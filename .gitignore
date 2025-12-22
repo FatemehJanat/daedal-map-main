@@ -1,0 +1,50 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+package-lock.json
+
+# Data folders (raw data not tracked)
+data/
+data_pipeline/data_loading/
+
+# Cleaned data IS tracked (needed for deployment)
+# data_pipeline/data_cleaned/  <- now tracked
+
+# Logs and temp files
+logs/
+*.log
+*.tmp
+
+# Environment and secrets
+.env
+.env.local
+config.local.json
+settings.json
+
+# OS files
+.DS_Store
+Thumbs.db
+nul
+*.swp
+*.swo
+*~
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# Keep metadata folder tracked
+!data_pipeline/metadata/

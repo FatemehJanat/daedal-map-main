@@ -1,0 +1,32 @@
+# Core web framework
+fastapi>=0.104.0
+uvicorn>=0.24.0
+
+# Environment and configuration
+python-dotenv>=1.0.0
+
+# LLM integration
+langchain>=0.1.0
+langchain-openai>=0.0.5
+
+# HTTP requests
+requests>=2.31.0
+
+# Data processing
+pandas>=2.0.0
+numpy>=1.24.0
+
+# String matching
+rapidfuzz>=3.0.0
+
+# Cloud logging and analytics (optional - graceful fallback if not configured)
+supabase>=2.0.0
+
+# Admin dashboard (local only, not deployed to Railway)
+streamlit>=1.30.0
+
+# Legacy/Archive tools (not required for main app):
+# geopandas>=0.14.0
+# shapely>=2.0.0
+# pyproj>=3.6.0
+# pyogrio>=0.7.0

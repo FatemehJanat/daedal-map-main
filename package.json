@@ -1,0 +1,15 @@
+{
+  "name": "county-map-server",
+  "version": "1.0.0",
+  "description": "Tileserver-GL project with MBTiles and custom styles",
+  "scripts": {
+    "start": "concurrently \"npm run dev\" \"venv/bin/uvicorn mapmover:app --host 0.0.0.0 --port 8000 --reload\"",
+    "dev": "npx tileserver-gl --config config.json --port 8080"
+  },
+  "dependencies": {
+    "tileserver-gl": "^5.3.1"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.0"
+  }
+}
