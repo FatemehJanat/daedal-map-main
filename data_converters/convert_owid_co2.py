@@ -14,10 +14,30 @@ We just need to:
 import pandas as pd
 import os
 import json
+import sys
+from pathlib import Path
+
+# Add parent dir to path for mapmover imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from mapmover.metadata_generator import generate_metadata
 
 # Configuration
 INPUT_FILE = r"C:\Users\Bryan\Desktop\county-map\data_pipeline\data_cleaned\owid-co2-data.csv"
 OUTPUT_DIR = r"C:\Users\Bryan\Desktop\county-map-data\data\owid_co2"
+
+# Source info for metadata generation
+SOURCE_INFO = {
+    "source_id": "owid_co2",
+    "source_name": "Our World in Data",
+    "source_url": "https://github.com/owid/co2-data",
+    "license": "CC-BY",
+    "description": "CO2 and greenhouse gas emissions, energy, and economic data",
+    "category": "environmental",
+    "topic_tags": ["climate", "emissions", "environment", "energy", "economics"],
+    "keywords": ["carbon", "pollution", "greenhouse", "global warming", "climate change"],
+    "update_schedule": "annual",
+    "expected_next_update": "2025-06"
+}
 
 
 def convert_owid_data():
@@ -69,45 +89,12 @@ def convert_owid_data():
     usa = df[df['loc_id'] == 'USA'].sort_values('year').tail(5)
     print(usa[['loc_id', 'year', 'population', 'gdp', 'co2', 'co2_per_capita']].to_string(index=False))
 
-    return df
+    return out_path
 
 
-def create_metadata(df):
-    """Create metadata.json for the dataset."""
-    metric_cols = [c for c in df.columns if c not in ['loc_id', 'year']]
-
-    metadata = {
-        "source_id": "owid_co2",
-        "source_name": "Our World in Data",
-        "description": "CO2 and greenhouse gas emissions, energy, and economic data",
-        "source_url": "https://github.com/owid/co2-data",
-        "last_updated": "2024-12-21",
-        "license": "CC-BY",
-        "geographic_level": "country",
-        "year_range": {
-            "start": int(df['year'].min()),
-            "end": int(df['year'].max())
-        },
-        "countries_covered": df['loc_id'].nunique(),
-        "metrics": {
-            "population": {"name": "Population", "unit": "count", "aggregation": "sum"},
-            "gdp": {"name": "GDP", "unit": "USD", "aggregation": "sum"},
-            "co2": {"name": "Annual CO2 emissions", "unit": "million tonnes", "aggregation": "sum"},
-            "co2_per_capita": {"name": "CO2 per capita", "unit": "tonnes/person", "aggregation": "avg"},
-            "cement_co2": {"name": "CO2 from cement", "unit": "million tonnes", "aggregation": "sum"},
-            "coal_co2": {"name": "CO2 from coal", "unit": "million tonnes", "aggregation": "sum"},
-            "oil_co2": {"name": "CO2 from oil", "unit": "million tonnes", "aggregation": "sum"},
-            "gas_co2": {"name": "CO2 from gas", "unit": "million tonnes", "aggregation": "sum"},
-            "flaring_co2": {"name": "CO2 from flaring", "unit": "million tonnes", "aggregation": "sum"},
-            "methane": {"name": "Methane emissions", "unit": "million tonnes CO2eq", "aggregation": "sum"},
-            "nitrous_oxide": {"name": "Nitrous oxide emissions", "unit": "million tonnes CO2eq", "aggregation": "sum"},
-            "total_ghg": {"name": "Total GHG emissions", "unit": "million tonnes CO2eq", "aggregation": "sum"},
-            "primary_energy_consumption": {"name": "Primary energy consumption", "unit": "TWh", "aggregation": "sum"},
-            "energy_per_capita": {"name": "Energy per capita", "unit": "kWh/person", "aggregation": "avg"},
-        },
-        "topic_tags": ["climate", "emissions", "environment", "energy", "economics"],
-        "llm_summary": f"Comprehensive CO2 and greenhouse gas emissions data for {df['loc_id'].nunique()} countries ({df['year'].min()}-{df['year'].max()})"
-    }
+def create_metadata(parquet_path):
+    """Create metadata.json using the shared generator."""
+    metadata = generate_metadata(parquet_path, SOURCE_INFO)
 
     meta_path = os.path.join(OUTPUT_DIR, "metadata.json")
     with open(meta_path, 'w', encoding='utf-8') as f:
@@ -118,6 +105,6 @@ def create_metadata(df):
 
 
 if __name__ == "__main__":
-    df = convert_owid_data()
-    create_metadata(df)
+    parquet_path = convert_owid_data()
+    create_metadata(parquet_path)
     print("\nDone!")

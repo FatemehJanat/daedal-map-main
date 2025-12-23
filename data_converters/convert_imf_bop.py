@@ -14,11 +14,30 @@ We keep USD values and rename indicators to clean column names.
 import pandas as pd
 import os
 import json
-import re
+import sys
+from pathlib import Path
+
+# Add parent dir to path for mapmover imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from mapmover.metadata_generator import generate_metadata
 
 # Configuration
 INPUT_FILE = r"C:\Users\Bryan\Desktop\county-map\data_pipeline\data_cleaned\IMF_BOPAGG_WIDEF.csv"
 OUTPUT_DIR = r"C:\Users\Bryan\Desktop\county-map-data\data\imf_bop"
+
+# Source info for metadata generation
+SOURCE_INFO = {
+    "source_id": "imf_bop",
+    "source_name": "International Monetary Fund",
+    "source_url": "https://data.imf.org",
+    "license": "IMF Data Terms",
+    "description": "Balance of payments and trade data",
+    "category": "economic",
+    "topic_tags": ["economics", "trade", "finance"],
+    "keywords": ["trade", "exports", "imports", "balance of payments", "finance"],
+    "update_schedule": "annual",
+    "expected_next_update": "2025-04"
+}
 
 # Year columns in the data
 YEAR_COLS = [str(y) for y in range(2005, 2023)]
@@ -133,44 +152,12 @@ def convert_imf_data():
     cols_avail = [c for c in cols_to_show if c in pivot_df.columns]
     print(usa[cols_avail].to_string(index=False))
 
-    return pivot_df
+    return out_path
 
 
-def create_metadata(df):
-    """Create metadata.json for the dataset."""
-    metric_cols = [c for c in df.columns if c not in ['loc_id', 'year']]
-
-    metadata = {
-        "source_id": "imf_bop",
-        "source_name": "International Monetary Fund",
-        "description": "Balance of Payments aggregate statistics",
-        "source_url": "https://data.imf.org/",
-        "last_updated": "2024-12-21",
-        "license": "IMF Terms of Use",
-        "geographic_level": "country",
-        "year_range": {
-            "start": int(df['year'].min()),
-            "end": int(df['year'].max())
-        },
-        "countries_covered": df['loc_id'].nunique(),
-        "metrics": {
-            "current_account_pct_gdp": {"name": "Current Account (% GDP)", "unit": "percent", "aggregation": "avg"},
-            "goods_balance": {"name": "Goods Trade Balance", "unit": "USD millions", "aggregation": "sum"},
-            "goods_exports": {"name": "Goods Exports", "unit": "USD millions", "aggregation": "sum"},
-            "goods_imports": {"name": "Goods Imports", "unit": "USD millions", "aggregation": "sum"},
-            "services_balance": {"name": "Services Trade Balance", "unit": "USD millions", "aggregation": "sum"},
-            "services_exports": {"name": "Services Exports", "unit": "USD millions", "aggregation": "sum"},
-            "services_imports": {"name": "Services Imports", "unit": "USD millions", "aggregation": "sum"},
-            "primary_income_balance": {"name": "Primary Income Balance", "unit": "USD millions", "aggregation": "sum"},
-            "secondary_income_balance": {"name": "Secondary Income Balance", "unit": "USD millions", "aggregation": "sum"},
-            "capital_account_balance": {"name": "Capital Account Balance", "unit": "USD millions", "aggregation": "sum"},
-            "direct_investment_balance": {"name": "Direct Investment Balance", "unit": "USD millions", "aggregation": "sum"},
-            "portfolio_investment_balance": {"name": "Portfolio Investment Balance", "unit": "USD millions", "aggregation": "sum"},
-            "reserve_assets": {"name": "Reserve Assets", "unit": "USD millions", "aggregation": "sum"},
-        },
-        "topic_tags": ["economics", "trade", "finance", "balance of payments"],
-        "llm_summary": f"IMF Balance of Payments data for {df['loc_id'].nunique()} countries ({df['year'].min()}-{df['year'].max()})"
-    }
+def create_metadata(parquet_path):
+    """Create metadata.json using the shared generator."""
+    metadata = generate_metadata(parquet_path, SOURCE_INFO)
 
     meta_path = os.path.join(OUTPUT_DIR, "metadata.json")
     with open(meta_path, 'w', encoding='utf-8') as f:
@@ -181,6 +168,6 @@ def create_metadata(df):
 
 
 if __name__ == "__main__":
-    df = convert_imf_data()
-    create_metadata(df)
+    parquet_path = convert_imf_data()
+    create_metadata(parquet_path)
     print("\nDone!")

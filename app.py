@@ -39,24 +39,16 @@ BASE_DIR = Path(__file__).resolve().parent
 from mapmover import (
     # Data loading
     initialize_catalog,
-    get_data_catalog,
-    get_ultimate_metadata,
     # Geography
     load_conversions,
     # Logging
     logger,
-    log_conversation,
     log_error_to_cloud,
-    # Meta queries
-    detect_meta_query,
-    handle_meta_query,
-    # Map state
-    get_map_state,
-    # Chat handlers
-    fetch_and_return_data,
-    determine_chat_intent,
-    handle_modify_request,
 )
+
+# Order Taker system (Phase 1B - replaces old multi-LLM chat)
+from mapmover.order_taker import interpret_request
+from mapmover.order_executor import execute_order
 
 # Geometry handlers (parquet-based)
 from mapmover.geometry_handlers import (
@@ -268,162 +260,75 @@ async def initialize_folders(req: Request):
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
 
-# === Data Endpoints ===
-
-@app.post("/location")
-async def location_endpoint(req: Request):
-    """
-    Legacy endpoint for direct data queries (used by embedded widget).
-    Delegates to fetch_and_return_data for unified code path.
-    """
-    try:
-        data = await req.json()
-        user_query = data.get("query", "")
-        current_view = data.get("currentView", {})
-
-        if not user_query:
-            return JSONResponse(content={"error": "No query provided"}, status_code=400)
-
-        logger.debug(f"=== Processing query via /location: {user_query} ===")
-
-        # Check for meta query
-        meta_type = detect_meta_query(user_query)
-        if meta_type:
-            logger.debug(f"Detected meta query type: {meta_type}")
-            meta_response = handle_meta_query(meta_type, user_query, get_ultimate_metadata(), get_data_catalog())
-            return JSONResponse(content={
-                "geojson": {"type": "FeatureCollection", "features": []},
-                "meta_response": meta_response,
-                "message": meta_response.get('answer', ''),
-                "selected_file": "metadata",
-                "is_meta_query": True
-            })
-
-        # Delegate to unified data fetching
-        return await fetch_and_return_data(user_query, current_view, display_immediately=True, endpoint="location")
-
-    except Exception as e:
-        error_details = {
-            "timestamp": datetime.now().isoformat(),
-            "error_type": type(e).__name__,
-            "query": user_query if 'user_query' in locals() else "Unknown",
-            "error_message": str(e),
-            "traceback": traceback.format_exc()
-        }
-        logger.error(f"Unexpected Error: {json.dumps(error_details, indent=2)}")
-        log_error_to_cloud(type(e).__name__, str(e),
-                         query=user_query if 'user_query' in locals() else None,
-                         tb=traceback.format_exc())
-        return JSONResponse(content={"error": str(e)}, status_code=500)
-
+# === Chat Endpoint (Order Taker Model) ===
 
 @app.post("/chat")
 async def chat_endpoint(req: Request):
     """
-    Conversational chat endpoint that supports back-and-forth dialogue.
-    Uses a two-stage approach:
-    1. Conversation LLM decides intent (chat, clarify, or fetch data)
-    2. If fetch data, uses the existing query parsing chain
+    Chat endpoint - Order Taker model (Phase 1B).
+
+    Flow:
+    1. User sends query -> Returns order for confirmation
+    2. User confirms order -> Executes and returns GeoJSON data
+
+    Request body:
+    - query: str - Natural language query
+    - chatHistory: list - Previous messages for context
+    - confirmed_order: dict - If present, execute this order directly
     """
     try:
-        data = await req.json()
-        user_query = data.get("query", "")
-        current_view = data.get("currentView", {})
-        chat_history = data.get("chatHistory", [])
-        session_id = data.get("sessionId")
+        body = await req.json()
 
-        if not user_query:
+        # Check if this is a confirmed order execution
+        if body.get("confirmed_order"):
+            try:
+                result = execute_order(body["confirmed_order"])
+                return JSONResponse(content={
+                    "type": "data",
+                    "geojson": result["geojson"],
+                    "summary": result["summary"],
+                    "count": result["count"],
+                    "source": result["source"]
+                })
+            except Exception as e:
+                logger.error(f"Order execution error: {e}")
+                return JSONResponse(content={
+                    "type": "error",
+                    "message": str(e)
+                }, status_code=400)
+
+        # Otherwise, interpret the natural language request
+        query = body.get("query", "")
+        chat_history = body.get("chatHistory", [])
+
+        if not query:
             return JSONResponse(content={"error": "No query provided"}, status_code=400)
 
-        logger.debug(f"Chat query: {user_query[:100]}...")
-        logger.debug(f"Chat history length: {len(chat_history)}, session: {session_id}")
+        logger.debug(f"Chat query: {query[:100]}...")
 
-        # Build conversation context
-        history_context = ""
-        if chat_history:
-            recent_history = chat_history[-6:]
-            for msg in recent_history:
-                role = "User" if msg.get("role") == "user" else "Assistant"
-                content = msg.get("content", "")
-                history_context += f"{role}: {content}\n"
+        # Single LLM call to interpret request
+        result = interpret_request(query, chat_history)
 
-        # Stage 1: Determine intent
-        intent_result = await determine_chat_intent(user_query, history_context)
-        logger.debug(f"Chat intent: {intent_result.get('intent', 'unknown')}")
-
-        intent = intent_result.get("intent", "chat")
-        response_text = intent_result.get("response", "")
-
-        # Handle different intents
-        if intent == "fetch_data":
-            data_query = intent_result.get("data_query", user_query)
-            wants_immediate_display = intent_result.get("display_immediately", False)
-            return await fetch_and_return_data(
-                data_query, current_view, wants_immediate_display,
-                endpoint="chat", session_id=session_id
-            )
-
-        elif intent == "clarify":
-            log_conversation(
-                session_id=session_id,
-                query=user_query,
-                response_text=response_text,
-                intent="clarify",
-                endpoint="chat"
-            )
+        if result["type"] == "order":
+            # Return order for UI confirmation
             return JSONResponse(content={
-                "message": response_text,
+                "type": "order",
+                "order": result["order"],
+                "summary": result["summary"]
+            })
+        elif result["type"] == "clarify":
+            # Need more information from user
+            return JSONResponse(content={
+                "type": "clarify",
+                "message": result["message"],
                 "geojson": {"type": "FeatureCollection", "features": []},
                 "needsMoreInfo": True
             })
-
-        elif intent == "modify_data":
-            modify_action = intent_result.get("modify_action", "")
-            return await handle_modify_request(modify_action, current_view, session_id=session_id)
-
-        elif intent == "meta":
-            meta_type = detect_meta_query(user_query)
-            if meta_type:
-                meta_response = handle_meta_query(meta_type, user_query, get_ultimate_metadata(), get_data_catalog())
-                final_response = meta_response.get('answer', response_text)
-                log_conversation(
-                    session_id=session_id,
-                    query=user_query,
-                    response_text=final_response,
-                    intent="meta",
-                    endpoint="chat"
-                )
-                return JSONResponse(content={
-                    "message": final_response,
-                    "geojson": {"type": "FeatureCollection", "features": []},
-                    "needsMoreInfo": False,
-                    "is_meta_query": True
-                })
-            else:
-                log_conversation(
-                    session_id=session_id,
-                    query=user_query,
-                    response_text=response_text,
-                    intent="meta",
-                    endpoint="chat"
-                )
-                return JSONResponse(content={
-                    "message": response_text,
-                    "geojson": {"type": "FeatureCollection", "features": []},
-                    "needsMoreInfo": False
-                })
-
         else:
-            # General conversation
-            log_conversation(
-                session_id=session_id,
-                query=user_query,
-                response_text=response_text,
-                intent="chat",
-                endpoint="chat"
-            )
+            # General chat response (not a data request)
             return JSONResponse(content={
-                "message": response_text,
+                "type": "chat",
+                "message": result["message"],
                 "geojson": {"type": "FeatureCollection", "features": []},
                 "needsMoreInfo": False
             })
@@ -432,6 +337,7 @@ async def chat_endpoint(req: Request):
         logger.error(f"Chat error: {e}")
         traceback.print_exc()
         return JSONResponse(content={
+            "type": "error",
             "message": "Sorry, I encountered an error. Please try again.",
             "geojson": {"type": "FeatureCollection", "features": []},
             "error": str(e)

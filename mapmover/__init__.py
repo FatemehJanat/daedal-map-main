@@ -6,12 +6,11 @@ This package provides:
 - Data loading and catalog management (data_loading.py)
 - Geometry enrichment (geometry_enrichment.py)
 - Geometry joining (geometry_joining.py)
-- Map state management (map_state.py)
-- Meta query handling (meta_queries.py)
-- Response building (response_builder.py)
-- LLM initialization and database selection (llm.py)
-- Chat endpoint handlers (chat_handlers.py)
 - Geometry endpoint handlers (geometry_handlers.py)
+- Order Taker LLM (order_taker.py) - Phase 1B
+- Order Executor (order_executor.py) - Phase 1B
+- Metadata generator (metadata_generator.py)
+- Catalog builder (catalog_builder.py)
 - Logging and analytics (logging_analytics.py)
 - Utility functions (utils.py)
 - Constants (constants.py)
@@ -63,7 +62,6 @@ from .data_loading import (
 )
 
 from .logging_analytics import (
-    log_conversation,
     log_missing_geometry,
     log_error_to_cloud,
     log_missing_region_to_cloud,
@@ -79,47 +77,9 @@ from .geometry_enrichment import (
     COUNTRY_NAME_ALIASES,
 )
 
-from .map_state import (
-    get_map_state,
-    clear_map_state,
-    add_source_to_state,
-    build_geometry_package,
-    enrich_features_with_data,
-    remove_field_from_features,
-    build_incremental_response,
-)
-
-from .meta_queries import (
-    detect_meta_query,
-    handle_meta_query,
-)
-
-from .response_builder import (
-    generate_conversational_summary,
-    build_response,
-)
-
 from .geometry_joining import (
     detect_join_key,
     auto_join_geometry,
-)
-
-from .llm import (
-    choose_database,
-    get_chain,
-    get_llm,
-    chain,
-    llm,
-)
-
-from .chat_handlers import (
-    preview_data_availability,
-    generate_friendly_error_message,
-    fetch_and_return_data,
-    generate_chat_summary,
-    get_helpful_response,
-    determine_chat_intent,
-    handle_modify_request,
 )
 
 from .geometry_handlers import (
@@ -132,6 +92,10 @@ from .geometry_handlers import (
     load_global_countries,
     clear_cache,
 )
+
+# Phase 1B: Order Taker system
+from .order_taker import interpret_request
+from .order_executor import execute_order
 
 __version__ = "2.0.0"
 __all__ = [
@@ -172,7 +136,6 @@ __all__ = [
     "data_catalog",
     "ultimate_metadata",
     # Logging
-    "log_conversation",
     "log_missing_geometry",
     "log_error_to_cloud",
     "log_missing_region_to_cloud",
@@ -183,15 +146,16 @@ __all__ = [
     "detect_missing_geometry",
     "get_geometry_source",
     "COUNTRY_NAME_ALIASES",
-    # Map state
-    "get_map_state",
-    "clear_map_state",
-    "add_source_to_state",
-    "build_geometry_package",
-    "enrich_features_with_data",
-    "remove_field_from_features",
-    "build_incremental_response",
-    # Meta queries
-    "detect_meta_query",
-    "handle_meta_query",
+    # Geometry handlers
+    "get_countries_geometry",
+    "get_location_children",
+    "get_location_places",
+    "get_location_info",
+    "load_country_depth",
+    "load_country_parquet",
+    "load_global_countries",
+    "clear_cache",
+    # Order Taker (Phase 1B)
+    "interpret_request",
+    "execute_order",
 ]

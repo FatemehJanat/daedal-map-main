@@ -426,6 +426,101 @@
       "code": "AMR",
       "countries": ["ATG", "ARG", "BHS", "BRB", "BLZ", "BOL", "BRA", "CAN", "CHL", "COL", "CRI", "CUB", "DMA", "DOM", "ECU", "SLV", "GRD", "GTM", "GUY", "HTI", "HND", "JAM", "MEX", "NIC", "PAN", "PRY", "PER", "KNA", "LCA", "VCT", "SUR", "TTO", "USA", "URY", "VEN"]
     },
+    "OECD": {
+      "code": "OECD",
+      "_note": "Organisation for Economic Co-operation and Development - developed economies",
+      "countries": ["AUS", "AUT", "BEL", "CAN", "CHL", "COL", "CRI", "CZE", "DNK", "EST", "FIN", "FRA", "DEU", "GRC", "HUN", "ISL", "IRL", "ISR", "ITA", "JPN", "KOR", "LVA", "LTU", "LUX", "MEX", "NLD", "NZL", "NOR", "POL", "PRT", "SVK", "SVN", "ESP", "SWE", "CHE", "TUR", "GBR", "USA"]
+    },
+    "High_Income": {
+      "code": "HIC",
+      "_note": "World Bank classification - updated annually",
+      "countries": ["AND", "ATG", "AUS", "AUT", "BHS", "BHR", "BRB", "BEL", "BRN", "CAN", "CHL", "HRV", "CYP", "CZE", "DNK", "EST", "FIN", "FRA", "DEU", "GRC", "HKG", "HUN", "ISL", "IRL", "ISR", "ITA", "JPN", "KOR", "KWT", "LVA", "LIE", "LTU", "LUX", "MAC", "MLT", "MCO", "NLD", "NZL", "NOR", "OMN", "PAN", "POL", "PRT", "QAT", "ROU", "SAU", "SYC", "SGP", "SVK", "SVN", "ESP", "SWE", "CHE", "TWN", "TTO", "ARE", "GBR", "USA", "URY"]
+    },
+    "Upper_Middle_Income": {
+      "code": "UMC",
+      "_note": "World Bank classification",
+      "countries": ["ALB", "DZA", "ARG", "ARM", "AZE", "BLR", "BLZ", "BIH", "BWA", "BRA", "BGR", "CHN", "COL", "CRI", "CUB", "DMA", "DOM", "ECU", "SLV", "GNQ", "FJI", "GAB", "GEO", "GRD", "GTM", "GUY", "IRN", "IRQ", "JAM", "JOR", "KAZ", "LBY", "MYS", "MDV", "MUS", "MEX", "MDA", "MNE", "NAM", "MKD", "PRY", "PER", "RUS", "SRB", "ZAF", "LCA", "VCT", "SUR", "THA", "TON", "TUR", "TKM", "TUV", "VEN"]
+    },
+    "Lower_Middle_Income": {
+      "code": "LMC",
+      "_note": "World Bank classification",
+      "countries": ["AGO", "BGD", "BEN", "BTN", "BOL", "CPV", "KHM", "CMR", "COM", "COG", "CIV", "DJI", "EGY", "SWZ", "GHA", "HND", "IND", "IDN", "KEN", "KIR", "KGZ", "LAO", "LSO", "MRT", "FSM", "MNG", "MAR", "MMR", "NPL", "NIC", "NGA", "PAK", "PNG", "PHL", "WSM", "STP", "SEN", "SLB", "LKA", "TZA", "TLS", "TUN", "UKR", "UZB", "VUT", "VNM", "PSE", "ZMB", "ZWE"]
+    },
+    "Low_Income": {
+      "code": "LIC",
+      "_note": "World Bank classification - poorest countries",
+      "countries": ["AFG", "BFA", "BDI", "CAF", "TCD", "COD", "ERI", "ETH", "GMB", "GIN", "GNB", "HTI", "PRK", "LBR", "MDG", "MWI", "MLI", "MOZ", "NER", "RWA", "SLE", "SOM", "SSD", "SDN", "SYR", "TGO", "UGA", "YEM"]
+    },
+    "Sub_Saharan_Africa": {
+      "code": "SSA",
+      "_note": "Africa excluding North African Arab states",
+      "countries": ["AGO", "BEN", "BWA", "BFA", "BDI", "CPV", "CMR", "CAF", "TCD", "COM", "COG", "COD", "CIV", "GNQ", "ERI", "SWZ", "ETH", "GAB", "GMB", "GHA", "GIN", "GNB", "KEN", "LSO", "LBR", "MDG", "MWI", "MLI", "MRT", "MUS", "MOZ", "NAM", "NER", "NGA", "RWA", "STP", "SEN", "SYC", "SLE", "SOM", "ZAF", "SSD", "SDN", "TZA", "TGO", "UGA", "ZMB", "ZWE"]
+    },
+    "Least_Developed_Countries": {
+      "code": "LDC",
+      "_note": "UN classification for poorest and most vulnerable countries",
+      "countries": ["AFG", "AGO", "BGD", "BEN", "BTN", "BFA", "BDI", "KHM", "CAF", "TCD", "COM", "COD", "DJI", "ERI", "ETH", "GMB", "GIN", "GNB", "HTI", "KIR", "LAO", "LSO", "LBR", "MDG", "MWI", "MLI", "MRT", "MOZ", "MMR", "NPL", "NER", "RWA", "STP", "SEN", "SLE", "SLB", "SOM", "SSD", "SDN", "TLS", "TGO", "TUV", "UGA", "TZA", "YEM", "ZMB"]
+    },
+    "Small_Island_Developing_States": {
+      "code": "SIDS",
+      "_note": "UN classification for island nations facing unique vulnerabilities",
+      "countries": ["ATG", "BHS", "BRB", "BLZ", "CPV", "COM", "COK", "CUB", "DMA", "DOM", "FJI", "GRD", "GIN", "GNB", "GUY", "HTI", "JAM", "KIR", "MDV", "MHL", "MUS", "FSM", "NRU", "NIU", "PLW", "PNG", "WSM", "STP", "SYC", "SGP", "SLB", "SUR", "TLS", "TON", "TTO", "TUV", "VUT"]
+    },
+    "Landlocked_Developing_Countries": {
+      "code": "LLDC",
+      "_note": "UN classification for countries without coastal access",
+      "countries": ["AFG", "ARM", "AZE", "BTN", "BOL", "BWA", "BFA", "BDI", "CAF", "TCD", "ETH", "KAZ", "KGZ", "LAO", "LSO", "MWI", "MLI", "MDA", "MNG", "NPL", "NER", "MKD", "PRY", "RWA", "SSD", "SWZ", "TJK", "TKM", "UGA", "UZB", "ZMB", "ZWE"]
+    },
+    "East_Africa": {
+      "code": "EAFR",
+      "_note": "Eastern African region",
+      "countries": ["BDI", "COM", "DJI", "ERI", "ETH", "KEN", "MDG", "MWI", "MUS", "MOZ", "RWA", "SYC", "SOM", "SSD", "TZA", "UGA", "ZMB", "ZWE"]
+    },
+    "West_Africa": {
+      "code": "WAFR",
+      "_note": "Western African region",
+      "countries": ["BEN", "BFA", "CPV", "CIV", "GMB", "GHA", "GIN", "GNB", "LBR", "MLI", "MRT", "NER", "NGA", "SEN", "SLE", "TGO"]
+    },
+    "Central_Africa": {
+      "code": "CAFR",
+      "_note": "Central African region",
+      "countries": ["AGO", "CMR", "CAF", "TCD", "COG", "COD", "GNQ", "GAB", "STP"]
+    },
+    "Southern_Africa": {
+      "code": "SAFR",
+      "_note": "Southern African region",
+      "countries": ["BWA", "SWZ", "LSO", "NAM", "ZAF"]
+    },
+    "North_Africa": {
+      "code": "NAFR",
+      "_note": "Northern African region",
+      "countries": ["DZA", "EGY", "LBY", "MAR", "SDN", "TUN"]
+    },
+    "East_Asia": {
+      "code": "EASIA",
+      "_note": "Eastern Asian region",
+      "countries": ["CHN", "HKG", "JPN", "MAC", "MNG", "PRK", "KOR", "TWN"]
+    },
+    "South_Asia": {
+      "code": "SASIA",
+      "_note": "Southern Asian region",
+      "countries": ["AFG", "BGD", "BTN", "IND", "MDV", "NPL", "PAK", "LKA"]
+    },
+    "Southeast_Asia": {
+      "code": "SEASIA",
+      "_note": "Southeast Asian region",
+      "countries": ["BRN", "KHM", "IDN", "LAO", "MYS", "MMR", "PHL", "SGP", "THA", "TLS", "VNM"]
+    },
+    "Central_Asia": {
+      "code": "CASIA",
+      "_note": "Central Asian region",
+      "countries": ["KAZ", "KGZ", "TJK", "TKM", "UZB"]
+    },
+    "Middle_East": {
+      "code": "MEAST",
+      "_note": "Middle Eastern region",
+      "countries": ["BHR", "IRN", "IRQ", "ISR", "JOR", "KWT", "LBN", "OMN", "PSE", "QAT", "SAU", "SYR", "TUR", "ARE", "YEM"]
+    },
     "European_Union": {
       "code": "EU",
       "countries": ["AUT", "BEL", "BGR", "HRV", "CYP", "CZE", "DNK", "EST", "FIN", "FRA", "DEU", "GRC", "HUN", "IRL", "ITA", "LVA", "LTU", "LUX", "MLT", "NLD", "POL", "PRT", "ROU", "SVK", "SVN", "ESP", "SWE"]
@@ -445,6 +540,51 @@
     "ASEAN": {
       "code": "ASEAN",
       "countries": ["BRN", "KHM", "IDN", "LAO", "MYS", "MMR", "PHL", "SGP", "THA", "VNM"]
+    },
+    "OPEC": {
+      "code": "OPEC",
+      "_note": "Organization of the Petroleum Exporting Countries",
+      "countries": ["DZA", "AGO", "COG", "GNQ", "GAB", "IRN", "IRQ", "KWT", "LBY", "NGA", "SAU", "ARE", "VEN"]
+    },
+    "MERCOSUR": {
+      "code": "MERCOSUR",
+      "_note": "Southern Common Market - South American trade bloc",
+      "countries": ["ARG", "BRA", "PRY", "URY", "VEN"]
+    },
+    "USMCA": {
+      "code": "USMCA",
+      "_note": "United States-Mexico-Canada Agreement (formerly NAFTA)",
+      "countries": ["CAN", "MEX", "USA"]
+    },
+    "ECOWAS": {
+      "code": "ECOWAS",
+      "_note": "Economic Community of West African States",
+      "countries": ["BEN", "BFA", "CPV", "CIV", "GMB", "GHA", "GIN", "GNB", "LBR", "MLI", "NER", "NGA", "SEN", "SLE", "TGO"]
+    },
+    "SADC": {
+      "code": "SADC",
+      "_note": "Southern African Development Community",
+      "countries": ["AGO", "BWA", "COM", "COD", "SWZ", "LSO", "MDG", "MWI", "MUS", "MOZ", "NAM", "SYC", "ZAF", "TZA", "ZMB", "ZWE"]
+    },
+    "East_African_Community": {
+      "code": "EAC",
+      "_note": "East African trade and political bloc",
+      "countries": ["BDI", "COD", "KEN", "RWA", "SSD", "TZA", "UGA"]
+    },
+    "Commonwealth_of_Independent_States": {
+      "code": "CIS",
+      "_note": "Former Soviet states",
+      "countries": ["ARM", "AZE", "BLR", "KAZ", "KGZ", "MDA", "RUS", "TJK", "TKM", "UZB"]
+    },
+    "Organization_of_Islamic_Cooperation": {
+      "code": "OIC",
+      "_note": "Second largest intergovernmental organization after UN",
+      "countries": ["AFG", "ALB", "DZA", "AZE", "BHR", "BGD", "BEN", "BRN", "BFA", "CMR", "TCD", "COM", "CIV", "DJI", "EGY", "GAB", "GMB", "GIN", "GNB", "GUY", "IDN", "IRN", "IRQ", "JOR", "KAZ", "KWT", "KGZ", "LBN", "LBY", "MYS", "MDV", "MLI", "MRT", "MAR", "MOZ", "NER", "NGA", "OMN", "PAK", "PSE", "QAT", "SAU", "SEN", "SLE", "SOM", "SDN", "SUR", "SYR", "TJK", "TGO", "TUN", "TUR", "TKM", "UGA", "ARE", "UZB", "YEM"]
+    },
+    "Francophonie": {
+      "code": "FRANCO",
+      "_note": "French-speaking countries and regions",
+      "countries": ["BEN", "BFA", "BDI", "CMR", "CAN", "CAF", "TCD", "COM", "COG", "COD", "CIV", "DJI", "EGY", "GNQ", "FRA", "GAB", "GIN", "HTI", "LUX", "MDG", "MLI", "MRT", "MUS", "MCO", "MAR", "NER", "RWA", "SEN", "SYC", "CHE", "TGO", "TUN", "VUT", "BEL"]
     },
     "Arab_League": {
       "code": "AL",
@@ -607,7 +747,34 @@
     "Oceanian": "Oceania",
     "Pacific": "Oceania",
     "Pacific Islands": "Pacific_Islands",
-    "Australia and Pacific": "Oceania"
+    "Australia and Pacific": "Oceania",
+    "Middle East": "Middle_East",
+    "MENA": "Middle_East",
+    "Sub-Saharan Africa": "Sub_Saharan_Africa",
+    "SSA": "Sub_Saharan_Africa",
+    "East Africa": "East_Africa",
+    "West Africa": "West_Africa",
+    "Central Africa": "Central_Africa",
+    "Southern Africa": "Southern_Africa",
+    "North Africa": "North_Africa",
+    "East Asia": "East_Asia",
+    "South Asia": "South_Asia",
+    "Southeast Asia": "Southeast_Asia",
+    "Central Asia": "Central_Asia",
+    "LDCs": "Least_Developed_Countries",
+    "Least developed": "Least_Developed_Countries",
+    "SIDS": "Small_Island_Developing_States",
+    "Island nations": "Small_Island_Developing_States",
+    "Landlocked": "Landlocked_Developing_Countries",
+    "High income": "High_Income",
+    "High income countries": "High_Income",
+    "Developed countries": "High_Income",
+    "Developed world": "High_Income",
+    "Upper middle income": "Upper_Middle_Income",
+    "Lower middle income": "Lower_Middle_Income",
+    "Low income": "Low_Income",
+    "Low income countries": "Low_Income",
+    "Poorest countries": "Low_Income"
   },
 
   "limited_geometry_countries": {

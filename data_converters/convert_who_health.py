@@ -13,11 +13,30 @@ This script creates separate columns for each disaggregation:
 import pandas as pd
 import os
 import json
-import re
+import sys
+from pathlib import Path
+
+# Add parent dir to path for mapmover imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from mapmover.metadata_generator import generate_metadata
 
 # Configuration
 INPUT_FILE = r"C:\Users\Bryan\Desktop\county-map\data_pipeline\data_cleaned\WHS2025_DATADOWNLOAD.csv"
 OUTPUT_DIR = r"C:\Users\Bryan\Desktop\county-map-data\data\who_health"
+
+# Source info for metadata generation
+SOURCE_INFO = {
+    "source_id": "who_health",
+    "source_name": "World Health Organization",
+    "source_url": "https://www.who.int/data/gho",
+    "license": "CC BY-NC-SA 3.0 IGO",
+    "description": "WHO Global Health Observatory indicators",
+    "category": "health",
+    "topic_tags": ["health", "mortality", "disease", "healthcare"],
+    "keywords": ["life expectancy", "mortality", "disease", "medical", "health"],
+    "update_schedule": "annual",
+    "expected_next_update": "2025-06"
+}
 
 # Column name mapping: IndicatorCode -> clean column name
 INDICATOR_NAMES = {
@@ -156,57 +175,13 @@ def convert_who_data():
     usa = pivot_df[pivot_df['loc_id'] == 'USA']
     print(usa[['loc_id', 'year', 'life_expectancy_total', 'uhc_index', 'doctors_per_10k']].to_string(index=False))
 
-    return pivot_df
+    return out_path
 
 
-def create_metadata(df):
-    """Create metadata.json for the dataset."""
+def create_metadata(parquet_path):
+    """Create metadata.json using the shared generator."""
+    metadata = generate_metadata(parquet_path, SOURCE_INFO)
 
-    # Get list of metric columns
-    metric_cols = [c for c in df.columns if c not in ['loc_id', 'year']]
-
-    metadata = {
-        "source_id": "who_health",
-        "source_name": "World Health Organization",
-        "description": "WHO Global Health Observatory indicators",
-        "source_url": "https://www.who.int/data/gho",
-        "last_updated": "2024-12-21",
-        "license": "CC BY-NC-SA 3.0 IGO",
-        "geographic_level": "country",
-        "year_range": {
-            "start": int(df['year'].min()),
-            "end": int(df['year'].max())
-        },
-        "countries_covered": df['loc_id'].nunique(),
-        "metrics": {},
-        "topic_tags": ["health", "mortality", "disease", "healthcare"],
-        "llm_summary": f"WHO health indicators for {df['loc_id'].nunique()} countries ({df['year'].min()}-{df['year'].max()})"
-    }
-
-    # Add key metrics
-    key_metrics = {
-        "life_expectancy_total": ("Life expectancy at birth", "years", "avg"),
-        "healthy_life_expectancy_total": ("Healthy life expectancy", "years", "avg"),
-        "uhc_index": ("Universal health coverage index", "0-100", "avg"),
-        "maternal_mortality": ("Maternal mortality ratio", "per 100K", "avg"),
-        "under5_mortality": ("Under-5 mortality rate", "per 1000", "avg"),
-        "neonatal_mortality": ("Neonatal mortality rate", "per 1000", "avg"),
-        "doctors_per_10k": ("Medical doctors density", "per 10K", "avg"),
-        "nurses_per_10k": ("Nurses and midwives density", "per 10K", "avg"),
-        "tb_incidence": ("Tuberculosis incidence", "per 100K", "avg"),
-        "hiv_incidence": ("HIV incidence", "per 1000", "avg"),
-        "malaria_incidence": ("Malaria incidence", "per 1000 at risk", "avg"),
-    }
-
-    for col, (name, unit, agg) in key_metrics.items():
-        if col in metric_cols:
-            metadata["metrics"][col] = {
-                "name": name,
-                "unit": unit,
-                "aggregation": agg
-            }
-
-    # Save metadata
     meta_path = os.path.join(OUTPUT_DIR, "metadata.json")
     with open(meta_path, 'w', encoding='utf-8') as f:
         json.dump(metadata, f, indent=2)
@@ -216,6 +191,6 @@ def create_metadata(df):
 
 
 if __name__ == "__main__":
-    df = convert_who_data()
-    create_metadata(df)
+    parquet_path = convert_who_data()
+    create_metadata(parquet_path)
     print("\nDone!")

@@ -113,6 +113,117 @@ The `llm_summary` field is sent to the conversation LLM to help it understand av
 
 ---
 
+## Enhanced Metadata Schema
+
+The enhanced schema adds fields for LLM comprehension and data discovery.
+
+### Full metadata.json Structure
+
+```json
+{
+  "source_id": "owid_co2",
+  "source_name": "Our World in Data",
+  "source_url": "https://github.com/owid/co2-data",
+  "license": "CC-BY",
+  "description": "CO2 and greenhouse gas emissions, energy, and economic data",
+  "category": "environmental",
+  "topic_tags": ["climate", "emissions", "environment", "energy"],
+  "keywords": ["carbon", "pollution", "greenhouse", "warming"],
+
+  "last_updated": "2024-12-22",
+  "geographic_level": "country",
+  "geographic_coverage": {
+    "type": "global",
+    "countries": 217,
+    "regions": ["Europe", "Asia", "Africa", "Americas", "Oceania"],
+    "admin_levels": [0]
+  },
+  "temporal_coverage": {
+    "start": 1750,
+    "end": 2024,
+    "frequency": "annual"
+  },
+  "update_schedule": "annual",
+  "expected_next_update": "2025-06",
+  "row_count": 42000,
+  "file_size_mb": 2.0,
+  "data_completeness": 0.85,
+
+  "metrics": {
+    "gdp": {
+      "name": "GDP",
+      "unit": "USD",
+      "aggregation": "sum",
+      "keywords": ["economy", "economic output", "wealth"]
+    },
+    "co2": {
+      "name": "CO2 emissions",
+      "unit": "million tonnes",
+      "aggregation": "sum",
+      "keywords": ["carbon", "emissions", "pollution"]
+    }
+  },
+
+  "llm_summary": "217 countries, 1750-2024. CO2, GDP, population, energy metrics."
+}
+```
+
+### New Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `category` | string | Category: environmental, economic, health, demographic |
+| `keywords` | array | Synonyms/related terms for LLM matching |
+| `geographic_coverage` | object | Structured coverage info |
+| `geographic_coverage.type` | string | global, country, or regional |
+| `geographic_coverage.countries` | int | Number of countries covered |
+| `geographic_coverage.regions` | array | Regions with data: Europe, Asia, Africa, Americas, Oceania |
+| `geographic_coverage.admin_levels` | array | Admin levels present: 0=country, 1=state, 2=county |
+| `temporal_coverage` | object | Structured time range |
+| `temporal_coverage.start` | int | First year of data |
+| `temporal_coverage.end` | int | Last year of data |
+| `temporal_coverage.frequency` | string | annual, monthly, or daily |
+| `update_schedule` | string | How often source publishes: annual, quarterly, monthly, or unknown |
+| `expected_next_update` | string | When to check for new data: YYYY-MM or unknown |
+| `row_count` | int | Total rows in parquet |
+| `file_size_mb` | float | File size in MB |
+| `data_completeness` | float | Non-null ratio (0-1) |
+| `metrics[].keywords` | array | Per-metric synonyms for LLM matching |
+
+### Unified Catalog
+
+The `catalog.json` aggregates all metadata into one file for the LLM:
+
+```json
+{
+  "catalog_version": "1.0",
+  "last_updated": "2024-12-22",
+  "total_sources": 6,
+  "sources": [
+    {
+      "source_id": "owid_co2",
+      "source_name": "Our World in Data",
+      "category": "environmental",
+      "topic_tags": ["climate", "emissions"],
+      "keywords": ["carbon", "pollution"],
+      "geographic_level": "country",
+      "geographic_coverage": {"type": "global", "countries": 217},
+      "temporal_coverage": {"start": 1750, "end": 2024},
+      "llm_summary": "217 countries, 1750-2024. CO2, GDP, population, energy."
+    }
+  ]
+}
+```
+
+The catalog contains summary info only. The LLM reads the catalog for an overview, then can request full metadata for specific sources if needed.
+
+### Generation Scripts
+
+- `scripts/regenerate_metadata.py` - Regenerate metadata.json for all sources
+- `scripts/build_catalog.py` - Build catalog.json from all metadata files
+
+---
+
 ## Dataset Catalog
 
 ### Quick Reference
@@ -401,10 +512,11 @@ When multiple sources have the same metric, the app selects:
 | File | Purpose |
 |------|---------|
 | `mapmover/data_loading.py` | Load parquets, build catalog |
-| `mapmover/data_cascade.py` | Parent/child data lookups |
-| `mapmover/meta_queries.py` | "What data is available?" |
-| `mapmover/response_builder.py` | Query data for map display |
+| `mapmover/order_taker.py` | LLM interprets user queries using catalog.json |
+| `mapmover/order_executor.py` | Execute orders against parquet files |
+| `mapmover/metadata_generator.py` | Generate metadata.json from parquet |
+| `mapmover/catalog_builder.py` | Build catalog.json from all metadata |
 
 ---
 
-*Last Updated: 2024-12-21*
+*Last Updated: 2024-12-22*

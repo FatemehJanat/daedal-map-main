@@ -15,6 +15,9 @@ Navigation index for understanding the system. This document describes where to 
 | [DEVELOPER.md](DEVELOPER.md) | Technical docs, module reference, debugging |
 | [GEOMETRY.md](GEOMETRY.md) | Geometry system, loc_id specification, process_gadm.py |
 | [DATA_PIPELINE.md](DATA_PIPELINE.md) | Data format, converters, dataset catalog |
+| [ADMIN_DASHBOARD.md](ADMIN_DASHBOARD.md) | Admin dashboard design, import wizard, metadata |
+| [CHAT_REDESIGN.md](CHAT_REDESIGN.md) | Fast food kiosk model for chat UI |
+| [geographic_data_reference.md](geographic_data_reference.md) | Data sources, geometry sources, free vs paid |
 | [ROADMAP.md](ROADMAP.md) | Future features and plans |
 
 ---
@@ -326,4 +329,4 @@ Defined in [mapmover/conversions.json](mapmover/conversions.json). Supports:
 
 ---
 
-*Last Updated: 2024-12-21*
+*Last Updated: 2025-12-21*

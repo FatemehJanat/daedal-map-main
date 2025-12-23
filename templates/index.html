@@ -183,6 +183,7 @@
     /* Chat messages area */
     #chatMessages {
       flex: 1;
+      min-height: 100px;
       overflow-y: auto;
       padding: 15px;
       display: flex;
@@ -240,11 +241,12 @@
     /* Chat input area */
     #chatInputArea {
       padding: 15px;
-      border-top: 1px solid #eee;
       background: #fafafa;
-      min-height: 25%;
+      height: 140px;
+      min-height: 80px;
       display: flex;
       flex-direction: column;
+      flex-shrink: 0;
     }
 
     #chatForm {
@@ -261,7 +263,7 @@
       border-radius: 8px;
       font-size: 14px;
       resize: none;
-      min-height: 80px;
+      min-height: 40px;
     }
 
     #chatInput:focus {
@@ -287,6 +289,122 @@
     #sendBtn:disabled {
       background: #ccc;
       cursor: not-allowed;
+    }
+
+    /* Order Panel */
+    #orderPanel {
+      padding: 12px 15px;
+      background: #f8f9fa;
+      height: 160px;
+      min-height: 60px;
+      overflow-y: auto;
+      flex-shrink: 0;
+    }
+
+    #orderPanel h4 {
+      font-size: 13px;
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    #orderPanel h4 span {
+      color: #666;
+      font-weight: normal;
+      font-size: 11px;
+    }
+
+    .order-items {
+      margin-bottom: 12px;
+    }
+
+    .order-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 10px;
+      background: white;
+      border: 1px solid #e0e0e0;
+      border-radius: 6px;
+      margin-bottom: 6px;
+      font-size: 13px;
+    }
+
+    .order-item-info {
+      flex: 1;
+    }
+
+    .order-item-name {
+      font-weight: 500;
+      color: #333;
+    }
+
+    .order-item-details {
+      font-size: 11px;
+      color: #666;
+      margin-top: 2px;
+    }
+
+    .order-item-remove {
+      background: none;
+      border: none;
+      color: #999;
+      font-size: 18px;
+      cursor: pointer;
+      padding: 0 5px;
+      line-height: 1;
+    }
+
+    .order-item-remove:hover {
+      color: #dc3545;
+    }
+
+    .order-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .order-btn {
+      flex: 1;
+      padding: 10px 16px;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .order-btn.confirm {
+      background: #28a745;
+      color: white;
+    }
+
+    .order-btn.confirm:hover {
+      background: #218838;
+    }
+
+    .order-btn.confirm:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+
+    .order-btn.cancel {
+      background: #6c757d;
+      color: white;
+    }
+
+    .order-btn.cancel:hover {
+      background: #545b62;
+    }
+
+    .order-summary {
+      font-size: 12px;
+      color: #666;
+      margin-bottom: 10px;
+      font-style: italic;
     }
 
     /* Sidebar footer with settings link */
@@ -438,6 +556,36 @@
       color: #007bff;
     }
 
+    /* Resize handles */
+    .resize-handle {
+      height: 8px;
+      background: #e0e0e0;
+      cursor: ns-resize;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: background 0.2s;
+    }
+
+    .resize-handle:hover,
+    .resize-handle.active {
+      background: #007bff;
+    }
+
+    .resize-handle::after {
+      content: '';
+      width: 40px;
+      height: 3px;
+      background: #999;
+      border-radius: 2px;
+    }
+
+    .resize-handle:hover::after,
+    .resize-handle.active::after {
+      background: white;
+    }
+
     /* Typing indicator */
     .typing-indicator {
       display: flex;
@@ -519,11 +667,28 @@
         </div>
       </div>
 
+      <!-- Resize handle between messages and input -->
+      <div class="resize-handle" id="resizeInput" title="Drag to resize"></div>
+
       <div id="chatInputArea">
         <form id="chatForm">
           <textarea id="chatInput" placeholder="Ask about locations, data, or comparisons..." rows="1"></textarea>
           <button type="submit" id="sendBtn">Send</button>
         </form>
+      </div>
+
+      <!-- Resize handle between input and order panel -->
+      <div class="resize-handle" id="resizeOrder" title="Drag to resize"></div>
+
+      <!-- Order Panel -->
+      <div id="orderPanel">
+        <h4>Your Order <span id="orderCount"></span></h4>
+        <div class="order-summary" id="orderSummary"></div>
+        <div class="order-items" id="orderItems"></div>
+        <div class="order-actions">
+          <button class="order-btn cancel" id="orderCancelBtn">Clear</button>
+          <button class="order-btn confirm" id="orderConfirmBtn">Display on Map</button>
+        </div>
       </div>
     </div>
 

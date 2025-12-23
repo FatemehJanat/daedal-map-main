@@ -15,8 +15,8 @@
 
 const CONFIG = {
   // Map settings
-  defaultCenter: [-100, 40],  // Centered on USA
-  defaultZoom: 3,
+  defaultCenter: [-78.64, 35.78],  // Centered on Raleigh, NC
+  defaultZoom: 2.5,
 
   // Zoom thresholds for automatic navigation
   zoom: {
@@ -1223,14 +1223,37 @@ const ChatManager = {
     try {
       const response = await this.sendQuery(query);
 
-      // Handle response
-      if (response.geojson && response.geojson.features && response.geojson.features.length > 0) {
-        const message = response.summary || response.message || 'Found data for you.';
-        this.addMessage(message, 'assistant');
-        App.displayData(response);
-      } else {
-        const message = response.summary || response.message || 'Could you be more specific?';
-        this.addMessage(message, 'assistant');
+      // Handle response based on type (Order Taker model)
+      switch (response.type) {
+        case 'order':
+          // LLM created an order - show in order panel for confirmation
+          this.addMessage(response.summary || 'Added to your order. Click "Display on Map" when ready.', 'assistant');
+          OrderManager.setOrder(response.order, response.summary);
+          break;
+
+        case 'clarify':
+          // LLM needs more information
+          this.addMessage(response.message || 'Could you be more specific?', 'assistant');
+          break;
+
+        case 'data':
+          // Direct data response (from confirmed order)
+          this.addMessage(response.summary || 'Here is your data.', 'assistant');
+          App.displayData(response);
+          break;
+
+        case 'chat':
+        default:
+          // General chat response or legacy format
+          if (response.geojson && response.geojson.features && response.geojson.features.length > 0) {
+            const message = response.summary || response.message || 'Found data for you.';
+            this.addMessage(message, 'assistant');
+            App.displayData(response);
+          } else {
+            const message = response.summary || response.message || 'Could you be more specific?';
+            this.addMessage(message, 'assistant');
+          }
+          break;
       }
     } catch (error) {
       console.error('Chat error:', error);
@@ -1289,6 +1312,22 @@ const ChatManager = {
 
     if (options.html) {
       div.innerHTML = text;
+    } else if (type === 'assistant') {
+      // For assistant messages, render basic formatting:
+      // - Convert newlines to <br>
+      // - Bold text with **text** or __text__
+      // - Numbered lists (1. item)
+      // - Bullet lists (- item)
+      let formatted = this.escapeHtml(text);
+
+      // Bold: **text** or __text__
+      formatted = formatted.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+      formatted = formatted.replace(/__(.+?)__/g, '<strong>$1</strong>');
+
+      // Newlines to <br>
+      formatted = formatted.replace(/\n/g, '<br>');
+
+      div.innerHTML = formatted;
     } else {
       div.textContent = text;
     }
@@ -1296,6 +1335,15 @@ const ChatManager = {
     messages.appendChild(div);
     messages.scrollTop = messages.scrollHeight;
     return div;
+  },
+
+  /**
+   * Escape HTML for safe rendering
+   */
+  escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
   },
 
   /**
@@ -1309,6 +1357,297 @@ const ChatManager = {
     messages.appendChild(indicator);
     messages.scrollTop = messages.scrollHeight;
     return indicator;
+  }
+};
+
+// ============================================================================
+// ORDER MANAGER - Order panel for confirming data requests
+// ============================================================================
+
+const OrderManager = {
+  currentOrder: null,
+  elements: {},
+
+  /**
+   * Initialize order manager
+   */
+  init() {
+    this.elements = {
+      panel: document.getElementById('orderPanel'),
+      count: document.getElementById('orderCount'),
+      summary: document.getElementById('orderSummary'),
+      items: document.getElementById('orderItems'),
+      confirmBtn: document.getElementById('orderConfirmBtn'),
+      cancelBtn: document.getElementById('orderCancelBtn')
+    };
+
+    this.setupEventListeners();
+    this.render();
+  },
+
+  /**
+   * Setup event listeners
+   */
+  setupEventListeners() {
+    const { confirmBtn, cancelBtn } = this.elements;
+
+    confirmBtn.addEventListener('click', () => {
+      this.confirmOrder();
+    });
+
+    cancelBtn.addEventListener('click', () => {
+      this.clearOrder();
+    });
+  },
+
+  /**
+   * Set a new order from the LLM response
+   * @param {Object} order - The order object from backend
+   * @param {string} summary - Summary text from LLM
+   */
+  setOrder(order, summary) {
+    this.currentOrder = order;
+    this.render(summary);
+  },
+
+  /**
+   * Clear the current order
+   */
+  clearOrder() {
+    this.currentOrder = null;
+    this.render();
+  },
+
+  /**
+   * Remove a specific item from the order
+   * @param {number} index - Index of item to remove
+   */
+  removeItem(index) {
+    if (!this.currentOrder || !this.currentOrder.items) return;
+
+    this.currentOrder.items.splice(index, 1);
+
+    if (this.currentOrder.items.length === 0) {
+      this.currentOrder = null;
+    }
+
+    this.render();
+  },
+
+  /**
+   * Render the order panel
+   * @param {string} summary - Optional summary text
+   */
+  render(summary = '') {
+    const { count, items, confirmBtn, summary: summaryEl } = this.elements;
+
+    // Update summary
+    summaryEl.textContent = summary || '';
+
+    // No order - show empty state
+    if (!this.currentOrder || !this.currentOrder.items || this.currentOrder.items.length === 0) {
+      count.textContent = '(empty)';
+      items.innerHTML = '<div style="color: #999; font-size: 12px; text-align: center; padding: 10px;">Ask for data to add items here</div>';
+      confirmBtn.disabled = true;
+      return;
+    }
+
+    // Has order - render items
+    const orderItems = this.currentOrder.items;
+    count.textContent = `(${orderItems.length} item${orderItems.length > 1 ? 's' : ''})`;
+    confirmBtn.disabled = false;
+
+    items.innerHTML = orderItems.map((item, index) => {
+      const name = item.metric_label || item.metric || 'Data';
+      const region = item.region || 'All';
+      const year = item.year || '';
+      const source = item.source || '';
+
+      const details = [region, year, source].filter(Boolean).join(' | ');
+
+      return `
+        <div class="order-item">
+          <div class="order-item-info">
+            <div class="order-item-name">${this.escapeHtml(name)}</div>
+            <div class="order-item-details">${this.escapeHtml(details)}</div>
+          </div>
+          <button class="order-item-remove" onclick="OrderManager.removeItem(${index})" title="Remove">x</button>
+        </div>
+      `;
+    }).join('');
+  },
+
+  /**
+   * Confirm and execute the order
+   */
+  async confirmOrder() {
+    if (!this.currentOrder) return;
+
+    const { confirmBtn } = this.elements;
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = 'Loading...';
+
+    try {
+      const apiUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL)
+        ? `${API_BASE_URL}/chat`
+        : '/chat';
+
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          confirmed_order: this.currentOrder
+        })
+      });
+
+      const data = await response.json();
+
+      if (data.type === 'data' && data.geojson) {
+        // Success - display data on map
+        ChatManager.addMessage(data.summary || 'Data loaded successfully.', 'assistant');
+        App.displayData(data);
+        this.clearOrder();
+      } else if (data.type === 'error') {
+        ChatManager.addMessage(data.message || 'Failed to load data.', 'assistant');
+      }
+    } catch (error) {
+      console.error('Order execution error:', error);
+      ChatManager.addMessage('Sorry, something went wrong executing the order.', 'assistant');
+    } finally {
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = 'Display on Map';
+    }
+  },
+
+  /**
+   * Escape HTML to prevent XSS
+   */
+  escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+};
+
+// Make OrderManager available globally for onclick handlers
+window.OrderManager = OrderManager;
+
+// ============================================================================
+// RESIZE MANAGER - Draggable resize handles for sidebar sections
+// ============================================================================
+
+const ResizeManager = {
+  activeHandle: null,
+  startY: 0,
+  startHeights: {},
+
+  /**
+   * Initialize resize manager
+   */
+  init() {
+    this.setupResizeHandle('resizeInput', 'chatMessages', 'chatInputArea', true);
+    this.setupResizeHandle('resizeOrder', 'chatInputArea', 'orderPanel', false);
+  },
+
+  /**
+   * Setup a resize handle
+   * @param {string} handleId - ID of the resize handle element
+   * @param {string} aboveId - ID of the element above the handle
+   * @param {string} belowId - ID of the element below the handle
+   * @param {boolean} aboveFlexible - If true, above element uses flex, else fixed height
+   */
+  setupResizeHandle(handleId, aboveId, belowId, aboveFlexible) {
+    const handle = document.getElementById(handleId);
+    const above = document.getElementById(aboveId);
+    const below = document.getElementById(belowId);
+
+    if (!handle || !above || !below) return;
+
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      this.activeHandle = { handle, above, below, aboveFlexible };
+      this.startY = e.clientY;
+      this.startHeights = {
+        above: above.offsetHeight,
+        below: below.offsetHeight
+      };
+      handle.classList.add('active');
+      document.body.style.cursor = 'ns-resize';
+      document.body.style.userSelect = 'none';
+    });
+
+    // Touch support
+    handle.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      const touch = e.touches[0];
+      this.activeHandle = { handle, above, below, aboveFlexible };
+      this.startY = touch.clientY;
+      this.startHeights = {
+        above: above.offsetHeight,
+        below: below.offsetHeight
+      };
+      handle.classList.add('active');
+    }, { passive: false });
+
+    // Global mouse/touch move and up handlers
+    document.addEventListener('mousemove', (e) => this.handleMove(e.clientY));
+    document.addEventListener('mouseup', () => this.handleEnd());
+    document.addEventListener('touchmove', (e) => {
+      if (this.activeHandle) {
+        e.preventDefault();
+        this.handleMove(e.touches[0].clientY);
+      }
+    }, { passive: false });
+    document.addEventListener('touchend', () => this.handleEnd());
+  },
+
+  /**
+   * Handle drag movement
+   */
+  handleMove(clientY) {
+    if (!this.activeHandle) return;
+
+    const { above, below, aboveFlexible } = this.activeHandle;
+    const deltaY = clientY - this.startY;
+
+    // Calculate new heights
+    let newAboveHeight = this.startHeights.above + deltaY;
+    let newBelowHeight = this.startHeights.below - deltaY;
+
+    // Get min heights from CSS
+    const aboveMinHeight = parseInt(getComputedStyle(above).minHeight) || 60;
+    const belowMinHeight = parseInt(getComputedStyle(below).minHeight) || 60;
+
+    // Enforce minimums
+    if (newAboveHeight < aboveMinHeight) {
+      newAboveHeight = aboveMinHeight;
+      newBelowHeight = this.startHeights.above + this.startHeights.below - aboveMinHeight;
+    }
+    if (newBelowHeight < belowMinHeight) {
+      newBelowHeight = belowMinHeight;
+      newAboveHeight = this.startHeights.above + this.startHeights.below - belowMinHeight;
+    }
+
+    // Apply heights
+    if (aboveFlexible) {
+      // For chat messages, set flex-basis instead of height
+      above.style.flex = `0 0 ${newAboveHeight}px`;
+    } else {
+      above.style.height = `${newAboveHeight}px`;
+    }
+    below.style.height = `${newBelowHeight}px`;
+  },
+
+  /**
+   * Handle drag end
+   */
+  handleEnd() {
+    if (!this.activeHandle) return;
+
+    this.activeHandle.handle.classList.remove('active');
+    this.activeHandle = null;
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
   }
 };
 
@@ -1529,7 +1868,9 @@ const App = {
 
     // Initialize components
     ChatManager.init();
+    OrderManager.init();
     SettingsManager.init();
+    ResizeManager.init();
 
     // Initialize map
     await MapAdapter.init();

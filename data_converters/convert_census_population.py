@@ -11,10 +11,30 @@ Converts FIPS codes to loc_id format (USA-{state}-{fips}).
 import pandas as pd
 import os
 import json
+import sys
+from pathlib import Path
+
+# Add parent dir to path for mapmover imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from mapmover.metadata_generator import generate_metadata
 
 # Configuration
 INPUT_FILE = r"C:\Users\Bryan\Desktop\county-map\data_pipeline\Raw data\cc-est2024-alldata.csv"
 OUTPUT_DIR = r"C:\Users\Bryan\Desktop\county-map-data\data\census_population"
+
+# Source info for metadata generation
+SOURCE_INFO = {
+    "source_id": "census_population",
+    "source_name": "US Census Bureau",
+    "source_url": "https://www.census.gov",
+    "license": "Public Domain",
+    "description": "US county-level population estimates",
+    "category": "demographic",
+    "topic_tags": ["demographics", "population"],
+    "keywords": ["population", "people", "residents", "census"],
+    "update_schedule": "annual",
+    "expected_next_update": "2025-03"
+}
 
 # State FIPS to abbreviation mapping
 STATE_FIPS = {
@@ -110,32 +130,12 @@ def convert_census_population():
     la = result[result['loc_id'] == 'USA-CA-6037']
     print(la.to_string(index=False))
 
-    return result
+    return out_path
 
 
-def create_metadata(df):
-    """Create metadata.json for the dataset."""
-    metadata = {
-        "source_id": "census_population",
-        "source_name": "US Census Bureau",
-        "description": "County-level population estimates",
-        "source_url": "https://www.census.gov/programs-surveys/popest.html",
-        "last_updated": "2024-12-21",
-        "license": "Public Domain",
-        "geographic_level": "county",
-        "year_range": {
-            "start": int(df['year'].min()),
-            "end": int(df['year'].max())
-        },
-        "countries_covered": ["USA"],
-        "metrics": {
-            "total_pop": {"name": "Total Population", "unit": "count", "aggregation": "sum"},
-            "male": {"name": "Male Population", "unit": "count", "aggregation": "sum"},
-            "female": {"name": "Female Population", "unit": "count", "aggregation": "sum"},
-        },
-        "topic_tags": ["demographics", "population"],
-        "llm_summary": f"US county population estimates for {df['loc_id'].nunique()} counties ({df['year'].min()}-{df['year'].max()})"
-    }
+def create_metadata(parquet_path):
+    """Create metadata.json using the shared generator."""
+    metadata = generate_metadata(parquet_path, SOURCE_INFO)
 
     meta_path = os.path.join(OUTPUT_DIR, "metadata.json")
     with open(meta_path, 'w', encoding='utf-8') as f:
@@ -146,6 +146,6 @@ def create_metadata(df):
 
 
 if __name__ == "__main__":
-    df = convert_census_population()
-    create_metadata(df)
+    parquet_path = convert_census_population()
+    create_metadata(parquet_path)
     print("\nDone!")

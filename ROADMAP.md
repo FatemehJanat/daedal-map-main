@@ -4,20 +4,23 @@ Future development plans and feature ideas.
 
 ---
 
-## Current Status (v1.0)
+## Current Status (v1.1)
 
 ### Completed Features
 
 - [x] CSV self-discovery and catalog system
-- [x] Two-stage LLM architecture (conversation + database)
+- [x] Order Taker LLM model (single LLM interprets -> user confirms -> execute)
+- [x] Order panel UI for confirming/modifying data requests
 - [x] Conversational chat interface with sidebar
 - [x] Natural language query parsing
-- [x] MODIFY intent for incremental updates (add field, change year, change region)
+- [x] Dynamic prompt loading from catalog.json and conversions.json
+- [x] Enhanced regional groupings (OECD, income levels, African/Asian sub-regions, trade blocs)
+- [x] Detailed geographic coverage in metadata (country_codes, region_coverage)
 - [x] Temporal data support (year filtering, ranges)
 - [x] Smart year selection (data completeness + recency)
 - [x] Unit conversion system
 - [x] Auto-join geometry from separate datasets
-- [x] Cesium 3D globe visualization (Leaflet archived)
+- [x] MapLibre GL JS 3D globe visualization
 - [x] Multiple data sources in popups
 - [x] Region/continent filtering (Europe, EU, G7, etc.) via conversions.json
 - [x] String filters with exclusions ("Europe excluding Germany")
@@ -25,10 +28,10 @@ Future development plans and feature ideas.
 - [x] ETL pipeline with quality analysis
 - [x] Shared helper functions (clean_nans, apply_unit_multiplier)
 - [x] Coordinate lookup from Countries.csv (no hardcoded coords)
-- [x] LLM-controlled conversation flow (no keyword shortcuts)
 - [x] Supabase cloud logging (sessions, errors, data quality issues)
 - [x] Geometry consolidation (standard 6-column format)
 - [x] Multi-level geographic support (country, state, county)
+- [x] Geometry simplification (0.01 tolerance for countries, 0.001 for counties)
 
 ---
 
@@ -124,35 +127,16 @@ Combine smaller regions into larger ones dynamically:
 - Leverage existing region groupings from conversions.json
 - Consider caching frequently requested unions
 
-### Admin Dashboard Cleanup
+### Admin Dashboard Rebuild
 
-Streamlit dashboard refinement:
+Full rebuild of the admin dashboard for data management. See [ADMIN_DASHBOARD.md](ADMIN_DASHBOARD.md) for detailed design.
 
-- [ ] Remove unused/experimental features
-- [ ] Simplify data ingestion workflow
-- [ ] Add "Build Your Own Dataset" export feature
-- [ ] Improve aggregate row editor
-- [ ] Better metadata editing UI
-
-### Build Your Own Dataset (Admin Feature)
-
-Custom dataset exports for specific use cases:
-
-- [ ] Select fields from multiple datasets
-- [ ] Apply filters (region, year range, thresholds)
-- [ ] Preview before download
-- [ ] Export as CSV or JSON
-- [ ] Does NOT modify main database
-
-**Example workflow:**
-```
-Admin: "I need GDP + population for Europe 2010-2020"
--> Select owid-co2-data.csv
--> Pick fields: country_name, year, gdp, population
--> Filter: region=Europe, year=2010-2020
--> Preview: 440 rows
--> Download: europe_gdp_pop_2010-2020.csv
-```
+**Phases:**
+- [ ] Phase 1: Read-only dashboard (system overview, dataset browser)
+- [ ] Phase 2: Metadata editing
+- [ ] Phase 3: Import wizard (file analyzer, column detector, loc_id mapper)
+- [ ] Phase 4: Source monitoring & auto-update
+- [ ] Phase 5: Streaming & live data
 
 ---
 
@@ -170,10 +154,10 @@ Handle ambiguous queries by letting users click on the map:
 - [ ] "Confirm Selection" button sends FIPS codes back to server
 - [ ] Multi-select for comparison queries ("Compare these 3 counties")
 
-**Cesium APIs to use:**
-- `viewer.selectedEntityChanged` - Click event on entities
-- `viewer.scene.pick()` - Get entity at mouse position
-- `ScreenSpaceEventHandler` - Low-level click/hover events
+**MapLibre APIs to use:**
+- `map.on('click', layerId, callback)` - Click event on layer features
+- `map.queryRenderedFeatures(point)` - Get features at mouse position
+- Feature state for selection highlighting
 
 **User flow:**
 ```
@@ -296,6 +280,75 @@ CREATE POLICY "Admin write" ON owid_data FOR ALL USING (auth.role() = 'service_r
 - [ ] Remove large CSVs from git repo
 - [ ] Update admin dashboard for Supabase management
 
+### Offline Operation / Local Deployment
+
+Run the entire system without internet connectivity.
+
+**Local Map Tiles (PMTiles):**
+- [ ] Download PMTiles basemap file (z0-10 = ~1-5GB, z0-15 = ~120GB)
+- [ ] Configure MapLibre to use local PMTiles protocol
+- [ ] Serve tiles as static asset (no tile server needed)
+- [ ] Latency improvement: 50-200ms/tile -> 1-10ms/tile
+
+**Local LLM (Ollama):**
+- [ ] Install Ollama with Llama 3.1 8B or Mistral 7B
+- [ ] Update chat_handlers.py to call local endpoint
+- [ ] Tune prompts for smaller model capabilities
+- [ ] Latency improvement: 500-2000ms -> 100-500ms
+
+**Logging Replacement:**
+- [ ] Replace Supabase logging with local SQLite
+- [ ] Or remove logging entirely for airgapped use
+
+**Benefits:**
+- Zero API costs
+- Works without internet
+- Noticeably snappier UI (pan/zoom instant, faster chat)
+- Privacy - no data leaves the machine
+
+**Trade-offs:**
+- Disk space (tiles + model weights)
+- Hardware requirements for local LLM
+- Smaller models less reliable at structured JSON output
+
+**PMTiles Resources:**
+- Protomaps: https://protomaps.com/
+- MapLibre PMTiles protocol built-in
+- Single file, HTTP Range requests for tile access
+
+### Prompt Optimization (Scaling to 200+ Sources)
+
+Three-tier context system for efficient LLM prompts as catalog grows.
+See [optimized_prompting_strategy.md](optimized_prompting_strategy.md) for full design.
+
+**When to implement:**
+- Current (6 sources): Not needed, full catalog fits fine
+- 15-30 sources: Add basic preprocessing and condensed prompts
+- 50+ sources: Add semantic search for catalog filtering
+
+**The three tiers:**
+1. **Lightweight system prompt** (~2K tokens) - Region list, source summaries
+2. **Preprocessing layer** (0 tokens to LLM) - Resolve locations, filter catalog
+3. **Just-in-time injection** (~1K tokens) - Only relevant sources per query
+
+**Token reduction:** 25K -> 3K per query (85-90% savings)
+
+**Phase 1: Basic Preprocessing**
+- [ ] Create QueryPreprocessor class
+- [ ] Location extraction from query text
+- [ ] Location resolution (name -> country codes)
+- [ ] Catalog filtering by geography
+
+**Phase 2: Condensed Prompts**
+- [ ] Build condensed system prompt generator
+- [ ] Use llm_summary field from catalog
+- [ ] Region list summary (counts only)
+
+**Phase 3: Semantic Search (50+ sources)**
+- [ ] Embed metadata with sentence-transformers
+- [ ] Query embedding comparison
+- [ ] Top-k source selection
+
 ### Query Caching
 
 - [ ] Cache frequent queries (Redis or in-memory)
@@ -351,11 +404,12 @@ Semantic search over external content:
 Ideas that may or may not be implemented:
 
 - Natural language data updates ("Update Canada's GDP to 2 trillion")
-- Scheduled data refresh (auto-pull from OWID, WHO, Census)
 - Collaborative annotations (users add notes to regions)
 - Embeddable widget (like disaster-clippy's embed system)
 - Mobile app (React Native with offline support)
 - AI-generated insights ("What's interesting about this data?")
+
+Note: Scheduled data refresh moved to [ADMIN_DASHBOARD.md](ADMIN_DASHBOARD.md) Phase 4.
 
 ---
 
@@ -376,6 +430,25 @@ Ideas that may or may not be implemented:
 ## Recently Completed
 
 ### December 2025
+- **Order Taker chat model** - Replaced two-stage LLM with single Order Taker LLM
+  - User describes request -> LLM builds structured order -> user confirms -> execute
+  - Simpler architecture, easier to debug
+- **Order panel UI** - Sidebar panel showing pending data requests
+  - Users can review, modify, remove items before executing
+  - "Display on Map" button to confirm order
+- **Dynamic prompt loading** - System prompt built from catalog.json + conversions.json
+  - No hardcoded data sources or regions in prompts
+  - Prompt evolves automatically as data catalog grows
+- **Enhanced regional groupings** - Expanded conversions.json with 40+ groupings:
+  - Income levels: High/Upper-Middle/Lower-Middle/Low income
+  - UN classifications: LDCs, SIDS, Landlocked countries
+  - African sub-regions: East/West/Central/Southern/North Africa
+  - Asian sub-regions: East/South/Southeast/Central Asia, Middle East
+  - Trade blocs: OECD, OPEC, MERCOSUR, USMCA, ECOWAS, SADC, EAC, CIS, OIC
+- **Detailed geographic coverage** - metadata.json now includes:
+  - country_codes and country_codes_all arrays
+  - region_coverage with counts per region
+  - coverage_description for LLM context
 - **MapLibre GL JS migration** - Migrated from Cesium to MapLibre GL JS 5.x with globe projection
   - Fixed polygon click detection (Cesium only detected border clicks)
   - Resolved memory errors with complex polygons
@@ -403,4 +476,4 @@ Ideas that may or may not be implemented:
 
 ---
 
-*Last Updated: 2025-12-21*
+*Last Updated: 2025-12-22*

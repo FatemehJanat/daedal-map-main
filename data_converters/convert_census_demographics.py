@@ -11,10 +11,30 @@ Converts FIPS codes to loc_id format (USA-{state}-{fips}).
 import pandas as pd
 import os
 import json
+import sys
+from pathlib import Path
+
+# Add parent dir to path for mapmover imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from mapmover.metadata_generator import generate_metadata
 
 # Configuration
 INPUT_FILE = r"C:\Users\Bryan\Desktop\county-map\data_pipeline\Raw data\cc-est2024-alldata.csv"
 OUTPUT_DIR = r"C:\Users\Bryan\Desktop\county-map-data\data\census_demographics"
+
+# Source info for metadata generation
+SOURCE_INFO = {
+    "source_id": "census_demographics",
+    "source_name": "US Census Bureau",
+    "source_url": "https://www.census.gov",
+    "license": "Public Domain",
+    "description": "US county-level race and ethnicity demographics",
+    "category": "demographic",
+    "topic_tags": ["demographics", "race", "ethnicity"],
+    "keywords": ["race", "ethnicity", "demographics", "census"],
+    "update_schedule": "annual",
+    "expected_next_update": "2025-03"
+}
 
 # State FIPS to abbreviation mapping
 STATE_FIPS = {
@@ -115,43 +135,12 @@ def convert_census_demographics():
     la = result[(result['loc_id'] == 'USA-CA-6037') & (result['year'] == 2024)]
     print(la.to_string(index=False))
 
-    return result
+    return out_path
 
 
-def create_metadata(df):
-    """Create metadata.json for the dataset."""
-    metadata = {
-        "source_id": "census_demographics",
-        "source_name": "US Census Bureau",
-        "description": "County-level race and ethnicity demographics by sex",
-        "source_url": "https://www.census.gov/programs-surveys/popest.html",
-        "last_updated": "2024-12-21",
-        "license": "Public Domain",
-        "geographic_level": "county",
-        "year_range": {
-            "start": int(df['year'].min()),
-            "end": int(df['year'].max())
-        },
-        "countries_covered": ["USA"],
-        "metrics": {
-            "white_male": {"name": "White Male", "unit": "count", "aggregation": "sum"},
-            "white_female": {"name": "White Female", "unit": "count", "aggregation": "sum"},
-            "black_male": {"name": "Black Male", "unit": "count", "aggregation": "sum"},
-            "black_female": {"name": "Black Female", "unit": "count", "aggregation": "sum"},
-            "asian_male": {"name": "Asian Male", "unit": "count", "aggregation": "sum"},
-            "asian_female": {"name": "Asian Female", "unit": "count", "aggregation": "sum"},
-            "hispanic_male": {"name": "Hispanic Male", "unit": "count", "aggregation": "sum"},
-            "hispanic_female": {"name": "Hispanic Female", "unit": "count", "aggregation": "sum"},
-            "native_male": {"name": "Native American Male", "unit": "count", "aggregation": "sum"},
-            "native_female": {"name": "Native American Female", "unit": "count", "aggregation": "sum"},
-            "pacific_male": {"name": "Pacific Islander Male", "unit": "count", "aggregation": "sum"},
-            "pacific_female": {"name": "Pacific Islander Female", "unit": "count", "aggregation": "sum"},
-            "multiracial_male": {"name": "Multiracial Male", "unit": "count", "aggregation": "sum"},
-            "multiracial_female": {"name": "Multiracial Female", "unit": "count", "aggregation": "sum"},
-        },
-        "topic_tags": ["demographics", "race", "ethnicity", "population"],
-        "llm_summary": f"US county race/ethnicity demographics for {df['loc_id'].nunique()} counties ({df['year'].min()}-{df['year'].max()})"
-    }
+def create_metadata(parquet_path):
+    """Create metadata.json using the shared generator."""
+    metadata = generate_metadata(parquet_path, SOURCE_INFO)
 
     meta_path = os.path.join(OUTPUT_DIR, "metadata.json")
     with open(meta_path, 'w', encoding='utf-8') as f:
@@ -162,6 +151,6 @@ def create_metadata(df):
 
 
 if __name__ == "__main__":
-    df = convert_census_demographics()
-    create_metadata(df)
+    parquet_path = convert_census_demographics()
+    create_metadata(parquet_path)
     print("\nDone!")

@@ -70,7 +70,7 @@ Open http://localhost:7000 in your browser.
 | IMF Balance of Payments | 195 countries | Trade, investment, financial flows |
 | US Census Demographics | 3,200+ counties | Age, sex, race demographics |
 
-See [DATA_CATALOG.md](DATA_CATALOG.md) for complete dataset documentation.
+See [DATA_PIPELINE.md](DATA_PIPELINE.md) for complete dataset documentation.
 
 ---
 
@@ -80,18 +80,22 @@ See [DATA_CATALOG.md](DATA_CATALOG.md) for complete dataset documentation.
 |----------|---------|
 | [CONTEXT.md](CONTEXT.md) | System overview and where to find information |
 | [DEVELOPER.md](DEVELOPER.md) | Technical documentation for developers |
-| [DATA_CATALOG.md](DATA_CATALOG.md) | Complete dataset reference |
+| [DATA_PIPELINE.md](DATA_PIPELINE.md) | Data format, converters, dataset catalog |
+| [GEOMETRY.md](GEOMETRY.md) | Geometry system and loc_id specification |
 | [ROADMAP.md](ROADMAP.md) | Future features and development plans |
 
 ---
 
 ## Adding New Data
 
-1. Place CSV in `data_pipeline/data_loading/`
-2. Run ETL: `python data_pipeline/prepare_data.py`
-3. Restart server - new dataset auto-discovered
+Use the data converters in `data_converters/` to process new datasets:
 
-See [DEVELOPER.md](DEVELOPER.md#adding-new-data) for detailed instructions.
+1. Place raw data in `county-map-data/Raw data/`
+2. Create or modify a converter script in `data_converters/`
+3. Run the converter to output to `county-map-data/data/`
+4. Restart server - new dataset auto-discovered
+
+See [DATA_PIPELINE.md](DATA_PIPELINE.md) for converter documentation.
 
 ---
 
