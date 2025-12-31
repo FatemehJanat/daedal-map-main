@@ -14,6 +14,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Global conversions data cache
 CONVERSIONS_DATA = {}
 
+# Cache for ISO codes from reference/iso_codes.json
+_ISO_CODES_CACHE = None
+
 # Cache for populated places capitals lookup
 _CAPITALS_CACHE = None
 
@@ -23,7 +26,7 @@ logger = logging.getLogger("mapmover")
 def load_conversions():
     """Load conversions.json for regional groupings, country codes, etc."""
     global CONVERSIONS_DATA
-    conversions_path = BASE_DIR / "data_pipeline" / "conversions.json"
+    conversions_path = BASE_DIR / "mapmover" / "conversions.json"
     if conversions_path.exists():
         try:
             with open(conversions_path, 'r', encoding='utf-8') as f:
@@ -39,6 +42,35 @@ def get_conversions_data():
     if not CONVERSIONS_DATA:
         load_conversions()
     return CONVERSIONS_DATA
+
+
+def load_iso_codes():
+    """Load ISO codes from reference/iso_codes.json."""
+    global _ISO_CODES_CACHE
+    if _ISO_CODES_CACHE is not None:
+        return _ISO_CODES_CACHE
+
+    iso_path = BASE_DIR / "mapmover" / "reference" / "iso_codes.json"
+    if iso_path.exists():
+        try:
+            with open(iso_path, 'r', encoding='utf-8') as f:
+                _ISO_CODES_CACHE = json.load(f)
+                logger.debug(f"Loaded iso_codes.json with {len(_ISO_CODES_CACHE.get('iso3_to_name', {}))} countries")
+        except Exception as e:
+            logger.warning(f"Failed to load iso_codes.json: {e}")
+            _ISO_CODES_CACHE = {}
+    else:
+        logger.warning("iso_codes.json not found")
+        _ISO_CODES_CACHE = {}
+
+    return _ISO_CODES_CACHE
+
+
+def get_iso_codes():
+    """Get ISO codes data, loading if necessary."""
+    if _ISO_CODES_CACHE is None:
+        load_iso_codes()
+    return _ISO_CODES_CACHE
 
 
 def get_countries_in_region(region_name, query=None, dataset=None):
@@ -96,14 +128,13 @@ def get_countries_in_region(region_name, query=None, dataset=None):
 
 def get_country_names_from_codes(country_codes):
     """Convert ISO 3-letter codes to country names."""
-    if not CONVERSIONS_DATA:
-        load_conversions()
+    iso_data = get_iso_codes()
+    iso3_to_name = iso_data.get('iso3_to_name', {})
 
-    iso_codes = CONVERSIONS_DATA.get('iso_country_codes', {})
     names = []
     for code in country_codes:
-        if code in iso_codes:
-            names.append(iso_codes[code])
+        if code in iso3_to_name:
+            names.append(iso3_to_name[code])
         else:
             names.append(code)  # Fallback to code if not found
     return names

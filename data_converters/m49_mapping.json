@@ -1,0 +1,972 @@
+{
+  "m49_to_iso3": {
+    "12": "DZA",
+    "20": "AND",
+    "24": "AGO",
+    "28": "ATG",
+    "31": "AZE",
+    "32": "ARG",
+    "36": "AUS",
+    "40": "AUT",
+    "44": "BHS",
+    "48": "BHR",
+    "50": "BGD",
+    "51": "ARM",
+    "52": "BRB",
+    "53": "AUS",
+    "56": "BEL",
+    "60": "BMU",
+    "64": "BTN",
+    "68": "BOL",
+    "70": "BIH",
+    "72": "BWA",
+    "76": "BRA",
+    "84": "BLZ",
+    "86": "IND",
+    "90": "SLB",
+    "92": "VGB",
+    "96": "BRN",
+    "100": "BGR",
+    "104": "MMR",
+    "108": "BDI",
+    "112": "BLR",
+    "116": "KHM",
+    "120": "CMR",
+    "124": "CAN",
+    "132": "CPV",
+    "136": "CYM",
+    "144": "LKA",
+    "148": "TCD",
+    "152": "CHL",
+    "156": "CHN",
+    "170": "COL",
+    "174": "COM",
+    "178": "COG",
+    "180": "COD",
+    "184": "COK",
+    "188": "CRI",
+    "191": "HRV",
+    "192": "CUB",
+    "196": "CYP",
+    "203": "CZE",
+    "204": "BEN",
+    "208": "DNK",
+    "212": "DMA",
+    "214": "DOM",
+    "218": "ECU",
+    "222": "SLV",
+    "226": "GNQ",
+    "231": "ETH",
+    "232": "ERI",
+    "233": "EST",
+    "234": "FRO",
+    "238": "FLK",
+    "239": "GEO",
+    "242": "FJI",
+    "246": "FIN",
+    "250": "FRA",
+    "262": "DJI",
+    "266": "GAB",
+    "268": "GEO",
+    "270": "GMB",
+    "275": "PSE",
+    "276": "DEU",
+    "288": "GHA",
+    "296": "KIR",
+    "300": "GRC",
+    "304": "GRL",
+    "308": "GRD",
+    "312": "GLP",
+    "316": "GUM",
+    "320": "GTM",
+    "324": "GIN",
+    "328": "GUY",
+    "332": "HTI",
+    "336": "VAT",
+    "340": "HND",
+    "348": "HUN",
+    "352": "ISL",
+    "356": "IND",
+    "360": "IDN",
+    "364": "IRN",
+    "368": "IRQ",
+    "372": "IRL",
+    "376": "ISR",
+    "380": "ITA",
+    "384": "CIV",
+    "388": "JAM",
+    "392": "JPN",
+    "398": "KAZ",
+    "400": "JOR",
+    "404": "KEN",
+    "408": "PRK",
+    "410": "KOR",
+    "414": "KWT",
+    "417": "KGZ",
+    "418": "LAO",
+    "422": "LBN",
+    "426": "LSO",
+    "428": "LVA",
+    "430": "LBR",
+    "434": "LBY",
+    "438": "LIE",
+    "440": "LTU",
+    "442": "LUX",
+    "450": "MDG",
+    "454": "MWI",
+    "458": "MYS",
+    "462": "MDV",
+    "466": "MLI",
+    "470": "MLT",
+    "474": "MTQ",
+    "478": "MRT",
+    "480": "MUS",
+    "484": "MEX",
+    "492": "MCO",
+    "496": "MNG",
+    "498": "MDA",
+    "499": "MNE",
+    "500": "MSR",
+    "504": "MAR",
+    "508": "MOZ",
+    "512": "OMN",
+    "516": "NAM",
+    "520": "NRU",
+    "524": "NPL",
+    "528": "NLD",
+    "530": "NLD",
+    "531": "CUW",
+    "534": "SXM",
+    "535": "BES",
+    "540": "NCL",
+    "548": "VUT",
+    "554": "NZL",
+    "558": "NIC",
+    "562": "NER",
+    "566": "NGA",
+    "570": "NIU",
+    "574": "NFK",
+    "578": "NOR",
+    "581": "USA",
+    "584": "MHL",
+    "585": "PLW",
+    "586": "PAK",
+    "591": "PAN",
+    "598": "PNG",
+    "600": "PRY",
+    "604": "PER",
+    "608": "PHL",
+    "612": "PCN",
+    "616": "POL",
+    "620": "PRT",
+    "624": "GNB",
+    "626": "TLS",
+    "630": "PRI",
+    "634": "QAT",
+    "638": "REU",
+    "642": "ROU",
+    "643": "RUS",
+    "646": "RWA",
+    "652": "BLM",
+    "654": "SHN",
+    "659": "KNA",
+    "660": "AIA",
+    "662": "LCA",
+    "663": "MAF",
+    "666": "SPM",
+    "670": "VCT",
+    "674": "SMR",
+    "678": "STP",
+    "682": "SAU",
+    "686": "SEN",
+    "688": "SRB",
+    "690": "SYC",
+    "694": "SLE",
+    "702": "SGP",
+    "703": "SVK",
+    "704": "VNM",
+    "705": "SVN",
+    "706": "SOM",
+    "716": "ZWE",
+    "724": "ESP",
+    "728": "SSD",
+    "729": "SDN",
+    "736": "SDN",
+    "740": "SUR",
+    "748": "SWZ",
+    "752": "SWE",
+    "756": "CHE",
+    "760": "SYR",
+    "762": "TJK",
+    "764": "THA",
+    "768": "TGO",
+    "776": "TON",
+    "780": "TTO",
+    "784": "ARE",
+    "788": "TUN",
+    "792": "TUR",
+    "795": "TKM",
+    "796": "TCA",
+    "798": "TUV",
+    "800": "UGA",
+    "804": "UKR",
+    "807": "MKD",
+    "818": "EGY",
+    "827": "GBR",
+    "829": "GBR",
+    "831": "GGY",
+    "832": "JEY",
+    "833": "IMN",
+    "834": "TZA",
+    "836": "TZA",
+    "850": "VIR",
+    "854": "BFA",
+    "858": "URY",
+    "860": "UZB",
+    "862": "VEN",
+    "876": "WLF",
+    "882": "WSM",
+    "887": "YEM",
+    "891": "MNE",
+    "894": "ZMB",
+    "99041": "BEL"
+  },
+  "regional_codes": [
+    {
+      "code": 1,
+      "name": "World"
+    },
+    {
+      "code": 2,
+      "name": "Africa"
+    },
+    {
+      "code": 4,
+      "name": "Afghanistan"
+    },
+    {
+      "code": 5,
+      "name": "South America"
+    },
+    {
+      "code": 8,
+      "name": "Albania"
+    },
+    {
+      "code": 9,
+      "name": "Oceania"
+    },
+    {
+      "code": 11,
+      "name": "Western Africa"
+    },
+    {
+      "code": 13,
+      "name": "Central America"
+    },
+    {
+      "code": 14,
+      "name": "Eastern Africa"
+    },
+    {
+      "code": 15,
+      "name": "Northern Africa"
+    },
+    {
+      "code": 16,
+      "name": "American Samoa"
+    },
+    {
+      "code": 17,
+      "name": "Middle Africa"
+    },
+    {
+      "code": 18,
+      "name": "Southern Africa"
+    },
+    {
+      "code": 19,
+      "name": "Americas"
+    },
+    {
+      "code": 21,
+      "name": "Northern America"
+    },
+    {
+      "code": 29,
+      "name": "Caribbean"
+    },
+    {
+      "code": 30,
+      "name": "Eastern Asia"
+    },
+    {
+      "code": 34,
+      "name": "Southern Asia"
+    },
+    {
+      "code": 35,
+      "name": "South-Eastern Asia"
+    },
+    {
+      "code": 39,
+      "name": "Southern Europe"
+    },
+    {
+      "code": 54,
+      "name": "Melanesia"
+    },
+    {
+      "code": 57,
+      "name": "Micronesia"
+    },
+    {
+      "code": 61,
+      "name": "Polynesia"
+    },
+    {
+      "code": 62,
+      "name": "Central and Southern Asia"
+    },
+    {
+      "code": 97,
+      "name": "European Union"
+    },
+    {
+      "code": 127,
+      "name": "Southern Asia (excluding India)"
+    },
+    {
+      "code": 135,
+      "name": "Caucasus and Central Asia"
+    },
+    {
+      "code": 140,
+      "name": "Central African Republic"
+    },
+    {
+      "code": 142,
+      "name": "Asia"
+    },
+    {
+      "code": 143,
+      "name": "Central Asia"
+    },
+    {
+      "code": 145,
+      "name": "Western Asia"
+    },
+    {
+      "code": 150,
+      "name": "Europe"
+    },
+    {
+      "code": 151,
+      "name": "Eastern Europe"
+    },
+    {
+      "code": 154,
+      "name": "Northern Europe"
+    },
+    {
+      "code": 155,
+      "name": "Western Europe"
+    },
+    {
+      "code": 158,
+      "name": "Other non-specified areas in Eastern Asia"
+    },
+    {
+      "code": 199,
+      "name": "Least Developed Countries (LDCs)"
+    },
+    {
+      "code": 202,
+      "name": "Sub-Saharan Africa"
+    },
+    {
+      "code": 223,
+      "name": "Eastern Asia (excluding Japan and China)"
+    },
+    {
+      "code": 258,
+      "name": "French Polynesia"
+    },
+    {
+      "code": 260,
+      "name": "French Southern Territories"
+    },
+    {
+      "code": 344,
+      "name": "China, Hong Kong Special Administrative Region"
+    },
+    {
+      "code": 369,
+      "name": "Iraq (Central Iraq)"
+    },
+    {
+      "code": 370,
+      "name": "Iraq (Kurdistan Region)"
+    },
+    {
+      "code": 419,
+      "name": "Latin America and the Caribbean"
+    },
+    {
+      "code": 432,
+      "name": "Landlocked developing countries (LLDCs)"
+    },
+    {
+      "code": 446,
+      "name": "China, Macao Special Administrative Region"
+    },
+    {
+      "code": 485,
+      "name": "Western Asia (exc. Armenia, Azerbaijan, Cyprus, Israel and Georgia)"
+    },
+    {
+      "code": 513,
+      "name": "Europe and Northern America"
+    },
+    {
+      "code": 514,
+      "name": "Developed regions (Europe, Cyprus, Israel, Northern America, Japan, Australia & New Zealand)"
+    },
+    {
+      "code": 515,
+      "name": "Developing regions"
+    },
+    {
+      "code": 518,
+      "name": "Eastern Asia (excluding Japan)"
+    },
+    {
+      "code": 543,
+      "name": "Oceania (exc. Australia and New Zealand)"
+    },
+    {
+      "code": 580,
+      "name": "Northern Mariana Islands"
+    },
+    {
+      "code": 583,
+      "name": "Micronesia (Federated States of)"
+    },
+    {
+      "code": 636,
+      "name": "Other non-OECD Americas"
+    },
+    {
+      "code": 710,
+      "name": "South Africa"
+    },
+    {
+      "code": 722,
+      "name": "Small island developing States (SIDS)"
+    },
+    {
+      "code": 732,
+      "name": "Western Sahara"
+    },
+    {
+      "code": 738,
+      "name": "Sub-Saharan Africa (inc. Sudan)"
+    },
+    {
+      "code": 746,
+      "name": "Northern Africa (exc. Sudan)"
+    },
+    {
+      "code": 747,
+      "name": "Northern Africa and Western Asia"
+    },
+    {
+      "code": 753,
+      "name": "Eastern and South-Eastern Asia"
+    },
+    {
+      "code": 826,
+      "name": "United Kingdom of Great Britain and Northern Ireland"
+    },
+    {
+      "code": 828,
+      "name": "United Kingdom (Northern Ireland)"
+    },
+    {
+      "code": 840,
+      "name": "United States of America"
+    },
+    {
+      "code": 901,
+      "name": "Africa (ILO)"
+    },
+    {
+      "code": 903,
+      "name": "Central and Eastern Europe (ILO)"
+    },
+    {
+      "code": 904,
+      "name": "Middle East and North Africa (ILO)"
+    },
+    {
+      "code": 905,
+      "name": "Middle East (ILO)"
+    },
+    {
+      "code": 906,
+      "name": "North America (ILO)"
+    },
+    {
+      "code": 917,
+      "name": "International Centers (FAO)"
+    },
+    {
+      "code": 918,
+      "name": "European Union (EU) Institutions"
+    },
+    {
+      "code": 919,
+      "name": "Regional Centres (FAO)"
+    },
+    {
+      "code": 951,
+      "name": "Other Africa (IEA)"
+    },
+    {
+      "code": 99018,
+      "name": "FAO Major Fishing Area: Pacific, Eastern Central"
+    },
+    {
+      "code": 99019,
+      "name": "FAO Major Fishing Area: Pacific, Northeast"
+    },
+    {
+      "code": 99020,
+      "name": "FAO Major Fishing Area: Pacific, Northwest"
+    },
+    {
+      "code": 99021,
+      "name": "FAO Major Fishing Area: Pacific, Western Central"
+    },
+    {
+      "code": 99022,
+      "name": "FAO Major Fishing Area: Pacific, Southwest"
+    },
+    {
+      "code": 99023,
+      "name": "FAO Major Fishing Area: Atlantic, Northwest"
+    },
+    {
+      "code": 99024,
+      "name": "FAO Major Fishing Area: Atlantic, Northeast"
+    },
+    {
+      "code": 99025,
+      "name": "FAO Major Fishing Area: Indian Ocean, Eastern"
+    },
+    {
+      "code": 99026,
+      "name": "FAO Major Fishing Area: Atlantic, Southeast"
+    },
+    {
+      "code": 99027,
+      "name": "FAO Major Fishing Area: Indian Ocean, Western"
+    },
+    {
+      "code": 99028,
+      "name": "FAO Major Fishing Area: Atlantic, Western Central"
+    },
+    {
+      "code": 99029,
+      "name": "FAO Major Fishing Area: Atlantic, Eastern Central"
+    },
+    {
+      "code": 99030,
+      "name": "FAO Major Fishing Area: Atlantic, Southwest"
+    },
+    {
+      "code": 99031,
+      "name": "FAO Major Fishing Area: Pacific, Southeast"
+    },
+    {
+      "code": 99032,
+      "name": "FAO Major Fishing Area: Mediterranean and Black Sea"
+    },
+    {
+      "code": 99035,
+      "name": "Residual/unallocated ODA: Central Asia and Southern Asia"
+    },
+    {
+      "code": 99036,
+      "name": "Residual/unallocated ODA: Eastern and South-eastern Asia"
+    },
+    {
+      "code": 99037,
+      "name": "Residual/unallocated ODA: Latin America and the Caribbean"
+    },
+    {
+      "code": 99038,
+      "name": "Residual/unallocated ODA: Oceania excl. Aus. and N. Zealand"
+    },
+    {
+      "code": 99039,
+      "name": "Residual/unallocated ODA: Sub-Saharan Africa"
+    },
+    {
+      "code": 99040,
+      "name": "Residual/unallocated ODA: Western Asia and Northern Africa"
+    },
+    {
+      "code": 99049,
+      "name": "Residual/unallocated ODA: Unspecified, developing countries"
+    },
+    {
+      "code": 99050,
+      "name": "Residual/unallocated ODA: Northern America and Europe"
+    },
+    {
+      "code": 99051,
+      "name": "Large Marine Ecosystem: East Bering Sea"
+    },
+    {
+      "code": 99052,
+      "name": "Large Marine Ecosystem: Gulf of Alaska"
+    },
+    {
+      "code": 99053,
+      "name": "Large Marine Ecosystem: California Current"
+    },
+    {
+      "code": 99054,
+      "name": "Large Marine Ecosystem: Gulf of California"
+    },
+    {
+      "code": 99055,
+      "name": "Large Marine Ecosystem: Gulf of Mexico"
+    },
+    {
+      "code": 99056,
+      "name": "Large Marine Ecosystem: Southeast U.S. Continental Shelf"
+    },
+    {
+      "code": 99057,
+      "name": "Large Marine Ecosystem: Northeast U.S. Continental Shelf"
+    },
+    {
+      "code": 99058,
+      "name": "Large Marine Ecosystem: Scotian Shelf"
+    },
+    {
+      "code": 99059,
+      "name": "Large Marine Ecosystem: Labrador - Newfoundland"
+    },
+    {
+      "code": 99060,
+      "name": "Large Marine Ecosystem: Insular Pacific-Hawaiian"
+    },
+    {
+      "code": 99061,
+      "name": "Large Marine Ecosystem: Pacific Central-American Coastal"
+    },
+    {
+      "code": 99062,
+      "name": "Large Marine Ecosystem: Caribbean Sea"
+    },
+    {
+      "code": 99063,
+      "name": "Large Marine Ecosystem: Humboldt Current"
+    },
+    {
+      "code": 99064,
+      "name": "Large Marine Ecosystem: Patagonian Shelf"
+    },
+    {
+      "code": 99065,
+      "name": "Large Marine Ecosystem: South Brazil Shelf"
+    },
+    {
+      "code": 99066,
+      "name": "Large Marine Ecosystem: East Brazil Shelf"
+    },
+    {
+      "code": 99067,
+      "name": "Large Marine Ecosystem: North Brazil Shelf"
+    },
+    {
+      "code": 99068,
+      "name": "Large Marine Ecosystem: Canadian Eastern Arctic - West Greenland"
+    },
+    {
+      "code": 99069,
+      "name": "Large Marine Ecosystem: Greenland Sea"
+    },
+    {
+      "code": 99070,
+      "name": "Large Marine Ecosystem: Barents Sea"
+    },
+    {
+      "code": 99071,
+      "name": "Large Marine Ecosystem: Norwegian Sea"
+    },
+    {
+      "code": 99072,
+      "name": "Large Marine Ecosystem: North Sea"
+    },
+    {
+      "code": 99073,
+      "name": "Large Marine Ecosystem: Baltic Sea"
+    },
+    {
+      "code": 99074,
+      "name": "Large Marine Ecosystem: Celtic-Biscay Shelf"
+    },
+    {
+      "code": 99075,
+      "name": "Large Marine Ecosystem: Iberian Coastal"
+    },
+    {
+      "code": 99076,
+      "name": "Large Marine Ecosystem: Mediterranean Sea"
+    },
+    {
+      "code": 99077,
+      "name": "Large Marine Ecosystem: Canary Current"
+    },
+    {
+      "code": 99078,
+      "name": "Large Marine Ecosystem: Guinea Current"
+    },
+    {
+      "code": 99079,
+      "name": "Large Marine Ecosystem: Benguela Current"
+    },
+    {
+      "code": 99080,
+      "name": "Large Marine Ecosystem: Agulhas Current"
+    },
+    {
+      "code": 99081,
+      "name": "Large Marine Ecosystem: Somali Coastal Current"
+    },
+    {
+      "code": 99082,
+      "name": "Large Marine Ecosystem: Arabian Sea"
+    },
+    {
+      "code": 99083,
+      "name": "Large Marine Ecosystem: Red Sea"
+    },
+    {
+      "code": 99084,
+      "name": "Large Marine Ecosystem: Bay of Bengal"
+    },
+    {
+      "code": 99085,
+      "name": "Large Marine Ecosystem: Gulf of Thailand"
+    },
+    {
+      "code": 99086,
+      "name": "Large Marine Ecosystem: South China Sea"
+    },
+    {
+      "code": 99087,
+      "name": "Large Marine Ecosystem: Sulu-Celebes Sea"
+    },
+    {
+      "code": 99088,
+      "name": "Large Marine Ecosystem: Indonesian Sea"
+    },
+    {
+      "code": 99089,
+      "name": "Large Marine Ecosystem: North Australian Shelf"
+    },
+    {
+      "code": 99090,
+      "name": "Large Marine Ecosystem: Northeast Australian Shelf"
+    },
+    {
+      "code": 99091,
+      "name": "Large Marine Ecosystem: East Central Australian Shelf"
+    },
+    {
+      "code": 99092,
+      "name": "Large Marine Ecosystem: Southeast Australian Shelf"
+    },
+    {
+      "code": 99093,
+      "name": "Large Marine Ecosystem: South West Australian Shelf"
+    },
+    {
+      "code": 99094,
+      "name": "Large Marine Ecosystem: West Central Australian Shelf"
+    },
+    {
+      "code": 99095,
+      "name": "Large Marine Ecosystem: Northwest Australian Shelf"
+    },
+    {
+      "code": 99096,
+      "name": "Large Marine Ecosystem: New Zealand Shelf"
+    },
+    {
+      "code": 99097,
+      "name": "Large Marine Ecosystem: East China Sea"
+    },
+    {
+      "code": 99098,
+      "name": "Large Marine Ecosystem: Yellow Sea"
+    },
+    {
+      "code": 99099,
+      "name": "Large Marine Ecosystem: Kuroshio Current"
+    },
+    {
+      "code": 99100,
+      "name": "Large Marine Ecosystem: Sea of Japan"
+    },
+    {
+      "code": 99101,
+      "name": "Large Marine Ecosystem: Oyashio Current"
+    },
+    {
+      "code": 99102,
+      "name": "Large Marine Ecosystem: Sea of Okhotsk"
+    },
+    {
+      "code": 99103,
+      "name": "Large Marine Ecosystem: West Bering Sea"
+    },
+    {
+      "code": 99104,
+      "name": "Large Marine Ecosystem: Northern Bering - Chukchi Seas"
+    },
+    {
+      "code": 99105,
+      "name": "Large Marine Ecosystem: Beaufort Sea"
+    },
+    {
+      "code": 99106,
+      "name": "Large Marine Ecosystem: East Siberian Sea"
+    },
+    {
+      "code": 99107,
+      "name": "Large Marine Ecosystem: Laptev Sea"
+    },
+    {
+      "code": 99108,
+      "name": "Large Marine Ecosystem: Kara Sea"
+    },
+    {
+      "code": 99109,
+      "name": "Large Marine Ecosystem: Iceland Shelf and Sea"
+    },
+    {
+      "code": 99110,
+      "name": "Large Marine Ecosystem: Faroe Plateau"
+    },
+    {
+      "code": 99111,
+      "name": "Large Marine Ecosystem: Antarctica"
+    },
+    {
+      "code": 99112,
+      "name": "Large Marine Ecosystem: Black Sea"
+    },
+    {
+      "code": 99113,
+      "name": "Large Marine Ecosystem: Hudson Bay Complex"
+    },
+    {
+      "code": 99114,
+      "name": "Large Marine Ecosystem: Central Arctic"
+    },
+    {
+      "code": 99115,
+      "name": "Large Marine Ecosystem: Aleutian Islands"
+    },
+    {
+      "code": 99116,
+      "name": "Large Marine Ecosystem: Canadian High Arctic - North Greenland"
+    }
+  ],
+  "unmatched": [
+    {
+      "code": 10,
+      "name": "Antarctica"
+    },
+    {
+      "code": 74,
+      "name": "Bouvet Island"
+    },
+    {
+      "code": 162,
+      "name": "Christmas Island"
+    },
+    {
+      "code": 166,
+      "name": "Cocos (Keeling) Islands"
+    },
+    {
+      "code": 175,
+      "name": "Mayotte"
+    },
+    {
+      "code": 248,
+      "name": "\u00c5land Islands"
+    },
+    {
+      "code": 254,
+      "name": "French Guiana"
+    },
+    {
+      "code": 292,
+      "name": "Gibraltar"
+    },
+    {
+      "code": 334,
+      "name": "Heard Island and McDonald Islands"
+    },
+    {
+      "code": 412,
+      "name": "Kosovo"
+    },
+    {
+      "code": 533,
+      "name": "Aruba"
+    },
+    {
+      "code": 655,
+      "name": "Ascension"
+    },
+    {
+      "code": 680,
+      "name": "Sark"
+    },
+    {
+      "code": 744,
+      "name": "Svalbard and Jan Mayen Islands"
+    },
+    {
+      "code": 772,
+      "name": "Tokelau"
+    },
+    {
+      "code": 830,
+      "name": "Channel Islands"
+    },
+    {
+      "code": 890,
+      "name": "Yugoslavia [former]"
+    },
+    {
+      "code": 921,
+      "name": "ODA residual"
+    },
+    {
+      "code": 952,
+      "name": "Unallocated by country"
+    }
+  ],
+  "generated": "2025-12-29",
+  "country_count": 230
+}

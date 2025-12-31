@@ -100,6 +100,149 @@
       box-shadow: 0 2px 6px rgba(0,0,0,0.15);
     }
 
+    /* Time Slider */
+    #timeSliderContainer {
+      position: absolute;
+      bottom: 50px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 1000;
+      background: rgba(255,255,255,0.95);
+      padding: 12px 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+      display: none;
+      min-width: 300px;
+      max-width: 500px;
+    }
+
+    #timeSliderContainer.visible {
+      display: block;
+    }
+
+    .time-slider-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .time-slider-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #333;
+    }
+
+    .time-slider-year {
+      font-size: 18px;
+      font-weight: 700;
+      color: #007bff;
+      min-width: 50px;
+      text-align: center;
+    }
+
+    .time-slider-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    #timeSlider {
+      flex: 1;
+      height: 6px;
+      -webkit-appearance: none;
+      appearance: none;
+      background: #ddd;
+      border-radius: 3px;
+      outline: none;
+    }
+
+    #timeSlider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 18px;
+      height: 18px;
+      background: #007bff;
+      border-radius: 50%;
+      cursor: pointer;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+
+    #timeSlider::-moz-range-thumb {
+      width: 18px;
+      height: 18px;
+      background: #007bff;
+      border-radius: 50%;
+      cursor: pointer;
+      border: none;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+
+    .time-slider-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: #666;
+      margin-top: 4px;
+    }
+
+    #playBtn {
+      width: 32px;
+      height: 32px;
+      border: none;
+      background: #007bff;
+      color: white;
+      border-radius: 50%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+
+    #playBtn:hover {
+      background: #0056b3;
+    }
+
+    /* Choropleth Legend */
+    #choroplethLegend {
+      position: absolute;
+      bottom: 50px;
+      left: 10px;
+      z-index: 1000;
+      background: rgba(255,255,255,0.95);
+      padding: 10px 12px;
+      border-radius: 6px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+      display: none;
+      min-width: 120px;
+    }
+
+    #choroplethLegend.visible {
+      display: block;
+    }
+
+    .legend-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 6px;
+    }
+
+    .legend-gradient {
+      height: 12px;
+      border-radius: 2px;
+      margin-bottom: 4px;
+    }
+
+    .legend-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      color: #666;
+    }
+
     /* Sidebar toggle button */
     #sidebarToggle {
       position: absolute;
@@ -146,6 +289,24 @@
 
     #sidebar.collapsed {
       transform: translateX(-100%);
+    }
+
+    /* Sidebar width resize handle */
+    #sidebarResizeHandle {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 6px;
+      height: 100%;
+      cursor: ew-resize;
+      background: transparent;
+      z-index: 1001;
+      transition: background 0.2s ease;
+    }
+
+    #sidebarResizeHandle:hover,
+    #sidebarResizeHandle.active {
+      background: rgba(0, 123, 255, 0.3);
     }
 
     /* Sidebar header */
@@ -360,6 +521,22 @@
 
     .order-item-remove:hover {
       color: #dc3545;
+    }
+
+    .order-item-invalid {
+      background: #fff5f5;
+      border-left: 3px solid #dc3545;
+    }
+
+    .order-item-invalid .order-item-name {
+      color: #dc3545;
+    }
+
+    .order-item-error {
+      font-size: 10px;
+      color: #dc3545;
+      margin-top: 2px;
+      font-style: italic;
     }
 
     .order-actions {
@@ -649,6 +826,7 @@
 
   <!-- Sidebar -->
   <div id="sidebar">
+    <div id="sidebarResizeHandle" title="Drag to resize"></div>
     <div id="sidebarHeader">
       <h2>Map Explorer</h2>
       <button id="closeSidebar" title="Close">&times;</button>
@@ -748,6 +926,32 @@
   <!-- Stats Overlay -->
   <div id="statsOverlay">
     <span id="totalAreas">0</span> areas
+  </div>
+
+  <!-- Time Slider -->
+  <div id="timeSliderContainer">
+    <div class="time-slider-header">
+      <span class="time-slider-title" id="sliderTitle">Year</span>
+      <span class="time-slider-year" id="currentYearLabel">2020</span>
+    </div>
+    <div class="time-slider-controls">
+      <button id="playBtn" title="Play/Pause">|></button>
+      <input type="range" id="timeSlider" min="2000" max="2023" value="2023">
+    </div>
+    <div class="time-slider-labels">
+      <span id="minYearLabel">2000</span>
+      <span id="maxYearLabel">2023</span>
+    </div>
+  </div>
+
+  <!-- Choropleth Legend -->
+  <div id="choroplethLegend">
+    <div class="legend-title" id="legendTitle">Value</div>
+    <div class="legend-gradient" id="legendGradient"></div>
+    <div class="legend-labels">
+      <span id="legendMin">0</span>
+      <span id="legendMax">100</span>
+    </div>
   </div>
 
   <script src="https://unpkg.com/maplibre-gl@5.0.0/dist/maplibre-gl.js"></script>

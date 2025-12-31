@@ -1,15 +1,15 @@
 """
-Process GADM 3.6 GeoPackage into per-country parquet files.
+Process GADM GeoPackage into per-country parquet files.
 
-GADM 3.6 stores all admin levels in a single flat 'gadm' table.
+GADM stores all admin levels in a single flat table.
 Each row represents one location at its deepest admin level.
 
-Input: Raw data/gadm36.gpkg
-Output:
-  - geometry/global.csv (all countries, admin_0 only)
-  - geometry/{ISO3}.parquet (all admin levels per country)
-  - geometry/country_depth.json (metadata about admin levels per country)
-  - geometry/country_coverage.json (coverage stats for each country)
+NOTE: This script does NOT touch global.csv.
+      Country-level geometry comes from Natural Earth data via build_global_csv.py.
+      GADM only provides sub-country admin levels (states, counties, etc.)
+
+Input: Raw data/gadm_410.gpkg (GADM 4.1) or gadm36.gpkg (GADM 3.6)
+Output: geometry/{ISO3}.parquet (all admin levels per country)
 
 Schema (13 columns):
   loc_id, parent_id, admin_level, name, name_local, code, iso_3166_2,
@@ -25,10 +25,20 @@ from shapely import wkb
 from shapely.geometry import mapping
 import re
 
-# Paths
-GADM_FILE = Path(r"C:\Users\Bryan\Desktop\county-map-data\Raw data\gadm36.gpkg")
+# Paths - GADM 4.1 (use gadm36.gpkg for older version)
+GADM_FILE = Path(r"C:\Users\Bryan\Desktop\county-map-data\Raw data\gadm_410.gpkg")
+GADM_TABLE = "gadm_410"  # Table name: "gadm" for 3.6, "gadm_410" for 4.1
 OUTPUT_PATH = Path(r"C:\Users\Bryan\Desktop\county-map-data\geometry")
 CENSUS_FILE = Path(r"C:\Users\Bryan\Desktop\county-map\data_pipeline\data_cleaned\cc-est2024-alldata.csv")
+
+# Countries with partial geometry from other sources (merge, don't overwrite)
+# These countries have some admin levels with better geometry (e.g., USA has Census counties)
+# GADM will fill in missing levels but preserve existing geometry
+MERGE_COUNTRIES = {'USA'}  # USA has Census-derived county geometry at level 2
+
+# Large countries to process last (by record count from GADM 4.1)
+# These take longest, so process them at the end
+LARGE_COUNTRIES = ['IDN', 'PHL', 'FRA', 'DEU', 'VNM']  # 162k, 127k, 41k, 28k, 27k records
 
 # Ensure output folder exists
 OUTPUT_PATH.mkdir(parents=True, exist_ok=True)
@@ -145,9 +155,17 @@ def normalize_name(name):
 
 
 def get_admin_level(row):
-    """Determine admin level based on which GID columns are filled."""
+    """
+    Determine admin level based on which NAME columns are filled.
+
+    Note: GADM fills GID columns even when there's no actual data at that level.
+    The NAME columns are more reliable - they're only filled when real data exists.
+    We check NAME columns from deepest to shallowest to find actual admin level.
+    """
     for level in range(5, -1, -1):
-        if row.get(f'GID_{level}') is not None:
+        name = row.get(f'NAME_{level}')
+        # Check for actual non-empty name
+        if name is not None and str(name).strip() != '':
             return level
     return 0
 
@@ -208,18 +226,167 @@ def get_centroid(geom_bytes):
         return None, None
 
 
-def geometry_to_geojson(geom_bytes, simplify_tolerance=0.001):
-    """Convert GPKG geometry to GeoJSON string."""
+def get_simplify_tolerance(admin_level):
+    """Get simplification tolerance based on admin level (per GEOMETRY.md)."""
+    if admin_level == 0:
+        return 0.01      # Countries: ~1 km precision
+    elif admin_level <= 2:
+        return 0.001     # States/Counties: ~100 m precision
+    else:
+        return 0.0001    # Cities/Districts: ~10 m precision
+
+
+def geometry_to_geojson(geom_bytes, admin_level=2):
+    """Convert GPKG geometry to GeoJSON string with level-appropriate simplification."""
     try:
         geom = parse_gpkg_geometry(geom_bytes)
         if geom is None or geom.is_empty:
             return None
-        # Simplify for smaller file size
-        if simplify_tolerance:
-            geom = geom.simplify(simplify_tolerance, preserve_topology=True)
+        # Simplify for smaller file size using level-appropriate tolerance
+        tolerance = get_simplify_tolerance(admin_level)
+        geom = geom.simplify(tolerance, preserve_topology=True)
         return json.dumps(mapping(geom))
     except Exception as e:
         return None
+
+
+def get_bbox_from_geometry(geometry_str):
+    """
+    Extract bounding box from GeoJSON geometry string.
+    Returns (min_lon, min_lat, max_lon, max_lat) or (None, None, None, None).
+    """
+    if not geometry_str:
+        return None, None, None, None
+
+    try:
+        from shapely.geometry import shape
+        geom_data = json.loads(geometry_str)
+        geom = shape(geom_data)
+        bounds = geom.bounds  # (minx, miny, maxx, maxy)
+        return round(bounds[0], 6), round(bounds[1], 6), round(bounds[2], 6), round(bounds[3], 6)
+    except Exception:
+        return None, None, None, None
+
+
+def is_placeholder_level(df, level):
+    """
+    Check if a level is a placeholder (all names are empty/null).
+
+    GADM creates placeholder rows at levels 4-5 even when real data
+    only exists at level 3. These placeholders have empty names and
+    just copy the parent name.
+    """
+    level_df = df[df['admin_level'] == level]
+    if len(level_df) == 0:
+        return False
+
+    # Check names - if all are empty/null/Unknown, it's a placeholder
+    names = level_df['name'].fillna('')
+    unique_names = names.unique()
+
+    # Placeholder indicators:
+    # 1. All names are empty
+    # 2. All names are "Unknown"
+    # 3. Only one unique name that matches parent pattern
+    if len(unique_names) == 1:
+        if unique_names[0] in ['', 'Unknown', None]:
+            return True
+
+    # Also check if > 90% of names are empty
+    empty_count = (names == '').sum() + level_df['name'].isna().sum()
+    if empty_count / len(level_df) > 0.9:
+        return True
+
+    return False
+
+
+def remove_placeholder_levels(df):
+    """
+    Remove placeholder admin levels from the DataFrame.
+    Returns cleaned DataFrame and list of removed levels.
+    """
+    levels = sorted(df['admin_level'].unique())
+    removed_levels = []
+
+    # Check from deepest level upward
+    for level in reversed(levels):
+        if level == 0:
+            continue  # Never remove country level
+
+        if is_placeholder_level(df, level):
+            removed_levels.append(level)
+            df = df[df['admin_level'] != level]
+        else:
+            # Stop at first non-placeholder level
+            # (don't remove middle levels, only trailing placeholders)
+            break
+
+    return df, removed_levels
+
+
+def merge_with_existing(new_df, existing_df):
+    """
+    Merge new GADM data with existing parquet, preserving existing geometry.
+
+    Logic:
+    - For loc_ids that exist in both: keep existing row if it has geometry,
+      otherwise use new row (to fill in missing geometry)
+    - For loc_ids only in new: add them
+    - For loc_ids only in existing: keep them (e.g., Census county data)
+
+    Returns merged DataFrame and stats dict.
+    """
+    if existing_df is None or len(existing_df) == 0:
+        return new_df, {"preserved": 0, "added": len(new_df), "filled": 0}
+
+    # Index by loc_id for fast lookup
+    existing_by_id = existing_df.set_index('loc_id')
+    new_by_id = new_df.set_index('loc_id')
+
+    existing_ids = set(existing_by_id.index)
+    new_ids = set(new_by_id.index)
+
+    # Categories
+    only_existing = existing_ids - new_ids  # Keep these (e.g., Census counties)
+    only_new = new_ids - existing_ids        # Add these
+    both = existing_ids & new_ids            # Merge logic
+
+    result_rows = []
+    stats = {"preserved": 0, "added": 0, "filled": 0}
+
+    # Keep rows only in existing (preserve Census data, etc.)
+    for loc_id in only_existing:
+        result_rows.append(existing_by_id.loc[loc_id])
+        stats["preserved"] += 1
+
+    # Add rows only in new (new GADM data)
+    for loc_id in only_new:
+        result_rows.append(new_by_id.loc[loc_id])
+        stats["added"] += 1
+
+    # For rows in both: prefer existing if it has geometry, else use new
+    for loc_id in both:
+        existing_row = existing_by_id.loc[loc_id]
+        new_row = new_by_id.loc[loc_id]
+
+        existing_has_geom = pd.notna(existing_row.get('geometry')) and existing_row.get('geometry')
+
+        if existing_has_geom:
+            result_rows.append(existing_row)
+            stats["preserved"] += 1
+        else:
+            result_rows.append(new_row)
+            stats["filled"] += 1
+
+    # Build result DataFrame
+    result_df = pd.DataFrame(result_rows)
+    result_df = result_df.reset_index()  # loc_id back to column
+
+    # Ensure loc_id is named correctly (reset_index may name it 'index')
+    if 'index' in result_df.columns and 'loc_id' not in result_df.columns:
+        result_df = result_df.rename(columns={'index': 'loc_id'})
+
+    return result_df, stats
 
 
 def build_loc_id(row, admin_level, us_fips_map=None):
@@ -309,7 +476,7 @@ def process_country(conn, iso3, us_fips_map=None):
     # Get all rows for this country
     query = f"""
     SELECT *
-    FROM gadm
+    FROM {GADM_TABLE}
     WHERE GID_0 = ?
     """
 
@@ -354,7 +521,7 @@ def process_country(conn, iso3, us_fips_map=None):
             else:
                 # Deepest level - has geometry
                 lon, lat = get_centroid(geom_bytes)
-                geometry_str = geometry_to_geojson(geom_bytes)
+                geometry_str = geometry_to_geojson(geom_bytes, level)
                 has_polygon = geometry_str is not None
 
             # Get name for this level
@@ -382,6 +549,9 @@ def process_country(conn, iso3, us_fips_map=None):
                 if hasc:
                     iso_3166_2 = hasc.replace('.', '-')
 
+            # Compute bounding box from geometry
+            bbox_min_lon, bbox_min_lat, bbox_max_lon, bbox_max_lat = get_bbox_from_geometry(geometry_str)
+
             record = {
                 'loc_id': loc_id,
                 'parent_id': build_parent_id(loc_id),
@@ -394,6 +564,10 @@ def process_country(conn, iso3, us_fips_map=None):
                 'centroid_lat': lat,
                 'has_polygon': has_polygon,
                 'geometry': geometry_str,
+                'bbox_min_lon': bbox_min_lon,
+                'bbox_min_lat': bbox_min_lat,
+                'bbox_max_lon': bbox_max_lon,
+                'bbox_max_lat': bbox_max_lat,
                 'timezone': None,
                 'iso_a3': iso3
             }
@@ -403,10 +577,15 @@ def process_country(conn, iso3, us_fips_map=None):
     return list(locations.values())
 
 
-def process_all_countries():
-    """Process all countries and create output files."""
+def process_all_countries(country_list=None):
+    """
+    Process countries and create output files.
+
+    Args:
+        country_list: Optional list of ISO3 codes to process. If None, process all.
+    """
     print("=" * 60)
-    print("GADM 3.6 GeoPackage Processor")
+    print(f"GADM GeoPackage Processor ({GADM_TABLE})")
     print("=" * 60)
     print(f"Input: {GADM_FILE}")
     print(f"Output: {OUTPUT_PATH}")
@@ -423,15 +602,25 @@ def process_all_countries():
     # Connect to GADM
     conn = sqlite3.connect(GADM_FILE)
 
-    # Get list of all countries
-    cursor = conn.execute("SELECT DISTINCT GID_0 FROM gadm ORDER BY GID_0")
-    countries = [row[0] for row in cursor.fetchall()]
-    print(f"Found {len(countries)} countries")
+    # Get list of countries to process
+    if country_list:
+        # Validate that requested countries exist in GADM
+        cursor = conn.execute(f"SELECT DISTINCT GID_0 FROM {GADM_TABLE}")
+        valid_countries = {row[0] for row in cursor.fetchall()}
+        countries = [c.upper() for c in country_list if c.upper() in valid_countries]
+        invalid = [c for c in country_list if c.upper() not in valid_countries]
+        if invalid:
+            print(f"Warning: Countries not found in GADM: {invalid}")
+    else:
+        # Get all countries
+        cursor = conn.execute(f"SELECT DISTINCT GID_0 FROM {GADM_TABLE} ORDER BY GID_0")
+        all_countries = [row[0] for row in cursor.fetchall()]
+        # Reorder: put large countries at the end (they take longest)
+        small_countries = [c for c in all_countries if c not in LARGE_COUNTRIES]
+        countries = small_countries + [c for c in LARGE_COUNTRIES if c in all_countries]
+        print(f"Large countries moved to end: {[c for c in LARGE_COUNTRIES if c in all_countries]}")
 
-    # Track metadata
-    country_depth = {}
-    country_coverage = {}
-    global_records = []
+    print(f"Processing {len(countries)} countries")
 
     # Process each country
     for i, iso3 in enumerate(countries):
@@ -449,54 +638,34 @@ def process_all_countries():
         # Sort by admin_level then loc_id
         df = df.sort_values(['admin_level', 'loc_id'])
 
+        # Remove placeholder levels (GADM creates empty levels 4-5 for many countries)
+        original_count = len(df)
+        df, removed_levels = remove_placeholder_levels(df)
+        if removed_levels:
+            print(f"  Removed placeholder levels: {removed_levels} ({original_count - len(df)} rows)")
+
+        # For MERGE_COUNTRIES: merge with existing data, preserving existing geometry
+        output_file = OUTPUT_PATH / f"{iso3}.parquet"
+        if iso3 in MERGE_COUNTRIES and output_file.exists():
+            try:
+                existing_df = pd.read_parquet(output_file)
+                df, merge_stats = merge_with_existing(df, existing_df)
+                print(f"  Merged: {merge_stats['preserved']} preserved, {merge_stats['added']} added, {merge_stats['filled']} filled")
+            except Exception as e:
+                print(f"  Warning: Could not merge with existing ({e}), overwriting")
+
         # Convert types
         df['admin_level'] = df['admin_level'].astype('int8')
         df['has_polygon'] = df['has_polygon'].astype(bool)
 
         # Save country parquet
-        output_file = OUTPUT_PATH / f"{iso3}.parquet"
         df.to_parquet(output_file, index=False)
 
-        # Get stats
-        level_counts = df.groupby('admin_level').size().to_dict()
+        # Print stats
         max_depth = df['admin_level'].max()
-
-        country_depth[iso3] = {
-            'max_depth': int(max_depth),
-            'level_counts': {int(k): int(v) for k, v in level_counts.items()}
-        }
-
-        country_coverage[iso3] = {
-            'actual_depth': int(max_depth),
-            'expected_depth': int(max_depth),  # GADM is authoritative
-            'coverage': 1.0,
-            'level_counts': {int(k): int(v) for k, v in level_counts.items()}
-        }
-
-        # Add country-level record to global list
-        country_record = df[df['admin_level'] == 0].to_dict('records')
-        if country_record:
-            global_records.append(country_record[0])
-
         print(f"  Saved {len(df)} records, max depth: {max_depth}")
 
     conn.close()
-
-    # Save global.csv
-    if global_records:
-        global_df = pd.DataFrame(global_records)
-        global_df = global_df.sort_values('loc_id')
-        global_df.to_csv(OUTPUT_PATH / "global.csv", index=False)
-        print(f"\nSaved {len(global_df)} countries to global.csv")
-
-    # Save metadata files
-    with open(OUTPUT_PATH / "country_depth.json", 'w', encoding='utf-8') as f:
-        json.dump(country_depth, f, indent=2)
-    print(f"Saved country_depth.json")
-
-    with open(OUTPUT_PATH / "country_coverage.json", 'w', encoding='utf-8') as f:
-        json.dump(country_coverage, f, indent=2)
-    print(f"Saved country_coverage.json")
 
     print("\n" + "=" * 60)
     print("Processing complete!")
@@ -505,4 +674,18 @@ def process_all_countries():
 
 
 if __name__ == "__main__":
-    process_all_countries()
+    import sys
+
+    # Parse command-line arguments
+    # Usage: python process_gadm.py [COUNTRY1] [COUNTRY2] ...
+    # Examples:
+    #   python process_gadm.py           # Process all countries
+    #   python process_gadm.py BRA ARG   # Process Brazil and Argentina only
+
+    country_args = [arg.upper() for arg in sys.argv[1:] if not arg.startswith('-')]
+
+    if country_args:
+        print(f"Processing specific countries: {country_args}")
+        process_all_countries(country_list=country_args)
+    else:
+        process_all_countries()

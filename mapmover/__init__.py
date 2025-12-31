@@ -20,9 +20,7 @@ This package provides:
 from .constants import (
     state_abbreviations,
     UNIT_MULTIPLIERS,
-    GEOMETRY_ONLY_DATASETS,
-    ESSENTIAL_COLUMNS,
-    TOPIC_COLUMNS,
+    TOPIC_KEYWORDS,
 )
 
 from .utils import (
@@ -47,18 +45,15 @@ from .geography import (
 )
 
 from .data_loading import (
-    load_ultimate_metadata,
-    get_primary_datasets,
-    get_fallback_datasets,
-    get_columns_for_query,
-    load_csv_smart,
-    rank_datasets,
     initialize_catalog,
     get_data_catalog,
-    get_ultimate_metadata,
-    find_fallback_dataset,
+    get_data_folder,
+    get_catalog_path,
+    load_catalog,
+    load_source_metadata,
+    get_source_by_topic,
+    clear_metadata_cache,
     data_catalog,
-    ultimate_metadata,
 )
 
 from .logging_analytics import (
@@ -87,7 +82,6 @@ from .geometry_handlers import (
     get_location_children,
     get_location_places,
     get_location_info,
-    load_country_depth,
     load_country_parquet,
     load_global_countries,
     clear_cache,
@@ -102,9 +96,7 @@ __all__ = [
     # Constants
     "state_abbreviations",
     "UNIT_MULTIPLIERS",
-    "GEOMETRY_ONLY_DATASETS",
-    "ESSENTIAL_COLUMNS",
-    "TOPIC_COLUMNS",
+    "TOPIC_KEYWORDS",
     # Utils
     "convert_unit",
     "state_from_abbr",
@@ -123,18 +115,15 @@ __all__ = [
     "get_supported_regions_text",
     "CONVERSIONS_DATA",
     # Data loading
-    "load_ultimate_metadata",
-    "get_primary_datasets",
-    "get_fallback_datasets",
-    "get_columns_for_query",
-    "load_csv_smart",
-    "rank_datasets",
     "initialize_catalog",
     "get_data_catalog",
-    "get_ultimate_metadata",
-    "find_fallback_dataset",
+    "get_data_folder",
+    "get_catalog_path",
+    "load_catalog",
+    "load_source_metadata",
+    "get_source_by_topic",
+    "clear_metadata_cache",
     "data_catalog",
-    "ultimate_metadata",
     # Logging
     "log_missing_geometry",
     "log_error_to_cloud",
@@ -151,7 +140,6 @@ __all__ = [
     "get_location_children",
     "get_location_places",
     "get_location_info",
-    "load_country_depth",
     "load_country_parquet",
     "load_global_countries",
     "clear_cache",

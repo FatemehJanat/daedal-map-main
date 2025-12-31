@@ -17,7 +17,8 @@ DEFAULT_SETTINGS = {
 }
 
 # Expected folder structure within backup path
-BACKUP_FOLDERS = ["geometry", "data", "metadata"]
+# Each folder should contain at least one source subfolder
+BACKUP_FOLDERS = ["geometry", "data"]
 
 
 def load_settings() -> dict:
@@ -68,8 +69,8 @@ def set_backup_path(path: str) -> bool:
 
 def check_backup_folders(backup_path: str) -> dict:
     """
-    Check which folders exist in the backup path.
-    Returns dict mapping folder name to existence boolean.
+    Check which folders exist in the backup path and have content.
+    Returns dict mapping folder name to status: True if exists with subfolders, False otherwise.
     """
     if not backup_path:
         return {}
@@ -79,7 +80,12 @@ def check_backup_folders(backup_path: str) -> dict:
 
     for folder in BACKUP_FOLDERS:
         folder_path = base_path / folder
-        result[folder] = folder_path.exists()
+        if folder_path.exists():
+            # Check for at least one subfolder (source directory)
+            subfolders = [d for d in folder_path.iterdir() if d.is_dir()]
+            result[folder] = len(subfolders) > 0
+        else:
+            result[folder] = False
 
     return result
 
@@ -137,41 +143,28 @@ Sources:
         "data": """Data Folder
 ===========
 
-This folder stores indicator datasets (Parquet, CSV).
+This folder stores indicator datasets. Each source is self-contained in its own folder.
 
-Recommended structure:
-  [indicator_name]/
-    admin_0/
-      all_countries_all_years.parquet
-    admin_1/
-      usa_all_years.parquet
-      fra_all_years.parquet
+Structure per source:
+  [source_id]/
+    all_countries.parquet   -- Main data file
+    metadata.json           -- Data structure, columns, coverage
+    reference.json          -- Optional: conceptual context for LLM
 
 Examples:
-  gdp/admin_0/all_countries_all_years.parquet
-  population/admin_1/usa_all_years.parquet
-  poverty/admin_0/all_countries_all_years.parquet
+  owid_co2/
+    all_countries.parquet
+    metadata.json
+  un_sdg_01/
+    all_countries.parquet
+    metadata.json
+    reference.json          -- SDG Goal 1 description, targets
 
 Sources:
   - World Bank Open Data
   - UN SDG Database
   - OECD.Stat
   - OWID
-""",
-        "metadata": """Metadata Folder
-===============
-
-This folder stores catalog and index files.
-
-Key files:
-  catalog.json              -- Master catalog of all datasets
-  catalog_embeddings.npy    -- Vector embeddings for semantic search
-
-The catalog.json contains:
-  - Dataset paths and descriptions
-  - Geographic and temporal coverage
-  - Tags and keywords for search
-  - SDG alignment information
 """
     }
     return readmes.get(folder_name, f"{folder_name} folder for county-map data")

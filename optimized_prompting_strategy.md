@@ -22,6 +22,13 @@ Loading these entirely into every prompt would:
 **Size: ~2,000-3,000 tokens**
 **Frequency: Once per session, cached**
 
+Good question. The issue is the LLM doesn't know what "their" refers to (refering to previous messages, ex the top 10 CO2 countries). Options:
+Increase chat history (more tokens)
+Include current order state in prompt (best for "add X to current selection")
+Include current map state (loc_ids currently displayed)
+The most practical fix is #2 - include the current order in the prompt so the LLM knows what's been requested:
+
+
 Contains condensed, high-level information:
 
 ```python
@@ -442,6 +449,14 @@ Even at 200 sources, you're using <10K tokens vs 30K+ with naive approach.
 - [ ] Build hierarchical catalog option
 - [ ] Test with 50+ data sources
 
+### Phase 6: Reference Documents (Tier 4)
+- [ ] Create reference.json for un_sdg_01 through un_sdg_17 (in each source folder)
+- [ ] Implement load_source_reference() function in order_taker.py
+- [ ] Add query classification (conceptual vs data)
+- [ ] Implement find_relevant_sdg_sources() for source detection
+- [ ] Wire reference loading into build_system_prompt()
+- [ ] Test with "tell me about SDG X" queries
+
 ## Best Practices
 
 ### DO:
@@ -522,13 +537,401 @@ class PromptMetrics:
 **User prompt:** 1,000 tokens (query + 10 countries + 3 sources)
 **Total:** 3,000 tokens
 
+## Tier 4: Topic Reference Documents (Conceptual Context)
+
+### The Problem
+
+The three-tier system handles data queries well, but some questions require domain knowledge that isn't in the catalog:
+
+- "Tell me about SDG 1" - What IS SDG 1?
+- "What are the poverty targets?" - Policy context, not data
+- "How does SDG 3 relate to health indicators?" - Interpretive knowledge
+- "What's the difference between SDG 1.1 and 1.2?" - Hierarchical details
+
+GPT-4o-mini has general training knowledge but may lack specific, authoritative details about specialized datasets like UN SDGs.
+
+### Solution: Reference Documents (In-Folder)
+
+Reference files live inside each source folder, keeping sources self-contained:
+
+```
+county-map-data/data/
+  owid_co2/
+    all_countries.parquet
+    metadata.json           # Data structure, columns, coverage
+    (no reference.json)     # Simple source, LLM knows CO2
+  un_sdg_01/
+    all_countries.parquet
+    metadata.json
+    reference.json          # Goal 1 context, targets, description
+  un_sdg_02/
+    all_countries.parquet
+    metadata.json
+    reference.json          # Goal 2 context
+  imf_bop/
+    all_countries.parquet
+    metadata.json
+    reference.json          # Optional: BOP terminology glossary
+```
+
+### Structure: reference.json (per source)
+
+For SDG Goal 1 (`un_sdg_01/reference.json`):
+
+```json
+{
+  "source_context": "United Nations SDG Framework",
+  "goal": {
+    "number": 1,
+    "name": "No Poverty",
+    "full_title": "End poverty in all its forms everywhere",
+    "description": "Goal 1 calls for an end to poverty in all its manifestations, including extreme poverty, over the next 15 years.",
+    "targets": [
+      {
+        "id": "1.1",
+        "text": "By 2030, eradicate extreme poverty for all people everywhere, currently measured as people living on less than $2.15 a day"
+      },
+      {
+        "id": "1.2",
+        "text": "By 2030, reduce at least by half the proportion of men, women and children living in poverty according to national definitions"
+      },
+      {
+        "id": "1.3",
+        "text": "Implement nationally appropriate social protection systems and measures for all"
+      },
+      {
+        "id": "1.4",
+        "text": "Ensure all men and women have equal rights to economic resources, basic services, ownership of land, inheritance, and financial services"
+      },
+      {
+        "id": "1.5",
+        "text": "Build resilience of the poor and reduce their exposure to climate-related extreme events"
+      }
+    ],
+    "key_indicators": [
+      "SI_POV_DAY1 - Proportion below $2.15/day",
+      "SI_POV_EMP1 - Employed population below poverty line"
+    ]
+  },
+  "shared_with": ["un_sdg_08", "un_sdg_10"],
+  "note": "SI_POV_EMP1 measures intersection of employment and poverty, also tracked in Goals 8 and 10"
+}
+```
+
+### Integration with Three-Tier System
+
+Reference documents plug into Tier 3 (Just-In-Time Context Injection):
+
+```python
+DATA_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/data")
+
+def load_source_reference(source_id: str) -> dict:
+    """Load reference.json for a source if it exists."""
+    ref_path = DATA_DIR / source_id / "reference.json"
+    if ref_path.exists():
+        with open(ref_path, encoding='utf-8') as f:
+            return json.load(f)
+    return {}
+
+def load_references_for_sources(sources: list) -> dict:
+    """Load reference docs for all relevant sources."""
+    references = {}
+    for source in sources:
+        source_id = source.get('source_id', source) if isinstance(source, dict) else source
+        ref = load_source_reference(source_id)
+        if ref:
+            references[source_id] = ref
+    return references
+
+def build_user_prompt(user_query, preprocessed, references):
+    """Enhanced prompt builder with reference injection."""
+
+    base_prompt = f"""User query: "{user_query}"
+
+Context resolved via preprocessing:
+- Location: {preprocessed['locations_found']}
+- Countries: {len(preprocessed['country_codes'])} countries
+- Sources: {len(preprocessed['relevant_sources'])} relevant datasets
+"""
+
+    # Inject reference context if available
+    if references:
+        base_prompt += "\nReference Context:\n"
+        for source_id, ref in references.items():
+            # Include goal info for SDG sources
+            if 'goal' in ref:
+                goal = ref['goal']
+                base_prompt += f"""
+**{source_id}** - SDG Goal {goal['number']}: {goal['name']}
+{goal['description']}
+Targets: {', '.join(t['id'] for t in goal.get('targets', []))}
+"""
+            else:
+                # Generic reference (glossary, etc.)
+                base_prompt += f"\n**{source_id}**: {json.dumps(ref, indent=2)}\n"
+
+    return base_prompt
+```
+
+### Query Type Detection
+
+Determine if query needs reference context vs data:
+
+```python
+def classify_query(query: str) -> str:
+    """Classify query type to determine response strategy."""
+
+    query_lower = query.lower()
+
+    # Conceptual questions - need reference docs
+    conceptual_patterns = [
+        'what is', 'what are', 'tell me about', 'explain',
+        'describe', 'how does', 'why is', 'define',
+        'what does * mean', 'difference between'
+    ]
+
+    # Data questions - need catalog/preprocessing
+    data_patterns = [
+        'show me', 'display', 'compare', 'top', 'highest',
+        'lowest', 'trend', 'over time', 'change in',
+        'data for', 'statistics'
+    ]
+
+    for pattern in conceptual_patterns:
+        if pattern in query_lower:
+            return 'conceptual'
+
+    for pattern in data_patterns:
+        if pattern in query_lower:
+            return 'data'
+
+    return 'hybrid'  # May need both
+```
+
+### Token Budget for References
+
+Reference documents should be compact to avoid bloating prompts:
+
+**Full SDG reference:** ~8,000 tokens (all 17 goals with targets)
+**Per-goal excerpt:** ~400-600 tokens
+
+Strategy: Only load references for sources being used.
+
+```python
+# Goal topic mapping for detecting relevant SDG sources
+SDG_GOAL_TOPICS = {
+    'un_sdg_01': ['poverty', 'poor', 'income'],
+    'un_sdg_02': ['hunger', 'food', 'nutrition', 'malnutrition'],
+    'un_sdg_03': ['health', 'mortality', 'disease', 'medical'],
+    'un_sdg_04': ['education', 'school', 'learning', 'literacy'],
+    'un_sdg_05': ['gender', 'women', 'equality', 'female'],
+    'un_sdg_06': ['water', 'sanitation', 'hygiene'],
+    'un_sdg_07': ['energy', 'electricity', 'renewable'],
+    'un_sdg_08': ['employment', 'labor', 'economic growth', 'jobs'],
+    'un_sdg_09': ['infrastructure', 'industry', 'innovation'],
+    'un_sdg_10': ['inequality', 'income distribution'],
+    'un_sdg_11': ['cities', 'urban', 'housing', 'sustainable cities'],
+    'un_sdg_12': ['consumption', 'production', 'waste'],
+    'un_sdg_13': ['climate', 'carbon', 'emissions'],
+    'un_sdg_14': ['ocean', 'marine', 'sea', 'fish'],
+    'un_sdg_15': ['land', 'forest', 'biodiversity', 'ecosystem'],
+    'un_sdg_16': ['peace', 'justice', 'institutions', 'governance'],
+    'un_sdg_17': ['partnership', 'cooperation', 'development aid']
+}
+
+def find_relevant_sdg_sources(query: str) -> list:
+    """Find SDG sources relevant to a query based on topic keywords."""
+    query_lower = query.lower()
+    relevant = []
+
+    # Check for explicit goal mentions (e.g., "SDG 1", "goal 3")
+    import re
+    goal_matches = re.findall(r'(?:sdg|goal)\s*(\d{1,2})', query_lower)
+    for num in goal_matches:
+        source_id = f'un_sdg_{int(num):02d}'
+        if source_id not in relevant:
+            relevant.append(source_id)
+
+    # Check topic keywords
+    for source_id, keywords in SDG_GOAL_TOPICS.items():
+        if any(kw in query_lower for kw in keywords):
+            if source_id not in relevant:
+                relevant.append(source_id)
+
+    return relevant
+```
+
+### Example: "Tell me about SDG 1"
+
+**Without reference:**
+- LLM relies on training data
+- May give generic or outdated info
+- Cant link to specific indicators
+
+**With reference injection (from un_sdg_01/reference.json):**
+
+```
+User query: "Tell me about SDG 1"
+
+1. System detects "SDG 1" -> maps to source un_sdg_01
+2. Loads un_sdg_01/reference.json
+3. Injects goal context into prompt
+
+Reference Context:
+**un_sdg_01** - SDG Goal 1: No Poverty
+Goal 1 calls for an end to poverty in all its manifestations...
+Targets: 1.1, 1.2, 1.3, 1.4, 1.5
+
+LLM Response:
+"SDG 1 - No Poverty aims to end poverty in all forms by 2030.
+Key targets include:
+- 1.1: Eradicate extreme poverty (below $2.15/day)
+- 1.2: Halve poverty by national definitions
+- 1.3: Implement social protection systems
+
+I have poverty data available in the un_sdg_01 dataset. Would you
+like to see poverty rates for a specific region?"
+```
+
+### Creating Reference Documents
+
+**Sources for SDG reference:**
+- UN SDG Knowledge Portal: https://sdgs.un.org/goals
+- SDG Indicators Metadata: https://unstats.un.org/sdgs/metadata/
+
+**Minimal viable reference.json per source:**
+```json
+{
+  "source_context": "Framework or organization name",
+  "goal": {
+    "number": 1,
+    "name": "Short name",
+    "full_title": "Official title",
+    "description": "1-2 sentences explaining the goal",
+    "targets": [{"id": "1.1", "text": "Target description"}]
+  }
+}
+```
+
+Keep each reference.json under 500 tokens for reasonable prompt sizes.
+One reference per source folder - no centralized reference files.
+
+### When to Create Reference Documents
+
+Create a reference document when:
+- Dataset is specialized/technical (SDGs, IMF BOP codes, WHO classifications)
+- Users likely to ask "what is X?" questions
+- LLM training data may be insufficient or outdated
+- Authoritative definitions matter (official UN targets vs general knowledge)
+
+Skip reference documents when:
+- Dataset is self-explanatory (population, GDP)
+- Column names in metadata.json are sufficient
+- LLM general knowledge is adequate
+
+---
+
 ## Conclusion
 
-The three-tier approach provides:
+The four-tier approach provides:
 - **85-90% reduction in token usage** vs naive approach
 - **Faster response times** from smaller prompts
 - **Better relevance** by showing only pertinent information
 - **Scalability** to 200+ data sources without degradation
 - **Lower costs** from reduced token consumption
+- **Domain expertise** for specialized datasets via reference documents
 
-The key insight: conversions.json and catalog.json are **reference databases for your code**, not **context for the LLM**. Use preprocessing to extract only what's needed, then inject minimal, focused context into each prompt.
+**Summary of Tiers:**
+| Tier | Purpose | Token Cost | When Applied |
+|------|---------|------------|--------------|
+| 1 | System prompt (cached) | ~2,500 | Once per session |
+| 2 | Preprocessing | 0 | Every query |
+| 3 | Just-in-time context | ~1,000 | Every query |
+| 4 | Reference documents | ~500 | When topic detected |
+
+The key insight: conversions.json and catalog.json are **reference databases for your code**, not **context for the LLM**. Reference documents like sdg_reference.json provide **domain knowledge** when needed. Use preprocessing to extract only what's needed, then inject minimal, focused context into each prompt.
+
+---
+
+## Future Enhancement: Viewport Context for Chat
+
+### The Opportunity
+
+Users interact with the map in two ways:
+1. **Direct query**: User asks about specific places ("show GDP for France")
+2. **Contextual query**: User explores the map, then asks "show me population HERE"
+
+Currently, the chat has no awareness of where "here" is.
+
+### Solution: Pass Viewport State to Chat
+
+The frontend knows:
+- Current viewport bounding box (minLon, minLat, maxLon, maxLat)
+- Current zoom level / admin level
+- Center point (lon, lat)
+- Visible countries (from loaded features)
+
+Pass this to the chat endpoint so the LLM can understand spatial context:
+
+```javascript
+// In chat request
+const viewportContext = {
+  bbox: MapAdapter.map.getBounds().toArray(),
+  zoom: MapAdapter.map.getZoom(),
+  adminLevel: MapAdapter.currentAdminLevel,
+  center: MapAdapter.map.getCenter(),
+  visibleCountries: getVisibleCountryISOs()  // From loaded features
+};
+
+fetch('/chat', {
+  body: JSON.stringify({
+    message: userMessage,
+    viewport: viewportContext
+  })
+});
+```
+
+### Backend Integration
+
+In order_taker.py, use viewport context to resolve "here", "this area", etc:
+
+```python
+def preprocess_query(user_query, viewport=None):
+    # Existing location extraction...
+    locations = extract_locations(user_query)
+
+    # NEW: Handle spatial pronouns with viewport
+    spatial_pronouns = ['here', 'this area', 'this region', 'these countries']
+    if viewport and any(p in user_query.lower() for p in spatial_pronouns):
+        # Resolve "here" to visible countries
+        locations.extend(viewport.get('visibleCountries', []))
+
+    # Or use center point to find nearest country
+    if viewport and 'center' in viewport:
+        center_country = find_country_at_point(
+            viewport['center']['lng'],
+            viewport['center']['lat']
+        )
+        if center_country:
+            locations.append(center_country)
+
+    return locations
+```
+
+### User Experience
+
+**Without viewport context:**
+- User: "Show me population here"
+- LLM: "Where would you like to see population data?"
+
+**With viewport context:**
+- User zooms to France, then asks "Show me population here"
+- System: viewport shows France is visible at center
+- LLM: "Here's population data for France..."
+
+### Implementation Checklist
+- [ ] Add viewport state to chat request payload (mapviewer.js)
+- [ ] Update /chat endpoint to accept viewport parameter (app.py)
+- [ ] Add spatial pronoun detection in QueryPreprocessor
+- [ ] Add find_country_at_point() helper using geometry
+- [ ] Test with "show X here" queries

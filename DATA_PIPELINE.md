@@ -519,4 +519,81 @@ When multiple sources have the same metric, the app selects:
 
 ---
 
-*Last Updated: 2024-12-22*
+## Complete Import Workflow
+
+When importing new data (especially with geometry), follow this sequence:
+
+### 1. Geometry Import (if new locations)
+
+If your data includes new geographic entities (NYC boroughs, watersheds, etc.):
+
+```bash
+# Import geometry to country parquet
+python scripts/import_geometry.py nyc_boroughs.geojson --country USA
+
+# Or for cross-cutting entities
+python scripts/import_geometry.py watersheds.geojson --global
+```
+
+### 2. Post-Process Geometry
+
+Always run after geometry changes:
+
+```bash
+python mapmover/post_process_geometry.py
+```
+
+This adds:
+- Aggregated parent geometry (dissolve children)
+- Bounding boxes (for viewport filtering)
+- Children counts (for popup info)
+
+### 3. Run Data Converter
+
+Convert your raw data to parquet format:
+
+```bash
+python data_converters/convert_mysource.py
+```
+
+### 4. Rebuild Catalog
+
+Update catalog.json with the new source:
+
+```bash
+python scripts/build_catalog.py
+```
+
+### Workflow Diagram
+
+```
+Raw Data + GeoJSON
+       |
+       v
++------------------+
+| Geometry Import  |  (if new locations)
++------------------+
+       |
+       v
++------------------+
+| Post-Processing  |  <-- Aggregates, bboxes, children counts
++------------------+
+       |
+       v
++------------------+
+| Data Converter   |  <-- Creates parquet with loc_id
++------------------+
+       |
+       v
++------------------+
+| Catalog Builder  |  <-- Updates catalog.json
++------------------+
+       |
+       v
+    Ready for
+    Runtime Use
+```
+
+---
+
+*Last Updated: 2025-12-30*

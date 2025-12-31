@@ -66,8 +66,17 @@ class NameStandardizer:
             with open(self.conversions_path, 'r', encoding='utf-8') as f:
                 conv = json.load(f)
 
-            # Build alias map from iso_country_codes
-            for code, name in conv.get('iso_country_codes', {}).items():
+            # Load ISO codes from reference/iso_codes.json
+            iso_codes_path = self.data_dir / "reference" / "iso_codes.json"
+            if iso_codes_path.exists():
+                with open(iso_codes_path, 'r', encoding='utf-8') as f:
+                    iso_data = json.load(f)
+                iso3_to_name = iso_data.get('iso3_to_name', {})
+            else:
+                iso3_to_name = {}
+
+            # Build alias map from iso_codes.json
+            for code, name in iso3_to_name.items():
                 self._country_codes[code] = name
                 self._aliases[name.lower()] = name
                 self._aliases[code.lower()] = name

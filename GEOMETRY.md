@@ -4,7 +4,7 @@ The geometry layer is the **source of truth** for all locations. Every indicator
 
 **Builder**: `mapmover/process_gadm.py`
 **Output**: `county-map-data/geometry/`
-**Source**: GADM 3.6 (gadm36.gpkg)
+**Source**: GADM 4.1 (gadm_410.gpkg)
 
 ---
 
@@ -433,8 +433,8 @@ Location: `county-map-data/geometry/`
 
 ### Prerequisites
 
-- GADM gpkg file in `county-map-data/Raw data/gadm36.gpkg` (1.9GB)
-- Python with geopandas, pyarrow
+- GADM gpkg file in `county-map-data/Raw data/gadm_410.gpkg` (~2GB)
+- Python with geopandas, pyarrow, shapely
 
 ### Running the Builder
 
@@ -446,10 +446,53 @@ This will:
 1. Read all layers from GADM gpkg
 2. Generate loc_ids using HASC codes where available
 3. Build parent-child relationships
-4. Simplify geometries for web display
+4. Simplify geometries for web display (level-appropriate tolerances)
 5. Output one parquet per country to `geometry/`
 6. Generate `global.csv` with country-level geometries
 7. Generate `country_coverage.json` with drill-down metadata
+
+### Post-Processing (Required After Import)
+
+After importing geometry, run post-processing to complete the data:
+
+```bash
+python mapmover/post_process_geometry.py              # All countries
+python mapmover/post_process_geometry.py USA          # Single country
+python mapmover/post_process_geometry.py --dry-run    # Preview only
+```
+
+Post-processing performs 4 steps:
+
+1. **Aggregate Geometry** - GADM only stores geometry at the deepest level. Parent boundaries are created by dissolving child polygons.
+2. **Compute Bounding Boxes** - Add bbox columns for fast viewport filtering.
+3. **Backfill Centroids** - Ensure all rows have centroid coordinates.
+4. **Compute Children Counts** - Add `children_count`, `children_by_level`, `descendants_count`, `descendants_by_level` for popup info.
+
+**Example output:**
+```
+[USA] Updated: 52 aggregated, 52 children, 52 descendants
+[BRA] Updated: 28 aggregated, 28 children, 28 descendants
+```
+
+### Parquet Columns After Post-Processing
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `loc_id` | string | Canonical location ID |
+| `parent_id` | string | Parent location ID |
+| `admin_level` | int | 0=country, 1=state, 2=county, etc. |
+| `name` | string | Display name |
+| `geometry` | string | GeoJSON geometry |
+| `centroid_lon` | float | Centroid longitude |
+| `centroid_lat` | float | Centroid latitude |
+| `bbox_min_lon` | float | Bounding box west |
+| `bbox_min_lat` | float | Bounding box south |
+| `bbox_max_lon` | float | Bounding box east |
+| `bbox_max_lat` | float | Bounding box north |
+| `children_count` | int | Number of direct children |
+| `children_by_level` | string | JSON: `{"1": 27}` |
+| `descendants_count` | int | Total descendants at all levels |
+| `descendants_by_level` | string | JSON: `{"1": 27, "2": 5572}` |
 
 ### When to Rebuild
 
@@ -576,4 +619,77 @@ A valid loc_id must:
 
 ---
 
-*Last Updated: 2025-12-22*
+## Import Workflows
+
+### Adding New Hierarchical Data (e.g., NYC Boroughs)
+
+For data that fits the parent-child hierarchy (sub-city districts, neighborhoods):
+
+```
+1. Geometry Import
+   - Add rows to country parquet (e.g., USA.parquet)
+   - Assign loc_ids: USA-NY-36061-CD01, USA-NY-36061-CD02, ...
+   - Set parent_id = USA-NY-36061 (Manhattan)
+   - Set admin_level = 3
+
+2. Post-Processing
+   python mapmover/post_process_geometry.py USA
+   - Aggregates geometry if needed
+   - Computes bboxes
+   - Updates children_count for parent (Manhattan gets +12)
+   - Updates descendants_count up the tree (NY state, USA)
+
+3. Data Import
+   - Run data converter with loc_id = USA-NY-36061-CD01
+   - Creates parquet in data/{source_id}/
+   - Updates catalog.json
+
+4. Dataset Counts (Automatic)
+   - Popup reads catalog.json for dataset availability
+   - Always current, no refresh needed
+```
+
+### Adding Cross-Cutting Data (e.g., Watersheds)
+
+For data that crosses administrative boundaries:
+
+```
+1. Geometry Import
+   - Create new file: relationships/watersheds.parquet
+   - Or add to global_entities.parquet
+   - loc_id = WATERSHED-MISSISSIPPI, WATERSHED-COLORADO
+   - No parent_id (standalone entities)
+
+2. Relationships Update
+   - Add to relationships.json:
+   {
+     "watersheds": {
+       "WATERSHED-MISSISSIPPI": ["USA-MN", "USA-WI", "USA-IA", "USA-MO", ...],
+       "WATERSHED-COLORADO": ["USA-CO", "USA-UT", "USA-AZ", ...]
+     }
+   }
+
+3. Data Import
+   - Run converter with loc_id = WATERSHED-MISSISSIPPI
+   - Same process as hierarchical data
+
+4. Membership Lookups (Automatic)
+   - Popup scans relationships.json
+   - Shows "Part of: Mississippi Basin, Great Lakes Region, ..."
+```
+
+### Key Principle: Post-Processing is Idempotent
+
+You can run post-processing multiple times safely:
+- Already-aggregated geometry is skipped
+- Already-computed bboxes are skipped
+- Children counts are recalculated (cheap, fast)
+
+```bash
+# Safe to run after any change
+python mapmover/post_process_geometry.py
+```
+
+---
+
+*Last Updated: 2025-12-30*

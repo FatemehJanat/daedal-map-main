@@ -56,6 +56,7 @@ from mapmover.geometry_handlers import (
     get_location_children as get_location_children_handler,
     get_location_places as get_location_places_handler,
     get_location_info,
+    get_viewport_geometry as get_viewport_geometry_handler,
     clear_cache as clear_geometry_cache,
 )
 
@@ -177,6 +178,40 @@ async def get_location_info_endpoint(loc_id: str):
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
 
+@app.get("/geometry/viewport")
+async def get_viewport_geometry_endpoint(level: int = 0, bbox: str = None, debug: bool = False):
+    """
+    Get geometry features within a viewport bounding box.
+
+    Args:
+        level: Admin level (0=countries, 1=states, 2=counties, 3=subdivisions)
+        bbox: Bounding box as "minLon,minLat,maxLon,maxLat"
+        debug: If true, include coverage info for level 0 features
+
+    Returns:
+        GeoJSON FeatureCollection with features intersecting the viewport
+    """
+    try:
+        if bbox:
+            # Parse bbox string
+            parts = [float(x) for x in bbox.split(',')]
+            if len(parts) != 4:
+                return JSONResponse(
+                    content={"error": "bbox must be minLon,minLat,maxLon,maxLat"},
+                    status_code=400
+                )
+            bbox_tuple = tuple(parts)
+        else:
+            # Default to world view
+            bbox_tuple = (-180, -90, 180, 90)
+
+        result = get_viewport_geometry_handler(level, bbox_tuple, debug=debug)
+        return JSONResponse(content=result)
+    except Exception as e:
+        logger.error(f"Error in /geometry/viewport: {e}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
 @app.post("/geometry/cache/clear")
 async def clear_geometry_cache_endpoint():
     """Clear the geometry cache. Useful after updating data files."""
@@ -234,7 +269,7 @@ async def update_settings(req: Request):
 async def initialize_folders(req: Request):
     """
     Initialize the backup folder structure.
-    Creates geometry/, data/, metadata/ folders at the backup path.
+    Creates geometry/ and data/ folders at the backup path.
     """
     try:
         data = await req.json()
@@ -283,13 +318,20 @@ async def chat_endpoint(req: Request):
         if body.get("confirmed_order"):
             try:
                 result = execute_order(body["confirmed_order"])
-                return JSONResponse(content={
+                response = {
                     "type": "data",
                     "geojson": result["geojson"],
                     "summary": result["summary"],
                     "count": result["count"],
-                    "source": result["source"]
-                })
+                    "sources": result.get("sources", [])
+                }
+                # Include multi-year data if present (for time slider)
+                if result.get("multi_year"):
+                    response["multi_year"] = True
+                    response["year_data"] = result["year_data"]
+                    response["year_range"] = result["year_range"]
+                    response["metric_key"] = result.get("metric_key")
+                return JSONResponse(content=response)
             except Exception as e:
                 logger.error(f"Order execution error: {e}")
                 return JSONResponse(content={

@@ -9,7 +9,7 @@ import os
 import pandas as pd
 from pathlib import Path
 
-from .geography import get_fallback_coordinates, load_conversions, CONVERSIONS_DATA
+from .geography import get_fallback_coordinates, load_conversions, CONVERSIONS_DATA, get_iso_codes
 
 # Base directory for file paths
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -99,11 +99,10 @@ def get_country_coordinates(country_name, country_code=None):
     # Third try: Find code by name and check fallback coordinates
     if not country_code:
         # Try to find the country code from the name
-        if not CONVERSIONS_DATA:
-            load_conversions()
-        iso_codes = CONVERSIONS_DATA.get('iso_country_codes', {})
+        iso_data = get_iso_codes()
+        iso3_to_name = iso_data.get('iso3_to_name', {})
         name_lower = country_name.lower().strip()
-        for code, name in iso_codes.items():
+        for code, name in iso3_to_name.items():
             if name.lower() == name_lower:
                 fallback = get_fallback_coordinates(code)
                 if fallback:

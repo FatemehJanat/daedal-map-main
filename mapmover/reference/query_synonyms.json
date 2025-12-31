@@ -1,0 +1,45 @@
+{
+  "_description": "Query interpretation synonyms for natural language processing",
+  "_schema_version": "1.0.0",
+  "_last_updated": "2025-01",
+  "_note": "Helps LLM interpret user queries with alternative phrasings",
+
+  "metric_synonyms": {
+    "_description": "Common ways users might ask for specific metrics",
+    "population": ["people", "inhabitants", "residents", "citizens", "headcount"],
+    "gdp": ["gross domestic product", "economic output", "economy size"],
+    "gdp_per_capita": ["gdp per person", "income per capita", "wealth per person"],
+    "life_expectancy": ["lifespan", "how long people live", "longevity"],
+    "co2_emissions": ["carbon emissions", "carbon dioxide", "greenhouse gas", "carbon footprint"],
+    "unemployment": ["jobless rate", "unemployment rate", "people without jobs"],
+    "inflation": ["price increase", "cost of living increase", "inflation rate"],
+    "mortality_rate": ["death rate", "deaths per capita"],
+    "birth_rate": ["births per capita", "fertility rate", "natality"],
+    "literacy_rate": ["reading rate", "education rate", "can read"]
+  },
+
+  "time_synonyms": {
+    "_description": "Temporal query interpretations",
+    "latest": ["most recent", "current", "newest", "last available"],
+    "historical": ["over time", "trend", "time series", "through the years"],
+    "decade": ["10 years", "ten years"],
+    "century": ["100 years", "hundred years"]
+  },
+
+  "comparison_synonyms": {
+    "_description": "Comparison query patterns",
+    "highest": ["most", "top", "greatest", "largest", "maximum", "best"],
+    "lowest": ["least", "bottom", "smallest", "minimum", "worst"],
+    "compare": ["versus", "vs", "against", "difference between"],
+    "ranking": ["rank", "order", "sorted", "list by"]
+  },
+
+  "geographic_synonyms": {
+    "_description": "Geographic query patterns - see also region_aliases in conversions.json",
+    "worldwide": ["global", "all countries", "entire world", "every country"],
+    "nearby": ["neighboring", "adjacent", "bordering", "surrounding"],
+    "coastal": ["seaside", "oceanfront", "with coastline", "beach"]
+  },
+
+  "_todo_expand": "TODO: Add more synonyms based on actual user query patterns from logs"
+}
