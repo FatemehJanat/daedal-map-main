@@ -1,8 +1,26 @@
-# CIA World Factbook - Metrics Summary
+# CIA Factbook Converter - Technical Reference
 
-## Overview
+This document provides technical reference for maintaining the CIA World Factbook data converter.
 
-The CIA World Factbook 2020 edition contains **66 quantitative rank metrics** covering demographics, economy, energy, infrastructure, and more.
+For usage instructions, see [DATA_PIPELINE.md](../DATA_PIPELINE.md#cia-factbook).
+
+---
+
+## Files in This Folder
+
+| File | Purpose |
+|------|---------|
+| `convert_cia_factbook.py` | Main converter - extracts data from 21 editions (2000-2020) |
+| `cia_field_mappings.json` | Maps metric names to field IDs across editions |
+| `cia_factbook_metrics.csv` | Tracking spreadsheet: country counts per metric per edition |
+| `CIA_CONVERTER_REFERENCE.md` | This file - technical reference for parser maintenance |
+
+### Output Locations
+
+| Source ID | Output Path | Description |
+|-----------|-------------|-------------|
+| `cia_unique` | `county-map-data/data/cia_unique/` | 51 unique metrics (in catalog) |
+| `cia_overlap` | `county-map-data/data/cia_overlap/` | 27 overlap metrics (excluded from catalog) |
 
 ---
 

@@ -6,13 +6,30 @@ Explore geographic data through natural conversation. Ask questions about countr
 
 ---
 
-## What You Can Do
+## Features
 
-- **Ask questions naturally** - "What GDP data do you have?" or "Show me CO2 emissions for Europe"
-- **Get guided suggestions** - The system helps you discover available data and refine your queries
-- **Visualize on a map** - Results display on an interactive globe with clickable features
-- **Combine data sources** - View GDP alongside health indicators or demographics
-- **Filter and compare** - "Top 10 countries by GDP" or "Europe excluding Germany"
+**Conversational Data Discovery**
+- Natural language queries - "What GDP data do you have?" or "Show me CO2 emissions for Europe"
+- Guided suggestions help you discover available data and refine your requests
+- Order panel lets you review, modify, and confirm data requests before display
+
+**Interactive 3D Globe**
+- MapLibre GL JS with globe projection
+- Click any country/region for detailed popup with multiple data sources
+- Choropleth coloring by selected metric with color legend
+- Smooth zooming from world view to county level
+
+**Multi-Source Data Integration**
+- Combine data from different sources in single view (GDP + health + demographics)
+- Region/continent filtering (Europe, EU, G7, OECD, income levels)
+- Exclusion filters ("Europe excluding Germany")
+- Smart year selection based on data completeness
+
+**Geographic Coverage**
+- 257 countries with standardized boundaries
+- 56 regional groupings (WHO regions, trade blocs, income levels)
+- Multi-level support: country, state/province, county
+- US Census data at county level (3,200+ counties)
 
 ---
 
@@ -23,6 +40,7 @@ Explore geographic data through natural conversation. Ask questions about countr
 | OWID CO2 Data | 218 countries | GDP, CO2, energy, population |
 | WHO Health Stats | 198 countries | Life expectancy, mortality, immunization |
 | IMF Balance of Payments | 195 countries | Trade, investment, financial flows |
+| CIA World Factbook | 250 countries | Infrastructure, military, oil/gas, electricity |
 | US Census Demographics | 3,200+ counties | Age, sex, race demographics |
 | UN SDG Indicators | 200+ countries | 17 Sustainable Development Goals |
 
@@ -50,7 +68,6 @@ For technical documentation, see [CONTEXT.md](CONTEXT.md).
 | [CHAT.md](CHAT.md) | Chat interface and LLM system |
 | [MAPPING.md](MAPPING.md) | Frontend visualization |
 | [ADMIN_DASHBOARD.md](ADMIN_DASHBOARD.md) | Admin tools for data management |
-| [ROADMAP.md](ROADMAP.md) | Future features and plans |
 
 ---
 

@@ -384,6 +384,15 @@ class QueryPreprocessor:
         }
 ```
 
+**Reference Files Used** (see [GEOMETRY.md](GEOMETRY.md) for details):
+
+| File | Preprocessing Use |
+|------|-------------------|
+| `conversions.json` | Regional groupings, region_aliases ("Europe" -> country codes) |
+| `reference/query_synonyms.json` | Metric synonyms ("gdp" = "economic output"), time synonyms ("latest" = "most recent") |
+| `reference/admin_levels.json` | Admin level synonyms ("states" = "provinces" = "regions") |
+| `reference/iso_codes.json` | Country name/code resolution |
+
 ### Tier 3: Just-In-Time Context Injection (Query-Specific)
 
 **Size**: 500-1,500 tokens
@@ -559,6 +568,56 @@ fetch('/chat', {
 5. **Suggest connections**: "You might also want..."
 6. **Keep it actionable**: Every response should have a clear next step
 7. **Limit suggestions**: Max 3-5 items per response, go general if too many
+
+---
+
+## Future Enhancements
+
+### Derived Fields / Calculated Metrics
+
+Enable computed fields without hardcoded formulas:
+
+- Rule-based derivation system (not hardcoded formulas)
+- "Per capita" pattern -> divide by population
+- "Percentage of total" -> sum filtered set, divide each by total
+- "Growth rate" -> compare to previous year
+- LLM prompt updates to recognize derived field requests
+- Caching for expensive calculations
+
+**Example queries:**
+- "GDP per capita for African countries" -> gdp / population
+- "CO2 emissions by percentage for G7" -> each / sum(all G7)
+- "Population growth rate 2020-2023" -> (2023 - 2020) / 2020
+
+**Scope rules:**
+- Percentage denominator = filtered set total (user's current selection)
+- User can specify "percentage of world total" for global denominator
+
+### Query Caching
+
+- Cache frequent queries (Redis or in-memory)
+- Cache geometry (rarely changes)
+- Invalidate on data updates
+
+### Vector Search Layer
+
+Semantic search over external content:
+
+- Web scraper for supplier sites / documentation
+- Vector database (ChromaDB local, Pinecone cloud)
+- "Where can I buy solar panels in Texas?" -> relevant links
+
+---
+
+## Related Files
+
+| File | Purpose |
+|------|---------|
+| `mapmover/conversions.json` | Regional groupings (56), region aliases for preprocessing |
+| `mapmover/reference/` | Modular reference data for query preprocessing |
+| [GEOMETRY.md](GEOMETRY.md) | Reference file documentation, loc_id spec |
+| [DATA_PIPELINE.md](DATA_PIPELINE.md) | Data source catalog |
+| `county-map-data/catalog.json` | Master catalog for LLM context |
 
 ---
 

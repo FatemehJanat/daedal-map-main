@@ -692,4 +692,185 @@ python mapmover/post_process_geometry.py
 
 ---
 
-*Last Updated: 2025-12-30*
+## Geometry Sources
+
+Primary and alternative sources for geographic boundaries.
+
+### GADM (Primary Source)
+
+- **URL**: gadm.org
+- **File**: `gadm_410.gpkg` (~2GB)
+- **Coverage**: Admin boundaries for every country, levels 0-5
+- **License**: Free for non-commercial, attribution required
+- **Used by**: `process_gadm.py`
+
+### Natural Earth (Alternative)
+
+- **URL**: naturalearthdata.com
+- **Coverage**: Admin boundaries, populated places, physical features
+- **Scales**: 1:10m (detailed), 1:50m (medium), 1:110m (small)
+- **License**: Public domain
+- **Best for**: Simplified country borders, physical features
+
+### geoBoundaries (Alternative)
+
+- **URL**: geoboundaries.org
+- **Coverage**: Open admin boundaries, simplified versions
+- **License**: Fully open (better than GADM for commercial)
+- **Notes**: Good alternative with pre-simplified versions
+
+### US Census TIGER/Line (US Detail)
+
+- **URL**: census.gov/geographies/mapping-files.html
+- **Coverage**: States, counties, ZCTAs, census tracts, blocks
+- **License**: Public domain
+- **Notes**: Most detailed US boundaries, updated annually
+
+---
+
+## Reference Data Files
+
+The `mapmover/reference/` folder contains modular JSON files for geographic metadata. This keeps `conversions.json` lean while allowing rich country-specific data.
+
+### File Status
+
+| File | Purpose | Status |
+|------|---------|--------|
+| `conversions.json` | Regional groupings (56 groups), region aliases, fallback coordinates | Complete |
+| `reference/iso_codes.json` | ISO 3166-1 alpha-2/alpha-3 mappings (207 countries) | Complete |
+| `reference/admin_levels.json` | Country-specific admin level names + synonyms (40+ countries) | Complete |
+| `reference/country_metadata.json` | Capitals (207), currencies, timezones | Capitals complete, currencies/timezones TODO |
+| `reference/geographic_features.json` | Rivers, mountains, lakes, deserts, islands | Structure only, data TODO |
+| `reference/languages.json` | ISO 639-1 codes, country-language mappings | Codes complete, mappings TODO |
+| `reference/query_synonyms.json` | Metric/time/comparison synonyms for NLP | Partial, expand from logs |
+| `reference/usa_admin.json` | US-specific admin data | Complete |
+
+### What's in conversions.json
+
+Core lookups that need fast access:
+- `regional_groupings` - 56 groups (WHO regions, income levels, trade blocs)
+- `region_aliases` - "Europe" -> "WHO_European_Region"
+- `limited_geometry_countries` - Fallback coordinates for microstates
+
+### Adding Reference Data
+
+To add currencies to country_metadata.json:
+```json
+{
+  "currencies": {
+    "USA": ["USD", "$", "US Dollar"],
+    "GBR": ["GBP", "L", "British Pound"],
+    "EUR_ZONE": ["EUR", "E", "Euro"]
+  }
+}
+```
+
+To add country-language mappings to languages.json:
+```json
+{
+  "country_languages": {
+    "USA": ["en", "es"],
+    "CAN": ["en", "fr"],
+    "CHE": ["de", "fr", "it", "rm"]
+  }
+}
+```
+
+---
+
+## Alternative Geographic Frameworks
+
+Beyond the standard admin hierarchy (country > state > county), other frameworks exist for specialized data.
+
+### Statistical and Functional Regions
+
+- **Metropolitan Statistical Areas (MSAs)**: Cross city/county boundaries, defined by economic ties
+- **OECD Functional Urban Areas**: Globally standardized metropolitan definitions
+- **Eurostat NUTS Regions**: Hierarchical system for Europe (NUTS1 > NUTS2 > NUTS3)
+
+### Grid-Based Systems
+
+- **H3 Hexagonal Grids**: Uber's hierarchical geospatial indexing
+- **Lat/Long Grid Cells**: Climate data (1x1 or 0.5x0.5 degree cells)
+- **MGRS/UTM Zones**: Military Grid Reference System
+
+### Natural Boundaries
+
+- **Watershed/River Basins**: Water resource and environmental data (use sibling layer approach)
+- **Ecoregions/Biomes**: Biodiversity and conservation
+- **Climate Zones**: Koppen climate classification
+
+### Implementation Notes
+
+Grid-based and natural boundary data would use the **sibling layer approach** documented above:
+- Watersheds crossing state lines -> level-1 siblings in country parquet
+- Climate zones crossing countries -> global_entities.parquet
+
+---
+
+## Edge Cases and Special Geographies
+
+Data that doesn't fit standard hierarchies:
+
+### Transboundary Phenomena
+
+- Air quality/pollution (doesn't respect borders)
+- Ocean data and maritime boundaries
+- Cross-border river systems (Mekong, Danube)
+
+### Special Jurisdictions
+
+- Indigenous/tribal lands (may overlap multiple admin units)
+- Special economic zones
+- Exclusive Economic Zones (EEZ) in oceans
+- Disputed territories
+- Extraterritorial areas (embassies, military bases)
+
+### Point-Based Data
+
+- Weather stations
+- Seismic monitoring stations
+- Shipping routes
+
+For these cases, consider:
+1. Store in global_entities.parquet with appropriate `type` column
+2. Use relationships.json to map membership (which countries contain which features)
+3. For point data, use centroid-only entries (no polygon geometry)
+
+---
+
+## TODO: Reference Data Gaps
+
+Priority items to fill:
+
+1. **country_metadata.json**
+   - Add currencies (ISO 4217 codes)
+   - Add primary timezones (IANA database)
+
+2. **geographic_features.json**
+   - Add major rivers (from Natural Earth or GeoNames)
+   - Add mountain ranges with spanning countries
+   - Add major lakes with bordering countries
+
+3. **languages.json**
+   - Add country-language mappings (official + major spoken)
+   - Source: Ethnologue or Wikipedia
+
+4. **query_synonyms.json**
+   - Expand based on actual user query logs
+   - Add country name aliases ("USA", "America", "United States")
+
+---
+
+## Related Files
+
+| File | Purpose |
+|------|---------|
+| `mapmover/conversions.json` | Regional groupings (56 groups: WHO, income, trade blocs) |
+| `mapmover/reference/` | Modular reference data (admin levels, ISO codes, metadata) |
+| `DATA_PIPELINE.md` | Data source catalog and conversion workflows |
+| `MAPPING.md` | Frontend map rendering and display |
+
+---
+
+*Last Updated: 2025-12-31*

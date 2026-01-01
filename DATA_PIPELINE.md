@@ -265,6 +265,52 @@ For complex datasets with domain-specific context (SDGs, IMF codes, WHO classifi
 | [census_population](#census-population) | county | demographics | 2020-2024 | 3,144 US counties |
 | [census_agesex](#census-agesex) | county | demographics | 2019-2024 | 3,144 US counties |
 | [census_demographics](#census-demographics) | county | demographics | 2020-2024 | 3,144 US counties |
+| [cia_unique](#cia-factbook) | country | infrastructure, military, energy | 1990-2020 | 250 countries |
+
+---
+
+### cia_unique (CIA Factbook)
+
+CIA World Factbook - 51 unique metrics not available elsewhere.
+
+**Converter**: `data_converters/convert_cia_factbook.py`
+**Output**: `data/cia_unique/all_countries.parquet`
+**Source**: https://www.cia.gov/the-world-factbook/
+**Editions**: 2000-2020 (21 years, 5-year intervals recommended)
+
+Split into two sources:
+- `cia_unique` - 51 metrics NOT in other sources (in catalog)
+- `cia_overlap` - 27 metrics also in OWID/WHO/IMF (excluded from catalog)
+
+**Unique Metrics by Category**:
+
+| Category | Metrics |
+|----------|---------|
+| Infrastructure | airports, railways_km, roadways_km, waterways_km, merchant_marine |
+| Military | military_expenditure_pct |
+| Oil/Gas | crude_oil_production/exports/imports/reserves, natural_gas_* |
+| Electricity | electricity_capacity, fossil/nuclear/hydro/renewable_pct |
+| Banking | central_bank_discount_rate, commercial_bank_prime_rate, foreign_reserves |
+| Financial | stock_fdi_abroad/at_home, gini_index |
+| Communications | telephones_fixed/mobile, broadband_subscriptions, internet_users |
+
+**Usage**:
+```bash
+# Import unique metrics (recommended)
+python convert_cia_factbook.py --editions 2000,2005,2010,2015,2020 --source-type unique --save
+
+# Import overlap metrics (for historical time series)
+python convert_cia_factbook.py --editions 2000,2005,2010,2015,2020 --source-type overlap --save
+
+# List all metrics
+python convert_cia_factbook.py --list-metrics
+```
+
+**Technical Notes**:
+- HTML format changed across editions (text 2000-2001, rankorder 2003-2017, modern 2018-2020)
+- Field ID mappings stored in `cia_field_mappings.json`
+- CIA 2-letter codes mapped to ISO3 via appendix-d.html
+- Detailed format docs in `CIA_CONVERTER_REFERENCE.md`
 
 ---
 
@@ -550,16 +596,19 @@ Check that:
 
 | Topic | Sources |
 |-------|---------|
-| **economics** | owid_co2, imf_bop, un_sdg_08 |
+| **economics** | owid_co2, imf_bop, un_sdg_08, cia_unique (banking, financial) |
 | **environment** | owid_co2, un_sdg_13, un_sdg_14, un_sdg_15 |
 | **health** | who_health, un_sdg_03 |
 | **demographics** | census_population, census_agesex, census_demographics |
-| **energy** | owid_co2, un_sdg_07 |
+| **energy** | owid_co2, un_sdg_07, cia_unique (oil, gas, electricity sources) |
 | **poverty** | un_sdg_01, un_sdg_10 |
 | **education** | un_sdg_04 |
 | **water/sanitation** | un_sdg_06 |
 | **gender** | un_sdg_05 |
 | **governance** | un_sdg_16 |
+| **infrastructure** | cia_unique (airports, railways, roads, waterways) |
+| **military** | cia_unique (military expenditure) |
+| **communications** | cia_unique (telephones, internet, broadband) |
 
 ---
 
@@ -575,6 +624,10 @@ When multiple sources have the same metric, the app selects:
 | Population (US counties) | census_population | - |
 | Health indicators | who_health | - |
 | Trade/finance | imf_bop | - |
+| Infrastructure | cia_unique | - |
+| Military spending | cia_unique | - |
+| Oil/gas production | cia_unique | - |
+| Electricity sources | cia_unique | - |
 
 ---
 
@@ -664,6 +717,69 @@ Raw Data + GeoJSON
     Ready for
     Runtime Use
 ```
+
+---
+
+## Future: Supabase Database Migration
+
+Migrate from CSV/parquet files to Supabase PostgreSQL for better performance and scalability.
+
+**Why migrate:**
+- Server-side filtering (not loading 358k rows into memory)
+- Faster queries with indexes
+- Less Railway memory usage
+- Cross-dataset queries become natural
+- Scales better as data grows
+
+**Architecture:**
+```
+Current:  CSV files -> pandas -> filter -> GeoJSON
+Future:   Supabase tables -> SQL query -> small result -> GeoJSON
+```
+
+**Table structure:**
+```sql
+countries_geometry (code, name, geometry, continent, ...)
+owid_data (country_code, year, gdp, population, co2, ...)
+who_health (country_code, year, indicator, value, ...)
+census_demographics (state_code, county_code, year, population, ...)
+dataset_metadata (table_name, source_name, source_url, columns JSONB, ...)
+```
+
+**Multi-query approach (not JOINs):**
+```python
+# 1. Get geometry
+geometry = supabase.table('countries_geometry').select('*').in_('code', codes).execute()
+
+# 2. Get each data field separately (can fail independently)
+gdp = supabase.table('owid_data').select('country_code, gdp').eq('year', 2022).execute()
+pop = supabase.table('owid_data').select('country_code, population').eq('year', 2022).execute()
+
+# 3. Merge in Python and calculate derived fields
+for country in result:
+    country['gdp_per_capita'] = country['gdp'] / country['population']
+```
+
+**ETL changes:**
+- Convert wide format to long format (years as rows, not columns)
+- `df.melt()` to transform IMF-style data
+- Insert to Supabase instead of writing CSV
+
+**Cost estimate:**
+- Current data ~100 MB (well under 500 MB free tier)
+- Pro tier ($25/mo) for production reliability
+- No per-query costs
+
+**Migration steps:**
+1. Create tables in Supabase with proper schema
+2. Update ETL to insert to Supabase (wide->long conversion)
+3. Add RLS policies (public read, admin write)
+4. Create `supabase_queries.py` module for data fetching
+5. Replace pandas CSV loading with Supabase queries in mapmover.py
+6. Keep metadata table for LLM dataset selection
+7. Test derived field calculations in Python
+8. Remove large CSVs from git repo
+9. Update admin dashboard for Supabase management
 
 ---
 

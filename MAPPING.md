@@ -342,6 +342,35 @@ Handle ambiguous queries by letting users click on the map:
 - Frontend displays all matches with markers
 - User clicks to select one or multiple
 
+### Show Me Borders Command
+
+Display geometry via conversational request:
+- META intent type for border/geometry requests
+- Returns geometry without data (for visual reference)
+- Replaces current map content (not layered)
+- User can then click to select regions for data queries
+
+### Result Summary Cards
+
+Show key stats before/alongside map:
+- Total, average, min, max for displayed data
+- Count of results
+- Data source attribution
+
+### Tile Server
+
+Vector tiles for complex polygons:
+- Mapbox/MapLibre vector tile integration
+- Reduce GeoJSON payload size for large datasets
+- Pre-render tiles during ETL
+
+### Advanced Visualization
+
+Enhanced chart and comparison features:
+- Charts alongside map (bar/line for time series)
+- Toggle between map and data table view
+- Side-by-side comparison mode
+
 ---
 
 ## Module Reference

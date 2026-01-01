@@ -17,15 +17,13 @@ Technical index for understanding the system architecture. For a non-technical o
 | [CHAT.md](CHAT.md) | Chat system, LLM prompting, order model |
 | [MAPPING.md](MAPPING.md) | Frontend visualization, MapLibre, choropleth |
 | [ADMIN_DASHBOARD.md](ADMIN_DASHBOARD.md) | Admin dashboard design, import wizard |
-| [ROADMAP.md](ROADMAP.md) | Future features and plans |
-| [geographic_data_reference.md](geographic_data_reference.md) | Data sources, geometry sources, reference notes |
 
 ### Ongoing Implementation Plans
 
 | Document | Status |
 |----------|--------|
 | [TIME_SLIDER_PLAN.md](TIME_SLIDER_PLAN.md) | Time slider feature spec |
-| [data_converters/CIA_FACTBOOK_NOTES.md](data_converters/CIA_FACTBOOK_NOTES.md) | CIA Factbook import notes |
+| [data_converters/CIA_CONVERTER_REFERENCE.md](data_converters/CIA_CONVERTER_REFERENCE.md) | CIA Factbook parser reference |
 
 ---
 
@@ -167,7 +165,7 @@ county-map/                      # Main repository
 |   CHAT.md                      # Chat system
 |   MAPPING.md                   # Frontend visualization
 |   ADMIN_DASHBOARD.md           # Admin tools
-|   ROADMAP.md                   # Future plans
+|   TIME_SLIDER_PLAN.md          # Time slider feature spec
 
 
 county-map-data/                 # External data folder (THE CONTRACT)
@@ -318,6 +316,70 @@ python app.py
 | `geography.py` | Regions, coordinates |
 | `logging_analytics.py` | Cloud logging |
 | `process_gadm.py` | Geometry builder (build tool) |
+
+---
+
+## Design Principles
+
+| Principle | Reasoning |
+|-----------|-----------|
+| Keep user requests lightweight | Avoid memory issues, fast responses |
+| Pre-compute where possible | Heat maps, metadata at ETL time |
+| Admin tools are separate | Heavy lifting offline, not during user sessions |
+| Database is read-optimized | Exports are copies, never restructure source |
+| LLM controls conversation | No keyword shortcuts, full conversational flow |
+| Geometry is canonical | All data matches geometry dataset names |
+| Log gaps for improvement | Missing data/geometry tracked in Supabase |
+
+---
+
+## Technical Debt
+
+Outstanding items to address:
+
+- Add unit tests for LLM parsing
+- Clean up archive folder
+- Review requirements.txt for unused packages
+
+---
+
+## Future: Offline Operation
+
+Run the entire system without internet connectivity.
+
+**Local Map Tiles (PMTiles):**
+- Download PMTiles basemap file (z0-10 = ~1-5GB, z0-15 = ~120GB)
+- Configure MapLibre to use local PMTiles protocol
+- Serve tiles as static asset (no tile server needed)
+- Latency improvement: 50-200ms/tile -> 1-10ms/tile
+
+**Local LLM (Ollama):**
+- Install Ollama with Llama 3.1 8B or Mistral 7B
+- Update chat_handlers.py to call local endpoint
+- Tune prompts for smaller model capabilities
+- Latency improvement: 500-2000ms -> 100-500ms
+
+**Benefits:**
+- Zero API costs
+- Works without internet
+- Noticeably snappier UI (pan/zoom instant, faster chat)
+- Privacy - no data leaves the machine
+
+**Trade-offs:**
+- Disk space (tiles + model weights)
+- Hardware requirements for local LLM
+- Smaller models less reliable at structured JSON output
+
+---
+
+## Future: Railway Deployment Testing
+
+Production testing on Railway platform:
+
+- Memory profiling with concurrent users
+- Response time benchmarking
+- Error rate monitoring via Supabase logs
+- Large dataset loading performance
 
 ---
 
