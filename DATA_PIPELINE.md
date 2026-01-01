@@ -217,6 +217,34 @@ The `catalog.json` aggregates all metadata into one file for the LLM:
 
 The catalog contains summary info only. The LLM reads the catalog for an overview, then can request full metadata for specific sources if needed.
 
+### Reference Documents (reference.json)
+
+For complex datasets with domain-specific context (SDGs, IMF codes, WHO classifications), an optional `reference.json` provides LLM-readable context:
+
+```json
+{
+  "source_context": "United Nations SDG Framework",
+  "goal": {
+    "number": 1,
+    "name": "No Poverty",
+    "full_title": "End poverty in all its forms everywhere",
+    "description": "Goal 1 calls for an end to poverty...",
+    "targets": [
+      {"id": "1.1", "text": "Eradicate extreme poverty..."},
+      {"id": "1.2", "text": "Reduce poverty by half..."}
+    ],
+    "key_indicators": ["SI_POV_DAY1", "SI_POV_EMP1"]
+  },
+  "shared_with": ["un_sdg_08", "un_sdg_10"]
+}
+```
+
+**When to use reference.json**:
+- Dataset has domain-specific terminology (SDG targets, IMF BOP codes)
+- Indicators have hierarchical structure (goals -> targets -> indicators)
+- Some metrics appear in multiple related datasets
+- LLM needs context to understand what metrics measure
+
 ### Generation Scripts
 
 - `scripts/regenerate_metadata.py` - Regenerate metadata.json for all sources
@@ -233,6 +261,7 @@ The catalog contains summary info only. The LLM reads the catalog for an overvie
 | [owid_co2](#owid-co2) | country | environment, energy | 1750-2024 | 218 countries |
 | [who_health](#who-health) | country | health | 2015-2024 | 198 countries |
 | [imf_bop](#imf-bop) | country | economics | 2005-2022 | 195 countries |
+| [un_sdg_01-17](#un-sdg) | country | development | 1970-2024 | 200+ countries |
 | [census_population](#census-population) | county | demographics | 2020-2024 | 3,144 US counties |
 | [census_agesex](#census-agesex) | county | demographics | 2019-2024 | 3,144 US counties |
 | [census_demographics](#census-demographics) | county | demographics | 2020-2024 | 3,144 US counties |
@@ -295,6 +324,43 @@ International Monetary Fund balance of payments.
 | `imports` | USD millions | Goods and services imports |
 
 37 total metrics.
+
+---
+
+### un_sdg
+
+UN Sustainable Development Goals - 17 goal-specific datasets.
+
+**Converter**: `data_converters/convert_sdg.py`
+**Output**: `data/un_sdg_01/` through `data/un_sdg_17/`
+**Source**: https://unstats.un.org/sdgs/indicators/database/
+
+Each goal folder contains:
+- `all_countries.parquet` - Wide format data (loc_id, year, metric columns)
+- `metadata.json` - Source info and metric definitions
+- `reference.json` - Goal context for LLM (targets, descriptions)
+
+| Goal | Name | Key Topics |
+|------|------|------------|
+| 1 | No Poverty | poverty, income, social protection |
+| 2 | Zero Hunger | food, nutrition, agriculture |
+| 3 | Good Health | health, mortality, disease |
+| 4 | Quality Education | education, literacy, school |
+| 5 | Gender Equality | gender, women, empowerment |
+| 6 | Clean Water | water, sanitation, hygiene |
+| 7 | Clean Energy | energy, electricity, renewable |
+| 8 | Economic Growth | employment, labor, jobs, GDP |
+| 9 | Infrastructure | industry, innovation, technology |
+| 10 | Reduced Inequalities | inequality, discrimination |
+| 11 | Sustainable Cities | urban, housing, transport |
+| 12 | Responsible Consumption | waste, recycling, production |
+| 13 | Climate Action | climate, emissions, disaster |
+| 14 | Life Below Water | ocean, marine, fishing |
+| 15 | Life on Land | forest, biodiversity, land |
+| 16 | Peace and Justice | governance, violence, institutions |
+| 17 | Partnerships | cooperation, trade, aid |
+
+**Note**: Uses M49 to ISO3 country code mapping (stored in `data_converters/m49_mapping.json`).
 
 ---
 
@@ -484,11 +550,16 @@ Check that:
 
 | Topic | Sources |
 |-------|---------|
-| **economics** | owid_co2, imf_bop |
-| **environment** | owid_co2 |
-| **health** | who_health |
+| **economics** | owid_co2, imf_bop, un_sdg_08 |
+| **environment** | owid_co2, un_sdg_13, un_sdg_14, un_sdg_15 |
+| **health** | who_health, un_sdg_03 |
 | **demographics** | census_population, census_agesex, census_demographics |
-| **energy** | owid_co2 |
+| **energy** | owid_co2, un_sdg_07 |
+| **poverty** | un_sdg_01, un_sdg_10 |
+| **education** | un_sdg_04 |
+| **water/sanitation** | un_sdg_06 |
+| **gender** | un_sdg_05 |
+| **governance** | un_sdg_16 |
 
 ---
 
@@ -596,4 +667,4 @@ Raw Data + GeoJSON
 
 ---
 
-*Last Updated: 2025-12-30*
+*Last Updated: 2025-12-31*

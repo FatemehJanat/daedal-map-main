@@ -2,38 +2,41 @@
 CIA World Factbook Converter
 
 Converts CIA World Factbook HTML data to standardized parquet format.
+Supports multiple editions with different HTML structures and field ID schemes.
 
-SOURCE TYPE: cia_factbook
-This is a multi-year source. Each factbook edition (2000-2024) can be processed.
-The factbook is published annually with data from the previous year.
+SPLIT SOURCES:
+    cia_unique  - 51 metrics NOT available in other sources (infrastructure, military, energy details)
+    cia_overlap - 27 metrics also available in OWID/WHO/IMF/SDG (for time series continuity)
 
-RAW DATA LOCATION:
-    county-map-data/Raw data/factbook-{year}/
+OUTPUT:
+    county-map-data/data/cia_unique/all_countries.parquet
+    county-map-data/data/cia_overlap/all_countries.parquet
 
-OUTPUT LOCATION (TBD - folder structure decision needed):
-    Option A: county-map-data/data/cia_factbook/all_countries.parquet (all years combined)
-    Option B: county-map-data/data/cia_factbook_{year}/all_countries.parquet (per edition)
-    Option C: county-map-data/data/cia_factbook/all_countries.parquet + year column (recommended)
+EDITION FORMAT DIFFERENCES:
+    | Edition | Format      | Field IDs        | Location              |
+    |---------|-------------|------------------|----------------------|
+    | 2000    | Text-based  | Descriptive names | fields/airports.html |
+    | 2005    | Table-based | 2xxx IDs          | rankorder/2119rank.html |
+    | 2010    | Table-based | 2xxx IDs          | fields/2119rank.html |
+    | 2015    | Table-based | 2xxx IDs          | fields/2119rank.html |
+    | 2020    | Modern HTML | 1xx-3xx IDs       | fields/335rank.html  |
 
-DATA OVERLAP CONSIDERATIONS:
-    CIA Factbook overlaps with several existing sources:
-    - Population: Also in OWID, Census (US), UN SDGs
-    - GDP: Also in OWID, IMF, World Bank
-    - Life expectancy: Also in WHO, OWID
-    - CO2 emissions: Also in OWID
+USAGE:
+    # Import unique metrics only (recommended first)
+    python convert_cia_factbook.py --editions 2000,2005,2010,2015,2020 --source-type unique --save
 
-    Trust hierarchy (suggested):
-    1. Specialized agencies (WHO for health, IMF for economics) - most authoritative
-    2. CIA Factbook - good coverage, consistent methodology, but secondary source
-    3. Aggregators (OWID) - convenient but third-hand
+    # Import overlap metrics
+    python convert_cia_factbook.py --editions 2000,2005,2010,2015,2020 --source-type overlap --save
 
-    CIA Factbook unique value:
-    - Comprehensive single-source coverage (same methodology across all countries)
-    - Many unique metrics (military spending, infrastructure, energy details)
-    - Historical editions allow time series reconstruction
+    # Dry run (default) - preview without saving
+    python convert_cia_factbook.py --editions 2020 --source-type unique --dry-run
 
-AVAILABLE METRICS (66 quantitative):
-    See METRICS dict below for full list with field IDs
+    # List metrics by type
+    python convert_cia_factbook.py --list-metrics
+
+METRICS:
+    51 UNIQUE: military, infrastructure, energy source %, oil/gas details, communications
+    27 OVERLAP: demographics, health, basic economy (GDP, trade), CO2 emissions
 """
 
 import os
@@ -52,6 +55,179 @@ from datetime import datetime
 RAW_DATA_BASE = r"C:\Users\Bryan\Desktop\county-map-data\Raw data"
 OUTPUT_BASE = r"C:\Users\Bryan\Desktop\county-map-data\data"
 GEOMETRY_FILE = r"C:\Users\Bryan\Desktop\county-map-data\geometry\global.csv"
+FIELD_MAPPINGS_FILE = os.path.join(os.path.dirname(__file__), 'cia_field_mappings.json')
+
+# Supported editions with their format types
+# Format types:
+#   'text' = descriptive filenames (population.html), text-based extraction
+#   'field_listing' = 2xxx IDs (2001.html), table without rank column
+#   'rankorder' = 2xxx IDs (2001rank.html) in rankorder/ folder
+#   'modern' = 1xx-3xx IDs (335rank.html) in fields/ folder
+EDITION_FORMATS = {
+    2000: 'text',           # fields/population.html
+    2001: 'text',           # fields/population.html
+    2002: 'field_listing',  # fields/2001.html (no rank column)
+    2003: 'rankorder',      # rankorder/2001rank.html
+    2004: 'rankorder',
+    2005: 'rankorder',
+    2006: 'rankorder',
+    2007: 'rankorder',
+    2008: 'rankorder',
+    2009: 'rankorder',
+    2010: 'rankorder',
+    2011: 'rankorder',
+    2012: 'rankorder',
+    2013: 'rankorder',
+    2014: 'rankorder',
+    2015: 'rankorder',
+    2016: 'rankorder',
+    2017: 'rankorder',
+    2018: 'modern',         # fields/335rank.html
+    2019: 'modern',
+    2020: 'modern',
+}
+
+# =============================================================================
+# METRIC CLASSIFICATION
+# =============================================================================
+
+# 51 UNIQUE metrics - NOT available in other data sources (OWID, WHO, IMF, UN SDG)
+UNIQUE_METRICS = [
+    # Infrastructure (5)
+    'airports',
+    'railways_km',
+    'roadways_km',
+    'waterways_km',
+    'merchant_marine',
+
+    # Military (1)
+    'military_expenditure_pct',
+
+    # Economy - Budgetary (4)
+    'budget_surplus_deficit',
+    'gini_index',
+    'gross_national_saving',
+    'taxes_revenue_pct_gdp',
+
+    # Economy - Banking (3)
+    'central_bank_discount_rate',
+    'commercial_bank_prime_rate',
+    'foreign_reserves',
+
+    # Economy - Financial Markets (6)
+    'market_value_traded_shares',
+    'stock_broad_money',
+    'stock_domestic_credit',
+    'stock_fdi_abroad',
+    'stock_fdi_at_home',
+    'stock_narrow_money',
+
+    # Economy - Industrial (1)
+    'industrial_production_growth',
+
+    # Energy - Oil (8)
+    'crude_oil_production',
+    'crude_oil_exports',
+    'crude_oil_imports',
+    'crude_oil_reserves',
+    'refined_petroleum_production',
+    'refined_petroleum_consumption',
+    'refined_petroleum_exports',
+    'refined_petroleum_imports',
+
+    # Energy - Natural Gas (5)
+    'natural_gas_production',
+    'natural_gas_consumption',
+    'natural_gas_exports',
+    'natural_gas_imports',
+    'natural_gas_reserves',
+
+    # Energy - Electricity source percentages (7)
+    'electricity_capacity',
+    'electricity_exports',
+    'electricity_imports',
+    'electricity_fossil_pct',
+    'electricity_nuclear_pct',
+    'electricity_hydro_pct',
+    'electricity_renewable_pct',
+
+    # Communications - verified unique (6)
+    'broadband_subscriptions',
+    'internet_users',
+    'internet_hosts',
+    'telephones_fixed',
+    'telephones_mobile',
+
+    # Demographics - verified unique (5)
+    'area_sq_km',
+    'median_age',
+    'net_migration_rate',
+    'labor_force',
+    'unemployment_rate',
+    'youth_unemployment',
+]
+
+# 27 OVERLAP metrics - also available in other data sources
+OVERLAP_METRICS = [
+    # Demographics - OWID/WHO (4)
+    'birth_rate',      # OWID/WHO
+    'death_rate',      # OWID/WHO
+    'fertility_rate',  # OWID/WHO
+    'life_expectancy', # WHO/OWID
+
+    # Demographics - OWID only (2)
+    'population',      # OWID
+    'pop_growth_rate', # OWID
+
+    # Health - WHO only (8)
+    'child_underweight',   # WHO
+    'health_expenditures', # WHO
+    'hiv_deaths',          # WHO
+    'hiv_living',          # WHO
+    'hiv_prevalence',      # WHO
+    'infant_mortality',    # WHO
+    'maternal_mortality',  # WHO
+    'obesity_rate',        # WHO
+
+    # Economy - IMF only (7)
+    'current_account_balance', # IMF
+    'exports',                 # IMF
+    'imports',                 # IMF
+    'external_debt',           # IMF
+    'gdp_ppp',                 # IMF
+    'inflation_rate',          # IMF
+    'public_debt_pct_gdp',     # IMF
+
+    # Economy - IMF/OWID (2)
+    'gdp_growth_rate',     # IMF/OWID
+    'gdp_per_capita_ppp',  # IMF/OWID
+
+    # Energy - OWID (3)
+    'co2_emissions',          # OWID
+    'electricity_production', # OWID
+    'electricity_consumption', # OWID
+
+    # Education - UN SDG (1)
+    'education_expenditure',  # UN SDG
+]
+
+
+def load_field_mappings() -> Dict[str, Dict[str, str]]:
+    """
+    Load field ID mappings from cia_field_mappings.json.
+
+    Returns:
+        Dict mapping metric_name -> {edition_year: field_id}
+    """
+    if not os.path.exists(FIELD_MAPPINGS_FILE):
+        print(f"Warning: Field mappings file not found at {FIELD_MAPPINGS_FILE}")
+        return {}
+
+    with open(FIELD_MAPPINGS_FILE, 'r', encoding='utf-8') as f:
+        mappings = json.load(f)
+
+    # Remove comment fields
+    return {k: v for k, v in mappings.items() if not k.startswith('_')}
 
 # Metrics available in rank files (field_id: metric_info)
 # Format: field_id -> (metric_name, unit, aggregation, description)
@@ -177,6 +353,27 @@ PRIORITY_METRICS = [
 
 
 # =============================================================================
+# FILE READING HELPERS
+# =============================================================================
+
+def read_html_file(file_path: str) -> Optional[str]:
+    """
+    Read an HTML file with encoding fallback.
+    Older factbook editions use Latin-1 or Windows-1252 encoding.
+
+    Returns:
+        File content as string, or None if file cannot be read
+    """
+    for encoding in ['utf-8', 'latin-1', 'cp1252']:
+        try:
+            with open(file_path, 'r', encoding=encoding) as f:
+                return f.read()
+        except UnicodeDecodeError:
+            continue
+    return None
+
+
+# =============================================================================
 # CIA CODE TO ISO3 MAPPING
 # =============================================================================
 
@@ -194,24 +391,57 @@ def build_cia_to_iso3_mapping(factbook_path: str) -> Dict[str, str]:
         print(f"Warning: appendix-d.html not found at {appendix_path}")
         return get_fallback_cia_mapping()
 
-    with open(appendix_path, 'r', encoding='utf-8') as f:
-        content = f.read()
+    content = read_html_file(appendix_path)
+    if content is None:
+        print(f"Warning: Could not decode appendix-d.html with any encoding")
+        return get_fallback_cia_mapping()
 
-    # Pattern to extract: geos link -> country name -> FIPS -> ISO2 -> ISO3 -> numeric
-    pattern = (
-        r"<a href='../geos/([a-z]+)\.html'>([^<]+)</a>.*?"
+    cia_to_iso3 = {}
+
+    # Method 1: 2010+ format - geos links with country code in href
+    # Pattern: <a href="../geos/xx.html">Country</a> ... FIPS ... ISO2 ... ISO3
+    pattern1 = (
+        r"<a href=['\"]\.{0,2}/?geos/([a-zA-Z]+)\.html['\"]>([^<]+)</a>.*?"
         r"<td[^>]*>([^<]*)</td>.*?"  # FIPS
         r"<td[^>]*>([^<]*)</td>.*?"  # ISO alpha-2
         r"<td[^>]*>([^<]*)</td>.*?"  # ISO alpha-3
         r"<td[^>]*>([^<]*)</td>"     # ISO numeric
     )
 
-    matches = re.findall(pattern, content, re.DOTALL)
-
-    cia_to_iso3 = {}
+    matches = re.findall(pattern1, content, re.DOTALL | re.IGNORECASE)
     for cia, name, fips, iso2, iso3, numeric in matches:
         if iso3 and iso3.strip() != '-':
             cia_to_iso3[cia.upper()] = iso3.strip()
+
+    # Method 2: 2005-2009 format - country name in <b>, FIPS in next td, ISO3 in later td
+    # Pattern: <b>Country</b></td><td>FIPS</td><td>ISO2</td><td>ISO3</td>
+    if not cia_to_iso3:
+        pattern2 = (
+            r"<td[^>]*><b>([^<]+)</b></td>\s*"
+            r"<td[^>]*>([A-Z]{2})</td>\s*"    # FIPS (this is also CIA code)
+            r"<td[^>]*>([A-Z]{2})</td>\s*"    # ISO alpha-2
+            r"<td[^>]*>([A-Z]{3})</td>"       # ISO alpha-3
+        )
+
+        matches = re.findall(pattern2, content, re.DOTALL)
+        for name, fips, iso2, iso3 in matches:
+            if fips and iso3:
+                cia_to_iso3[fips.upper()] = iso3.strip()
+
+    # Method 3: 2002-2004 format - values in <p> tags inside <td>
+    # Pattern: <p><b>Country</b></p></td><td><p>FIPS</p></td><td><p>ISO2</p></td><td><p>ISO3</p></td>
+    if not cia_to_iso3:
+        pattern3 = (
+            r"<td[^>]*>\s*<p><b>([^<]+)</b></p>\s*</td>\s*"
+            r"<td[^>]*>\s*<p>([A-Z]{2})</p>\s*</td>\s*"    # FIPS
+            r"<td[^>]*>\s*<p>([A-Z]{2})</p>\s*</td>\s*"    # ISO alpha-2
+            r"<td[^>]*>\s*<p>([A-Z]{3})</p>"               # ISO alpha-3
+        )
+
+        matches = re.findall(pattern3, content, re.DOTALL)
+        for name, fips, iso2, iso3 in matches:
+            if fips and iso3:
+                cia_to_iso3[fips.upper()] = iso3.strip()
 
     print(f"Built CIA->ISO3 mapping with {len(cia_to_iso3)} entries")
     return cia_to_iso3
@@ -219,14 +449,42 @@ def build_cia_to_iso3_mapping(factbook_path: str) -> Dict[str, str]:
 
 def get_fallback_cia_mapping() -> Dict[str, str]:
     """
-    Fallback hardcoded mapping for common countries.
-    Used if appendix-d.html parsing fails.
+    Complete CIA 2-letter code to ISO3 mapping.
+    Used as fallback when appendix-d.html is missing (2000-2001 editions).
+    Extracted from 2020 edition's appendix-d.html.
     """
     return {
-        'US': 'USA', 'CA': 'CAN', 'MX': 'MEX', 'UK': 'GBR', 'FR': 'FRA',
-        'GM': 'DEU', 'IT': 'ITA', 'SP': 'ESP', 'JA': 'JPN', 'CH': 'CHN',
-        'IN': 'IND', 'RS': 'RUS', 'BR': 'BRA', 'AS': 'AUS', 'SF': 'ZAF',
-        # Add more as needed
+        'AA': 'ABW', 'AC': 'ATG', 'AE': 'ARE', 'AF': 'AFG', 'AG': 'DZA', 'AJ': 'AZE', 'AL': 'ALB', 'AM': 'ARM',
+        'AN': 'AND', 'AO': 'AGO', 'AQ': 'ASM', 'AR': 'ARG', 'AS': 'AUS', 'AU': 'AUT', 'AV': 'AIA', 'AY': 'ATA',
+        'BA': 'BHR', 'BB': 'BRB', 'BC': 'BWA', 'BD': 'BMU', 'BE': 'BEL', 'BF': 'BHS', 'BG': 'BGD', 'BH': 'BLZ',
+        'BK': 'BIH', 'BL': 'BOL', 'BM': 'MMR', 'BN': 'BEN', 'BO': 'BLR', 'BP': 'SLB', 'BR': 'BRA', 'BT': 'BTN',
+        'BU': 'BGR', 'BV': 'BVT', 'BX': 'BRN', 'BY': 'BDI', 'CA': 'CAN', 'CB': 'KHM', 'CD': 'TCD', 'CE': 'LKA',
+        'CF': 'COG', 'CG': 'COD', 'CH': 'CHN', 'CI': 'CHL', 'CJ': 'CYM', 'CK': 'CCK', 'CM': 'CMR', 'CN': 'COM',
+        'CO': 'COL', 'CQ': 'MNP', 'CS': 'CRI', 'CT': 'CAF', 'CU': 'CUB', 'CV': 'CPV', 'CW': 'COK', 'CY': 'CYP',
+        'DA': 'DNK', 'DJ': 'DJI', 'DO': 'DMA', 'DR': 'DOM', 'EC': 'ECU', 'EG': 'EGY', 'EI': 'IRL', 'EK': 'GNQ',
+        'EN': 'EST', 'ER': 'ERI', 'ES': 'SLV', 'ET': 'ETH', 'EZ': 'CZE', 'FG': 'GUF', 'FI': 'FIN', 'FJ': 'FJI',
+        'FK': 'FLK', 'FM': 'FSM', 'FO': 'FRO', 'FP': 'PYF', 'FR': 'FRA', 'FS': 'ATF', 'GA': 'GMB', 'GB': 'GAB',
+        'GG': 'GEO', 'GH': 'GHA', 'GI': 'GIB', 'GJ': 'GRD', 'GK': 'GGY', 'GL': 'GRL', 'GM': 'DEU', 'GP': 'GLP',
+        'GQ': 'GUM', 'GR': 'GRC', 'GT': 'GTM', 'GV': 'GIN', 'GY': 'GUY', 'GZ': 'PSE', 'HA': 'HTI', 'HK': 'HKG',
+        'HM': 'HMD', 'HO': 'HND', 'HR': 'HRV', 'HU': 'HUN', 'IC': 'ISL', 'ID': 'IDN', 'IM': 'IMN', 'IN': 'IND',
+        'IO': 'IOT', 'IR': 'IRN', 'IS': 'ISR', 'IT': 'ITA', 'IV': 'CIV', 'IZ': 'IRQ', 'JA': 'JPN', 'JE': 'JEY',
+        'JM': 'JAM', 'JO': 'JOR', 'KE': 'KEN', 'KG': 'KGZ', 'KN': 'PRK', 'KR': 'KIR', 'KS': 'KOR', 'KT': 'CXR',
+        'KU': 'KWT', 'KV': 'XKS', 'KZ': 'KAZ', 'LA': 'LAO', 'LE': 'LBN', 'LG': 'LVA', 'LH': 'LTU', 'LI': 'LBR',
+        'LO': 'SVK', 'LS': 'LIE', 'LT': 'LSO', 'LU': 'LUX', 'LY': 'LBY', 'MA': 'MDG', 'MB': 'MTQ', 'MC': 'MAC',
+        'MD': 'MDA', 'MF': 'MYT', 'MG': 'MNG', 'MH': 'MSR', 'MI': 'MWI', 'MJ': 'MNE', 'MK': 'MKD', 'ML': 'MLI',
+        'MN': 'MCO', 'MO': 'MAR', 'MP': 'MUS', 'MR': 'MRT', 'MT': 'MLT', 'MU': 'OMN', 'MV': 'MDV', 'MX': 'MEX',
+        'MY': 'MYS', 'MZ': 'MOZ', 'NC': 'NCL', 'NE': 'NIU', 'NF': 'NFK', 'NG': 'NER', 'NH': 'VUT', 'NI': 'NGA',
+        'NL': 'NLD', 'NN': 'SXM', 'NO': 'NOR', 'NP': 'NPL', 'NR': 'NRU', 'NS': 'SUR', 'NU': 'NIC', 'NZ': 'NZL',
+        'OD': 'SSD', 'PA': 'PRY', 'PC': 'PCN', 'PE': 'PER', 'PK': 'PAK', 'PL': 'POL', 'PM': 'PAN', 'PO': 'PRT',
+        'PP': 'PNG', 'PS': 'PLW', 'PU': 'GNB', 'QA': 'QAT', 'RE': 'REU', 'RI': 'SRB', 'RM': 'MHL', 'RN': 'MAF',
+        'RO': 'ROU', 'RP': 'PHL', 'RQ': 'PRI', 'RS': 'RUS', 'RW': 'RWA', 'SA': 'SAU', 'SB': 'SPM', 'SC': 'KNA',
+        'SE': 'SYC', 'SF': 'ZAF', 'SG': 'SEN', 'SH': 'SHN', 'SI': 'SVN', 'SL': 'SLE', 'SM': 'SMR', 'SN': 'SGP',
+        'SO': 'SOM', 'SP': 'ESP', 'ST': 'LCA', 'SU': 'SDN', 'SV': 'SJM', 'SW': 'SWE', 'SX': 'SGS', 'SY': 'SYR',
+        'SZ': 'CHE', 'TB': 'BLM', 'TD': 'TTO', 'TH': 'THA', 'TI': 'TJK', 'TK': 'TCA', 'TL': 'TKL', 'TN': 'TON',
+        'TO': 'TGO', 'TP': 'STP', 'TS': 'TUN', 'TT': 'TLS', 'TU': 'TUR', 'TV': 'TUV', 'TW': 'TWN', 'TX': 'TKM',
+        'TZ': 'TZA', 'UC': 'CUW', 'UG': 'UGA', 'UK': 'GBR', 'UP': 'UKR', 'US': 'USA', 'UV': 'BFA', 'UY': 'URY',
+        'UZ': 'UZB', 'VC': 'VCT', 'VE': 'VEN', 'VI': 'VGB', 'VM': 'VNM', 'VQ': 'VIR', 'VT': 'VAT', 'WA': 'NAM',
+        'WE': 'PSE', 'WF': 'WLF', 'WI': 'ESH', 'WS': 'WSM', 'WZ': 'SWZ', 'YM': 'YEM', 'ZA': 'ZMB', 'ZI': 'ZWE',
     }
 
 
@@ -253,11 +511,18 @@ def parse_value(value_str: str) -> Optional[float]:
     # Clean the string
     s = value_str.strip()
 
+    # Remove year in parentheses BEFORE removing parentheses
+    # Patterns: "(2001 est.)" or "(July 2002 est.)" or "(2001)" or "(est.)"
+    s = re.sub(r'\s*\([A-Za-z]*\s*\d{4}[^)]*\)', '', s)  # "(July 2002 est.)" or "(2002 est.)"
+    s = re.sub(r'\s*\(est\.?\s*\)', '', s)  # "(est.)" or "(est)"
+
+    # Check for negative BEFORE removing parentheses
+    # Accounting convention: (500) means -500, but "46 (2001 est.)" is positive
+    # Only treat as negative if value STARTS with '(' followed by number/currency
+    is_negative = s.startswith('-') or bool(re.match(r'^\s*\(\s*[\$\d]', s))
+
     # Remove currency symbols and parentheses
     s = re.sub(r'[\$\(\)]', '', s)
-
-    # Check for negative (sometimes in parentheses)
-    is_negative = s.startswith('-') or '(' in value_str
     s = s.lstrip('-')
 
     # Handle multipliers
@@ -275,21 +540,31 @@ def parse_value(value_str: str) -> Optional[float]:
             s = re.sub(pattern, '', s, flags=re.IGNORECASE)
             break
 
-    # Remove commas and whitespace
-    s = re.sub(r'[,\s]', '', s)
-
     # Remove percent sign (keep the number)
     s = s.rstrip('%')
 
-    # Remove any remaining non-numeric characters except decimal point and minus
-    s = re.sub(r'[^\d.\-]', '', s)
+    # Extract numeric portion - find the main number, ignoring separator dashes
+    # First try to find a number preceded by $ or space or start (these can be negative)
+    # Pattern: optional minus, then digits with optional decimal
+    num_match = re.search(r'(?:^|[\s\$])(-?[\d,]+\.?\d*)', s)
+    if num_match:
+        s = num_match.group(1)
+    else:
+        # Fallback: just find any number (without negative)
+        num_match = re.search(r'[\d,]+\.?\d*', s)
+        if not num_match:
+            return None
+        s = num_match.group()
 
-    if not s:
-        return None
+    # Clean up commas
+    s = s.replace(',', '')
 
     try:
         value = float(s) * multiplier
-        return -value if is_negative else value
+        # Apply is_negative only if the extracted number isn't already negative
+        if is_negative and value > 0:
+            value = -value
+        return value
     except ValueError:
         return None
 
@@ -308,37 +583,65 @@ def parse_year(year_str: str) -> Optional[int]:
 
 
 # =============================================================================
-# DATA EXTRACTION
+# EDITION-SPECIFIC EXTRACTION
 # =============================================================================
 
-def extract_rank_data(factbook_path: str, field_id: str, cia_to_iso3: Dict[str, str], default_year: int = None) -> List[dict]:
+def find_rank_file(factbook_path: str, field_id: str, edition_year: int) -> Optional[str]:
     """
-    Extract data from a rank file.
+    Find the data file for a given field ID and edition.
 
-    Args:
-        factbook_path: Path to factbook directory
-        field_id: The field ID (e.g., '335' for population)
-        cia_to_iso3: Mapping from CIA codes to ISO3
-        default_year: Year to use when not specified in data (factbook_year - 1)
-
-    Returns:
-        List of dicts with keys: loc_id, year, value
+    Different editions store files in different locations:
+    - 2000-2001 (text): fields/{descriptive_name}.html (e.g., population.html)
+    - 2002 (field_listing): fields/{id}.html (e.g., 2001.html - no 'rank' suffix)
+    - 2003-2017 (rankorder): rankorder/{id}rank.html (e.g., 2001rank.html)
+    - 2018-2020 (modern): fields/{id}rank.html (e.g., 335rank.html)
     """
-    rank_file = os.path.join(factbook_path, 'fields', f'{field_id}rank.html')
+    edition_format = EDITION_FORMATS.get(edition_year, 'rankorder')
 
-    if not os.path.exists(rank_file):
+    if edition_format == 'text':
+        # 2000-2001: descriptive filenames like "population.html"
+        if field_id.endswith('.html'):
+            text_path = os.path.join(factbook_path, 'fields', field_id)
+            if os.path.exists(text_path):
+                return text_path
+
+    elif edition_format == 'field_listing':
+        # 2002: 2xxx IDs without 'rank' suffix
+        field_path = os.path.join(factbook_path, 'fields', f'{field_id}.html')
+        if os.path.exists(field_path):
+            return field_path
+
+    elif edition_format == 'rankorder':
+        # 2003-2017: rankorder folder with 'rank' suffix
+        rankorder_path = os.path.join(factbook_path, 'rankorder', f'{field_id}rank.html')
+        if os.path.exists(rankorder_path):
+            return rankorder_path
+
+    elif edition_format == 'modern':
+        # 2018-2020: fields folder with 'rank' suffix
+        fields_path = os.path.join(factbook_path, 'fields', f'{field_id}rank.html')
+        if os.path.exists(fields_path):
+            return fields_path
+
+    return None
+
+
+def extract_data_2020(file_path: str, cia_to_iso3: Dict[str, str], default_year: int = None) -> List[dict]:
+    """
+    Extract data from 2020 format rank files.
+
+    HTML pattern:
+    <tr id="US" class='rankorder north-america'>
+      <td>23</td>
+      <td class='region'><a href='../geos/us.html'>United States</a></td>
+      <td>$55,761</td>
+      <td>2019 est.</td>
+    </tr>
+    """
+    content = read_html_file(file_path)
+    if content is None:
+        print(f"Warning: Could not read {file_path}")
         return []
-
-    with open(rank_file, 'r', encoding='utf-8') as f:
-        content = f.read()
-
-    # Pattern to match table rows
-    # <tr id="US" class='rankorder north-america'>
-    #   <td scope='row'>23</td>
-    #   <td class='region'><a href='../geos/us.html'>United States</a></td>
-    #   <td>$55,761</td>
-    #   <td>2019 est.</td>
-    # </tr>
 
     pattern = (
         r"<tr id=\"([A-Z]+)\"[^>]*>.*?"
@@ -359,7 +662,6 @@ def extract_rank_data(factbook_path: str, field_id: str, cia_to_iso3: Dict[str, 
         value = parse_value(value_str)
         year = parse_year(year_str)
 
-        # Use default year if year not specified in data
         if year is None and default_year is not None:
             year = default_year
 
@@ -375,45 +677,425 @@ def extract_rank_data(factbook_path: str, field_id: str, cia_to_iso3: Dict[str, 
     return results
 
 
-def extract_all_metrics(factbook_path: str, metric_ids: List[str] = None, factbook_year: int = None) -> pd.DataFrame:
+def extract_data_2003_2017(file_path: str, cia_to_iso3: Dict[str, str], default_year: int = None) -> List[dict]:
+    """
+    Extract data from 2003-2017 format rank files (rankorder folder).
+
+    These editions have table structure with rank column.
+    Format varies by year:
+    - 2003-2009: Simple tr/td structure
+    - 2010-2017: Each country in separate <table id="xx"> container
+    """
+    content = read_html_file(file_path)
+    if content is None:
+        print(f"Warning: Could not read {file_path}")
+        return []
+
+    results = []
+
+    # Method 1: Try table-per-country format (2010-2017)
+    # Each country is in: <table id="xx">...</table>
+    table_pattern = r'<table[^>]*id="([a-z]{2})"[^>]*>(.*?)</table>'
+    tables = re.findall(table_pattern, content, re.DOTALL | re.IGNORECASE)
+
+    if len(tables) > 50:  # This format typically has 200+ tables
+        for cia_code_lower, table_html in tables:
+            cia_code = cia_code_lower.upper()
+            iso3 = cia_to_iso3.get(cia_code)
+            if not iso3:
+                continue
+
+            # Extract rank (look for currentRow class or just a number in first td)
+            rank_match = re.search(r'class="currentRow"[^>]*>\s*(\d+)\s*<', table_html)
+            if not rank_match:
+                rank_match = re.search(r'<td[^>]*>\s*(\d+)\s*</td>', table_html)
+            rank = int(rank_match.group(1)) if rank_match else None
+
+            # Extract country name
+            name_match = re.search(r'geos/' + cia_code_lower + r'\.html[^>]*>(?:<strong>)?([^<]+)', table_html, re.IGNORECASE)
+            country_name = name_match.group(1).strip() if name_match else cia_code
+
+            # Extract value (look for numbers in category_data or just large numbers)
+            value_match = re.search(r'category_data[^>]*>.*?([\d,]+(?:\.\d+)?)\s*<', table_html, re.DOTALL)
+            if not value_match:
+                value_match = re.search(r'>\s*\$?\s*([\d,]+(?:\.\d+)?)\s*<', table_html)
+            value_str = value_match.group(1) if value_match else None
+
+            # Extract year
+            year_match = re.search(r'(\d{4})\s*est\.', table_html, re.IGNORECASE)
+            year = int(year_match.group(1)) if year_match else default_year
+
+            if value_str:
+                value = parse_value(value_str)
+                if value is not None and year is not None:
+                    results.append({
+                        'loc_id': iso3,
+                        'year': year,
+                        'value': value,
+                        'rank': rank,
+                        'country_name': country_name
+                    })
+
+    # Method 2: Try 2009 format with nested divs (class="currentRow" for rank)
+    if not results:
+        # 2009 format: <td class="currentRow">1</td> ... <td class="category_data"><div>value</div></td>
+        pattern = (
+            r'<td[^>]*class="currentRow"[^>]*>\s*(\d+)\s*</td>\s*'  # rank
+            r'<td[^>]*class="region"[^>]*>.*?<a[^>]*geos/([a-z]+)\.html[^>]*>.*?([^<]+)</a>.*?</td>\s*'  # country
+            r'<td[^>]*class="category_data"[^>]*>.*?>([\d,.\s]+)<.*?</td>\s*'  # value (inside div)
+            r'<td[^>]*>.*?class="category_data"[^>]*>(\d{4})</span>'  # year
+        )
+        matches = re.findall(pattern, content, re.DOTALL | re.IGNORECASE)
+
+        for rank_str, cia_code_lower, country_name, value_str, year_str in matches:
+            cia_code = cia_code_lower.upper()
+            iso3 = cia_to_iso3.get(cia_code)
+            if not iso3:
+                continue
+
+            value = parse_value(value_str.strip())
+            year = int(year_str) if year_str.isdigit() else default_year
+
+            if value is not None and year is not None:
+                results.append({
+                    'loc_id': iso3,
+                    'year': year,
+                    'value': value,
+                    'rank': int(rank_str),
+                    'country_name': country_name.strip()
+                })
+
+    # Method 3: Line-by-line parsing for 2003-2009 (avoids regex backtracking)
+    if not results:
+        # Find all country links and their surrounding context
+        country_pattern = r'geos/([a-z]{2})\.html[^>]*>(?:<strong>)?([^<]+)'
+        value_pattern = r'category_data[^>]*>(?:<div[^>]*>)?\s*([\d,.\s]+)\s*(?:</div>)?</td>'
+        year_pattern = r'(\d{4})\s*(?:est\.?)?'
+        rank_pattern = r'class="currentRow"[^>]*>\s*(\d+)'
+
+        # Split content into rows
+        rows = re.split(r'<tr[^>]*>', content, flags=re.IGNORECASE)
+
+        for row in rows:
+            # Find country code
+            country_match = re.search(country_pattern, row, re.IGNORECASE)
+            if not country_match:
+                continue
+
+            cia_code = country_match.group(1).upper()
+            iso3 = cia_to_iso3.get(cia_code)
+            if not iso3:
+                continue
+
+            country_name = country_match.group(2).strip()
+
+            # Find rank
+            rank_match = re.search(rank_pattern, row)
+            rank = int(rank_match.group(1)) if rank_match else None
+
+            # Find value
+            value_match = re.search(value_pattern, row, re.IGNORECASE)
+            if not value_match:
+                # Try simpler pattern
+                value_match = re.search(r'>\s*([\d,]+(?:\.\d+)?)\s*<', row)
+            value_str = value_match.group(1) if value_match else None
+
+            # Find year
+            year_match = re.search(year_pattern, row)
+            year = int(year_match.group(1)) if year_match else default_year
+
+            if value_str:
+                value = parse_value(value_str.strip())
+                if value is not None and year is not None:
+                    results.append({
+                        'loc_id': iso3,
+                        'year': year,
+                        'value': value,
+                        'rank': rank,
+                        'country_name': country_name
+                    })
+
+    return results
+
+
+def extract_data_2002_field_listing(file_path: str, cia_to_iso3: Dict[str, str], default_year: int = None) -> List[dict]:
+    """
+    Extract data from 2002 field listing format (no rank column).
+
+    HTML pattern:
+    <tr>
+      <td valign=top><a href="../geos/us.html" class="CountryLink">United States</a></td>
+      <td class="Normal">purchasing power parity - $10.082 trillion (2001 est.)</td>
+    </tr>
+
+    Uses row-by-row parsing to avoid regex catastrophic backtracking on large files.
+    """
+    content = read_html_file(file_path)
+    if content is None:
+        print(f"Warning: Could not read {file_path}")
+        return []
+
+    results = []
+    rank = 0
+
+    # Split into rows to avoid catastrophic backtracking with .*? and DOTALL
+    rows = re.split(r'<tr[^>]*>', content, flags=re.IGNORECASE)
+
+    # Pattern to find country link and value in each row
+    country_pattern = r"geos/([a-zA-Z]{2})\.html['\"][^>]*>([^<]+)</a>"
+    value_pattern = r"<td[^>]*class=['\"]Normal['\"][^>]*>\s*([^<]+?)\s*</td>"
+
+    for row in rows:
+        # Find country link
+        country_match = re.search(country_pattern, row, re.IGNORECASE)
+        if not country_match:
+            continue
+
+        cia_code = country_match.group(1).upper()
+        country_name = country_match.group(2).strip()
+
+        # Find value in "Normal" class cell
+        value_match = re.search(value_pattern, row, re.IGNORECASE | re.DOTALL)
+        if not value_match:
+            # Try alternate pattern without class
+            value_match = re.search(r"</a>\s*</td>\s*<td[^>]*>\s*([^<]+?)\s*</td>", row, re.IGNORECASE | re.DOTALL)
+
+        if not value_match:
+            continue
+
+        value_text = value_match.group(1).strip()
+
+        iso3 = cia_to_iso3.get(cia_code)
+        if not iso3:
+            continue
+
+        # Parse value and year from combined text like "purchasing power parity - $10.082 trillion (2001 est.)"
+        value = parse_value(value_text)
+        year = parse_year(value_text)
+
+        if year is None and default_year is not None:
+            year = default_year
+
+        if value is not None and year is not None:
+            rank += 1
+            results.append({
+                'loc_id': iso3,
+                'year': year,
+                'value': value,
+                'rank': rank,
+                'country_name': country_name
+            })
+
+    return results
+
+
+def extract_data_2000_text(file_path: str, cia_to_iso3: Dict[str, str], default_year: int = None) -> List[dict]:
+    """
+    Extract data from 2000 edition text-based format.
+
+    The 2000 edition uses a very different format with text paragraphs.
+    Pattern: <p><b>CountryName:</b><br>Value (year est.)
+
+    Need to build country name to code mapping from geos folder.
+    """
+    content = read_html_file(file_path)
+    if content is None:
+        print(f"Warning: Could not read {file_path}")
+        return []
+
+    # Build name to code mapping for this edition
+    factbook_path = os.path.dirname(os.path.dirname(file_path))
+    name_to_iso3 = build_name_to_iso3_mapping(factbook_path, cia_to_iso3)
+
+    # Try multiple patterns for 2000-2001 formats
+    # 2000 format: <b>CountryName:</b><br>Value
+    pattern_2000 = r"<b>([^<:]+):</b>\s*<br>\s*([^<]+)"
+    # 2001 format: <b>CountryName:</b></font></td><td...><font...>Value
+    pattern_2001 = r"<b>([^<:]+):</b></font></td>\s*<td[^>]*><font[^>]*>\s*([^<]+)"
+
+    matches = re.findall(pattern_2000, content, re.IGNORECASE)
+    if not matches:
+        matches = re.findall(pattern_2001, content, re.IGNORECASE)
+
+    results = []
+    rank = 0
+    for country_name, value_text in matches:
+        country_name = country_name.strip()
+        value_text = value_text.strip()
+
+        # Look up ISO3 code
+        iso3 = name_to_iso3.get(country_name.lower())
+        if not iso3:
+            # Try partial match
+            for name, code in name_to_iso3.items():
+                if country_name.lower() in name or name in country_name.lower():
+                    iso3 = code
+                    break
+        if not iso3:
+            continue
+
+        # Parse value and year from text like "1,330,141,295 (2008 est.)"
+        value = parse_value(value_text)
+        year = parse_year(value_text)
+
+        if year is None and default_year is not None:
+            year = default_year
+
+        if value is not None and year is not None:
+            rank += 1
+            results.append({
+                'loc_id': iso3,
+                'year': year,
+                'value': value,
+                'rank': rank,
+                'country_name': country_name
+            })
+
+    return results
+
+
+def build_name_to_iso3_mapping(factbook_path: str, cia_to_iso3: Dict[str, str]) -> Dict[str, str]:
+    """
+    Build mapping from country names to ISO3 codes.
+    Used for 2000 edition which doesn't have codes in data files.
+    """
+    geos_path = os.path.join(factbook_path, 'geos')
+    name_to_iso3 = {}
+
+    if not os.path.exists(geos_path):
+        return name_to_iso3
+
+    for filename in os.listdir(geos_path):
+        if filename.endswith('.html'):
+            cia_code = filename[:-5].upper()  # Remove .html
+            iso3 = cia_to_iso3.get(cia_code)
+            if not iso3:
+                continue
+
+            # Read the geo file to get country name
+            geo_file = os.path.join(geos_path, filename)
+            try:
+                with open(geo_file, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                    # Look for country name in title or header
+                    title_match = re.search(r'<title>([^<]+)</title>', content, re.IGNORECASE)
+                    if title_match:
+                        title = title_match.group(1).strip()
+                        # Title formats:
+                        # 2000: "CIA -- The World Factbook 2000 -- Afghanistan"
+                        # Later: "Country Name - The World Factbook"
+                        if '--' in title:
+                            # Extract country name after last "--"
+                            name = title.split('--')[-1].strip()
+                        else:
+                            # Clean up common suffixes
+                            name = re.sub(r'\s*-?\s*the world factbook.*', '', title, flags=re.IGNORECASE)
+                        name = re.sub(r'\s*\(.*\)', '', name).strip()
+                        if name and name.lower() not in ['cia', '']:
+                            name_to_iso3[name.lower()] = iso3
+            except:
+                pass
+
+    return name_to_iso3
+
+
+def extract_rank_data(factbook_path: str, field_id: str, cia_to_iso3: Dict[str, str],
+                      edition_year: int, default_year: int = None) -> List[dict]:
+    """
+    Extract data from a rank file using edition-appropriate parser.
+
+    Args:
+        factbook_path: Path to factbook directory
+        field_id: The field ID (e.g., '335' for 2020, '2119' for 2003-2017)
+        cia_to_iso3: Mapping from CIA codes to ISO3
+        edition_year: The factbook edition year (determines parser)
+        default_year: Year to use when not specified in data
+
+    Returns:
+        List of dicts with keys: loc_id, year, value, rank, country_name
+    """
+    # Find the data file (different locations per edition)
+    data_file = find_rank_file(factbook_path, field_id, edition_year)
+
+    if not data_file:
+        return []
+
+    # Use edition-appropriate parser
+    edition_format = EDITION_FORMATS.get(edition_year, 'rankorder')
+
+    if edition_format == 'text':
+        return extract_data_2000_text(data_file, cia_to_iso3, default_year)
+    elif edition_format == 'field_listing':
+        return extract_data_2002_field_listing(data_file, cia_to_iso3, default_year)
+    elif edition_format == 'rankorder':
+        return extract_data_2003_2017(data_file, cia_to_iso3, default_year)
+    elif edition_format == 'modern':
+        return extract_data_2020(data_file, cia_to_iso3, default_year)
+    else:
+        return []
+
+
+def extract_all_metrics(factbook_path: str, metric_names: List[str] = None,
+                        factbook_year: int = None, field_mappings: Dict = None) -> pd.DataFrame:
     """
     Extract all specified metrics from a factbook edition.
 
     Args:
         factbook_path: Path to factbook directory
-        metric_ids: List of field IDs to extract (None = all available)
-        factbook_year: Edition year (used as default when data doesn't specify year)
+        metric_names: List of metric names to extract (None = all mapped metrics)
+        factbook_year: Edition year (determines field IDs and parser)
+        field_mappings: Field ID mappings across editions (loaded from JSON)
 
     Returns:
         DataFrame with columns: loc_id, year, [metric columns]
     """
     cia_to_iso3 = build_cia_to_iso3_mapping(factbook_path)
 
-    if metric_ids is None:
-        metric_ids = list(METRICS.keys())
+    # Load field mappings if not provided
+    if field_mappings is None:
+        field_mappings = load_field_mappings()
 
-    # Default year for data without explicit year (factbook typically has prior year data)
-    # Use factbook_year - 1 as a reasonable default
+    # Use all mapped metrics if not specified
+    if metric_names is None:
+        metric_names = list(field_mappings.keys())
+
+    # Default year for data without explicit year
     default_year = (factbook_year - 1) if factbook_year else None
+    edition_key = str(factbook_year)
 
     # Collect all data by loc_id and year
     all_data = {}  # (loc_id, year) -> {metric: value}
+    metrics_found = 0
+    metrics_missing = 0
 
-    for field_id in metric_ids:
-        if field_id not in METRICS:
-            print(f"Warning: Unknown field ID {field_id}")
+    for metric_name in metric_names:
+        if metric_name not in field_mappings:
+            print(f"  Warning: No mapping for metric '{metric_name}'")
             continue
 
-        metric_name = METRICS[field_id][0]
+        # Get field ID for this edition
+        field_id = field_mappings[metric_name].get(edition_key)
+        if not field_id:
+            metrics_missing += 1
+            continue
+
         print(f"  Extracting {metric_name} (field {field_id})...")
 
-        rows = extract_rank_data(factbook_path, field_id, cia_to_iso3, default_year=default_year)
+        rows = extract_rank_data(
+            factbook_path, field_id, cia_to_iso3,
+            edition_year=factbook_year, default_year=default_year
+        )
+
+        if rows:
+            metrics_found += 1
 
         for row in rows:
             key = (row['loc_id'], row['year'])
             if key not in all_data:
                 all_data[key] = {}
             all_data[key][metric_name] = row['value']
+
+    print(f"  Found {metrics_found} metrics, {metrics_missing} not available for {factbook_year}")
 
     # Convert to DataFrame
     records = []
@@ -513,37 +1195,86 @@ def extract_languages(factbook_path: str, cia_to_iso3: Dict[str, str]) -> pd.Dat
 # METADATA GENERATION
 # =============================================================================
 
-def create_metadata(factbook_year: int, df: pd.DataFrame, extracted_metrics: List[str]) -> dict:
-    """Create metadata.json for a factbook extraction."""
+def create_metadata(df: pd.DataFrame, editions: List[int] = None, source_id: str = 'cia_factbook') -> dict:
+    """Create metadata.json for a combined factbook extraction."""
 
+    # Build metric definitions from columns in dataframe
     metric_definitions = {}
-    for field_id in extracted_metrics:
-        if field_id in METRICS:
-            name, unit, agg, desc = METRICS[field_id]
-            metric_definitions[name] = {
-                'name': desc,
-                'unit': unit,
-                'aggregation': agg,
-                'cia_field_id': field_id
-            }
+    metric_cols = [c for c in df.columns if c not in ['loc_id', 'year', 'factbook_edition']]
+
+    for metric_name in metric_cols:
+        # Find matching metric info from METRICS dict
+        unit = 'unknown'
+        agg = 'avg'
+        desc = metric_name.replace('_', ' ').title()
+
+        for field_id, (name, m_unit, m_agg, m_desc) in METRICS.items():
+            if name == metric_name:
+                unit = m_unit
+                agg = m_agg
+                desc = m_desc
+                break
+
+        metric_definitions[metric_name] = {
+            'name': desc,
+            'unit': unit,
+            'aggregation': agg
+        }
 
     # Get year range from data
     years = df['year'].dropna().unique()
-    year_start = int(min(years)) if len(years) > 0 else factbook_year - 1
-    year_end = int(max(years)) if len(years) > 0 else factbook_year - 1
+    year_start = int(min(years)) if len(years) > 0 else 1999
+    year_end = int(max(years)) if len(years) > 0 else 2019
+
+    edition_str = ', '.join(str(e) for e in sorted(editions)) if editions else 'multiple'
+
+    # Source-specific metadata
+    if source_id == 'cia_unique':
+        source_name = 'CIA World Factbook - Unique Metrics'
+        description = f'Unique CIA Factbook metrics not available elsewhere (infrastructure, military, energy details). Editions: {edition_str}'
+        topic_tags = ['infrastructure', 'military', 'energy', 'oil', 'gas', 'communications']
+        data_notes = {
+            'type': 'unique',
+            'note': 'These 51 metrics are NOT available in other data sources (OWID, WHO, IMF, UN SDG)',
+            'categories': ['infrastructure', 'military', 'oil/gas', 'electricity sources', 'banking', 'financial markets']
+        }
+    elif source_id == 'cia_overlap':
+        source_name = 'CIA World Factbook - Overlap Metrics'
+        description = f'CIA Factbook metrics also available in other sources (for time series continuity). Editions: {edition_str}'
+        topic_tags = ['demographics', 'health', 'economy', 'gdp', 'trade']
+        data_notes = {
+            'type': 'overlap',
+            'note': 'These 27 metrics overlap with OWID, WHO, IMF, or UN SDG. Use for historical continuity.',
+            'primary_sources': {
+                'demographics': 'OWID, WHO',
+                'health': 'WHO',
+                'economy': 'IMF',
+                'energy': 'OWID',
+                'education': 'UN SDG'
+            }
+        }
+    else:
+        source_name = 'CIA World Factbook'
+        description = f'CIA World Factbook combined data from editions: {edition_str}'
+        topic_tags = ['demographics', 'economy', 'energy', 'infrastructure', 'military', 'health']
+        data_notes = {
+            'overlap_with': ['owid_co2 (GDP, population, CO2)', 'who_health (life expectancy)', 'imf_bop (trade)'],
+            'unique_metrics': ['military expenditure', 'infrastructure (airports, railways)', 'energy source percentages'],
+            'methodology': 'CIA compiles from multiple sources; values may differ from primary sources'
+        }
 
     return {
-        'source_id': 'cia_factbook',
-        'source_name': 'CIA World Factbook',
+        'source_id': source_id,
+        'source_name': source_name,
         'source_url': 'https://www.cia.gov/the-world-factbook/',
         'license': 'Public Domain (US Government Work)',
-        'description': f'CIA World Factbook {factbook_year} edition - comprehensive country data',
+        'description': description,
         'category': 'reference',
-        'topic_tags': ['demographics', 'economy', 'energy', 'infrastructure', 'military', 'health'],
-        'keywords': ['cia', 'factbook', 'country profiles', 'world data'],
+        'topic_tags': topic_tags,
+        'keywords': ['cia', 'factbook', 'country profiles', 'world data', 'time series'],
 
         'last_updated': datetime.now().strftime('%Y-%m-%d'),
-        'factbook_edition': factbook_year,
+        'factbook_editions': sorted(editions) if editions else [],
         'geographic_level': 'country',
         'geographic_coverage': {
             'type': 'global',
@@ -561,15 +1292,12 @@ def create_metadata(factbook_year: int, df: pd.DataFrame, extracted_metrics: Lis
         'metrics': metric_definitions,
 
         'llm_summary': (
-            f'CIA World Factbook {factbook_year}: {df["loc_id"].nunique() if len(df) > 0 else 0} countries, '
-            f'{len(extracted_metrics)} metrics including demographics, economy, energy, military, infrastructure.'
+            f'{source_name}: {df["loc_id"].nunique() if len(df) > 0 else 0} countries, '
+            f'{len(metric_cols)} metrics. '
+            f'Data from editions: {edition_str}.'
         ),
 
-        'data_notes': {
-            'overlap_with': ['owid_co2 (GDP, population, CO2)', 'who_health (life expectancy)', 'imf_bop (trade)'],
-            'unique_metrics': ['military expenditure', 'infrastructure (airports, railways)', 'energy source percentages'],
-            'methodology': 'CIA compiles from multiple sources; values may differ from primary sources'
-        }
+        'data_notes': data_notes
     }
 
 
@@ -579,21 +1307,19 @@ def create_metadata(factbook_year: int, df: pd.DataFrame, extracted_metrics: Lis
 
 def convert_factbook(
     factbook_year: int,
-    metric_ids: List[str] = None,
-    output_dir: str = None,
-    dry_run: bool = True
-) -> Tuple[pd.DataFrame, dict]:
+    metric_names: List[str] = None,
+    field_mappings: Dict = None
+) -> pd.DataFrame:
     """
-    Convert a CIA World Factbook edition to parquet format.
+    Convert a single CIA World Factbook edition to DataFrame.
 
     Args:
         factbook_year: Year of the factbook edition (e.g., 2020)
-        metric_ids: List of field IDs to extract (None = priority metrics)
-        output_dir: Output directory (None = don't save)
-        dry_run: If True, don't create output files
+        metric_names: List of metric names to extract (None = all mapped metrics)
+        field_mappings: Field ID mappings (loaded once and passed in)
 
     Returns:
-        Tuple of (DataFrame, metadata dict)
+        DataFrame with columns: loc_id, year, [metric columns]
     """
     factbook_path = os.path.join(RAW_DATA_BASE, f'factbook-{factbook_year}')
 
@@ -605,29 +1331,137 @@ def convert_factbook(
     print(f"{'='*60}")
     print(f"Source: {factbook_path}")
 
-    # Use priority metrics if not specified
-    if metric_ids is None:
-        metric_ids = PRIORITY_METRICS
-        print(f"Using {len(metric_ids)} priority metrics")
+    # Load field mappings if not provided
+    if field_mappings is None:
+        field_mappings = load_field_mappings()
+
+    # Use all mapped metrics if not specified
+    if metric_names is None:
+        metric_names = list(field_mappings.keys())
+
+    print(f"Processing {len(metric_names)} metrics...")
 
     # Extract data
-    print("\nExtracting metrics...")
-    df = extract_all_metrics(factbook_path, metric_ids, factbook_year=factbook_year)
+    df = extract_all_metrics(
+        factbook_path,
+        metric_names=metric_names,
+        factbook_year=factbook_year,
+        field_mappings=field_mappings
+    )
 
     print(f"\nExtraction complete:")
     print(f"  Total rows: {len(df)}")
     print(f"  Countries: {df['loc_id'].nunique() if len(df) > 0 else 0}")
     print(f"  Metrics: {len([c for c in df.columns if c not in ['loc_id', 'year']])}")
 
+    return df
+
+
+def convert_all_factbooks(
+    editions: List[int],
+    metric_names: List[str] = None,
+    output_dir: str = None,
+    dry_run: bool = True,
+    source_id: str = 'cia_factbook'
+) -> Tuple[pd.DataFrame, dict]:
+    """
+    Convert multiple factbook editions and combine into single dataset.
+
+    Args:
+        editions: List of factbook edition years to process
+        metric_names: List of metric names to extract (None = all mapped metrics)
+        output_dir: Output directory for combined files
+        dry_run: If True, don't create output files
+        source_id: Source identifier (cia_unique, cia_overlap, or cia_factbook)
+
+    Returns:
+        Tuple of (combined DataFrame, metadata dict)
+    """
+    # Load field mappings once
+    field_mappings = load_field_mappings()
+
+    if metric_names is None:
+        metric_names = list(field_mappings.keys())
+
+    print(f"\n{'#'*60}")
+    print(f"# CIA Factbook Multi-Edition Import")
+    print(f"# Editions: {editions}")
+    print(f"# Metrics: {len(metric_names)}")
+    print(f"{'#'*60}")
+
+    all_dfs = []
+    successful_editions = []
+
+    for year in editions:
+        try:
+            df = convert_factbook(year, metric_names=metric_names, field_mappings=field_mappings)
+            if len(df) > 0:
+                df['factbook_edition'] = year
+                all_dfs.append(df)
+                successful_editions.append(year)
+        except FileNotFoundError as e:
+            print(f"Skipping {year}: {e}")
+
+    if not all_dfs:
+        print("\nNo data extracted from any edition!")
+        return pd.DataFrame(), {}
+
+    combined = pd.concat(all_dfs, ignore_index=True)
+
+    # For duplicate (loc_id, year) entries from different editions,
+    # prefer the more recent factbook edition (more accurate data)
+    combined = combined.sort_values('factbook_edition', ascending=False)
+    combined = combined.drop_duplicates(subset=['loc_id', 'year'], keep='first')
+    combined = combined.sort_values(['loc_id', 'year']).reset_index(drop=True)
+
+    # Validate years - fix any parsing errors by using factbook_edition as fallback
+    MIN_VALID_YEAR = 1990
+    MAX_VALID_YEAR = 2025
+    bad_years = (combined['year'] < MIN_VALID_YEAR) | (combined['year'] > MAX_VALID_YEAR)
+    if bad_years.any():
+        bad_count = bad_years.sum()
+        combined.loc[bad_years, 'year'] = combined.loc[bad_years, 'factbook_edition']
+        print(f"  Fixed {bad_count} invalid year values (using edition year as fallback)")
+
+    print(f"\n{'='*60}")
+    print(f"Combined Results")
+    print(f"{'='*60}")
+    print(f"  Editions processed: {successful_editions}")
+    print(f"  Total rows: {len(combined)}")
+    print(f"  Countries: {combined['loc_id'].nunique()}")
+    print(f"  Metrics: {len([c for c in combined.columns if c not in ['loc_id', 'year', 'factbook_edition']])}")
+    print(f"  Year range: {int(combined['year'].min())}-{int(combined['year'].max())}")
+
     # Create metadata
-    metadata = create_metadata(factbook_year, df, metric_ids)
+    metadata = create_metadata(combined, editions=successful_editions, source_id=source_id)
 
     # Save if not dry run
     if not dry_run and output_dir:
         os.makedirs(output_dir, exist_ok=True)
 
         parquet_path = os.path.join(output_dir, 'all_countries.parquet')
-        df.to_parquet(parquet_path, index=False)
+
+        # Merge with existing data if file exists
+        if os.path.exists(parquet_path):
+            existing = pd.read_parquet(parquet_path)
+            existing_editions = sorted(existing['factbook_edition'].unique())
+            print(f"\nMerging with existing data ({len(existing)} rows from editions {existing_editions})")
+
+            # Combine existing + new
+            combined = pd.concat([existing, combined], ignore_index=True)
+
+            # Deduplicate: keep newest edition for each (loc_id, year)
+            combined = combined.sort_values('factbook_edition', ascending=False)
+            combined = combined.drop_duplicates(subset=['loc_id', 'year'], keep='first')
+            combined = combined.sort_values(['loc_id', 'year']).reset_index(drop=True)
+
+            # Update editions list for metadata (convert numpy types to Python int)
+            all_editions = sorted([int(e) for e in set(existing_editions) | set(successful_editions)])
+            metadata = create_metadata(combined, editions=all_editions, source_id=source_id)
+
+            print(f"After merge: {len(combined)} rows, editions {all_editions}")
+
+        combined.to_parquet(parquet_path, index=False)
         print(f"\nSaved: {parquet_path}")
 
         metadata_path = os.path.join(output_dir, 'metadata.json')
@@ -637,51 +1471,7 @@ def convert_factbook(
     elif dry_run:
         print("\n[DRY RUN - no files created]")
 
-    return df, metadata
-
-
-def convert_all_factbooks(
-    years: List[int],
-    output_base: str = None,
-    dry_run: bool = True
-) -> pd.DataFrame:
-    """
-    Convert multiple factbook editions and combine into single dataset.
-
-    Args:
-        years: List of factbook years to process
-        output_base: Base output directory
-        dry_run: If True, don't create output files
-
-    Returns:
-        Combined DataFrame with all years
-    """
-    all_dfs = []
-
-    for year in years:
-        try:
-            df, _ = convert_factbook(year, dry_run=True)
-            df['factbook_edition'] = year
-            all_dfs.append(df)
-        except FileNotFoundError as e:
-            print(f"Skipping {year}: {e}")
-
-    if not all_dfs:
-        return pd.DataFrame()
-
-    combined = pd.concat(all_dfs, ignore_index=True)
-
-    # For duplicate (loc_id, year, metric) entries from different editions,
-    # prefer the more recent factbook edition
-    combined = combined.sort_values('factbook_edition', ascending=False)
-    combined = combined.drop_duplicates(subset=['loc_id', 'year'], keep='first')
-    combined = combined.sort_values(['loc_id', 'year']).reset_index(drop=True)
-
-    print(f"\n{'='*60}")
-    print(f"Combined dataset: {len(combined)} rows, {combined['loc_id'].nunique()} countries")
-    print(f"Year range: {combined['year'].min()}-{combined['year'].max()}")
-
-    return combined
+    return combined, metadata
 
 
 # =============================================================================
@@ -691,32 +1481,102 @@ def convert_all_factbooks(
 if __name__ == '__main__':
     import argparse
 
-    parser = argparse.ArgumentParser(description='Convert CIA World Factbook to parquet')
-    parser.add_argument('--year', type=int, default=2020, help='Factbook year to convert')
-    parser.add_argument('--all-metrics', action='store_true', help='Extract all 66 metrics (default: priority only)')
-    parser.add_argument('--dry-run', action='store_true', default=True, help='Do not create output files')
-    parser.add_argument('--output', type=str, help='Output directory')
-    parser.add_argument('--list-metrics', action='store_true', help='List available metrics and exit')
+    parser = argparse.ArgumentParser(
+        description='Convert CIA World Factbook to parquet',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Import unique metrics (infrastructure, military, energy details)
+  python convert_cia_factbook.py --editions 2000,2005,2010,2015,2020 --source-type unique --save
+
+  # Import overlap metrics (demographics, health, GDP)
+  python convert_cia_factbook.py --editions 2000,2005,2010,2015,2020 --source-type overlap --save
+
+  # Dry run (preview only)
+  python convert_cia_factbook.py --editions 2020 --source-type unique --dry-run
+
+  # List available metrics by category
+  python convert_cia_factbook.py --list-metrics
+        """
+    )
+
+    parser.add_argument('--editions', type=str, default='2020',
+                        help='Comma-separated list of editions (e.g., 2000,2005,2010,2015,2020)')
+    parser.add_argument('--year', type=int, help='Single factbook year (legacy, use --editions instead)')
+    parser.add_argument('--source-type', type=str, choices=['unique', 'overlap', 'all'], default='unique',
+                        help='Which metrics to import: unique (51), overlap (27), or all (78)')
+    parser.add_argument('--dry-run', action='store_true', help='Preview without saving files (default)')
+    parser.add_argument('--save', action='store_true', help='Actually save output files')
+    parser.add_argument('--output', type=str, default=None,
+                        help='Output directory (auto-set based on source-type if not specified)')
+    parser.add_argument('--list-metrics', action='store_true', help='List mapped metrics and exit')
 
     args = parser.parse_args()
 
+    # --save overrides default dry-run behavior
+    dry_run = not args.save
+
     if args.list_metrics:
-        print("\nAvailable CIA Factbook Metrics:")
+        print("\n" + "="*80)
+        print("CIA Factbook Metrics by Category")
         print("="*80)
-        for field_id, (name, unit, agg, desc) in sorted(METRICS.items(), key=lambda x: x[1][0]):
-            priority = '*' if field_id in PRIORITY_METRICS else ' '
-            print(f"{priority} {field_id:4} {name:35} {unit:15} {desc}")
-        print("\n* = Priority metric (extracted by default)")
+
+        print(f"\nUNIQUE METRICS ({len(UNIQUE_METRICS)} - not in other sources):")
+        print("-"*60)
+        for i, metric in enumerate(sorted(UNIQUE_METRICS), 1):
+            print(f"  {i:2}. {metric}")
+
+        print(f"\nOVERLAP METRICS ({len(OVERLAP_METRICS)} - also in OWID/WHO/IMF/SDG):")
+        print("-"*60)
+        for i, metric in enumerate(sorted(OVERLAP_METRICS), 1):
+            print(f"  {i:2}. {metric}")
+
+        print(f"\nTotal: {len(UNIQUE_METRICS)} unique + {len(OVERLAP_METRICS)} overlap = {len(UNIQUE_METRICS) + len(OVERLAP_METRICS)} metrics")
+
+        # Also show which metrics have field mappings
+        field_mappings = load_field_mappings()
+        mapped = set(field_mappings.keys())
+        unique_mapped = set(UNIQUE_METRICS) & mapped
+        overlap_mapped = set(OVERLAP_METRICS) & mapped
+        print(f"\nCurrently mapped in cia_field_mappings.json:")
+        print(f"  Unique: {len(unique_mapped)}/{len(UNIQUE_METRICS)}")
+        print(f"  Overlap: {len(overlap_mapped)}/{len(OVERLAP_METRICS)}")
         exit(0)
 
-    # None = all metrics, PRIORITY_METRICS = priority only
-    metric_ids = list(METRICS.keys()) if args.all_metrics else PRIORITY_METRICS
+    # Determine which metrics to extract
+    if args.source_type == 'unique':
+        metric_names = UNIQUE_METRICS
+        source_id = 'cia_unique'
+    elif args.source_type == 'overlap':
+        metric_names = OVERLAP_METRICS
+        source_id = 'cia_overlap'
+    else:  # all
+        metric_names = UNIQUE_METRICS + OVERLAP_METRICS
+        source_id = 'cia_factbook'
 
-    df, metadata = convert_factbook(
-        factbook_year=args.year,
-        metric_ids=metric_ids,
-        output_dir=args.output,
-        dry_run=args.dry_run
+    # Determine output directory
+    if args.output:
+        output_dir = args.output
+    else:
+        output_dir = os.path.join(OUTPUT_BASE, source_id)
+
+    # Parse editions
+    if args.year:
+        editions = [args.year]
+    else:
+        editions = [int(y.strip()) for y in args.editions.split(',')]
+
+    print(f"\nSource type: {args.source_type}")
+    print(f"Metrics to extract: {len(metric_names)}")
+    print(f"Output directory: {output_dir}")
+
+    # Run conversion
+    df, metadata = convert_all_factbooks(
+        editions=editions,
+        metric_names=metric_names,
+        output_dir=output_dir,
+        dry_run=dry_run,
+        source_id=source_id
     )
 
     # Show sample
@@ -725,7 +1585,7 @@ if __name__ == '__main__':
         print(df.head(10).to_string())
 
         print("\nMetrics extracted:")
-        for col in df.columns:
-            if col not in ['loc_id', 'year']:
+        for col in sorted(df.columns):
+            if col not in ['loc_id', 'year', 'factbook_edition']:
                 non_null = df[col].notna().sum()
                 print(f"  {col}: {non_null} values")

@@ -1,6 +1,6 @@
 # County Map - Geographic Data Explorer
 
-Explore geographic data through natural conversation. Ask questions about countries, states, and counties, then visualize the results on an interactive map.
+Explore geographic data through natural conversation. Ask questions about countries, states, and counties, then visualize the results on an interactive 3D globe.
 
 **Live Demo**: [county-map.up.railway.app](https://county-map.up.railway.app)
 
@@ -8,56 +8,11 @@ Explore geographic data through natural conversation. Ask questions about countr
 
 ## What You Can Do
 
-- **Explore data conversationally** - "What GDP data do you have?" / "Tell me about CO2 emissions"
-- **Get guided suggestions** - The LLM guides you to refine queries (year, region, top N)
-- **Display on map** - Results visualize on an interactive map with clickable features
-- **Modify existing data** - "Add population data" / "Show 2020 instead" / "Now show Asia"
-- **Query with filters** - "Top 10 countries by GDP" / "Europe excluding Germany"
-
----
-
-## Quick Start
-
-### Prerequisites
-- Python 3.12+
-- OpenAI API key
-
-### Installation
-
-```bash
-# Clone and enter directory
-git clone https://github.com/xyver/county-map.git
-cd county-map
-
-# Create .env file
-echo OPENAI_API_KEY=your-api-key-here > .env
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Start the server
-python app.py
-```
-
-Open http://localhost:7000 in your browser.
-
----
-
-## Query Examples
-
-**Simple queries:**
-- "Show me all countries"
-- "Population of Texas counties"
-- "Top 10 countries by CO2 emissions"
-
-**With filters:**
-- "Countries with GDP over 1 trillion"
-- "Counties in California with population greater than 500,000"
-
-**Regional groupings:**
-- "GDP of European Union countries"
-- "CO2 emissions for G7 nations"
-- "Health stats for ASEAN countries"
+- **Ask questions naturally** - "What GDP data do you have?" or "Show me CO2 emissions for Europe"
+- **Get guided suggestions** - The system helps you discover available data and refine your queries
+- **Visualize on a map** - Results display on an interactive globe with clickable features
+- **Combine data sources** - View GDP alongside health indicators or demographics
+- **Filter and compare** - "Top 10 countries by GDP" or "Europe excluding Germany"
 
 ---
 
@@ -69,33 +24,33 @@ Open http://localhost:7000 in your browser.
 | WHO Health Stats | 198 countries | Life expectancy, mortality, immunization |
 | IMF Balance of Payments | 195 countries | Trade, investment, financial flows |
 | US Census Demographics | 3,200+ counties | Age, sex, race demographics |
+| UN SDG Indicators | 200+ countries | 17 Sustainable Development Goals |
 
-See [DATA_PIPELINE.md](DATA_PIPELINE.md) for complete dataset documentation.
+---
+
+## Quick Start
+
+1. Clone the repository
+2. Add your OpenAI API key to `.env`
+3. Install dependencies: `pip install -r requirements.txt`
+4. Run: `python app.py`
+5. Open http://localhost:7000
 
 ---
 
 ## Documentation
 
+For technical documentation, see [CONTEXT.md](CONTEXT.md).
+
 | Document | Purpose |
 |----------|---------|
-| [CONTEXT.md](CONTEXT.md) | System overview and where to find information |
-| [DEVELOPER.md](DEVELOPER.md) | Technical documentation for developers |
-| [DATA_PIPELINE.md](DATA_PIPELINE.md) | Data format, converters, dataset catalog |
-| [GEOMETRY.md](GEOMETRY.md) | Geometry system and loc_id specification |
-| [ROADMAP.md](ROADMAP.md) | Future features and development plans |
-
----
-
-## Adding New Data
-
-Use the data converters in `data_converters/` to process new datasets:
-
-1. Place raw data in `county-map-data/Raw data/`
-2. Create or modify a converter script in `data_converters/`
-3. Run the converter to output to `county-map-data/data/`
-4. Restart server - new dataset auto-discovered
-
-See [DATA_PIPELINE.md](DATA_PIPELINE.md) for converter documentation.
+| [CONTEXT.md](CONTEXT.md) | System architecture and technical index |
+| [DATA_PIPELINE.md](DATA_PIPELINE.md) | Data format and import process |
+| [GEOMETRY.md](GEOMETRY.md) | Geography system and location IDs |
+| [CHAT.md](CHAT.md) | Chat interface and LLM system |
+| [MAPPING.md](MAPPING.md) | Frontend visualization |
+| [ADMIN_DASHBOARD.md](ADMIN_DASHBOARD.md) | Admin tools for data management |
+| [ROADMAP.md](ROADMAP.md) | Future features and plans |
 
 ---
 
@@ -105,4 +60,4 @@ MIT License
 
 ---
 
-*Last Updated: 2025-12-21*
+*Last Updated: 2025-12-31*
