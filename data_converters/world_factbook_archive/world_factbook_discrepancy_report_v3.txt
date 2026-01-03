@@ -1,0 +1,129 @@
+================================================================================
+WORLD FACTBOOK EXTRACTION REPORT - v3
+Generated: 2026-01-02 11:34
+================================================================================
+
+CHANGES IN v3:
+- Fixed deduplication to merge values across editions (not discard)
+- Values now represent best available data from any edition
+- Each (loc_id, year) pair has one row with merged values
+
+================================================================================
+UNIQUE METRICS (world_factbook)
+================================================================================
+Total rows: 5,674
+Unique countries: 255
+Year range: 1990-2020
+Editions merged: [np.int64(2002), np.int64(2003), np.int64(2004), np.int64(2005), np.int64(2006), np.int64(2007), np.int64(2008), np.int64(2009), np.int64(2010), np.int64(2011), np.int64(2012), np.int64(2013), np.int64(2014), np.int64(2015), np.int64(2016), np.int64(2017), np.int64(2018), np.int64(2019), np.int64(2020)]
+
+  airports: 2,991 values (53%) [GOOD]
+  area_sq_km: 4,180 values (74%) [GOOD]
+  broadband_subscriptions: 594 values (10%) [LOW]
+  budget_surplus_deficit: 1,428 values (25%) [PARTIAL]
+  central_bank_discount_rate: 905 values (16%) [LOW]
+  commercial_bank_prime_rate: 1,587 values (28%) [PARTIAL]
+  crude_oil_exports: 1,620 values (29%) [PARTIAL]
+  crude_oil_imports: 1,606 values (28%) [PARTIAL]
+  crude_oil_production: 2,706 values (48%) [PARTIAL]
+  crude_oil_reserves: 2,216 values (39%) [PARTIAL]
+  electricity_capacity: 1,179 values (21%) [PARTIAL]
+  electricity_exports: 1,528 values (27%) [PARTIAL]
+  electricity_fossil_pct: 1,204 values (21%) [PARTIAL]
+  electricity_hydro_pct: 1,214 values (21%) [PARTIAL]
+  electricity_imports: 1,572 values (28%) [PARTIAL]
+  electricity_nuclear_pct: 1,211 values (21%) [PARTIAL]
+  electricity_renewable_pct: 1,213 values (21%) [PARTIAL]
+  foreign_reserves: 2,093 values (37%) [PARTIAL]
+  gini_index: 1,033 values (18%) [LOW]
+  gross_national_saving: 1,012 values (18%) [LOW]
+  industrial_production_growth: 2,309 values (41%) [PARTIAL]
+  internet_hosts: 2,049 values (36%) [PARTIAL]
+  internet_users: 3,031 values (53%) [GOOD]
+  labor_force: 2,018 values (36%) [PARTIAL]
+  market_value_traded_shares: 963 values (17%) [LOW]
+  median_age: 2,471 values (44%) [PARTIAL]
+  merchant_marine: 1,984 values (35%) [PARTIAL]
+  military_expenditure_pct: 1,925 values (34%) [PARTIAL]
+  natural_gas_consumption: 2,155 values (38%) [PARTIAL]
+  natural_gas_exports: 1,974 values (35%) [PARTIAL]
+  natural_gas_imports: 1,990 values (35%) [PARTIAL]
+  natural_gas_production: 2,299 values (41%) [PARTIAL]
+  natural_gas_reserves: 2,005 values (35%) [PARTIAL]
+  net_migration_rate: 2,546 values (45%) [PARTIAL]
+  railways_km: 1,743 values (31%) [PARTIAL]
+  refined_petroleum_consumption: 898 values (16%) [LOW]
+  refined_petroleum_exports: 1,072 values (19%) [LOW]
+  refined_petroleum_imports: 1,040 values (18%) [LOW]
+  refined_petroleum_production: 1,079 values (19%) [LOW]
+  roadways_km: 2,158 values (38%) [PARTIAL]
+  stock_broad_money: 1,367 values (24%) [PARTIAL]
+  stock_domestic_credit: 1,621 values (29%) [PARTIAL]
+  stock_fdi_abroad: 896 values (16%) [LOW]
+  stock_fdi_at_home: 996 values (18%) [LOW]
+  stock_narrow_money: 1,494 values (26%) [PARTIAL]
+  taxes_revenue_pct_gdp: 1,425 values (25%) [PARTIAL]
+  telephones_fixed: 3,169 values (56%) [GOOD]
+  telephones_mobile: 3,121 values (55%) [GOOD]
+  unemployment_rate: 2,082 values (37%) [PARTIAL]
+  waterways_km: 977 values (17%) [LOW]
+  youth_unemployment: 1,090 values (19%) [LOW]
+
+Total values across 51 metrics: 89,039
+Average fill rate: 30.8%
+
+================================================================================
+OVERLAP METRICS (world_factbook_overlap)
+================================================================================
+Total rows: 5,138
+Unique countries: 249
+Year range: 1990-2020
+Editions merged: [np.int64(2002), np.int64(2003), np.int64(2004), np.int64(2005), np.int64(2006), np.int64(2007), np.int64(2008), np.int64(2009), np.int64(2010), np.int64(2011), np.int64(2012), np.int64(2013), np.int64(2014), np.int64(2015), np.int64(2016), np.int64(2017), np.int64(2018), np.int64(2019), np.int64(2020)]
+
+  birth_rate: 3,772 values (73%) [GOOD]
+  child_underweight: 702 values (14%) [LOW]
+  co2_emissions: 1,046 values (20%) [PARTIAL]
+  current_account_balance: 2,378 values (46%) [PARTIAL]
+  death_rate: 3,771 values (73%) [GOOD]
+  education_expenditure: 1,586 values (31%) [PARTIAL]
+  electricity_consumption: 2,641 values (51%) [GOOD]
+  electricity_production: 2,745 values (53%) [GOOD]
+  exports: 3,042 values (59%) [GOOD]
+  external_debt: 2,527 values (49%) [PARTIAL]
+  fertility_rate: 3,744 values (73%) [GOOD]
+  gdp_growth_rate: 2,890 values (56%) [GOOD]
+  gdp_per_capita_ppp: 3,015 values (59%) [GOOD]
+  gdp_ppp: 2,423 values (47%) [PARTIAL]
+  health_expenditures: 951 values (19%) [LOW]
+  hiv_deaths: 1,251 values (24%) [PARTIAL]
+  hiv_living: 1,522 values (30%) [PARTIAL]
+  hiv_prevalence: 1,501 values (29%) [PARTIAL]
+  imports: 3,047 values (59%) [GOOD]
+  infant_mortality: 3,754 values (73%) [GOOD]
+  inflation_rate: 3,036 values (59%) [GOOD]
+  life_expectancy: 3,279 values (64%) [GOOD]
+  maternal_mortality: 1,099 values (21%) [PARTIAL]
+  obesity_rate: 905 values (18%) [LOW]
+  pop_growth_rate: 2,716 values (53%) [GOOD]
+  population: 3,595 values (70%) [GOOD]
+  public_debt_pct_gdp: 1,856 values (36%) [PARTIAL]
+
+Total values across 27 metrics: 64,794
+Average fill rate: 46.7%
+
+================================================================================
+SUMMARY
+================================================================================
+
+Status definitions:
+  GOOD: >= 50% of rows have values
+  PARTIAL: 20-49% of rows have values
+  LOW: < 20% of rows have values
+
+Total metrics: 78
+  GOOD: 19 (24%)
+  PARTIAL: 43 (55%)
+  LOW: 16 (21%)
+
+This report measures data completeness after merging all factbook editions.
+LOW coverage is expected for metrics that were only tracked in recent years
+(e.g., broadband_subscriptions, obesity_rate, co2_emissions).

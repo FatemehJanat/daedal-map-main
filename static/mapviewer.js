@@ -347,17 +347,17 @@ const MapAdapter = {
   init() {
     this.map = new maplibregl.Map({
       container: 'map',
-      style: 'https://tiles.openfreemap.org/styles/liberty',
+      style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
       center: CONFIG.defaultCenter,
       zoom: CONFIG.defaultZoom,
       doubleClickZoom: false  // Disable default double-click zoom
     });
 
-    // Create popup instance
+    // Create popup instance - compact sizing, no fixed width
     this.popup = new maplibregl.Popup({
       closeButton: true,
       closeOnClick: false,
-      maxWidth: '320px'
+      maxWidth: 'none'  // Let content determine width naturally
     });
 
     // Unlock popup when close button is clicked (but not when we're just re-showing)
@@ -368,10 +368,11 @@ const MapAdapter = {
       }
     });
 
-    // Enable globe projection when style loads
-    this.map.on('style.load', () => {
-      this.enableGlobe();
-    });
+    // Globe projection disabled - using flat mercator for smoother panning
+    // To re-enable globe: uncomment the enableGlobe() call below
+    // this.map.on('style.load', () => {
+    //   this.enableGlobe();
+    // });
 
     // Setup zoom-based navigation
     this.map.on('zoomend', () => this.handleZoomChange());
@@ -1577,26 +1578,29 @@ const PopupBuilder = {
         lines.push(`${fieldName}: ${formattedValue}${yearSuffix}`);
       }
 
-      // Source info (from chat query)
+      // Source info (from chat query) - compact with clickable links
       if (sourceData) {
-        lines.push('<br>');
         if (sourceData.sources && sourceData.sources.length > 0) {
-          lines.push('<strong>Sources:</strong>');
-          for (const source of sourceData.sources.slice(0, 3)) {
-            if (source.url && source.url !== 'Unknown') {
-              lines.push(`- <a href="${source.url}" target="_blank">${source.name}</a>`);
-            } else {
-              lines.push(`- ${source.name}`);
+          const sourceLinks = sourceData.sources.slice(0, 2).map(s => {
+            if (s.url && s.url !== 'Unknown') {
+              return `<a href="${s.url}" target="_blank" style="color: #5dade2;">${s.name}</a>`;
             }
-          }
+            return s.name;
+          }).join(', ');
+          lines.push(`<span style="font-size: 10px; color: #888;">Source: ${sourceLinks}</span>`);
         } else if (sourceData.source_name) {
-          lines.push(`<strong>Source:</strong> ${sourceData.source_name}`);
+          const url = sourceData.source_url || sourceData.url;
+          if (url && url !== 'Unknown') {
+            lines.push(`<span style="font-size: 10px; color: #888;">Source: <a href="${url}" target="_blank" style="color: #5dade2;">${sourceData.source_name}</a></span>`);
+          } else {
+            lines.push(`<span style="font-size: 10px; color: #888;">Source: ${sourceData.source_name}</span>`);
+          }
         }
       }
     }
 
-    // Hint for zoom navigation
-    lines.push('<br><em style="font-size: 11px; color: #666;">Zoom in to see sub-layers</em>');
+    // Compact hint for zoom navigation (no leading break)
+    lines.push('<em style="font-size: 10px; color: #999;">Zoom for sub-layers</em>');
 
     return lines.join('<br>');
   },
@@ -1612,12 +1616,11 @@ const PopupBuilder = {
     // Memberships first (G20, BRICS, EU for countries; "Part of: X" for sub-nationals)
     if (info.memberships && info.memberships.length > 0) {
       const first = info.memberships[0];
-      // If it already says "Part of:", display as-is; otherwise prefix with "Member of:"
       if (first.startsWith('Part of:')) {
-        parts.push(`<span style="color: #666; font-size: 12px;">${first}</span>`);
+        parts.push(`<span style="color: #888; font-size: 11px;">${first}</span>`);
       } else {
-        const memberships = info.memberships.slice(0, 5).join(', ');
-        parts.push(`<span style="color: #666; font-size: 12px;">Member of: ${memberships}</span>`);
+        const memberships = info.memberships.slice(0, 3).join(', ');
+        parts.push(`<span style="color: #888; font-size: 11px;">${memberships}</span>`);
       }
     }
 
@@ -1625,14 +1628,14 @@ const PopupBuilder = {
     const datasetCounts = info.dataset_counts || {};
     const countryDatasets = datasetCounts.country || 0;
     if (info.admin_level === 0 && countryDatasets > 0) {
-      parts.push(`<span style="color: #666; font-size: 12px;">${countryDatasets} country-level datasets</span>`);
+      parts.push(`<span style="color: #888; font-size: 11px;">${countryDatasets} datasets</span>`);
     }
 
-    // Subdivisions - each level on its own line with dataset counts
+    // Subdivisions - compact, one line with dataset counts
     if (info.children_count > 0 || info.descendants_count > 0) {
       const subdivisionLines = this.formatSubdivisions(info);
       for (const line of subdivisionLines) {
-        parts.push(`<span style="color: #666; font-size: 12px;">${line}</span>`);
+        parts.push(`<span style="color: #888; font-size: 11px;">${line}</span>`);
       }
     }
 

@@ -29,6 +29,9 @@ _global_countries_cache = None
 # Cache for country bounding boxes (for viewport filtering)
 _country_bounds_cache = None
 
+# Cache for admin level names from reference/admin_levels.json
+_admin_levels_cache = None
+
 
 def get_geometry_path():
     """Get the geometry folder path from settings."""
@@ -675,37 +678,57 @@ def _extract_display_name(value):
     return value  # Already a string
 
 
+def _load_admin_levels():
+    """Load admin level names from reference/admin_levels.json."""
+    global _admin_levels_cache
+    if _admin_levels_cache is not None:
+        return _admin_levels_cache
+
+    try:
+        admin_levels_path = Path(__file__).parent / "reference" / "admin_levels.json"
+        if admin_levels_path.exists():
+            with open(admin_levels_path, 'r', encoding='utf-8') as f:
+                _admin_levels_cache = json.load(f)
+                logger.debug(f"Loaded admin_levels.json with {len(_admin_levels_cache)} entries")
+        else:
+            logger.warning("admin_levels.json not found")
+            _admin_levels_cache = {}
+    except Exception as e:
+        logger.warning(f"Failed to load admin_levels.json: {e}")
+        _admin_levels_cache = {}
+
+    return _admin_levels_cache
+
+
 def _get_level_names(iso3: str) -> dict:
     """
-    Get country-specific level names from conversions.json.
+    Get country-specific level names from reference/admin_levels.json.
     Returns dict like {1: "states", 2: "counties", 3: "places"} for USA.
 
-    Format in conversions.json is array: [display_name, synonym1, synonym2, ...]
+    Format in admin_levels.json is array: [display_name, synonym1, synonym2, ...]
     This function extracts only the display name (first element).
 
     Falls back to DEFAULT_LEVEL_NAMES if country not found.
     """
     try:
-        from .geography import get_conversions_data
-        conversions = get_conversions_data()
-        if not conversions:
+        admin_levels = _load_admin_levels()
+        if not admin_levels:
             return DEFAULT_LEVEL_NAMES
 
-        level_names = conversions.get("country_level_names", {})
-
-        # Get country-specific names or default
-        country_names = level_names.get(iso3)
+        # Get country-specific names
+        country_names = admin_levels.get(iso3)
         if country_names:
             # Convert string keys to int keys, extract display name from arrays
             return {int(k): _extract_display_name(v) for k, v in country_names.items() if not k.startswith("_")}
 
-        # Use _default from conversions.json if available
-        default_from_json = level_names.get("_default")
-        if default_from_json:
-            return {int(k): _extract_display_name(v) for k, v in default_from_json.items()}
+        # Use _default from admin_levels.json if available
+        default_names = admin_levels.get("_default")
+        if default_names:
+            return {int(k): _extract_display_name(v) for k, v in default_names.items() if not k.startswith("_")}
 
         return DEFAULT_LEVEL_NAMES
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Error loading level names for {iso3}: {e}")
         return DEFAULT_LEVEL_NAMES
 
 

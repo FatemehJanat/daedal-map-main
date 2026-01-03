@@ -1,0 +1,167 @@
+========================================================================================================================
+WORLD FACTBOOK DATA COVERAGE REPORT - V5 (TOP-DOWN STRATEGY)
+========================================================================================================================
+
+Strategy: Use newest editions first, skip problematic years (2009, 2011, 2013, 2014)
+
+================================================================================
+EDITION QUALITY RANKING
+================================================================================
+
+GOOD editions (use these):
+  2020: unique=37555 vals (37.9%), overlap=14394 vals (43.9%)
+  2019: unique= 6159 vals (48.7%), overlap= 2007 vals (39.1%)
+  2018: unique= 2410 vals (37.8%), overlap= 5208 vals (58.3%)
+  2017: unique=12554 vals (53.4%), overlap= 7585 vals (67.0%)
+  2016: unique= 1185 vals (36.3%), overlap= 9106 vals (73.3%)
+  2015: unique= 5686 vals (49.6%), overlap= 1517 vals (43.9%)
+  2012: unique= 5411 vals (45.7%), overlap=  809 vals (35.7%)
+  2010: unique= 2364 vals (30.9%), overlap= 3529 vals (54.9%)
+  2008: unique= 4630 vals (19.7%), overlap= 6834 vals (48.3%)
+  2007: unique= 1749 vals (14.0%), overlap= 2412 vals (46.8%)
+  2006: unique= 2822 vals (16.2%), overlap= 1376 vals (37.8%)
+  2005: unique= 1366 vals ( 9.7%), overlap= 3314 vals (39.3%)
+  2004: unique=  521 vals ( 7.3%), overlap=  959 vals (27.1%)
+  2003: unique=  551 vals ( 4.3%), overlap=  493 vals (23.1%)
+  2002: unique=  216 vals ( 2.8%), overlap=  861 vals ( 9.7%)
+
+BAD editions (skip these):
+  2014: unique= 1334 vals (51.3%), overlap= 2314 vals (49.3%) <-- LOW
+  2013: unique= 1154 vals (34.8%), overlap= 1229 vals (42.9%) <-- LOW
+  2011: unique=  529 vals (21.6%), overlap=  427 vals (33.6%) <-- LOW
+  2009: unique=  818 vals (22.0%), overlap=  420 vals (35.4%) <-- LOW
+
+================================================================================
+COVERAGE WITH GOOD EDITIONS ONLY
+================================================================================
+
+Unique dataset: 5317 unique (country, year) pairs
+Overlap dataset: 4765 unique (country, year) pairs
+
+Unique: 255 countries, years 1990-2020 (31 years)
+Overlap: 249 countries, years 1990-2020 (31 years)
+
+================================================================================
+METRIC COVERAGE (GOOD EDITIONS ONLY)
+================================================================================
+
+UNIQUE METRICS:
+Metric                                Actual      Max   Coverage
+-----------------------------------------------------------------
+area_sq_km                             3,970    5,317      74.7%
+telephones_fixed                       3,006    5,317      56.5%
+telephones_mobile                      2,961    5,317      55.7%
+internet_users                         2,873    5,317      54.0%
+airports                               2,853    5,317      53.7%
+crude_oil_production                   2,598    5,317      48.9%
+net_migration_rate                     2,471    5,317      46.5%
+median_age                             2,403    5,317      45.2%
+industrial_production_growth           2,225    5,317      41.8%
+natural_gas_production                 2,161    5,317      40.6%
+crude_oil_reserves                     2,119    5,317      39.9%
+roadways_km                            2,057    5,317      38.7%
+natural_gas_consumption                2,017    5,317      37.9%
+foreign_reserves                       2,008    5,317      37.8%
+unemployment_rate                      1,979    5,317      37.2%
+internet_hosts                         1,908    5,317      35.9%
+natural_gas_reserves                   1,905    5,317      35.8%
+labor_force                            1,896    5,317      35.7%
+natural_gas_imports                    1,869    5,317      35.2%
+natural_gas_exports                    1,857    5,317      34.9%
+merchant_marine                        1,854    5,317      34.9%
+military_expenditure_pct               1,813    5,317      34.1%
+railways_km                            1,639    5,317      30.8%
+stock_domestic_credit                  1,589    5,317      29.9%
+electricity_imports                    1,515    5,317      28.5%
+commercial_bank_prime_rate             1,513    5,317      28.5%
+crude_oil_exports                      1,494    5,317      28.1%
+crude_oil_imports                      1,487    5,317      28.0%
+electricity_exports                    1,470    5,317      27.6%
+stock_narrow_money                     1,446    5,317      27.2%
+budget_surplus_deficit                 1,417    5,317      26.7%
+taxes_revenue_pct_gdp                  1,415    5,317      26.6%
+stock_broad_money                      1,319    5,317      24.8%
+electricity_hydro_pct                  1,174    5,317      22.1%
+electricity_renewable_pct              1,174    5,317      22.1%
+electricity_nuclear_pct                1,171    5,317      22.0%
+electricity_fossil_pct                 1,164    5,317      21.9%
+electricity_capacity                   1,139    5,317      21.4%
+youth_unemployment                     1,081    5,317      20.3%
+refined_petroleum_production           1,073    5,317      20.2%
+refined_petroleum_exports              1,067    5,317      20.1%
+refined_petroleum_imports              1,034    5,317      19.4%
+gross_national_saving                  1,012    5,317      19.0%
+gini_index                               995    5,317      18.7%
+stock_fdi_at_home                        975    5,317      18.3%
+waterways_km                             917    5,317      17.2%
+market_value_traded_shares               894    5,317      16.8%
+refined_petroleum_consumption            888    5,317      16.7%
+stock_fdi_abroad                         879    5,317      16.5%
+central_bank_discount_rate               841    5,317      15.8%
+broadband_subscriptions                  594    5,317      11.2%
+
+UNIQUE SUBTOTAL: 85,179 / 271,167 = 31.4%
+
+OVERLAP METRICS:
+Metric                                Actual      Max   Coverage
+-----------------------------------------------------------------
+birth_rate                             3,464    4,765      72.7%
+death_rate                             3,462    4,765      72.7%
+infant_mortality                       3,446    4,765      72.3%
+fertility_rate                         3,435    4,765      72.1%
+population                             3,268    4,765      68.6%
+life_expectancy                        2,998    4,765      62.9%
+gdp_per_capita_ppp                     2,932    4,765      61.5%
+imports                                2,930    4,765      61.5%
+exports                                2,925    4,765      61.4%
+inflation_rate                         2,918    4,765      61.2%
+gdp_growth_rate                        2,799    4,765      58.7%
+electricity_production                 2,474    4,765      51.9%
+pop_growth_rate                        2,430    4,765      51.0%
+electricity_consumption                2,421    4,765      50.8%
+external_debt                          2,380    4,765      49.9%
+gdp_ppp                                2,354    4,765      49.4%
+current_account_balance                2,321    4,765      48.7%
+public_debt_pct_gdp                    1,818    4,765      38.2%
+education_expenditure                  1,383    4,765      29.0%
+hiv_living                             1,368    4,765      28.7%
+hiv_prevalence                         1,345    4,765      28.2%
+hiv_deaths                             1,112    4,765      23.3%
+maternal_mortality                     1,036    4,765      21.7%
+co2_emissions                            977    4,765      20.5%
+health_expenditures                      878    4,765      18.4%
+obesity_rate                             849    4,765      17.8%
+child_underweight                        681    4,765      14.3%
+
+OVERLAP SUBTOTAL: 60,404 / 128,655 = 47.0%
+
+================================================================================
+GRAND TOTAL
+================================================================================
+Total data points: 145,583
+Theoretical max: 399,822
+Overall coverage: 36.4%
+
+================================================================================
+COMPARISON: Good editions vs All editions
+================================================================================
+
+Unique metrics:
+  Good editions (15): 85,179 values
+  All editions (19): 92,058 values
+  Lost by skipping bad: 6,879 (7.5%)
+
+Overlap metrics:
+  Good editions (15): 60,404 values
+  All editions (19): 69,149 values
+  Lost by skipping bad: 8,745 (12.6%)
+
+================================================================================
+RECOMMENDATION
+================================================================================
+
+Skip editions 2009, 2011, 2013, 2014 - they have low fill rates and
+their data is mostly covered by adjacent better editions.
+
+The ~3-6% data loss from skipping bad editions is acceptable
+because those editions have extraction issues that cause bad data.

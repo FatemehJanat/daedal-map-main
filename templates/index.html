@@ -87,30 +87,31 @@
       font-family: monospace;
     }
 
-    /* Stats overlay */
+    /* Stats overlay - dark */
     #statsOverlay {
       position: absolute;
       bottom: 10px;
       right: 10px;
       z-index: 1000;
-      background: rgba(255,255,255,0.9);
+      background: rgba(26,26,46,0.9);
       padding: 8px 12px;
       border-radius: 6px;
       font-size: 12px;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+      color: #d0d0d0;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.4);
     }
 
-    /* Time Slider */
+    /* Time Slider - dark */
     #timeSliderContainer {
       position: absolute;
       bottom: 50px;
       left: 50%;
       transform: translateX(-50%);
       z-index: 1000;
-      background: rgba(255,255,255,0.95);
+      background: rgba(26,26,46,0.95);
       padding: 12px 20px;
       border-radius: 8px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+      box-shadow: 0 2px 10px rgba(0,0,0,0.4);
       display: none;
       min-width: 300px;
       max-width: 500px;
@@ -130,13 +131,13 @@
     .time-slider-title {
       font-size: 12px;
       font-weight: 600;
-      color: #333;
+      color: #d0d0d0;
     }
 
     .time-slider-year {
       font-size: 18px;
       font-weight: 700;
-      color: #007bff;
+      color: #5dade2;
       min-width: 50px;
       text-align: center;
     }
@@ -152,7 +153,7 @@
       height: 6px;
       -webkit-appearance: none;
       appearance: none;
-      background: #ddd;
+      background: #3d3d5c;
       border-radius: 3px;
       outline: none;
     }
@@ -162,59 +163,78 @@
       appearance: none;
       width: 18px;
       height: 18px;
-      background: #007bff;
+      background: #0f4c75;
       border-radius: 50%;
       cursor: pointer;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+      box-shadow: 0 2px 4px rgba(0,0,0,0.4);
     }
 
     #timeSlider::-moz-range-thumb {
       width: 18px;
       height: 18px;
-      background: #007bff;
+      background: #0f4c75;
       border-radius: 50%;
       cursor: pointer;
       border: none;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+      box-shadow: 0 2px 4px rgba(0,0,0,0.4);
     }
 
     .time-slider-labels {
       display: flex;
       justify-content: space-between;
       font-size: 11px;
-      color: #666;
+      color: #888;
       margin-top: 4px;
     }
 
-    #playBtn {
-      width: 32px;
-      height: 32px;
+    /* Time slider buttons */
+    .time-btn {
+      width: 28px;
+      height: 28px;
       border: none;
-      background: #007bff;
-      color: white;
-      border-radius: 50%;
+      background: #2d2d44;
+      color: #d0d0d0;
+      border-radius: 4px;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 14px;
+      font-size: 11px;
+      font-weight: bold;
       flex-shrink: 0;
     }
 
-    #playBtn:hover {
-      background: #0056b3;
+    .time-btn:hover {
+      background: #3d3d5c;
     }
 
-    /* Choropleth Legend */
+    .time-btn.play {
+      width: 32px;
+      height: 32px;
+      background: #0f4c75;
+      border-radius: 50%;
+      font-size: 12px;
+    }
+
+    .time-btn.play:hover {
+      background: #1a6a9e;
+    }
+
+    .time-btn.active {
+      background: #ff6600;
+      color: white;
+    }
+
+    /* Choropleth Legend - dark */
     #choroplethLegend {
       position: absolute;
       bottom: 50px;
-      left: 10px;
+      right: 10px;  /* Right side to avoid sidebar overlap */
       z-index: 1000;
-      background: rgba(255,255,255,0.95);
+      background: rgba(26,26,46,0.95);
       padding: 10px 12px;
       border-radius: 6px;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+      box-shadow: 0 2px 6px rgba(0,0,0,0.4);
       display: none;
       min-width: 120px;
     }
@@ -226,7 +246,7 @@
     .legend-title {
       font-size: 11px;
       font-weight: 600;
-      color: #333;
+      color: #d0d0d0;
       margin-bottom: 6px;
     }
 
@@ -240,7 +260,7 @@
       display: flex;
       justify-content: space-between;
       font-size: 10px;
-      color: #666;
+      color: #888;
     }
 
     /* Sidebar toggle button */
@@ -251,20 +271,21 @@
       z-index: 1001;
       width: 44px;
       height: 44px;
-      background: white;
+      background: #1a1a2e;
       border: none;
       border-radius: 8px;
       cursor: pointer;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+      box-shadow: 0 2px 10px rgba(0,0,0,0.4);
       display: flex;
       align-items: center;
       justify-content: center;
       font-size: 20px;
       transition: all 0.3s;
+      color: #e8e8e8;
     }
 
     #sidebarToggle:hover {
-      background: #f0f0f0;
+      background: #2d2d44;
     }
 
     #sidebarToggle.hidden {
@@ -278,9 +299,9 @@
       left: 0;
       width: 400px;
       height: 100%;
-      background: white;
+      background: #1a1a2e;
       z-index: 1000;
-      box-shadow: 2px 0 10px rgba(0,0,0,0.2);
+      box-shadow: 2px 0 10px rgba(0,0,0,0.5);
       display: flex;
       flex-direction: column;
       transform: translateX(0);
@@ -312,8 +333,8 @@
     /* Sidebar header */
     #sidebarHeader {
       padding: 15px;
-      background: #007bff;
-      color: white;
+      background: #16213e;
+      color: #e8e8e8;
       display: flex;
       justify-content: space-between;
       align-items: center;
@@ -362,22 +383,22 @@
 
     .chat-message.user {
       align-self: flex-end;
-      background: #007bff;
-      color: white;
+      background: #0f4c75;
+      color: #e8e8e8;
       border-bottom-right-radius: 4px;
     }
 
     .chat-message.assistant {
       align-self: flex-start;
-      background: #f0f0f0;
-      color: #333;
+      background: #2d2d44;
+      color: #d0d0d0;
       border-bottom-left-radius: 4px;
     }
 
     .chat-message.system {
       align-self: center;
-      background: #fff3cd;
-      color: #856404;
+      background: #3d3d2e;
+      color: #c9b458;
       font-size: 12px;
       padding: 8px 12px;
     }
@@ -402,7 +423,7 @@
     /* Chat input area */
     #chatInputArea {
       padding: 15px;
-      background: #fafafa;
+      background: #16213e;
       height: 140px;
       min-height: 80px;
       display: flex;
@@ -420,21 +441,27 @@
     #chatInput {
       flex: 1;
       padding: 12px;
-      border: 1px solid #ddd;
+      border: 1px solid #3d3d5c;
       border-radius: 8px;
       font-size: 14px;
       resize: none;
       min-height: 40px;
+      background: #1a1a2e;
+      color: #e8e8e8;
     }
 
     #chatInput:focus {
       outline: none;
-      border-color: #007bff;
+      border-color: #0f4c75;
+    }
+
+    #chatInput::placeholder {
+      color: #666;
     }
 
     #sendBtn {
       padding: 12px 20px;
-      background: #007bff;
+      background: #0f4c75;
       color: white;
       border: none;
       border-radius: 8px;
@@ -444,18 +471,19 @@
     }
 
     #sendBtn:hover {
-      background: #0056b3;
+      background: #1a6a9e;
     }
 
     #sendBtn:disabled {
-      background: #ccc;
+      background: #3d3d5c;
+      color: #666;
       cursor: not-allowed;
     }
 
     /* Order Panel */
     #orderPanel {
       padding: 12px 15px;
-      background: #f8f9fa;
+      background: #0f0f1a;
       height: 160px;
       min-height: 60px;
       overflow-y: auto;
@@ -465,7 +493,7 @@
     #orderPanel h4 {
       font-size: 13px;
       font-weight: 600;
-      color: #333;
+      color: #c0c0c0;
       margin-bottom: 10px;
       display: flex;
       justify-content: space-between;
@@ -473,7 +501,7 @@
     }
 
     #orderPanel h4 span {
-      color: #666;
+      color: #888;
       font-weight: normal;
       font-size: 11px;
     }
@@ -487,8 +515,8 @@
       justify-content: space-between;
       align-items: center;
       padding: 8px 10px;
-      background: white;
-      border: 1px solid #e0e0e0;
+      background: #1a1a2e;
+      border: 1px solid #3d3d5c;
       border-radius: 6px;
       margin-bottom: 6px;
       font-size: 13px;
@@ -500,12 +528,12 @@
 
     .order-item-name {
       font-weight: 500;
-      color: #333;
+      color: #d0d0d0;
     }
 
     .order-item-details {
       font-size: 11px;
-      color: #666;
+      color: #888;
       margin-top: 2px;
     }
 
@@ -524,12 +552,12 @@
     }
 
     .order-item-invalid {
-      background: #fff5f5;
+      background: #2a1a1a;
       border-left: 3px solid #dc3545;
     }
 
     .order-item-invalid .order-item-name {
-      color: #dc3545;
+      color: #ff6b6b;
     }
 
     .order-item-error {
@@ -564,22 +592,23 @@
     }
 
     .order-btn.confirm:disabled {
-      background: #ccc;
+      background: #3d3d5c;
+      color: #666;
       cursor: not-allowed;
     }
 
     .order-btn.cancel {
-      background: #6c757d;
-      color: white;
+      background: #3d3d5c;
+      color: #d0d0d0;
     }
 
     .order-btn.cancel:hover {
-      background: #545b62;
+      background: #4d4d6c;
     }
 
     .order-summary {
       font-size: 12px;
-      color: #666;
+      color: #888;
       margin-bottom: 10px;
       font-style: italic;
     }
@@ -587,20 +616,20 @@
     /* Sidebar footer with settings link */
     #sidebarFooter {
       padding: 10px 15px;
-      border-top: 1px solid #eee;
-      background: #f5f5f5;
+      border-top: 1px solid #3d3d5c;
+      background: #16213e;
       text-align: center;
     }
 
     #settingsLink {
-      color: #666;
+      color: #888;
       text-decoration: none;
       font-size: 13px;
       cursor: pointer;
     }
 
     #settingsLink:hover {
-      color: #007bff;
+      color: #5dade2;
     }
 
     /* Settings view */
@@ -631,30 +660,32 @@
     .settings-section h3 {
       font-size: 14px;
       font-weight: 600;
-      color: #333;
+      color: #d0d0d0;
       margin-bottom: 10px;
       padding-bottom: 5px;
-      border-bottom: 1px solid #eee;
+      border-bottom: 1px solid #3d3d5c;
     }
 
     .settings-section p {
       font-size: 12px;
-      color: #666;
+      color: #888;
       margin-bottom: 10px;
     }
 
     .settings-input {
       width: 100%;
       padding: 10px 12px;
-      border: 1px solid #ddd;
+      border: 1px solid #3d3d5c;
       border-radius: 6px;
       font-size: 13px;
       font-family: monospace;
+      background: #1a1a2e;
+      color: #e8e8e8;
     }
 
     .settings-input:focus {
       outline: none;
-      border-color: #007bff;
+      border-color: #0f4c75;
     }
 
     .settings-btn {
@@ -668,21 +699,21 @@
     }
 
     .settings-btn.primary {
-      background: #007bff;
+      background: #0f4c75;
       color: white;
     }
 
     .settings-btn.primary:hover {
-      background: #0056b3;
+      background: #1a6a9e;
     }
 
     .settings-btn.secondary {
-      background: #6c757d;
-      color: white;
+      background: #3d3d5c;
+      color: #d0d0d0;
     }
 
     .settings-btn.secondary:hover {
-      background: #545b62;
+      background: #4d4d6c;
     }
 
     .settings-status {
@@ -695,48 +726,48 @@
 
     .settings-status.success {
       display: block;
-      background: #d4edda;
-      color: #155724;
+      background: #1a3d2e;
+      color: #7dcea0;
     }
 
     .settings-status.error {
       display: block;
-      background: #f8d7da;
-      color: #721c24;
+      background: #3d1a1a;
+      color: #e74c3c;
     }
 
     .folder-structure {
       font-family: monospace;
       font-size: 12px;
-      background: #f8f9fa;
+      background: #0f0f1a;
       padding: 12px;
       border-radius: 6px;
-      color: #495057;
+      color: #888;
       margin-top: 10px;
     }
 
     .settings-footer {
       padding: 10px 15px;
-      border-top: 1px solid #eee;
-      background: #f5f5f5;
+      border-top: 1px solid #3d3d5c;
+      background: #16213e;
       text-align: center;
     }
 
     .settings-footer a {
-      color: #666;
+      color: #888;
       text-decoration: none;
       font-size: 13px;
       cursor: pointer;
     }
 
     .settings-footer a:hover {
-      color: #007bff;
+      color: #5dade2;
     }
 
-    /* Resize handles */
+    /* Resize handles - dark */
     .resize-handle {
       height: 8px;
-      background: #e0e0e0;
+      background: #2d2d44;
       cursor: ns-resize;
       display: flex;
       align-items: center;
@@ -747,14 +778,14 @@
 
     .resize-handle:hover,
     .resize-handle.active {
-      background: #007bff;
+      background: #0f4c75;
     }
 
     .resize-handle::after {
       content: '';
       width: 40px;
       height: 3px;
-      background: #999;
+      background: #666;
       border-radius: 2px;
     }
 
@@ -763,12 +794,12 @@
       background: white;
     }
 
-    /* Typing indicator */
+    /* Typing indicator - dark */
     .typing-indicator {
       display: flex;
       gap: 4px;
       padding: 10px 14px;
-      background: #f0f0f0;
+      background: #2d2d44;
       border-radius: 12px;
       align-self: flex-start;
       border-bottom-left-radius: 4px;
@@ -777,7 +808,7 @@
     .typing-indicator span {
       width: 8px;
       height: 8px;
-      background: #999;
+      background: #666;
       border-radius: 50%;
       animation: typing 1.4s infinite;
     }
@@ -790,24 +821,23 @@
       30% { transform: translateY(-4px); }
     }
 
-    /* MapLibre popup styling */
+    /* MapLibre popup styling - compact sizing */
     .maplibregl-popup-content {
-      padding: 15px;
-      max-width: 300px;
+      padding: 10px 12px;
       font-size: 13px;
-      line-height: 1.5;
+      line-height: 1.35;
     }
 
     .maplibregl-popup-content strong {
-      font-size: 15px;
+      font-size: 14px;
       display: block;
-      margin-bottom: 8px;
+      margin-bottom: 5px;
       color: #333;
     }
 
     .maplibregl-popup-close-button {
-      font-size: 18px;
-      padding: 5px 8px;
+      font-size: 16px;
+      padding: 4px 6px;
     }
 
     /* Responsive */
@@ -837,11 +867,9 @@
         <div class="chat-message assistant">
           Welcome! I can help you explore geographic data.
           <br><br>
-          Start by asking me about any topic - countries, states, counties, or specific data like GDP, population, or emissions.
+          To build a map query, I need three things: <b>location</b> (where), <b>time period</b> (when), and <b>data</b> (what). Feel free to ask what's available before diving in.
           <br><br>
-          After we narrow down your request, I'll display the results on the map.
-          <br><br>
-          Try: "What GDP data do you have?" or "Top 10 countries by CO2 emissions"
+          Try: "What data do you have for Europe?" or "Show me CO2 emissions trends worldwide"
         </div>
       </div>
 
@@ -877,7 +905,7 @@
           <h3>Data Storage</h3>
           <p>Configure an external folder for storing large geometry and data files. This keeps your git repository small.</p>
 
-          <label for="backupPathInput" style="font-size: 12px; font-weight: 500; display: block; margin-bottom: 5px;">
+          <label for="backupPathInput" style="font-size: 12px; font-weight: 500; display: block; margin-bottom: 5px; color: #d0d0d0;">
             Backup Folder Path:
           </label>
           <input type="text" id="backupPathInput" class="settings-input"
@@ -899,7 +927,7 @@
 
         <div class="settings-section">
           <h3>Current Configuration</h3>
-          <div id="currentConfig" style="font-size: 12px; color: #666;">
+          <div id="currentConfig" style="font-size: 12px; color: #888;">
             Loading...
           </div>
         </div>
@@ -935,7 +963,11 @@
       <span class="time-slider-year" id="currentYearLabel">2020</span>
     </div>
     <div class="time-slider-controls">
-      <button id="playBtn" title="Play/Pause">|></button>
+      <button id="rewindBtn" class="time-btn" title="Fast rewind (3x)">&lt;&lt;</button>
+      <button id="stepBackBtn" class="time-btn" title="Previous year">&lt;</button>
+      <button id="playBtn" class="time-btn play" title="Play/Pause">|&gt;</button>
+      <button id="stepFwdBtn" class="time-btn" title="Next year">&gt;</button>
+      <button id="fastFwdBtn" class="time-btn" title="Fast forward (3x)">&gt;&gt;</button>
       <input type="range" id="timeSlider" min="2000" max="2023" value="2023">
     </div>
     <div class="time-slider-labels">
@@ -955,7 +987,6 @@
   </div>
 
   <script src="https://unpkg.com/maplibre-gl@5.0.0/dist/maplibre-gl.js"></script>
-  <script src="/static/config.js"></script>
-  <script src="/static/mapviewer.js"></script>
+  <script type="module" src="/static/modules/app.js"></script>
 </body>
 </html>

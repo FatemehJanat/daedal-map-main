@@ -1,0 +1,203 @@
+========================================================================================================================
+WORLD FACTBOOK DATA COVERAGE REPORT - V9 (WITH 2021-2024 WEB SCRAPES)
+========================================================================================================================
+
+Report Date: 2026-01-02
+New in V9: Added 2021, 2022, 2023, 2024 editions from CIA World Factbook web archives
+           Fixed all loc_ids to ISO 3166-1 alpha-3 standard
+           Combined unique and overlap metrics into single parquet
+
+================================================================================
+DATASET OVERVIEW
+================================================================================
+
+Total rows (country-year pairs): 6,832
+Unique countries: 251
+Year range: 1990 - 2025
+Editions: [2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025]
+Total editions: 24
+
+Total metrics: 78
+
+================================================================================
+EDITION CONTRIBUTION
+================================================================================
+
+Edition   Rows   Values  Pct of Total
+--------------------------------------------------
+2025     1412   30,915     17.5%
+2020      606   21,991     12.5%
+2017      478   19,914     11.3%
+2024      606   13,874      7.9% <-- NEW
+2008      595   12,274      7.0%
+2019      227    9,215      5.2%
+2021      180    8,619      4.9% <-- NEW
+2016      200    8,028      4.6%
+2023      302    7,579      4.3% <-- NEW
+2022      201    7,491      4.3% <-- NEW
+2018      142    5,528      3.1%
+2010      193    5,392      3.1%
+2015      113    3,671      2.1%
+2014       93    3,433      1.9%
+2006      208    3,075      1.7%
+2013       88    3,028      1.7%
+2007      199    2,977      1.7%
+2012      108    2,786      1.6%
+2005      257    2,645      1.5%
+2009       66    1,238      0.7%
+2011       54      906      0.5%
+2004      114      669      0.4%
+2003      222      661      0.4%
+2002      168      339      0.2%
+
+================================================================================
+DATA YEAR COVERAGE
+================================================================================
+
+Year   Rows   Values
+------------------------------
+1990      6        6
+1991     18       20
+1992     11       12
+1993     16       17
+1994     26       30
+1995     42       51
+1996     61       82
+1997    112      203
+1998     94      144
+1999    212      748
+2000    226    1,417
+2001    239    3,294
+2002    241    4,439
+2003    245    5,608
+2004    245    4,804
+2005    245    6,426
+2006    246    6,107
+2007    241    7,481
+2008    244    9,852
+2009    243    9,743
+2010    242   12,884
+2011    241    8,885
+2012    241   13,424
+2013    241   11,874
+2014    237    9,535
+2015    236    8,056
+2016    238    9,463
+2017    241   10,053
+2018    241    4,805
+2019    240    3,962
+2020    235    3,170
+2021    238    5,366
+2022    236    3,939
+2023    240    5,645
+2024    240    4,471
+2025    232      232
+
+================================================================================
+METRIC COVERAGE
+================================================================================
+
+Metric                                Non-Null    Max    Coverage
+----------------------------------------------------------------------
+area_sq_km                                5,127    6,832    75.0%
+birth_rate                                4,666    6,832    68.3%
+death_rate                                4,666    6,832    68.3%
+infant_mortality                          4,648    6,832    68.0%
+fertility_rate                            4,638    6,832    67.9%
+population                                4,503    6,832    65.9%
+life_expectancy                           4,173    6,832    61.1%
+telephones_fixed                          3,899    6,832    57.1%
+telephones_mobile                         3,846    6,832    56.3%
+gdp_per_capita_ppp                        3,813    6,832    55.8%
+imports                                   3,759    6,832    55.0%
+exports                                   3,758    6,832    55.0%
+airports                                  3,677    6,832    53.8%
+pop_growth_rate                           3,612    6,832    52.9%
+gdp_growth_rate                           3,582    6,832    52.4%
+inflation_rate                            3,573    6,832    52.3%
+net_migration_rate                        3,442    6,832    50.4%
+median_age                                3,364    6,832    49.2%
+gdp_ppp                                   3,224    6,832    47.2%
+internet_users                            3,029    6,832    44.3%
+current_account_balance                   2,897    6,832    42.4%
+industrial_production_growth              2,879    6,832    42.1%
+external_debt                             2,849    6,832    41.7%
+electricity_production                    2,743    6,832    40.1%
+crude_oil_production                      2,703    6,832    39.6%
+unemployment_rate                         2,639    6,832    38.6%
+electricity_consumption                   2,639    6,832    38.6%
+foreign_reserves                          2,590    6,832    37.9%
+labor_force                               2,572    6,832    37.6%
+merchant_marine                           2,540    6,832    37.2%
+natural_gas_production                    2,299    6,832    33.7%
+crude_oil_reserves                        2,209    6,832    32.3%
+roadways_km                               2,156    6,832    31.6%
+natural_gas_consumption                   2,155    6,832    31.5%
+internet_hosts                            2,048    6,832    30.0%
+public_debt_pct_gdp                       2,033    6,832    29.8%
+natural_gas_reserves                      1,995    6,832    29.2%
+natural_gas_imports                       1,990    6,832    29.1%
+natural_gas_exports                       1,974    6,832    28.9%
+military_expenditure_pct                  1,924    6,832    28.2%
+youth_unemployment                        1,839    6,832    26.9%
+taxes_revenue_pct_gdp                     1,783    6,832    26.1%
+education_expenditure                     1,779    6,832    26.0%
+railways_km                               1,743    6,832    25.5%
+co2_emissions                             1,683    6,832    24.6%
+stock_domestic_credit                     1,621    6,832    23.7%
+crude_oil_exports                         1,620    6,832    23.7%
+crude_oil_imports                         1,606    6,832    23.5%
+commercial_bank_prime_rate                1,587    6,832    23.2%
+electricity_imports                       1,572    6,832    23.0%
+electricity_exports                       1,528    6,832    22.4%
+hiv_living                                1,520    6,832    22.2%
+hiv_prevalence                            1,499    6,832    21.9%
+stock_narrow_money                        1,494    6,832    21.9%
+maternal_mortality                        1,478    6,832    21.6%
+budget_surplus_deficit                    1,427    6,832    20.9%
+gini_index                                1,415    6,832    20.7%
+stock_broad_money                         1,367    6,832    20.0%
+hiv_deaths                                1,249    6,832    18.3%
+electricity_hydro_pct                     1,214    6,832    17.8%
+electricity_renewable_pct                 1,213    6,832    17.8%
+electricity_nuclear_pct                   1,211    6,832    17.7%
+electricity_fossil_pct                    1,204    6,832    17.6%
+electricity_capacity                      1,179    6,832    17.3%
+refined_petroleum_production              1,079    6,832    15.8%
+refined_petroleum_exports                 1,072    6,832    15.7%
+refined_petroleum_imports                 1,040    6,832    15.2%
+broadband_subscriptions                   1,028    6,832    15.0%
+gross_national_saving                     1,012    6,832    14.8%
+stock_fdi_at_home                           996    6,832    14.6%
+waterways_km                                977    6,832    14.3%
+market_value_traded_shares                  962    6,832    14.1%
+health_expenditures                         951    6,832    13.9%
+central_bank_discount_rate                  905    6,832    13.2%
+obesity_rate                                905    6,832    13.2%
+refined_petroleum_consumption               898    6,832    13.1%
+stock_fdi_abroad                            896    6,832    13.1%
+child_underweight                           863    6,832    12.6%
+
+================================================================================
+DATA QUALITY CHECKS
+================================================================================
+
+Sanity Checks:
+  USA population 2023: 339,665,118 [PASS]
+  CHN population 2023: 1,413,142,846 [PASS]
+  USA gdp_per_capita_ppp 2021: 63,700 [PASS]
+  USA airports 2021: 13,513 [PASS]
+  SAU crude_oil_production 2018: 10,425,000 [PASS]
+
+================================================================================
+SUMMARY
+================================================================================
+
+Total data values: 176,248
+Theoretical max: 532,896
+Overall coverage: 33.1%
+
+Comparison to V6:
+  V6: 6,581 rows, ~92,000 values
+  V9: 6,832 rows, 176,248 values
+  Improvement: +84,248 values (+92%)

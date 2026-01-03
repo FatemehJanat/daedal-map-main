@@ -1,5 +1,5 @@
 """
-mapmover package - Core application logic for the county-map application.
+mapmover package - Runtime application logic for the county-map application.
 
 This package provides:
 - Geography and regional groupings (geography.py)
@@ -7,13 +7,13 @@ This package provides:
 - Geometry enrichment (geometry_enrichment.py)
 - Geometry joining (geometry_joining.py)
 - Geometry endpoint handlers (geometry_handlers.py)
-- Order Taker LLM (order_taker.py) - Phase 1B
-- Order Executor (order_executor.py) - Phase 1B
-- Metadata generator (metadata_generator.py)
-- Catalog builder (catalog_builder.py)
+- Order Taker LLM (order_taker.py)
+- Order Executor (order_executor.py)
 - Logging and analytics (logging_analytics.py)
 - Utility functions (utils.py)
 - Constants (constants.py)
+
+Note: Build tools (geometry processing, catalog generation) are in the build/ folder.
 """
 
 # Re-export key functions for convenience
@@ -87,7 +87,7 @@ from .geometry_handlers import (
     clear_cache,
 )
 
-# Phase 1B: Order Taker system
+# Order Taker system
 from .order_taker import interpret_request
 from .order_executor import execute_order
 
@@ -143,7 +143,7 @@ __all__ = [
     "load_country_parquet",
     "load_global_countries",
     "clear_cache",
-    # Order Taker (Phase 1B)
+    # Order Taker
     "interpret_request",
     "execute_order",
 ]

@@ -40,7 +40,7 @@ Explore geographic data through natural conversation. Ask questions about countr
 | OWID CO2 Data | 218 countries | GDP, CO2, energy, population |
 | WHO Health Stats | 198 countries | Life expectancy, mortality, immunization |
 | IMF Balance of Payments | 195 countries | Trade, investment, financial flows |
-| CIA World Factbook | 250 countries | Infrastructure, military, oil/gas, electricity |
+| World Factbook | 250 countries | Infrastructure, military, oil/gas, electricity |
 | US Census Demographics | 3,200+ counties | Age, sex, race demographics |
 | UN SDG Indicators | 200+ countries | 17 Sustainable Development Goals |
 
@@ -58,16 +58,16 @@ Explore geographic data through natural conversation. Ask questions about countr
 
 ## Documentation
 
-For technical documentation, see [CONTEXT.md](CONTEXT.md).
+For technical documentation, see [docs/CONTEXT.md](docs/CONTEXT.md).
 
 | Document | Purpose |
 |----------|---------|
-| [CONTEXT.md](CONTEXT.md) | System architecture and technical index |
-| [DATA_PIPELINE.md](DATA_PIPELINE.md) | Data format and import process |
-| [GEOMETRY.md](GEOMETRY.md) | Geography system and location IDs |
-| [CHAT.md](CHAT.md) | Chat interface and LLM system |
-| [MAPPING.md](MAPPING.md) | Frontend visualization |
-| [ADMIN_DASHBOARD.md](ADMIN_DASHBOARD.md) | Admin tools for data management |
+| [docs/CONTEXT.md](docs/CONTEXT.md) | System architecture and technical index |
+| [docs/DATA_PIPELINE.md](docs/DATA_PIPELINE.md) | Data format and import process |
+| [docs/GEOMETRY.md](docs/GEOMETRY.md) | Geography system and location IDs |
+| [docs/CHAT.md](docs/CHAT.md) | Chat interface and LLM system |
+| [docs/MAPPING.md](docs/MAPPING.md) | Frontend visualization |
+| [docs/ADMIN_DASHBOARD.md](docs/ADMIN_DASHBOARD.md) | Admin tools for data management |
 
 ---
 
@@ -77,4 +77,4 @@ MIT License
 
 ---
 
-*Last Updated: 2025-12-31*
+*Last Updated: 2026-01-01*

@@ -1,0 +1,373 @@
+/**
+ * Popup Builder - Generate popup HTML content for map features.
+ * Handles formatting and display of feature properties.
+ */
+
+// Dependencies set via setDependencies to avoid circular imports
+let App = null;
+
+export function setDependencies(deps) {
+  App = deps.App;
+}
+
+// ============================================================================
+// POPUP BUILDER - Generate popup HTML content
+// ============================================================================
+
+export const PopupBuilder = {
+  // Units to hide in popup display (redundant/obvious)
+  hideUnits: ['count', 'number', 'people', 'persons', 'units'],
+
+  // Fields to skip in popup display (technical/internal fields)
+  skipFields: [
+    // Identity fields
+    'geometry', 'coordinates', 'loc_id', 'parent_id', 'level', 'code', 'abbrev',
+    'name', 'Name', 'Location', 'name_long', 'name_sort', 'formal_en', 'name_local',
+    // Country/region name variants
+    'country', 'country_name', 'country_code', 'iso_code', 'iso_a3', 'iso_3166_2',
+    'Admin Country Name', 'Sov Country Name', 'Admin Country Abbr', 'Sov Country Abbr',
+    'stusab', 'state', 'postal', 'continent',
+    // Admin/type fields
+    'Admin Type', 'type', 'admin_level',
+    // Geometry metadata
+    'centroid_lon', 'centroid_lat', 'Longitude', 'Latitude',
+    'bbox_min_lon', 'bbox_min_lat', 'bbox_max_lon', 'bbox_max_lat',
+    'has_polygon', 'timezone',
+    // Children counts (shown via enriched info)
+    'children_count', 'children_by_level', 'descendants_count', 'descendants_by_level',
+    // Categorization
+    'population_year', 'gdp_year', 'economy type', 'income_group',
+    'UN Region', 'subregion', 'region_wb',
+    // Year shown separately
+    'data_year'
+  ],
+
+  /**
+   * Build popup HTML from feature properties
+   * @param {Object} properties - Feature properties
+   * @param {Object} sourceData - Optional source metadata (from chat query)
+   * @param {Object} locationInfo - Optional enriched location info from API
+   * @returns {string} HTML content
+   */
+  build(properties, sourceData = null, locationInfo = null) {
+    const lines = [];
+
+    // Title
+    const name = properties.name || properties.country_name ||
+                 properties.country || properties.Name || 'Unknown';
+    const stateAbbr = properties.stusab || properties.abbrev || '';
+    lines.push(`<strong>${name}${stateAbbr ? ', ' + stateAbbr : ''}</strong>`);
+
+    // Check if we have actual data fields (from a chat query)
+    const dataFields = this.getRelevantFields(properties);
+    const hasQueryData = dataFields.length > 0;
+
+    // Debug mode: show coverage info
+    if (App?.debugMode && properties.coverage !== undefined) {
+      lines.push(this.buildHierarchyInfo(properties));
+    } else if (hasQueryData) {
+      // DATA MODE: Show data fields from chat query (takes priority over locationInfo)
+      for (const key of dataFields.slice(0, 10)) {
+        const value = properties[key];
+        if (value == null || value === '') continue;
+
+        const fieldName = this.cleanFieldName(key);
+        const formattedValue = this.formatValue(key, value);
+        // Prefer data_year (actual year of data) over year (slider position)
+        const displayYear = properties.data_year || properties.year || '';
+        const yearSuffix = displayYear ? ` (${displayYear})` : '';
+
+        lines.push(`${fieldName}: ${formattedValue}${yearSuffix}`);
+      }
+
+      // Source info (from chat query) - compact with clickable links
+      if (sourceData) {
+        if (sourceData.sources && sourceData.sources.length > 0) {
+          const sourceLinks = sourceData.sources.slice(0, 2).map(s => {
+            if (s.url && s.url !== 'Unknown') {
+              return `<a href="${s.url}" target="_blank" style="color: #5dade2;">${s.name}</a>`;
+            }
+            return s.name;
+          }).join(', ');
+          lines.push(`<span style="font-size: 10px; color: #888;">Source: ${sourceLinks}</span>`);
+        } else if (sourceData.source_name) {
+          const url = sourceData.source_url || sourceData.url;
+          if (url && url !== 'Unknown') {
+            lines.push(`<span style="font-size: 10px; color: #888;">Source: <a href="${url}" target="_blank" style="color: #5dade2;">${sourceData.source_name}</a></span>`);
+          } else {
+            lines.push(`<span style="font-size: 10px; color: #888;">Source: ${sourceData.source_name}</span>`);
+          }
+        }
+      }
+    } else if (locationInfo && !locationInfo.error) {
+      // EXPLORATION MODE: Show location info from API (no query data present)
+      lines.push(this.buildLocationInfo(locationInfo));
+    } else {
+      // Fallback: show any remaining non-skip fields
+      const fieldsToShow = Object.keys(properties).filter(k =>
+        !this.skipFields.includes(k) &&
+        k.toLowerCase() !== 'year' &&
+        properties[k] != null &&
+        properties[k] !== ''
+      );
+
+      for (const key of fieldsToShow.slice(0, 10)) {
+        const value = properties[key];
+        if (value == null || value === '') continue;
+
+        const fieldName = this.cleanFieldName(key);
+        const formattedValue = this.formatValue(key, value);
+        // Prefer data_year (actual year of data) over year (slider position)
+        const displayYear = properties.data_year || properties.year || '';
+        const yearSuffix = displayYear ? ` (${displayYear})` : '';
+
+        lines.push(`${fieldName}: ${formattedValue}${yearSuffix}`);
+      }
+    }
+
+    // Compact hint for zoom navigation (no leading break)
+    lines.push('<em style="font-size: 10px; color: #999;">Zoom for sub-layers</em>');
+
+    return lines.join('<br>');
+  },
+
+  /**
+   * Build location info section from enriched API data
+   * @param {Object} info - Location info from /geometry/{loc_id}/info
+   * @returns {string} HTML content
+   */
+  buildLocationInfo(info) {
+    const parts = [];
+
+    // Memberships first (G20, BRICS, EU for countries; "Part of: X" for sub-nationals)
+    if (info.memberships && info.memberships.length > 0) {
+      const first = info.memberships[0];
+      if (first.startsWith('Part of:')) {
+        parts.push(`<span style="color: #888; font-size: 11px;">${first}</span>`);
+      } else {
+        const memberships = info.memberships.slice(0, 3).join(', ');
+        parts.push(`<span style="color: #888; font-size: 11px;">${memberships}</span>`);
+      }
+    }
+
+    // Country-level datasets (shown at country level)
+    const datasetCounts = info.dataset_counts || {};
+    const countryDatasets = datasetCounts.country || 0;
+    if (info.admin_level === 0 && countryDatasets > 0) {
+      parts.push(`<span style="color: #888; font-size: 11px;">${countryDatasets} datasets</span>`);
+    }
+
+    // Subdivisions - compact, one line with dataset counts
+    if (info.children_count > 0 || info.descendants_count > 0) {
+      const subdivisionLines = this.formatSubdivisions(info);
+      for (const line of subdivisionLines) {
+        parts.push(`<span style="color: #888; font-size: 11px;">${line}</span>`);
+      }
+    }
+
+    return parts.join('<br>');
+  },
+
+  /**
+   * Format subdivision counts into array of lines with dataset counts
+   * @param {Object} info - Location info with children/descendants counts, level_names, dataset_counts
+   * @returns {string[]} Array of formatted lines like ["52 states (20 datasets)", "3,144 counties (3 datasets)"]
+   */
+  formatSubdivisions(info) {
+    // Parse children_by_level and descendants_by_level
+    let childrenByLevel = {};
+    let descendantsByLevel = {};
+
+    try {
+      if (typeof info.children_by_level === 'string') {
+        childrenByLevel = JSON.parse(info.children_by_level);
+      } else if (info.children_by_level) {
+        childrenByLevel = info.children_by_level;
+      }
+    } catch (e) {}
+
+    try {
+      if (typeof info.descendants_by_level === 'string') {
+        descendantsByLevel = JSON.parse(info.descendants_by_level);
+      } else if (info.descendants_by_level) {
+        descendantsByLevel = info.descendants_by_level;
+      }
+    } catch (e) {}
+
+    // Use country-specific level names from API, or fall back to defaults
+    const countryLevelNames = info.level_names || {};
+    const defaultNames = { 1: 'states/provinces', 2: 'districts', 3: 'subdivisions', 4: 'localities' };
+
+    // Dataset counts by geographic level (e.g., {"country": 20, "county": 3})
+    const datasetCounts = info.dataset_counts || {};
+
+    // Map admin levels to catalog geographic levels
+    const levelToGeoLevel = { 0: 'country', 1: 'state', 2: 'county', 3: 'place' };
+
+    const lines = [];
+
+    // Format each level on its own line
+    const allLevels = { ...childrenByLevel, ...descendantsByLevel };
+    const sortedLevels = Object.keys(allLevels).map(Number).sort((a, b) => a - b);
+
+    for (const level of sortedLevels) {
+      const count = descendantsByLevel[level] || childrenByLevel[level] || 0;
+      if (count > 0) {
+        const levelName = countryLevelNames[level] || defaultNames[level] || `level ${level}`;
+
+        // Get dataset count for this level
+        const geoLevel = levelToGeoLevel[level];
+        const dsCount = datasetCounts[geoLevel] || 0;
+
+        if (dsCount > 0) {
+          lines.push(`${count.toLocaleString()} ${levelName} (${dsCount} datasets)`);
+        } else {
+          lines.push(`${count.toLocaleString()} ${levelName}`);
+        }
+      }
+    }
+
+    // Limit to first 3 levels
+    return lines.slice(0, 3);
+  },
+
+  /**
+   * Build coverage info for debug mode popup
+   * @param {Object} properties - Feature properties with coverage data
+   * @returns {string} HTML content for coverage info
+   */
+  buildHierarchyInfo(properties) {
+    const currentLevel = properties.current_admin_level || 0;
+    const actualDepth = properties.actual_depth || 0;
+    const coverage = properties.coverage || 0;
+    const drillableDepth = properties.drillable_depth || 0;
+    let levelCounts = properties.level_counts || {};
+    let geometryCounts = properties.geometry_counts || {};
+
+    // Parse if it's a JSON string (GeoJSON stringifies nested objects)
+    if (typeof levelCounts === 'string') {
+      try {
+        levelCounts = JSON.parse(levelCounts);
+      } catch (e) {
+        levelCounts = {};
+      }
+    }
+    if (typeof geometryCounts === 'string') {
+      try {
+        geometryCounts = JSON.parse(geometryCounts);
+      } catch (e) {
+        geometryCounts = {};
+      }
+    }
+
+    const lines = [];
+    const levelNames = ['country', 'state', 'county', 'place', 'locality', 'neighborhood'];
+    const currentLevelName = levelNames[currentLevel] || `level ${currentLevel}`;
+
+    // Show current admin level
+    lines.push(`<br><strong>Admin Level: ${currentLevel} (${currentLevelName})</strong>`);
+
+    // Show coverage percentage
+    const coveragePct = Math.round(coverage * 100);
+    const coverageColor = coverage >= 1 ? '#44aa44' : coverage >= 0.5 ? '#ff9900' : '#ff4444';
+    lines.push(`<strong style="color: ${coverageColor};">Geometry: ${coveragePct}%</strong>`);
+
+    // Show depth info
+    lines.push(`Depth: ${actualDepth} levels (drill to level ${drillableDepth})`);
+
+    // Show level counts with geometry availability
+    // Iterate over actual keys in levelCounts (may start at admin_level > 0)
+    const levels = Object.keys(levelCounts).map(Number).sort((a, b) => a - b);
+
+    for (const level of levels) {
+      const count = levelCounts[String(level)] || 0;
+      const geomCount = geometryCounts[String(level)] || 0;
+      if (count > 0 && level < levelNames.length) {
+        const hasGeom = geomCount > 0;
+        const color = hasGeom ? '#44aa44' : '#ff9900';
+        const geomNote = hasGeom ? '' : ' (no geometry)';
+        lines.push(`<span style="color: ${color};">${levelNames[level]}: ${count.toLocaleString()}${geomNote}</span>`);
+      }
+    }
+
+    return lines.join('<br>');
+  },
+
+  /**
+   * Get relevant data fields (numeric, interesting values)
+   */
+  getRelevantFields(properties) {
+    const relevant = [];
+    const keywords = ['co2', 'gdp', 'population', 'emission', 'capita', 'total',
+                      'methane', 'temperature', 'energy', 'oil', 'gas', 'coal',
+                      'balance', 'account', 'trade', 'export', 'import', 'income',
+                      'life', 'mortality', 'birth', 'health', 'age', 'median'];
+
+    for (const [key, value] of Object.entries(properties)) {
+      if (this.skipFields.includes(key) || value == null || value === '') continue;
+      if (key.toLowerCase() === 'year') continue;
+
+      const keyLower = key.toLowerCase();
+      const isNumeric = !isNaN(parseFloat(value));
+      const isRelevant = keywords.some(kw => keyLower.includes(kw));
+      // Also include fields with our metric_label format (contain parentheses)
+      const isLabeledMetric = key.includes('(') && key.includes(')');
+
+      if (isNumeric && (isRelevant || isLabeledMetric)) {
+        relevant.push(key);
+      }
+    }
+    return relevant;
+  },
+
+  /**
+   * Clean field name for display - removes redundant units like (count)
+   * @param {string} key - Raw field name like "Population (count)"
+   * @returns {string} Cleaned name like "Population"
+   */
+  cleanFieldName(key) {
+    // Check for unit suffix pattern: "Name (unit)"
+    const match = key.match(/^(.+?)\s*\(([^)]+)\)$/);
+    if (match) {
+      const name = match[1];
+      const unit = match[2].toLowerCase();
+      // Hide redundant units
+      if (this.hideUnits.includes(unit)) {
+        return name;
+      }
+    }
+    // No unit suffix or not in hide list - format normally
+    return key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+  },
+
+  /**
+   * Format a value for display
+   */
+  formatValue(key, value) {
+    const keyLower = key.toLowerCase();
+    const numValue = parseFloat(value);
+
+    if (!isNaN(numValue)) {
+      if (keyLower.includes('gdp') && !keyLower.includes('per')) {
+        if (numValue > 1e9) return `$${(numValue / 1e9).toFixed(2)} billion`;
+        if (numValue > 1e6) return `$${(numValue / 1e6).toFixed(2)} million`;
+        return `$${numValue.toLocaleString()}`;
+      }
+      if (keyLower.includes('co2')) {
+        if (keyLower.includes('per_capita') || keyLower.includes('percapita')) {
+          return `${numValue.toFixed(2)} tonnes/person`;
+        }
+        return `${numValue.toFixed(2)} million tonnes`;
+      }
+      if (keyLower.includes('population') || keyLower.includes('pop')) {
+        return numValue.toLocaleString();
+      }
+      if (keyLower.includes('percent') || keyLower.includes('rate')) {
+        return `${numValue.toFixed(1)}%`;
+      }
+      if (numValue > 1000) return numValue.toLocaleString();
+      return numValue.toFixed(2);
+    }
+    return value;
+  }
+};

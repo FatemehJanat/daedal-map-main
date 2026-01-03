@@ -2,16 +2,16 @@
   "_description": "Country-specific names for administrative levels. First element is display name, rest are synonyms for query interpretation.",
   "_format": "ISO3 -> {admin_level: [display_name, synonym1, synonym2, ...]}",
   "_schema_version": "1.0.0",
-  "_last_updated": "2025-01",
+  "_last_updated": "2026-01",
   "_note": "Moved from conversions.json country_level_names section",
 
   "_default": {
-    "1": ["first-level divisions", "regions", "provinces", "states"],
-    "2": ["second-level divisions", "districts", "counties"],
-    "3": ["third-level divisions", "municipalities", "cities", "towns"],
-    "4": ["fourth-level divisions", "localities", "neighborhoods", "villages"],
-    "5": ["fifth-level divisions", "subdivisions", "sectors"],
-    "6": ["sixth-level divisions", "blocks", "units"]
+    "1": ["regions", "provinces", "states", "first-level divisions"],
+    "2": ["districts", "counties", "second-level divisions"],
+    "3": ["municipalities", "cities", "towns", "third-level divisions"],
+    "4": ["localities", "neighborhoods", "villages", "fourth-level divisions"],
+    "5": ["subdivisions", "sectors", "fifth-level divisions"],
+    "6": ["blocks", "units", "sixth-level divisions"]
   },
 
   "_comment_north_america": "North America",
@@ -25,8 +25,8 @@
   },
   "CAN": {
     "1": ["provinces", "territories", "province", "territory"],
-    "2": ["census divisions", "regional districts", "counties", "regional municipalities"],
-    "3": ["census subdivisions", "municipalities", "cities", "towns", "villages", "reserves", "settlements"]
+    "2": ["districts", "counties", "census divisions", "regional districts", "regional municipalities"],
+    "3": ["municipalities", "cities", "towns", "villages", "census subdivisions", "reserves", "settlements"]
   },
   "MEX": {
     "1": ["states", "estados", "federal entities"],
@@ -95,13 +95,13 @@
     "3": ["municipalities", "Gemeinden"]
   },
   "POL": {
-    "1": ["voivodeships", "wojewodztwa", "provinces"],
+    "1": ["provinces", "voivodeships", "wojewodztwa"],
     "2": ["counties", "powiaty", "districts"],
-    "3": ["communes", "gminy", "municipalities"],
-    "4": ["solectwos", "solectwa", "village councils"]
+    "3": ["municipalities", "communes", "gminy"],
+    "4": ["village councils", "solectwa", "solectwos"]
   },
   "RUS": {
-    "1": ["federal subjects", "regions", "oblasts", "republics", "krais"],
+    "1": ["regions", "federal subjects", "oblasts", "republics", "krais"],
     "2": ["districts", "rayons"],
     "3": ["municipalities", "cities", "towns"]
   },
@@ -136,10 +136,10 @@
     "3": ["municipalities", "demoi"]
   },
   "UKR": {
-    "1": ["oblasts", "regions", "cities with special status"],
-    "2": ["raions", "districts"],
-    "3": ["hromadas", "territorial communities"],
-    "4": ["settlements", "villages"]
+    "1": ["regions", "oblasts", "cities with special status"],
+    "2": ["districts", "raions"],
+    "3": ["communities", "hromadas", "territorial communities"],
+    "4": ["villages", "settlements"]
   },
 
   "_comment_asia": "Asia",
@@ -196,7 +196,7 @@
   "MYS": {
     "1": ["states", "negeri", "federal territories"],
     "2": ["districts", "daerah"],
-    "3": ["mukim", "subdistricts"],
+    "3": ["subdistricts", "mukim"],
     "4": ["villages", "kampung", "neighborhoods", "taman"]
   },
   "PAK": {
@@ -228,7 +228,7 @@
     "1": ["provinces", "palata"],
     "2": ["districts", "distrikkaya"],
     "3": ["divisions", "divisional secretariats"],
-    "4": ["grama niladhari divisions", "villages"]
+    "4": ["villages", "grama niladhari divisions"]
   },
   "MMR": {
     "1": ["states", "regions", "pyi-neh"],
@@ -321,12 +321,12 @@
   "_comment_oceania": "Oceania",
   "AUS": {
     "1": ["states", "territories"],
-    "2": ["local government areas", "LGAs", "local councils"],
+    "2": ["councils", "local government areas", "LGAs", "shires"],
     "3": ["suburbs", "localities", "towns"]
   },
   "NZL": {
     "1": ["regions"],
-    "2": ["territorial authorities", "TAs", "districts", "cities"],
+    "2": ["districts", "cities", "territorial authorities", "TAs"],
     "3": ["wards"],
     "4": ["suburbs", "localities"]
   }

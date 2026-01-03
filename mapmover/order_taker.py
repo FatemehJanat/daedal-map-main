@@ -261,6 +261,15 @@ CRITICAL RULES:
 - For "top N" requests: add sort to items: {{"by": "co2", "order": "desc", "limit": 10}}
 - summary: Plain English description of what will be displayed
 
+COMPREHENSIVE TOPIC REQUESTS:
+When user asks about an entire topic, goal, or source (e.g., "show me SDG 7", "all energy data"):
+- Small sources (1-5 metrics): Add all metrics automatically, one order item each
+- Medium sources (6-10 metrics): Add all metrics, mention the count in summary
+- Large sources (10+ metrics): ASK first before adding. Respond with:
+  "This source has X metrics. Would you like me to add all of them, or would you prefer I list them so you can choose?"
+  - If user confirms "add all" or similar: add all metrics
+  - If user wants to see the list: show numbered list of metrics
+
 VALIDATION:
 - If user asks for data outside the Years range, inform them of available years
 - If user asks for a metric that doesn't exist, list similar available columns

@@ -70,7 +70,9 @@ def set_backup_path(path: str) -> bool:
 def check_backup_folders(backup_path: str) -> dict:
     """
     Check which folders exist in the backup path and have content.
-    Returns dict mapping folder name to status: True if exists with subfolders, False otherwise.
+    Returns dict mapping folder name to status: True if exists with content, False otherwise.
+    - geometry: checks for .parquet files (geometry files are stored directly)
+    - data: checks for subfolders (each data source has its own subfolder)
     """
     if not backup_path:
         return {}
@@ -81,9 +83,14 @@ def check_backup_folders(backup_path: str) -> dict:
     for folder in BACKUP_FOLDERS:
         folder_path = base_path / folder
         if folder_path.exists():
-            # Check for at least one subfolder (source directory)
-            subfolders = [d for d in folder_path.iterdir() if d.is_dir()]
-            result[folder] = len(subfolders) > 0
+            if folder == "geometry":
+                # Geometry folder contains parquet files directly
+                parquet_files = list(folder_path.glob("*.parquet"))
+                result[folder] = len(parquet_files) > 0
+            else:
+                # Data folder contains subfolders for each source
+                subfolders = [d for d in folder_path.iterdir() if d.is_dir()]
+                result[folder] = len(subfolders) > 0
         else:
             result[folder] = False
 

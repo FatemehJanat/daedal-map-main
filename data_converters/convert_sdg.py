@@ -163,6 +163,11 @@ def convert_goal(goal_num: int, df_goal: pd.DataFrame, m49_to_iso3: dict) -> dic
     # Ensure year is integer
     df_pivot['year'] = df_pivot['year'].astype(int)
 
+    # Convert metric columns to numeric (they come as strings from CSV)
+    metric_cols = [c for c in df_pivot.columns if c not in ['loc_id', 'year']]
+    for col in metric_cols:
+        df_pivot[col] = pd.to_numeric(df_pivot[col], errors='coerce')
+
     # Sort by loc_id, year
     df_pivot = df_pivot.sort_values(['loc_id', 'year']).reset_index(drop=True)
 

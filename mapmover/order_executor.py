@@ -270,6 +270,8 @@ def execute_order(order: dict) -> dict:
     boxes = {} if not multi_year_mode else None
     all_years = set()
     metric_key = None  # Track the metric label for frontend
+    requested_year_start = None  # Track requested range for comparison
+    requested_year_end = None
 
     # Step 3: Process each order item
     for item in items:
@@ -280,6 +282,11 @@ def execute_order(order: dict) -> dict:
         year_start = item.get("year_start")
         year_end = item.get("year_end")
         sort_spec = item.get("sort")
+
+        # Track requested range for comparison with actual data
+        if year_start and year_end:
+            requested_year_start = year_start
+            requested_year_end = year_end
 
         if not source_id:
             continue
@@ -469,9 +476,13 @@ def execute_order(order: dict) -> dict:
                     "properties": properties
                 })
 
-    # Build source info for response
+    # Build source info for response (include URL if available)
     source_info = [
-        {"id": sid, "name": meta.get("source_name", sid)}
+        {
+            "id": sid,
+            "name": meta.get("source_name", sid),
+            "url": meta.get("source_url", "")
+        }
         for sid, meta in sources_used.items()
     ]
 
@@ -490,13 +501,29 @@ def execute_order(order: dict) -> dict:
     # Add multi-year data if applicable
     if multi_year_mode and year_data:
         sorted_years = sorted(all_years)
+        actual_min = sorted_years[0] if sorted_years else 0
+        actual_max = sorted_years[-1] if sorted_years else 0
+
         response["multi_year"] = True
         response["year_data"] = year_data
         response["year_range"] = {
-            "min": sorted_years[0] if sorted_years else 0,
-            "max": sorted_years[-1] if sorted_years else 0,
+            "min": actual_min,
+            "max": actual_max,
             "available_years": sorted_years
         }
         response["metric_key"] = metric_key
+
+        # Add data note if year range differs from requested
+        data_notes = []
+        if requested_year_start and requested_year_end:
+            if actual_min != requested_year_start or actual_max != requested_year_end:
+                data_notes.append(f"Note: Data available for {actual_min}-{actual_max} (requested {requested_year_start}-{requested_year_end})")
+            # Check for sparse years
+            expected_years = set(range(actual_min, actual_max + 1))
+            missing_years = expected_years - all_years
+            if missing_years:
+                data_notes.append(f"Some years have no data: {sorted(missing_years)[:5]}{'...' if len(missing_years) > 5 else ''}")
+        if data_notes:
+            response["data_note"] = " | ".join(data_notes)
 
     return response
