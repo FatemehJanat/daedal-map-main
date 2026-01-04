@@ -91,6 +91,12 @@ from .geometry_handlers import (
 from .order_taker import interpret_request
 from .order_executor import execute_order
 
+# Preprocessor for tiered context
+from .preprocessor import preprocess_query
+
+# Postprocessor for validation and derived fields
+from .postprocessor import postprocess_order, get_display_items
+
 __version__ = "2.0.0"
 __all__ = [
     # Constants
@@ -146,4 +152,9 @@ __all__ = [
     # Order Taker
     "interpret_request",
     "execute_order",
+    # Preprocessor
+    "preprocess_query",
+    # Postprocessor
+    "postprocess_order",
+    "get_display_items",
 ]

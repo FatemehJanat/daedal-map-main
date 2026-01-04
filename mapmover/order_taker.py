@@ -137,12 +137,16 @@ def build_regions_text(conversions: dict) -> str:
 
 
 def build_system_prompt(catalog: dict, conversions: dict) -> str:
-    """Build system prompt with catalog and conversions context."""
+    """
+    Build system prompt with full catalog and column names from metadata.
 
-    # Build sources text from catalog with EXACT column names
+    Loads metadata.json for each source to get exact column names.
+    TODO: Optimize by adding column names to catalog.json later.
+    """
+
+    # Build sources text from catalog with exact column names
     sources_text = ""
     usa_only_sources = []
-    global_sources = []
 
     for src in catalog["sources"]:
         geo = src.get("geographic_coverage", {})
@@ -173,153 +177,64 @@ def build_system_prompt(catalog: dict, conversions: dict) -> str:
 
         sources_text += f"""
 **{source_id}** ({src['source_name']})
-  Category: {src.get('category', 'general')}
-  Coverage: {coverage}
-  Years: {temp.get('start', '?')}-{temp.get('end', '?')}
+  Coverage: {coverage}, {temp.get('start', '?')}-{temp.get('end', '?')}
   COLUMNS: {columns_text}
 """
-        # Track coverage for notes
+        # Track USA-only sources
         if geo.get("type") == "country" and geo.get("countries") == 1:
             usa_only_sources.append(source_id)
-        elif geo.get("type") == "global":
-            global_sources.append(f"{source_id} ({geo.get('countries', '?')} countries)")
 
     # Build regions text from conversions
     regions_text = build_regions_text(conversions)
 
-    # Build coverage notes dynamically
-    coverage_notes = []
+    # USA-only warning
+    usa_warning = ""
     if usa_only_sources:
-        coverage_notes.append(f"- {', '.join(usa_only_sources)}: USA ONLY (counties, not countries) - do NOT use for other countries")
-    if global_sources:
-        coverage_notes.append(f"- {', '.join(global_sources)}: Global coverage")
-    coverage_notes.append("- When user asks about a region, ONLY suggest sources that cover that region")
-    coverage_notes_text = "\n".join(coverage_notes)
+        usa_warning = f"\nUSA-ONLY (counties, not countries): {', '.join(usa_only_sources)}"
 
     return f"""You are an Order Taker for a map data visualization system.
 
 AVAILABLE DATA SOURCES:
 {sources_text}
+{usa_warning}
 
-SUPPORTED REGIONS (use lowercase in orders):
+REGIONS:
 {regions_text}
 
-IMPORTANT COVERAGE NOTES:
-{coverage_notes_text}
-
-YOUR JOB:
-1. Understand what the user wants to see on a map
-2. Return a structured JSON order OR a helpful response
-3. If unclear, ask ONE clarifying question (no JSON)
-
-ORDER FORMAT (only when user requests specific data):
+ORDER FORMAT (JSON when user requests data):
 ```json
-{{
-  "items": [
-    {{
-      "source_id": "owid_co2",
-      "metric": "co2",
-      "metric_label": "Co2 (million tonnes)",
-      "region": "europe",
-      "year": 2022
-    }}
-  ],
-  "summary": "CO2 emissions for European countries in 2022"
-}}
+{{"items": [{{"source_id": "owid_co2", "metric": "co2", "region": "europe", "year": 2022}}], "summary": "CO2 for Europe 2022"}}
 ```
 
-YEAR RANGE FORMAT (for time series / trends):
-```json
-{{
-  "items": [
-    {{
-      "source_id": "owid_co2",
-      "metric": "co2",
-      "metric_label": "Co2 (million tonnes)",
-      "region": "europe",
-      "year_start": 2010,
-      "year_end": 2022
-    }}
-  ],
-  "summary": "CO2 emissions trend in Europe from 2010 to 2022"
-}}
-```
+For trends/time series, use year_start/year_end instead of year.
 
-CRITICAL RULES:
+DERIVED FIELDS:
+- Per capita: add "derived": "per_capita" to item
+- Density: add "derived": "density" to item
+- Custom ratio: use type "derived" with numerator/denominator
+
+RULES:
 - source_id: Must EXACTLY match one of the available sources
-- metric: Must be an EXACT column name from the COLUMNS list above (e.g., "co2", "capital_account_balance", "life_expectancy")
-  - DO NOT make up column names or use descriptive phrases
-  - If unsure which column matches user's request, pick the closest match from COLUMNS
-  - If no column matches, say "No matching data found" instead of guessing
-- metric_label: Human-readable name shown in UI (from COLUMNS list, e.g., "Co2 (million tonnes)")
-- region: lowercase region name, or null for global/all
-- year: Integer year for SINGLE year queries, or null for most recent (DEFAULT TO NULL if user doesn't specify - DO NOT ask for year)
-- year_start/year_end: Use INSTEAD of year when user asks for trends, changes over time, or specifies a range like "from 2010 to 2022"
-  - Triggers: "over time", "trend", "from X to Y", "between X and Y", "last N years", "since X"
-  - Example: "CO2 trend in Europe" -> use year_start: 2000, year_end: 2023 (or source's available range)
-  - Example: "GDP from 2015 to 2020" -> use year_start: 2015, year_end: 2020
-- For "top N" requests: add sort to items: {{"by": "co2", "order": "desc", "limit": 10}}
-- summary: Plain English description of what will be displayed
+- metric: Must be an EXACT column name from COLUMNS list (e.g., "co2", "population", "total_pop")
+- region: lowercase (europe, g7, africa) or null for global
+- year: null = most recent (don't ask unless specified)
+- For large sources (10+ metrics): ask before adding all
 
-COMPREHENSIVE TOPIC REQUESTS:
-When user asks about an entire topic, goal, or source (e.g., "show me SDG 7", "all energy data"):
-- Small sources (1-5 metrics): Add all metrics automatically, one order item each
-- Medium sources (6-10 metrics): Add all metrics, mention the count in summary
-- Large sources (10+ metrics): ASK first before adding. Respond with:
-  "This source has X metrics. Would you like me to add all of them, or would you prefer I list them so you can choose?"
-  - If user confirms "add all" or similar: add all metrics
-  - If user wants to see the list: show numbered list of metrics
-
-VALIDATION:
-- If user asks for data outside the Years range, inform them of available years
-- If user asks for a metric that doesn't exist, list similar available columns
-- If user asks for a region not covered by a source, suggest alternative sources
-
-WHEN USER ASKS "what data do you have for X region?":
-- Check which sources cover that region (see Coverage field)
-- List ONLY the relevant sources with brief descriptions
-- Do NOT include census sources for non-US regions
-- If there are MORE THAN 5 matching sources, SUMMARIZE instead of listing all:
-  - Group by category (e.g., "17 SDG datasets covering poverty, health, education...")
-  - Mention the range of years available
-  - Suggest the user ask about a specific topic for details
-
-FORMATTING FOR TEXT RESPONSES:
-- Use **bold** for source names and headings
-- ALWAYS use NUMBERED lists (1. 2. 3.) instead of bullet points - this lets users say "show me #3"
-- Put each item on its own line with a blank line between them
-- Keep descriptions brief (1-2 sentences each)
-- When listing available metrics/data points, show the human-readable NAME not the column code
-  - GOOD: "1. Proportion of population below poverty line (%)"
-  - BAD: "1. si_pov_day1: Proportion of population below poverty line"
-- When a source has many metrics (more than 5-6), state the TOTAL COUNT and show examples:
-  - GOOD: "This source has 12 metrics available, including:"
-  - Then list 5-6 representative examples
-  - This helps users know there are more options to explore
-- Example format for sources:
-
-1. **IMF Balance of Payments** (imf_bop)
-Trade and financial data, 2005-2022.
-
-2. **OWID CO2 Emissions** (owid_co2)
-Emissions, energy, and climate data, 1750-2024.
-
-- Example format for metrics within a source:
-
-1. Proportion of population below international poverty line (%)
-2. Proportion of population living below national poverty line (%)
-3. Direct economic loss attributed to disasters (USD)
-
-RESPOND WITH ONLY:
-- A JSON order block (when user wants specific data displayed)
-- OR a helpful text response (when answering questions about available data)
-- OR a short clarifying question
+RESPOND WITH:
+- JSON order (for data requests)
+- Helpful text (for questions)
+- Short clarifying question (if unclear)
 """
 
 
-def interpret_request(user_query: str, chat_history: list = None) -> dict:
+def interpret_request(user_query: str, chat_history: list = None, hints: dict = None) -> dict:
     """
     Interpret user request and return structured order or response.
+
+    Args:
+        user_query: The user's natural language query
+        chat_history: Previous messages for context
+        hints: Preprocessor hints (topics, regions, time patterns, reference lookups)
 
     Returns:
         {"type": "order", "order": {...}, "summary": "..."} or
@@ -338,6 +253,70 @@ def interpret_request(user_query: str, chat_history: list = None) -> dict:
             messages.append({
                 "role": msg.get("role", "user"),
                 "content": msg.get("content", "")
+            })
+
+    # Inject Tier 3/Tier 4 context from preprocessor hints
+    if hints:
+        context_parts = []
+
+        # Tier 3: Just-in-time context (resolved regions, time patterns)
+        if hints.get("summary"):
+            context_parts.append(f"[Context: {hints['summary']}]")
+
+        # Add resolved region details
+        if hints.get("regions"):
+            for region in hints["regions"][:2]:  # Limit to avoid token bloat
+                context_parts.append(
+                    f"'{region['match']}' resolves to {region['count']} countries"
+                )
+
+        # Tier 4: Reference document content
+        ref_lookup = hints.get("reference_lookup")
+        if ref_lookup:
+            ref_type = ref_lookup.get("type")
+
+            # Check for country-specific data first (direct answers)
+            if ref_lookup.get("country_data"):
+                country_data = ref_lookup["country_data"]
+                formatted = country_data.get("formatted", "")
+                if formatted:
+                    context_parts.append(f"\n[REFERENCE ANSWER: {formatted}]")
+
+            # Fall back to full content for SDG and data source lookups
+            elif ref_lookup.get("content"):
+                ref_content = ref_lookup["content"]
+
+                if ref_type == "sdg":
+                    goal = ref_content.get("goal", {})
+                    context_parts.append(
+                        f"\n[Reference - SDG {goal.get('number')}]\n"
+                        f"Name: {goal.get('name')}\n"
+                        f"Full title: {goal.get('full_title')}\n"
+                        f"Description: {goal.get('description')}"
+                    )
+                    if goal.get("targets"):
+                        context_parts.append("Targets:")
+                        for target in goal["targets"][:3]:
+                            context_parts.append(f"  {target['id']}: {target['text']}")
+
+                elif ref_type == "data_source":
+                    about = ref_content.get("about", {})
+                    context_parts.append(
+                        f"\n[Reference - Data Source: {about.get('name', 'Unknown')}]\n"
+                        f"Publisher: {about.get('publisher', 'Unknown')}\n"
+                        f"URL: {about.get('url', 'N/A')}\n"
+                        f"License: {about.get('license', 'Unknown')}"
+                    )
+
+                elif ref_type == "capital":
+                    capitals = ref_content.get("capitals", {})
+                    context_parts.append(f"[Reference: {len(capitals)} country capitals available]")
+
+        # Add context as a system message before user query
+        if context_parts:
+            messages.append({
+                "role": "system",
+                "content": "\n".join(context_parts)
             })
 
     messages.append({"role": "user", "content": user_query})

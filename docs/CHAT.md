@@ -655,16 +655,53 @@ Semantic search over external content:
 
 Enable the chat to answer data questions directly from parquet files:
 
-- Currently, the LLM can only build orders for map display or answer questions about catalog structure
-- Direct questions like "What country has the highest GDP?" get answered from LLM training data, not actual data
-- Solution: Add a "query" response type that executes against parquet and returns results to LLM for formatting
+**Simplified v1 approach:**
+- LLM answers from training data first (often accurate enough)
+- Offers "Would you like an exact answer from the database?" follow-up
+- Falls back to "I don't know, would you like me to check?" if unsure
+- User confirmation triggers actual data query
+
+**Full implementation (v2):**
+- Add a "query" response type that executes against parquet
 - Example flow:
   1. User: "What's the largest GDP?"
   2. LLM returns: `{"type": "query", "source": "owid_co2", "metric": "gdp", "sort": "desc", "limit": 1}`
   3. Backend executes query, returns: `[{"loc_id": "USA", "name": "United States", "gdp": 26700000000000}]`
   4. LLM formats: "The United States has the highest GDP at $26.7 trillion (2023 data from OWID)."
 
-### calculated score for overloaded pop up windows
+### Catalog Token Optimization
+
+Current approach loads full catalog (~2,500 tokens) for good conversation quality. As catalog grows beyond 50+ sources, may need:
+- Topic-based filtering (only show relevant sources to LLM)
+- Tiered catalog (summaries first, details on request)
+- Embedding-based semantic search for source discovery
+- See [PROMPT_OPTIMIZATION_PLAN.md](PROMPT_OPTIMIZATION_PLAN.md) for architecture
+
+### Growth Rate Calculations
+
+Open question on formula approach for derived growth metrics:
+- Simple percentage: (end - start) / start * 100
+- CAGR (Compound Annual Growth Rate): ((end/start)^(1/years) - 1) * 100
+- Year-over-year series: separate growth value per year
+
+### Chat Pagination & Clickable Actions
+
+For sources with many metrics (28+), need better discovery UX:
+- **Grouped display**: Show metrics by category first, then expand
+- **Pagination**: "Showing 1-10 of 28. Say 'more' for next page"
+- **Clickable actions** (v2): Response includes action buttons
+  ```json
+  {
+    "reply": "OWID has 28 metrics. Here are 1-10: [...]",
+    "actions": [
+      {"label": "Show More", "trigger": "show more OWID metrics"},
+      {"label": "Show All", "trigger": "show all OWID metrics"}
+    ]
+  }
+  ```
+- v1: Explicit "more" command works with current architecture
+
+### Calculated Score for Overloaded Popups
 If a request asks for too many data points (10+?) and the window cannot display properly, have a live calculated score.
 Potentially implement by having a checkbox beside Display button to show "aggregate score".
 

@@ -205,6 +205,119 @@ def find_metric_column(df: pd.DataFrame, metric: str) -> Optional[str]:
     return None
 
 
+# =============================================================================
+# Derived Field Calculations
+# =============================================================================
+
+def lookup_canonical_value(metric: str, loc_id: str, year: int) -> Optional[float]:
+    """
+    Look up a metric value from its canonical source.
+
+    Used for denominator values in derived calculations (population, area, etc.)
+    """
+    canonical_sources = {
+        "population": "owid_co2",
+        "area_sq_km": "world_factbook_static",
+    }
+
+    source_id = canonical_sources.get(metric)
+    if not source_id:
+        return None
+
+    try:
+        df, _ = load_source_data(source_id)
+
+        # Filter by loc_id
+        if "loc_id" not in df.columns:
+            return None
+
+        df_loc = df[df["loc_id"] == loc_id]
+        if df_loc.empty:
+            return None
+
+        # Filter by year if the source has years
+        if "year" in df.columns and year:
+            df_year = df_loc[df_loc["year"] == year]
+            if df_year.empty:
+                # Try closest year
+                df_year = df_loc[df_loc["year"] <= year].tail(1)
+            if not df_year.empty:
+                df_loc = df_year
+
+        # Get the metric value
+        if metric in df_loc.columns:
+            val = df_loc[metric].iloc[0]
+            if pd.notna(val):
+                return float(val)
+
+    except Exception:
+        pass
+
+    return None
+
+
+def apply_derived_fields(boxes: dict, derived_specs: list, year: int = None) -> list:
+    """
+    Apply derived field calculations to filled boxes.
+
+    Args:
+        boxes: Dict of loc_id -> {metric: value, ...}
+        derived_specs: List of derived field specifications from postprocessor
+        year: Year to use for canonical lookups
+
+    Returns:
+        List of warning messages for missing data
+    """
+    warnings = []
+
+    for spec in derived_specs:
+        numerator_name = spec.get("numerator")
+        denominator_name = spec.get("denominator")
+        label = spec.get("label", f"{numerator_name}/{denominator_name}")
+        multiplier = spec.get("multiplier", 1)
+
+        for loc_id, metrics in boxes.items():
+            # Get numerator value
+            num_val = metrics.get(numerator_name)
+            if num_val is None:
+                # Try with different case/formats
+                for key in metrics.keys():
+                    if key.lower() == numerator_name.lower():
+                        num_val = metrics[key]
+                        break
+
+            if num_val is None:
+                continue  # Skip silently if numerator not available
+
+            # Get denominator value
+            denom_val = metrics.get(denominator_name)
+            if denom_val is None:
+                # Try with different case/formats
+                for key in metrics.keys():
+                    if key.lower() == denominator_name.lower():
+                        denom_val = metrics[key]
+                        break
+
+            # If still not found, try canonical lookup
+            if denom_val is None:
+                box_year = metrics.get("year", year)
+                denom_val = lookup_canonical_value(denominator_name, loc_id, box_year)
+
+            # Calculate derived value
+            if denom_val is None:
+                warnings.append(f"{loc_id}: {denominator_name} unavailable")
+                continue
+
+            if denom_val == 0:
+                warnings.append(f"{loc_id}: {denominator_name} is zero")
+                continue
+
+            result = (float(num_val) / float(denom_val)) * multiplier
+            metrics[f"{label} (calculated)"] = result
+
+    return warnings
+
+
 def execute_order(order: dict) -> dict:
     """
     Execute a confirmed order and return GeoJSON response.
@@ -388,6 +501,21 @@ def execute_order(order: dict) -> dict:
                         boxes[loc_id] = {"year": row.get("year")} if "year" in df.columns else {}
 
                     boxes[loc_id][label] = val
+
+    # Step 3.5: Apply derived field calculations
+    derived_specs = order.get("derived_specs", [])
+    if derived_specs and boxes:
+        # Get year from first item or first box
+        calc_year = None
+        if items:
+            calc_year = items[0].get("year")
+        if not calc_year and boxes:
+            first_box = next(iter(boxes.values()))
+            calc_year = first_box.get("year")
+
+        derivation_warnings = apply_derived_fields(boxes, derived_specs, calc_year)
+        if derivation_warnings:
+            print(f"Derivation warnings: {derivation_warnings[:5]}")  # Log first 5
 
     # Step 4: Join with geometry
     # Determine geographic level from sources

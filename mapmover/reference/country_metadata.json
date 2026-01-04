@@ -1,12 +1,15 @@
 {
-  "_description": "Country metadata including capitals, currencies, and timezones",
+  "_description": "Country metadata: capitals (fallback), currencies, timezones",
   "_schema_version": "1.0.0",
-  "_last_updated": "2025-01",
-  "_note": "Capitals from common knowledge. TODO: Verify against official UN/ISO sources",
-  "_todo": "Add currencies and timezones from official sources",
+  "_last_updated": "2026-01",
+  "_note": "Primary capital source is world_factbook_static (has coordinates). This file provides fallback + currencies/timezones.",
+  "_canonical_count": 252,
+  "_factbook_static_gaps": ["ANT", "SCG", "YUG", "BES", "ESH", "GLP", "GUF", "MTQ", "MYT", "REU", "UMI"],
+  "_note_gaps": "11 remaining: 3 historical (ANT/SCG/YUG), 6 French overseas, BES, ESH, UMI",
 
   "capitals": {
-    "_description": "ISO3 code to capital city name",
+    "_description": "Fallback capitals. Use world_factbook_static.capital_name + capital_lat/lon when available.",
+    "_primary_source": "world_factbook_static parquet",
     "AFG": "Kabul",
     "ALB": "Tirana",
     "DZA": "Algiers",

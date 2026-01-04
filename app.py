@@ -50,6 +50,12 @@ from mapmover import (
 from mapmover.order_taker import interpret_request
 from mapmover.order_executor import execute_order
 
+# Preprocessor for tiered context system
+from mapmover.preprocessor import preprocess_query
+
+# Postprocessor for validation and derived field expansion
+from mapmover.postprocessor import postprocess_order, get_display_items
+
 # Geometry handlers (parquet-based)
 from mapmover.geometry_handlers import (
     get_countries_geometry as get_countries_geometry_handler,
@@ -348,15 +354,37 @@ async def chat_endpoint(req: Request):
 
         logger.debug(f"Chat query: {query[:100]}...")
 
-        # Single LLM call to interpret request
-        result = interpret_request(query, chat_history)
+        # Run preprocessor to extract hints (Tier 2)
+        hints = preprocess_query(query)
+        if hints.get("summary"):
+            logger.debug(f"Preprocessor hints: {hints['summary']}")
+
+        # Single LLM call to interpret request (with Tier 3/4 context from hints)
+        result = interpret_request(query, chat_history, hints=hints)
 
         if result["type"] == "order":
+            # Run postprocessor to validate and expand derived fields
+            processed = postprocess_order(result["order"], hints)
+            logger.debug(f"Postprocessor: {processed.get('validation_summary')}")
+
+            # Get display items (filtered for user view - hides for_derivation items, adds derived specs)
+            display_items = get_display_items(
+                processed.get("items", []),
+                processed.get("derived_specs", [])
+            )
+
             # Return order for UI confirmation
             return JSONResponse(content={
                 "type": "order",
-                "order": result["order"],
-                "summary": result["summary"]
+                "order": {
+                    **result["order"],
+                    "items": display_items,
+                    "derived_specs": processed.get("derived_specs", []),
+                },
+                "full_order": processed,  # Full order for execution
+                "summary": result["summary"],
+                "validation_summary": processed.get("validation_summary"),
+                "all_valid": processed.get("all_valid", True)
             })
         elif result["type"] == "clarify":
             # Need more information from user
