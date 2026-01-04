@@ -157,3 +157,80 @@ def clear_metadata_cache():
     global _metadata_cache
     _metadata_cache = {}
     logger.info("Metadata cache cleared")
+
+
+def get_geometry_folder():
+    """Get the geometry folder path from settings backup path."""
+    backup_path = get_backup_path()
+    if backup_path:
+        return Path(backup_path) / "geometry"
+    return None
+
+
+def fetch_geometries_by_loc_ids(loc_ids: list) -> dict:
+    """
+    Fetch geometries from parquet files for a list of loc_ids.
+    Used for "show borders" functionality.
+
+    Args:
+        loc_ids: List of location IDs (e.g., ["USA-WA-53073", "USA-OR-41067"])
+
+    Returns:
+        GeoJSON FeatureCollection with geometries
+    """
+    import pandas as pd
+    import geopandas as gpd
+
+    geometry_folder = get_geometry_folder()
+    if not geometry_folder or not geometry_folder.exists():
+        logger.warning("Geometry folder not found")
+        return {"type": "FeatureCollection", "features": []}
+
+    # Group loc_ids by country (first part before dash)
+    country_loc_ids = {}
+    for loc_id in loc_ids:
+        parts = loc_id.split("-")
+        if parts:
+            country = parts[0]
+            if country not in country_loc_ids:
+                country_loc_ids[country] = []
+            country_loc_ids[country].append(loc_id)
+
+    all_features = []
+
+    for country, lids in country_loc_ids.items():
+        parquet_path = geometry_folder / f"{country}.parquet"
+        if not parquet_path.exists():
+            logger.warning(f"Parquet file not found: {parquet_path}")
+            continue
+
+        try:
+            # Load only the rows we need
+            gdf = gpd.read_parquet(parquet_path)
+
+            # Filter to our loc_ids
+            filtered = gdf[gdf['loc_id'].isin(lids)]
+
+            if len(filtered) > 0:
+                # Convert to GeoJSON features
+                for _, row in filtered.iterrows():
+                    feature = {
+                        "type": "Feature",
+                        "geometry": row.geometry.__geo_interface__,
+                        "properties": {
+                            "loc_id": row.get("loc_id"),
+                            "name": row.get("name"),
+                            "admin_level": row.get("admin_level"),
+                            "parent_id": row.get("parent_id"),
+                        }
+                    }
+                    all_features.append(feature)
+
+                logger.debug(f"Fetched {len(filtered)} geometries from {country}.parquet")
+        except Exception as e:
+            logger.error(f"Error reading {parquet_path}: {e}")
+
+    return {
+        "type": "FeatureCollection",
+        "features": all_features
+    }

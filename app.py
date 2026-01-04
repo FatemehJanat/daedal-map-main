@@ -253,6 +253,27 @@ async def get_selection_geometry_endpoint(req: Request):
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
 
+# === Reference Data Endpoints ===
+
+@app.get("/reference/admin-levels")
+async def get_admin_levels():
+    """
+    Get admin level names for all countries.
+    Used by frontend for popup display (e.g., "Clackamas" -> "Clackamas County").
+    """
+    try:
+        ref_path = BASE_DIR / "mapmover" / "reference" / "admin_levels.json"
+        if ref_path.exists():
+            with open(ref_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            return JSONResponse(content=data)
+        else:
+            return JSONResponse(content={"error": "admin_levels.json not found"}, status_code=404)
+    except Exception as e:
+        logger.error(f"Error loading admin_levels.json: {e}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
 # === Settings Endpoints ===
 
 @app.get("/settings")
@@ -399,12 +420,79 @@ async def chat_endpoint(req: Request):
             }
             hints["disambiguation"] = None  # Clear disambiguation flag
 
+        # Check for "show borders" intent - display geometry from previous disambiguation
+        if hints.get("show_borders"):
+            # Check for previous_disambiguation passed from frontend
+            previous_options = body.get("previous_disambiguation_options", [])
+
+            if previous_options:
+                loc_ids_to_show = [opt.get("loc_id") for opt in previous_options if opt.get("loc_id")]
+            else:
+                # Fallback: search for the term from recent chat if available
+                loc_ids_to_show = []
+
+            if loc_ids_to_show:
+                logger.debug(f"Show borders: displaying {len(loc_ids_to_show)} locations")
+                # Fetch geometry for these locations
+                from mapmover.data_loading import fetch_geometries_by_loc_ids
+                geojson = fetch_geometries_by_loc_ids(loc_ids_to_show)
+
+                return JSONResponse(content={
+                    "type": "navigate",
+                    "message": f"Showing {len(loc_ids_to_show)} locations on the map. Click any location to see data options.",
+                    "locations": previous_options if previous_options else [{"loc_id": lid} for lid in loc_ids_to_show],
+                    "loc_ids": loc_ids_to_show,
+                    "original_query": query,
+                    "geojson": geojson,
+                })
+            else:
+                # No previous disambiguation found - tell user
+                return JSONResponse(content={
+                    "type": "chat",
+                    "reply": "I don't have a list of locations to display. Please first ask about specific locations (e.g., 'show me washington county') to get a list.",
+                })
+
         # Check for navigation intent - zoom to locations without data request
         navigation = hints.get("navigation")
         if navigation and navigation.get("is_navigation"):
             locations = navigation.get("locations", [])
             loc_ids = [loc.get("loc_id") for loc in locations if loc.get("loc_id")]
-            loc_names = [loc.get("matched_term", loc.get("loc_id", "?")) for loc in locations]
+
+            # Check for drill-down pattern (e.g., "texas counties" -> show counties of Texas)
+            if len(locations) == 1 and locations[0].get("drill_to_level"):
+                loc = locations[0]
+                loc_id = loc.get("loc_id")
+                drill_level = loc.get("drill_to_level")
+                name = loc.get("matched_term", loc_id)
+
+                logger.debug(f"Drill-down request: {name} -> {drill_level}")
+
+                # Return a drilldown response that tells frontend to drill into this location
+                return JSONResponse(content={
+                    "type": "drilldown",
+                    "message": f"Showing {drill_level} of {name}...",
+                    "loc_id": loc_id,
+                    "name": name,
+                    "drill_to_level": drill_level,
+                    "original_query": query,
+                })
+
+            # Build display names with parent context (e.g., "vancouver (BC)" vs "vancouver (WA)")
+            def get_display_name(loc):
+                name = loc.get("matched_term", loc.get("loc_id", "?"))
+                loc_id = loc.get("loc_id", "")
+                # Parse loc_id format: ISO3-PARENT-NAME or ISO3-STATE
+                parts = loc_id.split("-") if loc_id else []
+                if len(parts) >= 2:
+                    # Use state/province code as context (e.g., "WA", "BC")
+                    parent_code = parts[1]
+                    return f"{name} ({parent_code})"
+                elif loc.get("country_name"):
+                    # Fallback to country name
+                    return f"{name} ({loc.get('country_name')})"
+                return name
+
+            loc_names = [get_display_name(loc) for loc in locations]
 
             logger.debug(f"Navigation request for {len(locations)} locations: {loc_ids}")
 

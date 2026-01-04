@@ -18,6 +18,59 @@ export const PopupBuilder = {
   // Units to hide in popup display (redundant/obvious)
   hideUnits: ['count', 'number', 'people', 'persons', 'units'],
 
+  // Admin level data loaded from server (populated by loadAdminLevels)
+  adminLevels: null,
+  adminLevelsLoading: false,
+
+  /**
+   * Load admin level names from server reference data
+   */
+  async loadAdminLevels() {
+    if (this.adminLevels || this.adminLevelsLoading) return;
+    this.adminLevelsLoading = true;
+
+    try {
+      const response = await fetch('/reference/admin-levels');
+      if (response.ok) {
+        this.adminLevels = await response.json();
+      }
+    } catch (e) {
+      console.warn('Failed to load admin levels:', e);
+    }
+    this.adminLevelsLoading = false;
+  },
+
+  /**
+   * Get singular suffix for an admin level (e.g., "counties" -> "County")
+   * @param {string} iso3 - Country ISO3 code
+   * @param {number} level - Admin level number
+   * @returns {string|null} Singular suffix or null
+   */
+  getAdminSuffix(iso3, level) {
+    if (!this.adminLevels) return null;
+
+    const countryLevels = this.adminLevels[iso3] || this.adminLevels["_default"];
+    if (!countryLevels) return null;
+
+    const levelNames = countryLevels[String(level)];
+    if (!levelNames || !levelNames[0]) return null;
+
+    // Get first name (display name) and convert to singular title case
+    let name = levelNames[0];
+
+    // Common plural -> singular conversions
+    if (name.endsWith('ies')) {
+      name = name.slice(0, -3) + 'y';  // counties -> county
+    } else if (name.endsWith('es') && !name.endsWith('ches') && !name.endsWith('shes')) {
+      name = name.slice(0, -2);  // places -> place (but not matches)
+    } else if (name.endsWith('s') && !name.endsWith('ss')) {
+      name = name.slice(0, -1);  // states -> state
+    }
+
+    // Title case
+    return name.charAt(0).toUpperCase() + name.slice(1);
+  },
+
   // Fields to skip in popup display (technical/internal fields)
   skipFields: [
     // Identity fields
@@ -52,10 +105,22 @@ export const PopupBuilder = {
   build(properties, sourceData = null, locationInfo = null) {
     const lines = [];
 
-    // Title
-    const name = properties.name || properties.country_name ||
-                 properties.country || properties.Name || 'Unknown';
+    // Title - add admin level suffix if appropriate (e.g., "Clackamas" -> "Clackamas County")
+    let name = properties.name || properties.country_name ||
+               properties.country || properties.Name || 'Unknown';
     const stateAbbr = properties.stusab || properties.abbrev || '';
+
+    // Add admin level suffix if name doesn't already include it
+    const adminLevel = properties.admin_level;
+    const locId = properties.loc_id || '';
+    const iso3 = locId.split('-')[0] || '';
+    if (adminLevel && iso3) {
+      const suffix = this.getAdminSuffix(iso3, adminLevel);
+      if (suffix && !name.toLowerCase().includes(suffix.toLowerCase())) {
+        name = `${name} ${suffix}`;
+      }
+    }
+
     lines.push(`<strong>${name}${stateAbbr ? ', ' + stateAbbr : ''}</strong>`);
 
     // Check if we have actual data fields (from a chat query)

@@ -49,6 +49,9 @@ export const App = {
     // Initialize map
     await MapAdapter.init();
 
+    // Load reference data for popups (non-blocking)
+    PopupBuilder.loadAdminLevels();
+
     // Setup keyboard handler for debug mode
     this.setupKeyboardHandler();
 
@@ -359,6 +362,105 @@ export const App = {
       source_name: 'Location View',
       isNavigation: true
     };
+
+    // Store locations for click handling
+    this.navigationLocations = locations;
+
+    // Set up click handler for navigation layer selection
+    this.setupNavigationClickHandler();
+  },
+
+  /**
+   * Set up click handler for navigation layer
+   * Allows user to select one location from multiple candidates
+   */
+  setupNavigationClickHandler() {
+    if (!MapAdapter?.map) return;
+
+    // Remove any existing handler
+    if (this._navigationClickHandler) {
+      MapAdapter.map.off('click', CONFIG.layers.selectionFill, this._navigationClickHandler);
+    }
+
+    // Create click handler
+    this._navigationClickHandler = (e) => {
+      if (!e.features || e.features.length === 0) return;
+
+      const feature = e.features[0];
+      const locId = feature.properties?.loc_id;
+
+      // Find matching location from stored locations
+      const location = this.navigationLocations?.find(loc => loc.loc_id === locId);
+
+      if (location) {
+        this.handleNavigationSelection(location, feature);
+      }
+    };
+
+    // Add click handler
+    MapAdapter.map.on('click', CONFIG.layers.selectionFill, this._navigationClickHandler);
+
+    // Change cursor on hover
+    MapAdapter.map.on('mouseenter', CONFIG.layers.selectionFill, () => {
+      MapAdapter.map.getCanvas().style.cursor = 'pointer';
+    });
+    MapAdapter.map.on('mouseleave', CONFIG.layers.selectionFill, () => {
+      MapAdapter.map.getCanvas().style.cursor = '';
+    });
+  },
+
+  /**
+   * Handle selection of a location in navigation mode
+   * @param {Object} location - The selected location object
+   * @param {Object} feature - The GeoJSON feature that was clicked
+   */
+  handleNavigationSelection(location, feature) {
+    const name = location.matched_term || location.loc_id;
+    const country = location.country_name || location.iso3 || '';
+
+    console.log(`Navigation selection: ${name} (${country})`);
+
+    // Add message to chat
+    const displayName = country ? `${name} (${country})` : name;
+    ChatManager.addMessage(`Selected: ${displayName}. What data would you like to see for this location?`, 'assistant');
+
+    // Update order panel to show just this location
+    OrderManager.setNavigationLocations([location]);
+
+    // Clear the navigation layer and show just the selected location
+    MapAdapter.clearNavigationLayer();
+
+    // Reload with just the selected feature
+    const selectedGeojson = {
+      type: 'FeatureCollection',
+      features: [feature]
+    };
+    MapAdapter.loadNavigationLayer(selectedGeojson);
+
+    // Clean up - only keep selected location
+    this.navigationLocations = [location];
+
+    // Remove click handler (no longer needed after selection)
+    if (this._navigationClickHandler) {
+      MapAdapter.map.off('click', CONFIG.layers.selectionFill, this._navigationClickHandler);
+      this._navigationClickHandler = null;
+    }
+  },
+
+  /**
+   * Clear navigation mode and return to normal map state
+   */
+  clearNavigationMode() {
+    MapAdapter.clearNavigationLayer();
+    this.navigationLocations = null;
+
+    if (this._navigationClickHandler && MapAdapter?.map) {
+      MapAdapter.map.off('click', CONFIG.layers.selectionFill, this._navigationClickHandler);
+      this._navigationClickHandler = null;
+    }
+
+    // Re-enable viewport loading
+    ViewportLoader.orderMode = false;
   }
 };
 

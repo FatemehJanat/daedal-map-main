@@ -95,7 +95,8 @@ def get_countries_in_viewport(bounds: dict) -> list:
 def load_parquet_names(iso3: str) -> dict:
     """
     Load location names from a country's parquet file.
-    Returns dict of {name_lower: {"loc_id": loc_id, "parent_id": parent_id, "admin_level": level}}
+    Returns dict of {name_lower: [list of location dicts]}
+    Multiple locations can share the same name (e.g., 30+ Washington Counties).
     Cached per ISO3 code.
     """
     global _PARQUET_NAMES_CACHE
@@ -117,19 +118,88 @@ def load_parquet_names(iso3: str) -> dict:
         for _, row in df.iterrows():
             name = row.get('name')
             if name and isinstance(name, str):
-                names_dict[name.lower()] = {
+                name_lower = name.lower()
+                location_info = {
                     "loc_id": row.get('loc_id'),
                     "parent_id": row.get('parent_id'),
                     "admin_level": row.get('admin_level')
                 }
+                # Store as list to handle duplicate names (e.g., Washington County in 30+ states)
+                if name_lower not in names_dict:
+                    names_dict[name_lower] = []
+                names_dict[name_lower].append(location_info)
 
         _PARQUET_NAMES_CACHE[iso3] = names_dict
-        logger.debug(f"Loaded {len(names_dict)} location names from {iso3}.parquet")
+        logger.debug(f"Loaded {len(names_dict)} unique location names from {iso3}.parquet")
         return names_dict
     except Exception as e:
         logger.warning(f"Error loading parquet names for {iso3}: {e}")
         _PARQUET_NAMES_CACHE[iso3] = {}
         return {}
+
+
+def search_locations_globally(name: str, admin_level: int = None, limit_countries: list = None) -> list:
+    """
+    Search for locations by name across all parquet files globally.
+    Used when viewport-based search fails or isn't available.
+
+    Args:
+        name: Location name to search for (case-insensitive)
+        admin_level: Optional admin level to filter by (1=state, 2=county, 3=city)
+        limit_countries: Optional list of ISO3 codes to limit search to
+
+    Returns:
+        List of match dicts with loc_id, matched_term, iso3, admin_level, etc.
+    """
+    name_lower = name.lower().strip()
+    all_matches = []
+
+    # Get list of countries to search
+    if limit_countries:
+        countries = limit_countries
+    else:
+        # Search common large countries first, then others
+        priority_countries = ["USA", "CAN", "GBR", "AUS", "DEU", "FRA", "IND", "BRA", "MEX"]
+        other_countries = []
+
+        # Get all available parquet files
+        if GEOMETRY_DIR.exists():
+            for f in GEOMETRY_DIR.glob("*.parquet"):
+                iso3 = f.stem
+                if iso3 not in priority_countries:
+                    other_countries.append(iso3)
+
+        countries = priority_countries + other_countries
+
+    # Search each country's parquet
+    iso_data = load_reference_file(REFERENCE_DIR / "iso_codes.json")
+
+    for iso3 in countries:
+        names = load_parquet_names(iso3)
+        if not names:
+            continue
+
+        # Look for exact name match - names[name_lower] is now a LIST of locations
+        if name_lower in names:
+            locations_list = names[name_lower]
+            country_name = iso_data.get("iso3_to_name", {}).get(iso3, iso3) if iso_data else iso3
+
+            for info in locations_list:
+                # Check admin level filter
+                if admin_level is not None and info.get("admin_level") != admin_level:
+                    continue
+
+                all_matches.append({
+                    "matched_term": name_lower,
+                    "iso3": iso3,
+                    "country_name": country_name,
+                    "loc_id": info.get("loc_id"),
+                    "parent_id": info.get("parent_id"),
+                    "admin_level": info.get("admin_level", 0),
+                    "is_subregion": info.get("admin_level", 0) > 0
+                })
+
+    return all_matches
 
 
 def lookup_location_in_viewport(query: str, viewport: dict = None) -> dict:
@@ -172,6 +242,10 @@ def lookup_location_in_viewport(query: str, viewport: dict = None) -> dict:
         if not names:
             continue
 
+        # Get country name for display (once per country)
+        iso_data = load_reference_file(REFERENCE_DIR / "iso_codes.json")
+        country_name = iso_data.get("iso3_to_name", {}).get(iso3, iso3) if iso_data else iso3
+
         # Sort by length (longest first) to match most specific names
         sorted_names = sorted(names.keys(), key=len, reverse=True)
 
@@ -179,21 +253,19 @@ def lookup_location_in_viewport(query: str, viewport: dict = None) -> dict:
             # Use word boundary matching
             pattern = r'\b' + re.escape(name) + r'\b'
             if re.search(pattern, query_lower):
-                info = names[name]
-                is_subregion = info.get("admin_level", 0) > 0
+                # names[name] is now a LIST of locations
+                locations_list = names[name]
+                for info in locations_list:
+                    is_subregion = info.get("admin_level", 0) > 0
 
-                # Get country name for display
-                iso_data = load_reference_file(REFERENCE_DIR / "iso_codes.json")
-                country_name = iso_data.get("iso3_to_name", {}).get(iso3, iso3) if iso_data else iso3
-
-                all_matches.append({
-                    "matched_term": name,
-                    "iso3": iso3,
-                    "country_name": country_name,
-                    "loc_id": info.get("loc_id"),
-                    "admin_level": info.get("admin_level", 0),
-                    "is_subregion": is_subregion
-                })
+                    all_matches.append({
+                        "matched_term": name,
+                        "iso3": iso3,
+                        "country_name": country_name,
+                        "loc_id": info.get("loc_id"),
+                        "admin_level": info.get("admin_level", 0),
+                        "is_subregion": is_subregion
+                    })
 
     if len(all_matches) == 0:
         return result
@@ -703,7 +775,7 @@ def detect_reference_lookup(query: str) -> Optional[dict]:
                 result["country_data"] = specific
         return result
 
-    # Currency pattern - use scraped CIA Factbook data
+    # Currency pattern - use scraped World Factbook data
     if any(kw in query_lower for kw in ["currency", "money in", "monetary unit"]):
         result = {
             "type": "currency",
@@ -715,7 +787,7 @@ def detect_reference_lookup(query: str) -> Optional[dict]:
                 result["country_data"] = specific
         return result
 
-    # Language pattern - use scraped CIA Factbook data
+    # Language pattern - use scraped World Factbook data
     if any(kw in query_lower for kw in ["language", "speak", "spoken", "official language"]):
         result = {
             "type": "language",
@@ -727,7 +799,7 @@ def detect_reference_lookup(query: str) -> Optional[dict]:
                 result["country_data"] = specific
         return result
 
-    # Timezone pattern - use scraped CIA Factbook data
+    # Timezone pattern - use scraped World Factbook data
     if any(kw in query_lower for kw in ["timezone", "time zone", "what time"]):
         result = {
             "type": "timezone",
@@ -953,6 +1025,46 @@ NAVIGATION_PATTERNS = [
     r"^show\b(?!.*data|.*gdp|.*population)",  # "show X" but not "show data/gdp/population"
 ]
 
+# Patterns for "show borders/geometry" follow-up requests (no data, just display)
+SHOW_BORDERS_PATTERNS = [
+    r"^(?:just\s+)?show\s+(?:me\s+)?(?:them|all|all\s+of\s+them)\b",
+    r"^display\s+(?:them|all|all\s+of\s+them)\b",
+    r"^(?:just\s+)?show\s+(?:me\s+)?(?:the\s+)?(?:borders?|geometr(?:y|ies)|outlines?|boundaries?)\b",
+    r"^(?:put|display|show)\s+(?:them\s+)?(?:all\s+)?on\s+(?:the\s+)?map\b",
+    r"^(?:just\s+)?the\s+(?:borders?|geometr(?:y|ies)|locations?)\b",
+]
+
+
+def detect_show_borders_intent(query: str) -> dict:
+    """
+    Detect if query is asking to display geometry/borders without data.
+    Typically used as a follow-up after disambiguation lists locations.
+
+    Patterns:
+    - "just show me them"
+    - "display them all"
+    - "show all of them on the map"
+    - "just the borders"
+
+    Returns dict with:
+    - is_show_borders: True if this is a show-borders request
+    - pattern: The matched pattern
+    """
+    result = {
+        "is_show_borders": False,
+        "pattern": None,
+    }
+
+    query_lower = query.lower().strip()
+
+    for pattern in SHOW_BORDERS_PATTERNS:
+        if re.match(pattern, query_lower):
+            result["is_show_borders"] = True
+            result["pattern"] = pattern
+            return result
+
+    return result
+
 
 def detect_navigation_intent(query: str) -> dict:
     """
@@ -984,27 +1096,161 @@ def detect_navigation_intent(query: str) -> dict:
     return result
 
 
-def extract_multiple_locations(query: str, viewport: dict = None) -> list:
+def detect_drilldown_pattern(query: str, viewport: dict = None) -> dict:
+    """
+    Detect "drill-down" patterns like:
+    - "texas counties" or "california cities" ([location] [level])
+    - "counties in texas" or "cities of california" ([level] in/of [location])
+    - "all the texas counties" (with "all the" prefix)
+
+    Returns dict with:
+    - is_drilldown: True if this is a drill-down pattern
+    - parent_location: The parent location dict (e.g., Texas)
+    - child_level_name: The child level name (e.g., "counties")
+    """
+    query_lower = query.lower().strip()
+
+    # Remove common prefixes: "all", "the", "show me", etc.
+    query_lower = re.sub(r'^(?:show\s+me\s+)?(?:all\s+)?(?:the\s+)?', '', query_lower)
+
+    # Admin level names to check (plural forms)
+    level_names = ["counties", "states", "cities", "districts", "regions",
+                   "provinces", "municipalities", "departments", "prefectures",
+                   "parishes", "boroughs"]
+
+    # Pattern 1: "[level] in/of [location]" (e.g., "counties in texas")
+    for level in level_names:
+        # Match patterns like "counties in texas" or "cities of california"
+        pattern = rf'^{level}\s+(?:in|of)\s+(.+)$'
+        match = re.match(pattern, query_lower)
+        if match:
+            location_part = match.group(1).strip()
+            if location_part:
+                # Try to find this as a location
+                result = extract_country_from_query(location_part)
+                if result.get("match"):
+                    matched_term, iso3, is_subregion = result["match"]
+                    return {
+                        "is_drilldown": True,
+                        "parent_location": {
+                            "matched_term": matched_term,
+                            "iso3": iso3,
+                            "loc_id": result.get("loc_id", iso3),
+                            "country_name": result.get("country_name", matched_term),
+                            "is_subregion": is_subregion
+                        },
+                        "child_level_name": level
+                    }
+
+                # Also try viewport-based lookup
+                if viewport:
+                    vp_result = lookup_location_in_viewport(location_part, viewport)
+                    if vp_result.get("matches") and len(vp_result["matches"]) == 1:
+                        loc_match = vp_result["matches"][0]
+                        return {
+                            "is_drilldown": True,
+                            "parent_location": loc_match,
+                            "child_level_name": level
+                        }
+
+    # Pattern 2: "[location] [level]" (e.g., "texas counties")
+    for level in level_names:
+        if query_lower.endswith(level):
+            # Extract what comes before the level
+            location_part = query_lower[:-len(level)].strip()
+
+            if not location_part:
+                continue
+
+            # Try to find this as a location (state, country, etc.)
+            result = extract_country_from_query(location_part)
+            if result.get("match"):
+                matched_term, iso3, is_subregion = result["match"]
+                return {
+                    "is_drilldown": True,
+                    "parent_location": {
+                        "matched_term": matched_term,
+                        "iso3": iso3,
+                        "loc_id": result.get("loc_id", iso3),
+                        "country_name": result.get("country_name", matched_term),
+                        "is_subregion": is_subregion
+                    },
+                    "child_level_name": level
+                }
+
+            # Also try viewport-based lookup for state-level
+            if viewport:
+                vp_result = lookup_location_in_viewport(location_part, viewport)
+                if vp_result.get("matches") and len(vp_result["matches"]) == 1:
+                    loc_match = vp_result["matches"][0]
+                    return {
+                        "is_drilldown": True,
+                        "parent_location": loc_match,
+                        "child_level_name": level
+                    }
+
+    return {"is_drilldown": False}
+
+
+def extract_multiple_locations(query: str, viewport: dict = None) -> dict:
     """
     Extract multiple location names from a query.
     Handles patterns like "Simpson and Woodford counties" or
     "Butler, Franklin, Knox, Laurel, Lawrence and Whitley".
 
-    Returns list of location match dicts.
+    Returns dict with:
+    - locations: list of location match dicts
+    - needs_disambiguation: True if singular suffix with multiple matches (user wants ONE)
+    - suffix_type: 'singular', 'plural', or None
     """
     # First, try to find comma-separated or "and"-separated location names
     # Common patterns: "X, Y, and Z" or "X and Y" or "X, Y, Z"
     query_lower = query.lower()
 
-    # Remove common suffixes that apply to all (e.g., "counties", "states")
-    common_suffixes = ["counties", "county", "states", "state", "cities", "city",
-                       "regions", "region", "provinces", "province", "districts", "district"]
+    # Check for drill-down pattern first (e.g., "texas counties" -> drill into Texas)
+    drilldown = detect_drilldown_pattern(query, viewport)
+    if drilldown.get("is_drilldown"):
+        # Return the parent location with a drill-down flag
+        parent = drilldown["parent_location"]
+        parent["drill_to_level"] = drilldown["child_level_name"]
+        return {"locations": [parent], "needs_disambiguation": False, "suffix_type": "plural"}
+
+    # Track admin level AND whether suffix was singular (disambiguation) or plural (show all)
+    singular_suffixes = {
+        "county": 2, "parish": 2, "borough": 2,
+        "state": 1, "province": 1, "region": 1,
+        "city": 3, "town": 3, "place": 3,
+        "district": 2,
+    }
+    plural_suffixes = {
+        "counties": 2, "parishes": 2, "boroughs": 2,
+        "states": 1, "provinces": 1, "regions": 1,
+        "cities": 3, "towns": 3, "places": 3,
+        "districts": 2,
+    }
+
     suffix_found = None
-    for suffix in common_suffixes:
+    expected_admin_level = None
+    suffix_type = None  # 'singular' = user wants one (disambiguate), 'plural' = show all
+
+    # Check singular suffixes first (more specific)
+    for suffix, level in singular_suffixes.items():
         if query_lower.endswith(suffix):
             suffix_found = suffix
+            expected_admin_level = level
+            suffix_type = "singular"
             query_lower = query_lower[:-len(suffix)].strip()
             break
+
+    # Check plural suffixes if no singular match
+    if not suffix_found:
+        for suffix, level in plural_suffixes.items():
+            if query_lower.endswith(suffix):
+                suffix_found = suffix
+                expected_admin_level = level
+                suffix_type = "plural"
+                query_lower = query_lower[:-len(suffix)].strip()
+                break
 
     # Split by comma and "and"
     # Replace "and" with comma, then split
@@ -1012,31 +1258,58 @@ def extract_multiple_locations(query: str, viewport: dict = None) -> list:
     normalized = re.sub(r'\s*,\s*', ',', normalized)
     parts = [p.strip() for p in normalized.split(',') if p.strip()]
 
-    # If suffix was found, append it back to each part for lookup
-    if suffix_found:
-        parts = [f"{p} {suffix_found.rstrip('s')}" for p in parts]  # "county" not "counties"
+    # Don't append suffix back - search by name only, then filter by admin level
+    # This prevents matching "washington" in "washington county" to Washington state
 
     all_matches = []
 
     # Look up each part
     for part in parts:
+        part_matches = []
+
         if viewport:
             result = lookup_location_in_viewport(part, viewport)
             if result.get("matches"):
-                all_matches.extend(result["matches"])
-        else:
-            # Fallback to country lookup
+                matches = result["matches"]
+                # Filter by admin level if suffix implies a specific level
+                if expected_admin_level is not None:
+                    matches = [m for m in matches if m.get("admin_level") == expected_admin_level]
+                part_matches.extend(matches)
+
+        # If viewport lookup failed or returned empty, and we have a specific admin level,
+        # do a global search for this name at this admin level
+        if not part_matches and expected_admin_level is not None:
+            logger.debug(f"Viewport lookup empty for '{part}', doing global search at admin_level={expected_admin_level}")
+            global_matches = search_locations_globally(part, admin_level=expected_admin_level)
+            if global_matches:
+                part_matches.extend(global_matches)
+                logger.debug(f"Global search found {len(global_matches)} matches for '{part}'")
+
+        # If still no matches and no specific admin level, try country lookup
+        if not part_matches and expected_admin_level is None:
             result = extract_country_from_query(part)
             if result.get("match"):
                 matched_term, iso3, is_subregion = result["match"]
-                all_matches.append({
+                part_matches.append({
                     "matched_term": matched_term,
                     "iso3": iso3,
                     "is_subregion": is_subregion,
                     "source": result.get("source", "country")
                 })
 
-    return all_matches
+        all_matches.extend(part_matches)
+
+    # Determine if disambiguation is needed:
+    # - Singular suffix (county, city) with multiple matches = user wants ONE, needs to pick
+    # - Plural suffix (counties, cities) with multiple matches = user wants ALL, show them
+    needs_disambiguation = (suffix_type == "singular" and len(all_matches) > 1)
+
+    return {
+        "locations": all_matches,
+        "needs_disambiguation": needs_disambiguation,
+        "suffix_type": suffix_type,
+        "query_term": query.strip()  # Original query for disambiguation message
+    }
 
 
 # =============================================================================
@@ -1053,57 +1326,73 @@ def preprocess_query(query: str, viewport: dict = None) -> dict:
 
     Returns a hints dict that can be injected into LLM context.
     """
+    # Check for "show borders" intent first - follow-up to display geometry without data
+    show_borders = detect_show_borders_intent(query)
+
     # Check for navigation intent first
     nav_intent = detect_navigation_intent(query)
 
     # For navigation queries, try to extract multiple locations
     navigation = None
-    multiple_locations = []
+    disambiguation = None
 
     if nav_intent.get("is_navigation") and nav_intent.get("location_text"):
         # Try to extract multiple locations from the query
-        multiple_locations = extract_multiple_locations(nav_intent["location_text"], viewport)
-        if multiple_locations:
-            navigation = {
-                "is_navigation": True,
-                "pattern": nav_intent.get("pattern"),
-                "locations": multiple_locations,
-                "count": len(multiple_locations)
-            }
+        location_result = extract_multiple_locations(nav_intent["location_text"], viewport)
+        locations = location_result.get("locations", [])
 
-    # Resolve location first - used for both reference lookups and data orders
+        if locations:
+            # Check if disambiguation is needed (singular suffix with multiple matches)
+            if location_result.get("needs_disambiguation"):
+                # User said "washington county" (singular) but we found many - need to pick one
+                disambiguation = {
+                    "needed": True,
+                    "query_term": location_result.get("query_term", "location"),
+                    "options": locations,
+                    "count": len(locations)
+                }
+            else:
+                # Either single match, or plural suffix (show all), or explicit list
+                navigation = {
+                    "is_navigation": True,
+                    "pattern": nav_intent.get("pattern"),
+                    "locations": locations,
+                    "count": len(locations)
+                }
+
+    # Resolve location for non-navigation queries (data orders, etc.)
     # Pass viewport to enable parquet-based city/location lookups
-    location_result = extract_country_from_query(query, viewport=viewport)
-
     location = None
-    disambiguation = None
 
-    if location_result.get("match"):
-        matched_term, iso3, is_subregion = location_result["match"]
-        # Get proper country name from ISO3
-        iso_data = load_reference_file(REFERENCE_DIR / "iso_codes.json")
-        country_name = iso_data.get("iso3_to_name", {}).get(iso3, matched_term.title()) if iso_data else matched_term.title()
-        location = {
-            "matched_term": matched_term,
-            "iso3": iso3,
-            "country_name": country_name,
-            "is_subregion": is_subregion,
-            "source": location_result.get("source"),
-        }
+    if not navigation and not disambiguation:
+        location_result = extract_country_from_query(query, viewport=viewport)
 
-        # Check for ambiguity - multiple locations with same name
-        # Skip disambiguation if this is a navigation request with multiple explicit locations
-        if not navigation and location_result.get("ambiguous") and location_result.get("matches"):
-            disambiguation = {
-                "needed": True,
-                "query_term": matched_term,
-                "options": location_result["matches"],
-                "count": len(location_result["matches"])
+        if location_result.get("match"):
+            matched_term, iso3, is_subregion = location_result["match"]
+            # Get proper country name from ISO3
+            iso_data = load_reference_file(REFERENCE_DIR / "iso_codes.json")
+            country_name = iso_data.get("iso3_to_name", {}).get(iso3, matched_term.title()) if iso_data else matched_term.title()
+            location = {
+                "matched_term": matched_term,
+                "iso3": iso3,
+                "country_name": country_name,
+                "is_subregion": is_subregion,
+                "source": location_result.get("source"),
             }
+
+            # Check for ambiguity - multiple locations with same name
+            if location_result.get("ambiguous") and location_result.get("matches"):
+                disambiguation = {
+                    "needed": True,
+                    "query_term": matched_term,
+                    "options": location_result["matches"],
+                    "count": len(location_result["matches"])
+                }
 
     hints = {
         "original_query": query,
         "viewport": viewport,  # Pass through for downstream use
+        "show_borders": show_borders if show_borders.get("is_show_borders") else None,  # Display geometry without data
         "navigation": navigation,  # Navigation intent with multiple locations
         "topics": extract_topics(query),
         "regions": resolve_regions(query),
@@ -1284,16 +1573,16 @@ def build_tier4_context(hints: dict) -> str:
         return "[Reference: Country capital data available. Ask about a specific country.]"
 
     elif ref_type == "currency":
-        return "[Reference: Currency data for 215 countries available from CIA World Factbook. Ask about a specific country.]"
+        return "[Reference: Currency data for 215 countries available from World Factbook. Ask about a specific country.]"
 
     elif ref_type == "language":
-        return "[Reference: Language data for 200+ countries available from CIA World Factbook. Ask about a specific country.]"
+        return "[Reference: Language data for 200+ countries available from World Factbook. Ask about a specific country.]"
 
     elif ref_type == "timezone":
-        return "[Reference: Timezone data for 200+ countries available from CIA World Factbook. Ask about a specific country.]"
+        return "[Reference: Timezone data for 200+ countries available from World Factbook. Ask about a specific country.]"
 
     elif ref_type in ["country_info", "economy_info", "government_info", "trade_info"]:
         # These already have country_data with formatted output
-        return "[Reference: Detailed country information available from CIA World Factbook.]"
+        return "[Reference: Detailed country information available from World Factbook.]"
 
     return ""

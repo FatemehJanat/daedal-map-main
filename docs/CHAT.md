@@ -319,16 +319,29 @@ User can say "show me Simpson and Woodford counties" to see them on the map, the
 
 ## Disambiguation Mode (Selection Mode)
 
-When multiple locations match a query name (e.g., "Vancouver"):
+When multiple locations match a query name (e.g., "Vancouver" or "Washington County"):
+
+### Singular vs Plural Suffix Detection
+
+The system distinguishes user intent by the suffix used:
+
+| Query | Suffix Type | Intent | Response Type |
+|-------|-------------|--------|---------------|
+| "show me washington county" | Singular | Want ONE | `disambiguate` |
+| "show me washington counties" | Plural | Want ALL | `navigate` |
+| "show me texas counties" | Plural (drill) | Children | `drilldown` |
+
+**Implementation**: `extract_multiple_locations()` in `preprocessor.py` tracks `suffix_type` ('singular' or 'plural') and sets `needs_disambiguation` when singular suffix finds multiple matches.
 
 ### Backend Response
 ```python
 {
     "type": "disambiguate",
-    "message": "I found 2 locations matching 'vancouver'. Please click on the one you meant:",
+    "message": "I found 31 locations matching 'washington county'. Please click on the one you meant:",
     "options": [
-        {"loc_id": "CAN-BC", "country_name": "Canada", "matched_term": "Vancouver"},
-        {"loc_id": "USA-WA", "country_name": "United States", "matched_term": "Vancouver"}
+        {"loc_id": "USA-AL-01129", "country_name": "United States", "matched_term": "washington"},
+        {"loc_id": "USA-AR-05143", "country_name": "United States", "matched_term": "washington"},
+        # ... 29 more Washington Counties
     ]
 }
 ```
@@ -337,9 +350,70 @@ When multiple locations match a query name (e.g., "Vancouver"):
 1. Freezes map (disables pan/zoom/click)
 2. Dims existing map layers
 3. Fetches and highlights candidate locations
-4. Shows instruction overlay
+4. Shows instruction overlay with parent context (e.g., "washington (AL)", "washington (AR)")
 5. User clicks location to select, or clicks away to cancel
 6. On selection, retries original query with resolved `loc_id`
+7. Stores options in `lastDisambiguationOptions` for "show them all" follow-up
+
+---
+
+## Show Borders Follow-up
+
+After disambiguation lists multiple locations, users can display all of them on the map without picking one. See [MAPPING.md](MAPPING.md) for visualization details.
+
+### Trigger Phrases
+
+```python
+SHOW_BORDERS_PATTERNS = [
+    r"^(?:just\s+)?show\s+(?:me\s+)?(?:them|all|all\s+of\s+them)\b",
+    r"^display\s+(?:them|all|all\s+of\s+them)\b",
+    r"^(?:put|display|show)\s+(?:them\s+)?(?:all\s+)?on\s+(?:the\s+)?map\b",
+    r"^(?:just\s+)?the\s+(?:borders?|geometr(?:y|ies)|locations?)\b",
+]
+```
+
+Examples: "just show me them", "display them all", "show all of them on the map"
+
+### Flow
+
+```
+User: "show me washington county"
+Bot: "I found 31 locations matching 'washington county'. Please click..."
+     [Options stored in lastDisambiguationOptions]
+
+User: "just show me them"
+      [detect_show_borders_intent() matches pattern]
+      [Backend receives previous_disambiguation_options from frontend]
+      [fetch_geometries_by_loc_ids() loads all 31 geometries]
+
+Bot: "Showing 31 locations on the map. Click any location to see data options."
+     [Map displays all Washington Counties highlighted]
+```
+
+### Backend Implementation
+
+```python
+# app.py - chat endpoint
+if hints.get("show_borders"):
+    previous_options = body.get("previous_disambiguation_options", [])
+    if previous_options:
+        loc_ids = [opt.get("loc_id") for opt in previous_options]
+        geojson = fetch_geometries_by_loc_ids(loc_ids)
+        return {"type": "navigate", "geojson": geojson, ...}
+```
+
+### Frontend Integration
+
+```javascript
+// chat-panel.js
+ChatManager.lastDisambiguationOptions = null;  // Stored on disambiguate response
+
+// Passed with each query
+body: JSON.stringify({
+    query,
+    previous_disambiguation_options: this.lastDisambiguationOptions || []
+})
+```
 
 ---
 
@@ -528,14 +602,16 @@ When too many data points requested (10+):
 
 | File | Purpose |
 |------|---------|
-| `mapmover/preprocessor.py` | Query preprocessing, pattern detection |
+| `mapmover/preprocessor.py` | Query preprocessing, pattern detection, show borders intent |
 | `mapmover/postprocessor.py` | Order validation, derived field expansion |
 | `mapmover/order_taker.py` | LLM interpretation with context |
 | `mapmover/order_executor.py` | Execute orders, derived calculations |
+| `mapmover/data_loading.py` | `fetch_geometries_by_loc_ids()` for show borders |
 | `mapmover/conversions.json` | Regional groupings (56 regions) |
 | `mapmover/reference/` | Reference data for Tier 4 context |
-| `static/modules/chat-panel.js` | Frontend chat and order UI |
+| `static/modules/chat-panel.js` | Frontend chat, order UI, disambiguation storage |
 | `static/modules/selection-manager.js` | Disambiguation selection mode |
+| [MAPPING.md](MAPPING.md) | Show Borders visualization, map rendering |
 | [GEOMETRY.md](GEOMETRY.md) | loc_id specification |
 | [DATA_PIPELINE.md](DATA_PIPELINE.md) | Data source catalog |
 

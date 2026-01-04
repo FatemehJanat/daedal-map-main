@@ -209,6 +209,66 @@ loadGeometry('USA.parquet', {adminLevel: 2, parent: 'USA-CA'});
 
 ---
 
+## Show Borders Command
+
+Display geometry via conversational request without data. See [CHAT.md](CHAT.md) for the full chat flow.
+
+### How It Works
+
+1. User says "show me washington county" (singular)
+2. System finds 30+ Washington Counties across the US
+3. Returns `type: "disambiguate"` with all options
+4. User can say "just show me them" or "display them all"
+5. System fetches geometry for all options and displays on map
+
+### Trigger Phrases
+
+Patterns detected by `detect_show_borders_intent()`:
+- "just show me them"
+- "display them all"
+- "show all of them on the map"
+- "just the borders"
+- "display all"
+
+### Singular vs Plural Suffix
+
+The system distinguishes user intent by suffix:
+
+| Suffix | Intent | Behavior |
+|--------|--------|----------|
+| "washington county" | Want ONE | Disambiguation (pick one) |
+| "washington counties" | Want ALL | Navigation (show all) |
+| "texas counties" | Drill-down | Show children of Texas |
+
+### Backend Response
+
+```json
+{
+  "type": "navigate",
+  "message": "Showing 31 locations on the map. Click any location to see data options.",
+  "locations": [...],
+  "loc_ids": ["USA-AL-01129", "USA-AR-05143", ...],
+  "geojson": { "type": "FeatureCollection", "features": [...] }
+}
+```
+
+### Frontend Behavior
+
+1. Receives GeoJSON with geometries
+2. Loads into selection/highlight layer (orange/amber colors)
+3. Fits map bounds to show all features
+4. User can click locations to select for data queries
+
+### Related Files
+
+| File | Purpose |
+|------|---------|
+| `mapmover/preprocessor.py` | `detect_show_borders_intent()`, `search_locations_globally()` |
+| `mapmover/data_loading.py` | `fetch_geometries_by_loc_ids()` |
+| `static/modules/chat-panel.js` | Stores `lastDisambiguationOptions` for follow-up |
+
+---
+
 ## Feature Interaction
 
 ### Click Events
@@ -439,14 +499,6 @@ Handle ambiguous queries by letting users click on the map:
 - Frontend displays all matches with markers
 - User clicks to select one or multiple
 
-### Show Me Borders Command
-
-Display geometry via conversational request:
-- META intent type for border/geometry requests
-- Returns geometry without data (for visual reference)
-- Replaces current map content (not layered)
-- User can then click to select regions for data queries
-
 ### Result Summary Cards
 
 Show key stats before/alongside map:
@@ -480,7 +532,13 @@ See [FRONTEND_MODULES.md](FRONTEND_MODULES.md) for detailed module documentation
 | ChoroplethManager | Color scale calculation and legend |
 | TimeSlider | Year range slider and animation |
 | PopupBuilder | Format feature properties for display |
+| SelectionManager | Disambiguation and selection overlay |
+
+### Related Documentation
+
+- [CHAT.md](CHAT.md) - Chat system, disambiguation, show borders follow-up
+- [GEOMETRY.md](GEOMETRY.md) - loc_id specification, parquet structure
 
 ---
 
-*Last Updated: 2026-01-01*
+*Last Updated: 2026-01-03*

@@ -452,8 +452,12 @@ export const SelectionManager = {
 
     const optionsList = this.options.map((opt, i) => {
       const name = opt.matched_term || 'Unknown';
-      const country = opt.country_name || opt.iso3 || '';
-      return `<div class="selection-option-label">${i + 1}. ${name} (${country})</div>`;
+      // Parse loc_id to get state/province code (e.g., "USA-WA-NAME" -> "WA")
+      const locId = opt.loc_id || '';
+      const parts = locId.split('-');
+      // Use state/province code if available, otherwise fall back to country
+      const context = parts.length >= 2 ? parts[1] : (opt.country_name || opt.iso3 || '');
+      return `<div class="selection-option-label">${i + 1}. ${name} (${context})</div>`;
     }).join('');
 
     overlay.innerHTML = `

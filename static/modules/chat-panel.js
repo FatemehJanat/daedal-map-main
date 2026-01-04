@@ -24,6 +24,7 @@ export const ChatManager = {
   history: [],
   sessionId: null,
   elements: {},
+  lastDisambiguationOptions: null,  // Store options for "show them all" follow-up
 
   /**
    * Initialize chat manager
@@ -122,6 +123,8 @@ export const ChatManager = {
         case 'disambiguate':
           // Multiple locations match - enter selection mode
           this.addMessage(response.message || 'Please select a location:', 'assistant');
+          // Store options for potential "show them all" follow-up
+          this.lastDisambiguationOptions = response.options || [];
           if (SelectionManager) {
             SelectionManager.enter(response, (selected, originalQuery) => {
               // User selected a location - retry the query with specific loc_id
@@ -134,6 +137,15 @@ export const ChatManager = {
           // Navigation request - zoom to locations and prepare for data
           this.addMessage(response.message || 'Showing locations.', 'assistant');
           this.handleNavigation(response);
+          break;
+
+        case 'drilldown':
+          // Drill-down request - show children of a location (e.g., "texas counties")
+          this.addMessage(response.message || 'Loading...', 'assistant');
+          if (App && response.loc_id) {
+            // Drill into the location to show its children
+            App.drillDown(response.loc_id, response.name || response.loc_id);
+          }
           break;
 
         case 'data':
@@ -352,6 +364,20 @@ export const ChatManager = {
       ? `${API_BASE_URL}/chat`
       : '/chat';
 
+    // Check if we have a navigation location selected (from "show me X" flow)
+    const navLocations = OrderManager.currentOrder?.navigationLocations;
+    let resolvedLocation = null;
+    if (navLocations && navLocations.length === 1) {
+      // Single location selected - use it as context for this query
+      const loc = navLocations[0];
+      resolvedLocation = {
+        loc_id: loc.loc_id,
+        iso3: loc.iso3,
+        matched_term: loc.matched_term,
+        country_name: loc.country_name
+      };
+    }
+
     const response = await fetch(apiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -364,7 +390,11 @@ export const ChatManager = {
           adminLevel: view.adminLevel
         },
         chatHistory: this.history.slice(-10),
-        sessionId: this.sessionId
+        sessionId: this.sessionId,
+        // Include navigation location as resolved context if available
+        resolved_location: resolvedLocation,
+        // Include previous disambiguation options for "show them all" follow-up
+        previous_disambiguation_options: this.lastDisambiguationOptions || []
       })
     });
 
@@ -573,6 +603,9 @@ export const OrderManager = {
   clearOrder() {
     this.currentOrder = null;
     this.render();
+
+    // Clear navigation mode if active
+    App?.clearNavigationMode();
 
     // Reset map to exploration mode (reload default countries)
     App?.loadCountries();
