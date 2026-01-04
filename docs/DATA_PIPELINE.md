@@ -247,8 +247,88 @@ For complex datasets with domain-specific context (SDGs, IMF codes, WHO classifi
 
 ### Generation Scripts
 
-- `scripts/regenerate_metadata.py` - Regenerate metadata.json for all sources
-- `scripts/build_catalog.py` - Build catalog.json from all metadata files
+Scripts are located in `build/` and `build/catalog/`:
+
+```bash
+# Regenerate metadata.json for all sources
+python build/regenerate_metadata.py
+
+# Build catalog.json from all metadata files
+python build/catalog/catalog_builder.py
+
+# Generate metadata for a single source
+python build/catalog/metadata_generator.py owid_co2
+```
+
+### Metadata Generation Process
+
+The metadata generator (`build/catalog/metadata_generator.py`) introspects parquet files to auto-generate metadata:
+
+1. **Parquet Inspection**: Reads column names, row counts, year ranges
+2. **Metric Discovery**: Lists all non-standard columns as metrics
+3. **Coverage Analysis**: Counts unique loc_ids, detects admin levels
+4. **Template Generation**: Creates metadata.json with placeholders for descriptions
+
+```python
+# Example output structure
+{
+    "source_id": "owid_co2",
+    "source_name": "Our World in Data",  # Auto-detected or manual
+    "geographic_level": "country",        # Inferred from loc_id format
+    "year_range": {"start": 1750, "end": 2024},  # From parquet
+    "countries_covered": 217,             # Count of unique loc_ids
+    "row_count": 42000,                   # Total rows
+    "metrics": {
+        "co2": {"name": "co2", "unit": "unknown"}  # Needs manual enrichment
+    }
+}
+```
+
+### Catalog Build Process
+
+The catalog builder (`build/catalog/catalog_builder.py`) aggregates all metadata:
+
+1. **Scan Sources**: Finds all `data/{source_id}/metadata.json` files
+2. **Extract Summaries**: Pulls key fields for LLM context
+3. **Build Index**: Creates searchable catalog structure
+4. **Write Output**: Saves to `county-map-data/catalog.json`
+
+```python
+# Catalog structure
+{
+    "catalog_version": "1.0",
+    "last_updated": "2026-01-03",
+    "total_sources": 25,
+    "sources": [
+        {
+            "source_id": "owid_co2",
+            "source_name": "Our World in Data",
+            "category": "environmental",
+            "topic_tags": ["climate", "emissions"],
+            "geographic_coverage": {"type": "global", "countries": 217},
+            "temporal_coverage": {"start": 1750, "end": 2024},
+            "llm_summary": "217 countries, 1750-2024. CO2, GDP, population, energy."
+        }
+    ]
+}
+```
+
+### Workflow After Adding New Data
+
+```bash
+# 1. Run converter to create parquet
+python data_converters/convert_mysource.py
+
+# 2. Generate metadata (auto-detects from parquet)
+python build/catalog/metadata_generator.py mysource
+
+# 3. Edit metadata.json to add descriptions, units, topic_tags
+
+# 4. Rebuild catalog to include new source
+python build/catalog/catalog_builder.py
+
+# 5. Restart server to pick up new catalog
+```
 
 ---
 
@@ -665,11 +745,14 @@ When multiple sources have the same metric, the app selects:
 
 | File | Purpose |
 |------|---------|
-| `mapmover/data_loading.py` | Load parquets, build catalog |
-| `mapmover/order_taker.py` | LLM interprets user queries using catalog.json |
-| `mapmover/order_executor.py` | Execute orders against parquet files |
-| `mapmover/metadata_generator.py` | Generate metadata.json from parquet |
-| `mapmover/catalog_builder.py` | Build catalog.json from all metadata |
+| `mapmover/data_loading.py` | Load parquets, initialize catalog |
+| `mapmover/preprocessor.py` | Extract topics, resolve regions, detect patterns |
+| `mapmover/order_taker.py` | LLM interprets user queries with context injection |
+| `mapmover/postprocessor.py` | Validate orders, expand derived fields |
+| `mapmover/order_executor.py` | Execute orders, calculate derived fields |
+| `build/catalog/metadata_generator.py` | Generate metadata.json from parquet |
+| `build/catalog/catalog_builder.py` | Build catalog.json from all metadata |
+| `build/regenerate_metadata.py` | Batch regenerate all metadata files |
 
 ---
 
@@ -813,4 +896,4 @@ for country in result:
 
 ---
 
-*Last Updated: 2025-12-31*
+*Last Updated: 2026-01-03*

@@ -2,7 +2,7 @@
 
 The chat interface uses a "fast food kiosk" model where one LLM interprets user requests, builds orders, and guides users to available data.
 
-**Status**: Phase 1B Complete - Backend + Order Panel UI implemented
+**Status**: Phase 2 Complete - Preprocessing, Postprocessing, Derived Fields, Navigation Mode
 
 ---
 
@@ -10,212 +10,439 @@ The chat interface uses a "fast food kiosk" model where one LLM interprets user 
 
 ```
 +------------------+     +------------------+     +------------------+
-|   Order Taker    | --> |   Order Screen   | --> |   Order Filler   |
-|      (LLM)       |     |   (User View)    |     |  (Python code)   |
+|   Preprocessor   | --> |   Order Taker    | --> |   Postprocessor  |
+|   (Python code)  |     |      (LLM)       |     |   (Python code)  |
 +------------------+     +------------------+     +------------------+
         |                        |                        |
-  Talk to user             Shows order              Creates "empty boxes"
-  Read from catalog        User can edit            Fills from each source
-  Suggest options          Delete with X            Joins by loc_id
-  Add to order             [Display] button         Builds GeoJSON
+  Extract hints            Talk to user              Validate items
+  Resolve locations        Read from catalog         Expand derived fields
+  Detect patterns          Suggest options           Build display items
+  Load references          Add to order              Return validation
+        |                        |                        |
+        v                        v                        v
++------------------+     +------------------+     +------------------+
+|   Tier 3/4       | --> |   Order Screen   | --> |   Order Filler   |
+|   Context        |     |   (User View)    |     |  (Python code)   |
++------------------+     +------------------+     +------------------+
+                                 |                        |
+                           Shows order              Creates "empty boxes"
+                           User can edit            Fills from each source
+                           Delete with X            Calculates derived fields
+                           [Display] button         Builds GeoJSON
 ```
 
 **Key files**:
-- [mapmover/order_taker.py](mapmover/order_taker.py) - LLM interprets requests
-- [mapmover/order_executor.py](mapmover/order_executor.py) - Executes orders against parquet
-- [mapmover/chat_handlers.py](mapmover/chat_handlers.py) - Chat endpoint logic
-- [mapmover/llm.py](mapmover/llm.py) - LLM initialization, prompts, parsing
+- [mapmover/preprocessor.py](../mapmover/preprocessor.py) - Topic extraction, region resolution, pattern detection
+- [mapmover/order_taker.py](../mapmover/order_taker.py) - LLM interprets requests with context injection
+- [mapmover/postprocessor.py](../mapmover/postprocessor.py) - Validation, derived field expansion
+- [mapmover/order_executor.py](../mapmover/order_executor.py) - Executes orders, calculates derived fields
 
 ---
 
-## Order Taker LLM
+## Tiered Context System (Prompt Optimization)
 
-**Role**: Help users discover and select data. Guide them to what's available.
+The chat uses a four-tier context system to minimize token usage while maintaining conversation quality.
 
-**Model**: gpt-4o-mini
+### Tier 1: System Prompt (~2,500 tokens, cached)
 
-**Input**:
-- User message
-- Master catalog (read from catalog.json dynamically)
-- Current order
+Contains condensed, high-level information loaded once per session:
+- Role description and output format
+- Robust catalog (source names, categories, topic tags, key metrics)
+- Region list (names only, not full country code mappings)
 
-**Output**:
-- Structured order item to add, OR
-- Clarifying question with suggestions from catalog
+### Tier 2: Preprocessor (0 LLM tokens)
 
-### Catalog Integration
-
-The LLM reads from `county-map-data/catalog.json` which contains:
-- All datasets with descriptions
-- All indicators with keywords and synonyms
-- Geographic coverage per dataset
-- Year ranges
-- Topic tags
+Pure Python processing BEFORE the LLM call:
 
 ```python
-# Load catalog dynamically - NOT hardcoded
-catalog = load_catalog("county-map-data/catalog.json")
+# mapmover/preprocessor.py
+def preprocess_query(query, viewport=None):
+    return {
+        "topics": extract_topics(query),           # ["economy", "health"]
+        "regions": resolve_regions(query),          # "Europe" -> 27 country codes
+        "location": extract_country_from_query(query, viewport),  # City -> country
+        "time": detect_time_patterns(query),        # "trend", "2020-2023"
+        "reference_lookup": detect_reference_lookup(query),  # SDG, capitals, languages
+        "navigation": detect_navigation_intent(query),  # "show me Paris"
+        "disambiguation": check_ambiguous_locations(query, viewport),  # Multiple matches
+    }
+```
 
-prompt = f"""
-You are a data guide. Help users find and select data from our catalog.
+### Tier 3: Just-in-Time Context (~500-1000 tokens)
 
-CATALOG (what we have):
-{format_catalog_for_llm(catalog)}
+Query-specific context injected into the LLM prompt:
+- Resolved regions with country counts
+- Detected time patterns
+- Viewport admin level (what the user is currently viewing)
 
-YOUR JOB:
-1. Understand what the user is looking for (even if vague)
-2. Search the catalog for matches or related data
-3. If exact match: add to order, suggest related data
-4. If close match: offer options from what we have
-5. If no match: explain what topics/regions we DO cover
-6. Always guide toward actionable next steps
+### Tier 4: Reference Documents (on-demand)
 
-ASSUME: Users don't know exactly what they want. Help them explore.
+Loaded only when specific topics are detected:
 
-Current order: {current_order}
-"""
+| Trigger Keywords | Reference File | Example Query |
+|-----------------|----------------|---------------|
+| "SDG 7", "goal 7" | `un_sdg_07/reference.json` | "What is SDG 7?" |
+| "capital of X" | `country_metadata.json` | "What's the capital of China?" |
+| "currency", "money in" | `currencies_scraped.json` | "What currency does Japan use?" |
+| "language", "speak in" | `languages_scraped.json` | "What languages are spoken in Switzerland?" |
+| "economy of X" | `world_factbook_text.json` | "Tell me about Japan's economy" |
+| "trade partners" | `world_factbook_text.json` | "Who does Brazil trade with?" |
+
+### Token Usage Comparison
+
+| Approach | Tokens per Query |
+|----------|------------------|
+| Naive (load everything) | ~25,000 |
+| Optimized (four-tier) | ~3,500-4,000 |
+| **Reduction** | **~85%** |
+
+---
+
+## Preprocessor Features
+
+### Topic Extraction
+
+Keywords mapped to source categories:
+```python
+TOPIC_KEYWORDS = {
+    "economy": ["gdp", "economic", "income", "wealth", "poverty", "trade"],
+    "health": ["health", "disease", "mortality", "life expectancy", "hospital"],
+    "environment": ["co2", "carbon", "emissions", "climate", "pollution"],
+    "demographics": ["population", "age", "birth", "death", "migration"],
+    # ...
+}
+```
+
+### Region Resolution
+
+Expands region names to country codes using `conversions.json`:
+- "Europe" -> 53 countries (or EU -> 27)
+- "G7" -> USA, CAN, GBR, FRA, DEU, ITA, JPN
+- "Africa" -> 54 countries
+
+### Time Pattern Detection
+
+Detects temporal intent:
+```python
+# Patterns detected:
+- "trend" / "over time" / "historical" -> is_time_series: True
+- "from 2015 to 2020" -> year_start: 2015, year_end: 2020
+- "in 2023" -> year: 2023
+- "latest" / "recent" -> year: None (executor uses most recent)
+```
+
+### Location Resolution (City -> Country)
+
+Hierarchical lookup with viewport awareness:
+1. Direct country name match (from reference file)
+2. Capital city match (from reference file)
+3. Viewport-based location match (from geometry parquet files)
+
+```python
+# "Paris" -> resolves to France (FRA)
+# "Vancouver" with viewport over Canada -> CAN-BC
+# "Vancouver" with viewport over USA -> USA-WA
+```
+
+### Disambiguation Detection
+
+When multiple locations match a query:
+```python
+# User: "Show me data for Vancouver"
+# Preprocessor detects:
+{
+    "disambiguation": {
+        "needed": True,
+        "query_term": "vancouver",
+        "options": [
+            {"loc_id": "CAN-BC", "country_name": "Canada", "matched_term": "Vancouver"},
+            {"loc_id": "USA-WA", "country_name": "United States", "matched_term": "Vancouver"}
+        ]
+    }
+}
+```
+
+Frontend enters "selection mode" - highlights candidates on map, user clicks to select.
+
+### Navigation Intent Detection
+
+Detects "show me X" patterns for zooming without data request:
+
+```python
+NAVIGATION_PATTERNS = [
+    r"^show me\b",
+    r"^where is\b",
+    r"^zoom to\b",
+    r"^go to\b",
+    r"^take me to\b",
+]
+
+# "show me Simpson and Woodford counties"
+# -> Zooms map, highlights locations, prepares empty order for data
 ```
 
 ---
 
-## Example Conversations
+## Postprocessor Features
 
-### Vague request - guide to options
-```
-User: "I want to know about water"
+### Validation Against Catalog
 
-Bot: "I have several water-related datasets:
+After LLM outputs an order, postprocessor validates each item:
 
-     Environmental:
-     - Rainfall data (142 countries, 1990-2023)
-     - Flood risk zones (85 countries)
-
-     Infrastructure:
-     - Access to clean water % (WHO, 198 countries)
-     - Sanitation coverage (WHO, 198 countries)
-
-     What aspect interests you? And which part of the world?"
-
-Order: unchanged (guiding user)
+```python
+def validate_item(item, catalog):
+    # Check source exists
+    # Check metric exists in source
+    # Add metric_label for display
+    # Return with _valid: True/False and _error if invalid
 ```
 
-### No exact match - suggest alternatives
-```
-User: "Show me unemployment rates"
+### Derived Field Expansion
 
-Bot: "I don't have unemployment data yet.
+Simple flags expanded to full specifications:
 
-     For economic indicators, I have:
-     - GDP and GDP per capita (217 countries)
-     - Trade balance (195 countries)
-     - Population (for labor force context)
-
-     For US specifically, I have county-level:
-     - Population and demographics
-     - Age distribution (working age population)
-
-     Would any of these help with your analysis?"
-
-Order: unchanged (offering alternatives)
+**Input** (from LLM):
+```json
+{"source_id": "owid_co2", "metric": "gdp", "region": "EU", "derived": "per_capita"}
 ```
 
-### Good match - add and suggest more
+**Output** (after postprocessor):
+```json
+[
+  {"source_id": "owid_co2", "metric": "gdp", "region": "EU", "for_derivation": true},
+  {"source_id": "owid_co2", "metric": "population", "region": "EU", "for_derivation": true},
+  {"type": "derived_result", "numerator": "gdp", "denominator": "population", "label": "GDP Per Capita"}
+]
 ```
-User: "GDP for European countries"
 
-Bot: "Added to your order:
-     - GDP, Europe (27 countries), 2024
+**Expansion shortcuts**:
+```python
+DERIVED_EXPANSIONS = {
+    "per_capita": {"denominator": "population", "denominator_source": "owid_co2"},
+    "density": {"denominator": "area_sq_km", "denominator_source": "world_factbook_static"},
+    "per_1000": {"denominator": "population", "multiplier": 1000},
+}
+```
 
-     Related data you might want:
-     - Population (to calculate per capita)
-     - CO2 emissions (economic/environmental correlation)
-     - Life expectancy (development indicator)
+### Cross-Source Derived Fields
 
-     Say 'add population' or 'show me what else you have for Europe'"
+Supports combining metrics from different sources:
 
-Order updated: [{metric: "gdp", region: "Europe", year: 2024, source: "owid_co2"}]
+```json
+{
+  "type": "derived",
+  "numerator": {"source_id": "owid_co2", "metric": "gdp"},
+  "denominator": {"source_id": "imf_bop", "metric": "exports"},
+  "region": "EU"
+}
+```
+
+### Order Panel Display
+
+- Items with `for_derivation: true` are hidden from order panel
+- Derived items show as: "GDP Per Capita (calculated)"
+- User sees clean order, not internal mechanics
+
+---
+
+## Order Executor: Derived Field Calculation
+
+After fetching all data into boxes:
+
+```python
+def apply_derived_fields(boxes, derived_specs, year):
+    warnings = []
+    for loc_id, metrics in boxes.items():
+        for spec in derived_specs:
+            num = metrics.get(spec["numerator"])
+            denom = get_denominator_value(metrics, spec["denominator"], loc_id, year)
+
+            if denom is None or denom == 0:
+                warnings.append(f"{loc_id}: {spec['denominator']} unavailable")
+                continue
+
+            result = num / denom
+            if spec.get("multiplier"):
+                result *= spec["multiplier"]
+
+            label = spec.get("label", f"{spec['numerator']}/{spec['denominator']}")
+            metrics[f"{label} (calculated)"] = result
+    return warnings
+```
+
+### Canonical Sources for Denominators
+
+```python
+CANONICAL_SOURCES = {
+    "population": "owid_co2",         # Country population
+    "area_sq_km": "world_factbook_static",  # Static area data
+}
+
+def lookup_canonical_value(metric, loc_id, year):
+    # Check canonical sources when metric not already in box
+    if metric == "population" and len(loc_id) == 3:
+        return lookup_owid_population(loc_id, year)
+    # ...
 ```
 
 ---
 
-## Response Limits
+## Navigation Mode
 
-**Rule: 3-5 suggestions max per response**
+For "show me X" queries without data requests:
 
-If too many matches, go more general and ask for narrowing:
-
-### Tiered Response Logic
-
+### Backend Response
+```python
+# type: "navigate" response
+{
+    "type": "navigate",
+    "message": "Showing 2 locations: Simpson, Woodford. What data would you like to see?",
+    "locations": [{"loc_id": "...", "matched_term": "Simpson", ...}],
+    "loc_ids": ["USA-KY-21213", "USA-KY-21239"]
+}
 ```
-If matches > 10:
-    Respond with category summaries
-    Ask user to narrow by topic or region
 
-If matches 5-10:
-    Show top 5 most relevant
-    Mention "and X more in [category]"
+### Frontend Behavior
+1. Fetches geometries for all locations
+2. Calculates bounding box around all features
+3. Fits map to bounds with padding
+4. Highlights locations with orange/amber selection colors
+5. Order panel shows locations with "Add Data First" button
 
-If matches < 5:
-    Show all matches with details
+### Use Case
+Original motivation: FEMA disaster declarations like:
+> "FEMA denied public assistance to Simpson and Woodford counties"
+
+User can say "show me Simpson and Woodford counties" to see them on the map, then ask for specific data.
+
+---
+
+## Disambiguation Mode (Selection Mode)
+
+When multiple locations match a query name (e.g., "Vancouver"):
+
+### Backend Response
+```python
+{
+    "type": "disambiguate",
+    "message": "I found 2 locations matching 'vancouver'. Please click on the one you meant:",
+    "options": [
+        {"loc_id": "CAN-BC", "country_name": "Canada", "matched_term": "Vancouver"},
+        {"loc_id": "USA-WA", "country_name": "United States", "matched_term": "Vancouver"}
+    ]
+}
+```
+
+### Frontend Behavior (SelectionManager)
+1. Freezes map (disables pan/zoom/click)
+2. Dims existing map layers
+3. Fetches and highlights candidate locations
+4. Shows instruction overlay
+5. User clicks location to select, or clicks away to cancel
+6. On selection, retries original query with resolved `loc_id`
+
+---
+
+## Chat Endpoint Flow
+
+```python
+@app.post("/chat")
+async def chat(request):
+    # Step 1: Preprocess query
+    hints = preprocess_query(query, viewport)
+
+    # Step 2: Check for navigation intent (no LLM needed)
+    if hints.get("navigation", {}).get("is_navigation"):
+        return {"type": "navigate", "locations": hints["navigation"]["locations"]}
+
+    # Step 3: Check for disambiguation needed (no LLM needed)
+    if hints.get("disambiguation", {}).get("needed"):
+        return {"type": "disambiguate", "options": hints["disambiguation"]["options"]}
+
+    # Step 4: LLM interprets request with context
+    result = interpret_request(query, chat_history, hints=hints)
+
+    # Step 5: Postprocess order
+    if result["type"] == "order":
+        processed = postprocess_order(result["order"], hints)
+        display_items = get_display_items(processed["items"], processed["derived_specs"])
+        return {"type": "order", "order": {...}, "full_order": processed}
+
+    return result
+
+@app.post("/display")  # When user clicks "Display on Map"
+async def display(order):
+    # Order executor fills boxes and calculates derived fields
+    geojson = execute_order(order)
+    return geojson
 ```
 
 ---
 
 ## Order Format
 
-Simple JSON structure that lives in the UI (not in LLM context):
-
 ```json
 {
   "items": [
     {
-      "id": "item_1",
+      "source_id": "owid_co2",
       "metric": "gdp",
-      "metric_label": "GDP",
+      "metric_label": "GDP (USD)",
       "region": "Europe",
-      "region_type": "group",
       "year": 2024,
-      "source": "owid_co2",
-      "added_at": "2025-12-21T20:30:00Z"
+      "_valid": true
     },
     {
-      "id": "item_2",
-      "metric": "population",
-      "metric_label": "Population",
-      "region": "Europe",
-      "region_type": "group",
-      "year": 2024,
-      "source": "owid_co2",
-      "added_at": "2025-12-21T20:30:15Z"
+      "type": "derived",
+      "metric": "GDP Per Capita",
+      "metric_label": "GDP Per Capita (calculated)",
+      "_is_derived": true
     }
+  ],
+  "derived_specs": [
+    {"numerator": "gdp", "denominator": "population", "label": "GDP Per Capita"}
   ]
 }
 ```
 
 ---
 
-## Order Panel UI
+## Reference File Loading
 
+### Reference Types
+
+| Type | File | Content |
+|------|------|---------|
+| SDG Goals | `un_sdg_XX/reference.json` | Goal name, targets, description |
+| Capitals | `reference/country_metadata.json` | Capital cities |
+| Currencies | `reference/currencies_scraped.json` | Currency codes and names |
+| Languages | `reference/languages_scraped.json` | Official/spoken languages |
+| Timezones | `reference/timezones_scraped.json` | UTC offsets, DST |
+| Country Info | `reference/world_factbook_text.json` | Background, economy, government, trade |
+
+### Detection and Loading
+
+```python
+def detect_reference_lookup(query):
+    # SDG pattern
+    if re.search(r'sdg\s*(\d+)|goal\s*(\d+)', query.lower()):
+        return {"type": "sdg", "file": f"un_sdg_{num}/reference.json"}
+
+    # Country-specific patterns
+    if any(kw in query.lower() for kw in ["capital of", "currency", "language"]):
+        # Load specific country data from reference files
+        return {"type": "currency", "country_data": {...}}
 ```
-YOUR ORDER:
-+-----------------------------------------+
-| GDP                                     |
-| Europe | 2024 | owid_co2           [x]  |
-+-----------------------------------------+
-| Population                              |
-| Europe | 2024 | owid_co2           [x]  |
-+-----------------------------------------+
-| Life Expectancy                         |
-| Europe | 2023 | who_health         [x]  |
-+-----------------------------------------+
 
-[Clear All]                    [Display -->]
+### Context Injection
+
+```python
+def build_tier4_context(hints):
+    ref_lookup = hints.get("reference_lookup")
+    if ref_lookup and ref_lookup.get("country_data"):
+        # Return formatted answer for LLM to use
+        return f"[REFERENCE ANSWER: {ref_lookup['country_data']['formatted']}]"
 ```
-
-**User actions**:
-- Click [x] to remove an item
-- Click [Display] to execute order (fills boxes, builds GeoJSON)
-- Click [Clear All] to start over
 
 ---
 
@@ -229,484 +456,71 @@ YOUR ORDER:
 Order:
 [
   {metric: "gdp", region: "Europe", year: 2024, source: "owid_co2"},
-  {metric: "life_expectancy", region: "Europe", year: 2024, source: "who_health"},
-  {metric: "co2", region: "Europe", year: 2024, source: "owid_co2"}
+  {metric: "life_expectancy", region: "Europe", year: 2024, source: "who_health"}
 ]
 
 Step 1: Expand region to loc_ids
-  "Europe" -> [DEU, FRA, GBR, ITA, ESP, POL, NLD, ...]
+  "Europe" -> [DEU, FRA, GBR, ITA, ESP, ...]
 
-Step 2: Create empty boxes (one per location)
-  {
-    "DEU": {},
-    "FRA": {},
-    "GBR": {},
-    ...
-  }
+Step 2: Create empty boxes
+  {"DEU": {}, "FRA": {}, "GBR": {}, ...}
 
-Step 3: Process each order item, fill boxes
+Step 3: Fill boxes from each source
+  Item 1: boxes[loc_id]["gdp"] = value
+  Item 2: boxes[loc_id]["life_expectancy"] = value
 
-  Item 1 (gdp from owid_co2):
-    -> Query owid_co2 parquet, filter year=2024, filter to Europe loc_ids
-    -> For each row: boxes[loc_id]["gdp"] = value
+Step 4: Apply derived field calculations
+  boxes[loc_id]["GDP Per Capita (calculated)"] = gdp / population
 
-  Item 2 (life_expectancy from who_health):
-    -> Query who_health parquet, filter year=2024, filter to Europe loc_ids
-    -> For each row: boxes[loc_id]["life_expectancy"] = value
-
-  Item 3 (co2 from owid_co2):
-    -> Query owid_co2 parquet, filter year=2024, filter to Europe loc_ids
-    -> For each row: boxes[loc_id]["co2"] = value
-
-Step 4: Result - boxes filled with data from multiple sources
-  {
-    "DEU": {"gdp": 4.2T, "life_expectancy": 81.2, "co2": 674.8},
-    "FRA": {"gdp": 2.9T, "life_expectancy": 82.5, "co2": 326.1},
-    "GBR": {"gdp": 3.1T, "life_expectancy": 81.0, "co2": 341.5},
-    ...
-  }
-
-Step 5: Join with geometry, convert to GeoJSON features
+Step 5: Join with geometry, convert to GeoJSON
 ```
-
-### Why This Works
-
-1. **loc_id is the universal key** - All datasets use loc_id, so merging is trivial
-2. **Each item processed independently** - No complex multi-table JOINs
-3. **Partial success is fine** - If WHO is missing data for one country, others still show
-4. **Easy to debug** - Can see exactly which box has which fields filled
-5. **Cross-dataset joins are free** - Just fill the same box from different sources
 
 ### Handling Missing Data
 
 ```
 Box for a country with partial data:
 {
-  "SOM": {"gdp": 8.1B, "co2": 0.7}  // life_expectancy missing (no WHO data)
+  "SOM": {"gdp": 8.1B, "co2": 0.7}  // life_expectancy missing
 }
 
 Popup shows:
   Somalia
   GDP: $8.1B
   CO2: 0.7 Mt
-  Life Expectancy: --
+  Life Expectancy: N/A
 ```
-
-The box model handles gaps gracefully - empty fields just show as missing.
-
----
-
-## Order Limits (Map Display vs Export)
-
-### Chat Order (Map Display)
-- **Purpose**: Visual exploration on the map
-- **Limit**: ~5-10 metrics per location (popup readability)
-- **Output**: GeoJSON with properties for map rendering
-- **User**: Anyone using the public interface
-
-### Admin Export (Dataset Builder)
-- **Purpose**: Data extraction for analysis
-- **Limit**: None - export as much as needed
-- **Output**: CSV, Parquet, JSON files
-- **User**: Admin via dashboard (not public)
-- **Location**: See [ADMIN_DASHBOARD.md](ADMIN_DASHBOARD.md) Page 5: Dataset Builder
-
----
-
-## Prompt Optimization Strategy
-
-As the catalog grows (6 sources now, potentially 200+), we use a tiered context system to keep prompts efficient.
-
-### The Four Tiers
-
-| Tier | Purpose | Token Cost | When Applied |
-|------|---------|------------|--------------|
-| 1 | System prompt (cached) | ~2,500 | Once per session |
-| 2 | Preprocessing | 0 | Every query |
-| 3 | Just-in-time context | ~1,000 | Every query |
-| 4 | Reference documents | ~500 | When topic detected |
-
-### Tier 1: Lightweight System Prompt (Always Loaded)
-
-**Size**: ~2,000-3,000 tokens
-**Frequency**: Once per session, cached
-
-Contains condensed, high-level information:
-
-```python
-def build_system_prompt():
-    # Condensed region list (just names, not full mappings)
-    regions_available = {
-        "Africa": "54 countries",
-        "Europe": "53 countries",
-        "EU": "27 countries",
-        # ... ~50 total regions
-    }
-
-    # Ultra-condensed catalog summaries
-    sources_summary = [
-        {"id": "census_agesex", "summary": "USA counties. 2019-2024. Age demographics."},
-        {"id": "imf_bop", "summary": "195 countries. 2005-2022. Trade, finance."},
-    ]
-
-    system_prompt = f"""You are a geographic data assistant...
-Available regions: {list(regions_available.keys())}
-Total data sources: {len(sources_summary)}
-Condensed source list: {sources_summary}
-"""
-    return system_prompt
-```
-
-### Tier 2: Preprocessing Layer (Outside LLM)
-
-**Size**: 0 tokens to LLM
-**Frequency**: Every query
-
-Resolves locations and filters catalog BEFORE the LLM sees anything:
-
-```python
-class QueryPreprocessor:
-    def preprocess_query(self, user_query):
-        # 1. Extract location mentions from query
-        locations_mentioned = self.extract_locations(user_query)
-
-        # 2. Resolve to country codes using conversions.json
-        resolved_countries = self.resolve_locations(locations_mentioned)
-
-        # 3. Filter catalog to relevant sources
-        relevant_sources = self.filter_catalog(user_query, resolved_countries)
-
-        return {
-            "original_query": user_query,
-            "locations_found": locations_mentioned,
-            "country_codes": resolved_countries,
-            "relevant_sources": relevant_sources  # 2-10 instead of 200
-        }
-```
-
-**Reference Files Used** (see [GEOMETRY.md](GEOMETRY.md) for details):
-
-| File | Preprocessing Use |
-|------|-------------------|
-| `conversions.json` | Regional groupings, region_aliases ("Europe" -> country codes) |
-| `reference/query_synonyms.json` | Metric synonyms ("gdp" = "economic output"), time synonyms ("latest" = "most recent") |
-| `reference/admin_levels.json` | Admin level synonyms ("states" = "provinces" = "regions") |
-| `reference/iso_codes.json` | Country name/code resolution |
-
-### Tier 3: Just-In-Time Context Injection (Query-Specific)
-
-**Size**: 500-1,500 tokens
-**Frequency**: Every query
-
-Only inject relevant details for this specific query:
-
-```python
-def build_user_prompt(user_query, preprocessed):
-    prompt = f"""User query: "{user_query}"
-
-Context resolved via preprocessing:
-- Location: {preprocessed['locations_found']}
-- Resolved to: {len(preprocessed['country_codes'])} countries
-- Found {len(preprocessed['relevant_sources'])} relevant data sources
-
-Available sources for this query:
-{preprocessed['relevant_sources']}
-"""
-    return prompt
-```
-
-### Tier 4: Topic Reference Documents
-
-For specialized datasets (SDGs, IMF codes, WHO classifications), reference documents provide domain knowledge:
-
-```
-county-map-data/data/
-  un_sdg_01/
-    all_countries.parquet
-    metadata.json
-    reference.json          # Goal 1 context, targets, description
-```
-
-**reference.json** example:
-```json
-{
-  "source_context": "United Nations SDG Framework",
-  "goal": {
-    "number": 1,
-    "name": "No Poverty",
-    "full_title": "End poverty in all its forms everywhere",
-    "description": "Goal 1 calls for an end to poverty...",
-    "targets": [
-      {"id": "1.1", "text": "Eradicate extreme poverty..."}
-    ]
-  }
-}
-```
-
-#### Implementation Notes: Meta Questions via Reference Loading
-
-**Currently working** (catalog-based, no reference files needed):
-- "What data do you have?" - lists all sources from catalog
-- "What data do you have for Europe?" - filters by coverage
-- "What CO2/population data is available?" - topic search
-- "Tell me about source X" - shows metrics from that source
-- "How many metrics does SDG 7 have?" - counts from catalog
-
-**Not yet working** (requires Tier 4 reference loading):
-- "Tell me about SDG 7" / "What does SDG 7 mean?" - reference.json has goal description
-- "What are the SDG 7 targets?" - reference.json has targets array
-- "Where does your data come from?" - source URLs in metadata.json
-- "When was this data last updated?" - last_updated in metadata.json
-
-**Detection triggers** (preprocessing layer):
-```python
-# Detect topic reference questions
-topic_patterns = [
-    r"tell me about (sdg|goal)\s*(\d+)",
-    r"what (does|is) (sdg|goal)\s*(\d+)",
-    r"explain (sdg|goal)\s*(\d+)",
-    r"what are the targets for",
-]
-
-# Detect source metadata questions
-source_patterns = [
-    r"where does .* come from",
-    r"what is the source (of|for)",
-    r"when was .* updated",
-    r"who provides .* data",
-]
-```
-
-**Loading strategy**:
-1. Preprocessing detects topic/source question pattern
-2. Load only the relevant reference.json (e.g., un_sdg_07/reference.json)
-3. Inject ~200-500 tokens of context into Tier 3 prompt
-4. LLM answers from actual reference data, not training data
-
-**File locations**:
-- `county-map-data/data/{source_id}/reference.json` - topic context, targets
-- `county-map-data/data/{source_id}/metadata.json` - source URL, last updated
-
-### Token Usage Comparison
-
-**Naive Approach (Load Everything)**: ~25,100 tokens per query
-- Full conversions.json: 10,000 tokens
-- Full catalog.json: 15,000 tokens
-- User query: 100 tokens
-
-**Optimized Approach (Four-Tier)**: ~3,600 tokens per query
-- System prompt (cached): 2,500 tokens
-- Preprocessing: 0 tokens
-- User prompt: 1,100 tokens
-
-**Result**: 85-90% reduction in token usage
-
----
-
-## Chat Endpoint Flow
-
-```python
-@app.post("/chat")
-async def chat(message: str, current_order: list):
-    # LLM 1: Order Taker
-    response = order_taker_llm(message, current_order, data_catalog)
-    return {
-        "reply": response.text,
-        "add_to_order": response.new_items,
-        "remove_from_order": []
-    }
-
-@app.post("/display")
-async def display(order: dict):
-    # Empty box filler - deterministic Python, no LLM
-    geojson = fill_boxes_and_build_geojson(order["items"])
-    return geojson
-```
-
----
-
-## Display Table (Persistence Layer)
-
-The Order Filler produces a **Display Table** - a denormalized view that the map reads from.
-
-### The Flow
-
-```
-+------------------+     +------------------+     +------------------+
-|   Order Panel    | --> |  Order Filler    | --> |  Display Table   |
-|   (JS memory)    |     |  (Python/API)    |     |  (localStorage)  |
-+------------------+     +------------------+     +------------------+
-        |                        |                        |
-  Ephemeral               Fills boxes              Persisted locally
-  Gone on refresh         Adds geometry            Survives refresh
-  User builds here        Returns table            Map reads from here
-```
-
-### What Gets Stored
-
-**Order (memory only)** - disappears on page refresh
-**Display Table (localStorage)** - survives refresh
-
-```javascript
-localStorage.setItem("displayTable", JSON.stringify({
-  columns: ["loc_id", "name", "year", "gdp", "life_expectancy"],
-  rows: [
-    {loc_id: "DEU", name: "Germany", year: 2024, gdp: 4.2e12, life_expectancy: 81.2, geometry: {...}},
-    {loc_id: "FRA", name: "France", year: 2024, gdp: 2.9e12, life_expectancy: 82.5, geometry: {...}},
-  ],
-  metadata: {
-    created: "2025-12-22T10:30:00Z",
-    sources: ["owid_co2", "who_health"]
-  }
-}));
-```
-
-### Benefits
-
-| Benefit | How |
-|---------|-----|
-| **Refresh survival** | Display table persists in localStorage |
-| **Fast re-render** | Map reads local data, no API call |
-| **Easy export** | Table IS the export format (CSV/JSON) |
-| **Offline viewing** | Once loaded, works without server |
-| **Debug friendly** | Can inspect table in dev tools |
-
----
-
-## Future Enhancement: Viewport Context
-
-Pass the current map viewport to chat so the LLM understands "here":
-
-```javascript
-const viewportContext = {
-  bbox: MapAdapter.map.getBounds().toArray(),
-  zoom: MapAdapter.map.getZoom(),
-  adminLevel: MapAdapter.currentAdminLevel,
-  visibleCountries: getVisibleCountryISOs()
-};
-
-fetch('/chat', {
-  body: JSON.stringify({
-    message: userMessage,
-    viewport: viewportContext
-  })
-});
-```
-
-**Without viewport context:**
-- User: "Show me population here"
-- LLM: "Where would you like to see population data?"
-
-**With viewport context:**
-- User zooms to France, then asks "Show me population here"
-- LLM: "Here's population data for France..."
-
----
-
-## Prompt Design Principles
-
-1. **Assume ignorance**: User doesn't know what's available
-2. **Be a guide**: Suggest, clarify, offer options
-3. **Show coverage**: "For X region, I have Y and Z"
-4. **Admit gaps**: "I don't have X, but I have related Y"
-5. **Suggest connections**: "You might also want..."
-6. **Keep it actionable**: Every response should have a clear next step
-7. **Limit suggestions**: Max 3-5 items per response, go general if too many
 
 ---
 
 ## Future Enhancements
 
-### Derived Fields / Calculated Metrics
+### Growth Rate Calculations
 
-Enable computed fields without hardcoded formulas:
-
-- Rule-based derivation system (not hardcoded formulas)
-- "Per capita" pattern -> divide by population
-- "Percentage of total" -> sum filtered set, divide each by total
-- "Growth rate" -> compare to previous year
-- LLM prompt updates to recognize derived field requests
-- Caching for expensive calculations
-
-**Example queries:**
-- "GDP per capita for African countries" -> gdp / population
-- "CO2 emissions by percentage for G7" -> each / sum(all G7)
-- "Population growth rate 2020-2023" -> (2023 - 2020) / 2020
-
-**Scope rules:**
-- Percentage denominator = filtered set total (user's current selection)
-- User can specify "percentage of world total" for global denominator
-
-### Query Caching
-
-- Cache frequent queries (Redis or in-memory)
-- Cache geometry (rarely changes)
-- Invalidate on data updates
-
-### Vector Search Layer
-
-Semantic search over external content:
-
-- Web scraper for supplier sites / documentation
-- Vector database (ChromaDB local, Pinecone cloud)
-- "Where can I buy solar panels in Texas?" -> relevant links
+Open question on formula approach:
+- Simple percentage: (end - start) / start * 100
+- CAGR: ((end/start)^(1/years) - 1) * 100
+- Year-over-year series
 
 ### Direct Data Queries
 
-Enable the chat to answer data questions directly from parquet files:
-
-**Simplified v1 approach:**
-- LLM answers from training data first (often accurate enough)
-- Offers "Would you like an exact answer from the database?" follow-up
-- Falls back to "I don't know, would you like me to check?" if unsure
-- User confirmation triggers actual data query
-
-**Full implementation (v2):**
-- Add a "query" response type that executes against parquet
-- Example flow:
-  1. User: "What's the largest GDP?"
-  2. LLM returns: `{"type": "query", "source": "owid_co2", "metric": "gdp", "sort": "desc", "limit": 1}`
-  3. Backend executes query, returns: `[{"loc_id": "USA", "name": "United States", "gdp": 26700000000000}]`
-  4. LLM formats: "The United States has the highest GDP at $26.7 trillion (2023 data from OWID)."
-
-### Catalog Token Optimization
-
-Current approach loads full catalog (~2,500 tokens) for good conversation quality. As catalog grows beyond 50+ sources, may need:
-- Topic-based filtering (only show relevant sources to LLM)
-- Tiered catalog (summaries first, details on request)
-- Embedding-based semantic search for source discovery
-- See [PROMPT_OPTIMIZATION_PLAN.md](PROMPT_OPTIMIZATION_PLAN.md) for architecture
-
-### Growth Rate Calculations
-
-Open question on formula approach for derived growth metrics:
-- Simple percentage: (end - start) / start * 100
-- CAGR (Compound Annual Growth Rate): ((end/start)^(1/years) - 1) * 100
-- Year-over-year series: separate growth value per year
+Enable chat to answer data questions directly:
+- "What's the largest GDP?" -> Query parquet, return answer
+- v1: LLM answers from training data, offers "check database?" follow-up
+- v2: Add "query" response type for direct parquet queries
 
 ### Chat Pagination & Clickable Actions
 
-For sources with many metrics (28+), need better discovery UX:
-- **Grouped display**: Show metrics by category first, then expand
-- **Pagination**: "Showing 1-10 of 28. Say 'more' for next page"
-- **Clickable actions** (v2): Response includes action buttons
-  ```json
-  {
-    "reply": "OWID has 28 metrics. Here are 1-10: [...]",
-    "actions": [
-      {"label": "Show More", "trigger": "show more OWID metrics"},
-      {"label": "Show All", "trigger": "show all OWID metrics"}
-    ]
-  }
-  ```
-- v1: Explicit "more" command works with current architecture
+For sources with many metrics (28+):
+- Grouped display by category
+- Pagination: "Showing 1-10 of 28. Say 'more' for next page"
+- v2: Response includes action buttons user can click
 
 ### Calculated Score for Overloaded Popups
-If a request asks for too many data points (10+?) and the window cannot display properly, have a live calculated score.
-Potentially implement by having a checkbox beside Display button to show "aggregate score".
 
-The functionality would take all the data points, turn them all into %'s (relative to the min/max of other locations in the query)
-and then display that % in the popup instead of overloading it with a ton of individual datapoints. 
+When too many data points requested (10+):
+- Aggregate into percentile score
+- Each metric normalized to 0-100% based on min/max in selection
+- Optional checkbox beside Display button
 
 ---
 
@@ -714,12 +528,17 @@ and then display that % in the popup instead of overloading it with a ton of ind
 
 | File | Purpose |
 |------|---------|
-| `mapmover/conversions.json` | Regional groupings (56), region aliases for preprocessing |
-| `mapmover/reference/` | Modular reference data for query preprocessing |
-| [GEOMETRY.md](GEOMETRY.md) | Reference file documentation, loc_id spec |
+| `mapmover/preprocessor.py` | Query preprocessing, pattern detection |
+| `mapmover/postprocessor.py` | Order validation, derived field expansion |
+| `mapmover/order_taker.py` | LLM interpretation with context |
+| `mapmover/order_executor.py` | Execute orders, derived calculations |
+| `mapmover/conversions.json` | Regional groupings (56 regions) |
+| `mapmover/reference/` | Reference data for Tier 4 context |
+| `static/modules/chat-panel.js` | Frontend chat and order UI |
+| `static/modules/selection-manager.js` | Disambiguation selection mode |
+| [GEOMETRY.md](GEOMETRY.md) | loc_id specification |
 | [DATA_PIPELINE.md](DATA_PIPELINE.md) | Data source catalog |
-| `county-map-data/catalog.json` | Master catalog for LLM context |
 
 ---
 
-*Last Updated: 2025-12-31*
+*Last Updated: 2026-01-03*

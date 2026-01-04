@@ -60,7 +60,22 @@ export const CONFIG = {
     citySource: 'cities',
     cityCircle: 'cities-circle',
     cityLabel: 'cities-label',
-    cityMinZoom: 8  // Cities appear at this zoom level
+    cityMinZoom: 8,  // Cities appear at this zoom level
+    // Selection/disambiguation layer
+    selectionSource: 'selection-regions',
+    selectionFill: 'selection-fill',
+    selectionStroke: 'selection-stroke'
+  },
+
+  // Selection mode colors (for disambiguation highlighting)
+  selectionColors: {
+    fill: '#ffaa00',        // Orange/amber highlight
+    fillOpacity: 0.5,
+    stroke: '#ff8800',      // Darker orange stroke
+    strokeWidth: 3,
+    hoverFill: '#ffcc44',   // Brighter on hover
+    hoverOpacity: 0.7,
+    hoverStrokeWidth: 4
   },
 
   // API endpoints

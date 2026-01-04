@@ -735,13 +735,21 @@ export const MapAdapter = {
   },
 
   /**
-   * Get current map center and zoom
-   * @returns {Object} {center, zoom}
+   * Get current map view including bounds and admin level
+   * @returns {Object} {center, zoom, bounds, adminLevel}
    */
   getView() {
+    const bounds = this.map.getBounds();
     return {
       center: this.map.getCenter(),
-      zoom: this.map.getZoom()
+      zoom: this.map.getZoom(),
+      bounds: {
+        west: bounds.getWest(),
+        south: bounds.getSouth(),
+        east: bounds.getEast(),
+        north: bounds.getNorth()
+      },
+      adminLevel: ViewportLoader?.currentAdminLevel || 0
     };
   },
 
@@ -973,12 +981,93 @@ export const MapAdapter = {
   },
 
   /**
+   * Load navigation locations as a highlighted layer
+   * Used for "show me X" navigation without data request
+   * @param {Object} geojson - GeoJSON FeatureCollection of locations to highlight
+   */
+  loadNavigationLayer(geojson) {
+    if (!geojson || !geojson.features || geojson.features.length === 0) {
+      return;
+    }
+
+    // Clear any existing navigation layer
+    this.clearNavigationLayer();
+
+    // Add unique IDs to features
+    geojson.features.forEach((feature, index) => {
+      feature.id = index;
+    });
+
+    // Add source for navigation locations
+    this.map.addSource(CONFIG.layers.selectionSource, {
+      type: 'geojson',
+      data: geojson,
+      generateId: true
+    });
+
+    // Add fill layer with selection colors (orange/amber)
+    this.map.addLayer({
+      id: CONFIG.layers.selectionFill,
+      type: 'fill',
+      source: CONFIG.layers.selectionSource,
+      paint: {
+        'fill-color': [
+          'case',
+          ['boolean', ['feature-state', 'hover'], false],
+          CONFIG.selectionColors.hoverFill,
+          CONFIG.selectionColors.fill
+        ],
+        'fill-opacity': [
+          'case',
+          ['boolean', ['feature-state', 'hover'], false],
+          CONFIG.selectionColors.hoverOpacity,
+          CONFIG.selectionColors.fillOpacity
+        ]
+      }
+    });
+
+    // Add stroke layer
+    this.map.addLayer({
+      id: CONFIG.layers.selectionStroke,
+      type: 'line',
+      source: CONFIG.layers.selectionSource,
+      paint: {
+        'line-color': CONFIG.selectionColors.stroke,
+        'line-width': [
+          'case',
+          ['boolean', ['feature-state', 'hover'], false],
+          CONFIG.selectionColors.hoverStrokeWidth,
+          CONFIG.selectionColors.strokeWidth
+        ]
+      }
+    });
+
+    console.log(`Navigation layer loaded with ${geojson.features.length} features`);
+  },
+
+  /**
+   * Clear the navigation layer
+   */
+  clearNavigationLayer() {
+    if (this.map.getLayer(CONFIG.layers.selectionFill)) {
+      this.map.removeLayer(CONFIG.layers.selectionFill);
+    }
+    if (this.map.getLayer(CONFIG.layers.selectionStroke)) {
+      this.map.removeLayer(CONFIG.layers.selectionStroke);
+    }
+    if (this.map.getSource(CONFIG.layers.selectionSource)) {
+      this.map.removeSource(CONFIG.layers.selectionSource);
+    }
+  },
+
+  /**
    * Full memory cleanup - call when switching major views
    */
   cleanup() {
     this.clearLayers();
     this.clearParentOutline();
     this.clearCityOverlay();
+    this.clearNavigationLayer();
     this.currentRegionGeojson = null;
     this.hoveredFeatureId = null;
   }

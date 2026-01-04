@@ -8,10 +8,12 @@ import { CONFIG } from './config.js';
 // Dependencies set via setDependencies to avoid circular imports
 let MapAdapter = null;
 let App = null;
+let SelectionManager = null;
 
 export function setDependencies(deps) {
   MapAdapter = deps.MapAdapter;
   App = deps.App;
+  SelectionManager = deps.SelectionManager;
 }
 
 // ============================================================================
@@ -117,6 +119,23 @@ export const ChatManager = {
           this.addMessage(response.message || 'Could you be more specific?', 'assistant');
           break;
 
+        case 'disambiguate':
+          // Multiple locations match - enter selection mode
+          this.addMessage(response.message || 'Please select a location:', 'assistant');
+          if (SelectionManager) {
+            SelectionManager.enter(response, (selected, originalQuery) => {
+              // User selected a location - retry the query with specific loc_id
+              this.handleDisambiguationSelection(selected, originalQuery);
+            });
+          }
+          break;
+
+        case 'navigate':
+          // Navigation request - zoom to locations and prepare for data
+          this.addMessage(response.message || 'Showing locations.', 'assistant');
+          this.handleNavigation(response);
+          break;
+
         case 'data':
           // Direct data response (from confirmed order)
           this.addMessage(response.summary || 'Here is your data.', 'assistant');
@@ -148,12 +167,143 @@ export const ChatManager = {
   },
 
   /**
-   * Send query to API
+   * Handle user selection from disambiguation mode
+   * @param {Object} selected - The selected location option
+   * @param {string} originalQuery - The original query to retry
    */
-  async sendQuery(query) {
+  async handleDisambiguationSelection(selected, originalQuery) {
+    const locationName = selected.matched_term || selected.loc_id;
+    const countryName = selected.country_name || selected.iso3;
+
+    // Show what was selected
+    this.addMessage(`Selected: ${locationName} in ${countryName}`, 'user');
+
+    // Retry the query with the selected location's loc_id
+    // The backend should use this to scope the data request
+    const { sendBtn, input } = this.elements;
+    sendBtn.disabled = true;
+    input.disabled = true;
+
+    const indicator = this.showTypingIndicator();
+
+    try {
+      // Send query with disambiguation resolution
+      const response = await this.sendQueryWithLocation(originalQuery, selected);
+
+      // Handle response (same as normal response handling)
+      switch (response.type) {
+        case 'order':
+          this.addMessage('Added to your order. Click "Display on Map" when ready.', 'assistant');
+          OrderManager.setOrder(response.order, response.summary);
+          break;
+
+        case 'clarify':
+          this.addMessage(response.message || 'Could you be more specific?', 'assistant');
+          break;
+
+        case 'data':
+          this.addMessage(response.summary || 'Here is your data.', 'assistant');
+          App?.displayData(response);
+          break;
+
+        case 'chat':
+        default:
+          if (response.geojson && response.geojson.features && response.geojson.features.length > 0) {
+            this.addMessage(response.summary || response.message || 'Found data for you.', 'assistant');
+            App?.displayData(response);
+          } else {
+            this.addMessage(response.summary || response.message || 'Could you be more specific?', 'assistant');
+          }
+          break;
+      }
+    } catch (error) {
+      console.error('Disambiguation retry error:', error);
+      this.addMessage('Sorry, something went wrong. Please try again.', 'assistant');
+    } finally {
+      indicator.remove();
+      sendBtn.disabled = false;
+      input.disabled = false;
+      input.focus();
+    }
+  },
+
+  /**
+   * Handle navigation request - zoom to locations and highlight them
+   * @param {Object} response - Navigate response with locations and loc_ids
+   */
+  async handleNavigation(response) {
+    const locIds = response.loc_ids || [];
+    const locations = response.locations || [];
+
+    if (locIds.length === 0) {
+      console.warn('Navigation: no loc_ids to show');
+      return;
+    }
+
+    try {
+      // Fetch geometries for the locations
+      const geomResponse = await fetch('/geometry/selection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ loc_ids: locIds })
+      });
+
+      if (!geomResponse.ok) {
+        throw new Error('Failed to fetch location geometries');
+      }
+
+      const geojson = await geomResponse.json();
+
+      if (geojson.features && geojson.features.length > 0) {
+        // Calculate bounding box for all features
+        let minLng = 180, maxLng = -180, minLat = 90, maxLat = -90;
+
+        for (const feature of geojson.features) {
+          const props = feature.properties || {};
+          // Use bbox if available
+          if (props.bbox_min_lon !== undefined) {
+            minLng = Math.min(minLng, props.bbox_min_lon);
+            maxLng = Math.max(maxLng, props.bbox_max_lon);
+            minLat = Math.min(minLat, props.bbox_min_lat);
+            maxLat = Math.max(maxLat, props.bbox_max_lat);
+          } else if (props.centroid_lon !== undefined) {
+            // Fallback to centroid with buffer
+            minLng = Math.min(minLng, props.centroid_lon - 1);
+            maxLng = Math.max(maxLng, props.centroid_lon + 1);
+            minLat = Math.min(minLat, props.centroid_lat - 1);
+            maxLat = Math.max(maxLat, props.centroid_lat + 1);
+          }
+        }
+
+        // Fit map to bounds with padding
+        if (MapAdapter?.map && minLng < maxLng && minLat < maxLat) {
+          MapAdapter.map.fitBounds(
+            [[minLng, minLat], [maxLng, maxLat]],
+            { padding: 50, duration: 1000 }
+          );
+        }
+
+        // Display the locations as a highlight layer
+        App?.displayNavigationLocations(geojson, locations);
+
+        // Set up empty order with these locations
+        OrderManager.setNavigationLocations(locations);
+      }
+    } catch (error) {
+      console.error('Navigation error:', error);
+      this.addMessage('Sorry, could not display those locations.', 'assistant');
+    }
+  },
+
+  /**
+   * Send query with resolved location (after disambiguation)
+   * @param {string} query - Original query
+   * @param {Object} location - Resolved location with loc_id, iso3, etc.
+   */
+  async sendQueryWithLocation(query, location) {
     this.history.push({ role: 'user', content: query });
 
-    const view = MapAdapter?.getView() || { center: { lat: 0, lng: 0 }, zoom: 2 };
+    const view = MapAdapter?.getView() || { center: { lat: 0, lng: 0 }, zoom: 2, bounds: null, adminLevel: 0 };
     const apiUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL)
       ? `${API_BASE_URL}/chat`
       : '/chat';
@@ -163,10 +313,55 @@ export const ChatManager = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         query,
-        currentView: {
-          clat: view.center.lat,
-          clng: view.center.lng,
-          czoom: view.zoom
+        viewport: {
+          center: { lat: view.center.lat, lng: view.center.lng },
+          zoom: view.zoom,
+          bounds: view.bounds,
+          adminLevel: view.adminLevel
+        },
+        chatHistory: this.history.slice(-10),
+        sessionId: this.sessionId,
+        // Disambiguation resolution - tell backend which location was selected
+        resolved_location: {
+          loc_id: location.loc_id,
+          iso3: location.iso3,
+          matched_term: location.matched_term,
+          country_name: location.country_name
+        }
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to get response: ' + response.statusText);
+    }
+
+    const data = await response.json();
+    this.history.push({ role: 'assistant', content: data.message || data.summary });
+
+    return data;
+  },
+
+  /**
+   * Send query to API
+   */
+  async sendQuery(query) {
+    this.history.push({ role: 'user', content: query });
+
+    const view = MapAdapter?.getView() || { center: { lat: 0, lng: 0 }, zoom: 2, bounds: null, adminLevel: 0 };
+    const apiUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL)
+      ? `${API_BASE_URL}/chat`
+      : '/chat';
+
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query,
+        viewport: {
+          center: { lat: view.center.lat, lng: view.center.lng },
+          zoom: view.zoom,
+          bounds: view.bounds,  // {west, south, east, north}
+          adminLevel: view.adminLevel
         },
         chatHistory: this.history.slice(-10),
         sessionId: this.sessionId
@@ -292,9 +487,11 @@ export const OrderManager = {
       return;
     }
 
-    if (!this.currentOrder || !this.currentOrder.items) {
-      // No existing order - use the new one
+    if (!this.currentOrder || !this.currentOrder.items || this.currentOrder.items.length === 0) {
+      // No existing order (or only navigation locations) - use the new one
+      // Clear navigationLocations to exit navigation mode
       this.currentOrder = order;
+      delete this.currentOrder.navigationLocations;
     } else {
       // Append new items, but deduplicate by source_id + metric + region
       const existingKeys = new Set(
@@ -312,9 +509,62 @@ export const OrderManager = {
         this.currentOrder.items = this.currentOrder.items.concat(newItems);
         this.currentOrder.summary = summary || this.currentOrder.summary;
       }
+      // Clear navigationLocations when adding data
+      delete this.currentOrder.navigationLocations;
     }
 
+    // Reset confirm button text (may have been in navigation mode)
+    this.elements.confirmBtn.textContent = 'Display on Map';
+
     this.render(summary);
+  },
+
+  /**
+   * Set navigation locations - locations are selected, ready for data request
+   * @param {Array} locations - List of location objects from navigation
+   */
+  setNavigationLocations(locations) {
+    if (!locations || locations.length === 0) return;
+
+    // Store locations as pending selection (no data yet)
+    this.currentOrder = {
+      items: [],  // No data items yet
+      navigationLocations: locations,  // Store the locations for reference
+      summary: `${locations.length} location${locations.length > 1 ? 's' : ''} selected`
+    };
+
+    this.renderNavigationMode();
+  },
+
+  /**
+   * Render order panel in navigation mode (locations selected, awaiting data request)
+   */
+  renderNavigationMode() {
+    const { count, items, confirmBtn, summary: summaryEl } = this.elements;
+
+    if (!this.currentOrder || !this.currentOrder.navigationLocations) {
+      return this.render();
+    }
+
+    const locations = this.currentOrder.navigationLocations;
+    count.textContent = `(${locations.length} location${locations.length > 1 ? 's' : ''})`;
+    summaryEl.textContent = 'Locations ready - ask for data';
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = 'Add Data First';
+
+    // Render location list
+    items.innerHTML = locations.map((loc, index) => {
+      const name = loc.matched_term || loc.loc_id || 'Unknown';
+      const country = loc.country_name || loc.iso3 || '';
+      return `
+        <div class="order-item order-item-location">
+          <div class="order-item-info">
+            <div class="order-item-name">${this.escapeHtml(name)}</div>
+            <div class="order-item-details">${this.escapeHtml(country)}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
   },
 
   /**

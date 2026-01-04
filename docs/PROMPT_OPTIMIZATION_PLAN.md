@@ -1,5 +1,14 @@
 # Plan: Prompt Optimization + Derived Fields
 
+**STATUS: COMPLETED** (2026-01-03)
+
+All features implemented:
+- Preprocessor (preprocessor.py) - topic extraction, region resolution, time patterns, reference lookups, navigation, disambiguation
+- Postprocessor (postprocessor.py) - validation, derived field expansion
+- Derived field calculation in order_executor.py
+- Tiered context system in order_taker.py
+- Navigation mode and selection mode in frontend
+
 ## Overview
 
 Two connected features that share a preprocessing layer:

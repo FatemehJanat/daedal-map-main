@@ -915,3 +915,56 @@ def clear_cache():
     _global_countries_cache = None
     _country_bounds_cache = None
     logger.info("Geometry cache cleared")
+
+
+def get_selection_geometries(loc_ids: list):
+    """
+    Get geometries for specific loc_ids for disambiguation selection mode.
+
+    Args:
+        loc_ids: List of location IDs to fetch geometries for
+
+    Returns:
+        GeoJSON FeatureCollection with requested geometries
+    """
+    if not loc_ids:
+        return {"type": "FeatureCollection", "features": []}
+
+    features = []
+
+    # Group by country (first part of loc_id) for efficient loading
+    by_country = {}
+    for loc_id in loc_ids:
+        parts = loc_id.split("-")
+        iso3 = parts[0]
+        if iso3 not in by_country:
+            by_country[iso3] = []
+        by_country[iso3].append(loc_id)
+
+    # For each country, load parquet and filter to requested loc_ids
+    for iso3, country_loc_ids in by_country.items():
+        # Check if any are country-level (just the ISO3 code)
+        country_level_ids = [lid for lid in country_loc_ids if lid == iso3]
+        sub_level_ids = [lid for lid in country_loc_ids if lid != iso3]
+
+        # Fetch country-level from global.csv
+        if country_level_ids:
+            global_df = load_global_countries()
+            if global_df is not None:
+                country_rows = global_df[global_df["loc_id"].isin(country_level_ids)]
+                if len(country_rows) > 0:
+                    country_geojson = df_to_geojson(country_rows, polygon_only=True)
+                    features.extend(country_geojson.get("features", []))
+
+        # Fetch sub-country levels from parquet
+        if sub_level_ids:
+            country_df = load_country_parquet(iso3)
+            if country_df is not None:
+                filtered = country_df[country_df["loc_id"].isin(sub_level_ids)]
+                if len(filtered) > 0:
+                    sub_geojson = df_to_geojson(filtered, polygon_only=True)
+                    features.extend(sub_geojson.get("features", []))
+
+    logger.debug(f"Loaded {len(features)} geometries for selection from {len(loc_ids)} loc_ids")
+
+    return {"type": "FeatureCollection", "features": features}

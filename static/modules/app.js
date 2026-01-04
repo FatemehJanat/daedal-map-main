@@ -13,6 +13,7 @@ import { ChatManager, OrderManager, setDependencies as setChatDeps } from './cha
 import { TimeSlider, setDependencies as setTimeDeps } from './time-slider.js';
 import { ChoroplethManager, setDependencies as setChoroDeps } from './choropleth.js';
 import { ResizeManager, SidebarResizer, SettingsManager } from './sidebar.js';
+import { SelectionManager, setDependencies as setSelectionDeps } from './selection-manager.js';
 
 // ============================================================================
 // APP - Main application controller
@@ -33,9 +34,10 @@ export const App = {
     setMapDeps({ ViewportLoader, NavigationManager, App, PopupBuilder });
     setNavDeps({ MapAdapter, ViewportLoader, App });
     setPopupDeps({ App });
-    setChatDeps({ MapAdapter, App });
+    setChatDeps({ MapAdapter, App, SelectionManager });
     setTimeDeps({ MapAdapter, ChoroplethManager });
     setChoroDeps({ MapAdapter });
+    setSelectionDeps({ MapAdapter, ChatManager });
 
     // Initialize components
     ChatManager.init();
@@ -125,6 +127,7 @@ export const App = {
         NavigationManager.reset();
         MapAdapter.clearParentOutline();  // Clear parent outline at world level
         MapAdapter.clearCityOverlay();    // Clear city overlay
+        MapAdapter.clearNavigationLayer(); // Clear navigation highlights
         MapAdapter.loadGeoJSON(result.geojson, this.debugMode);
         // Don't fitToBounds for world view - use CONFIG.defaultCenter instead
         // (fitToBounds on 256 countries averages to 0,0 which is Gulf of Guinea)
@@ -322,6 +325,40 @@ export const App = {
       ChatManager.elements.sidebar.classList.add('collapsed');
       ChatManager.elements.toggle.style.display = 'flex';
     }
+  },
+
+  /**
+   * Display navigation locations as highlighted overlay
+   * Used when user says "show me X" without requesting data
+   * @param {Object} geojson - GeoJSON with location geometries
+   * @param {Array} locations - Location metadata array
+   */
+  displayNavigationLocations(geojson, locations) {
+    if (!geojson || !geojson.features || geojson.features.length === 0) {
+      console.warn('No features to display for navigation');
+      return;
+    }
+
+    console.log(`Displaying ${geojson.features.length} navigation locations`);
+
+    // Suspend viewport loading while showing navigation locations
+    ViewportLoader.orderMode = true;
+
+    // Reset any previous data display state
+    TimeSlider.reset();
+    ChoroplethManager.reset();
+
+    // Load the navigation locations using selection layer (orange/amber highlighting)
+    // This uses the same layer as disambiguation but for a different purpose
+    MapAdapter.loadNavigationLayer(geojson);
+
+    // Store reference for popups (minimal data, just location info)
+    this.currentData = {
+      geojson: geojson,
+      dataset_name: 'Navigation',
+      source_name: 'Location View',
+      isNavigation: true
+    };
   }
 };
 

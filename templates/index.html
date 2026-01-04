@@ -567,6 +567,19 @@
       font-style: italic;
     }
 
+    .order-item-location {
+      background: #2a2010;
+      border-left: 3px solid #ffaa00;
+    }
+
+    .order-item-location .order-item-name {
+      color: #ffcc44;
+    }
+
+    .order-item-location .order-item-details {
+      color: #aa9955;
+    }
+
     .order-actions {
       display: flex;
       gap: 8px;
@@ -845,6 +858,71 @@
       #sidebar {
         width: 100%;
       }
+    }
+
+    /* Selection Mode (disambiguation) */
+    #map.selection-mode {
+      cursor: crosshair;
+    }
+
+    .selection-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      pointer-events: none;
+      z-index: 2000;
+      opacity: 0;
+      transition: opacity 0.2s ease;
+    }
+
+    .selection-overlay.visible {
+      opacity: 1;
+    }
+
+    .selection-overlay-content {
+      position: absolute;
+      top: 60px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(26, 26, 46, 0.95);
+      border: 1px solid #ff8800;
+      border-radius: 8px;
+      padding: 16px 24px;
+      color: white;
+      text-align: center;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+      max-width: 400px;
+    }
+
+    .selection-overlay-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: #ffaa00;
+      margin-bottom: 8px;
+    }
+
+    .selection-overlay-subtitle {
+      font-size: 14px;
+      color: #aaa;
+      margin-bottom: 12px;
+    }
+
+    .selection-options-list {
+      text-align: left;
+      margin-bottom: 12px;
+    }
+
+    .selection-option-label {
+      font-size: 13px;
+      color: #ddd;
+      padding: 4px 0;
+    }
+
+    .selection-overlay-hint {
+      font-size: 12px;
+      color: #888;
+      font-style: italic;
     }
   </style>
 </head>

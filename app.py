@@ -63,6 +63,7 @@ from mapmover.geometry_handlers import (
     get_location_places as get_location_places_handler,
     get_location_info,
     get_viewport_geometry as get_viewport_geometry_handler,
+    get_selection_geometries as get_selection_geometries_handler,
     clear_cache as clear_geometry_cache,
 )
 
@@ -229,6 +230,29 @@ async def clear_geometry_cache_endpoint():
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
 
+@app.post("/geometry/selection")
+async def get_selection_geometry_endpoint(req: Request):
+    """
+    Get geometries for specific loc_ids for disambiguation selection mode.
+    Used by SelectionManager to highlight candidate locations.
+
+    Body: { loc_ids: ["CAN-BC", "USA-WA", ...] }
+    Returns: GeoJSON FeatureCollection
+    """
+    try:
+        body = await req.json()
+        loc_ids = body.get("loc_ids", [])
+
+        if not loc_ids:
+            return JSONResponse(content={"type": "FeatureCollection", "features": []})
+
+        result = get_selection_geometries_handler(loc_ids)
+        return JSONResponse(content=result)
+    except Exception as e:
+        logger.error(f"Error in /geometry/selection: {e}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
 # === Settings Endpoints ===
 
 @app.get("/settings")
@@ -348,16 +372,72 @@ async def chat_endpoint(req: Request):
         # Otherwise, interpret the natural language request
         query = body.get("query", "")
         chat_history = body.get("chatHistory", [])
+        viewport = body.get("viewport")  # {center, zoom, bounds, adminLevel}
+        resolved_location = body.get("resolved_location")  # From disambiguation selection
 
         if not query:
             return JSONResponse(content={"error": "No query provided"}, status_code=400)
 
         logger.debug(f"Chat query: {query[:100]}...")
 
-        # Run preprocessor to extract hints (Tier 2)
-        hints = preprocess_query(query)
+        # Run preprocessor to extract hints (Tier 2) with viewport context
+        hints = preprocess_query(query, viewport=viewport)
         if hints.get("summary"):
             logger.debug(f"Preprocessor hints: {hints['summary']}")
+
+        # If resolved_location is provided, skip disambiguation and use it directly
+        if resolved_location:
+            logger.debug(f"Using resolved location: {resolved_location}")
+            # Override preprocessor hints with resolved location
+            hints["location"] = {
+                "matched_term": resolved_location.get("matched_term"),
+                "iso3": resolved_location.get("iso3"),
+                "country_name": resolved_location.get("country_name"),
+                "loc_id": resolved_location.get("loc_id"),
+                "is_subregion": resolved_location.get("loc_id") != resolved_location.get("iso3"),
+                "source": "disambiguation_selection"
+            }
+            hints["disambiguation"] = None  # Clear disambiguation flag
+
+        # Check for navigation intent - zoom to locations without data request
+        navigation = hints.get("navigation")
+        if navigation and navigation.get("is_navigation"):
+            locations = navigation.get("locations", [])
+            loc_ids = [loc.get("loc_id") for loc in locations if loc.get("loc_id")]
+            loc_names = [loc.get("matched_term", loc.get("loc_id", "?")) for loc in locations]
+
+            logger.debug(f"Navigation request for {len(locations)} locations: {loc_ids}")
+
+            # Format message based on count
+            if len(locations) == 1:
+                message = f"Showing {loc_names[0]}. What data would you like to see for this location?"
+            else:
+                message = f"Showing {len(locations)} locations: {', '.join(loc_names[:5])}{'...' if len(loc_names) > 5 else ''}. What data would you like to see?"
+
+            return JSONResponse(content={
+                "type": "navigate",
+                "message": message,
+                "locations": locations,
+                "loc_ids": loc_ids,
+                "original_query": query,
+                "geojson": {"type": "FeatureCollection", "features": []},
+            })
+
+        # Check for disambiguation needed - return early without LLM call
+        disambiguation = hints.get("disambiguation")
+        if disambiguation and disambiguation.get("needed"):
+            options = disambiguation.get("options", [])
+            query_term = disambiguation.get("query_term", "location")
+            logger.debug(f"Disambiguation needed for '{query_term}' with {len(options)} options")
+
+            return JSONResponse(content={
+                "type": "disambiguate",
+                "message": f"I found {len(options)} locations matching '{query_term}'. Please click on the one you meant:",
+                "query_term": query_term,
+                "original_query": query,
+                "options": options,  # List of {matched_term, iso3, country_name, loc_id, admin_level}
+                "geojson": {"type": "FeatureCollection", "features": []},
+            })
 
         # Single LLM call to interpret request (with Tier 3/4 context from hints)
         result = interpret_request(query, chat_history, hints=hints)
