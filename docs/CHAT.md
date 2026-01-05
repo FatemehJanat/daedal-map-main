@@ -566,6 +566,26 @@ Popup shows:
 
 ---
 
+## Design Decisions
+
+Key decisions made during implementation of the chat system:
+
+| Question | Decision |
+|----------|----------|
+| Derived field naming | "GDP Per Capita (calculated): $45K" - include indicator in label |
+| Missing data | Show warning, omit derived field for that location |
+| Preprocessor approach | Start gentle, mostly pass to LLM, build specificity over time |
+| Scope | Flexible system - any metric / any metric, not just per capita |
+| LLM output format | Simple flag (`derived: "per_capita"`), postprocessor expands |
+| Cross-source derivations | Use nested objects: `{"source_id": "x", "metric": "y"}` |
+| Auto-add dependencies | Add with `for_derivation: true` flag, hidden from order panel |
+| Reference lookups | Tier 4 on-demand context injection for SDG, capitals, languages |
+| Catalog in prompt | Keep robust (~2,500 tokens) for good conversation UX |
+| Validation approach | Inline after each LLM response, no explicit Verify button |
+| Growth rate calculation | Deferred to future enhancement |
+
+---
+
 ## Future Enhancements
 
 ### Growth Rate Calculations
@@ -617,4 +637,4 @@ When too many data points requested (10+):
 
 ---
 
-*Last Updated: 2026-01-03*
+*Last Updated: 2026-01-05*

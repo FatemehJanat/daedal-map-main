@@ -9,14 +9,128 @@ Design for the data preparation and management dashboard.
 
 ## Purpose
 
-The admin dashboard is the BUILD side of the system. It handles:
-1. Importing new datasets
-2. Managing metadata
+The admin dashboard serves two primary functions:
+
+### Primary: Data Export Tool (MVP - Build First)
+
+A large-scale data export interface that allows users to:
+1. **Explore and select** geographic areas (countries, states, counties)
+2. **Choose time periods** via year range selection
+3. **Select metrics** from multiple data sources simultaneously
+4. **Download clean CSVs** with cross-source data compilation
+
+Similar UX to the chat interface, but optimized for bulk data extraction rather than visualization.
+
+### Secondary: Data Management (Future)
+
+Long-term capabilities for system maintenance:
+1. Importing new datasets (custom converters per source)
+2. Managing metadata and catalog
 3. Viewing system health and coverage gaps
+4. Source monitoring and updates
+
+**Note**: Data importing requires custom solutions per source. The existing data converters (`convert_owid_co2.py`, `convert_who_health.py`, etc.) handle this complexity better than a generic wizard would.
 
 ---
 
-## MVP: Core Import Decisions
+## MVP: Data Export Builder
+
+### User Flow
+
+**Step 1: Geographic Selection**
+```
+Select Areas:
+  [ ] All Countries (217)
+  [x] Filter by region:
+      Region: [Europe ▼]
+
+  Or select specific locations:
+  [x] France (FRA)
+  [x] Germany (DEU)
+  [x] United Kingdom (GBR)
+  [ ] ...
+
+  Admin levels available:
+  [x] Countries (admin_0)
+  [ ] US States (admin_1)
+  [ ] US Counties (admin_2)
+```
+
+**Step 2: Time Period Selection**
+```
+Year Range:
+  [2010] ●────────────●─── [2024]
+
+Or specific years:
+  [2015, 2018, 2020, 2024]
+```
+
+**Step 3: Data Source & Metric Selection**
+```
+Available Datasets:
+
+▼ owid_co2 (217 countries, 1750-2024)
+  [x] co2 - CO2 emissions (million tonnes)
+  [x] co2_per_capita - CO2 per capita (tonnes/person)
+  [x] gdp - GDP (current USD)
+  [x] population - Total population
+  [ ] energy_per_capita
+  [ ] ...
+
+▼ who_health (198 countries, 2015-2024)
+  [x] life_expectancy - Life expectancy at birth
+  [ ] infant_mortality
+  [ ] ...
+
+▼ imf_bop (195 countries, 2005-2022)
+  [ ] trade_balance
+  [ ] current_account
+  [ ] ...
+
+Selected: 5 metrics from 2 sources
+```
+
+**Step 4: Preview & Export**
+```
+Preview (showing first 10 of 165 rows):
+
+loc_id | year | co2   | co2_per_capita | gdp        | population | life_expectancy
+-------|------|-------|----------------|------------|------------|----------------
+DEU    | 2010 | 832.4 | 10.2           | 3417000... | 81.7M      | 80.5
+DEU    | 2015 | 798.1 | 9.8            | 3376000... | 81.4M      | 80.9
+DEU    | 2020 | 644.9 | 7.7            | 3846000... | 83.2M      | 81.1
+FRA    | 2010 | 388.2 | 6.1            | 2642000... | 63.0M      | 81.8
+FRA    | 2015 | 356.8 | 5.4            | 2438000... | 64.4M      | 82.4
+...
+
+Export Options:
+  Format: [CSV ▼] (CSV, Parquet, Excel, JSON)
+  Filename: [europe_climate_health_2010-2024]
+
+  Join Strategy:
+    ( ) Inner join - Only rows with all selected metrics
+    (x) Outer join - Include all locations, null for missing data
+
+  [Download Export]
+```
+
+### Design Questions (To Be Resolved)
+
+1. **Output formats**: CSV-only or also Parquet/Excel/JSON?
+2. **Join strategy default**: Inner vs outer join? User choice or fixed?
+3. **Mixed admin levels**: How to handle country-level + US county-level selections?
+   - Block incompatible combinations?
+   - Auto-aggregate to common level?
+   - Separate exports?
+4. **Row limits**: Max export size for performance? (100K rows? 1M rows?)
+5. **Data validation**: Show warnings for large gaps in selected data?
+6. **Saved queries**: Allow users to save/load common export configurations?
+
+---
+
+## Future: Import & Management Features
+
+### MVP: Core Import Decisions
 
 The minimum viable import workflow answers two questions:
 
@@ -129,7 +243,9 @@ Done.
 
 ---
 
-## Dashboard Pages
+## Dashboard Pages (Future Implementation)
+
+These pages support the long-term data management vision. The export builder (above) takes priority for initial development.
 
 ### Page 1: System Overview
 
@@ -663,33 +779,46 @@ Metadata Gaps:
 
 ## Implementation Priority
 
-**Phase 1: Read-Only Dashboard**
-1. System Overview page (catalog.json reader)
-2. Dataset Browser (metadata.json reader)
-3. Geometry Status page
+**Phase 1: Data Export Builder (PRIMARY - Build First)**
+1. Geographic selection interface
+2. Time period selection (year range slider)
+3. Multi-source metric selection
+4. Data preview and CSV export
+5. Basic join logic (inner/outer)
 
-**Phase 2: Metadata Editing**
-4. Metadata Editor (edit metadata.json files)
-5. LLM context management
+**Phase 2: Export Enhancements**
+6. Additional export formats (Parquet, Excel, JSON)
+7. Saved query configurations
+8. Advanced filtering and validation
+9. Export history and re-run
 
-**Phase 3: Import Wizard**
-6. File analyzer
-7. Column detector
-8. loc_id mapper
-9. Converter generator
+**Phase 3: Read-Only Management Dashboard (Future)**
+10. System Overview page (catalog.json reader)
+11. Dataset Browser (metadata.json reader)
+12. Geometry Status page
 
-**Phase 4: Source Monitoring & Auto-Update**
-10. Source registry (URLs, update frequency, last checked)
-11. Change detection (check if source has new data)
-12. Auto-download pipeline
-13. Review queue (pending imports for approval)
-14. Scheduled jobs (cron-style triggers)
+**Phase 4: Metadata Editing (Future)**
+13. Metadata Editor (edit metadata.json files)
+14. LLM context management
 
-**Phase 5: Streaming & Live Data**
-15. Streaming source connectors
-16. Real-time update pipeline
-17. Time-series append (vs full refresh)
-18. Live data indicators on map
+**Phase 5: Import Wizard (Future)**
+15. File analyzer
+16. Column detector
+17. loc_id mapper
+18. Converter generator
+
+**Phase 6: Source Monitoring & Auto-Update (Future)**
+19. Source registry (URLs, update frequency, last checked)
+20. Change detection (check if source has new data)
+21. Auto-download pipeline
+22. Review queue (pending imports for approval)
+23. Scheduled jobs (cron-style triggers)
+
+**Phase 7: Streaming & Live Data (Future)**
+24. Streaming source connectors
+25. Real-time update pipeline
+26. Time-series append (vs full refresh)
+27. Live data indicators on map
 
 ---
 

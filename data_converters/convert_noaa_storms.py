@@ -226,72 +226,65 @@ def generate_metadata(output_dir, all_columns, year_range):
     # Event type columns
     event_cols = [c for c in all_columns if c.startswith('events_')]
 
-    indicators = [
-        {
-            "column": "total_events",
+    # Build metrics dict (standard format matching metadata_generator.py)
+    metrics = {
+        "total_events": {
             "name": "Total Storm Events",
             "description": "Total number of storm events across all types",
             "unit": "count",
             "aggregation": "sum"
         },
-        {
-            "column": "deaths_direct",
+        "deaths_direct": {
             "name": "Direct Deaths",
             "description": "Deaths directly caused by storm events",
             "unit": "count",
             "aggregation": "sum"
         },
-        {
-            "column": "deaths_indirect",
+        "deaths_indirect": {
             "name": "Indirect Deaths",
             "description": "Deaths indirectly caused by storm events",
             "unit": "count",
             "aggregation": "sum"
         },
-        {
-            "column": "injuries_direct",
+        "injuries_direct": {
             "name": "Direct Injuries",
             "description": "Injuries directly caused by storm events",
             "unit": "count",
             "aggregation": "sum"
         },
-        {
-            "column": "injuries_indirect",
+        "injuries_indirect": {
             "name": "Indirect Injuries",
             "description": "Injuries indirectly caused by storm events",
             "unit": "count",
             "aggregation": "sum"
         },
-        {
-            "column": "damage_property_usd",
+        "damage_property_usd": {
             "name": "Property Damage",
             "description": "Total property damage in USD",
             "unit": "USD",
             "aggregation": "sum"
         },
-        {
-            "column": "damage_crops_usd",
+        "damage_crops_usd": {
             "name": "Crop Damage",
             "description": "Total crop damage in USD",
             "unit": "USD",
             "aggregation": "sum"
         },
-    ]
+    }
 
-    # Add event type indicators
+    # Add event type metrics
     for col in sorted(event_cols):
         event_name = col.replace('events_', '').replace('_', ' ').title()
-        indicators.append({
-            "column": col,
+        metrics[col] = {
             "name": f"{event_name} Events",
             "description": f"Number of {event_name.lower()} events",
             "unit": "count",
             "aggregation": "sum"
-        })
+        }
 
     metadata = {
-        "id": SOURCE_INFO["source_id"],
-        "name": SOURCE_INFO["source_name"],
+        "source_id": SOURCE_INFO["source_id"],
+        "source_name": SOURCE_INFO["source_name"],
         "description": SOURCE_INFO["description"],
 
         "source": {
@@ -300,21 +293,24 @@ def generate_metadata(output_dir, all_columns, year_range):
             "license": SOURCE_INFO["license"],
         },
 
-        "coverage": {
-            "admin_level": 2,
-            "geographic": "USA counties",
-            "year_start": year_range[0],
-            "year_end": year_range[1]
+        "geographic_level": "county",
+        "geographic_coverage": {
+            "type": "country",
+            "countries": 1,
+            "country_codes": ["USA"]
+        },
+        "coverage_description": "USA",
+
+        "temporal_coverage": {
+            "start": year_range[0],
+            "end": year_range[1],
+            "frequency": "annual"
         },
 
-        "indicators": indicators,
+        "metrics": metrics,
 
-        "llm_context": {
-            "summary": f"NOAA Storm Events Database for US counties ({year_range[0]}-{year_range[1]}). "
-                      f"Includes {len(event_cols)} event types with deaths, injuries, and damage estimates.",
-            "keywords": SOURCE_INFO["keywords"],
-            "topic_tags": SOURCE_INFO["topic_tags"]
-        },
+        "llm_summary": f"NOAA Storm Events for USA counties, {year_range[0]}-{year_range[1]}. "
+                      f"{len(event_cols)} event types with deaths, injuries, damage estimates.",
 
         "processing": {
             "converter": "data_converters/convert_noaa_storms.py",

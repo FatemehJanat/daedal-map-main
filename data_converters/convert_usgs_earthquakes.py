@@ -18,6 +18,7 @@ import geopandas as gpd
 from pathlib import Path
 from shapely.geometry import Point
 import numpy as np
+import json
 
 # Configuration
 RAW_DATA_DIR = Path("C:/Users/bryan/Desktop/county_map_data/Raw data/usgs_earthquakes")
@@ -252,6 +253,132 @@ def save_county_parquet(df):
     return output_path
 
 
+def generate_metadata(events_df, county_df, year_range):
+    """Generate metadata.json for the dataset."""
+    print("\nGenerating metadata.json...")
+
+    # Build metrics dict (standard format matching metadata_generator.py)
+    metrics = {
+        # County aggregate metrics (USA.parquet)
+        "earthquake_count": {
+            "name": "Earthquake Count",
+            "description": "Total number of earthquakes (magnitude 3.0+) in county during year",
+            "unit": "count",
+            "aggregation": "sum",
+            "file": "USA.parquet"
+        },
+        "min_magnitude": {
+            "name": "Minimum Magnitude",
+            "description": "Smallest earthquake magnitude recorded in county during year",
+            "unit": "Richter scale",
+            "aggregation": "min",
+            "file": "USA.parquet"
+        },
+        "max_magnitude": {
+            "name": "Maximum Magnitude",
+            "description": "Largest earthquake magnitude recorded in county during year",
+            "unit": "Richter scale",
+            "aggregation": "max",
+            "file": "USA.parquet"
+        },
+        "avg_magnitude": {
+            "name": "Average Magnitude",
+            "description": "Mean earthquake magnitude for county during year",
+            "unit": "Richter scale",
+            "aggregation": "mean",
+            "file": "USA.parquet"
+        },
+        "avg_depth_km": {
+            "name": "Average Depth",
+            "description": "Mean earthquake depth below surface",
+            "unit": "kilometers",
+            "aggregation": "mean",
+            "file": "USA.parquet"
+        },
+        # Event-level metrics (events.parquet)
+        "magnitude": {
+            "name": "Magnitude",
+            "description": "Earthquake magnitude on Richter scale",
+            "unit": "Richter scale",
+            "file": "events.parquet"
+        },
+        "felt_radius_km": {
+            "name": "Felt Radius",
+            "description": "Estimated radius where shaking is felt (Modified Mercalli Intensity formula)",
+            "unit": "kilometers",
+            "formula": "10^(0.5 * M - 1.0)",
+            "file": "events.parquet"
+        },
+        "damage_radius_km": {
+            "name": "Damage Radius",
+            "description": "Estimated radius of potential structural damage (MMI VI+)",
+            "unit": "kilometers",
+            "formula": "10^(0.5 * M - 1.5)",
+            "file": "events.parquet"
+        }
+    }
+
+    metadata = {
+        "source_id": "usgs_earthquakes",
+        "source_name": "USGS Earthquake Catalog",
+        "description": f"Historical earthquake events for US territory ({year_range[0]}-{year_range[1]}, magnitude 3.0+)",
+
+        "source": {
+            "name": "USGS Earthquake Hazards Program",
+            "url": "https://earthquake.usgs.gov/",
+            "license": "Public Domain (US Government)"
+        },
+
+        "geographic_level": "county",
+        "geographic_coverage": {
+            "type": "country",
+            "countries": 1,
+            "country_codes": ["USA"]
+        },
+        "coverage_description": "USA",
+
+        "temporal_coverage": {
+            "start": year_range[0],
+            "end": year_range[1],
+            "frequency": "annual"
+        },
+
+        "files": {
+            "events": {
+                "filename": "events.parquet",
+                "description": "Individual earthquake events with location, magnitude, and impact radii",
+                "record_type": "event",
+                "record_count": len(events_df)
+            },
+            "county_aggregates": {
+                "filename": "USA.parquet",
+                "description": "County-year earthquake statistics (event counts and magnitude metrics)",
+                "record_type": "county-year",
+                "record_count": len(county_df)
+            }
+        },
+
+        "metrics": metrics,
+
+        "llm_summary": f"USGS Earthquake Catalog for USA, {year_range[0]}-{year_range[1]}. "
+                      f"{len(events_df):,} events, magnitude 3.0+. County aggregates and individual events with impact radii.",
+
+        "processing": {
+            "converter": "data_converters/convert_usgs_earthquakes.py",
+            "last_run": pd.Timestamp.now().strftime("%Y-%m-%d"),
+            "magnitude_threshold": "3.0",
+            "geocoding_method": "Spatial join with Census TIGER/Line 2024 county boundaries"
+        }
+    }
+
+    # Write metadata.json
+    metadata_path = OUTPUT_DIR / "metadata.json"
+    with open(metadata_path, 'w', encoding='utf-8') as f:
+        json.dump(metadata, f, indent=2)
+
+    print(f"  Saved: {metadata_path}")
+
+
 def print_statistics(events_df, county_df):
     """Print summary statistics."""
     print("\n" + "="*80)
@@ -307,15 +434,17 @@ def main():
     # Print statistics
     print_statistics(events_df, county_df)
 
+    # Generate metadata
+    year_range = (int(events_df['time'].dt.year.min()), int(events_df['time'].dt.year.max()))
+    generate_metadata(events_df, county_df, year_range)
+
     print("\n" + "="*80)
     print("COMPLETE!")
     print("="*80)
     print("\nOutput files:")
     print(f"  events.parquet: Individual earthquakes with location and radii")
     print(f"  USA.parquet: County-year aggregated statistics")
-    print("\nNext steps:")
-    print("  1. Create metadata.json for earthquake metrics")
-    print("  2. Update DATA_SOURCES_EXPLORATION.md")
+    print(f"  metadata.json: Standard metadata format")
 
     return 0
 

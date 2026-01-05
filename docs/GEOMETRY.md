@@ -8,6 +8,35 @@ The geometry layer is the **source of truth** for all locations. Every indicator
 
 ---
 
+## Quick Reference: Geometry Standards
+
+| Standard | Specification | Example |
+|----------|---------------|---------|
+| **loc_id format** | `{ISO3}[-{admin1}[-{admin2}]]` | `USA-CA-6037` |
+| **Country codes** | ISO 3166-1 alpha-3 (uppercase) | `USA`, `GBR`, `DEU` |
+| **US state codes** | 2-letter postal abbreviation | `CA`, `TX`, `NY` |
+| **US FIPS** | Integer (no leading zeros) | `6037` not `06037` |
+| **Join key** | `loc_id` column in both geometry and data | Must match exactly |
+| **Parquet schema** | See [Parquet Schema](#parquet-schema) section | `loc_id`, `admin_level`, `geometry`, ... |
+| **Simplification** | Level-appropriate tolerances | Countries: 0.01, Counties: 0.001 |
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `geometry/USA.parquet` | All US geometry (states + counties) |
+| `geometry/global.csv` | 257 country outlines |
+| `geometry/index.json` | Discovery metadata |
+| `countries/USA/geometry.parquet` | Symlink or copy for data folder structure |
+
+### Cross-Reference
+
+- **Data Pipeline**: See [data_pipeline.md](data_pipeline.md) for converter standards
+- **Adding Data**: loc_id in data MUST match geometry exactly - see [How Data Links to Geometry](#how-data-links-to-geometry)
+- **Reference Data**: See [Reference Data Files](#reference-data-files) for ISO codes, admin levels, conversions
+
+---
+
 ## Location ID (loc_id) Specification
 
 Every geographic location has a unique `loc_id` that:
@@ -94,6 +123,82 @@ Region codes use ISO 3166-2 or national standard codes:
 - `JPN-13` - Tokyo (prefecture number)
 
 **Source**: GADM gpkg with mapping to standard codes via HASC_1/HASC_2 columns.
+
+---
+
+## How Data Links to Geometry
+
+The `loc_id` column is the **join key** between geometry and all indicator datasets. This single-column join enables:
+
+```
+GEOMETRY (source of truth)              DATA (indicator values)
+========================               ======================
+geometry/USA.parquet                   countries/USA/fema_nri/USA.parquet
+------------------------               ----------------------------------
+loc_id          | geometry             loc_id          | risk_score | ...
+USA-CA-6037     | {...}       <--->    USA-CA-6037     | 99.8       | ...
+USA-TX-48201    | {...}       <--->    USA-TX-48201    | 87.2       | ...
+```
+
+### The Join Pattern
+
+All data queries follow this pattern:
+
+```python
+# 1. Load geometry for the region
+geometry = pd.read_parquet("geometry/USA.parquet")
+geometry = geometry[geometry['admin_level'] == 2]  # Counties
+
+# 2. Load indicator data
+data = pd.read_parquet("countries/USA/fema_nri/USA.parquet")
+
+# 3. Join on loc_id
+merged = geometry.merge(data, on='loc_id', how='left')
+
+# Result: GeoJSON features with properties from data
+```
+
+### loc_id Consistency Rules
+
+For data to display correctly on the map:
+
+| Rule | Geometry | Data | Result |
+|------|----------|------|--------|
+| Match | `USA-CA-6037` | `USA-CA-6037` | Data displays |
+| Format mismatch | `USA-CA-6037` | `USA-CA-06037` | NO MATCH - leading zero |
+| Format mismatch | `USA-CA-6037` | `6037` | NO MATCH - missing prefix |
+| Missing geometry | (none) | `USA-CA-99999` | Data orphaned |
+| Missing data | `USA-CA-6037` | (none) | Empty on map |
+
+### Converters Must Match Geometry
+
+When creating data converters, the loc_id format MUST match geometry exactly. See [data_pipeline.md](data_pipeline.md) for the FIPS to loc_id conversion pattern:
+
+```python
+# CORRECT: Matches geometry format
+loc_id = f"USA-{state_abbr}-{int(fips)}"  # "USA-CA-6037"
+
+# WRONG: Leading zeros don't match
+loc_id = f"USA-{state_abbr}-{fips:05d}"   # "USA-CA-06037" - won't join!
+```
+
+### Validation
+
+Before finalizing a data source, verify loc_ids match geometry:
+
+```python
+geometry = pd.read_parquet("geometry/USA.parquet")
+data = pd.read_parquet("countries/USA/my_source/USA.parquet")
+
+# Check for orphaned data (loc_ids in data but not geometry)
+geo_ids = set(geometry['loc_id'])
+data_ids = set(data['loc_id'])
+orphaned = data_ids - geo_ids
+
+if orphaned:
+    print(f"WARNING: {len(orphaned)} loc_ids in data have no geometry!")
+    print(list(orphaned)[:10])  # Show first 10
+```
 
 ---
 
@@ -916,13 +1021,42 @@ The artifacts appear to be internal geometry issues from the `unary_union()` ope
 
 ## Related Files
 
+### Documentation
+
 | File | Purpose |
 |------|---------|
+| [data_pipeline.md](data_pipeline.md) | Data source catalog, converter standards, finalize_source() workflow |
+| [MAPPING.md](MAPPING.md) | Frontend map rendering and display |
+
+### Code Files
+
+| File | Purpose |
+|------|---------|
+| `mapmover/process_gadm.py` | Build geometry from GADM source |
+| `mapmover/post_process_geometry.py` | Aggregate parents, compute bboxes, children counts |
+| `mapmover/name_standardizer.py` | Name-to-loc_id conversion |
 | `mapmover/conversions.json` | Regional groupings (56 groups: WHO, income, trade blocs) |
 | `mapmover/reference/` | Modular reference data (admin levels, ISO codes, metadata) |
-| `DATA_PIPELINE.md` | Data source catalog and conversion workflows |
-| `MAPPING.md` | Frontend map rendering and display |
+
+### Data Workflow Integration
+
+When adding new data sources, the geometry link is critical:
+
+```
+1. Geometry exists first (loc_id is source of truth)
+       |
+       v
+2. Converter creates parquet with matching loc_id format
+       |
+       v
+3. finalize_source() generates metadata.json
+       |
+       v
+4. Data joins to geometry via loc_id at query time
+```
+
+See [data_pipeline.md - Adding New Data Sources](data_pipeline.md#adding-new-data-sources) for the complete converter workflow.
 
 ---
 
-*Last Updated: 2026-01-01*
+*Last Updated: 2026-01-05*

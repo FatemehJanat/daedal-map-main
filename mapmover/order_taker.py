@@ -14,27 +14,12 @@ from pathlib import Path
 from openai import OpenAI
 from dotenv import load_dotenv
 
+from .data_loading import load_catalog, load_source_metadata
+
 load_dotenv()
 
-DATA_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/data")
-CATALOG_PATH = DATA_DIR.parent / "catalog.json"
 CONVERSIONS_PATH = Path(__file__).parent / "conversions.json"
 REFERENCE_DIR = Path(__file__).parent / "reference"
-
-
-def load_catalog() -> dict:
-    """Load the data catalog."""
-    with open(CATALOG_PATH, encoding='utf-8') as f:
-        return json.load(f)
-
-
-def load_source_metadata(source_id: str) -> dict:
-    """Load metadata.json for a specific source."""
-    meta_path = DATA_DIR / source_id / "metadata.json"
-    if meta_path.exists():
-        with open(meta_path, encoding='utf-8') as f:
-            return json.load(f)
-    return {}
 
 
 def load_conversions() -> dict:

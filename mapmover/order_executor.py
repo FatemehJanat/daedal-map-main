@@ -22,7 +22,8 @@ from .geometry_handlers import (
     df_to_geojson,
 )
 
-DATA_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/data")
+from .settings import get_backup_path
+
 CONVERSIONS_PATH = Path(__file__).parent / "conversions.json"
 REFERENCE_DIR = Path(__file__).parent / "reference"
 
@@ -30,6 +31,41 @@ REFERENCE_DIR = Path(__file__).parent / "reference"
 _conversions_cache = None
 _iso_codes_cache = None
 _usa_admin_cache = None
+_catalog_cache = None
+
+
+def _load_catalog() -> dict:
+    """Load catalog.json with caching."""
+    global _catalog_cache
+    if _catalog_cache is None:
+        backup_path = get_backup_path()
+        if backup_path:
+            catalog_path = Path(backup_path) / "catalog.json"
+            if catalog_path.exists():
+                with open(catalog_path, encoding='utf-8') as f:
+                    _catalog_cache = json.load(f)
+            else:
+                _catalog_cache = {"sources": []}
+        else:
+            _catalog_cache = {"sources": []}
+    return _catalog_cache
+
+
+def _get_source_path(source_id: str) -> Path:
+    """Get the full path to a source directory using catalog path field."""
+    backup_path = get_backup_path()
+    if not backup_path:
+        raise ValueError("Backup path not configured")
+
+    catalog = _load_catalog()
+    for source in catalog.get("sources", []):
+        if source.get("source_id") == source_id:
+            # Use path field if present, otherwise fall back to old structure
+            source_path = source.get("path", f"data/{source_id}")
+            return Path(backup_path) / source_path
+
+    # Source not in catalog - try old path as fallback
+    return Path(backup_path) / "data" / source_id
 
 
 def _load_conversions() -> dict:
@@ -74,12 +110,12 @@ def load_source_data(source_id: str) -> tuple:
     Returns:
         tuple: (DataFrame, metadata dict)
     """
-    source_dir = DATA_DIR / source_id
+    source_dir = _get_source_path(source_id)
 
     # Find parquet file - prefer all_countries.parquet or USA.parquet
     parquet_files = list(source_dir.glob("*.parquet"))
     if not parquet_files:
-        raise ValueError(f"No parquet file found for {source_id}")
+        raise ValueError(f"No parquet file found for {source_id} in {source_dir}")
 
     # Prefer specific files over generic names
     parquet_path = parquet_files[0]

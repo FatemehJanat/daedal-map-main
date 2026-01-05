@@ -4,16 +4,31 @@ Data loading, catalog management, and metadata functions.
 Handles loading the unified catalog.json and source metadata from the parquet-based
 data structure.
 
-Data Structure:
+Data Structure (layered):
     county-map-data/
-        catalog.json              # Unified catalog of all sources
-        data/
-            {source_id}/
-                metadata.json     # Source metadata
-                *.parquet         # Data files
-        geometry/
-            global.csv            # Country geometry
-            {ISO3}.parquet        # Country sub-divisions
+        catalog.json              # Unified catalog with 'path' field per source
+
+        global/                   # Country-level datasets
+            geometry.csv          # Country outlines
+            {source_id}/          # e.g., owid_co2/, imf_bop/
+                metadata.json
+                *.parquet
+            un_sdg/               # Nested folder for SDGs
+                01/ ... 17/
+
+        countries/                # Sub-national data
+            USA/
+                geometry.parquet  # States + counties
+                index.json        # Country-level metadata
+                {source_id}/      # e.g., noaa_storms/, census_agesex/
+                    metadata.json
+                    *.parquet
+
+        geometry/                 # Bank of all country geometries (fallback)
+            {ISO3}.parquet
+
+Path resolution uses catalog.json 'path' field:
+    source_id='usgs_earthquakes' -> path='countries/USA/usgs_earthquakes'
 """
 
 import json
@@ -67,6 +82,31 @@ def load_catalog():
         return {"sources": [], "total_sources": 0}
 
 
+def get_source_path(source_id: str):
+    """
+    Get the path to a source folder using the path field from catalog.
+
+    Args:
+        source_id: Source identifier (e.g., 'owid_co2', 'usgs_earthquakes')
+
+    Returns:
+        Path: Full path to source folder, or None if not found
+    """
+    backup_path = get_backup_path()
+    if not backup_path:
+        return None
+
+    catalog = load_catalog()
+    for source in catalog.get("sources", []):
+        if source.get("source_id") == source_id:
+            # Use path field if present, otherwise fall back to old structure
+            source_path = source.get("path", f"data/{source_id}")
+            return Path(backup_path) / source_path
+
+    # Source not in catalog - try old path as fallback
+    return Path(backup_path) / "data" / source_id
+
+
 def load_source_metadata(source_id: str):
     """
     Load metadata.json for a specific source.
@@ -80,11 +120,11 @@ def load_source_metadata(source_id: str):
     if source_id in _metadata_cache:
         return _metadata_cache[source_id]
 
-    data_folder = get_data_folder()
-    if not data_folder:
+    source_folder = get_source_path(source_id)
+    if not source_folder or not source_folder.exists():
         return None
 
-    metadata_path = data_folder / source_id / "metadata.json"
+    metadata_path = source_folder / "metadata.json"
     if not metadata_path.exists():
         return None
 

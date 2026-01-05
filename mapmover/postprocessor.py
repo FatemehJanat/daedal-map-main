@@ -17,25 +17,7 @@ import json
 from pathlib import Path
 from typing import Optional
 
-DATA_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/data")
-CATALOG_PATH = DATA_DIR.parent / "catalog.json"
-
-
-def load_catalog() -> dict:
-    """Load the data catalog."""
-    if CATALOG_PATH.exists():
-        with open(CATALOG_PATH, encoding='utf-8') as f:
-            return json.load(f)
-    return {}
-
-
-def load_source_metadata(source_id: str) -> dict:
-    """Load metadata.json for a specific source."""
-    meta_path = DATA_DIR / source_id / "metadata.json"
-    if meta_path.exists():
-        with open(meta_path, encoding='utf-8') as f:
-            return json.load(f)
-    return {}
+from .data_loading import load_catalog, load_source_metadata
 
 
 # =============================================================================

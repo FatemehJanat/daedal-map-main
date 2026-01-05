@@ -32,24 +32,182 @@ USA-CA      | 2020 | 400     | 10.1    | 50
 
 ---
 
-## Output Structure
+## Folder Structure
 
-Each source gets its own folder:
+Data is organized by geographic scope:
 
 ```
-county-map-data/data/
-  owid_co2/
-    all_countries.parquet    # Country-level data
-    metadata.json            # Source and metric definitions
+county-map-data/
+  index.json                  # Router - which countries have sub-national folders
+  catalog.json                # All dataset metadata for LLM context
 
-  census_population/
-    USA.parquet              # US-only data
-    metadata.json
+  global/                     # Country-level datasets (admin_0)
+    geometry.csv              # 252 country outlines
+    owid_co2/
+      all_countries.parquet
+      metadata.json
+    who_health/
+      all_countries.parquet
+      metadata.json
+    un_sdg/                   # SDG goals in subfolders
+      01/
+        all_countries.parquet
+        metadata.json
+        reference.json
+      02/ ... 17/
+
+  countries/                  # Sub-national datasets
+    USA/
+      index.json              # USA datasets summary
+      geometry.parquet        # States (51) + Counties (3,143)
+      noaa_storms/
+        USA.parquet           # County-year aggregates
+        events.parquet        # Individual storm events
+        metadata.json
+      usdm_drought/
+        USA.parquet
+        metadata.json
+      wildfire_risk/
+        USA.parquet
+        metadata.json
+      usgs_earthquakes/
+        USA.parquet
+        events.parquet
+        metadata.json
+      fema_nri/
+        USA.parquet           # 18-hazard composite risk scores
+        metadata.json
+      census_population/
+        USA.parquet
+        metadata.json
+    DEU/                      # Future country folders
+      geometry.parquet
+      ...
+
+  geometry/                   # Fallback geometry bank
+    USA.parquet               # GADM admin levels (when no data folder exists)
+    DEU.parquet
+    FRA.parquet
+    ...                       # 267 country parquets
 ```
 
-**Naming convention**:
-- Country-level sources: `all_countries.parquet`
-- US-only sources: `USA.parquet`
+**File naming convention**:
+- Global sources: `global/{source_id}/all_countries.parquet`
+- Country sources: `countries/{ISO3}/{source_id}/USA.parquet`
+- Event-based datasets: `USA.parquet` (aggregates) + `events.parquet` (individual events)
+
+---
+
+## index.json Router
+
+The `index.json` file routes queries to the correct data location.
+
+**Location**: `county-map-data/index.json`
+
+```json
+{
+  "_description": "Data folder routing - which countries have sub-national data folders",
+  "_schema_version": "1.0.0",
+
+  "_global": {
+    "path": "global",
+    "geometry": "global/geometry.csv",
+    "datasets": ["owid_co2", "imf_bop", "who_health", "un_sdg", "world_factbook"]
+  },
+
+  "_geometry_bank": {
+    "_description": "Fallback geometry for sub-national exploration even without data",
+    "path": "geometry",
+    "pattern": "geometry/{ISO3}.parquet",
+    "country_count": 267
+  },
+
+  "_default": {
+    "has_folder": false,
+    "geometry_fallback": "geometry/{ISO3}.parquet",
+    "admin_levels": [0],
+    "datasets": []
+  },
+
+  "USA": {
+    "name": "United States",
+    "has_folder": true,
+    "path": "countries/USA",
+    "geometry": "countries/USA/geometry.parquet",
+    "admin_levels": [0, 1, 2],
+    "admin_counts": {"1": 51, "2": 3144},
+    "datasets": ["noaa_storms", "usdm_drought", "wildfire_risk", "usgs_earthquakes", "fema_nri", "census_population"]
+  }
+}
+```
+
+### Navigation Logic
+
+**World View:**
+1. Read `global/geometry.csv` for 252 country shapes
+2. Read `global/*.parquet` for country-level metrics
+
+**Zoom into country with folder (USA):**
+1. Check `index.json` -> USA.has_folder = true
+2. Read `countries/USA/geometry.parquet` for sub-national shapes
+3. Read `countries/USA/*/USA.parquet` for sub-national data
+
+**Zoom into country without folder (France):**
+1. Check `index.json` -> FRA not listed (use _default)
+2. Read `geometry/FRA.parquet` for sub-national shapes (geometry only)
+3. Data only from `global/*.parquet` datasets
+
+### Adding a New Country
+
+When sub-national data becomes available for a country:
+
+1. Create folder: `countries/{ISO3}/`
+2. Add geometry: `countries/{ISO3}/geometry.parquet`
+3. Add data folders as needed: `countries/{ISO3}/{source_id}/`
+4. Update `index.json`: add country entry with `has_folder: true`
+5. Rebuild catalog: `python build/catalog/catalog_builder.py`
+
+---
+
+## Layered Metadata Architecture
+
+Each level summarizes its children. Go deeper only when needed.
+
+```
+GLOBAL (catalog.json, index.json)
+   |   "30 sources exist, USA has 7 datasets, DEU has geometry only"
+   |
+   +-- COUNTRY (countries/USA/index.json - future)
+   |      "7 datasets, 3 admin levels, noaa_storms has events + aggregates"
+   |
+   +-- DATASET (countries/USA/noaa_storms/metadata.json)
+          "41 event types, 1950-2025, these exact fields and schema"
+```
+
+### Design Principles
+
+1. **Graceful Degradation**
+   - Missing folder = blank spot on map, not system error
+   - Dataset missing metadata.json? Still queryable, just no field descriptions
+
+2. **Additive Expansion**
+   - Add new country folder = instant support, no code changes
+   - Add new dataset = update index.json, catalog auto-discovers
+
+3. **Layer Independence**
+   - Changes in USA folder don't affect DEU folder
+   - Adding global dataset doesn't touch country folders
+
+4. **Self-Describing**
+   - Each folder contains its own metadata
+   - Can ship USA folder standalone to another system
+
+### catalog.json vs index.json
+
+| File | Purpose | Size | Updated |
+|------|---------|------|---------|
+| `catalog.json` | LLM context - all dataset metadata | ~50 KB | On metadata change |
+| `index.json` | Routing - where data lives | ~2 KB | On folder structure change |
 
 ---
 
@@ -288,9 +446,12 @@ The metadata generator (`build/catalog/metadata_generator.py`) introspects parqu
 
 The catalog builder (`build/catalog/catalog_builder.py`) aggregates all metadata:
 
-1. **Scan Sources**: Finds all `data/{source_id}/metadata.json` files
+1. **Scan Sources**: Finds all `metadata.json` files in new folder structure:
+   - `global/{source_id}/metadata.json` - Country-level datasets
+   - `global/un_sdg/{01-17}/metadata.json` - SDG goals
+   - `countries/{ISO3}/{source_id}/metadata.json` - Sub-national datasets
 2. **Extract Summaries**: Pulls key fields for LLM context
-3. **Build Index**: Creates searchable catalog structure
+3. **Build Index**: Creates searchable catalog structure with paths
 4. **Write Output**: Saves to `county-map-data/catalog.json`
 
 ```python
@@ -342,10 +503,15 @@ python build/catalog/catalog_builder.py
 | [who_health](#who-health) | country | health | 2015-2024 | 198 countries |
 | [imf_bop](#imf-bop) | country | economics | 2005-2022 | 195 countries |
 | [un_sdg_01-17](#un-sdg) | country | development | 1970-2024 | 200+ countries |
+| [world_factbook](#world-factbook) | country | infrastructure, military, energy | 1990-2020 | 250 countries |
+| [noaa_storms](#noaa-storms) | county | hazards, weather | 1950-2025 | 3,144 US counties |
+| [usdm_drought](#usdm-drought) | county | hazards, climate | 2000-2025 | 3,144 US counties |
+| [usgs_earthquakes](#usgs-earthquakes) | county | hazards, geology | 1970-2025 | US counties |
+| [wildfire_risk](#wildfire-risk) | county | hazards, fire | 2020 (snapshot) | 3,144 US counties |
+| [fema_nri](#fema-nri) | county | hazards, risk | snapshot (v1.20) | 3,232 US counties |
 | [census_population](#census-population) | county | demographics | 2020-2024 | 3,144 US counties |
 | [census_agesex](#census-agesex) | county | demographics | 2019-2024 | 3,144 US counties |
 | [census_demographics](#census-demographics) | county | demographics | 2020-2024 | 3,144 US counties |
-| [world_factbook](#world-factbook) | country | infrastructure, military, energy | 1990-2020 | 250 countries |
 
 ---
 
@@ -532,7 +698,7 @@ US Census Bureau age and sex demographics.
 US Census Bureau race/ethnicity demographics.
 
 **Converter**: `data_converters/convert_census_demographics.py`
-**Output**: `data/census_demographics/USA.parquet` (638 KB, 15.7K rows)
+**Output**: `countries/USA/census_demographics/USA.parquet` (638 KB, 15.7K rows)
 **Source**: US Census Bureau
 
 | Metric | Unit | Description |
@@ -546,7 +712,198 @@ US Census Bureau race/ethnicity demographics.
 
 ---
 
-## Running Converters
+### noaa_storms
+
+NOAA Storm Events Database - severe weather events by county.
+
+**Converter**: `data_converters/convert_noaa_storms.py`
+**Output**: `countries/USA/noaa_storms/`
+**Source**: https://www.ncdc.noaa.gov/stormevents/
+
+**Files**:
+- `USA.parquet` (1 MB) - County-year aggregates (159K rows)
+- `events.parquet` (28 MB) - Individual storm events (1.2M events)
+- `reference.json` - Event type definitions
+- `named_storms.json` - Hurricane/tropical storm names
+
+| Metric | Unit | Description |
+|--------|------|-------------|
+| `event_count` | count | Total severe weather events |
+| `tornado_count` | count | Tornado events |
+| `hail_count` | count | Hail events |
+| `flood_count` | count | Flood events |
+| `deaths` | count | Storm-related deaths |
+| `injuries` | count | Storm-related injuries |
+| `damage_property` | USD | Property damage |
+| `damage_crops` | USD | Crop damage |
+
+41 event types total. Supports both choropleth (aggregates) and scatter (events) visualization.
+
+---
+
+### usdm_drought
+
+US Drought Monitor - weekly drought conditions by county.
+
+**Converter**: `data_converters/convert_usdm_drought.py`
+**Output**: `countries/USA/usdm_drought/USA.parquet` (0.7 MB, 90K rows)
+**Source**: https://droughtmonitor.unl.edu/
+
+| Metric | Unit | Description |
+|--------|------|-------------|
+| `d0_pct` | % | Abnormally dry |
+| `d1_pct` | % | Moderate drought |
+| `d2_pct` | % | Severe drought |
+| `d3_pct` | % | Extreme drought |
+| `d4_pct` | % | Exceptional drought |
+| `none_pct` | % | No drought |
+| `dsci` | index | Drought Severity Coverage Index (0-500) |
+
+11 total metrics including area percentages.
+
+---
+
+### usgs_earthquakes
+
+USGS Earthquake Catalog - seismic events in US territory.
+
+**Converter**: `data_converters/convert_usgs_earthquakes.py`
+**Output**: `countries/USA/usgs_earthquakes/`
+**Source**: https://earthquake.usgs.gov/
+
+**Files**:
+- `USA.parquet` (61 KB) - County-year aggregates (7.6K rows)
+- `events.parquet` (5.7 MB) - Individual earthquakes (173K events)
+
+| Metric | Unit | Description |
+|--------|------|-------------|
+| `earthquake_count` | count | Number of earthquakes |
+| `min_magnitude` | Richter | Minimum magnitude in period |
+| `max_magnitude` | Richter | Maximum magnitude in period |
+| `avg_magnitude` | Richter | Average magnitude |
+| `avg_depth_km` | km | Average depth |
+
+Covers magnitude 3.0+ earthquakes. Supports choropleth and scatter visualization.
+
+---
+
+### wildfire_risk
+
+USDA Forest Service Wildfire Risk Assessment.
+
+**Converter**: `data_converters/convert_wildfire_risk.py`
+**Output**: `countries/USA/wildfire_risk/USA.parquet` (112 KB, 3,144 rows)
+**Source**: USDA Forest Service
+
+| Metric | Unit | Description |
+|--------|------|-------------|
+| `risk_to_potential_structures` | index | Risk score for structures |
+| `risk_to_homes` | index | Risk score for existing homes |
+| `expected_annual_loss` | USD | Expected annual loss |
+| `wildfire_likelihood` | probability | Burn probability |
+| `flame_length_exceed_4ft` | probability | High-intensity fire probability |
+
+Static snapshot (2020 assessment). Single-year data, no time series.
+
+---
+
+### fema_nri
+
+FEMA National Risk Index - composite risk scores for 18 natural hazards.
+
+**Downloader**: `data_converters/download_fema_nri.py`
+**Converter**: `data_converters/convert_fema_nri.py`
+**Output**: `countries/USA/fema_nri/USA.parquet` (1.1 MB, 3,232 rows, 74 columns)
+**Source**: https://hazards.fema.gov/nri/ (via ArcGIS REST API workaround)
+
+| Metric | Unit | Description |
+|--------|------|-------------|
+| `risk_score` | 0-100 | Composite risk score |
+| `risk_rating` | category | Very Low to Very High |
+| `eal_total` | USD | Expected Annual Loss (all hazards) |
+| `sovi_score` | 0-100 | Social Vulnerability Index |
+| `resilience_score` | 0-100 | Community Resilience score |
+| `{hazard}_risk_score` | 0-100 | Per-hazard risk (18 hazards) |
+| `{hazard}_eal` | USD | Per-hazard expected annual loss |
+
+**18 Natural Hazards Covered:**
+Avalanche, Coastal Flooding, Cold Wave, Drought, Earthquake, Hail, Heat Wave, Hurricane, Ice Storm, Inland Flooding, Landslide, Lightning, Strong Wind, Tornado, Tsunami, Volcanic Activity, Wildfire, Winter Weather
+
+**Historical Versions Available** (via ArcGIS):
+| Version | Service | Counties | Release |
+|---------|---------|----------|---------|
+| v1.17 | NRI_Counties_v117 | 3,142 | 2021 |
+| v1.18.1 | NRI_Counties_Prod_v1181_view | 3,142 | Nov 2021 |
+| v1.19.0 | National_Risk_Index_Counties_(March_2023) | 3,231 | Mar 2023 |
+| v1.20.0 | National_Risk_Index_Counties | 3,232 | Dec 2025 |
+
+Static snapshot data. Download script supports version selection for historical analysis.
+
+---
+
+## Converter Pipeline Architecture
+
+The data pipeline has two layers that separate single-source processing from cross-source aggregation.
+
+```
+                        LAYER 1: Single Source Finalization
+                        ====================================
+
+  Raw Data (CSV/JSON/API)
+         |
+         v
+  +------------------+
+  | Converter Script |  data_converters/convert_{source_id}.py
+  | - Load raw data  |
+  | - Transform      |
+  | - Create loc_id  |
+  +------------------+
+         |
+         v
+  +------------------+
+  |  Save Parquet    |  countries/USA/{source_id}/USA.parquet
+  +------------------+
+         |
+         v
+  +------------------+
+  | finalize_source()|  build/catalog/finalize_source.py
+  | - Read registry  |  <-- Uses source_registry.py for static metadata
+  | - Gen metadata   |  <-- Uses metadata_generator.py for auto-detection
+  | - Update index   |
+  +------------------+
+         |
+         +-- metadata.json    (in source folder)
+         +-- reference.json   (optional, if reference_data provided)
+         +-- index.json       (country-level, updated with new entry)
+
+
+                        LAYER 2: Catalog Aggregation
+                        ============================
+
+  All metadata.json files
+         |
+         v
+  +------------------+
+  | catalog_builder  |  build/catalog/catalog_builder.py
+  | - Scan all dirs  |
+  | - Extract info   |
+  | - Build index    |
+  +------------------+
+         |
+         v
+  catalog.json              (for LLM context at runtime)
+```
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `build/catalog/source_registry.py` | Central config for all sources (name, URL, license, keywords) |
+| `build/catalog/finalize_source.py` | Layer 1 - generates metadata, reference, updates index |
+| `build/catalog/metadata_generator.py` | Auto-detects fields from parquet schema |
+| `build/catalog/catalog_builder.py` | Layer 2 - aggregates all sources into catalog.json |
+
+### Running Converters
 
 ```bash
 cd county-map
@@ -556,81 +913,231 @@ python data_converters/convert_owid_co2.py
 python data_converters/convert_who_health.py
 python data_converters/convert_imf_bop.py
 
+# US Hazard data
+python data_converters/convert_fema_nri.py
+python data_converters/convert_noaa_storms.py
+python data_converters/convert_usgs_earthquakes.py
+
 # US Census
 python data_converters/convert_census_population.py
-python data_converters/convert_census_agesex.py
-python data_converters/convert_census_demographics.py
+
+# After all converters: rebuild catalog
+python build/catalog/catalog_builder.py
 ```
 
 ---
 
 ## Adding New Data Sources
 
-### 1. Create converter script
+Follow this checklist when adding a new data source. Reference existing converters as examples:
+- **USA hazard data**: `convert_fema_nri.py` (single file, snapshot)
+- **USA event data**: `convert_noaa_storms.py` (dual-file: aggregates + events)
+- **Global data**: `convert_owid_co2.py` (country-level time series)
+
+### Step 1: Add to Source Registry
+
+Edit `build/catalog/source_registry.py`. Add to `USA_SOURCES` or `GLOBAL_SOURCES` based on scope:
+
+```python
+USA_SOURCES = {
+    # ... existing sources ...
+
+    "my_new_source": {
+        "source_name": "My New Data Source",
+        "source_url": "https://example.com/data",
+        "license": "Public Domain",
+        "description": "What this data contains.",
+        "category": "hazard",  # or: demographic, economic, environmental, health, general
+        "topic_tags": ["weather", "storms"],
+        "keywords": ["storm", "weather", "damage"],
+        "update_schedule": "annual",  # annual, quarterly, monthly, weekly, continuous, periodic
+        "has_reference": False,  # True if source needs reference.json
+        "has_events": False      # True if dual-file (USA.parquet + events.parquet)
+    },
+}
+```
+
+**Required fields in source_registry:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `source_name` | string | Human-readable name (shown in UI) |
+| `source_url` | string | Original data source URL |
+| `license` | string | License type (e.g., "Public Domain", "CC-BY") |
+| `description` | string | 1-2 sentence description of what data contains |
+| `category` | string | One of: hazard, demographic, economic, environmental, health, general |
+| `topic_tags` | array | 2-4 topic keywords for categorization |
+| `keywords` | array | Synonyms/related terms for LLM matching |
+| `update_schedule` | string | How often source updates |
+| `has_reference` | bool | Whether source needs reference.json for context |
+| `has_events` | bool | Whether source has events.parquet (dual-file) |
+
+**Note**: The `scope` field is auto-added based on which dict you add to:
+- `USA_SOURCES` -> scope: "usa" -> updates `countries/USA/index.json`
+- `GLOBAL_SOURCES` -> scope: "global" -> updates `global/index.json`
+
+### Step 2: Create Converter Script
 
 Create `data_converters/convert_{source_id}.py`:
 
 ```python
 import pandas as pd
-import os
-import json
+from pathlib import Path
+import sys
 
-# Paths
-RAW_FILE = r"C:\Users\Bryan\Desktop\county-map-data\Raw data\source.csv"
-OUTPUT_DIR = r"C:\Users\Bryan\Desktop\county-map-data\data\source_id"
-GEOMETRY_FILE = r"C:\Users\Bryan\Desktop\county-map-data\geometry\global.csv"
+# Add build path for finalize_source
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from build.catalog.finalize_source import finalize_source
+
+# Configuration
+RAW_FILE = Path("C:/Users/Bryan/Desktop/county-map-data/Raw data/my_source.csv")
+OUTPUT_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/countries/USA/my_new_source")
 
 def convert():
+    """Convert raw data to clean parquet."""
     df = pd.read_csv(RAW_FILE)
 
     # Transform to standard format
-    df['loc_id'] = df['country_code']  # or use fips_to_loc_id for US data
+    df['loc_id'] = 'USA-' + df['state_abbr'] + '-' + df['fips'].astype(str)
     df = df.rename(columns={'data_year': 'year'})
 
-    # Select and order columns
-    metric_cols = ['metric1', 'metric2', 'metric3']
-    df = df[['loc_id', 'year'] + metric_cols]
+    # Select columns
+    result = df[['loc_id', 'year', 'metric1', 'metric2']]
 
-    # Verify loc_ids match geometry
-    geom = pd.read_csv(GEOMETRY_FILE)
-    valid_ids = set(geom['loc_id'])
-    df = df[df['loc_id'].isin(valid_ids)]
+    # Save parquet
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    output_path = OUTPUT_DIR / "USA.parquet"
+    result.to_parquet(output_path, index=False)
+    print(f"Saved {len(result)} rows to {output_path}")
 
-    # Save
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    df.to_parquet(os.path.join(OUTPUT_DIR, "all_countries.parquet"), index=False)
-    print(f"Saved {len(df)} rows")
+    return output_path
 
-def create_metadata():
-    metadata = {
-        "source_id": "source_id",
-        "source_name": "Source Name",
-        "description": "What this data contains",
-        "source_url": "https://...",
-        "last_updated": "2024-12-21",
-        "geographic_level": "country",
-        "year_range": {"start": 2000, "end": 2024},
-        "metrics": {
-            "metric1": {
-                "name": "Metric One",
-                "unit": "count",
-                "aggregation": "sum"
-            }
-        },
-        "topic_tags": ["economics"],
-        "llm_summary": "Brief description for the chat LLM"
-    }
 
-    with open(os.path.join(OUTPUT_DIR, "metadata.json"), 'w') as f:
-        json.dump(metadata, f, indent=2)
+def main():
+    # Step 1: Convert raw data to parquet
+    parquet_path = convert()
+
+    # Step 2: Finalize (generates metadata.json, updates index.json)
+    finalize_source(
+        parquet_path=str(parquet_path),
+        source_id="my_new_source"
+    )
+
+    print("Done!")
+    return 0
+
 
 if __name__ == "__main__":
-    convert()
-    create_metadata()
-    print("Done!")
+    import sys
+    sys.exit(main())
 ```
 
-### 2. For US data: FIPS to loc_id
+### Step 3: For Dual-File Sources (events + aggregates)
+
+For sources with individual events (storms, earthquakes):
+
+```python
+def main():
+    # Convert both files
+    aggregates_path = convert_aggregates()
+    events_path = convert_events()
+
+    # Finalize with events file
+    finalize_source(
+        parquet_path=str(aggregates_path),
+        source_id="my_source",
+        events_parquet_path=str(events_path),
+        reference_data=my_reference_dict  # Optional: event type definitions
+    )
+```
+
+### finalize_source() Function Reference
+
+Located in `build/catalog/finalize_source.py`. This is the Layer 1 finalization function.
+
+```python
+finalize_source(
+    parquet_path: str,           # Required: path to main parquet (aggregates)
+    source_id: str,              # Required: must match key in source_registry
+    reference_data: dict = None, # Optional: dict for reference.json (event types, etc.)
+    events_parquet_path: str = None  # Optional: path to events parquet
+) -> dict
+```
+
+**What it does:**
+1. Reads source config from `source_registry.py` using `source_id`
+2. Calls `metadata_generator.py` to auto-detect fields from parquet schema
+3. Generates `metadata.json` in the parquet's directory
+4. Generates `reference.json` if `reference_data` provided
+5. Updates the appropriate `index.json` (USA or global based on scope)
+6. Returns dict with paths to generated files
+
+**Example with all parameters:**
+```python
+finalize_source(
+    parquet_path="C:/Users/Bryan/Desktop/county-map-data/countries/USA/noaa_storms/USA.parquet",
+    source_id="noaa_storms",
+    events_parquet_path="C:/Users/Bryan/Desktop/county-map-data/countries/USA/noaa_storms/events.parquet",
+    reference_data={
+        "event_types": {"Tornado": {"description": "...", "severity_scale": "EF0-EF5"}},
+        "damage_categories": {"K": 1000, "M": 1000000}
+    }
+)
+```
+
+### Step 4: Rebuild Catalog
+
+After adding new sources:
+
+```bash
+python build/catalog/catalog_builder.py
+```
+
+This aggregates all metadata.json files into catalog.json for LLM context.
+
+### Step 5: Verify Standards Checklist
+
+Before considering a source complete, verify:
+
+**Parquet Standards:**
+- [ ] `loc_id` column present and matches geometry files (e.g., `USA-CA-6037`)
+- [ ] `year` column is integer (not string), or omitted for snapshot data
+- [ ] All metric columns are numeric types (float64), not strings
+- [ ] File saved with snappy compression: `df.to_parquet(path, compression='snappy')`
+
+**Registry Standards:**
+- [ ] `source_id` in source_registry.py matches folder name
+- [ ] All required fields populated (source_name, source_url, license, description, category)
+- [ ] Keywords include synonyms users might search for
+
+**Generated Files:**
+- [ ] `metadata.json` exists in source folder
+- [ ] `index.json` updated with new dataset entry
+- [ ] For event sources: `events.parquet` has lat/lon columns
+
+**Documentation:**
+- [ ] Source added to Quick Reference table in data_pipeline.md
+- [ ] Detailed section added with metrics table
+- [ ] Topic Index updated if new topic category
+- [ ] DATA_SOURCES_EXPLORATION.md updated if applicable
+
+**Testing:**
+```python
+# Verify parquet schema
+import pyarrow.parquet as pq
+pf = pq.read_table('output.parquet')
+print(pf.schema)  # All metrics should show 'double', not 'string'
+
+# Verify loc_id format
+import pandas as pd
+df = pd.read_parquet('output.parquet')
+print(df['loc_id'].head())  # Should match: USA-{state}-{fips} or {ISO3}
+```
+
+---
+
+### For US data: FIPS to loc_id
 
 ```python
 STATE_FIPS = {
@@ -719,6 +1226,7 @@ This was discovered when SDG data had all 578 metrics stored as strings, breakin
 | **infrastructure** | world_factbook (airports, railways, roads, waterways) |
 | **military** | world_factbook (military expenditure) |
 | **communications** | world_factbook (telephones, internet, broadband) |
+| **hazards** | noaa_storms, usdm_drought, usgs_earthquakes, wildfire_risk, fema_nri |
 
 ---
 
@@ -738,6 +1246,10 @@ When multiple sources have the same metric, the app selects:
 | Military spending | world_factbook | - |
 | Oil/gas production | world_factbook | - |
 | Electricity sources | world_factbook | - |
+| Natural hazard risk (US) | fema_nri | wildfire_risk, noaa_storms |
+| Storm events (US) | noaa_storms | - |
+| Earthquake events (US) | usgs_earthquakes | - |
+| Drought conditions (US) | usdm_drought | - |
 
 ---
 
@@ -896,4 +1408,4 @@ for country in result:
 
 ---
 
-*Last Updated: 2026-01-03*
+*Last Updated: 2026-01-05*
