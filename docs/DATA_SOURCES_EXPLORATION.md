@@ -2,7 +2,7 @@
 
 Quick reference for potential data sources to expand risk scoring capabilities.
 
-Last Updated: January 5, 2026
+Last Updated: January 6, 2026
 
 ---
 
@@ -33,9 +33,15 @@ Location: `county-map-data/Raw data/`
 | **Canada Fire** | `canada/cnfdb/` | 789 MB | Fire points + polygons (shapefiles) |
 | **Canada Drought** | `canada/drought/` | 1.0 GB | 325 monthly GeoJSON (2019-2025) |
 | **Canada Earthquakes** | `canada/` | 12 MB | CSV + GDB earthquake catalog |
+| **Canada Census** | `statcan/census_2021/` | 25 GB | 2021 Census Profile (all geo levels) |
 | **Australia Cyclones** | `australia/` | 7.6 MB | 31,225 cyclone tracks (1909-present) |
+| **Australia Population** | `abs/` | 127 MB | LGA + SA2 population 2001-2024 (GeoPackage) |
 | **NOAA Climate** | `noaa/climate_at_a_glance/` | 65 MB | Temperature/precip 1895-2025 |
 | **HDX/EM-DAT** | `hdx/` | 390 KB | Global disaster profiles (27K+ events) |
+| **ReliefWeb** | `reliefweb/` | 6.9 MB | Global disasters 1981-present (18K+ events) |
+| **EPA AQS** | `epa_aqs/` | 2.8 MB | Annual AQI by county 1980-2025 |
+| **EIA Energy** | `eia/` | 1.4 GB | US energy data (7 bulk datasets) |
+| **Eurostat** | `eurostat/` | 5.9 MB | NUTS 3 population + GDP |
 
 ### Download Scripts Available
 Location: `county-map/data_converters/`
@@ -52,17 +58,32 @@ Location: `county-map/data_converters/`
 | download_australia_cyclones.py | Australia BOM | Working |
 | download_noaa_climate.py | Climate at a Glance | Working |
 | download_hdx_disasters.py | HDX/EM-DAT | Working |
-| download_desinventar.py | 82+ countries | Server issues |
+| download_desinventar.py | 82+ countries | Server dead |
 | download_fema_nfhl.py | Flood zones | FEMA servers down |
+| download_reliefweb.py | ReliefWeb/HDX | Working (uses HDX mirror) |
+| download_epa_aqs.py | EPA Air Quality | Working |
+| download_eia_bulk.py | EIA Energy Data | Working |
+| download_eurostat.py | Eurostat NUTS 3 | Working (partial) |
+| download_statcan.py | Statistics Canada | Manual download required |
+| download_abs.py | Australian ABS | Manual download required |
 
 ### Blocked Sources (Infrastructure Issues)
 | Source | Issue | Workaround |
 |--------|-------|------------|
 | FEMA NFHL Flood Zones | hazards.fema.gov DOWN | State GIS portals (MassGIS has data) |
-| DesInventar (82 countries) | Server timeout | Retry later |
+| DesInventar (82 countries) | Server dead (times out) | None - service appears defunct |
 | Canadian Disaster Database | Interactive search only | Manual export |
+| Statistics Canada | API URLs return 404 | Manual download from portal (done) |
+| ABS Australia | API URLs return 404 | Manual download from portal (done) |
 
-### Total Raw Data Size: ~2.1 GB
+### Total Raw Data Size: ~29 GB
+
+**Breakdown:**
+- US Sources: ~1.5 GB (FEMA, EPA, EIA, NOAA)
+- Canada: ~26 GB (Census 25GB, Fire 789MB, Drought 1GB, Earthquakes 12MB)
+- Australia: ~135 MB (Population 127MB, Cyclones 7.6MB)
+- Europe: ~6 MB (Eurostat NUTS 3)
+- Global: ~7 MB (ReliefWeb, HDX/EM-DAT)
 
 ---
 
@@ -705,6 +726,7 @@ Output format matching existing pattern:
 
 ## Next Steps
 
+### Completed
 - [x] Download FEMA NRI county-level data via ArcGIS
 - [x] Build converter following existing pattern
 - [x] Generate metadata.json
@@ -714,14 +736,577 @@ Output format matching existing pattern:
 - [x] Download all 467 fields (not just 188) from latest NRI version
 - [x] Download FEMA disaster declarations (68K records, 1953-2025)
 - [x] Create disaster declarations converter with county-year aggregates
-- [ ] Wait for FEMA infrastructure recovery for NFHL flood zones
 - [x] Add NOAA Climate at a Glance data (65 MB, 9 national + 193 state files)
-- [ ] Consider NRI Census Tracts download (85K+ records, finer granularity)
 - [x] Download Canadian fire, earthquake, drought data (1.8 GB total)
 - [x] Download Australia tropical cyclones (31K records, 1909-present)
 - [x] Download HDX/EM-DAT global profiles (27K+ disasters)
-- [ ] Process DesInventar data (82+ countries downloading)
-- [ ] Create converters for new international data
+- [x] Download ReliefWeb disasters via HDX mirror (18K+ events)
+- [x] Download EPA AQS annual AQI data (1980-2025, 46 years)
+- [x] Download EIA bulk energy data (7 datasets, 1.4 GB)
+- [x] Download Eurostat NUTS 3 data (population, GDP)
+- [x] Download Statistics Canada Census 2021 (5,161 CSDs, 25 GB)
+- [x] Download Australia ABS population (547 LGAs, 127 MB)
+
+### In Progress
+- [ ] Create converters for new international data (Canada, Australia, Europe)
+- [ ] Import international geometry (LGA, CSD, NUTS boundaries)
+
+### Blocked
+- [ ] Wait for FEMA infrastructure recovery for NFHL flood zones
+- [ ] DesInventar - server appears defunct (times out on downloads)
+
+### Future
+- [ ] Consider NRI Census Tracts download (85K+ records, finer granularity)
+- [ ] CDC PLACES county health data
+- [ ] NOAA Sea Level Rise projections
+
+---
+
+## NEW SOURCES TO EXPLORE (January 2026)
+
+### ReliefWeb API - Global Disasters (1981-present) - TO DOWNLOAD
+
+Global disaster data from OCHA/UN covering humanitarian emergencies since 1981.
+
+- **API Documentation**: https://apidoc.reliefweb.int/
+- **Disasters Endpoint**: `https://api.reliefweb.int/v1/disasters?appname=YOUR_APP&preset=analysis&limit=1000`
+- **HDX Mirror**: https://data.humdata.org/dataset/reliefweb-disasters-list
+- **Coverage**: Global, 1981-present
+- **Format**: JSON API (paginated, max 1000 per request)
+- **Cost**: Free (requires appname parameter, registration recommended from Nov 2025)
+- **GLIDE Numbers**: Includes standardized disaster identifiers
+
+**Key Features:**
+- All major disasters with humanitarian impact since 1981
+- Includes GLIDE numbers for cross-referencing with EM-DAT
+- Situation reports, assessments, maps linked per disaster
+- `preset=analysis` includes archived disasters for historical analysis
+- Countries, disaster types, dates, affected areas
+
+**API Notes:**
+- Valid limit: 0-1000 per request
+- Must use `appname` parameter (can be any identifier)
+- Returns JSON with `count` property for total records
+
+---
+
+### EPA Air Quality System (AQS) - County AQI (1980-present) - TO DOWNLOAD
+
+Historical air quality data with annual county-level AQI summaries.
+
+- **Pre-Generated Files**: https://aqs.epa.gov/aqsweb/airdata/download_files.html
+- **AQS API**: https://aqs.epa.gov/aqsweb/documents/data_api.html
+- **Main Portal**: https://www.epa.gov/outdoor-air-quality-data
+- **Coverage**: All US counties with monitors, 1980-2025
+- **Format**: CSV (zipped)
+- **Cost**: Free
+- **Update Frequency**: Twice annually (June for full year, December for summer ozone)
+
+**Pre-Generated Files Available:**
+
+| File Type | Years | Description |
+|-----------|-------|-------------|
+| `annual_aqi_by_county_[YEAR].zip` | 1980-2025 | Annual AQI summary by county |
+| `annual_aqi_by_cbsa_[YEAR].zip` | 1980-2025 | Annual AQI by metro area |
+| `daily_aqi_by_county_[YEAR].zip` | 1980-2025 | Daily AQI values |
+| `annual_conc_by_monitor_[YEAR].zip` | 1980-2025 | Pollutant concentrations |
+
+**Pollutants Covered:**
+- Ozone (O3)
+- Particulate Matter (PM2.5, PM10)
+- Carbon Monoxide (CO)
+- Sulfur Dioxide (SO2)
+- Nitrogen Dioxide (NO2)
+- Lead (Pb)
+
+**Download URL Pattern:**
+```
+https://aqs.epa.gov/aqsweb/airdata/annual_aqi_by_county_[YEAR].zip
+```
+
+**API Rate Limits:**
+- Max 1,000,000 rows per query
+- Max 10 requests per minute
+- 5 second pause between requests
+
+**Use Case**: New visualization layer - air quality trends, pollution hotspots, health correlations
+
+---
+
+### EIA Energy Data - State Level (1960s-present) - TO DOWNLOAD
+
+Comprehensive US energy statistics from the Energy Information Administration.
+
+- **Open Data Portal**: https://www.eia.gov/opendata/
+- **Bulk Download**: https://www.eia.gov/opendata/v1/bulkfiles.php
+- **API Documentation**: https://www.eia.gov/opendata/documentation.php
+- **Coverage**: National + State level, 1960s-present (varies by dataset)
+- **Format**: JSON (API), ZIP (bulk downloads contain JSON text files)
+- **Cost**: Free (API key recommended but bulk download is key-free)
+- **Update Frequency**: Twice daily (5am and 3pm ET)
+
+**Bulk Download Files:**
+
+| File | Description | Series Count |
+|------|-------------|--------------|
+| SEDS.zip | State Energy Data System | 30,000+ |
+| ELEC.zip | Electricity | 408,000+ |
+| NG.zip | Natural Gas | 11,989+ |
+| PET.zip | Petroleum | 115,052+ |
+| COAL.zip | Coal (includes county-level mine data) | varies |
+| TOTAL.zip | Total Energy | varies |
+| EMISS.zip | CO2 Emissions | varies |
+| EBA.zip | Electric System Operating Data (hourly) | varies |
+| STEO.zip | Short-Term Energy Outlook | varies |
+| INTL.zip | International Energy Data | varies |
+
+**Geographic Levels:**
+- **National**: All datasets
+- **State**: SEDS, Electricity, Natural Gas, Petroleum
+- **County**: Coal mine-level data only
+- **Plant-level**: Electricity generation
+
+**Key Metrics:**
+- Electricity generation by source (coal, gas, nuclear, renewables)
+- Natural gas production, prices, storage
+- Petroleum production, refining, imports/exports
+- Energy consumption by sector (residential, commercial, industrial, transport)
+- CO2 emissions by state and sector
+
+**Time Coverage by Dataset:**
+- SEDS: 1960-present (annual)
+- Electricity: 2001-present (monthly, some hourly)
+- Natural Gas: 1973-present (monthly)
+- Petroleum: 1981-present (weekly/monthly)
+
+**Use Case**: Energy infrastructure resilience, grid reliability correlation, emissions mapping
+
+---
+
+### Eurostat Regional Statistics - NUTS 3 (1990-present) - TO DOWNLOAD
+
+European regional statistics at NUTS 3 level (small regions, ~1,165 units in EU).
+
+- **Regional Database**: https://ec.europa.eu/eurostat/web/regions/database
+- **Statistics API**: https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/
+- **GISCO Geodata**: https://ec.europa.eu/eurostat/web/gisco/geodata/statistical-units/territorial-units-statistics
+- **Bulk Download**: https://ec.europa.eu/eurostat/estat-navtree-portlet-prod/BulkDownloadListing
+- **Coverage**: EU 27 + candidate countries, NUTS 0-3 levels
+- **Format**: TSV (tab-separated), SDMX-ML (XML), JSON-stat
+- **Cost**: Free (Open Data)
+
+**NUTS Levels:**
+- NUTS 0: Countries (27 EU members)
+- NUTS 1: Major socio-economic regions (92 units)
+- NUTS 2: Basic regions for regional policy (244 units)
+- NUTS 3: Small regions for specific diagnoses (1,165 units)
+
+**Key Datasets:**
+
+| Dataset Code | Description | Time Range |
+|--------------|-------------|------------|
+| demo_r_gind3 | Population change at NUTS 3 | 1990-present |
+| demo_r_d3avg | Average population by NUTS 3 | 1990-present |
+| nama_10r_3gdp | GDP at NUTS 3 level | 2000-present |
+| nama_10r_3popgdp | GDP per capita at NUTS 3 | 2000-present |
+| lfst_r_lfu3rt | Unemployment rate NUTS 3 | 1999-present |
+
+**Population Data (NUTS 3):**
+- Total population by sex and broad age groups (0-14, 15-64, 65+)
+- Time series from 1990 (voluntary reporting pre-2013)
+- Birth rates, death rates, migration
+
+**Economic Data (NUTS 3):**
+- GDP and GDP per capita
+- Employment by sector
+- Compensation of employees
+
+**API Filtering:**
+```
+geoLevel=nuts3  # Filter to NUTS 3 regions only
+```
+
+**Use Case**: European expansion - population, economic, demographic layers
+
+---
+
+### Statistics Canada Census - Subdivision Level (1981-2021) - TO DOWNLOAD
+
+Canadian census population data at census subdivision (municipality) level.
+
+- **Census Portal**: https://www12.statcan.gc.ca/census-recensement/index-eng.cfm
+- **Multi-Census Datasets**: https://www12.statcan.gc.ca/datasets/index-eng.cfm
+- **Census Profile Downloads**: https://www150.statcan.gc.ca/n1/en/catalogue/98-401-X
+- **Web Data Service API**: https://www.statcan.gc.ca/en/developers
+- **Coverage**: All census subdivisions, 1981-2021 (census years)
+- **Format**: CSV, PRN (tab-separated), IVT (Beyond 20/20)
+- **Cost**: Free (Open Government License - Canada)
+
+**Census Years Available:**
+- 2021 Census (latest)
+- 2016 Census
+- 2011 Census + National Household Survey
+- 2006 Census
+- 2001 Census
+- 1996 Census
+- 1991 Census (time series profiles back to 1981)
+
+**Geographic Levels:**
+- Census Divisions (CD) - ~293 units
+- Census Subdivisions (CSD) - ~5,000+ municipalities
+- Census Metropolitan Areas (CMA)
+- Census Tracts (CT) - urban areas only
+
+**Key Variables:**
+- Population and dwelling counts
+- Age and sex distribution
+- Marital status
+- Language (mother tongue, home language, official language)
+- Immigration and citizenship
+- Education attainment
+- Labour force participation
+- Income
+- Housing characteristics
+
+**Download Options:**
+1. Census Profile Downloads (Catalogue 98-401-X) - comprehensive profiles by geography
+2. Population and Dwelling Count tables - CSV downloads by census year
+3. Web Data Service API - SDMX and JSON formats
+
+**Time Series Profiles:**
+- The 1991 Census Time Series Community profiles include comparable data from 1981, 1986, and 1991 censuses
+
+**Use Case**: Canadian expansion - population trends, demographics at municipality level
+
+---
+
+### Australian Bureau of Statistics - LGA Population (2001-2024) - TO DOWNLOAD
+
+Australian population estimates by Local Government Area.
+
+- **Regional Population Portal**: https://www.abs.gov.au/statistics/people/population/regional-population/latest-release
+- **Data API**: https://www.abs.gov.au/about/data-services/application-programming-interfaces-apis/data-api-user-guide
+- **Population Statistics**: https://www.abs.gov.au/statistics/people/population
+- **Coverage**: All LGAs, 2001-2024 (annual estimates)
+- **Format**: Excel data cubes, CSV, JSON (API), XML (SDMX)
+- **Cost**: Free (Creative Commons BY 4.0)
+- **Update Frequency**: Annual (regional population) + Quarterly (national)
+
+**Geographic Levels:**
+- National
+- States and Territories (8)
+- Statistical Area Level 4 (SA4) - ~89 units
+- Statistical Area Level 3 (SA3) - ~340 units
+- Statistical Area Level 2 (SA2) - ~2,472 units
+- Local Government Areas (LGA) - ~544 units
+
+**Available Datasets:**
+
+| Dataset ID | Description | Time Range |
+|------------|-------------|------------|
+| ABS_ANNUAL_ERP_LGA2024 | Annual population by LGA | 2001-2024 |
+| ERP_QUARTERLY | Quarterly population estimates | varies |
+| Regional components of change | Births, deaths, migration by region | varies |
+
+**Key Metrics:**
+- Estimated Resident Population (ERP)
+- Population change (number and percent)
+- Natural increase (births minus deaths)
+- Net internal migration
+- Net overseas migration
+- Population density
+
+**Census Data (1991):**
+- Census-based LGA data from 1991 available through AURIN (data.aurin.org.au)
+- Time Series Community Profiles cover 1981, 1986, 1991
+
+**API Notes:**
+- SDMX 2.1 compliant
+- Authentication optional but recommended for production
+- Large datasets recommended via Excel data cubes rather than API
+
+**Use Case**: Australian expansion - population trends by LGA, demographic analysis
+
+---
+
+## loc_id Mapping for New Sources
+
+All data must map to the loc_id system defined in GEOMETRY.md. The loc_id format is:
+
+```
+{ISO3}[-{admin1}[-{admin2}[-{admin3}...]]]
+```
+
+**Key Design Principle**: Each country can use their **own naming scheme** within this structure. The loc_id system is intentionally flexible - admin codes can use ISO 3166-2, national standard codes, or any consistent identifier. The only requirement is the ISO3 country prefix.
+
+### Source Compatibility Summary
+
+| Source | Geographic Level | Source ID | loc_id Format | Status |
+|--------|-----------------|-----------|---------------|--------|
+| **ReliefWeb** | Country | ISO alpha-3 | `{ISO3}` | Direct match |
+| **EPA AQS** | US Counties | FIPS 5-digit | `USA-{state}-{FIPS}` | Direct match |
+| **EIA Energy** | US States | State postal | `USA-{state}` | Direct match |
+| **Eurostat** | NUTS 3 regions | NUTS code | `{ISO3}-{NUTS}` | Compatible |
+| **Statistics Canada** | Census Subdivisions | DGUID | `CAN-{prov}-{CSD}` | Compatible |
+| **ABS Australia** | LGAs | State+LGA code | `AUS-{state}-{LGA}` | Compatible |
+
+### US Data (Direct Match)
+
+US sources use FIPS codes which map directly to our existing loc_id format:
+
+```python
+# County level (FIPS to loc_id)
+state_fips = "06"
+county_fips = "037"
+state_abbr = STATE_FIPS_TO_ABBR[state_fips]  # "CA"
+loc_id = f"USA-{state_abbr}-{int(state_fips + county_fips)}"  # "USA-CA-6037"
+
+# State level
+loc_id = f"USA-{state_abbr}"  # "USA-CA"
+```
+
+### European Data (Eurostat NUTS)
+
+NUTS (Nomenclature of Territorial Units for Statistics) is the EU's hierarchical system:
+
+| NUTS Level | Description | Units | Example Code | loc_id |
+|------------|-------------|-------|--------------|--------|
+| NUTS 0 | Country | 27 | `DE` | `DEU` |
+| NUTS 1 | Major regions | 92 | `DE3` | `DEU-DE3` |
+| NUTS 2 | Basic regions | 244 | `DE30` | `DEU-DE30` |
+| NUTS 3 | Small regions | 1,165 | `DE300` | `DEU-DE300` |
+
+The NUTS code becomes the admin identifier directly. This is consistent with the loc_id spec which allows "ISO 3166-2 or national standard codes."
+
+```python
+# Eurostat NUTS to loc_id
+nuts_code = "DE300"  # Berlin
+iso3 = NUTS_COUNTRY_TO_ISO3[nuts_code[:2]]  # "DEU"
+loc_id = f"{iso3}-{nuts_code}"  # "DEU-DE300"
+```
+
+**Downloaded Eurostat Files:**
+- `demo_r_gind3.tsv` - Population change at NUTS 3 (3.5 MB, ~23,165 regions)
+- `nama_10r_3gdp.tsv` - GDP at NUTS 3 level (2.4 MB, ~12,498 regions)
+
+### Canadian Data (Statistics Canada)
+
+Canada uses a hierarchical census geography system:
+
+| Level | Description | Units | DGUID Pattern | loc_id |
+|-------|-------------|-------|---------------|--------|
+| Province | Provinces/Territories | 13 | `2021A000210` | `CAN-NL` |
+| Census Division (CD) | Counties, districts | 293 | `2021A00031001` | `CAN-NL-1001` |
+| Census Subdivision (CSD) | Municipalities | 5,161 | `2021A00051001105` | `CAN-NL-1001105` |
+| Dissemination Area (DA) | Small areas | 57,936 | `2021S051210010732` | (optional) |
+
+```python
+# Canada DGUID to loc_id
+dguid = "2021A00051001105"  # Portugal Cove South, NL
+province_code = dguid[9:11]  # "10" -> NL
+csd_code = dguid[11:]  # "01105"
+prov_abbr = CANADA_PROV_TO_ABBR[province_code]  # "NL"
+loc_id = f"CAN-{prov_abbr}-{csd_code}"  # "CAN-NL-1001105"
+```
+
+**Downloaded StatsCan Files:**
+- 6 regional CSV files (Atlantic, BC, Ontario, Prairies, Quebec, Territories)
+- 25 GB total extracted
+- 5,161 Census Subdivisions + 57,936 Dissemination Areas
+
+**Census Profile Download URLs (for future reference):**
+
+Canada conducts a census every 5 years. Download pages for comprehensive CSV files:
+
+| Census | Catalogue | Download Page | Notes |
+|--------|-----------|---------------|-------|
+| **2021** | 98-401-X2021006 | [Census Profile Downloads](https://www150.statcan.gc.ca/n1/en/catalogue/98-401-X) | What we downloaded (25 GB) |
+| **2016** | 98-401-X2016044 | [2016 Download Page](https://www12.statcan.gc.ca/census-recensement/2016/dp-pd/prof/details/download-telecharger/comp/page_dl-tc.cfm?Lang=E) | ~1.6 GB for all geo levels |
+| **2011** | 98-316-XWE | [2011 Download Page](https://www12.statcan.gc.ca/census-recensement/2011/dp-pd/prof/details/download-telecharger/comprehensive/comp-csv-tab-dwnld-tlchrgr.cfm?Lang=E) | ~194 MB for DAs |
+| **Multi-year** | - | [Census Datasets Portal](https://www12.statcan.gc.ca/datasets/index-eng.cfm) | 1981-2021 selected datasets |
+
+**2016 Direct Download URLs:**
+```
+# All levels (Canada through CSDs) - 147 MB compressed
+https://www12.statcan.gc.ca/census-recensement/2016/dp-pd/prof/details/download-telecharger/comp/GetFile.cfm?Lang=E&FILETYPE=CSV&GEONO=055
+
+# All levels including DAs - 1.6 GB compressed
+https://www12.statcan.gc.ca/census-recensement/2016/dp-pd/prof/details/download-telecharger/comp/GetFile.cfm?Lang=E&FILETYPE=CSV&GEONO=044
+```
+
+**Data Structure (why 25 GB for one census year):**
+- 166.8 million rows total (63,409 locations x 2,631 characteristics)
+- Each row = one characteristic for one location
+- Characteristics span: population, age, income, languages, indigenous identity, immigration, ethnicity, religion, mobility, education, labour, commuting
+
+**Characteristic Categories (2,631 total):**
+| ID Range | Category | Variables |
+|----------|----------|-----------|
+| 1-40 | Population & Age | Population 2021/2016, age groups, density |
+| 41-110 | Dwellings & Families | Structure type, household size, family composition |
+| 111-382 | Income | Median/mean income, sources, deciles, inequality (2019 & 2020) |
+| 383-1401 | Languages | ~1000 languages - mother tongue, home, work |
+| 1402-1521 | Indigenous Identity | First Nations, Metis, Inuit, Treaty status |
+| 1522-1682 | Immigration | Citizenship, place of birth, admission category |
+| 1683-1948 | Ethnicity | Visible minority, 250+ ethnic origins |
+| 1949-1973 | Religion | 25+ religions |
+| 1974-2222 | Education & Mobility | Degrees, field of study, moved in past 1/5 years |
+| 2223-2631 | Labour & Commuting | Employment, occupation, industry, mode of transport |
+
+**Future Processing Notes:**
+- Will need to extract subset of key characteristics (~50-100) for practical use
+- Consider splitting into multiple parquets by theme (demographics, income, housing, labour, etc.)
+- For future census years, download only the trimmed characteristic set
+- CSD level (5,161 municipalities) is primary target; DA level (57,936) optional for finer analysis
+
+**Province Code Mapping:**
+| Code | Province | Abbr |
+|------|----------|------|
+| 10 | Newfoundland and Labrador | NL |
+| 11 | Prince Edward Island | PE |
+| 12 | Nova Scotia | NS |
+| 13 | New Brunswick | NB |
+| 24 | Quebec | QC |
+| 35 | Ontario | ON |
+| 46 | Manitoba | MB |
+| 47 | Saskatchewan | SK |
+| 48 | Alberta | AB |
+| 59 | British Columbia | BC |
+| 60 | Yukon | YT |
+| 61 | Northwest Territories | NT |
+| 62 | Nunavut | NU |
+
+### Australian Data (ABS)
+
+Australia uses State/Territory codes with LGA (Local Government Area) codes:
+
+| Level | Description | Units | Source ID | loc_id |
+|-------|-------------|-------|-----------|--------|
+| State | States/Territories | 9 | `state_code_2021` | `AUS-NSW` |
+| LGA | Local Government Areas | 547 | `lga_code_2024` | `AUS-NSW-10050` |
+| SA2 | Statistical Area Level 2 | 2,472 | `sa2_code` | (optional) |
+
+```python
+# Australia ABS to loc_id
+state_code = 1  # New South Wales
+lga_code = 10050  # Albury
+state_abbr = AUS_STATE_TO_ABBR[state_code]  # "NSW"
+loc_id = f"AUS-{state_abbr}-{lga_code}"  # "AUS-NSW-10050"
+```
+
+**Downloaded ABS Files:**
+- `ERP_2024_LGA/` - GeoPackage with 547 LGAs, population 2001-2024 + geometry (54 MB)
+- `ERP_2024_SA2/` - GeoPackage with SA2 regions (71 MB)
+- `Data-cubes/` - 6 Excel files with time series data (2.2 MB)
+
+**Data Structure (much cleaner than Canada!):**
+- Wide table format: 1 row per LGA, columns for each year/metric
+- 547 LGAs x 61 columns = ~33,000 cells (vs Canada's 166 million rows)
+- Geometry included in GeoPackage
+- Ready to convert with minimal processing
+
+**Column Categories (61 total):**
+| Category | Columns | Notes |
+|----------|---------|-------|
+| Identifiers | state_code, state_name, lga_code, lga_name | 4 columns |
+| Population (ERP) | erp_2001 through erp_2024 | 24 years time series |
+| Area/Density | area_km2, pop_density_2024 | 2 columns |
+| Change | erp_change_number, erp_change_per_cent | 2023-24 |
+| Births/Deaths | births, deaths, natural_increase | 3 fiscal years (2021-24) |
+| Internal Migration | arrivals, departures, net | 3 fiscal years |
+| Overseas Migration | arrivals, departures, net | 3 fiscal years |
+| Geometry | geom (polygon) | Built-in |
+
+**ABS Regional Population Download URLs (for future reference):**
+
+Australia releases annual population estimates. Download page:
+
+| Release | Download Page | Notes |
+|---------|---------------|-------|
+| **Latest (2023-24)** | [Regional Population](https://www.abs.gov.au/statistics/people/population/regional-population/latest-release) | What we downloaded |
+| **Previous releases** | Same URL, select "Previous releases" | Annual updates |
+
+**Direct Download URLs (from latest release page):**
+```
+# LGA GeoPackage (population 2001-2024 + geometry) - 38 MB
+https://www.abs.gov.au/statistics/people/population/regional-population/latest-release
+-> Download: "LGA population estimates (2001-2024), GDA 2020 GeoPackage"
+
+# SA2 GeoPackage (finer granularity) - 48 MB
+-> Download: "SA2 population estimates (2001-2024), GDA 2020 GeoPackage"
+
+# Excel data cubes (no geometry)
+-> Download: "Population estimates by LGA, 2001-2024" (265 KB)
+```
+
+**Comparison: Australia vs Canada Data Quality**
+| Aspect | Australia | Canada |
+|--------|-----------|--------|
+| Format | GeoPackage (geometry included) | CSV (geometry separate) |
+| Size | 54 MB | 25 GB |
+| Structure | Wide (1 row per LGA) | Long (1 row per characteristic) |
+| Time series | 24 years built-in | Single year + comparison |
+| Variables | 61 columns | 2,631 characteristics |
+| Converter effort | Low (direct extract) | High (pivot + filter) |
+
+**State Code Mapping:**
+| Code | State/Territory | Abbr |
+|------|-----------------|------|
+| 1 | New South Wales | NSW |
+| 2 | Victoria | VIC |
+| 3 | Queensland | QLD |
+| 4 | South Australia | SA |
+| 5 | Western Australia | WA |
+| 6 | Tasmania | TAS |
+| 7 | Northern Territory | NT |
+| 8 | Australian Capital Territory | ACT |
+| 9 | Other Territories | OT |
+
+### Global/Country-Level Data
+
+Sources that provide country-level data use ISO 3166-1 alpha-3 directly:
+
+```python
+# ReliefWeb uses ISO alpha-3
+country_iso3 = "USA"  # Already in our format
+loc_id = country_iso3  # "USA"
+```
+
+### Water Body Codes (for ocean/sea disasters)
+
+ReliefWeb disasters may reference ocean areas. Use existing water body codes from GEOMETRY.md:
+- `XOA` - Atlantic Ocean
+- `XOP` - Pacific Ocean
+- `XOI` - Indian Ocean
+- `XSC` - Caribbean Sea
+- `XSG` - Gulf of Mexico
+
+### Geometry Considerations
+
+For international data, we have two options:
+
+1. **Use existing GADM geometry** - GADM has admin boundaries for all countries. Need to build crosswalk from source IDs (NUTS, CSD, LGA) to GADM region codes.
+
+2. **Import source geometry** - The downloaded files include geometry:
+   - ABS GeoPackage files have LGA boundaries
+   - Eurostat GISCO provides NUTS boundaries
+   - StatsCan provides boundary files separately
+
+The second option is cleaner since the geometry matches the data exactly. We would:
+- Import AUS LGA geometry from GeoPackage -> `AUS.parquet`
+- Import NUTS 3 geometry from GISCO -> country parquets (DEU.parquet, FRA.parquet, etc.)
+- Import Canada CSD geometry from StatsCan -> `CAN.parquet`
+
+---
+
+## Download Priority Order (New Sources)
+
+1. **ReliefWeb API** - Global disasters, complements HDX/EM-DAT, easy JSON API
+2. **EPA AQS Annual AQI** - 45 years of air quality, new visualization layer
+3. **EIA Bulk Data** - Energy infrastructure, state-level metrics (state level = easy)
+4. **Statistics Canada Census** - Canadian population for municipality mapping (needs crosswalk)
+5. **ABS Regional Population** - Australian LGA population for expansion (needs crosswalk)
+6. **Eurostat NUTS 3** - European regional data for future expansion (needs crosswalk)
 
 ---
 
