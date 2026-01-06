@@ -225,6 +225,74 @@
       color: white;
     }
 
+    /* Time slider tabs (multi-scale) */
+    .time-slider-tabs {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 8px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #3d3d5c;
+    }
+
+    .time-slider-tab {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px;
+      background: #2d2d44;
+      border: 1px solid #3d3d5c;
+      border-radius: 4px;
+      color: #a0a0a0;
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .time-slider-tab:hover {
+      background: #3d3d5c;
+      color: #d0d0d0;
+    }
+
+    .time-slider-tab.active {
+      background: #0f4c75;
+      border-color: #1a6a9e;
+      color: #ffffff;
+    }
+
+    .time-slider-tab .tab-label {
+      font-weight: 500;
+    }
+
+    .time-slider-tab .tab-granularity {
+      font-size: 9px;
+      padding: 1px 4px;
+      background: rgba(0,0,0,0.3);
+      border-radius: 2px;
+      color: #888;
+    }
+
+    .time-slider-tab.active .tab-granularity {
+      background: rgba(255,255,255,0.15);
+      color: #b0d0e8;
+    }
+
+    .time-slider-tab .tab-close {
+      margin-left: 4px;
+      width: 14px;
+      height: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 2px;
+      font-size: 10px;
+      color: #666;
+    }
+
+    .time-slider-tab .tab-close:hover {
+      background: rgba(255,100,100,0.3);
+      color: #ff6666;
+    }
+
     /* Choropleth Legend - dark */
     #choroplethLegend {
       position: absolute;
@@ -1036,6 +1104,8 @@
 
   <!-- Time Slider -->
   <div id="timeSliderContainer">
+    <!-- Multi-scale tabs (hidden when only one scale) -->
+    <div id="timeSliderTabs" class="time-slider-tabs" style="display: none;"></div>
     <div class="time-slider-header">
       <span class="time-slider-title" id="sliderTitle">Year</span>
       <span class="time-slider-year" id="currentYearLabel">2020</span>

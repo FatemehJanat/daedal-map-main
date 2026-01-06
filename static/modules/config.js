@@ -64,7 +64,13 @@ export const CONFIG = {
     // Selection/disambiguation layer
     selectionSource: 'selection-regions',
     selectionFill: 'selection-fill',
-    selectionStroke: 'selection-stroke'
+    selectionStroke: 'selection-stroke',
+    // Hurricane/storm layer
+    hurricaneSource: 'hurricane-points',
+    hurricaneCircle: 'hurricane-circle',
+    hurricaneLabel: 'hurricane-label',
+    hurricaneTrackLine: 'hurricane-track-line',
+    hurricaneTrackSource: 'hurricane-track'
   },
 
   // Selection mode colors (for disambiguation highlighting)
@@ -76,6 +82,19 @@ export const CONFIG = {
     hoverFill: '#ffcc44',   // Brighter on hover
     hoverOpacity: 0.7,
     hoverStrokeWidth: 4
+  },
+
+  // Hurricane category colors (Saffir-Simpson scale)
+  hurricaneColors: {
+    // Category by wind speed (kt)
+    TD: '#5ebaff',      // Tropical Depression (<34 kt) - light blue
+    TS: '#00faf4',      // Tropical Storm (34-63 kt) - cyan
+    1: '#ffffcc',       // Cat 1 (64-82 kt) - pale yellow
+    2: '#ffe775',       // Cat 2 (83-95 kt) - yellow
+    3: '#ffc140',       // Cat 3 (96-112 kt) - orange
+    4: '#ff8f20',       // Cat 4 (113-136 kt) - dark orange
+    5: '#ff6060',       // Cat 5 (>137 kt) - red
+    default: '#aaaaaa'  // Unknown/other
   },
 
   // API endpoints

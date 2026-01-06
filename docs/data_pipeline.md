@@ -8,6 +8,27 @@ Convert raw data sources to standardized parquet format for the globe display.
 
 ---
 
+## Download Scripts
+
+Raw data is downloaded before conversion. Download scripts are in `data_converters/`:
+
+| Script | Source | Output Location |
+|--------|--------|-----------------|
+| `download_fema_nri.py` | FEMA NRI via ArcGIS | `Raw data/fema/nri_counties/` |
+| `download_fema_all.py` | FEMA disaster declarations | `Raw data/fema/disasters/` |
+| `download_noaa_storms.py` | NOAA Storm Events | `Raw data/noaa_storms/` |
+| `download_usdm_drought.py` | US Drought Monitor | `Raw data/usdm_drought/` |
+| `download_usgs_earthquakes.py` | USGS Earthquake API | `Raw data/usgs_earthquakes/` |
+| `download_hurdat2.py` | NOAA Hurricane tracks | `Raw data/noaa/hurdat2/` |
+| `download_mtbs.py` | MTBS Wildfire perimeters | `Raw data/mtbs/` |
+| `download_tsunami.py` | NOAA Tsunami database | `Raw data/noaa/tsunami/` |
+| `download_volcano.py` | Smithsonian volcanoes | `Raw data/smithsonian/volcano/` |
+| `download_fema_nfhl.py` | FEMA Flood zones | `Raw data/fema/nfhl/` |
+
+**See also:** [DATA_SOURCES_EXPLORATION.md](DATA_SOURCES_EXPLORATION.md) for source URLs, API endpoints, and download instructions.
+
+---
+
 ## Data Format
 
 All indicator data uses **long format** with parquet storage:

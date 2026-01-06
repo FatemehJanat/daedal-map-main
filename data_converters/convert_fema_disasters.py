@@ -41,7 +41,7 @@ STATE_FIPS = {
     '39': 'OH', '40': 'OK', '41': 'OR', '42': 'PA', '44': 'RI',
     '45': 'SC', '46': 'SD', '47': 'TN', '48': 'TX', '49': 'UT',
     '50': 'VT', '51': 'VA', '53': 'WA', '54': 'WV', '55': 'WI',
-    '56': 'WY', '60': 'AS', '66': 'GU', '69': 'MP', '72': 'PR', '78': 'VI'
+    '56': 'WY', '60': 'AS', '64': 'FM', '66': 'GU', '68': 'MH', '69': 'MP', '70': 'PW', '72': 'PR', '78': 'VI'
 }
 
 # Incident type categories for aggregation
@@ -118,12 +118,18 @@ def clean_and_enrich(df):
     # Create full FIPS code
     df['stcofips'] = df['fipsStateCode'] + df['fipsCountyCode']
 
-    # Create loc_id (only for county-specific declarations)
-    # County code 000 means statewide, not a specific county
+    # Create loc_id for all declarations
+    # County code 000 means statewide - use state-level loc_id
     df['is_county_specific'] = df['fipsCountyCode'] != '000'
     df['loc_id'] = None
-    mask = df['is_county_specific'] & df['state_abbr'].notna()
-    df.loc[mask, 'loc_id'] = 'USA-' + df.loc[mask, 'state_abbr'] + '-' + df.loc[mask, 'stcofips']
+
+    # County-specific: USA-{state_abbr}-{stcofips} (e.g., USA-TX-48201)
+    mask_county = df['is_county_specific'] & df['state_abbr'].notna()
+    df.loc[mask_county, 'loc_id'] = 'USA-' + df.loc[mask_county, 'state_abbr'] + '-' + df.loc[mask_county, 'stcofips']
+
+    # Statewide: USA-{state_abbr} (e.g., USA-TX)
+    mask_state = (~df['is_county_specific']) & df['state_abbr'].notna()
+    df.loc[mask_state, 'loc_id'] = 'USA-' + df.loc[mask_state, 'state_abbr']
 
     # Categorize incident types
     df['incident_category'] = df['incidentType'].map(INCIDENT_CATEGORIES).fillna('other')

@@ -4,6 +4,11 @@ Build NOAA Storm Events events.parquet file.
 Creates events.parquet with individual storm events including location data
 for map visualization alongside the existing USA.parquet county aggregates.
 
+Uses 3-pass geocoding:
+1. FIPS-based loc_id from source data
+2. Nearest county match within 12nm (territorial waters) for coastal events
+3. Water body codes for marine events beyond 12nm
+
 Input: Raw NOAA storm CSV files
 Output: events.parquet with individual storm events
 
@@ -11,14 +16,21 @@ Usage:
     python build_noaa_events.py
 """
 import pandas as pd
+import geopandas as gpd
 import pyarrow as pa
 import pyarrow.parquet as pq
 from pathlib import Path
 from datetime import datetime
+from shapely.geometry import Point, shape
+import json
 
 # Configuration
-RAW_DATA_DIR = Path("C:/Users/bryan/Desktop/county_map_data/Raw data/noaa_storms")
-OUTPUT_DIR = Path("C:/Users/bryan/Desktop/county_map_data/data/noaa_storms")
+RAW_DATA_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/Raw data/noaa_storms")
+OUTPUT_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/countries/USA/noaa_storms")
+GEOMETRY_PATH = Path("C:/Users/Bryan/Desktop/county-map-data/geometry/USA.parquet")
+
+# Territorial waters threshold: 12 nautical miles = ~0.2 degrees
+TERRITORIAL_WATERS_DEG = 0.2
 
 # State FIPS to abbreviation mapping
 STATE_FIPS = {
@@ -32,8 +44,64 @@ STATE_FIPS = {
     '39': 'OH', '40': 'OK', '41': 'OR', '42': 'PA', '44': 'RI',
     '45': 'SC', '46': 'SD', '47': 'TN', '48': 'TX', '49': 'UT',
     '50': 'VT', '51': 'VA', '53': 'WA', '54': 'WV', '55': 'WI',
-    '56': 'WY', '72': 'PR'
+    '56': 'WY', '72': 'PR', '78': 'VI'
 }
+
+
+def get_water_body_loc_id(lat, lon):
+    """
+    Assign water body loc_id for points in international waters.
+    Uses ISO 3166-1 X-prefix codes for water bodies.
+    """
+    # Great Lakes
+    if 41 < lat < 49 and -93 < lon < -76:
+        return "XLG"  # Great Lakes
+
+    # Gulf of Mexico
+    if 18 < lat < 31 and -98 < lon < -80:
+        return "XSG"  # Gulf of Mexico
+
+    # Caribbean Sea
+    if 8 < lat < 22 and -90 < lon < -60:
+        return "XSC"  # Caribbean Sea
+
+    # Atlantic Ocean (East Coast)
+    if lon > -82 and lat > 24 and lat < 50:
+        return "XOA"  # Atlantic Ocean
+
+    # Pacific Ocean (West Coast, Hawaii, Alaska)
+    if lon < -100 or lon > 150:
+        return "XOP"  # Pacific Ocean
+
+    # Bering Sea
+    if lon < -160 and lat > 50:
+        return "XSB"  # Bering Sea
+
+    # Default to generic ocean
+    return "XOO"  # Unknown ocean
+
+
+def load_counties():
+    """Load county geometry from parquet for spatial joins."""
+    print("Loading county geometry...")
+
+    df = pd.read_parquet(GEOMETRY_PATH)
+    df = df[df['admin_level'] == 2].copy()
+
+    # Convert GeoJSON to shapely geometry
+    def parse_geometry(g):
+        if g is None:
+            return None
+        if isinstance(g, str):
+            return shape(json.loads(g))
+        return shape(g)
+
+    df['geometry'] = df['geometry'].apply(parse_geometry)
+    df = df[df['geometry'].notna()].copy()
+
+    gdf = gpd.GeoDataFrame(df, geometry='geometry', crs="EPSG:4326")
+    print(f"  Loaded {len(gdf)} counties")
+    return gdf
 
 
 def fips_to_loc_id(state_fips, cz_fips):
@@ -108,7 +176,7 @@ def process_storm_details():
     """Load and process storm details CSV files."""
     print("\nProcessing storm details CSV files...")
 
-    csv_files = sorted(RAW_DATA_DIR.glob("StormEvents_details-*.csv"))
+    csv_files = sorted(RAW_DATA_DIR.glob("StormEvents_details-ftp_v1.0_d*.csv"))
     print(f"  Found {len(csv_files)} files")
 
     all_events = []
@@ -142,10 +210,17 @@ def process_storm_details():
             df_with_loc['longitude'] = df_with_loc['BEGIN_LON'].fillna(df_with_loc['END_LON'])
 
             # Parse datetime
+            # Note: %y (2-digit year) defaults to 2000-2068 pivot, but NOAA data
+            # starts from 1950. Dates parsed as 2050-2068 need to be fixed to 1950-1968.
             df_with_loc['event_time'] = pd.to_datetime(
                 df_with_loc['BEGIN_DATE_TIME'],
                 format='%d-%b-%y %H:%M:%S',
                 errors='coerce'
+            )
+            # Fix century parsing: any date > 2025 should be shifted back 100 years
+            future_mask = df_with_loc['event_time'].dt.year > 2025
+            df_with_loc.loc[future_mask, 'event_time'] = (
+                df_with_loc.loc[future_mask, 'event_time'] - pd.DateOffset(years=100)
             )
 
             # Calculate event radius
@@ -205,6 +280,75 @@ def process_storm_details():
     print(f"  Final events.parquet size: {len(combined):,}")
 
     return combined
+
+
+def geocode_missing_events(df, counties_gdf):
+    """
+    Apply 3-pass geocoding to fill missing loc_ids.
+
+    Pass 1: Already done - FIPS-based loc_id from source data
+    Pass 2: Nearest county match within 12nm (territorial waters)
+    Pass 3: Water body codes for marine events beyond 12nm
+    """
+    missing_mask = df['loc_id'].isna()
+    missing_count = missing_mask.sum()
+
+    if missing_count == 0:
+        print("\nAll events have loc_id from FIPS codes")
+        return df
+
+    print(f"\nGeocoding {missing_count:,} events missing loc_id...")
+
+    # Create GeoDataFrame for spatial operations - use original index
+    missing_df = df[missing_mask].copy()
+    missing_df['_orig_idx'] = missing_df.index
+    geometry = [Point(xy) for xy in zip(missing_df['longitude'], missing_df['latitude'])]
+    missing_gdf = gpd.GeoDataFrame(missing_df, geometry=geometry, crs="EPSG:4326")
+
+    # === PASS 2: Nearest county within territorial waters ===
+    print("  Pass 2: Nearest county matching (< 12nm)...")
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # Suppress CRS warning
+        nearest = gpd.sjoin_nearest(
+            missing_gdf,
+            counties_gdf[['loc_id', 'geometry']].rename(columns={'loc_id': 'county_loc_id'}),
+            how='left',
+            distance_col='dist_to_county'
+        )
+
+    # Filter to within territorial waters and dedupe by original index
+    within_territorial = nearest[nearest['dist_to_county'] <= TERRITORIAL_WATERS_DEG].copy()
+    within_territorial = within_territorial.drop_duplicates(subset=['_orig_idx'])
+    nearest_count = len(within_territorial)
+    print(f"    Matched {nearest_count:,} events to nearest county")
+
+    # Build mapping and apply
+    loc_id_map = within_territorial.set_index('_orig_idx')['county_loc_id'].to_dict()
+    for orig_idx, loc_id in loc_id_map.items():
+        df.loc[orig_idx, 'loc_id'] = loc_id
+
+    # === PASS 3: Water body codes for remaining events ===
+    still_missing_mask = df['loc_id'].isna()
+    still_missing_count = still_missing_mask.sum()
+
+    if still_missing_count > 0:
+        print(f"  Pass 3: Assigning water body codes to {still_missing_count:,} marine events...")
+        df.loc[still_missing_mask, 'loc_id'] = df.loc[still_missing_mask].apply(
+            lambda row: get_water_body_loc_id(row['latitude'], row['longitude']),
+            axis=1
+        )
+
+    # Summary
+    county_match = df['loc_id'].str.startswith('USA-', na=False).sum()
+    water_body = df['loc_id'].str.startswith('X', na=False).sum()
+    total = len(df)
+
+    print(f"\nGeocoding complete:")
+    print(f"  County matches: {county_match:,} ({county_match/total*100:.1f}%)")
+    print(f"  Water body codes: {water_body:,} ({water_body/total*100:.1f}%)")
+
+    return df
 
 
 def save_events_parquet(df):
@@ -324,12 +468,18 @@ def main():
     print("NOAA Storm Events - Build events.parquet")
     print("="*80)
 
+    # Load county geometry for geocoding
+    counties_gdf = load_counties()
+
     # Process storm details
     events_df = process_storm_details()
 
     if events_df.empty:
         print("\nERROR: No events with location data found")
         return 1
+
+    # Geocode missing loc_ids (3-pass approach)
+    events_df = geocode_missing_events(events_df, counties_gdf)
 
     # Save events.parquet
     save_events_parquet(events_df)

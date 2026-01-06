@@ -492,7 +492,7 @@ Combine smaller regions into larger ones dynamically:
 - GeoJSON export with geometry
 - Include metadata in export
 
-### Click-to-Select Disambiguation
+### Click-to-Select Disambiguation (work in progress)
 
 Handle ambiguous queries by letting users click on the map:
 - Backend detects "Washington County" = 30 matches

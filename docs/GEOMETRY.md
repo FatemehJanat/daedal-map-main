@@ -14,6 +14,7 @@ The geometry layer is the **source of truth** for all locations. Every indicator
 |----------|---------------|---------|
 | **loc_id format** | `{ISO3}[-{admin1}[-{admin2}]]` | `USA-CA-6037` |
 | **Country codes** | ISO 3166-1 alpha-3 (uppercase) | `USA`, `GBR`, `DEU` |
+| **Water body codes** | X-prefix: XO_ (ocean), XS_ (sea), XL_ (lake) | `XOA`, `XSC`, `XLE` |
 | **US state codes** | 2-letter postal abbreviation | `CA`, `TX`, `NY` |
 | **US FIPS** | Integer (no leading zeros) | `6037` not `06037` |
 | **Join key** | `loc_id` column in both geometry and data | Must match exactly |
@@ -78,6 +79,129 @@ Every geographic location has a unique `loc_id` that:
 - `US` -> `USA`
 - `GB` -> `GBR`
 - `FR` -> `FRA`
+
+---
+
+## Water Bodies (Oceans, Seas, Lakes)
+
+Events and features that occur outside sovereign territory (international waters, shared lakes) need loc_ids that work alongside country codes. Since no existing standard provides 3-letter codes for water bodies, we use ISO 3166-1's **user-assigned range (XAA-XZZ)** with a semantic prefix structure.
+
+### Existing Standards (Reference Only)
+
+| Standard | Format | Notes |
+|----------|--------|-------|
+| IHO S-130 | Numeric IDs | New digital standard, replaces S-23 |
+| Marine Regions MRGID | Numeric IDs | e.g., MRGID 1904 = Atlantic Ocean |
+| ISO 3166-1 | 3-letter codes | Countries only, no water bodies |
+
+Since these use numeric IDs (not compatible with our loc_id pattern), we define our own 3-letter codes using ISO's reserved X-prefix range.
+
+### Water Body Code Structure
+
+```
+X{type}{identifier}
+
+Where:
+  X  = Required prefix (ISO user-assigned range)
+  {type} = O (Ocean), S (Sea), L (Lake)
+  {identifier} = 1-letter unique identifier
+```
+
+### Oceans (XO_)
+
+| Code | Name | Notes |
+|------|------|-------|
+| `XOA` | Atlantic Ocean | Can subdivide: XOA-N (North), XOA-S (South) |
+| `XOP` | Pacific Ocean | Can subdivide: XOP-N (North), XOP-S (South) |
+| `XOI` | Indian Ocean | |
+| `XOR` | Arctic Ocean | |
+| `XOS` | Southern Ocean | Antarctic waters |
+
+### Seas (XS_)
+
+| Code | Name | Notes |
+|------|------|-------|
+| `XSM` | Mediterranean Sea | |
+| `XSC` | Caribbean Sea | |
+| `XSB` | Baltic Sea | |
+| `XSR` | Red Sea | |
+| `XSA` | Arabian Sea | |
+| `XSG` | Gulf of Mexico | |
+| `XSP` | Persian Gulf | |
+| `XSJ` | Sea of Japan | |
+| `XSE` | East China Sea | |
+| `XSS` | South China Sea | |
+
+### International Lakes (XL_)
+
+Lakes shared between countries or otherwise needing standalone codes:
+
+| Code | Name | Bordering Countries |
+|------|------|---------------------|
+| `XLE` | Lake Erie | USA, CAN |
+| `XLH` | Lake Huron | USA, CAN |
+| `XLM` | Lake Michigan | USA (entirely, but part of Great Lakes system) |
+| `XLO` | Lake Ontario | USA, CAN |
+| `XLS` | Lake Superior | USA, CAN |
+| `XLC` | Caspian Sea | RUS, KAZ, TKM, IRN, AZE (technically a lake) |
+| `XLV` | Lake Victoria | UGA, TZA, KEN |
+| `XLT` | Lake Tanganyika | TZA, COD, BDI, ZMB |
+
+### loc_id Format for Water Bodies
+
+Water bodies are admin_level 0 entities (peers to countries):
+
+```
+{water_code}[-{subdivision}][-{sub-subdivision}]
+
+Examples:
+  XOA           - Atlantic Ocean (entire)
+  XOA-N         - North Atlantic
+  XOA-S         - South Atlantic
+  XOA-N-0       - North Atlantic (single region ID)
+  XSC-0         - Caribbean Sea (single region)
+  XLE-0         - Lake Erie (single region)
+```
+
+### Usage Example: Hurricane Tracks
+
+A hurricane track crosses from ocean to land:
+
+```
+Position 1: loc_id = XOA-0      (Atlantic Ocean, over water)
+Position 2: loc_id = XOA-0      (still over Atlantic)
+Position 3: loc_id = XSC-0      (entered Caribbean Sea)
+Position 4: loc_id = XSG-0      (Gulf of Mexico)
+Position 5: loc_id = USA-FL-12086  (landfall in Miami-Dade County)
+Position 6: loc_id = USA-FL-12011  (continued inland to Broward County)
+```
+
+### Geometry for Water Bodies
+
+Water bodies can optionally have geometry in `global_entities.parquet`:
+
+```
+loc_id  | admin_level | type  | name           | geometry
+XOA     | 0           | ocean | Atlantic Ocean | POLYGON(...)
+XOA-N   | 1           | ocean | North Atlantic | POLYGON(...)
+XSC     | 0           | sea   | Caribbean Sea  | POLYGON(...)
+XLE     | 0           | lake  | Lake Erie      | POLYGON(...)
+```
+
+For events over water, geometry is optional - the lat/lon coordinates are sufficient for visualization. The loc_id provides categorization and enables queries like "all hurricane positions in the Caribbean."
+
+### Code Capacity
+
+ISO 3166-1 reserves XAA-XZZ (676 codes) for user assignment:
+
+| Category | Codes Available | Estimated Need |
+|----------|-----------------|----------------|
+| Oceans (XO_) | 26 | 5 (+ subdivisions) |
+| Seas (XS_) | 26 | ~20 major seas |
+| Lakes (XL_) | 26 | ~15 international lakes |
+| **Total** | 78 single-letter | ~40 primary codes |
+
+With subdivision support (XOA-N, XOA-S, etc.), this provides ample capacity for global coverage.
 
 ---
 
@@ -306,12 +430,16 @@ Features that cross country borders live in `global_entities.parquet`, separate 
 **global_entities.parquet** - Everything else:
 ```
 loc_id              | level | type      | name
+XOA                 | 0     | ocean     | Atlantic Ocean
+XOP                 | 0     | ocean     | Pacific Ocean
+XSM                 | 0     | sea       | Mediterranean Sea
+XSC                 | 0     | sea       | Caribbean Sea
+XLE                 | 0     | lake      | Lake Erie
+XLS                 | 0     | lake      | Lake Superior
 AMAZON-BASIN        | 0     | river     | Amazon River Basin
 NILE-WATERSHED      | 0     | river     | Nile Watershed
-MEDITERRANEAN       | 0     | sea       | Mediterranean Sea
 EU                  | 0     | political | European Union
 SAHEL               | 0     | climate   | Sahel Region
-ARCTIC              | 0     | climate   | Arctic Circle
 ```
 
 **Why separate files:**
@@ -344,15 +472,49 @@ The `type` column distinguishes entity categories. This is the **canonical list*
 |------|-------------|----------|
 | river | River basins, watersheds | Mississippi Basin, Amazon Basin |
 | hydro | Hydrological units (HUC) | USGS watershed codes |
-| sea | Seas, oceans, maritime zones | Mediterranean, Baltic Sea |
+| watershed | Major watershed boundaries | Columbia River Watershed, Great Lakes |
+| ocean | Major oceans | Atlantic (XOA), Pacific (XOP), Indian (XOI) |
+| sea | Seas, gulfs, maritime zones | Mediterranean (XSM), Caribbean (XSC), Gulf of Mexico (XSG) |
+| lake | International/shared lakes | Great Lakes (XLE, XLH, XLM, XLO, XLS), Caspian (XLC) |
 | climate | Climate zones, biomes | Arctic Circle, Sahel, Tropics |
 
-**Political/Economic:**
+**Political/Economic/Cultural:**
 
 | Type | Description | Examples |
 |------|-------------|----------|
 | political | Political entities with geometry | EU, NATO (if mapped) |
 | economic | Economic zones | Trade corridors, special economic zones |
+| tribal | Indigenous/tribal nation boundaries | Navajo Nation, Cherokee Nation |
+
+**Disaster/Hazard Events:**
+
+| Type | Description | Examples |
+|------|-------------|----------|
+| hurricane | Tropical storm tracks and wind swaths | Hurricane Ian, Katrina, Maria |
+| wildfire | Fire perimeter boundaries | Creek Fire, Camp Fire, Dixie Fire |
+| earthquake | Seismic events (epicenter + shake zones) | Northridge 1994, Loma Prieta 1989 |
+| tsunami | Tsunami source events and runup zones | 1946 Aleutian, 1964 Alaska |
+| eruption | Volcanic eruption events | Mt. St. Helens 1980, Kilauea 2018 |
+| tornado | Tornado track paths | Joplin 2011, Moore 2013 |
+| flood | Major flood events/zones | Great Flood of 1993, Harvey 2017 |
+
+**Cross-Boundary Entity loc_id Examples:**
+```
+loc_id                  | level | type      | name                    | geometry
+USA-FL                  | 1     | admin     | Florida                 | POLYGON(...)
+USA-HRCN-IAN2022        | 1     | hurricane | Hurricane Ian (2022)    | POLYGON(...wind swath)
+USA-HRCN-KATRINA2005    | 1     | hurricane | Hurricane Katrina       | POLYGON(...)
+USA-CA-FIRE-CREEK2020   | 2     | wildfire  | Creek Fire (2020)       | POLYGON(...perimeter)
+USA-AK-TSUN-1964ALASKA  | 1     | tsunami   | 1964 Alaska Tsunami     | POINT(...source)
+PACIFIC-TSUN-2011TOHOKU | 0     | tsunami   | 2011 Tohoku Tsunami     | POINT(...global event)
+USA-WSHED-MISSISSIPPI   | 1     | watershed | Mississippi River Basin | POLYGON(...)
+USA-TRIBAL-NAVAJO       | 1     | tribal    | Navajo Nation           | POLYGON(...)
+```
+
+**Disaster Sibling Rules:**
+- Disaster affecting multiple counties within a state -> level 2 sibling (e.g., `USA-CA-FIRE-CREEK2020`)
+- Disaster affecting multiple states -> level 1 sibling (e.g., `USA-HRCN-IAN2022`)
+- Disaster affecting multiple countries -> level 0 global entity (e.g., `PACIFIC-TSUN-2011TOHOKU`)
 
 **Other:**
 
@@ -378,6 +540,10 @@ The loc_id prefix tells you which file to load:
 
 ```python
 def get_geometry_file(loc_id):
+    # Water body codes (X-prefix) -> global entities
+    if loc_id.startswith("X") and len(loc_id) >= 3:
+        return "geometry/global_entities.parquet"
+
     if "-" in loc_id:
         # Has country prefix -> country file
         country = loc_id.split("-")[0]
@@ -397,6 +563,9 @@ get_geometry_file("DEU-BY")        # -> DEU.parquet
 get_geometry_file("USA-MISS")      # -> USA.parquet (river basin)
 get_geometry_file("AMAZON-BASIN")  # -> global_entities.parquet
 get_geometry_file("EU")            # -> global_entities.parquet
+get_geometry_file("XOA")           # -> global_entities.parquet (Atlantic Ocean)
+get_geometry_file("XSC-0")         # -> global_entities.parquet (Caribbean Sea)
+get_geometry_file("XLE")           # -> global_entities.parquet (Lake Erie)
 ```
 
 ---
@@ -515,7 +684,7 @@ Location: `county-map-data/geometry/`
 | `loc_id` | string | Canonical location ID |
 | `parent_id` | string | Parent location ID (derived, optional) |
 | `level` | int | 0=country, 1=state, 2=county, etc. |
-| `type` | string | Entity type: admin, river, hydro, sea, climate, political, economic |
+| `type` | string | Entity type: admin, hurricane, wildfire, watershed, tribal, river, etc. |
 | `name` | string | Display name |
 | `lon` | float | Centroid longitude |
 | `lat` | float | Centroid latitude |
@@ -531,6 +700,37 @@ Location: `county-map-data/geometry/`
 | USA (United States) | 35,783 | 3 |
 | DEU (Germany) | 16,380 | 4 |
 | BRA (Brazil) | 15,727 | 3 |
+
+### Flat File Structure and Scalability
+
+All geometry for a country lives in a single parquet file (e.g., `USA.parquet`). This includes:
+- Administrative boundaries (counties, states)
+- Disaster events (hurricanes, wildfires, earthquakes)
+- Natural features (watersheds, rivers)
+- Cultural boundaries (tribal nations)
+
+The `type` column distinguishes entity types. This flat structure:
+- Provides single geometry source per country
+- Uses consistent loc_id linking to data
+- Enables efficient queries with column filtering
+
+**Scalability tested:**
+
+| Rows | File Size | Load Time | Memory |
+|------|-----------|-----------|--------|
+| 35k (USA current) | 35 MB | 300ms | 88 MB |
+| 85k (Indonesia) | 122 MB | 610ms | 314 MB |
+| 200k (projected) | 288 MB | 1,500ms | 754 MB |
+
+Files up to 200k+ rows are acceptable. The geometry is loaded once per session and cached client-side.
+
+**Example: USA with disasters**
+```
+Current:  35,783 admin rows
++ Add:    ~30,000 disaster events (hurricanes, wildfires, etc.)
++ Add:    ~5,000 watersheds, tribal lands
+= Total:  ~70,000 rows (similar to Indonesia)
+```
 
 ---
 
@@ -793,6 +993,47 @@ You can run post-processing multiple times safely:
 ```bash
 # Safe to run after any change
 python mapmover/post_process_geometry.py
+```
+
+### Adding Disaster Events
+
+Disasters are cross-boundary entities with their own geometry and loc_id. They link to affected admin units via an impact table.
+
+```
+1. Geometry Import
+   - Add disaster to appropriate parquet file based on scope
+   - Single-state disaster -> country parquet (e.g., USA.parquet)
+   - Multi-country disaster -> global_entities.parquet
+   - Assign loc_id: USA-HRCN-IAN2022, USA-CA-FIRE-CREEK2020
+   - Set type = hurricane, wildfire, earthquake, tsunami, eruption, tornado, flood
+   - Set level based on sibling rule (see Disaster Sibling Rules above)
+
+2. Impact Linkage (disaster_impacts.parquet)
+   - Create rows linking disaster loc_id to affected admin loc_ids
+   - Include impact metrics (damage, casualties, burned acres, etc.)
+
+   Example:
+   disaster_loc_id         | affected_loc_id  | impact_type  | value
+   USA-HRCN-IAN2022        | USA-FL-12021     | landfall     | category_4
+   USA-HRCN-IAN2022        | USA-FL-12015     | wind_damage  | 120_kt
+   USA-CA-FIRE-CREEK2020   | USA-CA-06019     | burned_acres | 379895
+   USA-CA-FIRE-CREEK2020   | USA-CA-06039     | burned_acres | 1200
+
+3. Queries Enabled
+   - "Show Hurricane Ian" -> load geometry, list affected counties
+   - "What disasters affected Lee County FL?" -> scan impact table
+   - "Total hurricane damage in Florida 2022" -> aggregate impacts
+
+4. Visualization Options by Type
+   | Type | Geometry | Display |
+   |------|----------|---------|
+   | hurricane | Track polyline + wind swath polygon | Path with buffered corridor |
+   | wildfire | Burn perimeter polygon | Fill with severity coloring |
+   | earthquake | Epicenter point | Concentric shake intensity rings |
+   | tsunami | Source point + runup points | Source marker + coastal impacts |
+   | eruption | Volcano point | Location + VEI-scaled radius |
+   | tornado | Track line (begin to end) | Path with width by EF scale |
+   | flood | Affected area polygon | Fill showing inundation |
 ```
 
 ---

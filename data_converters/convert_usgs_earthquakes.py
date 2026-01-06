@@ -21,9 +21,10 @@ import numpy as np
 import json
 
 # Configuration
-RAW_DATA_DIR = Path("C:/Users/bryan/Desktop/county_map_data/Raw data/usgs_earthquakes")
-SHAPEFILE_PATH = Path("C:/Users/bryan/Desktop/county_map_data/shapefiles/counties/tl_2024_us_county.shp")
-OUTPUT_DIR = Path("C:/Users/bryan/Desktop/county_map_data/data/usgs_earthquakes")
+RAW_DATA_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/Raw data/usgs_earthquakes")
+GEOMETRY_PATH = Path("C:/Users/Bryan/Desktop/county-map-data/geometry/USA.parquet")
+OUTPUT_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/countries/USA/usgs_earthquakes")
+from shapely.geometry import shape
 
 # State FIPS to abbreviation mapping
 STATE_FIPS = {
@@ -73,17 +74,76 @@ def fips_to_loc_id(fips_code):
     return f"USA-{state_abbr}-{int(fips_str)}"
 
 
-def load_shapefile():
-    """Load Census county shapefile."""
-    print("Loading county shapefile...")
-    counties = gpd.read_file(SHAPEFILE_PATH)
-    print(f"  Loaded {len(counties)} counties")
-    return counties
+def get_water_body_loc_id(lat, lon):
+    """
+    Assign water body loc_id for points in international waters.
+    Uses ISO 3166-1 X-prefix codes for water bodies.
+    """
+    # Pacific Ocean
+    if lon < -100 or lon > 150:
+        if lat > 0:
+            return "XOP"  # North Pacific
+        else:
+            return "XOP"  # South Pacific (same code)
+
+    # Atlantic Ocean
+    if -100 < lon < -10:
+        if lat > 0:
+            return "XOA"  # North Atlantic
+        else:
+            return "XOA"  # South Atlantic
+
+    # Gulf of Mexico
+    if -98 < lon < -80 and 18 < lat < 31:
+        return "XSG"  # Gulf of Mexico
+
+    # Caribbean Sea
+    if -90 < lon < -60 and 8 < lat < 22:
+        return "XSC"  # Caribbean Sea
+
+    # Bering Sea
+    if lon < -160 and lat > 50:
+        return "XSB"  # Bering Sea
+
+    # Default to generic ocean
+    return "XOO"  # Unknown ocean
+
+
+def load_counties():
+    """Load county geometry from parquet."""
+    print("Loading county geometry...")
+
+    # Read parquet with geometry column
+    df = pd.read_parquet(GEOMETRY_PATH)
+
+    # Filter to county level only (admin_level 2)
+    df = df[df['admin_level'] == 2].copy()
+
+    # Convert GeoJSON to shapely geometry (handles both dict and JSON string)
+    def parse_geometry(g):
+        if g is None:
+            return None
+        if isinstance(g, str):
+            return shape(json.loads(g))
+        return shape(g)
+
+    df['geometry'] = df['geometry'].apply(parse_geometry)
+
+    # Drop rows with no geometry
+    df = df[df['geometry'].notna()].copy()
+
+    gdf = gpd.GeoDataFrame(df, geometry='geometry', crs="EPSG:4326")
+
+    print(f"  Loaded {len(gdf)} counties")
+    return gdf
 
 
 def process_earthquake_csvs(counties_gdf):
-    """Load and geocode all earthquake CSV files."""
+    """Load and geocode all earthquake CSV files using 3-pass matching."""
     print("\nProcessing earthquake CSV files...")
+
+    # Territorial waters threshold: 12 nautical miles = ~0.2 degrees
+    TERRITORIAL_WATERS_DEG = 0.2
 
     csv_files = sorted(RAW_DATA_DIR.glob("earthquakes_*.csv"))
     print(f"  Found {len(csv_files)} CSV files")
@@ -112,14 +172,37 @@ def process_earthquake_csvs(counties_gdf):
             geometry = [Point(xy) for xy in zip(df['longitude'], df['latitude'])]
             gdf = gpd.GeoDataFrame(df, geometry=geometry, crs="EPSG:4326")
 
-            # Spatial join with counties
-            gdf_with_counties = gpd.sjoin(gdf, counties_gdf[['GEOID', 'geometry']],
+            # === PASS 1: Strict "within" spatial join ===
+            gdf_with_counties = gpd.sjoin(gdf, counties_gdf[['loc_id', 'geometry']],
                                           how='left', predicate='within')
 
-            # Convert GEOID to loc_id
-            gdf_with_counties['loc_id'] = gdf_with_counties['GEOID'].apply(
-                lambda x: fips_to_loc_id(x) if pd.notna(x) else None
-            )
+            # === PASS 2: Nearest neighbor for unmatched points within territorial waters ===
+            unmatched_mask = gdf_with_counties['loc_id'].isna()
+            if unmatched_mask.any():
+                unmatched_gdf = gdf_with_counties[unmatched_mask].copy()
+                unmatched_gdf = unmatched_gdf.drop(columns=['loc_id', 'index_right'], errors='ignore')
+
+                # Find nearest county
+                nearest = gpd.sjoin_nearest(
+                    unmatched_gdf,
+                    counties_gdf[['loc_id', 'geometry']],
+                    how='left',
+                    distance_col='dist_to_county'
+                )
+
+                # Assign loc_id for points within territorial waters
+                within_territorial = nearest['dist_to_county'] <= TERRITORIAL_WATERS_DEG
+                for idx in nearest[within_territorial].index:
+                    gdf_with_counties.loc[idx, 'loc_id'] = nearest.loc[idx, 'loc_id']
+
+            # === PASS 3: Assign water body codes for points beyond territorial waters ===
+            still_unmatched_mask = gdf_with_counties['loc_id'].isna()
+            if still_unmatched_mask.any():
+                gdf_with_counties.loc[still_unmatched_mask, 'loc_id'] = \
+                    gdf_with_counties.loc[still_unmatched_mask].apply(
+                        lambda row: get_water_body_loc_id(row['latitude'], row['longitude']),
+                        axis=1
+                    )
 
             # Select columns for events file
             events = gdf_with_counties[[
@@ -133,6 +216,8 @@ def process_earthquake_csvs(counties_gdf):
 
         except Exception as e:
             print(f"ERROR: {e}")
+            import traceback
+            traceback.print_exc()
             continue
 
     # Combine all years
@@ -140,11 +225,16 @@ def process_earthquake_csvs(counties_gdf):
     combined = pd.concat(all_events, ignore_index=True)
     print(f"  Total events: {len(combined):,}")
 
-    # Count events with/without county match
-    matched = combined['loc_id'].notna().sum()
+    # Count events by matching type
+    county_match = combined['loc_id'].str.startswith('USA-', na=False).sum()
+    water_body = combined['loc_id'].str.startswith('X', na=False).sum()
     unmatched = combined['loc_id'].isna().sum()
-    print(f"  Matched to counties: {matched:,} ({matched/len(combined)*100:.1f}%)")
-    print(f"  No county match: {unmatched:,} ({unmatched/len(combined)*100:.1f}%)")
+    total = len(combined)
+
+    print(f"  Matched to counties: {county_match:,} ({county_match/total*100:.1f}%)")
+    print(f"  Water body codes: {water_body:,} ({water_body/total*100:.1f}%)")
+    if unmatched > 0:
+        print(f"  Still unmatched: {unmatched:,} ({unmatched/total*100:.1f}%)")
 
     return combined
 
@@ -367,7 +457,7 @@ def generate_metadata(events_df, county_df, year_range):
             "converter": "data_converters/convert_usgs_earthquakes.py",
             "last_run": pd.Timestamp.now().strftime("%Y-%m-%d"),
             "magnitude_threshold": "3.0",
-            "geocoding_method": "Spatial join with Census TIGER/Line 2024 county boundaries"
+            "geocoding_method": "3-pass: (1) within polygon, (2) nearest <12nm, (3) water body codes"
         }
     }
 
@@ -389,12 +479,12 @@ def print_statistics(events_df, county_df):
     print(f"Date range: {events_df['time'].min()} to {events_df['time'].max()}")
 
     print("\nMagnitude Distribution:")
-    print(f"  Min: {events_df['magnitude'].min():.2f}")
-    print(f"  Max: {events_df['magnitude'].max():.2f}")
-    print(f"  Mean: {events_df['magnitude'].mean():.2f}")
-    print(f"  Mag 5.0+: {(events_df['magnitude'] >= 5.0).sum():,}")
-    print(f"  Mag 6.0+: {(events_df['magnitude'] >= 6.0).sum():,}")
-    print(f"  Mag 7.0+: {(events_df['magnitude'] >= 7.0).sum():,}")
+    print(f"  Min: {events_df['mag'].min():.2f}")
+    print(f"  Max: {events_df['mag'].max():.2f}")
+    print(f"  Mean: {events_df['mag'].mean():.2f}")
+    print(f"  Mag 5.0+: {(events_df['mag'] >= 5.0).sum():,}")
+    print(f"  Mag 6.0+: {(events_df['mag'] >= 6.0).sum():,}")
+    print(f"  Mag 7.0+: {(events_df['mag'] >= 7.0).sum():,}")
 
     print("\nTop 10 Most Seismically Active Counties (by event count):")
     top_counties = county_df.groupby('loc_id')['earthquake_count'].sum().nlargest(10)
@@ -403,9 +493,9 @@ def print_statistics(events_df, county_df):
         print(f"  {loc_id}: {int(count):,} events (avg mag {avg_mag:.2f})")
 
     print("\nLargest Earthquakes (Top 10):")
-    top_quakes = events_df.nlargest(10, 'magnitude')[['time', 'magnitude', 'place', 'damage_radius_km']]
+    top_quakes = events_df.nlargest(10, 'mag')[['time', 'mag', 'place', 'damage_radius_km']]
     for _, row in top_quakes.iterrows():
-        print(f"  Mag {row['magnitude']:.2f} ({row['time'].year}) - {row['place']} (damage radius: {row['damage_radius_km']:.0f} km)")
+        print(f"  Mag {row['mag']:.2f} ({row['time'].year}) - {row['place']} (damage radius: {row['damage_radius_km']:.0f} km)")
 
 
 def main():
@@ -414,8 +504,8 @@ def main():
     print("USGS Earthquake Data - CSV to Parquet Converter")
     print("="*80)
 
-    # Load county shapefile
-    counties_gdf = load_shapefile()
+    # Load county geometry
+    counties_gdf = load_counties()
 
     # Process earthquake CSVs
     events_df = process_earthquake_csvs(counties_gdf)

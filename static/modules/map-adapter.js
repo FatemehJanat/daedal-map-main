@@ -1068,7 +1068,286 @@ export const MapAdapter = {
     this.clearParentOutline();
     this.clearCityOverlay();
     this.clearNavigationLayer();
+    this.clearHurricaneLayer();
+    this.clearHurricaneTrack();
     this.currentRegionGeojson = null;
     this.hoveredFeatureId = null;
+  },
+
+  // ============================================================================
+  // HURRICANE/STORM LAYERS
+  // ============================================================================
+
+  hurricaneClickHandler: null,
+
+  /**
+   * Load hurricane/storm point markers onto the map.
+   * @param {Object} geojson - GeoJSON FeatureCollection with Point features
+   * @param {Function} onStormClick - Callback when a storm marker is clicked (stormId, stormName)
+   */
+  loadHurricaneLayer(geojson, onStormClick = null) {
+    if (!geojson || !geojson.features || geojson.features.length === 0) {
+      return;
+    }
+
+    // Clear existing hurricane layer
+    this.clearHurricaneLayer();
+
+    // Add hurricane source
+    this.map.addSource(CONFIG.layers.hurricaneSource, {
+      type: 'geojson',
+      data: geojson
+    });
+
+    // Build color expression based on category
+    const categoryColorExpr = [
+      'match',
+      ['coalesce', ['get', 'category'], ['get', 'max_category']],
+      'TD', CONFIG.hurricaneColors.TD,
+      'TS', CONFIG.hurricaneColors.TS,
+      '1', CONFIG.hurricaneColors['1'],
+      '2', CONFIG.hurricaneColors['2'],
+      '3', CONFIG.hurricaneColors['3'],
+      '4', CONFIG.hurricaneColors['4'],
+      '5', CONFIG.hurricaneColors['5'],
+      1, CONFIG.hurricaneColors['1'],
+      2, CONFIG.hurricaneColors['2'],
+      3, CONFIG.hurricaneColors['3'],
+      4, CONFIG.hurricaneColors['4'],
+      5, CONFIG.hurricaneColors['5'],
+      CONFIG.hurricaneColors.default
+    ];
+
+    // Add outer glow
+    this.map.addLayer({
+      id: CONFIG.layers.hurricaneCircle + '-glow',
+      type: 'circle',
+      source: CONFIG.layers.hurricaneSource,
+      paint: {
+        'circle-radius': 14,
+        'circle-color': categoryColorExpr,
+        'circle-opacity': 0.3,
+        'circle-blur': 1
+      }
+    });
+
+    // Add main circle
+    this.map.addLayer({
+      id: CONFIG.layers.hurricaneCircle,
+      type: 'circle',
+      source: CONFIG.layers.hurricaneSource,
+      paint: {
+        'circle-radius': 8,
+        'circle-color': categoryColorExpr,
+        'circle-opacity': 0.9,
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': 2
+      }
+    });
+
+    // Add labels for storm names
+    this.map.addLayer({
+      id: CONFIG.layers.hurricaneLabel,
+      type: 'symbol',
+      source: CONFIG.layers.hurricaneSource,
+      minzoom: 4,
+      layout: {
+        'text-field': ['coalesce', ['get', 'name'], ['get', 'storm_name']],
+        'text-size': 11,
+        'text-offset': [0, 1.8],
+        'text-anchor': 'top',
+        'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold']
+      },
+      paint: {
+        'text-color': '#ffffff',
+        'text-halo-color': 'rgba(0, 0, 0, 0.8)',
+        'text-halo-width': 2
+      }
+    });
+
+    // Setup click handler
+    if (onStormClick) {
+      this.hurricaneClickHandler = (e) => {
+        if (e.features.length > 0) {
+          const props = e.features[0].properties;
+          const stormId = props.storm_id || props.id;
+          const stormName = props.name || props.storm_name || stormId;
+          onStormClick(stormId, stormName);
+        }
+      };
+      this.map.on('click', CONFIG.layers.hurricaneCircle, this.hurricaneClickHandler);
+    }
+
+    // Hover cursor
+    this.map.on('mouseenter', CONFIG.layers.hurricaneCircle, () => {
+      this.map.getCanvas().style.cursor = 'pointer';
+    });
+    this.map.on('mouseleave', CONFIG.layers.hurricaneCircle, () => {
+      this.map.getCanvas().style.cursor = '';
+    });
+
+    console.log(`Loaded ${geojson.features.length} hurricane markers`);
+  },
+
+  /**
+   * Clear hurricane point layer
+   */
+  clearHurricaneLayer() {
+    // Remove click handler
+    if (this.hurricaneClickHandler) {
+      this.map.off('click', CONFIG.layers.hurricaneCircle, this.hurricaneClickHandler);
+      this.hurricaneClickHandler = null;
+    }
+    // Remove layers
+    if (this.map.getLayer(CONFIG.layers.hurricaneLabel)) {
+      this.map.removeLayer(CONFIG.layers.hurricaneLabel);
+    }
+    if (this.map.getLayer(CONFIG.layers.hurricaneCircle)) {
+      this.map.removeLayer(CONFIG.layers.hurricaneCircle);
+    }
+    if (this.map.getLayer(CONFIG.layers.hurricaneCircle + '-glow')) {
+      this.map.removeLayer(CONFIG.layers.hurricaneCircle + '-glow');
+    }
+    if (this.map.getSource(CONFIG.layers.hurricaneSource)) {
+      this.map.removeSource(CONFIG.layers.hurricaneSource);
+    }
+  },
+
+  /**
+   * Load a hurricane track (line + animated current position).
+   * Used for drill-down into a specific storm.
+   * @param {Object} trackGeojson - GeoJSON with track points
+   * @param {Object} lineGeojson - GeoJSON LineString for the track path
+   * @param {Object} currentPosition - {longitude, latitude, category} for animated marker
+   */
+  loadHurricaneTrack(trackGeojson, lineGeojson = null, currentPosition = null) {
+    // Clear existing track
+    this.clearHurricaneTrack();
+
+    // Build line from points if not provided
+    if (!lineGeojson && trackGeojson && trackGeojson.features) {
+      const coords = trackGeojson.features.map(f => f.geometry.coordinates);
+      lineGeojson = {
+        type: 'FeatureCollection',
+        features: [{
+          type: 'Feature',
+          geometry: {
+            type: 'LineString',
+            coordinates: coords
+          },
+          properties: {}
+        }]
+      };
+    }
+
+    // Add track line source and layer
+    if (lineGeojson) {
+      this.map.addSource(CONFIG.layers.hurricaneTrackSource, {
+        type: 'geojson',
+        data: lineGeojson
+      });
+
+      this.map.addLayer({
+        id: CONFIG.layers.hurricaneTrackLine,
+        type: 'line',
+        source: CONFIG.layers.hurricaneTrackSource,
+        paint: {
+          'line-color': '#ffffff',
+          'line-width': 3,
+          'line-opacity': 0.7,
+          'line-dasharray': [2, 2]
+        }
+      });
+    }
+
+    // Add track points (small dots along path)
+    if (trackGeojson) {
+      this.map.addSource(CONFIG.layers.hurricaneSource + '-track', {
+        type: 'geojson',
+        data: trackGeojson
+      });
+
+      // Build color expression
+      const categoryColorExpr = [
+        'match',
+        ['get', 'category'],
+        'TD', CONFIG.hurricaneColors.TD,
+        'TS', CONFIG.hurricaneColors.TS,
+        '1', CONFIG.hurricaneColors['1'],
+        '2', CONFIG.hurricaneColors['2'],
+        '3', CONFIG.hurricaneColors['3'],
+        '4', CONFIG.hurricaneColors['4'],
+        '5', CONFIG.hurricaneColors['5'],
+        1, CONFIG.hurricaneColors['1'],
+        2, CONFIG.hurricaneColors['2'],
+        3, CONFIG.hurricaneColors['3'],
+        4, CONFIG.hurricaneColors['4'],
+        5, CONFIG.hurricaneColors['5'],
+        CONFIG.hurricaneColors.default
+      ];
+
+      this.map.addLayer({
+        id: CONFIG.layers.hurricaneCircle + '-track-dots',
+        type: 'circle',
+        source: CONFIG.layers.hurricaneSource + '-track',
+        paint: {
+          'circle-radius': 4,
+          'circle-color': categoryColorExpr,
+          'circle-opacity': 0.8
+        }
+      });
+    }
+
+    console.log('Hurricane track loaded');
+  },
+
+  /**
+   * Update the current position marker on a track (for animation).
+   * @param {number} longitude
+   * @param {number} latitude
+   * @param {string} category - Storm category for color
+   */
+  updateTrackPosition(longitude, latitude, category) {
+    const posSource = this.map.getSource(CONFIG.layers.hurricaneSource + '-current');
+    if (posSource) {
+      posSource.setData({
+        type: 'FeatureCollection',
+        features: [{
+          type: 'Feature',
+          geometry: {
+            type: 'Point',
+            coordinates: [longitude, latitude]
+          },
+          properties: { category }
+        }]
+      });
+    }
+  },
+
+  /**
+   * Clear hurricane track layers
+   */
+  clearHurricaneTrack() {
+    // Track line
+    if (this.map.getLayer(CONFIG.layers.hurricaneTrackLine)) {
+      this.map.removeLayer(CONFIG.layers.hurricaneTrackLine);
+    }
+    if (this.map.getSource(CONFIG.layers.hurricaneTrackSource)) {
+      this.map.removeSource(CONFIG.layers.hurricaneTrackSource);
+    }
+    // Track dots
+    if (this.map.getLayer(CONFIG.layers.hurricaneCircle + '-track-dots')) {
+      this.map.removeLayer(CONFIG.layers.hurricaneCircle + '-track-dots');
+    }
+    if (this.map.getSource(CONFIG.layers.hurricaneSource + '-track')) {
+      this.map.removeSource(CONFIG.layers.hurricaneSource + '-track');
+    }
+    // Current position marker
+    if (this.map.getLayer(CONFIG.layers.hurricaneCircle + '-current')) {
+      this.map.removeLayer(CONFIG.layers.hurricaneCircle + '-current');
+    }
+    if (this.map.getSource(CONFIG.layers.hurricaneSource + '-current')) {
+      this.map.removeSource(CONFIG.layers.hurricaneSource + '-current');
+    }
   }
 };

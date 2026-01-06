@@ -6,6 +6,66 @@ Last Updated: January 5, 2026
 
 ---
 
+## QUICK REFERENCE: Current Data Inventory
+
+### Processed Data (Ready for Map)
+Location: `county-map-data/countries/USA/`
+
+| Source | File | Size | Records | Time Range | Key Metrics |
+|--------|------|------|---------|------------|-------------|
+| FEMA NRI | USA.parquet | 5.7 MB | 12,747 | 2021-2025 | 18 hazard risk scores |
+| FEMA NRI Full | USA_full.parquet | 8.5 MB | 3,232 | Latest | 467 fields |
+| FEMA Disasters | USA.parquet | 0.24 MB | 46,901 | 1953-2025 | Declaration counts by type |
+| NOAA Storms | USA.parquet | 1 MB | 159,651 | 1950-2025 | 41 event type columns |
+| NOAA Storms Events | events.parquet | 28 MB | 1,231,663 | 1950-2025 | Individual storm records |
+| USGS Earthquakes | USA.parquet | 61 KB | 7,680 | 1970-2025 | County-year aggregates |
+| USGS Earthquakes Events | events.parquet | 5.7 MB | 173,971 | 1970-2025 | Individual quakes 3.0+ |
+| US Drought Monitor | USA.parquet | 0.67 MB | 90,188 | 2000-2026 | D0-D4 severity weeks |
+| Wildfire Risk | USA.parquet | 112 KB | 3,144 | 2022 snapshot | Burn probability, exposure |
+
+### Raw Data (Downloaded, Needs Processing)
+Location: `county-map-data/Raw data/`
+
+| Source | Location | Size | Content |
+|--------|----------|------|---------|
+| **FEMA** | `fema/nri_counties/` | 141 MB | 4 NRI versions JSON |
+| **FEMA** | `fema/disasters/` | 60 MB | Disaster declarations JSON |
+| **Canada Fire** | `canada/cnfdb/` | 789 MB | Fire points + polygons (shapefiles) |
+| **Canada Drought** | `canada/drought/` | 1.0 GB | 325 monthly GeoJSON (2019-2025) |
+| **Canada Earthquakes** | `canada/` | 12 MB | CSV + GDB earthquake catalog |
+| **Australia Cyclones** | `australia/` | 7.6 MB | 31,225 cyclone tracks (1909-present) |
+| **NOAA Climate** | `noaa/climate_at_a_glance/` | 65 MB | Temperature/precip 1895-2025 |
+| **HDX/EM-DAT** | `hdx/` | 390 KB | Global disaster profiles (27K+ events) |
+
+### Download Scripts Available
+Location: `county-map/data_converters/`
+
+| Script | Source | Status |
+|--------|--------|--------|
+| download_fema_all.py | FEMA NRI + Disasters | Working |
+| download_and_extract_noaa.py | NOAA Storm Events | Working |
+| download_usdm_drought.py | US Drought Monitor | Working |
+| download_canada_fires.py | Canadian CNFDB | Working |
+| download_canada_drought.py | Canadian Drought Monitor | Working |
+| download_canada_earthquakes.py | Earthquakes Canada | Working |
+| download_canada_disasters.py | Canadian CDD | Needs interactive |
+| download_australia_cyclones.py | Australia BOM | Working |
+| download_noaa_climate.py | Climate at a Glance | Working |
+| download_hdx_disasters.py | HDX/EM-DAT | Working |
+| download_desinventar.py | 82+ countries | Server issues |
+| download_fema_nfhl.py | Flood zones | FEMA servers down |
+
+### Blocked Sources (Infrastructure Issues)
+| Source | Issue | Workaround |
+|--------|-------|------------|
+| FEMA NFHL Flood Zones | hazards.fema.gov DOWN | State GIS portals (MassGIS has data) |
+| DesInventar (82 countries) | Server timeout | Retry later |
+| Canadian Disaster Database | Interactive search only | Manual export |
+
+### Total Raw Data Size: ~2.1 GB
+
+---
+
 ## Priority 1: FEMA Data Sources
 
 ### FEMA National Risk Index (NRI) - COMPLETE (Time-Series)
@@ -362,6 +422,188 @@ https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&starttime=2024-0
 
 ---
 
+## Canadian Data Sources
+
+### Canadian National Fire Database (CNFDB) - COMPLETE
+
+**Status**: Downloaded 2026-01-05. 788 MB of fire data.
+
+- **Main Portal**: https://cwfis.cfs.nrcan.gc.ca/ha/nfdb
+- **Datamart**: https://cwfis.cfs.nrcan.gc.ca/datamart
+- **Coverage**: All Canadian provinces and territories, historical fire records
+- **Format**: Shapefile (points and polygons), text files
+- **Cost**: Free (Open Government License - Canada)
+- **Downloader Script**: `data_converters/download_canada_fires.py`
+
+**Downloaded Files:**
+| File | Size | Description |
+|------|------|-------------|
+| NFDB_point.zip | 29 MB | All fire point locations |
+| NFDB_poly.zip | 742 MB | Fire perimeter polygons (>= 200 ha) |
+| NFDB_point_large_fires.zip | 2 MB | Large fires only |
+| NFDB_point_txt.zip | 13 MB | Text format data |
+| NFDB_point_stats.zip | 1 MB | Summary statistics |
+
+**Key Fields**: Fire location (lat/lon), date, cause, size (hectares), agency
+
+### Canadian Drought Monitor - COMPLETE
+
+**Status**: Downloaded 2026-01-05.
+
+- **Main Portal**: https://agriculture.canada.ca/en/agricultural-production/weather/canadian-drought-monitor
+- **Data URL**: https://agriculture.canada.ca/atlas/data_donnees/canadianDroughtMonitor/
+- **Coverage**: Canada-wide, 2019-present (monthly)
+- **Format**: GeoJSON polygons by severity level
+- **Cost**: Free (Open Government License - Canada)
+- **Downloader Script**: `data_converters/download_canada_drought.py`
+
+**Drought Severity Levels** (same as US Drought Monitor):
+- D0: Abnormally Dry
+- D1: Moderate Drought
+- D2: Severe Drought
+- D3: Extreme Drought
+- D4: Exceptional Drought
+
+**File Pattern**: `CDM_{YYMM}_D{0-4}_LR.geojson` per month/severity
+
+### Canadian Disaster Database (CDD) - PENDING
+
+**Status**: Requires interactive search, no bulk download API.
+
+- **Main Portal**: https://cdd.publicsafety.gc.ca/
+- **Open Data Portal**: https://open.canada.ca/data/en/dataset/1c3d15f9-9cfa-4010-8462-0d67e493d9b9
+- **Coverage**: 1000+ disasters since 1900
+- **Format**: CSV (via search), KML, GeoRSS
+- **Disaster Types**: Floods, storms, wildfires, earthquakes, industrial accidents
+
+**Note**: The geospatial view is temporarily out of service. Standard search still works but requires manual export.
+
+### Earthquakes Canada - COMPLETE
+
+**Status**: Downloaded 2026-01-05. 8 MB earthquake catalog.
+
+- **Database Search**: https://www.earthquakescanada.nrcan.gc.ca/stndon/NEDB-BNDS/bulletin-en.php
+- **Open Data Portal**: https://open.canada.ca/data/en/dataset/4cedd37e-0023-41fe-8eff-bea45385e469
+- **Direct CSV**: https://ftp.maps.canada.ca/pub/nrcan_rncan/Earthquakes_Tremblement-de-terre/canadian-earthquakes_tremblements-de-terre-canadien/eqarchive-en.csv
+- **Coverage**: Canadian earthquakes since 1985 (some records back to 1600s)
+- **Format**: CSV, GDB (geodatabase)
+- **Cost**: Free (Open Government License - Canada)
+- **Downloader Script**: `data_converters/download_canada_earthquakes.py`
+
+**Downloaded Files:**
+| File | Size | Description |
+|------|------|-------------|
+| eqarchive-en.csv | 8 MB | Full earthquake catalog |
+| earthquakes_en.gdb.zip | 3.7 MB | Geodatabase format |
+
+**Key Fields**: Date/Time, Latitude, Longitude, Depth, Magnitude, Location
+
+### Canadian Flood Extent Polygons - NOT YET EXPLORED
+
+- **Portal**: https://geo.ca/emergency/
+- **Coverage**: Historical flood extents from satellite imagery
+- **Source**: Natural Resources Canada
+
+---
+
+## Australian Data Sources
+
+### Australian Tropical Cyclone Database - COMPLETE
+
+**Status**: Downloaded 2026-01-05. 7.6 MB, 31,225 records (1909-present).
+
+- **Portal**: https://www.bom.gov.au/cyclone/tropical-cyclone-knowledge-centre/databases/
+- **Direct CSV**: http://www.bom.gov.au/clim_data/IDCKMSTM0S.csv
+- **Coverage**: Australian region (90E-160E, 0-40S), 1909-present
+- **Format**: CSV
+- **Cost**: Free (Creative Commons BY 4.0)
+- **Downloader Script**: `data_converters/download_australia_cyclones.py`
+
+**Downloaded Files:**
+| File | Size | Records | Description |
+|------|------|---------|-------------|
+| IDCKMSTM0S.csv | 7.6 MB | 31,225 | Best track database |
+
+**Key Fields**: Cyclone ID, Name, Date/Time, Lat/Lon, Central Pressure, Max Wind Speed, Category
+
+**Note**: OTCR reanalysis database (1981-2016) with improved intensity estimates not publicly available in CSV form.
+
+---
+
+## Global Disaster Databases
+
+### NOAA Climate at a Glance - COMPLETE
+
+**Status**: Downloaded 2026-01-05. 65 MB total.
+
+- **Portal**: https://www.ncei.noaa.gov/access/monitoring/climate-at-a-glance/
+- **Coverage**: US National + 43 states, 1895-2025
+- **Format**: CSV time series
+- **Cost**: Free (Public Domain)
+- **Downloader Script**: `data_converters/download_noaa_climate.py`
+
+**Downloaded Files:**
+- National level: 9/9 parameters (all successful)
+- State level: 193/255 files
+
+**Parameters Downloaded:**
+- tavg: Average Temperature
+- tmax: Maximum Temperature
+- tmin: Minimum Temperature
+- pcp: Precipitation
+- pdsi: Palmer Drought Severity Index
+- phdi: Palmer Hydrological Drought Index
+- zndx: Palmer Z-Index
+- cdd: Cooling Degree Days
+- hdd: Heating Degree Days
+
+### HDX/EM-DAT Global Disaster Profiles - COMPLETE
+
+**Status**: Downloaded 2026-01-05. 390 KB.
+
+- **Portal**: https://data.humdata.org/
+- **Dataset**: https://data.humdata.org/dataset/emdat-country-profiles
+- **Coverage**: Global (all countries), 1900-present
+- **Format**: XLSX
+- **Cost**: Free
+- **Downloader Script**: `data_converters/download_hdx_disasters.py`
+
+**Downloaded Files:**
+| File | Size | Description |
+|------|------|-------------|
+| EMDAT-country-profiles_2026_01_06.xlsx | 390 KB | Aggregated disaster stats by country/year/type |
+
+**Content**: 27,000+ disasters since 1900, aggregated by year, country, disaster subtype. Includes deaths, affected population, economic losses.
+
+### DesInventar Global Disaster Database - IN PROGRESS
+
+**Status**: Downloading 2026-01-05. 82+ countries available.
+
+- **Portal**: https://www.desinventar.net/
+- **Download**: https://www.desinventar.net/DesInventar/download.jsp
+- **Coverage**: 82+ countries (Latin America, Africa, Asia, Europe, Pacific)
+- **Format**: XML per country
+- **Cost**: Free (Apache 2.0-like license)
+- **Downloader Script**: `data_converters/download_desinventar.py`
+
+**Countries Available Include:**
+- **Latin America**: Argentina, Bolivia, Chile, Colombia, Ecuador, Guatemala, Mexico, Peru, Venezuela
+- **Africa**: Algeria, Angola, Ethiopia, Ghana, Kenya, Madagascar, Morocco, Nigeria, Tanzania
+- **Asia**: Afghanistan, India, Indonesia, Iran, Nepal, Pakistan, Philippines, Sri Lanka, Vietnam
+- **Europe**: Albania, Serbia, Spain, Turkey
+
+**Key Fields**: Event ID, Date, Location (admin levels), Event Type, Deaths, Injured, Affected, Houses Destroyed, Economic Losses
+
+### ReliefWeb API - AVAILABLE
+
+- **API Docs**: https://reliefweb.int/help/api
+- **Disasters Endpoint**: https://api.reliefweb.int/v1/disasters
+- **Coverage**: Global disasters since 1981
+- **Format**: JSON API
+- **Note**: API requires appname parameter, returns disaster metadata with GLIDE numbers
+
+---
+
 ## Other Data Sources
 
 ### HazardAware (Regional)
@@ -473,8 +715,13 @@ Output format matching existing pattern:
 - [x] Download FEMA disaster declarations (68K records, 1953-2025)
 - [x] Create disaster declarations converter with county-year aggregates
 - [ ] Wait for FEMA infrastructure recovery for NFHL flood zones
-- [ ] Add NOAA Climate at a Glance data
+- [x] Add NOAA Climate at a Glance data (65 MB, 9 national + 193 state files)
 - [ ] Consider NRI Census Tracts download (85K+ records, finer granularity)
+- [x] Download Canadian fire, earthquake, drought data (1.8 GB total)
+- [x] Download Australia tropical cyclones (31K records, 1909-present)
+- [x] Download HDX/EM-DAT global profiles (27K+ disasters)
+- [ ] Process DesInventar data (82+ countries downloading)
+- [ ] Create converters for new international data
 
 ---
 
@@ -515,11 +762,33 @@ Casualties & damage data included
 | Earthquakes | USA.parquet + events.parquet | 7,680 + 173,971 | 1970-2025 |
 
 **Raw Data Preserved:**
-All raw downloaded files are preserved in `county-map-data/Raw data/fema/`:
+All raw downloaded files are preserved in `county-map-data/Raw data/`:
+
+FEMA (`Raw data/fema/`):
 - `nri_counties/nri_v1_17_raw.json` (27.5 MB)
 - `nri_counties/nri_v1_18_1_raw.json` (30.5 MB)
 - `nri_counties/nri_v1_19_0_raw.json` (41.3 MB)
 - `nri_counties/nri_v1_20_0_raw.json` (41.6 MB)
 - `disasters/disaster_declarations_raw.json` (60.1 MB)
 - `nri_hazard_info.json` (8.7 KB)
+
+Canada (`Raw data/canada/` - 1.8 GB total):
+- `cnfdb/NFDB_point.zip` (29 MB) - Fire point locations
+- `cnfdb/NFDB_poly.zip` (742 MB) - Fire perimeter polygons
+- `drought/` (1 GB) - 325 monthly GeoJSON files (2019-2025)
+- `eqarchive-en.csv` (8 MB) - Earthquake catalog
+- `earthquakes_en.gdb.zip` (3.7 MB) - Earthquake geodatabase
+
+Australia (`Raw data/australia/` - 7.6 MB):
+- `IDCKMSTM0S.csv` (7.6 MB) - 31,225 cyclone track records (1909-present)
+
+NOAA (`Raw data/noaa/` - 65 MB):
+- `climate_at_a_glance/national/` - 9 parameter files (1895-2025)
+- `climate_at_a_glance/state/` - 193 state parameter files
+
+HDX (`Raw data/hdx/` - 390 KB):
+- `EMDAT-country-profiles_2026_01_06.xlsx` - Global disaster statistics
+
+DesInventar (`Raw data/desinventar/` - downloading):
+- Up to 82 country XML files with detailed disaster records
 

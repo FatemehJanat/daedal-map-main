@@ -253,6 +253,187 @@ async def get_selection_geometry_endpoint(req: Request):
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
 
+# === Hurricane Data Endpoints ===
+
+@app.get("/api/hurricane/track/{storm_id}")
+async def get_hurricane_track(storm_id: str):
+    """
+    Get 6-hourly track positions for a specific hurricane.
+    Returns timestamp, lat/lon, wind speed, pressure, category for each position.
+    """
+    import pandas as pd
+
+    try:
+        # Path to hurricane positions parquet
+        positions_path = Path("C:/Users/Bryan/Desktop/county-map-data/countries/USA/hurricanes/positions.parquet")
+
+        if not positions_path.exists():
+            return JSONResponse(content={"error": "Hurricane data not available"}, status_code=404)
+
+        # Load and filter positions for this storm
+        df = pd.read_parquet(positions_path)
+        storm_df = df[df['storm_id'] == storm_id].copy()
+
+        if len(storm_df) == 0:
+            return JSONResponse(content={"error": f"Storm {storm_id} not found"}, status_code=404)
+
+        # Sort by timestamp
+        storm_df = storm_df.sort_values('timestamp')
+
+        # Convert to list of dicts
+        positions = []
+        for _, row in storm_df.iterrows():
+            positions.append({
+                "timestamp": row['timestamp'].isoformat() if hasattr(row['timestamp'], 'isoformat') else str(row['timestamp']),
+                "latitude": float(row['latitude']),
+                "longitude": float(row['longitude']),
+                "wind_kt": int(row['wind_kt']) if pd.notna(row['wind_kt']) else None,
+                "pressure_mb": int(row['pressure_mb']) if pd.notna(row['pressure_mb']) else None,
+                "category": row['category'] if pd.notna(row['category']) else None,
+                "status": row['status'] if pd.notna(row['status']) else None,
+                "loc_id": row['loc_id'] if pd.notna(row['loc_id']) else None
+            })
+
+        return JSONResponse(content={
+            "storm_id": storm_id,
+            "position_count": len(positions),
+            "positions": positions
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching hurricane track {storm_id}: {e}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+@app.get("/api/hurricane/storms")
+async def get_hurricane_storms(year: int = None, name: str = None, us_landfall: bool = None):
+    """
+    Get list of hurricanes/storms with optional filters.
+    """
+    import pandas as pd
+
+    try:
+        storms_path = Path("C:/Users/Bryan/Desktop/county-map-data/countries/USA/hurricanes/storms.parquet")
+
+        if not storms_path.exists():
+            return JSONResponse(content={"error": "Hurricane data not available"}, status_code=404)
+
+        df = pd.read_parquet(storms_path)
+
+        # Apply filters
+        if year is not None:
+            df = df[df['year'] == year]
+        if name is not None:
+            df = df[df['name'].str.upper() == name.upper()]
+        if us_landfall is not None:
+            df = df[df['us_landfall'] == us_landfall]
+
+        # Sort by year desc, max_wind desc
+        df = df.sort_values(['year', 'max_wind_kt'], ascending=[False, False])
+
+        # Convert to list
+        storms = []
+        for _, row in df.iterrows():
+            storms.append({
+                "storm_id": row['storm_id'],
+                "name": row['name'],
+                "year": int(row['year']),
+                "basin": row['basin'],
+                "max_wind_kt": int(row['max_wind_kt']) if pd.notna(row['max_wind_kt']) else None,
+                "max_category": row['max_category'] if pd.notna(row['max_category']) else None,
+                "us_landfall": bool(row['us_landfall']) if pd.notna(row['us_landfall']) else False,
+                "start_date": str(row['start_date']) if pd.notna(row['start_date']) else None,
+                "end_date": str(row['end_date']) if pd.notna(row['end_date']) else None
+            })
+
+        return JSONResponse(content={
+            "count": len(storms),
+            "storms": storms
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching hurricane storms: {e}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+@app.get("/api/hurricane/storms/geojson")
+async def get_hurricane_storms_geojson(year: int = None, us_landfall: bool = None):
+    """
+    Get storms as GeoJSON points (for map marker display).
+    Each storm is placed at its max intensity position.
+    """
+    import pandas as pd
+
+    try:
+        storms_path = Path("C:/Users/Bryan/Desktop/county-map-data/countries/USA/hurricanes/storms.parquet")
+        positions_path = Path("C:/Users/Bryan/Desktop/county-map-data/countries/USA/hurricanes/positions.parquet")
+
+        if not storms_path.exists() or not positions_path.exists():
+            return JSONResponse(content={"error": "Hurricane data not available"}, status_code=404)
+
+        # Load storms
+        storms_df = pd.read_parquet(storms_path)
+
+        # Apply filters
+        if year is not None:
+            storms_df = storms_df[storms_df['year'] == year]
+        if us_landfall is not None:
+            storms_df = storms_df[storms_df['us_landfall'] == us_landfall]
+
+        if len(storms_df) == 0:
+            return JSONResponse(content={
+                "type": "FeatureCollection",
+                "features": []
+            })
+
+        # Load positions for these storms
+        positions_df = pd.read_parquet(positions_path)
+        storm_ids = storms_df['storm_id'].tolist()
+        positions_df = positions_df[positions_df['storm_id'].isin(storm_ids)]
+
+        # Find max intensity position for each storm
+        max_positions = positions_df.loc[
+            positions_df.groupby('storm_id')['wind_kt'].idxmax()
+        ][['storm_id', 'latitude', 'longitude', 'timestamp', 'category']].copy()
+
+        # Merge with storm metadata
+        merged = storms_df.merge(max_positions, on='storm_id', how='left')
+
+        # Build GeoJSON features
+        features = []
+        for _, row in merged.iterrows():
+            if pd.isna(row['latitude']) or pd.isna(row['longitude']):
+                continue
+
+            features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [float(row['longitude']), float(row['latitude'])]
+                },
+                "properties": {
+                    "storm_id": row['storm_id'],
+                    "name": row['name'] if pd.notna(row['name']) else row['storm_id'],
+                    "year": int(row['year']),
+                    "max_wind_kt": int(row['max_wind_kt']) if pd.notna(row['max_wind_kt']) else None,
+                    "max_category": row['max_category'] if pd.notna(row['max_category']) else None,
+                    "category": row['category'] if pd.notna(row['category']) else None,
+                    "us_landfall": bool(row['us_landfall']) if pd.notna(row['us_landfall']) else False,
+                    "start_date": str(row['start_date']) if pd.notna(row['start_date']) else None,
+                    "end_date": str(row['end_date']) if pd.notna(row['end_date']) else None
+                }
+            })
+
+        return JSONResponse(content={
+            "type": "FeatureCollection",
+            "features": features
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching hurricane storms GeoJSON: {e}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
 # === Reference Data Endpoints ===
 
 @app.get("/reference/admin-levels")

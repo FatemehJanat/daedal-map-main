@@ -14,6 +14,7 @@ import { TimeSlider, setDependencies as setTimeDeps } from './time-slider.js';
 import { ChoroplethManager, setDependencies as setChoroDeps } from './choropleth.js';
 import { ResizeManager, SidebarResizer, SettingsManager } from './sidebar.js';
 import { SelectionManager, setDependencies as setSelectionDeps } from './selection-manager.js';
+import { HurricaneHandler, setDependencies as setHurricaneDeps } from './hurricane-handler.js';
 
 // ============================================================================
 // APP - Main application controller
@@ -38,6 +39,7 @@ export const App = {
     setTimeDeps({ MapAdapter, ChoroplethManager });
     setChoroDeps({ MapAdapter });
     setSelectionDeps({ MapAdapter, ChatManager });
+    setHurricaneDeps({ TimeSlider, MapAdapter });
 
     // Initialize components
     ChatManager.init();
@@ -291,8 +293,34 @@ export const App = {
     // This prevents viewport API from overwriting our ordered data
     ViewportLoader.orderMode = true;
 
-    // Check if this is multi-year data
-    if (data.multi_year && data.year_data && data.year_range) {
+    // Clear any existing hurricane layers first
+    MapAdapter.clearHurricaneLayer();
+    MapAdapter.clearHurricaneTrack();
+
+    // Check if this is hurricane/storm point data
+    const isHurricaneData = data.source_id === 'ibtracs' ||
+      data.dataset_name?.toLowerCase().includes('hurricane') ||
+      data.dataset_name?.toLowerCase().includes('storm') ||
+      data.metric_key === 'storm_count' ||
+      (data.geojson?.features?.[0]?.properties?.storm_id);
+
+    if (isHurricaneData && data.geojson?.features?.[0]?.geometry?.type === 'Point') {
+      // Hurricane point data - use special hurricane layer with click drill-down
+      console.log('Hurricane data detected, using hurricane layer');
+
+      TimeSlider.reset();
+      ChoroplethManager.reset();
+
+      // Load hurricane markers with drill-down click handler
+      MapAdapter.loadHurricaneLayer(data.geojson, (stormId, stormName) => {
+        console.log(`Storm clicked: ${stormId} - ${stormName}`);
+        HurricaneHandler.drillDown(stormId, stormName);
+      });
+
+      // Fit map to storm locations
+      MapAdapter.fitToBounds(data.geojson);
+
+    } else if (data.multi_year && data.year_data && data.year_range) {
       // Multi-year mode: initialize time slider
       console.log('Multi-year data detected, initializing time slider');
       console.log(`Year range: ${data.year_range.min} - ${data.year_range.max}`);
