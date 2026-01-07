@@ -65,6 +65,9 @@ export const TimeSlider = {
   tabContainer: null,     // Tab bar DOM element
   MAX_SCALES: 3,          // Maximum allowed scales
 
+  // Admin level filtering (for hierarchical data display)
+  currentAdminLevel: null,  // null = show all, 0/1/2/3 = filter to specific level
+
   /**
    * Calculate step size in milliseconds for a given granularity
    */
@@ -383,15 +386,60 @@ export const TimeSlider = {
   },
 
   /**
+   * Get admin level from loc_id based on dash count.
+   * @param {string} locId - Location ID (e.g., 'AUS', 'AUS-NSW', 'AUS-NSW-10050')
+   * @returns {number} - Admin level (0=country, 1=state, 2=county, 3+=deeper)
+   */
+  getAdminLevelFromLocId(locId) {
+    if (!locId) return 0;
+    const dashCount = (locId.match(/-/g) || []).length;
+    return dashCount;
+  },
+
+  /**
+   * Set admin level filter and re-render the current time.
+   * Called by ViewportLoader when viewport changes in order mode.
+   * @param {number|null} level - Admin level to filter to, or null for all
+   */
+  setAdminLevelFilter(level) {
+    if (this.currentAdminLevel === level) return;  // No change
+
+    this.currentAdminLevel = level;
+    console.log(`TimeSlider: Filtering to admin level ${level}`);
+
+    // Re-render current time with new filter
+    if (this.currentTime != null && this.baseGeojson) {
+      const geojson = this.buildTimeGeojson(this.currentTime);
+      MapAdapter?.updateSourceData(geojson);
+
+      // Update feature count display
+      const countEl = document.getElementById('totalAreas');
+      if (countEl) {
+        countEl.textContent = geojson.features.length;
+      }
+    }
+  },
+
+  /**
    * Build GeoJSON with time-specific values injected.
    * Uses pre-computed gap-filled data for O(1) lookup per location.
+   * Filters by currentAdminLevel if set.
    */
   buildTimeGeojson(time) {
     const timeValues = this.timeDataFilled[time] || {};
 
+    // Filter features by admin level if filter is active
+    let features = this.baseGeojson.features;
+    if (this.currentAdminLevel != null) {
+      features = features.filter(f => {
+        const level = this.getAdminLevelFromLocId(f.properties.loc_id);
+        return level === this.currentAdminLevel;
+      });
+    }
+
     return {
       type: 'FeatureCollection',
-      features: this.baseGeojson.features.map(f => {
+      features: features.map(f => {
         const locId = f.properties.loc_id;
         const locData = timeValues[locId] || {};
 
@@ -775,6 +823,7 @@ export const TimeSlider = {
     this.granularity = 'yearly';
     this.useTimestamps = false;
     this.stepMs = null;
+    this.currentAdminLevel = null;  // Reset admin level filter
 
     // Clear multi-scale state
     this.scales = [];

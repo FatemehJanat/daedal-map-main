@@ -316,9 +316,10 @@ def postprocess_order(order: dict, hints: dict = None) -> dict:
     Main postprocessor function.
 
     Takes an order from the LLM and:
-    1. Expands derived fields
-    2. Validates all items
-    3. Returns processed order with validation results
+    1. Injects time range from preprocessor hints
+    2. Expands derived fields
+    3. Validates all items
+    4. Returns processed order with validation results
 
     Args:
         order: The order dict from LLM (with "items" list)
@@ -332,6 +333,15 @@ def postprocess_order(order: dict, hints: dict = None) -> dict:
     """
     catalog = load_catalog()
     items = order.get("items", [])
+
+    # Step 0: Inject time range from preprocessor hints if LLM left year as null
+    time_hints = hints.get("time", {}) if hints else {}
+    if time_hints.get("is_time_series") and time_hints.get("year_start") and time_hints.get("year_end"):
+        for item in items:
+            # If year is null/None and no year_start/year_end, inject from hints
+            if item.get("year") is None and not item.get("year_start") and not item.get("year_end"):
+                item["year_start"] = time_hints["year_start"]
+                item["year_end"] = time_hints["year_end"]
 
     # Step 1: Expand derived fields
     expanded_items = expand_all_derived_fields(items)

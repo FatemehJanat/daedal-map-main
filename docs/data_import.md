@@ -150,6 +150,39 @@ All locations use standardized loc_id format based on admin levels:
 
 ---
 
+## Geometry File Standards
+
+When creating country-specific geometry files in `countries/{ISO}/geometry.parquet`, use the **same column names** as the GADM files in `geometry/{ISO}.parquet`:
+
+**Required columns (must match exactly):**
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `loc_id` | string | Location identifier (e.g., `AUS-NSW-10050`) |
+| `name` | string | Human-readable name |
+| `admin_level` | int | Admin level (0=country, 1=state, 2=county) |
+| `parent_id` | string | Parent location's loc_id |
+| `geometry` | string | GeoJSON string (e.g., `{"type": "Polygon", ...}`) |
+
+**IMPORTANT**:
+- Use `parent_id`, NOT `parent_loc_id`. This ensures consistent column naming across all geometry sources and prevents join failures.
+- Use **GeoJSON strings**, NOT WKB bytes. WKB bytes cause JSON serialization errors at runtime.
+
+**Optional columns (included in GADM files):**
+- `centroid_lon`, `centroid_lat` - Centroid coordinates
+- `bbox_min_lon`, `bbox_min_lat`, `bbox_max_lon`, `bbox_max_lat` - Bounding box
+- `children_count`, `descendants_count` - Hierarchy counts
+- `has_polygon` - Boolean for geometry presence
+
+**Geometry Priority:**
+The system loads geometry in this order:
+1. `countries/{ISO}/geometry.parquet` - Country-specific (preferred, matches data loc_ids)
+2. `geometry/{ISO}.parquet` - GADM fallback (global coverage)
+
+This allows country-specific sources (ABS, StatsCan) to use their official boundaries while falling back to GADM for countries without custom geometry.
+
+---
+
 ## Standard Converter Structure
 
 Every converter follows this pattern:
@@ -329,6 +362,162 @@ Long format enables:
 - Easy filtering by year range
 - Uniform data loading in frontend
 - Simpler aggregation queries
+
+---
+
+## Hierarchical Aggregation
+
+When source data is only available at a detailed level (e.g., admin_2 LGAs), **auto-aggregate up to parent levels** for better visualization at country/state scale.
+
+> **See also**: [data_pipeline.md - Hierarchical Aggregation Scripts](data_pipeline.md#hierarchical-aggregation-scripts) for NUTS hierarchy details and the `aggregate_eurostat_to_country.py` script.
+
+### Why Aggregate?
+
+Without aggregation:
+- User asks for "Australia population" -> gets 547 tiny LGAs
+- Choropleth dominated by one outlier (Brisbane ~1.4M), everything else dull blue
+- Hard to see state-level patterns
+
+With aggregation:
+- Same query -> shows 8 states with meaningful variation
+- User can drill down to LGAs if needed
+- Better UX at every zoom level
+
+### Aggregation Pattern
+
+When your source data has only one admin level, create parent levels:
+
+```python
+def aggregate_to_parent_levels(df, geometry_df):
+    """
+    Aggregate admin_2 data up to admin_1 and admin_0 levels.
+
+    Args:
+        df: DataFrame with loc_id, year, and metric columns
+        geometry_df: DataFrame with loc_id, parent_id, admin_level
+
+    Returns:
+        Combined DataFrame with all admin levels
+    """
+    all_levels = [df.copy()]  # Start with original data
+
+    # Build parent lookup from geometry
+    parent_lookup = geometry_df.set_index('loc_id')['parent_id'].to_dict()
+
+    # Identify numeric columns to aggregate (exclude loc_id, year)
+    metric_cols = [c for c in df.columns if c not in ['loc_id', 'year']]
+
+    # Aggregate to admin_1 (states)
+    df_with_parent = df.copy()
+    df_with_parent['parent_id'] = df_with_parent['loc_id'].map(parent_lookup)
+
+    admin1 = df_with_parent.groupby(['parent_id', 'year'])[metric_cols].sum().reset_index()
+    admin1 = admin1.rename(columns={'parent_id': 'loc_id'})
+    all_levels.append(admin1)
+
+    # Aggregate to admin_0 (country)
+    # Extract country code from loc_id (e.g., "AUS-NSW" -> "AUS")
+    admin1['country'] = admin1['loc_id'].str.split('-').str[0]
+    admin0 = admin1.groupby(['country', 'year'])[metric_cols].sum().reset_index()
+    admin0 = admin0.rename(columns={'country': 'loc_id'})
+    all_levels.append(admin0)
+
+    return pd.concat(all_levels, ignore_index=True)
+```
+
+### Geometry Aggregation
+
+Parent-level geometry is created by dissolving child polygons:
+
+```python
+def create_parent_geometry(geometry_gdf):
+    """
+    Dissolve admin_2 polygons into admin_1 and admin_0.
+
+    Args:
+        geometry_gdf: GeoDataFrame with geometry, loc_id, parent_id
+
+    Returns:
+        Combined GeoDataFrame with all admin levels
+    """
+    from shapely.ops import unary_union
+
+    all_levels = [geometry_gdf.copy()]
+
+    # Dissolve to admin_1 (group by parent_id)
+    admin1_groups = geometry_gdf.groupby('parent_id')
+    admin1_records = []
+    for parent_id, group in admin1_groups:
+        dissolved = unary_union(group.geometry.tolist())
+        admin1_records.append({
+            'loc_id': parent_id,
+            'name': get_state_name(parent_id),  # Lookup state name
+            'admin_level': 1,
+            'parent_id': parent_id.split('-')[0],  # Country code
+            'geometry': dissolved
+        })
+    admin1_gdf = gpd.GeoDataFrame(admin1_records, crs=geometry_gdf.crs)
+    all_levels.append(admin1_gdf)
+
+    # Dissolve to admin_0 (whole country)
+    country_code = geometry_gdf['loc_id'].str.split('-').str[0].iloc[0]
+    country_geom = unary_union(geometry_gdf.geometry.tolist())
+    admin0_gdf = gpd.GeoDataFrame([{
+        'loc_id': country_code,
+        'name': get_country_name(country_code),
+        'admin_level': 0,
+        'parent_id': None,
+        'geometry': country_geom
+    }], crs=geometry_gdf.crs)
+    all_levels.append(admin0_gdf)
+
+    return pd.concat(all_levels, ignore_index=True)
+```
+
+### Aggregation Rules by Metric Type
+
+> **See**: [data_pipeline.md - Aggregation Rules](data_pipeline.md#aggregate_eurostat_to_countrypy) for the complete 9-row table covering counts, rates, per-capita, density, averages, indices, categorical, min/max, and medians - plus common mistakes and when NOT to aggregate.
+
+### Complete Example
+
+```python
+# In converter main():
+def main():
+    # Load source data (admin_2 only)
+    gdf = load_geopackage()
+
+    # Process to long format
+    df = process_data(gdf)  # Creates admin_2 rows
+
+    # Extract geometry
+    geom_gdf = extract_geometry(gdf)  # admin_2 polygons
+
+    # === NEW: Aggregate to parent levels ===
+    df = aggregate_to_parent_levels(df, geom_gdf)
+    geom_gdf = create_parent_geometry(geom_gdf)
+
+    # Save outputs (now includes all admin levels)
+    save_parquet(df, OUTPUT_DIR / "AUS.parquet", "population data")
+    save_parquet(geom_gdf, COUNTRY_DIR / "geometry.parquet", "geometry")
+```
+
+### Output Verification
+
+After aggregation, verify all levels exist:
+
+```python
+# Check data levels
+print(df.groupby(df['loc_id'].str.count('-'))['loc_id'].nunique())
+# 0 dashes (AUS): 1 location
+# 1 dash (AUS-NSW): 8 states
+# 2 dashes (AUS-NSW-10050): 547 LGAs
+
+# Check geometry levels
+print(geom_df.groupby('admin_level').size())
+# admin_level 0: 1
+# admin_level 1: 8
+# admin_level 2: 547
+```
 
 ---
 

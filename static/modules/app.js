@@ -31,7 +31,7 @@ export const App = {
     console.log('Initializing Map Explorer...');
 
     // Wire up circular dependencies
-    setViewportDeps({ MapAdapter, NavigationManager, App });
+    setViewportDeps({ MapAdapter, NavigationManager, App, TimeSlider });
     setMapDeps({ ViewportLoader, NavigationManager, App, PopupBuilder });
     setNavDeps({ MapAdapter, ViewportLoader, App });
     setPopupDeps({ App });
@@ -337,8 +337,19 @@ export const App = {
         data.metric_key
       );
 
-      // Fit map to the data
+      // Fit map to the data, then apply initial admin level filter
       MapAdapter.fitToBounds(data.geojson);
+
+      // Set initial admin level filter based on viewport after fit completes
+      // Use setTimeout to let fitToBounds animation complete
+      setTimeout(() => {
+        const bounds = MapAdapter.map?.getBounds();
+        if (bounds) {
+          const level = ViewportLoader.getAdminLevelForViewport(bounds);
+          ViewportLoader.currentAdminLevel = level;
+          TimeSlider.setAdminLevelFilter(level);
+        }
+      }, 100);
 
     } else {
       // Single-year mode: hide time slider, display normally

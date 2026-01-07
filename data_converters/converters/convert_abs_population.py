@@ -49,6 +49,19 @@ AUS_STATE_TO_ABBR = {
     9: "OT"    # Other Territories
 }
 
+# State names for admin_1 geometry
+AUS_STATE_NAMES = {
+    "AUS-NSW": "New South Wales",
+    "AUS-VIC": "Victoria",
+    "AUS-QLD": "Queensland",
+    "AUS-SA": "South Australia",
+    "AUS-WA": "Western Australia",
+    "AUS-TAS": "Tasmania",
+    "AUS-NT": "Northern Territory",
+    "AUS-ACT": "Australian Capital Territory",
+    "AUS-OT": "Other Territories",
+}
+
 
 def load_geopackage():
     """Load GeoPackage with population data and geometry."""
@@ -103,12 +116,15 @@ def process_data(gdf):
     return df
 
 
-def extract_geometry(gdf, simplify_tolerance=0.001):
-    """Extract and convert geometry to parquet format for geometry folder.
+def extract_geometry_gdf(gdf, simplify_tolerance=0.001):
+    """Extract geometry as GeoDataFrame for aggregation.
 
     Args:
         gdf: GeoDataFrame with geometry
         simplify_tolerance: Tolerance for simplification (0.001 = ~100m for counties)
+
+    Returns:
+        GeoDataFrame with geometry objects (not GeoJSON strings)
     """
     print("\nExtracting geometry...")
 
@@ -117,7 +133,7 @@ def extract_geometry(gdf, simplify_tolerance=0.001):
     geom_df['loc_id'] = gdf.apply(create_loc_id, axis=1)
     geom_df['name'] = gdf['lga_name_2024']
     geom_df['admin_level'] = 2  # LGA = admin level 2
-    geom_df['parent_loc_id'] = gdf['state_code_2021'].map(
+    geom_df['parent_id'] = gdf['state_code_2021'].map(
         lambda x: f"AUS-{AUS_STATE_TO_ABBR.get(x, 'XX')}"
     )
 
@@ -133,20 +149,8 @@ def extract_geometry(gdf, simplify_tolerance=0.001):
     print(f"  Simplifying geometry (tolerance={simplify_tolerance})...")
     geom_gdf['geometry'] = geom_gdf['geometry'].simplify(simplify_tolerance, preserve_topology=True)
 
-    # Convert to WKB for parquet storage
-    geom_gdf['geometry_wkb'] = geom_gdf['geometry'].apply(lambda g: g.wkb if g else None)
-
-    # Create output dataframe (without shapely geometry)
-    output_df = pd.DataFrame({
-        'loc_id': geom_gdf['loc_id'],
-        'name': geom_gdf['name'],
-        'admin_level': geom_gdf['admin_level'],
-        'parent_loc_id': geom_gdf['parent_loc_id'],
-        'geometry': geom_gdf['geometry_wkb']
-    })
-
-    print(f"  Geometry: {len(output_df)} polygons")
-    return output_df
+    print(f"  Geometry: {len(geom_gdf)} polygons (admin_level 2)")
+    return geom_gdf
 
 
 def save_parquet(df, output_path, description):
@@ -163,6 +167,115 @@ def save_parquet(df, output_path, description):
     return size_mb
 
 
+def aggregate_to_parent_levels(df, geometry_df):
+    """
+    Aggregate admin_2 data up to admin_1 and admin_0 levels.
+
+    Args:
+        df: DataFrame with loc_id, year, and metric columns (admin_2)
+        geometry_df: DataFrame with loc_id, parent_id, admin_level
+
+    Returns:
+        Combined DataFrame with all admin levels
+    """
+    print("\nAggregating data to parent levels...")
+
+    all_levels = [df.copy()]  # Start with original admin_2 data
+
+    # Build parent lookup from geometry
+    parent_lookup = geometry_df.set_index('loc_id')['parent_id'].to_dict()
+
+    # Identify numeric columns to aggregate (exclude loc_id, year)
+    metric_cols = [c for c in df.columns if c not in ['loc_id', 'year']]
+
+    # Aggregate to admin_1 (states)
+    df_with_parent = df.copy()
+    df_with_parent['parent_id'] = df_with_parent['loc_id'].map(parent_lookup)
+
+    # Remove rows where parent_id is None (shouldn't happen, but safety check)
+    df_with_parent = df_with_parent.dropna(subset=['parent_id'])
+
+    admin1 = df_with_parent.groupby(['parent_id', 'year'])[metric_cols].sum().reset_index()
+    admin1 = admin1.rename(columns={'parent_id': 'loc_id'})
+    print(f"  Admin 1 (states): {admin1['loc_id'].nunique()} locations, {len(admin1)} rows")
+    all_levels.append(admin1)
+
+    # Aggregate to admin_0 (country)
+    admin1_copy = admin1.copy()
+    admin1_copy['country'] = admin1_copy['loc_id'].str.split('-').str[0]
+    admin0 = admin1_copy.groupby(['country', 'year'])[metric_cols].sum().reset_index()
+    admin0 = admin0.rename(columns={'country': 'loc_id'})
+    print(f"  Admin 0 (country): {admin0['loc_id'].nunique()} locations, {len(admin0)} rows")
+    all_levels.append(admin0)
+
+    result = pd.concat(all_levels, ignore_index=True)
+    print(f"  Total: {result['loc_id'].nunique()} unique locations, {len(result)} rows")
+    return result
+
+
+def create_parent_geometry(geometry_gdf):
+    """
+    Dissolve admin_2 polygons into admin_1 and admin_0.
+
+    Args:
+        geometry_gdf: GeoDataFrame with geometry, loc_id, parent_id, admin_level
+
+    Returns:
+        Combined GeoDataFrame with all admin levels
+    """
+    from shapely.ops import unary_union
+    from shapely.geometry import mapping
+
+    print("\nCreating parent-level geometry...")
+
+    # Keep only admin_2 for dissolving (geometry_gdf may already be admin_2 only)
+    admin2_gdf = geometry_gdf[geometry_gdf['admin_level'] == 2].copy()
+
+    all_levels = [admin2_gdf.copy()]
+
+    # Dissolve to admin_1 (group by parent_id)
+    admin1_groups = admin2_gdf.groupby('parent_id')
+    admin1_records = []
+    for parent_id, group in admin1_groups:
+        dissolved = unary_union(group.geometry.tolist())
+        admin1_records.append({
+            'loc_id': parent_id,
+            'name': AUS_STATE_NAMES.get(parent_id, parent_id),
+            'admin_level': 1,
+            'parent_id': 'AUS',
+            'geometry': dissolved
+        })
+    admin1_gdf = gpd.GeoDataFrame(admin1_records, crs=admin2_gdf.crs)
+    print(f"  Admin 1 (states): {len(admin1_gdf)} polygons")
+    all_levels.append(admin1_gdf)
+
+    # Dissolve to admin_0 (whole country)
+    country_geom = unary_union(admin2_gdf.geometry.tolist())
+    admin0_gdf = gpd.GeoDataFrame([{
+        'loc_id': 'AUS',
+        'name': 'Australia',
+        'admin_level': 0,
+        'parent_id': None,
+        'geometry': country_geom
+    }], crs=admin2_gdf.crs)
+    print(f"  Admin 0 (country): 1 polygon")
+    all_levels.append(admin0_gdf)
+
+    # Combine all levels
+    combined = pd.concat(all_levels, ignore_index=True)
+
+    # Convert geometry to GeoJSON strings for parquet storage
+    combined['geometry'] = combined['geometry'].apply(
+        lambda g: json.dumps(mapping(g)) if g else None
+    )
+
+    # Convert to regular DataFrame (drop shapely geometry column type)
+    result = pd.DataFrame(combined)
+    print(f"  Total: {len(result)} polygons across all levels")
+
+    return result
+
+
 def main():
     """Main conversion workflow."""
     print("=" * 60)
@@ -172,11 +285,16 @@ def main():
     # Load data
     gdf = load_geopackage()
 
-    # Process population data
+    # Process population data (admin_2 only initially)
     df = process_data(gdf)
 
-    # Extract geometry
-    geom_df = extract_geometry(gdf)
+    # Extract geometry as GeoDataFrame (for aggregation)
+    geom_gdf = extract_geometry_gdf(gdf)
+
+    # === Aggregate to parent levels ===
+    # This creates admin_1 (states) and admin_0 (country) from admin_2 (LGAs)
+    df = aggregate_to_parent_levels(df, geom_gdf)
+    geom_df = create_parent_geometry(geom_gdf)
 
     # Save outputs
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -195,21 +313,30 @@ def main():
     print("=" * 60)
     print(f"Total rows: {len(df):,} (long format)")
     print(f"Locations: {df['loc_id'].nunique()}")
-    print(f"Years: {df['year'].min()}-{df['year'].max()} ({df['year'].nunique()} years)")
+
+    # Show breakdown by admin level
+    df['_level'] = df['loc_id'].str.count('-')
+    level_counts = df.groupby('_level')['loc_id'].nunique()
+    print(f"\nLocations by admin level:")
+    print(f"  Admin 0 (country): {level_counts.get(0, 0)}")
+    print(f"  Admin 1 (states): {level_counts.get(1, 0)}")
+    print(f"  Admin 2 (LGAs): {level_counts.get(2, 0)}")
+    df = df.drop(columns=['_level'])
+
+    print(f"\nYears: {df['year'].min()}-{df['year'].max()} ({df['year'].nunique()} years)")
     print(f"Columns: {list(df.columns)}")
     print(f"\nOutputs:")
     print(f"  Data: {data_path}")
     print(f"  Geometry: {geom_path}")
 
-    # Sample output - show one location across years
-    print("\nSample data (Sydney - first 5 years):")
-    sample = df[df['loc_id'].str.contains('17200')].head(5)  # Sydney LGA
+    # Sample output - show aggregated state data
+    print("\nSample data (NSW state - first 5 years):")
+    sample = df[df['loc_id'] == 'AUS-NSW'].head(5)
     if len(sample) == 0:
         sample = df.head(5)
     print(sample.to_string(index=False))
 
     # Finalize source (generate metadata, update index)
-    # Note: Need to add abs_population to source_registry first
     print("\n" + "=" * 60)
     print("Finalizing source...")
     print("=" * 60)

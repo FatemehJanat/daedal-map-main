@@ -1070,6 +1070,146 @@ See [GEOMETRY.md - Special Geometries](GEOMETRY.md#special-geometries) for point
 
 ---
 
+## Hierarchical Aggregation Scripts
+
+Scripts for aggregating detailed data up to parent levels. These are post-processing scripts run after initial conversion.
+
+**Location**: `data_converters/scripts/`
+
+### NUTS Hierarchy (European Data)
+
+Eurostat uses NUTS (Nomenclature of Territorial Units for Statistics) codes. The hierarchy is based on **character length**, not dash separators:
+
+| Level | Code Length | Example | Description |
+|-------|-------------|---------|-------------|
+| Country | 2 chars | DE | But we use ISO3 (DEU) in loc_id |
+| NUTS-1 | 3 chars | DE2 | Major regions |
+| NUTS-2 | 4 chars | DE27 | Provinces |
+| NUTS-3 | 5 chars | DE27C | Districts |
+
+**loc_id format**: `{ISO3}-{NUTS_CODE}` (e.g., `DEU-DE27C`)
+
+**Hierarchy derivation** (truncate NUTS code):
+```
+DEU-DE27C (NUTS-3) -> DEU-DE27 (NUTS-2) -> DEU-DE2 (NUTS-1) -> DEU (Country)
+```
+
+### aggregate_eurostat_to_country.py
+
+Aggregates all Eurostat NUTS-3 data to parent levels (NUTS-2, NUTS-1, Country).
+
+**Usage**:
+```bash
+# Dry run - preview without changes
+python data_converters/scripts/aggregate_eurostat_to_country.py --dry-run
+
+# Process single country
+python data_converters/scripts/aggregate_eurostat_to_country.py --country DEU
+
+# Process all 37 European countries
+python data_converters/scripts/aggregate_eurostat_to_country.py
+```
+
+**What it does**:
+1. Reads each country's Eurostat parquet (e.g., `countries/DEU/eurostat/DEU.parquet`)
+2. Derives parent loc_ids by truncating NUTS codes
+3. Aggregates metrics at each level
+4. Recalculates per-capita columns from totals
+5. Combines all levels into single parquet (original + aggregated rows)
+
+**Aggregation Rules by Metric Type**:
+
+| Metric Type | Rule | Example | Notes |
+|-------------|------|---------|-------|
+| Counts/Totals | SUM | population, births, deaths, GDP, event_count | Most common - just add up |
+| Rates/Percentages | WEIGHTED MEAN | unemployment_rate, fertility_rate | Weight by denominator (usually population) |
+| Per-Capita | RECALCULATE | gdp_per_capita, income_per_capita | `sum(numerator) / sum(denominator)` - never average ratios |
+| Density | RECALCULATE | pop_density, housing_density | `sum(count) / sum(area)` |
+| Averages | WEIGHTED MEAN | avg_income, avg_age | Weight by population or sample size |
+| Index/Scores | WEIGHTED MEAN or SKIP | risk_score, composite_index | Often can't aggregate meaningfully |
+| Categorical | MODE or SKIP | dominant_land_use, political_party | Take most common, or don't aggregate |
+| Min/Max | MIN/MAX | min_temp, max_elevation | Preserve extremes |
+| Medians | CANNOT AGGREGATE | median_income, median_age | Need raw data - skip or approximate |
+
+**Common Mistakes**:
+- Averaging percentages: Wrong `avg(unemployment_rates)`, Right `sum(unemployed) / sum(labor_force)`
+- Averaging per-capita: Wrong `avg(gdp_per_capita)`, Right `sum(gdp) / sum(population)`
+- Summing rates: Wrong `sum(mortality_rate)`, Right `sum(deaths) / sum(population)`
+- Aggregating indices: Risk scores have internal weights - summing them is meaningless
+
+**When NOT to Aggregate**:
+- Event data (earthquakes, storms) - individual events don't roll up
+- Survey data with medians/percentiles - can't aggregate without raw data
+- Composite indices with internal weights (FEMA NRI risk scores)
+- Point data (specific locations like volcanoes, weather stations)
+
+**Key functions**:
+```python
+def derive_parent_loc_id(loc_id: str, target_nuts_level: int) -> str:
+    """Derive parent loc_id by truncating NUTS code."""
+    parts = loc_id.split('-')
+    iso3 = parts[0]
+    nuts_code = parts[1] if len(parts) > 1 else ''
+
+    if target_nuts_level == 0:
+        return iso3  # Country level - just ISO3
+    elif target_nuts_level == 1:
+        return f"{iso3}-{nuts_code[:3]}"  # NUTS-1: 3 chars
+    elif target_nuts_level == 2:
+        return f"{iso3}-{nuts_code[:4]}"  # NUTS-2: 4 chars
+    return loc_id
+
+def aggregate_to_level(df: pd.DataFrame, target_level: int) -> pd.DataFrame:
+    """Aggregate data to a target NUTS level."""
+    df = df.copy()
+    df['parent_loc_id'] = df['loc_id'].apply(
+        lambda x: derive_parent_loc_id(x, target_level)
+    )
+    sum_cols = [c for c in SUM_COLUMNS if c in df.columns]
+    agg_df = df.groupby(['parent_loc_id', 'year'])[sum_cols].sum().reset_index()
+    agg_df = agg_df.rename(columns={'parent_loc_id': 'loc_id'})
+
+    # Recalculate per-capita from aggregated totals
+    for col, (numerator, denominator, multiplier) in PER_CAPITA_COLUMNS.items():
+        if numerator in agg_df.columns and denominator in agg_df.columns:
+            agg_df[col] = (agg_df[numerator] * multiplier) / agg_df[denominator]
+
+    return agg_df
+```
+
+**Output verification**:
+```
+DEU: NUTS-3=401 -> NUTS-2=38 -> NUTS-1=16 -> Country=1 | Total: 456 locations
+```
+
+### When to Use Aggregation Scripts
+
+**During Conversion** (built into converter):
+- Use `aggregate_to_parent_levels()` pattern from `convert_abs_population.py`
+- Best when source only has one level (e.g., Australian LGAs)
+- Also creates parent geometry via dissolve
+
+**Post-Conversion** (separate script):
+- Use standalone scripts like `aggregate_eurostat_to_country.py`
+- Best for batch-processing existing data
+- When source data already has geometry separate from data
+
+### Verification
+
+After aggregation, verify totals match:
+
+```python
+# Load aggregated data
+df = pd.read_parquet("countries/DEU/eurostat/DEU.parquet")
+
+# Country total should equal sum of NUTS-1
+country_pop = df[df['loc_id'] == 'DEU']['population'].iloc[0]
+nuts1_sum = df[df['loc_id'].str.match(r'^DEU-[A-Z0-9]{3}$')]['population'].sum()
+assert abs(country_pop - nuts1_sum) < 1, "Hierarchy mismatch!"
+```
+
+---
+
 ## Adding New Data Sources
 
 Follow this checklist when adding a new data source. Reference existing converters as examples:

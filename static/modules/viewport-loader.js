@@ -11,11 +11,13 @@ import { GeometryCache } from './cache.js';
 let MapAdapter = null;
 let NavigationManager = null;
 let App = null;
+let TimeSlider = null;
 
 export function setDependencies(deps) {
   MapAdapter = deps.MapAdapter;
   NavigationManager = deps.NavigationManager;
   App = deps.App;
+  TimeSlider = deps.TimeSlider;
 }
 
 // ============================================================================
@@ -149,12 +151,22 @@ export const ViewportLoader = {
    * Handle zoom/move change - check if admin level should change based on viewport area
    */
   onViewportChange() {
-    // Skip viewport loading when in order mode (displaying order data with time slider)
-    if (!this.enabled || !MapAdapter?.map || this.orderMode) return;
+    if (!this.enabled || !MapAdapter?.map) return;
 
     const bounds = MapAdapter.map.getBounds();
     const area = this.getViewportArea(bounds);
     const newLevel = this.getAdminLevelForViewport(bounds);
+
+    // In order mode, filter displayed data by admin level instead of loading new data
+    if (this.orderMode) {
+      if (newLevel !== this.currentAdminLevel) {
+        console.log(`Order mode: Viewport area ${area.toFixed(0)} sq deg -> Admin level ${newLevel}`);
+        this.currentAdminLevel = newLevel;
+        // Tell TimeSlider to filter to this admin level
+        TimeSlider?.setAdminLevelFilter(newLevel);
+      }
+      return;
+    }
 
     if (newLevel !== this.currentAdminLevel) {
       console.log(`Viewport area ${area.toFixed(0)} sq deg -> Admin level ${newLevel}`);

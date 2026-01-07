@@ -74,6 +74,10 @@ def load_country_parquet(iso3: str, admin_level: int = None):
     Load country geometry parquet file into cache.
     Returns DataFrame or None if file doesn't exist.
 
+    Priority order:
+    1. countries/{ISO3}/geometry.parquet - Country-specific geometry with matching loc_ids
+    2. geometry/{ISO3}.parquet - Global GADM geometry (fallback)
+
     If admin_level is specified, uses predicate pushdown for efficiency.
     """
     # Check cache - if admin_level specified, cache by (iso3, level)
@@ -88,13 +92,25 @@ def load_country_parquet(iso3: str, admin_level: int = None):
         _country_parquet_cache[cache_key] = filtered
         return filtered
 
-    geom_path = get_geometry_path()
-    if not geom_path:
+    backup_path = get_backup_path()
+    if not backup_path:
         return None
 
-    parquet_file = geom_path / f"{iso3}.parquet"
-    if not parquet_file.exists():
-        logger.debug(f"Parquet file not found: {parquet_file}")
+    # Priority 1: Country-specific geometry (matches data loc_ids)
+    country_geom_file = Path(backup_path) / "countries" / iso3 / "geometry.parquet"
+    # Priority 2: Global geometry folder (GADM fallback)
+    global_geom_file = Path(backup_path) / "geometry" / f"{iso3}.parquet"
+
+    # Try country-specific first, then global
+    parquet_file = None
+    if country_geom_file.exists():
+        parquet_file = country_geom_file
+        logger.debug(f"Using country-specific geometry: {country_geom_file}")
+    elif global_geom_file.exists():
+        parquet_file = global_geom_file
+        logger.debug(f"Using global geometry fallback: {global_geom_file}")
+    else:
+        logger.debug(f"No geometry file found for {iso3}")
         return None
 
     try:
@@ -108,10 +124,10 @@ def load_country_parquet(iso3: str, admin_level: int = None):
             df = pd.read_parquet(parquet_file)
 
         _country_parquet_cache[cache_key] = df
-        logger.debug(f"Loaded {len(df)} features for {iso3} (level={admin_level}) from parquet")
+        logger.debug(f"Loaded {len(df)} features for {iso3} (level={admin_level}) from {parquet_file.name}")
         return df
     except Exception as e:
-        logger.error(f"Error loading {iso3}.parquet: {e}")
+        logger.error(f"Error loading geometry for {iso3}: {e}")
         return None
 
 

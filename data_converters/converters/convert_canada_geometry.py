@@ -24,6 +24,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from pathlib import Path
 import sys
+import json
+from shapely.geometry import mapping
 
 # Add build path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -112,9 +114,9 @@ def process_provinces(gdf, simplify_tolerance=0.01):
             'loc_id': f"CAN-{abbr}",
             'name': row['PRENAME'],
             'admin_level': 1,
-            'parent_loc_id': 'CAN',
+            'parent_id': 'CAN',
             'pruid': pruid,
-            'geometry': row['geometry'].wkb if row['geometry'] else None
+            'geometry': json.dumps(mapping(row['geometry'])) if row['geometry'] else None
         })
 
     df = pd.DataFrame(records)
@@ -151,10 +153,10 @@ def process_census_divisions(gdf, simplify_tolerance=0.001):
             'loc_id': f"CAN-{abbr}-{cduid}",
             'name': row['CDNAME'],
             'admin_level': 2,
-            'parent_loc_id': f"CAN-{abbr}",
+            'parent_id': f"CAN-{abbr}",
             'pruid': pruid,
             'cduid': cduid,
-            'geometry': row['geometry'].wkb if row['geometry'] else None
+            'geometry': json.dumps(mapping(row['geometry'])) if row['geometry'] else None
         })
 
     df = pd.DataFrame(records)
@@ -193,12 +195,12 @@ def process_census_subdivisions(gdf, simplify_tolerance=0.0005):
             'loc_id': f"CAN-{abbr}-{csduid}",
             'name': row['CSDNAME'],
             'admin_level': 3,
-            'parent_loc_id': f"CAN-{abbr}-{cduid}",
+            'parent_id': f"CAN-{abbr}-{cduid}",
             'pruid': pruid,
             'cduid': cduid,
             'csduid': csduid,
             'csdtype': row.get('CSDTYPE', ''),
-            'geometry': row['geometry'].wkb if row['geometry'] else None
+            'geometry': json.dumps(mapping(row['geometry'])) if row['geometry'] else None
         })
 
     df = pd.DataFrame(records)
@@ -276,7 +278,7 @@ def main():
     print(f"  Total: {len(combined_df)} features")
 
     # Reorder columns
-    col_order = ['loc_id', 'name', 'admin_level', 'parent_loc_id', 'pruid', 'cduid', 'csduid', 'csdtype', 'geometry']
+    col_order = ['loc_id', 'name', 'admin_level', 'parent_id', 'pruid', 'cduid', 'csduid', 'csdtype', 'geometry']
     combined_df = combined_df[[c for c in col_order if c in combined_df.columns]]
 
     # Save outputs
@@ -302,10 +304,10 @@ def main():
     print(prov_df[['loc_id', 'name']].to_string())
 
     print("\nSample Census Divisions (first 10):")
-    print(cd_df[['loc_id', 'name', 'parent_loc_id']].head(10).to_string())
+    print(cd_df[['loc_id', 'name', 'parent_id']].head(10).to_string())
 
     print("\nSample Census Subdivisions (first 10):")
-    print(csd_df[['loc_id', 'name', 'parent_loc_id']].head(10).to_string())
+    print(csd_df[['loc_id', 'name', 'parent_id']].head(10).to_string())
 
     print("\n" + "=" * 60)
     print("Outputs:")

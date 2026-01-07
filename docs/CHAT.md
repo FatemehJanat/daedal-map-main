@@ -736,6 +736,14 @@ if (!restoreSession()) {
 - Reduced repeated explanations from LLM
 - **Consistent UX** - what user sees matches what system remembers
 
+
+Error to avoid, talking about australian data made a jump to Has in albania when "show me how australias population has changed over the years" was sent. 
+
+Track recent locations in session context
+Boost matching priority for countries in recent context
+Or prompt "Did you mean the district Has in Albania?" when context suggests otherwise
+
+The chat remmebering context will know when a location jump is out of place and needs to be confirmed. 
 ---
 
 ## Future Enhancements

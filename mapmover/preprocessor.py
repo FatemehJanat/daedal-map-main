@@ -35,6 +35,47 @@ GEOMETRY_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/geometry")
 # Parquet cache for location lookups
 _PARQUET_NAMES_CACHE = {}  # iso3 -> {name_lower: loc_id}
 
+# Common English words that should NOT match location names
+# These are valid location names in some countries but cause false positives
+LOCATION_STOP_WORDS = {
+    # Common verbs/auxiliary verbs
+    "has", "have", "had", "is", "are", "was", "were", "be", "been", "being",
+    "do", "does", "did", "will", "would", "could", "should", "may", "might",
+    "can", "must", "shall", "get", "got", "go", "went", "come", "came",
+    # Common articles/pronouns
+    "the", "a", "an", "this", "that", "these", "those",
+    "i", "me", "my", "we", "us", "our", "you", "your",
+    "he", "him", "his", "she", "her", "it", "its", "they", "them", "their",
+    # Common prepositions/conjunctions
+    "in", "on", "at", "to", "for", "of", "with", "by", "from", "up", "down",
+    "and", "or", "but", "if", "then", "so", "as", "than",
+    # Common adverbs/adjectives
+    "all", "any", "some", "no", "not", "more", "most", "very", "just",
+    "now", "here", "there", "when", "where", "how", "why", "what", "which",
+    # Query-specific words
+    "show", "data", "map", "see", "view", "display", "compare", "over", "years",
+}
+
+
+def normalize_query_for_location_matching(query: str) -> str:
+    """
+    Normalize query to improve location matching.
+
+    Handles:
+    - Possessive forms: "australia's" -> "australia", "australias" -> "australia"
+    - Trailing apostrophe: "texas'" -> "texas"
+    """
+    # Remove apostrophe-s possessive
+    query = re.sub(r"'s\b", "", query)
+    # Handle trailing apostrophe (e.g., "texas'")
+    query = re.sub(r"'\b", "", query)
+    # Handle informal possessive without apostrophe (e.g., "australias" -> "australia")
+    # Only for words that look like country names (capitalized or at word boundary)
+    # This pattern matches word + trailing 's' when followed by common words
+    query = re.sub(r'\b(\w+?)s\s+(population|gdp|economy|data|capital|government|president|leader)',
+                   r'\1 \2', query, flags=re.IGNORECASE)
+    return query
+
 
 def load_conversions() -> dict:
     """Load conversions.json for region resolution."""
@@ -249,7 +290,11 @@ def lookup_location_in_viewport(query: str, viewport: dict = None) -> dict:
         country_name = iso_data.get("iso3_to_name", {}).get(iso3, iso3) if iso_data else iso3
 
         # Sort by length (longest first) to match most specific names
-        sorted_names = sorted(names.keys(), key=len, reverse=True)
+        # Filter out stop words that cause false positives (e.g., "Has" in Albania)
+        sorted_names = sorted(
+            [n for n in names.keys() if n not in LOCATION_STOP_WORDS],
+            key=len, reverse=True
+        )
 
         for name in sorted_names:
             # Use word boundary matching
@@ -392,7 +437,10 @@ def extract_country_from_query(query: str, viewport: dict = None) -> dict:
         - source: "country", "capital", or "viewport" indicating match source
     """
     result = {"match": None, "ambiguous": False, "matches": [], "source": None}
-    query_lower = query.lower()
+
+    # Normalize query to handle possessive forms (australias -> australia)
+    normalized_query = normalize_query_for_location_matching(query)
+    query_lower = normalized_query.lower()
 
     # First try direct country match
     name_to_iso3 = build_name_to_iso3()
@@ -690,6 +738,9 @@ TIME_PATTERNS = {
         r"\bchange\b",
         r"\bgrowth\b",
         r"\bdecline\b",
+        r"\ball\s+(?:the\s+)?years?\b",
+        r"\bevery\s+year\b",
+        r"\bacross\s+(?:all\s+)?years?\b",
     ],
     "last_n_years": [
         r"last\s+(\d+)\s+years?",
