@@ -992,6 +992,33 @@
       color: #888;
       font-style: italic;
     }
+
+    /* Selection mode numbered markers */
+    .selection-marker {
+      width: 32px;
+      height: 32px;
+      background: #ff8800;
+      border: 3px solid #ffffff;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+      transition: transform 0.15s ease, background 0.15s ease;
+    }
+
+    .selection-marker:hover {
+      transform: scale(1.15);
+      background: #ffaa00;
+    }
+
+    .selection-marker-number {
+      color: white;
+      font-size: 14px;
+      font-weight: 700;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+    }
   </style>
 </head>
 <body>

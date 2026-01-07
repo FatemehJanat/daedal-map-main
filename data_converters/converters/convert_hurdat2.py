@@ -9,20 +9,7 @@ Creates three output files:
 Input: HURDAT2 text files from NOAA NHC
 Output: Three parquet files with hurricane data
 
-HURDAT2 Format:
-- Header line: AL011851, UNNAMED, 14,
-- Position lines: 18510625, 0000, , HU, 28.0N, 94.8W, 80, -999, ...
-
-Status codes:
-- TD = Tropical Depression (<34 kt)
-- TS = Tropical Storm (34-63 kt)
-- HU = Hurricane (>= 64 kt)
-- EX = Extratropical
-- SD = Subtropical Depression
-- SS = Subtropical Storm
-- LO = Low
-- WV = Wave
-- DB = Disturbance
+Uses unified base utilities for spatial join and water body assignment.
 
 Usage:
     python convert_hurdat2.py
@@ -32,35 +19,36 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import geopandas as gpd
 from pathlib import Path
-from shapely.geometry import Point, LineString, shape
-import re
-import json
+from shapely.geometry import Point
+import sys
+
+# Add parent paths for imports
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from data_converters.base import (
+    USA_STATE_FIPS,
+    load_geometry_parquet,
+    get_water_body_loc_id,
+    create_point_gdf,
+    save_parquet,
+    SAFFIR_SIMPSON_SCALE,
+)
+from build.catalog.finalize_source import finalize_source
 
 # Configuration
 RAW_DATA_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/Raw data/noaa/hurdat2")
 GEOMETRY_PATH = Path("C:/Users/Bryan/Desktop/county-map-data/geometry/USA.parquet")
 OUTPUT_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/countries/USA/hurricanes")
+SOURCE_ID = "noaa_hurricanes"
 
-# State FIPS to abbreviation mapping
-STATE_FIPS = {
-    '01': 'AL', '02': 'AK', '04': 'AZ', '05': 'AR', '06': 'CA',
-    '08': 'CO', '09': 'CT', '10': 'DE', '11': 'DC', '12': 'FL',
-    '13': 'GA', '15': 'HI', '16': 'ID', '17': 'IL', '18': 'IN',
-    '19': 'IA', '20': 'KS', '21': 'KY', '22': 'LA', '23': 'ME',
-    '24': 'MD', '25': 'MA', '26': 'MI', '27': 'MN', '28': 'MS',
-    '29': 'MO', '30': 'MT', '31': 'NE', '32': 'NV', '33': 'NH',
-    '34': 'NJ', '35': 'NM', '36': 'NY', '37': 'NC', '38': 'ND',
-    '39': 'OH', '40': 'OK', '41': 'OR', '42': 'PA', '44': 'RI',
-    '45': 'SC', '46': 'SD', '47': 'TN', '48': 'TX', '49': 'UT',
-    '50': 'VT', '51': 'VA', '53': 'WA', '54': 'WV', '55': 'WI',
-    '56': 'WY', '72': 'PR'
-}
+# =============================================================================
+# Hurricane-Specific Functions
+# =============================================================================
 
-# Saffir-Simpson Hurricane Wind Scale (kt to category)
 def wind_to_category(wind_kt):
     """Convert max wind speed (knots) to Saffir-Simpson category."""
     if pd.isna(wind_kt) or wind_kt < 0:
         return None
+    # Use SAFFIR_SIMPSON_SCALE thresholds
     elif wind_kt < 34:
         return 'TD'  # Tropical Depression
     elif wind_kt < 64:
@@ -92,76 +80,13 @@ def parse_coordinate(coord_str):
     return value
 
 
-def fips_to_loc_id(fips_code):
-    """Convert 5-digit FIPS code to loc_id format."""
-    fips_str = str(fips_code).zfill(5)
-    state_fips = fips_str[:2]
-    state_abbr = STATE_FIPS.get(state_fips)
-
-    if not state_abbr:
-        return None
-
-    return f"USA-{state_abbr}-{int(fips_str)}"
-
-
-def get_water_body_loc_id(lat, lon):
-    """
-    Determine water body loc_id based on coordinates.
-
-    Uses simplified bounding boxes to assign ocean/sea codes.
-    Water body codes follow ISO 3166-1 X-prefix convention:
-      XOA = Atlantic Ocean
-      XOP = Pacific Ocean
-      XSG = Gulf of Mexico
-      XSC = Caribbean Sea
-    """
-    if pd.isna(lat) or pd.isna(lon):
-        return None
-
-    # Gulf of Mexico (roughly bounded)
-    # lat: 18-31, lon: -98 to -80
-    if 18 <= lat <= 31 and -98 <= lon <= -80:
-        return "XSG-0"
-
-    # Caribbean Sea
-    # lat: 9-22, lon: -89 to -59
-    if 9 <= lat <= 22 and -89 <= lon <= -59:
-        return "XSC-0"
-
-    # Eastern Pacific (west of Americas)
-    # lon < -100 (west of Mexico) or Pacific basin storms
-    if lon < -100:
-        return "XOP-0"
-
-    # Atlantic Ocean (default for Atlantic basin)
-    # Everything else in the western Atlantic
-    if -100 <= lon <= 0:
-        return "XOA-0"
-
-    # Fallback for any other location
-    return "XOA-0"
-
+# =============================================================================
+# Data Loading
+# =============================================================================
 
 def load_counties():
-    """Load county boundaries from geometry parquet."""
-    print("Loading county boundaries...")
-
-    # Read geometry parquet
-    df = pd.read_parquet(GEOMETRY_PATH)
-
-    # Filter to counties (admin_level 2)
-    counties = df[df['admin_level'] == 2].copy()
-
-    # Parse GeoJSON geometry
-    counties['geom'] = counties['geometry'].apply(
-        lambda x: shape(json.loads(x)) if pd.notna(x) else None
-    )
-
-    # Create GeoDataFrame
-    gdf = gpd.GeoDataFrame(counties, geometry='geom', crs='EPSG:4326')
-
-    print(f"  Loaded {len(gdf)} counties")
-    return gdf
+    """Load county boundaries from geometry parquet using base utility."""
+    return load_geometry_parquet(GEOMETRY_PATH, admin_level=2, geometry_format='geojson')
 
 
 def parse_hurdat2_file(file_path, basin):
@@ -400,7 +325,7 @@ def filter_us_affecting_storms(storms_df, positions_df):
 
 
 def geocode_positions(positions_df, counties_gdf):
-    """Geocode storm positions to counties."""
+    """Geocode storm positions to counties using base utilities."""
     print("\nGeocoding positions to counties...")
 
     # Filter to positions with coordinates
@@ -410,22 +335,20 @@ def geocode_positions(positions_df, counties_gdf):
     if len(positions_with_coords) == 0:
         return positions_df
 
-    # Create geometry
-    geometry = [Point(xy) for xy in zip(positions_with_coords['longitude'],
-                                         positions_with_coords['latitude'])]
-    gdf = gpd.GeoDataFrame(positions_with_coords, geometry=geometry, crs="EPSG:4326")
+    # Create point geometries using base utility
+    gdf = create_point_gdf(positions_with_coords, lat_col='latitude', lon_col='longitude')
 
-    # Spatial join with counties (geometry parquet already has loc_id)
-    gdf_with_counties = gpd.sjoin(gdf, counties_gdf[['loc_id', 'geom']].set_geometry('geom'),
+    # Spatial join with counties
+    gdf_with_counties = gpd.sjoin(gdf, counties_gdf[['loc_id', 'geometry']],
                                    how='left', predicate='within')
 
     matched_land = gdf_with_counties['loc_id'].notna().sum()
     print(f"  Matched to counties (land): {matched_land:,} ({matched_land/len(gdf_with_counties)*100:.1f}%)")
 
-    # For positions over water (no county match), assign water body loc_id
+    # For positions over water (no county match), assign water body loc_id using base utility
     water_mask = gdf_with_counties['loc_id'].isna()
     gdf_with_counties.loc[water_mask, 'loc_id'] = gdf_with_counties.loc[water_mask].apply(
-        lambda row: get_water_body_loc_id(row['latitude'], row['longitude']),
+        lambda row: get_water_body_loc_id(row['latitude'], row['longitude'], region='usa'),
         axis=1
     )
 
@@ -442,8 +365,6 @@ def geocode_positions(positions_df, counties_gdf):
 
 def create_storms_parquet(storms_df):
     """Create storms.parquet with storm metadata."""
-    print("\nCreating storms.parquet...")
-
     # Prepare storms dataframe
     storms_out = pd.DataFrame({
         'storm_id': storms_df['storm_id'],
@@ -460,40 +381,16 @@ def create_storms_parquet(storms_df):
         'us_landfall': storms_df['us_landfall']
     })
 
-    # Define schema
-    schema = pa.schema([
-        ('storm_id', pa.string()),
-        ('basin', pa.string()),
-        ('name', pa.string()),
-        ('year', pa.int32()),
-        ('start_date', pa.timestamp('us')),
-        ('end_date', pa.timestamp('us')),
-        ('max_wind_kt', pa.int32()),
-        ('min_pressure_mb', pa.int32()),
-        ('max_category', pa.string()),
-        ('num_positions', pa.int32()),
-        ('made_landfall', pa.bool_()),
-        ('us_landfall', pa.bool_())
-    ])
-
-    # Save
+    # Save using base utility
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     output_path = OUTPUT_DIR / "storms.parquet"
-
-    table = pa.Table.from_pandas(storms_out, schema=schema, preserve_index=False)
-    pq.write_table(table, output_path, compression='snappy')
-
-    size_mb = output_path.stat().st_size / (1024 * 1024)
-    print(f"  Saved: {size_mb:.2f} MB")
-    print(f"  Storms: {len(storms_out):,}")
+    save_parquet(storms_out, output_path, description="storm metadata")
 
     return storms_out
 
 
 def create_positions_parquet(positions_df):
     """Create positions.parquet with track positions."""
-    print("\nCreating positions.parquet...")
-
     # Select columns
     cols = ['storm_id', 'timestamp', 'record_id', 'status', 'latitude', 'longitude',
             'wind_kt', 'pressure_mb', 'category']
@@ -516,37 +413,9 @@ def create_positions_parquet(positions_df):
     positions_out['latitude'] = positions_out['latitude'].round(2)
     positions_out['longitude'] = positions_out['longitude'].round(2)
 
-    # Build schema dynamically
-    schema_fields = [
-        ('storm_id', pa.string()),
-        ('timestamp', pa.timestamp('us')),
-        ('record_id', pa.string()),
-        ('status', pa.string()),
-        ('latitude', pa.float32()),
-        ('longitude', pa.float32()),
-        ('wind_kt', pa.int32()),
-        ('pressure_mb', pa.int32()),
-        ('category', pa.string())
-    ]
-
-    for col in radii_cols:
-        if col in positions_out.columns:
-            schema_fields.append((col, pa.int32()))
-
-    if 'loc_id' in positions_out.columns:
-        schema_fields.append(('loc_id', pa.string()))
-
-    schema = pa.schema(schema_fields)
-
-    # Save
+    # Save using base utility
     output_path = OUTPUT_DIR / "positions.parquet"
-
-    table = pa.Table.from_pandas(positions_out, schema=schema, preserve_index=False)
-    pq.write_table(table, output_path, compression='snappy')
-
-    size_mb = output_path.stat().st_size / (1024 * 1024)
-    print(f"  Saved: {size_mb:.2f} MB")
-    print(f"  Positions: {len(positions_out):,}")
+    save_parquet(positions_out, output_path, description="track positions")
 
     return positions_out
 
@@ -588,30 +457,13 @@ def create_county_aggregates(storms_df, positions_df):
 
 
 def save_county_parquet(df):
-    """Save county aggregates to USA.parquet."""
+    """Save county aggregates to USA.parquet using base utility."""
     if df.empty:
         print("\n  Skipping USA.parquet (no data)")
         return None
 
-    print("\nSaving USA.parquet...")
-
-    # Define schema
-    schema = pa.schema([
-        ('loc_id', pa.string()),
-        ('year', pa.int32()),
-        ('storm_count', pa.int32()),
-        ('max_wind_kt', pa.int32()),
-        ('max_category', pa.string())
-    ])
-
-    # Save
     output_path = OUTPUT_DIR / "USA.parquet"
-
-    table = pa.Table.from_pandas(df, schema=schema, preserve_index=False)
-    pq.write_table(table, output_path, compression='snappy')
-
-    size_mb = output_path.stat().st_size / (1024 * 1024)
-    print(f"  Saved: {size_mb:.2f} MB")
+    save_parquet(df, output_path, description="county-year aggregates")
 
     return output_path
 
@@ -754,11 +606,11 @@ def print_statistics(storms_df, positions_df):
 
 def main():
     """Main conversion logic."""
-    print("="*80)
-    print("NOAA HURDAT2 Hurricane Database - Text to Parquet Converter")
-    print("="*80)
+    print("=" * 60)
+    print("NOAA HURDAT2 Hurricane Database Converter")
+    print("=" * 60)
 
-    # Load county boundaries
+    # Load county boundaries using base utility
     counties_gdf = load_counties()
 
     # Load HURDAT2 data
@@ -780,26 +632,36 @@ def main():
 
     # Create county aggregates
     county_df = create_county_aggregates(us_storms, us_positions_geocoded)
-    save_county_parquet(county_df)
+    agg_path = save_county_parquet(county_df)
 
     # Print statistics
     print_statistics(storms_out, positions_out)
 
-    # Generate metadata
+    # Generate metadata (custom for hurricanes - 3 files)
     generate_metadata(storms_out, positions_out, county_df)
 
-    print("\n" + "="*80)
+    # Finalize (update index)
+    print("\n" + "=" * 60)
+    print("Finalizing source...")
+    print("=" * 60)
+
+    try:
+        if agg_path:
+            finalize_source(
+                parquet_path=str(agg_path),
+                source_id=SOURCE_ID,
+                events_parquet_path=str(OUTPUT_DIR / "positions.parquet")
+            )
+    except ValueError as e:
+        print(f"  Note: {e}")
+        print(f"  Add '{SOURCE_ID}' to source_registry.py to enable auto-finalization")
+
+    print("\n" + "=" * 60)
     print("COMPLETE!")
-    print("="*80)
-    print("\nOutput files:")
-    print("  storms.parquet: Storm metadata with max intensity")
-    print("  positions.parquet: 6-hourly track positions")
-    print("  USA.parquet: County-year aggregated statistics")
-    print("  metadata.json: Standard metadata format")
+    print("=" * 60)
 
     return 0
 
 
 if __name__ == "__main__":
-    import sys
     sys.exit(main())

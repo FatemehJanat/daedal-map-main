@@ -2,6 +2,8 @@
 
 Quick reference for potential data sources to expand risk scoring capabilities.
 
+**Current inventory**: See `county-map-data/DATA_STATUS.txt` for what's already imported.
+
 Last Updated: January 6, 2026
 
 ---
@@ -20,6 +22,13 @@ Location: `county-map-data/countries/USA/`
 | NOAA Storms Events | events.parquet | 28 MB | 1,231,663 | 1950-2025 | Individual storm records |
 | USGS Earthquakes | USA.parquet | 61 KB | 7,680 | 1970-2025 | County-year aggregates |
 | USGS Earthquakes Events | events.parquet | 5.7 MB | 173,971 | 1970-2025 | Individual quakes 3.0+ |
+| Canada Earthquakes | events.parquet | - | 27,000+ | 1985-2025 | Individual quakes |
+| HURDAT2 Hurricanes | events.parquet | - | 1,991 storms | 1851-2024 | Track points, intensity |
+| NOAA Tsunamis | events.parquet | - | 3,025 events | 2100 BC-present | US: 321 events |
+| Tsunami Runups | events.parquet | - | 34,281 | Historical | US: 4,329 locations |
+| Volcanoes | events.parquet | - | 1,222 | Holocene | US: 165 volcanoes |
+| Eruptions | events.parquet | - | 11,079 | Historical | US: 1,281 eruptions |
+| MTBS Wildfires | events.parquet | - | ~25,000 | 1984-2023 | Fire perimeters |
 | US Drought Monitor | USA.parquet | 0.67 MB | 90,188 | 2000-2026 | D0-D4 severity weeks |
 | Wildfire Risk | USA.parquet | 112 KB | 3,144 | 2022 snapshot | Burn probability, exposure |
 
@@ -67,6 +76,27 @@ Location: `county-map/data_converters/`
 | download_statcan.py | Statistics Canada | Manual download required |
 | download_abs.py | Australian ABS | Manual download required |
 
+### Disaster Converters Status
+
+All disaster converters use unified base utilities from `data_converters/base/`. See [data_import.md](data_import.md) for creating new converters.
+
+| Source | Converter | Status |
+|--------|-----------|--------|
+| USGS Earthquakes | `convert_usgs_earthquakes.py` | Complete |
+| Canada Earthquakes | `convert_canada_earthquakes.py` | Complete |
+| HURDAT2 Hurricanes | `convert_hurdat2.py` | Complete |
+| NOAA Tsunamis | `convert_tsunami.py` | Complete |
+| Smithsonian Volcanoes | `convert_volcano.py` | Complete |
+| MTBS Wildfires | `convert_mtbs.py` | Complete |
+
+### Census/Population Converters Status
+
+| Source | Converter | Status | Output |
+|--------|-----------|--------|--------|
+| US Census | `convert_census_population.py` | Complete | Long format (loc_id, year, total_pop) |
+| Australia ABS | `convert_abs_population.py` | Complete | Long format (loc_id, year, total_pop) |
+| Canada StatsCan | `convert_statcan_census.py` | Planned | Phase 5 pipeline validation |
+
 ### Blocked Sources (Infrastructure Issues)
 | Source | Issue | Workaround |
 |--------|-------|------------|
@@ -84,6 +114,153 @@ Location: `county-map/data_converters/`
 - Australia: ~135 MB (Population 127MB, Cyclones 7.6MB)
 - Europe: ~6 MB (Eurostat NUTS 3)
 - Global: ~7 MB (ReliefWeb, HDX/EM-DAT)
+
+---
+
+## Data Gaps Analysis
+
+### Gaps Filled
+
+| Gap | Solution | Status |
+|-----|----------|--------|
+| Pre-1950 hurricanes | HURDAT2 (1851-2024) | Complete |
+| Historical wildfires | MTBS (1984-2023) | Complete |
+| Tsunami events | NOAA NCEI (2100 BC-present) | Complete |
+| Volcano eruptions | Smithsonian (Holocene) | Complete |
+| Canadian earthquakes | NRCan (1985-2025) | Complete |
+
+### Remaining Gaps
+
+| Hazard | Current Coverage | Gap | Priority |
+|--------|------------------|-----|----------|
+| Heat Wave | Limited NOAA data | NCEI temperature extremes | MEDIUM |
+| Cold Wave | Limited NOAA data | NCEI temperature extremes | MEDIUM |
+| Ice Storm (pre-1950) | NOAA 1950+ | Historical archives | LOW |
+| Pre-2000 Drought | USDM 2000+ | Palmer Drought Index | LOW |
+| Coastal Flooding | Model only | Event database | MEDIUM |
+
+### FEMA NRI Source Comparison
+
+How our event data compares to what FEMA NRI uses for their risk models:
+
+| NRI Hazard | FEMA Source Period | Our Coverage | Match |
+|------------|-------------------|--------------|-------|
+| Hurricane | 1851-2024 (173 yrs) | HURDAT2 1851-2024 | FULL |
+| Tornado | 1986-2023 (38 yrs) | NOAA 1950-2025 | FULL |
+| Wildfire | Model-based | MTBS 1984-2023 | FULL |
+| Earthquake | Model-based | USGS 1970-2025 | FULL |
+| Tsunami | Model-based | NCEI 2100 BC-present | FULL |
+| Volcano | Model-based | Smithsonian Holocene | FULL |
+| Drought | 2000-2025 | USDM 2000-2025 | FULL |
+
+---
+
+## Currency Market Data (Planned)
+
+Exchange rate data for currency conversions and economic analysis. Since currencies are country-level (no geographic subdivisions needed), we can afford higher temporal resolution.
+
+### Architecture: USD as Base Currency
+
+Store all exchange rates as **X/USD** (units of foreign currency per 1 USD):
+
+```
+EUR/USD = 0.92  (1 USD = 0.92 EUR)
+CAD/USD = 1.36  (1 USD = 1.36 CAD)
+GBP/USD = 0.79  (1 USD = 0.79 GBP)
+```
+
+**Cross-rate derivation** - Any pair can be calculated mathematically:
+```
+EUR/CAD = (EUR/USD) / (CAD/USD) = 0.92 / 1.36 = 0.676
+GBP/JPY = (GBP/USD) / (JPY/USD)
+```
+
+This enables queries like "show EUR/CAD over time" without storing every possible currency pair.
+
+### Integration with Derived Data System
+
+The `postprocessor.py` derived field system needs enhancement to support:
+
+1. **Currency conversion**: GDP_EUR * (USD/EUR) = GDP_USD
+2. **Chained derivations**: GDP_EUR -> GDP_USD -> GDP_USD_per_capita
+3. **Transform operations**: multiply, divide (not just divide by denominator)
+
+Reference files:
+- `mapmover/reference/currencies_scraped.json` - ISO3 to currency code mapping (215 countries)
+- `mapmover/reference/country_metadata.json` - placeholder for additional currency metadata
+
+### Data Format
+
+| Field | Type | Description |
+|-------|------|-------------|
+| currency_code | str | ISO 4217 code (EUR, CAD, GBP, JPY, etc.) |
+| date | date | Exchange rate date |
+| rate_to_usd | float | Units of currency per 1 USD |
+| source | str | Data source identifier |
+
+**Temporal resolution options:**
+- Weekly: Good balance of granularity vs size (~2,600 records per currency for 50 years)
+- Monthly: More compact (~600 records per currency for 50 years)
+- Daily: Overkill for most use cases, huge data volume
+
+### Potential Data Sources
+
+| Source | Coverage | Frequency | Format | Cost | Notes |
+|--------|----------|-----------|--------|------|-------|
+| **ECB Statistical Data Warehouse** | 40+ currencies | Daily | CSV/JSON | Free | EUR-based, need to convert to USD base |
+| **Federal Reserve (FRED)** | 20+ major currencies | Daily/Weekly | CSV/JSON | Free | Already USD-based |
+| **Bank of Canada** | 25+ currencies | Daily | CSV | Free | CAD-based |
+| **IMF Exchange Rates** | 180+ currencies | Monthly | CSV | Free | SDR-based, comprehensive |
+| **Open Exchange Rates** | 170+ currencies | Hourly | JSON API | Freemium | 1000 req/month free |
+| **Fixer.io** | 170+ currencies | Daily | JSON API | Freemium | EUR-based |
+| **ExchangeRate-API** | 160+ currencies | Daily | JSON API | Free tier | USD-based |
+
+**Recommended approach:**
+1. **Primary**: Federal Reserve (FRED) for major currencies - already USD-based, official source
+2. **Secondary**: IMF for comprehensive coverage of minor currencies
+3. **Historical**: ECB for deep historical data (1999+)
+
+### Priority Currencies
+
+Start with major traded currencies (~20):
+
+| Code | Currency | Priority |
+|------|----------|----------|
+| EUR | Euro | HIGH |
+| GBP | British Pound | HIGH |
+| JPY | Japanese Yen | HIGH |
+| CAD | Canadian Dollar | HIGH |
+| AUD | Australian Dollar | HIGH |
+| CHF | Swiss Franc | HIGH |
+| CNY | Chinese Yuan | HIGH |
+| INR | Indian Rupee | MEDIUM |
+| MXN | Mexican Peso | MEDIUM |
+| BRL | Brazilian Real | MEDIUM |
+| KRW | South Korean Won | MEDIUM |
+| SGD | Singapore Dollar | MEDIUM |
+| HKD | Hong Kong Dollar | MEDIUM |
+| NOK | Norwegian Krone | MEDIUM |
+| SEK | Swedish Krona | MEDIUM |
+| NZD | New Zealand Dollar | MEDIUM |
+| ZAR | South African Rand | LOW |
+| RUB | Russian Ruble | LOW |
+| TRY | Turkish Lira | LOW |
+| PLN | Polish Zloty | LOW |
+
+### Implementation Steps
+
+1. **Download script**: `download_currency_rates.py` - fetch from FRED/IMF
+2. **Converter**: `convert_currency_rates.py` - normalize to USD base, weekly/monthly
+3. **Reference update**: Add currency codes to `country_metadata.json`
+4. **Postprocessor enhancement**: Support multiply/chain operations in derived fields
+5. **Output**: `global/currency_rates.parquet` (not country-specific)
+
+### Use Cases
+
+- Convert Eurostat GDP (EUR) to USD for comparison with US data
+- Show purchasing power changes: "How has EUR/USD changed since 2000?"
+- Cross-rate analysis: "EUR/CAD exchange rate trend"
+- Inflation-adjusted comparisons when combined with CPI data
 
 ---
 

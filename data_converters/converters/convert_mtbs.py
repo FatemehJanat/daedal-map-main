@@ -10,37 +10,33 @@ Output: Two parquet files with wildfire data
 
 MTBS covers fires >1000 acres (West) or >500 acres (East) from 1984-present.
 
+Uses unified base utilities for spatial join and parquet saving.
+
 Usage:
     python convert_mtbs.py
 """
 import pandas as pd
-import pyarrow as pa
-import pyarrow.parquet as pq
 import geopandas as gpd
 from pathlib import Path
-from shapely.geometry import mapping, shape
 import json
 import zipfile
+import sys
+
+# Add parent paths for imports
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from data_converters.base import (
+    USA_STATE_FIPS,
+    load_geometry_parquet,
+    save_parquet,
+    TERRITORIAL_WATERS_DEG,
+)
+from build.catalog.finalize_source import finalize_source
 
 # Configuration
 RAW_DATA_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/Raw data/mtbs")
 GEOMETRY_PATH = Path("C:/Users/Bryan/Desktop/county-map-data/geometry/USA.parquet")
 OUTPUT_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/countries/USA/wildfires")
-
-# State FIPS to abbreviation mapping
-STATE_FIPS = {
-    '01': 'AL', '02': 'AK', '04': 'AZ', '05': 'AR', '06': 'CA',
-    '08': 'CO', '09': 'CT', '10': 'DE', '11': 'DC', '12': 'FL',
-    '13': 'GA', '15': 'HI', '16': 'ID', '17': 'IL', '18': 'IN',
-    '19': 'IA', '20': 'KS', '21': 'KY', '22': 'LA', '23': 'ME',
-    '24': 'MD', '25': 'MA', '26': 'MI', '27': 'MN', '28': 'MS',
-    '29': 'MO', '30': 'MT', '31': 'NE', '32': 'NV', '33': 'NH',
-    '34': 'NJ', '35': 'NM', '36': 'NY', '37': 'NC', '38': 'ND',
-    '39': 'OH', '40': 'OK', '41': 'OR', '42': 'PA', '44': 'RI',
-    '45': 'SC', '46': 'SD', '47': 'TN', '48': 'TX', '49': 'UT',
-    '50': 'VT', '51': 'VA', '53': 'WA', '54': 'WV', '55': 'WI',
-    '56': 'WY', '72': 'PR'
-}
+SOURCE_ID = "mtbs_wildfires"
 
 # Incident types
 INCIDENT_TYPES = {
@@ -51,38 +47,13 @@ INCIDENT_TYPES = {
 }
 
 
-def fips_to_loc_id(fips_code):
-    """Convert 5-digit FIPS code to loc_id format."""
-    fips_str = str(fips_code).zfill(5)
-    state_fips = fips_str[:2]
-    state_abbr = STATE_FIPS.get(state_fips)
-
-    if not state_abbr:
-        return None
-
-    return f"USA-{state_abbr}-{int(fips_str)}"
-
+# =============================================================================
+# Data Loading
+# =============================================================================
 
 def load_counties():
-    """Load county boundaries from geometry parquet."""
-    print("Loading county boundaries...")
-
-    # Read geometry parquet
-    df = pd.read_parquet(GEOMETRY_PATH)
-
-    # Filter to counties (admin_level 2)
-    counties = df[df['admin_level'] == 2].copy()
-
-    # Parse GeoJSON geometry
-    counties['geom'] = counties['geometry'].apply(
-        lambda x: shape(json.loads(x)) if pd.notna(x) else None
-    )
-
-    # Create GeoDataFrame
-    gdf = gpd.GeoDataFrame(counties, geometry='geom', crs='EPSG:4326')
-
-    print(f"  Loaded {len(gdf)} counties")
-    return gdf
+    """Load county boundaries from geometry parquet using base utility."""
+    return load_geometry_parquet(GEOMETRY_PATH, admin_level=2, geometry_format='geojson')
 
 
 def load_mtbs_perimeters():
@@ -226,12 +197,9 @@ def geocode_fires_to_counties(fires_gdf, counties_gdf):
     """
     Assign fires to counties using 2-pass matching:
     1. Centroid-based 'within' spatial join
-    2. Nearest county match for border fires (within 0.2 degrees)
+    2. Nearest county match for border fires (using base territorial waters constant)
     """
     print("\nGeocoding fires to counties...")
-
-    # Threshold for nearest match (roughly 12 nautical miles / 22km)
-    NEAREST_THRESHOLD_DEG = 0.2
 
     # Ensure same CRS
     if fires_gdf.crs != counties_gdf.crs:
@@ -248,10 +216,10 @@ def geocode_fires_to_counties(fires_gdf, counties_gdf):
     centroids_gdf = fires_gdf.copy()
     centroids_gdf = centroids_gdf.set_geometry('centroid_geom')
 
-    # Spatial join with counties (geometry parquet already has loc_id)
+    # Spatial join with counties
     fires_with_county = gpd.sjoin(
         centroids_gdf,
-        counties_gdf[['loc_id', 'name', 'geom']].rename(columns={'name': 'county_name'}).set_geometry('geom'),
+        counties_gdf[['loc_id', 'name', 'geometry']].rename(columns={'name': 'county_name'}),
         how='left',
         predicate='within'
     )
@@ -276,13 +244,13 @@ def geocode_fires_to_counties(fires_gdf, counties_gdf):
             warnings.simplefilter("ignore")  # Suppress CRS warning
             nearest = gpd.sjoin_nearest(
                 unmatched_df,
-                counties_gdf[['loc_id', 'name', 'geom']].rename(columns={'loc_id': 'nearest_loc_id', 'name': 'nearest_county'}).set_geometry('geom'),
+                counties_gdf[['loc_id', 'name', 'geometry']].rename(columns={'loc_id': 'nearest_loc_id', 'name': 'nearest_county'}),
                 how='left',
                 distance_col='dist_to_county'
             )
 
-        # Filter to within threshold and dedupe
-        within_threshold = nearest[nearest['dist_to_county'] <= NEAREST_THRESHOLD_DEG].copy()
+        # Filter to within threshold using base constant and dedupe
+        within_threshold = nearest[nearest['dist_to_county'] <= TERRITORIAL_WATERS_DEG].copy()
         within_threshold = within_threshold.drop_duplicates(subset=['_orig_idx'])
         nearest_count = len(within_threshold)
         print(f"    Matched {nearest_count} fires to nearest county")
@@ -310,8 +278,6 @@ def geocode_fires_to_counties(fires_gdf, counties_gdf):
 
 def create_fires_parquet(fires_gdf):
     """Create fires.parquet with individual fire events."""
-    print("\nCreating fires.parquet...")
-
     # Select columns for output
     fires_out = pd.DataFrame({
         'event_id': fires_gdf.get('event_id', fires_gdf.index),
@@ -336,34 +302,13 @@ def create_fires_parquet(fires_gdf):
     if 'burned_acres' in fires_out.columns:
         fires_out['burned_acres'] = fires_out['burned_acres'].round(0)
 
-    # Define schema
-    schema = pa.schema([
-        ('event_id', pa.string()),
-        ('fire_name', pa.string()),
-        ('fire_type', pa.string()),
-        ('year', pa.int32()),
-        ('ignition_date', pa.timestamp('us')),
-        ('burned_acres', pa.float32()),
-        ('centroid_lat', pa.float32()),
-        ('centroid_lon', pa.float32()),
-        ('loc_id', pa.string()),
-        ('county_name', pa.string()),
-        ('state_fips', pa.string())
-    ])
-
-    # Save
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    output_path = OUTPUT_DIR / "fires.parquet"
-
     # Convert event_id to string
     fires_out['event_id'] = fires_out['event_id'].astype(str)
 
-    table = pa.Table.from_pandas(fires_out, schema=schema, preserve_index=False)
-    pq.write_table(table, output_path, compression='snappy')
-
-    size_mb = output_path.stat().st_size / (1024 * 1024)
-    print(f"  Saved: {size_mb:.2f} MB")
-    print(f"  Fires: {len(fires_out):,}")
+    # Save using base utility
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    output_path = OUTPUT_DIR / "fires.parquet"
+    save_parquet(fires_out, output_path, description="fire events")
 
     return fires_out
 
@@ -409,31 +354,13 @@ def create_county_aggregates(fires_df):
 
 
 def save_county_parquet(df):
-    """Save county aggregates to USA.parquet."""
+    """Save county aggregates to USA.parquet using base utility."""
     if df.empty:
         print("\n  Skipping USA.parquet (no data)")
         return None
 
-    print("\nSaving USA.parquet...")
-
-    # Define schema
-    schema = pa.schema([
-        ('loc_id', pa.string()),
-        ('year', pa.int32()),
-        ('fire_count', pa.int32()),
-        ('total_burned_acres', pa.float32()),
-        ('max_fire_acres', pa.float32()),
-        ('avg_fire_acres', pa.float32())
-    ])
-
-    # Save
     output_path = OUTPUT_DIR / "USA.parquet"
-
-    table = pa.Table.from_pandas(df, schema=schema, preserve_index=False)
-    pq.write_table(table, output_path, compression='snappy')
-
-    size_mb = output_path.stat().st_size / (1024 * 1024)
-    print(f"  Saved: {size_mb:.2f} MB")
+    save_parquet(df, output_path, description="county-year aggregates")
 
     return output_path
 
@@ -563,9 +490,8 @@ def print_statistics(fires_df, county_df):
     print("\nMost Fire-Prone States (by acres burned):")
     if 'state_fips' in fires_df.columns:
         state_acres = fires_df.groupby('state_fips')['burned_acres'].sum().nlargest(10)
-        fips_to_name = {v: k for k, v in STATE_FIPS.items()}
         for fips, acres in state_acres.items():
-            state = STATE_FIPS.get(str(fips).zfill(2), fips)
+            state = USA_STATE_FIPS.get(str(fips).zfill(2), fips)
             count = len(fires_df[fires_df['state_fips'] == fips])
             print(f"  {state}: {acres:,.0f} acres ({count:,} fires)")
 
@@ -580,11 +506,11 @@ def print_statistics(fires_df, county_df):
 
 def main():
     """Main conversion logic."""
-    print("="*80)
-    print("MTBS Wildfire Data - Shapefile to Parquet Converter")
-    print("="*80)
+    print("=" * 60)
+    print("MTBS Wildfire Data Converter")
+    print("=" * 60)
 
-    # Load county boundaries from geometry parquet
+    # Load county boundaries using base utility
     counties_gdf = load_counties()
 
     # Load MTBS perimeter data
@@ -605,7 +531,7 @@ def main():
 
     # Create county aggregates
     county_df = create_county_aggregates(fires_out)
-    save_county_parquet(county_df)
+    agg_path = save_county_parquet(county_df)
 
     # Print statistics
     print_statistics(fires_out, county_df)
@@ -613,19 +539,28 @@ def main():
     # Generate metadata
     generate_metadata(fires_out, county_df)
 
-    print("\n" + "="*80)
+    # Finalize (update index)
+    print("\n" + "=" * 60)
+    print("Finalizing source...")
+    print("=" * 60)
+
+    try:
+        if agg_path:
+            finalize_source(
+                parquet_path=str(agg_path),
+                source_id=SOURCE_ID,
+                events_parquet_path=str(OUTPUT_DIR / "fires.parquet")
+            )
+    except ValueError as e:
+        print(f"  Note: {e}")
+        print(f"  Add '{SOURCE_ID}' to source_registry.py to enable auto-finalization")
+
+    print("\n" + "=" * 60)
     print("COMPLETE!")
-    print("="*80)
-    print("\nOutput files:")
-    print("  fires.parquet: Individual fire events with location and burned acres")
-    print("  USA.parquet: County-year aggregated statistics")
-    print("  metadata.json: Standard metadata format")
-    print("\nNote: Fire perimeters (geometry) are stored in the source shapefile.")
-    print("For visualization, consider extracting simplified perimeters to GeoJSON.")
+    print("=" * 60)
 
     return 0
 
 
 if __name__ == "__main__":
-    import sys
     sys.exit(main())

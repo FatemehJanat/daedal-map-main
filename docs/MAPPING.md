@@ -425,23 +425,10 @@ User: "show CO2 trend in Europe from 2000 to 2022"
 
 ## Geometry Simplification
 
-Geometries are simplified for web display to reduce file sizes.
-
-### Recommended Tolerances
-
-| Level | Tolerance | Precision | Use Case |
-|-------|-----------|-----------|----------|
-| Countries | 0.01 | ~1 km | World map view |
-| States/Regions | 0.001 | ~100 m | Country zoom |
-| Counties | 0.001 | ~100 m | State zoom |
-| Cities/Districts | 0.0001 | ~10 m | County zoom |
-
-### Size Impact
-
-| File | Original | Simplified | Reduction |
-|------|----------|------------|-----------|
-| global.csv (256 countries) | 31 MB | 7.8 MB | 75% |
-| USA.parquet (35,731 counties) | 63 MB | 30 MB | 53% |
+Geometries are simplified for web display. See [GEOMETRY.md](GEOMETRY.md#geometry-simplification) for:
+- Recommended tolerances by admin level
+- File size impacts
+- Simplification code examples
 
 ---
 
@@ -537,8 +524,10 @@ See [FRONTEND_MODULES.md](FRONTEND_MODULES.md) for detailed module documentation
 ### Related Documentation
 
 - [CHAT.md](CHAT.md) - Chat system, disambiguation, show borders follow-up
-- [GEOMETRY.md](GEOMETRY.md) - loc_id specification, parquet structure
+- [GEOMETRY.md](GEOMETRY.md) - loc_id specification, geometry structure, special entities
+- [data_pipeline.md](data_pipeline.md) - Data sources, metadata, folder structure
+- [data_import.md](data_import.md) - Quick reference for creating data converters
 
 ---
 
-*Last Updated: 2026-01-03*
+*Last Updated: 2026-01-06*

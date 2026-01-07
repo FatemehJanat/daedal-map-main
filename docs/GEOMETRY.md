@@ -236,6 +236,28 @@ loc_id = f"USA-CA-{fips_int}"  # -> "USA-CA-6037"
 
 ---
 
+## Canada Subdivisions
+
+**Format**: `CAN-{prov}-{cduid}` (e.g., `CAN-BC-5915` for Greater Vancouver)
+
+- **admin_1**: 13 provinces/territories (NL, PE, NS, NB, QC, ON, MB, SK, AB, BC, YT, NT, NU)
+- **admin_2**: Census Divisions (CD) - ~300 units
+- **Code mappings**: `data_converters/base/constants.py` - `CAN_PROVINCE_ABBR`
+- **loc_id converter**: `can_cduid_to_loc_id()` in `data_converters/base/geo_utils.py`
+
+---
+
+## Australia Subdivisions
+
+**Format**: `AUS-{state}-{lga_code}` (e.g., `AUS-NSW-17200` for Sydney)
+
+- **admin_1**: 9 states/territories (NSW, VIC, QLD, SA, WA, TAS, NT, ACT, OT)
+- **admin_2**: Local Government Areas (LGA) - 547 units
+- **Code mappings**: `data_converters/base/constants.py` - `AUS_STATE_ABBR`
+- **loc_id converter**: `aus_lga_to_loc_id()` in `data_converters/base/geo_utils.py`
+
+---
+
 ## International Subdivisions
 
 **Format**: `{ISO3}-{region_code}` (human-readable where possible)
@@ -567,6 +589,339 @@ get_geometry_file("XOA")           # -> global_entities.parquet (Atlantic Ocean)
 get_geometry_file("XSC-0")         # -> global_entities.parquet (Caribbean Sea)
 get_geometry_file("XLE")           # -> global_entities.parquet (Lake Erie)
 ```
+
+---
+
+## Special Geometries
+
+Disasters and natural phenomena often have complex geometries that go beyond simple administrative polygons. This section defines **standardized geometry patterns** that work globally across all countries, ensuring consistent handling of cross-border events, impact zones, and natural boundaries.
+
+### Design Principles
+
+1. **Events stored with point + attributes** - Raw event data lives in `events.parquet` with lat/lon and attributes
+2. **Radii precomputed and stored** - Impact radii calculated at conversion time using standard formulas, stored as columns (cheap: 4-8 bytes per event). Frontend just reads the value.
+3. **Tracks stored as LineStrings** - Paths stored with timestamps, rendered as animated tracks
+4. **Impact zones optional** - Large disasters can have pre-computed polygon footprints as siblings
+5. **Same pattern everywhere** - Canada earthquakes work like USA earthquakes work like Japan earthquakes
+6. **Formulas documented for transparency** - Standard formulas in this doc ensure consistency across converters
+
+### Geometry Categories
+
+#### 1. Point + Radius Features
+
+Events with an epicenter/source and calculable impact radius.
+
+| Event Type | Point | Radius Fields | Formula |
+|------------|-------|---------------|---------|
+| **Earthquake** | epicenter (lat/lon) | `felt_radius_km`, `damage_radius_km` | R = 10^(0.5*M - 1.0) for felt |
+| **Volcano** | vent location | `ash_radius_km`, `lahar_radius_km`, `pyroclastic_km` | VEI-based lookup |
+| **Explosion** | blast center | `blast_radius_km`, `thermal_radius_km` | Energy-based |
+| **Nuclear** | detonation point | `fireball_km`, `blast_km`, `radiation_km` | Yield-based (NUKEMAP formulas) |
+
+**events.parquet schema for point+radius:**
+```
+event_id     | string    | Unique identifier
+time         | timestamp | Event time (UTC)
+latitude     | float32   | Epicenter latitude
+longitude    | float32   | Epicenter longitude
+loc_id       | string    | Admin unit containing epicenter
+magnitude    | float32   | Event magnitude (Richter, VEI, etc.)
+depth_km     | float32   | Depth below surface (earthquakes)
+felt_radius_km    | float32 | Radius where shaking/effects felt
+damage_radius_km  | float32 | Radius of potential damage
+place        | string    | Human-readable location description
+```
+
+**Frontend rendering:**
+- Draw circle at (lat, lon) with radius from field
+- Color by severity (magnitude/VEI)
+- Clicking circle shows affected admin units (spatial query)
+
+#### 2. Track/Path Features
+
+Events that move through space over time.
+
+| Event Type | Geometry | Key Fields |
+|------------|----------|------------|
+| **Hurricane/Cyclone** | LineString (track) + polygons (wind swaths) | `max_wind_kt`, `pressure_mb`, `category` |
+| **Tornado** | LineString (damage path) | `ef_scale`, `path_length_km`, `path_width_m` |
+| **Storm system** | LineString (movement) | `storm_type`, `hail_size_in` |
+| **Wildfire** | Polygon sequence (daily perimeters) | `acres_burned`, `containment_pct` |
+
+**Track data schema (hurricanes/cyclones):**
+```
+storm_id     | string    | e.g., "AL092022" (Atlantic #9, 2022)
+storm_name   | string    | e.g., "IAN"
+point_time   | timestamp | Time of this track point
+latitude     | float32   | Position latitude
+longitude    | float32   | Position longitude
+max_wind_kt  | int16     | Maximum sustained wind (knots)
+pressure_mb  | int16     | Central pressure (millibars)
+category     | int8      | Saffir-Simpson (0-5) or Australian (1-5)
+wind_radii_34kt_ne | float32 | 34-knot wind radius NE quadrant (nm)
+wind_radii_34kt_se | float32 | 34-knot wind radius SE quadrant (nm)
+wind_radii_34kt_sw | float32 | 34-knot wind radius SW quadrant (nm)
+wind_radii_34kt_nw | float32 | 34-knot wind radius NW quadrant (nm)
+```
+
+**Frontend rendering:**
+- Render track as animated LineString (time slider scrubs position)
+- At each point, draw wind radii as asymmetric polygon (4-quadrant)
+- Color track by intensity (category/wind speed)
+
+#### 3. Impact Zone Features
+
+Events with complex footprint polygons (not circular).
+
+| Event Type | Zone Type | Data Source |
+|------------|-----------|-------------|
+| **Tsunami** | Runup zones, inundation areas | NOAA NGDC, national surveys |
+| **Hurricane** | Storm surge zones, wind swaths | NOAA NHC, SLOSH models |
+| **Flood** | Inundation extent | Satellite imagery, FEMA NFHL |
+| **Wildfire** | Burn perimeter (final) | MTBS, NIFC |
+| **Ash fall** | Deposit thickness contours | USGS, national volcanic surveys |
+
+**Impact zone schema:**
+```
+event_id     | string    | Links to parent event
+zone_type    | string    | "runup", "surge", "inundation", "perimeter", "ashfall"
+zone_level   | string    | Severity level (e.g., "6ft_surge", "1cm_ash")
+geometry     | geometry  | Polygon/MultiPolygon (GeoJSON)
+area_km2     | float32   | Zone area
+```
+
+**Sibling creation rule:**
+When an impact zone crosses admin boundaries, create a sibling entity:
+- Single state: `USA-CA-FIRE-CREEK2020` (level 2 sibling)
+- Multi-state: `USA-HRCN-IAN2022` (level 1 sibling)
+- Multi-country: `PACIFIC-TSUN-2011TOHOKU` (level 0 global entity)
+
+### Dual-File Pattern: Events + Aggregates
+
+Most hazard datasets produce TWO output files that serve different purposes:
+
+| File | Purpose | Size | When Loaded |
+|------|---------|------|-------------|
+| `events.parquet` | Individual events with point/geometry | Large (MB-GB) | On demand (detail view) |
+| `{COUNTRY}.parquet` | Admin-year aggregates (counts, totals) | Small (KB-MB) | Always (choropleth maps) |
+
+**Example: Wildfires**
+```
+wildfires/
+  fires.parquet     # 50K fires: event_id, name, date, centroid, acres, loc_id
+  USA.parquet       # 150K rows: loc_id, year, fire_count, total_acres, max_fire_acres
+```
+
+**Query patterns:**
+- "Show fire risk by county (2020)" -> Load `USA.parquet`, filter year=2020, choropleth by fire_count
+- "Show me the Creek Fire" -> Load `fires.parquet`, filter by name, show point/polygon
+- "Which counties were affected by Creek Fire?" -> Use loc_id from event or `event_impacts.parquet`
+
+### Tiered Polygon Loading
+
+Polygon geometries (fire perimeters, flood extents) can be huge. Use tiered files:
+
+```
+wildfires/
+  fires.parquet              # Metadata + centroid only (small, fast)
+  fires_perimeters.parquet   # Full perimeter polygons (large, on-demand)
+  USA.parquet                # County aggregates
+```
+
+**fires.parquet (always loaded):**
+```
+event_id | fire_name    | year | centroid_lat | centroid_lon | burned_acres | loc_id
+CREEK20  | Creek Fire   | 2020 | 37.21        | -119.32      | 379895       | USA-CA-6019
+```
+
+**fires_perimeters.parquet (loaded on demand):**
+```
+event_id | geometry                    | simplified_geometry
+CREEK20  | POLYGON((...full detail...))| POLYGON((...10% vertices...))
+```
+
+**Frontend flow:**
+1. Load `fires.parquet` - show points on map (fast)
+2. User clicks fire -> fetch `fires_perimeters.parquet` for that event_id
+3. Render actual burn perimeter polygon
+
+### Time-Series Perimeters (Active Events)
+
+For "watch it grow" visualizations, need daily snapshots:
+
+**Data sources:**
+| Source | Coverage | Update Frequency | Perimeter Type |
+|--------|----------|------------------|----------------|
+| **MTBS** | USA 1984-present | Post-fire (final only) | Final perimeter |
+| **NIFC/InciWeb** | USA active fires | Daily during event | Daily snapshots |
+| **FIRMS (NASA)** | Global | Every 12 hours | Hotspot points |
+| **Sentinel-2** | Global | 5 days | Derived polygons |
+
+**Time-series perimeter schema:**
+```
+event_id     | string    | Fire identifier
+snapshot_date| date      | Date of this perimeter
+acres_burned | float32   | Cumulative acres as of this date
+containment  | int8      | Percent contained (0-100)
+geometry     | geometry  | Perimeter polygon at this date
+```
+
+**Example query:** "Show 2020 Creek Fire growth"
+```python
+perimeters = df[df['event_id'] == 'CREEK20'].sort_values('snapshot_date')
+# Animate through perimeters as time slider moves
+```
+
+See [data_pipeline.md](data_pipeline.md) for converter implementation details.
+
+#### 4. Natural Flow Features
+
+Boundaries defined by physical flow patterns, not political lines.
+
+| Feature Type | Description | loc_id Pattern |
+|--------------|-------------|----------------|
+| **Watershed/Basin** | Water drainage areas | `USA-WSHED-MISSISSIPPI`, `AMAZON-BASIN` |
+| **Aquifer** | Underground water systems | `USA-AQUIFER-OGALLALA` |
+| **Airshed** | Air quality management basins | `USA-AIR-SOCAL`, `USA-AIR-SANJOAQUIN` |
+| **Ocean current** | Major current systems | `CURRENT-GULFSTREAM`, `CURRENT-KUROSHIO` |
+| **Climate zone** | Koppen classification areas | `CLIMATE-BWH`, `CLIMATE-CFB` |
+
+**Watershed hierarchy (USA HUC system):**
+```
+loc_id              | level | name                  | huc_code
+USA-HUC01           | 1     | New England Region    | 01
+USA-HUC0108         | 2     | Connecticut           | 0108
+USA-HUC010802       | 3     | Lower Connecticut     | 010802
+```
+
+### Cross-Border Event Handling
+
+When events cross international boundaries:
+
+**Option A: Multiple country-specific records**
+Store the event in each affected country's events.parquet with their local loc_id:
+```
+# USA events.parquet
+EQ-2024-001 | USA-WA-53073 | 7.2 | ...
+
+# CAN events.parquet
+EQ-2024-001 | CAN-BC-5915 | 7.2 | ...
+```
+Same `event_id`, different `loc_id`. Frontend can aggregate by event_id.
+
+**Option B: Global event entity**
+For truly global events (Pacific tsunamis, major volcanic eruptions), create global entity:
+```
+# global_entities.parquet
+PACIFIC-TSUN-2011TOHOKU | 0 | tsunami | 2011 Tohoku Tsunami | POINT(142.37, 38.32)
+```
+Then link affected countries via `event_impacts.parquet`.
+
+**Recommended approach:** Option A for most events, Option B for catastrophic multi-country disasters.
+
+### Event Impact Linkage
+
+The `event_impacts.parquet` file links events to affected administrative units:
+
+```
+event_id           | loc_id         | impact_type | value
+HRCN-IAN-2022     | USA-FL-12015   | damage_usd  | 1500000000
+HRCN-IAN-2022     | USA-FL-12015   | deaths      | 12
+HRCN-IAN-2022     | USA-FL-12021   | damage_usd  | 890000000
+HRCN-IAN-2022     | USA-SC-45019   | damage_usd  | 45000000
+EQ-TOHOKU-2011    | JPN-04         | deaths      | 15899
+EQ-TOHOKU-2011    | JPN-04         | damage_usd  | 235000000000
+```
+
+This allows:
+- Query: "Which counties were affected by Hurricane Ian?"
+- Query: "What disasters affected Los Angeles County in 2024?"
+- Aggregation: Total damage by state/country from an event
+
+### Standardized Formulas
+
+To ensure consistency globally, use these formulas:
+
+**Earthquake felt radius (Modified Mercalli Intensity):**
+```python
+def felt_radius_km(magnitude):
+    """Where shaking is perceptible (MMI II-III)"""
+    return 10 ** (0.5 * magnitude - 1.0)
+
+def damage_radius_km(magnitude):
+    """Where structural damage possible (MMI VI+)"""
+    return 10 ** (0.5 * magnitude - 1.5)
+```
+
+**Volcanic ash dispersal (simplified):**
+```python
+def ash_radius_km(vei):
+    """Approximate ash fall radius by VEI"""
+    radii = {0: 1, 1: 5, 2: 25, 3: 100, 4: 500, 5: 1000, 6: 2000, 7: 5000, 8: 10000}
+    return radii.get(vei, 0)
+```
+
+**Saffir-Simpson wind radii estimation:**
+```python
+def estimate_wind_radius_nm(max_wind_kt):
+    """Rough estimate of 34-knot wind radius"""
+    if max_wind_kt >= 137:  # Cat 5
+        return 150
+    elif max_wind_kt >= 113:  # Cat 4
+        return 120
+    elif max_wind_kt >= 96:  # Cat 3
+        return 100
+    elif max_wind_kt >= 83:  # Cat 2
+        return 80
+    elif max_wind_kt >= 64:  # Cat 1
+        return 60
+    else:
+        return 40
+```
+
+### File Organization
+
+```
+county-map-data/
+  geometry/
+    global.csv                    # 257 countries (clean)
+    global_entities.parquet       # Oceans, seas, global events
+    USA.parquet                   # USA admin + siblings (watersheds, etc.)
+    CAN.parquet                   # Canada admin + siblings
+    ...
+
+  countries/
+    USA/
+      usgs_earthquakes/
+        events.parquet            # Individual quakes with radius fields
+        USA.parquet               # County-year aggregates
+      noaa_storms/
+        events.parquet            # Individual storms
+        USA.parquet               # County-year aggregates
+      wildfires/
+        fires.parquet             # Individual fires with perimeters
+        USA.parquet               # County-year aggregates
+      event_impacts.parquet       # Links events to affected loc_ids (optional)
+
+    CAN/
+      nrcan_earthquakes/
+        events.parquet            # Same schema as USA
+        CAN.parquet               # Province/CSD-year aggregates
+```
+
+### Implementation Checklist for New Event Types
+
+When adding a new event type (e.g., adding earthquakes to a new country):
+
+1. [ ] Use same events.parquet schema as existing implementations
+2. [ ] Include lat/lon for point location
+3. [ ] Include calculated radius fields (using standard formulas)
+4. [ ] Assign loc_id to containing admin unit
+5. [ ] Create country-year aggregates in {COUNTRY}.parquet
+6. [ ] Add to source_registry.py with `has_events: True`
+7. [ ] Document any country-specific variations
+
+This ensures Canada earthquakes, Japan earthquakes, and Chile earthquakes all work identically in the frontend.
 
 ---
 
@@ -1049,6 +1404,276 @@ Primary and alternative sources for geographic boundaries.
 - **Coverage**: Admin boundaries for every country, levels 0-5
 - **License**: Free for non-commercial, attribution required
 - **Used by**: `process_gadm.py`
+- **Current Version**: 4.1 (400,276 administrative areas)
+- **Next Version**: 5.0 expected January 2026
+
+**GADM v5 Note (January 2026)**: Version 5 is expected to be released in January 2026. When available, evaluate for:
+- Updated boundary definitions
+- New administrative divisions
+- Improved accuracy for regions that have changed since 4.1
+- Consider running geometry comparison script against new version
+
+---
+
+## Geometry Overlay Strategy
+
+GADM provides a **unified global baseline** for administrative boundaries, but local statistical agencies often have more accurate, current geometry that matches their data exactly. This section documents when to use GADM vs local sources.
+
+### Strategy: GADM Base + Local Overlays
+
+```
+GADM 4.1 (Global Baseline)
+    |
+    +-- Use directly for: 200+ countries without local data
+    |
+    +-- Replace with local source for:
+        |
+        +-- Australia: ABS LGA boundaries (2024, 547 LGAs)
+        +-- Canada: StatsCan CSD boundaries (2021, 5,161 CSDs)
+        +-- Europe: Eurostat GISCO NUTS boundaries (1,612 NUTS 3)
+        +-- USA: Continue using GADM (matches Census TIGER well)
+```
+
+### Comparison Results (January 2026)
+
+Comparison script: `data_converters/utilities/compare_geometry_sources.py`
+
+| Region | Local Source | Local Units | GADM Units | Name Match | Recommendation |
+|--------|--------------|-------------|------------|------------|----------------|
+| **Australia** | ABS LGA 2024 | 547 | 564 | 87.7% | **Use ABS** - more current, includes geometry |
+| **Canada** | StatsCan CSD 2021 | 5,161 | ~5,000 | TBD | **Use StatsCan** - exact data match, need boundary download |
+| **Europe** | Eurostat GISCO | 1,612 NUTS3 | varies | TBD | **Use GISCO** - standardized EU system |
+| **USA** | Census TIGER | 3,144 | 3,144 | 99%+ | **Keep GADM** - good match, already working |
+
+### When to Replace GADM
+
+Replace GADM geometry with local source when:
+
+1. **Data-Geometry Mismatch**: Local data uses codes that don't map cleanly to GADM regions
+2. **Boundary Changes**: Local source has more recent boundary definitions (e.g., LGA mergers)
+3. **Name Discrepancies**: Significant name differences cause join failures
+4. **Geometry Included**: Local source provides geometry bundled with data (like ABS GeoPackage)
+5. **Official Boundaries Available**: Local source provides pre-defined parent boundaries
+
+**Important: Aggregation Artifacts**
+
+GADM only stores geometry at the deepest admin level. Parent boundaries (states, provinces) are created by **aggregating child polygons** using `unary_union()`. This can introduce:
+- Visual line artifacts from imperfect merges
+- Sliver gaps between children that show through
+- Inconsistencies at coastlines and complex borders
+
+Local statistical agencies (ABS, StatsCan, Eurostat) provide **official parent boundaries** that don't have these aggregation issues. Their state/province/region geometry is authoritative, not derived.
+
+```
+GADM Approach:           Local Source Approach:
+
+Counties -> merge ->     Counties (official)
+  State boundary            +
+  (artifacts possible)   State boundary (official, separate)
+                         (clean, no artifacts)
+```
+
+### When to Keep GADM
+
+Keep GADM geometry when:
+
+1. **No Local Alternative**: Country doesn't have accessible open boundary data
+2. **Good Match**: GADM boundaries align well with local data (like USA counties)
+3. **Unified Hierarchy**: Need consistent admin levels across neighboring countries
+4. **Simpler Maintenance**: Single source easier to update than multiple local sources
+
+### Australia: ABS vs GADM Details
+
+**Comparison Results:**
+```
+ABS LGAs (2024):    547 regions
+GADM admin_2 (2021): 564 regions
+Exact name matches:  480 (87.7%)
+ABS-only names:      67 (merged LGAs, renamed)
+GADM-only names:     78 (split LGAs, outdated names)
+```
+
+**Key Differences:**
+- LGA mergers since 2021 (GADM outdated)
+- Name variations: "Augusta-Margaret River" vs "Augusta Margaret River"
+- ABS disambiguates duplicates: "Bayside (NSW)" vs "Bayside (Vic.)"
+- GADM includes tiny external territories separately
+
+**Decision**: Use ABS geometry - it's bundled in the GeoPackage, matches our population data exactly, and is more current.
+
+**Implementation**:
+```python
+# Extract geometry from ABS GeoPackage
+gdf = gpd.read_file("Raw data/abs/ERP_2024_LGA/32180_ERP_2024_LGA_GDA2020.gpkg")
+
+# Convert to loc_id format
+AUS_STATE_TO_ABBR = {1: "NSW", 2: "VIC", 3: "QLD", 4: "SA", 5: "WA", 6: "TAS", 7: "NT", 8: "ACT", 9: "OT"}
+gdf["loc_id"] = gdf.apply(lambda r: f"AUS-{AUS_STATE_TO_ABBR[r['state_code_2021']]}-{r['lga_code_2024']}", axis=1)
+```
+
+### Canada: StatsCan vs GADM Details
+
+**Comparison Results:**
+```
+StatsCan CSDs (2021): 5,161 municipalities
+GADM admin_2:         ~5,000 regions
+Name match:           TBD (need boundary file download)
+```
+
+**Key Challenge**: Census data doesn't include geometry. Need separate download from:
+https://www12.statcan.gc.ca/census-recensement/2021/geo/sip-pis/boundary-limites/index2021-eng.cfm
+
+**Decision**: Download StatsCan boundary files - they match the census data DGUIDs exactly.
+
+**Implementation** (when boundaries downloaded):
+```python
+# StatsCan uses DGUID for unique identification
+dguid = "2021A00051001105"  # Example: Portugal Cove South, NL
+province_code = dguid[9:11]  # "10" -> NL
+csd_code = dguid[11:]        # "01105"
+
+CANADA_PROV_TO_ABBR = {"10": "NL", "11": "PE", "12": "NS", "13": "NB", "24": "QC",
+                        "35": "ON", "46": "MB", "47": "SK", "48": "AB", "59": "BC",
+                        "60": "YT", "61": "NT", "62": "NU"}
+loc_id = f"CAN-{CANADA_PROV_TO_ABBR[province_code]}-{csd_code}"
+```
+
+### Europe: Eurostat GISCO vs GADM Details
+
+**Comparison Results:**
+```
+Eurostat NUTS 3: 1,612 regions across 37 countries
+GADM admin_2:    Varies by country (different hierarchies)
+```
+
+**Key Challenge**:
+- NUTS system is EU-specific, doesn't map 1:1 to national admin divisions
+- GADM uses national admin structures (Kreise in Germany, Departements in France)
+- NUTS 3 may combine or split national admin units
+
+**Decision**: Use GISCO boundaries for NUTS data. Download from:
+https://ec.europa.eu/eurostat/web/gisco/geodata/statistical-units/territorial-units-statistics
+
+**Implementation**:
+```python
+# NUTS codes are self-describing: first 2 chars = country
+nuts_code = "DE300"  # Berlin
+NUTS_COUNTRY_TO_ISO3 = {"DE": "DEU", "FR": "FRA", "IT": "ITA", ...}
+iso3 = NUTS_COUNTRY_TO_ISO3[nuts_code[:2]]
+loc_id = f"{iso3}-{nuts_code}"  # "DEU-DE300"
+```
+
+### Geometry File Precedence
+
+Simple two-tier system:
+
+```
+1. countries/{ISO3}/geometry.parquet  <- Local source (preferred)
+2. geometry/{ISO3}.parquet            <- GADM fallback (global baseline)
+```
+
+When a country gets its own data folder (with converters, better data), we include local geometry there. The `geometry/` folder stays pure GADM as the global fallback.
+
+```python
+def get_country_geometry(iso3):
+    """Load geometry - country folder first, GADM fallback."""
+
+    # Check for country-specific geometry (local source, preferred)
+    country_geom = f"countries/{iso3}/geometry.parquet"
+    if Path(country_geom).exists():
+        return pd.read_parquet(country_geom)
+
+    # Fall back to GADM (global baseline)
+    gadm_path = f"geometry/{iso3}.parquet"
+    if Path(gadm_path).exists():
+        return pd.read_parquet(gadm_path)
+
+    return None
+```
+
+### loc_id Systems and Migration
+
+**The Two loc_id Systems**
+
+GADM and local sources use different identification codes:
+
+```
+GADM loc_ids (global baseline):     Local loc_ids (country-specific):
+  AUS-NS-11730                        AUS-NSW-10050
+  CAN-QC-2466023                      CAN-QC-66023
+  CHN-BJ-12345                        CHN-Beijing-110000
+```
+
+GADM uses its internal GID/HASC codes. Local sources use codes that citizens recognize (LGA codes, FIPS, postal regions). **Local loc_ids are preferred** because they're intuitive to locals and match the data source exactly.
+
+**Migration When Local Geometry Arrives**
+
+When a country transitions from GADM to local geometry:
+
+```
+Phase 1: Initial import (no local geometry)
+  -> Data uses GADM loc_ids
+  -> Links to geometry/{ISO3}.parquet
+
+Phase 2: Local geometry obtained
+  -> Create countries/{ISO3}/geometry.parquet with local loc_ids
+  -> **Re-run all converters** to migrate data to local loc_ids
+  -> All data now uses local loc_ids
+
+Phase 3: Unified system
+  -> All data uses local loc_ids
+  -> GADM fallback catches any stragglers
+```
+
+**The goal is one loc_id system per country** - local when available. When adopting local geometry, re-run converters to migrate existing data.
+
+**Dual loc_id Lookup (Safety Net)**
+
+The geometry lookup checks both systems as a safety net:
+
+```python
+def get_geometry_for_loc_id(loc_id):
+    """Find geometry for loc_id - tries local first, then GADM fallback."""
+    iso3 = loc_id.split('-')[0]
+
+    # Try local geometry (preferred)
+    local_geom = load_country_geometry(iso3)
+    if local_geom is not None:
+        match = local_geom[local_geom['loc_id'] == loc_id]
+        if len(match) > 0:
+            return match.iloc[0]
+
+    # Fallback to GADM
+    gadm_geom = load_gadm_geometry(iso3)
+    if gadm_geom is not None:
+        match = gadm_geom[gadm_geom['loc_id'] == loc_id]
+        if len(match) > 0:
+            return match.iloc[0]
+
+    return None
+```
+
+This handles:
+- Data that wasn't migrated yet
+- Edge cases during transition periods
+- Niche datasets that are hard to update
+
+**But the fallback is a safety net, not the design.** Strive to have all data use the same loc_id system.
+
+**Current Status:**
+| Country | Local Geometry | Source | Features |
+|---------|---------------|--------|----------|
+| AUS | `countries/AUS/geometry.parquet` | ABS LGA 2024 | 547 |
+| CAN | (pending) | StatsCan CSD 2021 | 5,161 |
+| USA | Uses GADM | GADM matches TIGER well | 3,144 |
+
+### TODO: Geometry Downloads Needed
+
+| Source | URL | Priority |
+|--------|-----|----------|
+| **StatsCan CSD Boundaries** | https://www12.statcan.gc.ca/census-recensement/2021/geo/sip-pis/boundary-limites/index2021-eng.cfm | High |
+| **Eurostat GISCO NUTS** | https://ec.europa.eu/eurostat/web/gisco/geodata/statistical-units/territorial-units-statistics | Medium |
+| **GADM v5** | https://gadm.org (when released) | Medium |
 
 ### Natural Earth (Alternative)
 
@@ -1266,7 +1891,8 @@ The artifacts appear to be internal geometry issues from the `unary_union()` ope
 
 | File | Purpose |
 |------|---------|
-| [data_pipeline.md](data_pipeline.md) | Data source catalog, converter standards, finalize_source() workflow |
+| [data_pipeline.md](data_pipeline.md) | Data source catalog, metadata schema, folder structure |
+| [data_import.md](data_import.md) | Quick reference for creating data converters |
 | [MAPPING.md](MAPPING.md) | Frontend map rendering and display |
 
 ### Code Files
@@ -1300,4 +1926,4 @@ See [data_pipeline.md - Adding New Data Sources](data_pipeline.md#adding-new-dat
 
 ---
 
-*Last Updated: 2026-01-05*
+*Last Updated: 2026-01-06*

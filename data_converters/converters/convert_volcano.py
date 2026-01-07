@@ -1,7 +1,7 @@
 """
 Convert Smithsonian Global Volcanism Program data to parquet format.
 
-Creates two output files:
+Creates three output files:
 1. volcanoes.parquet - Volcano locations with metadata
 2. eruptions.parquet - Historical eruption events
 3. USA.parquet - County-year aggregated eruption statistics
@@ -9,36 +9,34 @@ Creates two output files:
 Input: GeoJSON files from Smithsonian GVP
 Output: Three parquet files with volcano/eruption data
 
+Uses unified base utilities for spatial join and water body assignment.
+
 Usage:
     python convert_volcano.py
 """
 import pandas as pd
-import pyarrow as pa
-import pyarrow.parquet as pq
 import geopandas as gpd
 from pathlib import Path
-from shapely.geometry import Point, shape
 import json
+import sys
+
+# Add parent paths for imports
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from data_converters.base import (
+    USA_STATE_FIPS,
+    load_geometry_parquet,
+    get_water_body_loc_id,
+    create_point_gdf,
+    save_parquet,
+    VEI_SCALE,
+)
+from build.catalog.finalize_source import finalize_source
 
 # Configuration
 RAW_DATA_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/Raw data/smithsonian/volcano")
 GEOMETRY_PATH = Path("C:/Users/Bryan/Desktop/county-map-data/geometry/USA.parquet")
 OUTPUT_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/countries/USA/volcanoes")
-
-# State FIPS to abbreviation mapping
-STATE_FIPS = {
-    '01': 'AL', '02': 'AK', '04': 'AZ', '05': 'AR', '06': 'CA',
-    '08': 'CO', '09': 'CT', '10': 'DE', '11': 'DC', '12': 'FL',
-    '13': 'GA', '15': 'HI', '16': 'ID', '17': 'IL', '18': 'IN',
-    '19': 'IA', '20': 'KS', '21': 'KY', '22': 'LA', '23': 'ME',
-    '24': 'MD', '25': 'MA', '26': 'MI', '27': 'MN', '28': 'MS',
-    '29': 'MO', '30': 'MT', '31': 'NE', '32': 'NV', '33': 'NH',
-    '34': 'NJ', '35': 'NM', '36': 'NY', '37': 'NC', '38': 'ND',
-    '39': 'OH', '40': 'OK', '41': 'OR', '42': 'PA', '44': 'RI',
-    '45': 'SC', '46': 'SD', '47': 'TN', '48': 'TX', '49': 'UT',
-    '50': 'VT', '51': 'VA', '53': 'WA', '54': 'WV', '55': 'WI',
-    '56': 'WY', '72': 'PR'
-}
+SOURCE_ID = "smithsonian_volcanoes"
 
 # US regions/countries in Smithsonian data
 US_REGIONS = [
@@ -49,63 +47,13 @@ US_REGIONS = [
 ]
 
 
-def fips_to_loc_id(fips_code):
-    """Convert 5-digit FIPS code to loc_id format."""
-    fips_str = str(fips_code).zfill(5)
-    state_fips = fips_str[:2]
-    state_abbr = STATE_FIPS.get(state_fips)
-
-    if not state_abbr:
-        return None
-
-    return f"USA-{state_abbr}-{int(fips_str)}"
-
-
-def get_water_body_loc_id(lat, lon):
-    """
-    Determine water body loc_id based on coordinates.
-    Water body codes follow ISO 3166-1 X-prefix convention:
-      XOP = Pacific Ocean
-      XOA = Atlantic Ocean
-      XOI = Indian Ocean
-
-    Used for submarine volcanoes that don't fall within county boundaries.
-    """
-    if pd.isna(lat) or pd.isna(lon):
-        return None
-
-    # Pacific Ocean (most US submarine volcanoes are here - Hawaii, Mariana, etc.)
-    if lon < -100 or lon > 100:
-        return "XOP-0"
-
-    # Atlantic Ocean
-    if -100 <= lon <= 0 and lat > 0:
-        return "XOA-0"
-
-    # Default to Pacific for US territories
-    return "XOP-0"
-
+# =============================================================================
+# Data Loading
+# =============================================================================
 
 def load_counties():
-    """Load county boundaries from geometry parquet."""
-    print("Loading county boundaries...")
-
-    # Read geometry parquet
-    df = pd.read_parquet(GEOMETRY_PATH)
-
-    # Filter to counties (admin_level 2)
-    counties = df[df['admin_level'] == 2].copy()
-
-    # Parse GeoJSON geometry
-    counties['geom'] = counties['geometry'].apply(
-        lambda x: shape(json.loads(x)) if pd.notna(x) else None
-    )
-
-    # Create GeoDataFrame
-    gdf = gpd.GeoDataFrame(counties, geometry='geom', crs='EPSG:4326')
-
-    print(f"  Loaded {len(gdf)} counties")
-    return gdf
+    """Load county boundaries from geometry parquet using base utility."""
+    return load_geometry_parquet(GEOMETRY_PATH, admin_level=2, geometry_format='geojson')
 
 
 def load_volcano_data():
@@ -196,7 +144,7 @@ def filter_us_data(volcanoes_df, eruptions_df):
 
 
 def geocode_volcanoes(volcanoes_df, counties_gdf):
-    """Geocode volcano locations to counties."""
+    """Geocode volcano locations to counties using base utilities."""
     print("\nGeocoding volcanoes to counties...")
 
     # Filter to volcanoes with coordinates
@@ -206,13 +154,11 @@ def geocode_volcanoes(volcanoes_df, counties_gdf):
     if len(volcanoes_with_coords) == 0:
         return volcanoes_df
 
-    # Create geometry
-    geometry = [Point(xy) for xy in zip(volcanoes_with_coords['longitude'],
-                                         volcanoes_with_coords['latitude'])]
-    gdf = gpd.GeoDataFrame(volcanoes_with_coords, geometry=geometry, crs="EPSG:4326")
+    # Create point geometries using base utility
+    gdf = create_point_gdf(volcanoes_with_coords, lat_col='latitude', lon_col='longitude')
 
-    # Spatial join with counties (geometry parquet already has loc_id)
-    gdf_with_counties = gpd.sjoin(gdf, counties_gdf[['loc_id', 'geom']].set_geometry('geom'),
+    # Spatial join with counties
+    gdf_with_counties = gpd.sjoin(gdf, counties_gdf[['loc_id', 'geometry']],
                                    how='left', predicate='within')
 
     matched = gdf_with_counties['loc_id'].notna().sum()
@@ -222,7 +168,7 @@ def geocode_volcanoes(volcanoes_df, counties_gdf):
     water_mask = gdf_with_counties['loc_id'].isna()
     if water_mask.any():
         gdf_with_counties.loc[water_mask, 'loc_id'] = gdf_with_counties.loc[water_mask].apply(
-            lambda row: get_water_body_loc_id(row['latitude'], row['longitude']),
+            lambda row: get_water_body_loc_id(row['latitude'], row['longitude'], region='usa'),
             axis=1
         )
         water_count = water_mask.sum()
@@ -234,13 +180,14 @@ def geocode_volcanoes(volcanoes_df, counties_gdf):
         if not water_body_counts.empty:
             print(f"  Water body breakdown: {dict(water_body_counts)}")
 
+    # Clean up join artifacts
+    gdf_with_counties = gdf_with_counties.drop(columns=['index_right'], errors='ignore')
+
     return gdf_with_counties
 
 
 def create_volcanoes_parquet(volcanoes_df):
     """Create volcanoes.parquet with volcano locations."""
-    print("\nCreating volcanoes.parquet...")
-
     # Prepare volcanoes dataframe
     volcanoes_out = pd.DataFrame({
         'volcano_number': volcanoes_df['volcano_number'],
@@ -258,41 +205,16 @@ def create_volcanoes_parquet(volcanoes_df):
         'loc_id': volcanoes_df.get('loc_id', pd.NA)
     })
 
-    # Define schema
-    schema = pa.schema([
-        ('volcano_number', pa.int64()),
-        ('volcano_name', pa.string()),
-        ('country', pa.string()),
-        ('region', pa.string()),
-        ('subregion', pa.string()),
-        ('latitude', pa.float32()),
-        ('longitude', pa.float32()),
-        ('elevation_m', pa.int32()),
-        ('volcano_type', pa.string()),
-        ('last_eruption_year', pa.int32()),
-        ('tectonic_setting', pa.string()),
-        ('rock_type', pa.string()),
-        ('loc_id', pa.string())
-    ])
-
-    # Save
+    # Save using base utility
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     output_path = OUTPUT_DIR / "volcanoes.parquet"
-
-    table = pa.Table.from_pandas(volcanoes_out, schema=schema, preserve_index=False)
-    pq.write_table(table, output_path, compression='snappy')
-
-    size_mb = output_path.stat().st_size / (1024 * 1024)
-    print(f"  Saved: {size_mb:.2f} MB")
-    print(f"  Volcanoes: {len(volcanoes_out):,}")
+    save_parquet(volcanoes_out, output_path, description="volcano locations")
 
     return volcanoes_out
 
 
 def create_eruptions_parquet(eruptions_df, volcanoes_df):
     """Create eruptions.parquet with eruption events."""
-    print("\nCreating eruptions.parquet...")
-
     # Join eruptions with volcano loc_id
     volcano_loc_ids = volcanoes_df[['volcano_number', 'loc_id']].drop_duplicates()
     eruptions_with_loc = eruptions_df.merge(volcano_loc_ids, on='volcano_number', how='left')
@@ -313,31 +235,9 @@ def create_eruptions_parquet(eruptions_df, volcanoes_df):
         'loc_id': eruptions_with_loc.get('loc_id', pd.NA)
     })
 
-    # Define schema
-    schema = pa.schema([
-        ('eruption_number', pa.int64()),
-        ('volcano_number', pa.int64()),
-        ('volcano_name', pa.string()),
-        ('activity_type', pa.string()),
-        ('vei', pa.int32()),
-        ('start_year', pa.int32()),
-        ('start_month', pa.int32()),
-        ('start_day', pa.int32()),
-        ('end_year', pa.int32()),
-        ('latitude', pa.float32()),
-        ('longitude', pa.float32()),
-        ('loc_id', pa.string())
-    ])
-
-    # Save
+    # Save using base utility
     output_path = OUTPUT_DIR / "eruptions.parquet"
-
-    table = pa.Table.from_pandas(eruptions_out, schema=schema, preserve_index=False)
-    pq.write_table(table, output_path, compression='snappy')
-
-    size_mb = output_path.stat().st_size / (1024 * 1024)
-    print(f"  Saved: {size_mb:.2f} MB")
-    print(f"  Eruptions: {len(eruptions_out):,}")
+    save_parquet(eruptions_out, output_path, description="eruption events")
 
     return eruptions_out
 
@@ -379,31 +279,13 @@ def create_county_aggregates(eruptions_df):
 
 
 def save_county_parquet(df):
-    """Save county aggregates to USA.parquet."""
+    """Save county aggregates to USA.parquet using base utility."""
     if df.empty:
         print("\n  Skipping USA.parquet (no data)")
         return None
 
-    print("\nSaving USA.parquet...")
-
-    # Define schema
-    schema = pa.schema([
-        ('loc_id', pa.string()),
-        ('year', pa.int32()),
-        ('eruption_count', pa.int32()),
-        ('volcano_count', pa.int32()),
-        ('max_vei', pa.int32()),
-        ('avg_vei', pa.float32())
-    ])
-
-    # Save
     output_path = OUTPUT_DIR / "USA.parquet"
-
-    table = pa.Table.from_pandas(df, schema=schema, preserve_index=False)
-    pq.write_table(table, output_path, compression='snappy')
-
-    size_mb = output_path.stat().st_size / (1024 * 1024)
-    print(f"  Saved: {size_mb:.2f} MB")
+    save_parquet(df, output_path, description="county-year aggregates")
 
     return output_path
 
@@ -547,11 +429,11 @@ def print_statistics(volcanoes_df, eruptions_df):
 
 def main():
     """Main conversion logic."""
-    print("="*80)
-    print("Smithsonian Volcano Database - GeoJSON to Parquet Converter")
-    print("="*80)
+    print("=" * 60)
+    print("Smithsonian Volcano Database Converter")
+    print("=" * 60)
 
-    # Load county boundaries
+    # Load county boundaries using base utility
     counties_gdf = load_counties()
 
     # Load volcano data
@@ -573,26 +455,36 @@ def main():
 
     # Create county aggregates
     county_df = create_county_aggregates(eruptions_out)
-    save_county_parquet(county_df)
+    agg_path = save_county_parquet(county_df)
 
     # Print statistics
     print_statistics(volcanoes_out, eruptions_out)
 
-    # Generate metadata
+    # Generate metadata (custom for volcanoes - 3 files)
     generate_metadata(volcanoes_out, eruptions_out, county_df)
 
-    print("\n" + "="*80)
+    # Finalize (update index)
+    print("\n" + "=" * 60)
+    print("Finalizing source...")
+    print("=" * 60)
+
+    try:
+        if agg_path:
+            finalize_source(
+                parquet_path=str(agg_path),
+                source_id=SOURCE_ID,
+                events_parquet_path=str(OUTPUT_DIR / "eruptions.parquet")
+            )
+    except ValueError as e:
+        print(f"  Note: {e}")
+        print(f"  Add '{SOURCE_ID}' to source_registry.py to enable auto-finalization")
+
+    print("\n" + "=" * 60)
     print("COMPLETE!")
-    print("="*80)
-    print("\nOutput files:")
-    print("  volcanoes.parquet: Volcano locations with metadata")
-    print("  eruptions.parquet: Historical eruption events")
-    print("  USA.parquet: County-year aggregated statistics")
-    print("  metadata.json: Standard metadata format")
+    print("=" * 60)
 
     return 0
 
 
 if __name__ == "__main__":
-    import sys
     sys.exit(main())

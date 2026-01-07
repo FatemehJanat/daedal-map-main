@@ -4,9 +4,9 @@ Scrape CIA World Factbook Web Archives for country comparison data.
 Supports archive years 2021-2025 which use the same modern HTML format.
 
 Usage:
-    python scrape_world_factbook_archive.py 2021
-    python scrape_world_factbook_archive.py 2022
-    python scrape_world_factbook_archive.py --year 2021
+    python scrape_cia_factbook_archive.py 2021
+    python scrape_cia_factbook_archive.py 2022
+    python scrape_cia_factbook_archive.py --year 2021
 """
 
 import requests
@@ -36,7 +36,7 @@ def build_country_mapping() -> Dict[str, str]:
         if hasattr(country, 'official_name'):
             mapping[country.official_name.lower()] = iso3
 
-    # World Factbook-specific name variations
+    # CIA Factbook-specific name variations
     cia_overrides = {
         "united states": "USA", "united kingdom": "GBR", "russia": "RUS",
         "south korea": "KOR", "north korea": "PRK", "iran": "IRN",
@@ -307,7 +307,7 @@ def main():
     all_data = scrape_archive(year)
 
     if all_data:
-        output_path = f'world_factbook_{year}_scraped.json'
+        output_path = f'cia_factbook_{year}_scraped.json'
         save_results(all_data, output_path)
 
         # Summary

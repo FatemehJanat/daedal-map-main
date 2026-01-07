@@ -74,6 +74,28 @@ Query-specific context injected into the LLM prompt:
 - Resolved regions with country counts
 - Detected time patterns
 - Viewport admin level (what the user is currently viewing)
+- **Country data summary** from index.json (what datasets are available)
+- **Metric column hints** - exact column names for relevant sources
+
+**Metric Hints Injection** (added 2026-01):
+
+When a location or topic is detected, the preprocessor injects available data sources with exact column names:
+
+```
+[COUNTRY DATA SUMMARY: Australia sub-national data: 2 datasets. Demographics: 547 LGAs
+with population estimates (2001-2024)...]
+
+[AVAILABLE DATA SOURCES for this query - USE THESE EXACT METRIC NAMES:]
+- Australian Bureau of Statistics (abs_population): metrics=[total_pop]
+- Bureau of Meteorology (bom_cyclones): metrics=[season, total_cyclones...]
+```
+
+**Source selection logic** (`get_relevant_sources_with_metrics()`):
+- **Location specified**: Include ALL sources for that country + topic-matched global sources
+- **Topic only**: Include ANY source (country or global) that matches the topic keywords
+- **Both**: Country sources first, then topic-matched global sources
+
+This bidirectional flow means users can ask "earthquake data for Canada" OR "earthquake data" then "for Canada" and get the same results.
 
 ### Tier 4: Reference Documents (on-demand)
 
@@ -109,7 +131,8 @@ TOPIC_KEYWORDS = {
     "health": ["health", "disease", "mortality", "life expectancy", "hospital"],
     "environment": ["co2", "carbon", "emissions", "climate", "pollution"],
     "demographics": ["population", "age", "birth", "death", "migration"],
-    # ...
+    "hazard": ["earthquake", "volcano", "hurricane", "cyclone", "wildfire", "flood", "tsunami"],
+    "development": ["sdg", "sustainable", "development goal"],
 }
 ```
 
@@ -586,6 +609,135 @@ Key decisions made during implementation of the chat system:
 
 ---
 
+## Session Memory and Context
+
+### Current State
+
+The chat system maintains conversation context through multiple mechanisms:
+
+**Frontend (chat-panel.js)**:
+```javascript
+ChatManager = {
+  history: [],                      // In-memory message history
+  sessionId: null,                  // Generated per page load
+  lastDisambiguationOptions: null,  // Stored for "show them all" follow-up
+}
+```
+
+**What gets sent to backend**:
+- `chatHistory: this.history.slice(-10)` - Last 10 messages
+- `sessionId` - Unique per page load
+- `previous_disambiguation_options` - For show borders follow-up
+
+**Backend (order_taker.py)**:
+- Uses `chat_history[-4:]` - Only last 4 messages sent to LLM
+- No server-side session storage
+
+### Lifecycle
+
+| Event | Effect |
+|-------|--------|
+| Page load | New sessionId generated, history cleared |
+| Page reload | All context lost |
+| Tab close | All context lost |
+| Query sent | Added to history array |
+| Disambiguation | Options stored in `lastDisambiguationOptions` |
+
+### Future: Unified sessionStorage Persistence
+
+**UX Principle**: If the system "remembers" context, the UI must reflect it. All state must persist together or not at all.
+
+**Target behavior**:
+- Page refresh: State persists (chat visible, order intact)
+- Tab close: State clears (fresh start)
+
+**State to persist (unified)**:
+
+```javascript
+// sessionStorage key: 'mapviewer_session'
+{
+  // ChatManager state
+  "chat": {
+    "history": [...],                    // Message history (visible in chat)
+    "sessionId": "sess_...",             // Session identifier
+    "lastDisambiguationOptions": [...]   // For "show them all" follow-up
+  },
+
+  // OrderManager state
+  "order": {
+    "currentOrder": {...},               // Active order items
+    "navigationLocations": [...]         // "Show me X" locations
+  },
+
+  // Session context (for preprocessor hints)
+  "context": {
+    "accessed_datasets": ["abs_population", "owid_co2"],
+    "recent_locations": ["AUS", "AUS-NSW"],
+    "recent_metrics": ["total_pop", "gdp"]
+  }
+}
+```
+
+**Implementation approach**:
+
+```javascript
+// chat-panel.js - Unified session persistence
+const SESSION_KEY = 'mapviewer_session';
+
+function saveSession() {
+  const state = {
+    chat: {
+      history: ChatManager.history,
+      sessionId: ChatManager.sessionId,
+      lastDisambiguationOptions: ChatManager.lastDisambiguationOptions
+    },
+    order: {
+      currentOrder: OrderManager.currentOrder
+    },
+    context: ChatManager.sessionContext || {}
+  };
+  sessionStorage.setItem(SESSION_KEY, JSON.stringify(state));
+}
+
+function restoreSession() {
+  const saved = sessionStorage.getItem(SESSION_KEY);
+  if (!saved) return false;
+
+  const state = JSON.parse(saved);
+
+  // Restore chat (including re-rendering messages)
+  ChatManager.history = state.chat?.history || [];
+  ChatManager.sessionId = state.chat?.sessionId;
+  ChatManager.lastDisambiguationOptions = state.chat?.lastDisambiguationOptions;
+  ChatManager.sessionContext = state.context || {};
+  ChatManager.renderHistory();  // Re-display messages
+
+  // Restore order panel
+  if (state.order?.currentOrder) {
+    OrderManager.currentOrder = state.order.currentOrder;
+    OrderManager.render();
+  }
+
+  return true;
+}
+
+// In init():
+if (!restoreSession()) {
+  this.sessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 11);
+}
+
+// Call saveSession() after any state change
+```
+
+**Benefits of unified persistence**:
+- "Show me more data" -> knows which datasets were just accessed
+- "Compare to last year" -> knows which metrics/locations are active
+- "What else for Australia?" -> remembers recent location context
+- Reduced repeated explanations from LLM
+- **Consistent UX** - what user sees matches what system remembers
+
+---
+
 ## Future Enhancements
 
 ### Growth Rate Calculations
@@ -637,4 +789,4 @@ When too many data points requested (10+):
 
 ---
 
-*Last Updated: 2026-01-05*
+*Last Updated: 2026-01-06*

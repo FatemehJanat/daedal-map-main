@@ -272,8 +272,141 @@ export const SelectionManager = {
 
       console.log('SelectionManager: Loaded', geojson.features.length, 'candidate geometries');
 
+      // Zoom to fit all candidates
+      this.zoomToCandidates(geojson);
+
+      // Add numbered markers at centroids
+      this.addCandidateMarkers(geojson);
+
     } catch (error) {
       console.error('SelectionManager: Error loading geometries:', error);
+    }
+  },
+
+  /**
+   * Zoom map to fit all candidate geometries
+   */
+  zoomToCandidates(geojson) {
+    if (!MapAdapter?.map || !geojson.features?.length) return;
+
+    const map = MapAdapter.map;
+
+    // Calculate bounding box of all features
+    let minLon = Infinity, minLat = Infinity, maxLon = -Infinity, maxLat = -Infinity;
+
+    geojson.features.forEach(feature => {
+      const coords = this.getAllCoordinates(feature.geometry);
+      coords.forEach(([lon, lat]) => {
+        minLon = Math.min(minLon, lon);
+        minLat = Math.min(minLat, lat);
+        maxLon = Math.max(maxLon, lon);
+        maxLat = Math.max(maxLat, lat);
+      });
+    });
+
+    if (minLon !== Infinity) {
+      // Temporarily enable interactions for fitBounds animation
+      map.dragPan.enable();
+
+      map.fitBounds(
+        [[minLon, minLat], [maxLon, maxLat]],
+        { padding: 80, duration: 1000 }
+      );
+
+      // Re-freeze after animation
+      setTimeout(() => {
+        if (this.active) {
+          map.dragPan.disable();
+        }
+      }, 1100);
+    }
+  },
+
+  /**
+   * Get all coordinates from a geometry (handles Polygon, MultiPolygon)
+   */
+  getAllCoordinates(geometry) {
+    const coords = [];
+    if (!geometry) return coords;
+
+    if (geometry.type === 'Polygon') {
+      geometry.coordinates[0].forEach(c => coords.push(c));
+    } else if (geometry.type === 'MultiPolygon') {
+      geometry.coordinates.forEach(poly => {
+        poly[0].forEach(c => coords.push(c));
+      });
+    } else if (geometry.type === 'Point') {
+      coords.push(geometry.coordinates);
+    }
+    return coords;
+  },
+
+  /**
+   * Add numbered markers at the centroid of each candidate
+   */
+  addCandidateMarkers(geojson) {
+    if (!MapAdapter?.map || !geojson.features?.length) return;
+
+    // Remove any existing markers
+    this.removeCandidateMarkers();
+
+    this._markers = [];
+
+    geojson.features.forEach((feature, index) => {
+      const centroid = this.calculateCentroid(feature.geometry);
+      if (!centroid) return;
+
+      const optIndex = feature.properties?._optionIndex;
+      const option = optIndex >= 0 ? this.options[optIndex] : null;
+      const label = option?.matched_term || `Option ${index + 1}`;
+
+      // Create marker element
+      const el = document.createElement('div');
+      el.className = 'selection-marker';
+      el.innerHTML = `<span class="selection-marker-number">${index + 1}</span>`;
+      el.title = label;
+
+      // Add click handler
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (optIndex >= 0 && this.onSelect) {
+          this.onSelect(this.options[optIndex], this.originalQuery);
+          this.exit(false);
+        }
+      });
+
+      // Create and add marker
+      const marker = new maplibregl.Marker({ element: el })
+        .setLngLat(centroid)
+        .addTo(MapAdapter.map);
+
+      this._markers.push(marker);
+    });
+  },
+
+  /**
+   * Calculate centroid of a geometry
+   */
+  calculateCentroid(geometry) {
+    const coords = this.getAllCoordinates(geometry);
+    if (coords.length === 0) return null;
+
+    let sumLon = 0, sumLat = 0;
+    coords.forEach(([lon, lat]) => {
+      sumLon += lon;
+      sumLat += lat;
+    });
+
+    return [sumLon / coords.length, sumLat / coords.length];
+  },
+
+  /**
+   * Remove candidate markers
+   */
+  removeCandidateMarkers() {
+    if (this._markers) {
+      this._markers.forEach(m => m.remove());
+      this._markers = [];
     }
   },
 
@@ -284,6 +417,9 @@ export const SelectionManager = {
     if (!MapAdapter?.map) return;
 
     const map = MapAdapter.map;
+
+    // Remove numbered markers
+    this.removeCandidateMarkers();
 
     if (map.getLayer(CONFIG.layers.selectionFill)) {
       map.removeLayer(CONFIG.layers.selectionFill);

@@ -117,6 +117,13 @@ county-map-data/
 - Country sources: `countries/{ISO3}/{source_id}/USA.parquet`
 - Event-based datasets: `USA.parquet` (aggregates) + `events.parquet` (individual events)
 
+> **See also**: [GEOMETRY.md - Special Geometries](GEOMETRY.md#special-geometries) for details on:
+> - Dual-file pattern (events + aggregates) and when to use each
+> - Tiered polygon loading for large perimeter datasets (wildfires, floods)
+> - Time-series perimeters for daily event progression
+> - Cross-border event handling strategies
+> - Point + radius features (earthquakes, volcanoes) vs polygon features (fire perimeters)
+
 ---
 
 ## index.json Router
@@ -948,6 +955,121 @@ python build/catalog/catalog_builder.py
 
 ---
 
+## Unified Base Converter Architecture
+
+To reduce code duplication across converters, shared utilities are in `data_converters/base/`:
+
+```
+data_converters/
+  base/
+    __init__.py           # Exports all utilities
+    constants.py          # Country codes, water body codes, hazard scales
+    geo_utils.py          # Spatial join, geometry loading, loc_id generation
+    parquet_utils.py      # Standardized parquet saving, schema helpers
+  converters/
+    convert_usgs_earthquakes.py
+    convert_canada_earthquakes.py
+    ...
+```
+
+### Shared Constants (`constants.py`)
+
+| Constant | Description |
+|----------|-------------|
+| `USA_STATE_FIPS` | State FIPS to abbreviation mapping (51 states + territories) |
+| `CAN_PROVINCE_ABBR` | Province UID to abbreviation (13 provinces/territories) |
+| `AUS_STATE_ABBR` | State code to abbreviation (9 states/territories) |
+| `WATER_BODY_CODES` | ISO X-prefix codes for oceans/seas (XOP, XOA, XSG, etc.) |
+| `TERRITORIAL_WATERS_DEG` | 12 nautical miles = 0.2 degrees |
+| `SAFFIR_SIMPSON_SCALE` | Hurricane category thresholds |
+| `VEI_SCALE` | Volcanic Explosivity Index levels |
+| `DROUGHT_LEVELS` | USDM D0-D4 drought severity |
+
+### Spatial Join Utilities (`geo_utils.py`)
+
+**3-Pass Spatial Join** for geocoding point events to administrative units:
+
+```python
+from data_converters.base import spatial_join_3pass, load_geometry_parquet
+
+# Load county/division geometry
+counties_gdf = load_geometry_parquet(geometry_path, admin_level=2)
+
+# Geocode events with 3-pass matching
+events_gdf = spatial_join_3pass(
+    points_gdf=events_gdf,
+    polygons_gdf=counties_gdf,
+    territorial_waters_deg=0.2,  # 12nm threshold
+    water_body_region='usa'      # usa, canada, australia, global
+)
+```
+
+**Pass 1**: Point-in-polygon (`sjoin` with `predicate='within'`)
+**Pass 2**: Nearest neighbor within territorial waters (`sjoin_nearest` with distance < 0.2 deg)
+**Pass 3**: Assign water body codes for offshore events (XOP, XOA, XSH, etc.)
+
+**loc_id Generation**:
+
+```python
+from data_converters.base import usa_fips_to_loc_id, can_cduid_to_loc_id
+
+usa_fips_to_loc_id(6037)      # Returns 'USA-CA-6037'
+can_cduid_to_loc_id('5915')   # Returns 'CAN-BC-5915'
+```
+
+### Water Body Codes
+
+Offshore events are assigned ISO 3166-1 X-prefix codes:
+
+| Code | Water Body | Region |
+|------|-----------|--------|
+| `XOP` | Pacific Ocean | Global |
+| `XOA` | Atlantic Ocean | Global |
+| `XON` | Arctic Ocean | Global |
+| `XOI` | Indian Ocean | Global |
+| `XSG` | Gulf of Mexico / St. Lawrence | USA/Canada |
+| `XSC` | Caribbean Sea | Americas |
+| `XSB` | Bering Sea | USA/Canada |
+| `XSH` | Hudson Bay | Canada |
+| `XSL` | Labrador Sea | Canada |
+| `XSE` | Beaufort Sea | Canada |
+
+### Parquet Utilities (`parquet_utils.py`)
+
+```python
+from data_converters.base import save_parquet, get_output_paths
+
+# Get standard paths
+paths = get_output_paths('USA', 'usgs_earthquakes')
+# Returns: {'dir': ..., 'events': .../events.parquet, 'aggregates': .../USA.parquet}
+
+# Save with standard settings
+save_parquet(df, paths['events'], description='earthquake events')
+```
+
+### Converter Patterns
+
+**Earthquake Converters** (USA, Canada, future countries):
+1. Load raw CSV/JSON
+2. Parse dates, create event_id
+3. Calculate felt_radius_km, damage_radius_km
+4. Load geometry, run `spatial_join_3pass()`
+5. Save events.parquet + {COUNTRY}.parquet aggregates
+
+**Cyclone Converters** (HURDAT2, BOM, future agencies):
+1. Parse track data (positions over time)
+2. Calculate Saffir-Simpson category from wind speed
+3. Create storms.parquet (storm metadata) + positions.parquet (track points)
+4. Spatial join landfalls to counties
+
+**Event-Based Sources**:
+- `events.parquet`: Individual events with lat/lon, magnitude, date
+- `{COUNTRY}.parquet`: Aggregates by loc_id and year (counts, max magnitude, etc.)
+
+See [GEOMETRY.md - Special Geometries](GEOMETRY.md#special-geometries) for point+radius features, track/path features, and tiered polygon loading.
+
+---
+
 ## Adding New Data Sources
 
 Follow this checklist when adding a new data source. Reference existing converters as examples:
@@ -1429,4 +1551,14 @@ for country in result:
 
 ---
 
-*Last Updated: 2026-01-05*
+## Related Documentation
+
+| File | Purpose |
+|------|---------|
+| [GEOMETRY.md](GEOMETRY.md) | loc_id specification, geometry structure, special entities |
+| [data_import.md](data_import.md) | Quick reference for creating data converters |
+| [MAPPING.md](MAPPING.md) | Frontend map rendering and display |
+
+---
+
+*Last Updated: 2026-01-06*

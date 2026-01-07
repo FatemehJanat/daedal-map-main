@@ -8,37 +8,34 @@ Creates two output files:
 Input: JSON files from NOAA NCEI tsunami database
 Output: Two parquet files with tsunami data
 
+Uses unified base utilities for spatial join and water body assignment.
+
 Usage:
     python convert_tsunami.py
 """
 import pandas as pd
-import pyarrow as pa
-import pyarrow.parquet as pq
 import geopandas as gpd
 from pathlib import Path
-from shapely.geometry import Point
 import json
-from shapely.geometry import shape
+import sys
+
+# Add parent paths for imports
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from data_converters.base import (
+    USA_STATE_FIPS,
+    load_geometry_parquet,
+    get_water_body_loc_id,
+    create_point_gdf,
+    save_parquet,
+    TERRITORIAL_WATERS_DEG,
+)
+from build.catalog.finalize_source import finalize_source
 
 # Configuration
 RAW_DATA_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/Raw data/noaa/tsunami")
 GEOMETRY_PATH = Path("C:/Users/Bryan/Desktop/county-map-data/geometry/USA.parquet")
 OUTPUT_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/countries/USA/tsunamis")
-
-# State FIPS to abbreviation mapping
-STATE_FIPS = {
-    '01': 'AL', '02': 'AK', '04': 'AZ', '05': 'AR', '06': 'CA',
-    '08': 'CO', '09': 'CT', '10': 'DE', '11': 'DC', '12': 'FL',
-    '13': 'GA', '15': 'HI', '16': 'ID', '17': 'IL', '18': 'IN',
-    '19': 'IA', '20': 'KS', '21': 'KY', '22': 'LA', '23': 'ME',
-    '24': 'MD', '25': 'MA', '26': 'MI', '27': 'MN', '28': 'MS',
-    '29': 'MO', '30': 'MT', '31': 'NE', '32': 'NV', '33': 'NH',
-    '34': 'NJ', '35': 'NM', '36': 'NY', '37': 'NC', '38': 'ND',
-    '39': 'OH', '40': 'OK', '41': 'OR', '42': 'PA', '44': 'RI',
-    '45': 'SC', '46': 'SD', '47': 'TN', '48': 'TX', '49': 'UT',
-    '50': 'VT', '51': 'VA', '53': 'WA', '54': 'WV', '55': 'WI',
-    '56': 'WY', '72': 'PR'
-}
+SOURCE_ID = "noaa_tsunamis"
 
 # Cause codes from NOAA documentation
 CAUSE_CODES = {
@@ -57,72 +54,13 @@ CAUSE_CODES = {
 }
 
 
-def fips_to_loc_id(fips_code):
-    """Convert 5-digit FIPS code to loc_id format."""
-    fips_str = str(fips_code).zfill(5)
-    state_fips = fips_str[:2]
-    state_abbr = STATE_FIPS.get(state_fips)
-
-    if not state_abbr:
-        return None
-
-    return f"USA-{state_abbr}-{int(fips_str)}"
-
-
-def get_water_body_loc_id(lat, lon):
-    """
-    Determine water body loc_id based on coordinates.
-
-    Uses simplified bounding boxes to assign ocean/sea codes.
-    Water body codes follow ISO 3166-1 X-prefix convention.
-    """
-    if pd.isna(lat) or pd.isna(lon):
-        return None
-
-    # Pacific Ocean (west of Americas, or far west Pacific)
-    if lon < -100 or lon > 100:
-        return "XOP-0"
-
-    # Gulf of Mexico
-    if 18 <= lat <= 31 and -98 <= lon <= -80:
-        return "XSG-0"
-
-    # Caribbean Sea
-    if 9 <= lat <= 22 and -89 <= lon <= -59:
-        return "XSC-0"
-
-    # Atlantic Ocean (default for western Atlantic)
-    if -100 <= lon <= 0:
-        return "XOA-0"
-
-    # Indian Ocean
-    if 30 <= lon <= 100 and lat < 30:
-        return "XOI-0"
-
-    # Fallback
-    return "XOA-0"
-
+# =============================================================================
+# Data Loading
+# =============================================================================
 
 def load_counties():
-    """Load county boundaries from geometry parquet."""
-    print("Loading county boundaries...")
-
-    # Read geometry parquet
-    df = pd.read_parquet(GEOMETRY_PATH)
-
-    # Filter to counties (admin_level 2)
-    counties = df[df['admin_level'] == 2].copy()
-
-    # Parse GeoJSON geometry
-    counties['geom'] = counties['geometry'].apply(
-        lambda x: shape(json.loads(x)) if pd.notna(x) else None
-    )
-
-    # Create GeoDataFrame
-    gdf = gpd.GeoDataFrame(counties, geometry='geom', crs='EPSG:4326')
-
-    print(f"  Loaded {len(gdf)} counties")
-    return gdf
+    """Load county boundaries from geometry parquet using base utility."""
+    return load_geometry_parquet(GEOMETRY_PATH, admin_level=2, geometry_format='geojson')
 
 
 def load_tsunami_data():
@@ -179,16 +117,14 @@ def filter_us_data(events_df, runups_df):
 
 def geocode_runups(runups_df, counties_gdf):
     """
-    Geocode runup locations to counties.
+    Geocode runup locations to counties using base utilities.
 
-    Uses two-pass matching:
+    Uses three-pass matching:
     1. Strict 'within' for points inside county polygons
     2. Nearest neighbor for coastal points within 12 nautical miles (territorial waters)
+    3. Water body codes for offshore points
     """
     print("\nGeocoding runups to counties...")
-
-    # Territorial waters threshold: 12 nautical miles = 22.2 km = ~0.2 degrees
-    TERRITORIAL_WATERS_DEG = 0.2
 
     # Filter to runups with coordinates
     runups_with_coords = runups_df.dropna(subset=['latitude', 'longitude']).copy()
@@ -197,13 +133,11 @@ def geocode_runups(runups_df, counties_gdf):
     if len(runups_with_coords) == 0:
         return runups_df
 
-    # Create geometry
-    geometry = [Point(xy) for xy in zip(runups_with_coords['longitude'],
-                                         runups_with_coords['latitude'])]
-    gdf = gpd.GeoDataFrame(runups_with_coords, geometry=geometry, crs="EPSG:4326")
+    # Create point geometries using base utility
+    gdf = create_point_gdf(runups_with_coords, lat_col='latitude', lon_col='longitude')
 
     # Pass 1: Strict 'within' spatial join
-    gdf_with_counties = gpd.sjoin(gdf, counties_gdf[['loc_id', 'geom']].set_geometry('geom'),
+    gdf_with_counties = gpd.sjoin(gdf, counties_gdf[['loc_id', 'geometry']],
                                    how='left', predicate='within')
 
     strict_matched = gdf_with_counties['loc_id'].notna().sum()
@@ -214,31 +148,33 @@ def geocode_runups(runups_df, counties_gdf):
     if unmatched_mask.any():
         unmatched_indices = gdf_with_counties[unmatched_mask].index
         unmatched_gdf = gdf_with_counties.loc[unmatched_indices].copy()
+        unmatched_gdf = unmatched_gdf.drop(columns=['loc_id', 'index_right'], errors='ignore')
 
         # Use sjoin_nearest to find closest county
         nearest = gpd.sjoin_nearest(
-            unmatched_gdf[['geometry']],
-            counties_gdf[['loc_id', 'geom']].set_geometry('geom'),
+            unmatched_gdf,
+            counties_gdf[['loc_id', 'geometry']],
             how='left',
             distance_col='dist_to_county'
         )
 
-        # Only assign if within territorial waters (12 nm)
+        # Only assign if within territorial waters (12 nm) using base constant
         within_territorial = nearest['dist_to_county'] <= TERRITORIAL_WATERS_DEG
         nearest_matched = within_territorial.sum()
 
-        # Update loc_id for points within territorial waters using index alignment
-        for idx in nearest[within_territorial].index:
-            gdf_with_counties.loc[idx, 'loc_id'] = nearest.loc[idx, 'loc_id']
+        # Update loc_id for points within territorial waters
+        updates = nearest[within_territorial][['loc_id']].to_dict()['loc_id']
+        for idx, loc_id_val in updates.items():
+            gdf_with_counties.at[idx, 'loc_id'] = loc_id_val
 
         print(f"  Pass 2 (nearest, <12nm): {nearest_matched:,} matched")
 
-        # Pass 3: Assign water body codes for points beyond territorial waters
+        # Pass 3: Assign water body codes using base utility
         still_unmatched_mask = gdf_with_counties['loc_id'].isna()
         if still_unmatched_mask.any():
             gdf_with_counties.loc[still_unmatched_mask, 'loc_id'] = \
                 gdf_with_counties.loc[still_unmatched_mask].apply(
-                    lambda row: get_water_body_loc_id(row['latitude'], row['longitude']),
+                    lambda row: get_water_body_loc_id(row['latitude'], row['longitude'], region='usa'),
                     axis=1
                 )
             water_assigned = still_unmatched_mask.sum()
@@ -247,13 +183,14 @@ def geocode_runups(runups_df, counties_gdf):
     total_matched = gdf_with_counties['loc_id'].notna().sum()
     print(f"  Total assigned: {total_matched:,} ({total_matched/len(gdf_with_counties)*100:.1f}%)")
 
+    # Clean up join artifacts
+    gdf_with_counties = gdf_with_counties.drop(columns=['index_right'], errors='ignore')
+
     return gdf_with_counties
 
 
 def create_events_parquet(events_df, runups_df):
     """Create events.parquet with tsunami source events."""
-    print("\nCreating events.parquet...")
-
     # Prepare events dataframe
     events_out = pd.DataFrame({
         'event_id': events_df['id'],
@@ -277,9 +214,9 @@ def create_events_parquet(events_df, runups_df):
     # Filter to events with valid coordinates
     events_out = events_out.dropna(subset=['latitude', 'longitude'])
 
-    # Assign water body loc_id for source events (most are in ocean)
+    # Assign water body loc_id for source events using base utility (most are in ocean)
     events_out['loc_id'] = events_out.apply(
-        lambda row: get_water_body_loc_id(row['latitude'], row['longitude']),
+        lambda row: get_water_body_loc_id(row['latitude'], row['longitude'], region='usa'),
         axis=1
     )
 
@@ -289,45 +226,16 @@ def create_events_parquet(events_df, runups_df):
     for loc_id, count in water_counts.head(5).items():
         print(f"    {loc_id}: {count:,}")
 
-    # Define schema
-    schema = pa.schema([
-        ('event_id', pa.int64()),
-        ('year', pa.int32()),
-        ('month', pa.int32()),
-        ('day', pa.int32()),
-        ('latitude', pa.float32()),
-        ('longitude', pa.float32()),
-        ('country', pa.string()),
-        ('location', pa.string()),
-        ('cause_code', pa.int32()),
-        ('cause', pa.string()),
-        ('intensity', pa.float32()),
-        ('max_water_height_m', pa.float32()),
-        ('num_runups', pa.int32()),
-        ('deaths_order', pa.int32()),
-        ('damage_order', pa.int32()),
-        ('eq_magnitude', pa.float32()),
-        ('loc_id', pa.string())
-    ])
-
-    # Save
+    # Save using base utility
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     output_path = OUTPUT_DIR / "events.parquet"
-
-    table = pa.Table.from_pandas(events_out, schema=schema, preserve_index=False)
-    pq.write_table(table, output_path, compression='snappy')
-
-    size_mb = output_path.stat().st_size / (1024 * 1024)
-    print(f"  Saved: {size_mb:.2f} MB")
-    print(f"  Events: {len(events_out):,}")
+    save_parquet(events_out, output_path, description="tsunami source events")
 
     return events_out
 
 
 def create_runups_parquet(runups_df):
     """Create runups.parquet with coastal impact locations."""
-    print("\nCreating runups.parquet...")
-
     # Prepare runups dataframe
     runups_out = pd.DataFrame({
         'runup_id': runups_df['id'],
@@ -346,33 +254,9 @@ def create_runups_parquet(runups_df):
         'loc_id': runups_df.get('loc_id', pd.NA)
     })
 
-    # Define schema
-    schema = pa.schema([
-        ('runup_id', pa.int64()),
-        ('event_id', pa.int64()),
-        ('year', pa.int32()),
-        ('month', pa.int32()),
-        ('latitude', pa.float32()),
-        ('longitude', pa.float32()),
-        ('country', pa.string()),
-        ('location', pa.string()),
-        ('water_height_m', pa.float32()),
-        ('horizontal_inundation_m', pa.float32()),
-        ('dist_from_source_km', pa.float32()),
-        ('deaths_order', pa.int32()),
-        ('damage_order', pa.int32()),
-        ('loc_id', pa.string())
-    ])
-
-    # Save
+    # Save using base utility
     output_path = OUTPUT_DIR / "runups.parquet"
-
-    table = pa.Table.from_pandas(runups_out, schema=schema, preserve_index=False)
-    pq.write_table(table, output_path, compression='snappy')
-
-    size_mb = output_path.stat().st_size / (1024 * 1024)
-    print(f"  Saved: {size_mb:.2f} MB")
-    print(f"  Runups: {len(runups_out):,}")
+    save_parquet(runups_out, output_path, description="runup observations")
 
     return runups_out
 
@@ -405,29 +289,13 @@ def create_county_aggregates(runups_df):
 
 
 def save_county_parquet(df):
-    """Save county aggregates to USA.parquet."""
+    """Save county aggregates to USA.parquet using base utility."""
     if df.empty:
         print("\n  Skipping USA.parquet (no data)")
         return None
 
-    print("\nSaving USA.parquet...")
-
-    # Define schema
-    schema = pa.schema([
-        ('loc_id', pa.string()),
-        ('year', pa.int32()),
-        ('runup_count', pa.int32()),
-        ('event_count', pa.int32())
-    ])
-
-    # Save
     output_path = OUTPUT_DIR / "USA.parquet"
-
-    table = pa.Table.from_pandas(df, schema=schema, preserve_index=False)
-    pq.write_table(table, output_path, compression='snappy')
-
-    size_mb = output_path.stat().st_size / (1024 * 1024)
-    print(f"  Saved: {size_mb:.2f} MB")
+    save_parquet(df, output_path, description="county-year aggregates")
 
     return output_path
 
@@ -567,11 +435,11 @@ def print_statistics(events_df, runups_df, county_df):
 
 def main():
     """Main conversion logic."""
-    print("="*80)
-    print("NOAA Tsunami Database - JSON to Parquet Converter")
-    print("="*80)
+    print("=" * 60)
+    print("NOAA Tsunami Database Converter")
+    print("=" * 60)
 
-    # Load county boundaries
+    # Load county boundaries using base utility
     counties_gdf = load_counties()
 
     # Load tsunami data
@@ -593,26 +461,36 @@ def main():
 
     # Create county aggregates
     county_df = create_county_aggregates(us_runups_geocoded)
-    save_county_parquet(county_df)
+    agg_path = save_county_parquet(county_df)
 
     # Print statistics
     print_statistics(events_out, runups_out, county_df)
 
-    # Generate metadata
+    # Generate metadata (custom for tsunamis - 3 files)
     generate_metadata(events_out, runups_out, county_df)
 
-    print("\n" + "="*80)
+    # Finalize (update index)
+    print("\n" + "=" * 60)
+    print("Finalizing source...")
+    print("=" * 60)
+
+    try:
+        if agg_path:
+            finalize_source(
+                parquet_path=str(agg_path),
+                source_id=SOURCE_ID,
+                events_parquet_path=str(OUTPUT_DIR / "events.parquet")
+            )
+    except ValueError as e:
+        print(f"  Note: {e}")
+        print(f"  Add '{SOURCE_ID}' to source_registry.py to enable auto-finalization")
+
+    print("\n" + "=" * 60)
     print("COMPLETE!")
-    print("="*80)
-    print("\nOutput files:")
-    print("  events.parquet: Tsunami source events with location")
-    print("  runups.parquet: Coastal impact observations")
-    print("  USA.parquet: County-year aggregated statistics")
-    print("  metadata.json: Standard metadata format")
+    print("=" * 60)
 
     return 0
 
 
 if __name__ == "__main__":
-    import sys
     sys.exit(main())

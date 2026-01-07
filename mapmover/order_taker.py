@@ -15,6 +15,7 @@ from openai import OpenAI
 from dotenv import load_dotenv
 
 from .data_loading import load_catalog, load_source_metadata
+from .preprocessor import build_tier3_context, build_tier4_context
 
 load_dotenv()
 
@@ -123,91 +124,99 @@ def build_regions_text(conversions: dict) -> str:
 
 def build_system_prompt(catalog: dict, conversions: dict) -> str:
     """
-    Build system prompt with full catalog and column names from metadata.
+    Build system prompt with catalog organized by geographic scope.
 
-    Loads metadata.json for each source to get exact column names.
-    TODO: Optimize by adding column names to catalog.json later.
+    Groups sources by scope and combines related sources (UN SDGs, World Factbook).
     """
 
-    # Build sources text from catalog with exact column names
-    sources_text = ""
-    usa_only_sources = []
-
+    # Group sources by scope
+    sources_by_scope = {}
     for src in catalog["sources"]:
-        geo = src.get("geographic_coverage", {})
-        temp = src.get("temporal_coverage", {})
-        coverage = src.get("coverage_description", geo.get("type", "unknown"))
+        scope = src.get("scope", "global")
+        if scope not in sources_by_scope:
+            sources_by_scope[scope] = []
+        sources_by_scope[scope].append(src)
 
-        # Load actual metadata to get exact column names
-        source_id = src['source_id']
-        metadata = load_source_metadata(source_id)
-        metrics = metadata.get("metrics", {})
+    # Build sources text with grouping of related sources
+    sources_text = ""
 
-        # Build column list with descriptions
-        if metrics:
-            # Format: column_name (Human Name, unit)
-            column_entries = []
-            for col_name, col_info in list(metrics.items())[:15]:  # Limit to 15 columns
-                name = col_info.get("name", col_name)
-                unit = col_info.get("unit", "")
-                if unit and unit != "unknown":
-                    column_entries.append(f"{col_name} ({name}, {unit})")
-                else:
-                    column_entries.append(f"{col_name} ({name})")
-            columns_text = ", ".join(column_entries)
-            if len(metrics) > 15:
-                columns_text += f" ... and {len(metrics) - 15} more"
-        else:
-            columns_text = "see metadata"
+    def format_source_group(sources, scope_label):
+        """Format sources, grouping related ones together."""
+        lines = []
 
-        sources_text += f"""
-**{source_id}** ({src['source_name']})
-  Coverage: {coverage}, {temp.get('start', '?')}-{temp.get('end', '?')}
-  COLUMNS: {columns_text}
-"""
-        # Track USA-only sources
-        if geo.get("type") == "country" and geo.get("countries") == 1:
-            usa_only_sources.append(source_id)
+        # Separate UN SDGs and World Factbook for grouping
+        sdg_sources = [s for s in sources if s['source_id'].startswith('un_sdg_')]
+        factbook_sources = [s for s in sources if 'world_factbook' in s['source_id']]
+        other_sources = [s for s in sources if s not in sdg_sources and s not in factbook_sources]
+
+        # Add individual sources with human-readable names
+        for src in other_sources:
+            temp = src.get("temporal_coverage", {})
+            name = src.get("source_name", src["source_id"])
+            lines.append(f"- {name} ({src['source_id']}): {temp.get('start', '?')}-{temp.get('end', '?')}")
+
+        # Group UN SDGs
+        if sdg_sources:
+            years = [s.get("temporal_coverage", {}) for s in sdg_sources]
+            min_year = min(t.get("start", 9999) or 9999 for t in years)
+            max_year = max(t.get("end", 0) or 0 for t in years)
+            lines.append(f"- UN Sustainable Development Goals (un_sdg_01 to un_sdg_17): {min_year}-{max_year} [17 goals]")
+
+        # Group World Factbook
+        if factbook_sources:
+            names = [s['source_id'] for s in factbook_sources]
+            lines.append(f"- World Factbook ({', '.join(names)}): country profiles, demographics, infrastructure")
+
+        return "\n".join(lines)
+
+    # Country-specific sources FIRST (more relevant when asking about a country)
+    for scope in sorted(sources_by_scope.keys()):
+        if scope == "global":
+            continue
+
+        scope_sources = sources_by_scope[scope]
+        geo_level = scope_sources[0].get("geographic_level", "admin_2") if scope_sources else "admin_2"
+
+        sources_text += f"\n=== {scope.upper()} ONLY ({geo_level}) ===\n"
+        sources_text += format_source_group(scope_sources, scope) + "\n"
+
+    # Global sources SECOND
+    if "global" in sources_by_scope:
+        sources_text += "\n=== GLOBAL (available for all countries at admin_0) ===\n"
+        sources_text += format_source_group(sources_by_scope["global"], "global") + "\n"
 
     # Build regions text from conversions
     regions_text = build_regions_text(conversions)
 
-    # USA-only warning
-    usa_warning = ""
-    if usa_only_sources:
-        usa_warning = f"\nUSA-ONLY (counties, not countries): {', '.join(usa_only_sources)}"
-
     return f"""You are an Order Taker for a map data visualization system.
 
-AVAILABLE DATA SOURCES:
+DATA SOURCES:
 {sources_text}
-{usa_warning}
+IMPORTANT: Country-specific sources can ONLY be used for that country.
 
 REGIONS:
 {regions_text}
+
+WHEN USER ASKS "what data for [country]":
+1. List that country's specific sources FIRST (if any)
+2. Then mention global sources are also available
+3. Be CONCISE - use human-readable names, group related sources
+4. Don't list every column or every SDG goal individually
 
 ORDER FORMAT (JSON when user requests data):
 ```json
 {{"items": [{{"source_id": "owid_co2", "metric": "co2", "region": "europe", "year": 2022}}], "summary": "CO2 for Europe 2022"}}
 ```
 
-For trends/time series, use year_start/year_end instead of year.
-
-DERIVED FIELDS:
-- Per capita: add "derived": "per_capita" to item
-- Density: add "derived": "density" to item
-- Custom ratio: use type "derived" with numerator/denominator
-
 RULES:
 - source_id: Must EXACTLY match one of the available sources
-- metric: Must be an EXACT column name from COLUMNS list (e.g., "co2", "population", "total_pop")
-- region: lowercase (europe, g7, africa) or null for global
-- year: null = most recent (don't ask unless specified)
-- For large sources (10+ metrics): ask before adding all
+- metric: Must be an EXACT column name from the source
+- region: lowercase (europe, g7, australia) or null for global
+- year: null = most recent
 
 RESPOND WITH:
 - JSON order (for data requests)
-- Helpful text (for questions)
+- Concise summary (for questions) - 2-5 sentences max
 - Short clarifying question (if unclear)
 """
 
@@ -241,61 +250,19 @@ def interpret_request(user_query: str, chat_history: list = None, hints: dict = 
             })
 
     # Inject Tier 3/Tier 4 context from preprocessor hints
+    # Uses preprocessor functions that include metric hints injection
     if hints:
         context_parts = []
 
-        # Tier 3: Just-in-time context (resolved regions, time patterns)
-        if hints.get("summary"):
-            context_parts.append(f"[Context: {hints['summary']}]")
+        # Tier 3: Just-in-time context (includes metric column hints for location/topic)
+        tier3_context = build_tier3_context(hints)
+        if tier3_context:
+            context_parts.append(tier3_context)
 
-        # Add resolved region details
-        if hints.get("regions"):
-            for region in hints["regions"][:2]:  # Limit to avoid token bloat
-                context_parts.append(
-                    f"'{region['match']}' resolves to {region['count']} countries"
-                )
-
-        # Tier 4: Reference document content
-        ref_lookup = hints.get("reference_lookup")
-        if ref_lookup:
-            ref_type = ref_lookup.get("type")
-
-            # Check for country-specific data first (direct answers)
-            if ref_lookup.get("country_data"):
-                country_data = ref_lookup["country_data"]
-                formatted = country_data.get("formatted", "")
-                if formatted:
-                    context_parts.append(f"\n[REFERENCE ANSWER: {formatted}]")
-
-            # Fall back to full content for SDG and data source lookups
-            elif ref_lookup.get("content"):
-                ref_content = ref_lookup["content"]
-
-                if ref_type == "sdg":
-                    goal = ref_content.get("goal", {})
-                    context_parts.append(
-                        f"\n[Reference - SDG {goal.get('number')}]\n"
-                        f"Name: {goal.get('name')}\n"
-                        f"Full title: {goal.get('full_title')}\n"
-                        f"Description: {goal.get('description')}"
-                    )
-                    if goal.get("targets"):
-                        context_parts.append("Targets:")
-                        for target in goal["targets"][:3]:
-                            context_parts.append(f"  {target['id']}: {target['text']}")
-
-                elif ref_type == "data_source":
-                    about = ref_content.get("about", {})
-                    context_parts.append(
-                        f"\n[Reference - Data Source: {about.get('name', 'Unknown')}]\n"
-                        f"Publisher: {about.get('publisher', 'Unknown')}\n"
-                        f"URL: {about.get('url', 'N/A')}\n"
-                        f"License: {about.get('license', 'Unknown')}"
-                    )
-
-                elif ref_type == "capital":
-                    capitals = ref_content.get("capitals", {})
-                    context_parts.append(f"[Reference: {len(capitals)} country capitals available]")
+        # Tier 4: Reference document content (SDG, data sources, country info)
+        tier4_context = build_tier4_context(hints)
+        if tier4_context:
+            context_parts.append(tier4_context)
 
         # Add context as a system message before user query
         if context_parts:

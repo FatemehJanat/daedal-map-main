@@ -22,6 +22,8 @@ from pathlib import Path
 from typing import Optional
 import logging
 
+from .data_loading import load_catalog
+
 logger = logging.getLogger(__name__)
 
 # Paths
@@ -430,6 +432,130 @@ def extract_country_from_query(query: str, viewport: dict = None) -> dict:
 
 
 # =============================================================================
+# Source/Metric Hints for Context Injection
+# =============================================================================
+
+def load_country_index(iso3: str) -> Optional[dict]:
+    """
+    Load a country's index.json file for context injection.
+    Contains llm_summary and dataset categories.
+    """
+    # Try both county-map-data paths
+    paths_to_try = [
+        Path("C:/Users/Bryan/Desktop/county-map-data/countries") / iso3.upper() / "index.json",
+    ]
+
+    for index_path in paths_to_try:
+        if index_path.exists():
+            try:
+                with open(index_path, encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception:
+                pass
+    return None
+
+
+def get_relevant_sources_with_metrics(topics: list, iso3: str = None) -> dict:
+    """
+    Find relevant sources based on detected topics and location.
+    Returns dict with sources list and optional country context.
+
+    Args:
+        topics: List of detected topic names (e.g., ["demographics", "economy"])
+        iso3: ISO3 country code if location was detected (e.g., "AUS")
+
+    Returns:
+        Dict with:
+        - sources: List of relevant sources with metric names
+        - country_summary: llm_summary from country index.json (if available)
+    """
+    result = {"sources": [], "country_summary": None}
+
+    # Load country index.json for llm_summary if location specified
+    if iso3:
+        country_index = load_country_index(iso3)
+        if country_index:
+            result["country_summary"] = country_index.get("llm_summary")
+
+    catalog = load_catalog()
+    sources = catalog.get("sources", [])
+    relevant = []
+
+    # Map topics to common keywords for matching source topic_tags/keywords
+    topic_keywords = {
+        "demographics": ["population", "demographics", "census", "age", "birth", "death"],
+        "economy": ["economic", "economy", "gdp", "income", "trade"],
+        "health": ["health", "disease", "mortality", "medical"],
+        "environment": ["environment", "climate", "emissions", "co2", "energy"],
+        "education": ["education", "literacy", "school"],
+        "development": ["sdg", "development", "sustainable"],
+        "hazard": ["earthquake", "volcano", "hurricane", "cyclone", "wildfire", "fire", "flood", "tsunami", "storm", "disaster", "hazard"],
+    }
+
+    # Build list of keywords to match from detected topics
+    keywords_to_match = []
+    for topic in topics:
+        keywords_to_match.extend(topic_keywords.get(topic, [topic]))
+
+    for source in sources:
+        source_id = source.get("source_id", "")
+        scope = source.get("scope", "global")
+        topic_tags = source.get("topic_tags", [])
+        source_keywords = source.get("keywords", [])
+        metrics = source.get("metrics", {})
+
+        # Determine if this source should be included
+        # Logic: include if (scope matches location) OR (topics match source keywords)
+        include_source = False
+        is_country_source = (iso3 and scope.lower() == iso3.lower())
+        is_global_source = (scope == "global")
+
+        # Check topic match (for any source type)
+        topic_matches = False
+        if keywords_to_match:
+            all_source_keywords = [t.lower() for t in topic_tags + source_keywords]
+            for kw in keywords_to_match:
+                if any(kw.lower() in sk for sk in all_source_keywords):
+                    topic_matches = True
+                    break
+
+        if iso3:
+            # Location specified: include ALL country sources + topic-matched global
+            if is_country_source:
+                include_source = True  # All sources for this country
+            elif is_global_source and topic_matches:
+                include_source = True  # Global sources only if topic matches
+        else:
+            # No location: include ANY source that matches topics (country or global)
+            if topic_matches:
+                include_source = True
+
+        if not include_source:
+            continue
+
+        # Build metric list with actual column names
+        metric_list = []
+        for metric_key, metric_info in metrics.items():
+            metric_name = metric_info.get("name", metric_key)
+            metric_list.append({
+                "column": metric_key,
+                "name": metric_name,
+                "unit": metric_info.get("unit", "")
+            })
+
+        if metric_list:
+            relevant.append({
+                "source_id": source_id,
+                "source_name": source.get("source_name", source_id),
+                "scope": scope,
+                "metrics": metric_list
+            })
+
+    result["sources"] = relevant
+    return result
+
+
+# =============================================================================
 # Topic Extraction
 # =============================================================================
 
@@ -441,6 +567,7 @@ TOPIC_KEYWORDS = {
     "education": ["education", "school", "literacy", "student", "university"],
     "demographics": ["population", "birth", "death", "age", "gender", "migration"],
     "development": ["sdg", "sustainable", "development goal", "indicator"],
+    "hazard": ["earthquake", "volcano", "hurricane", "cyclone", "tornado", "wildfire", "fire", "flood", "tsunami", "storm", "disaster", "hazard"],
 }
 
 
@@ -1513,6 +1640,50 @@ def build_tier3_context(hints: dict) -> str:
             context_parts.append(
                 f"User wants data from {time['year_start']} to {time['year_end']}"
             )
+
+    # Inject relevant source/metric hints when topics + location detected
+    # This gives the LLM the actual column names to use
+    topics = hints.get("topics", [])
+
+    # Get ISO3 from location OR from navigation locations
+    location = hints.get("location")
+    iso3 = None
+    if location:
+        iso3 = location.get("iso3")
+    elif hints.get("navigation") and hints["navigation"].get("locations"):
+        # For navigation queries, extract iso3 from first location
+        nav_locs = hints["navigation"]["locations"]
+        if nav_locs and nav_locs[0].get("iso3"):
+            iso3 = nav_locs[0]["iso3"]
+
+    if topics or iso3:
+        source_hints = get_relevant_sources_with_metrics(topics, iso3)
+        relevant_sources = source_hints.get("sources", [])
+        country_summary = source_hints.get("country_summary")
+
+        # Add country summary from index.json if available
+        if country_summary:
+            context_parts.append(f"[COUNTRY DATA SUMMARY: {country_summary}]")
+
+        if relevant_sources:
+            # Prioritize country-specific sources first
+            country_sources = [s for s in relevant_sources if s["scope"] != "global"]
+            global_sources = [s for s in relevant_sources if s["scope"] == "global"]
+
+            hints_lines = ["[AVAILABLE DATA SOURCES for this query - USE THESE EXACT METRIC NAMES:]"]
+
+            # Country-specific sources first (more relevant)
+            for src in country_sources[:3]:  # Limit to avoid token bloat
+                metrics_str = ", ".join([f"{m['column']}" for m in src["metrics"][:5]])
+                hints_lines.append(f"- {src['source_name']} ({src['source_id']}): metrics=[{metrics_str}]")
+
+            # Then global sources
+            for src in global_sources[:2]:  # Limit global to 2
+                metrics_str = ", ".join([f"{m['column']}" for m in src["metrics"][:5]])
+                hints_lines.append(f"- {src['source_name']} ({src['source_id']}): metrics=[{metrics_str}]")
+
+            if len(hints_lines) > 1:  # More than just the header
+                context_parts.append("\n".join(hints_lines))
 
     return "\n".join(context_parts) if context_parts else ""
 
