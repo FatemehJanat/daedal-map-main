@@ -65,6 +65,10 @@ export const App = {
     ViewportLoader.currentAdminLevel = ViewportLoader.getAdminLevelForViewport(bounds);
     console.log('Viewport navigation ready (area-based thresholds)');
 
+    // Initialize admin level buttons
+    NavigationManager.initLevelButtons();
+    NavigationManager.updateLevelButtons(ViewportLoader.currentAdminLevel);
+
     console.log('Map Explorer ready');
     console.log('Press D to toggle debug mode (hierarchy depth colors)');
   },
@@ -293,9 +297,42 @@ export const App = {
     // This prevents viewport API from overwriting our ordered data
     ViewportLoader.orderMode = true;
 
-    // Clear any existing hurricane layers first
+    // Clear any existing layers first
     MapAdapter.clearHurricaneLayer();
     MapAdapter.clearHurricaneTrack();
+    MapAdapter.clearEventLayer();
+
+    // Check if this is event mode data (earthquakes, volcanoes, etc.)
+    if (data.type === 'events') {
+      console.log(`Event data detected: ${data.event_type}, ${data.count} events`);
+
+      TimeSlider.reset();
+      ChoroplethManager.reset();
+
+      // Load event layer with appropriate styling
+      MapAdapter.loadEventLayer(data.geojson, data.event_type, {
+        showFeltRadius: true,
+        showDamageRadius: true,
+        onEventClick: (props) => {
+          console.log('Event clicked:', props);
+          // Show detailed popup on click
+          const html = MapAdapter._buildEventPopupHtml(props, data.event_type);
+          MapAdapter.popup.setHTML(html);
+          MapAdapter.popupLocked = true;
+        }
+      });
+
+      // Fit map to event locations
+      MapAdapter.fitToEventBounds(data.geojson);
+
+      // Update summary display
+      const summaryEl = document.getElementById('queryStatus');
+      if (summaryEl) {
+        summaryEl.textContent = data.summary || `${data.count} ${data.event_type} events`;
+      }
+
+      return;
+    }
 
     // Check if this is hurricane/storm point data
     const isHurricaneData = data.source_id === 'ibtracs' ||

@@ -87,6 +87,58 @@
       font-family: monospace;
     }
 
+    /* Admin level buttons - quick zoom to specific levels */
+    #levelButtons {
+      position: absolute;
+      top: 45px;
+      right: 10px;
+      z-index: 1000;
+      display: flex;
+      gap: 4px;
+    }
+    #levelButtons button {
+      background: rgba(0, 0, 0, 0.7);
+      border: 1px solid #555;
+      color: #aaa;
+      padding: 4px 8px;
+      border-radius: 3px;
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    #levelButtons button:hover {
+      background: rgba(50, 50, 50, 0.9);
+      color: white;
+      border-color: #888;
+    }
+    #levelButtons button.active {
+      background: rgba(255, 102, 0, 0.8);
+      color: white;
+      border-color: #ff6600;
+    }
+    /* Lock button - separate from level buttons */
+    #levelLockBtn {
+      background: rgba(0, 0, 0, 0.7);
+      border: 1px solid #555;
+      color: #aaa;
+      padding: 4px 6px;
+      border-radius: 3px;
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-left: 4px;
+    }
+    #levelLockBtn:hover {
+      background: rgba(50, 50, 50, 0.9);
+      color: white;
+      border-color: #888;
+    }
+    #levelLockBtn.locked {
+      background: rgba(200, 50, 50, 0.8);
+      color: white;
+      border-color: #ff4444;
+    }
+
     /* Stats overlay - dark */
     #statsOverlay {
       position: absolute;
@@ -1155,6 +1207,13 @@
     <div id="map"></div>
     <div id="breadcrumb"></div>
     <div id="zoomLevel">Zoom: 0.0</div>
+    <div id="levelButtons">
+      <button data-level="0" title="Countries (zoom ~2)">World</button>
+      <button data-level="1" title="States/Provinces (zoom ~5)">States</button>
+      <button data-level="2" title="Counties/Districts (zoom ~8)">Counties</button>
+      <button data-level="3" title="Subdivisions (zoom ~11)">Local</button>
+      <button id="levelLockBtn" title="Lock admin level">Lock</button>
+    </div>
   </div>
 
   <!-- Stats Overlay -->

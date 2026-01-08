@@ -164,6 +164,105 @@ export const NavigationManager = {
       case 'city': return 10;
       default: return 4;
     }
+  },
+
+  /**
+   * Zoom to a specific admin level (for level buttons)
+   * @param {number} adminLevel - Target admin level (0=world, 1=states, 2=counties, 3=local)
+   */
+  zoomToAdminLevel(adminLevel) {
+    if (!MapAdapter?.map) return;
+
+    // Get target zoom calculated from viewport area thresholds
+    const targetArea = ViewportLoader?.getTargetAreaForAdminLevel(adminLevel);
+    const targetZoom = ViewportLoader?.getZoomForAdminLevel(adminLevel) || [2, 5, 8, 11][adminLevel];
+    const center = MapAdapter.map.getCenter();
+
+    console.log(`Zooming to admin level ${adminLevel} (target area: ${targetArea} sq deg, zoom: ${targetZoom.toFixed(1)})`);
+    MapAdapter.map.flyTo({ center, zoom: targetZoom, duration: 1000 });
+
+    // If locked, update the locked level to match the clicked button
+    if (ViewportLoader?.levelLocked) {
+      ViewportLoader.lockedLevel = adminLevel;
+      ViewportLoader.currentAdminLevel = adminLevel;
+      console.log(`Lock updated to level ${adminLevel}`);
+    }
+
+    // Update active button
+    this.updateLevelButtons(adminLevel);
+  },
+
+  /**
+   * Update level button active states
+   * @param {number} activeLevel - Currently active admin level
+   */
+  updateLevelButtons(activeLevel) {
+    const container = document.getElementById('levelButtons');
+    if (!container) return;
+
+    const buttons = container.querySelectorAll('button');
+    buttons.forEach(btn => {
+      const level = parseInt(btn.dataset.level);
+      btn.classList.toggle('active', level === activeLevel);
+    });
+  },
+
+  /**
+   * Initialize level button click handlers
+   */
+  initLevelButtons() {
+    const container = document.getElementById('levelButtons');
+    if (!container) return;
+
+    container.addEventListener('click', (e) => {
+      if (e.target.tagName === 'BUTTON' && e.target.dataset.level !== undefined) {
+        const level = parseInt(e.target.dataset.level);
+        this.zoomToAdminLevel(level);
+      }
+    });
+
+    // Initialize lock button
+    const lockBtn = document.getElementById('levelLockBtn');
+    if (lockBtn) {
+      lockBtn.addEventListener('click', () => this.toggleLevelLock());
+    }
+
+    // Update active button on zoom changes
+    if (MapAdapter?.map) {
+      MapAdapter.map.on('zoomend', () => {
+        const bounds = MapAdapter.map.getBounds();
+        const currentLevel = ViewportLoader?.getAdminLevelForViewport(bounds) || 0;
+        // Only update buttons if not locked
+        if (!ViewportLoader?.levelLocked) {
+          this.updateLevelButtons(currentLevel);
+        }
+      });
+    }
+  },
+
+  /**
+   * Toggle the admin level lock
+   */
+  toggleLevelLock() {
+    const isLocked = ViewportLoader?.toggleLock();
+    this.updateLockButton(isLocked);
+
+    // When locking, also update the level buttons to show locked level
+    if (isLocked) {
+      this.updateLevelButtons(ViewportLoader.lockedLevel);
+    }
+  },
+
+  /**
+   * Update lock button appearance
+   * @param {boolean} isLocked - Current lock state
+   */
+  updateLockButton(isLocked) {
+    const lockBtn = document.getElementById('levelLockBtn');
+    if (!lockBtn) return;
+
+    lockBtn.classList.toggle('locked', isLocked);
+    lockBtn.title = isLocked ? 'Unlock admin level (currently locked)' : 'Lock admin level';
   }
 };
 

@@ -939,6 +939,208 @@ Output format matching existing pattern:
 
 ---
 
+## US Census Sub-County Geography (January 2026)
+
+Deep dive into Census geographic levels below county, with data availability analysis.
+
+### Geographic Hierarchy Overview
+
+```
+USA (admin_0)
+  |
+  +-- States (admin_1): 51 units
+        |
+        +-- Counties (admin_2): 3,144 units        <-- CURRENT LEVEL
+              |
+              +-- ZCTAs (postal): ~33,000 units    <-- NEW (cross-county)
+              |
+              +-- Census Tracts: 84,414 units      <-- NEW
+                    |
+                    +-- Block Groups: 239,781 units <-- NEW
+                          |
+                          +-- Blocks: 8,180,866 units <-- OPTIONAL
+```
+
+### Data Availability by Geographic Level
+
+| Level | Polygons | ACS Data? | Decennial? | Variables Available | Update Freq |
+|-------|----------|-----------|------------|---------------------|-------------|
+| **County** | 3,144 | 1-yr + 5-yr | Yes | 64,000+ (all tables) | Annual |
+| **ZCTA** | ~33,000 | 5-yr only | Yes | Data Profiles only (DP02-05) | Annual |
+| **Tract** | 84,414 | 5-yr only | Yes | 64,000+ (all tables) | Annual |
+| **Block Group** | 239,781 | 5-yr only | Yes | Detailed Tables only (limited) | Annual |
+| **Block** | 8,180,866 | **NO** | Yes | ~400 fields (PL 94-171 only) | Decennial |
+
+### What's Available at Each Level
+
+**County Level (current)**
+- Full ACS 1-year AND 5-year estimates
+- All table types: Detailed, Subject, Data Profiles, Comparison
+- 64,000+ variables covering everything
+
+**ZCTA Level (ZIP codes)**
+- ACS 5-year estimates only
+- Data Profiles (DP02-DP05):
+  - DP02: Social (education, language, ancestry, computers)
+  - DP03: Economic (employment, income, poverty, health insurance)
+  - DP04: Housing (occupancy, structure, tenure, costs)
+  - DP05: Demographics (age, sex, race, Hispanic origin)
+- Good for: Income, poverty, education, housing at ZIP level
+
+**Census Tract Level**
+- ACS 5-year estimates only
+- ALL table types available
+- 64,000+ variables (same as county)
+- Best balance of granularity vs data richness
+
+**Block Group Level**
+- ACS 5-year estimates only
+- Detailed Tables and Summary File ONLY
+- NO Data Profiles or Subject Tables
+- Limited but still useful for detailed analysis
+
+**Block Level**
+- **NO ACS DATA** - only Decennial Census
+- PL 94-171 Redistricting Data only (~400 fields):
+  - Total population
+  - Race/ethnicity (63 categories)
+  - Voting age population (18+)
+  - Housing units (occupied/vacant)
+  - Group quarters population
+- Updated every 10 years (2020, 2030...)
+
+### Key Insight: Block Level Has Limited Value
+
+Since blocks only have decennial data (population, race, housing units), and this data:
+- Is 6+ years old (2020 Census)
+- Has no economic data (income, poverty, employment)
+- Has no social data (education, health insurance)
+- Won't update until 2030
+
+**Recommendation**: Stop at Block Group level for most use cases. Block geometry is useful for:
+- Electoral/redistricting analysis
+- Population density mapping
+- Testing loc_id system at scale
+
+### Tiered Geometry File Architecture
+
+Given the scale differences, geometry must be tiered to avoid memory issues:
+
+```
+countries/USA/
+  geometry.parquet              # 35 MB  - admin_0 + admin_1 + admin_2 (3,195 rows)
+  geometry_zcta.parquet         # ~300 MB - all ZCTAs national (33,000 rows)
+  geometry_tract/
+    USA-AL.parquet              # Tracts by state (~1,600 avg per state)
+    USA-CA.parquet              # ~9,000 tracts
+    ...
+  geometry_blockgroup/
+    USA-AL.parquet              # Block groups by state (~4,700 avg)
+    USA-CA.parquet              # ~25,000 block groups
+    ...
+  geometry_block/               # OPTIONAL - for testing
+    USA-CA.parquet              # ~700,000 blocks (351 MB)
+    USA-NY.parquet              # ~350,000 blocks (182 MB)
+    ...
+```
+
+**File Size Estimates:**
+
+| Level | Rows | Est. Size | Single File? |
+|-------|------|-----------|--------------|
+| Counties | 3,195 | 35 MB | Yes |
+| ZCTAs | 33,000 | 300 MB | Yes |
+| Tracts | 84,414 | 500 MB | Borderline |
+| Block Groups | 239,781 | 2+ GB | No - split by state |
+| Blocks | 8,180,866 | 80+ GB | No - split by state |
+
+**Parquet Best Practices:**
+- Target file sizes: 128 MB - 1 GB
+- Partition by frequently-filtered columns (state)
+- Over-partitioning causes fragmentation
+- Under-partitioning loads too much data
+
+### loc_id Format for Sub-County Levels
+
+```
+USA                      (admin_0, country)
+USA-CA                   (admin_1, state)
+USA-CA-6037              (admin_2, county - Los Angeles)
+USA-Z-90210              (ZCTA, postal, type="postal")
+USA-CA-T603702           (tract, type="census")
+USA-CA-T603702-1         (block group, type="census")
+USA-CA-T603702-1001      (block, type="census")
+```
+
+Note: ZCTAs cross county boundaries, so they don't nest cleanly in the county hierarchy. They are siblings, not children.
+
+### Downloaded Geometry Files (2026-01-08)
+
+Location: `county-map-data/Raw data/census/geometry/`
+
+| File | Size | Content |
+|------|------|---------|
+| cb_2024_us_tract_500k.zip | 56 MB | National tracts (cartographic) |
+| cb_2024_us_bg_500k.zip | 93 MB | National block groups (cartographic) |
+| tl_2024_us_zcta520.zip | 505 MB | National ZCTAs (TIGER full detail) |
+| tl_2024_06_tabblock20.zip | 351 MB | California blocks (TIGER) |
+| tl_2024_36_tabblock20.zip | 182 MB | New York blocks (TIGER) |
+
+**Full block download (all states):** https://www2.census.gov/geo/tiger/TIGER2024/TABBLOCK20/
+- 56 state files, ~6.7 GB total
+
+### Data Download Strategy
+
+Since data availability differs by level:
+
+1. **ZCTA**: Download Data Profiles (DP02-05) - income, poverty, education, housing
+2. **Tract**: Can download full ACS if needed - same richness as county
+3. **Block Group**: Download Detailed Tables only - subset of variables
+4. **Block**: Skip ACS (doesn't exist) - only decennial population/race
+
+### Aggregation Strategy
+
+All smaller geography data can be aggregated UP to generate consistent data across levels:
+
+```
+Blocks -> Block Groups -> Tracts -> Counties -> States -> Nation
+```
+
+This ensures:
+- County totals match sum of tract totals
+- State totals match sum of county totals
+- Consistent data even if source only has fine-grained data
+
+**Aggregation Rules:**
+| Metric Type | Method | Example |
+|-------------|--------|---------|
+| Counts | SUM | population, housing_units |
+| Rates | Weighted AVG | poverty_rate (weighted by pop) |
+| Medians | Cannot aggregate | median_income (must use source level) |
+
+> **Full details**: See [data_pipeline.md - Aggregation Rules](data_pipeline.md#aggregation-rules-by-metric-type) for complete 9-row table with per-capita, density, indices, categorical, min/max rules plus common mistakes.
+>
+> **Scaling DOWN**: See [data_pipeline.md - Disaggregation Rules](data_pipeline.md#disaggregation-rules-scaling-down) for how to handle queries at finer granularity than the data (e.g., "flood risk at my house" from county-level data).
+
+### Census Data Sources
+
+**ACS API:** https://www.census.gov/data/developers/data-sets/acs-5year.html
+- 5-year estimates for all geographies
+- Updated annually (2019-2023 currently available)
+
+**Decennial Census:** https://www.census.gov/programs-surveys/decennial-census/data.html
+- PL 94-171 for block-level population/race
+- Full data for all geographies
+
+**TIGER/Line Geometry:** https://www.census.gov/cgi-bin/geo/shapefiles/index.php
+- Full detail boundaries
+
+**Cartographic Boundaries:** https://www.census.gov/geographies/mapping-files/time-series/geo/cartographic-boundary.html
+- Simplified for web mapping (smaller files)
+- Available in Shapefile, GeoPackage, GeoDatabase, KML
+
+---
+
 ## NEW SOURCES TO EXPLORE (January 2026)
 
 ### ReliefWeb API - Global Disasters (1981-present) - TO DOWNLOAD

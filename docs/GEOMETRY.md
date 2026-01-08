@@ -1168,12 +1168,17 @@ Geometries are simplified for web display to reduce file sizes and improve rende
 
 ### Recommended Tolerances
 
-| Level | Tolerance | Precision | Use Case |
-|-------|-----------|-----------|----------|
-| Countries | 0.01 | ~1 km | World map view |
-| States/Regions | 0.001 | ~100 m | Country zoom |
-| Counties | 0.001 | ~100 m | State zoom |
-| Cities/Districts | 0.0001 | ~10 m | County zoom |
+| Level | Admin | Tolerance | Precision | Use Case |
+|-------|-------|-----------|-----------|----------|
+| Countries | 0 | 0.01 | ~1 km | World map view |
+| States/Regions | 1 | 0.001 | ~100 m | Country zoom |
+| Counties | 2 | 0.001 | ~100 m | State zoom |
+| ZCTAs | 3 | 0.0001 | ~10 m | County zoom |
+| Census Tracts | 4 | 0.0001 | ~10 m | City zoom |
+| Block Groups | 5 | 0.00005 | ~5 m | Neighborhood zoom |
+| Blocks | 6 | 0.00001 | ~1 m | Street zoom |
+
+**Note:** Simplified geometry improves both file size AND loading speed. The `df_to_geojson()` function parses each geometry from JSON - fewer vertices = faster parsing.
 
 ### Size Impact
 
@@ -1552,7 +1557,21 @@ GADM admin_2:    Varies by country (different hierarchies)
 - NUTS 3 may combine or split national admin units
 
 **Decision**: Use GISCO boundaries for NUTS data. Download from:
-https://ec.europa.eu/eurostat/web/gisco/geodata/statistical-units/territorial-units-statistics
+- **GISCO Distribution Service**: https://gisco-services.ec.europa.eu/distribution/v2/nuts/download/
+- **Eurostat GISCO Main Page**: https://ec.europa.eu/eurostat/web/gisco/geodata/statistical-units/territorial-units-statistics
+- **Nuts2json (GitHub)**: https://github.com/eurostat/Nuts2json - GeoJSON/TopoJSON formats
+
+**Available Formats**:
+- Shapefiles (SHP)
+- GeoJSON
+- TopoJSON (smaller, web-optimized)
+- Multiple scale options: 1M, 3M, 10M, 20M, 60M
+
+**NUTS Hierarchy**:
+- NUTS 0: Countries (37 EU/EFTA countries)
+- NUTS 1: Major socio-economic regions (~100)
+- NUTS 2: Basic regions for regional policy (~300)
+- NUTS 3: Small regions for diagnosis (~1,500)
 
 **Implementation**:
 ```python
@@ -1563,30 +1582,101 @@ iso3 = NUTS_COUNTRY_TO_ISO3[nuts_code[:2]]
 loc_id = f"{iso3}-{nuts_code}"  # "DEU-DE300"
 ```
 
+**Recommended Approach for Eurostat Data**:
+1. Download NUTS boundaries from GISCO (1M scale for detail, 10M for smaller files)
+2. Convert to parquet with loc_ids matching Eurostat data format
+3. Store in `countries/{ISO3}/geometry.parquet` for each European country
+4. Eurostat data joins directly without crosswalk needed
+
 ### Geometry File Precedence
 
-Simple two-tier system:
+Three-tier system with crosswalk support:
 
 ```
-1. countries/{ISO3}/geometry.parquet  <- Local source (preferred)
-2. geometry/{ISO3}.parquet            <- GADM fallback (global baseline)
+1. countries/{ISO3}/geometry.parquet  <- Local source (preferred, uses local loc_ids like NUTS)
+2. countries/{ISO3}/crosswalk.json    <- Maps local loc_ids to GADM loc_ids (if no local geometry)
+3. geometry/{ISO3}.parquet            <- GADM fallback (global baseline)
 ```
+
+**Resolution Order:**
+1. **Direct match in country geometry**: Data loc_id matches country geometry loc_id -> use it
+2. **Crosswalk fallback**: Data loc_id doesn't match, check crosswalk to translate -> use GADM geometry
+3. **Direct GADM fallback**: Data loc_id is already GADM-style -> use GADM geometry directly
 
 When a country gets its own data folder (with converters, better data), we include local geometry there. The `geometry/` folder stays pure GADM as the global fallback.
 
+### Crosswalk Files
+
+When data uses a different loc_id system (like NUTS codes for Eurostat) but we don't have matching geometry yet, a crosswalk file maps between systems.
+
+**Location**: `countries/{ISO3}/crosswalk.json`
+
+**Format**:
+```json
+{
+  "source_system": "nuts",
+  "target_system": "gadm",
+  "mappings": {
+    "FRA-FR1": "FRA-IF",
+    "FRA-FRB": "FRA-CE",
+    "FRA-FRC": "FRA-BF",
+    "DEU-DE1": "DEU-BW",
+    "DEU-DE2": "DEU-BY"
+  },
+  "notes": "NUTS to GADM mapping. Some NUTS regions span multiple GADM regions."
+}
+```
+
+**When to use crosswalk vs. new geometry**:
+- **Use crosswalk**: When NUTS/local regions roughly align with GADM regions (quick fix)
+- **Download new geometry**: When local regions are fundamentally different or more accurate is needed
+
+**Crosswalk limitations**:
+- NUTS regions may not align 1:1 with GADM regions (aggregation/splitting)
+- Boundaries may differ slightly at borders
+- For best results, download official geometry from the source agency
+
 ```python
-def get_country_geometry(iso3):
-    """Load geometry - country folder first, GADM fallback."""
+def get_geometry_for_loc_id(loc_id, iso3=None):
+    """
+    Get geometry for a loc_id using 3-tier fallback.
 
-    # Check for country-specific geometry (local source, preferred)
-    country_geom = f"countries/{iso3}/geometry.parquet"
-    if Path(country_geom).exists():
-        return pd.read_parquet(country_geom)
+    1. Try country geometry (local loc_ids like NUTS)
+    2. Try crosswalk to translate loc_id, then use GADM
+    3. Try GADM directly (loc_id is already GADM-style)
+    """
+    if iso3 is None:
+        iso3 = loc_id.split('-')[0]
 
-    # Fall back to GADM (global baseline)
+    # Tier 1: Country-specific geometry (preferred)
+    country_geom_path = f"countries/{iso3}/geometry.parquet"
+    if Path(country_geom_path).exists():
+        gdf = pd.read_parquet(country_geom_path)
+        match = gdf[gdf['loc_id'] == loc_id]
+        if len(match) > 0:
+            return match.iloc[0]
+
+    # Tier 2: Crosswalk translation -> GADM
+    crosswalk_path = f"countries/{iso3}/crosswalk.json"
+    if Path(crosswalk_path).exists():
+        with open(crosswalk_path) as f:
+            crosswalk = json.load(f)
+        gadm_loc_id = crosswalk.get('mappings', {}).get(loc_id)
+        if gadm_loc_id:
+            gadm_path = f"geometry/{iso3}.parquet"
+            if Path(gadm_path).exists():
+                gdf = pd.read_parquet(gadm_path)
+                match = gdf[gdf['loc_id'] == gadm_loc_id]
+                if len(match) > 0:
+                    return match.iloc[0]
+
+    # Tier 3: Direct GADM fallback
     gadm_path = f"geometry/{iso3}.parquet"
     if Path(gadm_path).exists():
-        return pd.read_parquet(gadm_path)
+        gdf = pd.read_parquet(gadm_path)
+        match = gdf[gdf['loc_id'] == loc_id]
+        if len(match) > 0:
+            return match.iloc[0]
 
     return None
 ```
@@ -1669,11 +1759,18 @@ This handles:
 
 ### TODO: Geometry Downloads Needed
 
-| Source | URL | Priority |
-|--------|-----|----------|
-| **StatsCan CSD Boundaries** | https://www12.statcan.gc.ca/census-recensement/2021/geo/sip-pis/boundary-limites/index2021-eng.cfm | High |
-| **Eurostat GISCO NUTS** | https://ec.europa.eu/eurostat/web/gisco/geodata/statistical-units/territorial-units-statistics | Medium |
-| **GADM v5** | https://gadm.org (when released) | Medium |
+| Source | URL | Priority | Notes |
+|--------|-----|----------|-------|
+| **Eurostat GISCO NUTS** | https://gisco-services.ec.europa.eu/distribution/v2/nuts/download/ | **High** | Required for Eurostat data to display. Download NUTS 2024 at 10M scale. |
+| **StatsCan CSD Boundaries** | https://www12.statcan.gc.ca/census-recensement/2021/geo/sip-pis/boundary-limites/index2021-eng.cfm | High | Needed for Canadian census data |
+| **GADM v5** | https://gadm.org (when released) | Medium | Update global fallback when available |
+
+**NUTS Geometry Downloader TODO**:
+1. Create `data_converters/downloaders/download_nuts_geometry.py`
+2. Download NUTS 2024 boundaries from GISCO (GeoJSON format, 10M scale)
+3. Split by country and convert to parquet
+4. Store in `countries/{ISO3}/geometry.parquet` with NUTS-style loc_ids
+5. Eurostat data will then join directly without crosswalk
 
 ### Natural Earth (Alternative)
 
@@ -1926,4 +2023,4 @@ See [data_pipeline.md - Adding New Data Sources](data_pipeline.md#adding-new-dat
 
 ---
 
-*Last Updated: 2026-01-06*
+*Last Updated: 2026-01-07*

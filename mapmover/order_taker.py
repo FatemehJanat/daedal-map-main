@@ -149,11 +149,13 @@ def build_system_prompt(catalog: dict, conversions: dict) -> str:
         factbook_sources = [s for s in sources if 'world_factbook' in s['source_id']]
         other_sources = [s for s in sources if s not in sdg_sources and s not in factbook_sources]
 
-        # Add individual sources with human-readable names
+        # Add individual sources with human-readable names AND source_id
         for src in other_sources:
             temp = src.get("temporal_coverage", {})
             name = src.get("source_name", src["source_id"])
-            lines.append(f"- {name}: {temp.get('start', '?')}-{temp.get('end', '?')}")
+            sid = src["source_id"]
+            # Show both name and source_id so LLM knows exact ID to use
+            lines.append(f"- {name} [source_id: {sid}]: {temp.get('start', '?')}-{temp.get('end', '?')}")
 
         # Group UN SDGs
         if sdg_sources:
@@ -227,7 +229,11 @@ This will be expanded to include ALL metrics from that source.
 RESPOND WITH:
 - JSON order (for data requests)
 - Concise summary (for questions) - 2-5 sentences max
-- Short clarifying question (if unclear)
+- Clarifying question if unclear - BE SPECIFIC about what's missing:
+  - "Which metric?" if they didn't specify what data
+  - "Which location/country?" if no region specified
+  - "Which time period/year?" if time is ambiguous
+  - Example: "Which metric would you like? Population, GDP, births, or all of them?"
 """
 
 
@@ -322,6 +328,10 @@ def validate_order_item(item: dict) -> dict:
 
     # Check metric exists
     metrics = metadata.get("metrics", {})
+    # Skip wildcard metrics - they'll be expanded or handled by the postprocessor
+    if metric in ("*", "all", "all_metrics"):
+        item["_valid"] = True
+        return item
     if metric and metric not in metrics:
         # Try to find close match
         close_matches = [k for k in metrics.keys() if metric.lower() in k.lower() or k.lower() in metric.lower()]
@@ -427,7 +437,60 @@ def parse_llm_response(content: str) -> dict:
 
     # Check if it's a clarifying question
     if "?" in content and len(content) < 200:
-        return {"type": "clarify", "message": content}
+        # If the message is too generic, try to make it more specific
+        message = _improve_clarify_message(content, hints)
+        return {"type": "clarify", "message": message}
 
     # Otherwise it's a chat response
     return {"type": "chat", "message": content}
+
+
+def _improve_clarify_message(message: str, hints: dict = None) -> str:
+    """
+    If the clarify message is too generic, improve it based on what we know is missing.
+    """
+    # Generic phrases that should be improved
+    generic_phrases = [
+        "could you be more specific",
+        "can you be more specific",
+        "please be more specific",
+        "i need more information",
+        "what do you mean",
+        "could you clarify",
+    ]
+
+    message_lower = message.lower()
+    is_generic = any(phrase in message_lower for phrase in generic_phrases)
+
+    if not is_generic or not hints:
+        return message
+
+    # Analyze what's missing based on hints
+    missing = []
+
+    # Check if location is missing
+    location = hints.get("location")
+    navigation = hints.get("navigation")
+    has_location = location or (navigation and navigation.get("locations"))
+    if not has_location:
+        missing.append("location/country")
+
+    # Check if topics/metrics are clear
+    topics = hints.get("topics", [])
+    if not topics:
+        missing.append("metric/data type")
+
+    # Check if time is specified
+    time_info = hints.get("time")
+    if not time_info:
+        # Time is often optional, so only mention if other things are missing
+        pass
+
+    # Build improved message
+    if missing:
+        if len(missing) == 1:
+            return f"Which {missing[0]} would you like to see data for?"
+        else:
+            return f"Could you specify the {' and '.join(missing)}?"
+
+    return message

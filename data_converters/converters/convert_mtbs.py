@@ -308,16 +308,15 @@ def create_fires_parquet(fires_gdf):
     valid_perimeters = perimeter_geojson.notna().sum()
     print(f"    Valid perimeters: {valid_perimeters:,} ({valid_perimeters/len(fires_gdf)*100:.1f}%)")
 
-    # Select columns for output
+    # Select columns for output using standard event schema names
     fires_out = pd.DataFrame({
         'event_id': fires_gdf.get('event_id', fires_gdf.index),
+        'timestamp': fires_gdf.get('ignition_date'),  # Standard column name
+        'latitude': fires_gdf.get('centroid_lat'),  # Standard column name
+        'longitude': fires_gdf.get('centroid_lon'),  # Standard column name
         'fire_name': fires_gdf.get('fire_name'),
         'fire_type': fires_gdf.get('fire_type'),
-        'year': fires_gdf.get('year'),
-        'ignition_date': fires_gdf.get('ignition_date'),
         'burned_acres': fires_gdf.get('burned_acres'),
-        'centroid_lat': fires_gdf.get('centroid_lat'),
-        'centroid_lon': fires_gdf.get('centroid_lon'),
         'perimeter': perimeter_geojson,  # GeoJSON string of simplified perimeter
         'loc_id': fires_gdf.get('loc_id'),
         'county_name': fires_gdf.get('county_name'),
@@ -325,9 +324,9 @@ def create_fires_parquet(fires_gdf):
     })
 
     # Convert coordinates to numeric and round
-    if 'centroid_lat' in fires_out.columns:
-        fires_out['centroid_lat'] = pd.to_numeric(fires_out['centroid_lat'], errors='coerce').round(4)
-        fires_out['centroid_lon'] = pd.to_numeric(fires_out['centroid_lon'], errors='coerce').round(4)
+    if 'latitude' in fires_out.columns:
+        fires_out['latitude'] = pd.to_numeric(fires_out['latitude'], errors='coerce').round(4)
+        fires_out['longitude'] = pd.to_numeric(fires_out['longitude'], errors='coerce').round(4)
 
     # Round acres
     if 'burned_acres' in fires_out.columns:
@@ -351,6 +350,10 @@ def create_fires_parquet(fires_gdf):
 def create_county_aggregates(fires_df):
     """Create USA.parquet with county-year aggregates."""
     print("\nCreating county-year aggregates...")
+
+    # Extract year from timestamp
+    fires_df = fires_df.copy()
+    fires_df['year'] = pd.to_datetime(fires_df['timestamp'], errors='coerce').dt.year
 
     # Filter to fires with county match and valid year
     df_with_county = fires_df[
@@ -404,8 +407,10 @@ def generate_metadata(fires_df, county_df):
     """Generate metadata.json for the dataset."""
     print("\nGenerating metadata.json...")
 
-    min_year = int(fires_df['year'].min()) if fires_df['year'].notna().any() else 1984
-    max_year = int(fires_df['year'].max()) if fires_df['year'].notna().any() else 2023
+    # Extract year from timestamp
+    years = pd.to_datetime(fires_df['timestamp'], errors='coerce').dt.year
+    min_year = int(years.min()) if years.notna().any() else 1984
+    max_year = int(years.max()) if years.notna().any() else 2023
 
     metrics = {
         "fire_count": {
@@ -507,6 +512,10 @@ def print_statistics(fires_df, county_df):
     print("\n" + "="*80)
     print("STATISTICS")
     print("="*80)
+
+    # Extract year from timestamp for stats
+    fires_df = fires_df.copy()
+    fires_df['year'] = pd.to_datetime(fires_df['timestamp'], errors='coerce').dt.year
 
     print(f"\nTotal fires: {len(fires_df):,}")
     if fires_df['year'].notna().any():

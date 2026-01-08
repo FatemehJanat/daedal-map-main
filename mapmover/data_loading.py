@@ -207,9 +207,72 @@ def get_geometry_folder():
     return None
 
 
+def get_countries_folder():
+    """Get the countries folder path from settings backup path."""
+    backup_path = get_backup_path()
+    if backup_path:
+        return Path(backup_path) / "countries"
+    return None
+
+
+def load_geometry_for_country(iso3: str):
+    """
+    Load geometry for a country using 3-tier fallback:
+    1. countries/{ISO3}/geometry.parquet (local/official source like NUTS)
+    2. countries/{ISO3}/crosswalk.json -> geometry/{ISO3}.parquet (translated)
+    3. geometry/{ISO3}.parquet (GADM fallback)
+
+    Returns:
+        tuple: (GeoDataFrame, crosswalk_dict or None)
+    """
+    import pandas as pd
+
+    countries_folder = get_countries_folder()
+    geometry_folder = get_geometry_folder()
+
+    # Tier 1: Country-specific geometry (NUTS, ABS LGA, etc.)
+    if countries_folder:
+        country_geom_path = countries_folder / iso3 / "geometry.parquet"
+        if country_geom_path.exists():
+            try:
+                gdf = pd.read_parquet(country_geom_path)
+                logger.debug(f"Loaded {len(gdf)} features from {country_geom_path}")
+                return gdf, None
+            except Exception as e:
+                logger.warning(f"Error loading {country_geom_path}: {e}")
+
+    # Tier 2: Load crosswalk if exists (for translating loc_ids)
+    crosswalk = None
+    if countries_folder:
+        crosswalk_path = countries_folder / iso3 / "crosswalk.json"
+        if crosswalk_path.exists():
+            try:
+                import json
+                with open(crosswalk_path, 'r') as f:
+                    crosswalk = json.load(f)
+                logger.debug(f"Loaded crosswalk for {iso3}: {len(crosswalk.get('mappings', {}))} mappings")
+            except Exception as e:
+                logger.warning(f"Error loading crosswalk {crosswalk_path}: {e}")
+
+    # Tier 3: GADM fallback geometry
+    if geometry_folder:
+        gadm_path = geometry_folder / f"{iso3}.parquet"
+        if gadm_path.exists():
+            try:
+                gdf = pd.read_parquet(gadm_path)
+                logger.debug(f"Loaded {len(gdf)} features from GADM {gadm_path}")
+                return gdf, crosswalk
+            except Exception as e:
+                logger.warning(f"Error loading {gadm_path}: {e}")
+
+    logger.warning(f"No geometry found for {iso3}")
+    return None, crosswalk
+
+
 def fetch_geometries_by_loc_ids(loc_ids: list) -> dict:
     """
     Fetch geometries from parquet files for a list of loc_ids.
+    Uses 3-tier geometry fallback: country folder -> crosswalk -> GADM.
     Used for "show borders" functionality.
 
     Args:
@@ -219,44 +282,56 @@ def fetch_geometries_by_loc_ids(loc_ids: list) -> dict:
         GeoJSON FeatureCollection with geometries
     """
     import pandas as pd
-    import geopandas as gpd
+    import json as json_module
 
-    geometry_folder = get_geometry_folder()
-    if not geometry_folder or not geometry_folder.exists():
-        logger.warning("Geometry folder not found")
+    if not loc_ids:
         return {"type": "FeatureCollection", "features": []}
 
-    # Group loc_ids by country (first part before dash)
+    # Group loc_ids by country (first part before dash, or whole ID for country-level)
     country_loc_ids = {}
     for loc_id in loc_ids:
         parts = loc_id.split("-")
-        if parts:
-            country = parts[0]
-            if country not in country_loc_ids:
-                country_loc_ids[country] = []
-            country_loc_ids[country].append(loc_id)
+        country = parts[0] if parts else loc_id
+        if country not in country_loc_ids:
+            country_loc_ids[country] = []
+        country_loc_ids[country].append(loc_id)
 
     all_features = []
 
     for country, lids in country_loc_ids.items():
-        parquet_path = geometry_folder / f"{country}.parquet"
-        if not parquet_path.exists():
-            logger.warning(f"Parquet file not found: {parquet_path}")
+        # Load geometry using 3-tier fallback
+        gdf, crosswalk = load_geometry_for_country(country)
+
+        if gdf is None:
+            logger.warning(f"No geometry found for {country}")
             continue
 
-        try:
-            # Load only the rows we need
-            gdf = gpd.read_parquet(parquet_path)
+        # Build lookup set for requested loc_ids
+        remaining_lids = set(lids)
+        found_lids = set()
 
-            # Filter to our loc_ids
-            filtered = gdf[gdf['loc_id'].isin(lids)]
+        try:
+            # First try direct match
+            filtered = gdf[gdf['loc_id'].isin(remaining_lids)]
 
             if len(filtered) > 0:
-                # Convert to GeoJSON features
                 for _, row in filtered.iterrows():
+                    # Handle geometry - could be string or shapely geometry
+                    geom = row.get('geometry')
+                    if geom is None:
+                        continue
+
+                    # Convert to dict if needed
+                    if hasattr(geom, '__geo_interface__'):
+                        geom_dict = geom.__geo_interface__
+                    elif isinstance(geom, str):
+                        geom_dict = json_module.loads(geom)
+                    else:
+                        continue
+
                     feature = {
                         "type": "Feature",
-                        "geometry": row.geometry.__geo_interface__,
+                        "geometry": geom_dict,
                         "properties": {
                             "loc_id": row.get("loc_id"),
                             "name": row.get("name"),
@@ -265,10 +340,51 @@ def fetch_geometries_by_loc_ids(loc_ids: list) -> dict:
                         }
                     }
                     all_features.append(feature)
+                    found_lids.add(row.get("loc_id"))
 
-                logger.debug(f"Fetched {len(filtered)} geometries from {country}.parquet")
+            remaining_lids -= found_lids
+
+            # If crosswalk exists and we still have unmatched loc_ids, try translation
+            if crosswalk and remaining_lids:
+                mappings = crosswalk.get('mappings', {})
+                for loc_id in list(remaining_lids):
+                    gadm_id = mappings.get(loc_id)
+                    if gadm_id:
+                        match = gdf[gdf['loc_id'] == gadm_id]
+                        if len(match) > 0:
+                            row = match.iloc[0]
+                            geom = row.get('geometry')
+                            if geom is None:
+                                continue
+
+                            if hasattr(geom, '__geo_interface__'):
+                                geom_dict = geom.__geo_interface__
+                            elif isinstance(geom, str):
+                                geom_dict = json_module.loads(geom)
+                            else:
+                                continue
+
+                            feature = {
+                                "type": "Feature",
+                                "geometry": geom_dict,
+                                "properties": {
+                                    "loc_id": loc_id,  # Use original loc_id
+                                    "name": row.get("name"),
+                                    "admin_level": row.get("admin_level"),
+                                    "parent_id": row.get("parent_id"),
+                                    "_crosswalk_from": gadm_id,  # Track translation
+                                }
+                            }
+                            all_features.append(feature)
+                            remaining_lids.discard(loc_id)
+
+            if remaining_lids:
+                logger.debug(f"No geometry found for {len(remaining_lids)} loc_ids in {country}: {list(remaining_lids)[:5]}")
+
         except Exception as e:
-            logger.error(f"Error reading {parquet_path}: {e}")
+            logger.error(f"Error processing geometry for {country}: {e}")
+
+    logger.info(f"Fetched {len(all_features)} geometries for {len(loc_ids)} loc_ids")
 
     return {
         "type": "FeatureCollection",

@@ -190,13 +190,33 @@ def geocode_runups(runups_df, counties_gdf):
 
 
 def create_events_parquet(events_df, runups_df):
-    """Create events.parquet with tsunami source events."""
-    # Prepare events dataframe
+    """Create events.parquet with tsunami source events.
+
+    Standard event schema columns:
+    - event_id: unique identifier
+    - timestamp: event datetime (ISO format)
+    - latitude, longitude: event location
+    - loc_id: assigned county/water body code
+    """
+    # Build timestamp from year/month/day
+    def build_timestamp(row):
+        try:
+            year = int(row['year']) if pd.notna(row['year']) else None
+            month = int(row.get('month', 1)) if pd.notna(row.get('month')) else 1
+            day = int(row.get('day', 1)) if pd.notna(row.get('day')) else 1
+            if year:
+                return pd.Timestamp(year=year, month=month, day=day)
+        except:
+            pass
+        return pd.NaT
+
+    events_df = events_df.copy()
+    events_df['timestamp'] = events_df.apply(build_timestamp, axis=1)
+
+    # Prepare events dataframe with standard schema
     events_out = pd.DataFrame({
-        'event_id': events_df['id'],
-        'year': events_df['year'],
-        'month': events_df.get('month', pd.NA),
-        'day': events_df.get('day', pd.NA),
+        'event_id': events_df['id'].apply(lambda x: f"TS{x:06d}" if pd.notna(x) else None),
+        'timestamp': events_df['timestamp'],  # Standard column name
         'latitude': events_df['latitude'].round(4),
         'longitude': events_df['longitude'].round(4),
         'country': events_df['country'],

@@ -79,6 +79,11 @@ def validate_item(item: dict, catalog: dict) -> dict:
         item["_needs_expansion"] = True
         return item
 
+    # Skip event mode items - they don't require metric validation
+    if item.get("mode") == "events":
+        item["_valid"] = True
+        return item
+
     if not source_id:
         item["_valid"] = False
         item["_error"] = "Missing source_id"
@@ -143,6 +148,11 @@ def expand_wildcard_metrics(items: list) -> list:
     expanded = []
 
     for item in items:
+        # Skip event mode items - they don't use metrics, "*" means "all events"
+        if item.get("mode") == "events":
+            expanded.append(item)
+            continue
+
         metric = item.get("metric")
 
         # Check for wildcard
@@ -382,6 +392,100 @@ def expand_all_derived_fields(items: list) -> list:
 
 
 # =============================================================================
+# Event Mode Detection
+# =============================================================================
+
+# Source IDs that support event mode (individual events vs aggregates)
+EVENT_SOURCES = {
+    "usgs_earthquakes": "events",
+    "canada_earthquakes": "events",
+    "smithsonian_volcanoes": "events",
+    "mtbs_wildfires": "fires",
+    "ibtracs": "positions",
+    "hurdat2": "positions",
+    "noaa_tsunamis": "events",
+}
+
+
+def detect_event_mode(items: list, hints: dict = None) -> list:
+    """
+    Detect if items should use event mode instead of aggregate mode.
+
+    Event mode is triggered when:
+    1. Source has an events file (events.parquet, fires.parquet, etc.)
+    2. Query intent suggests viewing individual events (not aggregates)
+
+    Query intent detection:
+    - "show me earthquakes" / "display wildfires" -> EVENT mode (markers on map)
+    - "how many earthquakes" / "count of fires" -> AGGREGATE mode (county choropleth)
+
+    Adds mode: "events" to items that should use event display.
+    """
+    query = ""
+    if hints:
+        query = hints.get("original_query", "").lower()
+
+    # Patterns that suggest user wants to SEE individual events
+    event_display_patterns = [
+        "show me", "show the", "display", "map of", "map the",
+        "where are", "where were", "where did", "where have",
+        "which", "what", "list", "find",
+        "struck", "hit", "affected", "impacted",
+        "occurred", "happened",
+        "magnitude", "category", "m4", "m5", "m6", "m7",  # Specific magnitude
+        "cat 1", "cat 2", "cat 3", "cat 4", "cat 5",      # Hurricane categories
+    ]
+
+    # Patterns that suggest user wants AGGREGATE counts/statistics
+    aggregate_patterns = [
+        "how many", "how much", "count", "total", "number of",
+        "statistics", "stats", "average", "sum",
+        "per year", "annually", "yearly", "over time",
+        "trend", "compare"
+    ]
+
+    # Determine intent from query
+    wants_events = any(p in query for p in event_display_patterns)
+    wants_aggregate = any(p in query for p in aggregate_patterns)
+
+    # If both or neither detected, use heuristics
+    if wants_events == wants_aggregate:
+        # Check for event-type nouns as main subject (default to events for disaster queries)
+        event_nouns = ["earthquake", "quake", "volcano", "eruption", "wildfire",
+                      "fire", "hurricane", "cyclone", "storm", "tsunami", "tornado"]
+        has_event_noun = any(noun in query for noun in event_nouns)
+        # Default: if disaster noun present without aggregate words, show events
+        wants_events = has_event_noun
+
+    updated_items = []
+
+    for item in items:
+        source_id = item.get("source_id", "")
+
+        # Check if source supports events
+        event_file_key = EVENT_SOURCES.get(source_id)
+
+        if event_file_key and wants_events and not wants_aggregate:
+            # Check if metric explicitly requests aggregate
+            metric = item.get("metric", "")
+            explicit_aggregate = metric and any(
+                agg in metric.lower() for agg in ["count", "total", "sum", "avg", "mean"]
+            )
+
+            if not explicit_aggregate:
+                # Add event mode
+                item["mode"] = "events"
+                item["event_file"] = event_file_key
+                # Remove metric if it's just a placeholder
+                if metric in ("*", "all", "all_metrics", ""):
+                    item.pop("metric", None)
+
+        updated_items.append(item)
+
+    return updated_items
+
+
+# =============================================================================
 # Main Postprocessor
 # =============================================================================
 
@@ -428,13 +532,16 @@ def postprocess_order(order: dict, hints: dict = None) -> dict:
                             item["year_start"] = temp["start"]
                             item["year_end"] = temp["end"]
 
-    # Step 1: Expand wildcard metrics (metric: "*" -> all metrics from source)
+    # Step 1: Detect event mode for disaster/event sources
+    items = detect_event_mode(items, hints)
+
+    # Step 2: Expand wildcard metrics (metric: "*" -> all metrics from source)
     items = expand_wildcard_metrics(items)
 
-    # Step 2: Expand derived fields
+    # Step 3: Expand derived fields
     expanded_items = expand_all_derived_fields(items)
 
-    # Step 3: Separate derived specs from regular items
+    # Step 4: Separate derived specs from regular items
     regular_items = []
     derived_specs = []
 

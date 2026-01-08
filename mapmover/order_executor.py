@@ -135,6 +135,50 @@ def load_source_data(source_id: str) -> tuple:
     return df, metadata
 
 
+def load_event_data(source_id: str, event_file_key: str = "events") -> tuple:
+    """
+    Load event-level parquet (e.g., events.parquet, fires.parquet) for a source.
+
+    Args:
+        source_id: e.g., "usgs_earthquakes", "mtbs_wildfires"
+        event_file_key: Key from metadata.files (e.g., "events", "fires", "positions")
+
+    Returns:
+        tuple: (DataFrame, metadata dict)
+    """
+    source_dir = _get_source_path(source_id)
+    meta_path = source_dir / "metadata.json"
+
+    with open(meta_path, encoding='utf-8') as f:
+        metadata = json.load(f)
+
+    # Get filename from metadata.files
+    files_info = metadata.get("files", {})
+    file_info = files_info.get(event_file_key)
+
+    if not file_info:
+        # Try common event file names as fallback
+        fallback_names = ["events.parquet", "fires.parquet", "positions.parquet"]
+        for name in fallback_names:
+            candidate = source_dir / name
+            if candidate.exists():
+                df = pd.read_parquet(candidate)
+                return df, metadata
+        raise ValueError(f"No event file '{event_file_key}' found in {source_id}")
+
+    # Get filename - handle both 'name' and 'filename' keys
+    filename = file_info.get("name") or file_info.get("filename")
+    if not filename:
+        raise ValueError(f"No filename specified for '{event_file_key}' in {source_id}")
+
+    parquet_path = source_dir / filename
+    if not parquet_path.exists():
+        raise ValueError(f"Event file not found: {parquet_path}")
+
+    df = pd.read_parquet(parquet_path)
+    return df, metadata
+
+
 def expand_region(region: str) -> set:
     """
     Expand a region name to a set of country codes (ISO3).
@@ -354,6 +398,286 @@ def apply_derived_fields(boxes: dict, derived_specs: list, year: int = None) -> 
     return warnings
 
 
+# =============================================================================
+# Event Mode Execution (for disaster/event data)
+# =============================================================================
+
+# Event type detection based on source_id patterns
+EVENT_TYPE_MAP = {
+    "usgs_earthquakes": "earthquake",
+    "canada_earthquakes": "earthquake",
+    "volcano": "volcano",
+    "smithsonian_volcanoes": "volcano",
+    "hurricanes": "hurricane",
+    "hurdat2": "hurricane",
+    "aus_cyclones": "hurricane",
+    "mtbs_wildfires": "wildfire",
+    "wildfires": "wildfire",
+    "tsunami": "tsunami",
+    "noaa_tsunamis": "tsunami",
+}
+
+# Default limits per event type
+EVENT_LIMITS = {
+    "earthquake": {"default": 1000, "max": 5000},
+    "volcano": {"default": 500, "max": 2000},
+    "hurricane": {"default": 500, "max": 2000},
+    "wildfire": {"default": 500, "max": 2000},
+    "tsunami": {"default": 500, "max": 1000},
+    "default": {"default": 1000, "max": 5000},
+}
+
+# Significance columns for sorting (most important events first)
+SIGNIFICANCE_COLUMNS = {
+    "earthquake": "magnitude",
+    "volcano": "VEI",
+    "hurricane": "wind_kt",
+    "wildfire": "burned_acres",
+    "tsunami": "max_water_height_m",
+}
+
+
+def _detect_event_type(source_id: str) -> str:
+    """Detect event type from source_id."""
+    for pattern, event_type in EVENT_TYPE_MAP.items():
+        if pattern in source_id.lower():
+            return event_type
+    return "unknown"
+
+
+def _get_coordinate_columns(df: pd.DataFrame) -> tuple:
+    """Find lat/lon column names in DataFrame."""
+    lat_candidates = ["lat", "latitude", "centroid_lat"]
+    lon_candidates = ["lon", "longitude", "centroid_lon"]
+
+    lat_col = None
+    lon_col = None
+
+    for col in lat_candidates:
+        if col in df.columns:
+            lat_col = col
+            break
+
+    for col in lon_candidates:
+        if col in df.columns:
+            lon_col = col
+            break
+
+    return lat_col, lon_col
+
+
+def _get_time_column(df: pd.DataFrame) -> str:
+    """Find timestamp column name in DataFrame."""
+    time_candidates = ["time", "timestamp", "event_date", "date", "ignition_date"]
+    for col in time_candidates:
+        if col in df.columns:
+            return col
+    return None
+
+
+def _get_id_column(df: pd.DataFrame, event_type: str) -> str:
+    """Find event ID column name in DataFrame."""
+    id_candidates = ["event_id", f"{event_type}_id", "id", "storm_id", "fire_id"]
+    for col in id_candidates:
+        if col in df.columns:
+            return col
+    return None
+
+
+def execute_event_order(order: dict) -> dict:
+    """
+    Execute order in event mode - returns individual events as GeoJSON points.
+
+    Args:
+        order: {items: [{source_id, mode, event_file, region, year_start, year_end, filters, limit}]}
+
+    Returns:
+        {
+            type: "events",
+            event_type: "earthquake",
+            geojson: {type: "FeatureCollection", features: [...]},
+            time_range: {min, max, granularity},
+            summary: str,
+            count: int,
+            sources: [...]
+        }
+    """
+    items = order.get("items", [])
+    summary = order.get("summary", "")
+
+    if not items:
+        return {
+            "type": "error",
+            "message": "No items in order",
+            "geojson": {"type": "FeatureCollection", "features": []},
+            "count": 0
+        }
+
+    # Event mode typically uses single source
+    item = items[0]
+    source_id = item.get("source_id")
+    event_file_key = item.get("event_file", "events")
+    region = item.get("region")
+    year_start = item.get("year_start")
+    year_end = item.get("year_end")
+    year = item.get("year")
+    filters = item.get("filters", {})
+    requested_limit = item.get("limit")
+
+    # Load event data
+    try:
+        df, metadata = load_event_data(source_id, event_file_key)
+    except Exception as e:
+        return {
+            "type": "error",
+            "message": f"Failed to load event data: {e}",
+            "geojson": {"type": "FeatureCollection", "features": []},
+            "count": 0
+        }
+
+    event_type = _detect_event_type(source_id)
+    print(f"Event mode: {source_id} -> {event_type}, {len(df)} raw events")
+
+    # Find coordinate columns
+    lat_col, lon_col = _get_coordinate_columns(df)
+    if not lat_col or not lon_col:
+        return {
+            "type": "error",
+            "message": f"No coordinate columns found in {source_id}",
+            "geojson": {"type": "FeatureCollection", "features": []},
+            "count": 0
+        }
+
+    # Find time column
+    time_col = _get_time_column(df)
+
+    # Find ID column
+    id_col = _get_id_column(df, event_type)
+
+    # Apply year filter
+    if year_start and year_end:
+        if "year" in df.columns:
+            df = df[(df["year"] >= year_start) & (df["year"] <= year_end)]
+        elif time_col:
+            # Extract year from timestamp
+            df["_year"] = pd.to_datetime(df[time_col]).dt.year
+            df = df[(df["_year"] >= year_start) & (df["_year"] <= year_end)]
+    elif year:
+        if "year" in df.columns:
+            df = df[df["year"] == year]
+        elif time_col:
+            df["_year"] = pd.to_datetime(df[time_col]).dt.year
+            df = df[df["_year"] == year]
+
+    # Apply region filter
+    region_codes = expand_region(region)
+    if region_codes and "loc_id" in df.columns:
+        # Check for US state filtering
+        us_state_prefixes = [c for c in region_codes if c.startswith("USA-")]
+        country_codes = [c for c in region_codes if not c.startswith("USA-")]
+
+        if us_state_prefixes:
+            mask = df["loc_id"].str.startswith(tuple(us_state_prefixes), na=False)
+            df = df[mask]
+        elif country_codes:
+            df["_country"] = df["loc_id"].str.split("-").str[0]
+            df = df[df["_country"].isin(country_codes)]
+
+    # Apply filters (e.g., magnitude_min, category)
+    for field, value in filters.items():
+        if field.endswith("_min"):
+            col = field[:-4]
+            if col in df.columns:
+                df = df[df[col] >= value]
+        elif field.endswith("_max"):
+            col = field[:-4]
+            if col in df.columns:
+                df = df[df[col] <= value]
+        elif field in df.columns:
+            df = df[df[field] == value]
+
+    print(f"  After filters: {len(df)} events")
+
+    # Apply limit
+    limits = EVENT_LIMITS.get(event_type, EVENT_LIMITS["default"])
+    limit = min(requested_limit or limits["default"], limits["max"])
+
+    if len(df) > limit:
+        # Sort by significance and take top N
+        sig_col = SIGNIFICANCE_COLUMNS.get(event_type)
+        if sig_col and sig_col in df.columns:
+            df = df.nlargest(limit, sig_col)
+        else:
+            df = df.head(limit)
+        print(f"  Limited to {limit} events (sorted by {sig_col or 'order'})")
+
+    # Build GeoJSON features
+    features = []
+    for idx, row in df.iterrows():
+        lat = row.get(lat_col)
+        lon = row.get(lon_col)
+
+        if pd.isna(lat) or pd.isna(lon):
+            continue
+
+        # Build properties - include all columns except geometry
+        properties = {}
+        for col in df.columns:
+            if col.startswith("_"):  # Skip temp columns
+                continue
+            val = row.get(col)
+            if pd.notna(val):
+                # Convert numpy types to Python types
+                if hasattr(val, 'item'):
+                    val = val.item()
+                # Convert timestamps to ISO string
+                if isinstance(val, pd.Timestamp):
+                    val = val.isoformat()
+                properties[col] = val
+
+        # Ensure event_id exists
+        if "event_id" not in properties and id_col:
+            properties["event_id"] = properties.get(id_col, idx)
+        elif "event_id" not in properties:
+            properties["event_id"] = idx
+
+        features.append({
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [float(lon), float(lat)]
+            },
+            "properties": properties
+        })
+
+    # Calculate time range
+    time_range = {"min": None, "max": None, "granularity": "daily"}
+    if time_col and len(df) > 0:
+        times = pd.to_datetime(df[time_col])
+        time_range["min"] = int(times.min().timestamp() * 1000)
+        time_range["max"] = int(times.max().timestamp() * 1000)
+
+    # Build source info
+    source_info = [{
+        "id": source_id,
+        "name": metadata.get("source_name", source_id),
+        "url": metadata.get("source_url", "")
+    }]
+
+    return {
+        "type": "events",
+        "event_type": event_type,
+        "geojson": {
+            "type": "FeatureCollection",
+            "features": features
+        },
+        "time_range": time_range,
+        "summary": summary or f"Showing {len(features)} {event_type} events",
+        "count": len(features),
+        "sources": source_info
+    }
+
+
 def execute_order(order: dict) -> dict:
     """
     Execute a confirmed order and return GeoJSON response.
@@ -368,12 +692,16 @@ def execute_order(order: dict) -> dict:
     Supports multi-year mode when year_start/year_end provided:
     - Returns base geometry + year_data dict for efficient time slider
 
+    Supports event mode when mode="events":
+    - Returns individual events as GeoJSON points
+
     Args:
-        order: {items: [{source_id, metric, region, year, year_start, year_end, sort}, ...], summary: str}
+        order: {items: [{source_id, metric, region, year, year_start, year_end, sort, mode}, ...], summary: str}
 
     Returns:
         Single year: {type, geojson, summary, count, sources}
         Multi-year: {type, geojson, year_data, year_range, multi_year, summary, count, sources}
+        Event mode: {type: "events", event_type, geojson, time_range, summary, count, sources}
     """
     items = order.get("items", [])
     summary = order.get("summary", "")
@@ -385,6 +713,14 @@ def execute_order(order: dict) -> dict:
             "geojson": {"type": "FeatureCollection", "features": []},
             "count": 0
         }
+
+    # Check if any item uses event mode
+    event_mode = any(
+        item.get("mode") == "events"
+        for item in items
+    )
+    if event_mode:
+        return execute_event_order(order)
 
     # Check if any item uses year range (multi-year mode)
     multi_year_mode = any(

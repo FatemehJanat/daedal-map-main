@@ -214,24 +214,43 @@ def create_volcanoes_parquet(volcanoes_df):
 
 
 def create_eruptions_parquet(eruptions_df, volcanoes_df):
-    """Create eruptions.parquet with eruption events."""
+    """Create eruptions.parquet with eruption events.
+
+    Standard event schema columns:
+    - event_id: unique identifier
+    - timestamp: event datetime (ISO format)
+    - latitude, longitude: event location
+    - loc_id: assigned county/water body code
+    """
     # Join eruptions with volcano loc_id
     volcano_loc_ids = volcanoes_df[['volcano_number', 'loc_id']].drop_duplicates()
     eruptions_with_loc = eruptions_df.merge(volcano_loc_ids, on='volcano_number', how='left')
 
-    # Prepare eruptions dataframe
+    # Build timestamp from start_year/start_month/start_day
+    def build_timestamp(row):
+        try:
+            year = int(row['start_year']) if pd.notna(row['start_year']) and row['start_year'] > 0 else None
+            month = int(row.get('start_month', 1)) if pd.notna(row.get('start_month')) else 1
+            day = int(row.get('start_day', 1)) if pd.notna(row.get('start_day')) else 1
+            if year and year > 0:
+                return pd.Timestamp(year=year, month=month, day=day)
+        except:
+            pass
+        return pd.NaT
+
+    eruptions_with_loc = eruptions_with_loc.copy()
+    eruptions_with_loc['timestamp'] = eruptions_with_loc.apply(build_timestamp, axis=1)
+
+    # Prepare eruptions dataframe with standard schema
     eruptions_out = pd.DataFrame({
-        'eruption_number': eruptions_with_loc['eruption_number'],
+        'event_id': eruptions_with_loc['eruption_number'].apply(lambda x: f"VE{x:06d}" if pd.notna(x) else None),
+        'timestamp': eruptions_with_loc['timestamp'],  # Standard column name
+        'latitude': eruptions_with_loc['latitude'].round(4) if pd.notna(eruptions_with_loc['latitude']).any() else pd.NA,
+        'longitude': eruptions_with_loc['longitude'].round(4) if pd.notna(eruptions_with_loc['longitude']).any() else pd.NA,
         'volcano_number': eruptions_with_loc['volcano_number'],
         'volcano_name': eruptions_with_loc['volcano_name'],
         'activity_type': eruptions_with_loc['activity_type'],
         'vei': eruptions_with_loc['vei'],
-        'start_year': eruptions_with_loc['start_year'],
-        'start_month': eruptions_with_loc['start_month'],
-        'start_day': eruptions_with_loc['start_day'],
-        'end_year': eruptions_with_loc['end_year'],
-        'latitude': eruptions_with_loc['latitude'].round(4) if pd.notna(eruptions_with_loc['latitude']).any() else pd.NA,
-        'longitude': eruptions_with_loc['longitude'].round(4) if pd.notna(eruptions_with_loc['longitude']).any() else pd.NA,
         'loc_id': eruptions_with_loc.get('loc_id', pd.NA)
     })
 
@@ -246,24 +265,24 @@ def create_county_aggregates(eruptions_df):
     """Create USA.parquet with county-year aggregates based on eruptions."""
     print("\nCreating county-year aggregates...")
 
-    # Filter to eruptions with county match and valid year
+    # Filter to eruptions with county match and valid timestamp
     df_with_county = eruptions_df[
         (eruptions_df['loc_id'].notna()) &
-        (eruptions_df['start_year'].notna()) &
-        (eruptions_df['start_year'] > 0)  # Filter out prehistoric
+        (eruptions_df['timestamp'].notna())
     ].copy()
 
     if len(df_with_county) == 0:
-        print("  No eruptions matched to counties with valid years!")
+        print("  No eruptions matched to counties with valid timestamps!")
         return pd.DataFrame()
 
-    df_with_county['year'] = df_with_county['start_year'].astype(int)
+    # Extract year from timestamp
+    df_with_county['year'] = pd.to_datetime(df_with_county['timestamp']).dt.year
 
     # Group by county-year
     grouped = df_with_county.groupby(['loc_id', 'year'])
 
     aggregates = grouped.agg({
-        'eruption_number': 'count',  # number of eruptions
+        'event_id': 'count',  # number of eruptions
         'volcano_number': 'nunique',  # distinct volcanoes
         'vei': ['max', 'mean']  # max and average VEI
     }).reset_index()
@@ -294,8 +313,9 @@ def generate_metadata(volcanoes_df, eruptions_df, county_df):
     """Generate metadata.json for the dataset."""
     print("\nGenerating metadata.json...")
 
-    # Year range (filter out prehistoric years < 0)
-    valid_years = eruptions_df[eruptions_df['start_year'] > 0]['start_year']
+    # Year range from timestamp
+    valid_timestamps = eruptions_df['timestamp'].dropna()
+    valid_years = pd.to_datetime(valid_timestamps).dt.year
     min_year = int(valid_years.min()) if not valid_years.empty else 0
     max_year = int(valid_years.max()) if not valid_years.empty else 0
 
@@ -421,10 +441,12 @@ def print_statistics(volcanoes_df, eruptions_df):
         print(f"  {volcano}: {count:,} eruptions")
 
     print("\nRecent Eruptions (2000+):")
-    recent = eruptions_df[eruptions_df['start_year'] >= 2000].sort_values('start_year', ascending=False)
+    eruptions_df = eruptions_df.copy()
+    eruptions_df['year'] = pd.to_datetime(eruptions_df['timestamp']).dt.year
+    recent = eruptions_df[eruptions_df['year'] >= 2000].sort_values('timestamp', ascending=False)
     for _, row in recent.head(10).iterrows():
         vei_str = f"VEI {int(row['vei'])}" if pd.notna(row['vei']) else "VEI ?"
-        print(f"  {row['volcano_name']} ({int(row['start_year'])}) - {vei_str}")
+        print(f"  {row['volcano_name']} ({int(row['year'])}) - {vei_str}")
 
 
 def main():

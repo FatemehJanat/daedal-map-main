@@ -1243,16 +1243,19 @@ def detect_derived_intent(query: str) -> Optional[dict]:
 # =============================================================================
 
 # Patterns that indicate user wants to navigate/view locations, not request data
+# Data/event keywords that should NOT trigger navigation (these are data queries)
+_DATA_KEYWORDS = r"data|from|gdp|population|earthquake|volcano|hurricane|storm|wildfire|fire|flood|drought|tornado|tsunami|emission|income|health|mortality"
+
 NAVIGATION_PATTERNS = [
-    r"^show me\b(?!.*data|.*from)",  # "show me X" but not "show me data" or "show me data from"
+    rf"^show me\b(?!.*(?:{_DATA_KEYWORDS}))",  # "show me X" but not data/event queries
     r"^where is\b",
     r"^where are\b",
     r"^locate\b",
-    r"^find\b(?!.*data)",  # "find X" but not "find data for X"
+    rf"^find\b(?!.*(?:{_DATA_KEYWORDS}))",  # "find X" but not data queries
     r"^zoom to\b",
     r"^go to\b",
     r"^take me to\b",
-    r"^show\b(?!.*data|.*gdp|.*population|.*from)",  # "show X" but not "show data/gdp/population/from"
+    rf"^show\b(?!.*(?:{_DATA_KEYWORDS}))",  # "show X" but not data/event queries
 ]
 
 # Patterns for "show borders/geometry" follow-up requests (no data, just display)
@@ -1690,12 +1693,74 @@ def preprocess_query(query: str, viewport: dict = None) -> dict:
 
             # Check for ambiguity - multiple locations with same name
             if location_result.get("ambiguous") and location_result.get("matches"):
-                disambiguation = {
-                    "needed": True,
-                    "query_term": matched_term,
-                    "options": location_result["matches"],
-                    "count": len(location_result["matches"])
-                }
+                matches = location_result["matches"]
+
+                # Try to resolve ambiguity using viewport context
+                resolved_by_viewport = False
+                if viewport:
+                    filtered_matches = matches
+
+                    # STEP 1: Filter by admin_level based on current zoom
+                    # Check from current level downward (2->1->0) but never above
+                    # This excludes cities/towns (level 3) when viewing states/counties
+                    current_admin_level = viewport.get("adminLevel")
+                    if current_admin_level is not None and current_admin_level >= 0:
+                        # Check each level from current down to 0
+                        for check_level in range(current_admin_level, -1, -1):
+                            level_matches = [
+                                m for m in filtered_matches
+                                if m.get("admin_level", 0) == check_level
+                            ]
+                            if level_matches:
+                                # Found matches at this level - use them
+                                filtered_matches = level_matches
+                                logger.debug(f"Admin level filter: {len(level_matches)} matches at level {check_level} (viewing level {current_admin_level})")
+                                break
+
+                    # STEP 2: Filter by country (if still multiple matches)
+                    if len(filtered_matches) > 1 and viewport.get("bounds"):
+                        countries_in_view = get_countries_in_viewport(viewport["bounds"])
+                        if countries_in_view:
+                            # Filter matches to those in viewport (check ISO3 country prefix)
+                            country_matches = [
+                                m for m in filtered_matches
+                                if m.get("iso3", "").split("-")[0] in countries_in_view
+                            ]
+                            if country_matches:
+                                filtered_matches = country_matches
+
+                    # Check result after filtering
+                    if len(filtered_matches) == 1:
+                        # Single match after filtering - auto-select
+                        m = filtered_matches[0]
+                        location = {
+                            "matched_term": m.get("matched_term", matched_term),
+                            "iso3": m.get("iso3", iso3),
+                            "loc_id": m.get("loc_id"),
+                            "country_name": m.get("country_name", country_name),
+                            "is_subregion": m.get("is_subregion", is_subregion),
+                            "source": "viewport_resolved",
+                        }
+                        resolved_by_viewport = True
+                        logger.info(f"Viewport auto-resolved '{matched_term}' to {m.get('loc_id')}")
+                    elif len(filtered_matches) > 1:
+                        # Multiple matches remain - show disambiguation with filtered list
+                        disambiguation = {
+                            "needed": True,
+                            "query_term": matched_term,
+                            "options": filtered_matches,
+                            "count": len(filtered_matches)
+                        }
+                        resolved_by_viewport = True
+
+                # If viewport didn't resolve, show all options
+                if not resolved_by_viewport:
+                    disambiguation = {
+                        "needed": True,
+                        "query_term": matched_term,
+                        "options": matches,
+                        "count": len(matches)
+                    }
 
     hints = {
         "original_query": query,
@@ -1878,7 +1943,8 @@ def build_tier3_context(hints: dict) -> str:
     # This gives the LLM the actual column names to use
     topics = hints.get("topics", [])
 
-    # Get ISO3 from location OR from navigation locations
+    # Get ISO3 from location OR navigation OR viewport inference
+    # Priority: explicit location > navigation > viewport-inferred
     location = hints.get("location")
     iso3 = None
     if location:
@@ -1888,6 +1954,14 @@ def build_tier3_context(hints: dict) -> str:
         nav_locs = hints["navigation"]["locations"]
         if nav_locs and nav_locs[0].get("iso3"):
             iso3 = nav_locs[0]["iso3"]
+    elif viewport and not explicit_location:
+        # Fallback: use viewport-inferred country if zoomed into single country
+        zoom_level = viewport.get("zoom", 0)
+        if viewport.get("bounds") and zoom_level >= 3:
+            countries_in_view = get_countries_in_viewport(viewport["bounds"])
+            if len(countries_in_view) == 1:
+                iso3 = countries_in_view[0]
+                logger.debug(f"Using viewport-inferred country: {iso3}")
 
     if topics or iso3:
         source_hints = get_relevant_sources_with_metrics(topics, iso3)
@@ -1925,15 +1999,16 @@ def build_tier3_context(hints: dict) -> str:
                 "You MUST use these EXACT column names. Do NOT use aliases like 'total_population' or 'population' - use the exact names below:"
             ]
 
-            # Country-specific sources - show ALL metrics (full metadata was loaded)
+            # Country-specific sources - show ALL metrics with both column AND name
             for src in country_sources[:3]:  # Limit sources but not metrics
-                metrics_list = [f'"{m["column"]}"' for m in src["metrics"]]  # ALL metrics
+                # Format: "column_name" (Human Readable Name) so LLM knows what to use
+                metrics_list = [f'"{m["column"]}" ({m["name"]})' for m in src["metrics"]]
                 metrics_str = ", ".join(metrics_list)
                 hints_lines.append(f"- {src['source_id']}: [{metrics_str}]")
 
-            # Global sources - show limited metrics (catalog only)
+            # Global sources - show limited metrics with both column AND name
             for src in global_sources[:2]:  # Limit global to 2 sources
-                metrics_list = [f'"{m["column"]}"' for m in src["metrics"][:5]]  # First 5 only
+                metrics_list = [f'"{m["column"]}" ({m["name"]})' for m in src["metrics"][:5]]
                 metrics_str = ", ".join(metrics_list)
                 hints_lines.append(f"- {src['source_id']}: [{metrics_str}]")
 

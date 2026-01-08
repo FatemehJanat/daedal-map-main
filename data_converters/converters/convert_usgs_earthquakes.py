@@ -132,22 +132,28 @@ def process_events(df, counties_gdf):
 
 
 def create_events_dataframe(gdf):
-    """Create standardized events DataFrame."""
+    """Create standardized events DataFrame.
+
+    Standard event schema columns:
+    - event_id: unique identifier
+    - timestamp: event datetime (ISO format)
+    - latitude, longitude: event location
+    - loc_id: assigned county/water body code
+    """
     events = pd.DataFrame({
-        'event_id': range(len(gdf)),
-        'loc_id': gdf['loc_id'],
-        'event_date': gdf['time'],
-        'year': gdf['year'].astype('Int64'),
-        'lat': gdf['latitude'].round(4),
-        'lon': gdf['longitude'].round(4),
-        'depth_km': gdf['depth'].round(1),
+        'event_id': [f"EQ{i:08d}" for i in range(len(gdf))],
+        'timestamp': gdf['time'],  # Standard column name
+        'latitude': gdf['latitude'].round(4),  # Standard column name
+        'longitude': gdf['longitude'].round(4),  # Standard column name
         'magnitude': gdf['mag'].round(2),
+        'depth_km': gdf['depth'].round(1),
         'felt_radius_km': gdf['felt_radius_km'].round(1),
         'damage_radius_km': gdf['damage_radius_km'].round(1),
         'place': gdf['place'],
+        'loc_id': gdf['loc_id'],
     })
 
-    return events.sort_values('event_date', ascending=False)
+    return events.sort_values('timestamp', ascending=False)
 
 
 def create_aggregates(events):
@@ -156,6 +162,9 @@ def create_aggregates(events):
 
     # Filter to events with county match (exclude water body codes)
     df = events[events['loc_id'].str.startswith('USA-', na=False)].copy()
+
+    # Extract year from timestamp
+    df['year'] = pd.to_datetime(df['timestamp']).dt.year
 
     # Group by county-year
     agg = df.groupby(['loc_id', 'year']).agg({
@@ -199,7 +208,8 @@ def print_statistics(events, aggregates):
     print("=" * 60)
 
     print(f"\nTotal events: {len(events):,}")
-    print(f"Year range: {events['year'].min()}-{events['year'].max()}")
+    years = pd.to_datetime(events['timestamp']).dt.year
+    print(f"Year range: {years.min()}-{years.max()}")
 
     # Matching summary
     county_match = events['loc_id'].str.startswith('USA-', na=False).sum()
@@ -222,7 +232,7 @@ def print_statistics(events, aggregates):
         print(f"  {loc_id}: {int(count):,}")
 
     print("\nLargest earthquakes:")
-    largest = events.nlargest(10, 'magnitude')[['event_date', 'magnitude', 'place', 'loc_id']]
+    largest = events.nlargest(10, 'magnitude')[['timestamp', 'magnitude', 'place', 'loc_id']]
     print(largest.to_string())
 
 

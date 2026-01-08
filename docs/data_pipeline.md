@@ -65,6 +65,137 @@ If you need location names for display, get them from:
 
 Event-based sources (earthquakes, hurricanes, volcanoes) use a different schema with individual event attributes. These have `events.parquet` files with columns like `event_id`, `timestamp`, `latitude`, `longitude`, etc. See [Event Data Format](#event-data-format) for details.
 
+See also: [DISASTER_DISPLAY.md](DISASTER_DISPLAY.md) for frontend rendering of event data.
+
+---
+
+## Event Data Format
+
+Event-based data (earthquakes, hurricanes, wildfires, etc.) uses a unified schema to support both historical browsing and live streaming displays.
+
+### Core Event Columns (Required)
+
+All event parquet files MUST have these columns:
+
+| Column | Type | Description | Example |
+|--------|------|-------------|---------|
+| `event_id` | string | Unique identifier for the event | `eq_2024_001`, `hur_AL012024` |
+| `timestamp` | datetime64 | Event time (UTC, ISO 8601) | `2024-03-15T14:30:00Z` |
+| `latitude` | float64 | Event latitude (WGS84) | `34.0522` |
+| `longitude` | float64 | Event longitude (WGS84) | `-118.2437` |
+| `event_type` | string | Event category | `earthquake`, `hurricane`, `wildfire` |
+| `loc_id` | string | Assigned location code | `USA-CA-6037` or `XOP` (Pacific) |
+
+### Current Data vs Unified Schema
+
+Several existing datasets use non-standard column names. This mapping shows what needs to be renamed:
+
+| Dataset | Current Column | Unified Column | Action Required |
+|---------|----------------|----------------|-----------------|
+| usgs_earthquakes | `time` | `timestamp` | RENAME |
+| usgs_earthquakes | `latitude` | `latitude` | OK |
+| usgs_earthquakes | `longitude` | `longitude` | OK |
+| hurricanes | `timestamp` | `timestamp` | OK |
+| hurricanes | `latitude` | `latitude` | OK |
+| hurricanes | `longitude` | `longitude` | OK |
+| wildfires | `ignition_date` | `timestamp` | RENAME (many NaT values) |
+| wildfires | `centroid_lat` | `latitude` | RENAME |
+| wildfires | `centroid_lon` | `longitude` | RENAME |
+| wildfires | (missing) | `event_type` | ADD = 'wildfire' |
+
+### Type-Specific Columns
+
+Beyond the core columns, each event type has specialized attributes:
+
+**Earthquakes:**
+| Column | Type | Description |
+|--------|------|-------------|
+| `magnitude` | float64 | Richter scale magnitude |
+| `depth_km` | float64 | Hypocenter depth in km |
+| `felt_radius_km` | float64 | Calculated felt radius |
+| `damage_radius_km` | float64 | Calculated damage radius |
+| `place` | string | Human-readable location description |
+
+**Hurricanes/Cyclones:**
+| Column | Type | Description |
+|--------|------|-------------|
+| `storm_id` | string | Unique storm identifier (e.g., `AL012024`) |
+| `wind_kt` | float64 | Maximum sustained wind speed (knots) |
+| `pressure_mb` | float64 | Central pressure (millibars) |
+| `category` | int | Saffir-Simpson category (0-5) |
+| `r34_ne/se/sw/nw` | float64 | 34-knot wind radii (nautical miles) |
+| `r50_ne/se/sw/nw` | float64 | 50-knot wind radii |
+| `r64_ne/se/sw/nw` | float64 | 64-knot wind radii |
+
+**Wildfires:**
+| Column | Type | Description |
+|--------|------|-------------|
+| `fire_name` | string | Fire name |
+| `fire_type` | string | Fire type classification |
+| `year` | int | Fire year (for aggregation) |
+| `burned_acres` | float64 | Total burned area |
+| `perimeter` | string | GeoJSON polygon of fire boundary |
+
+**Volcanoes:**
+| Column | Type | Description |
+|--------|------|-------------|
+| `vei` | int | Volcanic Explosivity Index (0-8) |
+| `volcano_name` | string | Volcano name |
+| `eruption_type` | string | Type of eruption |
+
+**Tsunamis:**
+| Column | Type | Description |
+|--------|------|-------------|
+| `max_water_height_m` | float64 | Maximum water height |
+| `runup_m` | float64 | Runup measurement |
+| `cause` | string | Tsunami cause (earthquake, landslide, etc.) |
+
+### Live vs Historical Mode Compatibility
+
+The unified schema supports both modes:
+
+**Historical Mode:**
+- Query by time range: `WHERE timestamp BETWEEN start AND end`
+- Playback scrubbing uses `timestamp` for timeline position
+- Aggregation by `year` for choropleth displays
+
+**Live Mode:**
+- New events appended with current `timestamp`
+- Real-time filtering: `WHERE timestamp > last_fetch_time`
+- Same visualization code works for both modes
+
+### Data Migration
+
+To migrate existing data to unified schema:
+
+```python
+# Earthquakes: rename 'time' to 'timestamp'
+df = df.rename(columns={'time': 'timestamp'})
+df['event_type'] = 'earthquake'
+
+# Wildfires: rename location columns, handle missing timestamps
+df = df.rename(columns={
+    'ignition_date': 'timestamp',
+    'centroid_lat': 'latitude',
+    'centroid_lon': 'longitude'
+})
+df['event_type'] = 'wildfire'
+# Fill NaT timestamps with year-01-01 as fallback
+df['timestamp'] = df['timestamp'].fillna(
+    pd.to_datetime(df['year'].astype(str) + '-01-01')
+)
+```
+
+### Validation Rules
+
+When creating or modifying event data:
+
+1. `timestamp` MUST be valid datetime (not NaT for required events)
+2. `latitude` MUST be in range [-90, 90]
+3. `longitude` MUST be in range [-180, 180]
+4. `event_id` MUST be unique within the dataset
+5. `loc_id` MUST match geometry files OR be a valid water body code (XOP, XOA, etc.)
+
 **IMPORTANT: Event Source Metadata Requires Manual Attention**
 
 Event sources have a more complex structure that the standard metadata generator cannot fully auto-detect:
@@ -1299,6 +1430,62 @@ python data_converters/scripts/aggregate_eurostat_to_country.py
 - Composite indices with internal weights (FEMA NRI risk scores)
 - Point data (specific locations like volcanoes, weather stations)
 
+### Disaggregation Rules (Scaling DOWN)
+
+Aggregation (small -> big) is well-defined, but disaggregation (big -> small) is fundamentally different. When a user asks "What is the flood risk at my house?" but data only exists at county level, how do we present meaningful information?
+
+**Disaggregation Rules by Metric Type**:
+
+| Metric Type | Downscale Method | Accuracy | Example |
+|-------------|------------------|----------|---------|
+| Uniform Values | INHERIT | Exact | County flood zone -> house inherits zone |
+| Counts | CANNOT disaggregate | N/A | County has 50 crimes - can't assign to addresses |
+| Rates/Percentages | INHERIT (same rate) | Assumption | 15% poverty rate -> assume 15% at any point |
+| Per-Capita | INHERIT | Same assumption | GDP per capita inherited from parent |
+| Risk Scores | INHERIT or INTERPOLATE | Moderate | FEMA NRI county score applies to whole county |
+| Point Data | LOOKUP NEAREST | Good if dense | Weather station temps -> interpolate to house |
+| Continuous Fields | INTERPOLATE | Good with models | Elevation, temperature gradients |
+| Categorical | INHERIT | Exact or wrong | County political party -> meaningless at house level |
+
+**Key Insight**: Most disaggregation assumes uniformity within the parent area, which is often false but necessary.
+
+**When Disaggregation Works Well**:
+- Risk scores that apply uniformly (FEMA flood zones, zoning)
+- Rates that are relatively stable within areas (regional unemployment)
+- Administrative designations (which county/state contains a point)
+
+**When Disaggregation is Misleading**:
+- Counts (cannot split 50 crimes among addresses)
+- Highly variable metrics (income varies block-to-block)
+- Categorical data at wrong granularity (county voting pattern != household)
+
+**Implementation Pattern**:
+```python
+def get_value_for_point(lat, lon, metric, available_levels):
+    """
+    Get metric value for a point, using smallest available level.
+
+    Args:
+        lat, lon: Point coordinates
+        metric: Metric column name
+        available_levels: Dict of {level: dataframe} with data
+
+    Returns:
+        Value from smallest geographic level containing the point
+    """
+    # Try levels from smallest to largest
+    for level in [3, 2, 1, 0]:  # block group -> tract -> county -> state
+        if level in available_levels:
+            containing = find_containing_polygon(lat, lon, available_levels[level])
+            if containing is not None:
+                return containing[metric]  # INHERIT from smallest available
+    return None
+```
+
+**UI Transparency**: When showing disaggregated data, indicate the source level:
+- "Flood risk: High (county-level data)"
+- "Median income: $65,000 (census tract estimate)"
+
 **Key functions**:
 ```python
 def derive_parent_loc_id(loc_id: str, target_nuts_level: int) -> str:
@@ -1857,4 +2044,4 @@ for country in result:
 
 ---
 
-*Last Updated: 2026-01-06*
+*Last Updated: 2026-01-08*

@@ -16,6 +16,15 @@ import logging
 import pandas as pd
 from pathlib import Path
 
+# Try orjson for faster JSON parsing (3-10x faster than stdlib json)
+try:
+    import orjson
+    def fast_json_loads(s):
+        return orjson.loads(s)
+except ImportError:
+    def fast_json_loads(s):
+        return json.loads(s)
+
 from .settings import get_backup_path
 
 logger = logging.getLogger("mapmover")
@@ -74,9 +83,10 @@ def load_country_parquet(iso3: str, admin_level: int = None):
     Load country geometry parquet file into cache.
     Returns DataFrame or None if file doesn't exist.
 
-    Priority order:
-    1. countries/{ISO3}/geometry.parquet - Country-specific geometry with matching loc_ids
-    2. geometry/{ISO3}.parquet - Global GADM geometry (fallback)
+    Priority order (3-tier fallback):
+    1. countries/{ISO3}/geometry.parquet - Country-specific geometry (NUTS, ABS LGA, etc.)
+    2. countries/{ISO3}/crosswalk.json + geometry/{ISO3}.parquet - Crosswalk translation to GADM
+    3. geometry/{ISO3}.parquet - Global GADM geometry (fallback)
 
     If admin_level is specified, uses predicate pushdown for efficiency.
     """
@@ -96,16 +106,30 @@ def load_country_parquet(iso3: str, admin_level: int = None):
     if not backup_path:
         return None
 
-    # Priority 1: Country-specific geometry (matches data loc_ids)
+    # Priority 1: Country-specific geometry (matches data loc_ids like NUTS)
     country_geom_file = Path(backup_path) / "countries" / iso3 / "geometry.parquet"
-    # Priority 2: Global geometry folder (GADM fallback)
+    # Priority 2: Crosswalk file (for translating loc_ids)
+    crosswalk_file = Path(backup_path) / "countries" / iso3 / "crosswalk.json"
+    # Priority 3: Global geometry folder (GADM fallback)
     global_geom_file = Path(backup_path) / "geometry" / f"{iso3}.parquet"
 
-    # Try country-specific first, then global
+    # Try country-specific first
     parquet_file = None
+    crosswalk_data = None
+
     if country_geom_file.exists():
         parquet_file = country_geom_file
         logger.debug(f"Using country-specific geometry: {country_geom_file}")
+    elif crosswalk_file.exists() and global_geom_file.exists():
+        # Load crosswalk for later translation
+        try:
+            with open(crosswalk_file, 'r') as f:
+                crosswalk_data = json.load(f)
+            parquet_file = global_geom_file
+            logger.debug(f"Using crosswalk + GADM geometry: {crosswalk_file}")
+        except Exception as e:
+            logger.warning(f"Error loading crosswalk {crosswalk_file}: {e}")
+            parquet_file = global_geom_file
     elif global_geom_file.exists():
         parquet_file = global_geom_file
         logger.debug(f"Using global geometry fallback: {global_geom_file}")
@@ -122,6 +146,16 @@ def load_country_parquet(iso3: str, admin_level: int = None):
             )
         else:
             df = pd.read_parquet(parquet_file)
+
+        # If crosswalk exists, add reverse mapping for lookup
+        # This allows data with local loc_ids to find GADM geometry
+        if crosswalk_data:
+            mappings = crosswalk_data.get('mappings', {})
+            # Create reverse lookup: GADM loc_id -> local loc_id
+            reverse_map = {v: k for k, v in mappings.items()}
+            # Add local_loc_id column for joining
+            df['local_loc_id'] = df['loc_id'].map(reverse_map)
+            logger.debug(f"Applied crosswalk: {len(reverse_map)} mappings")
 
         _country_parquet_cache[cache_key] = df
         logger.debug(f"Loaded {len(df)} features for {iso3} (level={admin_level}) from {parquet_file.name}")
@@ -256,29 +290,39 @@ def df_to_geojson(df, polygon_only=False):
     Args:
         df: DataFrame with geometry column (GeoJSON string)
         polygon_only: If True, skip Point geometries
+
+    Performance notes:
+        - Uses to_dict('records') instead of iterrows() (10-100x faster)
+        - Uses orjson for JSON parsing when available (3-10x faster)
+        - Pre-computes column list to avoid repeated lookups
     """
+    if df is None or len(df) == 0:
+        return {"type": "FeatureCollection", "features": []}
+
+    # Get property columns once (all except geometry)
+    prop_cols = [c for c in df.columns if c != 'geometry']
+
+    # Convert to list of dicts - MUCH faster than iterrows()
+    records = df.to_dict('records')
+
     features = []
-    for _, row in df.iterrows():
-        geom_str = row.get('geometry', '')
-        if not geom_str or pd.isna(geom_str):
+    for row in records:
+        geom_str = row.get('geometry')
+        if not geom_str or (isinstance(geom_str, float) and pd.isna(geom_str)):
             continue
 
         try:
-            geometry = json.loads(geom_str) if isinstance(geom_str, str) else geom_str
-        except (json.JSONDecodeError, TypeError):
+            geometry = fast_json_loads(geom_str) if isinstance(geom_str, str) else geom_str
+        except (ValueError, TypeError):
             continue
 
         # Skip Point geometries if polygon_only
         if polygon_only and geometry.get('type') == 'Point':
             continue
 
-        # Build properties from all columns except geometry
-        properties = {}
-        for col in df.columns:
-            if col != 'geometry':
-                val = row.get(col)
-                if pd.notna(val):
-                    properties[col] = val
+        # Build properties - only include non-null values
+        properties = {col: row[col] for col in prop_cols
+                      if row.get(col) is not None and not (isinstance(row[col], float) and pd.isna(row[col]))}
 
         features.append({
             "type": "Feature",
@@ -684,7 +728,152 @@ def _get_dataset_count(loc_id: str) -> int:
 
 
 # Default level names (fallback if conversions.json unavailable)
-DEFAULT_LEVEL_NAMES = {1: "first-level divisions", 2: "second-level divisions", 3: "third-level divisions", 4: "localities", 5: "neighborhoods"}
+DEFAULT_LEVEL_NAMES = {
+    1: "first-level divisions",
+    2: "second-level divisions",
+    3: "third-level divisions",
+    4: "localities",
+    5: "neighborhoods",
+    6: "blocks"
+}
+
+# Cache for sub-county geometry files (ZCTAs, tracts, block groups, blocks)
+_subcounty_geometry_cache = {}
+
+
+def load_subcounty_geometry(iso3: str, admin_level: int, state_abbrev: str = None):
+    """
+    Load sub-county geometry for deep admin levels (3+).
+
+    Supports tiered geometry files stored in:
+    - geometry_{type}.parquet (national files, e.g., geometry_zcta.parquet)
+    - geometry_{type}/{ISO3}-{region}.parquet (regional files)
+
+    For USA, the structure is:
+    - Level 3 (postal/ZCTA): geometry_zcta.parquet (national)
+    - Level 4 (tract): geometry_tract/USA-{state}.parquet
+    - Level 5 (block group): geometry_blockgroup/USA-{state}.parquet
+    - Level 6 (block): geometry_block/USA-{state}.parquet
+
+    Other countries can use similar patterns:
+    - geometry_postal.parquet for postal codes
+    - geometry_district/{ISO3}-{region}.parquet for sub-county divisions
+
+    Args:
+        iso3: Country code
+        admin_level: Admin level (3+)
+        state_abbrev: Region/state code (required for state-partitioned levels)
+
+    Returns:
+        DataFrame or None
+    """
+    backup_path = get_backup_path()
+    if not backup_path:
+        return None
+
+    countries_dir = Path(backup_path) / "countries" / iso3
+
+    # Country-specific level mappings
+    # Each country can define which files map to which admin levels
+    level_file_mapping = {
+        "USA": {
+            3: {"type": "zcta", "partitioned": False},
+            4: {"type": "tract", "partitioned": True},
+            5: {"type": "blockgroup", "partitioned": True},
+            6: {"type": "block", "partitioned": True}
+        }
+        # Future: Add other countries here
+        # "CAN": {3: {"type": "postal", "partitioned": False}, ...}
+        # "GBR": {3: {"type": "postal", "partitioned": False}, ...}
+    }
+
+    # Get file mapping for this country/level
+    country_mapping = level_file_mapping.get(iso3, {})
+    level_config = country_mapping.get(admin_level)
+
+    if not level_config:
+        # No sub-county geometry defined for this country/level
+        # Fall back to checking the main geometry.parquet
+        return None
+
+    geom_type = level_config["type"]
+    is_partitioned = level_config["partitioned"]
+
+    if not is_partitioned:
+        # National file
+        cache_key = f"{iso3}_{geom_type}"
+        if cache_key in _subcounty_geometry_cache:
+            return _subcounty_geometry_cache[cache_key]
+
+        file_path = countries_dir / f"geometry_{geom_type}.parquet"
+        if not file_path.exists():
+            logger.debug(f"Sub-county geometry not found: {file_path}")
+            return None
+
+        try:
+            df = pd.read_parquet(file_path)
+            _subcounty_geometry_cache[cache_key] = df
+            logger.debug(f"Loaded {len(df)} features from {file_path}")
+            return df
+        except Exception as e:
+            logger.error(f"Error loading sub-county geometry: {e}")
+            return None
+
+    else:
+        # Partitioned by region/state
+        if not state_abbrev:
+            logger.warning(f"Region/state code required for {iso3} admin level {admin_level}")
+            return None
+
+        subdir = f"geometry_{geom_type}"
+        cache_key = f"{iso3}_{subdir}_{state_abbrev}"
+
+        if cache_key in _subcounty_geometry_cache:
+            return _subcounty_geometry_cache[cache_key]
+
+        file_path = countries_dir / subdir / f"{iso3}-{state_abbrev}.parquet"
+        if not file_path.exists():
+            logger.debug(f"Sub-county geometry not found: {file_path}")
+            return None
+
+        try:
+            df = pd.read_parquet(file_path)
+            _subcounty_geometry_cache[cache_key] = df
+            logger.debug(f"Loaded {len(df)} features for {state_abbrev} level {admin_level}")
+            return df
+        except Exception as e:
+            logger.error(f"Error loading sub-county geometry: {e}")
+            return None
+
+
+def get_states_in_bbox(min_lon: float, min_lat: float, max_lon: float, max_lat: float):
+    """
+    Return state abbreviations whose bounds intersect the query bbox.
+    Uses the USA geometry.parquet to find states (admin_level=1).
+    """
+    df = load_country_parquet("USA", admin_level=1)
+    if df is None or len(df) == 0:
+        return []
+
+    result = []
+    for _, row in df.iterrows():
+        # Check bbox intersection
+        if 'bbox_min_lon' in df.columns:
+            c_min_lon = row.get('bbox_min_lon')
+            c_min_lat = row.get('bbox_min_lat')
+            c_max_lon = row.get('bbox_max_lon')
+            c_max_lat = row.get('bbox_max_lat')
+
+            if pd.notna(c_min_lon) and pd.notna(c_max_lon):
+                if (c_max_lon >= min_lon and c_min_lon <= max_lon and
+                    c_max_lat >= min_lat and c_min_lat <= max_lat):
+                    # Extract state abbrev from loc_id (e.g., "USA-CA" -> "CA")
+                    loc_id = row.get('loc_id', '')
+                    if '-' in loc_id:
+                        state_abbrev = loc_id.split('-')[1]
+                        result.append(state_abbrev)
+
+    return result
 
 
 def _extract_display_name(value):
@@ -787,12 +976,149 @@ def _get_parent_hierarchy(df, parent_id: str, iso3: str) -> list:
     return names
 
 
+def _load_subcounty_for_viewport(iso3: str, admin_level: int, buffered_bbox: tuple, debug: bool = False):
+    """
+    Load sub-county geometry (levels 3+) from tiered files for a specific country.
+
+    Args:
+        iso3: Country code
+        admin_level: Target admin level (3+)
+        buffered_bbox: (min_lon, min_lat, max_lon, max_lat) with buffer
+        debug: If True, add debug properties
+
+    Returns:
+        List of GeoJSON features
+    """
+    all_features = []
+    logger.info(f"Loading subcounty geometry for {iso3} level {admin_level}, bbox={buffered_bbox}")
+
+    # Check if this country has sub-county geometry at this level
+    # First try non-partitioned (national file)
+    df = load_subcounty_geometry(iso3, admin_level=admin_level)
+
+    if df is not None and len(df) > 0:
+        # National file exists - filter by bbox
+        logger.info(f"Found national file with {len(df)} features for {iso3} level {admin_level}")
+        df_filtered = _filter_df_by_bbox(df, buffered_bbox)
+        logger.info(f"After bbox filter: {len(df_filtered)} features")
+        geojson = df_to_geojson(df_filtered, polygon_only=True)
+        if debug:
+            for feature in geojson.get("features", []):
+                feature["properties"]["current_admin_level"] = admin_level
+        all_features.extend(geojson.get("features", []))
+
+    else:
+        # Try partitioned files (by state/region)
+        # Get regions that intersect the bbox
+        logger.info(f"No national file for {iso3} level {admin_level}, trying partitioned files")
+        regions = get_regions_in_bbox(iso3, *buffered_bbox)
+        logger.info(f"Regions in bbox: {regions}")
+
+        if regions:
+            for region_code in regions:
+                df = load_subcounty_geometry(iso3, admin_level=admin_level, state_abbrev=region_code)
+                if df is None or len(df) == 0:
+                    logger.debug(f"No data for {iso3}-{region_code} level {admin_level}")
+                    continue
+
+                logger.info(f"Loaded {len(df)} features for {iso3}-{region_code} level {admin_level}")
+                df_filtered = _filter_df_by_bbox(df, buffered_bbox)
+                logger.info(f"After bbox filter: {len(df_filtered)} features")
+                geojson = df_to_geojson(df_filtered, polygon_only=True)
+                if debug:
+                    for feature in geojson.get("features", []):
+                        feature["properties"]["current_admin_level"] = admin_level
+                all_features.extend(geojson.get("features", []))
+        else:
+            logger.warning(f"No regions found in bbox for {iso3}")
+
+    logger.info(f"Total subcounty features for {iso3} level {admin_level}: {len(all_features)}")
+    return all_features
+
+
+def _filter_df_by_bbox(df, buffered_bbox):
+    """Filter DataFrame by bounding box using bbox or centroid columns."""
+    if 'bbox_min_lon' in df.columns:
+        mask = (
+            (df['bbox_max_lon'] >= buffered_bbox[0]) &
+            (df['bbox_min_lon'] <= buffered_bbox[2]) &
+            (df['bbox_max_lat'] >= buffered_bbox[1]) &
+            (df['bbox_min_lat'] <= buffered_bbox[3])
+        )
+        return df[mask]
+    elif 'centroid_lon' in df.columns:
+        mask = (
+            (df['centroid_lon'] >= buffered_bbox[0]) &
+            (df['centroid_lon'] <= buffered_bbox[2]) &
+            (df['centroid_lat'] >= buffered_bbox[1]) &
+            (df['centroid_lat'] <= buffered_bbox[3])
+        )
+        return df[mask]
+    return df
+
+
+def get_regions_in_bbox(iso3: str, min_lon: float, min_lat: float, max_lon: float, max_lat: float):
+    """
+    Return region/state codes whose bounds intersect the query bbox.
+    Uses the country's geometry.parquet to find admin_level=1 regions.
+    """
+    df = load_country_parquet(iso3, admin_level=1)
+    if df is None or len(df) == 0:
+        logger.debug(f"No admin_level=1 data found for {iso3}")
+        return []
+
+    result = []
+    has_bbox = 'bbox_min_lon' in df.columns
+    has_centroid = 'centroid_lon' in df.columns
+
+    if not has_bbox and not has_centroid:
+        logger.warning(f"No bbox or centroid columns in {iso3} admin_level=1 parquet")
+        # Fallback: return all regions (let the sub-county loader filter by bbox)
+        for _, row in df.iterrows():
+            loc_id = row.get('loc_id', '')
+            if '-' in loc_id:
+                region_code = loc_id.split('-')[1]
+                result.append(region_code)
+        logger.debug(f"Returning all {len(result)} regions for {iso3} (no spatial filter)")
+        return result
+
+    for _, row in df.iterrows():
+        intersects = False
+
+        if has_bbox:
+            c_min_lon = row.get('bbox_min_lon')
+            c_min_lat = row.get('bbox_min_lat')
+            c_max_lon = row.get('bbox_max_lon')
+            c_max_lat = row.get('bbox_max_lat')
+
+            if pd.notna(c_min_lon) and pd.notna(c_max_lon):
+                intersects = (c_max_lon >= min_lon and c_min_lon <= max_lon and
+                              c_max_lat >= min_lat and c_min_lat <= max_lat)
+        elif has_centroid:
+            # Fallback to centroid check (less accurate but better than nothing)
+            c_lon = row.get('centroid_lon')
+            c_lat = row.get('centroid_lat')
+            if pd.notna(c_lon) and pd.notna(c_lat):
+                intersects = (c_lon >= min_lon and c_lon <= max_lon and
+                              c_lat >= min_lat and c_lat <= max_lat)
+
+        if intersects:
+            loc_id = row.get('loc_id', '')
+            if '-' in loc_id:
+                region_code = loc_id.split('-')[1]
+                result.append(region_code)
+
+    logger.debug(f"Found {len(result)} regions in bbox for {iso3}: {result}")
+    return result
+
+
 def get_viewport_geometry(admin_level: int, bbox: tuple, debug: bool = False):
     """
     Load features at admin_level within bounding box.
 
     Args:
-        admin_level: Target admin level (0=countries, 1=states, 2=counties, etc.)
+        admin_level: Target admin level (0=countries, 1=states, 2=counties, 3=ZCTAs,
+                     4=census tracts, 5=block groups, 6=blocks)
         bbox: (min_lon, min_lat, max_lon, max_lat)
         debug: If True, add coverage info for level 0 features
 
@@ -801,13 +1127,17 @@ def get_viewport_geometry(admin_level: int, bbox: tuple, debug: bool = False):
     """
     min_lon, min_lat, max_lon, max_lat = bbox
 
-    # Add buffer for smooth panning (2 degrees)
-    buffer = 2.0
+    # Add buffer for smooth panning - proportional to viewport size (2x total preload)
+    # 50% buffer on each side = 2x the viewport area total
+    viewport_width = max_lon - min_lon
+    viewport_height = max_lat - min_lat
+    buffer_lon = viewport_width * 0.5
+    buffer_lat = viewport_height * 0.5
     buffered_bbox = (
-        min_lon - buffer,
-        min_lat - buffer,
-        max_lon + buffer,
-        max_lat + buffer
+        min_lon - buffer_lon,
+        min_lat - buffer_lat,
+        max_lon + buffer_lon,
+        max_lat + buffer_lat
     )
 
     # For level 0 (countries), just return from global.csv
@@ -861,6 +1191,17 @@ def get_viewport_geometry(admin_level: int, bbox: tuple, debug: bool = False):
 
     all_features = []
 
+    # For admin levels 3+, try sub-county geometry files for each country
+    countries_with_subcounty = []
+    if admin_level >= 3:
+        for iso3 in countries:
+            subcounty_features = _load_subcounty_for_viewport(iso3, admin_level, buffered_bbox, debug)
+            if subcounty_features:
+                all_features.extend(subcounty_features)
+                countries_with_subcounty.append(iso3)
+        # Remove countries that were handled via subcounty geometry
+        countries = [c for c in countries if c not in countries_with_subcounty]
+
     for iso3 in countries:
         # Load only this level from parquet (predicate pushdown)
         df = load_country_parquet(iso3, admin_level=admin_level)
@@ -913,23 +1254,58 @@ def get_viewport_geometry(admin_level: int, bbox: tuple, debug: bool = False):
 
         all_features.extend(geojson.get("features", []))
 
+    # Safety limit to prevent browser memory issues
+    # Sort by distance from viewport center so edges get trimmed naturally
+    MAX_FEATURES = 10000
+    truncated = False
+    if len(all_features) > MAX_FEATURES:
+        logger.warning(f"Truncating {len(all_features)} features to {MAX_FEATURES} for admin level {admin_level}")
+
+        # Calculate viewport center
+        center_lon = (min_lon + max_lon) / 2
+        center_lat = (min_lat + max_lat) / 2
+
+        # Pre-compute distances once (O(n)) instead of during sort (O(n log n) function calls)
+        distances = []
+        for f in all_features:
+            props = f.get("properties", {})
+            f_lon = props.get("centroid_lon")
+            f_lat = props.get("centroid_lat")
+            if f_lon is None or f_lat is None:
+                # Fallback to bbox center
+                b1, b2 = props.get("bbox_min_lon"), props.get("bbox_max_lon")
+                b3, b4 = props.get("bbox_min_lat"), props.get("bbox_max_lat")
+                if b1 is not None and b2 is not None:
+                    f_lon, f_lat = (b1 + b2) / 2, (b3 + b4) / 2
+                else:
+                    distances.append(float('inf'))
+                    continue
+            distances.append((f_lon - center_lon) ** 2 + (f_lat - center_lat) ** 2)
+
+        # Sort indices by distance, take first N
+        sorted_indices = sorted(range(len(all_features)), key=lambda i: distances[i])
+        all_features = [all_features[i] for i in sorted_indices[:MAX_FEATURES]]
+        truncated = True
+
     return {
         "type": "FeatureCollection",
         "features": all_features,
         "metadata": {
             "admin_level": admin_level,
             "countries_searched": len(countries),
-            "feature_count": len(all_features)
+            "feature_count": len(all_features),
+            "truncated": truncated
         }
     }
 
 
 def clear_cache():
     """Clear all cached geometry data. Useful when data files are updated."""
-    global _country_parquet_cache, _global_countries_cache, _country_bounds_cache
+    global _country_parquet_cache, _global_countries_cache, _country_bounds_cache, _subcounty_geometry_cache
     _country_parquet_cache = {}
     _global_countries_cache = None
     _country_bounds_cache = None
+    _subcounty_geometry_cache = {}
     logger.info("Geometry cache cleared")
 
 

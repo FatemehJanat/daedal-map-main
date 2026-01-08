@@ -73,6 +73,24 @@ export const SelectionManager = {
 
     this.active = false;
 
+    // Clear any hover state before removing layers
+    if (this.hoveredOptionIndex !== null && MapAdapter?.map) {
+      try {
+        MapAdapter.map.setFeatureState(
+          { source: CONFIG.layers.selectionSource, id: this.hoveredOptionIndex },
+          { hover: false }
+        );
+      } catch (e) {
+        // Ignore - layer may already be removed
+      }
+      this.hoveredOptionIndex = null;
+    }
+
+    // Reset cursor
+    if (MapAdapter?.map) {
+      MapAdapter.map.getCanvas().style.cursor = '';
+    }
+
     // Unfreeze the map
     this.unfreezeMap();
 
@@ -421,14 +439,29 @@ export const SelectionManager = {
     // Remove numbered markers
     this.removeCandidateMarkers();
 
-    if (map.getLayer(CONFIG.layers.selectionFill)) {
-      map.removeLayer(CONFIG.layers.selectionFill);
+    // Remove layers and source with error handling to ensure complete cleanup
+    try {
+      if (map.getLayer(CONFIG.layers.selectionFill)) {
+        map.removeLayer(CONFIG.layers.selectionFill);
+      }
+    } catch (e) {
+      console.warn('SelectionManager: Error removing fill layer:', e);
     }
-    if (map.getLayer(CONFIG.layers.selectionStroke)) {
-      map.removeLayer(CONFIG.layers.selectionStroke);
+
+    try {
+      if (map.getLayer(CONFIG.layers.selectionStroke)) {
+        map.removeLayer(CONFIG.layers.selectionStroke);
+      }
+    } catch (e) {
+      console.warn('SelectionManager: Error removing stroke layer:', e);
     }
-    if (map.getSource(CONFIG.layers.selectionSource)) {
-      map.removeSource(CONFIG.layers.selectionSource);
+
+    try {
+      if (map.getSource(CONFIG.layers.selectionSource)) {
+        map.removeSource(CONFIG.layers.selectionSource);
+      }
+    } catch (e) {
+      console.warn('SelectionManager: Error removing source:', e);
     }
   },
 
@@ -500,6 +533,9 @@ export const SelectionManager = {
         const selectedOption = this.options[optionIndex];
         console.log('SelectionManager: Selected option', selectedOption);
 
+        // Mark that we're handling this click (prevent handleMapClick from also processing)
+        this._selectionMade = true;
+
         // Call the callback with selected option
         if (this.onSelect) {
           this.onSelect(selectedOption, this.originalQuery);
@@ -507,6 +543,9 @@ export const SelectionManager = {
 
         // Exit selection mode (not cancelled)
         this.exit(false);
+
+        // Reset flag after a tick
+        setTimeout(() => { this._selectionMade = false; }, 0);
       }
     }
   },
@@ -515,9 +554,21 @@ export const SelectionManager = {
    * Handle click on map (not on selection feature) - cancel
    */
   handleMapClick(e) {
+    // If selection was just made by handleSelectionClick, skip
+    if (this._selectionMade) return;
+
+    // If selection mode already exited (e.g., by handleSelectionClick), do nothing
+    if (!this.active) return;
+
     // Check if click was on a selection feature (that handler fires first)
+    const selectionLayer = CONFIG.layers.selectionFill;
+    if (!MapAdapter.map.getLayer(selectionLayer)) {
+      // Layer already removed, selection was made
+      return;
+    }
+
     const features = MapAdapter.map.queryRenderedFeatures(e.point, {
-      layers: [CONFIG.layers.selectionFill]
+      layers: [selectionLayer]
     });
 
     if (features.length === 0) {

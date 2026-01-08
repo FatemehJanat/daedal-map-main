@@ -400,6 +400,179 @@ else:
 
 ---
 
+## Order Context Reference Pattern
+
+### Problem: "Show me the same data for Poland"
+
+When user has an existing order and requests "the same" for a different location:
+
+```
+User: "what eurostat data do you have for spain"
+Bot: Lists 9 metrics (Births, Deaths, GDP, etc.) from 2000-2024
+
+User: "show me all metrics"
+Bot: Added to order. [Spain, eurostat_demo, all metrics, 2000-2024]
+
+User: "show me the same data for poland"
+Bot: Should ask: "Would you like to add to your current order or start a new order?"
+```
+
+### Detection Signals
+
+**Reference patterns** (indicate "duplicate with changes"):
+- "same data for {location}"
+- "same thing for {location}"
+- "do that for {location}"
+- "also for {location}"
+- "and for {location}"
+- "{location} too"
+- "repeat for {location}"
+
+**Context required:**
+- Previous order exists in chat history or active order state
+- New location is different from previous order's location
+
+### Clarification Question
+
+When detected, ask:
+
+```
+{
+    "type": "clarify",
+    "question": "Would you like to add Poland to your current order or start a new order?",
+    "options": [
+        {"label": "Add to order", "action": "append", "description": "View Spain and Poland together"},
+        {"label": "New order", "action": "replace", "description": "Replace Spain with Poland"}
+    ]
+}
+```
+
+### Implementation Approaches
+
+#### Approach 1: Order State Tracking
+
+Track active order in session state:
+
+```python
+# Session state
+active_order = {
+    "locations": ["ESP"],
+    "source_id": "eurostat_demo",
+    "metrics": ["births", "deaths", "gdp_million_eur", ...],
+    "year_start": 2000,
+    "year_end": 2024
+}
+
+# When "same for poland" detected:
+def handle_reference_pattern(query, active_order):
+    new_location = extract_location(query)  # "POL"
+
+    if active_order:
+        return {
+            "type": "clarify_order_action",
+            "question": "Would you like to add to your current order or start a new order?",
+            "options": [
+                {"label": "Add to order", "action": "append"},
+                {"label": "New order", "action": "replace"}
+            ],
+            "pending_location": new_location,
+            "existing_order": active_order
+        }
+```
+
+#### Approach 2: LLM Context Injection
+
+Pass order context to LLM, let it decide:
+
+```
+[ORDER CONTEXT]
+Active order:
+- Location: Spain (ESP)
+- Source: eurostat_demo
+- Metrics: births, deaths, gdp_million_eur, gdp_per_capita_eur, ...
+- Years: 2000-2024
+- Status: Ready to display
+
+User query: "show me the same data for poland"
+
+This appears to be a request to duplicate the current order for a different location.
+Ask user: "Would you like to add Poland to your current order or start a new order?"
+```
+
+#### Approach 3: Frontend Order Manager
+
+Let frontend track orders and handle duplication:
+
+```javascript
+// Frontend order state
+const orderManager = {
+    current: {
+        locations: ["ESP"],
+        source: "eurostat_demo",
+        metrics: [...],
+        years: [2000, 2024]
+    },
+
+    handleDuplicateRequest(newLocation) {
+        // Show modal: "Add to order" vs "New order"
+        showOrderActionModal({
+            question: "Would you like to add Poland to your current order or start a new order?",
+            onAdd: () => this.appendLocation(newLocation),
+            onNew: () => this.createNewOrder(newLocation)
+        });
+    }
+};
+```
+
+### Response Handling
+
+**If "Add to order":**
+```python
+# Append location to existing order
+active_order["locations"].append("POL")
+return {
+    "type": "order_updated",
+    "message": "Added Poland to your order. You now have Spain and Poland.",
+    "order": active_order
+}
+```
+
+**If "New order":**
+```python
+# Create new order with same parameters but new location
+new_order = {
+    **active_order,
+    "locations": ["POL"]
+}
+return {
+    "type": "order",
+    "message": "Created new order for Poland with the same metrics.",
+    "order": new_order
+}
+```
+
+### Related Patterns
+
+| Pattern | Example | Clarification Needed? |
+|---------|---------|----------------------|
+| "same for X" | "same data for Poland" | Yes - add or replace |
+| "also for X" | "also for Germany" | No - implies add |
+| "instead for X" | "show Poland instead" | No - implies replace |
+| "compare X and Y" | "compare Spain and Poland" | No - implies add both |
+
+### Confidence Scoring
+
+| Signal | Score for "duplicate_order" intent |
+|--------|-----------------------------------|
+| "same" + location | 0.9 |
+| "also" + location | 0.8 |
+| Active order exists | +0.2 |
+| No active order | -0.5 (can't duplicate nothing) |
+| Location is different from order | +0.1 |
+| Location is same as order | -0.3 (why duplicate?) |
+
+---
+
 ## Success Metrics
 
 1. **Accuracy**: "australian bureau of statistics" query returns ABS data 100% of time

@@ -1070,6 +1070,7 @@ export const MapAdapter = {
     this.clearNavigationLayer();
     this.clearHurricaneLayer();
     this.clearHurricaneTrack();
+    this.clearEventLayer();
     this.currentRegionGeojson = null;
     this.hoveredFeatureId = null;
   },
@@ -1348,6 +1349,373 @@ export const MapAdapter = {
     }
     if (this.map.getSource(CONFIG.layers.hurricaneSource + '-current')) {
       this.map.removeSource(CONFIG.layers.hurricaneSource + '-current');
+    }
+  },
+
+  // ============================================================================
+  // EVENT LAYERS (Earthquakes, Volcanoes, etc.)
+  // ============================================================================
+
+  eventClickHandler: null,
+
+  /**
+   * Load event layer (earthquakes, volcanoes, etc.) onto the map.
+   * @param {Object} geojson - GeoJSON FeatureCollection with Point features
+   * @param {string} eventType - 'earthquake', 'volcano', 'wildfire', etc.
+   * @param {Object} options - {showFeltRadius, showDamageRadius, onEventClick}
+   */
+  loadEventLayer(geojson, eventType = 'earthquake', options = {}) {
+    if (!geojson || !geojson.features || geojson.features.length === 0) {
+      console.log('No event features to display');
+      return;
+    }
+
+    // Clear existing event layer
+    this.clearEventLayer();
+
+    // Add event source
+    this.map.addSource(CONFIG.layers.eventSource, {
+      type: 'geojson',
+      data: geojson
+    });
+
+    // Build layer based on event type
+    if (eventType === 'earthquake') {
+      this._addEarthquakeLayer(options);
+    } else if (eventType === 'volcano') {
+      this._addVolcanoLayer(options);
+    } else {
+      // Generic event layer
+      this._addGenericEventLayer(eventType, options);
+    }
+
+    // Setup click handler
+    if (options.onEventClick) {
+      this.eventClickHandler = (e) => {
+        if (e.features.length > 0) {
+          const props = e.features[0].properties;
+          options.onEventClick(props);
+        }
+      };
+      this.map.on('click', CONFIG.layers.eventCircle, this.eventClickHandler);
+    }
+
+    // Hover cursor
+    this.map.on('mouseenter', CONFIG.layers.eventCircle, () => {
+      this.map.getCanvas().style.cursor = 'pointer';
+    });
+    this.map.on('mouseleave', CONFIG.layers.eventCircle, () => {
+      this.map.getCanvas().style.cursor = '';
+    });
+
+    // Hover popup
+    this.map.on('mousemove', CONFIG.layers.eventCircle, (e) => {
+      if (e.features.length > 0 && !this.popupLocked) {
+        const props = e.features[0].properties;
+        const html = this._buildEventPopupHtml(props, eventType);
+        this.showPopup([e.lngLat.lng, e.lngLat.lat], html);
+      }
+    });
+    this.map.on('mouseleave', CONFIG.layers.eventCircle, () => {
+      if (!this.popupLocked) {
+        this.hidePopup();
+      }
+    });
+
+    console.log(`Loaded ${geojson.features.length} ${eventType} events`);
+  },
+
+  /**
+   * Add earthquake-specific layers (point + optional radius circles).
+   * @private
+   */
+  _addEarthquakeLayer(options = {}) {
+    const colors = CONFIG.earthquakeColors;
+
+    // Color expression based on magnitude
+    const colorExpr = [
+      'interpolate', ['linear'], ['get', 'magnitude'],
+      3.0, colors.minor,
+      4.0, colors.light,
+      5.0, colors.moderate,
+      6.0, colors.strong,
+      7.0, colors.major
+    ];
+
+    // Size expression based on magnitude (exponential scaling)
+    const sizeExpr = [
+      'interpolate', ['exponential', 1.5], ['get', 'magnitude'],
+      3.0, 4,
+      4.0, 6,
+      5.0, 10,
+      6.0, 16,
+      7.0, 24,
+      8.0, 36
+    ];
+
+    // Add outer glow layer
+    this.map.addLayer({
+      id: CONFIG.layers.eventCircle + '-glow',
+      type: 'circle',
+      source: CONFIG.layers.eventSource,
+      paint: {
+        'circle-radius': ['+', sizeExpr, 6],
+        'circle-color': colorExpr,
+        'circle-opacity': 0.3,
+        'circle-blur': 1
+      }
+    });
+
+    // Add main earthquake circle
+    this.map.addLayer({
+      id: CONFIG.layers.eventCircle,
+      type: 'circle',
+      source: CONFIG.layers.eventSource,
+      paint: {
+        'circle-radius': sizeExpr,
+        'circle-color': colorExpr,
+        'circle-opacity': 0.85,
+        'circle-stroke-color': '#333333',
+        'circle-stroke-width': 1
+      }
+    });
+
+    // Add felt radius circle (outer) if requested
+    if (options.showFeltRadius !== false) {
+      this.map.addLayer({
+        id: CONFIG.layers.eventRadiusOuter,
+        type: 'circle',
+        source: CONFIG.layers.eventSource,
+        filter: ['has', 'felt_radius_km'],
+        paint: {
+          // Convert km to pixels at current zoom (approximate)
+          // At zoom 0, 1 degree ~ 111km. At zoom 10, 1 degree ~ 111/1024 km per pixel
+          // Use a scale factor that looks reasonable at typical zoom levels
+          'circle-radius': [
+            'interpolate', ['exponential', 2], ['zoom'],
+            3, ['/', ['get', 'felt_radius_km'], 50],
+            6, ['/', ['get', 'felt_radius_km'], 10],
+            9, ['/', ['get', 'felt_radius_km'], 2],
+            12, ['*', ['get', 'felt_radius_km'], 2]
+          ],
+          'circle-color': 'transparent',
+          'circle-stroke-color': colors.feltRadius,
+          'circle-stroke-width': 2,
+          'circle-stroke-opacity': 0.6
+        }
+      });
+    }
+
+    // Add damage radius circle (inner) if requested
+    if (options.showDamageRadius !== false) {
+      this.map.addLayer({
+        id: CONFIG.layers.eventRadiusInner,
+        type: 'circle',
+        source: CONFIG.layers.eventSource,
+        filter: ['has', 'damage_radius_km'],
+        paint: {
+          'circle-radius': [
+            'interpolate', ['exponential', 2], ['zoom'],
+            3, ['/', ['get', 'damage_radius_km'], 50],
+            6, ['/', ['get', 'damage_radius_km'], 10],
+            9, ['/', ['get', 'damage_radius_km'], 2],
+            12, ['*', ['get', 'damage_radius_km'], 2]
+          ],
+          'circle-color': 'transparent',
+          'circle-stroke-color': colors.damageRadius,
+          'circle-stroke-width': 2,
+          'circle-stroke-opacity': 0.7
+        }
+      });
+    }
+  },
+
+  /**
+   * Add volcano-specific layers.
+   * @private
+   */
+  _addVolcanoLayer(options = {}) {
+    const colors = CONFIG.volcanoColors;
+
+    // Color expression based on VEI
+    const colorExpr = [
+      'match', ['coalesce', ['get', 'VEI'], 0],
+      0, colors[0],
+      1, colors[1],
+      2, colors[2],
+      3, colors[3],
+      4, colors[4],
+      5, colors[5],
+      6, colors[6],
+      7, colors[7],
+      colors.default
+    ];
+
+    // Size based on VEI
+    const sizeExpr = [
+      'interpolate', ['linear'], ['coalesce', ['get', 'VEI'], 0],
+      0, 5,
+      3, 10,
+      5, 18,
+      7, 30
+    ];
+
+    // Add glow
+    this.map.addLayer({
+      id: CONFIG.layers.eventCircle + '-glow',
+      type: 'circle',
+      source: CONFIG.layers.eventSource,
+      paint: {
+        'circle-radius': ['+', sizeExpr, 6],
+        'circle-color': colorExpr,
+        'circle-opacity': 0.3,
+        'circle-blur': 1
+      }
+    });
+
+    // Add main circle
+    this.map.addLayer({
+      id: CONFIG.layers.eventCircle,
+      type: 'circle',
+      source: CONFIG.layers.eventSource,
+      paint: {
+        'circle-radius': sizeExpr,
+        'circle-color': colorExpr,
+        'circle-opacity': 0.85,
+        'circle-stroke-color': '#333333',
+        'circle-stroke-width': 1
+      }
+    });
+  },
+
+  /**
+   * Add generic event layer for other event types.
+   * @private
+   */
+  _addGenericEventLayer(eventType, options = {}) {
+    // Default yellow/orange coloring
+    this.map.addLayer({
+      id: CONFIG.layers.eventCircle + '-glow',
+      type: 'circle',
+      source: CONFIG.layers.eventSource,
+      paint: {
+        'circle-radius': 12,
+        'circle-color': '#ffcc00',
+        'circle-opacity': 0.3,
+        'circle-blur': 1
+      }
+    });
+
+    this.map.addLayer({
+      id: CONFIG.layers.eventCircle,
+      type: 'circle',
+      source: CONFIG.layers.eventSource,
+      paint: {
+        'circle-radius': 6,
+        'circle-color': '#ffcc00',
+        'circle-opacity': 0.85,
+        'circle-stroke-color': '#333333',
+        'circle-stroke-width': 1
+      }
+    });
+  },
+
+  /**
+   * Build HTML popup content for event.
+   * @private
+   */
+  _buildEventPopupHtml(props, eventType) {
+    const lines = [];
+
+    if (eventType === 'earthquake') {
+      const mag = props.magnitude?.toFixed(1) || 'N/A';
+      lines.push(`<strong>M${mag} Earthquake</strong>`);
+      if (props.place) lines.push(props.place);
+      if (props.depth_km) lines.push(`Depth: ${props.depth_km.toFixed(1)} km`);
+      if (props.time) {
+        const date = new Date(props.time);
+        lines.push(date.toLocaleString());
+      }
+      if (props.felt_radius_km) {
+        lines.push(`Felt radius: ${props.felt_radius_km.toFixed(0)} km`);
+      }
+    } else if (eventType === 'volcano') {
+      lines.push(`<strong>${props.volcano_name || 'Volcano'}</strong>`);
+      if (props.VEI != null) lines.push(`VEI: ${props.VEI}`);
+      if (props.eruption_type) lines.push(props.eruption_type);
+      if (props.start_date) lines.push(`Started: ${props.start_date}`);
+    } else {
+      // Generic popup
+      lines.push(`<strong>${eventType} Event</strong>`);
+      if (props.event_id) lines.push(`ID: ${props.event_id}`);
+    }
+
+    return lines.join('<br>');
+  },
+
+  /**
+   * Update event layer data (for time-based filtering).
+   * @param {Object} geojson - Filtered GeoJSON FeatureCollection
+   */
+  updateEventLayer(geojson) {
+    const source = this.map.getSource(CONFIG.layers.eventSource);
+    if (source) {
+      source.setData(geojson);
+    }
+  },
+
+  /**
+   * Clear event layer.
+   */
+  clearEventLayer() {
+    // Remove click handler
+    if (this.eventClickHandler) {
+      this.map.off('click', CONFIG.layers.eventCircle, this.eventClickHandler);
+      this.eventClickHandler = null;
+    }
+
+    // Remove layers
+    const layerIds = [
+      CONFIG.layers.eventCircle,
+      CONFIG.layers.eventCircle + '-glow',
+      CONFIG.layers.eventLabel,
+      CONFIG.layers.eventRadiusOuter,
+      CONFIG.layers.eventRadiusInner
+    ];
+
+    for (const layerId of layerIds) {
+      if (this.map.getLayer(layerId)) {
+        this.map.removeLayer(layerId);
+      }
+    }
+
+    // Remove source
+    if (this.map.getSource(CONFIG.layers.eventSource)) {
+      this.map.removeSource(CONFIG.layers.eventSource);
+    }
+  },
+
+  /**
+   * Fit map to event bounds.
+   * @param {Object} geojson - Event GeoJSON
+   */
+  fitToEventBounds(geojson) {
+    if (!geojson || !geojson.features || geojson.features.length === 0) return;
+
+    const bounds = new maplibregl.LngLatBounds();
+
+    for (const feature of geojson.features) {
+      if (feature.geometry && feature.geometry.type === 'Point') {
+        bounds.extend(feature.geometry.coordinates);
+      }
+    }
+
+    if (!bounds.isEmpty()) {
+      this.map.fitBounds(bounds, {
+        padding: 50,
+        duration: 1000,
+        maxZoom: 10
+      });
     }
   }
 };

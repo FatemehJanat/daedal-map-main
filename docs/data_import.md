@@ -23,11 +23,17 @@ All data in this system is designed to be **interoperable**. Conceptually, every
 
 **Key principle**: `(loc_id, year)` is the universal join key. All metrics are columns.
 
-**Note on loc_id sources**: Some countries have dual loc_id systems:
-- **Country-specific**: Official boundaries (ABS LGAs, StatsCan CSDs) stored in `countries/{ISO}/geometry.parquet`
+**Note on loc_id sources**: Some countries have multiple loc_id systems:
+- **Country-specific**: Official boundaries (ABS LGAs, StatsCan CSDs, NUTS regions) stored in `countries/{ISO}/geometry.parquet`
+- **Crosswalk files**: Map alternate loc_ids to GADM loc_ids via `countries/{ISO}/crosswalk.json`
 - **GADM fallback**: Global boundaries in `geometry/{ISO}.parquet`
 
-The system uses graceful fallback - country-specific geometry takes priority when present. This means loc_ids may differ between sources, but within each country's data ecosystem, they're consistent.
+**Three-tier geometry fallback system**:
+1. **Direct match in country geometry**: loc_id matches `countries/{ISO}/geometry.parquet` -> use it
+2. **Crosswalk translation**: loc_id in `crosswalk.json` -> translate to GADM loc_id -> use `geometry/{ISO}.parquet`
+3. **Direct GADM fallback**: loc_id is already GADM-style -> use `geometry/{ISO}.parquet` directly
+
+This means loc_ids may differ between sources, but the system resolves them to geometry automatically.
 
 This enables:
 - **Column portability**: Move population from census to geometry file
@@ -75,7 +81,7 @@ Do NOT include:
 - `STCOFIPS`, `GEOID`, `fips` - Redundant with loc_id
 - `STATE`, `COUNTY`, `region` - Stored in geometry, not data
 
-**Exception**: Event data (earthquakes, hurricanes) uses different schema with `event_id`, `timestamp`, etc.
+**Exception**: Event data (earthquakes, hurricanes) uses different schema with `event_id`, `timestamp`, etc. See [Unified Event Schema](data_pipeline.md#event-data-format) for required columns and naming conventions.
 
 ---
 
@@ -202,12 +208,92 @@ When creating country-specific geometry files in `countries/{ISO}/geometry.parqu
 - `children_count`, `descendants_count` - Hierarchy counts
 - `has_polygon` - Boolean for geometry presence
 
-**Geometry Priority:**
-The system loads geometry in this order:
-1. `countries/{ISO}/geometry.parquet` - Country-specific (preferred, matches data loc_ids)
-2. `geometry/{ISO}.parquet` - GADM fallback (global coverage)
+**Geometry Priority (3-tier fallback):**
+The system resolves geometry in this order:
+1. `countries/{ISO}/geometry.parquet` - Country-specific (preferred, matches data loc_ids like NUTS, ABS LGA)
+2. `countries/{ISO}/crosswalk.json` - If present, translates loc_id to GADM format, then uses GADM geometry
+3. `geometry/{ISO}.parquet` - GADM fallback (global coverage)
 
-This allows country-specific sources (ABS, StatsCan) to use their official boundaries while falling back to GADM for countries without custom geometry.
+This allows:
+- Country-specific sources (ABS, StatsCan, Eurostat) to use their official boundaries
+- Data with alternate loc_id systems (NUTS codes) to map to GADM geometry via crosswalk
+- Fallback to GADM for countries without custom geometry
+
+---
+
+## Geometry Simplification Requirements
+
+**All geometry MUST be simplified before import.** Raw geometry files (TIGER, GADM, etc.) contain far more detail than needed for web display and cause:
+- Slow JSON parsing in `df_to_geojson()` (each geometry is parsed from JSON string)
+- Large file sizes and slow network transfers
+- Slow frontend rendering
+
+### Required Tolerances by Admin Level
+
+| Level | Admin | Tolerance | Precision | Use Case |
+|-------|-------|-----------|-----------|----------|
+| Countries | 0 | 0.01 | ~1 km | World map view |
+| States/Regions | 1 | 0.001 | ~100 m | Country zoom |
+| Counties | 2 | 0.001 | ~100 m | State zoom |
+| ZCTAs | 3 | 0.0001 | ~10 m | County zoom |
+| Census Tracts | 4 | 0.0001 | ~10 m | City zoom |
+| Block Groups | 5 | 0.00005 | ~5 m | Neighborhood zoom |
+| Blocks | 6 | 0.00001 | ~1 m | Street zoom |
+
+### Simplification Code
+
+Using shapely (recommended):
+
+```python
+from shapely import simplify
+from shapely.geometry import shape, mapping
+import json
+
+def simplify_geometry(geom_json, tolerance):
+    """Simplify a GeoJSON geometry string."""
+    geom = shape(json.loads(geom_json))
+    simplified = simplify(geom, tolerance, preserve_topology=True)
+    return json.dumps(mapping(simplified))
+
+# Apply to DataFrame
+TOLERANCE = 0.0001  # Set based on admin level
+df['geometry'] = df['geometry'].apply(lambda g: simplify_geometry(g, TOLERANCE))
+```
+
+Using geopandas:
+
+```python
+import geopandas as gpd
+
+gdf = gpd.read_file("raw_geometry.shp")
+gdf['geometry'] = gdf['geometry'].simplify(tolerance=0.0001, preserve_topology=True)
+```
+
+### Size Impact Examples
+
+| Level | Before | After | Reduction |
+|-------|--------|-------|-----------|
+| Countries (0.01) | 31 MB | 7.8 MB | 75% |
+| Counties (0.001) | 63 MB | 30 MB | 53% |
+| Blocks (0.00001) | 351 MB | ~200 MB | ~43% |
+
+### Verification
+
+After simplification, verify the geometry still looks correct at the intended zoom level. Over-simplified geometry will have jagged edges or missing details.
+
+**See also**: [GEOMETRY.md](GEOMETRY.md#geometry-simplification) for detailed size impact analysis.
+
+**Crosswalk file format** (`countries/{ISO}/crosswalk.json`):
+```json
+{
+  "source_system": "nuts",
+  "target_system": "gadm",
+  "mappings": {
+    "FRA-FR1": "FRA-IF",
+    "FRA-FRB": "FRA-CE"
+  }
+}
+```
 
 ---
 
@@ -358,11 +444,26 @@ countries/{COUNTRY}/{source_id}/
 ```
 
 **events.parquet** - Individual records (optional for pre-aggregated data):
-- `event_id` - Unique identifier
-- `loc_id` - Location code
-- `year` - Event/record year
-- `lat`, `lon` - Coordinates (if applicable)
-- Source-specific columns (varies by data type)
+
+> **IMPORTANT**: All event files MUST follow the [Unified Event Schema](data_pipeline.md#event-data-format) for live/historical compatibility.
+
+**Required core columns** (use these exact names):
+- `event_id` - Unique identifier for the event
+- `timestamp` - Event datetime (NOT `time`, `event_date`, or `ignition_date`)
+- `latitude` - Event latitude (NOT `lat` or `centroid_lat`)
+- `longitude` - Event longitude (NOT `lon` or `centroid_lon`)
+- `event_type` - Event category string (e.g., `earthquake`, `hurricane`, `wildfire`)
+- `loc_id` - Assigned location code or water body code
+
+Type-specific severity columns:
+- Earthquakes: `magnitude`, `depth_km`, `felt_radius_km`, `damage_radius_km`
+- Hurricanes/Cyclones: `wind_kt`, `pressure_mb`, `category`, `r34_ne`/`r50_ne`/`r64_ne` (wind radii)
+- Wildfires: `burned_acres`, `perimeter` (GeoJSON string)
+- Volcanoes: `vei` (Volcanic Explosivity Index)
+- Tsunamis: `max_water_height_m`, `runup_m`
+
+Optional geometry column:
+- `perimeter` - GeoJSON string for polygon events (wildfires, floods)
 
 **{COUNTRY}.parquet** - Region-year aggregates (required):
 - `loc_id` - Location code
@@ -504,7 +605,9 @@ def create_parent_geometry(geometry_gdf):
 
 ### Aggregation Rules by Metric Type
 
-> **See**: [data_pipeline.md - Aggregation Rules](data_pipeline.md#aggregate_eurostat_to_countrypy) for the complete 9-row table covering counts, rates, per-capita, density, averages, indices, categorical, min/max, and medians - plus common mistakes and when NOT to aggregate.
+> **See**: [data_pipeline.md - Aggregation Rules](data_pipeline.md#aggregation-rules-by-metric-type) for the complete 9-row table covering counts, rates, per-capita, density, averages, indices, categorical, min/max, and medians - plus common mistakes and when NOT to aggregate.
+>
+> **See also**: [data_pipeline.md - Disaggregation Rules](data_pipeline.md#disaggregation-rules-scaling-down) for how data transforms when scaling DOWN (e.g., "What is the flood risk at my house?" when only county-level data exists). Covers inheritance patterns, when disaggregation works well vs. is misleading, and UI transparency guidelines.
 
 ### Complete Example
 
@@ -634,4 +737,4 @@ finalize_source(parquet_path, source_id, events_parquet_path)
 
 ---
 
-*Last Updated: 2026-01-06*
+*Last Updated: 2026-01-08*

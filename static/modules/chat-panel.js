@@ -154,6 +154,12 @@ export const ChatManager = {
           App?.displayData(response);
           break;
 
+        case 'events':
+          // Event data response (earthquakes, volcanoes, etc.)
+          this.addMessage(response.summary || `Showing ${response.count} ${response.event_type} events.`, 'assistant');
+          App?.displayData(response);
+          break;
+
         case 'chat':
         default:
           // General chat response or legacy format
@@ -215,6 +221,11 @@ export const ChatManager = {
 
         case 'data':
           this.addMessage(response.summary || 'Here is your data.', 'assistant');
+          App?.displayData(response);
+          break;
+
+        case 'events':
+          this.addMessage(response.summary || `Showing ${response.count} ${response.event_type} events.`, 'assistant');
           App?.displayData(response);
           break;
 
@@ -735,6 +746,11 @@ export const OrderManager = {
         ChatManager.addMessage(message, 'assistant');
         App?.displayData(data);
         // Keep order visible - only Clear button should empty it
+      } else if (data.type === 'events' && data.geojson) {
+        // Event data (earthquakes, volcanoes, etc.)
+        const message = data.summary || `Showing ${data.count} ${data.event_type} events`;
+        ChatManager.addMessage(message, 'assistant');
+        App?.displayData(data);
       } else if (data.type === 'error') {
         ChatManager.addMessage(data.message || 'Failed to load data.', 'assistant');
       }

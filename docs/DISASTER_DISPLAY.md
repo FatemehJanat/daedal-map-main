@@ -150,8 +150,8 @@ The frontend reads these standardized columns regardless of original source form
 **Model C: Polygon/Area** (geographic shape changing over time)
 - Area-based events
 - Requires polygon geometry per time step
-- Good for: Wildfires (if perimeter data available), Floods
-- Note: Currently NOT supported - wildfire data only has centroids
+- Good for: Wildfires, Floods
+- Note: MTBS wildfire perimeters now available in fires.parquet as GeoJSON strings
 
 **Model D: Choropleth on Counties** (aggregated area status)
 - Weekly/monthly snapshots on admin boundaries
@@ -684,33 +684,53 @@ O M4.0-4.9
 
 ## Implementation Phases
 
-### Phase 1: Foundation (Current Sprint)
-- [ ] Add `mode` field to order schema
-- [ ] Add `load_event_data()` to order_executor
+### Phase 1: Model A - Point + Radius (Current)
+Starting with earthquakes and volcanoes - simplest display model.
+
+**Backend:**
+- [ ] Add `mode: "events"` field to order schema
+- [ ] Add `load_event_data()` to order_executor.py
 - [ ] Add event type detection to postprocessor
+
+**Frontend:**
 - [ ] Create generalized `loadEventLayer()` in MapAdapter
+- [ ] Earthquake point layer (magnitude-sized circles)
+- [ ] Felt radius circle overlay (uses felt_radius_km)
+- [ ] Damage radius circle overlay (uses damage_radius_km)
+- [ ] TimeSlider integration for daily animation
 
-### Phase 2: Earthquake Events
-- [ ] Implement earthquake point layer
-- [ ] Implement felt radius circles
-- [ ] Connect to TimeSlider for daily animation
-- [ ] Test with California earthquake query
+**Data fields used:**
+- lat, lon - Event location
+- magnitude - Circle size
+- felt_radius_km - Outer impact circle
+- damage_radius_km - Inner damage circle
+- timestamp - Animation key
 
-### Phase 3: Hurricane Tracks
+**Test query:** "Show M4+ earthquakes in California 2024"
+
+### Phase 2: Model B - Track/Trail (Hurricanes)
 - [ ] Migrate HurricaneHandler to generalized event system
-- [ ] Implement track line rendering
-- [ ] Implement animated position marker
-- [ ] Test 6-hourly playback
+- [ ] Track line rendering (connect positions)
+- [ ] Animated position marker with wind radii
+- [ ] Category-based coloring
+- [ ] 6-hourly playback
 
-### Phase 4: Wildfire Events
-- [ ] Implement fire point/centroid layer
-- [ ] Add acres-based sizing
-- [ ] Test daily animation for fire season
+### Phase 3: Model C - Polygon/Area (Wildfires)
+- [ ] Parse perimeter GeoJSON from fires.parquet
+- [ ] Render fire polygon boundaries
+- [ ] Centroid marker fallback when no perimeter
+- [ ] Daily animation for fire season
 
-### Phase 5: Other Event Types
-- [ ] Tsunami runups
-- [ ] Volcano eruptions
-- [ ] NOAA storm events
+### Phase 4: Model D - Choropleth Events (Drought)
+- [ ] Weekly drought severity by county
+- [ ] Use existing choropleth system
+- [ ] Weekly granularity animation
+
+### Phase 5: Additional Sources
+- [ ] Tornado points (Model A)
+- [ ] Volcano eruptions (Model A)
+- [ ] Tsunami runups (Model A)
+- [ ] NOAA storm events (Model A)
 
 ---
 

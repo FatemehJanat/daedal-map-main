@@ -31,14 +31,24 @@ export const ViewportLoader = {
   isLoading: false,
   enabled: true,  // Always enabled - viewport is the only navigation mode
   orderMode: false,  // When true, viewport loading is suspended (order data is displayed)
+  levelLocked: false,  // When true, admin level doesn't change with zoom
+  lockedLevel: null,   // The locked admin level (0-6)
+  abortController: null,  // For cancelling stale requests
+  requestId: 0,  // Counter to track which request is current
+  lastRequestedLevel: null,  // Track the level of the in-flight request
+  lastZoom: null,  // Track zoom level to distinguish zoom from pan
 
   // Viewport area thresholds (in square degrees) for admin level selection
   // These are tunable - smaller areas = deeper admin levels
+  // Area roughly corresponds to zoom: zoom 10 ~ 1-2 sq deg, zoom 14 ~ 0.01 sq deg
   areaThresholds: {
-    level0: 3000,   // > 3000 sq deg = countries (world/continent view)
-    level1: 300,    // > 300 sq deg = states (large country view)
-    level2: 30      // > 30 sq deg = counties (state view)
-                    // < 30 sq deg = subdivisions (county view)
+    level0: 3000,   // > 3000 sq deg = countries (world/continent view, zoom ~2-4)
+    level1: 300,    // > 300 sq deg = states (large country view, zoom ~4-6)
+    level2: 30,     // > 30 sq deg = counties (state view, zoom ~6-8)
+    level3: 3,      // > 3 sq deg = subdivisions/ZCTAs (county view, zoom ~8-10)
+    level4: 0.3,    // > 0.3 sq deg = census tracts (city view, zoom ~10-12)
+    level5: 0.03    // > 0.03 sq deg = block groups (neighborhood, zoom ~12-14)
+                    // < 0.03 sq deg = blocks (street level, zoom ~14+)
   },
 
   /**
@@ -53,6 +63,15 @@ export const ViewportLoader = {
   /**
    * Get admin level based on viewport area (smarter than fixed zoom thresholds)
    * Larger viewport = shallower level, smaller viewport = deeper level
+   *
+   * Admin levels:
+   *   0 = Countries
+   *   1 = States/Provinces
+   *   2 = Counties
+   *   3 = Subdivisions/ZCTAs (postal)
+   *   4 = Census Tracts
+   *   5 = Block Groups
+   *   6 = Blocks
    */
   getAdminLevelForViewport(bounds) {
     const area = this.getViewportArea(bounds);
@@ -60,19 +79,94 @@ export const ViewportLoader = {
     if (area > this.areaThresholds.level0) return 0;  // Countries
     if (area > this.areaThresholds.level1) return 1;  // States
     if (area > this.areaThresholds.level2) return 2;  // Counties
-    return 3;  // Subdivisions
+    if (area > this.areaThresholds.level3) return 3;  // Subdivisions/ZCTAs
+    if (area > this.areaThresholds.level4) return 4;  // Census Tracts
+    if (area > this.areaThresholds.level5) return 5;  // Block Groups
+    return 6;  // Blocks
   },
 
   /**
-   * Get zoom level for a given admin level (for breadcrumb navigation)
-   * These are approximate - actual level depends on viewport area
+   * Get the target viewport area for a given admin level
+   * Returns a value solidly within the range for that level
+   * (biased toward the upper end to account for projection distortion)
+   */
+  getTargetAreaForAdminLevel(level) {
+    switch(level) {
+      case 0: return 5000;    // Countries: > 3000 sq deg, target ~5000
+      case 1: return 1000;    // States: 300-3000 sq deg, target ~1000
+      case 2: return 150;     // Counties: 30-300 sq deg, target ~150 (zoom ~7.5)
+      case 3: return 15;      // Subdivisions/ZCTAs: 3-30 sq deg, target ~15
+      case 4: return 1.5;     // Census Tracts: 0.3-3 sq deg, target ~1.5
+      case 5: return 0.15;    // Block Groups: 0.03-0.3 sq deg, target ~0.15
+      case 6: return 0.015;   // Blocks: < 0.03 sq deg, target ~0.015
+      default: return 15;     // Fallback to subdivisions
+    }
+  },
+
+  /**
+   * Calculate zoom level needed to achieve target viewport area at current center
+   * Uses the relationship: area scales by ~4x per zoom level (2x each dimension)
+   * @param {number} targetArea - Target viewport area in square degrees
+   * @returns {number} Zoom level to achieve that area
+   */
+  getZoomForTargetArea(targetArea) {
+    if (!MapAdapter?.map) return 2;
+
+    const bounds = MapAdapter.map.getBounds();
+    const currentArea = this.getViewportArea(bounds);
+    const currentZoom = MapAdapter.map.getZoom();
+
+    // Each zoom level change roughly quarters/quadruples the viewport area
+    // zoom_delta = log2(current_area / target_area) / 2
+    // (divide by 2 because area scales with zoom^2)
+    const zoomDelta = Math.log2(currentArea / targetArea) / 2;
+    const targetZoom = currentZoom + zoomDelta;
+
+    // Clamp to reasonable zoom range
+    return Math.max(1, Math.min(18, targetZoom));
+  },
+
+  /**
+   * Get zoom level for a given admin level based on current viewport
+   * Calculates the zoom needed to achieve the target area for that level
    */
   getZoomForAdminLevel(level) {
-    switch(level) {
-      case 0: return 2;    // Countries - zoom out to world
-      case 1: return 5;    // States
-      case 2: return 8;    // Counties
-      default: return 11;  // Subdivisions
+    const targetArea = this.getTargetAreaForAdminLevel(level);
+    return this.getZoomForTargetArea(targetArea);
+  },
+
+  /**
+   * Toggle level lock on/off
+   * When locked, zoom changes don't affect admin level
+   */
+  toggleLock() {
+    if (this.levelLocked) {
+      // Unlock
+      this.levelLocked = false;
+      this.lockedLevel = null;
+      console.log('Admin level unlocked - will change with zoom');
+    } else {
+      // Lock at current level
+      this.levelLocked = true;
+      this.lockedLevel = this.currentAdminLevel;
+      console.log(`Admin level locked at ${this.lockedLevel}`);
+    }
+    return this.levelLocked;
+  },
+
+  /**
+   * Set lock state directly
+   * @param {boolean} locked - Whether to lock
+   * @param {number} level - Level to lock at (optional, uses current if not provided)
+   */
+  setLock(locked, level = null) {
+    this.levelLocked = locked;
+    if (locked) {
+      this.lockedLevel = level !== null ? level : this.currentAdminLevel;
+      console.log(`Admin level locked at ${this.lockedLevel}`);
+    } else {
+      this.lockedLevel = null;
+      console.log('Admin level unlocked');
     }
   },
 
@@ -95,6 +189,21 @@ export const ViewportLoader = {
   async doLoad(adminLevel) {
     if (!MapAdapter?.map) return;
 
+    // Only abort if the admin level is CHANGING (not just panning within same level)
+    // This prevents cancelling slow-loading levels like blocks when user pans
+    const levelChanged = this.lastRequestedLevel !== null && this.lastRequestedLevel !== adminLevel;
+    if (this.abortController && levelChanged) {
+      this.abortController.abort();
+      console.log(`Level changed ${this.lastRequestedLevel} -> ${adminLevel}, cancelling previous request`);
+    }
+
+    // Track which level we're requesting
+    this.lastRequestedLevel = adminLevel;
+
+    // Create new abort controller for this request
+    this.abortController = new AbortController();
+    const thisRequestId = ++this.requestId;
+
     const bounds = MapAdapter.map.getBounds();
     // Round to 3 decimal places (~100m precision) - more than enough for viewport queries
     const bbox = [
@@ -115,25 +224,51 @@ export const ViewportLoader = {
     try {
       // Add debug param if debug mode is on (for coverage info in popups)
       const debugParam = App?.debugMode ? '&debug=true' : '';
-      const response = await fetch(
-        `${CONFIG.api.viewport}?level=${adminLevel}&bbox=${bbox}${debugParam}`
-      );
+      const url = `${CONFIG.api.viewport}?level=${adminLevel}&bbox=${bbox}${debugParam}`;
+      console.log(`[${thisRequestId}] Fetching level ${adminLevel}`);
+
+      const response = await fetch(url, { signal: this.abortController.signal });
+
+      // Check if this request was superseded by a newer one
+      if (thisRequestId !== this.requestId) {
+        console.log(`[${thisRequestId}] Discarding stale response (current is ${this.requestId})`);
+        return;
+      }
+
       const data = await response.json();
 
-      if (data.features && data.features.length > 0) {
-        // Add to cache
-        GeometryCache.add(data.features);
+      // Double-check we're still on the same level (user might have zoomed while parsing)
+      if (adminLevel !== this.currentAdminLevel) {
+        console.log(`[${thisRequestId}] Level changed during load (was ${adminLevel}, now ${this.currentAdminLevel}), discarding`);
+        return;
+      }
 
-        // Update map with fade
+      const featureCount = data.features?.length || 0;
+      console.log(`[${thisRequestId}] Level ${adminLevel} response: ${featureCount} features`);
+
+      // Always update the map when we get a response (even if empty)
+      // This ensures old geometry is cleared when switching levels
+      if (data.features) {
+        // Add to cache (if any features)
+        if (featureCount > 0) {
+          GeometryCache.add(data.features);
+        }
+
+        // Update map with new data (or empty to clear old geometry)
         MapAdapter.loadGeoJSONWithFade({
           type: 'FeatureCollection',
           features: data.features
         });
 
         // Update stats
-        document.getElementById('totalAreas').textContent = data.features.length;
+        document.getElementById('totalAreas').textContent = featureCount;
       }
     } catch (err) {
+      // Ignore abort errors - they're expected when we cancel requests
+      if (err.name === 'AbortError') {
+        console.log(`[${thisRequestId}] Request aborted`);
+        return;
+      }
       console.error('Viewport load failed:', err);
       // Keep displaying cached data - user sees no change
       const cached = GeometryCache.getForLevel(adminLevel);
@@ -141,9 +276,12 @@ export const ViewportLoader = {
         console.warn('No cached data available');
       }
     } finally {
-      this.isLoading = false;
-      clearTimeout(this.spinnerTimeout);
-      document.getElementById('loadingIndicator')?.classList.remove('visible');
+      // Only update loading state if this is still the current request
+      if (thisRequestId === this.requestId) {
+        this.isLoading = false;
+        clearTimeout(this.spinnerTimeout);
+        document.getElementById('loadingIndicator')?.classList.remove('visible');
+      }
     }
   },
 
@@ -155,12 +293,16 @@ export const ViewportLoader = {
 
     const bounds = MapAdapter.map.getBounds();
     const area = this.getViewportArea(bounds);
-    const newLevel = this.getAdminLevelForViewport(bounds);
+    const calculatedLevel = this.getAdminLevelForViewport(bounds);
+
+    // Use locked level if lock is active, otherwise use calculated level
+    const newLevel = this.levelLocked ? this.lockedLevel : calculatedLevel;
 
     // In order mode, filter displayed data by admin level instead of loading new data
     if (this.orderMode) {
       if (newLevel !== this.currentAdminLevel) {
-        console.log(`Order mode: Viewport area ${area.toFixed(0)} sq deg -> Admin level ${newLevel}`);
+        const lockInfo = this.levelLocked ? ' [LOCKED]' : '';
+        console.log(`Order mode: Viewport area ${area.toFixed(0)} sq deg -> Admin level ${newLevel}${lockInfo}`);
         this.currentAdminLevel = newLevel;
         // Tell TimeSlider to filter to this admin level
         TimeSlider?.setAdminLevelFilter(newLevel);
@@ -168,32 +310,59 @@ export const ViewportLoader = {
       return;
     }
 
+    // Only load when admin level CHANGES - not on every zoom step
     if (newLevel !== this.currentAdminLevel) {
-      console.log(`Viewport area ${area.toFixed(0)} sq deg -> Admin level ${newLevel}`);
+      const lockInfo = this.levelLocked ? ' [LOCKED]' : '';
+      console.log(`Viewport area ${area.toFixed(0)} sq deg -> Admin level ${newLevel}${lockInfo}`);
       this.currentAdminLevel = newLevel;
       this.load(newLevel);
 
       // Update breadcrumb to show current level
       NavigationManager?.updateLevelDisplay(newLevel);
-    } else {
-      // Same level but viewport moved - reload for new area
-      this.load(newLevel);
     }
+    // Note: Same-level pan reloads are handled by onMoveEnd, not here
   },
 
   /**
-   * Legacy method - redirects to onViewportChange
-   * @deprecated Use onViewportChange instead
+   * Handle pan/move - reload same level for new viewport area
+   * Only triggers on actual panning, not zoom changes
+   */
+  onPanEnd() {
+    if (!this.enabled || !MapAdapter?.map || this.orderMode) return;
+
+    // Reload current level for the new viewport position
+    this.load(this.currentAdminLevel);
+  },
+
+  /**
+   * Handle zoom end - just update lastZoom for tracking
+   * The actual level-change logic is handled by onMoveEnd to avoid double-firing
    */
   onZoomEnd() {
-    this.onViewportChange();
+    // No-op: moveend handles everything now
+    // This method exists for API compatibility but does nothing
   },
 
   /**
-   * Legacy method - redirects to onViewportChange
-   * @deprecated Use onViewportChange instead
+   * Handle move end - detect zoom vs pan and respond appropriately
+   * moveend fires for both zoom and pan, so we check if zoom changed
    */
   onMoveEnd() {
-    this.onViewportChange();
+    if (!MapAdapter?.map) return;
+    const currentZoom = MapAdapter.map.getZoom();
+
+    // Check if this was a zoom or a pan
+    const wasZoom = this.lastZoom === null || Math.abs(currentZoom - this.lastZoom) >= 0.01;
+
+    // Update lastZoom for next comparison
+    this.lastZoom = currentZoom;
+
+    if (wasZoom) {
+      // Zoom operation: check if admin level should change
+      this.onViewportChange();
+    } else {
+      // Pure pan - reload same level for new viewport position
+      this.onPanEnd();
+    }
   }
 };

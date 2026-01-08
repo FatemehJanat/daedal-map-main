@@ -1,0 +1,1002 @@
+[
+  {
+    "zcta": "00601",
+    "zcta_loc_id": "USA-Z-00601",
+    "primary_county_loc_id": "USA-PR-72001",
+    "primary_county_name": "Adjuntas Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72001\", \"USA-PR-72141\"]"
+  },
+  {
+    "zcta": "00602",
+    "zcta_loc_id": "USA-Z-00602",
+    "primary_county_loc_id": "USA-PR-72003",
+    "primary_county_name": "Aguada Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72003\", \"USA-PR-72011\"]"
+  },
+  {
+    "zcta": "00603",
+    "zcta_loc_id": "USA-Z-00603",
+    "primary_county_loc_id": "USA-PR-72005",
+    "primary_county_name": "Aguadilla Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72005\", \"USA-PR-72099\"]"
+  },
+  {
+    "zcta": "00606",
+    "zcta_loc_id": "USA-Z-00606",
+    "primary_county_loc_id": "USA-PR-72093",
+    "primary_county_name": "Maricao Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 3,
+    "all_counties_json": "[\"USA-PR-72093\", \"USA-PR-72121\", \"USA-PR-72153\"]"
+  },
+  {
+    "zcta": "00610",
+    "zcta_loc_id": "USA-Z-00610",
+    "primary_county_loc_id": "USA-PR-72011",
+    "primary_county_name": "A\u00f1asco Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 4,
+    "all_counties_json": "[\"USA-PR-72003\", \"USA-PR-72011\", \"USA-PR-72083\", \"USA-PR-72099\"]"
+  },
+  {
+    "zcta": "00611",
+    "zcta_loc_id": "USA-Z-00611",
+    "primary_county_loc_id": "USA-PR-72141",
+    "primary_county_name": "Utuado Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72141\"]"
+  },
+  {
+    "zcta": "00612",
+    "zcta_loc_id": "USA-Z-00612",
+    "primary_county_loc_id": "USA-PR-72013",
+    "primary_county_name": "Arecibo Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 3,
+    "all_counties_json": "[\"USA-PR-72013\", \"USA-PR-72017\", \"USA-PR-72065\"]"
+  },
+  {
+    "zcta": "00616",
+    "zcta_loc_id": "USA-Z-00616",
+    "primary_county_loc_id": "USA-PR-72013",
+    "primary_county_name": "Arecibo Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72013\"]"
+  },
+  {
+    "zcta": "00617",
+    "zcta_loc_id": "USA-Z-00617",
+    "primary_county_loc_id": "USA-PR-72017",
+    "primary_county_name": "Barceloneta Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72017\", \"USA-PR-72054\"]"
+  },
+  {
+    "zcta": "00622",
+    "zcta_loc_id": "USA-Z-00622",
+    "primary_county_loc_id": "USA-PR-72023",
+    "primary_county_name": "Cabo Rojo Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72023\"]"
+  },
+  {
+    "zcta": "00623",
+    "zcta_loc_id": "USA-Z-00623",
+    "primary_county_loc_id": "USA-PR-72023",
+    "primary_county_name": "Cabo Rojo Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72023\"]"
+  },
+  {
+    "zcta": "00624",
+    "zcta_loc_id": "USA-Z-00624",
+    "primary_county_loc_id": "USA-PR-72111",
+    "primary_county_name": "Pe\u00f1uelas Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72111\", \"USA-PR-72113\"]"
+  },
+  {
+    "zcta": "00627",
+    "zcta_loc_id": "USA-Z-00627",
+    "primary_county_loc_id": "USA-PR-72027",
+    "primary_county_name": "Camuy Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72027\", \"USA-PR-72115\"]"
+  },
+  {
+    "zcta": "00631",
+    "zcta_loc_id": "USA-Z-00631",
+    "primary_county_loc_id": "USA-PR-72001",
+    "primary_county_name": "Adjuntas Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72001\", \"USA-PR-72081\"]"
+  },
+  {
+    "zcta": "00636",
+    "zcta_loc_id": "USA-Z-00636",
+    "primary_county_loc_id": "USA-PR-72125",
+    "primary_county_name": "San Germ\u00e1n Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72125\"]"
+  },
+  {
+    "zcta": "00637",
+    "zcta_loc_id": "USA-Z-00637",
+    "primary_county_loc_id": "USA-PR-72121",
+    "primary_county_name": "Sabana Grande Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 3,
+    "all_counties_json": "[\"USA-PR-72079\", \"USA-PR-72121\", \"USA-PR-72125\"]"
+  },
+  {
+    "zcta": "00638",
+    "zcta_loc_id": "USA-Z-00638",
+    "primary_county_loc_id": "USA-PR-72039",
+    "primary_county_name": "Ciales Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 3,
+    "all_counties_json": "[\"USA-PR-72039\", \"USA-PR-72091\", \"USA-PR-72107\"]"
+  },
+  {
+    "zcta": "00641",
+    "zcta_loc_id": "USA-Z-00641",
+    "primary_county_loc_id": "USA-PR-72141",
+    "primary_county_name": "Utuado Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72001\", \"USA-PR-72141\"]"
+  },
+  {
+    "zcta": "00646",
+    "zcta_loc_id": "USA-Z-00646",
+    "primary_county_loc_id": "USA-PR-72051",
+    "primary_county_name": "Dorado Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72051\", \"USA-PR-72143\"]"
+  },
+  {
+    "zcta": "00647",
+    "zcta_loc_id": "USA-Z-00647",
+    "primary_county_loc_id": "USA-PR-72055",
+    "primary_county_name": "Gu\u00e1nica Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72055\", \"USA-PR-72079\"]"
+  },
+  {
+    "zcta": "00650",
+    "zcta_loc_id": "USA-Z-00650",
+    "primary_county_loc_id": "USA-PR-72054",
+    "primary_county_name": "Florida Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 6,
+    "all_counties_json": "[\"USA-PR-72013\", \"USA-PR-72017\", \"USA-PR-72039\", \"USA-PR-72054\", \"USA-PR-72091\", \"USA-PR-72141\"]"
+  },
+  {
+    "zcta": "00652",
+    "zcta_loc_id": "USA-Z-00652",
+    "primary_county_loc_id": "USA-PR-72013",
+    "primary_county_name": "Arecibo Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72013\"]"
+  },
+  {
+    "zcta": "00653",
+    "zcta_loc_id": "USA-Z-00653",
+    "primary_county_loc_id": "USA-PR-72055",
+    "primary_county_name": "Gu\u00e1nica Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72055\", \"USA-PR-72121\"]"
+  },
+  {
+    "zcta": "00656",
+    "zcta_loc_id": "USA-Z-00656",
+    "primary_county_loc_id": "USA-PR-72059",
+    "primary_county_name": "Guayanilla Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72059\", \"USA-PR-72153\"]"
+  },
+  {
+    "zcta": "00659",
+    "zcta_loc_id": "USA-Z-00659",
+    "primary_county_loc_id": "USA-PR-72065",
+    "primary_county_name": "Hatillo Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72065\"]"
+  },
+  {
+    "zcta": "00660",
+    "zcta_loc_id": "USA-Z-00660",
+    "primary_county_loc_id": "USA-PR-72067",
+    "primary_county_name": "Hormigueros Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72067\"]"
+  },
+  {
+    "zcta": "00662",
+    "zcta_loc_id": "USA-Z-00662",
+    "primary_county_loc_id": "USA-PR-72071",
+    "primary_county_name": "Isabela Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72071\"]"
+  },
+  {
+    "zcta": "00664",
+    "zcta_loc_id": "USA-Z-00664",
+    "primary_county_loc_id": "USA-PR-72073",
+    "primary_county_name": "Jayuya Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72073\", \"USA-PR-72141\"]"
+  },
+  {
+    "zcta": "00667",
+    "zcta_loc_id": "USA-Z-00667",
+    "primary_county_loc_id": "USA-PR-72079",
+    "primary_county_name": "Lajas Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72079\", \"USA-PR-72125\"]"
+  },
+  {
+    "zcta": "00669",
+    "zcta_loc_id": "USA-Z-00669",
+    "primary_county_loc_id": "USA-PR-72081",
+    "primary_county_name": "Lares Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 4,
+    "all_counties_json": "[\"USA-PR-72081\", \"USA-PR-72083\", \"USA-PR-72131\", \"USA-PR-72141\"]"
+  },
+  {
+    "zcta": "00670",
+    "zcta_loc_id": "USA-Z-00670",
+    "primary_county_loc_id": "USA-PR-72083",
+    "primary_county_name": "Las Mar\u00edas Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 4,
+    "all_counties_json": "[\"USA-PR-72011\", \"USA-PR-72083\", \"USA-PR-72093\", \"USA-PR-72097\"]"
+  },
+  {
+    "zcta": "00674",
+    "zcta_loc_id": "USA-Z-00674",
+    "primary_county_loc_id": "USA-PR-72091",
+    "primary_county_name": "Manat\u00ed Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72091\", \"USA-PR-72145\"]"
+  },
+  {
+    "zcta": "00676",
+    "zcta_loc_id": "USA-Z-00676",
+    "primary_county_loc_id": "USA-PR-72099",
+    "primary_county_name": "Moca Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 3,
+    "all_counties_json": "[\"USA-PR-72003\", \"USA-PR-72005\", \"USA-PR-72099\"]"
+  },
+  {
+    "zcta": "00677",
+    "zcta_loc_id": "USA-Z-00677",
+    "primary_county_loc_id": "USA-PR-72117",
+    "primary_county_name": "Rinc\u00f3n Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 3,
+    "all_counties_json": "[\"USA-PR-72003\", \"USA-PR-72011\", \"USA-PR-72117\"]"
+  },
+  {
+    "zcta": "00678",
+    "zcta_loc_id": "USA-Z-00678",
+    "primary_county_loc_id": "USA-PR-72115",
+    "primary_county_name": "Quebradillas Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 3,
+    "all_counties_json": "[\"USA-PR-72071\", \"USA-PR-72115\", \"USA-PR-72131\"]"
+  },
+  {
+    "zcta": "00680",
+    "zcta_loc_id": "USA-Z-00680",
+    "primary_county_loc_id": "USA-PR-72097",
+    "primary_county_name": "Mayag\u00fcez Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 3,
+    "all_counties_json": "[\"USA-PR-72011\", \"USA-PR-72097\", \"USA-PR-72125\"]"
+  },
+  {
+    "zcta": "00682",
+    "zcta_loc_id": "USA-Z-00682",
+    "primary_county_loc_id": "USA-PR-72097",
+    "primary_county_name": "Mayag\u00fcez Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72067\", \"USA-PR-72097\"]"
+  },
+  {
+    "zcta": "00683",
+    "zcta_loc_id": "USA-Z-00683",
+    "primary_county_loc_id": "USA-PR-72125",
+    "primary_county_name": "San Germ\u00e1n Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72125\"]"
+  },
+  {
+    "zcta": "00685",
+    "zcta_loc_id": "USA-Z-00685",
+    "primary_county_loc_id": "USA-PR-72131",
+    "primary_county_name": "San Sebasti\u00e1n Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 3,
+    "all_counties_json": "[\"USA-PR-72071\", \"USA-PR-72099\", \"USA-PR-72131\"]"
+  },
+  {
+    "zcta": "00687",
+    "zcta_loc_id": "USA-Z-00687",
+    "primary_county_loc_id": "USA-PR-72101",
+    "primary_county_name": "Morovis Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72101\"]"
+  },
+  {
+    "zcta": "00688",
+    "zcta_loc_id": "USA-Z-00688",
+    "primary_county_loc_id": "USA-PR-72013",
+    "primary_county_name": "Arecibo Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72013\"]"
+  },
+  {
+    "zcta": "00690",
+    "zcta_loc_id": "USA-Z-00690",
+    "primary_county_loc_id": "USA-PR-72005",
+    "primary_county_name": "Aguadilla Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72005\"]"
+  },
+  {
+    "zcta": "00692",
+    "zcta_loc_id": "USA-Z-00692",
+    "primary_county_loc_id": "USA-PR-72143",
+    "primary_county_name": "Vega Alta Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72143\", \"USA-PR-72145\"]"
+  },
+  {
+    "zcta": "00693",
+    "zcta_loc_id": "USA-Z-00693",
+    "primary_county_loc_id": "USA-PR-72145",
+    "primary_county_name": "Vega Baja Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 3,
+    "all_counties_json": "[\"USA-PR-72091\", \"USA-PR-72143\", \"USA-PR-72145\"]"
+  },
+  {
+    "zcta": "00694",
+    "zcta_loc_id": "USA-Z-00694",
+    "primary_county_loc_id": "USA-PR-72145",
+    "primary_county_name": "Vega Baja Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72145\"]"
+  },
+  {
+    "zcta": "00698",
+    "zcta_loc_id": "USA-Z-00698",
+    "primary_county_loc_id": "USA-PR-72153",
+    "primary_county_name": "Yauco Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72059\", \"USA-PR-72153\"]"
+  },
+  {
+    "zcta": "00703",
+    "zcta_loc_id": "USA-Z-00703",
+    "primary_county_loc_id": "USA-PR-72007",
+    "primary_county_name": "Aguas Buenas Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 3,
+    "all_counties_json": "[\"USA-PR-72007\", \"USA-PR-72041\", \"USA-PR-72045\"]"
+  },
+  {
+    "zcta": "00704",
+    "zcta_loc_id": "USA-Z-00704",
+    "primary_county_loc_id": "USA-PR-72123",
+    "primary_county_name": "Salinas Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72057\", \"USA-PR-72123\"]"
+  },
+  {
+    "zcta": "00705",
+    "zcta_loc_id": "USA-Z-00705",
+    "primary_county_loc_id": "USA-PR-72009",
+    "primary_county_name": "Aibonito Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72009\", \"USA-PR-72043\"]"
+  },
+  {
+    "zcta": "00707",
+    "zcta_loc_id": "USA-Z-00707",
+    "primary_county_loc_id": "USA-PR-72095",
+    "primary_county_name": "Maunabo Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72095\"]"
+  },
+  {
+    "zcta": "00714",
+    "zcta_loc_id": "USA-Z-00714",
+    "primary_county_loc_id": "USA-PR-72015",
+    "primary_county_name": "Arroyo Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72015\"]"
+  },
+  {
+    "zcta": "00715",
+    "zcta_loc_id": "USA-Z-00715",
+    "primary_county_loc_id": "USA-PR-72113",
+    "primary_county_name": "Ponce Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72075\", \"USA-PR-72113\"]"
+  },
+  {
+    "zcta": "00716",
+    "zcta_loc_id": "USA-Z-00716",
+    "primary_county_loc_id": "USA-PR-72113",
+    "primary_county_name": "Ponce Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72113\"]"
+  },
+  {
+    "zcta": "00717",
+    "zcta_loc_id": "USA-Z-00717",
+    "primary_county_loc_id": "USA-PR-72113",
+    "primary_county_name": "Ponce Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72113\"]"
+  },
+  {
+    "zcta": "00718",
+    "zcta_loc_id": "USA-Z-00718",
+    "primary_county_loc_id": "USA-PR-72103",
+    "primary_county_name": "Naguabo Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72037\", \"USA-PR-72103\"]"
+  },
+  {
+    "zcta": "00719",
+    "zcta_loc_id": "USA-Z-00719",
+    "primary_county_loc_id": "USA-PR-72105",
+    "primary_county_name": "Naranjito Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 4,
+    "all_counties_json": "[\"USA-PR-72045\", \"USA-PR-72047\", \"USA-PR-72105\", \"USA-PR-72135\"]"
+  },
+  {
+    "zcta": "00720",
+    "zcta_loc_id": "USA-Z-00720",
+    "primary_county_loc_id": "USA-PR-72107",
+    "primary_county_name": "Orocovis Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72043\", \"USA-PR-72107\"]"
+  },
+  {
+    "zcta": "00723",
+    "zcta_loc_id": "USA-Z-00723",
+    "primary_county_loc_id": "USA-PR-72109",
+    "primary_county_name": "Patillas Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 3,
+    "all_counties_json": "[\"USA-PR-72015\", \"USA-PR-72095\", \"USA-PR-72109\"]"
+  },
+  {
+    "zcta": "00725",
+    "zcta_loc_id": "USA-Z-00725",
+    "primary_county_loc_id": "USA-PR-72025",
+    "primary_county_name": "Caguas Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 6,
+    "all_counties_json": "[\"USA-PR-72007\", \"USA-PR-72025\", \"USA-PR-72061\", \"USA-PR-72127\", \"USA-PR-72129\", \"USA-PR-72139\"]"
+  },
+  {
+    "zcta": "00727",
+    "zcta_loc_id": "USA-Z-00727",
+    "primary_county_loc_id": "USA-PR-72025",
+    "primary_county_name": "Caguas Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72025\"]"
+  },
+  {
+    "zcta": "00728",
+    "zcta_loc_id": "USA-Z-00728",
+    "primary_county_loc_id": "USA-PR-72113",
+    "primary_county_name": "Ponce Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72113\"]"
+  },
+  {
+    "zcta": "00729",
+    "zcta_loc_id": "USA-Z-00729",
+    "primary_county_loc_id": "USA-PR-72029",
+    "primary_county_name": "Can\u00f3vanas Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72029\", \"USA-PR-72087\"]"
+  },
+  {
+    "zcta": "00730",
+    "zcta_loc_id": "USA-Z-00730",
+    "primary_county_loc_id": "USA-PR-72113",
+    "primary_county_name": "Ponce Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72113\"]"
+  },
+  {
+    "zcta": "00731",
+    "zcta_loc_id": "USA-Z-00731",
+    "primary_county_loc_id": "USA-PR-72113",
+    "primary_county_name": "Ponce Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72001\", \"USA-PR-72113\"]"
+  },
+  {
+    "zcta": "00735",
+    "zcta_loc_id": "USA-Z-00735",
+    "primary_county_loc_id": "USA-PR-72037",
+    "primary_county_name": "Ceiba Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72037\", \"USA-PR-72103\"]"
+  },
+  {
+    "zcta": "00736",
+    "zcta_loc_id": "USA-Z-00736",
+    "primary_county_loc_id": "USA-PR-72035",
+    "primary_county_name": "Cayey Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72035\", \"USA-PR-72041\"]"
+  },
+  {
+    "zcta": "00738",
+    "zcta_loc_id": "USA-Z-00738",
+    "primary_county_loc_id": "USA-PR-72053",
+    "primary_county_name": "Fajardo Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72037\", \"USA-PR-72053\"]"
+  },
+  {
+    "zcta": "00739",
+    "zcta_loc_id": "USA-Z-00739",
+    "primary_county_loc_id": "USA-PR-72041",
+    "primary_county_name": "Cidra Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72041\"]"
+  },
+  {
+    "zcta": "00740",
+    "zcta_loc_id": "USA-Z-00740",
+    "primary_county_loc_id": "USA-PR-72053",
+    "primary_county_name": "Fajardo Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72053\"]"
+  },
+  {
+    "zcta": "00741",
+    "zcta_loc_id": "USA-Z-00741",
+    "primary_county_loc_id": "USA-PR-72069",
+    "primary_county_name": "Humacao Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72069\"]"
+  },
+  {
+    "zcta": "00745",
+    "zcta_loc_id": "USA-Z-00745",
+    "primary_county_loc_id": "USA-PR-72119",
+    "primary_county_name": "R\u00edo Grande Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72029\", \"USA-PR-72119\"]"
+  },
+  {
+    "zcta": "00751",
+    "zcta_loc_id": "USA-Z-00751",
+    "primary_county_loc_id": "USA-PR-72123",
+    "primary_county_name": "Salinas Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72035\", \"USA-PR-72123\"]"
+  },
+  {
+    "zcta": "00754",
+    "zcta_loc_id": "USA-Z-00754",
+    "primary_county_loc_id": "USA-PR-72129",
+    "primary_county_name": "San Lorenzo Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72129\"]"
+  },
+  {
+    "zcta": "00757",
+    "zcta_loc_id": "USA-Z-00757",
+    "primary_county_loc_id": "USA-PR-72133",
+    "primary_county_name": "Santa Isabel Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72133\"]"
+  },
+  {
+    "zcta": "00765",
+    "zcta_loc_id": "USA-Z-00765",
+    "primary_county_loc_id": "USA-PR-72147",
+    "primary_county_name": "Vieques Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72147\"]"
+  },
+  {
+    "zcta": "00766",
+    "zcta_loc_id": "USA-Z-00766",
+    "primary_county_loc_id": "USA-PR-72149",
+    "primary_county_name": "Villalba Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72107\", \"USA-PR-72149\"]"
+  },
+  {
+    "zcta": "00767",
+    "zcta_loc_id": "USA-Z-00767",
+    "primary_county_loc_id": "USA-PR-72151",
+    "primary_county_name": "Yabucoa Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72069\", \"USA-PR-72151\"]"
+  },
+  {
+    "zcta": "00769",
+    "zcta_loc_id": "USA-Z-00769",
+    "primary_county_loc_id": "USA-PR-72043",
+    "primary_county_name": "Coamo Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72043\", \"USA-PR-72133\"]"
+  },
+  {
+    "zcta": "00771",
+    "zcta_loc_id": "USA-Z-00771",
+    "primary_county_loc_id": "USA-PR-72085",
+    "primary_county_name": "Las Piedras Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72069\", \"USA-PR-72085\"]"
+  },
+  {
+    "zcta": "00772",
+    "zcta_loc_id": "USA-Z-00772",
+    "primary_county_loc_id": "USA-PR-72087",
+    "primary_county_name": "Lo\u00edza Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72087\"]"
+  },
+  {
+    "zcta": "00773",
+    "zcta_loc_id": "USA-Z-00773",
+    "primary_county_loc_id": "USA-PR-72089",
+    "primary_county_name": "Luquillo Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72089\"]"
+  },
+  {
+    "zcta": "00775",
+    "zcta_loc_id": "USA-Z-00775",
+    "primary_county_loc_id": "USA-PR-72049",
+    "primary_county_name": "Culebra Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72049\"]"
+  },
+  {
+    "zcta": "00777",
+    "zcta_loc_id": "USA-Z-00777",
+    "primary_county_loc_id": "USA-PR-72077",
+    "primary_county_name": "Juncos Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 5,
+    "all_counties_json": "[\"USA-PR-72029\", \"USA-PR-72063\", \"USA-PR-72077\", \"USA-PR-72085\", \"USA-PR-72129\"]"
+  },
+  {
+    "zcta": "00778",
+    "zcta_loc_id": "USA-Z-00778",
+    "primary_county_loc_id": "USA-PR-72063",
+    "primary_county_name": "Gurabo Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72063\", \"USA-PR-72129\"]"
+  },
+  {
+    "zcta": "00780",
+    "zcta_loc_id": "USA-Z-00780",
+    "primary_county_loc_id": "USA-PR-72113",
+    "primary_county_name": "Ponce Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72075\", \"USA-PR-72113\"]"
+  },
+  {
+    "zcta": "00782",
+    "zcta_loc_id": "USA-Z-00782",
+    "primary_county_loc_id": "USA-PR-72045",
+    "primary_county_name": "Comer\u00edo Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72019\", \"USA-PR-72045\"]"
+  },
+  {
+    "zcta": "00783",
+    "zcta_loc_id": "USA-Z-00783",
+    "primary_county_loc_id": "USA-PR-72047",
+    "primary_county_name": "Corozal Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 3,
+    "all_counties_json": "[\"USA-PR-72019\", \"USA-PR-72047\", \"USA-PR-72135\"]"
+  },
+  {
+    "zcta": "00784",
+    "zcta_loc_id": "USA-Z-00784",
+    "primary_county_loc_id": "USA-PR-72057",
+    "primary_county_name": "Guayama Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 3,
+    "all_counties_json": "[\"USA-PR-72035\", \"USA-PR-72057\", \"USA-PR-72109\"]"
+  },
+  {
+    "zcta": "00786",
+    "zcta_loc_id": "USA-Z-00786",
+    "primary_county_loc_id": "USA-PR-72009",
+    "primary_county_name": "Aibonito Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72009\"]"
+  },
+  {
+    "zcta": "00791",
+    "zcta_loc_id": "USA-Z-00791",
+    "primary_county_loc_id": "USA-PR-72069",
+    "primary_county_name": "Humacao Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 3,
+    "all_counties_json": "[\"USA-PR-72069\", \"USA-PR-72085\", \"USA-PR-72151\"]"
+  },
+  {
+    "zcta": "00794",
+    "zcta_loc_id": "USA-Z-00794",
+    "primary_county_loc_id": "USA-PR-72019",
+    "primary_county_name": "Barranquitas Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 2,
+    "all_counties_json": "[\"USA-PR-72019\", \"USA-PR-72043\"]"
+  },
+  {
+    "zcta": "00795",
+    "zcta_loc_id": "USA-Z-00795",
+    "primary_county_loc_id": "USA-PR-72075",
+    "primary_county_name": "Juana D\u00edaz Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72075\"]"
+  },
+  {
+    "zcta": "00802",
+    "zcta_loc_id": "USA-Z-00802",
+    "primary_county_loc_id": "USA-VI-78030",
+    "primary_county_name": "St. Thomas Island",
+    "state_abbrev": "VI",
+    "state_loc_id": "USA-VI",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-VI-78030\"]"
+  },
+  {
+    "zcta": "00820",
+    "zcta_loc_id": "USA-Z-00820",
+    "primary_county_loc_id": "USA-VI-78010",
+    "primary_county_name": "St. Croix Island",
+    "state_abbrev": "VI",
+    "state_loc_id": "USA-VI",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-VI-78010\"]"
+  },
+  {
+    "zcta": "00830",
+    "zcta_loc_id": "USA-Z-00830",
+    "primary_county_loc_id": "USA-VI-78020",
+    "primary_county_name": "St. John Island",
+    "state_abbrev": "VI",
+    "state_loc_id": "USA-VI",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-VI-78020\"]"
+  },
+  {
+    "zcta": "00840",
+    "zcta_loc_id": "USA-Z-00840",
+    "primary_county_loc_id": "USA-VI-78010",
+    "primary_county_name": "St. Croix Island",
+    "state_abbrev": "VI",
+    "state_loc_id": "USA-VI",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-VI-78010\"]"
+  },
+  {
+    "zcta": "00850",
+    "zcta_loc_id": "USA-Z-00850",
+    "primary_county_loc_id": "USA-VI-78010",
+    "primary_county_name": "St. Croix Island",
+    "state_abbrev": "VI",
+    "state_loc_id": "USA-VI",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-VI-78010\"]"
+  },
+  {
+    "zcta": "00851",
+    "zcta_loc_id": "USA-Z-00851",
+    "primary_county_loc_id": "USA-VI-78010",
+    "primary_county_name": "St. Croix Island",
+    "state_abbrev": "VI",
+    "state_loc_id": "USA-VI",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-VI-78010\"]"
+  },
+  {
+    "zcta": "00901",
+    "zcta_loc_id": "USA-Z-00901",
+    "primary_county_loc_id": "USA-PR-72127",
+    "primary_county_name": "San Juan Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72127\"]"
+  },
+  {
+    "zcta": "00906",
+    "zcta_loc_id": "USA-Z-00906",
+    "primary_county_loc_id": "USA-PR-72127",
+    "primary_county_name": "San Juan Municipio",
+    "state_abbrev": "PR",
+    "state_loc_id": "USA-PR",
+    "county_count": 1,
+    "all_counties_json": "[\"USA-PR-72127\"]"
+  }
+]

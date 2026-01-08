@@ -70,7 +70,13 @@ export const CONFIG = {
     hurricaneCircle: 'hurricane-circle',
     hurricaneLabel: 'hurricane-label',
     hurricaneTrackLine: 'hurricane-track-line',
-    hurricaneTrackSource: 'hurricane-track'
+    hurricaneTrackSource: 'hurricane-track',
+    // Event layer (earthquakes, volcanoes, etc.)
+    eventSource: 'event-points',
+    eventCircle: 'event-circle',
+    eventLabel: 'event-label',
+    eventRadiusOuter: 'event-radius-outer',
+    eventRadiusInner: 'event-radius-inner'
   },
 
   // Selection mode colors (for disambiguation highlighting)
@@ -95,6 +101,33 @@ export const CONFIG = {
     4: '#ff8f20',       // Cat 4 (113-136 kt) - dark orange
     5: '#ff6060',       // Cat 5 (>137 kt) - red
     default: '#aaaaaa'  // Unknown/other
+  },
+
+  // Earthquake magnitude colors (yellow to red scale)
+  earthquakeColors: {
+    // Magnitude ranges
+    minor: '#ffeda0',     // M < 4.0 - pale yellow
+    light: '#fed976',     // M 4.0-4.9 - yellow
+    moderate: '#feb24c',  // M 5.0-5.9 - orange
+    strong: '#fd8d3c',    // M 6.0-6.9 - dark orange
+    major: '#f03b20',     // M 7.0+ - red
+    // Radius circle colors
+    feltRadius: '#ff9900',    // Outer felt radius - orange
+    damageRadius: '#ff3300',  // Inner damage radius - red
+    default: '#ffcc00'        // Default yellow
+  },
+
+  // Volcano eruption colors (by VEI)
+  volcanoColors: {
+    0: '#aaaaaa',   // VEI 0 - gray
+    1: '#ffeda0',   // VEI 1 - pale yellow
+    2: '#fed976',   // VEI 2 - yellow
+    3: '#feb24c',   // VEI 3 - orange
+    4: '#fd8d3c',   // VEI 4 - dark orange
+    5: '#f03b20',   // VEI 5 - red
+    6: '#bd0026',   // VEI 6 - dark red
+    7: '#800026',   // VEI 7+ - maroon
+    default: '#ffcc00'
   },
 
   // API endpoints
