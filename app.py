@@ -563,6 +563,8 @@ async def chat_endpoint(req: Request):
                     response["year_data"] = result["year_data"]
                     response["year_range"] = result["year_range"]
                     response["metric_key"] = result.get("metric_key")
+                    response["available_metrics"] = result.get("available_metrics", [])
+                    response["metric_year_ranges"] = result.get("metric_year_ranges", {})
                 return JSONResponse(content=response)
             except Exception as e:
                 logger.error(f"Order execution error: {e}")

@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Optional
 import logging
 
-from .data_loading import load_catalog
+from .data_loading import load_catalog, load_source_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -290,9 +290,15 @@ def lookup_location_in_viewport(query: str, viewport: dict = None) -> dict:
         country_name = iso_data.get("iso3_to_name", {}).get(iso3, iso3) if iso_data else iso3
 
         # Sort by length (longest first) to match most specific names
-        # Filter out stop words that cause false positives (e.g., "Has" in Albania)
+        # Filter out:
+        # - Stop words that cause false positives (e.g., "Has" in Albania)
+        # - Numeric-only strings (e.g., "3" from "those 3 data points")
+        # - Very short strings (single characters)
         sorted_names = sorted(
-            [n for n in names.keys() if n not in LOCATION_STOP_WORDS],
+            [n for n in names.keys()
+             if n not in LOCATION_STOP_WORDS
+             and not n.isdigit()  # Filter out pure numbers
+             and len(n) >= 2],    # Filter out single characters
             key=len, reverse=True
         )
 
@@ -514,16 +520,23 @@ def get_relevant_sources_with_metrics(topics: list, iso3: str = None) -> dict:
 
     Returns:
         Dict with:
-        - sources: List of relevant sources with metric names
+        - sources: List of relevant sources with metric names (FULL list for country sources)
         - country_summary: llm_summary from country index.json (if available)
+        - country_index: Full country index data (datasets, admin_levels, etc.)
     """
-    result = {"sources": [], "country_summary": None}
+    result = {"sources": [], "country_summary": None, "country_index": None}
 
-    # Load country index.json for llm_summary if location specified
+    # Load country index.json for full context if location specified
     if iso3:
         country_index = load_country_index(iso3)
         if country_index:
             result["country_summary"] = country_index.get("llm_summary")
+            # Include full index data for LLM context
+            result["country_index"] = {
+                "datasets": country_index.get("datasets", []),
+                "admin_levels": country_index.get("admin_levels", []),
+                "admin_counts": country_index.get("admin_counts", {}),
+            }
 
     catalog = load_catalog()
     sources = catalog.get("sources", [])
@@ -581,22 +594,46 @@ def get_relevant_sources_with_metrics(topics: list, iso3: str = None) -> dict:
         if not include_source:
             continue
 
-        # Build metric list with actual column names
+        # For country-specific sources, load FULL metadata to get ALL metrics
+        # For global sources, use catalog (trimmed) to avoid loading too many files
         metric_list = []
-        for metric_key, metric_info in metrics.items():
-            metric_name = metric_info.get("name", metric_key)
-            metric_list.append({
-                "column": metric_key,
-                "name": metric_name,
-                "unit": metric_info.get("unit", "")
-            })
+        if is_country_source:
+            # Load full metadata.json for complete metric list
+            full_metadata = load_source_metadata(source_id)
+            if full_metadata:
+                full_metrics = full_metadata.get("metrics", {})
+                for metric_key, metric_info in full_metrics.items():
+                    metric_name = metric_info.get("name", metric_key)
+                    metric_list.append({
+                        "column": metric_key,
+                        "name": metric_name,
+                        "unit": metric_info.get("unit", "")
+                    })
+            else:
+                # Fallback to catalog if metadata not found
+                for metric_key, metric_info in metrics.items():
+                    metric_list.append({
+                        "column": metric_key,
+                        "name": metric_info.get("name", metric_key),
+                        "unit": metric_info.get("unit", "")
+                    })
+        else:
+            # Global sources - use catalog (trimmed to avoid bloat)
+            for metric_key, metric_info in metrics.items():
+                metric_name = metric_info.get("name", metric_key)
+                metric_list.append({
+                    "column": metric_key,
+                    "name": metric_name,
+                    "unit": metric_info.get("unit", "")
+                })
 
         if metric_list:
             relevant.append({
                 "source_id": source_id,
                 "source_name": source.get("source_name", source_id),
                 "scope": scope,
-                "metrics": metric_list
+                "metrics": metric_list,
+                "is_country_source": is_country_source  # Flag for tier3 context
             })
 
     result["sources"] = relevant
@@ -731,6 +768,11 @@ TIME_PATTERNS = {
         r"between\s+(\d{4})\s+and\s+(\d{4})",
         r"(\d{4})\s*[-to]+\s*(\d{4})",
     ],
+    "year_to_now": [
+        # "from 2010 to now", "2015 to present", "from 2000 until now"
+        r"from\s+(\d{4})\s+(?:to|until)\s+(?:now|present|today|current)",
+        r"(\d{4})\s+(?:to|until)\s+(?:now|present|today|current)",
+    ],
     "trend_indicators": [
         r"\btrend\b",
         r"\bover time\b",
@@ -785,6 +827,16 @@ def detect_time_patterns(query: str) -> dict:
             result["year_start"] = int(match.group(1))
             result["year_end"] = int(match.group(2))
             result["pattern_type"] = "year_range"
+            return result
+
+    # Check for "year to now" patterns (e.g., "from 2010 to now")
+    for pattern in TIME_PATTERNS["year_to_now"]:
+        match = re.search(pattern, query_lower)
+        if match:
+            result["is_time_series"] = True
+            result["year_start"] = int(match.group(1))
+            result["year_end"] = 2024  # Current year
+            result["pattern_type"] = "year_to_now"
             return result
 
     # Check for trend indicators
@@ -1192,7 +1244,7 @@ def detect_derived_intent(query: str) -> Optional[dict]:
 
 # Patterns that indicate user wants to navigate/view locations, not request data
 NAVIGATION_PATTERNS = [
-    r"^show me\b",
+    r"^show me\b(?!.*data|.*from)",  # "show me X" but not "show me data" or "show me data from"
     r"^where is\b",
     r"^where are\b",
     r"^locate\b",
@@ -1200,7 +1252,7 @@ NAVIGATION_PATTERNS = [
     r"^zoom to\b",
     r"^go to\b",
     r"^take me to\b",
-    r"^show\b(?!.*data|.*gdp|.*population)",  # "show X" but not "show data/gdp/population"
+    r"^show\b(?!.*data|.*gdp|.*population|.*from)",  # "show X" but not "show data/gdp/population/from"
 ]
 
 # Patterns for "show borders/geometry" follow-up requests (no data, just display)
@@ -1211,6 +1263,71 @@ SHOW_BORDERS_PATTERNS = [
     r"^(?:put|display|show)\s+(?:them\s+)?(?:all\s+)?on\s+(?:the\s+)?map\b",
     r"^(?:just\s+)?the\s+(?:borders?|geometr(?:y|ies)|locations?)\b",
 ]
+
+
+def detect_source_from_query(query: str) -> Optional[dict]:
+    """
+    Detect if user mentions a specific data source by name.
+    Maps human-readable source names to source_ids.
+    
+    Handles:
+    - Full source_name matches
+    - Partial source_name matches (e.g., 'Australian Bureau of Statistics' matches 'ABS - Regional Demographics')
+    - source_id matches (for power users)
+    
+    Returns dict with source_id and source_name if found, None otherwise.
+    """
+    query_lower = query.lower()
+    catalog = load_catalog()
+    
+    if not catalog:
+        return None
+    
+    sources = catalog.get("sources", [])
+    source_matches = []
+    
+    for source in sources:
+        source_id = source.get("source_id", "")
+        source_name = source.get("source_name", "")
+        source_name_lower = source_name.lower() if source_name else ""
+        
+        # Check if full source_name appears in query
+        if source_name and source_name_lower in query_lower:
+            source_matches.append({
+                "source_id": source_id,
+                "source_name": source_name,
+                "match_length": len(source_name)
+            })
+        # Also check if main part of source_name appears in query
+        # Split by common separators like ' - ', ':', ','
+        elif source_name:
+            name_parts = [p.strip() for p in source_name.replace(' - ', '|').replace(': ', '|').split('|')]
+            for part in name_parts:
+                if len(part) >= 4 and part.lower() in query_lower:
+                    source_matches.append({
+                        "source_id": source_id,
+                        "source_name": source_name,
+                        "match_length": len(part)
+                    })
+                    break
+        
+        # Check if source_id appears (for power users, underscore-separated)
+        if source_id and source_id.lower() in query_lower:
+            source_matches.append({
+                "source_id": source_id,
+                "source_name": source_name or source_id,
+                "match_length": len(source_id) + 10  # Boost exact source_id matches
+            })
+    
+    if source_matches:
+        # Return the longest match (most specific)
+        best_match = max(source_matches, key=lambda x: x["match_length"])
+        return {
+            "source_id": best_match["source_id"],
+            "source_name": best_match["source_name"]
+        }
+    
+    return None
 
 
 def detect_show_borders_intent(query: str) -> dict:
@@ -1538,12 +1655,25 @@ def preprocess_query(query: str, viewport: dict = None) -> dict:
                     "count": len(locations)
                 }
 
+    # Detect source FIRST - if user mentions a data source by name, this takes priority
+    # over location matching (e.g., "Australian Bureau of Statistics" should not match "Bureau County")
+    detected_source = detect_source_from_query(query)
+    
     # Resolve location for non-navigation queries (data orders, etc.)
     # Pass viewport to enable parquet-based city/location lookups
     location = None
 
     if not navigation and not disambiguation:
         location_result = extract_country_from_query(query, viewport=viewport)
+        
+        # If a source was detected, filter out false positive location matches
+        # that are substrings of the source name
+        if detected_source and location_result.get("match"):
+            source_name_lower = detected_source.get("source_name", "").lower()
+            matched_term = location_result["match"][0].lower()
+            # If the matched location term is part of the source name, ignore it
+            if matched_term in source_name_lower:
+                location_result = {}  # Clear the false positive match
 
         if location_result.get("match"):
             matched_term, iso3, is_subregion = location_result["match"]
@@ -1579,6 +1709,7 @@ def preprocess_query(query: str, viewport: dict = None) -> dict:
         "time": detect_time_patterns(query),
         "reference_lookup": detect_reference_lookup(query),
         "derived_intent": detect_derived_intent(query),
+        "detected_source": detected_source,  # Already detected earlier for location filtering
     }
 
     # Build summary for LLM context injection
@@ -1618,6 +1749,9 @@ def preprocess_query(query: str, viewport: dict = None) -> dict:
     if hints["derived_intent"]:
         summary_parts.append(f"Derived calculation: {hints['derived_intent']['type']}")
 
+    if hints["detected_source"]:
+        summary_parts.append(f"Source specified: {hints['detected_source']['source_name']}")
+
     hints["summary"] = "; ".join(summary_parts) if summary_parts else None
 
     return hints
@@ -1635,13 +1769,35 @@ def build_tier3_context(hints: dict) -> str:
     if hints.get("summary"):
         context_parts.append(f"[Preprocessor hints: {hints['summary']}]")
 
-    # Add viewport context - helps LLM understand what level user is viewing
+    # Check if user explicitly mentioned a location in their query
+    explicit_location = hints.get("location")
+
+    # Add viewport context - but ONLY for admin level, NOT country inference
+    # Country inference only happens when user doesn't mention a location explicitly
     viewport = hints.get("viewport")
     if viewport:
         admin_level = viewport.get("adminLevel", 0)
         level_names = {0: "countries", 1: "states/provinces", 2: "counties/districts", 3: "subdivisions"}
         level_name = level_names.get(admin_level, f"level {admin_level}")
         context_parts.append(f"[VIEWPORT: User is viewing at {level_name} level]")
+
+        # ONLY infer country from viewport if:
+        # 1. User did NOT explicitly mention a location
+        # 2. Zoom level >= 3 (zoomed in enough to be focused on a region)
+        # 3. Single country visible in viewport
+        zoom_level = viewport.get("zoom", 0)
+        if not explicit_location and viewport.get("bounds") and zoom_level >= 3:
+            countries_in_view = get_countries_in_viewport(viewport["bounds"])
+
+            if len(countries_in_view) == 1:
+                # Single country in view - infer as user's focus
+                iso3 = countries_in_view[0]
+                iso_data = load_reference_file(REFERENCE_DIR / "iso_codes.json")
+                country_name = iso_data.get("iso3_to_name", {}).get(iso3, iso3) if iso_data else iso3
+                context_parts.append(
+                    f"[INFERRED LOCATION: User appears to be viewing {country_name} ({iso3}). "
+                    f"Use this country's data sources unless they specify otherwise.]"
+                )
 
     # Check for disambiguation needed FIRST - if ambiguous, LLM should ask for clarification
     disambiguation = hints.get("disambiguation")
@@ -1675,6 +1831,32 @@ def build_tier3_context(hints: dict) -> str:
             context_parts.append(
                 f"[LOCATION: {location['country_name']} (loc_id={location['iso3']})]"
             )
+
+    # If user mentioned a specific data source, show its available metrics
+    detected_source = hints.get("detected_source")
+    if detected_source:
+        source_id = detected_source.get("source_id")
+        source_name = detected_source.get("source_name")
+        metadata = load_source_metadata(source_id)
+        if metadata:
+            metrics = metadata.get("metrics", {})
+            metric_names = list(metrics.keys())[:10]
+            temporal = metadata.get("temporal_coverage", {})
+            year_range = f"{temporal.get('start', '?')}-{temporal.get('end', '?')}"
+            metric_display = []
+            for m in metric_names:
+                info = metrics.get(m, {})
+                name = info.get("name", m)
+                unit = info.get("unit", "")
+                if unit and unit != "unknown":
+                    metric_display.append(f"{name} ({unit})")
+                else:
+                    metric_display.append(name)
+            msg = f"[SOURCE DETECTED: {source_name}]"
+            msg += f" Years: {year_range}."
+            msg += f" Available metrics: {', '.join(metric_display)}."
+            msg += " (User can ask for any of these, or '*' for all)"
+            context_parts.append(msg)
 
     # Add resolved region details
     if hints.get("regions"):
@@ -1711,6 +1893,23 @@ def build_tier3_context(hints: dict) -> str:
         source_hints = get_relevant_sources_with_metrics(topics, iso3)
         relevant_sources = source_hints.get("sources", [])
         country_summary = source_hints.get("country_summary")
+        country_index = source_hints.get("country_index")
+
+        # Add country index data (datasets, admin levels) if available
+        if country_index:
+            datasets = country_index.get("datasets", [])
+            admin_levels = country_index.get("admin_levels", [])
+            admin_counts = country_index.get("admin_counts", {})
+            if datasets:
+                level_info = []
+                for level in admin_levels:
+                    count = admin_counts.get(str(level))
+                    if count:
+                        level_info.append(f"admin_{level}={count}")
+                admin_str = f" ({', '.join(level_info)})" if level_info else ""
+                context_parts.append(
+                    f"[COUNTRY DATASETS: {', '.join(datasets)}{admin_str}]"
+                )
 
         # Add country summary from index.json if available
         if country_summary:
@@ -1718,22 +1917,27 @@ def build_tier3_context(hints: dict) -> str:
 
         if relevant_sources:
             # Prioritize country-specific sources first
-            country_sources = [s for s in relevant_sources if s["scope"] != "global"]
-            global_sources = [s for s in relevant_sources if s["scope"] == "global"]
+            country_sources = [s for s in relevant_sources if s.get("is_country_source")]
+            global_sources = [s for s in relevant_sources if not s.get("is_country_source")]
 
-            hints_lines = ["[AVAILABLE DATA SOURCES for this query - USE THESE EXACT METRIC NAMES:]"]
+            hints_lines = [
+                "[CRITICAL - EXACT METRIC NAMES REQUIRED:]",
+                "You MUST use these EXACT column names. Do NOT use aliases like 'total_population' or 'population' - use the exact names below:"
+            ]
 
-            # Country-specific sources first (more relevant)
-            for src in country_sources[:3]:  # Limit to avoid token bloat
-                metrics_str = ", ".join([f"{m['column']}" for m in src["metrics"][:5]])
-                hints_lines.append(f"- {src['source_name']} ({src['source_id']}): metrics=[{metrics_str}]")
+            # Country-specific sources - show ALL metrics (full metadata was loaded)
+            for src in country_sources[:3]:  # Limit sources but not metrics
+                metrics_list = [f'"{m["column"]}"' for m in src["metrics"]]  # ALL metrics
+                metrics_str = ", ".join(metrics_list)
+                hints_lines.append(f"- {src['source_id']}: [{metrics_str}]")
 
-            # Then global sources
-            for src in global_sources[:2]:  # Limit global to 2
-                metrics_str = ", ".join([f"{m['column']}" for m in src["metrics"][:5]])
-                hints_lines.append(f"- {src['source_name']} ({src['source_id']}): metrics=[{metrics_str}]")
+            # Global sources - show limited metrics (catalog only)
+            for src in global_sources[:2]:  # Limit global to 2 sources
+                metrics_list = [f'"{m["column"]}"' for m in src["metrics"][:5]]  # First 5 only
+                metrics_str = ", ".join(metrics_list)
+                hints_lines.append(f"- {src['source_id']}: [{metrics_str}]")
 
-            if len(hints_lines) > 1:  # More than just the header
+            if len(hints_lines) > 2:  # More than just the headers
                 context_parts.append("\n".join(hints_lines))
 
     return "\n".join(context_parts) if context_parts else ""

@@ -33,10 +33,14 @@ from data_converters.base import (
 from build.catalog.finalize_source import finalize_source
 
 # Configuration
-RAW_DATA_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/Raw data/mtbs")
+RAW_DATA_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/Raw data/imported/mtbs")
 GEOMETRY_PATH = Path("C:/Users/Bryan/Desktop/county-map-data/geometry/USA.parquet")
 OUTPUT_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/countries/USA/wildfires")
 SOURCE_ID = "mtbs_wildfires"
+
+# Simplification tolerance for perimeter geometry (degrees)
+# ~0.001 deg = ~100m at mid-latitudes, good balance of detail vs file size
+SIMPLIFY_TOLERANCE = 0.001
 
 # Incident types
 INCIDENT_TYPES = {
@@ -187,6 +191,13 @@ def process_perimeters(perimeters_gdf):
         perimeters_gdf['centroid_lat'] = centroids.y
         perimeters_gdf['centroid_lon'] = centroids.x
 
+    # Simplify perimeter geometry for web display
+    print(f"  Simplifying perimeter geometry (tolerance={SIMPLIFY_TOLERANCE} deg)...")
+    original_size = perimeters_gdf.geometry.apply(lambda g: len(g.wkt) if g else 0).sum()
+    perimeters_gdf['geometry'] = perimeters_gdf.geometry.simplify(SIMPLIFY_TOLERANCE, preserve_topology=True)
+    simplified_size = perimeters_gdf.geometry.apply(lambda g: len(g.wkt) if g else 0).sum()
+    print(f"    Size reduction: {original_size/1e6:.1f}MB -> {simplified_size/1e6:.1f}MB ({100-simplified_size/original_size*100:.0f}% smaller)")
+
     print(f"  Year range: {perimeters_gdf['year'].min()}-{perimeters_gdf['year'].max()}")
     print(f"  Total acres burned: {perimeters_gdf['burned_acres'].sum():,.0f}")
 
@@ -276,8 +287,27 @@ def geocode_fires_to_counties(fires_gdf, counties_gdf):
     return fires_with_county
 
 
+def geometry_to_geojson(geom):
+    """Convert shapely geometry to GeoJSON string."""
+    if geom is None or geom.is_empty:
+        return None
+    try:
+        from shapely.geometry import mapping
+        return json.dumps(mapping(geom))
+    except Exception:
+        return None
+
+
 def create_fires_parquet(fires_gdf):
-    """Create fires.parquet with individual fire events."""
+    """Create fires.parquet with individual fire events including perimeter geometry."""
+    print("\nCreating fires.parquet with perimeter geometry...")
+
+    # Convert perimeter geometry to GeoJSON strings
+    print("  Converting perimeters to GeoJSON...")
+    perimeter_geojson = fires_gdf.geometry.apply(geometry_to_geojson)
+    valid_perimeters = perimeter_geojson.notna().sum()
+    print(f"    Valid perimeters: {valid_perimeters:,} ({valid_perimeters/len(fires_gdf)*100:.1f}%)")
+
     # Select columns for output
     fires_out = pd.DataFrame({
         'event_id': fires_gdf.get('event_id', fires_gdf.index),
@@ -288,6 +318,7 @@ def create_fires_parquet(fires_gdf):
         'burned_acres': fires_gdf.get('burned_acres'),
         'centroid_lat': fires_gdf.get('centroid_lat'),
         'centroid_lon': fires_gdf.get('centroid_lon'),
+        'perimeter': perimeter_geojson,  # GeoJSON string of simplified perimeter
         'loc_id': fires_gdf.get('loc_id'),
         'county_name': fires_gdf.get('county_name'),
         'state_fips': fires_gdf.get('state_fips')
@@ -308,7 +339,11 @@ def create_fires_parquet(fires_gdf):
     # Save using base utility
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     output_path = OUTPUT_DIR / "fires.parquet"
-    save_parquet(fires_out, output_path, description="fire events")
+    save_parquet(fires_out, output_path, description="fire events with perimeters")
+
+    # Report file size
+    file_size_mb = output_path.stat().st_size / 1e6
+    print(f"  Output file size: {file_size_mb:.1f}MB")
 
     return fires_out
 
@@ -430,9 +465,12 @@ def generate_metadata(fires_df, county_df):
         "files": {
             "fires": {
                 "filename": "fires.parquet",
-                "description": "Individual large fire events with location and burned acres",
+                "description": "Individual large fire events with perimeter geometry, location, and burned acres",
                 "record_type": "event",
-                "record_count": len(fires_df)
+                "record_count": len(fires_df),
+                "has_geometry": True,
+                "geometry_column": "perimeter",
+                "geometry_type": "Polygon/MultiPolygon"
             },
             "county_aggregates": {
                 "filename": "USA.parquet",

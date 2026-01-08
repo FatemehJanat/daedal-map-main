@@ -158,6 +158,38 @@ export const ChoroplethManager = {
   },
 
   /**
+   * Update color scale based on a subset of values (e.g., for admin level filtering).
+   * Recalculates min/max from provided values and updates the legend and map colors.
+   * @param {number[]} values - Array of numeric values to calculate scale from
+   * @param {string} metric - Current metric name (for map paint property)
+   */
+  updateScaleForValues(values, metric) {
+    if (!values || values.length === 0) return;
+
+    // Filter out null/NaN values
+    const validValues = values.filter(v => v != null && !isNaN(v));
+    if (validValues.length === 0) return;
+
+    this.minValue = Math.min(...validValues);
+    this.maxValue = Math.max(...validValues);
+
+    // Update color scale function
+    this.colorScale = this.createScale(this.minValue, this.maxValue);
+
+    // Update legend with new range
+    this.legendMin.textContent = this.formatValue(this.minValue);
+    this.legendMax.textContent = this.formatValue(this.maxValue);
+
+    // Update map paint property with new scale
+    if (MapAdapter?.map?.getLayer(CONFIG.layers.fill)) {
+      const colorExpression = this.buildInterpolateExpression(metric || this.metric);
+      MapAdapter.map.setPaintProperty(CONFIG.layers.fill, 'fill-color', colorExpression);
+    }
+
+    console.log(`ChoroplethManager: Updated scale to ${this.formatValue(this.minValue)} - ${this.formatValue(this.maxValue)}`);
+  },
+
+  /**
    * Build MapLibre interpolate expression for data-driven colors
    * Uses turbo color stops and reads value directly from feature properties
    */

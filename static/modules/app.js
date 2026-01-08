@@ -324,6 +324,7 @@ export const App = {
       // Multi-year mode: initialize time slider
       console.log('Multi-year data detected, initializing time slider');
       console.log(`Year range: ${data.year_range.min} - ${data.year_range.max}`);
+      console.log('DEBUG app.js: metric_year_ranges from response:', data.metric_year_ranges);
 
       // Hide any existing slider/legend first
       TimeSlider.reset();
@@ -334,7 +335,9 @@ export const App = {
         data.year_range,
         data.year_data,
         data.geojson,
-        data.metric_key
+        data.metric_key,
+        data.available_metrics,  // Explicit list of metrics from order
+        data.metric_year_ranges  // Per-metric year ranges for slider adjustment
       );
 
       // Fit map to the data, then apply initial admin level filter

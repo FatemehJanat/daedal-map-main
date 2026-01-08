@@ -288,6 +288,39 @@
       color: #666;
     }
 
+    /* Metric tabs (above time slider) */
+    .metric-tabs {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 10px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #3d3d5c;
+      flex-wrap: wrap;
+    }
+
+    .metric-tab {
+      padding: 5px 12px;
+      background: #2d2d44;
+      border: 1px solid #3d3d5c;
+      border-radius: 4px;
+      color: #a0a0a0;
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+
+    .metric-tab:hover {
+      background: #3d3d5c;
+      color: #d0d0d0;
+    }
+
+    .metric-tab.active {
+      background: #0f4c75;
+      border-color: #1a6a9e;
+      color: #ffffff;
+    }
+
     .time-slider-tab .tab-close:hover {
       background: rgba(255,100,100,0.3);
       color: #ff6666;
@@ -1131,6 +1164,8 @@
 
   <!-- Time Slider -->
   <div id="timeSliderContainer">
+    <!-- Metric tabs (shown when multiple metrics available) -->
+    <div id="metricTabs" class="metric-tabs" style="display: none;"></div>
     <!-- Multi-scale tabs (hidden when only one scale) -->
     <div id="timeSliderTabs" class="time-slider-tabs" style="display: none;"></div>
     <div class="time-slider-header">

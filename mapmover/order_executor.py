@@ -418,7 +418,9 @@ def execute_order(order: dict) -> dict:
     year_data = {} if multi_year_mode else None
     boxes = {} if not multi_year_mode else None
     all_years = set()
-    metric_key = None  # Track the metric label for frontend
+    metric_key = None  # Track the primary metric label for frontend
+    all_metrics = []  # Track ALL metric labels for multi-metric support
+    metric_year_ranges = {}  # Track year range per metric for time slider adjustment
     requested_year_start = None  # Track requested range for comparison
     requested_year_end = None
 
@@ -454,8 +456,15 @@ def execute_order(order: dict) -> dict:
             metric_col = numeric_cols[0] if len(numeric_cols) > 0 else None
 
         # Store metric label for frontend
-        if metric_col and not metric_key:
-            metric_key = item.get("metric_label", metric_col)
+        item_label = item.get("metric_label", metric_col)
+        if metric_col and item_label:
+            if not metric_key:
+                metric_key = item_label  # First metric is the default
+            if item_label not in all_metrics:
+                all_metrics.append(item_label)  # Track all metrics
+            # Track year range per metric
+            if year_start and year_end:
+                metric_year_ranges[item_label] = {"min": year_start, "max": year_end}
 
         # Filter by year (different logic for single vs range)
         if year_start and year_end and "year" in df.columns:
@@ -676,6 +685,8 @@ def execute_order(order: dict) -> dict:
             "available_years": sorted_years
         }
         response["metric_key"] = metric_key
+        response["available_metrics"] = all_metrics  # All metrics from order items
+        response["metric_year_ranges"] = metric_year_ranges  # Per-metric year ranges for slider
 
         # Add data note if year range differs from requested
         data_notes = []

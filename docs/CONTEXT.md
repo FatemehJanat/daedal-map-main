@@ -12,19 +12,20 @@ Technical index for understanding the system architecture. For a non-technical o
 |----------|---------|
 | [README.md](../README.md) | Non-technical overview and quick start |
 | **CONTEXT.md** (this file) | System architecture and technical index |
-| [DATA_PIPELINE.md](DATA_PIPELINE.md) | Data format, converters, dataset catalog |
+| [data_import.md](data_import.md) | Adding new data sources (start here for new data) |
+| [data_pipeline.md](data_pipeline.md) | Data format, converters, folder structure |
 | [GEOMETRY.md](GEOMETRY.md) | Geometry system, loc_id specification |
 | [CHAT.md](CHAT.md) | Chat system, LLM prompting, order model |
 | [MAPPING.md](MAPPING.md) | Frontend visualization, MapLibre, choropleth |
-| [FRONTEND_MODULES.md](FRONTEND_MODULES.md) | ES6 module structure for mapviewer.js |
+| [FRONTEND_MODULES.md](FRONTEND_MODULES.md) | ES6 module structure |
 | [ADMIN_DASHBOARD.md](ADMIN_DASHBOARD.md) | Admin dashboard design, import wizard |
 
-### Ongoing Implementation Plans
+### Planning Documents
 
-| Document | Status |
-|----------|--------|
+| Document | Purpose |
+|----------|---------|
+| [chat_refactor.md](chat_refactor.md) | Future: Candidate-based preprocessor architecture |
 | [TIME_SLIDER_PLAN.md](TIME_SLIDER_PLAN.md) | Time slider feature spec |
-| [WORLD_FACTBOOK_CONVERTER_REFERENCE.md](../data_converters/WORLD_FACTBOOK_CONVERTER_REFERENCE.md) | World Factbook parser reference |
 
 ---
 
@@ -69,12 +70,12 @@ The system is split into two distinct sides with a shared data folder as the con
 |                      The contract between both sides                         |
 +==============================================================================+
 |                                                                              |
-|    catalog.json     Raw data/       geometry/           data/                |
+|    catalog.json     Raw data/       global/             countries/           |
 |    +------------+   +-----------+   +-------------+     +----------------+   |
-|    | 23 sources |   | gadm.gpkg |   | global.csv  |     | owid_co2/      |   |
-|    | for LLM    |   | census/   |   | USA.parquet |     | who_health/    |   |
-|    +------------+   | owid/     |   | DEU.parquet |     | un_sdg_01-17/  |   |
-|                     +-----------+   | ...257 more |     | census_*/      |   |
+|    | 40+sources |   | gadm.gpkg |   | geometry.csv|     | USA/           |   |
+|    | for LLM    |   | census/   |   | owid_co2/   |     |   geometry.prq |   |
+|    +------------+   | owid/     |   | who_health/ |     |   census_*/    |   |
+|                     +-----------+   | un_sdg/     |     | AUS/, CAN/,... |   |
 |                                     +-------------+     +----------------+   |
 |                                                                              |
 +==============================================================================+
@@ -111,7 +112,9 @@ county-map/                      # Main repository
 |
 |   mapmover/                    # Core runtime package
 |     __init__.py                # Package exports
+|     preprocessor.py            # Query preprocessing, intent detection
 |     order_taker.py             # LLM interprets user requests
+|     postprocessor.py           # Order validation, metric expansion
 |     order_executor.py          # Execute orders against parquet
 |     response_builder.py        # GeoJSON response building
 |     data_loading.py            # Load catalog.json, source metadata
@@ -142,7 +145,10 @@ county-map/                      # Main repository
 |       config.js                # Configuration settings
 |       map-adapter.js           # MapLibre interface
 |       viewport-loader.js       # Loading strategy
-|       (+ 7 more modules)
+|       time-slider.js           # Time series playback
+|       choropleth.js            # Color scaling
+|       chat-panel.js            # Chat UI
+|       (+ 6 more modules)
 |
 +-- BUILD (Offline Tools) --------------------------------------
 |
@@ -157,15 +163,16 @@ county-map/                      # Main repository
 |     catalog/                   # Catalog generation
 |       catalog_builder.py       # Build catalog.json
 |       metadata_generator.py    # Generate metadata.json files
-|     add_type_column.py         # One-off utility
+|       source_registry.py       # Central source metadata registry
 |     regenerate_metadata.py     # Regenerate metadata files
 |
 |   data_converters/             # Source-specific converters
 |     convert_owid_co2.py        # Our World in Data
 |     convert_who_health.py      # WHO health indicators
-|     convert_imf_bop.py         # IMF balance of payments
 |     convert_census_*.py        # US Census data
-|     convert_world_factbook.py  # CIA World Factbook
+|     convert_abs_population.py  # Australian Bureau of Statistics
+|     convert_*_earthquakes.py   # USGS/NRCAN earthquakes
+|     (+ 20 more converters)
 |
 |   admin/                       # Admin dashboard
 |     app.py                     # Streamlit UI
@@ -175,36 +182,43 @@ county-map/                      # Main repository
 |   README.md                    # Non-technical overview (root)
 |   docs/                        # Technical documentation
 |     CONTEXT.md                 # This file - technical index
-|     DATA_PIPELINE.md           # Data importing
+|     data_import.md             # Adding new data (quick start)
+|     data_pipeline.md           # Data format, folder structure
 |     GEOMETRY.md                # Geography system
 |     CHAT.md                    # Chat system
 |     MAPPING.md                 # Frontend visualization
-|     ADMIN_DASHBOARD.md         # Admin tools
-|     TIME_SLIDER_PLAN.md        # Time slider feature spec
 
 
 county-map-data/                 # External data folder (THE CONTRACT)
 |
 |   catalog.json                 # Unified catalog of all sources
+|   index.json                   # Router - which countries have data
 |
 |   Raw data/                    # Original source files
 |     gadm_410.gpkg              # GADM geometry source (2GB)
 |
-|   geometry/                    # OUTPUT: Location geometries
-|     global.csv                 # All countries (admin_0)
-|     {ISO3}.parquet             # Per-country subdivisions (257 files)
+|   global/                      # Multi-country datasets (admin_0)
+|     geometry.csv               # 252 country outlines
+|     owid_co2/                  # Our World in Data - CO2
+|     who_health/                # WHO health indicators
+|     un_sdg/01-17/              # UN SDG indicators
+|     eurostat/                  # European regional statistics
+|     world_factbook/            # CIA World Factbook
 |
-|   data/                        # OUTPUT: Indicator data by source
-|     owid_co2/
-|       all_countries.parquet
-|       metadata.json
-|     who_health/
-|       all_countries.parquet
-|       metadata.json
-|     un_sdg_01/ ... un_sdg_17/
-|     census_population/
-|       USA.parquet
-|       metadata.json
+|   countries/                   # Country-specific datasets
+|     USA/
+|       index.json               # What's available in USA
+|       geometry.parquet         # US counties (3,144)
+|       census_population/       # Census population data
+|       fema_nri/                # FEMA risk indices
+|       hurricanes/              # Hurricane tracks
+|     AUS/
+|       geometry.parquet         # Australian LGAs (547)
+|       abs_population/          # ABS demographics
+|     CAN/
+|       geometry.parquet         # Canadian divisions (5,875)
+|       nrcan_earthquakes/       # Canadian earthquakes
+|     (+ 37 European countries with Eurostat data)
 ```
 
 ---
@@ -234,7 +248,7 @@ The chat uses a "fast food kiosk" model. See [CHAT.md](CHAT.md).
 
 ### Data Pipeline
 
-All data uses long format parquet. See [DATA_PIPELINE.md](DATA_PIPELINE.md).
+All data uses long format parquet. See [data_pipeline.md](data_pipeline.md).
 
 ```
 loc_id | year | metric1 | metric2
@@ -246,8 +260,8 @@ USA    | 2021 | 4800    | 14.5
 
 416,066 locations across 257 countries. See [GEOMETRY.md](GEOMETRY.md).
 
-- Global countries: `geometry/global.csv`
-- Per-country subdivisions: `geometry/{ISO3}.parquet`
+- Global countries: `global/geometry.csv`
+- Per-country subdivisions: `countries/{ISO3}/geometry.parquet`
 
 ---
 
@@ -266,17 +280,26 @@ USA    | 2021 | 4800    | 14.5
 
 ## Data Sources Summary
 
-| Source | Coverage | Years | Metrics |
-|--------|----------|-------|---------|
-| owid_co2 | 217 countries | 1750-2024 | CO2, GDP, population, energy |
-| who_health | 198 countries | 2015-2024 | Life expectancy, mortality |
-| imf_bop | 195 countries | 2005-2022 | Trade balance, investments |
-| un_sdg_01-17 | 200+ countries | 2000-2023 | UN Sustainable Development Goals |
-| census_population | 3,144 US counties | 2020-2024 | Population by sex |
-| census_agesex | 3,144 US counties | 2019-2024 | Age brackets, median age |
-| census_demographics | 3,144 US counties | 2020-2024 | Race/ethnicity by sex |
+### Global Sources (multi-country)
 
-**Total**: 23+ data sources in catalog.json
+| Source | Coverage | Years | Category |
+|--------|----------|-------|----------|
+| owid_co2 | 217 countries | 1750-2024 | Environment |
+| who_health | 198 countries | 2015-2024 | Health |
+| imf_bop | 195 countries | 2005-2022 | Economy |
+| un_sdg_01-17 | 200+ countries | 2000-2023 | UN SDGs |
+| world_factbook | 250+ countries | 2007-2008 | Reference |
+| eurostat | 37 European | 2000-2024 | Demographics/Economy |
+
+### Country-Specific Sources
+
+| Country | Sources | Examples |
+|---------|---------|----------|
+| USA | 15+ | Census, FEMA, NOAA storms, hurricanes, earthquakes, wildfires |
+| Australia | 2 | ABS population, BOM cyclones |
+| Canada | 1 | NRCAN earthquakes |
+
+**Total**: 40+ data sources across global and country-specific datasets
 
 ---
 
@@ -314,8 +337,10 @@ python app.py
 
 | Module | Purpose |
 |--------|---------|
+| `preprocessor.py` | Query preprocessing, intent/location/source detection |
 | `order_taker.py` | LLM interprets user requests |
-| `order_executor.py` | Execute orders against parquet |
+| `postprocessor.py` | Order validation, derived metric expansion |
+| `order_executor.py` | Execute orders against parquet files |
 | `response_builder.py` | GeoJSON response construction |
 | `data_loading.py` | Load data from county-map-data |
 | `data_cascade.py` | Parent/child data lookups |
@@ -341,6 +366,8 @@ python app.py
 | `geometry/rebuild_global_csv.py` | Rebuild from parquets |
 | `catalog/catalog_builder.py` | Build catalog.json |
 | `catalog/metadata_generator.py` | Generate metadata.json files |
+| `catalog/source_registry.py` | Central source metadata (URLs, licenses) |
+| `regenerate_metadata.py` | Regenerate all metadata files |
 
 ---
 
@@ -406,4 +433,4 @@ Production testing on Railway platform:
 
 ---
 
-*Last Updated: 2026-01-01*
+*Last Updated: 2026-01-07*

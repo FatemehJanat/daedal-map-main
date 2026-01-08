@@ -153,7 +153,7 @@ def build_system_prompt(catalog: dict, conversions: dict) -> str:
         for src in other_sources:
             temp = src.get("temporal_coverage", {})
             name = src.get("source_name", src["source_id"])
-            lines.append(f"- {name} ({src['source_id']}): {temp.get('start', '?')}-{temp.get('end', '?')}")
+            lines.append(f"- {name}: {temp.get('start', '?')}-{temp.get('end', '?')}")
 
         # Group UN SDGs
         if sdg_sources:
@@ -197,11 +197,16 @@ IMPORTANT: Country-specific sources can ONLY be used for that country.
 REGIONS:
 {regions_text}
 
-WHEN USER ASKS "what data for [country]":
+WHEN USER ASKS "what data for [country]" or "what do you have":
 1. List that country's specific sources FIRST (if any)
 2. Then mention global sources are also available
 3. Be CONCISE - use human-readable names, group related sources
-4. Don't list every column or every SDG goal individually
+
+WHEN USER ASKS about a specific source ("what's in X?" or "show me metrics"):
+- List the available metrics from that source (check the [SOURCE DETECTED] context)
+- Show 5-8 example metrics with their names
+- Mention the year range available
+- Offer to show all metrics with "*" or specific ones
 
 ORDER FORMAT (JSON when user requests data):
 ```json
@@ -210,9 +215,14 @@ ORDER FORMAT (JSON when user requests data):
 
 RULES:
 - source_id: Must EXACTLY match one of the available sources
-- metric: Must be an EXACT column name from the source
+- metric: Must be an EXACT column name from the source, OR use "*" for ALL metrics from that source
 - region: lowercase (europe, g7, australia) or null for global
 - year: null = most recent
+
+WILDCARD METRICS:
+Use "metric": "*" when user asks for "all data", "everything", or "all metrics" from a source.
+Example: {{"source_id": "abs_population", "metric": "*", "region": "australia"}}
+This will be expanded to include ALL metrics from that source.
 
 RESPOND WITH:
 - JSON order (for data requests)
@@ -242,15 +252,8 @@ def interpret_request(user_query: str, chat_history: list = None, hints: dict = 
     # Build messages
     messages = [{"role": "system", "content": system_prompt}]
 
-    if chat_history:
-        for msg in chat_history[-4:]:  # Last 4 messages only
-            messages.append({
-                "role": msg.get("role", "user"),
-                "content": msg.get("content", "")
-            })
-
-    # Inject Tier 3/Tier 4 context from preprocessor hints
-    # Uses preprocessor functions that include metric hints injection
+    # Inject Tier 3/Tier 4 context BEFORE chat history
+    # This ensures current location/metric context takes priority over old conversations
     if hints:
         context_parts = []
 
@@ -264,11 +267,19 @@ def interpret_request(user_query: str, chat_history: list = None, hints: dict = 
         if tier4_context:
             context_parts.append(tier4_context)
 
-        # Add context as a system message before user query
+        # Add context as a system message BEFORE chat history
+        # This makes current context more prominent than historical messages
         if context_parts:
             messages.append({
                 "role": "system",
-                "content": "\n".join(context_parts)
+                "content": "[CURRENT CONTEXT - USE THIS FOR THE CURRENT QUERY]\n" + "\n".join(context_parts)
+            })
+
+    if chat_history:
+        for msg in chat_history[-4:]:  # Last 4 messages only
+            messages.append({
+                "role": msg.get("role", "user"),
+                "content": msg.get("content", "")
             })
 
     messages.append({"role": "user", "content": user_query})

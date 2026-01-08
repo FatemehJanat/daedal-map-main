@@ -124,7 +124,9 @@ export const PopupBuilder = {
     lines.push(`<strong>${name}${stateAbbr ? ', ' + stateAbbr : ''}</strong>`);
 
     // Check if we have actual data fields (from a chat query)
-    const dataFields = this.getRelevantFields(properties);
+    // Pass fromQuery=true when sourceData is present to include ALL numeric fields
+    const hasSourceData = sourceData !== null;
+    const dataFields = this.getRelevantFields(properties, hasSourceData);
     const hasQueryData = dataFields.length > 0;
 
     // Debug mode: show coverage info
@@ -360,13 +362,19 @@ export const PopupBuilder = {
 
   /**
    * Get relevant data fields (numeric, interesting values)
+   * @param {Object} properties - Feature properties
+   * @param {boolean} fromQuery - If true, include ALL numeric fields (from chat query)
    */
-  getRelevantFields(properties) {
+  getRelevantFields(properties, fromQuery = false) {
     const relevant = [];
+    // Keywords for exploration mode (when no specific query)
     const keywords = ['co2', 'gdp', 'population', 'emission', 'capita', 'total',
                       'methane', 'temperature', 'energy', 'oil', 'gas', 'coal',
                       'balance', 'account', 'trade', 'export', 'import', 'income',
-                      'life', 'mortality', 'birth', 'health', 'age', 'median'];
+                      'life', 'mortality', 'birth', 'death', 'health', 'age', 'median',
+                      // ABS population data keywords
+                      'natural', 'increase', 'internal', 'overseas', 'arrivals',
+                      'departures', 'net', 'migration', 'area', 'density'];
 
     for (const [key, value] of Object.entries(properties)) {
       if (this.skipFields.includes(key) || value == null || value === '') continue;
@@ -374,6 +382,14 @@ export const PopupBuilder = {
 
       const keyLower = key.toLowerCase();
       const isNumeric = !isNaN(parseFloat(value));
+
+      // From chat query: include ALL numeric non-skip fields
+      if (fromQuery && isNumeric) {
+        relevant.push(key);
+        continue;
+      }
+
+      // Exploration mode: filter by keywords
       const isRelevant = keywords.some(kw => keyLower.includes(kw));
       // Also include fields with our metric_label format (contain parentheses)
       const isLabeledMetric = key.includes('(') && key.includes(')');

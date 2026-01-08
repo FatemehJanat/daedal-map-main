@@ -43,13 +43,41 @@ USA-CA      | 2020 | 400     | 10.1    | 50
 **Required columns**:
 - `loc_id` - Canonical location ID (must match geometry files)
 - `year` - Integer year
-- `[metric columns]` - One or more data columns
+- `[metric columns]` - One or more numeric data columns
+
+**Do NOT include these columns** (they're redundant):
+- `state`, `STATE`, `state_abbr` - Derivable from loc_id (e.g., `USA-NC-001` -> `NC`)
+- `county`, `COUNTY`, `county_name` - Derivable from loc_id or geometry lookup
+- `STCOFIPS`, `GEOID`, `fips` - Redundant with loc_id
+- `name`, `location`, `region` - Stored in geometry, not data
+
+If you need location names for display, get them from:
+1. **loc_id parsing**: `USA-NC-001` -> state is `NC`
+2. **Geometry lookup**: Join with geometry parquet on loc_id to get `name`
 
 **Why long format**:
 - Adding new years = append rows (no schema change)
 - Parquet compresses repeated loc_ids efficiently
 - Query "all 2020 data" with simple filter
 - Sparse data is fine - only include rows where data exists
+
+**Exception: Event Data**
+
+Event-based sources (earthquakes, hurricanes, volcanoes) use a different schema with individual event attributes. These have `events.parquet` files with columns like `event_id`, `timestamp`, `latitude`, `longitude`, etc. See [Event Data Format](#event-data-format) for details.
+
+**IMPORTANT: Event Source Metadata Requires Manual Attention**
+
+Event sources have a more complex structure that the standard metadata generator cannot fully auto-detect:
+
+1. **Multiple files**: Event sources have both `events.parquet` (individual events) AND `{COUNTRY}.parquet` (aggregates)
+2. **Metadata generator limitation**: The generator only introspects the aggregate parquet file - it cannot detect event file columns or temporal granularity
+3. **Manual metadata fields**: Event source metadata.json files need manual maintenance for:
+   - `files` section listing all parquet files
+   - `temporal_coverage.granularity` (often "daily" or "6h" for events, not "yearly")
+   - Event-specific column documentation (lat/lon, magnitude, event_id, etc.)
+4. **Different time fields**: Events use `timestamp` (ISO datetime), aggregates use `year` (integer)
+
+When regenerating metadata for all sources, **skip or manually review event sources** to avoid losing the `files` section and event-specific details. See [Event Data Format](#event-data-format) for the full event metadata schema.
 
 ---
 
@@ -283,17 +311,31 @@ Each source folder contains a `metadata.json`:
 | `source_name` | Human-readable source name |
 | `description` | Brief description of dataset |
 | `last_updated` | Date of last update (YYYY-MM-DD) |
-| `geographic_level` | Deepest admin level (country, state, county) |
-| `year_range` | Start and end years |
+| `geographic_coverage` | Object with `type`, `admin_levels`, country info (see below) |
+| `temporal_coverage` | Object with `start`, `end`, `frequency`, `granularity`, `field` |
 | `metrics` | Dictionary of metric definitions |
 
 ### Metric Fields
 
-| Field | Description |
-|-------|-------------|
-| `name` | Human-readable metric name |
-| `unit` | Unit of measurement |
-| `aggregation` | How to aggregate: sum, avg, first, max, min |
+Each metric in the `metrics` object has these fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Human-readable metric name |
+| `unit` | string | Unit of measurement |
+| `aggregation` | string | How to aggregate: sum, avg, first, max, min |
+| `keywords` | array | Synonyms/related terms for LLM matching |
+| `stats` | object | Overall statistics: min, max, median |
+| `density` | float | Non-null ratio (0-1) for this metric |
+| `years` | array | Per-metric year range [start, end] - may differ from source-level |
+| `countries` | int | Number of countries with data for this metric |
+| `by_era` | object | Statistics broken down by era (2000+, 1950-1999, 1900-1949, pre-1900) |
+
+**Important**: The `years` field is PER-METRIC, not source-level. Different metrics in the same source can have different year ranges. For example, in `abs_population`:
+- `total_pop` has `years: [2001, 2024]` (24 years of data)
+- `births` has `years: [2022, 2024]` (only 3 years of data)
+
+The wildcard expansion uses these per-metric years when expanding `metric: "*"` requests.
 
 The `llm_summary` field is sent to the conversation LLM to help it understand available data.
 
@@ -303,7 +345,53 @@ The `llm_summary` field is sent to the conversation LLM to help it understand av
 
 The enhanced schema adds fields for LLM comprehension and data discovery.
 
-### Full metadata.json Structure
+### Topic Tags vs Keywords
+
+| Field | Purpose | Example |
+|-------|---------|---------|
+| `topic_tags` | Category-level tags for filtering/grouping datasets | `["demographics", "economy", "health"]` |
+| `keywords` | Specific search terms users might type | `["GDP", "carbon emissions", "population growth"]` |
+
+- **topic_tags** = "what bin does this dataset go in" (broad categories)
+- **keywords** = "what would a user search for" (specific terms)
+
+### Geographic Coverage (Exclusion-Based)
+
+Country coverage uses an exclusion-based approach referencing `conversions.json`:
+- **common_countries**: 200 standard countries most datasets include
+- **commonly_missing**: 52 territories/dependencies typically excluded
+
+| Field | Description |
+|-------|-------------|
+| `type` | "global", "regional", or "country" |
+| `admin_levels` | Array of admin levels with data: `[0]`, `[0, 2]`, `[2]` |
+| `common_count` | How many of the 200 standard countries are included |
+| `common_missing` | Which standard countries are MISSING (empty = has all 200) |
+| `uncommonly_included` | Which rare territories (from 52) ARE included |
+
+**For global sources** (e.g., owid_co2 with 217 countries):
+```json
+"geographic_coverage": {
+  "type": "global",
+  "admin_levels": [0],
+  "common_count": 200,
+  "common_missing": [],
+  "uncommonly_included": ["ABW", "GRL", "PYF"]
+}
+```
+
+**For country-specific sources** (e.g., abs_population for Australia only):
+```json
+"geographic_coverage": {
+  "type": "country",
+  "admin_levels": [0, 1, 2],
+  "country": "AUS"
+}
+```
+
+Note: Single-country sources use `"country": "ISO3"` instead of exclusion lists.
+
+### Full metadata.json Structure (Global Source Example)
 
 ```json
 {
@@ -317,17 +405,19 @@ The enhanced schema adds fields for LLM comprehension and data discovery.
   "keywords": ["carbon", "pollution", "greenhouse", "warming"],
 
   "last_updated": "2024-12-22",
-  "geographic_level": "country",
   "geographic_coverage": {
     "type": "global",
-    "countries": 217,
-    "regions": ["Europe", "Asia", "Africa", "Americas", "Oceania"],
-    "admin_levels": [0]
+    "admin_levels": [0],
+    "common_count": 200,
+    "common_missing": [],
+    "uncommonly_included": ["ABW", "GRL", "PYF"]
   },
   "temporal_coverage": {
     "start": 1750,
     "end": 2024,
-    "frequency": "annual"
+    "frequency": "annual",
+    "granularity": "yearly",
+    "field": "year"
   },
   "update_schedule": "annual",
   "expected_next_update": "2025-06",
@@ -336,17 +426,41 @@ The enhanced schema adds fields for LLM comprehension and data discovery.
   "data_completeness": 0.85,
 
   "metrics": {
-    "gdp": {
-      "name": "GDP",
-      "unit": "USD",
-      "aggregation": "sum",
-      "keywords": ["economy", "economic output", "wealth"]
-    },
     "co2": {
       "name": "CO2 emissions",
       "unit": "million tonnes",
       "aggregation": "sum",
-      "keywords": ["carbon", "emissions", "pollution"]
+      "keywords": ["carbon", "emissions", "pollution"],
+      "stats": {
+        "min": 0.0,
+        "max": 12289.037,
+        "median": 2.793
+      },
+      "density": 0.554,
+      "years": [1750, 2024],
+      "countries": 214,
+      "by_era": {
+        "2000+": {
+          "density": 0.986,
+          "countries": 214,
+          "stats": { "min": 0.0, "max": 12289.037, "median": 7.897 }
+        },
+        "1950-1999": {
+          "density": 0.911,
+          "countries": 214,
+          "stats": { "min": 0.0, "max": 5800.281, "median": 3.303 }
+        },
+        "1900-1949": {
+          "density": 0.416,
+          "countries": 116,
+          "stats": { "min": 0.0, "max": 2582.559, "median": 2.353 }
+        },
+        "pre-1900": {
+          "density": 0.24,
+          "countries": 74,
+          "stats": { "min": 0.0, "max": 626.823, "median": 0.283 }
+        }
+      }
     }
   },
 
@@ -354,19 +468,61 @@ The enhanced schema adds fields for LLM comprehension and data discovery.
 }
 ```
 
+### Country-Specific Source Example (abs_population)
+
+```json
+{
+  "source_id": "abs_population",
+  "source_name": "Australian Bureau of Statistics",
+  "geographic_coverage": {
+    "type": "country",
+    "country": "AUS",
+    "admin_levels": [0, 1, 2]
+  },
+  "temporal_coverage": {
+    "start": 2001,
+    "end": 2024,
+    "frequency": "annual",
+    "granularity": "yearly",
+    "field": "year"
+  },
+  "metrics": {
+    "total_pop": {
+      "name": "Total Pop",
+      "unit": "count",
+      "aggregation": "sum",
+      "stats": { "min": 0, "max": 27194369, "median": 12691 },
+      "density": 1.0,
+      "years": [2001, 2024],
+      "countries": 1,
+      "by_era": { "2000+": { "density": 1.0, "countries": 1, "stats": {...} } }
+    },
+    "births": {
+      "years": [2022, 2024]
+    }
+  },
+  "llm_summary": "Australia LGA-level population 2001-2024. total_pop all years, births/deaths/migration 2022-2024 only."
+}
+```
+
+Note: `births` has `years: [2022, 2024]` while `total_pop` has `years: [2001, 2024]` - per-metric year ranges.
+
 ### New Fields
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `category` | string | Category: environmental, economic, health, demographic |
-| `keywords` | array | Synonyms/related terms for LLM matching |
+| `topic_tags` | array | Category-level tags for filtering/grouping |
+| `keywords` | array | Specific search terms for LLM matching |
 | `geographic_coverage` | object | Structured coverage info |
 | `geographic_coverage.type` | string | global, country, or regional |
-| `geographic_coverage.countries` | int | Number of countries covered |
-| `geographic_coverage.regions` | array | Regions with data: Europe, Asia, Africa, Americas, Oceania |
+| `geographic_coverage.country` | string | ISO3 code (for country type only) |
 | `geographic_coverage.admin_levels` | array | Admin levels present: 0=country, 1=state, 2=county |
+| `geographic_coverage.common_count` | int | How many of 200 standard countries included (global/regional) |
+| `geographic_coverage.common_missing` | array | Standard countries NOT included (global/regional) |
+| `geographic_coverage.uncommonly_included` | array | Rare territories that ARE included (global/regional) |
 | `temporal_coverage` | object | Structured time range |
-| `temporal_coverage.start` | int | First year of data |
+| `temporal_coverage.start` | int/string | First year or ISO timestamp |
 | `temporal_coverage.end` | int | Last year of data |
 | `temporal_coverage.frequency` | string | annual, monthly, or daily |
 | `update_schedule` | string | How often source publishes: annual, quarterly, monthly, or unknown |

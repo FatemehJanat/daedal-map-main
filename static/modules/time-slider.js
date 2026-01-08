@@ -68,6 +68,10 @@ export const TimeSlider = {
   // Admin level filtering (for hierarchical data display)
   currentAdminLevel: null,  // null = show all, 0/1/2/3 = filter to specific level
 
+  // Multi-metric support
+  availableMetrics: [],     // Array of detected metric names
+  metricTabContainer: null, // DOM element for metric tabs
+
   /**
    * Calculate step size in milliseconds for a given granularity
    */
@@ -151,13 +155,20 @@ export const TimeSlider = {
    * @param {Object} timeData - {time: {loc_id: {metric: value}}}
    * @param {Object} baseGeojson - Base geometry
    * @param {string} metricKey - Metric to display
+   * @param {string[]} availableMetrics - Explicit list of metrics from order (optional)
    */
-  init(timeRange, timeData, baseGeojson, metricKey) {
+  init(timeRange, timeData, baseGeojson, metricKey, availableMetrics = null, metricYearRanges = null) {
     this.timeData = timeData;
     this.baseGeojson = baseGeojson;
     this.metricKey = metricKey;
+    this.explicitMetrics = availableMetrics;  // Store explicit metrics from order
+    this.metricYearRanges = metricYearRanges || {};  // Per-metric year ranges
+    console.log('TimeSlider.init: metricYearRanges received:', this.metricYearRanges);
     this.minTime = timeRange.min;
     this.maxTime = timeRange.max;
+    // Store original range for restoration when switching metrics
+    this.originalMinTime = timeRange.min;
+    this.originalMaxTime = timeRange.max;
 
     // Granularity support - detect from timeRange or default to yearly
     this.granularity = timeRange.granularity || 'yearly';
@@ -188,6 +199,23 @@ export const TimeSlider = {
     this.maxLabel = document.getElementById('maxYearLabel');
     this.titleLabel = document.getElementById('sliderTitle');
     this.tabContainer = document.getElementById('timeSliderTabs');
+    this.metricTabContainer = document.getElementById('metricTabs');
+
+    // Use explicit metrics from order if provided, otherwise detect from data
+    if (this.explicitMetrics && this.explicitMetrics.length > 0) {
+      this.availableMetrics = this.explicitMetrics;
+      console.log('Using explicit metrics from order:', this.availableMetrics);
+    } else {
+      this.availableMetrics = this.detectAvailableMetrics();
+      console.log('Detected metrics from data:', this.availableMetrics);
+    }
+
+    // If metricKey not in available metrics, use first available
+    if (this.availableMetrics.length > 0 && !this.availableMetrics.includes(this.metricKey)) {
+      this.metricKey = this.availableMetrics[0];
+    }
+
+    this.renderMetricTabs();
 
     // Configure slider
     this.slider.min = this.minTime;
@@ -416,6 +444,14 @@ export const TimeSlider = {
       const countEl = document.getElementById('totalAreas');
       if (countEl) {
         countEl.textContent = geojson.features.length;
+      }
+
+      // Recalculate color scale for filtered features
+      if (ChoroplethManager && this.metricKey) {
+        const values = geojson.features
+          .map(f => f.properties[this.metricKey])
+          .filter(v => v != null && !isNaN(v));
+        ChoroplethManager.updateScaleForValues(values, this.metricKey);
       }
     }
   },
@@ -691,6 +727,172 @@ export const TimeSlider = {
     this.renderTabs();
   },
 
+  // ============================================================================
+  // MULTI-METRIC MANAGEMENT
+  // ============================================================================
+
+  /**
+   * Detect available metrics from timeData structure.
+   * Metrics are keys in the loc_id objects, excluding system keys.
+   * Samples from beginning, middle, and end of time range to catch sparse data.
+   * @returns {string[]} - Array of metric names
+   */
+  detectAvailableMetrics() {
+    const metrics = new Set();
+    const systemKeys = ['data_time', 'time', 'year', 'loc_id'];
+
+    // Sample from beginning, middle, and end to catch metrics that only exist for some years
+    // (e.g., demographic data might only exist for recent years)
+    const len = this.sortedTimes.length;
+    const sampleIndices = [
+      0, 1, 2,  // First 3
+      Math.floor(len / 2),  // Middle
+      len - 3, len - 2, len - 1  // Last 3
+    ].filter(i => i >= 0 && i < len);
+
+    // Dedupe indices
+    const uniqueIndices = [...new Set(sampleIndices)];
+
+    for (const idx of uniqueIndices) {
+      const time = this.sortedTimes[idx];
+      const timeValues = this.timeData[time] || {};
+      for (const locId in timeValues) {
+        const locData = timeValues[locId];
+        for (const key in locData) {
+          if (!systemKeys.includes(key) && typeof locData[key] === 'number') {
+            metrics.add(key);
+          }
+        }
+        break;  // Only need one loc_id per time
+      }
+    }
+
+    return Array.from(metrics);
+  },
+
+  /**
+   * Render metric tabs UI.
+   * Only shows tabs if there are 2+ metrics.
+   */
+  renderMetricTabs() {
+    if (!this.metricTabContainer) {
+      this.metricTabContainer = document.getElementById('metricTabs');
+    }
+    if (!this.metricTabContainer) return;
+
+    // Only show tabs if we have multiple metrics
+    if (this.availableMetrics.length <= 1) {
+      this.metricTabContainer.style.display = 'none';
+      return;
+    }
+
+    this.metricTabContainer.style.display = 'flex';
+    this.metricTabContainer.innerHTML = '';
+
+    for (const metric of this.availableMetrics) {
+      const tab = document.createElement('button');
+      tab.className = 'metric-tab' + (metric === this.metricKey ? ' active' : '');
+      tab.dataset.metric = metric;
+      tab.textContent = this.formatMetricName(metric);
+      tab.title = metric;
+
+      tab.addEventListener('click', () => {
+        if (metric !== this.metricKey) {
+          this.setActiveMetric(metric);
+        }
+      });
+
+      this.metricTabContainer.appendChild(tab);
+    }
+  },
+
+  /**
+   * Format metric name for display (convert snake_case to Title Case).
+   * @param {string} metric - Raw metric name
+   * @returns {string} - Formatted display name
+   */
+  formatMetricName(metric) {
+    if (!metric) return 'Value';
+    // Convert snake_case to Title Case, max 20 chars
+    const formatted = metric
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, c => c.toUpperCase());
+    return formatted.length > 20 ? formatted.substring(0, 17) + '...' : formatted;
+  },
+
+  /**
+   * Switch to a different metric.
+   * @param {string} metric - Metric name to activate
+   */
+  setActiveMetric(metric) {
+    if (!this.availableMetrics.includes(metric)) {
+      console.warn(`Metric "${metric}" not found in available metrics`);
+      return;
+    }
+
+    console.log(`TimeSlider: Switching metric from ${this.metricKey} to ${metric}`);
+    this.metricKey = metric;
+
+    // Update title
+    if (this.titleLabel) {
+      this.titleLabel.textContent = this.formatMetricName(metric);
+    }
+
+    // Adjust slider range if metric has specific year range
+    console.log('TimeSlider.setActiveMetric: Looking up', metric, 'in', this.metricYearRanges);
+    const metricRange = this.metricYearRanges?.[metric];
+    if (metricRange) {
+      console.log(`TimeSlider: Adjusting range to ${metricRange.min}-${metricRange.max} for ${metric}`);
+      this.minTime = metricRange.min;
+      this.maxTime = metricRange.max;
+      this.slider.min = this.minTime;
+      this.slider.max = this.maxTime;
+      this.minLabel.textContent = this.formatTimeLabel(this.minTime);
+      this.maxLabel.textContent = this.formatTimeLabel(this.maxTime);
+      
+      // Clamp current time to new range
+      if (this.currentTime < this.minTime) {
+        this.currentTime = this.minTime;
+      } else if (this.currentTime > this.maxTime) {
+        this.currentTime = this.maxTime;
+      }
+      this.slider.value = this.currentTime;
+      this.yearLabel.textContent = this.formatTimeLabel(this.currentTime);
+      
+      // Rebuild sortedTimes from availableTimes (don't destructively filter)
+      this.sortedTimes = [...this.availableTimes]
+        .filter(t => t >= this.minTime && t <= this.maxTime)
+        .sort((a, b) => a - b);
+    } else {
+      // No specific range for this metric - restore original full range
+      console.log(`TimeSlider: Restoring full range ${this.originalMinTime}-${this.originalMaxTime} for ${metric}`);
+      this.minTime = this.originalMinTime;
+      this.maxTime = this.originalMaxTime;
+      this.slider.min = this.minTime;
+      this.slider.max = this.maxTime;
+      this.minLabel.textContent = this.formatTimeLabel(this.minTime);
+      this.maxLabel.textContent = this.formatTimeLabel(this.maxTime);
+
+      // Rebuild sortedTimes with full range
+      this.sortedTimes = [...this.availableTimes]
+        .filter(t => t >= this.minTime && t <= this.maxTime)
+        .sort((a, b) => a - b);
+    }
+
+    // Re-render metric tabs to update active state
+    this.renderMetricTabs();
+
+    // Reinitialize choropleth with new metric (recalculates min/max)
+    ChoroplethManager?.init(metric, this.timeData, this.availableTimes);
+
+    // Re-render current time with new metric colors
+    if (this.currentTime != null && this.baseGeojson) {
+      const geojson = this.buildTimeGeojson(this.currentTime);
+      MapAdapter?.updateSourceData(geojson);
+      ChoroplethManager?.update(geojson, metric);
+    }
+  },
+
   /**
    * Start playback animation (normal speed, forward)
    */
@@ -816,6 +1018,10 @@ export const TimeSlider = {
     this.timeDataFilled = null;
     this.baseGeojson = null;
     this.metricKey = null;
+    this.explicitMetrics = null;  // Reset explicit metrics from order
+    this.metricYearRanges = {};  // Reset per-metric year ranges
+    this.originalMinTime = null;  // Reset stored original range
+    this.originalMaxTime = null;
     this.sortedTimes = [];
     this.availableTimes = [];
     this.playSpeed = 1;
@@ -831,6 +1037,13 @@ export const TimeSlider = {
     if (this.tabContainer) {
       this.tabContainer.style.display = 'none';
       this.tabContainer.innerHTML = '';
+    }
+
+    // Clear multi-metric state
+    this.availableMetrics = [];
+    if (this.metricTabContainer) {
+      this.metricTabContainer.style.display = 'none';
+      this.metricTabContainer.innerHTML = '';
     }
   }
 };

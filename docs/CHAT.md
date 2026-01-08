@@ -476,6 +476,192 @@ async def display(order):
 
 ---
 
+## LLM Message Assembly Order
+
+The order of messages sent to the LLM is critical for ensuring current context takes priority over historical conversations.
+
+### Message Structure
+
+```
+[1] SYSTEM: Main prompt (Tier 1 - catalog, regions, rules)
+[2] SYSTEM: [CURRENT CONTEXT] Tier 3 + Tier 4  <-- BEFORE history
+[3-6] Chat history (last 4 messages)
+[7] USER: Current query
+```
+
+### Why Context Before History
+
+Previous issue: When a user discussed USA data, then asked about Australia, the LLM would sometimes use USA context because chat history came AFTER the tier3 context.
+
+**Fix (2026-01)**: Move tier3/tier4 context BEFORE chat history with explicit header:
+
+```python
+# order_taker.py - interpret_request()
+messages = [{"role": "system", "content": system_prompt}]
+
+# Tier 3/4 context BEFORE chat history
+if hints:
+    tier3_context = build_tier3_context(hints)
+    tier4_context = build_tier4_context(hints)
+    if tier3_context or tier4_context:
+        messages.append({
+            "role": "system",
+            "content": "[CURRENT CONTEXT - USE THIS FOR THE CURRENT QUERY]\n" +
+                       "\n".join(filter(None, [tier3_context, tier4_context]))
+        })
+
+# Chat history AFTER current context
+if chat_history:
+    for msg in chat_history[-4:]:
+        messages.append({"role": msg.get("role"), "content": msg.get("content")})
+
+messages.append({"role": "user", "content": user_query})
+```
+
+### Tier 3 Context Contents
+
+Built by `build_tier3_context(hints)` based on preprocessor analysis:
+
+```
+[CURRENT CONTEXT - USE THIS FOR THE CURRENT QUERY]
+[VIEWPORT: User is viewing at countries level]
+[LOCATION: Australia (loc_id=AUS)]
+User wants data from 2010 to 2024
+
+[CRITICAL - EXACT METRIC NAMES REQUIRED:]
+You MUST use these EXACT column names. Do NOT use aliases like 'total_population' - use:
+- abs_population: ["total_pop", "births", "deaths", "natural_increase", "internal_arrivals", ...]
+- owid_co2: ["co2", "population", "gdp", ...]
+```
+
+### Viewport Inference Rules
+
+The viewport context only infers country when ALL conditions are met:
+1. User did NOT explicitly mention a location in their query
+2. Zoom level >= 3 (not at global overview)
+3. Single country visible in viewport bounds
+
+```python
+# preprocessor.py - build_tier3_context()
+if not explicit_location and viewport.get("bounds") and zoom_level >= 3:
+    countries_in_view = get_countries_in_viewport(viewport["bounds"])
+    if len(countries_in_view) == 1:
+        # Add inferred location context
+```
+
+This prevents inferring "USA" when viewing global overview with USA roughly centered.
+
+---
+
+## Time Pattern Detection and Injection
+
+### Detection Patterns
+
+```python
+TIME_PATTERNS = {
+    "year_range": [
+        r"from\s+(\d{4})\s+to\s+(\d{4})",      # "from 2010 to 2020"
+        r"between\s+(\d{4})\s+and\s+(\d{4})",   # "between 2015 and 2024"
+    ],
+    "year_to_now": [
+        r"from\s+(\d{4})\s+(?:to|until)\s+(?:now|present|today|current)",
+        # "from 2010 to now", "2015 to present"
+    ],
+    "trend_indicators": [
+        r"\ball\s+(?:the\s+)?years?\b",         # "all years", "all the years"
+        r"\btrend\b", r"\bover time\b",
+        r"\bhistor(?:y|ical)\b",
+    ],
+    "last_n_years": [r"last\s+(\d+)\s+years?"], # "last 5 years"
+    "since_year": [r"since\s+(\d{4})"],          # "since 2015"
+}
+```
+
+### Postprocessor Year Injection
+
+When the LLM leaves `year: null` and preprocessor detected a time pattern, postprocessor injects:
+
+```python
+# postprocessor.py - postprocess_order()
+time_hints = hints.get("time", {})
+if time_hints.get("is_time_series"):
+    for item in items:
+        if item.get("year") is None and not item.get("year_start"):
+            # Case 1: Specific range detected (e.g., "from 2010 to now")
+            if time_hints.get("year_start") and time_hints.get("year_end"):
+                item["year_start"] = time_hints["year_start"]
+                item["year_end"] = time_hints["year_end"]
+
+            # Case 2: Trend detected but no specific years (e.g., "all years")
+            # Look up source metadata for actual available range
+            elif time_hints.get("pattern_type") == "trend" and item.get("source_id"):
+                metadata = load_source_metadata(item["source_id"])
+                if metadata:
+                    temp = metadata.get("temporal_coverage", {})
+                    item["year_start"] = temp.get("start")
+                    item["year_end"] = temp.get("end")
+```
+
+This means "all the years you have" for abs_population automatically gets 2001-2024 from metadata.
+
+---
+
+## Wildcard Metric Expansion
+
+### Problem
+
+The LLM only sees a limited number of metrics in its context (to avoid token bloat). When user asks for "all Australian data", the LLM could only output items for the 5 metrics it knew about.
+
+### Solution
+
+LLM can use `"metric": "*"` to mean "all metrics from this source". The postprocessor expands it using full metadata access.
+
+### LLM Prompt
+
+```
+WILDCARD METRICS:
+Use "metric": "*" when user asks for "all data", "everything", or "all metrics" from a source.
+Example: {"source_id": "abs_population", "metric": "*", "region": "australia"}
+This will be expanded to include ALL metrics from that source.
+```
+
+### Postprocessor Expansion
+
+```python
+# postprocessor.py - expand_wildcard_metrics()
+def expand_wildcard_metrics(items: list) -> list:
+    for item in items:
+        if item.get("metric") in ("*", "all", "all_metrics"):
+            source_id = item.get("source_id")
+            metadata = load_source_metadata(source_id)
+
+            # Create one item per metric in the source
+            for metric_key in metadata.get("metrics", {}):
+                expanded.append({
+                    "source_id": source_id,
+                    "metric": metric_key,
+                    "region": item.get("region"),
+                    "year": item.get("year"),
+                    # ... other properties
+                })
+```
+
+### Example Flow
+
+```
+User: "Show me all Australian population data"
+LLM outputs: {"source_id": "abs_population", "metric": "*", "region": "australia"}
+Postprocessor: Loads abs_population metadata, expands to 11 items:
+  - total_pop, births, deaths, natural_increase
+  - internal_arrivals, internal_departures, internal_net
+  - overseas_arrivals, overseas_departures, overseas_net
+  - area_km2
+```
+
+This keeps the LLM prompt small while giving full access through the postprocessor.
+
+---
+
 ## Order Format
 
 ```json
@@ -797,4 +983,4 @@ When too many data points requested (10+):
 
 ---
 
-*Last Updated: 2026-01-06*
+*Last Updated: 2026-01-07 - Added wildcard metric expansion (metric: "*"), LLM message ordering, viewport inference rules, time pattern injection*

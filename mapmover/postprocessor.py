@@ -127,6 +127,80 @@ def validate_item(item: dict, catalog: dict) -> dict:
 
 
 # =============================================================================
+# Wildcard Metric Expansion
+# =============================================================================
+
+def expand_wildcard_metrics(items: list) -> list:
+    """
+    Expand wildcard metrics (metric: "*" or metric: "all") into individual items.
+
+    When LLM outputs {"source_id": "abs_population", "metric": "*", "region": "australia"},
+    this expands it into one item per actual metric in that source's metadata.
+
+    This allows the LLM to express "all metrics from this source" without needing
+    to know every metric name, keeping the prompt small while enabling full access.
+    """
+    expanded = []
+
+    for item in items:
+        metric = item.get("metric")
+
+        # Check for wildcard
+        if metric in ("*", "all", "all_metrics"):
+            source_id = item.get("source_id")
+            if not source_id:
+                # Can't expand without knowing the source
+                expanded.append(item)
+                continue
+
+            # Load full metadata for this source
+            metadata = load_source_metadata(source_id)
+            if not metadata or not metadata.get("metrics"):
+                # No metadata found, keep original item (will fail validation)
+                expanded.append(item)
+                continue
+
+            # Create one item per metric, using per-metric year ranges from metadata
+            metrics = metadata.get("metrics", {})
+            for metric_key, metric_info in metrics.items():
+                new_item = {
+                    "source_id": source_id,
+                    "metric": metric_key,
+                    "region": item.get("region"),
+                }
+
+                # Use per-metric year range if available in metadata
+                # metadata.metrics.{metric}.years = [start, end]
+                metric_years = metric_info.get("years")
+                if metric_years and len(metric_years) == 2:
+                    new_item["year_start"] = metric_years[0]
+                    new_item["year_end"] = metric_years[1]
+                else:
+                    # Fallback to item-level years if no per-metric range
+                    if item.get("year"):
+                        new_item["year"] = item.get("year")
+                    if item.get("year_start"):
+                        new_item["year_start"] = item.get("year_start")
+                    if item.get("year_end"):
+                        new_item["year_end"] = item.get("year_end")
+
+                # Remove None values
+                new_item = {k: v for k, v in new_item.items() if v is not None}
+                expanded.append(new_item)
+
+            # Log expansion for debugging
+            import logging
+            logging.getLogger(__name__).info(
+                f"Expanded wildcard metric for {source_id}: {len(metrics)} metrics"
+            )
+        else:
+            # Not a wildcard, keep as-is
+            expanded.append(item)
+
+    return expanded
+
+
+# =============================================================================
 # Derived Field Expansion
 # =============================================================================
 
@@ -336,17 +410,31 @@ def postprocess_order(order: dict, hints: dict = None) -> dict:
 
     # Step 0: Inject time range from preprocessor hints if LLM left year as null
     time_hints = hints.get("time", {}) if hints else {}
-    if time_hints.get("is_time_series") and time_hints.get("year_start") and time_hints.get("year_end"):
+    if time_hints.get("is_time_series"):
         for item in items:
-            # If year is null/None and no year_start/year_end, inject from hints
+            # If year is null/None and no year_start/year_end, inject time range
             if item.get("year") is None and not item.get("year_start") and not item.get("year_end"):
-                item["year_start"] = time_hints["year_start"]
-                item["year_end"] = time_hints["year_end"]
+                # Case 1: Preprocessor detected specific year range (e.g., "from 2010 to now")
+                if time_hints.get("year_start") and time_hints.get("year_end"):
+                    item["year_start"] = time_hints["year_start"]
+                    item["year_end"] = time_hints["year_end"]
+                # Case 2: Trend detected but no specific years (e.g., "all years")
+                # Look up the source metadata to get actual available range
+                elif time_hints.get("pattern_type") == "trend" and item.get("source_id"):
+                    metadata = load_source_metadata(item["source_id"])
+                    if metadata:
+                        temp = metadata.get("temporal_coverage", {})
+                        if temp.get("start") and temp.get("end"):
+                            item["year_start"] = temp["start"]
+                            item["year_end"] = temp["end"]
 
-    # Step 1: Expand derived fields
+    # Step 1: Expand wildcard metrics (metric: "*" -> all metrics from source)
+    items = expand_wildcard_metrics(items)
+
+    # Step 2: Expand derived fields
     expanded_items = expand_all_derived_fields(items)
 
-    # Step 2: Separate derived specs from regular items
+    # Step 3: Separate derived specs from regular items
     regular_items = []
     derived_specs = []
 
@@ -356,7 +444,7 @@ def postprocess_order(order: dict, hints: dict = None) -> dict:
         else:
             regular_items.append(item)
 
-    # Step 3: Validate regular items
+    # Step 4: Validate regular items
     validated_items = []
     errors = []
     valid_count = 0

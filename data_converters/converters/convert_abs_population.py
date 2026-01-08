@@ -32,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from build.catalog.finalize_source import finalize_source
 
 # Configuration
-INPUT_FILE = Path("C:/Users/Bryan/Desktop/county-map-data/Raw data/abs/ERP_2024_LGA/32180_ERP_2024_LGA_GDA2020.gpkg")
+INPUT_FILE = Path("C:/Users/Bryan/Desktop/county-map-data/Raw data/imported/abs/ERP_2024_LGA/32180_ERP_2024_LGA_GDA2020.gpkg")
 OUTPUT_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/countries/AUS/abs_population")
 COUNTRY_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/countries/AUS")
 
@@ -83,11 +83,37 @@ def process_data(gdf):
 
     Long format is required for consistent time slider functionality.
     See data_import.md for format specification.
+
+    Includes:
+    - total_pop: ERP (Estimated Resident Population) for all years 2001-2024
+    - Demographic components for 2022-2024 only (fiscal years 2021_22, 2022_23, 2023_24):
+      births, deaths, natural_increase, net_internal_migration, net_overseas_migration,
+      internal_arrivals, internal_departures, overseas_arrivals, overseas_departures
     """
     print("\nProcessing data to long format...")
 
     # Create loc_id
     gdf['loc_id'] = gdf.apply(create_loc_id, axis=1)
+
+    # Fiscal year suffix to calendar year mapping (fiscal year ends June, use ending year)
+    FISCAL_TO_YEAR = {
+        '2021_22': 2022,
+        '2022_23': 2023,
+        '2023_24': 2024,
+    }
+
+    # Demographic column prefixes (only available for 2021_22, 2022_23, 2023_24)
+    DEMOGRAPHIC_COLS = [
+        'births',
+        'deaths',
+        'natural_increase',
+        'net_internal_migration',
+        'net_overseas_migration',
+        'internal_arrivals',
+        'internal_departures',
+        'overseas_arrivals',
+        'overseas_departures',
+    ]
 
     # Build long format records (one row per LGA-year)
     records = []
@@ -98,21 +124,39 @@ def process_data(gdf):
         # Create one record per year (2001-2024)
         for year in range(2001, 2025):
             erp_col = f'erp_{year}'
-            if erp_col in gdf.columns and pd.notna(row[erp_col]):
-                records.append({
-                    'loc_id': loc_id,
-                    'year': year,
-                    'total_pop': int(row[erp_col]) if pd.notna(row[erp_col]) else None,
-                })
+            if erp_col not in gdf.columns or pd.isna(row[erp_col]):
+                continue
+
+            record = {
+                'loc_id': loc_id,
+                'year': year,
+                'total_pop': int(row[erp_col]),
+            }
+
+            # Add demographic columns for years that have them (2022-2024)
+            for fiscal_suffix, cal_year in FISCAL_TO_YEAR.items():
+                if year == cal_year:
+                    for col_prefix in DEMOGRAPHIC_COLS:
+                        src_col = f'{col_prefix}_{fiscal_suffix}'
+                        if src_col in gdf.columns and pd.notna(row[src_col]):
+                            record[col_prefix] = int(row[src_col])
+
+            records.append(record)
 
     df = pd.DataFrame(records)
 
     # Sort by loc_id, year for consistent ordering
     df = df.sort_values(['loc_id', 'year']).reset_index(drop=True)
 
+    # Count how many rows have demographic data
+    demo_cols = [c for c in DEMOGRAPHIC_COLS if c in df.columns]
+    rows_with_demo = df[demo_cols].notna().any(axis=1).sum() if demo_cols else 0
+
     print(f"  Output: {len(df):,} rows (long format)")
     print(f"  Locations: {df['loc_id'].nunique()}")
     print(f"  Years: {df['year'].min()}-{df['year'].max()}")
+    print(f"  Demographic data: {rows_with_demo:,} rows (2022-2024 only)")
+    print(f"  Columns: {list(df.columns)}")
     return df
 
 
@@ -125,6 +169,8 @@ def extract_geometry_gdf(gdf, simplify_tolerance=0.001):
 
     Returns:
         GeoDataFrame with geometry objects (not GeoJSON strings)
+
+    Includes area_km2 which aggregates cleanly (sum for parent polygons).
     """
     print("\nExtracting geometry...")
 
@@ -136,6 +182,8 @@ def extract_geometry_gdf(gdf, simplify_tolerance=0.001):
     geom_df['parent_id'] = gdf['state_code_2021'].map(
         lambda x: f"AUS-{AUS_STATE_TO_ABBR.get(x, 'XX')}"
     )
+    # Add area from source (static metric, aggregates via sum)
+    geom_df['area_km2'] = gdf['area_km2']
 
     # Reproject to WGS84 (EPSG:4326) for consistency with GADM
     if gdf.crs and str(gdf.crs) != "EPSG:4326":
@@ -195,7 +243,8 @@ def aggregate_to_parent_levels(df, geometry_df):
     # Remove rows where parent_id is None (shouldn't happen, but safety check)
     df_with_parent = df_with_parent.dropna(subset=['parent_id'])
 
-    admin1 = df_with_parent.groupby(['parent_id', 'year'])[metric_cols].sum().reset_index()
+    # Use min_count=1 so sum of all NaN = NaN (not 0.0)
+    admin1 = df_with_parent.groupby(['parent_id', 'year'])[metric_cols].sum(min_count=1).reset_index()
     admin1 = admin1.rename(columns={'parent_id': 'loc_id'})
     print(f"  Admin 1 (states): {admin1['loc_id'].nunique()} locations, {len(admin1)} rows")
     all_levels.append(admin1)
@@ -203,7 +252,7 @@ def aggregate_to_parent_levels(df, geometry_df):
     # Aggregate to admin_0 (country)
     admin1_copy = admin1.copy()
     admin1_copy['country'] = admin1_copy['loc_id'].str.split('-').str[0]
-    admin0 = admin1_copy.groupby(['country', 'year'])[metric_cols].sum().reset_index()
+    admin0 = admin1_copy.groupby(['country', 'year'])[metric_cols].sum(min_count=1).reset_index()
     admin0 = admin0.rename(columns={'country': 'loc_id'})
     print(f"  Admin 0 (country): {admin0['loc_id'].nunique()} locations, {len(admin0)} rows")
     all_levels.append(admin0)
@@ -218,10 +267,12 @@ def create_parent_geometry(geometry_gdf):
     Dissolve admin_2 polygons into admin_1 and admin_0.
 
     Args:
-        geometry_gdf: GeoDataFrame with geometry, loc_id, parent_id, admin_level
+        geometry_gdf: GeoDataFrame with geometry, loc_id, parent_id, admin_level, area_km2
 
     Returns:
         Combined GeoDataFrame with all admin levels
+
+    Aggregates area_km2 by summing child areas for parent polygons.
     """
     from shapely.ops import unary_union
     from shapely.geometry import mapping
@@ -233,32 +284,36 @@ def create_parent_geometry(geometry_gdf):
 
     all_levels = [admin2_gdf.copy()]
 
-    # Dissolve to admin_1 (group by parent_id)
+    # Dissolve to admin_1 (group by parent_id), aggregate area_km2
     admin1_groups = admin2_gdf.groupby('parent_id')
     admin1_records = []
     for parent_id, group in admin1_groups:
         dissolved = unary_union(group.geometry.tolist())
+        area_sum = group['area_km2'].sum() if 'area_km2' in group.columns else None
         admin1_records.append({
             'loc_id': parent_id,
             'name': AUS_STATE_NAMES.get(parent_id, parent_id),
             'admin_level': 1,
             'parent_id': 'AUS',
-            'geometry': dissolved
+            'geometry': dissolved,
+            'area_km2': area_sum,
         })
     admin1_gdf = gpd.GeoDataFrame(admin1_records, crs=admin2_gdf.crs)
     print(f"  Admin 1 (states): {len(admin1_gdf)} polygons")
     all_levels.append(admin1_gdf)
 
-    # Dissolve to admin_0 (whole country)
+    # Dissolve to admin_0 (whole country), aggregate area_km2
     country_geom = unary_union(admin2_gdf.geometry.tolist())
+    country_area = admin2_gdf['area_km2'].sum() if 'area_km2' in admin2_gdf.columns else None
     admin0_gdf = gpd.GeoDataFrame([{
         'loc_id': 'AUS',
         'name': 'Australia',
         'admin_level': 0,
         'parent_id': None,
-        'geometry': country_geom
+        'geometry': country_geom,
+        'area_km2': country_area,
     }], crs=admin2_gdf.crs)
-    print(f"  Admin 0 (country): 1 polygon")
+    print(f"  Admin 0 (country): 1 polygon (area: {country_area:,.0f} km2)")
     all_levels.append(admin0_gdf)
 
     # Combine all levels

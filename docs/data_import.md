@@ -48,6 +48,34 @@ When importing a new data source, verify these requirements:
 | 3. Column analysis | Decide which metrics to keep, rename, or combine | Clean schema |
 | 4. No duplicates | One row per (loc_id, year) in aggregates | Clean joins |
 | 5. Null handling | Missing data as NULL, not 0 or special values | Accurate analysis |
+| 6. No redundant cols | Remove state, county, name, FIPS columns | Derivable from loc_id |
+| 7. Source registry | Add to `build/catalog/source_registry.py` with URL, license, description | Clickable source links in UI |
+
+**IMPORTANT: Source Registry Entry**
+
+Every new source MUST be registered in `build/catalog/source_registry.py` before running the metadata generator. The registry provides:
+- `source_name` - Human-readable name shown in UI
+- `source_url` - Clickable link to original data source
+- `license` - Data license information
+- `description` - Brief description of the dataset
+- `category` - Data category (hazard, demographic, environment, etc.)
+- `topic_tags` / `keywords` - For search and discovery
+
+Without a registry entry, metadata will have empty/default values and source links won't work in the UI.
+
+**Important: Column Rules**
+
+Output parquet should ONLY contain:
+- `loc_id` - Location identifier
+- `year` - Time dimension
+- `[numeric metrics]` - Data columns
+
+Do NOT include:
+- `state`, `county`, `name` - Derivable from loc_id (e.g., `USA-NC-001` -> state is `NC`)
+- `STCOFIPS`, `GEOID`, `fips` - Redundant with loc_id
+- `STATE`, `COUNTY`, `region` - Stored in geometry, not data
+
+**Exception**: Event data (earthquakes, hurricanes) uses different schema with `event_id`, `timestamp`, etc.
 
 ---
 
