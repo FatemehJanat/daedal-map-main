@@ -53,11 +53,21 @@ export const TimeSlider = {
   playSpeed: 1,        // 1 = normal, 3 = fast
   playDirection: 1,    // 1 = forward, -1 = rewind
   listenersSetup: false,  // Track if event listeners have been added
+  sliderInitialized: false, // Track if DOM setup is done
+
+  // Change listeners - for decoupled notifications
+  changeListeners: [],  // Array of callbacks: (time, source) => void
 
   // Granularity support
   granularity: 'yearly',  // '6h', 'daily', 'weekly', 'monthly', 'yearly', '5y', '10y'
   useTimestamps: false,   // true for sub-yearly (6h, daily, weekly, monthly), false for yearly+
   stepMs: null,           // Step size in milliseconds (for sub-yearly)
+
+  // Non-linear scale support for data with gaps or large time ranges
+  // When true, slider position maps to index in sortedTimes (data-density scaling)
+  // Each data point gets equal slider space regardless of time gaps
+  useIndexedScale: false,
+  indexedScaleMinPoints: 50,  // Auto-enable if sortedTimes has >= this many points
 
   // Multi-scale support (Phase 3)
   scales: [],             // Array of scale objects
@@ -71,6 +81,212 @@ export const TimeSlider = {
   // Multi-metric support
   availableMetrics: [],     // Array of detected metric names
   metricTabContainer: null, // DOM element for metric tabs
+
+  // ============================================================================
+  // LISTENER SYSTEM - Decoupled change notifications
+  // ============================================================================
+
+  /**
+   * Add a listener for time changes.
+   * @param {Function} callback - Called with (time, source) when time changes
+   *   - time: current time value (year int or timestamp ms)
+   *   - source: 'slider' | 'playback' | 'api' identifying what triggered the change
+   */
+  addChangeListener(callback) {
+    if (typeof callback === 'function' && !this.changeListeners.includes(callback)) {
+      this.changeListeners.push(callback);
+    }
+  },
+
+  /**
+   * Remove a change listener.
+   * @param {Function} callback
+   */
+  removeChangeListener(callback) {
+    const index = this.changeListeners.indexOf(callback);
+    if (index >= 0) {
+      this.changeListeners.splice(index, 1);
+    }
+  },
+
+  /**
+   * Notify all change listeners.
+   * @private
+   * @param {string} source - What triggered the change
+   */
+  _notifyChangeListeners(source = 'api') {
+    for (const listener of this.changeListeners) {
+      try {
+        listener(this.currentTime, source);
+      } catch (err) {
+        console.error('TimeSlider change listener error:', err);
+      }
+    }
+  },
+
+  // ============================================================================
+  // INITIALIZATION - Decoupled from data loading
+  // ============================================================================
+
+  /**
+   * Initialize the slider UI (DOM setup only, no data).
+   * Call this once on app startup. Safe to call multiple times.
+   * @param {Object} options - {minTime, maxTime, granularity}
+   */
+  initSlider(options = {}) {
+    if (this.sliderInitialized) return;
+
+    // Cache DOM elements
+    this.container = document.getElementById('timeSliderContainer');
+    this.slider = document.getElementById('timeSlider');
+    this.yearLabel = document.getElementById('currentYearLabel');
+    this.playBtn = document.getElementById('playBtn');
+    this.stepBackBtn = document.getElementById('stepBackBtn');
+    this.stepFwdBtn = document.getElementById('stepFwdBtn');
+    this.rewindBtn = document.getElementById('rewindBtn');
+    this.fastFwdBtn = document.getElementById('fastFwdBtn');
+    this.minLabel = document.getElementById('minYearLabel');
+    this.maxLabel = document.getElementById('maxYearLabel');
+    this.titleLabel = document.getElementById('sliderTitle');
+    this.tabContainer = document.getElementById('timeSliderTabs');
+    this.metricTabContainer = document.getElementById('metricTabs');
+
+    if (!this.container || !this.slider) {
+      console.warn('TimeSlider: DOM elements not found');
+      return;
+    }
+
+    // Set default range
+    const defaultMin = options.minTime || 1900;
+    const defaultMax = options.maxTime || new Date().getFullYear();
+    this.minTime = defaultMin;
+    this.maxTime = defaultMax;
+    this.currentTime = defaultMax;
+    this.granularity = options.granularity || 'yearly';
+
+    // Configure slider with defaults
+    this.slider.min = this.minTime;
+    this.slider.max = this.maxTime;
+    this.slider.value = this.currentTime;
+    this.minLabel.textContent = this.formatTimeLabel(this.minTime);
+    this.maxLabel.textContent = this.formatTimeLabel(this.maxTime);
+    this.yearLabel.textContent = this.formatTimeLabel(this.currentTime);
+
+    // Setup event listeners (only once)
+    if (!this.listenersSetup) {
+      this.setupEventListeners();
+      this.listenersSetup = true;
+    }
+
+    this.sliderInitialized = true;
+    this.show();
+    console.log('TimeSlider: Initialized with range', this.minTime, '-', this.maxTime);
+  },
+
+  /**
+   * Update the time range (can be called by any data source).
+   * Expands range to union of current and new range.
+   * @param {Object} rangeConfig - {min, max, granularity?, available?, replace?}
+   *   - replace: if true, sets exact range instead of expanding
+   */
+  setTimeRange(rangeConfig) {
+    if (!this.sliderInitialized) {
+      this.initSlider(rangeConfig);
+    }
+
+    const newMin = rangeConfig.min;
+    const newMax = rangeConfig.max;
+    const replaceMode = rangeConfig.replace === true;
+
+    let rangeChanged = false;
+
+    if (replaceMode) {
+      // Replace mode: set exact range (used when recalculating from active overlays)
+      if (newMin != null && newMin !== this.minTime) {
+        this.minTime = newMin;
+        rangeChanged = true;
+      }
+      if (newMax != null && newMax !== this.maxTime) {
+        this.maxTime = newMax;
+        rangeChanged = true;
+      }
+    } else {
+      // Expand mode (union): only expand, never contract
+      if (newMin != null && (this.minTime == null || newMin < this.minTime)) {
+        this.minTime = newMin;
+        rangeChanged = true;
+      }
+      if (newMax != null && (this.maxTime == null || newMax > this.maxTime)) {
+        this.maxTime = newMax;
+        rangeChanged = true;
+      }
+    }
+
+    if (rangeChanged) {
+      this.slider.min = this.minTime;
+      this.slider.max = this.maxTime;
+      this.minLabel.textContent = this.formatTimeLabel(this.minTime);
+      this.maxLabel.textContent = this.formatTimeLabel(this.maxTime);
+      console.log('TimeSlider: Range updated to', this.minTime, '-', this.maxTime, replaceMode ? '(replaced)' : '(expanded)');
+    }
+
+    // Always clamp current time to DATA range (not just expanded range)
+    // This ensures if slider is at 2026 but data only goes to 2024, we snap to 2024
+    const dataMax = newMax || this.maxTime;
+    const dataMin = newMin || this.minTime;
+    let timeChanged = false;
+
+    if (this.currentTime > dataMax) {
+      this.currentTime = dataMax;
+      timeChanged = true;
+    } else if (this.currentTime < dataMin) {
+      this.currentTime = dataMin;
+      timeChanged = true;
+    }
+
+    if (timeChanged) {
+      this.slider.value = this.currentTime;
+      this.yearLabel.textContent = this.formatTimeLabel(this.currentTime);
+      console.log('TimeSlider: Clamped current time to', this.currentTime);
+    }
+
+    // Update granularity if provided
+    if (rangeConfig.granularity) {
+      this.granularity = rangeConfig.granularity;
+      this.useTimestamps = ['6h', 'daily', 'weekly', 'monthly'].includes(this.granularity);
+      this.stepMs = this.calculateStepMs(this.granularity);
+    }
+
+    // Update available times if provided
+    if (rangeConfig.available) {
+      // REPLACE available times (each overlay controls its own steps)
+      this.availableTimes = [...rangeConfig.available];
+      this.sortedTimes = [...this.availableTimes].sort((a, b) => a - b);
+      console.log('TimeSlider: Set', this.sortedTimes.length, 'available time steps');
+
+      // Reconfigure slider scale (indexed vs linear) based on new data
+      this.configureSliderScale();
+    } else if (this.sortedTimes.length === 0 && this.minTime && this.maxTime) {
+      // No available times provided - generate yearly range for step buttons
+      // Only do this for reasonable ranges (< 200 years)
+      const yearSpan = this.maxTime - this.minTime;
+      if (yearSpan <= 200) {
+        for (let year = this.minTime; year <= this.maxTime; year++) {
+          this.sortedTimes.push(year);
+        }
+        this.availableTimes = [...this.sortedTimes];
+        console.log('TimeSlider: Generated', this.sortedTimes.length, 'yearly steps');
+      } else {
+        console.log('TimeSlider: Range too large for auto-generation, waiting for available times');
+      }
+    }
+
+    this.show();
+  },
+
+  // ============================================================================
+  // UTILITY METHODS
+  // ============================================================================
 
   /**
    * Calculate step size in milliseconds for a given granularity
@@ -90,6 +306,107 @@ export const TimeSlider = {
     }
   },
 
+  // ============================================================================
+  // INDEXED SCALE - Data-density based slider positioning
+  // ============================================================================
+
+  /**
+   * Check if indexed scale should be used based on data density.
+   * Auto-enables when there are enough data points to benefit from it.
+   * @returns {boolean}
+   */
+  shouldUseIndexedScale() {
+    return this.sortedTimes.length >= this.indexedScaleMinPoints;
+  },
+
+  /**
+   * Convert slider position (index) to actual time value.
+   * Only used when useIndexedScale is true.
+   * @param {number} index - Slider position (0 to sortedTimes.length-1)
+   * @returns {number} Time value
+   */
+  indexToTime(index) {
+    if (!this.sortedTimes.length) return this.minTime;
+    const clampedIndex = Math.max(0, Math.min(this.sortedTimes.length - 1, Math.round(index)));
+    return this.sortedTimes[clampedIndex];
+  },
+
+  /**
+   * Convert actual time value to slider position (index).
+   * Only used when useIndexedScale is true.
+   * @param {number} time - Time value
+   * @returns {number} Slider position (index)
+   */
+  timeToIndex(time) {
+    if (!this.sortedTimes.length) return 0;
+    // Binary search for closest time
+    let left = 0;
+    let right = this.sortedTimes.length - 1;
+    while (left < right) {
+      const mid = Math.floor((left + right) / 2);
+      if (this.sortedTimes[mid] < time) {
+        left = mid + 1;
+      } else {
+        right = mid;
+      }
+    }
+    // Check if left-1 is closer
+    if (left > 0 && Math.abs(this.sortedTimes[left - 1] - time) < Math.abs(this.sortedTimes[left] - time)) {
+      return left - 1;
+    }
+    return left;
+  },
+
+  /**
+   * Configure slider for indexed or linear scale.
+   * Call this after sortedTimes is populated.
+   */
+  configureSliderScale() {
+    this.useIndexedScale = this.shouldUseIndexedScale();
+
+    if (this.useIndexedScale) {
+      // Indexed mode: slider value is index into sortedTimes
+      this.slider.min = 0;
+      this.slider.max = this.sortedTimes.length - 1;
+      this.slider.value = this.timeToIndex(this.currentTime);
+      console.log(`TimeSlider: Using indexed scale (${this.sortedTimes.length} points)`);
+    } else {
+      // Linear mode: slider value is actual time
+      this.slider.min = this.minTime;
+      this.slider.max = this.maxTime;
+      this.slider.value = this.currentTime;
+      console.log('TimeSlider: Using linear scale');
+    }
+
+    // Labels always show actual time values
+    this.minLabel.textContent = this.formatTimeLabel(this.minTime);
+    this.maxLabel.textContent = this.formatTimeLabel(this.maxTime);
+    this.yearLabel.textContent = this.formatTimeLabel(this.currentTime);
+  },
+
+  /**
+   * Get time value from current slider position (handles both modes).
+   * @returns {number} Time value
+   */
+  getTimeFromSlider() {
+    if (this.useIndexedScale) {
+      return this.indexToTime(parseInt(this.slider.value));
+    }
+    return this.useTimestamps ? parseFloat(this.slider.value) : parseInt(this.slider.value);
+  },
+
+  /**
+   * Set slider position from time value (handles both modes).
+   * @param {number} time - Time value
+   */
+  setSliderFromTime(time) {
+    if (this.useIndexedScale) {
+      this.slider.value = this.timeToIndex(time);
+    } else {
+      this.slider.value = time;
+    }
+  },
+
   /**
    * Format time label based on current granularity
    */
@@ -99,10 +416,21 @@ export const TimeSlider = {
       const year = typeof time === 'number' ? time : parseInt(time);
       switch (this.granularity) {
         case '5y':
+          // Handle negative years (BCE)
+          if (year < 0) {
+            return `${Math.abs(year)} - ${Math.abs(year - 4)} BCE`;
+          }
           return `${year}-${year + 4}`;
         case '10y':
+          if (year < 0) {
+            return `${Math.abs(year)} - ${Math.abs(year - 9)} BCE`;
+          }
           return `${year}-${year + 9}`;
         default:
+          // Negative years displayed as "XXXX BCE"
+          if (year < 0) {
+            return `${Math.abs(year)} BCE`;
+          }
           return year.toString();
       }
     }
@@ -217,12 +545,8 @@ export const TimeSlider = {
 
     this.renderMetricTabs();
 
-    // Configure slider
-    this.slider.min = this.minTime;
-    this.slider.max = this.maxTime;
-    this.slider.value = this.currentTime;
-    this.minLabel.textContent = this.formatTimeLabel(this.minTime);
-    this.maxLabel.textContent = this.formatTimeLabel(this.maxTime);
+    // Configure slider (auto-detects indexed vs linear scale)
+    this.configureSliderScale();
     this.titleLabel.textContent = metricKey || 'Time';
 
     // Setup event listeners (only once)
@@ -259,7 +583,8 @@ export const TimeSlider = {
   setupEventListeners() {
     // Slider input (fires while dragging)
     this.slider.addEventListener('input', (e) => {
-      const time = this.useTimestamps ? parseFloat(e.target.value) : parseInt(e.target.value);
+      // Use getTimeFromSlider to handle both indexed and linear modes
+      const time = this.getTimeFromSlider();
       this.setTime(time);
     });
 
@@ -343,16 +668,25 @@ export const TimeSlider = {
 
   /**
    * Set current time and update display
+   * @param {number} time - Year (int) or timestamp (ms)
+   * @param {string} source - What triggered the change: 'slider' | 'playback' | 'api'
    */
-  setTime(time) {
+  setTime(time, source = 'slider') {
     this.currentTime = time;
     this.yearLabel.textContent = this.formatTimeLabel(time);
-    this.slider.value = time;
+    // Use setSliderFromTime to handle both indexed and linear modes
+    this.setSliderFromTime(time);
 
     // Build GeoJSON for this time and update source data (fast, no layer recreation)
     // The interpolate expression automatically re-evaluates when source data changes
-    const geojson = this.buildTimeGeojson(time);
-    MapAdapter?.updateSourceData(geojson);
+    // Only do this if we have choropleth data loaded
+    if (this.baseGeojson && this.timeDataFilled) {
+      const geojson = this.buildTimeGeojson(time);
+      MapAdapter?.updateSourceData(geojson);
+    }
+
+    // Notify all listeners of time change
+    this._notifyChangeListeners(source);
   },
 
   /**
@@ -528,7 +862,7 @@ export const TimeSlider = {
       baseGeojson: scaleConfig.baseGeojson || this.baseGeojson,
       metricKey: scaleConfig.metricKey || this.metricKey,
       mapRenderer: scaleConfig.mapRenderer || 'choropleth',
-      currentTime: scaleConfig.timeRange?.max || scaleConfig.timeRange?.min
+      currentTime: scaleConfig.currentTime || scaleConfig.timeRange?.min || scaleConfig.timeRange?.max
     };
 
     this.scales.push(scale);
@@ -594,22 +928,24 @@ export const TimeSlider = {
     this.sortedTimes = [...this.availableTimes].sort((a, b) => a - b);
     this.currentTime = scale.currentTime || scale.timeRange.max;
 
-    // Rebuild filled data for new scale
-    this.timeDataFilled = this.buildFilledTimeData();
+    // Rebuild filled data for new scale (only if we have base geometry for choropleth)
+    // Point-event scales (earthquakes, etc.) don't use baseGeojson
+    if (this.baseGeojson && this.baseGeojson.features) {
+      this.timeDataFilled = this.buildFilledTimeData();
+    } else {
+      // For point-event scales, just use timeData directly
+      this.timeDataFilled = this.timeData || {};
+    }
 
-    // Update slider range
-    this.slider.min = this.minTime;
-    this.slider.max = this.maxTime;
-    this.slider.value = this.currentTime;
-    this.minLabel.textContent = this.formatTimeLabel(this.minTime);
-    this.maxLabel.textContent = this.formatTimeLabel(this.maxTime);
+    // Configure slider (auto-detects indexed vs linear scale based on data density)
+    this.configureSliderScale();
 
-    // Update display
-    this.yearLabel.textContent = this.formatTimeLabel(this.currentTime);
-
-    // Update map
-    const geojson = this.buildTimeGeojson(this.currentTime);
-    MapAdapter?.updateSourceData(geojson);
+    // Update map (only for choropleth scales with baseGeojson)
+    // Point-event scales handle their own rendering via overlay-controller
+    if (this.baseGeojson && this.baseGeojson.features) {
+      const geojson = this.buildTimeGeojson(this.currentTime);
+      MapAdapter?.updateSourceData(geojson);
+    }
 
     // Re-render tabs to update active state
     this.renderTabs();
@@ -942,7 +1278,7 @@ export const TimeSlider = {
           nextTime = this.sortedTimes[this.sortedTimes.length - 1];
         }
       }
-      this.setTime(nextTime);
+      this.setTime(nextTime, 'playback');
     }, interval);
   },
 

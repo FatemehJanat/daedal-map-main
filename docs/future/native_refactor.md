@@ -936,6 +936,138 @@ Never miss an earthquake at 3am - when you open the app next morning, it's all t
 
 ---
 
+## Cloud Sync Architecture
+
+Separating data collection from display enables offline-capable clients with live data freshness.
+
+### The Key Insight
+
+**Display code doesn't care about freshness.** Whether the timestamp is 5 seconds ago or 50 years ago, it's the same render path. The only differences are:
+
+| Aspect | Historical | Live |
+|--------|-----------|------|
+| Data source | Static files | Polling/streaming |
+| Refresh | Manual/none | Auto (30s, 5min, etc.) |
+| UI indicator | "Data from 2020" | "Updated 30s ago" |
+| Timeline | User scrubs | Auto-advances |
+
+### Architecture
+
+```
+[Ingestion Server]  -->  [Cloud Storage]  -->  [Local Instance]
+  (always-on)            (S3/R2/Supabase)       (offline-capable)
+
+  Scrapers run           Data folders           Sync on startup
+  Convert to schema      Versioned/CDN          Display from local
+  Push updates           Public read            Works offline
+```
+
+### Cloud Storage Options
+
+| Provider | Free Tier | Pros | Best For |
+|----------|-----------|------|----------|
+| **Cloudflare R2** | 10 GB | No egress fees, fast CDN | Public data distribution |
+| **Supabase Storage** | 1 GB | Already using for DB | Small datasets |
+| **AWS S3** | 5 GB | Industry standard | Enterprise |
+| **GitHub Releases** | 2 GB/file | Version control, free | Infrequent updates |
+
+### Sync Protocol
+
+**Option 1: Manifest-based (Simple)**
+
+```json
+// manifest.json at storage root
+{
+  "version": "2026-01-08",
+  "files": {
+    "countries/USA/usgs_earthquakes/events.parquet": {
+      "size": 7340032,
+      "hash": "sha256:abc123...",
+      "updated": "2026-01-08T06:00:00Z"
+    }
+  }
+}
+```
+
+Client compares local manifest to remote, downloads only changed files.
+
+**Option 2: Append-only Partitions**
+
+```
+events/earthquakes/
+  2026-01-07.parquet  (yesterday's events)
+  2026-01-08.parquet  (today's events)
+```
+
+Client syncs folder, reads all parquets. DuckDB/Polars handles partitioned files efficiently.
+
+### Local Instance Behavior
+
+```
+On startup:
+  1. Check network connectivity
+  2. If online: fetch manifest, compare hashes, download changed files
+  3. If offline: use cached data, show "Last synced: X hours ago"
+  4. Load data from local files
+  5. Display works identically either way
+```
+
+**User never waits for sync** - app opens immediately with cached data, sync happens in background.
+
+---
+
+## Business Model: Open Core
+
+The architecture enables monetization while keeping the project open source.
+
+### What's Free (Always)
+
+- All source code (GitHub, MIT/Apache license)
+- Schema documentation
+- Example converters
+- Self-hosting instructions
+
+### What Can Be Monetized
+
+| Offering | Description | Pricing Model |
+|----------|-------------|---------------|
+| **Pre-built Data Packs** | Ready-to-use parquet files | One-time purchase |
+| **Update Subscriptions** | Fresh data delivered to your storage | Monthly/annual |
+| **Converter Library** | Production converters for live sources | Per-converter purchase |
+| **Priority Support** | Help with deployment/customization | Hourly/retainer |
+
+### Data Pack Examples
+
+| Pack | Contents | Size | Use Case |
+|------|----------|------|----------|
+| "USA Complete" | All USA sub-national data (census, disasters, risk) | ~500 MB | US-focused apps |
+| "Global Disasters" | Earthquakes, hurricanes, volcanoes, tsunamis | ~200 MB | Disaster monitoring |
+| "World Demographics" | Population, GDP, health for all countries | ~100 MB | Global visualizations |
+
+### Converter Subscriptions
+
+For live data sources that require ongoing maintenance:
+
+| Source | Update Frequency | Effort | Subscription Value |
+|--------|------------------|--------|-------------------|
+| USGS Earthquakes | 5 minutes | Low | API is stable |
+| NASA FIRMS Fires | Hourly | Low | Simple CSV |
+| NOAA Weather | 6 hours | Medium | GRIB parsing |
+| Census Updates | Annual | High | Format changes |
+
+Users CAN run these themselves (code is open), but subscription saves the effort.
+
+### Why This Works
+
+1. **Can't sell open data** - USGS, NASA, Census data is public domain
+2. **CAN sell labor** - Converting, cleaning, maintaining takes work
+3. **CAN sell convenience** - Download ready-to-use vs build from scratch
+4. **CAN sell freshness** - Guaranteed updates vs DIY scraping
+
+This is the same model as: Mapbox (OSM data), Observable (open source tools), PostGIS (open source DB).
+
+---
+
 ## Optimization Targets (REVISIT)
 
 Items flagged for future optimization when performance becomes an issue:
@@ -977,4 +1109,184 @@ Items flagged for future optimization when performance becomes an issue:
 
 ---
 
-*Last Updated: 2026-01-08*
+## Implementation Priority (2026-01-09)
+
+### Phase 1: Complete Disaster Views [CURRENT]
+Finish earthquake, volcano, hurricane, wildfire display system before live pipeline.
+
+### Phase 2: Live Data Pipeline [NEXT]
+
+Implementation order:
+1. **Find live data sources** - USGS earthquake feed already has real-time API, NASA FIRMS for fires
+2. **Create scraper/monitor** - Python daemon that polls APIs, detects new events
+3. **Modify converters** - Add incremental append mode (not just full dumps)
+4. **Cloud storage** - Move parquet files to R2/S3 for scraper write access
+5. **Sync system** - Manifest-based comparison, incremental download on startup
+
+Key insight: **Frontend stays unchanged** - "Read databases, filter by user request, display" is the same whether data is 5 seconds old or 50 years old.
+
+### Phase 3: Dual-Mode UI
+
+After live pipeline works:
+- `/live` route - Globe projection, current year only
+- `/historical` route - 2D mercator, full timeline
+- Globe projection already implemented in map-adapter.js (just disabled)
+- Year filtering already works in overlay-controller.js
+
+---
+
+## Code Research: Dual-Mode Implementation (2026-01-09)
+
+Detailed findings from codebase exploration - reference when implementing.
+
+### 1. Route Structure (app.py)
+
+**Framework:** FastAPI (async), NOT Flask
+**Main route:** Lines 121-125
+```python
+@app.get("/", response_class=HTMLResponse)
+async def serve_index():
+    template_path = BASE_DIR / "templates" / "index.html"
+    return template_path.read_text(encoding='utf-8')
+```
+
+**To add `/live` route:**
+```python
+@app.get("/live", response_class=HTMLResponse)
+async def serve_live():
+    template_path = BASE_DIR / "templates" / "live.html"
+    return template_path.read_text(encoding='utf-8')
+```
+
+**Key:** No Jinja2 templating used - raw HTML served directly. All dynamic content via JavaScript.
+
+### 2. Globe Projection (map-adapter.js)
+
+**Location:** `static/modules/map-adapter.js`
+
+**Current status:** Globe DISABLED for performance (lines 70-74)
+```javascript
+// Globe projection disabled - using flat mercator for smoother panning
+// To re-enable globe: uncomment the enableGlobe() call below
+// this.map.on('style.load', () => {
+//   this.enableGlobe();
+// });
+```
+
+**enableGlobe() method:** Lines 181-207 - FULLY IMPLEMENTED
+```javascript
+enableGlobe() {
+  this.map.setProjection({ type: 'globe' });
+  this.map.setSky({
+    'sky-color': '#0a0a1a',
+    'sky-horizon-blend': 0.5,
+    'horizon-color': '#1a1a3e',
+    'horizon-fog-blend': 0.8,
+    'fog-color': '#0f0f2a',
+    'fog-ground-blend': 0.9
+  });
+  // + setFog() for atmosphere effect
+}
+```
+
+**To make configurable:** Add to config.js:
+```javascript
+map: {
+  projection: 'mercator',  // or 'globe'
+}
+```
+Then in MapAdapter.init(), check CONFIG.map.projection.
+
+### 3. Year Filtering (overlay-controller.js)
+
+**Location:** `static/modules/overlay-controller.js`
+
+**Pattern:** Cache-first, filter-second
+- `loadOverlay()` fetches ALL data (no year filter in API call)
+- `dataCache[overlayId]` stores full dataset
+- `renderFilteredData()` filters by current year from TimeSlider
+
+**Key code (lines 533-580):**
+```javascript
+if (endpoint.yearField && year) {
+  const yearNum = parseInt(year);
+  const filtered = cachedData.features.filter(f => {
+    const propYear = f.properties[endpoint.yearField];
+    return parseInt(propYear) === yearNum;
+  });
+  filteredGeojson = { type: 'FeatureCollection', features: filtered };
+}
+```
+
+**To add live mode:** Add property and method:
+```javascript
+displayMode: 'historical', // 'historical' | 'live'
+
+setDisplayMode(mode) {
+  this.displayMode = mode;
+  if (mode === 'live') {
+    // Lock to current year
+    const currentYear = new Date().getFullYear();
+    TimeSlider.setTime(currentYear);
+  }
+  this.refreshActive();
+},
+
+getFilterYear() {
+  if (this.displayMode === 'live') {
+    return new Date().getFullYear();
+  }
+  return this.getCurrentYear(); // From TimeSlider
+}
+```
+
+### 4. TimeSlider Integration
+
+**Location:** `static/modules/time-slider.js`
+
+**For live mode:**
+- Hide slider entirely, OR
+- Show locked "Live 2026" label
+- Disable step buttons and scrubbing
+
+**Key methods to modify:**
+- `setTimeRange()` - already has `replace: true` mode
+- `show()` / `hide()` - for visibility control
+- Add `setLocked(boolean)` to prevent user interaction
+
+### 5. Files to Create/Modify
+
+| File | Action | Notes |
+|------|--------|-------|
+| `templates/live.html` | CREATE | Copy index.html, add `window.APP_MODE = 'live'` |
+| `app.py` | MODIFY | Add `/live` route (2 lines) |
+| `config.js` | MODIFY | Add `mode` and `projection` settings |
+| `map-adapter.js` | MODIFY | Check config for projection on init |
+| `overlay-controller.js` | MODIFY | Add `displayMode` property |
+| `time-slider.js` | MODIFY | Add lock/hide for live mode |
+| `app.js` | MODIFY | Read `window.APP_MODE`, configure components |
+
+### 6. Minimal Implementation Path
+
+1. **live.html** - Copy index.html, add before app.js import:
+   ```html
+   <script>window.APP_MODE = 'live';</script>
+   ```
+
+2. **app.js init()** - Read mode and configure:
+   ```javascript
+   const appMode = window.APP_MODE || 'historical';
+   if (appMode === 'live') {
+     MapAdapter.enableGlobe();
+     OverlayController.setDisplayMode('live');
+     TimeSlider.hide(); // or lock
+   }
+   ```
+
+3. **app.py** - Add route (copy existing pattern)
+
+This keeps changes minimal while enabling mode switching.
+
+---
+
+*Last Updated: 2026-01-09*

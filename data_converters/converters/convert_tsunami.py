@@ -33,9 +33,30 @@ from build.catalog.finalize_source import finalize_source
 
 # Configuration
 RAW_DATA_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/Raw data/noaa/tsunami")
+IMPORTED_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/Raw data/imported/noaa/tsunami")
 GEOMETRY_PATH = Path("C:/Users/Bryan/Desktop/county-map-data/geometry/USA.parquet")
 OUTPUT_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/countries/USA/tsunamis")
 SOURCE_ID = "noaa_tsunamis"
+
+
+def get_source_dir():
+    """Get source directory - check raw first, then imported."""
+    if RAW_DATA_DIR.exists() and (RAW_DATA_DIR / "tsunami_events.json").exists():
+        return RAW_DATA_DIR
+    elif IMPORTED_DIR.exists() and (IMPORTED_DIR / "tsunami_events.json").exists():
+        print(f"  Note: Using imported data from {IMPORTED_DIR}")
+        return IMPORTED_DIR
+    return RAW_DATA_DIR
+
+
+def move_to_imported():
+    """Move processed raw files to imported folder."""
+    import shutil
+    if RAW_DATA_DIR.exists() and (RAW_DATA_DIR / "tsunami_events.json").exists():
+        IMPORTED_DIR.mkdir(parents=True, exist_ok=True)
+        for f in RAW_DATA_DIR.glob("*.json"):
+            shutil.move(str(f), str(IMPORTED_DIR / f.name))
+        print(f"  Moved files to {IMPORTED_DIR}")
 
 # Cause codes from NOAA documentation
 CAUSE_CODES = {
@@ -67,8 +88,10 @@ def load_tsunami_data():
     """Load tsunami events and runups from JSON files."""
     print("\nLoading tsunami data...")
 
+    source_dir = get_source_dir()
+
     # Load events
-    events_path = RAW_DATA_DIR / "tsunami_events.json"
+    events_path = source_dir / "tsunami_events.json"
     with open(events_path, 'r', encoding='utf-8') as f:
         events_data = json.load(f)
 
@@ -76,7 +99,7 @@ def load_tsunami_data():
     print(f"  Total events: {len(events_df):,}")
 
     # Load runups
-    runups_path = RAW_DATA_DIR / "tsunami_runups.json"
+    runups_path = source_dir / "tsunami_runups.json"
     with open(runups_path, 'r', encoding='utf-8') as f:
         runups_data = json.load(f)
 
@@ -324,9 +347,14 @@ def generate_metadata(events_df, runups_df, county_df):
     """Generate metadata.json for the dataset."""
     print("\nGenerating metadata.json...")
 
-    # Year range
-    min_year = int(events_df['year'].min()) if not events_df.empty else 0
-    max_year = int(events_df['year'].max()) if not events_df.empty else 0
+    # Year range - extract from timestamp
+    if not events_df.empty and 'timestamp' in events_df.columns:
+        years = pd.to_datetime(events_df['timestamp'], errors='coerce').dt.year
+        min_year = int(years.min()) if years.notna().any() else 0
+        max_year = int(years.max()) if years.notna().any() else 0
+    else:
+        min_year = 0
+        max_year = 0
 
     metrics = {
         "runup_count": {
@@ -431,8 +459,10 @@ def print_statistics(events_df, runups_df, county_df):
     print("="*80)
 
     print(f"\nTotal tsunami events: {len(events_df):,}")
-    if not events_df.empty:
-        print(f"Year range: {events_df['year'].min()} to {events_df['year'].max()}")
+    if not events_df.empty and 'timestamp' in events_df.columns:
+        years = pd.to_datetime(events_df['timestamp'], errors='coerce').dt.year
+        if years.notna().any():
+            print(f"Year range: {int(years.min())} to {int(years.max())}")
 
     print(f"\nTotal runup observations: {len(runups_df):,}")
 
@@ -504,6 +534,9 @@ def main():
     except ValueError as e:
         print(f"  Note: {e}")
         print(f"  Add '{SOURCE_ID}' to source_registry.py to enable auto-finalization")
+
+    # Move raw files to imported folder
+    move_to_imported()
 
     print("\n" + "=" * 60)
     print("COMPLETE!")

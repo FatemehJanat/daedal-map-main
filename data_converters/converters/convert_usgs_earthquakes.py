@@ -34,6 +34,7 @@ from build.catalog.finalize_source import finalize_source
 
 # Configuration
 RAW_DATA_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/Raw data/usgs_earthquakes")
+IMPORTED_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/Raw data/imported/usgs_earthquakes")
 GEOMETRY_PATH = Path("C:/Users/Bryan/Desktop/county-map-data/geometry/USA.parquet")
 OUTPUT_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/countries/USA/usgs_earthquakes")
 SOURCE_ID = "usgs_earthquakes"
@@ -43,39 +44,109 @@ SOURCE_ID = "usgs_earthquakes"
 # Earthquake-Specific Calculations
 # =============================================================================
 
-def calculate_felt_radius(magnitude):
+def calculate_felt_radius(magnitude, depth_km=None):
     """
-    Calculate felt radius in km (people notice shaking).
+    Calculate felt radius in km (MMI II-III, people notice shaking).
 
-    Based on Modified Mercalli Intensity attenuation.
-    Formula: R = 10^(0.5 * M - 1.0)
-    """
-    if pd.isna(magnitude):
-        return None
-    return 10 ** (0.5 * magnitude - 1.0)
+    Based on empirical seismological attenuation models.
+    Formula: R = 10^(0.44 * M - 0.29) with depth correction.
 
+    Shallow earthquakes (< 70km) are felt over wider areas.
+    Deep earthquakes have smaller felt radii.
 
-def calculate_damage_radius(magnitude):
-    """
-    Calculate damage radius in km (potential structural damage, MMI VI+).
-
-    Based on Modified Mercalli Intensity attenuation.
-    Formula: R = 10^(0.5 * M - 1.5)
+    Approximate felt radii by magnitude (shallow):
+    - M4.0: ~30 km
+    - M5.0: ~80 km
+    - M6.0: ~220 km
+    - M7.0: ~620 km
+    - M8.0: ~1700 km
     """
     if pd.isna(magnitude):
         return None
-    return 10 ** (0.5 * magnitude - 1.5)
+
+    # Base formula: empirical MMI attenuation
+    radius = 10 ** (0.44 * magnitude - 0.29)
+
+    # Depth correction: deeper quakes have smaller felt areas
+    if depth_km is not None and not pd.isna(depth_km):
+        if depth_km > 300:
+            radius *= 0.5  # Deep focus - 50% reduction
+        elif depth_km > 70:
+            radius *= 0.7  # Intermediate - 30% reduction
+        # Shallow (< 70km) - full radius
+
+    return radius
+
+
+def calculate_damage_radius(magnitude, depth_km=None):
+    """
+    Calculate damage radius in km (MMI VI+, potential structural damage).
+
+    Based on empirical attenuation for damaging ground motion.
+    Formula: R = 10^(0.32 * M - 0.78) with depth correction.
+
+    Damage radii are much smaller than felt radii - concentrated near epicenter.
+
+    Approximate damage radii by magnitude (shallow):
+    - M5.0: ~7 km
+    - M6.0: ~14 km
+    - M7.0: ~29 km
+    - M8.0: ~60 km
+    """
+    if pd.isna(magnitude):
+        return None
+
+    # Only earthquakes M5+ typically cause structural damage
+    if magnitude < 5.0:
+        return 0.0
+
+    # Base formula: empirical MMI attenuation for damaging intensity
+    radius = 10 ** (0.32 * magnitude - 0.78)
+
+    # Depth correction: deeper quakes cause less surface damage
+    if depth_km is not None and not pd.isna(depth_km):
+        if depth_km > 300:
+            radius *= 0.3  # Deep focus - 70% reduction
+        elif depth_km > 70:
+            radius *= 0.5  # Intermediate - 50% reduction
+        # Shallow (< 70km) - full radius
+
+    return radius
 
 
 # =============================================================================
 # Data Processing
 # =============================================================================
 
+def get_source_dir():
+    """Get source directory - check raw first, then imported."""
+    if RAW_DATA_DIR.exists() and list(RAW_DATA_DIR.glob("earthquakes_*.csv")):
+        return RAW_DATA_DIR
+    elif IMPORTED_DIR.exists() and list(IMPORTED_DIR.glob("earthquakes_*.csv")):
+        print(f"  Note: Using imported data from {IMPORTED_DIR}")
+        return IMPORTED_DIR
+    return RAW_DATA_DIR  # Default, will show 0 files message
+
+
+def move_to_imported():
+    """Move processed raw files to imported folder."""
+    if RAW_DATA_DIR.exists() and RAW_DATA_DIR != IMPORTED_DIR:
+        csv_files = list(RAW_DATA_DIR.glob("earthquakes_*.csv"))
+        if csv_files:
+            import shutil
+            IMPORTED_DIR.mkdir(parents=True, exist_ok=True)
+            for f in csv_files:
+                dest = IMPORTED_DIR / f.name
+                shutil.move(str(f), str(dest))
+            print(f"  Moved {len(csv_files)} files to {IMPORTED_DIR}")
+
+
 def load_raw_data():
     """Load all earthquake CSV files."""
     print("Loading earthquake CSV files...")
 
-    csv_files = sorted(RAW_DATA_DIR.glob("earthquakes_*.csv"))
+    source_dir = get_source_dir()
+    csv_files = sorted(source_dir.glob("earthquakes_*.csv"))
     print(f"  Found {len(csv_files)} CSV files")
 
     all_events = []
@@ -112,9 +183,15 @@ def process_events(df, counties_gdf):
     """Process events with spatial join and radius calculations."""
     print("\nProcessing events...")
 
-    # Calculate radii
-    df['felt_radius_km'] = df['mag'].apply(calculate_felt_radius)
-    df['damage_radius_km'] = df['mag'].apply(calculate_damage_radius)
+    # Calculate radii (using magnitude and depth for realistic values)
+    df['felt_radius_km'] = df.apply(
+        lambda row: calculate_felt_radius(row['mag'], row.get('depth')),
+        axis=1
+    )
+    df['damage_radius_km'] = df.apply(
+        lambda row: calculate_damage_radius(row['mag'], row.get('depth')),
+        axis=1
+    )
 
     # Create point geometries
     print("  Creating point geometries...")
@@ -288,6 +365,9 @@ def main():
     except ValueError as e:
         print(f"  Note: {e}")
         print(f"  Add '{SOURCE_ID}' to source_registry.py to enable auto-finalization")
+
+    # Move raw files to imported folder
+    move_to_imported()
 
     print("\n" + "=" * 60)
     print("COMPLETE!")

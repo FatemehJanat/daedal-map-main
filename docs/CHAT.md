@@ -932,6 +932,102 @@ Or prompt "Did you mean the district Has in Albania?" when context suggests othe
 The chat remmebering context will know when a location jump is out of place and needs to be confirmed. 
 ---
 
+## Overlay-Based Intent Detection (TODO)
+
+The overlay selector on the right side provides intent hints to help the preprocessor and LLM understand what data mode the user wants.
+
+### Overlay State as Context
+
+Active overlays should be passed to the preprocessor and included in LLM context:
+
+```python
+# preprocessor.py - include in hints
+hints["active_overlays"] = ["demographics", "volcanoes"]  # From frontend
+
+# order_taker.py - include in tier 3 context
+if hints.get("active_overlays"):
+    context += f"\n[ACTIVE OVERLAYS: {', '.join(hints['active_overlays'])}]"
+```
+
+### Intent Resolution Logic
+
+| Active Overlay | User Query | Intent | Data Source |
+|---------------|------------|--------|-------------|
+| demographics | "show me earthquake impacts" | Aggregates | County aggregate data (deaths, damage) |
+| earthquakes | "show me earthquake impacts" | Events | events.parquet (point+radius display) |
+| volcanoes | "show me volcanic eruptions" | Events | eruptions.parquet |
+| volcanoes | "show me the volcanoes" | Static locations | locations.parquet |
+| demographics + volcanoes | "volcanoes near Seattle" | Events | eruptions.parquet (overlay is more specific) |
+
+### Query Keyword Mapping
+
+```python
+# Different keywords suggest different data modes
+EVENT_KEYWORDS = ["eruption", "event", "happened", "occurred", "when did"]
+LOCATION_KEYWORDS = ["where are", "locations", "map of", "the volcanoes", "active volcanoes"]
+AGGREGATE_KEYWORDS = ["impact", "damage", "deaths", "affected", "counties hit"]
+
+# "show me volcanic eruptions" -> events file
+# "show me the volcanoes" -> locations file
+# "show me counties affected by volcanoes" -> aggregates
+```
+
+### Chat Guidance Responses
+
+When user intent is unclear or overlays don't match the query, the chat should guide:
+
+```python
+GUIDANCE_RESPONSES = {
+    "no_disaster_overlay": "To see disaster events on the map, please enable an overlay (Earthquakes, Hurricanes, Volcanoes, or Wildfires) on the right panel.",
+
+    "want_aggregates": "If you want to see county-level impacts and statistics, please enable the Demographics overlay.",
+
+    "suggest_overlay": "I see you're asking about earthquakes. Enable the Earthquakes overlay to see events on the map, or keep Demographics to see county impact statistics.",
+
+    "overlay_mismatch": "You're asking about hurricanes but have the Earthquakes overlay active. Would you like me to suggest switching overlays?",
+}
+```
+
+### Example Chat Flows
+
+**User has Demographics only:**
+```
+User: "Show me volcanic eruptions in Alaska"
+Bot: "To see volcanic eruptions as map events, please enable the Volcanoes overlay on the right.
+      With Demographics, I can show you counties affected by volcanic activity instead."
+```
+
+**User has Volcanoes overlay:**
+```
+User: "Show me volcanic eruptions in Alaska"
+Bot: [Displays eruption events on map with VEI-based coloring and radius circles]
+```
+
+**User asks about static locations:**
+```
+User: "Where are the volcanoes in the Pacific Northwest?"
+Bot: [Uses locations.parquet to show volcano markers, not eruption events]
+```
+
+### Implementation Notes
+
+1. **Frontend**: Pass `activeOverlays` array with each chat request
+2. **Preprocessor**: Add overlay state to hints, use for intent classification
+3. **LLM Context**: Include overlay state so LLM can provide relevant guidance
+4. **Postprocessor**: Route to correct data source based on overlay + query analysis
+5. **Response Templates**: Add helpful guidance messages when intent is unclear
+
+### File Changes Needed
+
+| File | Changes |
+|------|---------|
+| static/modules/chat-panel.js | Send `activeOverlays` from OverlaySelector with each query |
+| mapmover/preprocessor.py | Add `detect_disaster_intent()` using overlay context |
+| mapmover/order_taker.py | Include overlay state in tier 3 context |
+| mapmover/postprocessor.py | Route to events vs locations vs aggregates based on intent |
+
+---
+
 ## Future Enhancements
 
 ### Growth Rate Calculations
@@ -983,4 +1079,4 @@ When too many data points requested (10+):
 
 ---
 
-*Last Updated: 2026-01-07 - Added wildcard metric expansion (metric: "*"), LLM message ordering, viewport inference rules, time pattern injection*
+*Last Updated: 2026-01-08 - Added overlay-based intent detection notes (TODO), wildcard metric expansion, LLM message ordering*

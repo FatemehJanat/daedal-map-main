@@ -58,6 +58,31 @@ Goal: Verify all 4 disaster datasets work for US, then scale globally.
 | Fires | NASA FIRMS | Test | Global coverage |
 | Drought | USDM | Test | US only |
 
+### Overlay Selector UI (Quick Win)
+
+Implement a sidebar for toggling data overlays - helps chat understand context and shows off available data.
+
+```
+[Overlays]
+  [ ] Disasters
+      [ ] Earthquakes
+      [ ] Hurricanes
+      [ ] Wildfires
+      [ ] Volcanoes
+  [ ] Climate
+      [ ] Wind patterns
+      [ ] Air quality
+  [ ] Demographics (existing choropleth)
+```
+
+Benefits:
+- Chat knows which overlays are active (context for queries)
+- Users can explore data without typing queries
+- Multiple overlays can be visible simultaneously
+- Establishes visual language for event displays
+
+See [DISASTER_DISPLAY.md](../DISASTER_DISPLAY.md#overlay-selector-ui) for implementation details.
+
 ### Tasks
 
 1. Test each disaster view with US data
@@ -65,6 +90,7 @@ Goal: Verify all 4 disaster datasets work for US, then scale globally.
 3. Test date range filtering
 4. Confirm Canada data works (where applicable)
 5. Confirm global data works (earthquakes, fires)
+6. Build overlay selector UI
 
 ### Success Criteria
 
@@ -72,6 +98,7 @@ Goal: Verify all 4 disaster datasets work for US, then scale globally.
 - Date filtering works
 - Tooltip/popup shows event details
 - Performance acceptable with large event counts
+- Overlay selector toggles layers correctly
 
 ---
 
@@ -125,6 +152,39 @@ Goal: Add live data streams and climate datasets.
 - Time-series storage (append-only parquet or TimescaleDB)
 
 See [native_refactor.md](native_refactor.md) for architecture details.
+
+---
+
+## Business Model Options
+
+The architecture supports open-core monetization while keeping everything open source.
+
+### What's Free (Always)
+
+- All source code (MIT/Apache license)
+- Schema documentation
+- Example converters
+- Self-hosting instructions
+
+### What Can Be Monetized
+
+| Offering | Description | Model |
+|----------|-------------|-------|
+| **Pre-built Data Packs** | Ready-to-use parquet files | One-time purchase |
+| **Update Subscriptions** | Fresh data delivered regularly | Monthly/annual |
+| **Converter Library** | Production converters for live sources | Per-converter |
+| **Priority Support** | Deployment/customization help | Hourly/retainer |
+
+### Key Insight
+
+Can't sell open data (USGS, Census, NASA is public domain), but CAN sell:
+- **Labor** - Converting, cleaning, maintaining takes work
+- **Convenience** - Download ready-to-use vs build from scratch
+- **Freshness** - Guaranteed updates vs DIY scraping
+
+This is the same model as Mapbox (OSM data), Observable (open tools), PostGIS (open DB).
+
+See [native_refactor.md](native_refactor.md#business-model-open-core) for detailed breakdown.
 
 ---
 

@@ -34,9 +34,84 @@ from build.catalog.finalize_source import finalize_source
 
 # Configuration
 RAW_DATA_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/Raw data/smithsonian/volcano")
+IMPORTED_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/Raw data/imported/smithsonian/volcano")
 GEOMETRY_PATH = Path("C:/Users/Bryan/Desktop/county-map-data/geometry/USA.parquet")
 OUTPUT_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/countries/USA/volcanoes")
 SOURCE_ID = "smithsonian_volcanoes"
+
+
+# =============================================================================
+# Eruption Radius Calculations
+# =============================================================================
+
+def calculate_felt_radius_km(vei):
+    """
+    Calculate eruption "felt" radius in km based on VEI.
+
+    VEI is logarithmic (each step = 10x ejecta volume).
+    Radius scales as cube root of volume: R ~ 10^(VEI/3)
+
+    Formula: felt_radius = 5 * 10^(VEI * 0.33)
+
+    This gives approximately:
+    - VEI 0: ~5 km (local effects)
+    - VEI 2: ~11 km (regional ash fall)
+    - VEI 4: ~23 km (significant ash)
+    - VEI 5: ~50 km (Mt St Helens scale)
+    - VEI 6: ~108 km (Pinatubo scale)
+    - VEI 7: ~232 km (major caldera)
+
+    Calibrated against Tambora VEI 7 which had ash 600 km.
+    """
+    if pd.isna(vei):
+        return 10.0  # Default for unknown VEI
+    vei = max(0, int(vei))
+    # Formula: 5 * 10^(VEI * 0.33)
+    return round(5 * (10 ** (vei * 0.33)), 1)
+
+
+def calculate_damage_radius_km(vei):
+    """
+    Calculate eruption "damage" radius in km based on VEI.
+
+    Damage zone (pyroclastic flows, lahars, heavy ashfall)
+    is much smaller than felt radius.
+
+    Formula: damage_radius = 1 * 10^(VEI * 0.3)
+
+    This gives approximately:
+    - VEI 0: ~1 km (immediate vicinity)
+    - VEI 2: ~4 km
+    - VEI 4: ~16 km
+    - VEI 5: ~32 km
+    - VEI 6: ~63 km
+    - VEI 7: ~126 km
+    """
+    if pd.isna(vei):
+        return 3.0  # Default for unknown VEI
+    vei = max(0, int(vei))
+    # Formula: 1 * 10^(VEI * 0.3)
+    return round(1 * (10 ** (vei * 0.3)), 1)
+
+
+def get_source_dir():
+    """Get source directory - check raw first, then imported."""
+    if RAW_DATA_DIR.exists() and (RAW_DATA_DIR / "gvp_volcanoes.json").exists():
+        return RAW_DATA_DIR
+    elif IMPORTED_DIR.exists() and (IMPORTED_DIR / "gvp_volcanoes.json").exists():
+        print(f"  Note: Using imported data from {IMPORTED_DIR}")
+        return IMPORTED_DIR
+    return RAW_DATA_DIR
+
+
+def move_to_imported():
+    """Move processed raw files to imported folder."""
+    import shutil
+    if RAW_DATA_DIR.exists() and (RAW_DATA_DIR / "gvp_volcanoes.json").exists():
+        IMPORTED_DIR.mkdir(parents=True, exist_ok=True)
+        for f in RAW_DATA_DIR.glob("*.json"):
+            shutil.move(str(f), str(IMPORTED_DIR / f.name))
+        print(f"  Moved files to {IMPORTED_DIR}")
 
 # US regions/countries in Smithsonian data
 US_REGIONS = [
@@ -60,8 +135,10 @@ def load_volcano_data():
     """Load volcanoes and eruptions from GeoJSON files."""
     print("\nLoading volcano data...")
 
+    source_dir = get_source_dir()
+
     # Load volcanoes
-    volcanoes_path = RAW_DATA_DIR / "gvp_volcanoes.json"
+    volcanoes_path = source_dir / "gvp_volcanoes.json"
     with open(volcanoes_path, 'r', encoding='utf-8') as f:
         volcanoes_geojson = json.load(f)
 
@@ -90,7 +167,7 @@ def load_volcano_data():
     print(f"  Total volcanoes: {len(volcanoes_df):,}")
 
     # Load eruptions
-    eruptions_path = RAW_DATA_DIR / "gvp_eruptions.json"
+    eruptions_path = source_dir / "gvp_eruptions.json"
     with open(eruptions_path, 'r', encoding='utf-8') as f:
         eruptions_geojson = json.load(f)
 
@@ -216,23 +293,31 @@ def create_volcanoes_parquet(volcanoes_df):
 def create_eruptions_parquet(eruptions_df, volcanoes_df):
     """Create eruptions.parquet with eruption events.
 
-    Standard event schema columns:
+    Standard Point+Radius Event Schema (for frontend display):
     - event_id: unique identifier
     - timestamp: event datetime (ISO format)
     - latitude, longitude: event location
     - loc_id: assigned county/water body code
+    - felt_radius_km: outer impact radius (lighter display)
+    - damage_radius_km: inner damage radius (bolder display)
+    - [source-specific fields]: magnitude/VEI/intensity etc for coloring
     """
     # Join eruptions with volcano loc_id
     volcano_loc_ids = volcanoes_df[['volcano_number', 'loc_id']].drop_duplicates()
     eruptions_with_loc = eruptions_df.merge(volcano_loc_ids, on='volcano_number', how='left')
 
     # Build timestamp from start_year/start_month/start_day
+    # Note: Timestamps only work for positive years (CE). Prehistoric eruptions get null timestamp.
     def build_timestamp(row):
         try:
-            year = int(row['start_year']) if pd.notna(row['start_year']) and row['start_year'] > 0 else None
-            month = int(row.get('start_month', 1)) if pd.notna(row.get('start_month')) else 1
-            day = int(row.get('start_day', 1)) if pd.notna(row.get('start_day')) else 1
+            year = int(row['start_year']) if pd.notna(row['start_year']) else None
             if year and year > 0:
+                # Default month/day to 1 if 0 or missing
+                month = int(row.get('start_month', 1)) if pd.notna(row.get('start_month')) and row.get('start_month') > 0 else 1
+                day = int(row.get('start_day', 1)) if pd.notna(row.get('start_day')) and row.get('start_day') > 0 else 1
+                # Clamp to valid ranges
+                month = max(1, min(12, month))
+                day = max(1, min(28, day))  # Use 28 to avoid month-end issues
                 return pd.Timestamp(year=year, month=month, day=day)
         except:
             pass
@@ -241,22 +326,39 @@ def create_eruptions_parquet(eruptions_df, volcanoes_df):
     eruptions_with_loc = eruptions_with_loc.copy()
     eruptions_with_loc['timestamp'] = eruptions_with_loc.apply(build_timestamp, axis=1)
 
+    # Extract year directly from start_year (works for negative/prehistoric years too)
+    eruptions_with_loc['year'] = eruptions_with_loc['start_year'].apply(
+        lambda x: int(x) if pd.notna(x) else None
+    )
+
+    # Calculate impact radii from VEI
+    print("  Calculating impact radii from VEI...")
+    eruptions_with_loc['felt_radius_km'] = eruptions_with_loc['vei'].apply(calculate_felt_radius_km)
+    eruptions_with_loc['damage_radius_km'] = eruptions_with_loc['vei'].apply(calculate_damage_radius_km)
+
     # Prepare eruptions dataframe with standard schema
     eruptions_out = pd.DataFrame({
         'event_id': eruptions_with_loc['eruption_number'].apply(lambda x: f"VE{x:06d}" if pd.notna(x) else None),
-        'timestamp': eruptions_with_loc['timestamp'],  # Standard column name
+        'year': eruptions_with_loc['year'],  # Integer year (including negative for prehistoric)
+        'timestamp': eruptions_with_loc['timestamp'],  # Full datetime (null for prehistoric)
         'latitude': eruptions_with_loc['latitude'].round(4) if pd.notna(eruptions_with_loc['latitude']).any() else pd.NA,
         'longitude': eruptions_with_loc['longitude'].round(4) if pd.notna(eruptions_with_loc['longitude']).any() else pd.NA,
+        'felt_radius_km': eruptions_with_loc['felt_radius_km'],  # Standard: outer impact radius
+        'damage_radius_km': eruptions_with_loc['damage_radius_km'],  # Standard: inner damage radius
         'volcano_number': eruptions_with_loc['volcano_number'],
         'volcano_name': eruptions_with_loc['volcano_name'],
         'activity_type': eruptions_with_loc['activity_type'],
-        'vei': eruptions_with_loc['vei'],
+        'vei': eruptions_with_loc['vei'],  # Source-specific: used for coloring
         'loc_id': eruptions_with_loc.get('loc_id', pd.NA)
     })
 
     # Save using base utility
     output_path = OUTPUT_DIR / "eruptions.parquet"
     save_parquet(eruptions_out, output_path, description="eruption events")
+
+    # Print radius stats
+    print(f"  Radii calculated: felt_radius range {eruptions_out['felt_radius_km'].min()}-{eruptions_out['felt_radius_km'].max()} km")
+    print(f"                    damage_radius range {eruptions_out['damage_radius_km'].min()}-{eruptions_out['damage_radius_km'].max()} km")
 
     return eruptions_out
 
@@ -275,8 +377,17 @@ def create_county_aggregates(eruptions_df):
         print("  No eruptions matched to counties with valid timestamps!")
         return pd.DataFrame()
 
-    # Extract year from timestamp
-    df_with_county['year'] = pd.to_datetime(df_with_county['timestamp']).dt.year
+    # Extract year from timestamp - filter to valid pandas datetime range (1677+)
+    # Some eruptions have prehistoric dates that overflow pandas nanosecond bounds
+    df_with_county['year'] = df_with_county['timestamp'].apply(
+        lambda t: t.year if pd.notna(t) and hasattr(t, 'year') and t.year >= 1677 else None
+    )
+    df_with_county = df_with_county[df_with_county['year'].notna()].copy()
+    df_with_county['year'] = df_with_county['year'].astype(int)
+
+    if len(df_with_county) == 0:
+        print("  No eruptions with valid modern timestamps!")
+        return pd.DataFrame()
 
     # Group by county-year
     grouped = df_with_county.groupby(['loc_id', 'year'])
@@ -313,9 +424,11 @@ def generate_metadata(volcanoes_df, eruptions_df, county_df):
     """Generate metadata.json for the dataset."""
     print("\nGenerating metadata.json...")
 
-    # Year range from timestamp
+    # Year range from timestamp - extract safely to avoid overflow on prehistoric dates
     valid_timestamps = eruptions_df['timestamp'].dropna()
-    valid_years = pd.to_datetime(valid_timestamps).dt.year
+    valid_years = valid_timestamps.apply(
+        lambda t: t.year if pd.notna(t) and hasattr(t, 'year') and t.year >= 1677 else None
+    ).dropna()
     min_year = int(valid_years.min()) if not valid_years.empty else 0
     max_year = int(valid_years.max()) if not valid_years.empty else 0
 
@@ -442,7 +555,10 @@ def print_statistics(volcanoes_df, eruptions_df):
 
     print("\nRecent Eruptions (2000+):")
     eruptions_df = eruptions_df.copy()
-    eruptions_df['year'] = pd.to_datetime(eruptions_df['timestamp']).dt.year
+    # Extract year safely to avoid overflow on prehistoric dates
+    eruptions_df['year'] = eruptions_df['timestamp'].apply(
+        lambda t: t.year if pd.notna(t) and hasattr(t, 'year') and t.year >= 1677 else None
+    )
     recent = eruptions_df[eruptions_df['year'] >= 2000].sort_values('timestamp', ascending=False)
     for _, row in recent.head(10).iterrows():
         vei_str = f"VEI {int(row['vei'])}" if pd.notna(row['vei']) else "VEI ?"
@@ -500,6 +616,9 @@ def main():
     except ValueError as e:
         print(f"  Note: {e}")
         print(f"  Add '{SOURCE_ID}' to source_registry.py to enable auto-finalization")
+
+    # Move raw files to imported folder
+    move_to_imported()
 
     print("\n" + "=" * 60)
     print("COMPLETE!")

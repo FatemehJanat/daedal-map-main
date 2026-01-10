@@ -5,6 +5,8 @@
 
 import { CONFIG } from './config.js';
 import { LocationInfoCache } from './cache.js';
+import { PointRadiusModel } from './models/model-point-radius.js';
+import { TrackModel } from './models/model-track.js';
 
 // Dependencies set via setDependencies to avoid circular imports
 let ViewportLoader = null;
@@ -90,12 +92,26 @@ export const MapAdapter = {
   },
 
   /**
-   * Handle zoom changes - just update display
+   * Handle zoom changes - update display and toggle globe/2D projection
    * Navigation is now handled by ViewportLoader.onViewportChange()
    */
   handleZoomChange() {
     const currentZoom = this.map.getZoom();
     this.updateZoomDisplay(currentZoom);
+
+    // Toggle projection based on zoom: globe at zoom < 2, mercator at zoom >= 2
+    const globeThreshold = 2.0;
+    const wasGlobe = this.isGlobeMode || false;
+    const shouldBeGlobe = currentZoom < globeThreshold;
+
+    if (shouldBeGlobe && !wasGlobe) {
+      this.enableGlobe();
+      this.isGlobeMode = true;
+    } else if (!shouldBeGlobe && wasGlobe) {
+      this.disableGlobe();
+      this.isGlobeMode = false;
+    }
+
     this.lastZoom = currentZoom;
   },
 
@@ -201,6 +217,23 @@ export const MapAdapter = {
 
     } catch (e) {
       console.log('Globe projection not available:', e.message);
+    }
+  },
+
+  /**
+   * Disable globe projection (switch back to flat mercator)
+   */
+  disableGlobe() {
+    try {
+      this.map.setProjection({ type: 'mercator' });
+      console.log('Mercator projection enabled');
+
+      // Remove atmosphere effects
+      this.map.setSky({});
+      this.map.setFog({});
+
+    } catch (e) {
+      console.log('Failed to disable globe:', e.message);
     }
   },
 
@@ -531,6 +564,44 @@ export const MapAdapter = {
   },
 
   /**
+   * Show or hide all choropleth/demographics layers.
+   * Used when toggling the Demographics overlay.
+   * @param {boolean} visible - Whether to show (true) or hide (false)
+   */
+  setChoroplethVisible(visible) {
+    if (!this.map) return;
+
+    const visibility = visible ? 'visible' : 'none';
+
+    // Main choropleth layers
+    const choroplethLayers = [
+      CONFIG.layers.fill,
+      CONFIG.layers.stroke,
+      CONFIG.layers.parentFill,
+      CONFIG.layers.parentStroke,
+      CONFIG.layers.cityCircle,
+      CONFIG.layers.cityCircle + '-glow-outer',
+      CONFIG.layers.cityCircle + '-glow-mid',
+      CONFIG.layers.cityCircle + '-glow-inner',
+      CONFIG.layers.cityLabel
+    ];
+
+    for (const layerId of choroplethLayers) {
+      if (this.map.getLayer(layerId)) {
+        this.map.setLayoutProperty(layerId, 'visibility', visibility);
+      }
+    }
+
+    // Also toggle choropleth legend
+    const legend = document.getElementById('choroplethLegend');
+    if (legend) {
+      legend.style.display = visible ? '' : 'none';
+    }
+
+    console.log(`MapAdapter: Choropleth layers ${visible ? 'shown' : 'hidden'}`);
+  },
+
+  /**
    * Setup mouse and click event handlers
    */
   setupEventHandlers() {
@@ -538,6 +609,17 @@ export const MapAdapter = {
 
     // Click handler - locks popup and fetches enriched data
     this.map.on('click', fillLayer, async (e) => {
+      // Check if click was on an event/overlay layer - if so, skip base layer handling
+      // Event layers should take priority over base geometry
+      const eventFeatures = this.map.queryRenderedFeatures(e.point, {
+        layers: [CONFIG.layers.eventCircle, CONFIG.layers.hurricaneMarker, CONFIG.layers.polygonFill].filter(
+          layerId => this.map.getLayer(layerId)
+        )
+      });
+      if (eventFeatures.length > 0) {
+        return; // Let event layer handler deal with this click
+      }
+
       if (e.features.length > 0) {
         const feature = e.features[0];
         this.popupLocked = true;
@@ -1079,277 +1161,52 @@ export const MapAdapter = {
   // HURRICANE/STORM LAYERS
   // ============================================================================
 
-  hurricaneClickHandler: null,
-
   /**
    * Load hurricane/storm point markers onto the map.
+   * Delegates to TrackModel.
    * @param {Object} geojson - GeoJSON FeatureCollection with Point features
    * @param {Function} onStormClick - Callback when a storm marker is clicked (stormId, stormName)
    */
   loadHurricaneLayer(geojson, onStormClick = null) {
-    if (!geojson || !geojson.features || geojson.features.length === 0) {
-      return;
-    }
-
-    // Clear existing hurricane layer
-    this.clearHurricaneLayer();
-
-    // Add hurricane source
-    this.map.addSource(CONFIG.layers.hurricaneSource, {
-      type: 'geojson',
-      data: geojson
-    });
-
-    // Build color expression based on category
-    const categoryColorExpr = [
-      'match',
-      ['coalesce', ['get', 'category'], ['get', 'max_category']],
-      'TD', CONFIG.hurricaneColors.TD,
-      'TS', CONFIG.hurricaneColors.TS,
-      '1', CONFIG.hurricaneColors['1'],
-      '2', CONFIG.hurricaneColors['2'],
-      '3', CONFIG.hurricaneColors['3'],
-      '4', CONFIG.hurricaneColors['4'],
-      '5', CONFIG.hurricaneColors['5'],
-      1, CONFIG.hurricaneColors['1'],
-      2, CONFIG.hurricaneColors['2'],
-      3, CONFIG.hurricaneColors['3'],
-      4, CONFIG.hurricaneColors['4'],
-      5, CONFIG.hurricaneColors['5'],
-      CONFIG.hurricaneColors.default
-    ];
-
-    // Add outer glow
-    this.map.addLayer({
-      id: CONFIG.layers.hurricaneCircle + '-glow',
-      type: 'circle',
-      source: CONFIG.layers.hurricaneSource,
-      paint: {
-        'circle-radius': 14,
-        'circle-color': categoryColorExpr,
-        'circle-opacity': 0.3,
-        'circle-blur': 1
-      }
-    });
-
-    // Add main circle
-    this.map.addLayer({
-      id: CONFIG.layers.hurricaneCircle,
-      type: 'circle',
-      source: CONFIG.layers.hurricaneSource,
-      paint: {
-        'circle-radius': 8,
-        'circle-color': categoryColorExpr,
-        'circle-opacity': 0.9,
-        'circle-stroke-color': '#ffffff',
-        'circle-stroke-width': 2
-      }
-    });
-
-    // Add labels for storm names
-    this.map.addLayer({
-      id: CONFIG.layers.hurricaneLabel,
-      type: 'symbol',
-      source: CONFIG.layers.hurricaneSource,
-      minzoom: 4,
-      layout: {
-        'text-field': ['coalesce', ['get', 'name'], ['get', 'storm_name']],
-        'text-size': 11,
-        'text-offset': [0, 1.8],
-        'text-anchor': 'top',
-        'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold']
-      },
-      paint: {
-        'text-color': '#ffffff',
-        'text-halo-color': 'rgba(0, 0, 0, 0.8)',
-        'text-halo-width': 2
-      }
-    });
-
-    // Setup click handler
-    if (onStormClick) {
-      this.hurricaneClickHandler = (e) => {
-        if (e.features.length > 0) {
-          const props = e.features[0].properties;
-          const stormId = props.storm_id || props.id;
-          const stormName = props.name || props.storm_name || stormId;
-          onStormClick(stormId, stormName);
-        }
-      };
-      this.map.on('click', CONFIG.layers.hurricaneCircle, this.hurricaneClickHandler);
-    }
-
-    // Hover cursor
-    this.map.on('mouseenter', CONFIG.layers.hurricaneCircle, () => {
-      this.map.getCanvas().style.cursor = 'pointer';
-    });
-    this.map.on('mouseleave', CONFIG.layers.hurricaneCircle, () => {
-      this.map.getCanvas().style.cursor = '';
-    });
-
-    console.log(`Loaded ${geojson.features.length} hurricane markers`);
+    TrackModel.render(geojson, 'hurricane', { onStormClick });
   },
 
   /**
-   * Clear hurricane point layer
+   * Clear hurricane point layer.
+   * Delegates to TrackModel.
    */
   clearHurricaneLayer() {
-    // Remove click handler
-    if (this.hurricaneClickHandler) {
-      this.map.off('click', CONFIG.layers.hurricaneCircle, this.hurricaneClickHandler);
-      this.hurricaneClickHandler = null;
-    }
-    // Remove layers
-    if (this.map.getLayer(CONFIG.layers.hurricaneLabel)) {
-      this.map.removeLayer(CONFIG.layers.hurricaneLabel);
-    }
-    if (this.map.getLayer(CONFIG.layers.hurricaneCircle)) {
-      this.map.removeLayer(CONFIG.layers.hurricaneCircle);
-    }
-    if (this.map.getLayer(CONFIG.layers.hurricaneCircle + '-glow')) {
-      this.map.removeLayer(CONFIG.layers.hurricaneCircle + '-glow');
-    }
-    if (this.map.getSource(CONFIG.layers.hurricaneSource)) {
-      this.map.removeSource(CONFIG.layers.hurricaneSource);
-    }
+    TrackModel.clearMarkers();
   },
 
   /**
    * Load a hurricane track (line + animated current position).
-   * Used for drill-down into a specific storm.
+   * Delegates to TrackModel.
    * @param {Object} trackGeojson - GeoJSON with track points
    * @param {Object} lineGeojson - GeoJSON LineString for the track path
    * @param {Object} currentPosition - {longitude, latitude, category} for animated marker
    */
   loadHurricaneTrack(trackGeojson, lineGeojson = null, currentPosition = null) {
-    // Clear existing track
-    this.clearHurricaneTrack();
-
-    // Build line from points if not provided
-    if (!lineGeojson && trackGeojson && trackGeojson.features) {
-      const coords = trackGeojson.features.map(f => f.geometry.coordinates);
-      lineGeojson = {
-        type: 'FeatureCollection',
-        features: [{
-          type: 'Feature',
-          geometry: {
-            type: 'LineString',
-            coordinates: coords
-          },
-          properties: {}
-        }]
-      };
-    }
-
-    // Add track line source and layer
-    if (lineGeojson) {
-      this.map.addSource(CONFIG.layers.hurricaneTrackSource, {
-        type: 'geojson',
-        data: lineGeojson
-      });
-
-      this.map.addLayer({
-        id: CONFIG.layers.hurricaneTrackLine,
-        type: 'line',
-        source: CONFIG.layers.hurricaneTrackSource,
-        paint: {
-          'line-color': '#ffffff',
-          'line-width': 3,
-          'line-opacity': 0.7,
-          'line-dasharray': [2, 2]
-        }
-      });
-    }
-
-    // Add track points (small dots along path)
-    if (trackGeojson) {
-      this.map.addSource(CONFIG.layers.hurricaneSource + '-track', {
-        type: 'geojson',
-        data: trackGeojson
-      });
-
-      // Build color expression
-      const categoryColorExpr = [
-        'match',
-        ['get', 'category'],
-        'TD', CONFIG.hurricaneColors.TD,
-        'TS', CONFIG.hurricaneColors.TS,
-        '1', CONFIG.hurricaneColors['1'],
-        '2', CONFIG.hurricaneColors['2'],
-        '3', CONFIG.hurricaneColors['3'],
-        '4', CONFIG.hurricaneColors['4'],
-        '5', CONFIG.hurricaneColors['5'],
-        1, CONFIG.hurricaneColors['1'],
-        2, CONFIG.hurricaneColors['2'],
-        3, CONFIG.hurricaneColors['3'],
-        4, CONFIG.hurricaneColors['4'],
-        5, CONFIG.hurricaneColors['5'],
-        CONFIG.hurricaneColors.default
-      ];
-
-      this.map.addLayer({
-        id: CONFIG.layers.hurricaneCircle + '-track-dots',
-        type: 'circle',
-        source: CONFIG.layers.hurricaneSource + '-track',
-        paint: {
-          'circle-radius': 4,
-          'circle-color': categoryColorExpr,
-          'circle-opacity': 0.8
-        }
-      });
-    }
-
-    console.log('Hurricane track loaded');
+    TrackModel.renderTrack(trackGeojson, lineGeojson, currentPosition);
   },
 
   /**
    * Update the current position marker on a track (for animation).
+   * Delegates to TrackModel.
    * @param {number} longitude
    * @param {number} latitude
    * @param {string} category - Storm category for color
    */
   updateTrackPosition(longitude, latitude, category) {
-    const posSource = this.map.getSource(CONFIG.layers.hurricaneSource + '-current');
-    if (posSource) {
-      posSource.setData({
-        type: 'FeatureCollection',
-        features: [{
-          type: 'Feature',
-          geometry: {
-            type: 'Point',
-            coordinates: [longitude, latitude]
-          },
-          properties: { category }
-        }]
-      });
-    }
+    TrackModel.updatePosition(longitude, latitude, category);
   },
 
   /**
-   * Clear hurricane track layers
+   * Clear hurricane track layers.
+   * Delegates to TrackModel.
    */
   clearHurricaneTrack() {
-    // Track line
-    if (this.map.getLayer(CONFIG.layers.hurricaneTrackLine)) {
-      this.map.removeLayer(CONFIG.layers.hurricaneTrackLine);
-    }
-    if (this.map.getSource(CONFIG.layers.hurricaneTrackSource)) {
-      this.map.removeSource(CONFIG.layers.hurricaneTrackSource);
-    }
-    // Track dots
-    if (this.map.getLayer(CONFIG.layers.hurricaneCircle + '-track-dots')) {
-      this.map.removeLayer(CONFIG.layers.hurricaneCircle + '-track-dots');
-    }
-    if (this.map.getSource(CONFIG.layers.hurricaneSource + '-track')) {
-      this.map.removeSource(CONFIG.layers.hurricaneSource + '-track');
-    }
-    // Current position marker
-    if (this.map.getLayer(CONFIG.layers.hurricaneCircle + '-current')) {
-      this.map.removeLayer(CONFIG.layers.hurricaneCircle + '-current');
-    }
-    if (this.map.getSource(CONFIG.layers.hurricaneSource + '-current')) {
-      this.map.removeSource(CONFIG.layers.hurricaneSource + '-current');
-    }
+    TrackModel.clearTrack();
   },
 
   // ============================================================================
@@ -1360,362 +1217,39 @@ export const MapAdapter = {
 
   /**
    * Load event layer (earthquakes, volcanoes, etc.) onto the map.
+   * Delegates to appropriate display model via PointRadiusModel.
    * @param {Object} geojson - GeoJSON FeatureCollection with Point features
    * @param {string} eventType - 'earthquake', 'volcano', 'wildfire', etc.
    * @param {Object} options - {showFeltRadius, showDamageRadius, onEventClick}
    */
   loadEventLayer(geojson, eventType = 'earthquake', options = {}) {
-    if (!geojson || !geojson.features || geojson.features.length === 0) {
-      console.log('No event features to display');
-      return;
-    }
-
-    // Clear existing event layer
-    this.clearEventLayer();
-
-    // Add event source
-    this.map.addSource(CONFIG.layers.eventSource, {
-      type: 'geojson',
-      data: geojson
-    });
-
-    // Build layer based on event type
-    if (eventType === 'earthquake') {
-      this._addEarthquakeLayer(options);
-    } else if (eventType === 'volcano') {
-      this._addVolcanoLayer(options);
-    } else {
-      // Generic event layer
-      this._addGenericEventLayer(eventType, options);
-    }
-
-    // Setup click handler
-    if (options.onEventClick) {
-      this.eventClickHandler = (e) => {
-        if (e.features.length > 0) {
-          const props = e.features[0].properties;
-          options.onEventClick(props);
-        }
-      };
-      this.map.on('click', CONFIG.layers.eventCircle, this.eventClickHandler);
-    }
-
-    // Hover cursor
-    this.map.on('mouseenter', CONFIG.layers.eventCircle, () => {
-      this.map.getCanvas().style.cursor = 'pointer';
-    });
-    this.map.on('mouseleave', CONFIG.layers.eventCircle, () => {
-      this.map.getCanvas().style.cursor = '';
-    });
-
-    // Hover popup
-    this.map.on('mousemove', CONFIG.layers.eventCircle, (e) => {
-      if (e.features.length > 0 && !this.popupLocked) {
-        const props = e.features[0].properties;
-        const html = this._buildEventPopupHtml(props, eventType);
-        this.showPopup([e.lngLat.lng, e.lngLat.lat], html);
-      }
-    });
-    this.map.on('mouseleave', CONFIG.layers.eventCircle, () => {
-      if (!this.popupLocked) {
-        this.hidePopup();
-      }
-    });
-
-    console.log(`Loaded ${geojson.features.length} ${eventType} events`);
-  },
-
-  /**
-   * Add earthquake-specific layers (point + optional radius circles).
-   * @private
-   */
-  _addEarthquakeLayer(options = {}) {
-    const colors = CONFIG.earthquakeColors;
-
-    // Color expression based on magnitude
-    const colorExpr = [
-      'interpolate', ['linear'], ['get', 'magnitude'],
-      3.0, colors.minor,
-      4.0, colors.light,
-      5.0, colors.moderate,
-      6.0, colors.strong,
-      7.0, colors.major
-    ];
-
-    // Size expression based on magnitude (exponential scaling)
-    const sizeExpr = [
-      'interpolate', ['exponential', 1.5], ['get', 'magnitude'],
-      3.0, 4,
-      4.0, 6,
-      5.0, 10,
-      6.0, 16,
-      7.0, 24,
-      8.0, 36
-    ];
-
-    // Add outer glow layer
-    this.map.addLayer({
-      id: CONFIG.layers.eventCircle + '-glow',
-      type: 'circle',
-      source: CONFIG.layers.eventSource,
-      paint: {
-        'circle-radius': ['+', sizeExpr, 6],
-        'circle-color': colorExpr,
-        'circle-opacity': 0.3,
-        'circle-blur': 1
-      }
-    });
-
-    // Add main earthquake circle
-    this.map.addLayer({
-      id: CONFIG.layers.eventCircle,
-      type: 'circle',
-      source: CONFIG.layers.eventSource,
-      paint: {
-        'circle-radius': sizeExpr,
-        'circle-color': colorExpr,
-        'circle-opacity': 0.85,
-        'circle-stroke-color': '#333333',
-        'circle-stroke-width': 1
-      }
-    });
-
-    // Add felt radius circle (outer) if requested
-    if (options.showFeltRadius !== false) {
-      this.map.addLayer({
-        id: CONFIG.layers.eventRadiusOuter,
-        type: 'circle',
-        source: CONFIG.layers.eventSource,
-        filter: ['has', 'felt_radius_km'],
-        paint: {
-          // Convert km to pixels at current zoom (approximate)
-          // At zoom 0, 1 degree ~ 111km. At zoom 10, 1 degree ~ 111/1024 km per pixel
-          // Use a scale factor that looks reasonable at typical zoom levels
-          'circle-radius': [
-            'interpolate', ['exponential', 2], ['zoom'],
-            3, ['/', ['get', 'felt_radius_km'], 50],
-            6, ['/', ['get', 'felt_radius_km'], 10],
-            9, ['/', ['get', 'felt_radius_km'], 2],
-            12, ['*', ['get', 'felt_radius_km'], 2]
-          ],
-          'circle-color': 'transparent',
-          'circle-stroke-color': colors.feltRadius,
-          'circle-stroke-width': 2,
-          'circle-stroke-opacity': 0.6
-        }
-      });
-    }
-
-    // Add damage radius circle (inner) if requested
-    if (options.showDamageRadius !== false) {
-      this.map.addLayer({
-        id: CONFIG.layers.eventRadiusInner,
-        type: 'circle',
-        source: CONFIG.layers.eventSource,
-        filter: ['has', 'damage_radius_km'],
-        paint: {
-          'circle-radius': [
-            'interpolate', ['exponential', 2], ['zoom'],
-            3, ['/', ['get', 'damage_radius_km'], 50],
-            6, ['/', ['get', 'damage_radius_km'], 10],
-            9, ['/', ['get', 'damage_radius_km'], 2],
-            12, ['*', ['get', 'damage_radius_km'], 2]
-          ],
-          'circle-color': 'transparent',
-          'circle-stroke-color': colors.damageRadius,
-          'circle-stroke-width': 2,
-          'circle-stroke-opacity': 0.7
-        }
-      });
-    }
-  },
-
-  /**
-   * Add volcano-specific layers.
-   * @private
-   */
-  _addVolcanoLayer(options = {}) {
-    const colors = CONFIG.volcanoColors;
-
-    // Color expression based on VEI
-    const colorExpr = [
-      'match', ['coalesce', ['get', 'VEI'], 0],
-      0, colors[0],
-      1, colors[1],
-      2, colors[2],
-      3, colors[3],
-      4, colors[4],
-      5, colors[5],
-      6, colors[6],
-      7, colors[7],
-      colors.default
-    ];
-
-    // Size based on VEI
-    const sizeExpr = [
-      'interpolate', ['linear'], ['coalesce', ['get', 'VEI'], 0],
-      0, 5,
-      3, 10,
-      5, 18,
-      7, 30
-    ];
-
-    // Add glow
-    this.map.addLayer({
-      id: CONFIG.layers.eventCircle + '-glow',
-      type: 'circle',
-      source: CONFIG.layers.eventSource,
-      paint: {
-        'circle-radius': ['+', sizeExpr, 6],
-        'circle-color': colorExpr,
-        'circle-opacity': 0.3,
-        'circle-blur': 1
-      }
-    });
-
-    // Add main circle
-    this.map.addLayer({
-      id: CONFIG.layers.eventCircle,
-      type: 'circle',
-      source: CONFIG.layers.eventSource,
-      paint: {
-        'circle-radius': sizeExpr,
-        'circle-color': colorExpr,
-        'circle-opacity': 0.85,
-        'circle-stroke-color': '#333333',
-        'circle-stroke-width': 1
-      }
-    });
-  },
-
-  /**
-   * Add generic event layer for other event types.
-   * @private
-   */
-  _addGenericEventLayer(eventType, options = {}) {
-    // Default yellow/orange coloring
-    this.map.addLayer({
-      id: CONFIG.layers.eventCircle + '-glow',
-      type: 'circle',
-      source: CONFIG.layers.eventSource,
-      paint: {
-        'circle-radius': 12,
-        'circle-color': '#ffcc00',
-        'circle-opacity': 0.3,
-        'circle-blur': 1
-      }
-    });
-
-    this.map.addLayer({
-      id: CONFIG.layers.eventCircle,
-      type: 'circle',
-      source: CONFIG.layers.eventSource,
-      paint: {
-        'circle-radius': 6,
-        'circle-color': '#ffcc00',
-        'circle-opacity': 0.85,
-        'circle-stroke-color': '#333333',
-        'circle-stroke-width': 1
-      }
-    });
-  },
-
-  /**
-   * Build HTML popup content for event.
-   * @private
-   */
-  _buildEventPopupHtml(props, eventType) {
-    const lines = [];
-
-    if (eventType === 'earthquake') {
-      const mag = props.magnitude?.toFixed(1) || 'N/A';
-      lines.push(`<strong>M${mag} Earthquake</strong>`);
-      if (props.place) lines.push(props.place);
-      if (props.depth_km) lines.push(`Depth: ${props.depth_km.toFixed(1)} km`);
-      if (props.time) {
-        const date = new Date(props.time);
-        lines.push(date.toLocaleString());
-      }
-      if (props.felt_radius_km) {
-        lines.push(`Felt radius: ${props.felt_radius_km.toFixed(0)} km`);
-      }
-    } else if (eventType === 'volcano') {
-      lines.push(`<strong>${props.volcano_name || 'Volcano'}</strong>`);
-      if (props.VEI != null) lines.push(`VEI: ${props.VEI}`);
-      if (props.eruption_type) lines.push(props.eruption_type);
-      if (props.start_date) lines.push(`Started: ${props.start_date}`);
-    } else {
-      // Generic popup
-      lines.push(`<strong>${eventType} Event</strong>`);
-      if (props.event_id) lines.push(`ID: ${props.event_id}`);
-    }
-
-    return lines.join('<br>');
+    // Delegate to PointRadiusModel for point-based events
+    PointRadiusModel.render(geojson, eventType, options);
   },
 
   /**
    * Update event layer data (for time-based filtering).
+   * Delegates to PointRadiusModel.
    * @param {Object} geojson - Filtered GeoJSON FeatureCollection
    */
   updateEventLayer(geojson) {
-    const source = this.map.getSource(CONFIG.layers.eventSource);
-    if (source) {
-      source.setData(geojson);
-    }
+    PointRadiusModel.update(geojson);
   },
 
   /**
    * Clear event layer.
+   * Delegates to PointRadiusModel.
    */
   clearEventLayer() {
-    // Remove click handler
-    if (this.eventClickHandler) {
-      this.map.off('click', CONFIG.layers.eventCircle, this.eventClickHandler);
-      this.eventClickHandler = null;
-    }
-
-    // Remove layers
-    const layerIds = [
-      CONFIG.layers.eventCircle,
-      CONFIG.layers.eventCircle + '-glow',
-      CONFIG.layers.eventLabel,
-      CONFIG.layers.eventRadiusOuter,
-      CONFIG.layers.eventRadiusInner
-    ];
-
-    for (const layerId of layerIds) {
-      if (this.map.getLayer(layerId)) {
-        this.map.removeLayer(layerId);
-      }
-    }
-
-    // Remove source
-    if (this.map.getSource(CONFIG.layers.eventSource)) {
-      this.map.removeSource(CONFIG.layers.eventSource);
-    }
+    PointRadiusModel.clear();
   },
 
   /**
    * Fit map to event bounds.
+   * Delegates to PointRadiusModel.
    * @param {Object} geojson - Event GeoJSON
    */
   fitToEventBounds(geojson) {
-    if (!geojson || !geojson.features || geojson.features.length === 0) return;
-
-    const bounds = new maplibregl.LngLatBounds();
-
-    for (const feature of geojson.features) {
-      if (feature.geometry && feature.geometry.type === 'Point') {
-        bounds.extend(feature.geometry.coordinates);
-      }
-    }
-
-    if (!bounds.isEmpty()) {
-      this.map.fitBounds(bounds, {
-        padding: 50,
-        duration: 1000,
-        maxZoom: 10
-      });
-    }
+    PointRadiusModel.fitBounds(geojson);
   }
 };

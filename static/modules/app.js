@@ -15,6 +15,9 @@ import { ChoroplethManager, setDependencies as setChoroDeps } from './choropleth
 import { ResizeManager, SidebarResizer, SettingsManager } from './sidebar.js';
 import { SelectionManager, setDependencies as setSelectionDeps } from './selection-manager.js';
 import { HurricaneHandler, setDependencies as setHurricaneDeps } from './hurricane-handler.js';
+import { OverlaySelector, setDependencies as setOverlayDeps } from './overlay-selector.js';
+import { ModelRegistry } from './models/model-registry.js';
+import { OverlayController, setDependencies as setOverlayControllerDeps } from './overlay-controller.js';
 
 // ============================================================================
 // APP - Main application controller
@@ -40,6 +43,9 @@ export const App = {
     setChoroDeps({ MapAdapter });
     setSelectionDeps({ MapAdapter, ChatManager });
     setHurricaneDeps({ TimeSlider, MapAdapter });
+    setOverlayDeps({ MapAdapter, ModelRegistry });
+    ModelRegistry.setDependencies({ MapAdapter, TimeSlider });
+    setOverlayControllerDeps({ MapAdapter, ModelRegistry, OverlaySelector, TimeSlider });
 
     // Initialize components
     ChatManager.init();
@@ -47,6 +53,14 @@ export const App = {
     SettingsManager.init();
     ResizeManager.init();
     SidebarResizer.init();
+
+    // Initialize TimeSlider early (UI setup only, no data)
+    // This ensures the slider is visible and listener system is ready
+    // before overlays are enabled
+    TimeSlider.initSlider();
+
+    OverlaySelector.init();
+    OverlayController.init();
 
     // Initialize map
     await MapAdapter.init();

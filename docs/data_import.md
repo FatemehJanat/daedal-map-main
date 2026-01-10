@@ -456,11 +456,44 @@ countries/{COUNTRY}/{source_id}/
 - `loc_id` - Assigned location code or water body code
 
 Type-specific severity columns:
-- Earthquakes: `magnitude`, `depth_km`, `felt_radius_km`, `damage_radius_km`
+- Earthquakes: `magnitude`, `depth_km`, `felt_radius_km`, `damage_radius_km`, `place`
+  - Aftershock sequence columns (see below): `mainshock_id`, `sequence_id`, `is_mainshock`, `aftershock_count`
 - Hurricanes/Cyclones: `wind_kt`, `pressure_mb`, `category`, `r34_ne`/`r50_ne`/`r64_ne` (wind radii)
 - Wildfires: `burned_acres`, `perimeter` (GeoJSON string)
-- Volcanoes: `vei` (Volcanic Explosivity Index)
+- Volcanoes: `VEI`, `volcano_number`, `volcano_name`, `activity_type`, `activity_area`
+  - Duration columns (see below): `end_year`, `end_timestamp`, `duration_days`, `is_ongoing`, `eruption_id`
 - Tsunamis: `max_water_height_m`, `runup_m`
+
+Aftershock sequence columns (earthquakes only):
+- `mainshock_id` - USGS event ID of the mainshock this event is an aftershock of (NULL if this IS the mainshock)
+- `sequence_id` - Shared ID for all events in a sequence (e.g., `SEQ000001`), enables grouping
+- `is_mainshock` - Boolean, true if this event has detected aftershocks
+- `aftershock_count` - Number of aftershocks (mainshocks only, 0 for non-mainshocks)
+
+Aftershock detection uses Gardner-Knopoff (1974) empirical windows:
+- Time window: `10^(0.5*M - 1.5)` days (e.g., M7 = 10 days, M8 = 32 days)
+- Distance window: `10^(0.5*M - 0.5)` km (e.g., M7 = 100 km, M8 = 316 km)
+- Only M5.5+ earthquakes are considered as potential mainshocks
+
+Volcano duration columns (for continuous eruptions):
+- `end_year` - Year eruption ended (int, null if ongoing)
+- `end_timestamp` - End datetime (for precise duration calculation)
+- `duration_days` - Duration in days (calculated from start to end)
+- `is_ongoing` - Boolean, true if eruption has no end date or ended this year
+- `eruption_id` - Smithsonian eruption number (for future episode grouping)
+- `activity_area` - Specific vent/area (e.g., "East rift zone (Puu O'o), Halemaumau")
+
+Example: Kilauea 1983-2018 has `duration_days=13029` (~35.7 years), `activity_area="East rift zone (Puu O'o), Halemaumau"`
+
+Cross-event linking columns (for disaster chains):
+- `parent_event_id` - Links to triggering event (e.g., earthquake triggers tsunami)
+- `link_type` - Relationship type: `aftershock`, `triggered`, `caused_by`
+
+**Cross-Event Time Windows:**
+- Earthquake aftershocks: 0-90 days after, within rupture length
+- Volcano -> earthquakes: 30 days before to 60 days after eruption
+- Earthquake -> tsunami: 0-24 hours after, coastal areas
+- Earthquake -> volcano: 60 days before (eruption precedes quake)
 
 Optional geometry column:
 - `perimeter` - GeoJSON string for polygon events (wildfires, floods)
@@ -658,12 +691,29 @@ print(geom_df.groupby('admin_level').size())
 
 | Source | File | Input Format | Geocoding | Best For |
 |--------|------|--------------|-----------|----------|
-| USGS Earthquakes | `convert_usgs_earthquakes.py` | CSV | 3-pass spatial join | Simple point events |
+| USGS Global Earthquakes | `convert_global_earthquakes.py` | CSV | Water body assignment | Global events with aftershock detection |
+| USGS US Earthquakes | `convert_usgs_earthquakes.py` | CSV | 3-pass spatial join | US-only point events |
 | Canada Earthquakes | `convert_canada_earthquakes.py` | CSV | 3-pass spatial join | Canadian data |
 | HURDAT2 Hurricanes | `convert_hurdat2.py` | Custom text | Point-in-polygon + water | Track/trajectory data |
 | NOAA Tsunamis | `convert_tsunami.py` | JSON | 3-pass spatial join | Multiple related tables |
+| Smithsonian Global Volcanoes | `convert_global_volcanoes.py` | TSV | Water body assignment | Global eruptions with VEI |
 | Smithsonian Volcanoes | `convert_volcano.py` | GeoJSON | Point + water bodies | Location + events |
 | MTBS Wildfires | `convert_mtbs.py` | Shapefile (zip) | Centroid + nearest | Polygon geometries |
+
+### Live Data APIs (for periodic updates)
+
+| Source | API/Feed | Update Frequency | Coverage | Downloader |
+|--------|----------|------------------|----------|------------|
+| USGS Earthquakes | https://earthquake.usgs.gov/fdsnws/event/1/ | Real-time | Global M2.5+ | `download_usgs_earthquakes.py` |
+| Smithsonian Volcanoes | https://volcano.si.edu/geoserver/GVP-VOTW/ows (WFS) | Weekly | Global Holocene | `download_volcano.py` |
+| NOAA Hurricanes | https://www.nhc.noaa.gov/gis/ | 6-hourly | Atlantic/Pacific | `download_hurdat2.py` |
+| NOAA Tsunamis | https://www.ngdc.noaa.gov/hazard/tsu_db.shtml | As events | Global historical | `download_tsunami.py` |
+| NASA FIRMS (Fires) | https://firms.modaps.eosdis.nasa.gov/api/ | 12 hours | Global active | (planned) |
+
+**Magnitude thresholds for storage:**
+- M2.5+: Full archive (USGS comprehensive catalog, ~15K/year globally)
+- M4.5+: Display preload threshold (detected anywhere, ~1.5K/year)
+- M5.0+: Significant events only (~1K/year)
 
 ### Pre-Aggregated Data (aggregates only)
 
@@ -737,4 +787,4 @@ finalize_source(parquet_path, source_id, events_parquet_path)
 
 ---
 
-*Last Updated: 2026-01-08*
+*Last Updated: 2026-01-09*

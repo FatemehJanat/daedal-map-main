@@ -390,6 +390,62 @@ See [FRONTEND_MODULES.md](FRONTEND_MODULES.md) for module details.
 - `updateSourceData()` for fast year changes (no layer recreation)
 - MapLibre interpolate expression auto-updates with new values
 
+### Indexed Scale (Data-Density Scaling)
+
+For datasets with large time ranges (e.g., earthquake history 1900-2026), the slider auto-enables indexed scale mode:
+
+- **Trigger**: 50+ data points in `sortedTimes`
+- **Behavior**: Each data point gets equal slider space regardless of time gaps
+- **Benefit**: Ancient data points are reachable (no 10000-year jumps)
+
+```javascript
+// Auto-detects based on data density
+shouldUseIndexedScale() {
+  return this.sortedTimes.length >= this.indexedScaleMinPoints;
+}
+
+// Slider position <-> actual time conversion
+indexToTime(index)   // Get time value from slider position
+timeToIndex(time)    // Get slider position from time value
+```
+
+### Data-Driven Year Range
+
+Year ranges are derived from actual data, not hardcoded config:
+
+```javascript
+// overlay-controller.js extracts years from features
+const availableYears = new Set();
+for (const feature of geojson.features) {
+  const year = feature.properties[endpoint.yearField];
+  if (year != null) availableYears.add(parseInt(year));
+}
+const sortedYears = Array.from(availableYears).sort((a, b) => a - b);
+
+// Min/max derived from actual data
+const minYear = sortedYears[0];
+const maxYear = sortedYears[sortedYears.length - 1];
+```
+
+### Adaptive Time Stepping (Sequence Animation)
+
+For aftershock sequences with long durations, time steps scale adaptively:
+
+```javascript
+const MAX_STEPS = 200;
+const MIN_STEP_MS = 1 * 60 * 60 * 1000;  // 1 hour minimum
+const timeRange = maxTime - minTime;
+
+// Calculate adaptive step (never smaller than 1 hour)
+const adaptiveStepMs = Math.max(MIN_STEP_MS, Math.ceil(timeRange / MAX_STEPS));
+```
+
+**Results:**
+- Short sequences (hours): 1-hour steps
+- Medium sequences (days): 6-hour steps
+- Long sequences (months): 12h-2day steps
+- Animation always completes in ~200 steps regardless of duration
+
 ### Data Flow
 
 ```
@@ -530,4 +586,4 @@ See [FRONTEND_MODULES.md](FRONTEND_MODULES.md) for detailed module documentation
 
 ---
 
-*Last Updated: 2026-01-06*
+*Last Updated: 2026-01-09*

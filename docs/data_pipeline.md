@@ -86,6 +86,44 @@ All event parquet files MUST have these columns:
 | `event_type` | string | Event category | `earthquake`, `hurricane`, `wildfire` |
 | `loc_id` | string | Assigned location code | `USA-CA-6037` or `XOP` (Pacific) |
 
+### Optional Temporal Columns (Area-Based Events)
+
+Area-based events like wildfires and floods need additional temporal tracking for live displays:
+
+| Column | Type | Description | Example |
+|--------|------|-------------|---------|
+| `last_updated` | datetime64 | Most recent observation (UTC) | `2024-03-18T09:00:00Z` |
+| `status` | string | Event status (optional) | `active`, `contained`, `historical` |
+
+**Why `last_updated` matters:**
+
+Point events (earthquakes) are instantaneous. Track events (hurricanes) end when the last position is recorded. But area-based events (fires, floods) persist for days/weeks and need a way to determine "active" status.
+
+**Active Status Detection:**
+
+```python
+STALENESS_THRESHOLDS = {
+    'wildfire': timedelta(hours=48),   # FIRMS updates every 12h
+    'flood': timedelta(hours=24),      # Flood warnings refresh daily
+    'hurricane': timedelta(hours=12),  # NHC updates every 6h
+}
+
+def is_active(event, now=datetime.utcnow()):
+    threshold = STALENESS_THRESHOLDS.get(event['event_type'], timedelta(hours=24))
+    last_update = event.get('last_updated', event['timestamp'])
+    return (now - last_update) < threshold
+```
+
+**Historical vs Live Data:**
+
+| Mode | `timestamp` | `last_updated` | Status |
+|------|-------------|----------------|--------|
+| Historical | Event start | Same as timestamp (or null) | `historical` |
+| Live (active) | Event start | Recent datetime | `active` |
+| Live (ended) | Event start | Old datetime (stale) | `contained` |
+
+For historical archives, `last_updated` can be omitted or set equal to `timestamp`.
+
 ### Current Data vs Unified Schema
 
 Several existing datasets use non-standard column names. This mapping shows what needs to be renamed:
@@ -112,9 +150,36 @@ Beyond the core columns, each event type has specialized attributes:
 |--------|------|-------------|
 | `magnitude` | float64 | Richter scale magnitude |
 | `depth_km` | float64 | Hypocenter depth in km |
-| `felt_radius_km` | float64 | Calculated felt radius |
-| `damage_radius_km` | float64 | Calculated damage radius |
+| `felt_radius_km` | float64 | Calculated felt radius (see formulas below) |
+| `damage_radius_km` | float64 | Calculated damage radius (see formulas below) |
 | `place` | string | Human-readable location description |
+| `sequence_id` | string | Groups mainshock with aftershocks |
+| `is_mainshock` | bool | True if this is the primary event in sequence |
+| `aftershock_count` | int | Number of aftershocks (mainshock only) |
+
+**Event Sequences and Cross-Linking:**
+
+Events often occur in related sequences that can be explored together:
+
+| Sequence Type | Primary Event | Related Events | Link Direction |
+|---------------|---------------|----------------|----------------|
+| Aftershocks | Mainshock earthquake | Aftershock earthquakes | Forward (days-weeks after) |
+| Volcanic seismicity | Eruption | Triggered earthquakes | Bidirectional (before/during/after) |
+| Tsunami trigger | Earthquake/eruption | Tsunami waves | Forward (minutes-hours after) |
+| Storm surge | Hurricane | Coastal flooding | Forward (during storm) |
+
+**Cross-event linking columns:**
+| Column | Type | Description |
+|--------|------|-------------|
+| `sequence_id` | string | Groups related events (e.g., `eq_2024_001_seq`) |
+| `parent_event_id` | string | Links to triggering event |
+| `link_type` | string | Relationship: `aftershock`, `triggered`, `caused_by` |
+
+**Time Windows for Cross-Linking:**
+- Earthquake aftershocks: 0-90 days after mainshock, within rupture length
+- Volcano -> earthquakes: 30 days before to 60 days after eruption start, 150km radius
+- Earthquake -> volcano: 60 days before earthquake, 150km radius (eruption precedes quake)
+- Earthquake -> tsunami: 0-24 hours after, coastal areas only
 
 **Hurricanes/Cyclones:**
 | Column | Type | Description |
@@ -141,7 +206,22 @@ Beyond the core columns, each event type has specialized attributes:
 |--------|------|-------------|
 | `vei` | int | Volcanic Explosivity Index (0-8) |
 | `volcano_name` | string | Volcano name |
-| `eruption_type` | string | Type of eruption |
+| `activity_type` | string | Type of eruption |
+| `felt_radius_km` | float64 | Calculated felt radius (see formulas below) |
+| `damage_radius_km` | float64 | Calculated damage radius (see formulas below) |
+| `end_date` | datetime64 | End of eruption (for continuous eruptions) |
+| `eruption_id` | string | Groups episodes of same continuous eruption |
+| `is_ongoing` | bool | True if eruption still active |
+
+**Continuous Eruptions:**
+
+Volcanic eruptions can span years or decades (e.g., Kilauea 1983-2018, 35 years). The Smithsonian GVP records these as single events with start/end dates. For cross-linking with earthquakes:
+
+- Short eruptions (<90 days): Use start date for time-window search
+- Long eruptions: Also search around end date and major phase changes
+- Ongoing eruptions: `is_ongoing=True`, no end_date
+
+**Future enhancement:** Break continuous eruptions into episodes for more granular cross-linking. Each episode would have its own timestamp but share an `eruption_id` with the parent event.
 
 **Tsunamis:**
 | Column | Type | Description |
@@ -149,6 +229,74 @@ Beyond the core columns, each event type has specialized attributes:
 | `max_water_height_m` | float64 | Maximum water height |
 | `runup_m` | float64 | Runup measurement |
 | `cause` | string | Tsunami cause (earthquake, landslide, etc.) |
+
+### Impact Radius Formulas
+
+All point+radius events MUST pre-calculate `felt_radius_km` and `damage_radius_km` in the converter.
+The frontend displays these as concentric circles (felt=outer/lighter, damage=inner/bolder).
+
+**Earthquake Radii** (based on empirical seismological attenuation models):
+
+```python
+def calculate_felt_radius(magnitude, depth_km=None):
+    """Felt radius (MMI II-III) where shaking is noticeable."""
+    # Formula: R = 10^(0.44 * M - 0.29)
+    radius = 10 ** (0.44 * magnitude - 0.29)
+
+    # Depth correction: deeper quakes have smaller felt areas
+    if depth_km > 300:
+        radius *= 0.5  # Deep focus - 50% reduction
+    elif depth_km > 70:
+        radius *= 0.7  # Intermediate - 30% reduction
+    return radius
+
+def calculate_damage_radius(magnitude, depth_km=None):
+    """Damage radius (MMI VI+) where structural damage possible."""
+    if magnitude < 5.0:
+        return 0.0  # Only M5+ causes structural damage
+
+    # Formula: R = 10^(0.32 * M - 0.78)
+    radius = 10 ** (0.32 * magnitude - 0.78)
+
+    # Depth correction
+    if depth_km > 300:
+        radius *= 0.3
+    elif depth_km > 70:
+        radius *= 0.5
+    return radius
+```
+
+| Magnitude | Felt Radius | Damage Radius |
+|-----------|-------------|---------------|
+| M4.0 | ~30 km | 0 km |
+| M5.0 | ~80 km | ~7 km |
+| M6.0 | ~220 km | ~14 km |
+| M7.0 | ~620 km | ~29 km |
+| M8.0 | ~1700 km | ~60 km |
+
+**Volcano Radii** (based on VEI logarithmic scale - each step = 10x ejecta volume):
+
+```python
+def calculate_felt_radius_km(vei):
+    """Felt radius (ash fall, effects noticed)."""
+    # Formula: R = 5 * 10^(VEI * 0.33)
+    # Cube root of volume scaling: R ~ V^(1/3) ~ 10^(VEI/3)
+    return 5 * (10 ** (vei * 0.33))
+
+def calculate_damage_radius_km(vei):
+    """Damage radius (pyroclastic flows, heavy ashfall)."""
+    # Formula: R = 1 * 10^(VEI * 0.3)
+    return 1 * (10 ** (vei * 0.3))
+```
+
+| VEI | Felt Radius | Damage Radius | Example |
+|-----|-------------|---------------|---------|
+| 0 | ~5 km | ~1 km | Effusive lava |
+| 2 | ~23 km | ~4 km | Minor eruption |
+| 4 | ~105 km | ~16 km | Cataclysmic |
+| 5 | ~224 km | ~32 km | Mt St Helens 1980 |
+| 6 | ~478 km | ~63 km | Pinatubo 1991 |
+| 7 | ~1021 km | ~126 km | Tambora 1815 |
 
 ### Live vs Historical Mode Compatibility
 
@@ -163,6 +311,42 @@ The unified schema supports both modes:
 - New events appended with current `timestamp`
 - Real-time filtering: `WHERE timestamp > last_fetch_time`
 - Same visualization code works for both modes
+
+### Live Data APIs
+
+Sources for real-time and periodic data updates:
+
+| Source | API/Feed | Update Frequency | Coverage |
+|--------|----------|------------------|----------|
+| **USGS Earthquakes** | https://earthquake.usgs.gov/fdsnws/event/1/ | Real-time (minutes) | Global M2.5+ |
+| **Smithsonian Volcanoes** | https://volcano.si.edu/geoserver/GVP-VOTW/ows (WFS) | Weekly | Global Holocene |
+| **NOAA Hurricanes** | https://www.nhc.noaa.gov/gis/ | 6-hourly during season | Atlantic/Pacific |
+| **NOAA Tsunamis** | https://www.ngdc.noaa.gov/hazard/tsu_db.shtml | As events occur | Global historical |
+| **NASA FIRMS (Fires)** | https://firms.modaps.eosdis.nasa.gov/api/ | Every 12 hours | Global active fires |
+| **NOAA Storm Events** | https://www.ncdc.noaa.gov/stormevents/ftp.jsp | Monthly | US only |
+
+**API Query Examples:**
+
+```bash
+# USGS: Earthquakes last 7 days, M4.5+
+curl "https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&starttime=$(date -d '7 days ago' +%Y-%m-%d)&minmagnitude=4.5"
+
+# USGS: Earthquakes near a point (volcano cross-linking)
+curl "https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&latitude=19.4&longitude=-155.3&maxradiuskm=150&minmagnitude=2.5"
+
+# Smithsonian: All Holocene eruptions (GeoJSON)
+curl "https://webservices.volcano.si.edu/geoserver/GVP-VOTW/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=GVP-VOTW:Smithsonian_VOTW_Holocene_Eruptions&outputFormat=application/json"
+```
+
+**Magnitude Thresholds:**
+
+| Magnitude | Detection | Events/Year (Global) | Storage Recommendation |
+|-----------|-----------|----------------------|------------------------|
+| M0-2 | Local only | Millions | Too many, skip |
+| **M2.5+** | USGS catalog | ~15,000 | Full archive |
+| M3.0+ | Good global | ~12,000 | Display threshold |
+| **M4.5+** | Detected anywhere | ~1,500 | Preload threshold |
+| M5.0+ | Always detected | ~1,000 | Significant events |
 
 ### Data Migration
 

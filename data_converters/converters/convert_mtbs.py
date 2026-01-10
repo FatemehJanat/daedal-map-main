@@ -33,10 +33,33 @@ from data_converters.base import (
 from build.catalog.finalize_source import finalize_source
 
 # Configuration
-RAW_DATA_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/Raw data/imported/mtbs")
+RAW_DATA_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/Raw data/mtbs")
+IMPORTED_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/Raw data/imported/mtbs")
 GEOMETRY_PATH = Path("C:/Users/Bryan/Desktop/county-map-data/geometry/USA.parquet")
 OUTPUT_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/countries/USA/wildfires")
 SOURCE_ID = "mtbs_wildfires"
+
+
+def get_source_dir():
+    """Get source directory - check raw first, then imported."""
+    if RAW_DATA_DIR.exists() and (RAW_DATA_DIR / "mtbs_perimeter_data.zip").exists():
+        return RAW_DATA_DIR
+    elif IMPORTED_DIR.exists() and (IMPORTED_DIR / "mtbs_perimeter_data.zip").exists():
+        print(f"  Note: Using imported data from {IMPORTED_DIR}")
+        return IMPORTED_DIR
+    return RAW_DATA_DIR
+
+
+def move_to_imported():
+    """Move processed raw files to imported folder."""
+    import shutil
+    if RAW_DATA_DIR.exists() and (RAW_DATA_DIR / "mtbs_perimeter_data.zip").exists():
+        IMPORTED_DIR.mkdir(parents=True, exist_ok=True)
+        for f in RAW_DATA_DIR.glob("mtbs_*.zip"):
+            shutil.move(str(f), str(IMPORTED_DIR / f.name))
+        for f in RAW_DATA_DIR.glob("*.json"):
+            shutil.move(str(f), str(IMPORTED_DIR / f.name))
+        print(f"  Moved files to {IMPORTED_DIR}")
 
 # Simplification tolerance for perimeter geometry (degrees)
 # ~0.001 deg = ~100m at mid-latitudes, good balance of detail vs file size
@@ -64,8 +87,10 @@ def load_mtbs_perimeters():
     """Load MTBS fire perimeter data from shapefile."""
     print("\nLoading MTBS perimeter data...")
 
+    source_dir = get_source_dir()
+
     # Path to the zip file
-    zip_path = RAW_DATA_DIR / "mtbs_perimeter_data.zip"
+    zip_path = source_dir / "mtbs_perimeter_data.zip"
 
     if not zip_path.exists():
         print(f"  ERROR: {zip_path} not found")
@@ -95,7 +120,8 @@ def load_mtbs_points():
     """Load MTBS fire occurrence points."""
     print("\nLoading MTBS fire occurrence points...")
 
-    zip_path = RAW_DATA_DIR / "mtbs_fod_pts_data.zip"
+    source_dir = get_source_dir()
+    zip_path = source_dir / "mtbs_fod_pts_data.zip"
 
     if not zip_path.exists():
         print(f"  ERROR: {zip_path} not found")
@@ -152,10 +178,18 @@ def process_perimeters(perimeters_gdf):
 
     # Parse ignition date if present
     if 'ignition_date' in perimeters_gdf.columns:
-        # Try to parse dates - MTBS uses various formats
-        perimeters_gdf['ignition_date'] = pd.to_datetime(
-            perimeters_gdf['ignition_date'], errors='coerce', format='mixed'
-        )
+        # MTBS Ig_Date is often stored as integer YYYYMMDD or string
+        # Try multiple parsing approaches
+        raw_dates = perimeters_gdf['ignition_date']
+
+        # First try: parse as string with format detection
+        parsed = pd.to_datetime(raw_dates, errors='coerce', format='mixed')
+
+        # Second try: if mostly failed, try parsing as YYYYMMDD integer
+        if parsed.isna().sum() > len(parsed) * 0.9:
+            parsed = pd.to_datetime(raw_dates.astype(str), format='%Y%m%d', errors='coerce')
+
+        perimeters_gdf['ignition_date'] = parsed
         perimeters_gdf['year'] = perimeters_gdf['ignition_date'].dt.year
         print(f"  Parsed ignition dates: {perimeters_gdf['ignition_date'].notna().sum():,}")
 
@@ -308,10 +342,23 @@ def create_fires_parquet(fires_gdf):
     valid_perimeters = perimeter_geojson.notna().sum()
     print(f"    Valid perimeters: {valid_perimeters:,} ({valid_perimeters/len(fires_gdf)*100:.1f}%)")
 
+    # Build timestamp - use ignition_date if available, otherwise create from year
+    ignition_dates = fires_gdf.get('ignition_date')
+    years = fires_gdf.get('year')
+
+    # If ignition_date is mostly NaT, create timestamp from year
+    if ignition_dates is None or ignition_dates.isna().sum() > len(ignition_dates) * 0.9:
+        # Create timestamp from year (January 1st of that year)
+        timestamps = years.apply(
+            lambda y: pd.Timestamp(year=int(y), month=1, day=1) if pd.notna(y) else pd.NaT
+        )
+    else:
+        timestamps = ignition_dates
+
     # Select columns for output using standard event schema names
     fires_out = pd.DataFrame({
         'event_id': fires_gdf.get('event_id', fires_gdf.index),
-        'timestamp': fires_gdf.get('ignition_date'),  # Standard column name
+        'timestamp': timestamps,  # Standard column name
         'latitude': fires_gdf.get('centroid_lat'),  # Standard column name
         'longitude': fires_gdf.get('centroid_lon'),  # Standard column name
         'fire_name': fires_gdf.get('fire_name'),
@@ -601,6 +648,9 @@ def main():
     except ValueError as e:
         print(f"  Note: {e}")
         print(f"  Add '{SOURCE_ID}' to source_registry.py to enable auto-finalization")
+
+    # Move raw files to imported folder
+    move_to_imported()
 
     print("\n" + "=" * 60)
     print("COMPLETE!")

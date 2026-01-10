@@ -139,6 +139,157 @@
       border-color: #ff4444;
     }
 
+    /* Overlay Selector - data layer toggles */
+    #overlaySelector {
+      position: absolute;
+      top: 80px;
+      right: 10px;
+      z-index: 1000;
+      background: rgba(0, 0, 0, 0.8);
+      border-radius: 6px;
+      min-width: 140px;
+      font-size: 12px;
+    }
+
+    .overlay-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 12px;
+      cursor: pointer;
+      color: #ddd;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .overlay-header:hover {
+      background: rgba(255,255,255,0.05);
+    }
+
+    .overlay-title {
+      font-weight: 500;
+    }
+
+    .overlay-toggle {
+      color: #888;
+      font-family: monospace;
+    }
+
+    .overlay-list {
+      padding: 6px 0;
+    }
+
+    .overlay-item {
+      display: flex;
+      align-items: center;
+      padding: 6px 12px;
+      cursor: pointer;
+      color: #bbb;
+      gap: 8px;
+    }
+
+    .overlay-item:hover {
+      background: rgba(255,255,255,0.05);
+      color: #fff;
+    }
+
+    .overlay-item input[type="checkbox"] {
+      margin: 0;
+      cursor: pointer;
+    }
+
+    .overlay-icon {
+      width: 18px;
+      height: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255,255,255,0.1);
+      border-radius: 3px;
+      font-size: 10px;
+      font-weight: 600;
+      color: #888;
+    }
+
+    .overlay-item input:checked + .overlay-icon {
+      background: #0f4c75;
+      color: #fff;
+    }
+
+    .overlay-label {
+      flex: 1;
+    }
+
+    .overlay-label.placeholder {
+      color: #666;
+      font-style: italic;
+    }
+
+    /* Category styles */
+    .overlay-category {
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+
+    .overlay-category:last-child {
+      border-bottom: none;
+    }
+
+    .overlay-category-header {
+      display: flex;
+      align-items: center;
+      padding: 6px 12px;
+      cursor: pointer;
+      color: #ccc;
+      gap: 8px;
+      font-weight: 500;
+    }
+
+    .overlay-category-header:hover {
+      background: rgba(255,255,255,0.05);
+      color: #fff;
+    }
+
+    .overlay-category-header input[type="checkbox"] {
+      margin: 0;
+      cursor: pointer;
+    }
+
+    .overlay-category-header .overlay-icon {
+      background: rgba(255,255,255,0.15);
+      color: #aaa;
+    }
+
+    .overlay-category-header input:checked + .overlay-icon {
+      background: #0f4c75;
+      color: #fff;
+    }
+
+    .category-toggle {
+      margin-left: auto;
+      color: #666;
+      font-family: monospace;
+      font-size: 14px;
+    }
+
+    .overlay-sub-list {
+      background: rgba(0,0,0,0.2);
+    }
+
+    .overlay-sub-item {
+      padding-left: 32px;
+      font-size: 11px;
+    }
+
+    .overlay-sub-item .overlay-icon {
+      width: 16px;
+      height: 16px;
+      font-size: 9px;
+    }
+
+    .overlay-sub-item input[type="checkbox"]:disabled + .overlay-icon {
+      background: rgba(255,255,255,0.05);
+      color: #555;
+    }
+
     /* Stats overlay - dark */
     #statsOverlay {
       position: absolute;
@@ -1127,6 +1278,8 @@
           <br><br>
           To build a map query, I need three things: <b>location</b> (where), <b>time period</b> (when), and <b>data</b> (what). Feel free to ask what's available before diving in.
           <br><br>
+          Check the <b>overlays</b> on the right to help clarify what you want to see.
+          <br><br>
           Try: "What data do you have for Europe?" or "Show me CO2 emissions trends worldwide"
         </div>
       </div>
@@ -1214,6 +1367,9 @@
       <button data-level="3" title="Subdivisions (zoom ~11)">Local</button>
       <button id="levelLockBtn" title="Lock admin level">Lock</button>
     </div>
+
+    <!-- Overlay Selector -->
+    <div id="overlaySelector"></div>
   </div>
 
   <!-- Stats Overlay -->

@@ -22,6 +22,440 @@ When adding new disaster sources (Japan earthquakes, European floods, etc.), onl
 
 ---
 
+## Overlay Selector UI
+
+A sidebar control for toggling data overlays without typing queries.
+
+### UI Design
+
+```
++------------------+
+| Overlays      [x]|
++------------------+
+| v Disasters      |
+|   [ ] Earthquakes|
+|   [ ] Hurricanes |
+|   [ ] Wildfires  |
+|   [ ] Volcanoes  |
++------------------+
+| > Climate        |
++------------------+
+| > Demographics   |
++------------------+
+| Last updated:    |
+| 5 min ago        |
++------------------+
+```
+
+### Overlay Categories
+
+| Category | Overlays | Data Source | Update Frequency |
+|----------|----------|-------------|------------------|
+| **Disasters** | Earthquakes | usgs_earthquakes/events.parquet | Live (5 min) |
+| | Hurricanes | hurricanes/positions.parquet | Seasonal |
+| | Wildfires | wildfires/fires.parquet | Live (hourly) |
+| | Volcanoes | volcanoes/eruptions.parquet | As needed |
+| **Climate** | Wind patterns | (future) NOAA GFS | 6 hours |
+| | Air quality | (future) OpenAQ | Hourly |
+| | Temperature | (future) NOAA GFS | 6 hours |
+| **Demographics** | Population | census_population | Annual |
+| | Density | census_population (derived) | Annual |
+
+### State Management
+
+```javascript
+// overlay-manager.js
+const OverlayManager = {
+  // Current overlay states
+  overlays: {
+    earthquakes: { enabled: false, layer: null, lastUpdate: null },
+    hurricanes: { enabled: false, layer: null, lastUpdate: null },
+    wildfires: { enabled: false, layer: null, lastUpdate: null },
+    volcanoes: { enabled: false, layer: null, lastUpdate: null }
+  },
+
+  // Toggle overlay on/off
+  toggle(overlayId) {
+    const overlay = this.overlays[overlayId];
+    if (!overlay) return;
+
+    overlay.enabled = !overlay.enabled;
+
+    if (overlay.enabled) {
+      this.loadOverlay(overlayId);
+    } else {
+      this.removeOverlay(overlayId);
+    }
+
+    // Notify chat of context change
+    this.updateChatContext();
+  },
+
+  // Get active overlays for chat context
+  getActiveOverlays() {
+    return Object.entries(this.overlays)
+      .filter(([_, state]) => state.enabled)
+      .map(([id, _]) => id);
+  },
+
+  // Update chat with current context
+  updateChatContext() {
+    const active = this.getActiveOverlays();
+    // Chat now knows: "User has earthquakes and wildfires overlays active"
+    ChatModule.setOverlayContext(active);
+  }
+};
+```
+
+### Chat Integration
+
+When overlays are active, the chat has context about what the user is looking at:
+
+**Without overlay context:**
+```
+User: "What happened here?"
+Chat: "I need more context. What are you referring to?"
+```
+
+**With overlay context (earthquakes enabled):**
+```
+User: "What happened here?"
+Chat: "I see you have the earthquakes overlay active. Looking at your
+current map view, there was a M5.2 earthquake on Jan 5th near Hollister, CA.
+Would you like more details about this event?"
+```
+
+### Layer Loading
+
+```javascript
+// Load overlay data from parquet via backend
+async loadOverlay(overlayId) {
+  const config = OVERLAY_CONFIG[overlayId];
+
+  const response = await fetch('/api/overlay', {
+    method: 'POST',
+    body: JSON.stringify({
+      source_id: config.source_id,
+      event_file: config.event_file,
+      bounds: MapAdapter.getBounds(),  // Only load visible area
+      limit: config.limit || 1000
+    })
+  });
+
+  const data = await response.json();
+
+  // Add to map using event layer system
+  MapAdapter.loadEventLayer(data.geojson, config.eventType, {
+    showRadius: config.showRadius,
+    layerId: `overlay-${overlayId}`
+  });
+
+  this.overlays[overlayId].layer = `overlay-${overlayId}`;
+  this.overlays[overlayId].lastUpdate = new Date();
+}
+```
+
+### Configuration
+
+```javascript
+const OVERLAY_CONFIG = {
+  earthquakes: {
+    source_id: 'usgs_earthquakes',
+    event_file: 'events',
+    eventType: 'earthquake',
+    showRadius: true,
+    limit: 1000,
+    refreshInterval: 5 * 60 * 1000,  // 5 minutes
+    icon: 'seismic',
+    color: '#f03b20'
+  },
+  hurricanes: {
+    source_id: 'hurricanes',
+    event_file: 'positions',
+    eventType: 'hurricane-point',
+    showRadius: false,
+    limit: 500,
+    refreshInterval: null,  // No auto-refresh (seasonal)
+    icon: 'storm',
+    color: '#0571b0'
+  },
+  wildfires: {
+    source_id: 'wildfires',
+    event_file: 'fires',
+    eventType: 'wildfire',
+    showRadius: false,
+    limit: 500,
+    refreshInterval: 60 * 60 * 1000,  // 1 hour
+    icon: 'fire',
+    color: '#bd0026'
+  },
+  volcanoes: {
+    source_id: 'volcanoes',
+    event_file: 'eruptions',
+    eventType: 'volcano',
+    showRadius: true,
+    limit: 200,
+    refreshInterval: null,
+    icon: 'mountain',
+    color: '#fd8d3c'
+  }
+};
+```
+
+### Auto-Refresh (Live Mode)
+
+When overlay has `refreshInterval`, auto-update in background:
+
+```javascript
+startAutoRefresh(overlayId) {
+  const config = OVERLAY_CONFIG[overlayId];
+  if (!config.refreshInterval) return;
+
+  this.overlays[overlayId].refreshTimer = setInterval(() => {
+    if (this.overlays[overlayId].enabled) {
+      this.loadOverlay(overlayId);
+      this.showRefreshIndicator(overlayId);
+    }
+  }, config.refreshInterval);
+}
+```
+
+### Viewport-Based Loading
+
+Only load events within current map bounds to keep performance reasonable:
+
+```javascript
+// When map moves, reload visible overlays
+MapAdapter.map.on('moveend', debounce(() => {
+  const activeOverlays = OverlayManager.getActiveOverlays();
+  for (const id of activeOverlays) {
+    OverlayManager.loadOverlay(id);
+  }
+}, 500));
+```
+
+### Implementation Priority
+
+1. **Earthquakes overlay** - Best test case (point+radius, live updates)
+2. **Wildfires overlay** - Different display type (polygons)
+3. **Hurricanes overlay** - Track animation complexity
+4. **Climate overlays** - Requires new data sources
+
+---
+
+## Frontend Module Architecture
+
+### Current Problem
+
+The `map-adapter.js` file (1700+ lines) contains ALL rendering logic mixed together:
+- Earthquake rendering
+- Volcano rendering
+- Hurricane points and tracks
+- Generic event handling
+
+This makes it difficult to add new disaster types and maintain the code.
+
+### Solution: 4 Display Model Files
+
+Split rendering into specialized model files based on visualization type:
+
+```
+static/modules/
+  models/                        # NEW directory
+    model-point-radius.js        # Model A: Earthquakes, Volcanoes, Tornadoes
+    model-track.js               # Model B: Hurricanes, animated tracks
+    model-polygon.js             # Model C: Wildfires, floods (polygon areas)
+    model-registry.js            # Routes data to correct model
+  overlay-selector.js            # NEW: UI component (top right)
+  choropleth.js                  # Model D: Already exists (aggregates)
+  map-adapter.js                 # Refactored: basic map ops only
+```
+
+### The 4 Display Models
+
+| Model | File | Renders | Time Behavior |
+|-------|------|---------|---------------|
+| **A: Point+Radius** | model-point-radius.js | Earthquakes, Volcanoes, Tornadoes | Static (filter by year) |
+| **B: Track/Trail** | model-track.js | Hurricanes, Cyclones | Animated (6h positions) |
+| **C: Polygon/Area** | model-polygon.js | Wildfires, Floods | Static or animated |
+| **D: Choropleth** | choropleth.js (existing) | Census, metrics, aggregates | Year slider (existing) |
+
+### Model Interface
+
+All models implement this interface:
+
+```javascript
+const ModelInterface = {
+  id: 'model-id',
+  supportedTypes: ['earthquake', 'volcano'],
+
+  render(geojson, eventType, options),  // Load and display
+  update(geojson),                       // Update data (time filter)
+  clear(),                               // Remove layers
+  fitBounds(geojson),                    // Zoom to data
+  buildPopupHtml(properties, eventType)  // Popup content
+};
+```
+
+### Overlay Selector UI (Revised)
+
+**Location**: Top right, below zoom level and breadcrumbs
+
+```
++------------------------------------------+
+|  [Zoom: 5.2]  [USA > California > ...]   |
++------------------------------------------+
+|  [Overlays]                              |
+|    [x] Demographics (default, always on) |
+|    [ ] Earthquakes                       |
+|    [ ] Hurricanes                        |
+|    [ ] Wildfires                         |
+|    [ ] Volcanoes                         |
++------------------------------------------+
+```
+
+**Key behaviors:**
+- Demographics is checked by default, serves as base layer
+- Clicking overlays toggles visibility
+- Active selections passed to LLM preprocessor for query context
+- Multiple disaster overlays can be active simultaneously
+
+### Model Registry
+
+Routes event types to correct model:
+
+```javascript
+const typeToModel = {
+  // Point + Radius events
+  earthquake: 'point-radius',
+  volcano: 'point-radius',
+  tornado: 'point-radius',
+
+  // Track events
+  hurricane: 'track',
+  typhoon: 'track',
+  cyclone: 'track',
+
+  // Polygon events
+  wildfire: 'polygon',
+  flood: 'polygon'
+};
+
+// Usage in app.js
+ModelRegistry.render(data.geojson, eventType, options);
+```
+
+### Phase 1: Infrastructure + Visual UI [COMPLETE]
+
+**Step 1: Create model directory structure** - DONE
+- Created `static/modules/models/` folder
+- Created `model-registry.js` with routing logic
+
+**Step 2: Create overlay selector UI** - DONE
+- Created `overlay-selector.js` module
+- Added HTML element to templates/index.html (top right panel)
+- Styled to match dark theme
+- Demographics checked by default
+
+**Step 3: Wire up selector** - DONE
+- Connected selector to app.js
+- Exposed active overlays for preprocessor context
+- Toggle functionality working
+
+**Step 4: Create model files** - DONE
+- Created all model files with full implementation
+- Wired dependencies via existing pattern
+
+### Phase 2: Point+Radius Model [COMPLETE]
+
+Extracted earthquake/volcano rendering from map-adapter.js into `model-point-radius.js`:
+- Magnitude-based circle sizing
+- Felt/damage radius circles for earthquakes
+- VEI-based sizing for volcanoes
+- Popup HTML generation
+
+### Phase 2b: Aftershock Sequence Animation [COMPLETE]
+
+Added `sequence-animator.js` for visualizing earthquake aftershock sequences:
+
+**Features:**
+- "Ripples in a pond" effect - circles grow from epicenter
+- "Spiderweb" connection lines from mainshock to aftershocks
+- Geographic radius circles (felt + damage) scale with zoom
+- Viewport auto-zooms from damage radius to full sequence extent
+- Adaptive time stepping (200 max steps regardless of duration)
+
+**Gardner-Knopoff Windows:**
+```python
+# Time window: 10^(0.5*M - 1.5) days
+# Distance window: 10^(0.5*M - 0.5) km
+# M7.0: ~10 days, ~100 km
+# M8.0: ~32 days, ~316 km
+```
+
+**Activation:**
+- Click earthquake with aftershocks -> "View Aftershock Sequence" button in popup
+- TimeSlider adds new scale tab for sequence (adaptive granularity)
+- Exit button returns to normal earthquake view
+
+**Adaptive Time Stepping:**
+```javascript
+const MAX_STEPS = 200;
+const MIN_STEP_MS = 1 * 60 * 60 * 1000;  // 1 hour minimum
+const adaptiveStepMs = Math.max(MIN_STEP_MS, Math.ceil(timeRange / MAX_STEPS));
+```
+This ensures animations complete in ~200 steps whether the sequence is hours or months long.
+
+### Phase 3: Track Model [COMPLETE]
+
+Extracted hurricane track rendering into `model-track.js`:
+- Storm marker rendering with Saffir-Simpson colors
+- Track line rendering with position dots
+- Category-based color expressions
+- Storm drill-down support
+
+### Phase 4: Polygon Model [COMPLETE]
+
+Created new `model-polygon.js` for area-based events:
+- Wildfires, floods, ash clouds, drought areas
+- Fill with transparency + stroke outline
+- Severity/status-based color coding
+- Label rendering
+
+### Phase 5: Backend Integration [COMPLETE]
+
+Created `overlay-controller.js` to orchestrate data loading:
+- Listens to OverlaySelector toggle events
+- Fetches data from API endpoints
+- Caches full datasets client-side
+- Filters by TimeSlider year and re-renders
+
+Added API endpoints to `app.py`:
+- `/api/earthquakes/geojson` - Earthquake events
+- `/api/volcanoes/geojson` - Volcano locations
+- `/api/eruptions/geojson` - Volcanic eruptions
+- `/api/wildfires/geojson` - Wildfire events
+
+### Files Created/Modified
+
+| File | Status | Description |
+|------|--------|-------------|
+| static/modules/models/model-point-radius.js | NEW | Earthquakes, volcanoes (~320 lines) |
+| static/modules/models/model-track.js | NEW | Hurricanes, tracks (~370 lines) |
+| static/modules/models/model-polygon.js | NEW | Wildfires, polygons (~320 lines) |
+| static/modules/models/model-registry.js | NEW | Routes types to models |
+| static/modules/overlay-selector.js | NEW | UI component |
+| static/modules/overlay-controller.js | NEW | Data loading + sequence orchestration |
+| static/modules/sequence-animator.js | NEW | Aftershock sequence animation (~850 lines) |
+| static/modules/time-slider.js | MODIFIED | Indexed scale, listener system, multi-scale tabs |
+| static/modules/map-adapter.js | MODIFIED | Delegates to models |
+| static/modules/app.js | MODIFIED | Initializes all components |
+| app.py | MODIFIED | Added API endpoints + sequence endpoint |
+| templates/index.html | MODIFIED | Added overlay selector div |
+| static/css/style.css | MODIFIED | Overlay selector styling |
+
+---
+
 ## Overview
 
 The disaster display system handles TWO distinct modes:
@@ -684,53 +1118,101 @@ O M4.0-4.9
 
 ## Implementation Phases
 
-### Phase 1: Model A - Point + Radius (Current)
-Starting with earthquakes and volcanoes - simplest display model.
+### Phase 1: Model A - Point + Radius [COMPLETE]
+Earthquakes and volcanoes - simplest display model.
 
 **Backend:**
-- [ ] Add `mode: "events"` field to order schema
-- [ ] Add `load_event_data()` to order_executor.py
-- [ ] Add event type detection to postprocessor
+- [x] Add `mode: "events"` field to order schema
+- [x] Add event loading to API endpoints
+- [x] Add event type detection to postprocessor
 
 **Frontend:**
-- [ ] Create generalized `loadEventLayer()` in MapAdapter
-- [ ] Earthquake point layer (magnitude-sized circles)
-- [ ] Felt radius circle overlay (uses felt_radius_km)
-- [ ] Damage radius circle overlay (uses damage_radius_km)
-- [ ] TimeSlider integration for daily animation
+- [x] Create generalized `loadEventLayer()` in MapAdapter
+- [x] Earthquake point layer (magnitude-sized circles)
+- [x] Felt radius circle overlay (uses felt_radius_km)
+- [x] Damage radius circle overlay (uses damage_radius_km)
+- [x] TimeSlider integration for year-based filtering
 
 **Data fields used:**
 - lat, lon - Event location
 - magnitude - Circle size
 - felt_radius_km - Outer impact circle
 - damage_radius_km - Inner damage circle
-- timestamp - Animation key
+- year - TimeSlider filtering
 
-**Test query:** "Show M4+ earthquakes in California 2024"
+### Phase 2: Model B - Track/Trail (Hurricanes) [COMPLETE]
+- [x] Migrate HurricaneHandler to generalized event system
+- [x] Track line rendering (connect positions)
+- [x] Category-based coloring (Saffir-Simpson scale)
+- [x] Storm drill-down for individual track display
 
-### Phase 2: Model B - Track/Trail (Hurricanes)
-- [ ] Migrate HurricaneHandler to generalized event system
-- [ ] Track line rendering (connect positions)
-- [ ] Animated position marker with wind radii
-- [ ] Category-based coloring
-- [ ] 6-hourly playback
-
-### Phase 3: Model C - Polygon/Area (Wildfires)
-- [ ] Parse perimeter GeoJSON from fires.parquet
-- [ ] Render fire polygon boundaries
-- [ ] Centroid marker fallback when no perimeter
-- [ ] Daily animation for fire season
+### Phase 3: Model C - Polygon/Area (Wildfires) [COMPLETE]
+- [x] Polygon fill + stroke rendering
+- [x] Severity/status-based color coding
+- [x] Label rendering for fire names
+- [x] Year-based filtering via TimeSlider
 
 ### Phase 4: Model D - Choropleth Events (Drought)
 - [ ] Weekly drought severity by county
 - [ ] Use existing choropleth system
 - [ ] Weekly granularity animation
 
-### Phase 5: Additional Sources
+### Phase 5: Additional Sources [PARTIAL]
 - [ ] Tornado points (Model A)
-- [ ] Volcano eruptions (Model A)
+- [x] Volcano eruptions (Model A) - Full implementation with cross-linking
 - [ ] Tsunami runups (Model A)
 - [ ] NOAA storm events (Model A)
+
+---
+
+## Recent Updates (2026-01-09)
+
+### Volcano Enhancements
+- **Duration columns**: Added `end_year`, `end_timestamp`, `duration_days`, `is_ongoing` to track continuous eruptions
+- **Activity area**: Added `activity_area` field (e.g., "East rift zone (Puu O'o)")
+- **Eruption ID**: Added `eruption_id` for Smithsonian tracking
+- **Cross-linking**: Bidirectional volcano-earthquake linking (30 days before, 60 days after eruption)
+- **Popup display**: Shows year ranges for multi-year eruptions (e.g., "1983-2018, 35.7 years")
+- Example: Kilauea 1983-2018 eruption now shows 13,029 days duration with East rift zone activity
+
+### Earthquake Data Status
+- **Current dataset**: M4.5+ global (306K events, 1900-2026)
+- **Pending merge**: M2.5-4.5 data downloaded (1.05M events total)
+- **Conversion issue**: Full dataset merge times out during processing - needs optimization
+- **Workaround**: Using M4.5+ dataset until converter is optimized for larger datasets
+- **Aftershock detection**: Working with current dataset, Gardner-Knopoff windows applied
+
+### Overlay Selector Hierarchical Categories
+Updated overlay selector with 3 top-level categories:
+```
++ Demographics (base layer)
+v Disasters
+    [ ] Earthquakes
+    [ ] Volcanoes
+    [ ] Hurricanes
+    [ ] Storms (placeholder)
+    [ ] Tsunamis (placeholder)
+    [ ] Wildfires
+> Climate
+    [ ] Wind Patterns (placeholder)
+    [ ] Currents (placeholder)
+    [ ] Pollution (placeholder)
+```
+- Parent checkbox toggles all children
+- Placeholder items disabled with "(soon)" label
+
+### Map Projection Toggle
+- Added automatic 2D/globe switching based on zoom level
+- Zoom >= 2.0: Mercator (flat 2D map)
+- Zoom < 2.0: Globe projection with atmosphere/space effects
+- Handled in `map-adapter.js` handleZoomChange()
+
+### API Path Cleanup
+- Removed USA fallback paths for earthquakes and volcanoes
+- All disaster data now uses global paths only:
+  - `global/usgs_earthquakes/events.parquet`
+  - `global/smithsonian_volcanoes/events.parquet`
+- Hurricanes/wildfires still use USA paths (no global data yet)
 
 ---
 
@@ -746,4 +1228,163 @@ Starting with earthquakes and volcanoes - simplest display model.
 
 ---
 
-*Created: 2026-01-07*
+---
+
+## Geographic Radius Circles (km to pixels)
+
+MapLibre's `circle-radius` is in screen pixels, not geographic units. To display actual km-based impact radii (felt_radius_km, damage_radius_km), we convert using zoom-dependent expressions.
+
+**Formula:** `pixels = km * 2^zoom / 156.5`
+
+```javascript
+// Pre-scale km values in JavaScript because MapLibre can't nest zoom in multiplication
+const felt_radius_scaled = feltRadiusKm * animationScale;  // Pre-multiplied
+
+// Then use zoom interpolation for rendering
+const kmToPixelsExpr = (kmProp) => [
+  'interpolate', ['exponential', 2], ['zoom'],
+  0, ['/', ['get', kmProp], 156.5],   // At zoom 0: very small
+  5, ['/', ['get', kmProp], 4.9],     // 2^5 / 156.5 = 0.204
+  10, ['*', ['get', kmProp], 6.54],   // 2^10 / 156.5 = 6.54
+  15, ['*', ['get', kmProp], 209]     // 2^15 / 156.5 = 209
+];
+```
+
+**Why pre-scaling:** MapLibre doesn't allow zoom expressions nested inside arithmetic operations. We work around this by pre-multiplying km values by the animation scale in JavaScript, then applying the zoom-dependent conversion in the paint expression.
+
+---
+
+## Known Issues
+
+### Volcano Prehistoric Data
+The Smithsonian Global Volcanism Program includes eruptions dating back to prehistoric times (some as early as 1280 CE). These dates overflow pandas' nanosecond-based datetime bounds (min year 1677). Current workaround sets these to NaT, resulting in only 36% of eruptions having valid timestamps in the output.
+
+**Future fix:** Store prehistoric dates as integer years in a separate `year` column for display while keeping timestamp for modern events.
+
+### Wildfire Perimeter Timing
+MTBS data provides FINAL burn perimeters only - no daily progression data. All fires show the complete burned area regardless of timeline position. To show fire spread over time, we would need:
+- VIIRS/MODIS active fire detection (daily hotspots)
+- NIFC InciWeb perimeter updates (multi-day progression)
+- GOES-R fire detection (15-minute updates)
+
+### MTBS Ignition Dates
+The MTBS shapefile has no valid ignition dates (Ig_Date column is empty for all 30,730 fires). Dates are extracted from the Event_ID field which only contains year, so all fires are timestamped to January 1 of their ignition year.
+
+---
+
+## Temporal Visualization Analysis
+
+### Data Reality by Disaster Type
+
+| Type | Temporal Data | Animation Possible? | Notes |
+|------|---------------|---------------------|-------|
+| **Hurricanes** | 6-hourly positions | YES - full track animation | Best temporal data. 73,330 positions with wind radii (r34/r50/r64) |
+| **Tsunamis** | Source + runup distances | YES - wave propagation | Can calculate travel time from `dist_from_source_km` |
+| **Earthquakes** | Single timestamp | NO - point in time | Show as dot + radius. 100% have felt/damage radius |
+| **Volcanoes** | Single timestamp | NO - point in time | 36% have valid timestamps (prehistoric overflow). 62% have VEI |
+| **Wildfires** | Year only | NO - final perimeter only | Need VIIRS/MODIS for daily progression |
+| **Tornadoes** | Single timestamp | NO - point in time | Would need multi-point track data |
+
+### Recommended Display Modes
+
+#### Mode A: Static Point + Radius (Earthquakes, Volcanoes)
+Time slider not needed - show all events for selected period.
+
+```
+Display:
+- Epicenter dot (size = magnitude/VEI)
+- Felt radius circle (semi-transparent outer ring)
+- Damage radius circle (darker inner ring)
+
+Interaction:
+- Click for details popup
+- Filter by magnitude/VEI threshold
+```
+
+**Radius calculation from VEI (volcanoes):**
+```python
+# Approximate hazard radius based on VEI
+VEI_RADIUS_KM = {
+    0: 5,    # Effusive
+    1: 10,   # Gentle
+    2: 25,   # Explosive
+    3: 50,   # Severe
+    4: 100,  # Cataclysmic
+    5: 200,  # Paroxysmal
+    6: 500,  # Colossal
+    7: 1000, # Super-colossal
+}
+```
+
+#### Mode B: Animated Track (Hurricanes)
+Time slider shows storm progression.
+
+```
+Display at each timestamp:
+- Current position marker (category-colored)
+- Wind radii circles (34kt/50kt/64kt extent)
+- Track line (positions so far)
+- Future track (dashed, if known)
+
+Animation:
+- 6-hour steps
+- 100-200ms per step
+- Show date/time label
+```
+
+**Data available:**
+- `wind_kt`, `pressure_mb`, `category` at each position
+- `r34_ne/se/sw/nw` - 34kt wind radius in each quadrant
+- `r50_*`, `r64_*` - 50kt and 64kt wind radii
+
+#### Mode C: Wave Propagation (Tsunamis)
+Time slider shows wave traveling from source to coastlines.
+
+```
+Display:
+1. Source event (earthquake epicenter in ocean)
+2. Expanding wave front circle (based on tsunami speed ~700 km/h)
+3. Runup points activate as wave arrives
+
+Animation calculation:
+- Wave speed: ~700-800 km/h in open ocean
+- Arrival time = dist_from_source_km / 750
+- Runup points appear when wave reaches them
+```
+
+**Data available:**
+- Source: `latitude`, `longitude`, `eq_magnitude`
+- Runups: `dist_from_source_km`, `water_height_m`
+
+#### Mode D: Final Perimeter (Wildfires - Current)
+No animation - show final burned area.
+
+```
+Display:
+- Fire perimeter polygon (from GeoJSON)
+- Centroid marker with acres label
+- Color by fire size or type
+
+Future enhancement:
+- Add VIIRS hotspots for daily fire activity
+- Could animate hotspot appearance over fire duration
+```
+
+### What We're Missing
+
+| Feature | Data Needed | Potential Source |
+|---------|-------------|------------------|
+| Wildfire daily spread | Daily perimeter snapshots | NIFC InciWeb, GOES-R |
+| Tornado tracks | Multi-point path | NOAA Storm Events (some have) |
+| Flood extent progression | Daily inundation maps | NOAA NWS, Copernicus |
+| Volcanic ash dispersion | Ash cloud polygons over time | VAAC advisories |
+
+### Implementation Priority
+
+1. **Hurricanes** - Already have full track data, just need UI
+2. **Earthquakes/Volcanoes** - Static display with radius, straightforward
+3. **Tsunamis** - Wave animation from distance data, moderate complexity
+4. **Wildfires** - Need additional data source for progression
+
+
+*Last Updated: 2026-01-09 - Volcano duration columns and cross-linking complete. Earthquake data pending full merge (using M4.5+ for now). Hierarchical overlay categories. 2D/globe toggle at zoom 2. Moving to track/trail displays next.*

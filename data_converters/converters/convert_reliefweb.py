@@ -26,8 +26,31 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from build.catalog.finalize_source import finalize_source
 
 # Configuration
-INPUT_FILE = Path("C:/Users/Bryan/Desktop/county-map-data/Raw data/reliefweb/reliefweb-disasters-list.csv")
+RAW_DATA_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/Raw data/reliefweb")
+IMPORTED_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/Raw data/imported/reliefweb")
 OUTPUT_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/global/reliefweb_disasters")
+
+
+def get_input_file():
+    """Get input file - check raw first, then imported."""
+    raw_file = RAW_DATA_DIR / "reliefweb-disasters-list.csv"
+    imported_file = IMPORTED_DIR / "reliefweb-disasters-list.csv"
+    if raw_file.exists():
+        return raw_file
+    elif imported_file.exists():
+        print(f"  Note: Using imported data from {IMPORTED_DIR}")
+        return imported_file
+    return raw_file
+
+
+def move_to_imported():
+    """Move processed raw files to imported folder."""
+    import shutil
+    raw_file = RAW_DATA_DIR / "reliefweb-disasters-list.csv"
+    if raw_file.exists():
+        IMPORTED_DIR.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(raw_file), str(IMPORTED_DIR / raw_file.name))
+        print(f"  Moved files to {IMPORTED_DIR}")
 
 # Disaster type code mapping (for standardization)
 DISASTER_TYPE_MAP = {
@@ -56,18 +79,26 @@ DISASTER_TYPE_MAP = {
 def load_raw_data():
     """Load ReliefWeb CSV data."""
     print("Loading ReliefWeb disasters data...")
-    df = pd.read_csv(INPUT_FILE)
+    input_file = get_input_file()
+    df = pd.read_csv(input_file)
     print(f"  Loaded {len(df):,} disaster events")
     return df
 
 
 def process_events(df):
-    """Process raw data into events format."""
+    """Process raw data into events format.
+
+    Standard event schema columns:
+    - event_id: unique identifier
+    - timestamp: event datetime (ISO format)
+    - latitude, longitude: event location
+    - loc_id: assigned county/water body code
+    """
     print("\nProcessing events...")
 
     # Parse dates
-    df['event_date'] = pd.to_datetime(df['date-event'], errors='coerce')
-    df['year'] = df['event_date'].dt.year
+    df['timestamp'] = pd.to_datetime(df['date-event'], errors='coerce')
+    df['year'] = df['timestamp'].dt.year
 
     # Standardize ISO3 codes (uppercase)
     df['iso3'] = df['primary_country-iso3'].str.upper()
@@ -79,19 +110,19 @@ def process_events(df):
     df['disaster_type_code'] = df['primary_type-code']
     df['disaster_type'] = df['disaster_type_code'].map(DISASTER_TYPE_MAP).fillna('other')
 
-    # Create output dataframe
+    # Create output dataframe with standard schema
     events = pd.DataFrame({
         'event_id': df['id'].astype(str),
+        'timestamp': df['timestamp'],  # Standard column name
+        'latitude': df['primary_country-location-lat'],  # Standard column name
+        'longitude': df['primary_country-location-lon'],  # Standard column name
         'loc_id': df['loc_id'],
         'name': df['name'],
         'disaster_type': df['disaster_type'],
         'disaster_type_code': df['disaster_type_code'],
         'glide': df['glide'],  # Global Disaster Identifier
         'country_name': df['primary_country-name'],
-        'event_date': df['event_date'],
         'year': df['year'].astype('Int64'),
-        'lat': df['primary_country-location-lat'],
-        'lon': df['primary_country-location-lon'],
         'status': df['status'],
         'url': df['url'],
     })
@@ -100,7 +131,7 @@ def process_events(df):
     events = events[events['loc_id'].notna() & (events['loc_id'] != '')].copy()
 
     # Sort by date
-    events = events.sort_values('event_date', ascending=False)
+    events = events.sort_values('timestamp', ascending=False)
 
     print(f"  Output: {len(events):,} events")
     print(f"  Countries: {events['loc_id'].nunique()}")
@@ -206,6 +237,13 @@ def main():
     except ValueError as e:
         print(f"  Note: {e}")
         print("  Add 'reliefweb_disasters' to source_registry.py to enable auto-finalization")
+
+    # Move raw files to imported folder
+    move_to_imported()
+
+    print("\n" + "=" * 60)
+    print("COMPLETE!")
+    print("=" * 60)
 
     return events, aggregates
 

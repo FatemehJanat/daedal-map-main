@@ -20,6 +20,7 @@ import pyarrow.parquet as pq
 import geopandas as gpd
 from pathlib import Path
 from shapely.geometry import Point
+import json
 import sys
 
 # Add parent paths for imports
@@ -36,9 +37,32 @@ from build.catalog.finalize_source import finalize_source
 
 # Configuration
 RAW_DATA_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/Raw data/noaa/hurdat2")
+IMPORTED_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/Raw data/imported/noaa/hurdat2")
 GEOMETRY_PATH = Path("C:/Users/Bryan/Desktop/county-map-data/geometry/USA.parquet")
 OUTPUT_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/countries/USA/hurricanes")
 SOURCE_ID = "noaa_hurricanes"
+
+
+def get_source_dir():
+    """Get source directory - check raw first, then imported."""
+    if RAW_DATA_DIR.exists() and (RAW_DATA_DIR / "hurdat2_atlantic.txt").exists():
+        return RAW_DATA_DIR
+    elif IMPORTED_DIR.exists() and (IMPORTED_DIR / "hurdat2_atlantic.txt").exists():
+        print(f"  Note: Using imported data from {IMPORTED_DIR}")
+        return IMPORTED_DIR
+    return RAW_DATA_DIR
+
+
+def move_to_imported():
+    """Move processed raw files to imported folder."""
+    import shutil
+    if RAW_DATA_DIR.exists() and (RAW_DATA_DIR / "hurdat2_atlantic.txt").exists():
+        IMPORTED_DIR.mkdir(parents=True, exist_ok=True)
+        for f in RAW_DATA_DIR.glob("hurdat2_*.txt"):
+            shutil.move(str(f), str(IMPORTED_DIR / f.name))
+        for f in RAW_DATA_DIR.glob("*.json"):
+            shutil.move(str(f), str(IMPORTED_DIR / f.name))
+        print(f"  Moved files to {IMPORTED_DIR}")
 
 # =============================================================================
 # Hurricane-Specific Functions
@@ -250,11 +274,13 @@ def load_hurdat2_data():
     """Load all HURDAT2 files."""
     print("\nLoading HURDAT2 data...")
 
+    source_dir = get_source_dir()
+
     all_storms = []
     all_positions = []
 
     # Atlantic basin
-    atlantic_file = RAW_DATA_DIR / "hurdat2_atlantic.txt"
+    atlantic_file = source_dir / "hurdat2_atlantic.txt"
     if atlantic_file.exists():
         print(f"  Processing Atlantic basin...")
         storms, positions = parse_hurdat2_file(atlantic_file, 'Atlantic')
@@ -263,7 +289,7 @@ def load_hurdat2_data():
         print(f"    Storms: {len(storms):,}, Positions: {len(positions):,}")
 
     # Pacific basin (Eastern Pacific)
-    pacific_file = RAW_DATA_DIR / "hurdat2_pacific.txt"
+    pacific_file = source_dir / "hurdat2_pacific.txt"
     if pacific_file.exists():
         print(f"  Processing Pacific basin...")
         storms, positions = parse_hurdat2_file(pacific_file, 'Pacific')
@@ -390,9 +416,20 @@ def create_storms_parquet(storms_df):
 
 
 def create_positions_parquet(positions_df):
-    """Create positions.parquet with track positions."""
-    # Select columns
-    cols = ['storm_id', 'timestamp', 'record_id', 'status', 'latitude', 'longitude',
+    """Create positions.parquet with track positions.
+
+    Standard event schema columns:
+    - event_id: unique identifier
+    - timestamp: event datetime (ISO format)
+    - latitude, longitude: event location
+    - loc_id: assigned county/water body code
+    """
+    # Add event_id (storm_id + position index within storm)
+    positions_df = positions_df.copy()
+    positions_df['event_id'] = positions_df['storm_id'] + '_' + positions_df.groupby('storm_id').cumcount().astype(str).str.zfill(3)
+
+    # Select columns - event_id first for standard schema
+    cols = ['event_id', 'storm_id', 'timestamp', 'record_id', 'status', 'latitude', 'longitude',
             'wind_kt', 'pressure_mb', 'category']
 
     # Add wind radii columns if present
@@ -655,6 +692,9 @@ def main():
     except ValueError as e:
         print(f"  Note: {e}")
         print(f"  Add '{SOURCE_ID}' to source_registry.py to enable auto-finalization")
+
+    # Move raw files to imported folder
+    move_to_imported()
 
     print("\n" + "=" * 60)
     print("COMPLETE!")
