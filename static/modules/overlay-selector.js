@@ -28,7 +28,7 @@ const CATEGORIES = [
     label: 'Disasters',
     icon: '!',
     isCategory: true,
-    expanded: false,
+    expanded: true,  // Default expanded
     overlays: [
       {
         id: 'earthquakes',
@@ -74,13 +74,12 @@ const CATEGORIES = [
       {
         id: 'tsunamis',
         label: 'Tsunamis',
-        description: 'Tsunami events and wave data',
+        description: 'Tsunami events and coastal runups',
         default: false,
         locked: false,
         model: 'point-radius',
         icon: 'T',
-        hasYearFilter: true,
-        placeholder: true
+        hasYearFilter: true
       },
       {
         id: 'wildfires',
@@ -165,7 +164,7 @@ export function setDependencies(deps) {
 export const OverlaySelector = {
   // State
   activeOverlays: new Set(),
-  expanded: false,
+  expanded: true,  // Default expanded
   categoryExpanded: {},  // Track which categories are expanded
 
   // DOM elements

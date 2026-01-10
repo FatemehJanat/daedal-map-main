@@ -446,6 +446,57 @@ const adaptiveStepMs = Math.max(MIN_STEP_MS, Math.ceil(timeRange / MAX_STEPS));
 - Long sequences (months): 12h-2day steps
 - Animation always completes in ~200 steps regardless of duration
 
+### Rolling Window + Fade (Event Animation)
+
+For disaster event animations (earthquakes, storms, wildfires), events use a rolling window with opacity fading for smooth visualization during fast playback.
+
+**Window Duration by Granularity:**
+| Granularity | Window Size | Effect |
+|-------------|-------------|--------|
+| 6h | 24 hours | 4 data points visible |
+| daily | 7 days | 1 week of events |
+| monthly | ~3 months | Quarter's events |
+| yearly | 1 year | Full year |
+
+**Flash + Fade Effect:**
+- Brand new events get a "flash" (recency = 1.5) with size boost
+- Flash period is first 10% of window duration
+- After flash, events fade linearly from 1.0 to 0.0
+- Events beyond window boundary are removed
+- Creates attention-grabbing "pop" when events occur, then smooth fade
+
+```javascript
+// _recency: 1.5 = flash (new), 1.0 = recent, 0.0 = fading out
+// Opacity capped at 1.0, size boosted up to 50% for flash
+const opacityExpr = ['min', 1.0, ['*', 0.9, recencyExpr]];
+const sizeBoostExpr = ['*', baseSize, ['max', 1.0, recencyExpr]];
+```
+
+**Inactivity Detection (Continuous Events):**
+
+For events with periodic updates (storms, wildfires), the system detects when they've "ended" based on missed updates:
+
+| Event Type | Update Interval | Inactivity Threshold |
+|------------|-----------------|---------------------|
+| Storm | 6 hours | 24h (4x interval) |
+| Wildfire | Daily | 4 days (4x interval) |
+| Earthquake | Instant | N/A (point-in-time) |
+
+See [DISASTER_DISPLAY.md](DISASTER_DISPLAY.md#phase-2c-unified-eventanimator-in-progress) for full EventAnimator architecture.
+
+### Simplified Playback Display
+
+During animation playback, the time label shows simplified format to reduce visual noise:
+
+| Granularity | During Playback | When Paused |
+|-------------|-----------------|-------------|
+| 6h | "Jan 2005" | "Jan 15, 2005, 06:00 AM" |
+| daily | "Jan 2005" | "Jan 15, 2005" |
+| monthly | "2005" | "Jan 2005" |
+| yearly | "2005" | "2005" |
+
+This prevents "flashing text" during fast-forward playback while still showing precise time when user pauses.
+
 ### Data Flow
 
 ```
@@ -580,6 +631,7 @@ See [FRONTEND_MODULES.md](FRONTEND_MODULES.md) for detailed module documentation
 ### Related Documentation
 
 - [CHAT.md](CHAT.md) - Chat system, disambiguation, show borders follow-up
+- [DISASTER_DISPLAY.md](DISASTER_DISPLAY.md) - Event animation, overlay system, disaster visualization
 - [GEOMETRY.md](GEOMETRY.md) - loc_id specification, geometry structure, special entities
 - [data_pipeline.md](data_pipeline.md) - Data sources, metadata, folder structure
 - [data_import.md](data_import.md) - Quick reference for creating data converters

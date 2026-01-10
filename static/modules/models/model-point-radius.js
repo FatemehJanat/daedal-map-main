@@ -71,6 +71,8 @@ export const PointRadiusModel = {
       this._addEarthquakeLayer(options);
     } else if (eventType === 'volcano') {
       this._addVolcanoLayer(options);
+    } else if (eventType === 'tsunami') {
+      this._addTsunamiLayer(options);
     } else {
       this._addGenericEventLayer(eventType, options);
     }
@@ -205,6 +207,48 @@ export const PointRadiusModel = {
                 } catch (err) {
                   console.error('Error fetching nearby volcanoes:', err);
                   link.textContent = 'Error searching';
+                  link.style.color = '#f44336';
+                }
+
+                // Re-enable after delay
+                setTimeout(() => {
+                  link.style.pointerEvents = 'auto';
+                }, 2000);
+              });
+            });
+
+            // Setup click handler for "View runups" link (tsunami cross-link)
+            const runupLinks = popupEl.querySelectorAll('.view-runups-link');
+            runupLinks.forEach(link => {
+              link.addEventListener('click', async (evt) => {
+                evt.preventDefault();
+                const eventId = link.dataset.event;
+
+                // Update link to show loading state
+                link.textContent = 'Loading runups...';
+                link.style.pointerEvents = 'none';
+
+                try {
+                  // Fetch animation data (source + runups combined)
+                  const url = `/api/tsunamis/${eventId}/animation`;
+                  const response = await fetch(url);
+                  const data = await response.json();
+
+                  if (data.features && data.features.length > 1) {
+                    // Found runups - update display
+                    const runupCount = data.metadata?.runup_count || (data.features.length - 1);
+                    link.textContent = `Showing ${runupCount} runups`;
+                    link.style.color = '#81c784';
+
+                    // Notify listeners to display the runups
+                    this._notifyTsunamiRunups(data, eventId);
+                  } else {
+                    link.textContent = 'No runups recorded';
+                    link.style.color = '#999';
+                  }
+                } catch (err) {
+                  console.error('Error fetching tsunami runups:', err);
+                  link.textContent = 'Error loading';
                   link.style.color = '#f44336';
                 }
 
@@ -384,15 +428,30 @@ export const PointRadiusModel = {
       }
     });
 
+    // Recency-based effects for animation
+    // _recency: 1.5 = brand new (flash), 1.0 = recent, 0.0 = fading out
+    // Use coalesce to default to 1.0 if _recency not present (normal display)
+    const recencyExpr = ['coalesce', ['get', '_recency'], 1.0];
+
+    // Opacity: cap at 1.0 (recency can be > 1.0 for flash effect)
+    const opacityExpr = (baseOpacity) => ['min', 1.0, ['*', baseOpacity, recencyExpr]];
+
+    // Size boost for new events: when recency > 1.0, add extra size
+    // At recency 1.5: adds 50% extra size. At recency 1.0 or below: no boost.
+    const sizeBoostExpr = (baseSize) => [
+      '*', baseSize,
+      ['max', 1.0, recencyExpr]  // Multiplier is 1.0-1.5 for flash, 1.0 otherwise
+    ];
+
     // 3. EPICENTER GLOW - subtle glow behind the marker
     map.addLayer({
       id: CONFIG.layers.eventCircle + '-glow',
       type: 'circle',
       source: CONFIG.layers.eventSource,
       paint: {
-        'circle-radius': ['+', epicenterSize, 4],
+        'circle-radius': sizeBoostExpr(['+', epicenterSize, 4]),
         'circle-color': colorExpr,
-        'circle-opacity': 0.3,
+        'circle-opacity': opacityExpr(0.3),  // Fade with recency, cap at 1.0
         'circle-blur': 1
       }
     });
@@ -403,9 +462,9 @@ export const PointRadiusModel = {
       type: 'circle',
       source: CONFIG.layers.eventSource,
       paint: {
-        'circle-radius': epicenterSize,
+        'circle-radius': sizeBoostExpr(epicenterSize),
         'circle-color': colorExpr,
-        'circle-opacity': 0.9,
+        'circle-opacity': opacityExpr(0.9),  // Fade with recency, cap at 1.0
         'circle-stroke-color': '#222222',
         'circle-stroke-width': 1
       }
@@ -532,15 +591,21 @@ export const PointRadiusModel = {
       }
     });
 
+    // Recency-based effects for animation
+    // _recency: 1.5 = brand new (flash), 1.0 = recent, 0.0 = fading out
+    const recencyExpr = ['coalesce', ['get', '_recency'], 1.0];
+    const opacityExpr = (baseOpacity) => ['min', 1.0, ['*', baseOpacity, recencyExpr]];
+    const sizeBoostExpr = (baseSize) => ['*', baseSize, ['max', 1.0, recencyExpr]];
+
     // 3. EPICENTER GLOW
     map.addLayer({
       id: CONFIG.layers.eventCircle + '-glow',
       type: 'circle',
       source: CONFIG.layers.eventSource,
       paint: {
-        'circle-radius': ['+', epicenterSize, 4],
+        'circle-radius': sizeBoostExpr(['+', epicenterSize, 4]),
         'circle-color': colorExpr,
-        'circle-opacity': 0.3,
+        'circle-opacity': opacityExpr(0.3),  // Fade with recency, cap at 1.0
         'circle-blur': 1
       }
     });
@@ -551,11 +616,249 @@ export const PointRadiusModel = {
       type: 'circle',
       source: CONFIG.layers.eventSource,
       paint: {
-        'circle-radius': epicenterSize,
+        'circle-radius': sizeBoostExpr(epicenterSize),
         'circle-color': colorExpr,
-        'circle-opacity': 0.85,
+        'circle-opacity': opacityExpr(0.85),  // Fade with recency, cap at 1.0
         'circle-stroke-color': '#333333',
         'circle-stroke-width': 1
+      }
+    });
+  },
+
+  /**
+   * Add tsunami-specific layers.
+   * Handles both source epicenters (cyan) and coastal runup points (teal).
+   * Uses is_source property to distinguish source from runup points.
+   * Includes impact radius rings scaled by runup_count (log scale).
+   * @private
+   */
+  _addTsunamiLayer(options = {}) {
+    const map = MapAdapter.map;
+
+    // Recency-based effects for animation
+    const recencyExpr = ['coalesce', ['get', '_recency'], 1.0];
+    const opacityExpr = (baseOpacity) => ['min', 1.0, ['*', baseOpacity, recencyExpr]];
+    const sizeBoostExpr = (baseSize) => ['*', baseSize, ['max', 1.0, recencyExpr]];
+
+    // Colors: Source = cyan, Runup = teal/green
+    // Use coalesce to handle boolean or truthy check
+    const isSourceExpr = ['coalesce', ['get', 'is_source'], false];
+    const colorExpr = [
+      'case',
+      ['==', isSourceExpr, true], '#00bcd4',  // Cyan for source
+      '#26a69a'  // Teal-green for runups
+    ];
+
+    // Size based on runup_count (for sources) or water_height_m (for runups)
+    // Log scale for runup count: 1->4, 10->7, 100->10, 1000->13, 5000->16
+    // Increased range for more visible size difference
+    const sizeExpr = [
+      'case',
+      ['==', isSourceExpr, true],
+      // Source: size by runup_count (log scale for wide range 0-6000+)
+      [
+        'interpolate', ['linear'],
+        ['log10', ['max', 1, ['coalesce', ['get', 'runup_count'], 1]]],
+        0, 4,      // 1 runup = 4px
+        1, 7,      // 10 runups = 7px
+        2, 10,     // 100 runups = 10px
+        3, 14,     // 1000 runups = 14px
+        3.7, 18    // 5000+ runups = 18px (largest)
+      ],
+      // Runup: size by water height
+      [
+        'interpolate', ['linear'], ['coalesce', ['get', 'water_height_m'], 1],
+        0, 4,
+        5, 8,
+        10, 12,
+        20, 16
+      ]
+    ];
+
+    // Helper: convert km to pixels at current zoom (same as earthquakes)
+    // Formula: pixels = km * 2^zoom / 156.5
+    const kmToPixels = (kmExpr) => [
+      'interpolate', ['exponential', 2], ['zoom'],
+      0, ['/', kmExpr, 156.5],
+      5, ['/', kmExpr, 4.9],
+      10, ['*', kmExpr, 6.54],
+      15, ['*', kmExpr, 209]
+    ];
+
+    // Impact radius in km based on runup_count (log scale)
+    // More runups = wider impact = larger ring
+    // 1 runup = 30km, 10 = 100km, 100 = 300km, 1000 = 800km, 5000+ = 1500km
+    const impactRadiusKm = [
+      'interpolate', ['linear'],
+      ['log10', ['max', 1, ['coalesce', ['get', 'runup_count'], 1]]],
+      0, 30,       // 1 runup = 30km
+      1, 100,      // 10 runups = 100km
+      2, 300,      // 100 runups = 300km
+      3, 800,      // 1000 runups = 800km
+      3.7, 1500    // 5000+ runups = 1500km
+    ];
+
+    // 1. CONNECTION LINES (source to runups) - optional
+    if (options.showConnections !== false) {
+      map.addLayer({
+        id: CONFIG.layers.eventSource + '-connections',
+        type: 'line',
+        source: CONFIG.layers.eventSource,
+        filter: ['==', ['geometry-type'], 'LineString'],
+        paint: {
+          'line-color': '#26c6da',
+          'line-width': 1.5,
+          'line-opacity': opacityExpr(0.4),
+          'line-dasharray': [2, 2]
+        }
+      });
+    }
+
+    // 2. IMPACT RADIUS RING - shows tsunami reach based on runup_count
+    // Only for source events (is_source: true)
+    map.addLayer({
+      id: CONFIG.layers.eventRadiusOuter,
+      type: 'circle',
+      source: CONFIG.layers.eventSource,
+      filter: ['all',
+        ['==', ['geometry-type'], 'Point'],
+        ['==', ['get', 'is_source'], true],
+        ['>', ['coalesce', ['get', 'runup_count'], 0], 0]
+      ],
+      paint: {
+        'circle-radius': kmToPixels(impactRadiusKm),
+        'circle-color': 'transparent',
+        'circle-stroke-color': '#00bcd4',  // Cyan ring
+        'circle-stroke-width': 1.5,
+        'circle-stroke-opacity': opacityExpr(0.35)
+      }
+    });
+
+    // 3. INNER IMPACT RING - smaller ring for high-impact events (100+ runups)
+    map.addLayer({
+      id: CONFIG.layers.eventRadiusInner,
+      type: 'circle',
+      source: CONFIG.layers.eventSource,
+      filter: ['all',
+        ['==', ['geometry-type'], 'Point'],
+        ['==', ['get', 'is_source'], true],
+        ['>=', ['coalesce', ['get', 'runup_count'], 0], 100]
+      ],
+      paint: {
+        'circle-radius': kmToPixels(['/', impactRadiusKm, 3]),  // 1/3 of outer
+        'circle-color': 'transparent',
+        'circle-stroke-color': '#00bcd4',
+        'circle-stroke-width': 2.5,
+        'circle-stroke-opacity': opacityExpr(0.6)
+      }
+    });
+
+    // 4. SELECTED EVENT LAYERS - filled circles for clicked event
+    map.addLayer({
+      id: CONFIG.layers.eventRadiusOuter + '-selected',
+      type: 'circle',
+      source: CONFIG.layers.eventSource,
+      filter: ['==', ['get', 'event_id'], ''],  // Initially matches nothing
+      paint: {
+        'circle-radius': kmToPixels(impactRadiusKm),
+        'circle-color': '#00bcd4',
+        'circle-opacity': 0.12,
+        'circle-stroke-color': '#00bcd4',
+        'circle-stroke-width': 2,
+        'circle-stroke-opacity': 0.5
+      }
+    });
+
+    map.addLayer({
+      id: CONFIG.layers.eventRadiusInner + '-selected',
+      type: 'circle',
+      source: CONFIG.layers.eventSource,
+      filter: ['==', ['get', 'event_id'], ''],
+      paint: {
+        'circle-radius': kmToPixels(['/', impactRadiusKm, 3]),
+        'circle-color': '#00bcd4',
+        'circle-opacity': 0.2,
+        'circle-stroke-color': '#00bcd4',
+        'circle-stroke-width': 3,
+        'circle-stroke-opacity': 0.7
+      }
+    });
+
+    // 5. WAVE FRONT CIRCLE - animated growing circle during radial animation
+    // Uses _waveRadiusKm property set by EventAnimator
+    map.addLayer({
+      id: CONFIG.layers.eventSource + '-wavefront',
+      type: 'circle',
+      source: CONFIG.layers.eventSource,
+      filter: ['all',
+        ['==', ['geometry-type'], 'Point'],
+        ['==', ['get', 'is_source'], true],
+        ['has', '_waveRadiusKm'],
+        ['>', ['get', '_waveRadiusKm'], 0]
+      ],
+      paint: {
+        'circle-radius': kmToPixels(['get', '_waveRadiusKm']),
+        'circle-color': 'transparent',
+        'circle-stroke-color': '#4dd0e1',  // Teal wave front
+        'circle-stroke-width': 3,
+        'circle-stroke-opacity': 0.7,
+        'circle-pitch-alignment': 'map'
+      }
+    });
+
+    // 6. WAVE FRONT GLOW - subtle glow around wave front
+    map.addLayer({
+      id: CONFIG.layers.eventSource + '-wavefront-glow',
+      type: 'circle',
+      source: CONFIG.layers.eventSource,
+      filter: ['all',
+        ['==', ['geometry-type'], 'Point'],
+        ['==', ['get', 'is_source'], true],
+        ['has', '_waveRadiusKm'],
+        ['>', ['get', '_waveRadiusKm'], 0]
+      ],
+      paint: {
+        'circle-radius': kmToPixels(['+', ['get', '_waveRadiusKm'], 20]),
+        'circle-color': '#4dd0e1',
+        'circle-opacity': 0.08,
+        'circle-blur': 0.8
+      }
+    });
+
+    // 7. GLOW layer
+    map.addLayer({
+      id: CONFIG.layers.eventCircle + '-glow',
+      type: 'circle',
+      source: CONFIG.layers.eventSource,
+      filter: ['==', ['geometry-type'], 'Point'],
+      paint: {
+        'circle-radius': sizeBoostExpr(['+', sizeExpr, 4]),
+        'circle-color': colorExpr,
+        'circle-opacity': opacityExpr(0.3),
+        'circle-blur': 1
+      }
+    });
+
+    // 8. MAIN CIRCLE layer
+    map.addLayer({
+      id: CONFIG.layers.eventCircle,
+      type: 'circle',
+      source: CONFIG.layers.eventSource,
+      filter: ['==', ['geometry-type'], 'Point'],
+      paint: {
+        'circle-radius': sizeBoostExpr(sizeExpr),
+        'circle-color': colorExpr,
+        'circle-opacity': opacityExpr(0.9),
+        'circle-stroke-color': [
+          'case',
+          ['==', isSourceExpr, true], '#004d40',  // Dark teal stroke for source
+          '#006064'  // Slightly different for runups
+        ],
+        'circle-stroke-width': [
+          'case',
+          ['==', isSourceExpr, true], 2,  // Thicker stroke for source
+          1
+        ]
       }
     });
   },
@@ -567,15 +870,21 @@ export const PointRadiusModel = {
   _addGenericEventLayer(eventType, options = {}) {
     const map = MapAdapter.map;
 
+    // Recency-based effects for animation
+    // _recency: 1.5 = brand new (flash), 1.0 = recent, 0.0 = fading out
+    const recencyExpr = ['coalesce', ['get', '_recency'], 1.0];
+    const opacityExpr = (baseOpacity) => ['min', 1.0, ['*', baseOpacity, recencyExpr]];
+    const sizeBoostExpr = (baseSize) => ['*', baseSize, ['max', 1.0, recencyExpr]];
+
     // Default yellow/orange coloring
     map.addLayer({
       id: CONFIG.layers.eventCircle + '-glow',
       type: 'circle',
       source: CONFIG.layers.eventSource,
       paint: {
-        'circle-radius': 12,
+        'circle-radius': sizeBoostExpr(12),
         'circle-color': '#ffcc00',
-        'circle-opacity': 0.3,
+        'circle-opacity': opacityExpr(0.3),  // Fade with recency, cap at 1.0
         'circle-blur': 1
       }
     });
@@ -585,9 +894,9 @@ export const PointRadiusModel = {
       type: 'circle',
       source: CONFIG.layers.eventSource,
       paint: {
-        'circle-radius': 6,
+        'circle-radius': sizeBoostExpr(6),
         'circle-color': '#ffcc00',
-        'circle-opacity': 0.85,
+        'circle-opacity': opacityExpr(0.85),  // Fade with recency, cap at 1.0
         'circle-stroke-color': '#333333',
         'circle-stroke-width': 1
       }
@@ -595,15 +904,21 @@ export const PointRadiusModel = {
   },
 
   /**
-   * Update event layer data (for time-based filtering).
-   * @param {Object} geojson - Filtered GeoJSON FeatureCollection
+   * Update existing source data or create layers if needed.
+   * Used for time-based filtering and animation updates.
+   * @param {Object} geojson - GeoJSON FeatureCollection
+   * @param {Object} options - Options including eventType for layer creation
    */
-  update(geojson) {
+  update(geojson, options = {}) {
     if (!MapAdapter?.map) return;
 
     const source = MapAdapter.map.getSource(CONFIG.layers.eventSource);
     if (source) {
       source.setData(geojson);
+    } else {
+      // Source doesn't exist, need to render with proper event type
+      const eventType = options.eventType || this.activeType || 'generic_event';
+      this.render(geojson, eventType, options);
     }
   },
 
@@ -628,7 +943,7 @@ export const PointRadiusModel = {
     // Unlock popup
     MapAdapter.popupLocked = false;
 
-    // Remove layers (including selection and sequence highlight layers)
+    // Remove layers (including selection, sequence highlight, and tsunami layers)
     const layerIds = [
       CONFIG.layers.eventCircle,
       CONFIG.layers.eventCircle + '-glow',
@@ -637,7 +952,10 @@ export const PointRadiusModel = {
       CONFIG.layers.eventRadiusOuter,
       CONFIG.layers.eventRadiusInner,
       CONFIG.layers.eventRadiusOuter + '-selected',
-      CONFIG.layers.eventRadiusInner + '-selected'
+      CONFIG.layers.eventRadiusInner + '-selected',
+      CONFIG.layers.eventSource + '-connections',  // Tsunami connection lines
+      CONFIG.layers.eventSource + '-wavefront',     // Tsunami wave front
+      CONFIG.layers.eventSource + '-wavefront-glow' // Wave front glow
     ];
 
     for (const layerId of layerIds) {
@@ -650,6 +968,11 @@ export const PointRadiusModel = {
     if (map.getSource(CONFIG.layers.eventSource)) {
       map.removeSource(CONFIG.layers.eventSource);
     }
+
+    // Clean up runups mode state
+    this._inRunupsMode = false;
+    this._originalTsunamiData = null;
+    this._hideRunupsExitControl();
 
     this.activeType = null;
     this.selectedEventId = null;
@@ -815,6 +1138,136 @@ export const PointRadiusModel = {
   },
 
   /**
+   * Notify about tsunami runups loaded for an event.
+   * @param {Object} data - GeoJSON with source + runups from animation endpoint
+   * @param {string} eventId - Tsunami event ID
+   */
+  _notifyTsunamiRunups(data, eventId) {
+    console.log(`PointRadiusModel: Loaded ${data.features?.length - 1 || 0} runups for ${eventId}`);
+
+    if (this.tsunamiRunupsCallback) {
+      this.tsunamiRunupsCallback({
+        geojson: data,
+        eventId: eventId,
+        runupCount: data.metadata?.runup_count || 0
+      });
+    } else {
+      // Default behavior: update the map source directly with combined data
+      this._displayTsunamiRunups(data);
+    }
+  },
+
+  /**
+   * Display tsunami runups on the map (default behavior).
+   * Stores original data so user can exit back to normal view.
+   * @param {Object} geojson - GeoJSON with source + runups
+   */
+  _displayTsunamiRunups(geojson) {
+    if (!MapAdapter?.map) return;
+
+    const source = MapAdapter.map.getSource(CONFIG.layers.eventSource);
+    if (source) {
+      // Store original data if not already in runups mode
+      if (!this._inRunupsMode && source._data) {
+        this._originalTsunamiData = source._data;
+        this._inRunupsMode = true;
+      }
+
+      // Update the source data with combined features
+      source.setData(geojson);
+
+      // Fit bounds to show all points
+      this.fitBounds(geojson);
+
+      // Show exit button in popup or add to map
+      this._showRunupsExitControl();
+
+      console.log(`PointRadiusModel: Displaying ${geojson.features?.length || 0} tsunami features (runups mode)`);
+    }
+  },
+
+  /**
+   * Exit runups view and restore original tsunami data.
+   */
+  exitRunupsMode() {
+    if (!this._inRunupsMode || !this._originalTsunamiData) {
+      console.log('PointRadiusModel: Not in runups mode, nothing to exit');
+      return;
+    }
+
+    const source = MapAdapter?.map?.getSource(CONFIG.layers.eventSource);
+    if (source) {
+      source.setData(this._originalTsunamiData);
+      console.log('PointRadiusModel: Restored original tsunami data');
+    }
+
+    // Clean up
+    this._inRunupsMode = false;
+    this._originalTsunamiData = null;
+    this._hideRunupsExitControl();
+
+    // Hide popup
+    MapAdapter?.hidePopup?.();
+    MapAdapter.popupLocked = false;
+  },
+
+  /**
+   * Show an exit control for runups mode.
+   * @private
+   */
+  _showRunupsExitControl() {
+    // Remove any existing control
+    this._hideRunupsExitControl();
+
+    // Create a floating button on the map
+    const exitBtn = document.createElement('button');
+    exitBtn.id = 'runups-exit-btn';
+    exitBtn.textContent = 'Exit Runups View';
+    exitBtn.style.cssText = `
+      position: absolute;
+      top: 70px;
+      right: 10px;
+      z-index: 100;
+      padding: 8px 16px;
+      background: #004d40;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    `;
+    exitBtn.addEventListener('click', () => {
+      this.exitRunupsMode();
+    });
+
+    // Add to map container
+    const mapContainer = MapAdapter?.map?.getContainer();
+    if (mapContainer) {
+      mapContainer.appendChild(exitBtn);
+    }
+  },
+
+  /**
+   * Hide the runups exit control.
+   * @private
+   */
+  _hideRunupsExitControl() {
+    const existing = document.getElementById('runups-exit-btn');
+    if (existing) {
+      existing.remove();
+    }
+  },
+
+  /**
+   * Register callback for tsunami runups.
+   * @param {Function} callback - Callback function
+   */
+  onTsunamiRunups(callback) {
+    this.tsunamiRunupsCallback = callback;
+  },
+
+  /**
    * Get events in a sequence.
    * @param {string} sequenceId - Sequence ID
    * @returns {Array} Array of features in the sequence
@@ -960,6 +1413,63 @@ export const PointRadiusModel = {
         if (lat != null && lon != null) {
           const ts = props.timestamp || '';
           lines.push(`<a href="#" class="find-earthquakes-link" data-lat="${lat}" data-lon="${lon}" data-timestamp="${ts}" data-year="${props.year}" data-volcano="${props.volcano_name || 'volcano'}" style="color:#4fc3f7;text-decoration:underline;cursor:pointer">Find related earthquakes</a>`);
+        }
+      }
+    } else if (eventType === 'tsunami') {
+      // Tsunami - different display for source vs runup
+      // Check both is_source (API) and _isSource (animation enriched)
+      if (props.is_source || props._isSource) {
+        // Source epicenter
+        lines.push('<strong>Tsunami Source</strong>');
+        if (props.cause) lines.push(`Cause: ${props.cause}`);
+        if (props.eq_magnitude) lines.push(`Magnitude: M${props.eq_magnitude.toFixed(1)}`);
+        if (props.max_water_height_m != null) {
+          lines.push(`Max wave height: ${props.max_water_height_m.toFixed(1)} m`);
+        }
+        if (props.timestamp) {
+          const date = new Date(props.timestamp);
+          lines.push(date.toLocaleString());
+        } else if (props.year) {
+          const yearStr = props.year < 0 ? `${Math.abs(props.year)} BCE` : props.year;
+          lines.push(`Year: ${yearStr}`);
+        }
+        // Casualties
+        if (props.deaths != null && props.deaths > 0) {
+          lines.push(`<span style="color:#ef5350">Deaths: ${props.deaths.toLocaleString()}</span>`);
+        }
+        if (props.injuries != null && props.injuries > 0) {
+          lines.push(`Injuries: ${props.injuries.toLocaleString()}`);
+        }
+        // Runup count
+        if (props.runup_count != null && props.runup_count > 0) {
+          lines.push(`<span style="color:#4dd0e1">Runups recorded: ${props.runup_count}</span>`);
+          if (props.event_id) {
+            lines.push(`<a href="#" class="view-runups-link" data-event="${props.event_id}" style="color:#81c784;text-decoration:underline;cursor:pointer">View runups</a>`);
+          }
+        }
+      } else {
+        // Coastal runup observation
+        lines.push('<strong>Coastal Runup</strong>');
+        if (props.location_name) lines.push(props.location_name);
+        if (props.country) lines.push(props.country);
+        if (props.water_height_m != null) {
+          lines.push(`Wave height: ${props.water_height_m.toFixed(1)} m`);
+        }
+        if (props.dist_from_source_km != null) {
+          lines.push(`Distance from source: ${Math.round(props.dist_from_source_km)} km`);
+        }
+        // Travel time
+        if (props.travel_time_hours != null) {
+          const hours = props.travel_time_hours;
+          if (hours < 1) {
+            lines.push(`Travel time: ${Math.round(hours * 60)} min`);
+          } else {
+            lines.push(`Travel time: ${hours.toFixed(1)} hours`);
+          }
+        }
+        // Runup casualties
+        if (props.deaths != null && props.deaths > 0) {
+          lines.push(`<span style="color:#ef5350">Deaths: ${props.deaths.toLocaleString()}</span>`);
         }
       }
     } else {

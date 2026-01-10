@@ -36,7 +36,10 @@ const LAYERS = {
   FELT_RADIUS: 'sequence-felt-radius',       // Geographic felt radius circles
   DAMAGE_RADIUS: 'sequence-damage-radius',   // Geographic damage radius circles
   SOURCE: 'sequence-animation-source',
-  LINES_SOURCE: 'sequence-lines-source'
+  LINES_SOURCE: 'sequence-lines-source',
+  RELATED_SOURCE: 'sequence-related-source', // Related events (volcanoes, tsunamis)
+  RELATED_CIRCLES: 'sequence-related-circles',
+  RELATED_GLOW: 'sequence-related-glow'
 };
 
 // Helper: convert km to pixels at current zoom (geographic circles)
@@ -60,6 +63,7 @@ export const SequenceAnimator = {
   mainshock: null,              // Mainshock feature
   visibleEvents: [],            // Events visible at current time
   currentTime: null,            // Current animation time (ms timestamp)
+  relatedEvents: [],            // Related events (volcanoes, tsunamis) from enabled overlays
 
   // Time range for interpolation
   minTime: null,                // Sequence start time (mainshock)
@@ -83,9 +87,13 @@ export const SequenceAnimator = {
    * @param {string} sequenceId - Sequence ID
    * @param {Array} events - Array of GeoJSON features in the sequence
    * @param {Object} mainshock - The mainshock feature
+   * @param {Array} relatedEvents - Optional related events (volcanoes, tsunamis) to display
    */
-  start(sequenceId, events, mainshock) {
+  start(sequenceId, events, mainshock, relatedEvents = []) {
     console.log(`SequenceAnimator: Starting sequence ${sequenceId} with ${events.length} events`);
+    if (relatedEvents.length > 0) {
+      console.log(`SequenceAnimator: Including ${relatedEvents.length} related events`);
+    }
 
     if (!MapAdapter?.map) {
       console.warn('SequenceAnimator: MapAdapter not available');
@@ -109,6 +117,7 @@ export const SequenceAnimator = {
     this.visibleEvents = [];
     this.circleScales = {};
     this.lastViewportProgress = -1;
+    this.relatedEvents = relatedEvents || [];
 
     // Get mainshock coordinates and time
     const mainCoords = mainshock.geometry.coordinates;
@@ -315,6 +324,7 @@ export const SequenceAnimator = {
     this.initialBounds = null;
     this.finalBounds = null;
     this.lastViewportProgress = -1;
+    this.relatedEvents = [];
   },
 
   /**
@@ -483,6 +493,44 @@ export const SequenceAnimator = {
       }
     });
 
+    // Related events layers (volcanoes, tsunamis from enabled overlays)
+    if (this.relatedEvents.length > 0) {
+      map.addSource(LAYERS.RELATED_SOURCE, {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: this.relatedEvents }
+      });
+
+      // Glow layer for related events
+      map.addLayer({
+        id: LAYERS.RELATED_GLOW,
+        type: 'circle',
+        source: LAYERS.RELATED_SOURCE,
+        paint: {
+          'circle-radius': 14,
+          'circle-color': ['get', 'color'],
+          'circle-opacity': 0.4,
+          'circle-blur': 1
+        }
+      });
+
+      // Main circle layer for related events
+      map.addLayer({
+        id: LAYERS.RELATED_CIRCLES,
+        type: 'circle',
+        source: LAYERS.RELATED_SOURCE,
+        paint: {
+          'circle-radius': 8,
+          'circle-color': ['get', 'color'],
+          'circle-opacity': 0.9,
+          'circle-stroke-color': '#222222',
+          'circle-stroke-width': 2
+        }
+      });
+
+      // Pre-process related events with colors
+      this._updateRelatedEventsData();
+    }
+
     console.log('SequenceAnimator: Layers setup complete');
   },
 
@@ -497,6 +545,8 @@ export const SequenceAnimator = {
 
     // Remove layers (order matters - remove in reverse of add order)
     const layerIds = [
+      LAYERS.RELATED_CIRCLES,
+      LAYERS.RELATED_GLOW,
       LAYERS.MAINSHOCK_PULSE,
       LAYERS.CIRCLES_GROWING,
       LAYERS.CIRCLES_GLOW,
@@ -517,6 +567,9 @@ export const SequenceAnimator = {
     }
     if (map.getSource(LAYERS.LINES_SOURCE)) {
       map.removeSource(LAYERS.LINES_SOURCE);
+    }
+    if (map.getSource(LAYERS.RELATED_SOURCE)) {
+      map.removeSource(LAYERS.RELATED_SOURCE);
     }
   },
 
@@ -828,6 +881,53 @@ export const SequenceAnimator = {
     if (magnitude < 6) return '#feb24c';      // moderate - orange
     if (magnitude < 7) return '#fd8d3c';      // strong - dark orange
     return '#f03b20';                          // major - red
+  },
+
+  /**
+   * Update related events data with proper colors based on type.
+   * @private
+   */
+  _updateRelatedEventsData() {
+    if (!MapAdapter?.map || this.relatedEvents.length === 0) return;
+
+    const source = MapAdapter.map.getSource(LAYERS.RELATED_SOURCE);
+    if (!source) return;
+
+    // Add color property based on event type
+    const coloredFeatures = this.relatedEvents.map(feature => {
+      const props = feature.properties || {};
+      const relatedType = props._relatedType;
+
+      let color;
+      if (relatedType === 'volcano') {
+        // Volcano: orange-red based on VEI
+        const vei = props.VEI || props.vei || 0;
+        if (vei >= 5) color = '#f03b20';       // High VEI - red
+        else if (vei >= 3) color = '#fd8d3c';  // Medium VEI - orange
+        else color = '#feb24c';                 // Low VEI - yellow-orange
+      } else if (relatedType === 'tsunami') {
+        // Tsunami: cyan-teal
+        color = '#00bcd4';
+      } else {
+        // Unknown type - gray
+        color = '#9e9e9e';
+      }
+
+      return {
+        ...feature,
+        properties: {
+          ...props,
+          color: color
+        }
+      };
+    });
+
+    source.setData({
+      type: 'FeatureCollection',
+      features: coloredFeatures
+    });
+
+    console.log(`SequenceAnimator: Updated ${coloredFeatures.length} related events with colors`);
   },
 
   /**

@@ -71,6 +71,11 @@ export const CONFIG = {
     hurricaneLabel: 'hurricane-label',
     hurricaneTrackLine: 'hurricane-track-line',
     hurricaneTrackSource: 'hurricane-track',
+    // Wind radii layers (34kt, 50kt, 64kt wind extent)
+    windRadiiSource: 'wind-radii',
+    windRadii34: 'wind-radii-34',
+    windRadii50: 'wind-radii-50',
+    windRadii64: 'wind-radii-64',
     // Event layer (earthquakes, volcanoes, etc.)
     eventSource: 'event-points',
     eventCircle: 'event-circle',
@@ -101,6 +106,16 @@ export const CONFIG = {
     4: '#ff8f20',       // Cat 4 (113-136 kt) - dark orange
     5: '#ff6060',       // Cat 5 (>137 kt) - red
     default: '#aaaaaa'  // Unknown/other
+  },
+
+  // Wind radii colors (extent of different wind speeds)
+  windRadiiColors: {
+    r34: 'rgba(0, 200, 255, 0.25)',   // 34kt (TS force) - light blue
+    r50: 'rgba(255, 200, 0, 0.35)',   // 50kt (strong TS) - yellow
+    r64: 'rgba(255, 80, 80, 0.45)',   // 64kt (hurricane) - red
+    stroke34: 'rgba(0, 200, 255, 0.6)',
+    stroke50: 'rgba(255, 200, 0, 0.7)',
+    stroke64: 'rgba(255, 80, 80, 0.8)'
   },
 
   // Earthquake magnitude colors (yellow to red scale)

@@ -720,6 +720,254 @@ async def get_eruptions_geojson(year: int = None, min_vei: int = None):
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
 
+# === Tsunami Data Endpoints ===
+
+@app.get("/api/tsunamis/geojson")
+async def get_tsunamis_geojson(year: int = None, min_year: int = 1900, cause: str = None):
+    """
+    Get tsunami source events as GeoJSON points for map display.
+    Uses global NOAA NCEI data.
+    """
+    import pandas as pd
+
+    try:
+        events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tsunamis/events.parquet")
+
+        if not events_path.exists():
+            return JSONResponse(content={"error": "Tsunami data not available"}, status_code=404)
+
+        df = pd.read_parquet(events_path)
+
+        # Apply filters
+        if year is not None:
+            df = df[df['year'] == year]
+        elif min_year is not None:
+            df = df[df['year'] >= min_year]
+
+        if cause is not None:
+            df = df[df['cause'].str.lower() == cause.lower()]
+
+        # Build GeoJSON features
+        features = []
+        for _, row in df.iterrows():
+            if pd.isna(row['latitude']) or pd.isna(row['longitude']):
+                continue
+
+            features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [float(row['longitude']), float(row['latitude'])]
+                },
+                "properties": {
+                    "event_id": row.get('event_id', ''),
+                    "year": int(row['year']) if pd.notna(row.get('year')) else None,
+                    "timestamp": str(row['timestamp']) if pd.notna(row.get('timestamp')) else None,
+                    "country": row.get('country', ''),
+                    "location": row.get('location', '') if pd.notna(row.get('location')) else None,
+                    "cause": row.get('cause', ''),
+                    "eq_magnitude": float(row['eq_magnitude']) if pd.notna(row.get('eq_magnitude')) else None,
+                    "max_water_height_m": float(row['max_water_height_m']) if pd.notna(row.get('max_water_height_m')) else None,
+                    "intensity": float(row['intensity']) if pd.notna(row.get('intensity')) else None,
+                    "runup_count": int(row['num_runups']) if pd.notna(row.get('num_runups')) else 0,
+                    "deaths": int(row['deaths']) if pd.notna(row.get('deaths')) else None,
+                    "damage_millions": float(row['damage_millions']) if pd.notna(row.get('damage_millions')) else None,
+                    "loc_id": row.get('loc_id', ''),
+                    "is_source": True  # Mark as source event for display
+                }
+            })
+
+        return JSONResponse(content={
+            "type": "FeatureCollection",
+            "features": features,
+            "metadata": {
+                "count": len(features),
+                "year_range": [int(df['year'].min()), int(df['year'].max())] if len(df) > 0 else None
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching tsunamis GeoJSON: {e}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+@app.get("/api/tsunamis/{event_id}/runups")
+async def get_tsunami_runups(event_id: str):
+    """
+    Get runup observations for a specific tsunami event.
+    Returns points where the tsunami was observed at coastlines.
+    """
+    import pandas as pd
+
+    try:
+        runups_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tsunamis/runups.parquet")
+        events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tsunamis/events.parquet")
+
+        if not runups_path.exists():
+            return JSONResponse(content={"error": "Runup data not available"}, status_code=404)
+
+        # Load runups for this event
+        runups_df = pd.read_parquet(runups_path)
+        runups_df = runups_df[runups_df['event_id'] == event_id]
+
+        if len(runups_df) == 0:
+            return JSONResponse(content={"error": f"No runups found for event {event_id}"}, status_code=404)
+
+        # Load source event for reference
+        source_event = None
+        if events_path.exists():
+            events_df = pd.read_parquet(events_path)
+            event_row = events_df[events_df['event_id'] == event_id]
+            if len(event_row) > 0:
+                row = event_row.iloc[0]
+                source_event = {
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [float(row['longitude']), float(row['latitude'])]
+                    },
+                    "properties": {
+                        "event_id": event_id,
+                        "year": int(row['year']) if pd.notna(row.get('year')) else None,
+                        "timestamp": str(row['timestamp']) if pd.notna(row.get('timestamp')) else None,
+                        "cause": row.get('cause', ''),
+                        "eq_magnitude": float(row['eq_magnitude']) if pd.notna(row.get('eq_magnitude')) else None,
+                        "max_water_height_m": float(row['max_water_height_m']) if pd.notna(row.get('max_water_height_m')) else None,
+                        "_isSource": True,
+                        "is_source": True
+                    }
+                }
+
+        # Build runup features
+        features = []
+        for _, row in runups_df.iterrows():
+            if pd.isna(row['latitude']) or pd.isna(row['longitude']):
+                continue
+
+            features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [float(row['longitude']), float(row['latitude'])]
+                },
+                "properties": {
+                    "runup_id": row.get('runup_id', ''),
+                    "event_id": event_id,
+                    "year": int(row['year']) if pd.notna(row.get('year')) else None,
+                    "country": row.get('country', ''),
+                    "location_name": row.get('location', '') if pd.notna(row.get('location')) else None,
+                    "water_height_m": float(row['water_height_m']) if pd.notna(row.get('water_height_m')) else None,
+                    "dist_from_source_km": float(row['dist_from_source_km']) if pd.notna(row.get('dist_from_source_km')) else None,
+                    "travel_time_hours": float(row['arrival_travel_time_min']) / 60 if pd.notna(row.get('arrival_travel_time_min')) else None,
+                    "deaths": int(row['deaths']) if pd.notna(row.get('deaths')) else None,
+                    "_isSource": False,
+                    "is_source": False
+                }
+            })
+
+        return JSONResponse(content={
+            "type": "FeatureCollection",
+            "features": features,
+            "source": source_event,
+            "metadata": {
+                "event_id": event_id,
+                "runup_count": len(features)
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching tsunami runups: {e}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+@app.get("/api/tsunamis/{event_id}/animation")
+async def get_tsunami_animation_data(event_id: str):
+    """
+    Get combined source + runups data formatted for radial animation.
+    Includes source event marked with is_source=true and runups with distance data.
+    """
+    import pandas as pd
+
+    try:
+        runups_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tsunamis/runups.parquet")
+        events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tsunamis/events.parquet")
+
+        if not events_path.exists() or not runups_path.exists():
+            return JSONResponse(content={"error": "Tsunami data not available"}, status_code=404)
+
+        # Load source event
+        events_df = pd.read_parquet(events_path)
+        event_row = events_df[events_df['event_id'] == event_id]
+
+        if len(event_row) == 0:
+            return JSONResponse(content={"error": f"Event {event_id} not found"}, status_code=404)
+
+        row = event_row.iloc[0]
+
+        # Build all features (source + runups)
+        features = []
+
+        # Source event
+        features.append({
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [float(row['longitude']), float(row['latitude'])]
+            },
+            "properties": {
+                "event_id": event_id,
+                "year": int(row['year']) if pd.notna(row.get('year')) else None,
+                "timestamp": str(row['timestamp']) if pd.notna(row.get('timestamp')) else None,
+                "cause": row.get('cause', ''),
+                "eq_magnitude": float(row['eq_magnitude']) if pd.notna(row.get('eq_magnitude')) else None,
+                "max_water_height_m": float(row['max_water_height_m']) if pd.notna(row.get('max_water_height_m')) else None,
+                "deaths": int(row['deaths']) if pd.notna(row.get('deaths')) else None,
+                "is_source": True
+            }
+        })
+
+        # Load runups
+        runups_df = pd.read_parquet(runups_path)
+        runups_df = runups_df[runups_df['event_id'] == event_id]
+
+        for _, rrow in runups_df.iterrows():
+            if pd.isna(rrow['latitude']) or pd.isna(rrow['longitude']):
+                continue
+
+            features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [float(rrow['longitude']), float(rrow['latitude'])]
+                },
+                "properties": {
+                    "runup_id": rrow.get('runup_id', ''),
+                    "event_id": event_id,
+                    "country": rrow.get('country', ''),
+                    "location_name": rrow.get('location', '') if pd.notna(rrow.get('location')) else None,
+                    "water_height_m": float(rrow['water_height_m']) if pd.notna(rrow.get('water_height_m')) else None,
+                    "dist_from_source_km": float(rrow['dist_from_source_km']) if pd.notna(rrow.get('dist_from_source_km')) else None,
+                    "deaths": int(rrow['deaths']) if pd.notna(rrow.get('deaths')) else None,
+                    "is_source": False
+                }
+            })
+
+        return JSONResponse(content={
+            "type": "FeatureCollection",
+            "features": features,
+            "metadata": {
+                "event_id": event_id,
+                "source_timestamp": str(row['timestamp']) if pd.notna(row.get('timestamp')) else None,
+                "runup_count": len(features) - 1,
+                "animation_mode": "radial"
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching tsunami animation data: {e}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
 @app.get("/api/events/nearby-earthquakes")
 async def get_nearby_earthquakes(
     lat: float,
@@ -990,6 +1238,134 @@ async def get_nearby_volcanoes(
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
 
+@app.get("/api/events/nearby-tsunamis")
+async def get_nearby_tsunamis(
+    lat: float,
+    lon: float,
+    timestamp: str = None,
+    year: int = None,
+    radius_km: float = 300.0,
+    days_before: int = 1,
+    days_after: int = 30
+):
+    """
+    Find tsunamis near a location within a time window.
+    Used for cross-linking earthquakes to tsunami effects.
+
+    Parameters:
+    - lat, lon: Center point (earthquake epicenter)
+    - timestamp: ISO timestamp to search around (preferred)
+    - year: Fallback if no timestamp (searches whole year)
+    - radius_km: Search radius (default 300km - tsunamis travel far)
+    - days_before: Time window before event (default 1 day)
+    - days_after: Time window after event (default 30 days)
+
+    Returns GeoJSON with tsunamis in the window, plus metadata.
+    """
+    import pandas as pd
+    import numpy as np
+    from datetime import datetime, timedelta
+
+    try:
+        tsunamis_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tsunamis/events.parquet")
+
+        if not tsunamis_path.exists():
+            return JSONResponse(content={"error": "Tsunami data not available"}, status_code=404)
+
+        df = pd.read_parquet(tsunamis_path)
+
+        # Haversine distance filter (approximate, using km)
+        lat_range = radius_km / 111.0
+        lon_range = radius_km / (111.0 * np.cos(np.radians(lat)))
+
+        df = df[
+            (df['latitude'] >= lat - lat_range) &
+            (df['latitude'] <= lat + lat_range) &
+            (df['longitude'] >= lon - lon_range) &
+            (df['longitude'] <= lon + lon_range)
+        ]
+
+        # Time filter - look around the earthquake (tsunami follows quake)
+        if timestamp:
+            try:
+                center_time = pd.to_datetime(timestamp)
+                if center_time.tzinfo is not None:
+                    center_time = center_time.tz_convert('UTC').tz_localize(None)
+                start_time = center_time - timedelta(days=days_before)
+                end_time = center_time + timedelta(days=days_after)
+                df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+                if df['timestamp'].dt.tz is not None:
+                    df['timestamp'] = df['timestamp'].dt.tz_convert('UTC').dt.tz_localize(None)
+                df = df[(df['timestamp'] >= start_time) & (df['timestamp'] <= end_time)]
+            except Exception as e:
+                logger.warning(f"Could not parse timestamp {timestamp}: {e}")
+        elif year:
+            # Fallback: filter by year
+            if 'year' not in df.columns and 'timestamp' in df.columns:
+                df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+                df['year'] = df['timestamp'].dt.year
+            df = df[df['year'] == year]
+
+        if len(df) == 0:
+            return JSONResponse(content={
+                "type": "FeatureCollection",
+                "features": [],
+                "count": 0,
+                "search_params": {"lat": lat, "lon": lon, "radius_km": radius_km}
+            })
+
+        # Build GeoJSON features
+        features = []
+        for _, row in df.iterrows():
+            if pd.isna(row['latitude']) or pd.isna(row['longitude']):
+                continue
+
+            features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [float(row['longitude']), float(row['latitude'])]
+                },
+                "properties": {
+                    "event_id": row.get('event_id', ''),
+                    "cause": row.get('cause', ''),
+                    "cause_code": int(row['cause_code']) if pd.notna(row.get('cause_code')) else None,
+                    "eq_magnitude": float(row['eq_magnitude']) if pd.notna(row.get('eq_magnitude')) else None,
+                    "max_water_height_m": float(row['max_water_height_m']) if pd.notna(row.get('max_water_height_m')) else None,
+                    "intensity": float(row['intensity']) if pd.notna(row.get('intensity')) else None,
+                    "deaths": int(row['deaths']) if pd.notna(row.get('deaths')) else None,
+                    "num_runups": int(row['num_runups']) if pd.notna(row.get('num_runups')) else 0,
+                    "runup_count": int(row['num_runups']) if pd.notna(row.get('num_runups')) else 0,
+                    "year": int(row['year']) if pd.notna(row.get('year')) else None,
+                    "timestamp": str(row['timestamp']) if pd.notna(row.get('timestamp')) else None,
+                    "country": row.get('country', ''),
+                    "location": row.get('location', ''),
+                    "latitude": float(row['latitude']),
+                    "longitude": float(row['longitude']),
+                    "is_source": True  # Mark as source for display styling
+                }
+            })
+
+        logger.info(f"Found {len(features)} tsunamis within {radius_km}km of ({lat}, {lon})")
+
+        return JSONResponse(content={
+            "type": "FeatureCollection",
+            "features": features,
+            "count": len(features),
+            "search_params": {
+                "lat": lat,
+                "lon": lon,
+                "radius_km": radius_km,
+                "days_before": days_before,
+                "days_after": days_after
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Error finding nearby tsunamis: {e}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
 # === Wildfire Data Endpoints ===
 
 @app.get("/api/wildfires/geojson")
@@ -1064,6 +1440,301 @@ async def get_wildfires_geojson(year: int = None, min_acres: int = None):
 
     except Exception as e:
         logger.error(f"Error fetching wildfires GeoJSON: {e}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+# === Tropical Storm Data Endpoints ===
+
+@app.get("/api/storms/geojson")
+async def get_storms_geojson(year: int = None, min_year: int = 1950, basin: str = None, min_category: str = None):
+    """
+    Get tropical storms as GeoJSON points for map display.
+    Each storm is represented by a single point at its maximum intensity location.
+    Default: storms from 1950-present.
+    """
+    import pandas as pd
+
+    try:
+        storms_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tropical_storms/storms.parquet")
+        positions_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tropical_storms/positions.parquet")
+
+        if not storms_path.exists():
+            return JSONResponse(content={"error": "Storm data not available"}, status_code=404)
+
+        storms_df = pd.read_parquet(storms_path)
+        positions_df = pd.read_parquet(positions_path)
+
+        # Apply year filter
+        if year is not None:
+            storms_df = storms_df[storms_df['year'] == year]
+        elif min_year is not None:
+            storms_df = storms_df[storms_df['year'] >= min_year]
+
+        # Basin filter
+        if basin is not None:
+            storms_df = storms_df[storms_df['basin'] == basin.upper()]
+
+        # Category filter
+        if min_category is not None:
+            cat_order = {'TD': 0, 'TS': 1, 'Cat1': 2, 'Cat2': 3, 'Cat3': 4, 'Cat4': 5, 'Cat5': 6}
+            min_cat_val = cat_order.get(min_category, 0)
+            storms_df = storms_df[storms_df['max_category'].map(lambda x: cat_order.get(x, 0) >= min_cat_val)]
+
+        # Get max intensity position for each storm
+        storm_ids = storms_df['storm_id'].tolist()
+        positions_subset = positions_df[positions_df['storm_id'].isin(storm_ids)]
+
+        # Find position with max wind for each storm
+        max_positions = positions_subset.loc[positions_subset.groupby('storm_id')['wind_kt'].idxmax()]
+
+        # Build GeoJSON features
+        features = []
+        for _, storm in storms_df.iterrows():
+            storm_id = storm['storm_id']
+            max_pos = max_positions[max_positions['storm_id'] == storm_id]
+
+            if len(max_pos) == 0:
+                continue
+
+            pos = max_pos.iloc[0]
+            if pd.isna(pos['latitude']) or pd.isna(pos['longitude']):
+                continue
+
+            features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [float(pos['longitude']), float(pos['latitude'])]
+                },
+                "properties": {
+                    "storm_id": storm_id,
+                    "name": storm.get('name') if pd.notna(storm.get('name')) else None,
+                    "year": int(storm['year']),
+                    "basin": storm['basin'],
+                    "max_wind_kt": int(storm['max_wind_kt']) if pd.notna(storm['max_wind_kt']) else None,
+                    "min_pressure_mb": int(storm['min_pressure_mb']) if pd.notna(storm['min_pressure_mb']) else None,
+                    "max_category": storm['max_category'],
+                    "num_positions": int(storm['num_positions']),
+                    "start_date": str(storm['start_date']) if pd.notna(storm.get('start_date')) else None,
+                    "end_date": str(storm['end_date']) if pd.notna(storm.get('end_date')) else None,
+                    "made_landfall": bool(storm.get('made_landfall', False)),
+                    "latitude": float(pos['latitude']),
+                    "longitude": float(pos['longitude'])
+                }
+            })
+
+        logger.info(f"Returning {len(features)} storms for year={year}, min_year={min_year}, basin={basin}")
+
+        return JSONResponse(content={
+            "type": "FeatureCollection",
+            "features": features,
+            "count": len(features)
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching storms GeoJSON: {e}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+@app.get("/api/storms/{storm_id}/track")
+async def get_storm_track(storm_id: str):
+    """
+    Get full track positions for a specific storm.
+    Returns all 6-hourly positions with wind radii data for animation.
+    """
+    import pandas as pd
+
+    try:
+        positions_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tropical_storms/positions.parquet")
+        storms_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tropical_storms/storms.parquet")
+
+        if not positions_path.exists():
+            return JSONResponse(content={"error": "Storm data not available"}, status_code=404)
+
+        positions_df = pd.read_parquet(positions_path)
+        storm_positions = positions_df[positions_df['storm_id'] == storm_id].sort_values('timestamp')
+
+        if len(storm_positions) == 0:
+            return JSONResponse(content={"error": f"Storm {storm_id} not found"}, status_code=404)
+
+        # Get storm metadata
+        storms_df = pd.read_parquet(storms_path)
+        storm_meta = storms_df[storms_df['storm_id'] == storm_id]
+        storm_name = storm_meta.iloc[0]['name'] if len(storm_meta) > 0 and pd.notna(storm_meta.iloc[0]['name']) else storm_id
+
+        # Build positions array
+        positions = []
+        for _, pos in storm_positions.iterrows():
+            positions.append({
+                "timestamp": str(pos['timestamp']) if pd.notna(pos['timestamp']) else None,
+                "latitude": float(pos['latitude']),
+                "longitude": float(pos['longitude']),
+                "wind_kt": int(pos['wind_kt']) if pd.notna(pos['wind_kt']) else None,
+                "pressure_mb": int(pos['pressure_mb']) if pd.notna(pos['pressure_mb']) else None,
+                "category": pos['category'],
+                "status": pos.get('status') if pd.notna(pos.get('status')) else None,
+                # Wind radii
+                "r34_ne": int(pos['r34_ne']) if pd.notna(pos.get('r34_ne')) else None,
+                "r34_se": int(pos['r34_se']) if pd.notna(pos.get('r34_se')) else None,
+                "r34_sw": int(pos['r34_sw']) if pd.notna(pos.get('r34_sw')) else None,
+                "r34_nw": int(pos['r34_nw']) if pd.notna(pos.get('r34_nw')) else None,
+                "r50_ne": int(pos['r50_ne']) if pd.notna(pos.get('r50_ne')) else None,
+                "r50_se": int(pos['r50_se']) if pd.notna(pos.get('r50_se')) else None,
+                "r50_sw": int(pos['r50_sw']) if pd.notna(pos.get('r50_sw')) else None,
+                "r50_nw": int(pos['r50_nw']) if pd.notna(pos.get('r50_nw')) else None,
+                "r64_ne": int(pos['r64_ne']) if pd.notna(pos.get('r64_ne')) else None,
+                "r64_se": int(pos['r64_se']) if pd.notna(pos.get('r64_se')) else None,
+                "r64_sw": int(pos['r64_sw']) if pd.notna(pos.get('r64_sw')) else None,
+                "r64_nw": int(pos['r64_nw']) if pd.notna(pos.get('r64_nw')) else None,
+            })
+
+        return JSONResponse(content={
+            "storm_id": storm_id,
+            "name": storm_name,
+            "positions": positions,
+            "count": len(positions)
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching storm track: {e}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+@app.get("/api/storms/tracks/geojson")
+async def get_storm_tracks_geojson(year: int = None, min_year: int = 1950, basin: str = None):
+    """
+    Get storm tracks as GeoJSON LineStrings for yearly overview display.
+    Each storm is a LineString colored by max category.
+    Loads all storms from min_year (default 1950) to present.
+    """
+    import pandas as pd
+
+    try:
+        storms_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tropical_storms/storms.parquet")
+        positions_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tropical_storms/positions.parquet")
+
+        if not storms_path.exists():
+            return JSONResponse(content={"error": "Storm data not available"}, status_code=404)
+
+        storms_df = pd.read_parquet(storms_path)
+        positions_df = pd.read_parquet(positions_path)
+
+        # Apply year filter - min_year defaults to 1950
+        if year is not None:
+            storms_df = storms_df[storms_df['year'] == year]
+        elif min_year is not None:
+            storms_df = storms_df[storms_df['year'] >= min_year]
+
+        # Basin filter
+        if basin is not None:
+            storms_df = storms_df[storms_df['basin'] == basin.upper()]
+
+        # Build storm metadata lookup dict (O(1) access)
+        storms_df = storms_df.set_index('storm_id')
+        storm_ids_set = set(storms_df.index.tolist())
+
+        # Filter positions to only those storms, sort once
+        positions_subset = positions_df[positions_df['storm_id'].isin(storm_ids_set)].copy()
+        positions_subset = positions_subset.dropna(subset=['latitude', 'longitude'])
+        positions_subset = positions_subset.sort_values(['storm_id', 'timestamp'])
+
+        # Build coordinate lists using groupby (vectorized, much faster than iterrows)
+        coords_by_storm = {}
+        for storm_id, group in positions_subset.groupby('storm_id'):
+            coords = list(zip(group['longitude'].tolist(), group['latitude'].tolist()))
+            if len(coords) >= 2:
+                coords_by_storm[storm_id] = [[float(lon), float(lat)] for lon, lat in coords]
+
+        # Build features from storms that have valid tracks
+        features = []
+        for storm_id, coords in coords_by_storm.items():
+            storm = storms_df.loc[storm_id]
+            features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": coords
+                },
+                "properties": {
+                    "storm_id": storm_id,
+                    "name": storm.get('name') if pd.notna(storm.get('name')) else None,
+                    "year": int(storm['year']),
+                    "basin": storm['basin'],
+                    "max_wind_kt": int(storm['max_wind_kt']) if pd.notna(storm['max_wind_kt']) else None,
+                    "min_pressure_mb": int(storm['min_pressure_mb']) if pd.notna(storm['min_pressure_mb']) else None,
+                    "max_category": storm['max_category'],
+                    "num_positions": int(storm['num_positions']),
+                    "start_date": str(storm['start_date']) if pd.notna(storm.get('start_date')) else None,
+                    "end_date": str(storm['end_date']) if pd.notna(storm.get('end_date')) else None,
+                    "made_landfall": bool(storm.get('made_landfall', False))
+                }
+            })
+
+        logger.info(f"Returning {len(features)} storm tracks for year={year}, min_year={min_year}, basin={basin}")
+
+        return JSONResponse(content={
+            "type": "FeatureCollection",
+            "features": features,
+            "count": len(features)
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching storm tracks GeoJSON: {e}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+@app.get("/api/storms/list")
+async def get_storms_list(year: int = None, min_year: int = 1950, basin: str = None, limit: int = 100):
+    """
+    Get list of storms with metadata for filtering/selection.
+    Returns compact list without track data.
+    """
+    import pandas as pd
+
+    try:
+        storms_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tropical_storms/storms.parquet")
+
+        if not storms_path.exists():
+            return JSONResponse(content={"error": "Storm data not available"}, status_code=404)
+
+        storms_df = pd.read_parquet(storms_path)
+
+        # Apply filters
+        if year is not None:
+            storms_df = storms_df[storms_df['year'] == year]
+        elif min_year is not None:
+            storms_df = storms_df[storms_df['year'] >= min_year]
+
+        if basin is not None:
+            storms_df = storms_df[storms_df['basin'] == basin.upper()]
+
+        # Sort by max wind (strongest first)
+        storms_df = storms_df.sort_values('max_wind_kt', ascending=False)
+
+        # Apply limit
+        if limit is not None and limit > 0:
+            storms_df = storms_df.head(limit)
+
+        # Build list
+        storms = []
+        for _, storm in storms_df.iterrows():
+            storms.append({
+                "storm_id": storm['storm_id'],
+                "name": storm.get('name') if pd.notna(storm.get('name')) else None,
+                "year": int(storm['year']),
+                "basin": storm['basin'],
+                "max_wind_kt": int(storm['max_wind_kt']) if pd.notna(storm['max_wind_kt']) else None,
+                "max_category": storm['max_category'],
+                "start_date": str(storm['start_date']) if pd.notna(storm.get('start_date')) else None,
+            })
+
+        return JSONResponse(content={
+            "storms": storms,
+            "count": len(storms)
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching storms list: {e}")
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
 

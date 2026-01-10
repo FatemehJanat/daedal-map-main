@@ -10,6 +10,9 @@
  */
 
 import { SequenceAnimator, setDependencies as setSequenceAnimatorDeps } from './sequence-animator.js';
+import { TrackAnimator, setDependencies as setTrackAnimatorDeps } from './track-animator.js';
+import EventAnimator, { AnimationMode, setDependencies as setEventAnimatorDeps } from './event-animator.js';
+import { CONFIG } from './config.js';
 
 // Dependencies set via setDependencies
 let MapAdapter = null;
@@ -27,6 +30,20 @@ export function setDependencies(deps) {
   setSequenceAnimatorDeps({
     MapAdapter: deps.MapAdapter
   });
+
+  // Wire dependencies to TrackAnimator
+  setTrackAnimatorDeps({
+    MapAdapter: deps.MapAdapter,
+    TimeSlider: deps.TimeSlider,
+    TrackModel: deps.ModelRegistry?.getModel?.('track')
+  });
+
+  // Wire dependencies to EventAnimator
+  setEventAnimatorDeps({
+    MapAdapter: deps.MapAdapter,
+    TimeSlider: deps.TimeSlider,
+    ModelRegistry: deps.ModelRegistry
+  });
 }
 
 /**
@@ -43,12 +60,13 @@ function gardnerKnopoffTimeWindow(magnitude) {
 // API endpoints for each overlay type
 const OVERLAY_ENDPOINTS = {
   earthquakes: {
-    list: '/api/earthquakes/geojson?min_magnitude=4.5',  // Default M4.5+, chat can adjust
+    list: '/api/earthquakes/geojson?min_magnitude=5.5',  // Default M5.5+ for faster testing
     eventType: 'earthquake',
     yearField: 'year'  // Property name for year filtering
   },
   hurricanes: {
-    list: '/api/hurricane/storms/geojson',
+    list: '/api/storms/tracks/geojson?min_year=1950',  // Global IBTrACS storm tracks
+    trackEndpoint: '/api/storms/{storm_id}/track',     // Track drill-down endpoint
     eventType: 'hurricane',
     yearField: 'year'
   },
@@ -60,6 +78,12 @@ const OVERLAY_ENDPOINTS = {
   wildfires: {
     list: '/api/wildfires/geojson',
     eventType: 'wildfire',
+    yearField: 'year'
+  },
+  tsunamis: {
+    list: '/api/tsunamis/geojson?min_year=1900',  // NOAA global tsunami database
+    animationEndpoint: '/api/tsunamis/{event_id}/animation',  // Radial animation data
+    eventType: 'tsunami',
     yearField: 'year'
   }
 };
@@ -76,6 +100,9 @@ const yearRangeCache = {};
 export const OverlayController = {
   // Currently loading overlays (prevent duplicate requests)
   loading: new Set(),
+
+  // AbortControllers for in-flight fetch requests (overlayId -> AbortController)
+  abortControllers: new Map(),
 
   // Last known TimeSlider year (for change detection)
   lastTimeSliderYear: null,
@@ -154,6 +181,14 @@ export const OverlayController = {
         this.handleNearbyVolcanoes(data);
       });
       console.log('OverlayController: Registered earthquake->volcano cross-link listener');
+    }
+
+    // Tsunami -> Runups: when user clicks "View runups" on a tsunami
+    if (model.onTsunamiRunups) {
+      model.onTsunamiRunups((data) => {
+        this.handleTsunamiRunups(data);
+      });
+      console.log('OverlayController: Registered tsunami runups animation listener');
     }
   },
 
@@ -270,8 +305,17 @@ export const OverlayController = {
         TimeSlider.removeScale(this.activeSequenceScaleId);
         this.activeSequenceScaleId = null;
       }
+      // Restore TimeSlider range from cached overlay year ranges
+      this.recalculateTimeRange();
       if (TimeSlider) {
-        TimeSlider.setActiveScale('primary');
+        // Only switch to primary if it exists
+        if (TimeSlider.scales?.find(s => s.id === 'primary')) {
+          TimeSlider.setActiveScale('primary');
+        }
+        // Show TimeSlider if we have year data
+        if (Object.keys(yearRangeCache).length > 0) {
+          TimeSlider.show();
+        }
       }
       // Restore normal earthquake display for current year
       const currentYear = this.getCurrentYear();
@@ -365,6 +409,94 @@ export const OverlayController = {
       MapAdapter.map.fitBounds(bounds, { padding: 80, maxZoom: 8, duration: 1500 });
     } else {
       console.warn('OverlayController: Bounds are empty, cannot zoom');
+    }
+  },
+
+  /**
+   * Handle tsunami runups animation.
+   * Uses EventAnimator with RADIAL mode to show wave propagation.
+   * Similar to earthquake sequences: zoom to center, start animation,
+   * slowly zoom out with expanding wave radius, reveal runups progressively.
+   * @param {Object} data - { geojson, eventId, runupCount }
+   */
+  handleTsunamiRunups(data) {
+    const { geojson, eventId, runupCount } = data;
+    console.log(`OverlayController: Starting tsunami runups animation for ${eventId} with ${runupCount} runups`);
+
+    if (!geojson || !geojson.features || geojson.features.length < 2) {
+      console.warn('OverlayController: Not enough data for tsunami animation');
+      return;
+    }
+
+    // Find source event (is_source: true)
+    const sourceEvent = geojson.features.find(f => f.properties?.is_source === true);
+    if (!sourceEvent) {
+      console.warn('OverlayController: No source event found in tsunami data');
+      return;
+    }
+
+    // Get source coordinates for centering
+    const sourceCoords = sourceEvent.geometry?.coordinates;
+    if (!sourceCoords) {
+      console.warn('OverlayController: Source event has no coordinates');
+      return;
+    }
+
+    // Hide any popups
+    MapAdapter?.hidePopup?.();
+    MapAdapter.popupLocked = false;
+
+    // Zoom to source location first (like earthquake sequences)
+    MapAdapter.map.flyTo({
+      center: sourceCoords,
+      zoom: 7,
+      duration: 1500
+    });
+
+    // Start radial animation using EventAnimator
+    const animationId = `tsunami-${eventId}`;
+    const sourceYear = sourceEvent.properties?.year || new Date().getFullYear();
+    const sourceDate = sourceEvent.properties?.timestamp
+      ? new Date(sourceEvent.properties.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+      : sourceYear;
+
+    const started = EventAnimator.start({
+      id: animationId,
+      label: `Tsunami ${sourceDate}`,
+      mode: AnimationMode.RADIAL,
+      events: geojson.features,
+      eventType: 'tsunami',
+      timeField: 'timestamp',
+      granularity: '12m',  // 12-minute steps for smooth wave animation (5 steps per hour)
+      renderer: 'point-radius',
+      // Don't auto-center - we already did flyTo above
+      rendererOptions: {
+        eventType: 'tsunami'  // Tell renderer to use tsunami styling
+      },
+      onExit: () => {
+        console.log('OverlayController: Tsunami animation exited');
+        // Restore original tsunami overlay
+        const currentYear = this.getCurrentYear();
+        if (dataCache.tsunamis) {
+          this.renderFilteredData('tsunamis', currentYear);
+        }
+        // Recalculate time range for TimeSlider
+        this.recalculateTimeRange();
+        if (TimeSlider && Object.keys(yearRangeCache).length > 0) {
+          TimeSlider.show();
+        }
+      }
+    });
+
+    if (started) {
+      console.log(`OverlayController: Tsunami animation started with ${geojson.features.length} features`);
+    } else {
+      console.error('OverlayController: Failed to start tsunami animation');
+      // Try to restore the overlay
+      const currentYear = this.getCurrentYear();
+      if (dataCache.tsunamis) {
+        this.renderFilteredData('tsunamis', currentYear);
+      }
     }
   },
 
@@ -477,10 +609,68 @@ export const OverlayController = {
     const mainDate = new Date(mainTime);
     const label = `M${mainMag.toFixed(1)} ${mainDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
 
+    // Track which overlays are currently active (to restore on exit)
+    // SequenceAnimator uses separate layers, so we don't need to clear the model
+    const activeOverlays = OverlaySelector?.getActiveOverlays() || [];
+    const overlaysToRestore = activeOverlays.filter(id =>
+      id !== 'demographics' && OVERLAY_ENDPOINTS[id]
+    );
+
     // Clear normal earthquake display before starting sequence animation
+    // Note: This clears ALL point overlays since they share the model.
+    // We'll restore volcano/tsunami on exit if they were enabled.
     const model = ModelRegistry?.getModelForType('earthquake');
     if (model?.clear) {
       model.clear();
+    }
+
+    // Overlay-aware animation: If volcano or tsunami overlays are enabled,
+    // fetch related events and include them in the animation display
+    const relatedEvents = [];
+    const mainLat = mainshock.geometry?.coordinates?.[1];
+    const mainLon = mainshock.geometry?.coordinates?.[0];
+    const mainYear = new Date(mainTime).getFullYear();
+
+    // Check for enabled overlays and fetch related events
+    if (mainLat && mainLon) {
+      if (activeOverlays.includes('volcanoes')) {
+        try {
+          const volcanoUrl = `/api/events/nearby-volcanoes?lat=${mainLat}&lon=${mainLon}&radius_km=200&year=${mainYear}`;
+          const resp = await fetch(volcanoUrl);
+          if (resp.ok) {
+            const data = await resp.json();
+            if (data.features && data.features.length > 0) {
+              relatedEvents.push(...data.features.map(f => ({
+                ...f,
+                properties: { ...f.properties, _relatedType: 'volcano' }
+              })));
+              console.log(`OverlayController: Found ${data.features.length} related volcanoes`);
+            }
+          }
+        } catch (err) {
+          console.warn('Failed to fetch related volcanoes:', err);
+        }
+      }
+
+      if (activeOverlays.includes('tsunamis')) {
+        try {
+          // Tsunamis caused by the earthquake - check for same year/location
+          const tsunamiUrl = `/api/events/nearby-tsunamis?lat=${mainLat}&lon=${mainLon}&radius_km=300&year=${mainYear}`;
+          const resp = await fetch(tsunamiUrl);
+          if (resp.ok) {
+            const data = await resp.json();
+            if (data.features && data.features.length > 0) {
+              relatedEvents.push(...data.features.map(f => ({
+                ...f,
+                properties: { ...f.properties, _relatedType: 'tsunami' }
+              })));
+              console.log(`OverlayController: Found ${data.features.length} related tsunamis`);
+            }
+          }
+        } catch (err) {
+          console.warn('Failed to fetch related tsunamis:', err);
+        }
+      }
     }
 
     // Set up exit callback before starting
@@ -491,19 +681,30 @@ export const OverlayController = {
         TimeSlider.removeScale(this.activeSequenceScaleId);
         this.activeSequenceScaleId = null;
       }
-      // Switch back to primary scale and reset to default time
+      // Restore TimeSlider range from cached overlay year ranges
+      this.recalculateTimeRange();
+      // Switch back to primary scale if it exists
       if (TimeSlider) {
-        TimeSlider.setActiveScale('primary');
+        if (TimeSlider.scales?.find(s => s.id === 'primary')) {
+          TimeSlider.setActiveScale('primary');
+        }
+        // Show TimeSlider if we have year data
+        if (Object.keys(yearRangeCache).length > 0) {
+          TimeSlider.show();
+        }
       }
-      // Restore normal earthquake display for current year
+      // Restore all overlays that were active before animation
       const currentYear = this.getCurrentYear();
-      if (dataCache.earthquakes) {
-        this.renderFilteredData('earthquakes', currentYear);
+      for (const overlayId of overlaysToRestore) {
+        if (dataCache[overlayId]) {
+          this.renderFilteredData(overlayId, currentYear);
+          console.log(`OverlayController: Restored ${overlayId} overlay`);
+        }
       }
     });
 
-    // Start the sequence animator with the events
-    SequenceAnimator.start(sequenceId, seqEvents, mainshock);
+    // Start the sequence animator with the events and any related events
+    SequenceAnimator.start(sequenceId, seqEvents, mainshock, relatedEvents);
 
     // Determine granularity label based on adaptive step size
     const stepHours = adaptiveStepMs / (60 * 60 * 1000);
@@ -595,9 +796,16 @@ export const OverlayController = {
    */
   handleTimeChange(time, source) {
     // If sequence animation is active, forward timestamp to it
-    if (SequenceAnimator.isActive() && time > 3000) {
+    // Note: Don't check time value - pre-1970 events have negative timestamps
+    if (SequenceAnimator.isActive()) {
       SequenceAnimator.setTime(time);
       return;  // Don't do normal year-based filtering
+    }
+
+    // If EventAnimator is active, forward timestamp to it
+    if (EventAnimator.getIsActive()) {
+      EventAnimator.setTime(time);
+      return;
     }
 
     const year = this.getYearFromTime(time);
@@ -697,6 +905,15 @@ export const OverlayController = {
       return;
     }
 
+    // Abort any existing request for this overlay
+    if (this.abortControllers.has(overlayId)) {
+      this.abortControllers.get(overlayId).abort();
+    }
+
+    // Create new AbortController for this request
+    const abortController = new AbortController();
+    this.abortControllers.set(overlayId, abortController);
+
     this.loading.add(overlayId);
 
     try {
@@ -704,13 +921,20 @@ export const OverlayController = {
       const url = endpoint.list;
       console.log(`OverlayController: Fetching ${url}`);
 
-      const response = await fetch(url);
+      const response = await fetch(url, { signal: abortController.signal });
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
       const geojson = await response.json();
+
+      // Check if overlay was disabled while we were fetching
+      const activeOverlays = OverlaySelector?.getActiveOverlays() || [];
+      if (!activeOverlays.includes(overlayId)) {
+        console.log(`OverlayController: ${overlayId} was disabled during fetch, discarding data`);
+        return;
+      }
 
       // Cache the full dataset
       dataCache[overlayId] = geojson;
@@ -756,10 +980,16 @@ export const OverlayController = {
       this.renderFilteredData(overlayId, currentYear);
 
     } catch (error) {
+      // Don't log abort errors - they're expected when user disables overlay
+      if (error.name === 'AbortError') {
+        console.log(`OverlayController: Fetch aborted for ${overlayId}`);
+        return;
+      }
       console.error(`OverlayController: Failed to load ${overlayId}:`, error);
       this.showError(overlayId, error.message);
     } finally {
       this.loading.delete(overlayId);
+      this.abortControllers.delete(overlayId);
     }
   },
 
@@ -778,18 +1008,9 @@ export const OverlayController = {
 
     // Filter by year if overlay supports it and year is set
     if (endpoint.yearField && year) {
-      // Use == for type coercion (year might be string or number in data)
       const yearNum = parseInt(year);
-
-      // Debug: sample first few features to see what year values look like
-      if (cachedData.features.length > 0) {
-        const sample = cachedData.features.slice(0, 3).map(f => f.properties[endpoint.yearField]);
-        console.log(`OverlayController: Sample year values:`, sample, `filtering for ${yearNum}`);
-      }
-
       const filtered = cachedData.features.filter(f => {
         const propYear = f.properties[endpoint.yearField];
-        // Handle null/undefined
         if (propYear == null) return false;
         return parseInt(propYear) === yearNum;
       });
@@ -799,7 +1020,6 @@ export const OverlayController = {
       };
       console.log(`OverlayController: Filtered ${cachedData.features.length} -> ${filtered.length} for year ${yearNum}`);
     } else {
-      // No filtering - show all
       filteredGeojson = cachedData;
     }
 
@@ -824,6 +1044,13 @@ export const OverlayController = {
   clearOverlay(overlayId) {
     const endpoint = OVERLAY_ENDPOINTS[overlayId];
     if (!endpoint) return;
+
+    // Abort any in-flight fetch request for this overlay
+    if (this.abortControllers.has(overlayId)) {
+      this.abortControllers.get(overlayId).abort();
+      this.abortControllers.delete(overlayId);
+      console.log(`OverlayController: Aborted pending fetch for ${overlayId}`);
+    }
 
     // Get the model and clear it
     const model = ModelRegistry?.getModelForType(endpoint.eventType);
@@ -888,32 +1115,92 @@ export const OverlayController = {
    * Handle click on an event feature.
    * @param {string} overlayId - Overlay ID
    * @param {Object} props - Feature properties
+   * @param {Array} coords - Optional coordinates [lng, lat] for popup placement
    */
-  handleEventClick(overlayId, props) {
+  handleEventClick(overlayId, props, coords = null) {
     console.log(`OverlayController: Clicked ${overlayId} event:`, props);
 
-    // For hurricanes, drill down into track
+    // For hurricanes, show popup with View Track button
     if (overlayId === 'hurricanes' && props.storm_id) {
-      this.drillDownHurricane(props.storm_id, props.name || props.storm_id);
+      this._showHurricanePopup(props, coords);
     }
   },
 
   /**
-   * Drill down into a hurricane track.
-   * @param {string} stormId - Storm ID
+   * Show popup for hurricane track with View Track button.
+   * @private
+   */
+  _showHurricanePopup(props, coords) {
+    const map = MapAdapter?.map;
+    if (!map) return;
+
+    const stormId = props.storm_id;
+    const stormName = props.name || stormId;
+
+    // Build popup content
+    const lines = [`<strong>${stormName}</strong>`];
+    if (props.year) lines.push(`Year: ${props.year}`);
+    if (props.basin) lines.push(`Basin: ${props.basin}`);
+    if (props.max_category) lines.push(`Max Category: ${props.max_category}`);
+    if (props.max_wind_kt) lines.push(`Max Wind: ${props.max_wind_kt} kt`);
+    if (props.min_pressure_mb) lines.push(`Min Pressure: ${props.min_pressure_mb} mb`);
+    if (props.start_date && props.end_date) {
+      lines.push(`Dates: ${props.start_date.split('T')[0]} to ${props.end_date.split('T')[0]}`);
+    }
+    if (props.made_landfall) lines.push('<em>Made landfall</em>');
+
+    // Add View Track button
+    const buttonId = `view-track-${stormId.replace(/[^a-zA-Z0-9]/g, '-')}`;
+    lines.push(`<br><button id="${buttonId}" style="background:#3b82f6;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;margin-top:8px;">View Track</button>`);
+
+    // Determine popup position - use center of track if no coords provided
+    let popupCoords = coords;
+    if (!popupCoords) {
+      // Try to get coords from the feature geometry center (approximate)
+      popupCoords = [-80, 25]; // Default to Atlantic
+    }
+
+    // Create popup
+    const popup = new maplibregl.Popup({ closeOnClick: true, maxWidth: '280px' })
+      .setLngLat(popupCoords)
+      .setHTML(lines.join('<br>'))
+      .addTo(map);
+
+    // Setup button click handler after popup is added to DOM
+    setTimeout(() => {
+      const button = document.getElementById(buttonId);
+      if (button) {
+        button.addEventListener('click', () => {
+          popup.remove();
+          this.drillDownHurricane(stormId, stormName);
+        });
+      }
+    }, 0);
+  },
+
+  /**
+   * Drill down into a hurricane track for animation.
+   * Uses global IBTrACS API endpoint.
+   * @param {string} stormId - Storm ID (e.g., "2005236N23285" for Katrina)
    * @param {string} stormName - Storm name
    */
   async drillDownHurricane(stormId, stormName) {
     try {
-      const response = await fetch(`/api/hurricane/track/${stormId}`);
+      // Use global tropical storms API
+      const response = await fetch(`/api/storms/${encodeURIComponent(stormId)}/track`);
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
 
       const data = await response.json();
 
+      if (!data.positions || data.positions.length === 0) {
+        console.warn(`OverlayController: No positions found for storm ${stormId}`);
+        return;
+      }
+
       // Build GeoJSON from positions
-      const features = data.positions.map(pos => ({
+      const features = data.positions.map((pos, idx) => ({
         type: 'Feature',
         geometry: {
           type: 'Point',
@@ -921,11 +1208,26 @@ export const OverlayController = {
         },
         properties: {
           storm_id: stormId,
+          name: data.name || stormName,
           timestamp: pos.timestamp,
           wind_kt: pos.wind_kt,
           pressure_mb: pos.pressure_mb,
           category: pos.category,
-          status: pos.status
+          status: pos.status,
+          // Wind radii (may be null for older storms)
+          r34_ne: pos.r34_ne,
+          r34_se: pos.r34_se,
+          r34_sw: pos.r34_sw,
+          r34_nw: pos.r34_nw,
+          r50_ne: pos.r50_ne,
+          r50_se: pos.r50_se,
+          r50_sw: pos.r50_sw,
+          r50_nw: pos.r50_nw,
+          r64_ne: pos.r64_ne,
+          r64_se: pos.r64_se,
+          r64_sw: pos.r64_sw,
+          r64_nw: pos.r64_nw,
+          position_index: idx
         }
       }));
 
@@ -939,13 +1241,214 @@ export const OverlayController = {
       if (trackModel) {
         trackModel.renderTrack(trackGeojson);
         trackModel.fitBounds(trackGeojson);
+
+        // Store track data for click handling
+        this._currentTrackData = {
+          stormId,
+          stormName,
+          positions: features
+        };
+
+        // Add click handler for track position dots to show wind radii
+        this._setupTrackPositionClickHandler(trackModel);
       }
 
-      console.log(`OverlayController: Loaded track for ${stormName} (${data.position_count} positions)`);
+      console.log(`OverlayController: Loaded track for ${stormName} (${data.count} positions)`);
+
+      // Add "Animate Track" button for 6-hour animation mode
+      this._addAnimateTrackButton(stormId, stormName, data.positions);
 
     } catch (error) {
       console.error(`OverlayController: Failed to load hurricane track:`, error);
     }
+  },
+
+  /**
+   * Add track control buttons (Animate Track + Back to Storms).
+   * Positioned at top center to avoid overlapping TimeSlider.
+   * @private
+   */
+  _addAnimateTrackButton(stormId, stormName, positions) {
+    // Remove existing buttons if any
+    const existing = document.getElementById('track-controls-container');
+    if (existing) existing.remove();
+
+    // Create container for both buttons - positioned at top center
+    const container = document.createElement('div');
+    container.id = 'track-controls-container';
+    container.style.cssText = `
+      position: fixed;
+      top: 80px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 12px;
+      z-index: 1000;
+    `;
+
+    // Animate Track button
+    const animateBtn = document.createElement('button');
+    animateBtn.id = 'animate-track-btn';
+    animateBtn.textContent = 'Animate Track';
+    animateBtn.style.cssText = `
+      padding: 10px 20px;
+      background: #3b82f6;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    `;
+
+    animateBtn.addEventListener('click', () => {
+      container.remove();
+      this._startTrackAnimation(stormId, stormName, positions);
+    });
+
+    // Back to Storms button
+    const backBtn = document.createElement('button');
+    backBtn.id = 'back-to-storms-btn';
+    backBtn.textContent = 'Back to Storms';
+    backBtn.style.cssText = `
+      padding: 10px 20px;
+      background: #6b7280;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    `;
+
+    backBtn.addEventListener('click', () => {
+      container.remove();
+      this._exitTrackView();
+    });
+
+    container.appendChild(animateBtn);
+    container.appendChild(backBtn);
+    document.body.appendChild(container);
+  },
+
+  /**
+   * Exit track view and return to yearly storm overview.
+   * @private
+   */
+  _exitTrackView() {
+    // Clear track display
+    const trackModel = ModelRegistry?.getModel('track');
+    if (trackModel) {
+      trackModel.clearTrack();
+      trackModel.clearWindRadii();
+    }
+
+    // Clear track data
+    this._currentTrackData = null;
+
+    // Refresh hurricanes overlay to show yearly overview
+    if (activeOverlays.hurricanes) {
+      this._displayOverlayData('hurricanes', TimeSlider?.currentTime);
+    }
+
+    console.log('OverlayController: Returned to storms overview');
+  },
+
+  /**
+   * Start track animation using TrackAnimator.
+   * @private
+   */
+  _startTrackAnimation(stormId, stormName, positions) {
+    // Clear the static track display first
+    const trackModel = ModelRegistry?.getModel('track');
+    if (trackModel) {
+      trackModel.clearTrack();
+      trackModel.clearWindRadii();
+    }
+
+    // Start TrackAnimator
+    TrackAnimator.start(stormId, positions, {
+      stormName,
+      onExit: () => {
+        // When animation exits, reload the static track view
+        console.log('TrackAnimator: Exited, reloading static track');
+        this.drillDownHurricane(stormId, stormName);
+      }
+    });
+  },
+
+  /**
+   * Setup click handler for track position dots.
+   * Shows wind radii and popup when clicking on a position.
+   * @private
+   */
+  _setupTrackPositionClickHandler(trackModel) {
+    const map = MapAdapter?.map;
+    if (!map) return;
+
+    // Remove existing handler if any
+    if (this._trackPositionClickHandler) {
+      map.off('click', CONFIG.layers.hurricaneCircle + '-track-dots', this._trackPositionClickHandler);
+    }
+
+    this._trackPositionClickHandler = (e) => {
+      if (!e.features || e.features.length === 0) return;
+
+      const feature = e.features[0];
+      const props = feature.properties;
+      const coords = feature.geometry.coordinates;
+
+      // Show wind radii if available
+      const hasWindRadii = props.r34_ne || props.r34_se || props.r34_sw || props.r34_nw;
+      if (hasWindRadii) {
+        trackModel.renderWindRadii({
+          longitude: coords[0],
+          latitude: coords[1],
+          properties: props
+        });
+      } else {
+        trackModel.clearWindRadii();
+      }
+
+      // Build popup content
+      const lines = [`<strong>${props.name || 'Storm Position'}</strong>`];
+      if (props.timestamp) {
+        const date = new Date(props.timestamp);
+        lines.push(date.toLocaleString());
+      }
+      if (props.category) lines.push(`Category: ${props.category}`);
+      if (props.wind_kt) lines.push(`Wind: ${props.wind_kt} kt`);
+      if (props.pressure_mb) lines.push(`Pressure: ${props.pressure_mb} mb`);
+      if (props.status) lines.push(`Status: ${props.status}`);
+
+      // Wind radii info
+      if (hasWindRadii) {
+        lines.push('<br><em>Wind Radii (nm):</em>');
+        if (props.r34_ne) lines.push(`34kt: NE=${props.r34_ne} SE=${props.r34_se} SW=${props.r34_sw} NW=${props.r34_nw}`);
+        if (props.r50_ne) lines.push(`50kt: NE=${props.r50_ne} SE=${props.r50_se} SW=${props.r50_sw} NW=${props.r50_nw}`);
+        if (props.r64_ne) lines.push(`64kt: NE=${props.r64_ne} SE=${props.r64_se} SW=${props.r64_sw} NW=${props.r64_nw}`);
+      } else {
+        lines.push('<em>(No wind radii data for this position)</em>');
+      }
+
+      // Show popup
+      new maplibregl.Popup({ closeOnClick: true })
+        .setLngLat(coords)
+        .setHTML(lines.join('<br>'))
+        .addTo(map);
+    };
+
+    map.on('click', CONFIG.layers.hurricaneCircle + '-track-dots', this._trackPositionClickHandler);
+
+    // Hover cursor
+    map.on('mouseenter', CONFIG.layers.hurricaneCircle + '-track-dots', () => {
+      map.getCanvas().style.cursor = 'pointer';
+    });
+    map.on('mouseleave', CONFIG.layers.hurricaneCircle + '-track-dots', () => {
+      map.getCanvas().style.cursor = '';
+    });
   },
 
   /**

@@ -92,26 +92,13 @@ export const MapAdapter = {
   },
 
   /**
-   * Handle zoom changes - update display and toggle globe/2D projection
+   * Handle zoom changes - update display
    * Navigation is now handled by ViewportLoader.onViewportChange()
+   * Globe projection switching disabled - use mercator only for stability
    */
   handleZoomChange() {
     const currentZoom = this.map.getZoom();
     this.updateZoomDisplay(currentZoom);
-
-    // Toggle projection based on zoom: globe at zoom < 2, mercator at zoom >= 2
-    const globeThreshold = 2.0;
-    const wasGlobe = this.isGlobeMode || false;
-    const shouldBeGlobe = currentZoom < globeThreshold;
-
-    if (shouldBeGlobe && !wasGlobe) {
-      this.enableGlobe();
-      this.isGlobeMode = true;
-    } else if (!shouldBeGlobe && wasGlobe) {
-      this.disableGlobe();
-      this.isGlobeMode = false;
-    }
-
     this.lastZoom = currentZoom;
   },
 

@@ -28,6 +28,7 @@ export const TrackModel = {
 
   /**
    * Build category color expression for MapLibre.
+   * Handles multiple category formats: 'Cat1', '1', 1, 'TD', 'TS'
    * @private
    * @returns {Array} MapLibre match expression
    */
@@ -35,26 +36,29 @@ export const TrackModel = {
     return [
       'match',
       ['coalesce', ['get', 'category'], ['get', 'max_category']],
+      // String formats from IBTrACS (Cat1, Cat2, etc.)
       'TD', CONFIG.hurricaneColors.TD,
       'TS', CONFIG.hurricaneColors.TS,
+      'Cat1', CONFIG.hurricaneColors['1'],
+      'Cat2', CONFIG.hurricaneColors['2'],
+      'Cat3', CONFIG.hurricaneColors['3'],
+      'Cat4', CONFIG.hurricaneColors['4'],
+      'Cat5', CONFIG.hurricaneColors['5'],
+      // Legacy formats (string numbers)
       '1', CONFIG.hurricaneColors['1'],
       '2', CONFIG.hurricaneColors['2'],
       '3', CONFIG.hurricaneColors['3'],
       '4', CONFIG.hurricaneColors['4'],
       '5', CONFIG.hurricaneColors['5'],
-      1, CONFIG.hurricaneColors['1'],
-      2, CONFIG.hurricaneColors['2'],
-      3, CONFIG.hurricaneColors['3'],
-      4, CONFIG.hurricaneColors['4'],
-      5, CONFIG.hurricaneColors['5'],
-      CONFIG.hurricaneColors.default
+      // Default fallback (must be a string color)
+      CONFIG.hurricaneColors.default || '#888888'
     ];
   },
 
   /**
-   * Render hurricane/storm point markers onto the map.
-   * Used for overview display of multiple storms.
-   * @param {Object} geojson - GeoJSON FeatureCollection with Point features
+   * Render hurricane/storm features onto the map.
+   * Supports both Point (max intensity markers) and LineString (track lines) features.
+   * @param {Object} geojson - GeoJSON FeatureCollection with Point or LineString features
    * @param {string} eventType - 'hurricane', 'typhoon', 'cyclone'
    * @param {Object} options - {onStormClick: callback(stormId, stormName)}
    */
@@ -75,12 +79,130 @@ export const TrackModel = {
     const map = MapAdapter.map;
     const categoryColorExpr = this._buildCategoryColorExpr();
 
+    // Detect geometry type from first feature
+    const firstFeature = geojson.features[0];
+    const isLineString = firstFeature.geometry?.type === 'LineString';
+
     // Add hurricane source
     map.addSource(CONFIG.layers.hurricaneSource, {
       type: 'geojson',
       data: geojson
     });
 
+    if (isLineString) {
+      // Render track lines for yearly overview
+      this._renderTrackLines(map, categoryColorExpr, options);
+    } else {
+      // Render point markers (legacy behavior)
+      this._renderPointMarkers(map, categoryColorExpr, options);
+    }
+
+    console.log(`TrackModel: Loaded ${geojson.features.length} ${eventType} ${isLineString ? 'tracks' : 'markers'}`);
+  },
+
+  /**
+   * Render storm track lines for yearly overview.
+   * @private
+   */
+  _renderTrackLines(map, categoryColorExpr, options) {
+    // Add track line layer (colored by max category)
+    map.addLayer({
+      id: CONFIG.layers.hurricaneCircle + '-lines',
+      type: 'line',
+      source: CONFIG.layers.hurricaneSource,
+      paint: {
+        'line-color': categoryColorExpr,
+        'line-width': [
+          'interpolate', ['linear'], ['zoom'],
+          2, 1.5,
+          5, 3,
+          8, 4
+        ],
+        'line-opacity': 0.8
+      }
+    });
+
+    // Add glow effect for lines
+    map.addLayer({
+      id: CONFIG.layers.hurricaneCircle + '-glow',
+      type: 'line',
+      source: CONFIG.layers.hurricaneSource,
+      paint: {
+        'line-color': categoryColorExpr,
+        'line-width': [
+          'interpolate', ['linear'], ['zoom'],
+          2, 4,
+          5, 8,
+          8, 12
+        ],
+        'line-opacity': 0.2,
+        'line-blur': 3
+      }
+    }, CONFIG.layers.hurricaneCircle + '-lines');  // Below main line
+
+    // Add labels at track endpoints (use symbol layer with placement)
+    map.addLayer({
+      id: CONFIG.layers.hurricaneLabel,
+      type: 'symbol',
+      source: CONFIG.layers.hurricaneSource,
+      minzoom: 3,
+      layout: {
+        'symbol-placement': 'line',
+        'text-field': ['coalesce', ['get', 'name'], ''],
+        'text-size': [
+          'interpolate', ['linear'], ['zoom'],
+          3, 9,
+          6, 11
+        ],
+        'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+        'text-max-angle': 30,
+        'text-anchor': 'center'
+      },
+      paint: {
+        'text-color': '#ffffff',
+        'text-halo-color': 'rgba(0, 0, 0, 0.9)',
+        'text-halo-width': 2
+      }
+    });
+
+    // Click handler for track lines
+    const clickCallback = options.onEventClick || options.onStormClick;
+    if (clickCallback) {
+      this.clickHandler = (e) => {
+        if (e.features.length > 0) {
+          const feature = e.features[0];
+          const props = feature.properties;
+          // Use first point of track (genesis location) for popup position
+          // This is more predictable than click location for line features
+          let coords = null;
+          if (feature.geometry?.coordinates?.length > 0) {
+            const firstPoint = feature.geometry.coordinates[0];
+            coords = Array.isArray(firstPoint[0]) ? firstPoint[0] : firstPoint;
+          }
+          // Fallback to click location if no geometry
+          if (!coords && e.lngLat) {
+            coords = [e.lngLat.lng, e.lngLat.lat];
+          }
+          clickCallback(props, coords);
+        }
+      };
+      map.on('click', CONFIG.layers.hurricaneCircle + '-lines', this.clickHandler);
+    }
+
+    // Hover cursor for lines
+    map.on('mouseenter', CONFIG.layers.hurricaneCircle + '-lines', () => {
+      map.getCanvas().style.cursor = 'pointer';
+    });
+    map.on('mouseleave', CONFIG.layers.hurricaneCircle + '-lines', () => {
+      map.getCanvas().style.cursor = '';
+    });
+  },
+
+  /**
+   * Render storm point markers (legacy behavior).
+   * @private
+   */
+  _renderPointMarkers(map, categoryColorExpr, options) {
     // Add outer glow
     map.addLayer({
       id: CONFIG.layers.hurricaneCircle + '-glow',
@@ -129,13 +251,16 @@ export const TrackModel = {
     });
 
     // Setup click handler
-    if (options.onStormClick) {
+    const clickCallback = options.onEventClick || options.onStormClick;
+    if (clickCallback) {
       this.clickHandler = (e) => {
         if (e.features.length > 0) {
-          const props = e.features[0].properties;
-          const stormId = props.storm_id || props.id;
-          const stormName = props.name || props.storm_name || stormId;
-          options.onStormClick(stormId, stormName);
+          const feature = e.features[0];
+          const props = feature.properties;
+          // Use exact feature geometry for popup position
+          const coords = feature.geometry?.coordinates ||
+            (e.lngLat ? [e.lngLat.lng, e.lngLat.lat] : null);
+          clickCallback(props, coords);
         }
       };
       map.on('click', CONFIG.layers.hurricaneCircle, this.clickHandler);
@@ -148,8 +273,6 @@ export const TrackModel = {
     map.on('mouseleave', CONFIG.layers.hurricaneCircle, () => {
       map.getCanvas().style.cursor = '';
     });
-
-    console.log(`TrackModel: Loaded ${geojson.features.length} ${eventType} markers`);
   },
 
   /**
@@ -213,32 +336,56 @@ export const TrackModel = {
         data: trackGeojson
       });
 
+      // Use coalesce to handle both string and numeric category values
+      // Convert category to string for consistent matching
       const categoryColorExpr = [
         'match',
-        ['get', 'category'],
-        'TD', CONFIG.hurricaneColors.TD,
-        'TS', CONFIG.hurricaneColors.TS,
-        '1', CONFIG.hurricaneColors['1'],
-        '2', CONFIG.hurricaneColors['2'],
-        '3', CONFIG.hurricaneColors['3'],
-        '4', CONFIG.hurricaneColors['4'],
-        '5', CONFIG.hurricaneColors['5'],
-        1, CONFIG.hurricaneColors['1'],
-        2, CONFIG.hurricaneColors['2'],
-        3, CONFIG.hurricaneColors['3'],
-        4, CONFIG.hurricaneColors['4'],
-        5, CONFIG.hurricaneColors['5'],
-        CONFIG.hurricaneColors.default
+        ['to-string', ['get', 'category']],
+        'TD', CONFIG.hurricaneColors.TD || '#5ebaff',
+        'TS', CONFIG.hurricaneColors.TS || '#00faf4',
+        'Cat1', CONFIG.hurricaneColors['1'] || '#ffffcc',
+        'Cat2', CONFIG.hurricaneColors['2'] || '#ffe775',
+        'Cat3', CONFIG.hurricaneColors['3'] || '#ffc140',
+        'Cat4', CONFIG.hurricaneColors['4'] || '#ff8f20',
+        'Cat5', CONFIG.hurricaneColors['5'] || '#ff6060',
+        '1', CONFIG.hurricaneColors['1'] || '#ffffcc',
+        '2', CONFIG.hurricaneColors['2'] || '#ffe775',
+        '3', CONFIG.hurricaneColors['3'] || '#ffc140',
+        '4', CONFIG.hurricaneColors['4'] || '#ff8f20',
+        '5', CONFIG.hurricaneColors['5'] || '#ff6060',
+        CONFIG.hurricaneColors.default || '#aaaaaa'
       ];
+
+      // Recency-based effects for animation trail
+      // _recency: 1.5 = brand new (flash), 1.0 = recent, 0.0 = fading out
+      const recencyExpr = ['coalesce', ['get', '_recency'], 1.0];
+
+      // Opacity: cap at 1.0 (recency can be > 1.0 for flash effect)
+      const opacityExpr = (baseOpacity) => ['min', 1.0, ['*', baseOpacity, recencyExpr]];
+
+      // Size boost for current position when it just arrived (flash effect)
+      // Current position: base 8px, boosted up to 12px when new
+      // Past positions: base 4px, no boost (they fade, not flash)
+      const currentSizeExpr = ['*', 8, ['max', 1.0, recencyExpr]];
 
       map.addLayer({
         id: CONFIG.layers.hurricaneCircle + '-track-dots',
         type: 'circle',
         source: CONFIG.layers.hurricaneSource + '-track',
         paint: {
-          'circle-radius': 4,
+          'circle-radius': [
+            'case',
+            ['==', ['get', '_isCurrent'], true], currentSizeExpr,  // Larger + flash for current
+            4  // Normal for past positions (fade only, no size boost)
+          ],
           'circle-color': categoryColorExpr,
-          'circle-opacity': 0.8
+          'circle-opacity': opacityExpr(0.8),  // Fade with recency, cap at 1.0
+          'circle-stroke-color': [
+            'case',
+            ['==', ['get', '_isCurrent'], true], '#ffffff',  // White ring for current
+            'transparent'
+          ],
+          'circle-stroke-width': 2
         }
       });
     }
@@ -287,29 +434,34 @@ export const TrackModel = {
   },
 
   /**
-   * Clear all storm markers.
+   * Clear all storm markers (points or lines).
    */
   clearMarkers() {
     if (!MapAdapter?.map) return;
 
     const map = MapAdapter.map;
 
-    // Remove click handler
+    // Remove click handlers (for both points and lines)
     if (this.clickHandler) {
       map.off('click', CONFIG.layers.hurricaneCircle, this.clickHandler);
+      map.off('click', CONFIG.layers.hurricaneCircle + '-lines', this.clickHandler);
       this.clickHandler = null;
     }
 
-    // Remove layers
-    if (map.getLayer(CONFIG.layers.hurricaneLabel)) {
-      map.removeLayer(CONFIG.layers.hurricaneLabel);
+    // Remove layers (both point and line variants)
+    const layersToRemove = [
+      CONFIG.layers.hurricaneLabel,
+      CONFIG.layers.hurricaneCircle,
+      CONFIG.layers.hurricaneCircle + '-glow',
+      CONFIG.layers.hurricaneCircle + '-lines'
+    ];
+
+    for (const layerId of layersToRemove) {
+      if (map.getLayer(layerId)) {
+        map.removeLayer(layerId);
+      }
     }
-    if (map.getLayer(CONFIG.layers.hurricaneCircle)) {
-      map.removeLayer(CONFIG.layers.hurricaneCircle);
-    }
-    if (map.getLayer(CONFIG.layers.hurricaneCircle + '-glow')) {
-      map.removeLayer(CONFIG.layers.hurricaneCircle + '-glow');
-    }
+
     if (map.getSource(CONFIG.layers.hurricaneSource)) {
       map.removeSource(CONFIG.layers.hurricaneSource);
     }
@@ -432,5 +584,213 @@ export const TrackModel = {
    */
   getActiveTrackId() {
     return this.activeTrackId;
+  },
+
+  /**
+   * Build a wind radii polygon from quadrant values.
+   * Creates an asymmetric shape representing wind extent in each direction.
+   * @private
+   * @param {number} centerLon - Center longitude
+   * @param {number} centerLat - Center latitude
+   * @param {Object} radii - {ne, se, sw, nw} in nautical miles
+   * @returns {Array} Polygon coordinates array
+   */
+  _buildWindRadiiPolygon(centerLon, centerLat, radii) {
+    if (!radii.ne && !radii.se && !radii.sw && !radii.nw) {
+      return null;
+    }
+
+    // Convert nautical miles to degrees (approximate)
+    // 1 nm = 1.852 km, 1 degree lat = 111.32 km
+    const nmToDegLat = 1.852 / 111.32;
+    const nmToDegLon = 1.852 / (111.32 * Math.cos(centerLat * Math.PI / 180));
+
+    const coords = [];
+    const segments = 16; // Points per quadrant
+
+    // Build polygon clockwise from North
+    // NE quadrant (0 to 90 degrees)
+    const rNE = (radii.ne || 0) * nmToDegLat;
+    for (let i = 0; i <= segments; i++) {
+      const angle = (i / segments) * (Math.PI / 2); // 0 to 90 deg
+      const lon = centerLon + rNE * Math.sin(angle) * (nmToDegLon / nmToDegLat);
+      const lat = centerLat + rNE * Math.cos(angle);
+      coords.push([lon, lat]);
+    }
+
+    // SE quadrant (90 to 180 degrees)
+    const rSE = (radii.se || 0) * nmToDegLat;
+    for (let i = 1; i <= segments; i++) {
+      const angle = (Math.PI / 2) + (i / segments) * (Math.PI / 2);
+      const lon = centerLon + rSE * Math.sin(angle) * (nmToDegLon / nmToDegLat);
+      const lat = centerLat + rSE * Math.cos(angle);
+      coords.push([lon, lat]);
+    }
+
+    // SW quadrant (180 to 270 degrees)
+    const rSW = (radii.sw || 0) * nmToDegLat;
+    for (let i = 1; i <= segments; i++) {
+      const angle = Math.PI + (i / segments) * (Math.PI / 2);
+      const lon = centerLon + rSW * Math.sin(angle) * (nmToDegLon / nmToDegLat);
+      const lat = centerLat + rSW * Math.cos(angle);
+      coords.push([lon, lat]);
+    }
+
+    // NW quadrant (270 to 360 degrees)
+    const rNW = (radii.nw || 0) * nmToDegLat;
+    for (let i = 1; i <= segments; i++) {
+      const angle = (3 * Math.PI / 2) + (i / segments) * (Math.PI / 2);
+      const lon = centerLon + rNW * Math.sin(angle) * (nmToDegLon / nmToDegLat);
+      const lat = centerLat + rNW * Math.cos(angle);
+      coords.push([lon, lat]);
+    }
+
+    // Close the polygon
+    coords.push(coords[0]);
+
+    return [coords]; // GeoJSON polygon format
+  },
+
+  /**
+   * Render wind radii circles for a storm position.
+   * Shows concentric asymmetric shapes for 34kt, 50kt, and 64kt wind extent.
+   * @param {Object} position - Position with wind radii properties
+   */
+  renderWindRadii(position) {
+    if (!MapAdapter?.map) return;
+
+    // Clear existing wind radii
+    this.clearWindRadii();
+
+    const map = MapAdapter.map;
+    const lon = position.longitude || position.geometry?.coordinates?.[0];
+    const lat = position.latitude || position.geometry?.coordinates?.[1];
+    const props = position.properties || position;
+
+    if (!lon || !lat) {
+      console.warn('TrackModel: Invalid position for wind radii');
+      return;
+    }
+
+    const features = [];
+
+    // Build polygons for each wind threshold (largest first for proper layering)
+    const r34 = this._buildWindRadiiPolygon(lon, lat, {
+      ne: props.r34_ne, se: props.r34_se, sw: props.r34_sw, nw: props.r34_nw
+    });
+    const r50 = this._buildWindRadiiPolygon(lon, lat, {
+      ne: props.r50_ne, se: props.r50_se, sw: props.r50_sw, nw: props.r50_nw
+    });
+    const r64 = this._buildWindRadiiPolygon(lon, lat, {
+      ne: props.r64_ne, se: props.r64_se, sw: props.r64_sw, nw: props.r64_nw
+    });
+
+    // Add features with wind level property
+    if (r34) {
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'Polygon', coordinates: r34 },
+        properties: { windLevel: 34 }
+      });
+    }
+    if (r50) {
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'Polygon', coordinates: r50 },
+        properties: { windLevel: 50 }
+      });
+    }
+    if (r64) {
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'Polygon', coordinates: r64 },
+        properties: { windLevel: 64 }
+      });
+    }
+
+    if (features.length === 0) {
+      console.log('TrackModel: No wind radii data for this position');
+      return;
+    }
+
+    const geojson = {
+      type: 'FeatureCollection',
+      features: features
+    };
+
+    // Add source
+    map.addSource(CONFIG.layers.windRadiiSource, {
+      type: 'geojson',
+      data: geojson
+    });
+
+    // Add fill layers (34kt first/bottom, then 50kt, then 64kt on top)
+    map.addLayer({
+      id: CONFIG.layers.windRadii34,
+      type: 'fill',
+      source: CONFIG.layers.windRadiiSource,
+      filter: ['==', ['get', 'windLevel'], 34],
+      paint: {
+        'fill-color': CONFIG.windRadiiColors.r34,
+        'fill-outline-color': CONFIG.windRadiiColors.stroke34
+      }
+    });
+
+    map.addLayer({
+      id: CONFIG.layers.windRadii50,
+      type: 'fill',
+      source: CONFIG.layers.windRadiiSource,
+      filter: ['==', ['get', 'windLevel'], 50],
+      paint: {
+        'fill-color': CONFIG.windRadiiColors.r50,
+        'fill-outline-color': CONFIG.windRadiiColors.stroke50
+      }
+    });
+
+    map.addLayer({
+      id: CONFIG.layers.windRadii64,
+      type: 'fill',
+      source: CONFIG.layers.windRadiiSource,
+      filter: ['==', ['get', 'windLevel'], 64],
+      paint: {
+        'fill-color': CONFIG.windRadiiColors.r64,
+        'fill-outline-color': CONFIG.windRadiiColors.stroke64
+      }
+    });
+
+    console.log(`TrackModel: Rendered ${features.length} wind radii layers`);
+  },
+
+  /**
+   * Clear wind radii layers.
+   */
+  clearWindRadii() {
+    if (!MapAdapter?.map) return;
+
+    const map = MapAdapter.map;
+    const layers = [
+      CONFIG.layers.windRadii64,
+      CONFIG.layers.windRadii50,
+      CONFIG.layers.windRadii34
+    ];
+
+    for (const layerId of layers) {
+      if (map.getLayer(layerId)) {
+        map.removeLayer(layerId);
+      }
+    }
+
+    if (map.getSource(CONFIG.layers.windRadiiSource)) {
+      map.removeSource(CONFIG.layers.windRadiiSource);
+    }
+  },
+
+  /**
+   * Update wind radii for animation (moves to new position).
+   * @param {Object} position - New position with wind radii properties
+   */
+  updateWindRadii(position) {
+    // For now, just re-render (could optimize to update source data)
+    this.renderWindRadii(position);
   }
 };

@@ -21,6 +21,9 @@ export function setDependencies(deps) {
   ChoroplethManager = deps.ChoroplethManager;
 }
 
+// Playback speed multiplier for fast forward/rewind
+const FAST_SPEED = 5;
+
 // ============================================================================
 // TIME SLIDER - Controls year selection for multi-year data
 // ============================================================================
@@ -50,7 +53,7 @@ export const TimeSlider = {
   sortedTimes: [],     // Sorted array for navigation
   isPlaying: false,
   playInterval: null,
-  playSpeed: 1,        // 1 = normal, 3 = fast
+  playSpeed: 1,        // 1 = normal, FAST_SPEED = fast forward/rewind
   playDirection: 1,    // 1 = forward, -1 = rewind
   listenersSetup: false,  // Track if event listeners have been added
   sliderInitialized: false, // Track if DOM setup is done
@@ -59,7 +62,7 @@ export const TimeSlider = {
   changeListeners: [],  // Array of callbacks: (time, source) => void
 
   // Granularity support
-  granularity: 'yearly',  // '6h', 'daily', 'weekly', 'monthly', 'yearly', '5y', '10y'
+  granularity: 'monthly',  // '6h', 'daily', 'weekly', 'monthly', 'yearly', '5y', '10y'
   useTimestamps: false,   // true for sub-yearly (6h, daily, weekly, monthly), false for yearly+
   stepMs: null,           // Step size in milliseconds (for sub-yearly)
 
@@ -408,7 +411,9 @@ export const TimeSlider = {
   },
 
   /**
-   * Format time label based on current granularity
+   * Format time label based on current granularity.
+   * During playback, shows simplified output (just year or month/year).
+   * When paused, shows full detail.
    */
   formatTimeLabel(time) {
     // For yearly+ granularity with integer years
@@ -437,6 +442,26 @@ export const TimeSlider = {
 
     // For sub-yearly with timestamps
     const date = new Date(time);
+
+    // During playback, show simplified format (less flashing text)
+    if (this.isPlaying) {
+      switch (this.granularity) {
+        case '6h':
+        case 'daily':
+          // During fast playback, just show month/year to reduce flashing
+          return date.toLocaleDateString('en-US', {
+            month: 'short', year: 'numeric'
+          });
+        case 'weekly':
+        case 'monthly':
+          // Show just year for monthly/weekly during playback
+          return date.getFullYear().toString();
+        default:
+          return date.getFullYear().toString();
+      }
+    }
+
+    // When paused, show full detail
     switch (this.granularity) {
       case '6h':
         return date.toLocaleString('en-US', {
@@ -449,7 +474,7 @@ export const TimeSlider = {
         });
       case 'weekly':
         return `Week of ${date.toLocaleDateString('en-US', {
-          month: 'short', day: 'numeric'
+          month: 'short', day: 'numeric', year: 'numeric'
         })}`;
       case 'monthly':
         return date.toLocaleDateString('en-US', {
@@ -462,19 +487,23 @@ export const TimeSlider = {
 
   /**
    * Get playback interval based on granularity (faster for finer granularity)
+   * Base intervals tuned for smooth playback.
+   * Special case: '12m' uses 200ms for smooth tsunami animation (5 steps/sec, same speed as 1h)
    */
   getPlaybackInterval() {
     const baseIntervals = {
-      '6h': 150,      // Fast for smooth animation
-      'daily': 200,
-      'weekly': 300,
-      'monthly': 400,
-      'yearly': 600,
-      '5y': 800,
-      '10y': 1000
+      '12m': 200,     // Smooth tsunami: 5 steps/sec (same overall speed as 1h, but smoother)
+      '1h': 1000,     // Real-time: 1 second = 1 hour
+      '6h': 30,       // Doubled for slower animation
+      'daily': 40,
+      'weekly': 60,
+      'monthly': 80,  // ~12 steps/second at normal speed
+      'yearly': 120,
+      '5y': 160,
+      '10y': 200
     };
-    const base = baseIntervals[this.granularity] || 600;
-    return this.playSpeed === 3 ? Math.floor(base / 3) : base;
+    const base = baseIntervals[this.granularity] || 120;
+    return this.playSpeed === FAST_SPEED ? Math.floor(base / FAST_SPEED) : base;
   },
 
   /**
@@ -610,18 +639,18 @@ export const TimeSlider = {
 
     // Fast forward/rewind buttons - toggle fast mode
     this.rewindBtn?.addEventListener('click', () => {
-      if (this.isPlaying && this.playSpeed === 3 && this.playDirection === -1) {
+      if (this.isPlaying && this.playSpeed === FAST_SPEED && this.playDirection === -1) {
         this.pause();
       } else {
-        this.playFast(-1);  // Rewind at 3x
+        this.playFast(-1);  // Rewind fast
       }
     });
 
     this.fastFwdBtn?.addEventListener('click', () => {
-      if (this.isPlaying && this.playSpeed === 3 && this.playDirection === 1) {
+      if (this.isPlaying && this.playSpeed === FAST_SPEED && this.playDirection === 1) {
         this.pause();
       } else {
-        this.playFast(1);  // Fast forward at 3x
+        this.playFast(1);  // Fast forward
       }
     });
   },
@@ -887,9 +916,19 @@ export const TimeSlider = {
 
     this.scales.splice(index, 1);
 
-    // If we removed the active scale, switch to primary
+    // If we removed the active scale, try to switch to another
     if (this.activeScaleId === scaleId) {
-      this.setActiveScale('primary');
+      // Try primary first, otherwise use first available, or hide if none
+      const primaryScale = this.scales.find(s => s.id === 'primary');
+      if (primaryScale) {
+        this.setActiveScale('primary');
+      } else if (this.scales.length > 0) {
+        this.setActiveScale(this.scales[0].id);
+      } else {
+        // No scales left
+        this.activeScaleId = null;
+        this.hide();
+      }
     } else {
       this.renderTabs();
     }
@@ -1243,7 +1282,7 @@ export const TimeSlider = {
    * @param {number} direction - 1 for forward, -1 for rewind
    */
   playFast(direction) {
-    this.playSpeed = 3;
+    this.playSpeed = FAST_SPEED;
     this.playDirection = direction;
     this.startPlayback();
   },
@@ -1267,15 +1306,19 @@ export const TimeSlider = {
       let nextTime;
       if (this.playDirection === 1) {
         nextTime = this.getNextAvailableTime(this.currentTime);
-        // Check for wrap-around (looped back to start)
+        // Check for end of timeline - pause instead of looping
         if (nextTime <= this.currentTime && this.sortedTimes.length > 1) {
-          nextTime = this.sortedTimes[0];
+          // Reached the end - pause playback
+          this.pause();
+          return;
         }
       } else {
         nextTime = this.getPrevAvailableTime(this.currentTime);
-        // Check for wrap-around (looped back to end)
+        // Check for start of timeline - pause instead of looping
         if (nextTime >= this.currentTime && this.sortedTimes.length > 1) {
-          nextTime = this.sortedTimes[this.sortedTimes.length - 1];
+          // Reached the start - pause playback
+          this.pause();
+          return;
         }
       }
       this.setTime(nextTime, 'playback');
@@ -1298,7 +1341,7 @@ export const TimeSlider = {
       this.playBtn.title = 'Pause';
 
       // Highlight fast buttons when in fast mode
-      if (this.playSpeed === 3) {
+      if (this.playSpeed === FAST_SPEED) {
         if (this.playDirection === -1) {
           this.rewindBtn?.classList.add('active');
         } else {

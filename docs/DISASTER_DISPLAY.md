@@ -9,6 +9,61 @@ Event-based visualization for disasters including earthquakes, hurricanes, wildf
 
 ---
 
+## Global Disaster Data Sources
+
+All disaster data uses **global sources only** - no country-specific duplicates. Each source has live API endpoints for ongoing updates.
+
+| Type | Source | Data Path | Live Update URL | Coverage |
+|------|--------|-----------|-----------------|----------|
+| **Earthquakes** | USGS Earthquake Catalog | `global/usgs_earthquakes/` | `https://earthquake.usgs.gov/fdsnws/event/1/query` | 1900-present, M2.5+ global |
+| **Tropical Storms** | NOAA IBTrACS v04r01 | `global/tropical_storms/` | `https://www.ncei.noaa.gov/data/international-best-track-archive-for-climate-stewardship-ibtracs/` | 1842-present, all basins |
+| **Tsunamis** | NOAA NCEI Historical Tsunami Database | `global/tsunamis/` | `https://www.ngdc.noaa.gov/hazel/hazard-service/api/v1/tsunamis/` | 2100 BC-present, global |
+| **Volcanoes** | Smithsonian Global Volcanism Program | `global/smithsonian_volcanoes/` | `https://volcano.si.edu/database/webservices.cfm` | Holocene epoch, 1,400+ volcanoes |
+| **Wildfires** | Global Fire Atlas (NASA/ORNL) | `global/fire_atlas/` | [Zenodo](https://zenodo.org/records/11400062) | 2002-2024, 13.3M fires, daily progression |
+
+### Data Files Per Source
+
+**Earthquakes:**
+- `events.parquet` - Individual events (306K+ rows)
+- `GLOBAL.parquet` - Country-year aggregates
+
+**Tropical Storms:**
+- `storms.parquet` - Storm metadata (13,541 storms)
+- `positions.parquet` - 6-hourly track positions (722,507 rows)
+
+**Tsunamis:**
+- `events.parquet` - Source events/epicenters (2,619 events)
+- `runups.parquet` - Coastal observation points (33,623 runups)
+
+**Volcanoes:**
+- `events.parquet` - Eruption events
+- `volcanoes.parquet` - Volcano locations
+
+**Wildfires (Global Fire Atlas):**
+- `fires.parquet` - Fire events with perimeters (13.3M fires)
+- `ignitions.parquet` - Ignition points with fire metadata
+- Attributes: fire_id, start/end dates, size, duration, spread speed/direction
+- Daily progression polygons for animation
+
+### Alternative Fire Data Sources
+
+| Source | Coverage | Use Case |
+|--------|----------|----------|
+| **NASA FIRMS** | Global, 2000+, <3h latency | Live heatmap (Climate section), not tracked events |
+| **MTBS** | USA only, 1984+, large fires | Higher precision USA analysis (future enhancement) |
+
+NASA FIRMS provides raw satellite hotspot detections - useful for real-time fire activity heatmaps but not individual fire events. Global Fire Atlas clusters these into tracked fire events with perimeters.
+
+### Live Update Pipeline (Future)
+
+See `docs/future/native_refactor.md` for the planned live data architecture:
+1. Always-on scraper monitors live APIs
+2. Incremental updates to cloud storage (R2/S3)
+3. Client sync on startup
+4. Same overlay system displays both live and historical
+
+---
+
 ## Design Philosophy
 
 The system is designed for worldwide disaster data:
@@ -406,6 +461,140 @@ const adaptiveStepMs = Math.max(MIN_STEP_MS, Math.ceil(timeRange / MAX_STEPS));
 ```
 This ensures animations complete in ~200 steps whether the sequence is hours or months long.
 
+### Phase 2c: Unified EventAnimator [IN PROGRESS]
+
+Created `event-animator.js` to unify animation patterns across disaster types:
+
+**Motivation:**
+Previously had separate animators (SequenceAnimator for earthquakes, TrackAnimator for hurricanes) with duplicated logic for TimeSlider integration, exit callbacks, and layer management.
+
+**Architecture:**
+
+```
+EventAnimator (unified controller)
+  |
+  +-- Animation Modes
+  |     - ACCUMULATIVE: Events appear and stay (earthquakes, volcanoes)
+  |     - PROGRESSIVE: Track grows, current position highlighted (hurricanes)
+  |     - POLYGON: Areas change over time (wildfires, floods)
+  |
+  +-- Common Infrastructure
+  |     - TimeSlider multi-scale integration (addScale/setActiveScale/removeScale)
+  |     - Exit button and cleanup callbacks
+  |     - Time stepping and playback
+  |     - Layer lifecycle management
+  |
+  +-- Rendering Delegation
+        - Routes to existing models: model-point-radius, model-track, model-polygon
+        - Models handle visualization specifics (colors, sizes, symbols)
+```
+
+**Usage:**
+
+```javascript
+import { EventAnimator, AnimationMode } from './event-animator.js';
+
+// Start earthquake sequence animation
+EventAnimator.start({
+  id: 'seq-abc123',
+  label: 'M7.1 Jan 5',
+  mode: AnimationMode.ACCUMULATIVE,
+  events: earthquakeFeatures,
+  timeField: 'timestamp',
+  granularity: '6h',
+  renderer: 'point-radius',
+  onExit: () => restoreNormalView()
+});
+
+// Start hurricane track animation
+EventAnimator.start({
+  id: 'track-2005236N23285',
+  label: 'Katrina',
+  mode: AnimationMode.PROGRESSIVE,
+  events: trackPositions,
+  timeField: 'timestamp',
+  granularity: '6h',
+  renderer: 'track',
+  onExit: () => restoreYearlyView()
+});
+
+// Future: wildfire spread animation
+EventAnimator.start({
+  id: 'fire-camp2018',
+  label: 'Camp Fire',
+  mode: AnimationMode.POLYGON,
+  events: dailyPerimeters,
+  timeField: 'date',
+  granularity: 'daily',
+  renderer: 'polygon',
+  onExit: () => restoreStaticView()
+});
+```
+
+**Key Behaviors by Mode:**
+
+| Mode | Display Logic | TimeSlider Behavior |
+|------|---------------|---------------------|
+| ACCUMULATIVE | Events appear at timestamp, stay visible | Shows count of visible events |
+| PROGRESSIVE | Track grows, only current position active | Shows track progress X/Y positions |
+| POLYGON | Area state at exact timestamp | Shows snapshot date |
+
+**Rolling Window + Fade:**
+
+Events don't just appear and stay forever - they use a rolling window based on time granularity with opacity fading:
+
+```javascript
+// Window duration based on selected granularity
+const WINDOW_DURATIONS = {
+  '6h': 24 * 60 * 60 * 1000,      // 24h window (4 data points)
+  'daily': 7 * 24 * 60 * 60 * 1000,  // 7 day window
+  'weekly': 28 * 24 * 60 * 60 * 1000, // 4 week window
+  'monthly': 90 * 24 * 60 * 60 * 1000, // ~3 months
+  'yearly': 365 * 24 * 60 * 60 * 1000  // 1 year window
+};
+
+// For continuous events like storms, detect when they've "ended"
+// Uses 4x the expected update interval as threshold
+const INACTIVITY_MULTIPLIER = 4;
+const UPDATE_INTERVALS = {
+  storm: 6 * 60 * 60 * 1000,      // 6h updates -> 24h threshold
+  wildfire: 24 * 60 * 60 * 1000,  // Daily updates -> 4 day threshold
+  flood: 24 * 60 * 60 * 1000,     // Daily updates -> 4 day threshold
+  default: null                    // Uses animation granularity
+};
+// Point-in-time events: earthquake, volcano, tornado, tsunami (threshold = 0)
+```
+
+**Opacity Calculation:**
+- New events appear at full opacity (1.0)
+- As events age within the window, opacity decreases linearly
+- Events beyond window boundary are removed
+- This creates a "rolling view" of what's happening NOW while showing recent context
+
+```javascript
+// Each feature gets a _recency property (0-1)
+// Renderers multiply base opacity by _recency
+'circle-opacity': ['*', 0.9, ['coalesce', ['get', '_recency'], 1.0]]
+```
+
+**Visual Result:**
+```
+Timeline: [----window----][current]
+          ^              ^
+          fading out     full opacity
+
+Time -->  Jan     Feb     Mar     Apr (current)
+          |       |       |       |
+Events:   [dim]   [faded] [visible] [BRIGHT]
+          0.2     0.4     0.7      1.0 opacity
+```
+
+**Files:**
+- `static/modules/event-animator.js` - Unified animation controller with rolling window
+- `static/modules/models/model-point-radius.js` - Updated with _recency opacity
+- `static/modules/models/model-track.js` - Updated with _recency trail fade
+- Existing animators (sequence-animator.js, track-animator.js) to be refactored to use EventAnimator
+
 ### Phase 3: Track Model [COMPLETE]
 
 Extracted hurricane track rendering into `model-track.js`:
@@ -447,6 +636,8 @@ Added API endpoints to `app.py`:
 | static/modules/overlay-selector.js | NEW | UI component |
 | static/modules/overlay-controller.js | NEW | Data loading + sequence orchestration |
 | static/modules/sequence-animator.js | NEW | Aftershock sequence animation (~850 lines) |
+| static/modules/track-animator.js | NEW | Hurricane track animation (~600 lines) |
+| static/modules/event-animator.js | NEW | Unified animation controller (~400 lines) |
 | static/modules/time-slider.js | MODIFIED | Indexed scale, listener system, multi-scale tabs |
 | static/modules/map-adapter.js | MODIFIED | Delegates to models |
 | static/modules/app.js | MODIFIED | Initializes all components |
@@ -471,24 +662,44 @@ The existing system handles aggregate mode well. This document focuses on **even
 
 ## Data File Structure
 
-Each disaster source has multiple files:
+All disaster data uses global paths under `county-map-data/global/`:
 
-### Earthquakes (usgs_earthquakes/)
+### Earthquakes (global/usgs_earthquakes/)
 ```
 events.parquet     # Individual events with lat/lon/magnitude/radius
-USA.parquet        # County-year aggregates (earthquake_count, max_magnitude)
-metadata.json      # Describes both files
-```
-
-### Hurricanes (hurricanes/)
-```
-positions.parquet  # 6-hourly track positions (lat/lon/wind/pressure)
-storms.parquet     # Storm summary (name, dates, max_category)
-USA.parquet        # County-year aggregates (storm_count, max_wind)
+GLOBAL.parquet     # Country-year aggregates
 metadata.json
 ```
 
-### Wildfires (wildfires/)
+### Tropical Storms (global/tropical_storms/)
+```
+storms.parquet     # Storm metadata (13,541 storms)
+positions.parquet  # 6-hourly track positions (722,507 positions)
+metadata.json
+```
+
+### Tsunamis (global/tsunamis/)
+```
+events.parquet     # Source epicenters (2,619 events)
+runups.parquet     # Coastal observations (33,623 runups)
+metadata.json
+```
+
+### Volcanoes (global/smithsonian_volcanoes/)
+```
+events.parquet     # Eruption events
+volcanoes.parquet  # Volcano locations
+metadata.json
+```
+
+### Active Fires (global/nasa_firms/)
+```
+events.parquet     # Fire detections with FRP intensity
+metadata.json
+```
+Columns: event_id, timestamp, latitude, longitude, frp, brightness, confidence, sensor, daynight
+
+### Wildfires (countries/USA/wildfires/) - USA only, large fires
 ```
 fires.parquet      # Individual fires with centroid lat/lon and acres
 USA.parquet        # County-year aggregates (fire_count, total_acres)
@@ -592,6 +803,14 @@ The frontend reads these standardized columns regardless of original source form
 - No event-specific geometry
 - Good for: Drought conditions (weekly severity by county)
 
+**Model E: Radial Propagation** (source point -> multiple destination points)
+- Central source event (earthquake/volcano epicenter)
+- Multiple observation/impact points radiating outward
+- Distance-based timing (closer points appear first in animation)
+- Optional lines connecting source to destinations
+- Good for: Tsunamis (source + runup observations), Volcanic ash clouds, Earthquake-triggered events
+- Uses same cross-event linking pattern as volcano->earthquake drill-down
+
 ### Current Data Reality
 
 | Type | Model | Time Scale | Key Fields | Notes |
@@ -600,7 +819,7 @@ The frontend reads these standardized columns regardless of original source form
 | **Volcano** | A (point+radius) | Yearly | lat, lon, VEI | Could calculate radius from VEI |
 | **Tornado** | A (point+radius) | Daily | lat, lon, event_radius_km, tornado_scale | Already has radius! |
 | **Hurricane/Cyclone** | B (track) | 6-hourly | lat, lon, wind_kt, category, r34/r50/r64 radii | Full track positions |
-| **Tsunami** | A (point) | Daily | lat, lon, max_water_height_m | Runup observation points |
+| **Tsunami** | E (radial) | Daily | source lat/lon, eq_magnitude, runup water_height_m, dist_from_source_km | Source + runup observations |
 | **Wildfire** | C (polygon) | Daily | centroid_lat, centroid_lon, burned_acres, perimeter | Perimeter polygons NOW AVAILABLE |
 | **Drought** | D (choropleth) | Weekly | severity levels D0-D4 by county | Use existing choropleth system |
 
@@ -1140,13 +1359,13 @@ Earthquakes and volcanoes - simplest display model.
 - damage_radius_km - Inner damage circle
 - year - TimeSlider filtering
 
-### Phase 2: Model B - Track/Trail (Hurricanes) [COMPLETE]
+### Phase 2: Model B - Track/Trail (Hurricanes) [testing]
 - [x] Migrate HurricaneHandler to generalized event system
 - [x] Track line rendering (connect positions)
 - [x] Category-based coloring (Saffir-Simpson scale)
 - [x] Storm drill-down for individual track display
 
-### Phase 3: Model C - Polygon/Area (Wildfires) [COMPLETE]
+### Phase 3: Model C - Polygon/Area (Wildfires) [incomplete]
 - [x] Polygon fill + stroke rendering
 - [x] Severity/status-based color coding
 - [x] Label rendering for fire names
@@ -1166,6 +1385,24 @@ Earthquakes and volcanoes - simplest display model.
 ---
 
 ## Recent Updates (2026-01-09)
+
+### Data Source Cleanup
+Removed country-specific duplicate data in favor of global sources:
+- **Deleted**: `countries/USA/hurricanes/` (subset of IBTrACS)
+- **Deleted**: `countries/USA/tsunamis/` (subset of global)
+- **Deleted**: `countries/USA/usgs_earthquakes/` (subset of global)
+- **Deleted**: `countries/USA/volcanoes/` (subset of global)
+- **Deleted**: `global/reliefweb_disasters/` (redundant aggregate of event data)
+
+All disaster visualization now uses global paths only.
+
+### Global Tsunami Data Added
+Created converter for NOAA NCEI Global Historical Tsunami Database:
+- **Events**: 2,619 source events (earthquake/volcano epicenters)
+- **Runups**: 33,623 coastal observation points
+- **Coverage**: 2100 BC to present
+- **Files**: `global/tsunamis/events.parquet`, `runups.parquet`
+- **Display model**: Model E (Radial Propagation) - source + runup observations
 
 ### Volcano Enhancements
 - **Duration columns**: Added `end_year`, `end_timestamp`, `duration_days`, `is_ongoing` to track continuous eruptions
@@ -1201,18 +1438,75 @@ v Disasters
 - Parent checkbox toggles all children
 - Placeholder items disabled with "(soon)" label
 
-### Map Projection Toggle
-- Added automatic 2D/globe switching based on zoom level
+### Map Projection Toggle [DISABLED]
+- Previously had automatic 2D/globe switching based on zoom level
 - Zoom >= 2.0: Mercator (flat 2D map)
 - Zoom < 2.0: Globe projection with atmosphere/space effects
-- Handled in `map-adapter.js` handleZoomChange()
+- **Disabled 2026-01-09**: Caused interference with tsunami animations and general instability
+- Now uses Mercator projection only for stability
 
 ### API Path Cleanup
 - Removed USA fallback paths for earthquakes and volcanoes
 - All disaster data now uses global paths only:
   - `global/usgs_earthquakes/events.parquet`
   - `global/smithsonian_volcanoes/events.parquet`
-- Hurricanes/wildfires still use USA paths (no global data yet)
+- Hurricanes now use global IBTrACS data
+- Wildfires still use USA paths (no global data yet)
+
+### Global Tropical Storm Data (IBTrACS)
+- **Source**: NOAA IBTrACS v04r01 - merges all regional agencies (NHC, JTWC, JMA, BOM, IMD, etc.)
+- **Data range**: 1842-2026 (184 years of historical data)
+- **Total storms**: 13,541 storms globally
+- **Total positions**: 722,507 track positions (6-hourly)
+- **Wind radii coverage**: ~10% of positions have r34/r50/r64 quadrant data (mostly modern era)
+- **Basins covered**: NA (North Atlantic), EP (East Pacific), WP (West Pacific), SI (South Indian), SP (South Pacific), NI (North Indian), SA (South Atlantic)
+
+**Files created:**
+- `global/tropical_storms/storms.parquet` - Storm metadata (0.46 MB)
+- `global/tropical_storms/positions.parquet` - Track positions (9.41 MB)
+- `data_converters/converters/convert_ibtracs.py` - Converter
+- `data_converters/downloaders/download_ibtracs.py` - Downloader
+
+**API endpoints:**
+- `GET /api/storms/geojson?year=2005&basin=NA` - Storms as GeoJSON points (at max intensity location)
+- `GET /api/storms/{storm_id}/track` - Full track with wind radii for animation
+- `GET /api/storms/list?min_year=1950&basin=NA&limit=100` - Storm list for filtering
+
+### Tropical Storm Display Design
+
+**Yearly Overview Mode:**
+- Time slider at year granularity
+- Show full storm tracks as category-colored line segments
+- Click storm for popup with details and "Animate Track" button
+- Default: storms from 1950-present
+
+**Storm Animation Mode (drill-down):**
+- Triggered by clicking "Animate Track" button in popup
+- Time slider switches to 6-hour intervals
+- Progressive track drawing with current position marker
+- Wind radii circles (r34/r50/r64) displayed at current position
+- Exit button returns to yearly overview
+
+**Future Enhancement: Precomputed Wind Swaths**
+For better performance and visualization, precompute cumulative wind footprints:
+```python
+# In convert_ibtracs.py (future enhancement)
+def compute_wind_swath(positions_df, storm_id, wind_threshold=34):
+    """
+    Compute merged polygon of all wind radii positions for a storm.
+    Results in a "tube" shape showing total area affected by winds.
+
+    Store as 'footprint_34kt', 'footprint_50kt', 'footprint_64kt'
+    GeoJSON columns in storms.parquet.
+    """
+    # For each position with wind radii:
+    # 1. Build quadrant polygon from r34_ne/se/sw/nw
+    # 2. Union all position polygons into single MultiPolygon
+    # 3. Simplify for web rendering
+    pass
+```
+This would enable showing storm "impact footprints" without loading all positions.
+Priority: Low - current line display is sufficient for most use cases.
 
 ---
 
@@ -1387,4 +1681,4 @@ Future enhancement:
 4. **Wildfires** - Need additional data source for progression
 
 
-*Last Updated: 2026-01-09 - Volcano duration columns and cross-linking complete. Earthquake data pending full merge (using M4.5+ for now). Hierarchical overlay categories. 2D/globe toggle at zoom 2. Moving to track/trail displays next.*
+*Last Updated: 2026-01-09 - Data cleanup: removed USA-specific duplicates in favor of global sources. Added global tsunami data (NOAA NCEI). All disaster data now uses global paths only.*

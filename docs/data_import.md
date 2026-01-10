@@ -498,6 +498,134 @@ Cross-event linking columns (for disaster chains):
 Optional geometry column:
 - `perimeter` - GeoJSON string for polygon events (wildfires, floods)
 
+### Tropical Storm Schema (IBTrACS)
+
+Tropical storms use a two-table structure for efficient yearly overview + drill-down animation:
+
+**storms.parquet** - Storm metadata (one row per storm):
+
+| Column | Type | Required | Description |
+|--------|------|----------|-------------|
+| `storm_id` | string | Yes | Unique storm identifier (e.g., `2005236N23285` for Katrina) |
+| `name` | string | No | Storm name (e.g., `KATRINA`, `MARIA`) |
+| `year` | int | Yes | Season year |
+| `basin` | string | Yes | Basin code: `NA`, `EP`, `WP`, `SI`, `SP`, `NI`, `SA` |
+| `subbasin` | string | No | Sub-basin code (e.g., `GM` for Gulf of Mexico) |
+| `source_agency` | string | No | Primary tracking agency (NHC, JTWC, JMA, etc.) |
+| `start_date` | datetime | Yes | First track position timestamp |
+| `end_date` | datetime | Yes | Last track position timestamp |
+| `max_wind_kt` | float | No | Maximum sustained wind (knots) |
+| `min_pressure_mb` | float | No | Minimum central pressure (millibars) |
+| `max_category` | string | Yes | Saffir-Simpson category: `TD`, `TS`, `Cat1`-`Cat5` |
+| `num_positions` | int | Yes | Number of 6-hourly track positions |
+| `made_landfall` | bool | Yes | Whether storm made landfall |
+| `track_coords` | string | Yes | **Precalculated**: JSON array of `[[lon,lat],...]` for GeoJSON LineString |
+| `bbox` | string | Yes | **Precalculated**: JSON `[minLon, minLat, maxLon, maxLat]` for spatial queries |
+| `has_wind_radii` | bool | Yes | **Precalculated**: True if any position has r34/r50/r64 data |
+
+**positions.parquet** - Track positions (6-hourly, for animation drill-down):
+
+| Column | Type | Required | Description |
+|--------|------|----------|-------------|
+| `event_id` | string | Yes | Position ID: `{storm_id}_{index}` |
+| `storm_id` | string | Yes | Parent storm ID |
+| `timestamp` | datetime | Yes | Position timestamp (6-hourly intervals) |
+| `latitude` | float | Yes | Position latitude |
+| `longitude` | float | Yes | Position longitude |
+| `wind_kt` | float | No | Sustained wind speed (knots) |
+| `pressure_mb` | float | No | Central pressure (millibars) |
+| `category` | string | No | Category at this position: `TD`, `TS`, `Cat1`-`Cat5` |
+| `basin` | string | No | Basin code |
+| `source_agency` | string | No | Agency providing this observation |
+| `status` | string | No | Storm status (e.g., `HU`, `TS`, `EX`) |
+| `loc_id` | string | Yes | Water body code (e.g., `XOA`, `XSG`) |
+| `r34_ne/se/sw/nw` | int | No | 34kt wind radius by quadrant (nautical miles) |
+| `r50_ne/se/sw/nw` | int | No | 50kt wind radius by quadrant (nautical miles) |
+| `r64_ne/se/sw/nw` | int | No | 64kt wind radius by quadrant (nautical miles) |
+
+**Precalculated fields rationale:**
+- `track_coords`: Eliminates join with positions table for yearly track display. API reads directly from storms table and builds GeoJSON LineString without aggregation.
+- `bbox`: Enables fast spatial filtering (e.g., "storms affecting Florida") without loading all coordinates.
+- `has_wind_radii`: UI can show/hide "View Wind Radii" button without querying positions table.
+
+**Basin codes:**
+- `NA` - North Atlantic (NHC)
+- `EP` - East Pacific (NHC)
+- `WP` - West Pacific (JTWC/JMA)
+- `SI` - South Indian (Reunion/BOM)
+- `SP` - South Pacific (BOM/Fiji)
+- `NI` - North Indian (IMD)
+- `SA` - South Atlantic (rare)
+
+### Tsunami Schema (NOAA NCEI)
+
+**Source:** [NOAA NCEI Global Historical Tsunami Database](https://www.ncei.noaa.gov/products/natural-hazards/tsunamis-earthquakes-volcanoes/tsunamis)
+- DOI: 10.7289/V5PN93H7
+- Coverage: 2100 BC to present (2,400+ events globally)
+- Update: Continuous (as events occur)
+- License: Public Domain (U.S. Government)
+
+**HaZEL Search Tool:** https://www.ngdc.noaa.gov/hazel/view/hazards/tsunami/event-search
+
+Tsunamis use a two-table structure: source events + runup observations. Unlike hurricanes (sequential track), tsunamis radiate outward from a source to multiple coastal points.
+
+**events.parquet** - Tsunami source events (earthquake/landslide epicenters):
+
+| Column | Type | Required | Description |
+|--------|------|----------|-------------|
+| `event_id` | string | Yes | Unique event identifier (e.g., `TS005413` for 2011 Tohoku) |
+| `timestamp` | datetime | Yes | Event datetime (source earthquake/landslide time) |
+| `year` | int | Yes | Event year (for filtering) |
+| `latitude` | float | Yes | Source latitude (earthquake epicenter) |
+| `longitude` | float | Yes | Source longitude |
+| `cause` | string | Yes | Cause type: `Earthquake`, `Landslide`, `Volcano`, `Meteorological` |
+| `cause_code` | int | No | NCEI cause code (1=Earthquake, 2=Questionable, etc.) |
+| `country` | string | No | Source country name |
+| `location` | string | No | Source location description |
+| `eq_magnitude` | float | No | Triggering earthquake magnitude (if caused by earthquake) |
+| `max_water_height_m` | float | No | Maximum observed water height (meters) at any runup |
+| `intensity` | float | No | Tsunami intensity (Soloviev-Imamura scale) |
+| `num_runups` | int | No | Number of runup observations |
+| `deaths` | int | No | Total deaths (actual or estimated) |
+| `deaths_order` | int | No | Deaths magnitude order (0=0, 1=1-10, 2=11-100, etc.) |
+| `damage_millions` | float | No | Damage in millions USD |
+| `damage_order` | int | No | Damage magnitude order |
+| `loc_id` | string | Yes | Source location code or water body code |
+| `parent_event_id` | string | No | Links to triggering earthquake (for cross-event chains) |
+
+**runups.parquet** - Runup observations (where waves were measured/observed):
+
+| Column | Type | Required | Description |
+|--------|------|----------|-------------|
+| `runup_id` | string | Yes | Unique runup identifier |
+| `event_id` | string | Yes | Parent tsunami event ID (strip TS prefix for NCEI match) |
+| `timestamp` | datetime | No | Arrival time at this location (often estimated) |
+| `year` | int | Yes | Year (for filtering) |
+| `latitude` | float | Yes | Observation latitude |
+| `longitude` | float | Yes | Observation longitude |
+| `country` | string | No | Observation country |
+| `location` | string | No | Location name (e.g., "HILO, HAWAII, HI") |
+| `water_height_m` | float | No | Maximum water height observed (meters) |
+| `horizontal_inundation_m` | float | No | How far inland water reached (meters) |
+| `dist_from_source_km` | float | No | Distance from source epicenter (km) |
+| `arrival_travel_time_min` | int | No | Travel time from source (minutes) |
+| `deaths` | int | No | Deaths at this location |
+| `deaths_order` | int | No | Deaths magnitude order |
+| `damage_order` | int | No | Damage magnitude order |
+| `loc_id` | string | Yes | Location code or water body code |
+
+**Animation/Display Logic:**
+- Source event displays like earthquake (point with magnitude sizing)
+- Click "View Runups" to show coastal observation points
+- Runups can be animated by estimated arrival time: `dist_from_source_km / 700` hours (tsunami speed ~700 km/h in deep ocean)
+- Lines can be drawn from source to runup points (radial propagation pattern)
+
+**Cross-Event Linking:**
+Tsunamis are typically triggered by earthquakes. Use `parent_event_id` to link:
+- Time window: 0-24 hours after earthquake
+- Spatial: Coastal areas near earthquake epicenter
+- Earthquake M7.5+ in oceanic/subduction zones are primary triggers
+
 **{COUNTRY}.parquet** - Region-year aggregates (required):
 - `loc_id` - Location code
 - `year` - Year
@@ -694,7 +822,8 @@ print(geom_df.groupby('admin_level').size())
 | USGS Global Earthquakes | `convert_global_earthquakes.py` | CSV | Water body assignment | Global events with aftershock detection |
 | USGS US Earthquakes | `convert_usgs_earthquakes.py` | CSV | 3-pass spatial join | US-only point events |
 | Canada Earthquakes | `convert_canada_earthquakes.py` | CSV | 3-pass spatial join | Canadian data |
-| HURDAT2 Hurricanes | `convert_hurdat2.py` | Custom text | Point-in-polygon + water | Track/trajectory data |
+| IBTrACS Global Storms | `convert_ibtracs.py` | CSV | Water body assignment | Global tropical storms with precalculated tracks |
+| HURDAT2 Hurricanes | `convert_hurdat2.py` | Custom text | Point-in-polygon + water | Track/trajectory data (Atlantic/Pacific only) |
 | NOAA Tsunamis | `convert_tsunami.py` | JSON | 3-pass spatial join | Multiple related tables |
 | Smithsonian Global Volcanoes | `convert_global_volcanoes.py` | TSV | Water body assignment | Global eruptions with VEI |
 | Smithsonian Volcanoes | `convert_volcano.py` | GeoJSON | Point + water bodies | Location + events |
@@ -706,6 +835,7 @@ print(geom_df.groupby('admin_level').size())
 |--------|----------|------------------|----------|------------|
 | USGS Earthquakes | https://earthquake.usgs.gov/fdsnws/event/1/ | Real-time | Global M2.5+ | `download_usgs_earthquakes.py` |
 | Smithsonian Volcanoes | https://volcano.si.edu/geoserver/GVP-VOTW/ows (WFS) | Weekly | Global Holocene | `download_volcano.py` |
+| IBTrACS Storms | https://www.ncei.noaa.gov/data/international-best-track-archive-for-climate-stewardship-ibtracs/ | Monthly | Global 1842-present | `download_ibtracs.py` |
 | NOAA Hurricanes | https://www.nhc.noaa.gov/gis/ | 6-hourly | Atlantic/Pacific | `download_hurdat2.py` |
 | NOAA Tsunamis | https://www.ngdc.noaa.gov/hazard/tsu_db.shtml | As events | Global historical | `download_tsunami.py` |
 | NASA FIRMS (Fires) | https://firms.modaps.eosdis.nasa.gov/api/ | 12 hours | Global active | (planned) |
@@ -787,4 +917,4 @@ finalize_source(parquet_path, source_id, events_parquet_path)
 
 ---
 
-*Last Updated: 2026-01-09*
+*Last Updated: 2026-01-09 - Added Tsunami schema (NOAA NCEI) with events + runups tables, radial propagation display model*
