@@ -25,7 +25,7 @@ const TYPE_TO_MODEL = {
   storm_track: 'track',
 
   // Polygon events (Model C)
-  wildfire: 'polygon',
+  wildfire: 'point-radius',  // Points for overview, perimeter on-demand for animation
   flood: 'polygon',
   ash_cloud: 'polygon',
   drought_area: 'polygon'

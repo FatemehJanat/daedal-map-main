@@ -3,8 +3,9 @@
 Quick reference for importing new data sources using the unified converter system.
 
 For detailed documentation see:
-- [data_pipeline.md](data_pipeline.md) - Full pipeline documentation
-- [geometry.md](geometry.md) - Geometry system details
+- [data_pipeline.md](data_pipeline.md) - Full pipeline documentation (schemas, metadata, folder structure)
+- [DISASTER_DISPLAY.md](DISASTER_DISPLAY.md) - Disaster event visualization and animation
+- [GEOMETRY.md](GEOMETRY.md) - Geometry system, loc_id specification
 
 ---
 

@@ -305,103 +305,239 @@ map.on('mouseleave', 'countries-fill', () => {
 
 ## Time Slider
 
-Interactive year slider for time-series data visualization with animated playback.
+Interactive time slider with variable granularity (6-hour to yearly), continuous speed control, and multi-scale tabs for event drill-down. Supports both choropleth animation (county-level data over time) and event animation (individual disaster events).
 
-### Trigger Conditions
+**Key files:**
+- [time-slider.js](../static/modules/time-slider.js) - Core slider, playback, multi-scale tabs
+- [event-animator.js](../static/modules/event-animator.js) - Unified event animation (earthquakes, storms, fires)
+- [sequence-animator.js](../static/modules/sequence-animator.js) - Earthquake aftershock sequences
+- [track-animator.js](../static/modules/track-animator.js) - Hurricane track animation
 
-The time slider appears when the LLM detects year range queries:
-- "over time", "trend", "from X to Y", "between X and Y"
-- "last N years", "since X"
-- Example: "show CO2 trend in Europe from 2000 to 2022"
+**Full planning history:** [archive/TIME_SLIDER_UPDATE_PLAN.md](archive/TIME_SLIDER_UPDATE_PLAN.md)
 
-### Order Format
+### Architecture Overview
 
-**Single year** (no slider):
-```json
-{
-  "year": 2022
-}
+```
+                    TimeSlider (time-slider.js)
+                           |
+          +----------------+----------------+
+          |                |                |
+    Choropleth Mode    Event Mode     Drill-Down Mode
+    (county data)    (disaster events)  (single event)
+          |                |                |
+   ChoroplethManager  EventAnimator   SequenceAnimator
+                                      TrackAnimator
 ```
 
-**Year range** (slider appears):
-```json
-{
-  "year_start": 2000,
-  "year_end": 2022
-}
+### Granularity System
+
+Time steps auto-adapt to data source:
+
+| Granularity | Step Size | Label Format | Use Case |
+|-------------|-----------|--------------|----------|
+| 6h | 6 hours | "Sep 28, 2022 06:00" | Hurricane positions |
+| daily | 1 day | "Sep 28, 2022" | Earthquake sequences, fire spread |
+| weekly | 7 days | "Week of Sep 28" | Drought progression |
+| monthly | 1 month | "Sep 2022" | Seasonal patterns |
+| yearly | 1 year | "2022" | Default for most data |
+
+Granularity is detected from catalog metadata or data timestamps. The slider auto-configures based on source type.
+
+### Speed Slider
+
+Continuous logarithmic slider controls animation speed across all modes:
+
+```
+Speed: [=====|==================]  4d/sec
+       30m/sec                15yr/sec
 ```
 
-### Response Format (Multi-Year)
+**Math:**
+- Base unit: 6-hour steps
+- Frame rate: 15 FPS
+- Range: 0.0056 to 1460 steps per frame
+- At minimum (0.0056 steps/frame): ~30m/sec (fine-grained animations like tsunamis)
+- At maximum (1460 steps/frame): ~15yr/sec (fast overview)
 
-```json
-{
-  "type": "data",
-  "multi_year": true,
-  "geojson": {...},
-  "year_data": {
-    "2000": {"USA": {"co2": 5000}, "GBR": {"co2": 400}},
-    "2001": {...}
-  },
-  "year_range": {
-    "min": 2000,
-    "max": 2022,
-    "available_years": [2000, 2001, ..., 2022]
-  },
-  "metric_key": "co2"
-}
-```
-
-### Frontend Components
-
-See [FRONTEND_MODULES.md](FRONTEND_MODULES.md) for module details.
-
-**TimeSlider** (modules/time-slider.js):
-- Slider control for year selection
-- Play/pause animation (600ms per year)
-- Year label display
-- `buildYearGeojson()` merges year data with base geometry
-
-**ChoroplethManager** (modules/choropleth.js):
-- Viridis color scale (colorblind-friendly)
-- Global min/max across all years (consistent scale)
-- Legend with gradient and formatted values (K/M/B suffixes)
-- Efficient interpolate expression for MapLibre
+**Logarithmic mapping** gives most slider range to slower speeds where precision matters:
+- Slider 0.0 -> 0.0056 steps/frame -> 30m/sec
+- Slider 0.25 -> ~0.5 steps/frame -> ~5h/sec
+- Slider 0.50 -> ~3 steps/frame -> ~2d/sec
+- Slider 0.75 -> ~90 steps/frame -> ~5wk/sec
+- Slider 1.0 -> 1460 steps/frame -> ~15yr/sec
 
 ### UI Layout
 
 ```
-+----------------------------------+
-|           Map                    |
-|                                  |
-|   [Legend]                       |
-|   CO2 (Mt)                       |
-|   [gradient]                     |
-|   0        5000                  |
-+----------------------------------+
-| [2000]====|========[2022]   [>]  |  <- Time slider
-|          2016                    |
-+----------------------------------+
++------------------------------------------------------------------+
+| LAYER: Earthquakes (1900-2024)                              [x]  |
++------------------------------------------------------------------+
+|                                                                  |
+|  [|<] [<] [>|<] [>] [>|]    Speed: [======|===============]  1d  |
+|   Skip      Play           Detail 6hr              Year   /sec   |
+|                                                                  |
+|  |======================|=============|========================| |
+|  1900                  1962          |                    2024   |
+|                              Jan 15, 1962                        |
++------------------------------------------------------------------+
 ```
 
-### Performance
+**Controls:**
+- `[|<]` / `[>|]` - Jump to start/end
+- `[<]` / `[>]` - Step backward/forward by current speed
+- `[>|<]` - Play/pause toggle
+- Speed slider - Continuous adjustment during playback
 
-- Geometry loaded once, stored in `baseGeojson`
-- Year data overlaid on features (no geometry duplication)
-- `updateSourceData()` for fast year changes (no layer recreation)
-- MapLibre interpolate expression auto-updates with new values
+### Multi-Scale Tabs
 
-### Indexed Scale (Data-Density Scaling)
+Drill down from overview to event detail with separate time scales:
 
-For datasets with large time ranges (e.g., earthquake history 1900-2026), the slider auto-enables indexed scale mode:
+```
++------------------+---------------------+
+| All Data (Years) | Hurricane Ian (6hr) |
++------------------+---------------------+
+```
 
-- **Trigger**: 50+ data points in `sortedTimes`
-- **Behavior**: Each data point gets equal slider space regardless of time gaps
-- **Benefit**: Ancient data points are reachable (no 10000-year jumps)
+**API:**
+```javascript
+TimeSlider.addScale({
+  id: 'hurricane-ian',
+  label: 'Hurricane Ian',
+  granularity: '6h',
+  timeRange: { min: startTimestamp, max: endTimestamp },
+  timeData: { /* position data by timestamp */ }
+});
+
+TimeSlider.setActiveScale('hurricane-ian');  // Switch to tab
+TimeSlider.removeScale('hurricane-ian');     // Remove tab
+```
+
+**Drill-down flow:**
+1. User loads global hurricanes (yearly overview mode)
+2. User clicks Hurricane Ian marker
+3. System fetches track positions, adds 6-hour tab
+4. Animation shows storm path with 6-hour granularity
+5. User can switch tabs to return to overview
+
+---
+
+### Disaster-Specific Animation
+
+Each disaster type has specialized animation behavior:
+
+#### Earthquakes (SequenceAnimator)
+
+**Overview mode:** Points sized by magnitude, colored by depth
+- Rolling window shows events from current time period
+- Flash effect on new events, fade as they age
+- Filter to time window based on current speed
+
+**Aftershock drill-down:** Click mainshock to animate sequence
+- Mainshock appears first with expanding circle
+- Aftershocks appear at their timestamps
+- Circles grow/shrink based on magnitude
+- Camera follows sequence center
+- Adaptive time stepping (1hr to 2days based on sequence length)
+
+```javascript
+// Sequence animation creates expanding circles
+SequenceAnimator.animate(mainshockId, {
+  aftershocks: [...],  // From /api/earthquakes/{id}/aftershocks
+  duration: 10000,     // Animation duration in ms
+  onComplete: () => TimeSlider.removeScale(id)
+});
+```
+
+#### Hurricanes (TrackAnimator)
+
+**Overview mode:** Storm positions as points, latest position highlighted
+- 6-hour granularity (matches HURDAT2 data)
+- Category coloring (1-5 scale)
+- Wind speed in knots
+
+**Track drill-down:** Click storm to animate full path
+- Animated line follows historical positions
+- Current position marker moves along track
+- Shows wind speed, pressure, category at each point
+- ~10 second animation for typical 7-day storm
+
+```javascript
+// Track data from /api/hurricane/track/{storm_id}
+TrackAnimator.animate(stormId, {
+  positions: [...],  // Array of {timestamp, lat, lon, wind, pressure, category}
+  onComplete: callback
+});
+```
+
+#### Wildfires (Fire Progression)
+
+**Overview mode:** Final fire perimeters as polygons, colored by size
+- Points for fires without perimeter data
+- Year filtering via time slider
+
+**Progression drill-down:** Click fire to animate spread
+- Daily snapshots of cumulative burn area
+- Polygon geometry updates each day
+- Shows area burned progression
+- Uses day_of_burn raster data converted to daily polygons
+
+```javascript
+// Progression data from /api/wildfires/{event_id}/progression
+handleFireProgression({
+  snapshots: [...],  // Array of {date, day_num, area_km2, geometry}
+  eventId: fireId,
+  totalDays: duration
+});
+```
+
+**Data source:** Global Fire Atlas day_of_burn rasters + perimeter shapefiles
+
+#### Tsunamis
+
+**Overview mode:** Runup points sized by wave height
+- Flash + fade animation during playback
+- Colored by wave height (meters)
+
+**No drill-down currently** - tsunamis are point-in-time events
+
+---
+
+### Rolling Window + Fade
+
+Events use a visibility window that scales with speed:
+
+| Speed | Window Duration | Effect |
+|-------|-----------------|--------|
+| 6h/sec | 24 hours | 4 data points visible |
+| 1d/sec | 7 days | 1 week of events |
+| 1mo/sec | ~3 months | Quarter's events |
+| 1yr/sec | 1 year | Full year visible |
+
+**Flash + Fade effect:**
+```javascript
+// _recency property: 1.5 = flash, 1.0 = recent, 0.0 = fading out
+const flashPeriod = windowDuration * 0.1;  // First 10% of window
+const age = currentTime - eventTime;
+
+if (age < flashPeriod) {
+  recency = 1.5;  // Flash with size boost
+} else {
+  recency = 1.0 - (age / windowDuration);  // Linear fade
+}
+```
+
+### Indexed Scale Mode
+
+For datasets with large time ranges (earthquakes 1900-2024), the slider auto-enables indexed scaling:
+
+- **Trigger:** 50+ data points in time range
+- **Behavior:** Each data point gets equal slider space regardless of gaps
+- **Benefit:** Ancient events reachable without 10000-year jumps
 
 ```javascript
 // Auto-detects based on data density
 shouldUseIndexedScale() {
-  return this.sortedTimes.length >= this.indexedScaleMinPoints;
+  return this.sortedTimes.length >= 50;
 }
 
 // Slider position <-> actual time conversion
@@ -409,124 +545,71 @@ indexToTime(index)   // Get time value from slider position
 timeToIndex(time)    // Get slider position from time value
 ```
 
-### Data-Driven Year Range
+### Internal Timestamp Handling
 
-Year ranges are derived from actual data, not hardcoded config:
+All time values stored internally as Unix milliseconds for consistent math:
 
 ```javascript
-// overlay-controller.js extracts years from features
-const availableYears = new Set();
-for (const feature of geojson.features) {
-  const year = feature.properties[endpoint.yearField];
-  if (year != null) availableYears.add(parseInt(year));
+// Years auto-converted on input
+normalizeToTimestamp(time) {
+  if (Math.abs(time) < 50000) {
+    return Date.UTC(time, 0, 1);  // Year -> Jan 1 timestamp
+  }
+  return time;  // Already a timestamp
 }
-const sortedYears = Array.from(availableYears).sort((a, b) => a - b);
 
-// Min/max derived from actual data
-const minYear = sortedYears[0];
-const maxYear = sortedYears[sortedYears.length - 1];
+// Display converts back for yearly granularity
+formatTimeLabel(timestamp) {
+  if (this.granularity === 'yearly') {
+    return new Date(timestamp).getUTCFullYear().toString();
+  }
+  // Other formats for sub-yearly...
+}
 ```
-
-### Adaptive Time Stepping (Sequence Animation)
-
-For aftershock sequences with long durations, time steps scale adaptively:
-
-```javascript
-const MAX_STEPS = 200;
-const MIN_STEP_MS = 1 * 60 * 60 * 1000;  // 1 hour minimum
-const timeRange = maxTime - minTime;
-
-// Calculate adaptive step (never smaller than 1 hour)
-const adaptiveStepMs = Math.max(MIN_STEP_MS, Math.ceil(timeRange / MAX_STEPS));
-```
-
-**Results:**
-- Short sequences (hours): 1-hour steps
-- Medium sequences (days): 6-hour steps
-- Long sequences (months): 12h-2day steps
-- Animation always completes in ~200 steps regardless of duration
-
-### Rolling Window + Fade (Event Animation)
-
-For disaster event animations (earthquakes, storms, wildfires), events use a rolling window with opacity fading for smooth visualization during fast playback.
-
-**Window Duration by Granularity:**
-| Granularity | Window Size | Effect |
-|-------------|-------------|--------|
-| 6h | 24 hours | 4 data points visible |
-| daily | 7 days | 1 week of events |
-| monthly | ~3 months | Quarter's events |
-| yearly | 1 year | Full year |
-
-**Flash + Fade Effect:**
-- Brand new events get a "flash" (recency = 1.5) with size boost
-- Flash period is first 10% of window duration
-- After flash, events fade linearly from 1.0 to 0.0
-- Events beyond window boundary are removed
-- Creates attention-grabbing "pop" when events occur, then smooth fade
-
-```javascript
-// _recency: 1.5 = flash (new), 1.0 = recent, 0.0 = fading out
-// Opacity capped at 1.0, size boosted up to 50% for flash
-const opacityExpr = ['min', 1.0, ['*', 0.9, recencyExpr]];
-const sizeBoostExpr = ['*', baseSize, ['max', 1.0, recencyExpr]];
-```
-
-**Inactivity Detection (Continuous Events):**
-
-For events with periodic updates (storms, wildfires), the system detects when they've "ended" based on missed updates:
-
-| Event Type | Update Interval | Inactivity Threshold |
-|------------|-----------------|---------------------|
-| Storm | 6 hours | 24h (4x interval) |
-| Wildfire | Daily | 4 days (4x interval) |
-| Earthquake | Instant | N/A (point-in-time) |
-
-See [DISASTER_DISPLAY.md](DISASTER_DISPLAY.md#phase-2c-unified-eventanimator-in-progress) for full EventAnimator architecture.
-
-### Simplified Playback Display
-
-During animation playback, the time label shows simplified format to reduce visual noise:
-
-| Granularity | During Playback | When Paused |
-|-------------|-----------------|-------------|
-| 6h | "Jan 2005" | "Jan 15, 2005, 06:00 AM" |
-| daily | "Jan 2005" | "Jan 15, 2005" |
-| monthly | "2005" | "Jan 2005" |
-| yearly | "2005" | "2005" |
-
-This prevents "flashing text" during fast-forward playback while still showing precise time when user pauses.
 
 ### Data Flow
 
 ```
-User: "show CO2 trend in Europe from 2000 to 2022"
-                    |
-                    v
-           Order Taker LLM
-           (detects year range trigger)
-                    |
-                    v
-           Order: {year_start: 2000, year_end: 2022}
-                    |
-                    v
-           Order Executor
-           (loads all years, builds year_data)
-                    |
-                    v
-           Response: {multi_year: true, year_data: {...}}
-                    |
-                    v
-           App.displayData()
-           (detects multi_year flag)
-                    |
-                    v
-           TimeSlider.init()
-           ChoroplethManager.init()
-                    |
-                    v
-           User scrubs slider -> setYear() -> updateSourceData()
+User selects overlay (e.g., "Earthquakes")
+                |
+                v
+        overlay-controller.js
+        loads GeoJSON from /api/earthquakes/geojson
+                |
+                v
+        Extracts year range from data
+        Initializes TimeSlider with range
+                |
+                v
+        EventAnimator subscribes to time changes
+                |
+                v
+        User adjusts slider or plays animation
+                |
+                v
+        TimeSlider.setTime(timestamp)
+        Notifies all subscribers
+                |
+                v
+        EventAnimator filters events to window
+        Updates MapLibre layer with visible events
+                |
+                v
+        User clicks event marker
+                |
+                v
+        Drill-down: SequenceAnimator/TrackAnimator
+        Adds new tab with finer granularity
 ```
+
+### Performance
+
+- Geometry loaded once in `baseGeojson`, reused across time changes
+- Year data overlaid on features without geometry duplication
+- `updateSourceData()` for fast layer updates (no layer recreation)
+- 15 FPS animation loop with requestAnimationFrame
+- Adaptive time stepping prevents >200 steps for long sequences
+- Events outside visible window removed from layer (not just hidden)
 
 ---
 
@@ -638,4 +721,4 @@ See [FRONTEND_MODULES.md](FRONTEND_MODULES.md) for detailed module documentation
 
 ---
 
-*Last Updated: 2026-01-09*
+*Last Updated: 2026-01-10*

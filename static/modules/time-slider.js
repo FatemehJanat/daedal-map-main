@@ -21,8 +21,105 @@ export function setDependencies(deps) {
   ChoroplethManager = deps.ChoroplethManager;
 }
 
-// Playback speed multiplier for fast forward/rewind
+// Playback speed multiplier for fast forward/rewind (legacy - being replaced by continuous speed)
 const FAST_SPEED = 5;
+
+// ============================================================================
+// UNIFIED TIME SYSTEM - Continuous speed control (Phase 7)
+// ============================================================================
+
+/**
+ * Unified time system for continuous speed control across all animation types.
+ * Replaces discrete speed presets with a smooth slider from 6hr to yearly steps.
+ *
+ * Key concepts:
+ * - BASE_STEP_MS: The atomic unit of time (6 hours) - smallest meaningful step
+ * - stepsPerFrame: How many 6-hour steps advance per rendered frame
+ * - Logarithmic slider: Better control at slow speeds (where most use cases live)
+ * - Slideshow mode: When stepsPerFrame < 1, hold each frame longer instead of rendering redundantly
+ */
+export const TIME_SYSTEM = {
+  // Base unit: 6 hours in milliseconds
+  BASE_STEP_MS: 6 * 60 * 60 * 1000,  // 21,600,000
+
+  // Speed slider range (steps per frame)
+  MIN_STEPS_PER_FRAME: 0.0056,  // ~30min/sec - slow enough for fine-grained animations (tsunamis)
+  MAX_STEPS_PER_FRAME: 1460,    // ~1 year per frame (fastest - overview)
+
+  // Rendering
+  MAX_FPS: 15,  // Start conservative, increase to 60 later if needed
+  FRAME_INTERVAL_MS: 1000 / 15,  // ~67ms
+
+  /**
+   * Convert slider position (0-1) to steps per frame.
+   * Uses logarithmic scale for better control at slow end.
+   * @param {number} sliderValue - 0 to 1
+   * @returns {number} stepsPerFrame
+   */
+  sliderToStepsPerFrame(sliderValue) {
+    const log = Math.log;
+    const minLog = log(this.MIN_STEPS_PER_FRAME);
+    const maxLog = log(this.MAX_STEPS_PER_FRAME);
+    return Math.exp(minLog + sliderValue * (maxLog - minLog));
+  },
+
+  /**
+   * Reverse: steps per frame to slider position.
+   * @param {number} stepsPerFrame
+   * @returns {number} sliderValue 0 to 1
+   */
+  stepsPerFrameToSlider(stepsPerFrame) {
+    const log = Math.log;
+    const minLog = log(this.MIN_STEPS_PER_FRAME);
+    const maxLog = log(this.MAX_STEPS_PER_FRAME);
+    const clamped = Math.max(this.MIN_STEPS_PER_FRAME, Math.min(this.MAX_STEPS_PER_FRAME, stepsPerFrame));
+    return (log(clamped) - minLog) / (maxLog - minLog);
+  },
+
+  /**
+   * Get human-readable speed label.
+   * Shows time units per second (how much time passes per real second).
+   * @param {number} stepsPerFrame
+   * @returns {string} e.g., "6h/sec", "1d/sec", "1yr/sec"
+   */
+  getSpeedLabel(stepsPerFrame) {
+    // Convert to time per second (stepsPerFrame * 6 hours * 15 FPS)
+    // At minimum (0.0056 steps/frame): 0.0056 * 6 * 15 = ~30min/sec
+    // At maximum (1460 steps/frame): 1460 * 6 * 15 = ~15yr/sec
+    const hoursPerSecond = stepsPerFrame * 6 * this.MAX_FPS;
+    if (hoursPerSecond < 1) return `${Math.round(hoursPerSecond * 60)}m/sec`;  // Minutes for slow speeds
+    if (hoursPerSecond < 24) return `${Math.round(hoursPerSecond)}h/sec`;
+    if (hoursPerSecond < 168) return `${Math.round(hoursPerSecond / 24)}d/sec`;
+    if (hoursPerSecond < 720) return `${Math.round(hoursPerSecond / 168)}w/sec`;
+    if (hoursPerSecond < 8760) return `${Math.round(hoursPerSecond / 720)}mo/sec`;
+    return `${(hoursPerSecond / 8760).toFixed(1)}yr/sec`;
+  },
+
+  /**
+   * Calculate visibility window duration based on speed.
+   * Events stay visible for ~4 frames worth of time.
+   * @param {number} stepsPerFrame
+   * @returns {number} Window duration in milliseconds
+   */
+  getWindowDuration(stepsPerFrame) {
+    const WINDOW_MULTIPLIER = 4;
+    return this.BASE_STEP_MS * Math.max(1, stepsPerFrame) * WINDOW_MULTIPLIER;
+  }
+};
+
+// ============================================================================
+// SPEED PRESETS - Common speeds for quick selection
+// ============================================================================
+
+export const SPEED_PRESETS = {
+  SLIDESHOW: 0.0,     // 0.1 steps/frame - step through slowly
+  DETAIL: 0.15,       // ~1 step/frame (6hr)
+  DAILY: 0.30,        // ~4 steps/frame (1 day)
+  WEEKLY: 0.45,       // ~28 steps/frame (1 week)
+  MONTHLY: 0.60,      // ~120 steps/frame (1 month)
+  YEARLY: 0.72,       // ~97 steps/frame (1yr/sec) - DEFAULT for world view
+  OVERVIEW: 1.0       // 1460 steps/frame (~15yr/sec) - very fast scan
+};
 
 // ============================================================================
 // TIME SLIDER - Controls year selection for multi-year data
@@ -41,6 +138,17 @@ export const TimeSlider = {
   maxLabel: null,
   titleLabel: null,
 
+  // Speed slider elements (Phase 7 - Unified Speed Control)
+  speedSlider: null,       // DOM element for speed slider
+  speedLabel: null,        // DOM element showing speed (e.g., "1yr/sec")
+  loopCheckbox: null,      // DOM element for loop checkbox
+  loopEnabled: false,      // Whether animation should loop
+  stepsPerFrame: 97,       // Current speed (default: ~1yr/sec at 15 FPS)
+  speedSliderValue: 0.72,  // Current slider position (0-1), default = ~1yr/sec
+  _inEventMode: false,     // True when animating specific event (vs world view)
+  _previousSpeedSlider: null, // Saved speed when entering event mode
+  playTimeout: null,       // For new stepsPerFrame-based playback
+
   // Data state
   timeData: null,      // {time: {loc_id: {metric: value}}} - original data (time = year or timestamp)
   timeDataFilled: null, // {time: {loc_id: {metric, data_time}}} - with gaps filled
@@ -53,7 +161,7 @@ export const TimeSlider = {
   sortedTimes: [],     // Sorted array for navigation
   isPlaying: false,
   playInterval: null,
-  playSpeed: 1,        // 1 = normal, FAST_SPEED = fast forward/rewind
+  playSpeed: 1,        // 1 = normal, FAST_SPEED = fast forward/rewind (legacy)
   playDirection: 1,    // 1 = forward, -1 = rewind
   listenersSetup: false,  // Track if event listeners have been added
   sliderInitialized: false, // Track if DOM setup is done
@@ -159,15 +267,18 @@ export const TimeSlider = {
       return;
     }
 
-    // Set default range
-    const defaultMin = options.minTime || 1900;
-    const defaultMax = options.maxTime || new Date().getFullYear();
-    this.minTime = defaultMin;
-    this.maxTime = defaultMax;
-    this.currentTime = defaultMax;
+    // Set granularity first (affects timestamp handling)
     this.granularity = options.granularity || 'yearly';
+    this.useTimestamps = ['6h', 'daily', 'weekly', 'monthly'].includes(this.granularity);
 
-    // Configure slider with defaults
+    // Set default range - normalize to timestamps
+    const defaultMinYear = options.minTime || 1900;
+    const defaultMaxYear = options.maxTime || new Date().getFullYear();
+    this.minTime = this.normalizeToTimestamp(defaultMinYear);
+    this.maxTime = this.normalizeToTimestamp(defaultMaxYear);
+    this.currentTime = this.maxTime;
+
+    // Configure slider with defaults (using timestamps internally)
     this.slider.min = this.minTime;
     this.slider.max = this.maxTime;
     this.slider.value = this.currentTime;
@@ -181,6 +292,9 @@ export const TimeSlider = {
       this.listenersSetup = true;
     }
 
+    // Initialize speed slider (Phase 7 - Unified Speed Control)
+    this.initSpeedSlider();
+
     this.sliderInitialized = true;
     this.show();
     console.log('TimeSlider: Initialized with range', this.minTime, '-', this.maxTime);
@@ -189,6 +303,7 @@ export const TimeSlider = {
   /**
    * Update the time range (can be called by any data source).
    * Expands range to union of current and new range.
+   * All times are stored internally as timestamps (ms since epoch).
    * @param {Object} rangeConfig - {min, max, granularity?, available?, replace?}
    *   - replace: if true, sets exact range instead of expanding
    */
@@ -197,8 +312,16 @@ export const TimeSlider = {
       this.initSlider(rangeConfig);
     }
 
-    const newMin = rangeConfig.min;
-    const newMax = rangeConfig.max;
+    // Update granularity FIRST so normalizeToTimestamp knows whether to convert
+    if (rangeConfig.granularity) {
+      this.granularity = rangeConfig.granularity;
+      this.useTimestamps = ['6h', 'daily', 'weekly', 'monthly'].includes(this.granularity);
+      this.stepMs = this.calculateStepMs(this.granularity);
+    }
+
+    // Normalize incoming values to timestamps (converts years like 2024 to ms)
+    const newMin = rangeConfig.min != null ? this.normalizeToTimestamp(rangeConfig.min) : null;
+    const newMax = rangeConfig.max != null ? this.normalizeToTimestamp(rangeConfig.max) : null;
     const replaceMode = rangeConfig.replace === true;
 
     let rangeChanged = false;
@@ -230,16 +353,19 @@ export const TimeSlider = {
       this.slider.max = this.maxTime;
       this.minLabel.textContent = this.formatTimeLabel(this.minTime);
       this.maxLabel.textContent = this.formatTimeLabel(this.maxTime);
-      console.log('TimeSlider: Range updated to', this.minTime, '-', this.maxTime, replaceMode ? '(replaced)' : '(expanded)');
+      console.log('TimeSlider: Range updated to', this.formatTimeLabel(this.minTime), '-', this.formatTimeLabel(this.maxTime), replaceMode ? '(replaced)' : '(expanded)');
     }
 
     // Always clamp current time to DATA range (not just expanded range)
-    // This ensures if slider is at 2026 but data only goes to 2024, we snap to 2024
     const dataMax = newMax || this.maxTime;
     const dataMin = newMin || this.minTime;
     let timeChanged = false;
 
-    if (this.currentTime > dataMax) {
+    // Initialize currentTime if null
+    if (this.currentTime == null) {
+      this.currentTime = dataMax;
+      timeChanged = true;
+    } else if (this.currentTime > dataMax) {
       this.currentTime = dataMax;
       timeChanged = true;
     } else if (this.currentTime < dataMin) {
@@ -250,20 +376,14 @@ export const TimeSlider = {
     if (timeChanged) {
       this.slider.value = this.currentTime;
       this.yearLabel.textContent = this.formatTimeLabel(this.currentTime);
-      console.log('TimeSlider: Clamped current time to', this.currentTime);
+      console.log('TimeSlider: Current time set to', this.formatTimeLabel(this.currentTime));
     }
 
-    // Update granularity if provided
-    if (rangeConfig.granularity) {
-      this.granularity = rangeConfig.granularity;
-      this.useTimestamps = ['6h', 'daily', 'weekly', 'monthly'].includes(this.granularity);
-      this.stepMs = this.calculateStepMs(this.granularity);
-    }
-
-    // Update available times if provided
+    // Update available times if provided (normalize each to timestamp)
     if (rangeConfig.available) {
       // REPLACE available times (each overlay controls its own steps)
-      this.availableTimes = [...rangeConfig.available];
+      // Normalize each time value to timestamp
+      this.availableTimes = rangeConfig.available.map(t => this.normalizeToTimestamp(t));
       this.sortedTimes = [...this.availableTimes].sort((a, b) => a - b);
       console.log('TimeSlider: Set', this.sortedTimes.length, 'available time steps');
 
@@ -271,11 +391,13 @@ export const TimeSlider = {
       this.configureSliderScale();
     } else if (this.sortedTimes.length === 0 && this.minTime && this.maxTime) {
       // No available times provided - generate yearly range for step buttons
-      // Only do this for reasonable ranges (< 200 years)
-      const yearSpan = this.maxTime - this.minTime;
+      // Calculate year span from timestamps
+      const minYear = this.timestampToYear(this.minTime);
+      const maxYear = this.timestampToYear(this.maxTime);
+      const yearSpan = maxYear - minYear;
       if (yearSpan <= 200) {
-        for (let year = this.minTime; year <= this.maxTime; year++) {
-          this.sortedTimes.push(year);
+        for (let year = minYear; year <= maxYear; year++) {
+          this.sortedTimes.push(this.yearToTimestamp(year));
         }
         this.availableTimes = [...this.sortedTimes];
         console.log('TimeSlider: Generated', this.sortedTimes.length, 'yearly steps');
@@ -307,6 +429,76 @@ export const TimeSlider = {
       case '10y': return DAY * 365 * 10;
       default: return DAY * 365;
     }
+  },
+
+  // ============================================================================
+  // TIMESTAMP CONVERSION - Unified internal time representation
+  // ============================================================================
+
+  /**
+   * Convert a year (integer) to timestamp (ms since epoch).
+   * Uses January 1, 00:00:00 UTC of the given year.
+   * @param {number} year - Year as integer (e.g., 2024)
+   * @returns {number} Timestamp in milliseconds
+   */
+  yearToTimestamp(year) {
+    return Date.UTC(year, 0, 1, 0, 0, 0, 0);
+  },
+
+  /**
+   * Convert a timestamp (ms) to year (integer).
+   * Returns the year portion of the date.
+   * @param {number} timestamp - Timestamp in milliseconds
+   * @returns {number} Year as integer
+   */
+  timestampToYear(timestamp) {
+    return new Date(timestamp).getUTCFullYear();
+  },
+
+  /**
+   * Normalize time value to timestamp.
+   * Handles both year integers and existing timestamps.
+   * Detection logic: if |value| < 50000, treat as year; otherwise, timestamp.
+   * This safely handles years from 50000 BCE to 50000 CE.
+   * @param {number} time - Year integer or timestamp (ms)
+   * @returns {number} Timestamp in milliseconds
+   */
+  normalizeToTimestamp(time) {
+    // If absolute value is small, it's definitely a year
+    // Years: -50000 to 50000 (covers all human history and beyond)
+    // Timestamps: typically 1e12+ for modern dates, or negative 1e13+ for ancient dates
+    if (Math.abs(time) < 50000) {
+      return this.yearToTimestamp(time);
+    }
+    // Already a timestamp
+    return time;
+  },
+
+  /**
+   * Get display value for time (year for yearly granularity, timestamp otherwise).
+   * Used for display labels but NOT for internal calculations.
+   * @param {number} timestamp - Internal timestamp
+   * @returns {number} Year or timestamp depending on granularity
+   */
+  getDisplayTime(timestamp) {
+    if (!this.useTimestamps) {
+      return this.timestampToYear(timestamp);
+    }
+    return timestamp;
+  },
+
+  /**
+   * Get the key for looking up data in timeData/timeDataFilled.
+   * For yearly data, converts timestamp to year (since data uses year keys).
+   * For sub-yearly data, returns timestamp directly.
+   * @param {number} timestamp - Internal timestamp
+   * @returns {number} Key to use for data lookup
+   */
+  getDataLookupKey(timestamp) {
+    if (!this.useTimestamps) {
+      return this.timestampToYear(timestamp);
+    }
+    return timestamp;
   },
 
   // ============================================================================
@@ -412,13 +604,17 @@ export const TimeSlider = {
 
   /**
    * Format time label based on current granularity.
+   * All times are now stored internally as timestamps.
    * During playback, shows simplified output (just year or month/year).
    * When paused, shows full detail.
    */
   formatTimeLabel(time) {
-    // For yearly+ granularity with integer years
+    // Convert timestamp to Date for formatting
+    const date = new Date(time);
+    const year = date.getUTCFullYear();
+
+    // For yearly+ granularity, display as year(s)
     if (!this.useTimestamps) {
-      const year = typeof time === 'number' ? time : parseInt(time);
       switch (this.granularity) {
         case '5y':
           // Handle negative years (BCE)
@@ -440,8 +636,7 @@ export const TimeSlider = {
       }
     }
 
-    // For sub-yearly with timestamps
-    const date = new Date(time);
+    // For sub-yearly granularity, format as date/time
 
     // During playback, show simplified format (less flashing text)
     if (this.isPlaying) {
@@ -450,14 +645,14 @@ export const TimeSlider = {
         case 'daily':
           // During fast playback, just show month/year to reduce flashing
           return date.toLocaleDateString('en-US', {
-            month: 'short', year: 'numeric'
+            month: 'short', year: 'numeric', timeZone: 'UTC'
           });
         case 'weekly':
         case 'monthly':
           // Show just year for monthly/weekly during playback
-          return date.getFullYear().toString();
+          return year.toString();
         default:
-          return date.getFullYear().toString();
+          return year.toString();
       }
     }
 
@@ -466,22 +661,22 @@ export const TimeSlider = {
       case '6h':
         return date.toLocaleString('en-US', {
           month: 'short', day: 'numeric', year: 'numeric',
-          hour: '2-digit', minute: '2-digit'
+          hour: '2-digit', minute: '2-digit', timeZone: 'UTC'
         });
       case 'daily':
         return date.toLocaleDateString('en-US', {
-          month: 'short', day: 'numeric', year: 'numeric'
+          month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC'
         });
       case 'weekly':
         return `Week of ${date.toLocaleDateString('en-US', {
-          month: 'short', day: 'numeric', year: 'numeric'
+          month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC'
         })}`;
       case 'monthly':
         return date.toLocaleDateString('en-US', {
-          month: 'short', year: 'numeric'
+          month: 'short', year: 'numeric', timeZone: 'UTC'
         });
       default:
-        return date.getFullYear().toString();
+        return year.toString();
     }
   },
 
@@ -489,6 +684,9 @@ export const TimeSlider = {
    * Get playback interval based on granularity (faster for finer granularity)
    * Base intervals tuned for smooth playback.
    * Special case: '12m' uses 200ms for smooth tsunami animation (5 steps/sec, same speed as 1h)
+   *
+   * NOTE: This is the LEGACY method. New code should use TIME_SYSTEM.FRAME_INTERVAL_MS
+   * with stepsPerFrame for speed control.
    */
   getPlaybackInterval() {
     const baseIntervals = {
@@ -506,6 +704,200 @@ export const TimeSlider = {
     return this.playSpeed === FAST_SPEED ? Math.floor(base / FAST_SPEED) : base;
   },
 
+  // ============================================================================
+  // UNIFIED SPEED CONTROL (Phase 7)
+  // ============================================================================
+
+  /**
+   * Set animation speed from slider value (0-1).
+   * Updates stepsPerFrame and speed label.
+   * @param {number} sliderValue - 0 (slowest/slideshow) to 1 (fastest/yearly)
+   */
+  setSpeedFromSlider(sliderValue) {
+    this.speedSliderValue = sliderValue;
+    this.stepsPerFrame = TIME_SYSTEM.sliderToStepsPerFrame(sliderValue);
+
+    // Reset frame counter when speed changes during playback
+    // This ensures smooth transitions between slideshow and normal modes
+    if (this.isPlaying) {
+      this._frameCounter = 0;
+    }
+
+    if (this.speedLabel) {
+      this.speedLabel.textContent = TIME_SYSTEM.getSpeedLabel(this.stepsPerFrame);
+    }
+
+    console.log(`TimeSlider: Speed set to ${TIME_SYSTEM.getSpeedLabel(this.stepsPerFrame)} (${this.stepsPerFrame.toFixed(2)} steps/frame)`);
+  },
+
+  /**
+   * Set speed to a preset value.
+   * @param {string} presetName - Key from SPEED_PRESETS (SLIDESHOW, DETAIL, DAILY, etc.)
+   */
+  setSpeedPreset(presetName) {
+    const presetValue = SPEED_PRESETS[presetName];
+    if (presetValue !== undefined) {
+      this.setSpeedFromSlider(presetValue);
+      if (this.speedSlider) {
+        this.speedSlider.value = presetValue;
+      }
+    }
+  },
+
+  /**
+   * Calculate optimal speed for animating a specific event in ~10 seconds.
+   * @param {number} eventDurationMs - Event lifespan in milliseconds
+   * @returns {number} Slider position (0-1)
+   */
+  calculateEventSpeed(eventDurationMs) {
+    const TARGET_SECONDS = 10;
+    const MIN_SECONDS = 3;  // Very short events still get 3+ seconds
+    const TARGET_FRAMES = TARGET_SECONDS * TIME_SYSTEM.MAX_FPS;
+    const MIN_FRAMES = MIN_SECONDS * TIME_SYSTEM.MAX_FPS;
+
+    // Convert event duration to 6-hour steps
+    const totalSteps = eventDurationMs / TIME_SYSTEM.BASE_STEP_MS;
+
+    // Ensure minimum animation duration for very short events
+    const effectiveFrames = Math.max(MIN_FRAMES, Math.min(TARGET_FRAMES, totalSteps));
+
+    // Calculate steps per frame
+    const stepsPerFrame = totalSteps / effectiveFrames;
+
+    // Clamp to valid range (allow fractional for slideshow mode)
+    const clampedSteps = Math.max(
+      TIME_SYSTEM.MIN_STEPS_PER_FRAME,
+      Math.min(TIME_SYSTEM.MAX_STEPS_PER_FRAME, stepsPerFrame)
+    );
+
+    return TIME_SYSTEM.stepsPerFrameToSlider(clampedSteps);
+  },
+
+  /**
+   * Enter event animation mode with auto-calculated speed.
+   * Called when user clicks to animate a specific event (hurricane, earthquake, etc.).
+   * @param {number} eventStartTime - Event start timestamp
+   * @param {number} eventEndTime - Event end timestamp
+   */
+  enterEventAnimation(eventStartTime, eventEndTime) {
+    const durationMs = eventEndTime - eventStartTime;
+    const suggestedSlider = this.calculateEventSpeed(durationMs);
+
+    // Store previous speed for restoration
+    this._previousSpeedSlider = this.speedSliderValue;
+    this._inEventMode = true;
+
+    // Set new speed
+    this.setSpeedFromSlider(suggestedSlider);
+    if (this.speedSlider) {
+      this.speedSlider.value = suggestedSlider;
+    }
+
+    const days = durationMs / (24 * 60 * 60 * 1000);
+    console.log(`TimeSlider: Event animation (${days.toFixed(1)} days) -> ${TIME_SYSTEM.getSpeedLabel(this.stepsPerFrame)}`);
+  },
+
+  /**
+   * Exit event animation and return to world view speed.
+   * Returns to 1yr/sec default speed for world view browsing.
+   */
+  exitEventAnimation() {
+    // Return to 1yr/sec for world browsing (default speed)
+    const worldSpeed = SPEED_PRESETS.YEARLY;
+    this.setSpeedFromSlider(worldSpeed);
+    if (this.speedSlider) {
+      this.speedSlider.value = worldSpeed;
+    }
+
+    this._inEventMode = false;
+    this._previousSpeedSlider = null;
+
+    console.log('TimeSlider: Exited event mode, returned to 1yr/sec default');
+  },
+
+  /**
+   * Suggest speed based on the time range being viewed.
+   * @param {number} timeRangeMs - Total time range in milliseconds
+   * @returns {number} Suggested slider position (0-1)
+   */
+  suggestSpeedForRange(timeRangeMs) {
+    const days = timeRangeMs / (24 * 60 * 60 * 1000);
+
+    if (days <= 7) return SPEED_PRESETS.DETAIL;        // Week or less: 6hr detail
+    if (days <= 90) return SPEED_PRESETS.DAILY;        // 3 months: daily
+    if (days <= 365) return SPEED_PRESETS.WEEKLY;      // 1 year: weekly
+    if (days <= 3650) return SPEED_PRESETS.MONTHLY;    // 10 years: monthly
+    return SPEED_PRESETS.OVERVIEW;                      // Longer: yearly overview
+  },
+
+  /**
+   * Initialize speed slider DOM elements.
+   * Call this during initSlider() after finding other DOM elements.
+   */
+  initSpeedSlider() {
+    this.speedSlider = document.getElementById('speedSlider');
+    this.speedLabel = document.getElementById('speedLabel');
+    this.loopCheckbox = document.getElementById('loopCheckbox');
+
+    if (!this.speedSlider) {
+      console.log('TimeSlider: Speed slider DOM element not found (will use legacy speed control)');
+      return;
+    }
+
+    // Configure slider
+    this.speedSlider.min = 0;
+    this.speedSlider.max = 1;
+    this.speedSlider.step = 0.01;
+    this.speedSlider.value = this.speedSliderValue;
+
+    // Set initial label
+    if (this.speedLabel) {
+      this.speedLabel.textContent = TIME_SYSTEM.getSpeedLabel(this.stepsPerFrame);
+    }
+
+    // Add speed slider event listener
+    this.speedSlider.addEventListener('input', (e) => {
+      this.setSpeedFromSlider(parseFloat(e.target.value));
+    });
+
+    // Initialize loop checkbox
+    if (this.loopCheckbox) {
+      this.loopCheckbox.checked = this.loopEnabled;
+      this.loopCheckbox.addEventListener('change', (e) => {
+        this.loopEnabled = e.target.checked;
+        console.log(`TimeSlider: Loop ${this.loopEnabled ? 'enabled' : 'disabled'}`);
+      });
+    }
+
+    console.log('TimeSlider: Speed slider initialized');
+  },
+
+  /**
+   * Get current visibility window duration based on speed.
+   * Used by event overlays to determine how long events stay visible.
+   * @returns {number} Window duration in milliseconds
+   */
+  getVisibilityWindow() {
+    return TIME_SYSTEM.getWindowDuration(this.stepsPerFrame);
+  },
+
+  /**
+   * Calculate opacity for an event based on its age within the visibility window.
+   * @param {number} eventTime - Event timestamp
+   * @param {number} currentTime - Current animation time
+   * @returns {number} Opacity from 0 to 1
+   */
+  getEventOpacity(eventTime, currentTime) {
+    const windowDuration = this.getVisibilityWindow();
+    const age = currentTime - eventTime;
+
+    if (age < 0) return 0;  // Future event
+    if (age > windowDuration) return 0;  // Too old
+
+    // Linear fade from 1.0 (new) to 0.2 (about to disappear)
+    return 1.0 - (age / windowDuration) * 0.8;
+  },
+
   /**
    * Initialize time slider with time range data
    * @param {Object} timeRange - {min, max, available_years|available, granularity?, useTimestamps?}
@@ -521,23 +913,27 @@ export const TimeSlider = {
     this.explicitMetrics = availableMetrics;  // Store explicit metrics from order
     this.metricYearRanges = metricYearRanges || {};  // Per-metric year ranges
     console.log('TimeSlider.init: metricYearRanges received:', this.metricYearRanges);
-    this.minTime = timeRange.min;
-    this.maxTime = timeRange.max;
-    // Store original range for restoration when switching metrics
-    this.originalMinTime = timeRange.min;
-    this.originalMaxTime = timeRange.max;
 
-    // Granularity support - detect from timeRange or default to yearly
+    // Granularity support - detect from timeRange or default to yearly (set FIRST)
     this.granularity = timeRange.granularity || 'yearly';
     this.useTimestamps = timeRange.useTimestamps ||
       ['6h', 'daily', 'weekly', 'monthly'].includes(this.granularity);
     this.stepMs = this.calculateStepMs(this.granularity);
 
+    // Normalize time range to timestamps (converts years like 2024 to ms)
+    this.minTime = this.normalizeToTimestamp(timeRange.min);
+    this.maxTime = this.normalizeToTimestamp(timeRange.max);
+    // Store original range for restoration when switching metrics
+    this.originalMinTime = this.minTime;
+    this.originalMaxTime = this.maxTime;
+
     // Support both old (available_years) and new (available) property names
-    this.availableTimes = timeRange.available || timeRange.available_years || [];
+    // Normalize each time value to timestamp
+    const rawTimes = timeRange.available || timeRange.available_years || [];
+    this.availableTimes = rawTimes.map(t => this.normalizeToTimestamp(t));
     // Sort available times for navigation
     this.sortedTimes = [...this.availableTimes].sort((a, b) => a - b);
-    this.currentTime = timeRange.max;  // Start at latest time
+    this.currentTime = this.maxTime;  // Start at latest time (already normalized)
     this.playSpeed = 1;
 
     // Pre-compute gap-filled data (carry forward last known values)
@@ -720,9 +1116,10 @@ export const TimeSlider = {
 
   /**
    * Pre-compute gap-filled time data (called once at init).
-   * For yearly mode: fills gaps between years.
+   * For yearly mode: fills gaps between years (using year keys for data lookup).
    * For timestamp mode: only uses actual data points (no interpolation).
-   * Returns {time: {loc_id: {metric, data_time}}}
+   * Returns {dataKey: {loc_id: {metric, data_time}}} where dataKey is year or timestamp
+   * depending on granularity.
    */
   buildFilledTimeData() {
     const filled = {};
@@ -733,13 +1130,15 @@ export const TimeSlider = {
 
     if (this.useTimestamps) {
       // For timestamp mode, only fill for actual data points (no gap filling)
+      // timeData keys are timestamps, sortedTimes are timestamps
       for (const time of this.sortedTimes) {
-        filled[time] = {};
-        const timeValues = this.timeData[time] || {};
+        const dataKey = this.getDataLookupKey(time);
+        filled[dataKey] = {};
+        const timeValues = this.timeData[dataKey] || {};
 
         for (const locId of allLocIds) {
           if (timeValues[locId] && Object.keys(timeValues[locId]).length > 0) {
-            filled[time][locId] = {
+            filled[dataKey][locId] = {
               ...timeValues[locId],
               data_time: time
             };
@@ -747,8 +1146,12 @@ export const TimeSlider = {
         }
       }
     } else {
-      // For year mode, process all years and carry forward values
-      for (let year = this.minTime; year <= this.maxTime; year++) {
+      // For yearly mode, process all years and carry forward values
+      // timeData keys are years (integers), convert timestamps to years for iteration
+      const minYear = this.timestampToYear(this.minTime);
+      const maxYear = this.timestampToYear(this.maxTime);
+
+      for (let year = minYear; year <= maxYear; year++) {
         filled[year] = {};
         const yearValues = this.timeData[year] || {};
 
@@ -823,9 +1226,12 @@ export const TimeSlider = {
    * Build GeoJSON with time-specific values injected.
    * Uses pre-computed gap-filled data for O(1) lookup per location.
    * Filters by currentAdminLevel if set.
+   * @param {number} time - Timestamp (ms since epoch)
    */
   buildTimeGeojson(time) {
-    const timeValues = this.timeDataFilled[time] || {};
+    // Convert timestamp to data lookup key (year for yearly mode, timestamp for sub-yearly)
+    const dataKey = this.getDataLookupKey(time);
+    const timeValues = this.timeDataFilled[dataKey] || {};
 
     // Filter features by admin level if filter is active
     let features = this.baseGeojson.features;
@@ -835,6 +1241,9 @@ export const TimeSlider = {
         return level === this.currentAdminLevel;
       });
     }
+
+    // Extract year from timestamp for properties
+    const year = this.timestampToYear(time);
 
     return {
       type: 'FeatureCollection',
@@ -847,9 +1256,9 @@ export const TimeSlider = {
           properties: {
             ...f.properties,
             ...locData,
-            // Include both 'time' and 'year' for compatibility
+            // Include both 'time' (timestamp) and 'year' for compatibility
             time: time,
-            year: this.useTimestamps ? new Date(time).getFullYear() : time
+            year: year
           }
         };
       })
@@ -961,11 +1370,16 @@ export const TimeSlider = {
     this.timeData = scale.timeData;
     this.baseGeojson = scale.baseGeojson;
     this.metricKey = scale.metricKey;
-    this.minTime = scale.timeRange.min;
-    this.maxTime = scale.timeRange.max;
-    this.availableTimes = scale.timeRange.available || scale.timeRange.available_years || [];
+
+    // Normalize time range values to timestamps
+    this.minTime = this.normalizeToTimestamp(scale.timeRange.min);
+    this.maxTime = this.normalizeToTimestamp(scale.timeRange.max);
+    const rawTimes = scale.timeRange.available || scale.timeRange.available_years || [];
+    this.availableTimes = rawTimes.map(t => this.normalizeToTimestamp(t));
     this.sortedTimes = [...this.availableTimes].sort((a, b) => a - b);
-    this.currentTime = scale.currentTime || scale.timeRange.max;
+    this.currentTime = scale.currentTime
+      ? this.normalizeToTimestamp(scale.currentTime)
+      : this.maxTime;
 
     // Rebuild filled data for new scale (only if we have base geometry for choropleth)
     // Point-event scales (earthquakes, etc.) don't use baseGeojson
@@ -1217,14 +1631,17 @@ export const TimeSlider = {
     console.log('TimeSlider.setActiveMetric: Looking up', metric, 'in', this.metricYearRanges);
     const metricRange = this.metricYearRanges?.[metric];
     if (metricRange) {
-      console.log(`TimeSlider: Adjusting range to ${metricRange.min}-${metricRange.max} for ${metric}`);
-      this.minTime = metricRange.min;
-      this.maxTime = metricRange.max;
+      // Normalize year range to timestamps
+      const normalizedMin = this.normalizeToTimestamp(metricRange.min);
+      const normalizedMax = this.normalizeToTimestamp(metricRange.max);
+      console.log(`TimeSlider: Adjusting range to ${this.formatTimeLabel(normalizedMin)}-${this.formatTimeLabel(normalizedMax)} for ${metric}`);
+      this.minTime = normalizedMin;
+      this.maxTime = normalizedMax;
       this.slider.min = this.minTime;
       this.slider.max = this.maxTime;
       this.minLabel.textContent = this.formatTimeLabel(this.minTime);
       this.maxLabel.textContent = this.formatTimeLabel(this.maxTime);
-      
+
       // Clamp current time to new range
       if (this.currentTime < this.minTime) {
         this.currentTime = this.minTime;
@@ -1233,7 +1650,7 @@ export const TimeSlider = {
       }
       this.slider.value = this.currentTime;
       this.yearLabel.textContent = this.formatTimeLabel(this.currentTime);
-      
+
       // Rebuild sortedTimes from availableTimes (don't destructively filter)
       this.sortedTimes = [...this.availableTimes]
         .filter(t => t >= this.minTime && t <= this.maxTime)
@@ -1289,40 +1706,115 @@ export const TimeSlider = {
 
   /**
    * Internal: start the playback interval
+   * Uses unified TIME_SYSTEM for speed control (Phase 7)
    */
   startPlayback() {
-    // Clear any existing interval
+    // Clear any existing interval/timeout
     if (this.playInterval) {
       clearInterval(this.playInterval);
+      this.playInterval = null;
+    }
+    if (this.playTimeout) {
+      clearTimeout(this.playTimeout);
+      this.playTimeout = null;
     }
 
     this.isPlaying = true;
     this.updateButtonStates();
 
-    // Use granularity-aware interval
-    const interval = this.getPlaybackInterval();
+    // Use unified speed system if speed slider is available
+    const useUnifiedSpeed = this.speedSlider !== null;
 
-    this.playInterval = setInterval(() => {
-      let nextTime;
-      if (this.playDirection === 1) {
-        nextTime = this.getNextAvailableTime(this.currentTime);
-        // Check for end of timeline - pause instead of looping
-        if (nextTime <= this.currentTime && this.sortedTimes.length > 1) {
-          // Reached the end - pause playback
-          this.pause();
-          return;
+    if (useUnifiedSpeed) {
+      // Phase 7: Unified speed control using stepsPerFrame
+      this._frameCounter = 0;
+
+      const tick = () => {
+        if (!this.isPlaying) return;
+
+        // For slideshow mode (stepsPerFrame < 1), hold frames longer
+        const framesPerStep = this.stepsPerFrame < 1
+          ? Math.round(1 / this.stepsPerFrame)
+          : 1;
+
+        this._frameCounter++;
+
+        // Only advance time when we've held long enough (slideshow mode)
+        // or every frame (normal mode)
+        if (this.stepsPerFrame >= 1 || this._frameCounter >= framesPerStep) {
+          // Calculate time step
+          const stepMs = this.stepsPerFrame >= 1
+            ? TIME_SYSTEM.BASE_STEP_MS * this.stepsPerFrame
+            : TIME_SYSTEM.BASE_STEP_MS;  // One 6hr step in slideshow mode
+
+          let nextTime;
+          if (this.playDirection === 1) {
+            nextTime = this.currentTime + stepMs;
+            // Check for end
+            if (nextTime > this.maxTime) {
+              if (this.loopEnabled) {
+                // Loop back to start
+                nextTime = this.minTime;
+              } else {
+                this.pause();
+                return;
+              }
+            }
+          } else {
+            nextTime = this.currentTime - stepMs;
+            // Check for start
+            if (nextTime < this.minTime) {
+              if (this.loopEnabled) {
+                // Loop back to end
+                nextTime = this.maxTime;
+              } else {
+                this.pause();
+                return;
+              }
+            }
+          }
+
+          this.setTime(nextTime, 'playback');
+          this._frameCounter = 0;
         }
-      } else {
-        nextTime = this.getPrevAvailableTime(this.currentTime);
-        // Check for start of timeline - pause instead of looping
-        if (nextTime >= this.currentTime && this.sortedTimes.length > 1) {
-          // Reached the start - pause playback
-          this.pause();
-          return;
+
+        // Schedule next frame
+        this.playTimeout = setTimeout(tick, TIME_SYSTEM.FRAME_INTERVAL_MS);
+      };
+
+      tick();
+    } else {
+      // Legacy mode: granularity-based playback (fallback if no speed slider)
+      const interval = this.getPlaybackInterval();
+
+      this.playInterval = setInterval(() => {
+        let nextTime;
+        if (this.playDirection === 1) {
+          nextTime = this.getNextAvailableTime(this.currentTime);
+          if (nextTime <= this.currentTime && this.sortedTimes.length > 1) {
+            if (this.loopEnabled) {
+              // Loop back to start
+              nextTime = this.sortedTimes[0] || this.minTime;
+            } else {
+              this.pause();
+              return;
+            }
+          }
+        } else {
+          nextTime = this.getPrevAvailableTime(this.currentTime);
+          if (nextTime >= this.currentTime && this.sortedTimes.length > 1) {
+            if (this.loopEnabled) {
+              // Loop back to end
+              nextTime = this.sortedTimes[this.sortedTimes.length - 1] || this.maxTime;
+            } else {
+              this.pause();
+              return;
+            }
+          }
         }
-      }
-      this.setTime(nextTime, 'playback');
-    }, interval);
+        this.setTime(nextTime, 'playback');
+      }, interval);
+    }
   },
 
   /**
@@ -1409,6 +1901,26 @@ export const TimeSlider = {
     this.useTimestamps = false;
     this.stepMs = null;
     this.currentAdminLevel = null;  // Reset admin level filter
+
+    // Clear unified speed control state (Phase 7)
+    this.stepsPerFrame = 97;  // Reset to default (~1yr/sec)
+    this.speedSliderValue = 0.72;  // Reset to ~1yr/sec preset
+    this.loopEnabled = false;  // Reset loop state
+    this._inEventMode = false;
+    this._previousSpeedSlider = null;
+    if (this.playTimeout) {
+      clearTimeout(this.playTimeout);
+      this.playTimeout = null;
+    }
+    if (this.speedSlider) {
+      this.speedSlider.value = this.speedSliderValue;
+    }
+    if (this.speedLabel) {
+      this.speedLabel.textContent = TIME_SYSTEM.getSpeedLabel(this.stepsPerFrame);
+    }
+    if (this.loopCheckbox) {
+      this.loopCheckbox.checked = false;
+    }
 
     // Clear multi-scale state
     this.scales = [];

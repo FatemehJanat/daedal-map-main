@@ -29,11 +29,13 @@
 let MapAdapter = null;
 let TimeSlider = null;
 let ModelRegistry = null;
+let TIME_SYSTEM = null;
 
 export function setDependencies(deps) {
   MapAdapter = deps.MapAdapter;
   TimeSlider = deps.TimeSlider;
   ModelRegistry = deps.ModelRegistry;
+  TIME_SYSTEM = deps.TIME_SYSTEM;
 }
 
 // Animation modes
@@ -130,6 +132,14 @@ export const EventAnimator = {
   // Renderer reference (model-point-radius, model-track, model-polygon)
   renderer: null,
 
+  // Smooth wave animation state (radial mode only)
+  // Decouples visual wave circle from discrete time slider steps
+  _smoothWaveLoopId: null,      // requestAnimationFrame ID
+  _smoothWaveStartWall: null,   // Wall-clock time when playback started (ms)
+  _smoothWaveStartSim: null,    // Simulation time when playback started (ms)
+  _smoothWaveLastSim: null,     // Last rendered simulation time (for pause resume)
+  _smoothWavePlaying: false,    // Tracks if we're in smooth playback mode
+
   /**
    * Start an animation sequence.
    * @param {Object} options Animation configuration
@@ -217,6 +227,12 @@ export const EventAnimator = {
     this.currentIndex = 0;
     this._renderAtTime(this.timestamps[0]);
 
+    // Start smooth wave animation loop for radial mode (tsunamis)
+    // This provides 60 FPS wave circle updates independent of TimeSlider ticks
+    if (this.mode === AnimationMode.RADIAL) {
+      this._startSmoothWaveLoop();
+    }
+
     console.log(`EventAnimator: Started with ${this.events.length} events, ${this.timestamps.length} time steps`);
     return true;
   },
@@ -228,6 +244,9 @@ export const EventAnimator = {
     if (!this.isActive) return;
 
     console.log('EventAnimator: Stopping');
+
+    // Stop smooth wave animation loop (radial mode)
+    this._stopSmoothWaveLoop();
 
     // Remove TimeSlider scale and listener
     if (TimeSlider) {
@@ -289,6 +308,17 @@ export const EventAnimator = {
 
     this.currentIndex = index;
     this._renderAtTime(this.timestamps[index]);
+
+    // Sync smooth wave loop to new position (radial mode)
+    // This ensures wave radius matches after user seeks
+    if (this.mode === AnimationMode.RADIAL) {
+      this._smoothWaveLastSim = this.timestamps[index];
+      // If currently playing, reset start times for smooth continuation
+      if (this._smoothWavePlaying) {
+        this._smoothWaveStartWall = performance.now();
+        this._smoothWaveStartSim = this.timestamps[index];
+      }
+    }
   },
 
   /**
@@ -487,6 +517,11 @@ export const EventAnimator = {
     if (added) {
       TimeSlider.setActiveScale(this.scaleId);
 
+      // Enter event animation mode with auto-calculated speed for ~10 second playback
+      if (TimeSlider.enterEventAnimation) {
+        TimeSlider.enterEventAnimation(minTime, maxTime);
+      }
+
       // Listen for time changes
       this._timeChangeHandler = (time, source) => {
         if (source !== 'event-animator' && time > 3000) {
@@ -514,6 +549,143 @@ export const EventAnimator = {
         duration: 1500
       });
     }
+  },
+
+  /**
+   * Start smooth wave animation loop for radial mode.
+   * Runs at 60 FPS independently of TimeSlider discrete steps.
+   * Wave circle grows smoothly while runups still appear at discrete times.
+   * @private
+   */
+  _startSmoothWaveLoop() {
+    if (this.mode !== AnimationMode.RADIAL) return;
+    if (!MapAdapter?.map) return;
+
+    // Initialize last simulation time to source time
+    this._smoothWaveLastSim = this._radialSourceTime || this.timestamps[0];
+
+    // Monitor TimeSlider playback state
+    const checkPlaybackAndRender = () => {
+      if (!this.isActive || this.mode !== AnimationMode.RADIAL) {
+        this._smoothWaveLoopId = null;
+        return;
+      }
+
+      const nowPlaying = TimeSlider?.isPlaying || false;
+
+      // Detect play start
+      if (nowPlaying && !this._smoothWavePlaying) {
+        this._smoothWaveStartWall = performance.now();
+        this._smoothWaveStartSim = this._smoothWaveLastSim;
+        this._smoothWavePlaying = true;
+      }
+
+      // Detect pause
+      if (!nowPlaying && this._smoothWavePlaying) {
+        this._smoothWavePlaying = false;
+        // Preserve current simulation time for resume
+      }
+
+      // If playing, calculate smooth simulation time
+      if (this._smoothWavePlaying && TimeSlider && TIME_SYSTEM) {
+        const wallElapsed = performance.now() - this._smoothWaveStartWall;
+
+        // Calculate speed: stepsPerFrame * BASE_STEP_MS per frame, at TIME_SYSTEM.MAX_FPS
+        // speedMultiplier = how many simulation ms pass per real ms
+        // When MAX_FPS increases from 15 to 60, speed stays correct because
+        // TimeSlider adjusts stepsPerFrame accordingly
+        const stepsPerFrame = TimeSlider.stepsPerFrame || 1;
+        const baseStepMs = TIME_SYSTEM.BASE_STEP_MS;  // 6 hours in ms
+        const fps = TIME_SYSTEM.MAX_FPS;  // Currently 15, will be 60 later
+        const speedMultiplier = (stepsPerFrame * baseStepMs * fps) / 1000;
+
+        // Smooth simulation time
+        const smoothSimTime = this._smoothWaveStartSim + (wallElapsed * speedMultiplier);
+
+        // Clamp to animation range
+        const minTime = this.timestamps[0];
+        const maxTime = this.timestamps[this.timestamps.length - 1];
+        const clampedSimTime = Math.max(minTime, Math.min(maxTime, smoothSimTime));
+
+        // Update wave radius only (not full render)
+        this._updateWaveRadiusSmooth(clampedSimTime);
+
+        // Save for resume
+        this._smoothWaveLastSim = clampedSimTime;
+
+        // Check if animation completed
+        if (smoothSimTime >= maxTime) {
+          // Animation finished - let TimeSlider handle loop/pause
+        }
+      }
+
+      // Continue loop
+      this._smoothWaveLoopId = requestAnimationFrame(checkPlaybackAndRender);
+    };
+
+    // Start the loop
+    this._smoothWaveLoopId = requestAnimationFrame(checkPlaybackAndRender);
+    console.log('EventAnimator: Started smooth wave animation loop');
+  },
+
+  /**
+   * Update only the wave circle radius without re-rendering all features.
+   * Uses direct source data update for smooth 60 FPS animation.
+   * @private
+   */
+  _updateWaveRadiusSmooth(simTime) {
+    if (!MapAdapter?.map) return;
+
+    const sourceTime = this._radialSourceTime;
+    if (!sourceTime) return;
+
+    // Calculate wave distance at this simulation time
+    const elapsedMs = Math.max(0, simTime - sourceTime);
+    const elapsedHours = elapsedMs / (1000 * 60 * 60);
+    const waveRadiusKm = elapsedHours * TSUNAMI_SPEED_KMH;
+
+    // Find the source in the map layer and update its properties
+    const map = MapAdapter.map;
+    const sourceId = 'events-point-radius';  // From model-point-radius CONFIG
+
+    // Get current source data
+    const source = map.getSource(sourceId);
+    if (!source) return;
+
+    // Get source's current data and update the source event's wave radius
+    const currentData = source._data;
+    if (!currentData || !currentData.features) return;
+
+    // Find and update source event
+    let updated = false;
+    for (const feature of currentData.features) {
+      if (feature.properties?.is_source === true) {
+        feature.properties._waveRadiusKm = waveRadiusKm;
+        feature.properties._elapsedHours = elapsedHours;
+        updated = true;
+        break;
+      }
+    }
+
+    if (updated) {
+      // Trigger re-render with updated data
+      source.setData(currentData);
+    }
+  },
+
+  /**
+   * Stop smooth wave animation loop.
+   * @private
+   */
+  _stopSmoothWaveLoop() {
+    if (this._smoothWaveLoopId) {
+      cancelAnimationFrame(this._smoothWaveLoopId);
+      this._smoothWaveLoopId = null;
+    }
+    this._smoothWaveStartWall = null;
+    this._smoothWaveStartSim = null;
+    this._smoothWaveLastSim = null;
+    this._smoothWavePlaying = false;
   },
 
   /**

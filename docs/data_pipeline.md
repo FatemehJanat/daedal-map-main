@@ -1,10 +1,14 @@
 # Data Pipeline
 
-Convert raw data sources to standardized parquet format for the globe display.
+Detailed documentation for data schemas, metadata, folder structure, and pipeline architecture.
 
-**Converters**: `data_converters/`
-**Output**: `county-map-data/data/{source_id}/`
-**Geometry**: See [GEOMETRY.md](GEOMETRY.md) for loc_id specification
+**Quick reference for creating converters**: See [data_import.md](data_import.md)
+**Disaster visualization system**: See [DISASTER_DISPLAY.md](DISASTER_DISPLAY.md)
+**Geometry & loc_id**: See [GEOMETRY.md](GEOMETRY.md)
+
+**Code locations**:
+- Converters: `data_converters/`
+- Output: `county-map-data/data/{source_id}/`
 
 ---
 

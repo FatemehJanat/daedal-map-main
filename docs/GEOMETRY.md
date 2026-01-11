@@ -708,7 +708,7 @@ Most hazard datasets produce TWO output files that serve different purposes:
 **Example: Wildfires**
 ```
 wildfires/
-  fires.parquet     # 50K fires: event_id, name, date, centroid, acres, loc_id
+  fires.parquet     # 50K fires: event_id, fire_name, timestamp, centroid, burned_acres, perimeter, loc_id
   USA.parquet       # 150K rows: loc_id, year, fire_count, total_acres, max_fire_acres
 ```
 

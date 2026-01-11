@@ -12,6 +12,7 @@
 import { SequenceAnimator, setDependencies as setSequenceAnimatorDeps } from './sequence-animator.js';
 import { TrackAnimator, setDependencies as setTrackAnimatorDeps } from './track-animator.js';
 import EventAnimator, { AnimationMode, setDependencies as setEventAnimatorDeps } from './event-animator.js';
+import { TIME_SYSTEM } from './time-slider.js';
 import { CONFIG } from './config.js';
 
 // Dependencies set via setDependencies
@@ -42,7 +43,8 @@ export function setDependencies(deps) {
   setEventAnimatorDeps({
     MapAdapter: deps.MapAdapter,
     TimeSlider: deps.TimeSlider,
-    ModelRegistry: deps.ModelRegistry
+    ModelRegistry: deps.ModelRegistry,
+    TIME_SYSTEM: TIME_SYSTEM
   });
 }
 
@@ -76,7 +78,7 @@ const OVERLAY_ENDPOINTS = {
     yearField: 'year'  // Filter eruptions by year
   },
   wildfires: {
-    list: '/api/wildfires/geojson',
+    list: '/api/wildfires/geojson?include_perimeter=true',
     eventType: 'wildfire',
     yearField: 'year'
   },
@@ -189,6 +191,22 @@ export const OverlayController = {
         this.handleTsunamiRunups(data);
       });
       console.log('OverlayController: Registered tsunami runups animation listener');
+    }
+
+    // Wildfire -> Animation: when user clicks "View fire progression"
+    if (model.onFireAnimation) {
+      model.onFireAnimation((data) => {
+        this.handleFireAnimation(data);
+      });
+      console.log('OverlayController: Registered fire animation listener');
+    }
+
+    // Wildfire -> Progression: when daily progression data is available
+    if (model.onFireProgression) {
+      model.onFireProgression((data) => {
+        this.handleFireProgression(data);
+      });
+      console.log('OverlayController: Registered fire progression listener');
     }
   },
 
@@ -305,6 +323,10 @@ export const OverlayController = {
         TimeSlider.removeScale(this.activeSequenceScaleId);
         this.activeSequenceScaleId = null;
       }
+      // Exit event animation mode - restore yearly overview speed
+      if (TimeSlider && TimeSlider.exitEventAnimation) {
+        TimeSlider.exitEventAnimation();
+      }
       // Restore TimeSlider range from cached overlay year ranges
       this.recalculateTimeRange();
       if (TimeSlider) {
@@ -366,6 +388,12 @@ export const OverlayController = {
       if (added) {
         this.activeSequenceScaleId = scaleId;
         TimeSlider.setActiveScale(scaleId);
+
+        // Enter event animation mode with auto-calculated speed for ~10 second playback
+        if (TimeSlider.enterEventAnimation) {
+          TimeSlider.enterEventAnimation(minTime, maxTime);
+        }
+
         const durationDays = (timeRange / (24 * 60 * 60 * 1000)).toFixed(1);
         console.log(`OverlayController: Started volcano-triggered sequence for ${volcanoName} with ${seqEvents.length} earthquakes, ${availableTimes.length} time steps (${durationDays} days)`);
       }
@@ -498,6 +526,418 @@ export const OverlayController = {
         this.renderFilteredData('tsunamis', currentYear);
       }
     }
+  },
+
+  /**
+   * Handle wildfire animation - animates perimeter polygon opacity over fire duration.
+   * Simple Option A: Fade in final perimeter from 0% to 100% over duration_days.
+   */
+  handleFireAnimation(data) {
+    const { perimeter, eventId, durationDays, startTime } = data;
+    console.log(`OverlayController: Starting fire animation for ${eventId} (${durationDays} days)`);
+
+    if (!perimeter || !perimeter.geometry) {
+      console.warn('OverlayController: No perimeter data for fire animation');
+      return;
+    }
+
+    // Calculate time range
+    const startMs = new Date(startTime).getTime();
+    const durationMs = durationDays * 24 * 60 * 60 * 1000;
+    const endMs = startMs + durationMs;
+
+    // Hide popup
+    MapAdapter?.hidePopup?.();
+    MapAdapter.popupLocked = false;
+
+    // Get perimeter center for zoom
+    let centerLon = 0, centerLat = 0, count = 0;
+    const coords = perimeter.geometry.coordinates;
+    if (perimeter.geometry.type === 'Polygon') {
+      for (const pt of coords[0]) {
+        centerLon += pt[0];
+        centerLat += pt[1];
+        count++;
+      }
+    } else if (perimeter.geometry.type === 'MultiPolygon') {
+      for (const poly of coords) {
+        for (const pt of poly[0]) {
+          centerLon += pt[0];
+          centerLat += pt[1];
+          count++;
+        }
+      }
+    }
+    if (count > 0) {
+      centerLon /= count;
+      centerLat /= count;
+    }
+
+    // Zoom to fire location
+    MapAdapter.map.flyTo({
+      center: [centerLon, centerLat],
+      zoom: 9,
+      duration: 1500
+    });
+
+    // Create fire perimeter layer
+    const sourceId = 'fire-anim-perimeter';
+    const layerId = 'fire-anim-fill';
+    const strokeId = 'fire-anim-stroke';
+
+    // Remove existing layers
+    if (MapAdapter.map.getLayer(layerId)) MapAdapter.map.removeLayer(layerId);
+    if (MapAdapter.map.getLayer(strokeId)) MapAdapter.map.removeLayer(strokeId);
+    if (MapAdapter.map.getSource(sourceId)) MapAdapter.map.removeSource(sourceId);
+
+    // Add perimeter source
+    MapAdapter.map.addSource(sourceId, {
+      type: 'geojson',
+      data: perimeter
+    });
+
+    // Add fill layer (starts transparent)
+    MapAdapter.map.addLayer({
+      id: layerId,
+      type: 'fill',
+      source: sourceId,
+      paint: {
+        'fill-color': '#ff4400',
+        'fill-opacity': 0
+      }
+    });
+
+    // Add stroke layer
+    MapAdapter.map.addLayer({
+      id: strokeId,
+      type: 'line',
+      source: sourceId,
+      paint: {
+        'line-color': '#ff6600',
+        'line-width': 2,
+        'line-opacity': 0
+      }
+    });
+
+    // Setup TimeSlider for fire animation
+    const scaleId = `fire-${eventId.substring(0, 12)}`;
+    const fireDate = new Date(startTime).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+    // Generate timestamps for each day
+    const timestamps = [];
+    for (let t = startMs; t <= endMs; t += 24 * 60 * 60 * 1000) {
+      timestamps.push(t);
+    }
+
+    if (TimeSlider) {
+      const added = TimeSlider.addScale({
+        id: scaleId,
+        label: `Fire ${fireDate}`,
+        granularity: 'daily',
+        useTimestamps: true,
+        currentTime: startMs,
+        timeRange: {
+          min: startMs,
+          max: endMs,
+          available: timestamps
+        },
+        mapRenderer: 'fire-animation'
+      });
+
+      if (added) {
+        this.activeFireScaleId = scaleId;
+        TimeSlider.setActiveScale(scaleId);
+
+        // Enter event animation mode with auto-calculated speed
+        if (TimeSlider.enterEventAnimation) {
+          TimeSlider.enterEventAnimation(startMs, endMs);
+        }
+      }
+    }
+
+    // Store animation state
+    this._fireAnimState = {
+      sourceId,
+      layerId,
+      strokeId,
+      startMs,
+      endMs,
+      scaleId
+    };
+
+    // Listen for time changes to update opacity
+    this._fireTimeHandler = (time, source) => {
+      if (!this._fireAnimState) return;
+
+      const { startMs, endMs, layerId, strokeId } = this._fireAnimState;
+      const progress = Math.max(0, Math.min(1, (time - startMs) / (endMs - startMs)));
+
+      // Update fill and stroke opacity based on progress
+      if (MapAdapter.map.getLayer(layerId)) {
+        MapAdapter.map.setPaintProperty(layerId, 'fill-opacity', progress * 0.6);
+      }
+      if (MapAdapter.map.getLayer(strokeId)) {
+        MapAdapter.map.setPaintProperty(strokeId, 'line-opacity', progress * 0.9);
+      }
+    };
+    TimeSlider?.addChangeListener(this._fireTimeHandler);
+
+    // Add exit button
+    this._addFireExitButton(() => this._exitFireAnimation());
+
+    console.log(`OverlayController: Fire animation ready, ${durationDays} days starting ${fireDate}`);
+  },
+
+  /**
+   * Handle fire progression animation with daily snapshots.
+   * Shows actual fire spread day-by-day using pre-computed perimeters.
+   * @param {Object} data - {snapshots, eventId, totalDays, startTime}
+   */
+  handleFireProgression(data) {
+    const { snapshots, eventId, totalDays, startTime } = data;
+    console.log(`OverlayController: Starting fire progression for ${eventId} (${totalDays} daily snapshots)`);
+
+    if (!snapshots || snapshots.length === 0) {
+      console.warn('OverlayController: No snapshots for fire progression');
+      return;
+    }
+
+    // Build timestamp -> snapshot lookup
+    const snapshotMap = new Map();
+    const timestamps = [];
+    let minTime = Infinity, maxTime = -Infinity;
+
+    for (const snap of snapshots) {
+      const t = new Date(snap.date + 'T00:00:00Z').getTime();
+      snapshotMap.set(t, snap);
+      timestamps.push(t);
+      if (t < minTime) minTime = t;
+      if (t > maxTime) maxTime = t;
+    }
+    timestamps.sort((a, b) => a - b);
+
+    // Hide popup
+    MapAdapter?.hidePopup?.();
+    MapAdapter.popupLocked = false;
+
+    // Get center from first snapshot for zoom
+    const firstSnap = snapshots[0];
+    let centerLon = 0, centerLat = 0, count = 0;
+    const geom = firstSnap.geometry;
+    if (geom.type === 'Polygon') {
+      for (const pt of geom.coordinates[0]) {
+        centerLon += pt[0];
+        centerLat += pt[1];
+        count++;
+      }
+    } else if (geom.type === 'MultiPolygon') {
+      for (const poly of geom.coordinates) {
+        for (const pt of poly[0]) {
+          centerLon += pt[0];
+          centerLat += pt[1];
+          count++;
+        }
+      }
+    }
+    if (count > 0) {
+      centerLon /= count;
+      centerLat /= count;
+    }
+
+    // Zoom to fire location
+    MapAdapter.map.flyTo({
+      center: [centerLon, centerLat],
+      zoom: 9,
+      duration: 1500
+    });
+
+    // Create fire perimeter layer
+    const sourceId = 'fire-prog-perimeter';
+    const layerId = 'fire-prog-fill';
+    const strokeId = 'fire-prog-stroke';
+
+    // Remove existing layers
+    if (MapAdapter.map.getLayer(layerId)) MapAdapter.map.removeLayer(layerId);
+    if (MapAdapter.map.getLayer(strokeId)) MapAdapter.map.removeLayer(strokeId);
+    if (MapAdapter.map.getSource(sourceId)) MapAdapter.map.removeSource(sourceId);
+
+    // Add perimeter source with first snapshot
+    MapAdapter.map.addSource(sourceId, {
+      type: 'geojson',
+      data: { type: 'Feature', geometry: firstSnap.geometry, properties: { day: 1 } }
+    });
+
+    // Add fill layer
+    MapAdapter.map.addLayer({
+      id: layerId,
+      type: 'fill',
+      source: sourceId,
+      paint: {
+        'fill-color': '#ff4400',
+        'fill-opacity': 0.5
+      }
+    });
+
+    // Add stroke layer
+    MapAdapter.map.addLayer({
+      id: strokeId,
+      type: 'line',
+      source: sourceId,
+      paint: {
+        'line-color': '#ff6600',
+        'line-width': 2,
+        'line-opacity': 0.9
+      }
+    });
+
+    // Setup TimeSlider
+    const scaleId = `fireprog-${eventId.substring(0, 10)}`;
+    const fireDate = new Date(minTime).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+    if (TimeSlider) {
+      const added = TimeSlider.addScale({
+        id: scaleId,
+        label: `Fire ${fireDate} (${totalDays}d)`,
+        granularity: 'daily',
+        useTimestamps: true,
+        currentTime: minTime,
+        timeRange: {
+          min: minTime,
+          max: maxTime,
+          available: timestamps
+        },
+        mapRenderer: 'fire-progression'
+      });
+
+      if (added) {
+        this.activeFireScaleId = scaleId;
+        TimeSlider.setActiveScale(scaleId);
+
+        // Enter event animation mode
+        if (TimeSlider.enterEventAnimation) {
+          TimeSlider.enterEventAnimation(minTime, maxTime);
+        }
+      }
+    }
+
+    // Store animation state
+    this._fireAnimState = {
+      sourceId,
+      layerId,
+      strokeId,
+      startMs: minTime,
+      endMs: maxTime,
+      scaleId,
+      snapshotMap,  // For progression: lookup by timestamp
+      timestamps    // For progression: sorted list
+    };
+
+    // Listen for time changes to update geometry
+    this._fireTimeHandler = (time, source) => {
+      if (!this._fireAnimState || !this._fireAnimState.snapshotMap) return;
+
+      const { sourceId, snapshotMap, timestamps } = this._fireAnimState;
+
+      // Find closest snapshot <= current time
+      let closestTime = timestamps[0];
+      for (const t of timestamps) {
+        if (t <= time) closestTime = t;
+        else break;
+      }
+
+      const snap = snapshotMap.get(closestTime);
+      if (snap && MapAdapter.map.getSource(sourceId)) {
+        MapAdapter.map.getSource(sourceId).setData({
+          type: 'Feature',
+          geometry: snap.geometry,
+          properties: { day: snap.day_num, area_km2: snap.area_km2, date: snap.date }
+        });
+      }
+    };
+    TimeSlider?.addChangeListener(this._fireTimeHandler);
+
+    // Add exit button
+    this._addFireExitButton(() => this._exitFireAnimation());
+
+    console.log(`OverlayController: Fire progression ready, ${totalDays} days starting ${fireDate}`);
+  },
+
+  /**
+   * Exit fire animation and cleanup.
+   * @private
+   */
+  _exitFireAnimation() {
+    console.log('OverlayController: Exiting fire animation');
+
+    // Remove layers
+    if (this._fireAnimState) {
+      const { sourceId, layerId, strokeId, scaleId } = this._fireAnimState;
+      if (MapAdapter.map.getLayer(layerId)) MapAdapter.map.removeLayer(layerId);
+      if (MapAdapter.map.getLayer(strokeId)) MapAdapter.map.removeLayer(strokeId);
+      if (MapAdapter.map.getSource(sourceId)) MapAdapter.map.removeSource(sourceId);
+
+      // Remove TimeSlider scale
+      if (TimeSlider && scaleId) {
+        TimeSlider.removeScale(scaleId);
+        if (TimeSlider.exitEventAnimation) {
+          TimeSlider.exitEventAnimation();
+        }
+      }
+
+      this._fireAnimState = null;
+    }
+
+    // Remove time listener
+    if (this._fireTimeHandler && TimeSlider) {
+      TimeSlider.removeChangeListener(this._fireTimeHandler);
+      this._fireTimeHandler = null;
+    }
+
+    // Remove exit button
+    const exitBtn = document.getElementById('fire-exit-btn');
+    if (exitBtn) exitBtn.remove();
+
+    // Restore wildfire overlay
+    const currentYear = this.getCurrentYear();
+    if (dataCache.wildfires) {
+      this.renderFilteredData('wildfires', currentYear);
+    }
+
+    // Recalculate time range
+    this.recalculateTimeRange();
+  },
+
+  /**
+   * Add exit button for fire animation.
+   * @private
+   */
+  _addFireExitButton(onExit) {
+    // Remove existing
+    const existing = document.getElementById('fire-exit-btn');
+    if (existing) existing.remove();
+
+    const btn = document.createElement('button');
+    btn.id = 'fire-exit-btn';
+    btn.textContent = 'Exit Fire View';
+    btn.style.cssText = `
+      position: fixed;
+      top: 80px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 10px 20px;
+      background: #ff6600;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      z-index: 1000;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    `;
+
+    btn.addEventListener('click', onExit);
+    document.body.appendChild(btn);
   },
 
   /**
@@ -681,6 +1121,10 @@ export const OverlayController = {
         TimeSlider.removeScale(this.activeSequenceScaleId);
         this.activeSequenceScaleId = null;
       }
+      // Exit event animation mode - restore yearly overview speed
+      if (TimeSlider && TimeSlider.exitEventAnimation) {
+        TimeSlider.exitEventAnimation();
+      }
       // Restore TimeSlider range from cached overlay year ranges
       this.recalculateTimeRange();
       // Switch back to primary scale if it exists
@@ -736,6 +1180,12 @@ export const OverlayController = {
       if (added) {
         this.activeSequenceScaleId = scaleId;
         TimeSlider.setActiveScale(scaleId);
+
+        // Enter event animation mode with auto-calculated speed for ~10 second playback
+        if (TimeSlider.enterEventAnimation) {
+          TimeSlider.enterEventAnimation(minTime, maxTime);
+        }
+
         const stepHours = (adaptiveStepMs / (60 * 60 * 1000)).toFixed(1);
         const durationDays = (timeRange / (24 * 60 * 60 * 1000)).toFixed(1);
         console.log(`OverlayController: Added sequence scale ${scaleId} with ${seqEvents.length} events, ${availableTimes.length} time steps (${stepHours}h/step, ${durationDays} days)`);
@@ -817,31 +1267,35 @@ export const OverlayController = {
 
   /**
    * Convert time to year (handles both year int and timestamp ms).
+   * Uses same detection as TimeSlider: |value| < 50000 = year, else timestamp.
    * @param {number} time - Time value
    * @returns {number} Year
    */
   getYearFromTime(time) {
-    if (!time) return null;
-    // If it looks like a timestamp (> year 3000), convert
-    if (time > 3000) {
-      return new Date(time).getFullYear();
+    if (!time && time !== 0) return null;
+    // If absolute value is small, it's a year (-50000 to 50000)
+    // Otherwise it's a timestamp (handles both positive and negative)
+    if (Math.abs(time) < 50000) {
+      return time;
     }
-    return time;
+    // It's a timestamp - convert to year
+    return new Date(time).getUTCFullYear();
   },
 
   /**
    * Get current year from TimeSlider.
+   * TimeSlider.currentTime is always stored as timestamp (ms) internally.
    * @returns {number|null}
    */
   getCurrentYear() {
     if (!TimeSlider?.currentTime) return null;
 
-    // TimeSlider.currentTime can be a year (int) or timestamp (ms)
-    if (TimeSlider.useTimestamps) {
-      return new Date(TimeSlider.currentTime).getFullYear();
-    } else {
-      return TimeSlider.currentTime;
+    // currentTime is always a timestamp since Phase 8 unification
+    // Use TimeSlider's helper if available, otherwise convert directly
+    if (TimeSlider.timestampToYear) {
+      return TimeSlider.timestampToYear(TimeSlider.currentTime);
     }
+    return new Date(TimeSlider.currentTime).getFullYear();
   },
 
   /**
@@ -872,10 +1326,25 @@ export const OverlayController = {
   async handleOverlayChange(overlayId, isActive) {
     console.log(`OverlayController: ${overlayId} ${isActive ? 'ON' : 'OFF'}`);
 
-    // Demographics controls choropleth visibility
+    // Demographics controls choropleth visibility AND loads countries
     if (overlayId === 'demographics') {
-      if (MapAdapter) {
-        MapAdapter.setChoroplethVisible(isActive);
+      if (isActive) {
+        // Load countries if not already loaded (lazy load on first demographics enable)
+        const App = window.App;  // Get App reference
+        if (App && typeof App.loadCountries === 'function') {
+          // Check if countries are already loaded by checking if there's geojson data
+          if (!App.currentData?.geojson) {
+            console.log('OverlayController: Loading countries for demographics overlay');
+            await App.loadCountries();
+          }
+        }
+        if (MapAdapter) {
+          MapAdapter.setChoroplethVisible(true);
+        }
+      } else {
+        if (MapAdapter) {
+          MapAdapter.setChoroplethVisible(false);
+        }
       }
       return;
     }
@@ -971,6 +1440,7 @@ export const OverlayController = {
             granularity: 'yearly',
             available: sortedYears  // Only step to years with data
           });
+          TimeSlider.show();  // Show TimeSlider when overlay with year data loads
           console.log(`OverlayController: TimeSlider range ${minYear}-${maxYear} (from data), ${sortedYears.length} years with data`);
         }
       }

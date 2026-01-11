@@ -71,8 +71,8 @@ export const App = {
     // Setup keyboard handler for debug mode
     this.setupKeyboardHandler();
 
-    // Load initial data
-    await this.loadCountries();
+    // Don't load countries at startup - wait for demographics overlay to be enabled
+    // This keeps the map clean until user selects what they want to see
 
     // Initialize viewport-based navigation with current viewport area
     const bounds = MapAdapter.map.getBounds();

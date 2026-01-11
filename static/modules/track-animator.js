@@ -455,6 +455,12 @@ export const TrackAnimator = {
 
     if (added) {
       TimeSlider.setActiveScale(this.scaleId);
+
+      // Enter event animation mode with auto-calculated speed for ~10 second playback
+      if (TimeSlider.enterEventAnimation) {
+        TimeSlider.enterEventAnimation(this.startTime, this.endTime);
+      }
+
       console.log(`TrackAnimator: Added TimeSlider scale ${this.scaleId}`);
 
       // Listen for time changes from TimeSlider
@@ -537,6 +543,11 @@ export const TrackAnimator = {
 
     // Remove TimeSlider scale and listener
     if (TimeSlider) {
+      // Exit event animation mode - restore yearly overview speed
+      if (TimeSlider.exitEventAnimation) {
+        TimeSlider.exitEventAnimation();
+      }
+
       if (this._timeChangeHandler) {
         TimeSlider.removeChangeListener(this._timeChangeHandler);
         this._timeChangeHandler = null;

@@ -529,6 +529,87 @@
       color: #ff6666;
     }
 
+    /* Speed Control - Phase 7 Unified Speed Slider */
+    .speed-control {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 10px;
+      padding-top: 8px;
+      border-top: 1px solid #3d3d5c;
+    }
+
+    .speed-label-left,
+    .speed-label-right {
+      font-size: 10px;
+      color: #888;
+      min-width: 28px;
+    }
+
+    .speed-label-right {
+      text-align: right;
+    }
+
+    #speedSlider {
+      flex: 1;
+      height: 4px;
+      -webkit-appearance: none;
+      appearance: none;
+      background: linear-gradient(to right, #2d5a87, #ff6600);
+      border-radius: 2px;
+      outline: none;
+    }
+
+    #speedSlider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 14px;
+      height: 14px;
+      background: #5dade2;
+      border-radius: 50%;
+      cursor: pointer;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+    }
+
+    #speedSlider::-moz-range-thumb {
+      width: 14px;
+      height: 14px;
+      background: #5dade2;
+      border-radius: 50%;
+      cursor: pointer;
+      border: none;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+    }
+
+    .speed-value {
+      font-size: 11px;
+      font-weight: 600;
+      color: #5dade2;
+      min-width: 70px;
+      text-align: right;
+    }
+
+    .loop-control {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-left: 8px;
+      cursor: pointer;
+      font-size: 11px;
+      color: #888;
+    }
+
+    .loop-control:hover {
+      color: #5dade2;
+    }
+
+    .loop-control input[type="checkbox"] {
+      width: 14px;
+      height: 14px;
+      cursor: pointer;
+      accent-color: #5dade2;
+    }
+
     /* Choropleth Legend - dark */
     #choroplethLegend {
       position: absolute;
@@ -1388,16 +1469,25 @@
       <span class="time-slider-year" id="currentYearLabel">2020</span>
     </div>
     <div class="time-slider-controls">
-      <button id="rewindBtn" class="time-btn" title="Fast rewind (3x)">&lt;&lt;</button>
       <button id="stepBackBtn" class="time-btn" title="Previous year">&lt;</button>
       <button id="playBtn" class="time-btn play" title="Play/Pause">|&gt;</button>
       <button id="stepFwdBtn" class="time-btn" title="Next year">&gt;</button>
-      <button id="fastFwdBtn" class="time-btn" title="Fast forward (3x)">&gt;&gt;</button>
       <input type="range" id="timeSlider" min="2000" max="2023" value="2023">
     </div>
     <div class="time-slider-labels">
       <span id="minYearLabel">2000</span>
       <span id="maxYearLabel">2023</span>
+    </div>
+    <!-- Speed Control (Phase 7 - Unified Speed Slider) -->
+    <div class="speed-control">
+      <span class="speed-label-left">Slow</span>
+      <input type="range" id="speedSlider" min="0" max="1" step="0.01" value="0.72" title="Animation speed">
+      <span class="speed-label-right">Fast</span>
+      <span id="speedLabel" class="speed-value">1yr/sec</span>
+      <label class="loop-control" title="Loop animation">
+        <input type="checkbox" id="loopCheckbox">
+        <span>Loop</span>
+      </label>
     </div>
   </div>
 

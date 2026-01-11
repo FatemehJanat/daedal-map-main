@@ -17,7 +17,7 @@ const CATEGORIES = [
       id: 'demographics',
       label: 'Demographics',
       description: 'Population, density, economic data',
-      default: true,
+      default: false,
       locked: false,
       model: 'choropleth',
       hasYearFilter: false
@@ -84,10 +84,10 @@ const CATEGORIES = [
       {
         id: 'wildfires',
         label: 'Wildfires',
-        description: 'Fire perimeters and burned areas',
+        description: 'Global fires >= 100km2 (2003-2024)',
         default: false,
         locked: false,
-        model: 'polygon',
+        model: 'point-radius',
         icon: 'W',
         hasYearFilter: true
       }
@@ -600,3 +600,6 @@ export const OverlaySelector = {
     this._updateCategoryCheckbox(overlayId);
   }
 };
+
+// Expose globally for ViewportLoader to check active overlays
+window.OverlaySelector = OverlaySelector;

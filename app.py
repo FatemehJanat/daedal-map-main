@@ -1369,79 +1369,256 @@ async def get_nearby_tsunamis(
 # === Wildfire Data Endpoints ===
 
 @app.get("/api/wildfires/geojson")
-async def get_wildfires_geojson(year: int = None, min_acres: int = None):
+async def get_wildfires_geojson(
+    year: int = None,
+    min_year: int = 2010,
+    max_year: int = None,
+    min_area_km2: float = 100.0,
+    include_perimeter: bool = False
+):
     """
     Get wildfires as GeoJSON for map display.
-    Returns fire perimeter polygons or centroids.
+    Uses Global Fire Atlas data with yearly partitions for efficient loading.
+
+    Default: >= 100km2 fires as points from 2010+ (~54k fires, ~5MB as points).
+    Set include_perimeter=true to get polygon geometries (~137MB for full range).
+
+    Memory-efficient: Uses yearly parquet files with pyarrow predicate pushdown.
     """
+    import pyarrow.parquet as pq
+    import pyarrow as pa
     import pandas as pd
     import json as json_lib
 
     try:
-        fires_path = Path("C:/Users/Bryan/Desktop/county-map-data/countries/USA/wildfires/fires.parquet")
+        by_year_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/wildfires/by_year")
 
-        if not fires_path.exists():
+        if not by_year_path.exists():
             return JSONResponse(content={"error": "Wildfire data not available"}, status_code=404)
 
-        df = pd.read_parquet(fires_path)
-
-        # Apply filters
+        # Determine year range
         if year is not None:
-            df = df[df['year'] == year]
-        if min_acres is not None:
-            df = df[df['acres'] >= min_acres]
+            years_to_load = [year]
+        else:
+            end_year = max_year if max_year else 2024
+            years_to_load = list(range(min_year, end_year + 1))
 
-        # Limit for performance
-        if len(df) > 500:
-            df = df.nlargest(500, 'acres')
+        # Columns to read (exclude perimeter for fast initial load)
+        columns = ['event_id', 'timestamp', 'latitude', 'longitude', 'area_km2',
+                   'burned_acres', 'duration_days', 'land_cover', 'source']
+        if include_perimeter:
+            columns.append('perimeter')
+
+        # Load from yearly partition files with pyarrow filters
+        all_tables = []
+        for yr in years_to_load:
+            year_file = by_year_path / f"fires_{yr}.parquet"
+            if not year_file.exists():
+                continue
+
+            # Pyarrow predicate pushdown - only reads matching row groups
+            table = pq.read_table(
+                year_file,
+                columns=columns,
+                filters=[('area_km2', '>=', min_area_km2)]
+            )
+            if table.num_rows > 0:
+                all_tables.append(table)
+
+        if not all_tables:
+            return JSONResponse(content={
+                "type": "FeatureCollection",
+                "features": [],
+                "metadata": {"count": 0, "min_area_km2": min_area_km2, "min_year": min_year}
+            })
+
+        # Concatenate tables and convert to pandas for GeoJSON building
+        combined = pa.concat_tables(all_tables)
+        df = combined.to_pandas()
+
+        # Extract year from timestamp
+        df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+        df['year'] = df['timestamp'].dt.year
 
         # Build GeoJSON features
         features = []
         for _, row in df.iterrows():
-            # Check if we have polygon geometry
-            geom = None
-            if 'geometry' in row and pd.notna(row['geometry']):
-                try:
-                    if isinstance(row['geometry'], str):
-                        geom = json_lib.loads(row['geometry'])
-                    else:
-                        geom = row['geometry']
-                except:
-                    pass
+            if pd.isna(row['latitude']) or pd.isna(row['longitude']):
+                continue
 
-            # Fallback to centroid point if no polygon
-            if geom is None:
-                if pd.isna(row.get('latitude')) or pd.isna(row.get('longitude')):
-                    continue
-                geom = {
-                    "type": "Point",
-                    "coordinates": [float(row['longitude']), float(row['latitude'])]
-                }
+            # Use perimeter polygon if requested and available
+            if include_perimeter and 'perimeter' in row and pd.notna(row['perimeter']):
+                try:
+                    geom = json_lib.loads(row['perimeter']) if isinstance(row['perimeter'], str) else row['perimeter']
+                except:
+                    geom = {"type": "Point", "coordinates": [float(row['longitude']), float(row['latitude'])]}
+            else:
+                geom = {"type": "Point", "coordinates": [float(row['longitude']), float(row['latitude'])]}
 
             features.append({
                 "type": "Feature",
                 "geometry": geom,
                 "properties": {
                     "event_id": row.get('event_id', ''),
-                    "name": row.get('fire_name', row.get('name', '')),
-                    "acres": float(row['acres']) if pd.notna(row.get('acres')) else None,
+                    "area_km2": float(row['area_km2']) if pd.notna(row.get('area_km2')) else None,
+                    "burned_acres": float(row['burned_acres']) if pd.notna(row.get('burned_acres')) else None,
+                    "duration_days": int(row['duration_days']) if pd.notna(row.get('duration_days')) else None,
                     "year": int(row['year']) if pd.notna(row.get('year')) else None,
-                    "start_date": str(row['start_date']) if pd.notna(row.get('start_date')) else None,
-                    "status": row.get('status', ''),
-                    "percent_contained": float(row['percent_contained']) if pd.notna(row.get('percent_contained')) else None,
-                    "loc_id": row.get('loc_id', '')
+                    "timestamp": row['timestamp'].isoformat() if pd.notna(row.get('timestamp')) else None,
+                    "land_cover": row.get('land_cover', ''),
+                    "source": row.get('source', 'global_fire_atlas'),
+                    "latitude": float(row['latitude']),
+                    "longitude": float(row['longitude'])
                 }
             })
 
         return JSONResponse(content={
             "type": "FeatureCollection",
-            "features": features
+            "features": features,
+            "metadata": {
+                "count": len(features),
+                "min_area_km2": min_area_km2,
+                "min_year": min_year,
+                "max_year": max_year or 2024,
+                "include_perimeter": include_perimeter,
+                "source": "Global Fire Atlas v2024"
+            }
         })
 
     except Exception as e:
         logger.error(f"Error fetching wildfires GeoJSON: {e}")
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
+
+@app.get("/api/wildfires/{event_id}/perimeter")
+async def get_wildfire_perimeter(event_id: str, year: int = None):
+    """
+    Get perimeter polygon for a single wildfire.
+    Used for on-demand loading when user clicks a fire.
+
+    If year is provided, reads from yearly partition (~90MB) instead of main file (2GB).
+    Much more memory efficient when year is known (frontend has it from the point data).
+    """
+    import pyarrow.parquet as pq
+    import json as json_lib
+
+    try:
+        by_year_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/wildfires/by_year")
+        main_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/wildfires/fires.parquet")
+
+        # Try yearly partition first if year provided (much more efficient)
+        if year is not None and by_year_path.exists():
+            year_file = by_year_path / f"fires_{year}.parquet"
+            if year_file.exists():
+                table = pq.read_table(
+                    year_file,
+                    columns=['event_id', 'perimeter'],
+                    filters=[('event_id', '=', event_id)]
+                )
+                if table.num_rows > 0:
+                    perimeter_str = table.column('perimeter')[0].as_py()
+                    if perimeter_str:
+                        perimeter = json_lib.loads(perimeter_str) if isinstance(perimeter_str, str) else perimeter_str
+                        return JSONResponse(content={
+                            "type": "Feature",
+                            "geometry": perimeter,
+                            "properties": {"event_id": event_id, "year": year}
+                        })
+
+        # Fallback: search main file (slower but works without year)
+        if main_path.exists():
+            table = pq.read_table(
+                main_path,
+                columns=['event_id', 'perimeter'],
+                filters=[('event_id', '=', event_id)]
+            )
+
+            if table.num_rows == 0:
+                return JSONResponse(content={"error": f"Fire {event_id} not found"}, status_code=404)
+
+            perimeter_str = table.column('perimeter')[0].as_py()
+
+            if perimeter_str is None:
+                return JSONResponse(content={"error": "No perimeter data for this fire"}, status_code=404)
+
+            perimeter = json_lib.loads(perimeter_str) if isinstance(perimeter_str, str) else perimeter_str
+
+            return JSONResponse(content={
+                "type": "Feature",
+                "geometry": perimeter,
+                "properties": {"event_id": event_id}
+            })
+
+        return JSONResponse(content={"error": "Wildfire data not available"}, status_code=404)
+
+    except Exception as e:
+        logger.error(f"Error fetching wildfire perimeter: {e}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+
+
+@app.get("/api/wildfires/{event_id}/progression")
+async def get_wildfire_progression(event_id: str, year: int = None):
+    """
+    Get daily fire progression snapshots for animation.
+    Returns an array of daily perimeters showing fire spread over time.
+    """
+    import pyarrow.parquet as pq
+    import json as json_lib
+
+    try:
+        progression_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/wildfires")
+
+        # Try year-specific file first
+        if year:
+            prog_file = progression_path / f"fire_progression_{year}.parquet"
+        else:
+            prog_file = progression_path / "fire_progression_2024.parquet"
+
+        if not prog_file.exists():
+            return JSONResponse(content={
+                "event_id": event_id,
+                "snapshots": [],
+                "error": "No progression data available"
+            })
+
+        # Read progression data for this fire
+        table = pq.read_table(
+            prog_file,
+            filters=[('event_id', '=', str(event_id))]
+        )
+
+        if table.num_rows == 0:
+            return JSONResponse(content={
+                "event_id": event_id,
+                "snapshots": [],
+                "error": "Fire not found in progression data"
+            })
+
+        # Convert to list of snapshots
+        df = table.to_pandas()
+        df = df.sort_values('day_num')
+
+        snapshots = []
+        for _, row in df.iterrows():
+            perimeter = json_lib.loads(row['perimeter']) if isinstance(row['perimeter'], str) else row['perimeter']
+            snapshots.append({
+                "date": row['date'].strftime('%Y-%m-%d') if hasattr(row['date'], 'strftime') else str(row['date']),
+                "day_num": int(row['day_num']),
+                "area_km2": float(row['area_km2']),
+                "geometry": perimeter
+            })
+
+        return JSONResponse(content={
+            "event_id": event_id,
+            "total_days": len(snapshots),
+            "snapshots": snapshots
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching wildfire progression: {e}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
 
 # === Tropical Storm Data Endpoints ===
 

@@ -349,6 +349,15 @@ export const ViewportLoader = {
    */
   onMoveEnd() {
     if (!MapAdapter?.map) return;
+
+    // Only load viewport geometry if demographics overlay is active
+    // This keeps the map clean until user explicitly enables demographics
+    const OverlaySelector = window.OverlaySelector;
+    const activeOverlays = OverlaySelector?.getActiveOverlays?.() || [];
+    if (!activeOverlays.includes('demographics')) {
+      return;  // Skip loading if demographics not enabled
+    }
+
     const currentZoom = MapAdapter.map.getZoom();
 
     // Check if this was a zoom or a pan

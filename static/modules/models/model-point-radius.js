@@ -73,6 +73,8 @@ export const PointRadiusModel = {
       this._addVolcanoLayer(options);
     } else if (eventType === 'tsunami') {
       this._addTsunamiLayer(options);
+    } else if (eventType === 'wildfire') {
+      this._addWildfireLayer(options);
     } else {
       this._addGenericEventLayer(eventType, options);
     }
@@ -258,6 +260,63 @@ export const PointRadiusModel = {
                 }, 2000);
               });
             });
+
+            // Setup click handler for "View fire progression" link (wildfire animation)
+            const fireLinks = popupEl.querySelectorAll('.view-fire-link');
+            fireLinks.forEach(link => {
+              link.addEventListener('click', async (evt) => {
+                evt.preventDefault();
+                const eventId = link.dataset.event;
+                const duration = parseInt(link.dataset.duration) || 30;
+                const timestamp = link.dataset.timestamp;
+                const year = link.dataset.year;
+
+                // Update link to show loading state
+                link.textContent = 'Loading fire...';
+                link.style.pointerEvents = 'none';
+
+                try {
+                  // First try to get daily progression data
+                  const progressionUrl = year
+                    ? `/api/wildfires/${eventId}/progression?year=${year}`
+                    : `/api/wildfires/${eventId}/progression`;
+                  const progressionResponse = await fetch(progressionUrl);
+                  const progressionData = await progressionResponse.json();
+
+                  if (progressionData.snapshots && progressionData.snapshots.length > 0) {
+                    // We have daily progression data - use it
+                    link.textContent = `Starting (${progressionData.total_days} days)...`;
+                    link.style.color = '#ff9800';
+                    this._notifyFireProgression(progressionData, eventId, timestamp);
+                  } else {
+                    // Fall back to single perimeter
+                    const perimeterUrl = year
+                      ? `/api/wildfires/${eventId}/perimeter?year=${year}`
+                      : `/api/wildfires/${eventId}/perimeter`;
+                    const perimeterResponse = await fetch(perimeterUrl);
+                    const perimeterData = await perimeterResponse.json();
+
+                    if (perimeterData.geometry) {
+                      link.textContent = 'Starting animation...';
+                      link.style.color = '#ff9800';
+                      this._notifyFireAnimation(perimeterData, eventId, duration, timestamp);
+                    } else {
+                      link.textContent = 'No perimeter data';
+                      link.style.color = '#999';
+                    }
+                  }
+                } catch (err) {
+                  console.error('Error fetching fire data:', err);
+                  link.textContent = 'Error loading';
+                  link.style.color = '#f44336';
+                }
+
+                // Re-enable after delay
+                setTimeout(() => {
+                  link.style.pointerEvents = 'auto';
+                }, 2000);
+              });
+            });
           }
         }, 50);
 
@@ -268,6 +327,9 @@ export const PointRadiusModel = {
       }
     };
     MapAdapter.map.on('click', CONFIG.layers.eventCircle, this.clickHandler);
+
+    // Also handle clicks on polygon fill layer (for wildfires with perimeters)
+    MapAdapter.map.on('click', CONFIG.layers.eventCircle + '-fill', this.clickHandler);
 
     // Click elsewhere to unlock popup and deselect
     this._mapClickHandler = (e) => {
@@ -864,6 +926,105 @@ export const PointRadiusModel = {
   },
 
   /**
+   * Add wildfire-specific layer.
+   * Renders polygon perimeters when available, falls back to circles for points.
+   * Size/color based on area_km2 (log scale), orange/red coloring.
+   * @private
+   */
+  _addWildfireLayer(options = {}) {
+    const map = MapAdapter.map;
+
+    // Recency-based effects for animation
+    const recencyExpr = ['coalesce', ['get', '_recency'], 1.0];
+    const opacityExpr = (baseOpacity) => ['min', 1.0, ['*', baseOpacity, recencyExpr]];
+    const sizeBoostExpr = (baseSize) => ['*', baseSize, ['max', 1.0, recencyExpr]];
+
+    // Color gradient: smaller fires = orange, larger = deep red
+    const colorExpr = [
+      'interpolate', ['linear'],
+      ['log10', ['max', 10, ['coalesce', ['get', 'area_km2'], 100]]],
+      2, '#ff8800',    // 100 km2 = orange
+      3, '#ff4400',    // 1000 km2 = red-orange
+      4, '#cc0000',    // 10000 km2 = red
+      4.5, '#880000'   // 30000+ km2 = dark red
+    ];
+
+    // Filter for polygon geometries (fires with perimeters)
+    const polygonFilter = ['any',
+      ['==', ['geometry-type'], 'Polygon'],
+      ['==', ['geometry-type'], 'MultiPolygon']
+    ];
+
+    // Filter for point geometries (fires without perimeters)
+    const pointFilter = ['==', ['geometry-type'], 'Point'];
+
+    // === POLYGON LAYERS (for fires with perimeter data) ===
+
+    // Polygon fill layer
+    map.addLayer({
+      id: CONFIG.layers.eventCircle + '-fill',
+      type: 'fill',
+      source: CONFIG.layers.eventSource,
+      filter: polygonFilter,
+      paint: {
+        'fill-color': colorExpr,
+        'fill-opacity': opacityExpr(0.5)
+      }
+    });
+
+    // Polygon stroke layer
+    map.addLayer({
+      id: CONFIG.layers.eventCircle + '-stroke',
+      type: 'line',
+      source: CONFIG.layers.eventSource,
+      filter: polygonFilter,
+      paint: {
+        'line-color': '#ffcc00',
+        'line-width': 1.5,
+        'line-opacity': opacityExpr(0.9)
+      }
+    });
+
+    // === CIRCLE LAYERS (fallback for fires without perimeter data) ===
+
+    // Size based on area_km2 (log scale)
+    const sizeExpr = [
+      'interpolate', ['linear'],
+      ['log10', ['max', 10, ['coalesce', ['get', 'area_km2'], 100]]],
+      2, 5, 3, 10, 4, 16, 4.5, 22
+    ];
+
+    // Outer glow layer (points only)
+    map.addLayer({
+      id: CONFIG.layers.eventCircle + '-glow',
+      type: 'circle',
+      source: CONFIG.layers.eventSource,
+      filter: pointFilter,
+      paint: {
+        'circle-radius': sizeBoostExpr(['*', sizeExpr, 2]),
+        'circle-color': '#ff6600',
+        'circle-opacity': opacityExpr(0.25),
+        'circle-blur': 1
+      }
+    });
+
+    // Main fire circle (points only)
+    map.addLayer({
+      id: CONFIG.layers.eventCircle,
+      type: 'circle',
+      source: CONFIG.layers.eventSource,
+      filter: pointFilter,
+      paint: {
+        'circle-radius': sizeBoostExpr(sizeExpr),
+        'circle-color': colorExpr,
+        'circle-opacity': opacityExpr(0.85),
+        'circle-stroke-color': '#ffcc00',
+        'circle-stroke-width': 1.5
+      }
+    });
+  },
+
+  /**
    * Add generic event layer for other event types.
    * @private
    */
@@ -933,6 +1094,7 @@ export const PointRadiusModel = {
     // Remove click handlers
     if (this.clickHandler) {
       map.off('click', CONFIG.layers.eventCircle, this.clickHandler);
+      map.off('click', CONFIG.layers.eventCircle + '-fill', this.clickHandler);  // Polygon fill
       this.clickHandler = null;
     }
     if (this._mapClickHandler) {
@@ -943,10 +1105,12 @@ export const PointRadiusModel = {
     // Unlock popup
     MapAdapter.popupLocked = false;
 
-    // Remove layers (including selection, sequence highlight, and tsunami layers)
+    // Remove layers (including selection, sequence highlight, polygon, and tsunami layers)
     const layerIds = [
       CONFIG.layers.eventCircle,
       CONFIG.layers.eventCircle + '-glow',
+      CONFIG.layers.eventCircle + '-fill',    // Wildfire polygon fill
+      CONFIG.layers.eventCircle + '-stroke',  // Wildfire polygon stroke
       CONFIG.layers.eventCircle + '-sequence',  // Green sequence highlight
       CONFIG.layers.eventLabel,
       CONFIG.layers.eventRadiusOuter,
@@ -1268,6 +1432,76 @@ export const PointRadiusModel = {
   },
 
   /**
+   * Register callback for fire animation events.
+   * @param {Function} callback - Callback function
+   */
+  onFireAnimation(callback) {
+    this.fireAnimationCallback = callback;
+  },
+
+  /**
+   * Register callback for fire progression events (daily snapshots).
+   * @param {Function} callback - Callback function receiving {snapshots, eventId, totalDays, startTime}
+   */
+  onFireProgression(callback) {
+    this.fireProgressionCallback = callback;
+  },
+
+  /**
+   * Notify about fire animation request.
+   * @param {Object} perimeterData - GeoJSON perimeter from API
+   * @param {string} eventId - Fire event ID
+   * @param {number} durationDays - Fire duration in days
+   * @param {string} timestamp - Fire ignition timestamp
+   */
+  _notifyFireAnimation(perimeterData, eventId, durationDays, timestamp) {
+    console.log(`PointRadiusModel: Fire animation requested for ${eventId} (${durationDays} days)`);
+
+    if (this.fireAnimationCallback) {
+      this.fireAnimationCallback({
+        perimeter: perimeterData,
+        eventId: eventId,
+        durationDays: durationDays,
+        startTime: timestamp
+      });
+    } else {
+      console.warn('PointRadiusModel: No fire animation callback registered');
+    }
+  },
+
+  /**
+   * Notify listeners that fire progression animation is requested.
+   * Called when daily progression data is available.
+   * @param {Object} progressionData - API response with daily snapshots
+   * @param {string} eventId - Fire event ID
+   * @param {string} timestamp - Fire ignition timestamp
+   */
+  _notifyFireProgression(progressionData, eventId, timestamp) {
+    console.log(`PointRadiusModel: Fire progression requested for ${eventId} (${progressionData.total_days} daily snapshots)`);
+
+    if (this.fireProgressionCallback) {
+      this.fireProgressionCallback({
+        snapshots: progressionData.snapshots,
+        eventId: eventId,
+        totalDays: progressionData.total_days,
+        startTime: timestamp
+      });
+    } else if (this.fireAnimationCallback) {
+      // Fall back to single-perimeter animation using last snapshot
+      console.log('PointRadiusModel: No progression callback, falling back to single perimeter');
+      const lastSnapshot = progressionData.snapshots[progressionData.snapshots.length - 1];
+      this.fireAnimationCallback({
+        perimeter: { type: 'Feature', geometry: lastSnapshot.geometry, properties: {} },
+        eventId: eventId,
+        durationDays: progressionData.total_days,
+        startTime: timestamp
+      });
+    } else {
+      console.warn('PointRadiusModel: No fire animation/progression callback registered');
+    }
+  },
+
+  /**
    * Get events in a sequence.
    * @param {string} sequenceId - Sequence ID
    * @returns {Array} Array of features in the sequence
@@ -1471,6 +1705,44 @@ export const PointRadiusModel = {
         if (props.deaths != null && props.deaths > 0) {
           lines.push(`<span style="color:#ef5350">Deaths: ${props.deaths.toLocaleString()}</span>`);
         }
+      }
+    } else if (eventType === 'wildfire') {
+      // Wildfire popup
+      lines.push('<strong style="color:#ff6600">Wildfire</strong>');
+
+      // Size info
+      if (props.area_km2 != null) {
+        const areaKm2 = props.area_km2;
+        const acres = props.burned_acres || (areaKm2 * 247.105);
+        lines.push(`Area: ${areaKm2.toLocaleString(undefined, {maximumFractionDigits: 0})} km2 (${Math.round(acres).toLocaleString()} acres)`);
+      }
+
+      // Duration
+      if (props.duration_days != null && props.duration_days > 0) {
+        lines.push(`Duration: ${props.duration_days} days`);
+      }
+
+      // Date
+      if (props.timestamp) {
+        const date = new Date(props.timestamp);
+        lines.push(`Ignition: ${date.toLocaleDateString()}`);
+      } else if (props.year) {
+        lines.push(`Year: ${props.year}`);
+      }
+
+      // Land cover / vegetation type
+      if (props.land_cover) {
+        lines.push(`Vegetation: ${props.land_cover}`);
+      }
+
+      // Location
+      if (props.latitude != null && props.longitude != null) {
+        lines.push(`Location: ${props.latitude.toFixed(3)}, ${props.longitude.toFixed(3)}`);
+      }
+
+      // View fire animation link
+      if (props.event_id && props.duration_days > 1) {
+        lines.push(`<a href="#" class="view-fire-link" data-event="${props.event_id}" data-duration="${props.duration_days}" data-timestamp="${props.timestamp}" data-year="${props.year || ''}" style="color:#ff9800;text-decoration:underline;cursor:pointer">View fire progression</a>`);
       }
     } else {
       // Generic popup
