@@ -309,8 +309,7 @@ Interactive time slider with variable granularity (6-hour to yearly), continuous
 
 **Key files:**
 - [time-slider.js](../static/modules/time-slider.js) - Core slider, playback, multi-scale tabs
-- [event-animator.js](../static/modules/event-animator.js) - Unified event animation (earthquakes, storms, fires)
-- [sequence-animator.js](../static/modules/sequence-animator.js) - Earthquake aftershock sequences
+- [event-animator.js](../static/modules/event-animator.js) - Unified event animation (earthquakes, tsunamis, wildfires, tornadoes)
 - [track-animator.js](../static/modules/track-animator.js) - Hurricane track animation
 
 **Full planning history:** [archive/TIME_SLIDER_UPDATE_PLAN.md](archive/TIME_SLIDER_UPDATE_PLAN.md)
@@ -325,7 +324,8 @@ Interactive time slider with variable granularity (6-hour to yearly), continuous
     Choropleth Mode    Event Mode     Drill-Down Mode
     (county data)    (disaster events)  (single event)
           |                |                |
-   ChoroplethManager  EventAnimator   SequenceAnimator
+   ChoroplethManager  EventAnimator   EventAnimator
+                      (yearly view)   (sequence view)
                                       TrackAnimator
 ```
 

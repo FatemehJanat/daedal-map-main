@@ -40,10 +40,12 @@ export function setDependencies(deps) {
 
 // Animation modes
 export const AnimationMode = {
-  ACCUMULATIVE: 'accumulative',  // Events appear and stay (earthquakes)
+  ACCUMULATIVE: 'accumulative',  // Events appear and stay (generic)
   PROGRESSIVE: 'progressive',    // Track grows (hurricanes)
   POLYGON: 'polygon',            // Areas change over time (wildfires)
-  RADIAL: 'radial'               // Source -> destinations by distance (tsunamis)
+  RADIAL: 'radial',              // Source -> destinations by distance (tsunamis)
+  EARTHQUAKE: 'earthquake',      // Circle growth + spiderweb connections + radii
+  TORNADO_SEQUENCE: 'tornado'    // Track lines appearing in sequence
 };
 
 // Granularity to milliseconds
@@ -95,6 +97,66 @@ const INSTANT_EVENTS = ['earthquake', 'volcano', 'tornado', 'tsunami'];
 // Used for radial mode to calculate arrival times
 const TSUNAMI_SPEED_KMH = 700;  // ~700 km/h in deep ocean
 
+// Number of frames to generate for any animation
+// 150 frames provides smooth playback (can stretch to 10s at 15fps or run at 3s at 50fps)
+// All event types use the same frame count for consistent animation behavior
+const ANIMATION_FRAME_COUNT = 150;
+
+// Earthquake animation constants (from SequenceAnimator)
+const EQ_ANIMATION = {
+  CIRCLE_GROW_DURATION: 800,     // ms for circle to grow to full size
+  LINE_DRAW_DURATION: 400,       // ms for line to draw
+  VIEWPORT_PADDING: 40,          // px padding around bounds
+  VIEWPORT_DURATION: 800,        // ms for viewport transitions
+  MIN_ZOOM: 3,                   // Don't zoom out further than this
+  MAX_ZOOM: 10                   // Max zoom for damage radius view
+};
+
+// Layer IDs for earthquake sequence animation
+const EQ_LAYERS = {
+  CONNECTIONS: 'eq-seq-connections',
+  CIRCLES_GROWING: 'eq-seq-circles',
+  CIRCLES_GLOW: 'eq-seq-glow',
+  MAINSHOCK_PULSE: 'eq-seq-pulse',
+  FELT_RADIUS: 'eq-seq-felt',
+  DAMAGE_RADIUS: 'eq-seq-damage',
+  SOURCE: 'eq-seq-source',
+  LINES_SOURCE: 'eq-seq-lines',
+  RELATED_SOURCE: 'eq-seq-related',
+  RELATED_CIRCLES: 'eq-seq-related-circles',
+  RELATED_GLOW: 'eq-seq-related-glow'
+};
+
+// Layer IDs for tornado sequence animation
+const TORNADO_LAYERS = {
+  SOURCE: 'tornado-seq-source',
+  TRACKS: 'tornado-seq-tracks',
+  POINTS: 'tornado-seq-points',
+  END_POINTS: 'tornado-seq-end-points',
+  CONNECTIONS: 'tornado-seq-connect',
+  TRAVELING_CIRCLE: 'tornado-seq-traveler',
+  TRAVELING_GLOW: 'tornado-seq-traveler-glow'
+};
+
+// Tornado animation constants
+const TORNADO_ANIMATION = {
+  TRACK_DRAW_DURATION: 1500,    // ms to draw each tornado track
+  CONNECTION_DRAW_DURATION: 600, // ms to draw connection between tornadoes
+  CIRCLE_TRANSITION_ZONE: 0.25, // fraction of track where size transitions (last 25%)
+  MIN_CIRCLE_RADIUS: 8,         // pixels minimum
+  MAX_CIRCLE_RADIUS: 40,        // pixels maximum
+  BASE_YARDS_TO_PIXELS: 0.015   // conversion factor yards to pixels
+};
+
+// Helper: convert km to pixels at current zoom (for geographic radius circles)
+const kmToPixelsExpr = (kmProp) => [
+  'interpolate', ['exponential', 2], ['zoom'],
+  0, ['/', ['get', kmProp], 156.5],
+  5, ['/', ['get', kmProp], 4.9],
+  10, ['*', ['get', kmProp], 6.54],
+  15, ['*', ['get', kmProp], 209]
+];
+
 /**
  * Calculate inactivity threshold for an event type.
  * Returns 0 for instant events, otherwise 4x the update interval.
@@ -140,12 +202,30 @@ export const EventAnimator = {
   _smoothWaveLastSim: null,     // Last rendered simulation time (for pause resume)
   _smoothWavePlaying: false,    // Tracks if we're in smooth playback mode
 
+  // Earthquake sequence state (earthquake mode only)
+  _eqMainshock: null,           // The mainshock feature
+  _eqCircleScales: {},          // event_id -> current scale (0-1) for growth animation
+  _eqInitialBounds: null,       // Viewport bounds at start (damage radius)
+  _eqFinalBounds: null,         // Viewport bounds at end (felt radius + all events)
+  _eqLastViewportProgress: -1,  // Last viewport interpolation progress
+  _eqRelatedEvents: [],         // Related events (volcanoes, tsunamis)
+  _eqAnimationLoopId: null,     // requestAnimationFrame ID for circle growth
+  _eqLastFrameTime: null,       // Last animation frame timestamp
+
+  // Tornado sequence state (tornado mode only)
+  _tornadoAllFeatures: [],      // All track/point/connection features
+  _tornadoSortedEvents: [],     // Events sorted by timestamp
+  _tornadoAnimationLoopId: null,// requestAnimationFrame ID
+  _tornadoDrawProgress: {},     // event_id -> draw progress (0-1)
+  _tornadoLastFrameTime: null,  // Last animation frame timestamp
+  _tornadoActiveIndex: 0,       // Currently animating tornado index
+
   /**
    * Start an animation sequence.
    * @param {Object} options Animation configuration
    * @param {string} options.id - Unique animation ID (used for TimeSlider scale)
    * @param {string} options.label - Display label for TimeSlider tab
-   * @param {string} options.mode - Animation mode: 'accumulative', 'progressive', 'polygon'
+   * @param {string} options.mode - Animation mode: 'accumulative', 'progressive', 'polygon', 'radial', 'earthquake', 'tornado'
    * @param {Array} options.events - Array of events/positions to animate
    * @param {string} options.timeField - Property name containing timestamp (default: 'timestamp')
    * @param {string} options.granularity - Time step: '1h', '6h', 'daily', etc.
@@ -154,6 +234,8 @@ export const EventAnimator = {
    * @param {Function} options.onExit - Callback when animation exits
    * @param {Object} options.center - Optional {lat, lon} to center map
    * @param {number} options.zoom - Optional zoom level
+   * @param {Object} options.mainshock - (earthquake mode) The mainshock feature
+   * @param {Array} options.relatedEvents - (earthquake mode) Related events to display
    */
   start(options) {
     if (this.isActive) {
@@ -233,6 +315,22 @@ export const EventAnimator = {
       this._startSmoothWaveLoop();
     }
 
+    // Earthquake mode: setup layers, viewport bounds, circle growth animation
+    if (this.mode === AnimationMode.EARTHQUAKE) {
+      this._eqMainshock = options.mainshock;
+      this._eqRelatedEvents = options.relatedEvents || [];
+      this._setupEarthquakeLayers();
+      this._calculateEarthquakeBounds();
+      this._startEarthquakeAnimationLoop();
+    }
+
+    // Tornado mode: setup layers for track sequence display with progressive animation
+    // Note: Animation loop starts when TimeSlider begins playback (via _renderTornadoAtTime)
+    if (this.mode === AnimationMode.TORNADO_SEQUENCE) {
+      this._setupTornadoLayers();
+      // Don't start animation loop here - wait for TimeSlider to start playback
+    }
+
     console.log(`EventAnimator: Started with ${this.events.length} events, ${this.timestamps.length} time steps`);
     return true;
   },
@@ -248,6 +346,14 @@ export const EventAnimator = {
     // Stop smooth wave animation loop (radial mode)
     this._stopSmoothWaveLoop();
 
+    // Stop earthquake animation loop and remove layers
+    this._stopEarthquakeAnimation();
+    this._removeEarthquakeLayers();
+
+    // Stop tornado animation loop and remove layers
+    this._stopTornadoAnimation();
+    this._removeTornadoLayers();
+
     // Remove TimeSlider scale and listener
     if (TimeSlider) {
       if (this._timeChangeHandler) {
@@ -259,6 +365,10 @@ export const EventAnimator = {
         // Only switch to primary if it exists (may not exist if only overlays are displayed)
         if (TimeSlider.scales?.find(s => s.id === 'primary')) {
           TimeSlider.setActiveScale('primary');
+          // Reset speed to yearly (default for world view)
+          if (TimeSlider.setSpeedPreset) {
+            TimeSlider.setSpeedPreset('YEARLY');
+          }
         } else if (TimeSlider.scales?.length === 0) {
           // No scales left, hide the time slider
           TimeSlider.hide();
@@ -293,6 +403,22 @@ export const EventAnimator = {
     this.currentIndex = 0;
     this.renderer = null;
     this.onExitCallback = null;
+
+    // Reset earthquake state
+    this._eqMainshock = null;
+    this._eqCircleScales = {};
+    this._eqInitialBounds = null;
+    this._eqFinalBounds = null;
+    this._eqLastViewportProgress = -1;
+    this._eqRelatedEvents = [];
+
+    // Reset tornado state
+    this._tornadoAllFeatures = [];
+    this._tornadoSortedEvents = [];
+    this._tornadoDrawProgress = {};
+    this._tornadoConnectionProgress = {};
+    this._tornadoActiveIndex = 0;
+    this._stopTornadoAnimation();
   },
 
   /**
@@ -319,6 +445,15 @@ export const EventAnimator = {
         this._smoothWaveStartSim = this.timestamps[index];
       }
     }
+
+    // Update earthquake viewport based on time progress
+    if (this.mode === AnimationMode.EARTHQUAKE) {
+      const timeRange = this.timestamps[this.timestamps.length - 1] - this.timestamps[0];
+      const progress = timeRange > 0
+        ? Math.max(0, Math.min(1, (this.timestamps[index] - this.timestamps[0]) / timeRange))
+        : 0;
+      this._updateEarthquakeViewport(progress);
+    }
   },
 
   /**
@@ -335,51 +470,93 @@ export const EventAnimator = {
 
   /**
    * Build sorted timestamp array from events.
-   * For radial mode (tsunamis), generates synthetic timestamps based on wave propagation.
+   * Generates exactly ANIMATION_FRAME_COUNT (150) evenly-spaced frames for smooth playback.
+   * This ensures consistent animation regardless of event duration (hours to years).
    * @private
    */
   _buildTimestamps() {
     const timeField = this.config.timeField;
-    const granularityMs = GRANULARITY_MS[this.config.granularity] || GRANULARITY_MS['6h'];
 
-    // For radial mode, generate timestamps based on wave propagation
+    // For radial mode, generate timestamps based on wave propagation (special case)
     if (this.mode === AnimationMode.RADIAL) {
+      const granularityMs = GRANULARITY_MS[this.config.granularity] || GRANULARITY_MS['6h'];
       this._buildRadialTimestamps(granularityMs);
       return;
     }
 
-    // Extract all timestamps for other modes
-    const rawTimestamps = new Set();
+    // Find min/max timestamps from all events
+    let minTime = Infinity;
+    let maxTime = -Infinity;
+    const eventTimes = [];
+
     for (const event of this.events) {
       const props = event.properties || event;
       const timeVal = props[timeField];
       if (timeVal) {
         const ts = new Date(timeVal).getTime();
         if (!isNaN(ts)) {
-          // Bucket to granularity
-          const bucket = Math.floor(ts / granularityMs) * granularityMs;
-          rawTimestamps.add(bucket);
+          eventTimes.push({ ts, event });
+          if (ts < minTime) minTime = ts;
+          if (ts > maxTime) maxTime = ts;
         }
       }
     }
 
-    // Sort timestamps
-    this.timestamps = Array.from(rawTimestamps).sort((a, b) => a - b);
+    // Handle edge cases
+    if (minTime === Infinity || maxTime === -Infinity || eventTimes.length === 0) {
+      this.timestamps = [];
+      this._eventsByTime = {};
+      return;
+    }
 
-    // Also bucket events by timestamp for efficient lookup
+    // Ensure some minimum time range for very short sequences
+    const MIN_RANGE_MS = 60 * 1000; // 1 minute minimum
+    if (maxTime - minTime < MIN_RANGE_MS) {
+      maxTime = minTime + MIN_RANGE_MS;
+    }
+
+    // For tornado sequences, add time buffer for the last tornado's duration
+    // Tornadoes don't have explicit end times, so estimate from track length
+    // Average tornado speed is ~30 mph, so duration = length_mi / 30 hours
+    if (this.mode === AnimationMode.TORNADO_SEQUENCE && eventTimes.length > 0) {
+      // Find the last event (by time) and get its track length
+      const lastEvent = eventTimes[eventTimes.length - 1]?.event;
+      const lastProps = lastEvent?.properties || {};
+      const trackLengthMi = lastProps.tornado_length_mi || 0;
+
+      // Estimate duration: track_length / 30 mph, minimum 5 minutes
+      const TORNADO_AVG_SPEED_MPH = 30;
+      const estimatedDurationMs = Math.max(
+        5 * 60 * 1000,  // minimum 5 minutes
+        (trackLengthMi / TORNADO_AVG_SPEED_MPH) * 60 * 60 * 1000
+      );
+
+      // Add the buffer to maxTime
+      maxTime += estimatedDurationMs;
+      console.log(`EventAnimator: Added ${(estimatedDurationMs / 60000).toFixed(1)} min buffer for last tornado (${trackLengthMi.toFixed(1)} mi track)`);
+    }
+
+    // Generate exactly ANIMATION_FRAME_COUNT evenly-spaced timestamps
+    const frameCount = ANIMATION_FRAME_COUNT;
+    const timeStep = (maxTime - minTime) / (frameCount - 1);
+    this.timestamps = [];
+    for (let i = 0; i < frameCount; i++) {
+      this.timestamps.push(minTime + (i * timeStep));
+    }
+
+    // Build event lookup - map each event to its nearest timestamp
     this._eventsByTime = {};
-    for (const event of this.events) {
-      const props = event.properties || event;
-      const timeVal = props[timeField];
-      if (timeVal) {
-        const ts = new Date(timeVal).getTime();
-        const bucket = Math.floor(ts / granularityMs) * granularityMs;
-        if (!this._eventsByTime[bucket]) {
-          this._eventsByTime[bucket] = [];
-        }
-        this._eventsByTime[bucket].push(event);
+    for (const { ts, event } of eventTimes) {
+      // Find the timestamp bucket this event belongs to
+      const bucketIndex = Math.round((ts - minTime) / timeStep);
+      const bucket = this.timestamps[Math.min(bucketIndex, frameCount - 1)];
+      if (!this._eventsByTime[bucket]) {
+        this._eventsByTime[bucket] = [];
       }
+      this._eventsByTime[bucket].push(event);
     }
+
+    console.log(`EventAnimator: Generated ${frameCount} frames over ${((maxTime - minTime) / (60 * 60 * 1000)).toFixed(1)} hours`);
   },
 
   /**
@@ -412,69 +589,84 @@ export const EventAnimator = {
       return;
     }
 
-    // Find maximum distance to any runup
-    // Check multiple possible property names for distance
+    // Find the latest arrival time among all runups
+    // Arrival time = source_time + (distance / wave_speed)
+    // This keeps runups in sync with the expanding wave circle
     let maxDistanceKm = 0;
+    let maxArrivalTime = sourceTime;
     let farthestRunup = null;
-    let runupsWithDistance = 0;
-    let runupsWithoutDistance = 0;
+    let runupCount = 0;
 
     for (const event of this.events) {
       const props = event.properties || event;
       if (props.is_source) continue;
 
-      // Check all possible distance property names
-      // Use Number() to handle string values properly
+      // Get distance (for wave circle display)
       const rawDist = props.dist_from_source_km ??
                       props.distance_km ??
                       props.distance_from_source_km ??
                       props.distanceKm ??
                       props.distance;
-
       const distKm = rawDist != null ? Number(rawDist) : 0;
 
-      if (distKm > 0) {
-        runupsWithDistance++;
-        if (distKm > maxDistanceKm) {
-          maxDistanceKm = distKm;
-          farthestRunup = props.location_name || props.name || props.country || 'unknown';
-        }
-      } else {
-        runupsWithoutDistance++;
+      // Calculate arrival time based on distance from source
+      // Wave travels at TSUNAMI_SPEED_KMH, so arrival_time = source_time + (distance / speed)
+      // This keeps runup appearance in sync with the expanding wave circle
+      if (distKm <= 0) {
+        continue;  // Skip runups with no distance data
+      }
+
+      const arrivalHours = distKm / TSUNAMI_SPEED_KMH;
+      const arrivalMs = arrivalHours * 60 * 60 * 1000;
+      const arrivalTime = sourceTime + arrivalMs;
+      runupCount++;
+
+      // Track farthest runup (by arrival time)
+      if (arrivalTime > maxArrivalTime) {
+        maxArrivalTime = arrivalTime;
+        farthestRunup = props.location_name || props.name || props.country || 'unknown';
+      }
+
+      // Track max distance for wave circle
+      if (distKm > maxDistanceKm) {
+        maxDistanceKm = distKm;
       }
     }
 
     // Log diagnostic info
-    console.log(`EventAnimator: Radial mode analysis - ${runupsWithDistance} runups have distance, ${runupsWithoutDistance} missing distance`);
+    console.log(`EventAnimator: Radial mode - ${runupCount} runups with distance data`);
 
-    // Calculate animation duration based on wave travel time
-    // Wave travels at TSUNAMI_SPEED_KMH (700 km/h)
-    // Add 10% buffer to ensure animation completes after wave reaches farthest point
-    const travelHours = (maxDistanceKm / TSUNAMI_SPEED_KMH) * 1.1;
-    const travelMs = travelHours * 60 * 60 * 1000;
+    // Animation duration is from source time to last arrival + 10% buffer
+    const animationDurationMs = (maxArrivalTime - sourceTime) * 1.1;
 
-    // Minimum 2 hours of animation even for close runups
+    // Minimum 2 hours of simulation time even for close runups
     const minAnimationMs = 2 * 60 * 60 * 1000;
-    const animationDurationMs = Math.max(travelMs, minAnimationMs);
+    const effectiveDurationMs = Math.max(animationDurationMs, minAnimationMs);
 
-    // Generate timestamps from source time to source time + travel duration
+    // Generate ANIMATION_FRAME_COUNT frames for consistent smooth playback
+    // Same frame count as all other animation types
+    const numFrames = ANIMATION_FRAME_COUNT;
+
+    // Calculate step size in simulation time to spread animation over numFrames
+    const stepMs = effectiveDurationMs / (numFrames - 1);
+
+    // Generate exactly numFrames timestamps from source time to end of animation
     this.timestamps = [];
-    const endTime = sourceTime + animationDurationMs;
-
-    for (let t = sourceTime; t <= endTime; t += granularityMs) {
-      this.timestamps.push(t);
+    for (let i = 0; i < numFrames; i++) {
+      this.timestamps.push(sourceTime + (i * stepMs));
     }
 
     // Store source time for radial calculations
     this._radialSourceTime = sourceTime;
-    this._radialMaxDistance = maxDistanceKm;
+    // Store max distance for wave circle display (not for visibility check)
+    this._radialMaxDistance = maxDistanceKm * 1.1;
 
-    // Initialize empty eventsByTime (radial mode calculates visibility differently)
+    // Initialize empty eventsByTime (radial mode uses timestamp-based visibility)
     this._eventsByTime = {};
 
+    const durationHours = effectiveDurationMs / (60 * 60 * 1000);
     console.log(`EventAnimator: Radial mode - ${this.timestamps.length} time steps, ` +
-                `${maxDistanceKm.toFixed(0)}km max distance (farthest: ${farthestRunup}), ` +
-                `${travelHours.toFixed(1)}h animation (~${Math.ceil(travelHours)} sec at 1x speed)`);
+                `${durationHours.toFixed(1)}h animation, ${maxDistanceKm.toFixed(0)}km max distance (farthest: ${farthestRunup})`);
   },
 
   /**
@@ -517,7 +709,7 @@ export const EventAnimator = {
     if (added) {
       TimeSlider.setActiveScale(this.scaleId);
 
-      // Enter event animation mode with auto-calculated speed for ~10 second playback
+      // Enter event animation mode with auto-calculated speed for ~3 second playback
       if (TimeSlider.enterEventAnimation) {
         TimeSlider.enterEventAnimation(minTime, maxTime);
       }
@@ -607,15 +799,26 @@ export const EventAnimator = {
         const maxTime = this.timestamps[this.timestamps.length - 1];
         const clampedSimTime = Math.max(minTime, Math.min(maxTime, smoothSimTime));
 
-        // Update wave radius only (not full render)
+        // Update wave radius smoothly (every frame for smooth circle growth)
         this._updateWaveRadiusSmooth(clampedSimTime);
+
+        // Also trigger full re-render (runup visibility) at ~10 Hz
+        // This ensures runups appear as wave reaches them, independent of TimeSlider steps
+        const now = performance.now();
+        if (!this._lastRenderTime || now - this._lastRenderTime > 100) {
+          this._renderAtTime(clampedSimTime);
+          this._lastRenderTime = now;
+        }
 
         // Save for resume
         this._smoothWaveLastSim = clampedSimTime;
 
         // Check if animation completed
         if (smoothSimTime >= maxTime) {
-          // Animation finished - let TimeSlider handle loop/pause
+          // Animation finished - pause playback
+          if (TimeSlider?.isPlaying) {
+            TimeSlider.pause();
+          }
         }
       }
 
@@ -781,11 +984,21 @@ export const EventAnimator = {
         displayEvents = this._getRadialState(timestamp);
         break;
 
+      case AnimationMode.EARTHQUAKE:
+        // Earthquake mode: renders directly to its own layers
+        this._renderEarthquakeAtTime(timestamp);
+        return;  // Skip default rendering - earthquake mode handles its own layers
+
+      case AnimationMode.TORNADO_SEQUENCE:
+        // Tornado mode: renders directly to its own layers
+        this._renderTornadoAtTime(timestamp);
+        return;  // Skip default rendering - tornado mode handles its own layers
+
       default:
         displayEvents = this._getEventsUpTo(timestamp);
     }
 
-    // Build GeoJSON and render
+    // Build GeoJSON and render (for modes that use default rendering)
     const geojson = this._buildDisplayGeojson(displayEvents);
 
     if (this.renderer.update) {
@@ -1106,11 +1319,13 @@ export const EventAnimator = {
     const elapsedMs = timestamp - sourceTime;
     const elapsedHours = elapsedMs / (1000 * 60 * 60);
 
-    // Distance the wave could have traveled (capped at farthest runup)
-    const theoreticalDistanceKm = elapsedHours * TSUNAMI_SPEED_KMH;
-    const maxDistanceKm = Math.min(theoreticalDistanceKm, this._radialMaxDistance || theoreticalDistanceKm);
+    // Wave travels at TSUNAMI_SPEED_KMH - use this for wave circle display
+    const waveDistanceKm = elapsedHours * TSUNAMI_SPEED_KMH;
 
-    // Filter runups that would have been reached by wave
+    // Track max distance among visible runups for return value
+    let maxDistanceKm = 0;
+
+    // Filter runups that have been reached by wave (using actual timestamps when available)
     const visibleRunups = [];
     const connections = [];
 
@@ -1120,8 +1335,7 @@ export const EventAnimator = {
       // Skip source event
       if (props.is_source === true) continue;
 
-      // Get distance from source (check multiple property names)
-      // Use ?? to handle 0 values correctly, then Number() for string conversion
+      // Get distance from source (for wave circle display)
       const rawDist = props.dist_from_source_km ??
                       props.distance_km ??
                       props.distance_from_source_km ??
@@ -1129,15 +1343,23 @@ export const EventAnimator = {
                       props.distance;
       const distKm = rawDist != null ? Number(rawDist) : 0;
 
-      // Runup is visible if wave has passed it
-      // Add 5% buffer so runups appear slightly after the wave front reaches them
-      // This compensates for visual mismatch between circle rendering and geographic distance
-      const visibilityBuffer = distKm * 0.05;  // 5% of runup distance
-      if ((distKm + visibilityBuffer) <= maxDistanceKm) {
-        // Calculate when wave arrived at this runup
-        const arrivalHours = distKm / TSUNAMI_SPEED_KMH;
-        const arrivalMs = arrivalHours * 60 * 60 * 1000;
-        const arrivalTime = sourceTime + arrivalMs;
+      // Calculate arrival time based on distance from source
+      // Wave travels at TSUNAMI_SPEED_KMH, so arrival_time = source_time + (distance / speed)
+      // This keeps runup appearance in sync with the expanding wave circle
+      if (distKm <= 0) {
+        continue;  // Skip runups with no distance data
+      }
+
+      const arrivalHours = distKm / TSUNAMI_SPEED_KMH;
+      const arrivalMs = arrivalHours * 60 * 60 * 1000;
+      const arrivalTime = sourceTime + arrivalMs;
+
+      // Runup is visible if wave has reached it
+      if (arrivalTime <= timestamp) {
+        // Track max distance among visible runups
+        if (distKm > maxDistanceKm) {
+          maxDistanceKm = distKm;
+        }
 
         // Calculate recency based on time since arrival (not source time)
         const recency = useFade
@@ -1198,20 +1420,21 @@ export const EventAnimator = {
     }
 
     // Enrich source event with wave propagation data
+    // Use waveDistanceKm for visual circle (based on elapsed time and wave speed)
     const enrichedSource = sourceEvent.type === 'Feature' ? {
       ...sourceEvent,
       properties: {
         ...sourceEvent.properties,
         _recency: 1.0,
         _isSource: true,
-        _waveRadiusKm: maxDistanceKm,  // Current wave front distance
+        _waveRadiusKm: waveDistanceKm,  // Wave front distance based on elapsed time
         _elapsedHours: elapsedHours
       }
     } : {
       ...sourceEvent,
       _recency: 1.0,
       _isSource: true,
-      _waveRadiusKm: maxDistanceKm,
+      _waveRadiusKm: waveDistanceKm,
       _elapsedHours: elapsedHours
     };
 
@@ -1301,6 +1524,1275 @@ export const EventAnimator = {
       type: 'FeatureCollection',
       features
     };
+  },
+
+  // ========================================================================
+  // EARTHQUAKE MODE METHODS
+  // ========================================================================
+
+  /**
+   * Setup MapLibre layers for earthquake sequence animation.
+   * Includes: connection lines, geographic radii, epicenter circles, pulse effect.
+   * @private
+   */
+  _setupEarthquakeLayers() {
+    if (!MapAdapter?.map) return;
+    const map = MapAdapter.map;
+
+    // Remove existing layers first
+    this._removeEarthquakeLayers();
+
+    // Add source for event points
+    map.addSource(EQ_LAYERS.SOURCE, {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] }
+    });
+
+    // Add source for connection lines
+    map.addSource(EQ_LAYERS.LINES_SOURCE, {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] }
+    });
+
+    // Connection lines layer (spiderweb effect)
+    map.addLayer({
+      id: EQ_LAYERS.CONNECTIONS,
+      type: 'line',
+      source: EQ_LAYERS.LINES_SOURCE,
+      paint: {
+        'line-color': ['coalesce', ['get', 'color'], '#feb24c'],
+        'line-width': ['coalesce', ['get', 'width'], 1.5],
+        'line-opacity': ['coalesce', ['get', 'opacity'], 0.6],
+        'line-dasharray': [2, 2]
+      }
+    });
+
+    // Felt radius - outer geographic circle
+    map.addLayer({
+      id: EQ_LAYERS.FELT_RADIUS,
+      type: 'circle',
+      source: EQ_LAYERS.SOURCE,
+      filter: ['>', ['get', 'felt_radius_scaled'], 0],
+      paint: {
+        'circle-radius': kmToPixelsExpr('felt_radius_scaled'),
+        'circle-color': ['get', 'color'],
+        'circle-opacity': ['*', ['get', 'opacity'], 0.12],
+        'circle-stroke-color': ['get', 'color'],
+        'circle-stroke-width': 1.5,
+        'circle-stroke-opacity': ['*', ['get', 'opacity'], 0.35]
+      }
+    });
+
+    // Damage radius - inner geographic circle
+    map.addLayer({
+      id: EQ_LAYERS.DAMAGE_RADIUS,
+      type: 'circle',
+      source: EQ_LAYERS.SOURCE,
+      filter: ['>', ['get', 'damage_radius_scaled'], 0],
+      paint: {
+        'circle-radius': kmToPixelsExpr('damage_radius_scaled'),
+        'circle-color': ['get', 'color'],
+        'circle-opacity': ['*', ['get', 'opacity'], 0.2],
+        'circle-stroke-color': ['get', 'color'],
+        'circle-stroke-width': 2,
+        'circle-stroke-opacity': ['*', ['get', 'opacity'], 0.6]
+      }
+    });
+
+    // Glow layer behind epicenter markers
+    map.addLayer({
+      id: EQ_LAYERS.CIRCLES_GLOW,
+      type: 'circle',
+      source: EQ_LAYERS.SOURCE,
+      paint: {
+        'circle-radius': ['get', 'glowRadius'],
+        'circle-color': ['get', 'color'],
+        'circle-opacity': ['*', ['get', 'opacity'], 0.4],
+        'circle-blur': 1
+      }
+    });
+
+    // Epicenter markers
+    map.addLayer({
+      id: EQ_LAYERS.CIRCLES_GROWING,
+      type: 'circle',
+      source: EQ_LAYERS.SOURCE,
+      paint: {
+        'circle-radius': ['get', 'radius'],
+        'circle-color': ['get', 'color'],
+        'circle-opacity': ['get', 'opacity'],
+        'circle-stroke-color': '#222222',
+        'circle-stroke-width': 1
+      }
+    });
+
+    // Mainshock pulse effect
+    map.addLayer({
+      id: EQ_LAYERS.MAINSHOCK_PULSE,
+      type: 'circle',
+      source: EQ_LAYERS.SOURCE,
+      filter: ['==', ['get', 'isMainshock'], true],
+      paint: {
+        'circle-radius': ['get', 'pulseRadius'],
+        'circle-color': 'transparent',
+        'circle-stroke-color': ['get', 'color'],
+        'circle-stroke-width': 3,
+        'circle-stroke-opacity': ['get', 'pulseOpacity']
+      }
+    });
+
+    // Related events layers (volcanoes, tsunamis)
+    if (this._eqRelatedEvents.length > 0) {
+      map.addSource(EQ_LAYERS.RELATED_SOURCE, {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: this._eqRelatedEvents }
+      });
+
+      map.addLayer({
+        id: EQ_LAYERS.RELATED_GLOW,
+        type: 'circle',
+        source: EQ_LAYERS.RELATED_SOURCE,
+        paint: {
+          'circle-radius': 14,
+          'circle-color': ['get', 'color'],
+          'circle-opacity': 0.4,
+          'circle-blur': 1
+        }
+      });
+
+      map.addLayer({
+        id: EQ_LAYERS.RELATED_CIRCLES,
+        type: 'circle',
+        source: EQ_LAYERS.RELATED_SOURCE,
+        paint: {
+          'circle-radius': 8,
+          'circle-color': ['get', 'color'],
+          'circle-opacity': 0.9,
+          'circle-stroke-color': '#222222',
+          'circle-stroke-width': 2
+        }
+      });
+    }
+
+    console.log('EventAnimator: Earthquake layers setup complete');
+  },
+
+  /**
+   * Remove all earthquake animation layers.
+   * @private
+   */
+  _removeEarthquakeLayers() {
+    if (!MapAdapter?.map) return;
+    const map = MapAdapter.map;
+
+    const layerIds = [
+      EQ_LAYERS.RELATED_CIRCLES,
+      EQ_LAYERS.RELATED_GLOW,
+      EQ_LAYERS.MAINSHOCK_PULSE,
+      EQ_LAYERS.CIRCLES_GROWING,
+      EQ_LAYERS.CIRCLES_GLOW,
+      EQ_LAYERS.DAMAGE_RADIUS,
+      EQ_LAYERS.FELT_RADIUS,
+      EQ_LAYERS.CONNECTIONS
+    ];
+
+    for (const id of layerIds) {
+      if (map.getLayer(id)) map.removeLayer(id);
+    }
+
+    if (map.getSource(EQ_LAYERS.SOURCE)) map.removeSource(EQ_LAYERS.SOURCE);
+    if (map.getSource(EQ_LAYERS.LINES_SOURCE)) map.removeSource(EQ_LAYERS.LINES_SOURCE);
+    if (map.getSource(EQ_LAYERS.RELATED_SOURCE)) map.removeSource(EQ_LAYERS.RELATED_SOURCE);
+  },
+
+  /**
+   * Calculate viewport bounds for earthquake animation.
+   * Initial: mainshock damage radius (tight view)
+   * Final: mainshock felt radius + all aftershock felt radii (wide view)
+   * @private
+   */
+  _calculateEarthquakeBounds() {
+    if (!this._eqMainshock) return;
+
+    const mainCoords = this._eqMainshock.geometry.coordinates;
+    const damageRadiusKm = this._eqMainshock.properties.damage_radius_km || 50;
+    const feltRadiusKm = this._eqMainshock.properties.felt_radius_km || 200;
+
+    // Initial bounds: damage radius (tight)
+    this._eqInitialBounds = this._boundsFromCenterRadius(mainCoords, damageRadiusKm);
+
+    // Final bounds: felt radius
+    this._eqFinalBounds = this._boundsFromCenterRadius(mainCoords, feltRadiusKm);
+
+    // Extend to include all aftershock felt radii
+    for (const event of this.events) {
+      if (event.properties?.event_id === this._eqMainshock.properties?.event_id) continue;
+
+      let eventCoords = [...event.geometry.coordinates];
+      // Handle date line crossing
+      const lngDiff = eventCoords[0] - mainCoords[0];
+      if (Math.abs(lngDiff) > 180) {
+        eventCoords[0] += (lngDiff > 0 ? -360 : 360);
+      }
+
+      const eventFeltKm = event.properties?.felt_radius_km || 30;
+      const eventBounds = this._boundsFromCenterRadius(eventCoords, eventFeltKm);
+      this._eqFinalBounds.extend(eventBounds.getNorthEast());
+      this._eqFinalBounds.extend(eventBounds.getSouthWest());
+    }
+
+    // Zoom to initial bounds
+    MapAdapter.map.fitBounds(this._eqInitialBounds, {
+      padding: EQ_ANIMATION.VIEWPORT_PADDING,
+      duration: EQ_ANIMATION.VIEWPORT_DURATION,
+      maxZoom: EQ_ANIMATION.MAX_ZOOM,
+      essential: true
+    });
+  },
+
+  /**
+   * Create bounds from center point and radius in km.
+   * @private
+   */
+  _boundsFromCenterRadius(coords, radiusKm) {
+    const [lng, lat] = coords;
+    const latDelta = radiusKm / 111;
+    const lngDelta = radiusKm / (111 * Math.cos(lat * Math.PI / 180));
+
+    return new maplibregl.LngLatBounds(
+      [lng - lngDelta, lat - latDelta],
+      [lng + lngDelta, lat + latDelta]
+    );
+  },
+
+  /**
+   * Interpolate between two bounds based on progress.
+   * @private
+   */
+  _interpolateBounds(start, end, t) {
+    const eased = 1 - Math.pow(1 - t, 2);  // Ease-out
+    const startSW = start.getSouthWest();
+    const startNE = start.getNorthEast();
+    const endSW = end.getSouthWest();
+    const endNE = end.getNorthEast();
+
+    return new maplibregl.LngLatBounds(
+      [
+        startSW.lng + (endSW.lng - startSW.lng) * eased,
+        startSW.lat + (endSW.lat - startSW.lat) * eased
+      ],
+      [
+        startNE.lng + (endNE.lng - startNE.lng) * eased,
+        startNE.lat + (endNE.lat - startNE.lat) * eased
+      ]
+    );
+  },
+
+  /**
+   * Update earthquake viewport based on time progress.
+   * @private
+   */
+  _updateEarthquakeViewport(progress) {
+    if (!this._eqInitialBounds || !this._eqFinalBounds) return;
+
+    const progressDelta = Math.abs(progress - this._eqLastViewportProgress);
+    if (progressDelta < 0.005) return;  // Avoid jitter
+
+    this._eqLastViewportProgress = progress;
+    const currentBounds = this._interpolateBounds(this._eqInitialBounds, this._eqFinalBounds, progress);
+
+    MapAdapter.map.fitBounds(currentBounds, {
+      padding: EQ_ANIMATION.VIEWPORT_PADDING,
+      duration: 0,  // Instant for smooth animation
+      maxZoom: EQ_ANIMATION.MAX_ZOOM,
+      minZoom: EQ_ANIMATION.MIN_ZOOM,
+      linear: true
+    });
+  },
+
+  /**
+   * Start earthquake circle growth animation loop.
+   * @private
+   */
+  _startEarthquakeAnimationLoop() {
+    // Initialize circle scales
+    this._eqCircleScales = {};
+    const mainshockId = this._eqMainshock?.properties?.event_id;
+
+    for (const event of this.events) {
+      const eventId = event.properties?.event_id;
+      // Mainshock starts fully visible, others start at 0
+      this._eqCircleScales[eventId] = (eventId === mainshockId) ? 1 : 0;
+    }
+
+    this._eqLastFrameTime = performance.now();
+
+    const animate = (timestamp) => {
+      if (!this.isActive || this.mode !== AnimationMode.EARTHQUAKE) return;
+
+      const deltaTime = timestamp - this._eqLastFrameTime;
+      this._eqLastFrameTime = timestamp;
+
+      // Update circle growth
+      const needsUpdate = this._updateEarthquakeCircleGrowth(deltaTime);
+
+      if (needsUpdate) {
+        this._renderEarthquakeDisplay();
+      }
+
+      this._eqAnimationLoopId = requestAnimationFrame(animate);
+    };
+
+    this._eqAnimationLoopId = requestAnimationFrame(animate);
+  },
+
+  /**
+   * Stop earthquake animation loop.
+   * @private
+   */
+  _stopEarthquakeAnimation() {
+    if (this._eqAnimationLoopId) {
+      cancelAnimationFrame(this._eqAnimationLoopId);
+      this._eqAnimationLoopId = null;
+    }
+  },
+
+  /**
+   * Update earthquake circle growth animations.
+   * @private
+   */
+  _updateEarthquakeCircleGrowth(deltaTime) {
+    let stillGrowing = false;
+    const growthPerFrame = deltaTime / EQ_ANIMATION.CIRCLE_GROW_DURATION;
+
+    for (const eventId of Object.keys(this._eqCircleScales)) {
+      const currentScale = this._eqCircleScales[eventId] || 0;
+      if (currentScale < 1) {
+        const newScale = Math.min(1, currentScale + growthPerFrame * (1.5 - currentScale));
+        this._eqCircleScales[eventId] = newScale;
+        stillGrowing = true;
+      }
+    }
+
+    return stillGrowing;
+  },
+
+  /**
+   * Render earthquake events at a specific time.
+   * Called by _renderAtTime for earthquake mode.
+   * @private
+   */
+  _renderEarthquakeAtTime(timestamp) {
+    const mainshockId = this._eqMainshock?.properties?.event_id;
+    const timeField = this.config.timeField;
+
+    // Find which events should be visible at this time
+    for (const event of this.events) {
+      const eventId = event.properties?.event_id;
+      const eventTime = new Date(event.properties?.[timeField]).getTime();
+
+      // Mainshock always visible, others appear when time is reached
+      if (eventId === mainshockId) {
+        if (this._eqCircleScales[eventId] === 0) {
+          this._eqCircleScales[eventId] = 1;
+        }
+      } else if (eventTime <= timestamp) {
+        // Start growing if not already started
+        if (this._eqCircleScales[eventId] === 0) {
+          this._eqCircleScales[eventId] = 0.01;
+        }
+      }
+    }
+
+    this._renderEarthquakeDisplay();
+  },
+
+  /**
+   * Render current earthquake display state.
+   * @private
+   */
+  _renderEarthquakeDisplay() {
+    if (!MapAdapter?.map) return;
+    const map = MapAdapter.map;
+
+    const mainshockId = this._eqMainshock?.properties?.event_id;
+
+    // Build features with animation properties
+    const features = [];
+    for (const event of this.events) {
+      const props = event.properties;
+      const eventId = props?.event_id;
+      const scale = this._eqCircleScales[eventId] || 0;
+
+      if (scale <= 0) continue;  // Not visible yet
+
+      const isMainshock = eventId === mainshockId;
+      const magnitude = props?.magnitude || 4;
+      const baseRadius = this._eqMagnitudeToRadius(magnitude);
+      const color = this._eqMagnitudeToColor(magnitude);
+      const opacity = Math.min(1, scale * 1.5);
+
+      // Pulse effect for mainshock
+      const pulsePhase = (Date.now() % 2000) / 2000;
+      const pulseRadius = baseRadius + 10 + Math.sin(pulsePhase * Math.PI * 2) * 5;
+      const pulseOpacity = 0.8 - pulsePhase * 0.6;
+
+      const feltRadiusKm = props?.felt_radius_km || 0;
+      const damageRadiusKm = props?.damage_radius_km || 0;
+
+      features.push({
+        type: 'Feature',
+        geometry: event.geometry,
+        properties: {
+          event_id: eventId,
+          radius: baseRadius * scale,
+          glowRadius: (baseRadius + 6) * scale,
+          color: color,
+          opacity: opacity,
+          felt_radius_scaled: feltRadiusKm * scale,
+          damage_radius_scaled: damageRadiusKm * scale,
+          isMainshock: isMainshock,
+          pulseRadius: pulseRadius,
+          pulseOpacity: isMainshock ? pulseOpacity : 0
+        }
+      });
+    }
+
+    // Update points source
+    const source = map.getSource(EQ_LAYERS.SOURCE);
+    if (source) {
+      source.setData({ type: 'FeatureCollection', features });
+    }
+
+    // Build and update connection lines (spiderweb)
+    const lines = this._buildEarthquakeConnectionLines();
+    const linesSource = map.getSource(EQ_LAYERS.LINES_SOURCE);
+    if (linesSource) {
+      linesSource.setData({ type: 'FeatureCollection', features: lines });
+    }
+  },
+
+  /**
+   * Build spiderweb connection lines from mainshock to aftershocks.
+   * Lines draw progressively based on TIME - they grow toward each aftershock
+   * as the animation time approaches that aftershock's timestamp.
+   * @private
+   */
+  _buildEarthquakeConnectionLines() {
+    if (!this._eqMainshock) return [];
+
+    const mainCoords = this._eqMainshock.geometry.coordinates;
+    const mainId = this._eqMainshock.properties?.event_id;
+    const mainTime = new Date(this._eqMainshock.properties?.timestamp).getTime();
+    const timeField = this.config.timeField || 'timestamp';
+    const lines = [];
+
+    // Get current animation time
+    const currentTime = this.timestamps[this.currentIndex] || mainTime;
+
+    for (const event of this.events) {
+      const eventId = event.properties?.event_id;
+      if (eventId === mainId) continue;
+
+      // Get event time to calculate time-based progress
+      const eventTime = new Date(event.properties?.[timeField]).getTime();
+
+      // Line starts drawing from mainshock time, completes at event time
+      // The line grows progressively as animation time approaches event time
+      const timeRange = eventTime - mainTime;
+      const elapsed = currentTime - mainTime;
+
+      // Calculate line draw progress based on time (0 to 1)
+      // Line starts when animation begins, reaches aftershock when its timestamp is reached
+      let lineProgress = 0;
+      if (timeRange > 0) {
+        lineProgress = Math.max(0, Math.min(1, elapsed / timeRange));
+      } else if (elapsed >= 0) {
+        // Event at same time as mainshock - draw immediately
+        lineProgress = 1;
+      }
+
+      // Only draw if we have some progress
+      if (lineProgress > 0) {
+        let eventCoords = [...event.geometry.coordinates];
+        const magnitude = event.properties?.magnitude || 4;
+        const color = this._eqMagnitudeToColor(magnitude);
+
+        // Handle date line crossing
+        const lngDiff = eventCoords[0] - mainCoords[0];
+        if (Math.abs(lngDiff) > 180) {
+          eventCoords[0] += (lngDiff > 0 ? -360 : 360);
+        }
+
+        // Calculate current end point based on time progress
+        const currentEndCoords = [
+          mainCoords[0] + (eventCoords[0] - mainCoords[0]) * lineProgress,
+          mainCoords[1] + (eventCoords[1] - mainCoords[1]) * lineProgress
+        ];
+
+        // Opacity fades in as line draws, then stays visible
+        const lineOpacity = Math.min(0.6, lineProgress * 0.7);
+        const lineWidth = 1 + (magnitude - 3) * 0.3;
+
+        lines.push({
+          type: 'Feature',
+          geometry: {
+            type: 'LineString',
+            coordinates: [mainCoords, currentEndCoords]
+          },
+          properties: {
+            color: color,
+            opacity: lineOpacity,
+            width: lineWidth
+          }
+        });
+      }
+    }
+
+    return lines;
+  },
+
+  /**
+   * Convert magnitude to epicenter marker radius.
+   * @private
+   */
+  _eqMagnitudeToRadius(magnitude) {
+    if (magnitude < 4) return 3;
+    if (magnitude < 5) return 4;
+    if (magnitude < 6) return 5;
+    if (magnitude < 7) return 7;
+    if (magnitude < 8) return 9;
+    return 10;
+  },
+
+  /**
+   * Convert magnitude to color.
+   * @private
+   */
+  _eqMagnitudeToColor(magnitude) {
+    if (magnitude < 4) return '#ffeda0';
+    if (magnitude < 5) return '#fed976';
+    if (magnitude < 6) return '#feb24c';
+    if (magnitude < 7) return '#fd8d3c';
+    return '#f03b20';
+  },
+
+  // ========================================================================
+  // TORNADO MODE METHODS
+  // ========================================================================
+
+  /**
+   * Setup MapLibre layers for tornado sequence animation.
+   * Enhanced with progressive track drawing and traveling circle.
+   * @private
+   */
+  _setupTornadoLayers() {
+    if (!MapAdapter?.map) return;
+    const map = MapAdapter.map;
+
+    // Remove existing layers first
+    this._removeTornadoLayers();
+
+    // Sort events by timestamp
+    const timeField = this.config.timeField;
+    this._tornadoSortedEvents = [...this.events].sort((a, b) => {
+      const ta = new Date(a.properties?.[timeField]).getTime();
+      const tb = new Date(b.properties?.[timeField]).getTime();
+      return ta - tb;
+    });
+
+    // Initialize draw progress for each tornado
+    // Start with -1 so no tornadoes draw until TimeSlider advances
+    this._tornadoDrawProgress = {};
+    this._tornadoConnectionProgress = {};  // Separate tracking for connection line animation
+    this._tornadoActiveIndex = -1;
+    this._tornadoAnimationStarted = false;  // Track if animation loop has started
+    this._tornadoSortedEvents.forEach((event, idx) => {
+      const eventId = event.properties?.event_id || `tornado-${idx}`;
+      this._tornadoDrawProgress[eventId] = 0;
+      this._tornadoConnectionProgress[eventId] = 0;
+    });
+
+    // Add main source for tracks/connections
+    map.addSource(TORNADO_LAYERS.SOURCE, {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] }
+    });
+
+    // Connection lines (dashed) - progressive drawing
+    map.addLayer({
+      id: TORNADO_LAYERS.CONNECTIONS,
+      type: 'line',
+      source: TORNADO_LAYERS.SOURCE,
+      filter: ['==', ['get', 'feature_type'], 'connect'],
+      paint: {
+        'line-color': '#ffaa00',
+        'line-width': 2,
+        'line-dasharray': [4, 4],
+        'line-opacity': ['coalesce', ['get', 'opacity'], 0.8]
+      }
+    });
+
+    // Track lines - progressive drawing with color by EF scale
+    map.addLayer({
+      id: TORNADO_LAYERS.TRACKS,
+      type: 'line',
+      source: TORNADO_LAYERS.SOURCE,
+      filter: ['==', ['get', 'feature_type'], 'track'],
+      paint: {
+        'line-color': ['coalesce', ['get', 'track_color'], '#32cd32'],
+        'line-width': ['coalesce', ['get', 'track_width'], 4],
+        'line-opacity': 0.9
+      }
+    });
+
+    // Start point markers
+    map.addLayer({
+      id: TORNADO_LAYERS.POINTS,
+      type: 'circle',
+      source: TORNADO_LAYERS.SOURCE,
+      filter: ['==', ['get', 'feature_type'], 'start'],
+      paint: {
+        'circle-radius': 6,
+        'circle-color': ['coalesce', ['get', 'color'], '#00cc00'],
+        'circle-stroke-color': '#004400',
+        'circle-stroke-width': 2,
+        'circle-opacity': ['coalesce', ['get', 'opacity'], 1]
+      }
+    });
+
+    // End points layer (red markers at track end)
+    map.addLayer({
+      id: TORNADO_LAYERS.END_POINTS,
+      type: 'circle',
+      source: TORNADO_LAYERS.SOURCE,
+      filter: ['==', ['get', 'feature_type'], 'end'],
+      paint: {
+        'circle-radius': 6,
+        'circle-color': ['coalesce', ['get', 'color'], '#cc0000'],
+        'circle-stroke-color': '#440000',
+        'circle-stroke-width': 2,
+        'circle-opacity': ['coalesce', ['get', 'opacity'], 1]
+      }
+    });
+
+    // Traveling circle glow layer
+    map.addLayer({
+      id: TORNADO_LAYERS.TRAVELING_GLOW,
+      type: 'circle',
+      source: TORNADO_LAYERS.SOURCE,
+      filter: ['==', ['get', 'feature_type'], 'traveler'],
+      paint: {
+        'circle-radius': ['*', ['coalesce', ['get', 'radius'], 15], 1.4],
+        'circle-color': ['coalesce', ['get', 'color'], '#32cd32'],
+        'circle-opacity': 0.4,
+        'circle-blur': 1
+      }
+    });
+
+    // Traveling circle (the tornado marker that moves along the track)
+    map.addLayer({
+      id: TORNADO_LAYERS.TRAVELING_CIRCLE,
+      type: 'circle',
+      source: TORNADO_LAYERS.SOURCE,
+      filter: ['==', ['get', 'feature_type'], 'traveler'],
+      paint: {
+        'circle-radius': ['coalesce', ['get', 'radius'], 15],
+        'circle-color': ['coalesce', ['get', 'color'], '#32cd32'],
+        'circle-opacity': 0.85,
+        'circle-stroke-color': '#222',
+        'circle-stroke-width': 2
+      }
+    });
+
+    // Add click handler for tornado points to show popup info
+    this._tornadoClickHandler = (e) => {
+      if (!e.features || e.features.length === 0) return;
+      const feature = e.features[0];
+      const eventId = feature.properties?.event_id;
+      if (!eventId) return;
+
+      // Find the full tornado data
+      const tornado = this._tornadoSortedEvents.find(t =>
+        String(t.properties?.event_id) === String(eventId)
+      );
+      if (!tornado) return;
+
+      const props = tornado.properties;
+      const scale = props.tornado_scale || 0;
+      const scaleLabel = scale >= 0 ? `EF${scale}` : 'Unknown';
+      const date = new Date(props.timestamp);
+      const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      const timeStr = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      const length = props.tornado_length_mi ? `${props.tornado_length_mi.toFixed(1)} mi` : 'Unknown';
+      const width = props.tornado_width_yd ? `${props.tornado_width_yd} yd` : 'Unknown';
+
+      const html = `
+        <div style="min-width: 180px;">
+          <div style="font-weight: bold; font-size: 14px; margin-bottom: 4px;">${scaleLabel} Tornado</div>
+          <div style="font-size: 12px; color: #666;">${dateStr} ${timeStr}</div>
+          <div style="margin-top: 6px; font-size: 12px;">
+            <div>Path length: ${length}</div>
+            <div>Width: ${width}</div>
+            ${props.deaths_direct ? `<div>Fatalities: ${props.deaths_direct}</div>` : ''}
+            ${props.damage_property ? `<div>Damage: $${(props.damage_property / 1e6).toFixed(1)}M</div>` : ''}
+          </div>
+        </div>
+      `;
+
+      MapAdapter?.showPopup?.([props.longitude, props.latitude], html);
+    };
+
+    map.on('click', TORNADO_LAYERS.POINTS, this._tornadoClickHandler);
+
+    // Change cursor on hover
+    map.on('mouseenter', TORNADO_LAYERS.POINTS, () => {
+      map.getCanvas().style.cursor = 'pointer';
+    });
+    map.on('mouseleave', TORNADO_LAYERS.POINTS, () => {
+      map.getCanvas().style.cursor = '';
+    });
+
+    // Fit bounds to sequence
+    const bounds = new maplibregl.LngLatBounds();
+    this._tornadoSortedEvents.forEach(f => {
+      const props = f.properties;
+      if (props?.longitude && props?.latitude) {
+        bounds.extend([props.longitude, props.latitude]);
+      }
+      if (props?.end_longitude && props?.end_latitude) {
+        bounds.extend([props.end_longitude, props.end_latitude]);
+      }
+    });
+
+    if (!bounds.isEmpty()) {
+      map.fitBounds(bounds, { padding: 80, duration: 1000, maxZoom: 10 });
+    }
+
+    // Render initial state (shows all tornado points before animation starts)
+    this._renderTornadoDisplay();
+
+    console.log('EventAnimator: Tornado layers setup complete with progressive drawing');
+  },
+
+  /**
+   * Remove tornado sequence layers.
+   * @private
+   */
+  _removeTornadoLayers() {
+    if (!MapAdapter?.map) return;
+    const map = MapAdapter.map;
+
+    // Remove click handler
+    if (this._tornadoClickHandler) {
+      map.off('click', TORNADO_LAYERS.POINTS, this._tornadoClickHandler);
+      this._tornadoClickHandler = null;
+    }
+
+    [
+      TORNADO_LAYERS.TRAVELING_CIRCLE,
+      TORNADO_LAYERS.TRAVELING_GLOW,
+      TORNADO_LAYERS.POINTS,
+      TORNADO_LAYERS.END_POINTS,
+      TORNADO_LAYERS.TRACKS,
+      TORNADO_LAYERS.CONNECTIONS
+    ].forEach(id => {
+      if (map.getLayer(id)) map.removeLayer(id);
+    });
+
+    if (map.getSource(TORNADO_LAYERS.SOURCE)) {
+      map.removeSource(TORNADO_LAYERS.SOURCE);
+    }
+  },
+
+  /**
+   * Start tornado animation loop for smooth track drawing.
+   * @private
+   */
+  _startTornadoAnimationLoop() {
+    this._tornadoLastFrameTime = performance.now();
+
+    const animate = (timestamp) => {
+      if (!this.isActive || this.mode !== AnimationMode.TORNADO_SEQUENCE) return;
+
+      const deltaTime = timestamp - this._tornadoLastFrameTime;
+      this._tornadoLastFrameTime = timestamp;
+
+      // Update draw progress
+      const needsUpdate = this._updateTornadoDrawProgress(deltaTime);
+
+      if (needsUpdate) {
+        this._renderTornadoDisplay();
+      }
+
+      this._tornadoAnimationLoopId = requestAnimationFrame(animate);
+    };
+
+    this._tornadoAnimationLoopId = requestAnimationFrame(animate);
+  },
+
+  /**
+   * Stop tornado animation loop.
+   * @private
+   */
+  _stopTornadoAnimation() {
+    if (this._tornadoAnimationLoopId) {
+      cancelAnimationFrame(this._tornadoAnimationLoopId);
+      this._tornadoAnimationLoopId = null;
+    }
+  },
+
+  /**
+   * Update tornado track drawing progress.
+   * Sequential: only animates the currently active tornado.
+   * Returns true if any tracks are still animating.
+   * @private
+   */
+  _updateTornadoDrawProgress(deltaTime) {
+    if (this._tornadoActiveIndex < 0) return false;
+
+    let stillAnimating = false;
+    const trackProgressPerFrame = deltaTime / TORNADO_ANIMATION.TRACK_DRAW_DURATION;
+    const connectionProgressPerFrame = deltaTime / TORNADO_ANIMATION.CONNECTION_DRAW_DURATION;
+
+    // Only update progress for the CURRENT active tornado (sequential drawing)
+    const i = this._tornadoActiveIndex;
+    if (i < this._tornadoSortedEvents.length) {
+      const event = this._tornadoSortedEvents[i];
+      const eventId = event.properties?.event_id || `tornado-${i}`;
+      const currentProgress = this._tornadoDrawProgress[eventId] || 0;
+      const currentConnProgress = this._tornadoConnectionProgress[eventId] || 0;
+      const hasNextTornado = i < this._tornadoSortedEvents.length - 1;
+
+      if (currentProgress < 1) {
+        // Phase 1: Drawing track
+        // Use ease-out for natural deceleration at end
+        const newProgress = Math.min(1, currentProgress + trackProgressPerFrame * (1.2 - currentProgress * 0.4));
+        this._tornadoDrawProgress[eventId] = newProgress;
+        stillAnimating = true;
+      } else if (hasNextTornado && currentConnProgress < 1) {
+        // Phase 2: Drawing connection to next tornado
+        const newConnProgress = Math.min(1, currentConnProgress + connectionProgressPerFrame);
+        this._tornadoConnectionProgress[eventId] = newConnProgress;
+        stillAnimating = true;
+      }
+    }
+
+    return stillAnimating;
+  },
+
+  /**
+   * Render tornado features at a specific time (TimeSlider callback).
+   * Sequential drawing: only advance to next tornado after current is fully drawn.
+   * @private
+   */
+  _renderTornadoAtTime(timestamp) {
+    const timeField = this.config.timeField;
+
+    // Find which tornado SHOULD be active based on timestamp
+    // This is the target we're working toward (may be ahead of actual drawing)
+    let targetIdx = -1;
+    for (let i = 0; i < this._tornadoSortedEvents.length; i++) {
+      const event = this._tornadoSortedEvents[i];
+      const eventTime = new Date(event.properties?.[timeField]).getTime();
+      if (eventTime <= timestamp) {
+        targetIdx = i;
+      }
+    }
+
+    // Detect time going backwards (loop/scrub) - reset animation state
+    if (targetIdx < this._tornadoActiveIndex || (targetIdx === -1 && this._tornadoActiveIndex >= 0)) {
+      console.log('Tornado animation: Time went backwards, resetting state');
+      // Reset all progress
+      this._tornadoSortedEvents.forEach((event, idx) => {
+        const eventId = event.properties?.event_id || `tornado-${idx}`;
+        this._tornadoDrawProgress[eventId] = 0;
+        this._tornadoConnectionProgress[eventId] = 0;
+      });
+      this._tornadoActiveIndex = -1;
+      this._tornadoAnimationStarted = false;
+      this._stopTornadoAnimation();
+    }
+
+    // Sequential logic: only advance _tornadoActiveIndex when current tornado is fully drawn
+    // If we haven't started any tornado yet, start the first one
+    if (this._tornadoActiveIndex < 0 && targetIdx >= 0) {
+      this._tornadoActiveIndex = 0;
+      const firstEventId = this._tornadoSortedEvents[0]?.properties?.event_id || 'tornado-0';
+      this._tornadoDrawProgress[firstEventId] = 0.01;
+
+      // Start animation loop on first tornado activation
+      if (!this._tornadoAnimationStarted) {
+        this._tornadoAnimationStarted = true;
+        this._startTornadoAnimationLoop();
+      }
+    }
+
+    // Check if current tornado is done (track + connection) and we should advance to the next
+    if (this._tornadoActiveIndex >= 0 && this._tornadoActiveIndex < targetIdx) {
+      const currentEventId = this._tornadoSortedEvents[this._tornadoActiveIndex]?.properties?.event_id ||
+        `tornado-${this._tornadoActiveIndex}`;
+      const currentProgress = this._tornadoDrawProgress[currentEventId] || 0;
+      const currentConnProgress = this._tornadoConnectionProgress[currentEventId] || 0;
+      const hasNextTornado = this._tornadoActiveIndex < this._tornadoSortedEvents.length - 1;
+
+      // Must complete both track (progress >= 1) AND connection (if there's a next tornado)
+      const trackDone = currentProgress >= 1;
+      const connectionDone = !hasNextTornado || currentConnProgress >= 1;
+
+      if (trackDone && connectionDone) {
+        // Move to next tornado
+        this._tornadoActiveIndex++;
+        const nextEventId = this._tornadoSortedEvents[this._tornadoActiveIndex]?.properties?.event_id ||
+          `tornado-${this._tornadoActiveIndex}`;
+        if ((this._tornadoDrawProgress[nextEventId] || 0) === 0) {
+          this._tornadoDrawProgress[nextEventId] = 0.01;
+        }
+      }
+    }
+
+    this._renderTornadoDisplay();
+  },
+
+  /**
+   * Render current tornado display state with progressive drawing.
+   * Before animation starts: shows all tornado start points (clickable)
+   * During animation: progressively reveals tracks and points
+   * @private
+   */
+  _renderTornadoDisplay() {
+    if (!MapAdapter?.map) return;
+    const map = MapAdapter.map;
+    const source = map.getSource(TORNADO_LAYERS.SOURCE);
+    if (!source) return;
+
+    const features = [];
+
+    // If animation hasn't started yet, show all tornado start points as clickable markers
+    if (this._tornadoActiveIndex < 0) {
+      for (let idx = 0; idx < this._tornadoSortedEvents.length; idx++) {
+        const event = this._tornadoSortedEvents[idx];
+        const props = event.properties;
+        const eventId = props?.event_id || `tornado-${idx}`;
+        const startLon = props?.longitude;
+        const startLat = props?.latitude;
+        const scale = props?.tornado_scale || 0;
+        const color = this._tornadoScaleToColor(scale);
+
+        if (startLon && startLat) {
+          features.push({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [startLon, startLat] },
+            properties: {
+              feature_type: 'start',
+              opacity: 1,
+              event_id: eventId,
+              color: color
+            }
+          });
+        }
+      }
+      source.setData({ type: 'FeatureCollection', features });
+      return;
+    }
+
+    // First, show all tornado start points that haven't been reached yet (faded)
+    for (let idx = this._tornadoActiveIndex + 1; idx < this._tornadoSortedEvents.length; idx++) {
+      const event = this._tornadoSortedEvents[idx];
+      const props = event.properties;
+      const eventId = props?.event_id || `tornado-${idx}`;
+      const startLon = props?.longitude;
+      const startLat = props?.latitude;
+      const scale = props?.tornado_scale || 0;
+      const color = this._tornadoScaleToColor(scale);
+
+      if (startLon && startLat) {
+        features.push({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [startLon, startLat] },
+          properties: {
+            feature_type: 'start',
+            opacity: 0.3,  // Faded until animation reaches it
+            event_id: eventId,
+            color: color
+          }
+        });
+      }
+    }
+
+    // Process each tornado that has started animating
+    for (let idx = 0; idx <= this._tornadoActiveIndex && idx < this._tornadoSortedEvents.length; idx++) {
+      const event = this._tornadoSortedEvents[idx];
+      const props = event.properties;
+      const eventId = props?.event_id || `tornado-${idx}`;
+      const progress = this._tornadoDrawProgress[eventId] || 0;
+
+      if (progress <= 0) continue;
+
+      // Get tornado properties
+      const startLon = props?.longitude;
+      const startLat = props?.latitude;
+      const endLon = props?.end_longitude;
+      const endLat = props?.end_latitude;
+      const width = props?.tornado_width_yd || 100;
+      const scale = props?.tornado_scale || 0;
+      const color = this._tornadoScaleToColor(scale);
+      const trackWidth = this._tornadoScaleToTrackWidth(scale);
+
+      // Calculate circle radius from width (yards to pixels, clamped)
+      const baseRadius = Math.max(
+        TORNADO_ANIMATION.MIN_CIRCLE_RADIUS,
+        Math.min(TORNADO_ANIMATION.MAX_CIRCLE_RADIUS, width * TORNADO_ANIMATION.BASE_YARDS_TO_PIXELS)
+      );
+
+      // Draw start point (appears at start of track animation)
+      if (startLon && startLat && progress > 0.05) {
+        features.push({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [startLon, startLat] },
+          properties: {
+            feature_type: 'start',
+            opacity: Math.min(1, progress * 4),
+            event_id: eventId,
+            color: color
+          }
+        });
+      }
+
+      // Build track coordinates (use explicit track or construct from start/end)
+      let trackCoords = null;
+      if (props?.track && props.track.coordinates) {
+        trackCoords = props.track.coordinates;
+      } else if (startLon && startLat && endLon && endLat) {
+        // Build simple line from start to end
+        trackCoords = [[startLon, startLat], [endLon, endLat]];
+      }
+
+      // Draw progressive track line
+      if (trackCoords && trackCoords.length >= 2) {
+        const partialTrack = this._getPartialTrack(trackCoords, progress);
+        if (partialTrack.length >= 2) {
+          features.push({
+            type: 'Feature',
+            geometry: { type: 'LineString', coordinates: partialTrack },
+            properties: {
+              feature_type: 'track',
+              track_color: color,
+              track_width: trackWidth,
+              event_id: eventId
+            }
+          });
+        }
+      }
+
+      // Draw end point when track is complete
+      if (endLon && endLat && progress >= 1) {
+        features.push({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [endLon, endLat] },
+          properties: {
+            feature_type: 'end',
+            opacity: 1,
+            event_id: eventId,
+            color: color
+          }
+        });
+      }
+
+      // Draw traveling circle (while track is drawing, progress 0-1)
+      if (progress > 0 && progress < 1 && trackCoords && trackCoords.length >= 2) {
+        // Get current position along track
+        const currentPos = this._interpolateTrackPosition(trackCoords, progress);
+
+        // Calculate interpolated radius for smooth size transitions
+        const nextEvent = this._tornadoSortedEvents[idx + 1];
+        const nextWidth = nextEvent?.properties?.tornado_width_yd || width;
+        const nextRadius = Math.max(
+          TORNADO_ANIMATION.MIN_CIRCLE_RADIUS,
+          Math.min(TORNADO_ANIMATION.MAX_CIRCLE_RADIUS, nextWidth * TORNADO_ANIMATION.BASE_YARDS_TO_PIXELS)
+        );
+
+        // Smooth size transition in the last 25% of the track
+        let currentRadius = baseRadius;
+        if (progress > (1 - TORNADO_ANIMATION.CIRCLE_TRANSITION_ZONE)) {
+          const transitionProgress = (progress - (1 - TORNADO_ANIMATION.CIRCLE_TRANSITION_ZONE)) / TORNADO_ANIMATION.CIRCLE_TRANSITION_ZONE;
+          // Ease in-out for smooth transition
+          const eased = transitionProgress * transitionProgress * (3 - 2 * transitionProgress);
+          currentRadius = baseRadius + (nextRadius - baseRadius) * eased;
+        }
+
+        // Make the traveling circle larger and more visible
+        features.push({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: currentPos },
+          properties: {
+            feature_type: 'traveler',
+            radius: Math.max(currentRadius, 12),  // Minimum 12px for visibility
+            color: color,
+            event_id: eventId
+          }
+        });
+      }
+
+      // Draw connection to next tornado (progressive) with traveling circle
+      if (idx < this._tornadoSortedEvents.length - 1 && progress >= 1) {
+        const nextEvent = this._tornadoSortedEvents[idx + 1];
+        const nextProps = nextEvent?.properties;
+        // Use our tracked connection progress (animated independently)
+        const connectionProgress = this._tornadoConnectionProgress[eventId] || 0;
+
+        if (endLon && endLat && nextProps?.longitude && nextProps?.latitude && connectionProgress > 0) {
+          const connEndLon = endLon + (nextProps.longitude - endLon) * connectionProgress;
+          const connEndLat = endLat + (nextProps.latitude - endLat) * connectionProgress;
+
+          features.push({
+            type: 'Feature',
+            geometry: {
+              type: 'LineString',
+              coordinates: [[endLon, endLat], [connEndLon, connEndLat]]
+            },
+            properties: {
+              feature_type: 'connect',
+              opacity: Math.min(0.8, connectionProgress * 2)
+            }
+          });
+
+          // Calculate next tornado's radius
+          const nextWidth = nextProps?.tornado_width_yd || 100;
+          const nextRadius = Math.max(
+            TORNADO_ANIMATION.MIN_CIRCLE_RADIUS,
+            Math.min(TORNADO_ANIMATION.MAX_CIRCLE_RADIUS, nextWidth * TORNADO_ANIMATION.BASE_YARDS_TO_PIXELS)
+          );
+
+          // Draw traveling circle along connection
+          // Circle is already at nextRadius (we transitioned during last 25% of track)
+          // So just move it along the connection line
+          if (connectionProgress > 0 && connectionProgress < 1) {
+            features.push({
+              type: 'Feature',
+              geometry: { type: 'Point', coordinates: [connEndLon, connEndLat] },
+              properties: {
+                feature_type: 'traveler',
+                radius: Math.max(nextRadius, 12),  // Minimum 12px for visibility
+                color: this._tornadoScaleToColor(nextProps?.tornado_scale || 0),
+                event_id: eventId
+              }
+            });
+          }
+        }
+      }
+    }
+
+    source.setData({ type: 'FeatureCollection', features });
+  },
+
+  /**
+   * Get a partial track line based on draw progress.
+   * @private
+   */
+  _getPartialTrack(coordinates, progress) {
+    if (!coordinates || coordinates.length < 2) return [];
+    if (progress >= 1) return coordinates;
+
+    // Calculate total track length
+    let totalLength = 0;
+    const segmentLengths = [];
+    for (let i = 1; i < coordinates.length; i++) {
+      const dx = coordinates[i][0] - coordinates[i-1][0];
+      const dy = coordinates[i][1] - coordinates[i-1][1];
+      const len = Math.sqrt(dx * dx + dy * dy);
+      segmentLengths.push(len);
+      totalLength += len;
+    }
+
+    // Find target length
+    const targetLength = totalLength * progress;
+    let accumulatedLength = 0;
+    const result = [coordinates[0]];
+
+    for (let i = 0; i < segmentLengths.length; i++) {
+      const segLen = segmentLengths[i];
+      if (accumulatedLength + segLen <= targetLength) {
+        // Include full segment
+        result.push(coordinates[i + 1]);
+        accumulatedLength += segLen;
+      } else {
+        // Partial segment - interpolate end point
+        const remaining = targetLength - accumulatedLength;
+        const t = remaining / segLen;
+        const interpX = coordinates[i][0] + (coordinates[i+1][0] - coordinates[i][0]) * t;
+        const interpY = coordinates[i][1] + (coordinates[i+1][1] - coordinates[i][1]) * t;
+        result.push([interpX, interpY]);
+        break;
+      }
+    }
+
+    return result;
+  },
+
+  /**
+   * Interpolate position along track based on progress.
+   * @private
+   */
+  _interpolateTrackPosition(coordinates, progress) {
+    if (!coordinates || coordinates.length < 2) return [0, 0];
+    if (progress >= 1) return coordinates[coordinates.length - 1];
+    if (progress <= 0) return coordinates[0];
+
+    // Calculate total track length
+    let totalLength = 0;
+    const segmentLengths = [];
+    for (let i = 1; i < coordinates.length; i++) {
+      const dx = coordinates[i][0] - coordinates[i-1][0];
+      const dy = coordinates[i][1] - coordinates[i-1][1];
+      const len = Math.sqrt(dx * dx + dy * dy);
+      segmentLengths.push(len);
+      totalLength += len;
+    }
+
+    // Find position at target length
+    const targetLength = totalLength * progress;
+    let accumulatedLength = 0;
+
+    for (let i = 0; i < segmentLengths.length; i++) {
+      const segLen = segmentLengths[i];
+      if (accumulatedLength + segLen >= targetLength) {
+        // Interpolate within this segment
+        const remaining = targetLength - accumulatedLength;
+        const t = remaining / segLen;
+        const interpX = coordinates[i][0] + (coordinates[i+1][0] - coordinates[i][0]) * t;
+        const interpY = coordinates[i][1] + (coordinates[i+1][1] - coordinates[i][1]) * t;
+        return [interpX, interpY];
+      }
+      accumulatedLength += segLen;
+    }
+
+    return coordinates[coordinates.length - 1];
+  },
+
+  /**
+   * Convert EF scale to track color.
+   * @private
+   */
+  _tornadoScaleToColor(scale) {
+    const colors = {
+      0: '#98fb98',  // EF0 - Pale green
+      1: '#32cd32',  // EF1 - Lime green
+      2: '#ffd700',  // EF2 - Gold
+      3: '#ff8c00',  // EF3 - Dark orange
+      4: '#ff4500',  // EF4 - Orange-red
+      5: '#8b0000'   // EF5 - Dark red
+    };
+    return colors[scale] || colors[0];
+  },
+
+  /**
+   * Convert EF scale to track line width.
+   * @private
+   */
+  _tornadoScaleToTrackWidth(scale) {
+    // Width increases with intensity: EF0=3, EF5=8
+    return 3 + Math.min(5, scale);
   }
 };
 

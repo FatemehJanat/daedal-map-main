@@ -20,7 +20,7 @@ Event-based visualization for disasters including earthquakes, hurricanes, wildf
 | **Volcanoes** | Smithsonian GVP | Yes (weekly) | Static (with duration) | Holocene | Point + Radius |
 | **Wildfires** | Global Fire Atlas | Zenodo (periodic) | Daily progression | 2002-2024 | Polygon |
 | **Drought** | US Drought Monitor | Yes (weekly) | Weekly snapshots | 2000-present | Choropleth |
-| **Tornadoes** | NOAA Storm Events | Yes (monthly) | Static | 1950-present | Point |
+| **Tornadoes** | NOAA Storm Events | Yes (monthly) | Track drill-down | 1950-present | Point + Track |
 | **Floods** | (future) | - | - | - | Polygon |
 
 **Display Models:**
@@ -226,6 +226,45 @@ Processes years in reverse order (newest first), skips completed years.
 
 ---
 
+## Tornadoes
+
+### Display: Point + Track Drill-down
+
+USA tornadoes from NOAA Storm Events database (1950-present). No reliable global tornado database exists - ~75% of recorded tornadoes occur in the USA.
+
+**Overview Mode:**
+- Points colored by Enhanced Fujita (EF) or legacy Fujita (F) scale
+- Point size scales with tornado intensity
+- Impact radius circle shows damage path width
+
+**Drill-down Mode:**
+- Click tornado to view track
+- Track line connects start and end points
+- Green marker = start point, Red marker = end point
+- Impact corridor shown along track
+
+### EF Scale Colors
+
+| Scale | Wind (mph) | Color | Damage |
+|-------|------------|-------|--------|
+| EF0 | 65-85 | Pale Green | Light |
+| EF1 | 86-110 | Lime Green | Moderate |
+| EF2 | 111-135 | Gold | Significant |
+| EF3 | 136-165 | Dark Orange | Severe |
+| EF4 | 166-200 | Orange-Red | Devastating |
+| EF5 | >200 | Dark Red | Incredible |
+
+### Data Files
+
+**NOAA Storm Events** - `countries/USA/noaa_storms/`
+- `events.parquet` - All storm events including tornadoes (1.2M events, 79K tornadoes)
+- Schema: event_id, timestamp, latitude, longitude, end_latitude, end_longitude, tornado_scale, tornado_length_mi, tornado_width_yd
+- Damage/casualty columns: deaths_direct, injuries_direct, damage_property
+
+**Converter:** `data_converters/utilities/build_noaa_events.py`
+
+---
+
 ## Frontend Architecture
 
 ### Display Models
@@ -242,12 +281,11 @@ Processes years in reverse order (newest first), skips completed years.
 
 | File | Purpose |
 |------|---------|
-| `models/model-point-radius.js` | Earthquake, volcano rendering |
+| `models/model-point-radius.js` | Earthquake, volcano, tornado rendering |
 | `models/model-track.js` | Hurricane track rendering |
 | `models/model-polygon.js` | Wildfire polygon rendering |
 | `models/model-registry.js` | Routes event types to models |
-| `event-animator.js` | Unified animation controller |
-| `sequence-animator.js` | Earthquake aftershock sequences |
+| `event-animator.js` | Unified animation controller (earthquakes, tsunamis, wildfires, tornadoes) |
 | `track-animator.js` | Hurricane track animation |
 | `overlay-selector.js` | UI checkbox panel |
 | `overlay-controller.js` | Data loading orchestration |
@@ -265,11 +303,13 @@ Processes years in reverse order (newest first), skips completed years.
 |   [ ] Wildfires  |
 |   [ ] Volcanoes  |
 |   [ ] Tsunamis   |
+|   [ ] Tornadoes  |
 +------------------+
 ```
 
 ### Rolling Window + Fade
 
+See mapping.md for more details
 Events use a visibility window that scales with speed:
 
 | Speed | Window | Effect |
@@ -295,6 +335,7 @@ Events fade from full opacity to 0 as they leave the window.
 | `/api/eruptions/geojson` | year |
 | `/api/wildfires/geojson` | year |
 | `/api/tsunamis/geojson` | year |
+| `/api/tornadoes/geojson` | year, min_scale |
 
 ### Drill-Down Endpoints
 
@@ -303,6 +344,7 @@ Events fade from full opacity to 0 as they leave the window.
 | `/api/earthquakes/{id}/aftershocks` | Aftershock sequence |
 | `/api/tsunamis/{id}/runups` | Coastal observations |
 | `/api/wildfires/{id}/progression` | Daily burn snapshots |
+| `/api/tornadoes/{id}` | Tornado detail with track |
 
 ---
 
@@ -315,6 +357,7 @@ Events fade from full opacity to 0 as they leave the window.
 - [x] Hurricane display (Track/Trail, drill-down animation)
 - [x] Tsunami display (Radial propagation)
 - [x] Wildfire display (Polygon)
+- [x] Tornado display (Point + Track drill-down)
 - [x] Time slider (variable granularity, speed control)
 - [x] Overlay selector UI
 - [x] EventAnimator (unified controller)
@@ -326,7 +369,6 @@ Events fade from full opacity to 0 as they leave the window.
 
 ### Future
 
-- [ ] Tornado point display
 - [ ] Flood polygon display
 - [ ] Live data pipeline
 

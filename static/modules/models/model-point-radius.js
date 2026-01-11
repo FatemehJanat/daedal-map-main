@@ -75,6 +75,8 @@ export const PointRadiusModel = {
       this._addTsunamiLayer(options);
     } else if (eventType === 'wildfire') {
       this._addWildfireLayer(options);
+    } else if (eventType === 'tornado') {
+      this._addTornadoLayer(options);
     } else {
       this._addGenericEventLayer(eventType, options);
     }
@@ -104,10 +106,11 @@ export const PointRadiusModel = {
               link.addEventListener('click', (evt) => {
                 evt.preventDefault();
                 const seqId = link.dataset.sequence;
-                if (seqId) {
+                const eventId = link.dataset.eventid;
+                if (seqId || eventId) {
                   // Notify sequence change listeners (SequenceAnimator handles viewport/display)
-                  // Don't highlight or zoom here - let the animation reveal events
-                  this._notifySequenceChange(seqId);
+                  // Pass both sequenceId and eventId for accurate aftershock queries
+                  this._notifySequenceChange(seqId, eventId);
                 }
               });
             });
@@ -270,6 +273,8 @@ export const PointRadiusModel = {
                 const duration = parseInt(link.dataset.duration) || 30;
                 const timestamp = link.dataset.timestamp;
                 const year = link.dataset.year;
+                const latitude = link.dataset.lat ? parseFloat(link.dataset.lat) : null;
+                const longitude = link.dataset.lon ? parseFloat(link.dataset.lon) : null;
 
                 // Update link to show loading state
                 link.textContent = 'Loading fire...';
@@ -287,7 +292,7 @@ export const PointRadiusModel = {
                     // We have daily progression data - use it
                     link.textContent = `Starting (${progressionData.total_days} days)...`;
                     link.style.color = '#ff9800';
-                    this._notifyFireProgression(progressionData, eventId, timestamp);
+                    this._notifyFireProgression(progressionData, eventId, timestamp, latitude, longitude);
                   } else {
                     // Fall back to single perimeter
                     const perimeterUrl = year
@@ -299,7 +304,7 @@ export const PointRadiusModel = {
                     if (perimeterData.geometry) {
                       link.textContent = 'Starting animation...';
                       link.style.color = '#ff9800';
-                      this._notifyFireAnimation(perimeterData, eventId, duration, timestamp);
+                      this._notifyFireAnimation(perimeterData, eventId, duration, timestamp, latitude, longitude);
                     } else {
                       link.textContent = 'No perimeter data';
                       link.style.color = '#999';
@@ -307,6 +312,86 @@ export const PointRadiusModel = {
                   }
                 } catch (err) {
                   console.error('Error fetching fire data:', err);
+                  link.textContent = 'Error loading';
+                  link.style.color = '#f44336';
+                }
+
+                // Re-enable after delay
+                setTimeout(() => {
+                  link.style.pointerEvents = 'auto';
+                }, 2000);
+              });
+            });
+
+            // Setup click handler for "View tornado track" link
+            const tornadoLinks = popupEl.querySelectorAll('.view-tornado-track-link');
+            tornadoLinks.forEach(link => {
+              link.addEventListener('click', async (evt) => {
+                evt.preventDefault();
+                const eventId = link.dataset.event;
+
+                // Update link to show loading state
+                link.textContent = 'Loading track...';
+                link.style.pointerEvents = 'none';
+
+                try {
+                  // Fetch tornado detail with track data
+                  const url = `/api/tornadoes/${eventId}`;
+                  const response = await fetch(url);
+                  const data = await response.json();
+
+                  if (data.track && data.track.geometry) {
+                    link.textContent = 'Showing track';
+                    link.style.color = '#32cd32';
+
+                    // Display the track on the map
+                    this._displayTornadoTrack(data);
+                  } else {
+                    link.textContent = 'No track data';
+                    link.style.color = '#999';
+                  }
+                } catch (err) {
+                  console.error('Error fetching tornado track:', err);
+                  link.textContent = 'Error loading';
+                  link.style.color = '#f44336';
+                }
+
+                // Re-enable after delay
+                setTimeout(() => {
+                  link.style.pointerEvents = 'auto';
+                }, 2000);
+              });
+            });
+
+            // Setup click handler for "View tornado sequence" link
+            const sequenceLinks = popupEl.querySelectorAll('.view-tornado-sequence-link');
+            sequenceLinks.forEach(link => {
+              link.addEventListener('click', async (evt) => {
+                evt.preventDefault();
+                const eventId = link.dataset.event;
+
+                // Update link to show loading state
+                link.textContent = 'Finding sequence...';
+                link.style.pointerEvents = 'none';
+
+                try {
+                  // Fetch tornado sequence (linked tornadoes from same storm system)
+                  const url = `/api/tornadoes/${eventId}/sequence`;
+                  const response = await fetch(url);
+                  const data = await response.json();
+
+                  if (data.features && data.features.length > 1) {
+                    link.textContent = `Found ${data.sequence_count} linked`;
+                    link.style.color = '#ffa500';
+
+                    // Notify controller to display the sequence
+                    this._notifyTornadoSequence(data, eventId);
+                  } else {
+                    link.textContent = 'No linked tornadoes';
+                    link.style.color = '#999';
+                  }
+                } catch (err) {
+                  console.error('Error fetching tornado sequence:', err);
                   link.textContent = 'Error loading';
                   link.style.color = '#f44336';
                 }
@@ -333,9 +418,14 @@ export const PointRadiusModel = {
 
     // Click elsewhere to unlock popup and deselect
     this._mapClickHandler = (e) => {
-      // Check if click was on an event feature
+      // Check if click was on an event feature (both circle and polygon fill layers)
+      const layersToCheck = [CONFIG.layers.eventCircle];
+      // Also check polygon fill layer if it exists (for wildfires)
+      if (MapAdapter.map.getLayer(CONFIG.layers.eventCircle + '-fill')) {
+        layersToCheck.push(CONFIG.layers.eventCircle + '-fill');
+      }
       const features = MapAdapter.map.queryRenderedFeatures(e.point, {
-        layers: [CONFIG.layers.eventCircle]
+        layers: layersToCheck
       });
       if (features.length === 0 && MapAdapter.popupLocked) {
         MapAdapter.popupLocked = false;
@@ -1025,6 +1115,123 @@ export const PointRadiusModel = {
   },
 
   /**
+   * Add tornado-specific layers.
+   * Uses EF/F scale for color, display_radius for impact zone.
+   * Supports drill-down to show track line when clicked.
+   * @private
+   */
+  _addTornadoLayer(options = {}) {
+    const map = MapAdapter.map;
+
+    // Recency-based effects for animation
+    const recencyExpr = ['coalesce', ['get', '_recency'], 1.0];
+    const opacityExpr = (baseOpacity) => ['min', 1.0, ['*', baseOpacity, recencyExpr]];
+    const sizeBoostExpr = (baseSize) => ['*', baseSize, ['max', 1.0, recencyExpr]];
+
+    // Color by tornado scale (EF0-EF5 or legacy F0-F5)
+    // Maps to severe weather convention: green to red
+    // tornado_scale can be "EF0", "F3", etc. - extract number
+    const scaleNumExpr = [
+      'to-number',
+      ['slice', ['coalesce', ['get', 'tornado_scale'], 'EF0'], -1],
+      0
+    ];
+
+    const colorExpr = [
+      'interpolate', ['linear'], scaleNumExpr,
+      0, '#98fb98',  // EF0 - Pale green (weak)
+      1, '#32cd32',  // EF1 - Lime green
+      2, '#ffd700',  // EF2 - Gold (significant)
+      3, '#ff8c00',  // EF3 - Dark orange (severe)
+      4, '#ff4500',  // EF4 - Orange-red (devastating)
+      5, '#8b0000'   // EF5 - Dark red (violent)
+    ];
+
+    // Size by EF scale - larger = stronger tornado
+    const sizeExpr = [
+      'interpolate', ['linear'], scaleNumExpr,
+      0, 4,   // EF0 = 4px
+      1, 6,   // EF1 = 6px
+      2, 8,   // EF2 = 8px
+      3, 10,  // EF3 = 10px
+      4, 13,  // EF4 = 13px
+      5, 16   // EF5 = 16px
+    ];
+
+    // Helper: convert km to pixels at current zoom
+    const kmToPixels = (kmExpr) => [
+      'interpolate', ['exponential', 2], ['zoom'],
+      0, ['/', kmExpr, 156.5],
+      5, ['/', kmExpr, 4.9],
+      10, ['*', kmExpr, 6.54],
+      15, ['*', kmExpr, 209]
+    ];
+
+    // 1. DAMAGE RADIUS - shows width-based impact zone
+    // Only show if display_radius is available
+    map.addLayer({
+      id: CONFIG.layers.eventRadiusOuter,
+      type: 'circle',
+      source: CONFIG.layers.eventSource,
+      filter: ['>', ['coalesce', ['get', 'display_radius'], 0], 0],
+      paint: {
+        'circle-radius': kmToPixels(['get', 'display_radius']),
+        'circle-color': 'transparent',
+        'circle-stroke-color': colorExpr,
+        'circle-stroke-width': 1.5,
+        'circle-stroke-opacity': opacityExpr(0.4)
+      }
+    });
+
+    // 2. SELECTED EVENT LAYERS - filled circles for clicked event
+    map.addLayer({
+      id: CONFIG.layers.eventRadiusOuter + '-selected',
+      type: 'circle',
+      source: CONFIG.layers.eventSource,
+      filter: ['==', ['get', 'event_id'], ''],  // Initially matches nothing
+      paint: {
+        'circle-radius': kmToPixels(['coalesce', ['get', 'display_radius'], 1]),
+        'circle-color': colorExpr,
+        'circle-opacity': 0.2,
+        'circle-stroke-color': colorExpr,
+        'circle-stroke-width': 2,
+        'circle-stroke-opacity': 0.7
+      }
+    });
+
+    // 3. TORNADO TRACK LINE - shown during drill-down
+    // Uses separate source added by drill-down handler
+    // This layer is just a placeholder - actual track uses tornado-track source
+
+    // 4. GLOW layer
+    map.addLayer({
+      id: CONFIG.layers.eventCircle + '-glow',
+      type: 'circle',
+      source: CONFIG.layers.eventSource,
+      paint: {
+        'circle-radius': sizeBoostExpr(['+', sizeExpr, 4]),
+        'circle-color': colorExpr,
+        'circle-opacity': opacityExpr(0.35),
+        'circle-blur': 1
+      }
+    });
+
+    // 5. MAIN TORNADO MARKER
+    map.addLayer({
+      id: CONFIG.layers.eventCircle,
+      type: 'circle',
+      source: CONFIG.layers.eventSource,
+      paint: {
+        'circle-radius': sizeBoostExpr(sizeExpr),
+        'circle-color': colorExpr,
+        'circle-opacity': opacityExpr(0.9),
+        'circle-stroke-color': '#222222',
+        'circle-stroke-width': 1
+      }
+    });
+  },
+
+  /**
    * Add generic event layer for other event types.
    * @private
    */
@@ -1138,6 +1345,11 @@ export const PointRadiusModel = {
     this._originalTsunamiData = null;
     this._hideRunupsExitControl();
 
+    // Clean up track mode state (tornado drill-down)
+    this._clearTornadoTrack();
+    this._inTrackMode = false;
+    this._hideTrackExitControl();
+
     this.activeType = null;
     this.selectedEventId = null;
     this.activeSequenceId = null;
@@ -1227,7 +1439,7 @@ export const PointRadiusModel = {
 
   /**
    * Set callback for sequence changes (used by TimeSlider integration).
-   * @param {Function} callback - Called with (sequenceId) when sequence changes
+   * @param {Function} callback - Called with (sequenceId, eventId) when sequence changes
    */
   onSequenceChange(callback) {
     this.sequenceChangeCallback = callback;
@@ -1237,11 +1449,12 @@ export const PointRadiusModel = {
    * Notify sequence change listeners without highlighting.
    * Used when starting animation - SequenceAnimator handles display.
    * @param {string} sequenceId - Sequence ID
+   * @param {string} eventId - Event ID (mainshock ID for accurate aftershock query)
    * @private
    */
-  _notifySequenceChange(sequenceId) {
+  _notifySequenceChange(sequenceId, eventId = null) {
     if (this.sequenceChangeCallback) {
-      this.sequenceChangeCallback(sequenceId);
+      this.sequenceChangeCallback(sequenceId, eventId);
     }
   },
 
@@ -1351,6 +1564,215 @@ export const PointRadiusModel = {
   },
 
   /**
+   * Display a tornado track on the map.
+   * Shows track line, start point, end point, and impact radius.
+   * @param {Object} data - Tornado detail data with track GeoJSON
+   */
+  _displayTornadoTrack(data) {
+    if (!MapAdapter?.map) return;
+
+    const map = MapAdapter.map;
+    const trackSourceId = 'tornado-track';
+    const trackLayerId = 'tornado-track-line';
+    const pointsLayerId = 'tornado-track-points';
+    const radiusLayerId = 'tornado-track-radius';
+
+    // Clean up any existing track layers
+    this._clearTornadoTrack();
+
+    // Get scale color for consistent styling
+    const scale = data.tornado_scale || 'EF0';
+    const scaleColors = {
+      'EF0': '#98fb98', 'F0': '#98fb98',
+      'EF1': '#32cd32', 'F1': '#32cd32',
+      'EF2': '#ffd700', 'F2': '#ffd700',
+      'EF3': '#ff8c00', 'F3': '#ff8c00',
+      'EF4': '#ff4500', 'F4': '#ff4500',
+      'EF5': '#8b0000', 'F5': '#8b0000'
+    };
+    const trackColor = scaleColors[scale] || '#32cd32';
+
+    // Build GeoJSON with track line and endpoint markers
+    const features = [];
+
+    // Add track line if available
+    if (data.track && data.track.geometry) {
+      features.push({
+        type: 'Feature',
+        geometry: data.track.geometry,
+        properties: { type: 'track', tornado_scale: scale }
+      });
+    }
+
+    // Add start point marker
+    if (data.latitude != null && data.longitude != null) {
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [data.longitude, data.latitude] },
+        properties: { type: 'start', tornado_scale: scale, label: 'START' }
+      });
+    }
+
+    // Add end point marker
+    if (data.end_latitude != null && data.end_longitude != null) {
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [data.end_longitude, data.end_latitude] },
+        properties: { type: 'end', tornado_scale: scale, label: 'END' }
+      });
+    }
+
+    const geojson = { type: 'FeatureCollection', features };
+
+    // Add source
+    map.addSource(trackSourceId, { type: 'geojson', data: geojson });
+
+    // Helper: km to pixels
+    const kmToPixels = (km) => [
+      'interpolate', ['exponential', 2], ['zoom'],
+      0, km / 156.5,
+      5, km / 4.9,
+      10, km * 6.54,
+      15, km * 209
+    ];
+
+    // Add impact radius along track (using display_radius)
+    if (data.display_radius > 0) {
+      map.addLayer({
+        id: radiusLayerId,
+        type: 'line',
+        source: trackSourceId,
+        filter: ['==', ['get', 'type'], 'track'],
+        paint: {
+          'line-color': trackColor,
+          'line-width': kmToPixels(data.display_radius * 2),
+          'line-opacity': 0.25
+        }
+      });
+    }
+
+    // Add track line layer
+    map.addLayer({
+      id: trackLayerId,
+      type: 'line',
+      source: trackSourceId,
+      filter: ['==', ['get', 'type'], 'track'],
+      paint: {
+        'line-color': trackColor,
+        'line-width': 4,
+        'line-opacity': 0.9
+      }
+    });
+
+    // Add endpoint markers
+    map.addLayer({
+      id: pointsLayerId,
+      type: 'circle',
+      source: trackSourceId,
+      filter: ['in', ['get', 'type'], ['literal', ['start', 'end']]],
+      paint: {
+        'circle-radius': 8,
+        'circle-color': [
+          'case',
+          ['==', ['get', 'type'], 'start'], '#00ff00',  // Green for start
+          '#ff0000'  // Red for end
+        ],
+        'circle-stroke-color': '#222',
+        'circle-stroke-width': 2
+      }
+    });
+
+    // Fit map to track bounds
+    if (data.track?.geometry?.coordinates?.length > 0) {
+      const coords = data.track.geometry.coordinates;
+      const bounds = new maplibregl.LngLatBounds();
+      coords.forEach(c => bounds.extend(c));
+      map.fitBounds(bounds, { padding: 80, duration: 800, maxZoom: 12 });
+    }
+
+    // Show exit control
+    this._showTrackExitControl();
+    this._inTrackMode = true;
+
+    console.log(`PointRadiusModel: Displaying tornado track for ${data.event_id}`);
+  },
+
+  /**
+   * Clear tornado track display.
+   * @private
+   */
+  _clearTornadoTrack() {
+    if (!MapAdapter?.map) return;
+
+    const map = MapAdapter.map;
+    const layers = ['tornado-track-line', 'tornado-track-points', 'tornado-track-radius'];
+
+    layers.forEach(id => {
+      if (map.getLayer(id)) map.removeLayer(id);
+    });
+
+    if (map.getSource('tornado-track')) {
+      map.removeSource('tornado-track');
+    }
+  },
+
+  /**
+   * Show exit control for track/drill-down mode.
+   * @private
+   */
+  _showTrackExitControl() {
+    // Remove any existing
+    this._hideTrackExitControl();
+
+    const exitBtn = document.createElement('button');
+    exitBtn.id = 'track-exit-btn';
+    exitBtn.textContent = 'Exit Track View';
+    exitBtn.style.cssText = `
+      position: absolute;
+      top: 70px;
+      right: 10px;
+      z-index: 100;
+      padding: 8px 16px;
+      background: #2e7d32;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    `;
+    exitBtn.addEventListener('click', () => {
+      this.exitTrackMode();
+    });
+
+    const mapContainer = MapAdapter?.map?.getContainer();
+    if (mapContainer) {
+      mapContainer.appendChild(exitBtn);
+    }
+  },
+
+  /**
+   * Hide track exit control.
+   * @private
+   */
+  _hideTrackExitControl() {
+    const existing = document.getElementById('track-exit-btn');
+    if (existing) existing.remove();
+  },
+
+  /**
+   * Exit track/drill-down mode.
+   */
+  exitTrackMode() {
+    this._clearTornadoTrack();
+    this._hideTrackExitControl();
+    this._inTrackMode = false;
+    MapAdapter?.hidePopup?.();
+    MapAdapter.popupLocked = false;
+    console.log('PointRadiusModel: Exited track mode');
+  },
+
+  /**
    * Exit runups view and restore original tsunami data.
    */
   exitRunupsMode() {
@@ -1453,8 +1875,10 @@ export const PointRadiusModel = {
    * @param {string} eventId - Fire event ID
    * @param {number} durationDays - Fire duration in days
    * @param {string} timestamp - Fire ignition timestamp
+   * @param {number} latitude - Ignition latitude
+   * @param {number} longitude - Ignition longitude
    */
-  _notifyFireAnimation(perimeterData, eventId, durationDays, timestamp) {
+  _notifyFireAnimation(perimeterData, eventId, durationDays, timestamp, latitude, longitude) {
     console.log(`PointRadiusModel: Fire animation requested for ${eventId} (${durationDays} days)`);
 
     if (this.fireAnimationCallback) {
@@ -1462,7 +1886,9 @@ export const PointRadiusModel = {
         perimeter: perimeterData,
         eventId: eventId,
         durationDays: durationDays,
-        startTime: timestamp
+        startTime: timestamp,
+        latitude: latitude,
+        longitude: longitude
       });
     } else {
       console.warn('PointRadiusModel: No fire animation callback registered');
@@ -1475,8 +1901,10 @@ export const PointRadiusModel = {
    * @param {Object} progressionData - API response with daily snapshots
    * @param {string} eventId - Fire event ID
    * @param {string} timestamp - Fire ignition timestamp
+   * @param {number} latitude - Ignition latitude
+   * @param {number} longitude - Ignition longitude
    */
-  _notifyFireProgression(progressionData, eventId, timestamp) {
+  _notifyFireProgression(progressionData, eventId, timestamp, latitude, longitude) {
     console.log(`PointRadiusModel: Fire progression requested for ${eventId} (${progressionData.total_days} daily snapshots)`);
 
     if (this.fireProgressionCallback) {
@@ -1484,7 +1912,9 @@ export const PointRadiusModel = {
         snapshots: progressionData.snapshots,
         eventId: eventId,
         totalDays: progressionData.total_days,
-        startTime: timestamp
+        startTime: timestamp,
+        latitude: latitude,
+        longitude: longitude
       });
     } else if (this.fireAnimationCallback) {
       // Fall back to single-perimeter animation using last snapshot
@@ -1494,11 +1924,464 @@ export const PointRadiusModel = {
         perimeter: { type: 'Feature', geometry: lastSnapshot.geometry, properties: {} },
         eventId: eventId,
         durationDays: progressionData.total_days,
-        startTime: timestamp
+        startTime: timestamp,
+        latitude: latitude,
+        longitude: longitude
       });
     } else {
       console.warn('PointRadiusModel: No fire animation/progression callback registered');
     }
+  },
+
+  /**
+   * Register callback for tornado sequence events.
+   * @param {Function} callback - Callback function receiving {geojson, seedEventId, sequenceCount}
+   */
+  onTornadoSequence(callback) {
+    this.tornadoSequenceCallback = callback;
+  },
+
+  /**
+   * Notify about tornado sequence request.
+   * @param {Object} sequenceData - GeoJSON FeatureCollection with linked tornadoes
+   * @param {string} seedEventId - The tornado that was clicked
+   */
+  _notifyTornadoSequence(sequenceData, seedEventId) {
+    console.log(`PointRadiusModel: Tornado sequence found with ${sequenceData.sequence_count} linked tornadoes`);
+
+    if (this.tornadoSequenceCallback) {
+      this.tornadoSequenceCallback({
+        geojson: sequenceData,
+        seedEventId: seedEventId,
+        sequenceCount: sequenceData.sequence_count
+      });
+    } else {
+      console.warn('PointRadiusModel: No tornado sequence callback registered');
+      // Fall back to just displaying the sequence on the map
+      this._displayTornadoSequence(sequenceData);
+    }
+  },
+
+  // Tornado sequence animation state
+  _tornadoSeqState: null,
+
+  /**
+   * Display a tornado sequence on the map with TimeSlider animation.
+   * Shows linked tornado tracks appearing one by one as time advances.
+   * @param {Object} sequenceData - GeoJSON FeatureCollection with linked tornadoes
+   */
+  _displayTornadoSequence(sequenceData) {
+    if (!MapAdapter?.map) return;
+
+    const map = MapAdapter.map;
+    const sourceId = 'tornado-sequence';
+    const trackLayerId = 'tornado-sequence-tracks';
+    const pointsLayerId = 'tornado-sequence-points';
+    const connectLayerId = 'tornado-sequence-connect';
+
+    // Clean up existing layers and animation state
+    this._clearTornadoSequence();
+
+    // Sort features by timestamp
+    const sortedFeatures = sequenceData.features.sort((a, b) => {
+      return new Date(a.properties.timestamp) - new Date(b.properties.timestamp);
+    });
+
+    // Extract timestamps for TimeSlider
+    const timestamps = [];
+    let minTime = Infinity, maxTime = -Infinity;
+    for (const f of sortedFeatures) {
+      const t = new Date(f.properties.timestamp).getTime();
+      if (!isNaN(t)) {
+        timestamps.push(t);
+        if (t < minTime) minTime = t;
+        if (t > maxTime) maxTime = t;
+      }
+    }
+    timestamps.sort((a, b) => a - b);
+
+    // If only one tornado or no valid timestamps, just show static display
+    if (timestamps.length === 0 || minTime === maxTime) {
+      this._displayTornadoSequenceStatic(sequenceData, sortedFeatures, map, sourceId, trackLayerId, pointsLayerId, connectLayerId);
+      return;
+    }
+
+    // Build all possible features (will be filtered by time)
+    const allFeatures = this._buildTornadoSequenceFeatures(sortedFeatures);
+
+    // Add source with empty data (will be updated by time)
+    map.addSource(sourceId, {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] }
+    });
+
+    // Add connecting lines (dashed) - visible when tornado reaches that point
+    map.addLayer({
+      id: connectLayerId,
+      type: 'line',
+      source: sourceId,
+      filter: ['==', ['get', 'feature_type'], 'connect'],
+      paint: {
+        'line-color': '#ffaa00',
+        'line-width': 2,
+        'line-dasharray': [4, 4],
+        'line-opacity': 0.8
+      }
+    });
+
+    // Add track lines
+    map.addLayer({
+      id: trackLayerId,
+      type: 'line',
+      source: sourceId,
+      filter: ['==', ['get', 'feature_type'], 'track'],
+      paint: {
+        'line-color': ['case',
+          ['==', ['get', 'is_seed'], true], '#ff4500',
+          '#32cd32'
+        ],
+        'line-width': 5,
+        'line-opacity': 0.9
+      }
+    });
+
+    // Add endpoint markers
+    map.addLayer({
+      id: pointsLayerId,
+      type: 'circle',
+      source: sourceId,
+      filter: ['in', ['get', 'feature_type'], ['literal', ['start', 'end']]],
+      paint: {
+        'circle-radius': 8,
+        'circle-color': ['case',
+          ['==', ['get', 'feature_type'], 'start'], '#00ff00',
+          '#ff0000'
+        ],
+        'circle-stroke-color': '#222',
+        'circle-stroke-width': 2
+      }
+    });
+
+    // Fit bounds to full sequence
+    const bounds = new maplibregl.LngLatBounds();
+    sortedFeatures.forEach(f => {
+      bounds.extend([f.properties.longitude, f.properties.latitude]);
+      if (f.properties.end_longitude && f.properties.end_latitude) {
+        bounds.extend([f.properties.end_longitude, f.properties.end_latitude]);
+      }
+    });
+    map.fitBounds(bounds, { padding: 80, duration: 1000, maxZoom: 10 });
+
+    // Hide popup
+    MapAdapter?.hidePopup?.();
+    MapAdapter.popupLocked = false;
+
+    // Setup TimeSlider scale
+    const scaleId = `tornado-seq-${Date.now()}`;
+    const firstDate = new Date(minTime).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+    // Store animation state
+    this._tornadoSeqState = {
+      sourceId,
+      trackLayerId,
+      pointsLayerId,
+      connectLayerId,
+      scaleId,
+      allFeatures,
+      sortedFeatures,
+      minTime,
+      maxTime,
+      timeChangeHandler: null
+    };
+
+    if (TimeSlider) {
+      const added = TimeSlider.addScale({
+        id: scaleId,
+        label: `Tornado Sequence ${firstDate} (${sortedFeatures.length} paths)`,
+        granularity: '1h',  // Tornado sequences typically span hours
+        useTimestamps: true,
+        currentTime: minTime,
+        timeRange: {
+          min: minTime,
+          max: maxTime,
+          available: timestamps
+        },
+        mapRenderer: 'tornado-sequence'
+      });
+
+      if (added) {
+        TimeSlider.setActiveScale(scaleId);
+
+        // Enter event animation mode with auto-calculated ~3 second playback
+        if (TimeSlider.enterEventAnimation) {
+          TimeSlider.enterEventAnimation(minTime, maxTime);
+        }
+
+        // Listen for time changes to filter visible features
+        this._tornadoSeqState.timeChangeHandler = (time) => {
+          this._updateTornadoSequenceForTime(time);
+        };
+        TimeSlider.addChangeListener(this._tornadoSeqState.timeChangeHandler);
+      }
+    }
+
+    // Render initial state (first tornado)
+    this._updateTornadoSequenceForTime(minTime);
+
+    // Show exit button
+    this._showSequenceExitControl();
+
+    console.log(`PointRadiusModel: Displayed tornado sequence with ${sortedFeatures.length} tornadoes, TimeSlider enabled`);
+  },
+
+  /**
+   * Build all features for tornado sequence (tracks, endpoints, connections).
+   * @private
+   */
+  _buildTornadoSequenceFeatures(sortedFeatures) {
+    const features = [];
+
+    sortedFeatures.forEach((f, idx) => {
+      const props = f.properties;
+      const timestamp = new Date(props.timestamp).getTime();
+
+      // Track line
+      if (props.track && props.track.coordinates) {
+        features.push({
+          type: 'Feature',
+          geometry: props.track,
+          properties: { ...props, feature_type: 'track', seq_idx: idx, _timestamp: timestamp }
+        });
+      }
+
+      // Start endpoint
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [props.longitude, props.latitude] },
+        properties: { ...props, feature_type: 'start', seq_idx: idx, _timestamp: timestamp }
+      });
+
+      // End endpoint
+      if (props.end_latitude && props.end_longitude) {
+        features.push({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [props.end_longitude, props.end_latitude] },
+          properties: { ...props, feature_type: 'end', seq_idx: idx, _timestamp: timestamp }
+        });
+
+        // Connection to next tornado (visible when current tornado ends)
+        if (idx < sortedFeatures.length - 1) {
+          const next = sortedFeatures[idx + 1].properties;
+          features.push({
+            type: 'Feature',
+            geometry: {
+              type: 'LineString',
+              coordinates: [
+                [props.end_longitude, props.end_latitude],
+                [next.longitude, next.latitude]
+              ]
+            },
+            properties: { feature_type: 'connect', seq_idx: idx, _timestamp: timestamp }
+          });
+        }
+      }
+    });
+
+    return features;
+  },
+
+  /**
+   * Update tornado sequence display for current time.
+   * Shows only tornadoes that have occurred by this time.
+   * @private
+   */
+  _updateTornadoSequenceForTime(currentTime) {
+    if (!this._tornadoSeqState || !MapAdapter?.map) return;
+
+    const { sourceId, allFeatures } = this._tornadoSeqState;
+    const source = MapAdapter.map.getSource(sourceId);
+    if (!source) return;
+
+    // Filter features to those at or before current time
+    const visibleFeatures = allFeatures.filter(f => {
+      const featureTime = f.properties._timestamp;
+      return featureTime <= currentTime;
+    });
+
+    // Update source data
+    source.setData({
+      type: 'FeatureCollection',
+      features: visibleFeatures
+    });
+  },
+
+  /**
+   * Display static tornado sequence (no animation, single tornado or no timestamps).
+   * @private
+   */
+  _displayTornadoSequenceStatic(sequenceData, sortedFeatures, map, sourceId, trackLayerId, pointsLayerId, connectLayerId) {
+    const features = this._buildTornadoSequenceFeatures(sortedFeatures);
+
+    // Add source with all features
+    map.addSource(sourceId, {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features }
+    });
+
+    // Add layers
+    map.addLayer({
+      id: connectLayerId,
+      type: 'line',
+      source: sourceId,
+      filter: ['==', ['get', 'feature_type'], 'connect'],
+      paint: {
+        'line-color': '#ffaa00',
+        'line-width': 2,
+        'line-dasharray': [4, 4],
+        'line-opacity': 0.8
+      }
+    });
+
+    map.addLayer({
+      id: trackLayerId,
+      type: 'line',
+      source: sourceId,
+      filter: ['==', ['get', 'feature_type'], 'track'],
+      paint: {
+        'line-color': ['case',
+          ['==', ['get', 'is_seed'], true], '#ff4500',
+          '#32cd32'
+        ],
+        'line-width': 5,
+        'line-opacity': 0.9
+      }
+    });
+
+    map.addLayer({
+      id: pointsLayerId,
+      type: 'circle',
+      source: sourceId,
+      filter: ['in', ['get', 'feature_type'], ['literal', ['start', 'end']]],
+      paint: {
+        'circle-radius': 8,
+        'circle-color': ['case',
+          ['==', ['get', 'feature_type'], 'start'], '#00ff00',
+          '#ff0000'
+        ],
+        'circle-stroke-color': '#222',
+        'circle-stroke-width': 2
+      }
+    });
+
+    // Fit bounds
+    const bounds = new maplibregl.LngLatBounds();
+    sortedFeatures.forEach(f => {
+      bounds.extend([f.properties.longitude, f.properties.latitude]);
+      if (f.properties.end_longitude && f.properties.end_latitude) {
+        bounds.extend([f.properties.end_longitude, f.properties.end_latitude]);
+      }
+    });
+    map.fitBounds(bounds, { padding: 80, duration: 1000, maxZoom: 10 });
+
+    // Hide popup
+    MapAdapter?.hidePopup?.();
+    MapAdapter.popupLocked = false;
+
+    // Store minimal state for cleanup
+    this._tornadoSeqState = {
+      sourceId,
+      trackLayerId,
+      pointsLayerId,
+      connectLayerId,
+      scaleId: null,
+      allFeatures: features,
+      sortedFeatures,
+      minTime: null,
+      maxTime: null,
+      timeChangeHandler: null
+    };
+
+    // Show exit button
+    this._showSequenceExitControl();
+
+    console.log(`PointRadiusModel: Displayed static tornado sequence with ${sortedFeatures.length} tornadoes`);
+  },
+
+  /**
+   * Show exit control for tornado sequence view.
+   * Positioned at top center to match other animators (EventAnimator, SequenceAnimator).
+   * @private
+   */
+  _showSequenceExitControl() {
+    this._hideSequenceExitControl();
+
+    // Create container at top center (matching EventAnimator/SequenceAnimator style)
+    const container = document.createElement('div');
+    container.id = 'tornado-sequence-exit-container';
+    container.style.cssText = `
+      position: fixed;
+      top: 80px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 12px;
+      z-index: 1000;
+    `;
+
+    const exitBtn = document.createElement('button');
+    exitBtn.id = 'sequence-exit-btn';
+    exitBtn.textContent = 'Exit Sequence View';
+    exitBtn.style.cssText = `
+      padding: 10px 20px;
+      background: #6b7280;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    `;
+    exitBtn.addEventListener('click', () => {
+      this._clearTornadoSequence();
+      this._hideSequenceExitControl();
+    });
+
+    container.appendChild(exitBtn);
+    document.body.appendChild(container);
+  },
+
+  /**
+   * Hide sequence exit control.
+   * @private
+   */
+  _hideSequenceExitControl() {
+    const container = document.getElementById('tornado-sequence-exit-container');
+    if (container) container.remove();
+    // Also check for old button ID for backwards compatibility
+    const existingBtn = document.getElementById('sequence-exit-btn');
+    if (existingBtn) existingBtn.remove();
+  },
+
+  /**
+   * Clear tornado sequence display.
+   * @private
+   */
+  _clearTornadoSequence() {
+    if (!MapAdapter?.map) return;
+
+    const map = MapAdapter.map;
+    const layers = ['tornado-sequence-tracks', 'tornado-sequence-points', 'tornado-sequence-connect'];
+
+    layers.forEach(id => {
+      if (map.getLayer(id)) map.removeLayer(id);
+    });
+
+    if (map.getSource('tornado-sequence')) {
+      map.removeSource('tornado-sequence');
+    }
+
+    console.log('PointRadiusModel: Cleared tornado sequence');
   },
 
   /**
@@ -1574,11 +2457,11 @@ export const PointRadiusModel = {
       // Aftershock sequence info
       if (props.is_mainshock && props.aftershock_count > 0) {
         lines.push(`<span style="color:#4fc3f7">Aftershocks: ${props.aftershock_count.toLocaleString()}</span>`);
-        lines.push(`<a href="#" class="view-sequence-link" data-sequence="${props.sequence_id}" style="color:#81c784;text-decoration:underline;cursor:pointer">View sequence</a>`);
+        lines.push(`<a href="#" class="view-sequence-link" data-sequence="${props.sequence_id}" data-eventid="${props.event_id}" style="color:#81c784;text-decoration:underline;cursor:pointer">View sequence</a>`);
       } else if (props.mainshock_id) {
         lines.push(`<span style="color:#ffb74d">Aftershock of larger event</span>`);
         if (props.sequence_id) {
-          lines.push(`<a href="#" class="view-sequence-link" data-sequence="${props.sequence_id}" style="color:#81c784;text-decoration:underline;cursor:pointer">View sequence</a>`);
+          lines.push(`<a href="#" class="view-sequence-link" data-sequence="${props.sequence_id}" data-eventid="${props.event_id}" style="color:#81c784;text-decoration:underline;cursor:pointer">View sequence</a>`);
         }
       }
       // Cross-link to volcanoes: look for eruptions that may have triggered this earthquake
@@ -1742,7 +2625,83 @@ export const PointRadiusModel = {
 
       // View fire animation link
       if (props.event_id && props.duration_days > 1) {
-        lines.push(`<a href="#" class="view-fire-link" data-event="${props.event_id}" data-duration="${props.duration_days}" data-timestamp="${props.timestamp}" data-year="${props.year || ''}" style="color:#ff9800;text-decoration:underline;cursor:pointer">View fire progression</a>`);
+        lines.push(`<a href="#" class="view-fire-link" data-event="${props.event_id}" data-duration="${props.duration_days}" data-timestamp="${props.timestamp}" data-year="${props.year || ''}" data-lat="${props.latitude || ''}" data-lon="${props.longitude || ''}" style="color:#ff9800;text-decoration:underline;cursor:pointer">View fire progression</a>`);
+      }
+    } else if (eventType === 'tornado') {
+      // Tornado popup
+      const scale = props.tornado_scale || 'Unknown';
+      // Color the header by scale
+      const scaleColors = {
+        'EF0': '#98fb98', 'F0': '#98fb98',
+        'EF1': '#32cd32', 'F1': '#32cd32',
+        'EF2': '#ffd700', 'F2': '#ffd700',
+        'EF3': '#ff8c00', 'F3': '#ff8c00',
+        'EF4': '#ff4500', 'F4': '#ff4500',
+        'EF5': '#8b0000', 'F5': '#8b0000'
+      };
+      const scaleColor = scaleColors[scale] || '#ffffff';
+      lines.push(`<strong style="color:${scaleColor}">${scale} Tornado</strong>`);
+
+      // Scale description
+      const scaleDesc = {
+        'EF0': 'Light damage', 'F0': 'Light damage',
+        'EF1': 'Moderate damage', 'F1': 'Moderate damage',
+        'EF2': 'Significant damage', 'F2': 'Significant damage',
+        'EF3': 'Severe damage', 'F3': 'Severe damage',
+        'EF4': 'Devastating damage', 'F4': 'Devastating damage',
+        'EF5': 'Incredible damage', 'F5': 'Incredible damage'
+      };
+      if (scaleDesc[scale]) {
+        lines.push(`<span style="color:#aaa">${scaleDesc[scale]}</span>`);
+      }
+
+      // Track dimensions
+      if (props.path_length_miles != null && props.path_length_miles > 0) {
+        lines.push(`Path length: ${props.path_length_miles.toFixed(1)} miles`);
+      }
+      if (props.path_width_yards != null && props.path_width_yards > 0) {
+        lines.push(`Path width: ${props.path_width_yards} yards`);
+      }
+
+      // Date/time
+      if (props.timestamp) {
+        const date = new Date(props.timestamp);
+        lines.push(date.toLocaleString());
+      } else if (props.year) {
+        lines.push(`Year: ${props.year}`);
+      }
+
+      // Casualties
+      if (props.deaths_direct != null && props.deaths_direct > 0) {
+        lines.push(`<span style="color:#ef5350">Deaths: ${props.deaths_direct}</span>`);
+      }
+      if (props.injuries_direct != null && props.injuries_direct > 0) {
+        lines.push(`Injuries: ${props.injuries_direct}`);
+      }
+
+      // Property damage
+      if (props.damage_property != null && props.damage_property > 0) {
+        const damage = props.damage_property >= 1e9
+          ? `$${(props.damage_property / 1e9).toFixed(1)}B`
+          : props.damage_property >= 1e6
+          ? `$${(props.damage_property / 1e6).toFixed(1)}M`
+          : `$${props.damage_property.toLocaleString()}`;
+        lines.push(`Property damage: ${damage}`);
+      }
+
+      // View track link - only if end coordinates available
+      if (props.event_id && (props.end_latitude != null || props.end_lat != null)) {
+        lines.push(`<a href="#" class="view-tornado-track-link" data-event="${props.event_id}" style="color:#32cd32;text-decoration:underline;cursor:pointer">View tornado track</a>`);
+      }
+
+      // Animate tornado path(s) - always available
+      // Shows sequence if multiple linked tornadoes, single path otherwise
+      if (props.event_id && (props.end_latitude != null || props.end_lat != null)) {
+        const seqCount = props.sequence_count || 1;
+        const linkText = seqCount > 1
+          ? `Animate tornado sequence (${seqCount} paths)`
+          : 'Animate tornado path';
+        lines.push(`<a href="#" class="view-tornado-sequence-link" data-event="${props.event_id}" style="color:#ffa500;text-decoration:underline;cursor:pointer">${linkText}</a>`);
       }
     } else {
       // Generic popup

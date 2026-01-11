@@ -61,15 +61,14 @@ const CATEGORIES = [
         hasYearFilter: true
       },
       {
-        id: 'storms',
-        label: 'Storms',
-        description: 'Severe weather events',
+        id: 'tornadoes',
+        label: 'Tornadoes',
+        description: 'USA tornadoes 1950-present (NOAA)',
         default: false,
         locked: false,
-        model: 'track',
-        icon: 'S',
-        hasYearFilter: true,
-        placeholder: true
+        model: 'point-radius',
+        icon: 'R',  // R for Rotation/twisteR
+        hasYearFilter: true
       },
       {
         id: 'tsunamis',

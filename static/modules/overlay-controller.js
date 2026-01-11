@@ -9,7 +9,6 @@
  * 4. When TimeSlider changes -> filter cached data and update display
  */
 
-import { SequenceAnimator, setDependencies as setSequenceAnimatorDeps } from './sequence-animator.js';
 import { TrackAnimator, setDependencies as setTrackAnimatorDeps } from './track-animator.js';
 import EventAnimator, { AnimationMode, setDependencies as setEventAnimatorDeps } from './event-animator.js';
 import { TIME_SYSTEM } from './time-slider.js';
@@ -26,11 +25,6 @@ export function setDependencies(deps) {
   ModelRegistry = deps.ModelRegistry;
   OverlaySelector = deps.OverlaySelector;
   TimeSlider = deps.TimeSlider;
-
-  // Wire dependencies to SequenceAnimator
-  setSequenceAnimatorDeps({
-    MapAdapter: deps.MapAdapter
-  });
 
   // Wire dependencies to TrackAnimator
   setTrackAnimatorDeps({
@@ -86,6 +80,12 @@ const OVERLAY_ENDPOINTS = {
     list: '/api/tsunamis/geojson?min_year=1900',  // NOAA global tsunami database
     animationEndpoint: '/api/tsunamis/{event_id}/animation',  // Radial animation data
     eventType: 'tsunami',
+    yearField: 'year'
+  },
+  tornadoes: {
+    list: '/api/tornadoes/geojson?min_year=1990',  // USA NOAA tornadoes
+    detailEndpoint: '/api/tornadoes/{event_id}',   // Track drill-down endpoint
+    eventType: 'tornado',
     yearField: 'year'
   }
 };
@@ -155,8 +155,8 @@ export const OverlayController = {
   setupSequenceListener() {
     const model = ModelRegistry?.getModel('point-radius');
     if (model?.onSequenceChange) {
-      model.onSequenceChange((sequenceId) => {
-        this.handleSequenceChange(sequenceId);
+      model.onSequenceChange((sequenceId, eventId) => {
+        this.handleSequenceChange(sequenceId, eventId);
       });
       console.log('OverlayController: Registered sequence change listener');
     }
@@ -208,6 +208,14 @@ export const OverlayController = {
       });
       console.log('OverlayController: Registered fire progression listener');
     }
+
+    // Tornado -> Sequence: when user clicks a tornado that's part of a sequence
+    if (model.onTornadoSequence) {
+      model.onTornadoSequence((data) => {
+        this.handleTornadoSequence(data);
+      });
+      console.log('OverlayController: Registered tornado sequence listener');
+    }
   },
 
   /**
@@ -220,7 +228,7 @@ export const OverlayController = {
 
     if (features.length === 0) return;
 
-    // Convert API features to GeoJSON format expected by SequenceAnimator
+    // Convert API features to GeoJSON format
     const seqEvents = features.map(f => ({
       type: 'Feature',
       geometry: f.geometry,
@@ -235,9 +243,8 @@ export const OverlayController = {
       }
     }
 
-    // Find min/max timestamps
-    let minTime = Infinity;
-    let maxTime = -Infinity;
+    // Handle case where all events have same timestamp or no valid times
+    let minTime = Infinity, maxTime = -Infinity;
     for (const event of seqEvents) {
       const t = new Date(event.properties.timestamp || event.properties.time).getTime();
       if (!isNaN(t)) {
@@ -246,7 +253,6 @@ export const OverlayController = {
       }
     }
 
-    // Handle case where all events have same timestamp or no valid times
     if (minTime === Infinity || maxTime === -Infinity || minTime === maxTime) {
       // Just display statically without animation
       const geojson = { type: 'FeatureCollection', features: seqEvents };
@@ -267,47 +273,9 @@ export const OverlayController = {
       return;
     }
 
-    // Adaptive time stepping (same as aftershock sequences)
-    const MAX_STEPS = 200;
-    const MIN_STEP_MS = 1 * 60 * 60 * 1000;  // 1 hour minimum
-    const timeRange = maxTime - minTime;
-    const adaptiveStepMs = Math.max(MIN_STEP_MS, Math.ceil(timeRange / MAX_STEPS));
-
-    const availableTimes = [];
-    for (let t = minTime; t <= maxTime; t += adaptiveStepMs) {
-      availableTimes.push(t);
-    }
-
-    // Build time data structure
-    const timeData = {};
-    for (const t of availableTimes) {
-      timeData[t] = {};
-    }
-    for (const event of seqEvents) {
-      const t = new Date(event.properties.timestamp || event.properties.time).getTime();
-      if (!isNaN(t)) {
-        const bucket = Math.floor((t - minTime) / adaptiveStepMs) * adaptiveStepMs + minTime;
-        const eventId = event.properties.event_id;
-        if (timeData[bucket]) {
-          timeData[bucket][eventId] = event.properties;
-        }
-      }
-    }
-
-    // Create scale ID for this volcano-triggered sequence
-    const scaleId = `volcano-${volcanoName.replace(/\s+/g, '-').substring(0, 12)}`;
-
-    // Format label
-    const label = `${volcanoName} quakes`;
-
-    // Remove existing sequence scale if any
-    if (this.activeSequenceScaleId && TimeSlider) {
-      TimeSlider.removeScale(this.activeSequenceScaleId);
-    }
-
-    // Stop any active sequence animation
-    if (SequenceAnimator.isActive()) {
-      SequenceAnimator.stop();
+    // Stop any active animation
+    if (EventAnimator.getIsActive()) {
+      EventAnimator.stop();
     }
 
     // Clear normal earthquake display
@@ -316,37 +284,7 @@ export const OverlayController = {
       model.clear();
     }
 
-    // Set up exit callback
-    SequenceAnimator.onExit(() => {
-      console.log('OverlayController: Volcano sequence exit callback triggered');
-      if (this.activeSequenceScaleId && TimeSlider) {
-        TimeSlider.removeScale(this.activeSequenceScaleId);
-        this.activeSequenceScaleId = null;
-      }
-      // Exit event animation mode - restore yearly overview speed
-      if (TimeSlider && TimeSlider.exitEventAnimation) {
-        TimeSlider.exitEventAnimation();
-      }
-      // Restore TimeSlider range from cached overlay year ranges
-      this.recalculateTimeRange();
-      if (TimeSlider) {
-        // Only switch to primary if it exists
-        if (TimeSlider.scales?.find(s => s.id === 'primary')) {
-          TimeSlider.setActiveScale('primary');
-        }
-        // Show TimeSlider if we have year data
-        if (Object.keys(yearRangeCache).length > 0) {
-          TimeSlider.show();
-        }
-      }
-      // Restore normal earthquake display for current year
-      const currentYear = this.getCurrentYear();
-      if (dataCache.earthquakes) {
-        this.renderFilteredData('earthquakes', currentYear);
-      }
-    });
-
-    // Start the sequence animator - create a virtual "mainshock" at volcano location
+    // Create mainshock at volcano location
     const volcanoMainshock = {
       type: 'Feature',
       geometry: { type: 'Point', coordinates: [volcanoLon, volcanoLat] },
@@ -356,10 +294,10 @@ export const OverlayController = {
         volcano_name: volcanoName
       }
     };
-    SequenceAnimator.start(scaleId, seqEvents, volcanoMainshock);
 
-    // Determine granularity label
-    const stepHours = adaptiveStepMs / (60 * 60 * 1000);
+    // Determine granularity based on time range
+    const timeRange = maxTime - minTime;
+    const stepHours = Math.max(1, Math.ceil((timeRange / (60 * 60 * 1000)) / 200));
     let granularityLabel = '6h';
     if (stepHours < 2) granularityLabel = '1h';
     else if (stepHours < 4) granularityLabel = '2h';
@@ -368,36 +306,38 @@ export const OverlayController = {
     else if (stepHours < 36) granularityLabel = 'daily';
     else granularityLabel = '2d';
 
-    // Add scale to TimeSlider
-    if (TimeSlider) {
-      const added = TimeSlider.addScale({
-        id: scaleId,
-        label: label,
-        granularity: granularityLabel,
-        useTimestamps: true,
-        currentTime: minTime,
-        timeRange: {
-          min: minTime,
-          max: maxTime,
-          available: availableTimes
-        },
-        timeData: timeData,
-        mapRenderer: 'sequence-animation'
-      });
-
-      if (added) {
-        this.activeSequenceScaleId = scaleId;
-        TimeSlider.setActiveScale(scaleId);
-
-        // Enter event animation mode with auto-calculated speed for ~10 second playback
-        if (TimeSlider.enterEventAnimation) {
-          TimeSlider.enterEventAnimation(minTime, maxTime);
+    // Start unified EventAnimator with earthquake mode
+    EventAnimator.start({
+      id: `volcano-${volcanoName.replace(/\s+/g, '-').substring(0, 12)}`,
+      label: `${volcanoName} quakes`,
+      mode: AnimationMode.EARTHQUAKE,
+      events: seqEvents,
+      mainshock: volcanoMainshock,
+      eventType: 'earthquake',
+      timeField: 'timestamp',
+      granularity: granularityLabel,
+      renderer: 'point-radius',
+      onExit: () => {
+        console.log('OverlayController: Volcano earthquake sequence exited');
+        // Restore TimeSlider range from cached overlay year ranges
+        this.recalculateTimeRange();
+        if (TimeSlider) {
+          if (TimeSlider.scales?.find(s => s.id === 'primary')) {
+            TimeSlider.setActiveScale('primary');
+          }
+          if (Object.keys(yearRangeCache).length > 0) {
+            TimeSlider.show();
+          }
         }
-
-        const durationDays = (timeRange / (24 * 60 * 60 * 1000)).toFixed(1);
-        console.log(`OverlayController: Started volcano-triggered sequence for ${volcanoName} with ${seqEvents.length} earthquakes, ${availableTimes.length} time steps (${durationDays} days)`);
+        // Restore normal earthquake display for current year
+        const currentYear = this.getCurrentYear();
+        if (dataCache.earthquakes) {
+          this.renderFilteredData('earthquakes', currentYear);
+        }
       }
-    }
+    });
+
+    console.log(`OverlayController: Started volcano earthquake animation with ${seqEvents.length} events`);
   },
 
   /**
@@ -529,11 +469,94 @@ export const OverlayController = {
   },
 
   /**
+   * Handle tornado sequence animation.
+   * Uses EventAnimator with TORNADO_SEQUENCE mode for progressive track drawing.
+   * @param {Object} data - { geojson, seedEventId, sequenceCount }
+   */
+  handleTornadoSequence(data) {
+    const { geojson, seedEventId, sequenceCount } = data;
+    console.log(`OverlayController: Starting tornado sequence animation for ${seedEventId} with ${sequenceCount} tornadoes`);
+
+    if (!geojson || !geojson.features || geojson.features.length < 2) {
+      console.warn('OverlayController: Not enough data for tornado sequence animation');
+      return;
+    }
+
+    // Hide any popups
+    MapAdapter?.hidePopup?.();
+    MapAdapter.popupLocked = false;
+
+    // Find the seed tornado to get initial center
+    const seedTornado = geojson.features.find(f =>
+      String(f.properties?.event_id) === String(seedEventId)
+    ) || geojson.features[0];
+
+    const centerLon = seedTornado.properties?.longitude;
+    const centerLat = seedTornado.properties?.latitude;
+
+    // Get time range for animation label
+    let minTime = Infinity, maxTime = -Infinity;
+    for (const f of geojson.features) {
+      const t = new Date(f.properties?.timestamp).getTime();
+      if (!isNaN(t)) {
+        if (t < minTime) minTime = t;
+        if (t > maxTime) maxTime = t;
+      }
+    }
+
+    // Format label
+    const startDate = new Date(minTime);
+    const label = `Tornado Sequence ${startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+
+    // Start tornado sequence animation using EventAnimator
+    const animationId = `tornado-seq-${seedEventId}`;
+
+    const started = EventAnimator.start({
+      id: animationId,
+      label: label,
+      mode: AnimationMode.TORNADO_SEQUENCE,
+      events: geojson.features,
+      eventType: 'tornado',
+      timeField: 'timestamp',
+      granularity: '1h',
+      renderer: 'point-radius',
+      center: centerLat && centerLon ? { lat: centerLat, lon: centerLon } : null,
+      zoom: 8,
+      rendererOptions: {
+        eventType: 'tornado'
+      },
+      onExit: () => {
+        console.log('OverlayController: Tornado sequence animation exited');
+        // Restore original tornado overlay
+        const currentYear = this.getCurrentYear();
+        if (dataCache.tornadoes) {
+          this.renderFilteredData('tornadoes', currentYear);
+        }
+        // Recalculate time range for TimeSlider
+        this.recalculateTimeRange();
+        if (TimeSlider && Object.keys(yearRangeCache).length > 0) {
+          TimeSlider.show();
+        }
+      }
+    });
+
+    if (started) {
+      console.log(`OverlayController: Tornado sequence animation started with ${geojson.features.length} tornadoes`);
+    } else {
+      console.error('OverlayController: Failed to start tornado sequence animation');
+      const currentYear = this.getCurrentYear();
+      if (dataCache.tornadoes) {
+        this.renderFilteredData('tornadoes', currentYear);
+      }
+    }
+  },
+
+  /**
    * Handle wildfire animation - animates perimeter polygon opacity over fire duration.
    * Simple Option A: Fade in final perimeter from 0% to 100% over duration_days.
    */
   handleFireAnimation(data) {
-    const { perimeter, eventId, durationDays, startTime } = data;
+    const { perimeter, eventId, durationDays, startTime, latitude, longitude } = data;
     console.log(`OverlayController: Starting fire animation for ${eventId} (${durationDays} days)`);
 
     if (!perimeter || !perimeter.geometry) {
@@ -550,28 +573,42 @@ export const OverlayController = {
     MapAdapter?.hidePopup?.();
     MapAdapter.popupLocked = false;
 
-    // Get perimeter center for zoom
-    let centerLon = 0, centerLat = 0, count = 0;
-    const coords = perimeter.geometry.coordinates;
-    if (perimeter.geometry.type === 'Polygon') {
-      for (const pt of coords[0]) {
-        centerLon += pt[0];
-        centerLat += pt[1];
-        count++;
-      }
-    } else if (perimeter.geometry.type === 'MultiPolygon') {
-      for (const poly of coords) {
-        for (const pt of poly[0]) {
+    // Hide the wildfire overlay to focus on this fire
+    this._hideWildfireOverlay();
+
+    // Get perimeter center for zoom (use provided coords or calculate from geometry)
+    let centerLon = longitude || 0;
+    let centerLat = latitude || 0;
+
+    // Calculate center from geometry if not provided
+    if (!longitude || !latitude) {
+      let count = 0;
+      centerLon = 0;
+      centerLat = 0;
+      const coords = perimeter.geometry.coordinates;
+      if (perimeter.geometry.type === 'Polygon') {
+        for (const pt of coords[0]) {
           centerLon += pt[0];
           centerLat += pt[1];
           count++;
         }
+      } else if (perimeter.geometry.type === 'MultiPolygon') {
+        for (const poly of coords) {
+          for (const pt of poly[0]) {
+            centerLon += pt[0];
+            centerLat += pt[1];
+            count++;
+          }
+        }
+      }
+      if (count > 0) {
+        centerLon /= count;
+        centerLat /= count;
       }
     }
-    if (count > 0) {
-      centerLon /= count;
-      centerLat /= count;
-    }
+
+    // Add ignition marker at the fire's starting point
+    this._addIgnitionMarker(centerLon, centerLat);
 
     // Zoom to fire location
     MapAdapter.map.flyTo({
@@ -691,10 +728,10 @@ export const OverlayController = {
   /**
    * Handle fire progression animation with daily snapshots.
    * Shows actual fire spread day-by-day using pre-computed perimeters.
-   * @param {Object} data - {snapshots, eventId, totalDays, startTime}
+   * @param {Object} data - {snapshots, eventId, totalDays, startTime, latitude, longitude}
    */
   handleFireProgression(data) {
-    const { snapshots, eventId, totalDays, startTime } = data;
+    const { snapshots, eventId, totalDays, startTime, latitude, longitude } = data;
     console.log(`OverlayController: Starting fire progression for ${eventId} (${totalDays} daily snapshots)`);
 
     if (!snapshots || snapshots.length === 0) {
@@ -720,29 +757,44 @@ export const OverlayController = {
     MapAdapter?.hidePopup?.();
     MapAdapter.popupLocked = false;
 
-    // Get center from first snapshot for zoom
+    // Hide the wildfire overlay to focus on this fire
+    this._hideWildfireOverlay();
+
+    // Get first snapshot for initial display
     const firstSnap = snapshots[0];
-    let centerLon = 0, centerLat = 0, count = 0;
-    const geom = firstSnap.geometry;
-    if (geom.type === 'Polygon') {
-      for (const pt of geom.coordinates[0]) {
-        centerLon += pt[0];
-        centerLat += pt[1];
-        count++;
-      }
-    } else if (geom.type === 'MultiPolygon') {
-      for (const poly of geom.coordinates) {
-        for (const pt of poly[0]) {
+
+    // Get center from first snapshot for zoom (use provided coords or calculate)
+    let centerLon = longitude || 0;
+    let centerLat = latitude || 0;
+
+    if (!longitude || !latitude) {
+      let count = 0;
+      centerLon = 0;
+      centerLat = 0;
+      const geom = firstSnap.geometry;
+      if (geom.type === 'Polygon') {
+        for (const pt of geom.coordinates[0]) {
           centerLon += pt[0];
           centerLat += pt[1];
           count++;
         }
+      } else if (geom.type === 'MultiPolygon') {
+        for (const poly of geom.coordinates) {
+          for (const pt of poly[0]) {
+            centerLon += pt[0];
+            centerLat += pt[1];
+            count++;
+          }
+        }
+      }
+      if (count > 0) {
+        centerLon /= count;
+        centerLat /= count;
       }
     }
-    if (count > 0) {
-      centerLon /= count;
-      centerLat /= count;
-    }
+
+    // Add ignition marker at the fire's starting point
+    this._addIgnitionMarker(centerLon, centerLat);
 
     // Zoom to fire location
     MapAdapter.map.flyTo({
@@ -751,44 +803,83 @@ export const OverlayController = {
       duration: 1500
     });
 
-    // Create fire perimeter layer
-    const sourceId = 'fire-prog-perimeter';
-    const layerId = 'fire-prog-fill';
-    const strokeId = 'fire-prog-stroke';
+    // Create two sets of fire perimeter layers for cross-fading
+    // This enables smooth transitions between daily snapshots
+    const sourceIdA = 'fire-prog-perimeter-a';
+    const sourceIdB = 'fire-prog-perimeter-b';
+    const layerIdA = 'fire-prog-fill-a';
+    const layerIdB = 'fire-prog-fill-b';
+    const strokeIdA = 'fire-prog-stroke-a';
+    const strokeIdB = 'fire-prog-stroke-b';
 
-    // Remove existing layers
-    if (MapAdapter.map.getLayer(layerId)) MapAdapter.map.removeLayer(layerId);
-    if (MapAdapter.map.getLayer(strokeId)) MapAdapter.map.removeLayer(strokeId);
-    if (MapAdapter.map.getSource(sourceId)) MapAdapter.map.removeSource(sourceId);
+    // Remove existing layers from both sets
+    [layerIdA, layerIdB, strokeIdA, strokeIdB].forEach(id => {
+      if (MapAdapter.map.getLayer(id)) MapAdapter.map.removeLayer(id);
+    });
+    [sourceIdA, sourceIdB].forEach(id => {
+      if (MapAdapter.map.getSource(id)) MapAdapter.map.removeSource(id);
+    });
 
-    // Add perimeter source with first snapshot
-    MapAdapter.map.addSource(sourceId, {
+    // Add two perimeter sources for cross-fading
+    MapAdapter.map.addSource(sourceIdA, {
+      type: 'geojson',
+      data: { type: 'Feature', geometry: firstSnap.geometry, properties: { day: 1 } }
+    });
+    MapAdapter.map.addSource(sourceIdB, {
       type: 'geojson',
       data: { type: 'Feature', geometry: firstSnap.geometry, properties: { day: 1 } }
     });
 
-    // Add fill layer
+    // Add fill layers (A starts visible, B starts hidden)
     MapAdapter.map.addLayer({
-      id: layerId,
+      id: layerIdA,
       type: 'fill',
-      source: sourceId,
+      source: sourceIdA,
       paint: {
         'fill-color': '#ff4400',
-        'fill-opacity': 0.5
+        'fill-opacity': 0.5,
+        'fill-opacity-transition': { duration: 300, delay: 0 }
+      }
+    });
+    MapAdapter.map.addLayer({
+      id: layerIdB,
+      type: 'fill',
+      source: sourceIdB,
+      paint: {
+        'fill-color': '#ff4400',
+        'fill-opacity': 0,
+        'fill-opacity-transition': { duration: 300, delay: 0 }
       }
     });
 
-    // Add stroke layer
+    // Add stroke layers (A starts visible, B starts hidden)
     MapAdapter.map.addLayer({
-      id: strokeId,
+      id: strokeIdA,
       type: 'line',
-      source: sourceId,
+      source: sourceIdA,
       paint: {
         'line-color': '#ff6600',
         'line-width': 2,
-        'line-opacity': 0.9
+        'line-opacity': 0.9,
+        'line-opacity-transition': { duration: 300, delay: 0 }
       }
     });
+    MapAdapter.map.addLayer({
+      id: strokeIdB,
+      type: 'line',
+      source: sourceIdB,
+      paint: {
+        'line-color': '#ff6600',
+        'line-width': 2,
+        'line-opacity': 0,
+        'line-opacity-transition': { duration: 300, delay: 0 }
+      }
+    });
+
+    // Legacy variable names for backward compatibility
+    const sourceId = sourceIdA;
+    const layerId = layerIdA;
+    const strokeId = strokeIdA;
 
     // Setup TimeSlider
     const scaleId = `fireprog-${eventId.substring(0, 10)}`;
@@ -820,23 +911,32 @@ export const OverlayController = {
       }
     }
 
-    // Store animation state
+    // Store animation state with both layer sets for cross-fading
     this._fireAnimState = {
       sourceId,
       layerId,
       strokeId,
+      sourceIdA,
+      sourceIdB,
+      layerIdA,
+      layerIdB,
+      strokeIdA,
+      strokeIdB,
       startMs: minTime,
       endMs: maxTime,
       scaleId,
       snapshotMap,  // For progression: lookup by timestamp
-      timestamps    // For progression: sorted list
+      timestamps,   // For progression: sorted list
+      currentLayer: 'A',  // Track which layer is currently visible
+      lastSnapshotTime: minTime  // Track last snapshot to detect changes
     };
 
-    // Listen for time changes to update geometry
+    // Listen for time changes to update geometry with cross-fade
     this._fireTimeHandler = (time, source) => {
       if (!this._fireAnimState || !this._fireAnimState.snapshotMap) return;
 
-      const { sourceId, snapshotMap, timestamps } = this._fireAnimState;
+      const state = this._fireAnimState;
+      const { snapshotMap, timestamps, lastSnapshotTime, currentLayer } = state;
 
       // Find closest snapshot <= current time
       let closestTime = timestamps[0];
@@ -845,14 +945,47 @@ export const OverlayController = {
         else break;
       }
 
+      // If snapshot hasn't changed, no need to update
+      if (closestTime === lastSnapshotTime) return;
+
       const snap = snapshotMap.get(closestTime);
-      if (snap && MapAdapter.map.getSource(sourceId)) {
-        MapAdapter.map.getSource(sourceId).setData({
+      if (!snap) return;
+
+      // Cross-fade: update the hidden layer with new geometry, then swap visibility
+      const newLayer = currentLayer === 'A' ? 'B' : 'A';
+      const newSourceId = newLayer === 'A' ? state.sourceIdA : state.sourceIdB;
+      const newFillId = newLayer === 'A' ? state.layerIdA : state.layerIdB;
+      const newStrokeId = newLayer === 'A' ? state.strokeIdA : state.strokeIdB;
+      const oldFillId = currentLayer === 'A' ? state.layerIdA : state.layerIdB;
+      const oldStrokeId = currentLayer === 'A' ? state.strokeIdA : state.strokeIdB;
+
+      // Update the hidden layer's geometry
+      const newSource = MapAdapter.map.getSource(newSourceId);
+      if (newSource) {
+        newSource.setData({
           type: 'Feature',
           geometry: snap.geometry,
           properties: { day: snap.day_num, area_km2: snap.area_km2, date: snap.date }
         });
       }
+
+      // Cross-fade: fade in the new layer, fade out the old
+      if (MapAdapter.map.getLayer(newFillId)) {
+        MapAdapter.map.setPaintProperty(newFillId, 'fill-opacity', 0.5);
+      }
+      if (MapAdapter.map.getLayer(newStrokeId)) {
+        MapAdapter.map.setPaintProperty(newStrokeId, 'line-opacity', 0.9);
+      }
+      if (MapAdapter.map.getLayer(oldFillId)) {
+        MapAdapter.map.setPaintProperty(oldFillId, 'fill-opacity', 0);
+      }
+      if (MapAdapter.map.getLayer(oldStrokeId)) {
+        MapAdapter.map.setPaintProperty(oldStrokeId, 'line-opacity', 0);
+      }
+
+      // Update tracking state
+      state.currentLayer = newLayer;
+      state.lastSnapshotTime = closestTime;
     };
     TimeSlider?.addChangeListener(this._fireTimeHandler);
 
@@ -869,12 +1002,24 @@ export const OverlayController = {
   _exitFireAnimation() {
     console.log('OverlayController: Exiting fire animation');
 
-    // Remove layers
+    // Remove layers (both A and B layer sets for cross-fade)
     if (this._fireAnimState) {
-      const { sourceId, layerId, strokeId, scaleId } = this._fireAnimState;
-      if (MapAdapter.map.getLayer(layerId)) MapAdapter.map.removeLayer(layerId);
-      if (MapAdapter.map.getLayer(strokeId)) MapAdapter.map.removeLayer(strokeId);
-      if (MapAdapter.map.getSource(sourceId)) MapAdapter.map.removeSource(sourceId);
+      const {
+        sourceIdA, sourceIdB,
+        layerIdA, layerIdB,
+        strokeIdA, strokeIdB,
+        scaleId
+      } = this._fireAnimState;
+
+      // Remove all fill and stroke layers
+      [layerIdA, layerIdB, strokeIdA, strokeIdB].forEach(id => {
+        if (id && MapAdapter.map.getLayer(id)) MapAdapter.map.removeLayer(id);
+      });
+
+      // Remove all sources
+      [sourceIdA, sourceIdB].forEach(id => {
+        if (id && MapAdapter.map.getSource(id)) MapAdapter.map.removeSource(id);
+      });
 
       // Remove TimeSlider scale
       if (TimeSlider && scaleId) {
@@ -897,11 +1042,11 @@ export const OverlayController = {
     const exitBtn = document.getElementById('fire-exit-btn');
     if (exitBtn) exitBtn.remove();
 
+    // Remove ignition marker
+    this._removeIgnitionMarker();
+
     // Restore wildfire overlay
-    const currentYear = this.getCurrentYear();
-    if (dataCache.wildfires) {
-      this.renderFilteredData('wildfires', currentYear);
-    }
+    this._restoreWildfireOverlay();
 
     // Recalculate time range
     this.recalculateTimeRange();
@@ -941,26 +1086,144 @@ export const OverlayController = {
   },
 
   /**
+   * Hide wildfire overlay to focus on a single fire animation.
+   * Clears the map layers but preserves the cached data.
+   * @private
+   */
+  _hideWildfireOverlay() {
+    const model = ModelRegistry?.getModelForType('wildfire');
+    if (model?.clear) {
+      model.clear();
+    }
+    console.log('OverlayController: Hid wildfire overlay for animation');
+  },
+
+  /**
+   * Restore wildfire overlay after exiting fire animation.
+   * @private
+   */
+  _restoreWildfireOverlay() {
+    const currentYear = this.getCurrentYear();
+    if (dataCache.wildfires) {
+      this.renderFilteredData('wildfires', currentYear);
+      console.log('OverlayController: Restored wildfire overlay');
+    }
+  },
+
+  /**
+   * Add ignition marker for wildfire animation.
+   * Shows a fire icon/marker at the ignition point.
+   * @private
+   */
+  _addIgnitionMarker(lon, lat) {
+    if (!MapAdapter?.map) return;
+
+    const map = MapAdapter.map;
+    const sourceId = 'fire-ignition-marker';
+    const layerId = 'fire-ignition-point';
+    const glowId = 'fire-ignition-glow';
+
+    // Remove existing marker
+    this._removeIgnitionMarker();
+
+    // Add marker source
+    map.addSource(sourceId, {
+      type: 'geojson',
+      data: {
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [lon, lat] },
+        properties: { type: 'ignition' }
+      }
+    });
+
+    // Add glow effect layer
+    map.addLayer({
+      id: glowId,
+      type: 'circle',
+      source: sourceId,
+      paint: {
+        'circle-radius': 16,
+        'circle-color': '#ff4400',
+        'circle-opacity': 0.4,
+        'circle-blur': 0.8
+      }
+    });
+
+    // Add main marker layer (fire symbol)
+    map.addLayer({
+      id: layerId,
+      type: 'circle',
+      source: sourceId,
+      paint: {
+        'circle-radius': 8,
+        'circle-color': '#ff6600',
+        'circle-stroke-color': '#ffcc00',
+        'circle-stroke-width': 2
+      }
+    });
+
+    console.log(`OverlayController: Added ignition marker at [${lon.toFixed(3)}, ${lat.toFixed(3)}]`);
+  },
+
+  /**
+   * Remove ignition marker.
+   * @private
+   */
+  _removeIgnitionMarker() {
+    if (!MapAdapter?.map) return;
+
+    const map = MapAdapter.map;
+    const sourceId = 'fire-ignition-marker';
+    const layerId = 'fire-ignition-point';
+    const glowId = 'fire-ignition-glow';
+
+    if (map.getLayer(glowId)) map.removeLayer(glowId);
+    if (map.getLayer(layerId)) map.removeLayer(layerId);
+    if (map.getSource(sourceId)) map.removeSource(sourceId);
+  },
+
+  /**
+   * Hide hurricane overlay to focus on a single track animation.
+   * Clears the track model layers but preserves the cached data.
+   * @private
+   */
+  _hideHurricaneOverlay() {
+    const model = ModelRegistry?.getModel('track');
+    if (model?.clear) {
+      model.clear();
+    }
+    console.log('OverlayController: Hid hurricane overlay for track drill-down');
+  },
+
+  /**
+   * Restore hurricane overlay after exiting track drill-down.
+   * @private
+   */
+  _restoreHurricaneOverlay() {
+    const currentYear = this.getCurrentYear();
+    if (dataCache.hurricanes) {
+      this.renderFilteredData('hurricanes', currentYear);
+      console.log('OverlayController: Restored hurricane overlay');
+    }
+  },
+
+  /**
    * Handle aftershock sequence selection/deselection.
    * Fetches full sequence data from API (not filtered by magnitude).
+   * Uses unified EventAnimator with EARTHQUAKE mode.
    * @param {string|null} sequenceId - Sequence ID or null to clear
+   * @param {string|null} eventId - Optional mainshock event_id for accurate aftershock query
    */
-  async handleSequenceChange(sequenceId) {
-    console.log('OverlayController.handleSequenceChange called with:', sequenceId);
+  async handleSequenceChange(sequenceId, eventId = null) {
+    console.log('OverlayController.handleSequenceChange called with:', sequenceId, eventId);
 
-    // Remove existing sequence scale if any
-    if (this.activeSequenceScaleId && TimeSlider) {
-      TimeSlider.removeScale(this.activeSequenceScaleId);
-      this.activeSequenceScaleId = null;
-    }
-
-    // Stop any active sequence animation
-    if (SequenceAnimator.isActive()) {
-      SequenceAnimator.stop();
+    // Stop any active animation
+    if (EventAnimator.getIsActive()) {
+      EventAnimator.stop();
     }
 
     // If no sequence selected, restore normal earthquake display and we're done
-    if (!sequenceId) {
+    if (!sequenceId && !eventId) {
       console.log('OverlayController: Cleared aftershock sequence');
       // Re-render all earthquakes for current year
       const currentYear = this.getCurrentYear();
@@ -971,9 +1234,8 @@ export const OverlayController = {
     }
 
     // Fetch full sequence from API (includes ALL aftershocks regardless of magnitude filter)
-    // This is extensible for future cross-event linking (volcanoes triggering earthquakes,
-    // earthquakes triggering tsunamis, etc.)
-    const seqEvents = await this.fetchSequenceData(sequenceId);
+    // Use eventId if provided for accurate aftershock query (handles nested sequences)
+    const seqEvents = await this.fetchSequenceData(sequenceId, 'earthquake', eventId);
 
     if (!seqEvents || seqEvents.length === 0) {
       console.warn(`OverlayController: No events found for sequence ${sequenceId}`);
@@ -1011,148 +1273,10 @@ export const OverlayController = {
     // Extend max to theoretical window end if needed
     maxTime = Math.max(maxTime, windowEnd);
 
-    // Adaptive time stepping: target ~200 steps max for smooth animation
-    // This scales the step size based on sequence duration
-    const MAX_STEPS = 200;
-    const MIN_STEP_MS = 1 * 60 * 60 * 1000;   // Minimum 1 hour per step
+    // Determine granularity based on time range
     const timeRange = maxTime - minTime;
-
-    // Calculate adaptive step size (but never smaller than MIN_STEP)
-    const adaptiveStepMs = Math.max(MIN_STEP_MS, Math.ceil(timeRange / MAX_STEPS));
-
-    const availableTimes = [];
-    for (let t = minTime; t <= maxTime; t += adaptiveStepMs) {
-      availableTimes.push(t);
-    }
-
-    // Build time data: { timestamp: { event_id: props } }
-    // For point events, we don't need loc_id structure - just time filtering
-    const timeData = {};
-    for (const t of availableTimes) {
-      timeData[t] = {};
-    }
-    // Assign each event to nearest bucket (using adaptive step size)
-    for (const event of seqEvents) {
-      const t = new Date(event.properties.timestamp || event.properties.time).getTime();
-      // Find nearest bucket
-      const bucket = Math.floor((t - minTime) / adaptiveStepMs) * adaptiveStepMs + minTime;
-      const eventId = event.properties.event_id;
-      if (timeData[bucket]) {
-        timeData[bucket][eventId] = event.properties;
-      }
-    }
-
-    // Create scale ID
-    const scaleId = `seq-${sequenceId.substring(0, 8)}`;
-
-    // Format label
-    const mainDate = new Date(mainTime);
-    const label = `M${mainMag.toFixed(1)} ${mainDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
-
-    // Track which overlays are currently active (to restore on exit)
-    // SequenceAnimator uses separate layers, so we don't need to clear the model
-    const activeOverlays = OverlaySelector?.getActiveOverlays() || [];
-    const overlaysToRestore = activeOverlays.filter(id =>
-      id !== 'demographics' && OVERLAY_ENDPOINTS[id]
-    );
-
-    // Clear normal earthquake display before starting sequence animation
-    // Note: This clears ALL point overlays since they share the model.
-    // We'll restore volcano/tsunami on exit if they were enabled.
-    const model = ModelRegistry?.getModelForType('earthquake');
-    if (model?.clear) {
-      model.clear();
-    }
-
-    // Overlay-aware animation: If volcano or tsunami overlays are enabled,
-    // fetch related events and include them in the animation display
-    const relatedEvents = [];
-    const mainLat = mainshock.geometry?.coordinates?.[1];
-    const mainLon = mainshock.geometry?.coordinates?.[0];
-    const mainYear = new Date(mainTime).getFullYear();
-
-    // Check for enabled overlays and fetch related events
-    if (mainLat && mainLon) {
-      if (activeOverlays.includes('volcanoes')) {
-        try {
-          const volcanoUrl = `/api/events/nearby-volcanoes?lat=${mainLat}&lon=${mainLon}&radius_km=200&year=${mainYear}`;
-          const resp = await fetch(volcanoUrl);
-          if (resp.ok) {
-            const data = await resp.json();
-            if (data.features && data.features.length > 0) {
-              relatedEvents.push(...data.features.map(f => ({
-                ...f,
-                properties: { ...f.properties, _relatedType: 'volcano' }
-              })));
-              console.log(`OverlayController: Found ${data.features.length} related volcanoes`);
-            }
-          }
-        } catch (err) {
-          console.warn('Failed to fetch related volcanoes:', err);
-        }
-      }
-
-      if (activeOverlays.includes('tsunamis')) {
-        try {
-          // Tsunamis caused by the earthquake - check for same year/location
-          const tsunamiUrl = `/api/events/nearby-tsunamis?lat=${mainLat}&lon=${mainLon}&radius_km=300&year=${mainYear}`;
-          const resp = await fetch(tsunamiUrl);
-          if (resp.ok) {
-            const data = await resp.json();
-            if (data.features && data.features.length > 0) {
-              relatedEvents.push(...data.features.map(f => ({
-                ...f,
-                properties: { ...f.properties, _relatedType: 'tsunami' }
-              })));
-              console.log(`OverlayController: Found ${data.features.length} related tsunamis`);
-            }
-          }
-        } catch (err) {
-          console.warn('Failed to fetch related tsunamis:', err);
-        }
-      }
-    }
-
-    // Set up exit callback before starting
-    SequenceAnimator.onExit(() => {
-      console.log('OverlayController: Sequence exit callback triggered');
-      // Remove the sequence scale from TimeSlider
-      if (this.activeSequenceScaleId && TimeSlider) {
-        TimeSlider.removeScale(this.activeSequenceScaleId);
-        this.activeSequenceScaleId = null;
-      }
-      // Exit event animation mode - restore yearly overview speed
-      if (TimeSlider && TimeSlider.exitEventAnimation) {
-        TimeSlider.exitEventAnimation();
-      }
-      // Restore TimeSlider range from cached overlay year ranges
-      this.recalculateTimeRange();
-      // Switch back to primary scale if it exists
-      if (TimeSlider) {
-        if (TimeSlider.scales?.find(s => s.id === 'primary')) {
-          TimeSlider.setActiveScale('primary');
-        }
-        // Show TimeSlider if we have year data
-        if (Object.keys(yearRangeCache).length > 0) {
-          TimeSlider.show();
-        }
-      }
-      // Restore all overlays that were active before animation
-      const currentYear = this.getCurrentYear();
-      for (const overlayId of overlaysToRestore) {
-        if (dataCache[overlayId]) {
-          this.renderFilteredData(overlayId, currentYear);
-          console.log(`OverlayController: Restored ${overlayId} overlay`);
-        }
-      }
-    });
-
-    // Start the sequence animator with the events and any related events
-    SequenceAnimator.start(sequenceId, seqEvents, mainshock, relatedEvents);
-
-    // Determine granularity label based on adaptive step size
-    const stepHours = adaptiveStepMs / (60 * 60 * 1000);
-    let granularityLabel = '6h';  // Default
+    const stepHours = Math.max(1, Math.ceil((timeRange / (60 * 60 * 1000)) / 200));
+    let granularityLabel = '6h';
     if (stepHours < 2) granularityLabel = '1h';
     else if (stepHours < 4) granularityLabel = '2h';
     else if (stepHours < 8) granularityLabel = '6h';
@@ -1160,37 +1284,60 @@ export const OverlayController = {
     else if (stepHours < 36) granularityLabel = 'daily';
     else granularityLabel = '2d';
 
-    // Add scale to TimeSlider - start at minTime (mainshock), not maxTime
-    if (TimeSlider) {
-      const added = TimeSlider.addScale({
-        id: scaleId,
-        label: label,
-        granularity: granularityLabel,
-        useTimestamps: true,
-        currentTime: minTime,  // Start at mainshock time, not end of sequence
-        timeRange: {
-          min: minTime,
-          max: maxTime,
-          available: availableTimes
-        },
-        timeData: timeData,
-        mapRenderer: 'sequence-animation'  // Handled by SequenceAnimator
-      });
+    // Format label
+    const mainDate = new Date(mainTime);
+    const label = `M${mainMag.toFixed(1)} ${mainDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
 
-      if (added) {
-        this.activeSequenceScaleId = scaleId;
-        TimeSlider.setActiveScale(scaleId);
+    // Track which overlays are currently active (to restore on exit)
+    const activeOverlays = OverlaySelector?.getActiveOverlays() || [];
+    const overlaysToRestore = activeOverlays.filter(id =>
+      id !== 'demographics' && OVERLAY_ENDPOINTS[id]
+    );
 
-        // Enter event animation mode with auto-calculated speed for ~10 second playback
-        if (TimeSlider.enterEventAnimation) {
-          TimeSlider.enterEventAnimation(minTime, maxTime);
-        }
-
-        const stepHours = (adaptiveStepMs / (60 * 60 * 1000)).toFixed(1);
-        const durationDays = (timeRange / (24 * 60 * 60 * 1000)).toFixed(1);
-        console.log(`OverlayController: Added sequence scale ${scaleId} with ${seqEvents.length} events, ${availableTimes.length} time steps (${stepHours}h/step, ${durationDays} days)`);
-      }
+    // Clear normal earthquake display before starting sequence animation
+    const model = ModelRegistry?.getModelForType('earthquake');
+    if (model?.clear) {
+      model.clear();
     }
+
+    // Start unified EventAnimator with EARTHQUAKE mode
+    EventAnimator.start({
+      id: `seq-${sequenceId.substring(0, 8)}`,
+      label: label,
+      mode: AnimationMode.EARTHQUAKE,
+      events: seqEvents,
+      mainshock: mainshock,
+      eventType: 'earthquake',
+      timeField: 'timestamp',
+      granularity: granularityLabel,
+      renderer: 'point-radius',
+      onExit: () => {
+        console.log('OverlayController: Earthquake sequence exit callback triggered');
+        // Restore TimeSlider range from cached overlay year ranges
+        this.recalculateTimeRange();
+        // Switch back to primary scale if it exists
+        if (TimeSlider) {
+          if (TimeSlider.scales?.find(s => s.id === 'primary')) {
+            TimeSlider.setActiveScale('primary');
+          }
+          // Show TimeSlider if we have year data
+          if (Object.keys(yearRangeCache).length > 0) {
+            TimeSlider.show();
+          }
+        }
+        // Restore all overlays that were active before animation
+        const currentYear = this.getCurrentYear();
+        for (const overlayId of overlaysToRestore) {
+          if (dataCache[overlayId]) {
+            this.renderFilteredData(overlayId, currentYear);
+            console.log(`OverlayController: Restored ${overlayId} overlay`);
+          }
+        }
+      }
+    });
+
+    const durationDays = (timeRange / (24 * 60 * 60 * 1000)).toFixed(1);
+    console.log(`OverlayController: Started earthquake sequence ${sequenceId} with ${seqEvents.length} events (${durationDays} days)`);
   },
 
   /**
@@ -1200,15 +1347,21 @@ export const OverlayController = {
    *
    * @param {string} sequenceId - Sequence ID to fetch
    * @param {string} eventType - Event type (default 'earthquake', future: 'volcano', 'tsunami')
+   * @param {string} eventId - Optional event_id for mainshock-based query
    * @returns {Promise<Array>} Array of GeoJSON features
    */
-  async fetchSequenceData(sequenceId, eventType = 'earthquake') {
+  async fetchSequenceData(sequenceId, eventType = 'earthquake', eventId = null) {
     try {
       // Build API endpoint based on event type
-      // Currently only earthquakes have sequences, but this is extensible
       let endpoint;
       if (eventType === 'earthquake') {
-        endpoint = `/api/earthquakes/sequence/${encodeURIComponent(sequenceId)}`;
+        // Use aftershocks endpoint if eventId is provided (more accurate for nested sequences)
+        // Otherwise fall back to sequence_id query
+        if (eventId) {
+          endpoint = `/api/earthquakes/aftershocks/${encodeURIComponent(eventId)}`;
+        } else {
+          endpoint = `/api/earthquakes/sequence/${encodeURIComponent(sequenceId)}`;
+        }
       } else {
         // Future: add endpoints for cross-event sequences
         // e.g., /api/events/sequence/{id} for cross-type sequences
@@ -1245,17 +1398,11 @@ export const OverlayController = {
    * @param {string} source - What triggered: 'slider' | 'playback' | 'api'
    */
   handleTimeChange(time, source) {
-    // If sequence animation is active, forward timestamp to it
-    // Note: Don't check time value - pre-1970 events have negative timestamps
-    if (SequenceAnimator.isActive()) {
-      SequenceAnimator.setTime(time);
-      return;  // Don't do normal year-based filtering
-    }
-
     // If EventAnimator is active, forward timestamp to it
+    // Note: Don't check time value - pre-1970 events have negative timestamps
     if (EventAnimator.getIsActive()) {
       EventAnimator.setTime(time);
-      return;
+      return;  // Don't do normal year-based filtering
     }
 
     const year = this.getYearFromTime(time);
@@ -1656,6 +1803,9 @@ export const OverlayController = {
    */
   async drillDownHurricane(stormId, stormName) {
     try {
+      // Hide the hurricane overlay to focus on this single track
+      this._hideHurricaneOverlay();
+
       // Use global tropical storms API
       const response = await fetch(`/api/storms/${encodeURIComponent(stormId)}/track`);
       if (!response.ok) {
@@ -1818,10 +1968,8 @@ export const OverlayController = {
     // Clear track data
     this._currentTrackData = null;
 
-    // Refresh hurricanes overlay to show yearly overview
-    if (activeOverlays.hurricanes) {
-      this._displayOverlayData('hurricanes', TimeSlider?.currentTime);
-    }
+    // Restore hurricane overlay to show yearly overview
+    this._restoreHurricaneOverlay();
 
     console.log('OverlayController: Returned to storms overview');
   },

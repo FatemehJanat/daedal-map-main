@@ -209,6 +209,10 @@ def process_storm_details():
             df_with_loc['latitude'] = df_with_loc['BEGIN_LAT'].fillna(df_with_loc['END_LAT'])
             df_with_loc['longitude'] = df_with_loc['BEGIN_LON'].fillna(df_with_loc['END_LON'])
 
+            # Preserve END coords for track display (especially tornadoes)
+            df_with_loc['end_latitude'] = df_with_loc['END_LAT']
+            df_with_loc['end_longitude'] = df_with_loc['END_LON']
+
             # Parse datetime
             # Note: %y (2-digit year) defaults to 2000-2068 pivot, but NOAA data
             # starts from 1950. Dates parsed as 2050-2068 need to be fixed to 1950-1968.
@@ -243,7 +247,8 @@ def process_storm_details():
             # Select columns for events file
             events = df_with_loc[[
                 'EVENT_ID', 'event_time', 'EVENT_TYPE',
-                'latitude', 'longitude', 'event_radius_km',
+                'latitude', 'longitude', 'end_latitude', 'end_longitude',
+                'event_radius_km',
                 'MAGNITUDE', 'MAGNITUDE_TYPE',
                 'TOR_F_SCALE', 'TOR_LENGTH', 'TOR_WIDTH',
                 'DEATHS_DIRECT', 'DEATHS_INDIRECT',
@@ -252,10 +257,11 @@ def process_storm_details():
                 'BEGIN_LOCATION', 'loc_id'
             ]].copy()
 
-            # Rename columns
+            # Rename columns to match unified event schema (data_import.md)
             events.columns = [
-                'event_id', 'time', 'event_type',
-                'latitude', 'longitude', 'event_radius_km',
+                'event_id', 'timestamp', 'event_type',
+                'latitude', 'longitude', 'end_latitude', 'end_longitude',
+                'event_radius_km',
                 'magnitude', 'magnitude_type',
                 'tornado_scale', 'tornado_length_mi', 'tornado_width_yd',
                 'deaths_direct', 'deaths_indirect',
@@ -351,6 +357,169 @@ def geocode_missing_events(df, counties_gdf):
     return df
 
 
+def haversine_km(lon1, lat1, lon2, lat2):
+    """Calculate distance in km between two points using haversine formula."""
+    from math import radians, cos, sin, asin, sqrt
+    lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+    a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+    return 2 * 6371 * asin(sqrt(a))
+
+
+def link_tornado_sequences(df, time_window_hours=3, distance_km=50):
+    """
+    Link tornadoes into sequences (same storm system).
+
+    Algorithm:
+    - Tornadoes within time_window_hours of each other are candidates
+    - If tornado A's end point is within distance_km of tornado B's start point
+      AND B starts after A, they are linked
+    - Chains are built by walking forward/backward through links
+    - Each sequence gets a unique sequence_id based on the earliest tornado
+
+    Adds columns:
+    - sequence_id: ID of the sequence (event_id of earliest tornado in chain)
+    - sequence_position: Position in sequence (1 = first, 2 = second, etc.)
+    - sequence_count: Total tornadoes in this sequence
+
+    Similar to earthquake aftershock linking in convert_global_earthquakes.py
+    """
+    print("\nLinking tornado sequences...")
+
+    # Filter to tornadoes only
+    tornado_mask = df['event_type'] == 'Tornado'
+    tornado_count = tornado_mask.sum()
+    print(f"  Total tornadoes: {tornado_count:,}")
+
+    # Initialize new columns
+    df['sequence_id'] = None
+    df['sequence_position'] = None
+    df['sequence_count'] = None
+
+    if tornado_count == 0:
+        return df
+
+    # Get tornado subset with valid coordinates
+    tornadoes = df[tornado_mask & df['timestamp'].notna()].copy()
+    tornadoes = tornadoes[
+        tornadoes['latitude'].notna() &
+        tornadoes['longitude'].notna() &
+        tornadoes['end_latitude'].notna() &
+        tornadoes['end_longitude'].notna()
+    ].copy()
+
+    print(f"  Tornadoes with full track data: {len(tornadoes):,}")
+
+    if len(tornadoes) < 2:
+        return df
+
+    # Sort by timestamp
+    tornadoes = tornadoes.sort_values('timestamp').reset_index(drop=False)
+    tornadoes.rename(columns={'index': 'orig_idx'}, inplace=True)
+
+    # Build links: for each tornado, find what follows it
+    # links[event_id_a] = event_id_b means A -> B (B follows A)
+    links = {}
+    time_delta = pd.Timedelta(hours=time_window_hours)
+
+    print(f"  Building link graph (window={time_window_hours}h, distance={distance_km}km)...")
+
+    for i, row_a in tornadoes.iterrows():
+        # Only check tornadoes that come after this one (within time window)
+        candidates = tornadoes[
+            (tornadoes['timestamp'] > row_a['timestamp']) &
+            (tornadoes['timestamp'] <= row_a['timestamp'] + time_delta)
+        ]
+
+        if len(candidates) == 0:
+            continue
+
+        # Check if A's end point is near any candidate's start point
+        for j, row_b in candidates.iterrows():
+            dist = haversine_km(
+                row_a['end_longitude'], row_a['end_latitude'],
+                row_b['longitude'], row_b['latitude']
+            )
+
+            if dist <= distance_km:
+                # A -> B link found
+                # Only keep closest link if multiple candidates
+                if row_a['event_id'] not in links:
+                    links[row_a['event_id']] = row_b['event_id']
+                break  # First match wins (closest in time)
+
+    print(f"  Found {len(links):,} direct links")
+
+    if len(links) == 0:
+        return df
+
+    # Build reverse lookup
+    reverse_links = {v: k for k, v in links.items()}
+
+    # Build sequences by walking chains
+    visited = set()
+    sequences = []  # List of (sequence_id, [event_ids in order])
+
+    # Create event_id -> row lookup
+    event_lookup = tornadoes.set_index('event_id').to_dict('index')
+
+    for event_id in tornadoes['event_id']:
+        if event_id in visited:
+            continue
+
+        # Walk backwards to find sequence start
+        current = event_id
+        while current in reverse_links:
+            current = reverse_links[current]
+
+        # Now walk forward to build full sequence
+        sequence = [current]
+        visited.add(current)
+
+        while current in links:
+            next_id = links[current]
+            sequence.append(next_id)
+            visited.add(next_id)
+            current = next_id
+
+        # Only keep sequences with 2+ tornadoes
+        if len(sequence) >= 2:
+            # Use earliest event_id as sequence_id
+            seq_id = str(sequence[0])
+            sequences.append((seq_id, sequence))
+
+    print(f"  Found {len(sequences):,} sequences with 2+ tornadoes")
+
+    # Count total linked tornadoes
+    total_linked = sum(len(s[1]) for s in sequences)
+    print(f"  Total linked tornadoes: {total_linked:,}")
+
+    # Apply sequence info to dataframe
+    for seq_id, event_ids in sequences:
+        seq_count = len(event_ids)
+        for position, eid in enumerate(event_ids, 1):
+            if eid in event_lookup:
+                orig_idx = event_lookup[eid]['orig_idx']
+                df.loc[orig_idx, 'sequence_id'] = seq_id
+                df.loc[orig_idx, 'sequence_position'] = position
+                df.loc[orig_idx, 'sequence_count'] = seq_count
+
+    # Summary
+    linked_count = df['sequence_id'].notna().sum()
+    print(f"\nTornado sequence linking complete:")
+    print(f"  Sequences: {len(sequences):,}")
+    print(f"  Linked tornadoes: {linked_count:,} ({linked_count/tornado_count*100:.1f}% of all tornadoes)")
+
+    # Show some example sequences
+    if len(sequences) > 0:
+        print(f"\n  Example sequences:")
+        for seq_id, event_ids in sequences[:3]:
+            print(f"    Sequence {seq_id}: {len(event_ids)} tornadoes")
+
+    return df
+
+
 def save_events_parquet(df):
     """Save events to parquet."""
     print("\nSaving events.parquet...")
@@ -358,6 +527,8 @@ def save_events_parquet(df):
     # Round numeric columns for better compression
     df['latitude'] = df['latitude'].round(4)
     df['longitude'] = df['longitude'].round(4)
+    df['end_latitude'] = df['end_latitude'].round(4)
+    df['end_longitude'] = df['end_longitude'].round(4)
     df['event_radius_km'] = df['event_radius_km'].round(1)
 
     # Handle tornado columns (may be NaN)
@@ -394,19 +565,27 @@ def save_events_parquet(df):
     df['injuries_direct'] = df['injuries_direct'].fillna(0).astype('Int32')
     df['injuries_indirect'] = df['injuries_indirect'].fillna(0).astype('Int32')
 
-    # Define schema
+    # Handle sequence columns (may be None for non-tornadoes)
+    # Convert to string type for parquet compatibility
+    df['sequence_id'] = df['sequence_id'].astype('string')
+    df['sequence_position'] = df['sequence_position'].astype('Int32')
+    df['sequence_count'] = df['sequence_count'].astype('Int32')
+
+    # Define schema (follows unified event schema from data_import.md)
     schema = pa.schema([
         ('event_id', pa.int64()),
-        ('time', pa.timestamp('us')),
+        ('timestamp', pa.timestamp('us')),  # Use 'timestamp' per unified schema
         ('event_type', pa.string()),
         ('latitude', pa.float32()),
         ('longitude', pa.float32()),
+        ('end_latitude', pa.float32()),      # Tornado track end point
+        ('end_longitude', pa.float32()),     # Tornado track end point
         ('event_radius_km', pa.float32()),
         ('magnitude', pa.float32()),
         ('magnitude_type', pa.string()),
-        ('tornado_scale', pa.string()),
-        ('tornado_length_mi', pa.float32()),
-        ('tornado_width_yd', pa.int32()),
+        ('tornado_scale', pa.string()),      # EF0-EF5 or F0-F5
+        ('tornado_length_mi', pa.float32()), # Track length in miles
+        ('tornado_width_yd', pa.int32()),    # Width in yards
         ('deaths_direct', pa.int32()),
         ('deaths_indirect', pa.int32()),
         ('injuries_direct', pa.int32()),
@@ -414,7 +593,11 @@ def save_events_parquet(df):
         ('damage_property', pa.int64()),
         ('damage_crops', pa.int64()),
         ('location', pa.string()),
-        ('loc_id', pa.string())
+        ('loc_id', pa.string()),
+        # Tornado sequence columns (linked storm systems)
+        ('sequence_id', pa.string()),        # ID of sequence (event_id of first tornado)
+        ('sequence_position', pa.int32()),   # Position in sequence (1, 2, 3...)
+        ('sequence_count', pa.int32())       # Total tornadoes in sequence
     ])
 
     # Save
@@ -436,7 +619,7 @@ def print_statistics(df):
     print("="*80)
 
     print(f"\nTotal events with location data: {len(df):,}")
-    print(f"Date range: {df['time'].min()} to {df['time'].max()}")
+    print(f"Date range: {df['timestamp'].min()} to {df['timestamp'].max()}")
 
     print("\nTop 10 Event Types (by count):")
     top_types = df['event_type'].value_counts().head(10)
@@ -480,6 +663,9 @@ def main():
 
     # Geocode missing loc_ids (3-pass approach)
     events_df = geocode_missing_events(events_df, counties_gdf)
+
+    # Link tornado sequences (same storm system)
+    events_df = link_tornado_sequences(events_df)
 
     # Save events.parquet
     save_events_parquet(events_df)

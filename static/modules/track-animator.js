@@ -523,9 +523,10 @@ export const TrackAnimator = {
     }
 
     MapAdapter.map.fitBounds(bounds, {
-      padding: 50,
-      duration: 1000,
-      maxZoom: 7
+      padding: 80,
+      duration: 1500,
+      maxZoom: 8,
+      minZoom: 2  // Allow zooming out for large ocean-crossing tracks
     });
   },
 

@@ -43,7 +43,7 @@ export const TIME_SYSTEM = {
   BASE_STEP_MS: 6 * 60 * 60 * 1000,  // 21,600,000
 
   // Speed slider range (steps per frame)
-  MIN_STEPS_PER_FRAME: 0.0056,  // ~30min/sec - slow enough for fine-grained animations (tsunamis)
+  MIN_STEPS_PER_FRAME: 0.0011,  // ~6min/sec - slow enough for fine-grained animations (tsunamis)
   MAX_STEPS_PER_FRAME: 1460,    // ~1 year per frame (fastest - overview)
 
   // Rendering
@@ -84,7 +84,7 @@ export const TIME_SYSTEM = {
    */
   getSpeedLabel(stepsPerFrame) {
     // Convert to time per second (stepsPerFrame * 6 hours * 15 FPS)
-    // At minimum (0.0056 steps/frame): 0.0056 * 6 * 15 = ~30min/sec
+    // At minimum (0.0011 steps/frame): 0.0011 * 6 * 15 = ~6min/sec
     // At maximum (1460 steps/frame): 1460 * 6 * 15 = ~15yr/sec
     const hoursPerSecond = stepsPerFrame * 6 * this.MAX_FPS;
     if (hoursPerSecond < 1) return `${Math.round(hoursPerSecond * 60)}m/sec`;  // Minutes for slow speeds
@@ -142,7 +142,7 @@ export const TimeSlider = {
   speedSlider: null,       // DOM element for speed slider
   speedLabel: null,        // DOM element showing speed (e.g., "1yr/sec")
   loopCheckbox: null,      // DOM element for loop checkbox
-  loopEnabled: false,      // Whether animation should loop
+  loopEnabled: true,       // Whether animation should loop (default on)
   stepsPerFrame: 97,       // Current speed (default: ~1yr/sec at 15 FPS)
   speedSliderValue: 0.72,  // Current slider position (0-1), default = ~1yr/sec
   _inEventMode: false,     // True when animating specific event (vs world view)
@@ -711,17 +711,11 @@ export const TimeSlider = {
   /**
    * Set animation speed from slider value (0-1).
    * Updates stepsPerFrame and speed label.
-   * @param {number} sliderValue - 0 (slowest/slideshow) to 1 (fastest/yearly)
+   * @param {number} sliderValue - 0 (slowest) to 1 (fastest/yearly)
    */
   setSpeedFromSlider(sliderValue) {
     this.speedSliderValue = sliderValue;
     this.stepsPerFrame = TIME_SYSTEM.sliderToStepsPerFrame(sliderValue);
-
-    // Reset frame counter when speed changes during playback
-    // This ensures smooth transitions between slideshow and normal modes
-    if (this.isPlaying) {
-      this._frameCounter = 0;
-    }
 
     if (this.speedLabel) {
       this.speedLabel.textContent = TIME_SYSTEM.getSpeedLabel(this.stepsPerFrame);
@@ -732,7 +726,7 @@ export const TimeSlider = {
 
   /**
    * Set speed to a preset value.
-   * @param {string} presetName - Key from SPEED_PRESETS (SLIDESHOW, DETAIL, DAILY, etc.)
+   * @param {string} presetName - Key from SPEED_PRESETS (DETAIL, DAILY, WEEKLY, etc.)
    */
   setSpeedPreset(presetName) {
     const presetValue = SPEED_PRESETS[presetName];
@@ -745,29 +739,31 @@ export const TimeSlider = {
   },
 
   /**
-   * Calculate optimal speed for animating a specific event in ~10 seconds.
+   * Calculate optimal speed for animating a specific event in ~3 seconds.
+   * Works with EventAnimator which generates 150 evenly-spaced frames.
    * @param {number} eventDurationMs - Event lifespan in milliseconds
    * @returns {number} Slider position (0-1)
    */
   calculateEventSpeed(eventDurationMs) {
-    const TARGET_SECONDS = 10;
-    const MIN_SECONDS = 3;  // Very short events still get 3+ seconds
-    const TARGET_FRAMES = TARGET_SECONDS * TIME_SYSTEM.MAX_FPS;
-    const MIN_FRAMES = MIN_SECONDS * TIME_SYSTEM.MAX_FPS;
+    const TARGET_SECONDS = 3;
+    const MIN_SECONDS = 2;  // Very short events still get 2+ seconds
+    const MAX_FPS = TIME_SYSTEM?.MAX_FPS || 60;
 
-    // Convert event duration to 6-hour steps
-    const totalSteps = eventDurationMs / TIME_SYSTEM.BASE_STEP_MS;
+    // Target display frames for playback
+    const targetDisplayFrames = TARGET_SECONDS * MAX_FPS;
+    const minDisplayFrames = MIN_SECONDS * MAX_FPS;
 
-    // Ensure minimum animation duration for very short events
-    const effectiveFrames = Math.max(MIN_FRAMES, Math.min(TARGET_FRAMES, totalSteps));
+    // Time per display frame to complete in target time
+    // E.g., 3-hour event in 3 seconds = 3,600,000 ms per second = 60,000 ms per frame at 60fps
+    const msPerFrame = eventDurationMs / targetDisplayFrames;
 
-    // Calculate steps per frame
-    const stepsPerFrame = totalSteps / effectiveFrames;
+    // Convert to steps (where 1 step = BASE_STEP_MS, typically 6 hours)
+    const stepsPerFrame = msPerFrame / (TIME_SYSTEM?.BASE_STEP_MS || 21600000);
 
-    // Clamp to valid range (allow fractional for slideshow mode)
+    // Clamp to valid range (fractional values give smooth slow playback)
     const clampedSteps = Math.max(
-      TIME_SYSTEM.MIN_STEPS_PER_FRAME,
-      Math.min(TIME_SYSTEM.MAX_STEPS_PER_FRAME, stepsPerFrame)
+      TIME_SYSTEM?.MIN_STEPS_PER_FRAME || 0.001,
+      Math.min(TIME_SYSTEM?.MAX_STEPS_PER_FRAME || 100, stepsPerFrame)
     );
 
     return TIME_SYSTEM.stepsPerFrameToSlider(clampedSteps);
@@ -1727,56 +1723,41 @@ export const TimeSlider = {
 
     if (useUnifiedSpeed) {
       // Phase 7: Unified speed control using stepsPerFrame
-      this._frameCounter = 0;
-
       const tick = () => {
         if (!this.isPlaying) return;
 
-        // For slideshow mode (stepsPerFrame < 1), hold frames longer
-        const framesPerStep = this.stepsPerFrame < 1
-          ? Math.round(1 / this.stepsPerFrame)
-          : 1;
+        // Calculate time step - fractional stepsPerFrame gives smaller steps
+        // Always advance every frame (no slideshow mode holding)
+        const stepMs = TIME_SYSTEM.BASE_STEP_MS * this.stepsPerFrame;
 
-        this._frameCounter++;
-
-        // Only advance time when we've held long enough (slideshow mode)
-        // or every frame (normal mode)
-        if (this.stepsPerFrame >= 1 || this._frameCounter >= framesPerStep) {
-          // Calculate time step
-          const stepMs = this.stepsPerFrame >= 1
-            ? TIME_SYSTEM.BASE_STEP_MS * this.stepsPerFrame
-            : TIME_SYSTEM.BASE_STEP_MS;  // One 6hr step in slideshow mode
-
-          let nextTime;
-          if (this.playDirection === 1) {
-            nextTime = this.currentTime + stepMs;
-            // Check for end
-            if (nextTime > this.maxTime) {
-              if (this.loopEnabled) {
-                // Loop back to start
-                nextTime = this.minTime;
-              } else {
-                this.pause();
-                return;
-              }
-            }
-          } else {
-            nextTime = this.currentTime - stepMs;
-            // Check for start
-            if (nextTime < this.minTime) {
-              if (this.loopEnabled) {
-                // Loop back to end
-                nextTime = this.maxTime;
-              } else {
-                this.pause();
-                return;
-              }
+        let nextTime;
+        if (this.playDirection === 1) {
+          nextTime = this.currentTime + stepMs;
+          // Check for end
+          if (nextTime > this.maxTime) {
+            if (this.loopEnabled) {
+              // Loop back to start
+              nextTime = this.minTime;
+            } else {
+              this.pause();
+              return;
             }
           }
-
-          this.setTime(nextTime, 'playback');
-          this._frameCounter = 0;
+        } else {
+          nextTime = this.currentTime - stepMs;
+          // Check for start
+          if (nextTime < this.minTime) {
+            if (this.loopEnabled) {
+              // Loop back to end
+              nextTime = this.maxTime;
+            } else {
+              this.pause();
+              return;
+            }
+          }
         }
+
+        this.setTime(nextTime, 'playback');
 
         // Schedule next frame
         this.playTimeout = setTimeout(tick, TIME_SYSTEM.FRAME_INTERVAL_MS);
@@ -1905,7 +1886,7 @@ export const TimeSlider = {
     // Clear unified speed control state (Phase 7)
     this.stepsPerFrame = 97;  // Reset to default (~1yr/sec)
     this.speedSliderValue = 0.72;  // Reset to ~1yr/sec preset
-    this.loopEnabled = false;  // Reset loop state
+    this.loopEnabled = true;  // Keep loop enabled (default on)
     this._inEventMode = false;
     this._previousSpeedSlider = null;
     if (this.playTimeout) {
@@ -1919,7 +1900,7 @@ export const TimeSlider = {
       this.speedLabel.textContent = TIME_SYSTEM.getSpeedLabel(this.stepsPerFrame);
     }
     if (this.loopCheckbox) {
-      this.loopCheckbox.checked = false;
+      this.loopCheckbox.checked = true;  // Keep loop checked (default on)
     }
 
     // Clear multi-scale state
