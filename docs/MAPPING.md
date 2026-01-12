@@ -2,8 +2,12 @@
 
 Frontend display system using MapLibre GL JS with globe projection.
 
-**Key files**:
+**Related docs:**
+- [DISASTER_DISPLAY.md](DISASTER_DISPLAY.md) - **Complete disaster schemas**, display models, API endpoints
+- [GEOMETRY.md](GEOMETRY.md) - loc_id specification, geometry system
 - [FRONTEND_MODULES.md](FRONTEND_MODULES.md) - ES6 module structure and architecture
+
+**Key files**:
 - [templates/index.html](templates/index.html) - Main page with chat + map
 - [static/styles.css](static/styles.css) - UI styles
 
@@ -699,6 +703,108 @@ Enhanced chart and comparison features:
 
 ---
 
+## Disaster Event Architecture
+
+Central routing system for disaster visualizations. Routes event types to appropriate display models via ModelRegistry.
+
+**Key files:**
+- [model-registry.js](../static/modules/models/model-registry.js) - Central dispatcher and type routing
+- [model-point-radius.js](../static/modules/models/model-point-radius.js) - Point + radius display
+- [model-track.js](../static/modules/models/model-track.js) - Track/path display for storms
+- [model-polygon.js](../static/modules/models/model-polygon.js) - Polygon display for areas
+- [disaster-popup.js](../static/modules/disaster-popup.js) - Unified popup system
+
+See [DISASTER_DISPLAY.md](DISASTER_DISPLAY.md) for complete disaster schemas and display details.
+
+### Model Registry
+
+Routes event types to display models:
+
+```javascript
+const TYPE_TO_MODEL = {
+  // Point + Radius events
+  earthquake: 'point-radius',
+  volcano: 'point-radius',
+  tornado: 'point-radius',
+  tsunami: 'point-radius',
+  wildfire: 'point-radius',
+  flood: 'point-radius',
+
+  // Track events
+  hurricane: 'track',
+  typhoon: 'track',
+  cyclone: 'track',
+
+  // Polygon events
+  ash_cloud: 'polygon',
+  drought_area: 'polygon'
+};
+```
+
+### Central Sequence Dispatcher
+
+Single listener routes `disaster-sequence-request` events to appropriate models:
+
+```
+disaster-popup.js                    model-registry.js
+     |                                      |
+     | dispatch('disaster-sequence-request') |
+     +------------------------------------->|
+                                            | lookup TYPE_TO_MODEL[eventType]
+                                            | call model.handleSequence()
+                                            |
+            +-------------------------------+
+            |
+            v
+   model-point-radius.js    OR    model-track.js
+   (earthquake, tornado,          (hurricane, typhoon,
+    tsunami, wildfire, flood)      cyclone)
+```
+
+### handleSequence Interface
+
+Each display model implements:
+
+```javascript
+async handleSequence(eventId, eventType, props) {
+  // Type-specific sequence/animation logic
+  // Fetches from API and triggers animation
+}
+```
+
+**PointRadiusModel handles:**
+- earthquake - Aftershock sequences via sequence_id
+- tsunami - Runup animations via /api/tsunamis/{id}/animation
+- wildfire - Fire progression via /api/wildfires/{id}/progression
+- flood - Extent animation via /api/floods/{id}/geometry
+- tornado - Outbreak sequences via /api/tornadoes/{id}/sequence
+
+**TrackModel handles:**
+- hurricane/typhoon/cyclone - Storm track drill-down animation
+
+### Event Flow
+
+1. User clicks event marker on map
+2. DisasterPopup.show() displays popup with action buttons
+3. User clicks "Sequence" button
+4. DisasterPopup dispatches `disaster-sequence-request` custom event
+5. ModelRegistry.setupSequenceDispatcher() listener catches event
+6. Dispatcher looks up model via TYPE_TO_MODEL[eventType]
+7. Dispatcher calls model.handleSequence(eventId, eventType, props)
+8. Model fetches animation data from API
+9. Model triggers animation via EventAnimator or direct layer updates
+
+### Related Events
+
+| Event | Purpose | Dispatched By |
+|-------|---------|---------------|
+| disaster-sequence-request | Trigger sequence animation | disaster-popup.js |
+| disaster-related-request | Show related events | disaster-popup.js |
+| sequence-change | Notify animation start | model-point-radius.js |
+| track-drill-down | Hurricane track animation | model-track.js |
+
+---
+
 ## Module Reference
 
 See [FRONTEND_MODULES.md](FRONTEND_MODULES.md) for detailed module documentation.
@@ -721,4 +827,4 @@ See [FRONTEND_MODULES.md](FRONTEND_MODULES.md) for detailed module documentation
 
 ---
 
-*Last Updated: 2026-01-10*
+*Last Updated: 2026-01-11*

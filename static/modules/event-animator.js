@@ -135,17 +135,19 @@ const TORNADO_LAYERS = {
   END_POINTS: 'tornado-seq-end-points',
   CONNECTIONS: 'tornado-seq-connect',
   TRAVELING_CIRCLE: 'tornado-seq-traveler',
+  TRAVELING_FELT: 'tornado-seq-traveler-felt',  // outer felt radius
   TRAVELING_GLOW: 'tornado-seq-traveler-glow'
 };
 
 // Tornado animation constants
 const TORNADO_ANIMATION = {
-  TRACK_DRAW_DURATION: 1500,    // ms to draw each tornado track
+  TRACK_DRAW_DURATION: 1500,    // ms to draw each tornado track (for frame-based fallback)
   CONNECTION_DRAW_DURATION: 600, // ms to draw connection between tornadoes
-  CIRCLE_TRANSITION_ZONE: 0.25, // fraction of track where size transitions (last 25%)
   MIN_CIRCLE_RADIUS: 8,         // pixels minimum
   MAX_CIRCLE_RADIUS: 40,        // pixels maximum
-  BASE_YARDS_TO_PIXELS: 0.015   // conversion factor yards to pixels
+  BASE_YARDS_TO_PIXELS: 0.015,  // conversion factor yards to pixels
+  AVG_SPEED_MPH: 35,            // average tornado travel speed for duration estimation
+  MIN_DURATION_MS: 60000        // minimum 1 minute per tornado
 };
 
 // Helper: convert km to pixels at current zoom (for geographic radius circles)
@@ -2083,7 +2085,7 @@ export const EventAnimator = {
 
   /**
    * Setup MapLibre layers for tornado sequence animation.
-   * Enhanced with progressive track drawing and traveling circle.
+   * Pre-computes a "journey" of segments (tracks + connections) for smooth animation.
    * @private
    */
   _setupTornadoLayers() {
@@ -2093,25 +2095,8 @@ export const EventAnimator = {
     // Remove existing layers first
     this._removeTornadoLayers();
 
-    // Sort events by timestamp
-    const timeField = this.config.timeField;
-    this._tornadoSortedEvents = [...this.events].sort((a, b) => {
-      const ta = new Date(a.properties?.[timeField]).getTime();
-      const tb = new Date(b.properties?.[timeField]).getTime();
-      return ta - tb;
-    });
-
-    // Initialize draw progress for each tornado
-    // Start with -1 so no tornadoes draw until TimeSlider advances
-    this._tornadoDrawProgress = {};
-    this._tornadoConnectionProgress = {};  // Separate tracking for connection line animation
-    this._tornadoActiveIndex = -1;
-    this._tornadoAnimationStarted = false;  // Track if animation loop has started
-    this._tornadoSortedEvents.forEach((event, idx) => {
-      const eventId = event.properties?.event_id || `tornado-${idx}`;
-      this._tornadoDrawProgress[eventId] = 0;
-      this._tornadoConnectionProgress[eventId] = 0;
-    });
+    // Sort events by timestamp and build the journey
+    this._buildTornadoJourney();
 
     // Add main source for tracks/connections
     map.addSource(TORNADO_LAYERS.SOURCE, {
@@ -2119,7 +2104,7 @@ export const EventAnimator = {
       data: { type: 'FeatureCollection', features: [] }
     });
 
-    // Connection lines (dashed) - progressive drawing
+    // Connection lines (dashed)
     map.addLayer({
       id: TORNADO_LAYERS.CONNECTIONS,
       type: 'line',
@@ -2129,11 +2114,11 @@ export const EventAnimator = {
         'line-color': '#ffaa00',
         'line-width': 2,
         'line-dasharray': [4, 4],
-        'line-opacity': ['coalesce', ['get', 'opacity'], 0.8]
+        'line-opacity': 0.7
       }
     });
 
-    // Track lines - progressive drawing with color by EF scale
+    // Track lines with color by EF scale
     map.addLayer({
       id: TORNADO_LAYERS.TRACKS,
       type: 'line',
@@ -2153,15 +2138,15 @@ export const EventAnimator = {
       source: TORNADO_LAYERS.SOURCE,
       filter: ['==', ['get', 'feature_type'], 'start'],
       paint: {
-        'circle-radius': 6,
+        'circle-radius': 8,
         'circle-color': ['coalesce', ['get', 'color'], '#00cc00'],
-        'circle-stroke-color': '#004400',
+        'circle-stroke-color': '#ffffff',
         'circle-stroke-width': 2,
         'circle-opacity': ['coalesce', ['get', 'opacity'], 1]
       }
     });
 
-    // End points layer (red markers at track end)
+    // End points layer
     map.addLayer({
       id: TORNADO_LAYERS.END_POINTS,
       type: 'circle',
@@ -2172,36 +2157,69 @@ export const EventAnimator = {
         'circle-color': ['coalesce', ['get', 'color'], '#cc0000'],
         'circle-stroke-color': '#440000',
         'circle-stroke-width': 2,
-        'circle-opacity': ['coalesce', ['get', 'opacity'], 1]
+        'circle-opacity': 1
       }
     });
 
-    // Traveling circle glow layer
+    // Meters to pixels conversion at different zoom levels
+    // Based on meters per pixel at each zoom level (at equator)
+    // Zoom 8: 611.5 m/px, Zoom 11: 76.44 m/px, Zoom 14: 9.55 m/px
+    const damageMetersToPixels = [
+      'interpolate', ['exponential', 2], ['zoom'],
+      8, ['max', 6, ['/', ['get', 'radius_m'], 611.5]],
+      11, ['max', 6, ['/', ['get', 'radius_m'], 76.44]],
+      14, ['max', 6, ['/', ['get', 'radius_m'], 9.55]]
+    ];
+
+    // Felt radius to pixels (outer impact zone)
+    const feltMetersToPixels = [
+      'interpolate', ['exponential', 2], ['zoom'],
+      8, ['max', 12, ['/', ['get', 'felt_radius_m'], 611.5]],
+      11, ['max', 12, ['/', ['get', 'felt_radius_m'], 76.44]],
+      14, ['max', 12, ['/', ['get', 'felt_radius_m'], 9.55]]
+    ];
+
+    // 1. FELT RADIUS - outer impact zone (glow effect)
     map.addLayer({
       id: TORNADO_LAYERS.TRAVELING_GLOW,
       type: 'circle',
       source: TORNADO_LAYERS.SOURCE,
       filter: ['==', ['get', 'feature_type'], 'traveler'],
       paint: {
-        'circle-radius': ['*', ['coalesce', ['get', 'radius'], 15], 1.4],
-        'circle-color': ['coalesce', ['get', 'color'], '#32cd32'],
-        'circle-opacity': 0.4,
-        'circle-blur': 1
+        'circle-radius': feltMetersToPixels,
+        'circle-color': ['coalesce', ['get', 'color'], '#00cc00'],
+        'circle-opacity': 0.25,
+        'circle-blur': 0.8
       }
     });
 
-    // Traveling circle (the tornado marker that moves along the track)
+    // 2. FELT RADIUS OUTLINE - visible ring for felt zone
+    map.addLayer({
+      id: TORNADO_LAYERS.TRAVELING_FELT,
+      type: 'circle',
+      source: TORNADO_LAYERS.SOURCE,
+      filter: ['==', ['get', 'feature_type'], 'traveler'],
+      paint: {
+        'circle-radius': feltMetersToPixels,
+        'circle-color': 'transparent',
+        'circle-stroke-color': ['coalesce', ['get', 'color'], '#00cc00'],
+        'circle-stroke-width': 2,
+        'circle-stroke-opacity': 0.5
+      }
+    });
+
+    // 3. DAMAGE RADIUS - inner solid circle (actual tornado width)
     map.addLayer({
       id: TORNADO_LAYERS.TRAVELING_CIRCLE,
       type: 'circle',
       source: TORNADO_LAYERS.SOURCE,
       filter: ['==', ['get', 'feature_type'], 'traveler'],
       paint: {
-        'circle-radius': ['coalesce', ['get', 'radius'], 15],
-        'circle-color': ['coalesce', ['get', 'color'], '#32cd32'],
-        'circle-opacity': 0.85,
-        'circle-stroke-color': '#222',
-        'circle-stroke-width': 2
+        'circle-radius': damageMetersToPixels,
+        'circle-color': ['coalesce', ['get', 'color'], '#00cc00'],
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': 3,
+        'circle-opacity': 1
       }
     });
 
@@ -2219,8 +2237,11 @@ export const EventAnimator = {
       if (!tornado) return;
 
       const props = tornado.properties;
-      const scale = props.tornado_scale || 0;
-      const scaleLabel = scale >= 0 ? `EF${scale}` : 'Unknown';
+      const scaleRaw = props.tornado_scale || 0;
+      const scale = typeof scaleRaw === 'string'
+        ? parseInt(scaleRaw.replace(/[^0-9]/g, ''), 10) || 0
+        : scaleRaw;
+      const scaleLabel = `EF${scale}`;
       const date = new Date(props.timestamp);
       const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
       const timeStr = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
@@ -2291,6 +2312,7 @@ export const EventAnimator = {
 
     [
       TORNADO_LAYERS.TRAVELING_CIRCLE,
+      TORNADO_LAYERS.TRAVELING_FELT,
       TORNADO_LAYERS.TRAVELING_GLOW,
       TORNADO_LAYERS.POINTS,
       TORNADO_LAYERS.END_POINTS,
@@ -2306,384 +2328,380 @@ export const EventAnimator = {
   },
 
   /**
-   * Start tornado animation loop for smooth track drawing.
+   * Build the tornado journey - a sequence of segments (tracks + connections).
+   * Each segment knows its start/end time, coordinates, and visual properties.
    * @private
    */
-  _startTornadoAnimationLoop() {
-    this._tornadoLastFrameTime = performance.now();
+  _buildTornadoJourney() {
+    const timeField = this.config.timeField;
 
-    const animate = (timestamp) => {
-      if (!this.isActive || this.mode !== AnimationMode.TORNADO_SEQUENCE) return;
+    // Sort events by timestamp
+    this._tornadoSortedEvents = [...this.events].sort((a, b) => {
+      const ta = new Date(a.properties?.[timeField]).getTime();
+      const tb = new Date(b.properties?.[timeField]).getTime();
+      return ta - tb;
+    });
 
-      const deltaTime = timestamp - this._tornadoLastFrameTime;
-      this._tornadoLastFrameTime = timestamp;
+    if (this._tornadoSortedEvents.length === 0) {
+      this._tornadoJourney = { segments: [], startTime: 0, endTime: 0 };
+      return;
+    }
 
-      // Update draw progress
-      const needsUpdate = this._updateTornadoDrawProgress(deltaTime);
+    const segments = [];
+    let currentTime = 0;
 
-      if (needsUpdate) {
-        this._renderTornadoDisplay();
+    // Process each tornado
+    for (let i = 0; i < this._tornadoSortedEvents.length; i++) {
+      const event = this._tornadoSortedEvents[i];
+      const props = event.properties || {};
+      const eventId = props.event_id || `tornado-${i}`;
+
+      // Get timestamps
+      const startTime = new Date(props[timeField]).getTime();
+      const trackLengthMi = props.tornado_length_mi || 0;
+
+      // Estimate duration: track_length / avg_speed, minimum 1 minute
+      const durationMs = Math.max(
+        TORNADO_ANIMATION.MIN_DURATION_MS,
+        (trackLengthMi / TORNADO_ANIMATION.AVG_SPEED_MPH) * 60 * 60 * 1000
+      );
+      const endTime = startTime + durationMs;
+
+      // Get coordinates
+      const startLon = props.longitude;
+      const startLat = props.latitude;
+      const endLon = props.end_longitude || startLon;
+      const endLat = props.end_latitude || startLat;
+
+      // Build track coordinates
+      let trackCoords = null;
+      if (props.track && props.track.coordinates) {
+        trackCoords = props.track.coordinates;
+      } else if (startLon && startLat) {
+        trackCoords = [[startLon, startLat], [endLon, endLat]];
       }
 
-      this._tornadoAnimationLoopId = requestAnimationFrame(animate);
+      // Get visual properties - parse EF scale from string like 'EF2' or 'F3' to number
+      const scaleRaw = props.tornado_scale || 0;
+      const scale = typeof scaleRaw === 'string'
+        ? parseInt(scaleRaw.replace(/[^0-9]/g, ''), 10) || 0
+        : scaleRaw;
+      const color = this._tornadoScaleToColor(scale);
+      const trackWidth = this._tornadoScaleToTrackWidth(scale);
+
+      // Use pre-computed radii from parquet (preferred)
+      // damage_radius_km = actual tornado width, felt_radius_km = broader impact zone
+      let radiusM, feltRadiusM;
+      if (props.damage_radius_km && props.damage_radius_km > 0) {
+        radiusM = props.damage_radius_km * 1000;  // km to meters
+      } else if (props.tornado_width_yd && props.tornado_width_yd > 0) {
+        radiusM = (props.tornado_width_yd / 2) * 0.9144;
+      } else {
+        radiusM = this._tornadoScaleToRadiusMeters(scale);
+      }
+
+      if (props.felt_radius_km && props.felt_radius_km > 0) {
+        feltRadiusM = props.felt_radius_km * 1000;  // km to meters
+      } else {
+        // Default: felt radius is at least 2x damage radius
+        feltRadiusM = Math.max(radiusM * 2, 5000);  // At least 5km
+      }
+
+      // Add connection from previous tornado (if not first)
+      if (i > 0) {
+        const prevEvent = this._tornadoSortedEvents[i - 1];
+        const prevProps = prevEvent.properties || {};
+        const prevEndLon = prevProps.end_longitude || prevProps.longitude;
+        const prevEndLat = prevProps.end_latitude || prevProps.latitude;
+        const prevEndTime = segments[segments.length - 1]?.endTime || startTime;
+
+        // Connection segment
+        segments.push({
+          type: 'connection',
+          tornadoIdx: i - 1,
+          startTime: prevEndTime,
+          endTime: startTime,
+          startCoord: [prevEndLon, prevEndLat],
+          endCoord: [startLon, startLat],
+          color: '#ffaa00'
+        });
+      }
+
+      // Add track segment
+      segments.push({
+        type: 'track',
+        tornadoIdx: i,
+        eventId: eventId,
+        startTime: startTime,
+        endTime: endTime,
+        startCoord: [startLon, startLat],
+        endCoord: [endLon, endLat],
+        coords: trackCoords,
+        color: color,
+        trackWidth: trackWidth,
+        radiusM: radiusM,        // damage radius in meters (actual tornado width)
+        feltRadiusM: feltRadiusM, // felt radius in meters (broader impact zone)
+        scale: scale
+      });
+    }
+
+    // Calculate overall time range
+    const firstStart = segments.length > 0 ? segments[0].startTime : 0;
+    const lastEnd = segments.length > 0 ? segments[segments.length - 1].endTime : 0;
+
+    this._tornadoJourney = {
+      segments: segments,
+      startTime: firstStart,
+      endTime: lastEnd,
+      totalDurationMs: lastEnd - firstStart
     };
 
-    this._tornadoAnimationLoopId = requestAnimationFrame(animate);
+    console.log(`EventAnimator: Built tornado journey with ${segments.length} segments over ${(this._tornadoJourney.totalDurationMs / 60000).toFixed(1)} minutes`);
   },
 
   /**
-   * Stop tornado animation loop.
+   * Stop tornado animation loop (legacy - now using TimeSlider directly).
    * @private
    */
   _stopTornadoAnimation() {
-    if (this._tornadoAnimationLoopId) {
-      cancelAnimationFrame(this._tornadoAnimationLoopId);
-      this._tornadoAnimationLoopId = null;
-    }
+    // No longer using separate animation loop - TimeSlider drives everything
   },
 
   /**
-   * Update tornado track drawing progress.
-   * Sequential: only animates the currently active tornado.
-   * Returns true if any tracks are still animating.
-   * @private
-   */
-  _updateTornadoDrawProgress(deltaTime) {
-    if (this._tornadoActiveIndex < 0) return false;
-
-    let stillAnimating = false;
-    const trackProgressPerFrame = deltaTime / TORNADO_ANIMATION.TRACK_DRAW_DURATION;
-    const connectionProgressPerFrame = deltaTime / TORNADO_ANIMATION.CONNECTION_DRAW_DURATION;
-
-    // Only update progress for the CURRENT active tornado (sequential drawing)
-    const i = this._tornadoActiveIndex;
-    if (i < this._tornadoSortedEvents.length) {
-      const event = this._tornadoSortedEvents[i];
-      const eventId = event.properties?.event_id || `tornado-${i}`;
-      const currentProgress = this._tornadoDrawProgress[eventId] || 0;
-      const currentConnProgress = this._tornadoConnectionProgress[eventId] || 0;
-      const hasNextTornado = i < this._tornadoSortedEvents.length - 1;
-
-      if (currentProgress < 1) {
-        // Phase 1: Drawing track
-        // Use ease-out for natural deceleration at end
-        const newProgress = Math.min(1, currentProgress + trackProgressPerFrame * (1.2 - currentProgress * 0.4));
-        this._tornadoDrawProgress[eventId] = newProgress;
-        stillAnimating = true;
-      } else if (hasNextTornado && currentConnProgress < 1) {
-        // Phase 2: Drawing connection to next tornado
-        const newConnProgress = Math.min(1, currentConnProgress + connectionProgressPerFrame);
-        this._tornadoConnectionProgress[eventId] = newConnProgress;
-        stillAnimating = true;
-      }
-    }
-
-    return stillAnimating;
-  },
-
-  /**
-   * Render tornado features at a specific time (TimeSlider callback).
-   * Sequential drawing: only advance to next tornado after current is fully drawn.
+   * Render tornado sequence at a specific timestamp.
+   * Uses the pre-computed journey to determine what to draw.
    * @private
    */
   _renderTornadoAtTime(timestamp) {
-    const timeField = this.config.timeField;
+    if (!this._tornadoJourney || this._tornadoJourney.segments.length === 0) return;
 
-    // Find which tornado SHOULD be active based on timestamp
-    // This is the target we're working toward (may be ahead of actual drawing)
-    let targetIdx = -1;
-    for (let i = 0; i < this._tornadoSortedEvents.length; i++) {
-      const event = this._tornadoSortedEvents[i];
-      const eventTime = new Date(event.properties?.[timeField]).getTime();
-      if (eventTime <= timestamp) {
-        targetIdx = i;
-      }
+    const journey = this._tornadoJourney;
+
+    // Calculate overall progress (0 to 1)
+    let progress = 0;
+    if (journey.totalDurationMs > 0) {
+      progress = Math.max(0, Math.min(1, (timestamp - journey.startTime) / journey.totalDurationMs));
     }
 
-    // Detect time going backwards (loop/scrub) - reset animation state
-    if (targetIdx < this._tornadoActiveIndex || (targetIdx === -1 && this._tornadoActiveIndex >= 0)) {
-      console.log('Tornado animation: Time went backwards, resetting state');
-      // Reset all progress
-      this._tornadoSortedEvents.forEach((event, idx) => {
-        const eventId = event.properties?.event_id || `tornado-${idx}`;
-        this._tornadoDrawProgress[eventId] = 0;
-        this._tornadoConnectionProgress[eventId] = 0;
-      });
-      this._tornadoActiveIndex = -1;
-      this._tornadoAnimationStarted = false;
-      this._stopTornadoAnimation();
-    }
-
-    // Sequential logic: only advance _tornadoActiveIndex when current tornado is fully drawn
-    // If we haven't started any tornado yet, start the first one
-    if (this._tornadoActiveIndex < 0 && targetIdx >= 0) {
-      this._tornadoActiveIndex = 0;
-      const firstEventId = this._tornadoSortedEvents[0]?.properties?.event_id || 'tornado-0';
-      this._tornadoDrawProgress[firstEventId] = 0.01;
-
-      // Start animation loop on first tornado activation
-      if (!this._tornadoAnimationStarted) {
-        this._tornadoAnimationStarted = true;
-        this._startTornadoAnimationLoop();
-      }
-    }
-
-    // Check if current tornado is done (track + connection) and we should advance to the next
-    if (this._tornadoActiveIndex >= 0 && this._tornadoActiveIndex < targetIdx) {
-      const currentEventId = this._tornadoSortedEvents[this._tornadoActiveIndex]?.properties?.event_id ||
-        `tornado-${this._tornadoActiveIndex}`;
-      const currentProgress = this._tornadoDrawProgress[currentEventId] || 0;
-      const currentConnProgress = this._tornadoConnectionProgress[currentEventId] || 0;
-      const hasNextTornado = this._tornadoActiveIndex < this._tornadoSortedEvents.length - 1;
-
-      // Must complete both track (progress >= 1) AND connection (if there's a next tornado)
-      const trackDone = currentProgress >= 1;
-      const connectionDone = !hasNextTornado || currentConnProgress >= 1;
-
-      if (trackDone && connectionDone) {
-        // Move to next tornado
-        this._tornadoActiveIndex++;
-        const nextEventId = this._tornadoSortedEvents[this._tornadoActiveIndex]?.properties?.event_id ||
-          `tornado-${this._tornadoActiveIndex}`;
-        if ((this._tornadoDrawProgress[nextEventId] || 0) === 0) {
-          this._tornadoDrawProgress[nextEventId] = 0.01;
-        }
-      }
-    }
-
-    this._renderTornadoDisplay();
+    // Render based on progress
+    this._renderTornadoJourneyAtProgress(progress, timestamp);
   },
 
   /**
-   * Render current tornado display state with progressive drawing.
-   * Before animation starts: shows all tornado start points (clickable)
-   * During animation: progressively reveals tracks and points
+   * Render the tornado journey at a given progress value.
+   * Draws all completed segments and the current segment partially.
+   * Traveler always shows at current journey position.
    * @private
    */
-  _renderTornadoDisplay() {
+  _renderTornadoJourneyAtProgress(overallProgress, currentTime) {
     if (!MapAdapter?.map) return;
     const map = MapAdapter.map;
     const source = map.getSource(TORNADO_LAYERS.SOURCE);
     if (!source) return;
 
+    const journey = this._tornadoJourney;
     const features = [];
 
-    // If animation hasn't started yet, show all tornado start points as clickable markers
-    if (this._tornadoActiveIndex < 0) {
-      for (let idx = 0; idx < this._tornadoSortedEvents.length; idx++) {
-        const event = this._tornadoSortedEvents[idx];
-        const props = event.properties;
-        const eventId = props?.event_id || `tornado-${idx}`;
-        const startLon = props?.longitude;
-        const startLat = props?.latitude;
-        const scale = props?.tornado_scale || 0;
-        const color = this._tornadoScaleToColor(scale);
+    // Track which tornadoes have been reached
+    const tornadoReached = new Set();
+    const tornadoComplete = new Set();
 
-        if (startLon && startLat) {
+    // Traveler follows the tip of whatever line is being drawn
+    let travelerPos = null;
+    let travelerRadiusM = 50;      // damage radius in meters
+    let travelerFeltRadiusM = 500; // felt radius in meters
+    let travelerColor = '#32cd32';
+
+    // Draw all segments - traveler will be placed at the end of the most recent partial line
+    for (const segment of journey.segments) {
+      const segmentDuration = segment.endTime - segment.startTime;
+
+      let segmentProgress = 0;
+      if (segmentDuration <= 0) {
+        // Instant segment - either fully visible or not
+        segmentProgress = currentTime >= segment.startTime ? 1 : 0;
+      } else if (currentTime >= segment.endTime) {
+        segmentProgress = 1;
+      } else if (currentTime >= segment.startTime) {
+        segmentProgress = (currentTime - segment.startTime) / segmentDuration;
+      }
+
+      if (segment.type === 'track') {
+        // Mark tornado as reached/complete
+        if (segmentProgress > 0) {
+          tornadoReached.add(segment.tornadoIdx);
+        }
+        if (segmentProgress >= 1) {
+          tornadoComplete.add(segment.tornadoIdx);
+        }
+
+        // Draw start point
+        if (segmentProgress > 0 && segment.startCoord[0] && segment.startCoord[1]) {
           features.push({
             type: 'Feature',
-            geometry: { type: 'Point', coordinates: [startLon, startLat] },
+            geometry: { type: 'Point', coordinates: segment.startCoord },
             properties: {
               feature_type: 'start',
-              opacity: 1,
-              event_id: eventId,
-              color: color
+              opacity: Math.min(1, segmentProgress * 3),
+              event_id: segment.eventId,
+              color: segment.color
             }
           });
         }
-      }
-      source.setData({ type: 'FeatureCollection', features });
-      return;
-    }
 
-    // First, show all tornado start points that haven't been reached yet (faded)
-    for (let idx = this._tornadoActiveIndex + 1; idx < this._tornadoSortedEvents.length; idx++) {
-      const event = this._tornadoSortedEvents[idx];
-      const props = event.properties;
-      const eventId = props?.event_id || `tornado-${idx}`;
-      const startLon = props?.longitude;
-      const startLat = props?.latitude;
-      const scale = props?.tornado_scale || 0;
-      const color = this._tornadoScaleToColor(scale);
+        // Draw track line (progressive)
+        if (segmentProgress > 0 && segment.coords && segment.coords.length >= 2) {
+          const partialTrack = this._getPartialTrack(segment.coords, segmentProgress);
+          if (partialTrack.length >= 2) {
+            features.push({
+              type: 'Feature',
+              geometry: { type: 'LineString', coordinates: partialTrack },
+              properties: {
+                feature_type: 'track',
+                track_color: segment.color,
+                track_width: segment.trackWidth,
+                event_id: segment.eventId
+              }
+            });
 
-      if (startLon && startLat) {
-        features.push({
-          type: 'Feature',
-          geometry: { type: 'Point', coordinates: [startLon, startLat] },
-          properties: {
-            feature_type: 'start',
-            opacity: 0.3,  // Faded until animation reaches it
-            event_id: eventId,
-            color: color
+            // TRAVELER: follows the tip of the line being drawn
+            // Only update if this segment is actively drawing (not complete)
+            if (segmentProgress < 1) {
+              travelerPos = partialTrack[partialTrack.length - 1]; // Last point of partial track
+              travelerRadiusM = segment.radiusM || 50;
+              travelerFeltRadiusM = segment.feltRadiusM || 500;
+              travelerColor = segment.color;
+            }
           }
-        });
-      }
-    }
+        }
 
-    // Process each tornado that has started animating
-    for (let idx = 0; idx <= this._tornadoActiveIndex && idx < this._tornadoSortedEvents.length; idx++) {
-      const event = this._tornadoSortedEvents[idx];
-      const props = event.properties;
-      const eventId = props?.event_id || `tornado-${idx}`;
-      const progress = this._tornadoDrawProgress[eventId] || 0;
-
-      if (progress <= 0) continue;
-
-      // Get tornado properties
-      const startLon = props?.longitude;
-      const startLat = props?.latitude;
-      const endLon = props?.end_longitude;
-      const endLat = props?.end_latitude;
-      const width = props?.tornado_width_yd || 100;
-      const scale = props?.tornado_scale || 0;
-      const color = this._tornadoScaleToColor(scale);
-      const trackWidth = this._tornadoScaleToTrackWidth(scale);
-
-      // Calculate circle radius from width (yards to pixels, clamped)
-      const baseRadius = Math.max(
-        TORNADO_ANIMATION.MIN_CIRCLE_RADIUS,
-        Math.min(TORNADO_ANIMATION.MAX_CIRCLE_RADIUS, width * TORNADO_ANIMATION.BASE_YARDS_TO_PIXELS)
-      );
-
-      // Draw start point (appears at start of track animation)
-      if (startLon && startLat && progress > 0.05) {
-        features.push({
-          type: 'Feature',
-          geometry: { type: 'Point', coordinates: [startLon, startLat] },
-          properties: {
-            feature_type: 'start',
-            opacity: Math.min(1, progress * 4),
-            event_id: eventId,
-            color: color
-          }
-        });
-      }
-
-      // Build track coordinates (use explicit track or construct from start/end)
-      let trackCoords = null;
-      if (props?.track && props.track.coordinates) {
-        trackCoords = props.track.coordinates;
-      } else if (startLon && startLat && endLon && endLat) {
-        // Build simple line from start to end
-        trackCoords = [[startLon, startLat], [endLon, endLat]];
-      }
-
-      // Draw progressive track line
-      if (trackCoords && trackCoords.length >= 2) {
-        const partialTrack = this._getPartialTrack(trackCoords, progress);
-        if (partialTrack.length >= 2) {
+        // Draw end point when complete
+        if (segmentProgress >= 1 && segment.endCoord[0] && segment.endCoord[1]) {
           features.push({
             type: 'Feature',
-            geometry: { type: 'LineString', coordinates: partialTrack },
+            geometry: { type: 'Point', coordinates: segment.endCoord },
             properties: {
-              feature_type: 'track',
-              track_color: color,
-              track_width: trackWidth,
-              event_id: eventId
+              feature_type: 'end',
+              event_id: segment.eventId,
+              color: segment.color
             }
           });
         }
-      }
-
-      // Draw end point when track is complete
-      if (endLon && endLat && progress >= 1) {
-        features.push({
-          type: 'Feature',
-          geometry: { type: 'Point', coordinates: [endLon, endLat] },
-          properties: {
-            feature_type: 'end',
-            opacity: 1,
-            event_id: eventId,
-            color: color
-          }
-        });
-      }
-
-      // Draw traveling circle (while track is drawing, progress 0-1)
-      if (progress > 0 && progress < 1 && trackCoords && trackCoords.length >= 2) {
-        // Get current position along track
-        const currentPos = this._interpolateTrackPosition(trackCoords, progress);
-
-        // Calculate interpolated radius for smooth size transitions
-        const nextEvent = this._tornadoSortedEvents[idx + 1];
-        const nextWidth = nextEvent?.properties?.tornado_width_yd || width;
-        const nextRadius = Math.max(
-          TORNADO_ANIMATION.MIN_CIRCLE_RADIUS,
-          Math.min(TORNADO_ANIMATION.MAX_CIRCLE_RADIUS, nextWidth * TORNADO_ANIMATION.BASE_YARDS_TO_PIXELS)
-        );
-
-        // Smooth size transition in the last 25% of the track
-        let currentRadius = baseRadius;
-        if (progress > (1 - TORNADO_ANIMATION.CIRCLE_TRANSITION_ZONE)) {
-          const transitionProgress = (progress - (1 - TORNADO_ANIMATION.CIRCLE_TRANSITION_ZONE)) / TORNADO_ANIMATION.CIRCLE_TRANSITION_ZONE;
-          // Ease in-out for smooth transition
-          const eased = transitionProgress * transitionProgress * (3 - 2 * transitionProgress);
-          currentRadius = baseRadius + (nextRadius - baseRadius) * eased;
-        }
-
-        // Make the traveling circle larger and more visible
-        features.push({
-          type: 'Feature',
-          geometry: { type: 'Point', coordinates: currentPos },
-          properties: {
-            feature_type: 'traveler',
-            radius: Math.max(currentRadius, 12),  // Minimum 12px for visibility
-            color: color,
-            event_id: eventId
-          }
-        });
-      }
-
-      // Draw connection to next tornado (progressive) with traveling circle
-      if (idx < this._tornadoSortedEvents.length - 1 && progress >= 1) {
-        const nextEvent = this._tornadoSortedEvents[idx + 1];
-        const nextProps = nextEvent?.properties;
-        // Use our tracked connection progress (animated independently)
-        const connectionProgress = this._tornadoConnectionProgress[eventId] || 0;
-
-        if (endLon && endLat && nextProps?.longitude && nextProps?.latitude && connectionProgress > 0) {
-          const connEndLon = endLon + (nextProps.longitude - endLon) * connectionProgress;
-          const connEndLat = endLat + (nextProps.latitude - endLat) * connectionProgress;
-
+      } else if (segment.type === 'connection') {
+        // Draw connection line (progressive)
+        if (segmentProgress > 0 && segment.startCoord && segment.endCoord) {
+          const progress = Math.min(1, segmentProgress);
+          const connEnd = [
+            segment.startCoord[0] + (segment.endCoord[0] - segment.startCoord[0]) * progress,
+            segment.startCoord[1] + (segment.endCoord[1] - segment.startCoord[1]) * progress
+          ];
           features.push({
             type: 'Feature',
             geometry: {
               type: 'LineString',
-              coordinates: [[endLon, endLat], [connEndLon, connEndLat]]
+              coordinates: [segment.startCoord, connEnd]
             },
             properties: {
-              feature_type: 'connect',
-              opacity: Math.min(0.8, connectionProgress * 2)
+              feature_type: 'connect'
             }
           });
 
-          // Calculate next tornado's radius
-          const nextWidth = nextProps?.tornado_width_yd || 100;
-          const nextRadius = Math.max(
-            TORNADO_ANIMATION.MIN_CIRCLE_RADIUS,
-            Math.min(TORNADO_ANIMATION.MAX_CIRCLE_RADIUS, nextWidth * TORNADO_ANIMATION.BASE_YARDS_TO_PIXELS)
-          );
+          // TRAVELER: follows the tip of connection line
+          if (segmentProgress < 1) {
+            travelerPos = connEnd;
 
-          // Draw traveling circle along connection
-          // Circle is already at nextRadius (we transitioned during last 25% of track)
-          // So just move it along the connection line
-          if (connectionProgress > 0 && connectionProgress < 1) {
-            features.push({
-              type: 'Feature',
-              geometry: { type: 'Point', coordinates: [connEndLon, connEndLat] },
-              properties: {
-                feature_type: 'traveler',
-                radius: Math.max(nextRadius, 12),  // Minimum 12px for visibility
-                color: this._tornadoScaleToColor(nextProps?.tornado_scale || 0),
-                event_id: eventId
-              }
-            });
+            // Get previous and next tornado radii for smooth transition
+            const prevTrack = journey.segments.find(s => s.type === 'track' && s.tornadoIdx === segment.tornadoIdx);
+            const nextTrack = journey.segments.find(s => s.type === 'track' && s.tornadoIdx === segment.tornadoIdx + 1);
+            const prevRadius = prevTrack ? prevTrack.radiusM : 50;
+            const nextRadius = nextTrack ? nextTrack.radiusM : prevRadius;
+            const prevFeltRadius = prevTrack ? prevTrack.feltRadiusM : 500;
+            const nextFeltRadius = nextTrack ? nextTrack.feltRadiusM : prevFeltRadius;
+
+            // Keep previous intensity for first 75%, scale during last 25%
+            if (segmentProgress <= 0.75) {
+              travelerRadiusM = prevRadius;
+              travelerFeltRadiusM = prevFeltRadius;
+              travelerColor = prevTrack ? prevTrack.color : travelerColor;
+            } else {
+              // Smoothly interpolate during last 25% (remap 0.75-1.0 to 0-1)
+              const t = (segmentProgress - 0.75) / 0.25;
+              const eased = t * t * (3 - 2 * t); // smoothstep
+              travelerRadiusM = prevRadius + (nextRadius - prevRadius) * eased;
+              travelerFeltRadiusM = prevFeltRadius + (nextFeltRadius - prevFeltRadius) * eased;
+              // Blend colors too
+              travelerColor = nextTrack ? nextTrack.color : travelerColor;
+            }
           }
         }
       }
     }
 
+    // Fallback: if no active segment, place at first tornado start
+    if (!travelerPos && journey.segments.length > 0) {
+      const firstTrack = journey.segments.find(s => s.type === 'track');
+      if (firstTrack && firstTrack.startCoord) {
+        travelerPos = firstTrack.startCoord;
+        travelerRadiusM = firstTrack.radiusM || 50;
+        travelerFeltRadiusM = firstTrack.feltRadiusM || 500;
+        travelerColor = firstTrack.color;
+      }
+    }
+
+    // Show future tornado start points (faded)
+    for (let i = 0; i < this._tornadoSortedEvents.length; i++) {
+      if (!tornadoReached.has(i)) {
+        const event = this._tornadoSortedEvents[i];
+        const props = event.properties || {};
+        const lon = props.longitude;
+        const lat = props.latitude;
+        if (lon && lat) {
+          // Parse EF scale from string like 'EF2' to number
+          const scaleRaw = props.tornado_scale || 0;
+          const scale = typeof scaleRaw === 'string'
+            ? parseInt(scaleRaw.replace(/[^0-9]/g, ''), 10) || 0
+            : scaleRaw;
+          features.push({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [lon, lat] },
+            properties: {
+              feature_type: 'start',
+              opacity: 0.3,
+              event_id: props.event_id || `tornado-${i}`,
+              color: this._tornadoScaleToColor(scale)
+            }
+          });
+        }
+      }
+    }
+
+    // ALWAYS draw traveling circle if we have a position
+    if (travelerPos && travelerPos[0] && travelerPos[1]) {
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: travelerPos },
+        properties: {
+          feature_type: 'traveler',
+          radius_m: travelerRadiusM,           // damage radius in meters
+          felt_radius_m: travelerFeltRadiusM,  // felt radius in meters (outer)
+          color: travelerColor
+        }
+      });
+    }
+
     source.setData({ type: 'FeatureCollection', features });
+  },
+
+  /**
+   * Render initial tornado display (before animation starts).
+   * Shows all tornado start points.
+   * @private
+   */
+  _renderTornadoDisplay() {
+    // Render at the start time (shows all points faded)
+    if (this._tornadoJourney && this._tornadoJourney.startTime) {
+      this._renderTornadoJourneyAtProgress(0, this._tornadoJourney.startTime - 1);
+    }
   },
 
   /**
@@ -2693,6 +2711,7 @@ export const EventAnimator = {
   _getPartialTrack(coordinates, progress) {
     if (!coordinates || coordinates.length < 2) return [];
     if (progress >= 1) return coordinates;
+    if (progress <= 0) return [coordinates[0]];
 
     // Calculate total track length
     let totalLength = 0;
@@ -2713,11 +2732,9 @@ export const EventAnimator = {
     for (let i = 0; i < segmentLengths.length; i++) {
       const segLen = segmentLengths[i];
       if (accumulatedLength + segLen <= targetLength) {
-        // Include full segment
         result.push(coordinates[i + 1]);
         accumulatedLength += segLen;
       } else {
-        // Partial segment - interpolate end point
         const remaining = targetLength - accumulatedLength;
         const t = remaining / segLen;
         const interpX = coordinates[i][0] + (coordinates[i+1][0] - coordinates[i][0]) * t;
@@ -2735,11 +2752,11 @@ export const EventAnimator = {
    * @private
    */
   _interpolateTrackPosition(coordinates, progress) {
-    if (!coordinates || coordinates.length < 2) return [0, 0];
-    if (progress >= 1) return coordinates[coordinates.length - 1];
+    if (!coordinates || coordinates.length < 2) return coordinates?.[0] || [0, 0];
     if (progress <= 0) return coordinates[0];
+    if (progress >= 1) return coordinates[coordinates.length - 1];
 
-    // Calculate total track length
+    // Calculate total length
     let totalLength = 0;
     const segmentLengths = [];
     for (let i = 1; i < coordinates.length; i++) {
@@ -2757,7 +2774,6 @@ export const EventAnimator = {
     for (let i = 0; i < segmentLengths.length; i++) {
       const segLen = segmentLengths[i];
       if (accumulatedLength + segLen >= targetLength) {
-        // Interpolate within this segment
         const remaining = targetLength - accumulatedLength;
         const t = remaining / segLen;
         const interpX = coordinates[i][0] + (coordinates[i+1][0] - coordinates[i][0]) * t;
@@ -2793,6 +2809,24 @@ export const EventAnimator = {
   _tornadoScaleToTrackWidth(scale) {
     // Width increases with intensity: EF0=3, EF5=8
     return 3 + Math.min(5, scale);
+  },
+
+  /**
+   * Convert EF scale to damage radius in meters.
+   * Based on Fujita-Pearson scale typical path widths (radius = half width).
+   * @private
+   */
+  _tornadoScaleToRadiusMeters(scale) {
+    // Realistic radii based on typical damage path widths
+    const radii = {
+      0: 8,     // EF0: ~16m wide path
+      1: 25,    // EF1: ~50m wide path
+      2: 80,    // EF2: ~160m wide path
+      3: 200,   // EF3: ~400m wide path
+      4: 500,   // EF4: ~1km wide path
+      5: 1200   // EF5: ~2.4km wide path
+    };
+    return radii[scale] || radii[0];
   }
 };
 

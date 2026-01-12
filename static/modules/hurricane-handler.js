@@ -81,8 +81,28 @@ export const HurricaneHandler = {
     }
 
     const data = await response.json();
-    this.trackCache[stormId] = data.positions;
-    return data.positions;
+
+    // Handle both old format (positions array) and new FeatureCollection format
+    let positions;
+    if (data.type === 'FeatureCollection' && data.features) {
+      // New format: extract positions from GeoJSON features
+      positions = data.features.map(f => ({
+        timestamp: f.properties.timestamp,
+        latitude: f.geometry.coordinates[1],
+        longitude: f.geometry.coordinates[0],
+        wind_kt: f.properties.wind_kt,
+        pressure_mb: f.properties.pressure_mb,
+        category: f.properties.category,
+        status: f.properties.status,
+        loc_id: f.properties.loc_id
+      }));
+    } else {
+      // Legacy format
+      positions = data.positions;
+    }
+
+    this.trackCache[stormId] = positions;
+    return positions;
   },
 
   /**

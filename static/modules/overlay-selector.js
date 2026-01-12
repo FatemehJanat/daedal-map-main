@@ -89,6 +89,16 @@ const CATEGORIES = [
         model: 'point-radius',
         icon: 'W',
         hasYearFilter: true
+      },
+      {
+        id: 'floods',
+        label: 'Floods',
+        description: 'Global floods (1985-2019)',
+        default: false,
+        locked: false,
+        model: 'point-radius',
+        icon: 'F',
+        hasYearFilter: true
       }
     ]
   },

@@ -53,39 +53,45 @@ function gardnerKnopoffTimeWindow(magnitude) {
   return Math.pow(10, 0.5 * magnitude - 1.5);
 }
 
-// API endpoints for each overlay type
+// API endpoints for each overlay type (min_year=2020 for faster loading)
 const OVERLAY_ENDPOINTS = {
   earthquakes: {
-    list: '/api/earthquakes/geojson?min_magnitude=5.5',  // Default M5.5+ for faster testing
+    list: '/api/earthquakes/geojson?min_magnitude=5.5&min_year=2020',
     eventType: 'earthquake',
-    yearField: 'year'  // Property name for year filtering
+    yearField: 'year'
   },
   hurricanes: {
-    list: '/api/storms/tracks/geojson?min_year=1950',  // Global IBTrACS storm tracks
-    trackEndpoint: '/api/storms/{storm_id}/track',     // Track drill-down endpoint
+    list: '/api/storms/tracks/geojson?min_year=2020',
+    trackEndpoint: '/api/storms/{storm_id}/track',
     eventType: 'hurricane',
     yearField: 'year'
   },
   volcanoes: {
-    list: '/api/eruptions/geojson',  // Use eruptions (events) not static locations
+    list: '/api/eruptions/geojson?min_year=2020',
     eventType: 'volcano',
-    yearField: 'year'  // Filter eruptions by year
+    yearField: 'year'
   },
   wildfires: {
-    list: '/api/wildfires/geojson?include_perimeter=true',
+    list: '/api/wildfires/geojson?min_year=2020',
     eventType: 'wildfire',
     yearField: 'year'
   },
   tsunamis: {
-    list: '/api/tsunamis/geojson?min_year=1900',  // NOAA global tsunami database
-    animationEndpoint: '/api/tsunamis/{event_id}/animation',  // Radial animation data
+    list: '/api/tsunamis/geojson?min_year=2020',
+    animationEndpoint: '/api/tsunamis/{event_id}/animation',
     eventType: 'tsunami',
     yearField: 'year'
   },
   tornadoes: {
-    list: '/api/tornadoes/geojson?min_year=1990',  // USA NOAA tornadoes
-    detailEndpoint: '/api/tornadoes/{event_id}',   // Track drill-down endpoint
+    list: '/api/tornadoes/geojson?min_year=2020',
+    detailEndpoint: '/api/tornadoes/{event_id}',
     eventType: 'tornado',
+    yearField: 'year'
+  },
+  floods: {
+    list: '/api/floods/geojson?min_year=2020',
+    geometryEndpoint: '/api/floods/{event_id}/geometry',
+    eventType: 'flood',
     yearField: 'year'
   }
 };
@@ -145,7 +151,22 @@ export const OverlayController = {
     // Setup cross-event linking (volcano<->earthquake)
     this.setupCrossLinkListeners();
 
+    // Setup track drill-down listener for hurricanes
+    this.setupTrackDrillDownListener();
+
     console.log('OverlayController initialized');
+  },
+
+  /**
+   * Setup listener for hurricane track drill-down.
+   */
+  setupTrackDrillDownListener() {
+    document.addEventListener('track-drill-down', async (e) => {
+      const { stormId, stormName, eventType, props } = e.detail;
+      console.log(`OverlayController: Track drill-down for ${stormName} (${stormId})`);
+      await this.handleHurricaneDrillDown(stormId, stormName, props);
+    });
+    console.log('OverlayController: Registered track drill-down listener');
   },
 
   /**
@@ -215,6 +236,54 @@ export const OverlayController = {
         this.handleTornadoSequence(data);
       });
       console.log('OverlayController: Registered tornado sequence listener');
+    }
+
+    // Tornado -> Point Animation: for tornadoes without track data
+    if (model.onTornadoPointAnimation) {
+      model.onTornadoPointAnimation((data) => {
+        this.handleTornadoPointAnimation(data);
+      });
+      console.log('OverlayController: Registered tornado point animation listener');
+    }
+
+    // Flood -> Animation: when user clicks "View flood" on a flood event
+    if (model.onFloodAnimation) {
+      model.onFloodAnimation((data) => {
+        this.handleFloodAnimation(data);
+      });
+      console.log('OverlayController: Registered flood animation listener');
+    }
+
+    // Volcano -> Impact: when user clicks "Impact" on a volcano event
+    if (model.onVolcanoImpact) {
+      model.onVolcanoImpact((data) => {
+        this.handleVolcanoImpact(data);
+      });
+      console.log('OverlayController: Registered volcano impact animation listener');
+    }
+
+    // Wildfire -> Impact: fallback when no progression data (area circle)
+    if (model.onWildfireImpact) {
+      model.onWildfireImpact((data) => {
+        this.handleWildfireImpact(data);
+      });
+      console.log('OverlayController: Registered wildfire impact animation listener');
+    }
+
+    // Wildfire -> Perimeter: single shape fade-in (second preference)
+    if (model.onWildfirePerimeter) {
+      model.onWildfirePerimeter((data) => {
+        this.handleWildfirePerimeter(data);
+      });
+      console.log('OverlayController: Registered wildfire perimeter animation listener');
+    }
+
+    // Flood -> Impact: fallback when no geometry data (area circle)
+    if (model.onFloodImpact) {
+      model.onFloodImpact((data) => {
+        this.handleFloodImpact(data);
+      });
+      console.log('OverlayController: Registered flood impact animation listener');
     }
   },
 
@@ -477,9 +546,28 @@ export const OverlayController = {
     const { geojson, seedEventId, sequenceCount } = data;
     console.log(`OverlayController: Starting tornado sequence animation for ${seedEventId} with ${sequenceCount} tornadoes`);
 
-    if (!geojson || !geojson.features || geojson.features.length < 2) {
-      console.warn('OverlayController: Not enough data for tornado sequence animation');
+    if (!geojson || !geojson.features || geojson.features.length === 0) {
+      console.warn('OverlayController: No data for tornado sequence animation');
       return;
+    }
+
+    // For single tornadoes, only proceed if it has track geometry
+    // (otherwise route to point animation)
+    if (geojson.features.length === 1) {
+      const feature = geojson.features[0];
+      if (!feature.properties?.track) {
+        console.log('OverlayController: Single tornado without track - routing to point animation');
+        // Extract data and trigger point animation
+        const props = feature.properties || {};
+        this.handleTornadoPointAnimation({
+          eventId: props.event_id || seedEventId,
+          latitude: props.latitude,
+          longitude: props.longitude,
+          scale: props.tornado_scale || 'EF0',
+          timestamp: props.timestamp || null
+        });
+        return;
+      }
     }
 
     // Hide any popups
@@ -504,9 +592,12 @@ export const OverlayController = {
       }
     }
 
-    // Format label
+    // Format label - different for single vs sequence
     const startDate = new Date(minTime);
-    const label = `Tornado Sequence ${startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+    const isSingle = geojson.features.length === 1;
+    const label = isSingle
+      ? `Tornado ${startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+      : `Tornado Sequence ${startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
 
     // Start tornado sequence animation using EventAnimator
     const animationId = `tornado-seq-${seedEventId}`;
@@ -548,6 +639,1141 @@ export const OverlayController = {
       if (dataCache.tornadoes) {
         this.renderFilteredData('tornadoes', currentYear);
       }
+    }
+  },
+
+  /**
+   * Handle point-only tornado animation.
+   * For tornadoes without track data - zooms in, shows circle based on EF scale,
+   * with TimeSlider-driven animation showing the tornado's duration.
+   * @param {Object} data - { eventId, latitude, longitude, scale, timestamp }
+   */
+  handleTornadoPointAnimation(data) {
+    const { eventId, scale, timestamp } = data;
+    // Parse coordinates as floats to ensure valid numbers
+    const latitude = parseFloat(data.latitude);
+    const longitude = parseFloat(data.longitude);
+    console.log(`OverlayController: Starting point-only tornado animation for ${eventId} at [${longitude}, ${latitude}]`);
+
+    if (isNaN(latitude) || isNaN(longitude)) {
+      console.warn('OverlayController: Invalid coordinates for tornado point animation:', data);
+      return;
+    }
+
+    // Hide popup
+    MapAdapter?.hidePopup?.();
+    MapAdapter.popupLocked = false;
+
+    // Note: We keep the tornado overlay visible so the source point stays on screen
+    // The animation circle will appear on top of the existing point
+
+    // Get color and size based on scale
+    const scaleColors = {
+      'EF0': '#98fb98', 'F0': '#98fb98',
+      'EF1': '#32cd32', 'F1': '#32cd32',
+      'EF2': '#ffd700', 'F2': '#ffd700',
+      'EF3': '#ff8c00', 'F3': '#ff8c00',
+      'EF4': '#ff4500', 'F4': '#ff4500',
+      'EF5': '#8b0000', 'F5': '#8b0000'
+    };
+    const scaleRadii = {
+      'EF0': 500,   // meters
+      'EF1': 800,
+      'EF2': 1200,
+      'EF3': 1800,
+      'EF4': 2500,
+      'EF5': 3500
+    };
+
+    // Estimated duration in minutes based on EF scale
+    // Stronger tornadoes tend to last longer
+    const scaleDurations = {
+      'EF0': 3, 'F0': 3,     // ~3 minutes (weak, short-lived)
+      'EF1': 5, 'F1': 5,     // ~5 minutes
+      'EF2': 10, 'F2': 10,   // ~10 minutes
+      'EF3': 15, 'F3': 15,   // ~15 minutes
+      'EF4': 20, 'F4': 20,   // ~20 minutes
+      'EF5': 30, 'F5': 30    // ~30 minutes (violent, long-lived)
+    };
+
+    const color = scaleColors[scale] || '#32cd32';
+    const radius = scaleRadii[scale] || scaleRadii['EF0'] || 500;
+    const durationMinutes = scaleDurations[scale] || 5;
+    const layerId = 'tornado-point-animation';
+    const sourceId = 'tornado-point-animation-source';
+
+    // Calculate time range
+    // Use timestamp if available, otherwise use a default time
+    let startMs;
+    if (timestamp) {
+      startMs = new Date(timestamp).getTime();
+    } else {
+      // Fallback: use noon on Jan 1 of some year (arbitrary but valid)
+      startMs = new Date('2020-01-01T12:00:00Z').getTime();
+    }
+    const endMs = startMs + (durationMinutes * 60 * 1000);
+
+    // Create GeoJSON for the point
+    const geojson = {
+      type: 'FeatureCollection',
+      features: [{
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [longitude, latitude] },
+        properties: { scale: scale, radius: radius }
+      }]
+    };
+
+    // Zoom to location first
+    const zoomLevel = 11;
+    MapAdapter.flyTo([longitude, latitude], zoomLevel);
+
+    // Wait for flyTo to complete, then setup TimeSlider and layers
+    setTimeout(() => {
+      const map = MapAdapter.map;
+      if (!map) return;
+
+      // Clean up any previous animation layers
+      if (map.getLayer(layerId)) map.removeLayer(layerId);
+      if (map.getLayer(layerId + '-outline')) map.removeLayer(layerId + '-outline');
+      if (map.getSource(sourceId)) map.removeSource(sourceId);
+
+      // Add source
+      map.addSource(sourceId, {
+        type: 'geojson',
+        data: geojson
+      });
+
+      // Convert meters to pixels using proper geographic scaling
+      // Note: ['zoom'] can only be used at top-level interpolate/step, so we use
+      // interpolate with pre-calculated meters/pixel values at zoom stops:
+      // Zoom 8: 611.5 m/px, Zoom 11: 76.44 m/px, Zoom 14: 9.55 m/px
+      const metersToPixels = [
+        'interpolate', ['exponential', 2], ['zoom'],
+        8, ['/', ['get', 'radius'], 611.5],
+        11, ['/', ['get', 'radius'], 76.44],
+        14, ['/', ['get', 'radius'], 9.55]
+      ];
+
+      // Add fill circle layer (starts transparent)
+      map.addLayer({
+        id: layerId,
+        type: 'circle',
+        source: sourceId,
+        paint: {
+          'circle-radius': metersToPixels,
+          'circle-color': color,
+          'circle-opacity': 0
+        }
+      });
+
+      // Add outline layer
+      map.addLayer({
+        id: layerId + '-outline',
+        type: 'circle',
+        source: sourceId,
+        paint: {
+          'circle-radius': metersToPixels,
+          'circle-color': 'transparent',
+          'circle-stroke-color': color,
+          'circle-stroke-width': 3,
+          'circle-stroke-opacity': 1
+        }
+      });
+
+      // Setup TimeSlider for tornado animation
+      const scaleId = `tornado-point-${eventId.substring(0, 12)}`;
+      const tornadoDate = timestamp
+        ? new Date(timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+        : `${scale} Tornado`;
+
+      // Generate timestamps for each second (tornadoes are short events)
+      const timestamps = [];
+      const stepMs = 1000; // 1 second steps
+      for (let t = startMs; t <= endMs; t += stepMs) {
+        timestamps.push(t);
+      }
+
+      if (TimeSlider) {
+        const added = TimeSlider.addScale({
+          id: scaleId,
+          label: `Tornado ${tornadoDate}`,
+          granularity: 'seconds',
+          useTimestamps: true,
+          currentTime: startMs,
+          timeRange: {
+            min: startMs,
+            max: endMs,
+            available: timestamps
+          },
+          mapRenderer: 'tornado-point-animation'
+        });
+
+        if (added) {
+          this.activeTornadoPointScaleId = scaleId;
+          TimeSlider.setActiveScale(scaleId);
+
+          // Enter event animation mode with auto-calculated speed
+          if (TimeSlider.enterEventAnimation) {
+            TimeSlider.enterEventAnimation(startMs, endMs);
+          }
+        }
+      }
+
+      // Store animation state
+      this._tornadoPointAnimState = {
+        sourceId,
+        layerId,
+        startMs,
+        endMs,
+        scaleId,
+        color
+      };
+
+      // Listen for time changes to update opacity
+      this._tornadoPointTimeHandler = (time, source) => {
+        if (!this._tornadoPointAnimState) return;
+
+        const { startMs, endMs, layerId } = this._tornadoPointAnimState;
+        const progress = Math.max(0, Math.min(1, (time - startMs) / (endMs - startMs)));
+
+        // Update fill opacity based on progress (0 -> 0.7 over duration)
+        if (map.getLayer(layerId)) {
+          map.setPaintProperty(layerId, 'circle-opacity', progress * 0.7);
+        }
+      };
+      TimeSlider?.addChangeListener(this._tornadoPointTimeHandler);
+
+      // Add exit button
+      this._addTornadoPointExitButton(() => this._exitTornadoPointAnimation());
+
+      console.log(`OverlayController: Tornado point animation ready, ${durationMinutes} minutes`);
+    }, 1600); // Wait for flyTo to complete
+  },
+
+  /**
+   * Exit tornado point animation and cleanup.
+   * @private
+   */
+  _exitTornadoPointAnimation() {
+    console.log('OverlayController: Exiting tornado point animation');
+
+    const map = MapAdapter.map;
+
+    // Remove layers
+    if (this._tornadoPointAnimState) {
+      const { sourceId, layerId, scaleId } = this._tornadoPointAnimState;
+
+      if (map.getLayer(layerId)) map.removeLayer(layerId);
+      if (map.getLayer(layerId + '-outline')) map.removeLayer(layerId + '-outline');
+      if (map.getSource(sourceId)) map.removeSource(sourceId);
+
+      // Remove TimeSlider scale
+      if (TimeSlider && scaleId) {
+        TimeSlider.removeScale(scaleId);
+        if (TimeSlider.exitEventAnimation) {
+          TimeSlider.exitEventAnimation();
+        }
+      }
+
+      this._tornadoPointAnimState = null;
+    }
+
+    // Remove time listener
+    if (this._tornadoPointTimeHandler && TimeSlider) {
+      TimeSlider.removeChangeListener(this._tornadoPointTimeHandler);
+      this._tornadoPointTimeHandler = null;
+    }
+
+    // Remove exit button
+    const exitBtn = document.getElementById('tornado-point-exit-btn');
+    if (exitBtn) exitBtn.remove();
+
+    // Recalculate time range
+    this.recalculateTimeRange();
+  },
+
+  /**
+   * Add exit button for tornado point animation.
+   * @private
+   */
+  _addTornadoPointExitButton(onExit) {
+    // Remove existing
+    const existing = document.getElementById('tornado-point-exit-btn');
+    if (existing) existing.remove();
+
+    const btn = document.createElement('button');
+    btn.id = 'tornado-point-exit-btn';
+    btn.textContent = 'Exit Tornado View';
+    btn.style.cssText = `
+      position: fixed;
+      top: 80px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 10px 20px;
+      background: #32cd32;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      z-index: 1000;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    `;
+    btn.addEventListener('click', onExit);
+    btn.addEventListener('mouseenter', () => { btn.style.background = '#228b22'; });
+    btn.addEventListener('mouseleave', () => { btn.style.background = '#32cd32'; });
+
+    document.body.appendChild(btn);
+  },
+
+  /**
+   * Handle flood animation - shows flood polygon with opacity fade over duration.
+   * At flood start time, outline appears. Over the duration, opacity increases.
+   * @param {Object} data - { geometry, eventId, durationDays, startTime, endTime, latitude, longitude, eventName }
+   */
+  handleFloodAnimation(data) {
+    const { geometry, eventId, durationDays, startTime, endTime, latitude, longitude, eventName } = data;
+    console.log(`OverlayController: Starting flood animation for ${eventId} (${durationDays} days)`);
+
+    // Handle both Feature and FeatureCollection formats
+    let geojsonData = geometry;
+    if (!geometry) {
+      console.warn('OverlayController: No geometry data for flood animation');
+      return;
+    }
+
+    // If it's a FeatureCollection, use it directly; if it's a Feature, wrap it
+    if (geometry.type === 'FeatureCollection') {
+      geojsonData = geometry;
+    } else if (geometry.type === 'Feature') {
+      geojsonData = geometry;
+    } else if (geometry.geometry) {
+      // Already a Feature with geometry property
+      geojsonData = geometry;
+    } else {
+      console.warn('OverlayController: Invalid geometry format for flood animation');
+      return;
+    }
+
+    // Calculate time range
+    const startMs = new Date(startTime).getTime();
+    const endMs = new Date(endTime).getTime();
+    const durationMs = endMs - startMs;
+
+    // Hide popup
+    MapAdapter?.hidePopup?.();
+    MapAdapter.popupLocked = false;
+
+    // Hide the flood overlay to focus on this flood
+    this._hideFloodOverlay();
+
+    // Calculate bounds from geometry for proper zoom that shows the whole area
+    let bounds = null;
+
+    // Helper to collect all coordinates from a geometry
+    const collectCoords = (geom) => {
+      const coords = [];
+      if (!geom || !geom.coordinates) return coords;
+      if (geom.type === 'Polygon') {
+        coords.push(...geom.coordinates[0]);
+      } else if (geom.type === 'MultiPolygon') {
+        for (const poly of geom.coordinates) {
+          coords.push(...poly[0]);
+        }
+      }
+      return coords;
+    };
+
+    // Collect all coordinates from geometry
+    let allCoords = [];
+    if (geojsonData.type === 'FeatureCollection' && geojsonData.features) {
+      for (const feature of geojsonData.features) {
+        allCoords.push(...collectCoords(feature.geometry));
+      }
+    } else if (geojsonData.geometry) {
+      allCoords = collectCoords(geojsonData.geometry);
+    }
+
+    // Calculate bounds from coordinates
+    if (allCoords.length > 0) {
+      bounds = this._getBoundsFromCoords(allCoords);
+    }
+
+    // Zoom to flood - use fitBounds if we have geometry, otherwise flyTo center
+    if (bounds) {
+      MapAdapter.map.fitBounds(bounds, {
+        padding: 60,
+        duration: 1500,
+        maxZoom: 11
+      });
+    } else if (longitude && latitude) {
+      MapAdapter.map.flyTo({
+        center: [longitude, latitude],
+        zoom: 8,
+        duration: 1500
+      });
+    }
+
+    // Create flood polygon layer
+    const sourceId = 'flood-anim-polygon';
+    const layerId = 'flood-anim-fill';
+    const strokeId = 'flood-anim-stroke';
+
+    // Remove existing layers
+    if (MapAdapter.map.getLayer(layerId)) MapAdapter.map.removeLayer(layerId);
+    if (MapAdapter.map.getLayer(strokeId)) MapAdapter.map.removeLayer(strokeId);
+    if (MapAdapter.map.getSource(sourceId)) MapAdapter.map.removeSource(sourceId);
+
+    // Add flood source
+    MapAdapter.map.addSource(sourceId, {
+      type: 'geojson',
+      data: geojsonData
+    });
+
+    // Add stroke layer (appears immediately at animation start)
+    MapAdapter.map.addLayer({
+      id: strokeId,
+      type: 'line',
+      source: sourceId,
+      paint: {
+        'line-color': '#0066cc',
+        'line-width': 2,
+        'line-opacity': 0.8
+      }
+    });
+
+    // Add fill layer (starts transparent, fades in over duration)
+    MapAdapter.map.addLayer({
+      id: layerId,
+      type: 'fill',
+      source: sourceId,
+      paint: {
+        'fill-color': '#3399ff',
+        'fill-opacity': 0
+      }
+    });
+
+    // Setup TimeSlider for flood animation
+    const scaleId = `flood-${eventId.substring(0, 12)}`;
+    const floodDate = new Date(startTime).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+    // Generate timestamps for each day
+    const timestamps = [];
+    for (let t = startMs; t <= endMs; t += 24 * 60 * 60 * 1000) {
+      timestamps.push(t);
+    }
+
+    if (TimeSlider) {
+      const added = TimeSlider.addScale({
+        id: scaleId,
+        label: eventName ? `${eventName}` : `Flood ${floodDate}`,
+        granularity: 'daily',
+        useTimestamps: true,
+        currentTime: startMs,
+        timeRange: {
+          min: startMs,
+          max: endMs,
+          available: timestamps
+        },
+        mapRenderer: 'flood-animation'
+      });
+
+      if (added) {
+        this.activeFloodScaleId = scaleId;
+        TimeSlider.setActiveScale(scaleId);
+
+        // Enter event animation mode with auto-calculated speed
+        if (TimeSlider.enterEventAnimation) {
+          TimeSlider.enterEventAnimation(startMs, endMs);
+        }
+      }
+    }
+
+    // Store animation state
+    this._floodAnimState = {
+      sourceId,
+      layerId,
+      strokeId,
+      startMs,
+      endMs,
+      scaleId
+    };
+
+    // Listen for time changes to update opacity
+    this._floodTimeHandler = (time, source) => {
+      if (!this._floodAnimState) return;
+
+      const { startMs, endMs, layerId } = this._floodAnimState;
+      const progress = Math.max(0, Math.min(1, (time - startMs) / (endMs - startMs)));
+
+      // Update fill opacity based on progress (0 -> 0.6 over duration)
+      if (MapAdapter.map.getLayer(layerId)) {
+        MapAdapter.map.setPaintProperty(layerId, 'fill-opacity', progress * 0.6);
+      }
+    };
+    TimeSlider?.addChangeListener(this._floodTimeHandler);
+
+    // Add exit button
+    this._addFloodExitButton(() => this._exitFloodAnimation());
+
+    console.log(`OverlayController: Flood animation ready, ${durationDays} days starting ${floodDate}`);
+  },
+
+  /**
+   * Handle volcano impact radius animation.
+   * Shows felt and damage radii expanding from the volcano center.
+   */
+  handleVolcanoImpact(data) {
+    const { eventId, volcanoName, latitude, longitude, feltRadius, damageRadius, VEI, timestamp } = data;
+    console.log(`OverlayController: Starting volcano impact animation for ${volcanoName} (VEI ${VEI})`);
+
+    if (!latitude || !longitude) {
+      console.warn('OverlayController: No coordinates for volcano impact animation');
+      return;
+    }
+
+    // Hide popup
+    MapAdapter?.hidePopup?.();
+    MapAdapter.popupLocked = false;
+
+    // Zoom to volcano
+    MapAdapter.map.flyTo({
+      center: [longitude, latitude],
+      zoom: 7,
+      duration: 1500
+    });
+
+    // Create impact circle sources
+    const feltSourceId = 'volcano-felt-radius';
+    const damageSourceId = 'volcano-damage-radius';
+    const feltLayerId = 'volcano-felt-fill';
+    const damageLayerId = 'volcano-damage-fill';
+    const feltStrokeId = 'volcano-felt-stroke';
+    const damageStrokeId = 'volcano-damage-stroke';
+
+    // Remove existing layers
+    [feltLayerId, damageLayerId, feltStrokeId, damageStrokeId].forEach(id => {
+      if (MapAdapter.map.getLayer(id)) MapAdapter.map.removeLayer(id);
+    });
+    [feltSourceId, damageSourceId].forEach(id => {
+      if (MapAdapter.map.getSource(id)) MapAdapter.map.removeSource(id);
+    });
+
+    // Create circle GeoJSON (approximation using turf-style circle)
+    const createCircle = (centerLon, centerLat, radiusKm, steps = 64) => {
+      const coords = [];
+      for (let i = 0; i <= steps; i++) {
+        const angle = (i / steps) * 2 * Math.PI;
+        // Approximate km to degrees (1 degree ~ 111km at equator)
+        const latOffset = (radiusKm / 111) * Math.cos(angle);
+        const lonOffset = (radiusKm / (111 * Math.cos(centerLat * Math.PI / 180))) * Math.sin(angle);
+        coords.push([centerLon + lonOffset, centerLat + latOffset]);
+      }
+      return {
+        type: 'Feature',
+        properties: {},
+        geometry: {
+          type: 'Polygon',
+          coordinates: [coords]
+        }
+      };
+    };
+
+    // Add felt radius source and layers (larger, yellow/orange)
+    if (feltRadius > 0) {
+      MapAdapter.map.addSource(feltSourceId, {
+        type: 'geojson',
+        data: createCircle(longitude, latitude, feltRadius)
+      });
+
+      MapAdapter.map.addLayer({
+        id: feltLayerId,
+        type: 'fill',
+        source: feltSourceId,
+        paint: {
+          'fill-color': '#ffc107',
+          'fill-opacity': 0
+        }
+      });
+
+      MapAdapter.map.addLayer({
+        id: feltStrokeId,
+        type: 'line',
+        source: feltSourceId,
+        paint: {
+          'line-color': '#ff9800',
+          'line-width': 2,
+          'line-opacity': 0
+        }
+      });
+    }
+
+    // Add damage radius source and layers (smaller, red)
+    if (damageRadius > 0) {
+      MapAdapter.map.addSource(damageSourceId, {
+        type: 'geojson',
+        data: createCircle(longitude, latitude, damageRadius)
+      });
+
+      MapAdapter.map.addLayer({
+        id: damageLayerId,
+        type: 'fill',
+        source: damageSourceId,
+        paint: {
+          'fill-color': '#f44336',
+          'fill-opacity': 0
+        }
+      });
+
+      MapAdapter.map.addLayer({
+        id: damageStrokeId,
+        type: 'line',
+        source: damageSourceId,
+        paint: {
+          'line-color': '#d32f2f',
+          'line-width': 3,
+          'line-opacity': 0
+        }
+      });
+    }
+
+    // Animate the radii expanding (3 second animation)
+    const animDuration = 3000;
+    const startTime = performance.now();
+
+    const animate = () => {
+      const elapsed = performance.now() - startTime;
+      const progress = Math.min(1, elapsed / animDuration);
+      const easeProgress = 1 - Math.pow(1 - progress, 3); // Ease out cubic
+
+      // Update felt radius opacity (fade in)
+      if (feltRadius > 0 && MapAdapter.map.getLayer(feltLayerId)) {
+        MapAdapter.map.setPaintProperty(feltLayerId, 'fill-opacity', easeProgress * 0.3);
+        MapAdapter.map.setPaintProperty(feltStrokeId, 'line-opacity', easeProgress * 0.8);
+      }
+
+      // Update damage radius opacity (fade in slightly delayed)
+      if (damageRadius > 0 && MapAdapter.map.getLayer(damageLayerId)) {
+        const damageProgress = Math.max(0, (progress - 0.3) / 0.7); // Start at 30%
+        const easeDamage = 1 - Math.pow(1 - damageProgress, 3);
+        MapAdapter.map.setPaintProperty(damageLayerId, 'fill-opacity', easeDamage * 0.4);
+        MapAdapter.map.setPaintProperty(damageStrokeId, 'line-opacity', easeDamage * 0.9);
+      }
+
+      if (progress < 1) {
+        requestAnimationFrame(animate);
+      }
+    };
+
+    // Start animation after flyTo completes
+    setTimeout(animate, 1600);
+
+    // Store state for cleanup
+    this._volcanoImpactState = {
+      feltSourceId,
+      damageSourceId,
+      feltLayerId,
+      damageLayerId,
+      feltStrokeId,
+      damageStrokeId
+    };
+
+    // Add exit button
+    this._addVolcanoExitButton(() => this._exitVolcanoImpact());
+
+    console.log(`OverlayController: Volcano impact animation started (felt: ${feltRadius}km, damage: ${damageRadius}km)`);
+  },
+
+  /**
+   * Exit volcano impact animation and cleanup.
+   * @private
+   */
+  _exitVolcanoImpact() {
+    console.log('OverlayController: Exiting volcano impact animation');
+
+    if (this._volcanoImpactState) {
+      const { feltSourceId, damageSourceId, feltLayerId, damageLayerId, feltStrokeId, damageStrokeId } = this._volcanoImpactState;
+
+      // Remove layers
+      [feltLayerId, damageLayerId, feltStrokeId, damageStrokeId].forEach(id => {
+        if (MapAdapter.map.getLayer(id)) MapAdapter.map.removeLayer(id);
+      });
+
+      // Remove sources
+      [feltSourceId, damageSourceId].forEach(id => {
+        if (MapAdapter.map.getSource(id)) MapAdapter.map.removeSource(id);
+      });
+
+      this._volcanoImpactState = null;
+    }
+
+    // Remove exit button
+    const exitBtn = document.getElementById('volcano-exit-btn');
+    if (exitBtn) exitBtn.remove();
+  },
+
+  /**
+   * Add exit button for volcano impact animation.
+   * @private
+   */
+  _addVolcanoExitButton(onExit) {
+    const existing = document.getElementById('volcano-exit-btn');
+    if (existing) existing.remove();
+
+    const btn = document.createElement('button');
+    btn.id = 'volcano-exit-btn';
+    btn.textContent = 'Exit Impact View';
+    btn.style.cssText = `
+      position: fixed;
+      top: 80px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 10px 20px;
+      background: #ff5722;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      z-index: 1000;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    `;
+
+    btn.addEventListener('click', onExit);
+    document.body.appendChild(btn);
+  },
+
+  /**
+   * Handle wildfire impact animation (area circle fallback).
+   * Shows a circle representing the burned area.
+   */
+  handleWildfireImpact(data) {
+    const { eventId, fireName, latitude, longitude, areaKm2, radiusKm, timestamp } = data;
+    console.log(`OverlayController: Starting wildfire impact animation for ${fireName} (${areaKm2} km2)`);
+
+    if (!latitude || !longitude) {
+      console.warn('OverlayController: No coordinates for wildfire impact animation');
+      return;
+    }
+
+    // Hide popup
+    MapAdapter?.hidePopup?.();
+    MapAdapter.popupLocked = false;
+
+    // Zoom to fire
+    MapAdapter.map.flyTo({
+      center: [longitude, latitude],
+      zoom: 9,
+      duration: 1500
+    });
+
+    // Create area circle
+    const sourceId = 'wildfire-impact-radius';
+    const fillId = 'wildfire-impact-fill';
+    const strokeId = 'wildfire-impact-stroke';
+
+    // Remove existing
+    if (MapAdapter.map.getLayer(fillId)) MapAdapter.map.removeLayer(fillId);
+    if (MapAdapter.map.getLayer(strokeId)) MapAdapter.map.removeLayer(strokeId);
+    if (MapAdapter.map.getSource(sourceId)) MapAdapter.map.removeSource(sourceId);
+
+    // Create circle GeoJSON
+    const createCircle = (centerLon, centerLat, radiusKm, steps = 64) => {
+      const coords = [];
+      for (let i = 0; i <= steps; i++) {
+        const angle = (i / steps) * 2 * Math.PI;
+        const latOffset = (radiusKm / 111) * Math.cos(angle);
+        const lonOffset = (radiusKm / (111 * Math.cos(centerLat * Math.PI / 180))) * Math.sin(angle);
+        coords.push([centerLon + lonOffset, centerLat + latOffset]);
+      }
+      return {
+        type: 'Feature',
+        properties: {},
+        geometry: { type: 'Polygon', coordinates: [coords] }
+      };
+    };
+
+    MapAdapter.map.addSource(sourceId, {
+      type: 'geojson',
+      data: createCircle(longitude, latitude, radiusKm)
+    });
+
+    MapAdapter.map.addLayer({
+      id: fillId,
+      type: 'fill',
+      source: sourceId,
+      paint: { 'fill-color': '#ff5722', 'fill-opacity': 0 }
+    });
+
+    MapAdapter.map.addLayer({
+      id: strokeId,
+      type: 'line',
+      source: sourceId,
+      paint: { 'line-color': '#d84315', 'line-width': 3, 'line-opacity': 0 }
+    });
+
+    // Animate
+    const animDuration = 2000;
+    const startTime = performance.now();
+    const animate = () => {
+      const progress = Math.min(1, (performance.now() - startTime) / animDuration);
+      const ease = 1 - Math.pow(1 - progress, 3);
+      if (MapAdapter.map.getLayer(fillId)) {
+        MapAdapter.map.setPaintProperty(fillId, 'fill-opacity', ease * 0.4);
+        MapAdapter.map.setPaintProperty(strokeId, 'line-opacity', ease * 0.9);
+      }
+      if (progress < 1) requestAnimationFrame(animate);
+    };
+    setTimeout(animate, 1600);
+
+    this._wildfireImpactState = { sourceId, fillId, strokeId };
+    this._addGenericExitButton('wildfire-exit-btn', 'Exit Fire View', '#ff5722', () => this._exitWildfireImpact());
+  },
+
+  _exitWildfireImpact() {
+    if (this._wildfireImpactState) {
+      const { sourceId, fillId, strokeId } = this._wildfireImpactState;
+      if (MapAdapter.map.getLayer(fillId)) MapAdapter.map.removeLayer(fillId);
+      if (MapAdapter.map.getLayer(strokeId)) MapAdapter.map.removeLayer(strokeId);
+      if (MapAdapter.map.getSource(sourceId)) MapAdapter.map.removeSource(sourceId);
+      this._wildfireImpactState = null;
+    }
+    document.getElementById('wildfire-exit-btn')?.remove();
+  },
+
+  /**
+   * Handle wildfire perimeter animation (single shape fade-in).
+   * Shows the fire perimeter polygon fading in.
+   */
+  handleWildfirePerimeter(data) {
+    const { eventId, fireName, geometry, latitude, longitude, areaKm2, timestamp } = data;
+    console.log(`OverlayController: Starting wildfire perimeter animation for ${fireName}`);
+
+    // Hide popup
+    MapAdapter?.hidePopup?.();
+    MapAdapter.popupLocked = false;
+
+    // Calculate bounds from geometry for proper zoom
+    let bounds = null;
+    if (geometry && geometry.geometry) {
+      const coords = geometry.geometry.coordinates;
+      if (geometry.geometry.type === 'Polygon') {
+        bounds = this._getBoundsFromCoords(coords[0]);
+      } else if (geometry.geometry.type === 'MultiPolygon') {
+        // Flatten all outer rings
+        const allCoords = coords.flatMap(poly => poly[0]);
+        bounds = this._getBoundsFromCoords(allCoords);
+      }
+    }
+
+    // Zoom to fire perimeter
+    if (bounds) {
+      MapAdapter.map.fitBounds(bounds, {
+        padding: 50,
+        duration: 1500,
+        maxZoom: 12
+      });
+    } else if (latitude && longitude) {
+      MapAdapter.map.flyTo({
+        center: [longitude, latitude],
+        zoom: 9,
+        duration: 1500
+      });
+    }
+
+    // Layer IDs
+    const sourceId = 'wildfire-perimeter';
+    const fillId = 'wildfire-perimeter-fill';
+    const strokeId = 'wildfire-perimeter-stroke';
+
+    // Remove existing
+    if (MapAdapter.map.getLayer(fillId)) MapAdapter.map.removeLayer(fillId);
+    if (MapAdapter.map.getLayer(strokeId)) MapAdapter.map.removeLayer(strokeId);
+    if (MapAdapter.map.getSource(sourceId)) MapAdapter.map.removeSource(sourceId);
+
+    // Add the perimeter geometry
+    MapAdapter.map.addSource(sourceId, {
+      type: 'geojson',
+      data: geometry
+    });
+
+    MapAdapter.map.addLayer({
+      id: fillId,
+      type: 'fill',
+      source: sourceId,
+      paint: { 'fill-color': '#ff5722', 'fill-opacity': 0 }
+    });
+
+    MapAdapter.map.addLayer({
+      id: strokeId,
+      type: 'line',
+      source: sourceId,
+      paint: { 'line-color': '#d84315', 'line-width': 2, 'line-opacity': 0 }
+    });
+
+    // Animate fade-in
+    const animDuration = 2500;
+    const startTime = performance.now();
+    const animate = () => {
+      const progress = Math.min(1, (performance.now() - startTime) / animDuration);
+      const ease = 1 - Math.pow(1 - progress, 3);
+      if (MapAdapter.map.getLayer(fillId)) {
+        MapAdapter.map.setPaintProperty(fillId, 'fill-opacity', ease * 0.5);
+        MapAdapter.map.setPaintProperty(strokeId, 'line-opacity', ease * 0.9);
+      }
+      if (progress < 1) requestAnimationFrame(animate);
+    };
+    setTimeout(animate, 1600);
+
+    this._wildfirePerimeterState = { sourceId, fillId, strokeId };
+    this._addGenericExitButton('wildfire-perim-exit-btn', 'Exit Fire View', '#ff5722', () => this._exitWildfirePerimeter());
+  },
+
+  _exitWildfirePerimeter() {
+    if (this._wildfirePerimeterState) {
+      const { sourceId, fillId, strokeId } = this._wildfirePerimeterState;
+      if (MapAdapter.map.getLayer(fillId)) MapAdapter.map.removeLayer(fillId);
+      if (MapAdapter.map.getLayer(strokeId)) MapAdapter.map.removeLayer(strokeId);
+      if (MapAdapter.map.getSource(sourceId)) MapAdapter.map.removeSource(sourceId);
+      this._wildfirePerimeterState = null;
+    }
+    document.getElementById('wildfire-perim-exit-btn')?.remove();
+  },
+
+  /**
+   * Get bounding box from coordinate array.
+   * @param {Array} coords - Array of [lng, lat] coordinates
+   * @returns {Array} [[minLng, minLat], [maxLng, maxLat]]
+   */
+  _getBoundsFromCoords(coords) {
+    if (!coords || coords.length === 0) return null;
+    let minLng = Infinity, maxLng = -Infinity;
+    let minLat = Infinity, maxLat = -Infinity;
+    for (const [lng, lat] of coords) {
+      if (lng < minLng) minLng = lng;
+      if (lng > maxLng) maxLng = lng;
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+    }
+    return [[minLng, minLat], [maxLng, maxLat]];
+  },
+
+  /**
+   * Handle flood impact animation (area circle fallback).
+   * Shows a circle representing the flooded area.
+   */
+  handleFloodImpact(data) {
+    const { eventId, eventName, latitude, longitude, areaKm2, radiusKm, durationDays, timestamp } = data;
+    console.log(`OverlayController: Starting flood impact animation for ${eventName} (${areaKm2} km2)`);
+
+    if (!latitude || !longitude) {
+      console.warn('OverlayController: No coordinates for flood impact animation');
+      return;
+    }
+
+    // Hide popup
+    MapAdapter?.hidePopup?.();
+    MapAdapter.popupLocked = false;
+
+    // Zoom to flood
+    MapAdapter.map.flyTo({
+      center: [longitude, latitude],
+      zoom: 8,
+      duration: 1500
+    });
+
+    // Create area circle
+    const sourceId = 'flood-impact-radius';
+    const fillId = 'flood-impact-fill';
+    const strokeId = 'flood-impact-stroke';
+
+    // Remove existing
+    if (MapAdapter.map.getLayer(fillId)) MapAdapter.map.removeLayer(fillId);
+    if (MapAdapter.map.getLayer(strokeId)) MapAdapter.map.removeLayer(strokeId);
+    if (MapAdapter.map.getSource(sourceId)) MapAdapter.map.removeSource(sourceId);
+
+    // Create circle GeoJSON
+    const createCircle = (centerLon, centerLat, radiusKm, steps = 64) => {
+      const coords = [];
+      for (let i = 0; i <= steps; i++) {
+        const angle = (i / steps) * 2 * Math.PI;
+        const latOffset = (radiusKm / 111) * Math.cos(angle);
+        const lonOffset = (radiusKm / (111 * Math.cos(centerLat * Math.PI / 180))) * Math.sin(angle);
+        coords.push([centerLon + lonOffset, centerLat + latOffset]);
+      }
+      return {
+        type: 'Feature',
+        properties: {},
+        geometry: { type: 'Polygon', coordinates: [coords] }
+      };
+    };
+
+    MapAdapter.map.addSource(sourceId, {
+      type: 'geojson',
+      data: createCircle(longitude, latitude, radiusKm)
+    });
+
+    MapAdapter.map.addLayer({
+      id: fillId,
+      type: 'fill',
+      source: sourceId,
+      paint: { 'fill-color': '#2196f3', 'fill-opacity': 0 }
+    });
+
+    MapAdapter.map.addLayer({
+      id: strokeId,
+      type: 'line',
+      source: sourceId,
+      paint: { 'line-color': '#1565c0', 'line-width': 3, 'line-opacity': 0 }
+    });
+
+    // Animate
+    const animDuration = 2000;
+    const startTime = performance.now();
+    const animate = () => {
+      const progress = Math.min(1, (performance.now() - startTime) / animDuration);
+      const ease = 1 - Math.pow(1 - progress, 3);
+      if (MapAdapter.map.getLayer(fillId)) {
+        MapAdapter.map.setPaintProperty(fillId, 'fill-opacity', ease * 0.4);
+        MapAdapter.map.setPaintProperty(strokeId, 'line-opacity', ease * 0.9);
+      }
+      if (progress < 1) requestAnimationFrame(animate);
+    };
+    setTimeout(animate, 1600);
+
+    this._floodImpactState = { sourceId, fillId, strokeId };
+    this._addGenericExitButton('flood-impact-exit-btn', 'Exit Flood View', '#2196f3', () => this._exitFloodImpact());
+  },
+
+  _exitFloodImpact() {
+    if (this._floodImpactState) {
+      const { sourceId, fillId, strokeId } = this._floodImpactState;
+      if (MapAdapter.map.getLayer(fillId)) MapAdapter.map.removeLayer(fillId);
+      if (MapAdapter.map.getLayer(strokeId)) MapAdapter.map.removeLayer(strokeId);
+      if (MapAdapter.map.getSource(sourceId)) MapAdapter.map.removeSource(sourceId);
+      this._floodImpactState = null;
+    }
+    document.getElementById('flood-impact-exit-btn')?.remove();
+  },
+
+  /**
+   * Generic exit button helper.
+   * @private
+   */
+  _addGenericExitButton(id, text, color, onExit) {
+    document.getElementById(id)?.remove();
+    const btn = document.createElement('button');
+    btn.id = id;
+    btn.textContent = text;
+    btn.style.cssText = `
+      position: fixed; top: 80px; left: 50%; transform: translateX(-50%);
+      padding: 10px 20px; background: ${color}; color: white; border: none;
+      border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500;
+      z-index: 1000; box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    `;
+    btn.addEventListener('click', onExit);
+    document.body.appendChild(btn);
+  },
+
+  /**
+   * Exit flood animation and cleanup.
+   * @private
+   */
+  _exitFloodAnimation() {
+    console.log('OverlayController: Exiting flood animation');
+
+    // Remove layers
+    if (this._floodAnimState) {
+      const { sourceId, layerId, strokeId, scaleId } = this._floodAnimState;
+
+      if (MapAdapter.map.getLayer(layerId)) MapAdapter.map.removeLayer(layerId);
+      if (MapAdapter.map.getLayer(strokeId)) MapAdapter.map.removeLayer(strokeId);
+      if (MapAdapter.map.getSource(sourceId)) MapAdapter.map.removeSource(sourceId);
+
+      // Remove TimeSlider scale
+      if (TimeSlider && scaleId) {
+        TimeSlider.removeScale(scaleId);
+        if (TimeSlider.exitEventAnimation) {
+          TimeSlider.exitEventAnimation();
+        }
+      }
+
+      this._floodAnimState = null;
+    }
+
+    // Remove time listener
+    if (this._floodTimeHandler && TimeSlider) {
+      TimeSlider.removeChangeListener(this._floodTimeHandler);
+      this._floodTimeHandler = null;
+    }
+
+    // Remove exit button
+    const exitBtn = document.getElementById('flood-exit-btn');
+    if (exitBtn) exitBtn.remove();
+
+    // Restore flood overlay
+    this._restoreFloodOverlay();
+
+    // Recalculate time range
+    this.recalculateTimeRange();
+  },
+
+  /**
+   * Add exit button for flood animation.
+   * @private
+   */
+  _addFloodExitButton(onExit) {
+    // Remove existing
+    const existing = document.getElementById('flood-exit-btn');
+    if (existing) existing.remove();
+
+    const btn = document.createElement('button');
+    btn.id = 'flood-exit-btn';
+    btn.textContent = 'Exit Flood View';
+    btn.style.cssText = `
+      position: fixed;
+      top: 80px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 10px 20px;
+      background: #0066cc;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      z-index: 1000;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    `;
+
+    btn.addEventListener('click', onExit);
+    document.body.appendChild(btn);
+  },
+
+  /**
+   * Hide flood overlay to focus on a single flood animation.
+   * @private
+   */
+  _hideFloodOverlay() {
+    const model = ModelRegistry?.getModelForType('flood');
+    if (model?.clear) {
+      model.clear();
+    }
+    console.log('OverlayController: Hid flood overlay for animation');
+  },
+
+  /**
+   * Restore flood overlay after exiting flood animation.
+   * @private
+   */
+  _restoreFloodOverlay() {
+    const currentYear = this.getCurrentYear();
+    if (dataCache.floods) {
+      this.renderFilteredData('floods', currentYear);
+      console.log('OverlayController: Restored flood overlay');
     }
   },
 
@@ -1205,6 +2431,105 @@ export const OverlayController = {
       this.renderFilteredData('hurricanes', currentYear);
       console.log('OverlayController: Restored hurricane overlay');
     }
+  },
+
+  /**
+   * Handle hurricane track drill-down animation.
+   * Fetches detailed track data and shows animated path.
+   * @param {string} stormId - Storm ID
+   * @param {string} stormName - Storm name
+   * @param {Object} props - Storm properties
+   */
+  async handleHurricaneDrillDown(stormId, stormName, props) {
+    console.log(`OverlayController: Starting hurricane drill-down for ${stormName} (${stormId})`);
+
+    // Hide popup
+    MapAdapter?.hidePopup?.();
+    MapAdapter.popupLocked = false;
+
+    // Fetch track data
+    const trackUrl = OVERLAY_ENDPOINTS.hurricanes.trackEndpoint.replace('{storm_id}', stormId);
+    try {
+      const response = await fetch(trackUrl);
+      const data = await response.json();
+
+      if (!data || (!data.positions && !data.features)) {
+        console.warn('OverlayController: No track data for storm', stormId);
+        return;
+      }
+
+      // Normalize to positions array
+      let positions = data.positions;
+      if (!positions && data.features) {
+        // FeatureCollection format
+        positions = data.features.map(f => ({
+          timestamp: f.properties.timestamp,
+          latitude: f.geometry.coordinates[1],
+          longitude: f.geometry.coordinates[0],
+          wind_kt: f.properties.wind_kt,
+          category: f.properties.category,
+          ...f.properties
+        }));
+      }
+
+      if (!positions || positions.length === 0) {
+        console.warn('OverlayController: Empty track positions for storm', stormId);
+        return;
+      }
+
+      // Hide hurricane overlay to focus on this track
+      this._hideHurricaneOverlay();
+
+      // Use TrackAnimator for proper animation with moving marker and wind radii
+      TrackAnimator.start(stormId, positions, {
+        stormName,
+        onExit: () => {
+          console.log('TrackAnimator: Animation exited');
+          this._restoreHurricaneOverlay();
+          this.recalculateTimeRange();
+        }
+      });
+
+      // Add exit button (TrackAnimator handles its own TimeSlider setup)
+      this._addGenericExitButton('track-exit-btn', 'Exit Track View', '#9c27b0', () => this._exitTrackDrillDown());
+
+      console.log(`OverlayController: Hurricane track animation started (${positions.length} positions)`);
+    } catch (err) {
+      console.error('OverlayController: Error fetching hurricane track:', err);
+    }
+  },
+
+  /**
+   * Exit track drill-down and restore hurricane overlay.
+   * @private
+   */
+  _exitTrackDrillDown() {
+    console.log('OverlayController: Exiting track drill-down');
+
+    // Stop TrackAnimator (handles all cleanup including TimeSlider scale)
+    if (TrackAnimator.isActive) {
+      TrackAnimator.stop();
+    }
+
+    // Also clear track model layers in case they were used
+    const trackModel = ModelRegistry?.getModel('track');
+    if (trackModel?.clear) {
+      trackModel.clear();
+    }
+
+    // Exit event animation mode
+    if (TimeSlider?.exitEventAnimation) {
+      TimeSlider.exitEventAnimation();
+    }
+
+    // Remove exit button
+    document.getElementById('track-exit-btn')?.remove();
+
+    // Restore hurricane overlay
+    this._restoreHurricaneOverlay();
+
+    // Recalculate time range
+    this.recalculateTimeRange();
   },
 
   /**

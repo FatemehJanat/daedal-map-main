@@ -24,9 +24,9 @@ const TYPE_TO_MODEL = {
   cyclone: 'track',
   storm_track: 'track',
 
-  // Polygon events (Model C)
+  // Polygon events (Model C) - but using point-radius for overview
   wildfire: 'point-radius',  // Points for overview, perimeter on-demand for animation
-  flood: 'polygon',
+  flood: 'point-radius',     // Points for overview, polygon on-demand for animation
   ash_cloud: 'polygon',
   drought_area: 'polygon'
 };
@@ -38,16 +38,64 @@ const models = {
   'polygon': PolygonModel
 };
 
+// Listener reference for cleanup
+let _sequenceListener = null;
+
 export const ModelRegistry = {
   /**
-   * Set dependencies on all models
+   * Set dependencies on all models and setup central dispatcher
    */
   setDependencies(deps) {
     // Wire dependencies to each model
     setPointDeps(deps);
     setTrackDeps(deps);
     setPolygonDeps(deps);
-    console.log('ModelRegistry: Dependencies set');
+
+    // Setup central sequence dispatcher
+    this.setupSequenceDispatcher();
+
+    console.log('ModelRegistry: Dependencies set, sequence dispatcher initialized');
+  },
+
+  /**
+   * Setup central dispatcher for disaster-sequence-request events.
+   * Routes to appropriate model based on TYPE_TO_MODEL mapping.
+   */
+  setupSequenceDispatcher() {
+    // Remove existing listener if any
+    if (_sequenceListener) {
+      document.removeEventListener('disaster-sequence-request', _sequenceListener);
+    }
+
+    // Create new listener
+    _sequenceListener = async (e) => {
+      const { eventId, eventType, props } = e.detail;
+
+      // Get the appropriate model for this event type
+      const model = this.getModelForType(eventType);
+
+      if (model && typeof model.handleSequence === 'function') {
+        try {
+          await model.handleSequence(eventId, eventType, props);
+        } catch (err) {
+          console.error(`ModelRegistry: Error in handleSequence for ${eventType}:`, err);
+        }
+      } else {
+        console.warn(`ModelRegistry: No handleSequence() for event type: ${eventType}`);
+      }
+    };
+
+    document.addEventListener('disaster-sequence-request', _sequenceListener);
+  },
+
+  /**
+   * Cleanup dispatcher listener
+   */
+  cleanup() {
+    if (_sequenceListener) {
+      document.removeEventListener('disaster-sequence-request', _sequenceListener);
+      _sequenceListener = null;
+    }
   },
 
   /**

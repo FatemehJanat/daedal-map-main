@@ -43,7 +43,7 @@ export const TIME_SYSTEM = {
   BASE_STEP_MS: 6 * 60 * 60 * 1000,  // 21,600,000
 
   // Speed slider range (steps per frame)
-  MIN_STEPS_PER_FRAME: 0.0011,  // ~6min/sec - slow enough for fine-grained animations (tsunamis)
+  MIN_STEPS_PER_FRAME: 0.000185,  // ~1min/sec - slow enough for short tornado sequences
   MAX_STEPS_PER_FRAME: 1460,    // ~1 year per frame (fastest - overview)
 
   // Rendering

@@ -122,20 +122,68 @@ def fips_to_loc_id(state_fips, cz_fips):
     return f"USA-{state_abbr}-{full_fips}"
 
 
+def calculate_tornado_radii(tor_length, tor_width, ef_scale):
+    """
+    Calculate dual radii for tornado visualization (matches earthquake/volcano pattern).
+
+    Returns:
+        tuple: (felt_radius_km, damage_radius_km)
+        - felt_radius_km: Broader impact zone based on track length
+        - damage_radius_km: Actual tornado damage width
+    """
+    # Default EF scale radii in meters (from Fujita-Pearson data)
+    EF_RADII_M = {
+        0: 8,     # EF0: ~16m wide path
+        1: 25,    # EF1: ~50m wide path
+        2: 80,    # EF2: ~160m wide path
+        3: 200,   # EF3: ~400m wide path
+        4: 500,   # EF4: ~1km wide path
+        5: 1200   # EF5: ~2.4km wide path
+    }
+
+    # Calculate damage_radius_km from tornado_width_yd
+    if pd.notna(tor_width) and tor_width > 0:
+        # yards to km: yards * 0.0009144, then half for radius
+        damage_radius_km = (tor_width * 0.0009144) / 2
+    else:
+        # Fall back to EF scale default
+        scale_num = 0
+        if pd.notna(ef_scale):
+            scale_str = str(ef_scale).upper()
+            for i in range(6):
+                if str(i) in scale_str:
+                    scale_num = i
+                    break
+        damage_radius_km = EF_RADII_M.get(scale_num, 8) / 1000  # meters to km
+
+    # Calculate felt_radius_km from track length
+    if pd.notna(tor_length) and tor_length > 0:
+        # miles to km, then half for radius
+        felt_radius_km = (tor_length * 1.60934) / 2
+    else:
+        felt_radius_km = 5.0  # Default 5 km
+
+    # Ensure felt >= damage (impact zone should be larger than damage zone)
+    if felt_radius_km < damage_radius_km:
+        felt_radius_km = damage_radius_km * 2
+
+    return felt_radius_km, damage_radius_km
+
+
 def calculate_event_radius_km(event_type, magnitude, tor_length, tor_width):
     """
     Calculate approximate event radius in km for visualization.
 
     Different event types have different spatial extents.
+    Note: For tornadoes, use calculate_tornado_radii() for dual radii.
     """
     event_type_upper = str(event_type).upper() if pd.notna(event_type) else ""
 
-    # Tornado - use reported length/width
+    # Tornado - handled separately by calculate_tornado_radii
     if 'TORNADO' in event_type_upper:
-        if pd.notna(tor_length) and pd.notna(tor_width):
-            # Radius as average of length and width (converted from miles to km)
-            return ((tor_length + tor_width) / 2) * 1.60934
-        return 5.0  # Default 5 km for tornadoes without size data
+        # Return felt_radius for backwards compatibility
+        felt, _ = calculate_tornado_radii(tor_length, tor_width, None)
+        return felt
 
     # Hail - magnitude is hail size in inches, convert to damage radius
     if 'HAIL' in event_type_upper:
@@ -227,16 +275,29 @@ def process_storm_details():
                 df_with_loc.loc[future_mask, 'event_time'] - pd.DateOffset(years=100)
             )
 
-            # Calculate event radius
-            df_with_loc['event_radius_km'] = df_with_loc.apply(
-                lambda row: calculate_event_radius_km(
-                    row['EVENT_TYPE'],
-                    row.get('MAGNITUDE'),
-                    row.get('TOR_LENGTH'),
-                    row.get('TOR_WIDTH')
-                ),
-                axis=1
-            )
+            # Calculate dual radii for tornadoes (felt + damage)
+            def calc_radii(row):
+                event_type = str(row['EVENT_TYPE']).upper() if pd.notna(row['EVENT_TYPE']) else ""
+                if 'TORNADO' in event_type:
+                    felt, damage = calculate_tornado_radii(
+                        row.get('TOR_LENGTH'),
+                        row.get('TOR_WIDTH'),
+                        row.get('TOR_F_SCALE')
+                    )
+                    return pd.Series({'felt_radius_km': felt, 'damage_radius_km': damage})
+                else:
+                    # Non-tornado: use single radius for both
+                    radius = calculate_event_radius_km(
+                        row['EVENT_TYPE'],
+                        row.get('MAGNITUDE'),
+                        row.get('TOR_LENGTH'),
+                        row.get('TOR_WIDTH')
+                    )
+                    return pd.Series({'felt_radius_km': radius, 'damage_radius_km': radius})
+
+            radii = df_with_loc.apply(calc_radii, axis=1)
+            df_with_loc['felt_radius_km'] = radii['felt_radius_km']
+            df_with_loc['damage_radius_km'] = radii['damage_radius_km']
 
             # Create loc_id
             df_with_loc['loc_id'] = df_with_loc.apply(
@@ -248,7 +309,7 @@ def process_storm_details():
             events = df_with_loc[[
                 'EVENT_ID', 'event_time', 'EVENT_TYPE',
                 'latitude', 'longitude', 'end_latitude', 'end_longitude',
-                'event_radius_km',
+                'felt_radius_km', 'damage_radius_km',
                 'MAGNITUDE', 'MAGNITUDE_TYPE',
                 'TOR_F_SCALE', 'TOR_LENGTH', 'TOR_WIDTH',
                 'DEATHS_DIRECT', 'DEATHS_INDIRECT',
@@ -257,11 +318,11 @@ def process_storm_details():
                 'BEGIN_LOCATION', 'loc_id'
             ]].copy()
 
-            # Rename columns to match unified event schema (data_import.md)
+            # Rename columns to match unified event schema (DISASTER_DISPLAY.md)
             events.columns = [
                 'event_id', 'timestamp', 'event_type',
                 'latitude', 'longitude', 'end_latitude', 'end_longitude',
-                'event_radius_km',
+                'felt_radius_km', 'damage_radius_km',
                 'magnitude', 'magnitude_type',
                 'tornado_scale', 'tornado_length_mi', 'tornado_width_yd',
                 'deaths_direct', 'deaths_indirect',
@@ -367,7 +428,7 @@ def haversine_km(lon1, lat1, lon2, lat2):
     return 2 * 6371 * asin(sqrt(a))
 
 
-def link_tornado_sequences(df, time_window_hours=3, distance_km=50):
+def link_tornado_sequences(df, time_window_hours=1, distance_km=10):
     """
     Link tornadoes into sequences (same storm system).
 
@@ -378,12 +439,20 @@ def link_tornado_sequences(df, time_window_hours=3, distance_km=50):
     - Chains are built by walking forward/backward through links
     - Each sequence gets a unique sequence_id based on the earliest tornado
 
+    Official NWS Standard (for reference - we use looser values for storm system tracking):
+    - NWS considers same tornado segment if: lifts < 4 minutes AND < 2 miles (3.2 km)
+    - NWS considers separate tornado if: lifts >= 4 minutes OR >= 2 miles
+    - Source: https://www.ncei.noaa.gov/stormevents/faq.jsp
+
+    Current defaults (1 hr, 10 km) are looser to capture same supercell/storm system,
+    not just official tornado segments. Adjust as needed:
+    - Stricter (NWS-like): time_window_hours=0.1, distance_km=3.2
+    - Looser (outbreak tracking): time_window_hours=3, distance_km=50
+
     Adds columns:
     - sequence_id: ID of the sequence (event_id of earliest tornado in chain)
     - sequence_position: Position in sequence (1 = first, 2 = second, etc.)
     - sequence_count: Total tornadoes in this sequence
-
-    Similar to earthquake aftershock linking in convert_global_earthquakes.py
     """
     print("\nLinking tornado sequences...")
 
@@ -529,7 +598,8 @@ def save_events_parquet(df):
     df['longitude'] = df['longitude'].round(4)
     df['end_latitude'] = df['end_latitude'].round(4)
     df['end_longitude'] = df['end_longitude'].round(4)
-    df['event_radius_km'] = df['event_radius_km'].round(1)
+    df['felt_radius_km'] = df['felt_radius_km'].round(2)
+    df['damage_radius_km'] = df['damage_radius_km'].round(4)  # More precision for small tornado widths
 
     # Handle tornado columns (may be NaN)
     df['tornado_length_mi'] = df['tornado_length_mi'].fillna(0).round(1)
@@ -571,7 +641,7 @@ def save_events_parquet(df):
     df['sequence_position'] = df['sequence_position'].astype('Int32')
     df['sequence_count'] = df['sequence_count'].astype('Int32')
 
-    # Define schema (follows unified event schema from data_import.md)
+    # Define schema (follows unified event schema from DISASTER_DISPLAY.md)
     schema = pa.schema([
         ('event_id', pa.int64()),
         ('timestamp', pa.timestamp('us')),  # Use 'timestamp' per unified schema
@@ -580,7 +650,8 @@ def save_events_parquet(df):
         ('longitude', pa.float32()),
         ('end_latitude', pa.float32()),      # Tornado track end point
         ('end_longitude', pa.float32()),     # Tornado track end point
-        ('event_radius_km', pa.float32()),
+        ('felt_radius_km', pa.float32()),    # Broader impact zone
+        ('damage_radius_km', pa.float32()),  # Actual damage width
         ('magnitude', pa.float32()),
         ('magnitude_type', pa.string()),
         ('tornado_scale', pa.string()),      # EF0-EF5 or F0-F5
@@ -638,11 +709,17 @@ def print_statistics(df):
     print(f"  Total crop damage: ${df['damage_crops'].sum()/1e9:.2f}B")
     print(f"  Combined total: ${total_damage/1e9:.2f}B")
 
-    print("\nEvent Radius Distribution:")
-    print(f"  Min: {df['event_radius_km'].min():.1f} km")
-    print(f"  Max: {df['event_radius_km'].max():.1f} km")
-    print(f"  Mean: {df['event_radius_km'].mean():.1f} km")
-    print(f"  Median: {df['event_radius_km'].median():.1f} km")
+    print("\nFelt Radius Distribution:")
+    print(f"  Min: {df['felt_radius_km'].min():.2f} km")
+    print(f"  Max: {df['felt_radius_km'].max():.2f} km")
+    print(f"  Mean: {df['felt_radius_km'].mean():.2f} km")
+    print(f"  Median: {df['felt_radius_km'].median():.2f} km")
+
+    print("\nDamage Radius Distribution:")
+    print(f"  Min: {df['damage_radius_km'].min():.4f} km")
+    print(f"  Max: {df['damage_radius_km'].max():.4f} km")
+    print(f"  Mean: {df['damage_radius_km'].mean():.4f} km")
+    print(f"  Median: {df['damage_radius_km'].median():.4f} km")
 
 
 def main():

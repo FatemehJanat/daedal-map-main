@@ -11,12 +11,15 @@
  */
 
 import { CONFIG } from '../config.js';
+import { DisasterPopup } from '../disaster-popup.js';
 
 // Dependencies set via setDependencies
 let MapAdapter = null;
+let TimeSlider = null;
 
 export function setDependencies(deps) {
-  MapAdapter = deps.MapAdapter;
+  if (deps.MapAdapter) MapAdapter = deps.MapAdapter;
+  if (deps.TimeSlider) TimeSlider = deps.TimeSlider;
 }
 
 export const TrackModel = {
@@ -25,6 +28,12 @@ export const TrackModel = {
 
   // Click handler reference for cleanup
   clickHandler: null,
+
+  // Drill-down callback for popup sequence button
+  _drillDownCallback: null,
+
+  // Event listener reference for cleanup
+  _sequenceListener: null,
 
   /**
    * Build category color expression for MapLibre.
@@ -97,6 +106,9 @@ export const TrackModel = {
       this._renderPointMarkers(map, categoryColorExpr, options);
     }
 
+    // Set up popup event listeners for sequence button
+    this._setupPopupEventListeners();
+
     console.log(`TrackModel: Loaded ${geojson.features.length} ${eventType} ${isLineString ? 'tracks' : 'markers'}`);
   },
 
@@ -165,29 +177,32 @@ export const TrackModel = {
       }
     });
 
-    // Click handler for track lines
-    const clickCallback = options.onEventClick || options.onStormClick;
-    if (clickCallback) {
-      this.clickHandler = (e) => {
-        if (e.features.length > 0) {
-          const feature = e.features[0];
-          const props = feature.properties;
-          // Use first point of track (genesis location) for popup position
-          // This is more predictable than click location for line features
-          let coords = null;
-          if (feature.geometry?.coordinates?.length > 0) {
-            const firstPoint = feature.geometry.coordinates[0];
-            coords = Array.isArray(firstPoint[0]) ? firstPoint[0] : firstPoint;
-          }
-          // Fallback to click location if no geometry
-          if (!coords && e.lngLat) {
-            coords = [e.lngLat.lng, e.lngLat.lat];
-          }
-          clickCallback(props, coords);
+    // Store drill-down callback for popup sequence button
+    this._drillDownCallback = options.onEventClick || options.onStormClick;
+
+    // Click handler for track lines - show unified popup
+    this.clickHandler = (e) => {
+      if (TimeSlider?.isPlaying) return;
+      if (e.features.length > 0) {
+        const feature = e.features[0];
+        const props = feature.properties;
+        // Use first point of track (genesis location) for popup position
+        let coords = null;
+        if (feature.geometry?.coordinates?.length > 0) {
+          const firstPoint = feature.geometry.coordinates[0];
+          coords = Array.isArray(firstPoint[0]) ? firstPoint[0] : firstPoint;
         }
-      };
-      map.on('click', CONFIG.layers.hurricaneCircle + '-lines', this.clickHandler);
-    }
+        // Fallback to click location if no geometry
+        if (!coords && e.lngLat) {
+          coords = [e.lngLat.lng, e.lngLat.lat];
+        }
+        // Show unified disaster popup
+        if (coords) {
+          DisasterPopup.show(coords, props, 'hurricane');
+        }
+      }
+    };
+    map.on('click', CONFIG.layers.hurricaneCircle + '-lines', this.clickHandler);
 
     // Hover cursor for lines
     map.on('mouseenter', CONFIG.layers.hurricaneCircle + '-lines', () => {
@@ -250,21 +265,27 @@ export const TrackModel = {
       }
     });
 
-    // Setup click handler
-    const clickCallback = options.onEventClick || options.onStormClick;
-    if (clickCallback) {
-      this.clickHandler = (e) => {
-        if (e.features.length > 0) {
-          const feature = e.features[0];
-          const props = feature.properties;
-          // Use exact feature geometry for popup position
-          const coords = feature.geometry?.coordinates ||
-            (e.lngLat ? [e.lngLat.lng, e.lngLat.lat] : null);
-          clickCallback(props, coords);
-        }
-      };
-      map.on('click', CONFIG.layers.hurricaneCircle, this.clickHandler);
+    // Store drill-down callback for popup sequence button (if not already set)
+    if (!this._drillDownCallback) {
+      this._drillDownCallback = options.onEventClick || options.onStormClick;
     }
+
+    // Click handler for point markers - show unified popup
+    this.clickHandler = (e) => {
+      if (TimeSlider?.isPlaying) return;
+      if (e.features.length > 0) {
+        const feature = e.features[0];
+        const props = feature.properties;
+        // Use exact feature geometry for popup position
+        const coords = feature.geometry?.coordinates ||
+          (e.lngLat ? [e.lngLat.lng, e.lngLat.lat] : null);
+        // Show unified disaster popup
+        if (coords) {
+          DisasterPopup.show(coords, props, 'hurricane');
+        }
+      }
+    };
+    map.on('click', CONFIG.layers.hurricaneCircle, this.clickHandler);
 
     // Hover cursor
     map.on('mouseenter', CONFIG.layers.hurricaneCircle, () => {
@@ -440,6 +461,9 @@ export const TrackModel = {
     if (!MapAdapter?.map) return;
 
     const map = MapAdapter.map;
+
+    // Clean up popup event listeners
+    this._cleanupPopupEventListeners();
 
     // Remove click handlers (for both points and lines)
     if (this.clickHandler) {
@@ -792,5 +816,45 @@ export const TrackModel = {
   updateWindRadii(position) {
     // For now, just re-render (could optimize to update source data)
     this.renderWindRadii(position);
+  },
+
+  /**
+   * Handle sequence animation request from central dispatcher.
+   * Called by ModelRegistry when disaster-sequence-request event fires.
+   * @param {string} eventId - Event ID
+   * @param {string} eventType - Event type (hurricane, typhoon, cyclone)
+   * @param {Object} props - Event properties from the clicked feature
+   */
+  async handleSequence(eventId, eventType, props) {
+    // Extract storm info
+    const stormId = props.storm_id || eventId;
+    const stormName = props.name || 'Unknown Storm';
+
+    console.log(`TrackModel: Hurricane sequence request: ${stormId} (${stormName})`);
+
+    // Dispatch custom event for drill-down (preferred method)
+    // This allows any listener to handle the drill-down animation
+    document.dispatchEvent(new CustomEvent('track-drill-down', {
+      detail: { stormId, stormName, eventType, props }
+    }));
+  },
+
+  /**
+   * Set up event listeners for popup buttons.
+   * NOTE: disaster-sequence-request is now handled by ModelRegistry central dispatcher
+   * which routes to this model's handleSequence() method.
+   * This method is kept for backwards compatibility but no longer adds listeners.
+   */
+  _setupPopupEventListeners() {
+    // No-op: Sequence requests now handled by ModelRegistry.setupSequenceDispatcher()
+    // which calls this.handleSequence() for hurricane/typhoon/cyclone types
+  },
+
+  /**
+   * Clean up popup event listeners and callbacks.
+   */
+  _cleanupPopupEventListeners() {
+    // NOTE: Sequence listener cleanup now handled by ModelRegistry.cleanup()
+    this._drillDownCallback = null;
   }
 };

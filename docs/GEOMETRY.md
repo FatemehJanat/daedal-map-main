@@ -2,6 +2,11 @@
 
 The geometry layer is the **source of truth** for all locations. Every indicator dataset joins to geometry via `loc_id`.
 
+**Related docs:**
+- [DISASTER_DISPLAY.md](DISASTER_DISPLAY.md) - Disaster event schemas, display models
+- [MAPPING.md](MAPPING.md) - Frontend visualization, time slider
+- [data_import.md](data_import.md) - Quick reference for creating converters
+
 **Builder**: `mapmover/process_gadm.py`
 **Output**: `county-map-data/geometry/`
 **Source**: GADM 4.1 (gadm_410.gpkg)
@@ -651,7 +656,7 @@ Events that move through space over time.
 **Track data schema (hurricanes/cyclones):**
 ```
 storm_id     | string    | e.g., "AL092022" (Atlantic #9, 2022)
-storm_name   | string    | e.g., "IAN"
+name         | string    | e.g., "IAN"
 point_time   | timestamp | Time of this track point
 latitude     | float32   | Position latitude
 longitude    | float32   | Position longitude

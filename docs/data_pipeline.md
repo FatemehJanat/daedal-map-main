@@ -1,10 +1,11 @@
 # Data Pipeline
 
-Detailed documentation for data schemas, metadata, folder structure, and pipeline architecture.
+Folder structure, metadata schemas, and pipeline routing documentation.
 
-**Quick reference for creating converters**: See [data_import.md](data_import.md)
-**Disaster visualization system**: See [DISASTER_DISPLAY.md](DISASTER_DISPLAY.md)
-**Geometry & loc_id**: See [GEOMETRY.md](GEOMETRY.md)
+**Related docs:**
+- [data_import.md](data_import.md) - Quick reference for creating converters
+- [DISASTER_DISPLAY.md](DISASTER_DISPLAY.md) - **Complete disaster schemas**, display models, API endpoints
+- [GEOMETRY.md](GEOMETRY.md) - loc_id specification, water body codes, geometry system
 
 **Code locations**:
 - Converters: `data_converters/`
@@ -75,328 +76,33 @@ See also: [DISASTER_DISPLAY.md](DISASTER_DISPLAY.md) for frontend rendering of e
 
 ## Event Data Format
 
-Event-based data (earthquakes, hurricanes, wildfires, etc.) uses a unified schema to support both historical browsing and live streaming displays.
+Event-based data (earthquakes, hurricanes, wildfires, etc.) uses a unified schema. For complete schema definitions, see [DISASTER_DISPLAY.md - Complete Parquet Schemas](DISASTER_DISPLAY.md#complete-parquet-schemas).
 
-### Core Event Columns (Required)
+**Quick Reference - Core Columns (Required for all events):**
 
-All event parquet files MUST have these columns:
-
-| Column | Type | Description | Example |
-|--------|------|-------------|---------|
-| `event_id` | string | Unique identifier for the event | `eq_2024_001`, `hur_AL012024` |
-| `timestamp` | datetime64 | Event time (UTC, ISO 8601) | `2024-03-15T14:30:00Z` |
-| `latitude` | float64 | Event latitude (WGS84) | `34.0522` |
-| `longitude` | float64 | Event longitude (WGS84) | `-118.2437` |
-| `event_type` | string | Event category | `earthquake`, `hurricane`, `wildfire` |
-| `loc_id` | string | Assigned location code | `USA-CA-6037` or `XOP` (Pacific) |
-
-### Optional Temporal Columns (Area-Based Events)
-
-Area-based events like wildfires and floods need additional temporal tracking for live displays:
-
-| Column | Type | Description | Example |
-|--------|------|-------------|---------|
-| `last_updated` | datetime64 | Most recent observation (UTC) | `2024-03-18T09:00:00Z` |
-| `status` | string | Event status (optional) | `active`, `contained`, `historical` |
-
-**Why `last_updated` matters:**
-
-Point events (earthquakes) are instantaneous. Track events (hurricanes) end when the last position is recorded. But area-based events (fires, floods) persist for days/weeks and need a way to determine "active" status.
-
-**Active Status Detection:**
-
-```python
-STALENESS_THRESHOLDS = {
-    'wildfire': timedelta(hours=48),   # FIRMS updates every 12h
-    'flood': timedelta(hours=24),      # Flood warnings refresh daily
-    'hurricane': timedelta(hours=12),  # NHC updates every 6h
-}
-
-def is_active(event, now=datetime.utcnow()):
-    threshold = STALENESS_THRESHOLDS.get(event['event_type'], timedelta(hours=24))
-    last_update = event.get('last_updated', event['timestamp'])
-    return (now - last_update) < threshold
-```
-
-**Historical vs Live Data:**
-
-| Mode | `timestamp` | `last_updated` | Status |
-|------|-------------|----------------|--------|
-| Historical | Event start | Same as timestamp (or null) | `historical` |
-| Live (active) | Event start | Recent datetime | `active` |
-| Live (ended) | Event start | Old datetime (stale) | `contained` |
-
-For historical archives, `last_updated` can be omitted or set equal to `timestamp`.
-
-### Current Data vs Unified Schema
-
-Several existing datasets use non-standard column names. This mapping shows what needs to be renamed:
-
-| Dataset | Current Column | Unified Column | Action Required |
-|---------|----------------|----------------|-----------------|
-| usgs_earthquakes | `time` | `timestamp` | RENAME |
-| usgs_earthquakes | `latitude` | `latitude` | OK |
-| usgs_earthquakes | `longitude` | `longitude` | OK |
-| hurricanes | `timestamp` | `timestamp` | OK |
-| hurricanes | `latitude` | `latitude` | OK |
-| hurricanes | `longitude` | `longitude` | OK |
-| wildfires | `ignition_date` | `timestamp` | RENAME (many NaT values) |
-| wildfires | `centroid_lat` | `latitude` | RENAME |
-| wildfires | `centroid_lon` | `longitude` | RENAME |
-| wildfires | (missing) | `event_type` | ADD = 'wildfire' |
-
-### Type-Specific Columns
-
-Beyond the core columns, each event type has specialized attributes:
-
-**Earthquakes:**
 | Column | Type | Description |
 |--------|------|-------------|
-| `magnitude` | float64 | Richter scale magnitude |
-| `depth_km` | float64 | Hypocenter depth in km |
-| `felt_radius_km` | float64 | Calculated felt radius (see formulas below) |
-| `damage_radius_km` | float64 | Calculated damage radius (see formulas below) |
-| `place` | string | Human-readable location description |
-| `sequence_id` | string | Groups mainshock with aftershocks |
-| `is_mainshock` | bool | True if this is the primary event in sequence |
-| `aftershock_count` | int | Number of aftershocks (mainshock only) |
+| `event_id` | string | Unique identifier |
+| `timestamp` | datetime64 | Event time (UTC) |
+| `latitude` | float64 | WGS84 latitude |
+| `longitude` | float64 | WGS84 longitude |
+| `event_type` | string | earthquake, hurricane, wildfire, etc. |
+| `loc_id` | string | Location code or water body code |
 
-**Event Sequences and Cross-Linking:**
+**Disaster-Specific Schemas:** See DISASTER_DISPLAY.md for:
+- Earthquake schema (magnitude, aftershock linking)
+- Tropical Storm schema (two-table: storms + positions)
+- Tsunami schema (two-table: events + runups)
+- Volcano schema (VEI, duration)
+- Tornado schema (track coordinates, sequence linking)
+- Wildfire/Flood schemas (polygon support)
+- Cross-event linking columns
+- Impact radius formulas
+- Live data API sources
 
-Events often occur in related sequences that can be explored together:
+**Event Metadata Note:**
 
-| Sequence Type | Primary Event | Related Events | Link Direction |
-|---------------|---------------|----------------|----------------|
-| Aftershocks | Mainshock earthquake | Aftershock earthquakes | Forward (days-weeks after) |
-| Volcanic seismicity | Eruption | Triggered earthquakes | Bidirectional (before/during/after) |
-| Tsunami trigger | Earthquake/eruption | Tsunami waves | Forward (minutes-hours after) |
-| Storm surge | Hurricane | Coastal flooding | Forward (during storm) |
-
-**Cross-event linking columns:**
-| Column | Type | Description |
-|--------|------|-------------|
-| `sequence_id` | string | Groups related events (e.g., `eq_2024_001_seq`) |
-| `parent_event_id` | string | Links to triggering event |
-| `link_type` | string | Relationship: `aftershock`, `triggered`, `caused_by` |
-
-**Time Windows for Cross-Linking:**
-- Earthquake aftershocks: 0-90 days after mainshock, within rupture length
-- Volcano -> earthquakes: 30 days before to 60 days after eruption start, 150km radius
-- Earthquake -> volcano: 60 days before earthquake, 150km radius (eruption precedes quake)
-- Earthquake -> tsunami: 0-24 hours after, coastal areas only
-
-**Hurricanes/Cyclones:**
-| Column | Type | Description |
-|--------|------|-------------|
-| `storm_id` | string | Unique storm identifier (e.g., `AL012024`) |
-| `wind_kt` | float64 | Maximum sustained wind speed (knots) |
-| `pressure_mb` | float64 | Central pressure (millibars) |
-| `category` | int | Saffir-Simpson category (0-5) |
-| `r34_ne/se/sw/nw` | float64 | 34-knot wind radii (nautical miles) |
-| `r50_ne/se/sw/nw` | float64 | 50-knot wind radii |
-| `r64_ne/se/sw/nw` | float64 | 64-knot wind radii |
-
-**Wildfires:**
-| Column | Type | Description |
-|--------|------|-------------|
-| `fire_name` | string | Fire name |
-| `fire_type` | string | Fire type classification |
-| `year` | int | Fire year (for aggregation) |
-| `burned_acres` | float64 | Total burned area |
-| `perimeter` | string | GeoJSON polygon of fire boundary |
-
-**Volcanoes:**
-| Column | Type | Description |
-|--------|------|-------------|
-| `vei` | int | Volcanic Explosivity Index (0-8) |
-| `volcano_name` | string | Volcano name |
-| `activity_type` | string | Type of eruption |
-| `felt_radius_km` | float64 | Calculated felt radius (see formulas below) |
-| `damage_radius_km` | float64 | Calculated damage radius (see formulas below) |
-| `end_date` | datetime64 | End of eruption (for continuous eruptions) |
-| `eruption_id` | string | Groups episodes of same continuous eruption |
-| `is_ongoing` | bool | True if eruption still active |
-
-**Continuous Eruptions:**
-
-Volcanic eruptions can span years or decades (e.g., Kilauea 1983-2018, 35 years). The Smithsonian GVP records these as single events with start/end dates. For cross-linking with earthquakes:
-
-- Short eruptions (<90 days): Use start date for time-window search
-- Long eruptions: Also search around end date and major phase changes
-- Ongoing eruptions: `is_ongoing=True`, no end_date
-
-**Future enhancement:** Break continuous eruptions into episodes for more granular cross-linking. Each episode would have its own timestamp but share an `eruption_id` with the parent event.
-
-**Tsunamis:**
-| Column | Type | Description |
-|--------|------|-------------|
-| `max_water_height_m` | float64 | Maximum water height |
-| `runup_m` | float64 | Runup measurement |
-| `cause` | string | Tsunami cause (earthquake, landslide, etc.) |
-
-### Impact Radius Formulas
-
-All point+radius events MUST pre-calculate `felt_radius_km` and `damage_radius_km` in the converter.
-The frontend displays these as concentric circles (felt=outer/lighter, damage=inner/bolder).
-
-**Earthquake Radii** (based on empirical seismological attenuation models):
-
-```python
-def calculate_felt_radius(magnitude, depth_km=None):
-    """Felt radius (MMI II-III) where shaking is noticeable."""
-    # Formula: R = 10^(0.44 * M - 0.29)
-    radius = 10 ** (0.44 * magnitude - 0.29)
-
-    # Depth correction: deeper quakes have smaller felt areas
-    if depth_km > 300:
-        radius *= 0.5  # Deep focus - 50% reduction
-    elif depth_km > 70:
-        radius *= 0.7  # Intermediate - 30% reduction
-    return radius
-
-def calculate_damage_radius(magnitude, depth_km=None):
-    """Damage radius (MMI VI+) where structural damage possible."""
-    if magnitude < 5.0:
-        return 0.0  # Only M5+ causes structural damage
-
-    # Formula: R = 10^(0.32 * M - 0.78)
-    radius = 10 ** (0.32 * magnitude - 0.78)
-
-    # Depth correction
-    if depth_km > 300:
-        radius *= 0.3
-    elif depth_km > 70:
-        radius *= 0.5
-    return radius
-```
-
-| Magnitude | Felt Radius | Damage Radius |
-|-----------|-------------|---------------|
-| M4.0 | ~30 km | 0 km |
-| M5.0 | ~80 km | ~7 km |
-| M6.0 | ~220 km | ~14 km |
-| M7.0 | ~620 km | ~29 km |
-| M8.0 | ~1700 km | ~60 km |
-
-**Volcano Radii** (based on VEI logarithmic scale - each step = 10x ejecta volume):
-
-```python
-def calculate_felt_radius_km(vei):
-    """Felt radius (ash fall, effects noticed)."""
-    # Formula: R = 5 * 10^(VEI * 0.33)
-    # Cube root of volume scaling: R ~ V^(1/3) ~ 10^(VEI/3)
-    return 5 * (10 ** (vei * 0.33))
-
-def calculate_damage_radius_km(vei):
-    """Damage radius (pyroclastic flows, heavy ashfall)."""
-    # Formula: R = 1 * 10^(VEI * 0.3)
-    return 1 * (10 ** (vei * 0.3))
-```
-
-| VEI | Felt Radius | Damage Radius | Example |
-|-----|-------------|---------------|---------|
-| 0 | ~5 km | ~1 km | Effusive lava |
-| 2 | ~23 km | ~4 km | Minor eruption |
-| 4 | ~105 km | ~16 km | Cataclysmic |
-| 5 | ~224 km | ~32 km | Mt St Helens 1980 |
-| 6 | ~478 km | ~63 km | Pinatubo 1991 |
-| 7 | ~1021 km | ~126 km | Tambora 1815 |
-
-### Live vs Historical Mode Compatibility
-
-The unified schema supports both modes:
-
-**Historical Mode:**
-- Query by time range: `WHERE timestamp BETWEEN start AND end`
-- Playback scrubbing uses `timestamp` for timeline position
-- Aggregation by `year` for choropleth displays
-
-**Live Mode:**
-- New events appended with current `timestamp`
-- Real-time filtering: `WHERE timestamp > last_fetch_time`
-- Same visualization code works for both modes
-
-### Live Data APIs
-
-Sources for real-time and periodic data updates:
-
-| Source | API/Feed | Update Frequency | Coverage |
-|--------|----------|------------------|----------|
-| **USGS Earthquakes** | https://earthquake.usgs.gov/fdsnws/event/1/ | Real-time (minutes) | Global M2.5+ |
-| **Smithsonian Volcanoes** | https://volcano.si.edu/geoserver/GVP-VOTW/ows (WFS) | Weekly | Global Holocene |
-| **NOAA Hurricanes** | https://www.nhc.noaa.gov/gis/ | 6-hourly during season | Atlantic/Pacific |
-| **NOAA Tsunamis** | https://www.ngdc.noaa.gov/hazard/tsu_db.shtml | As events occur | Global historical |
-| **NASA FIRMS (Fires)** | https://firms.modaps.eosdis.nasa.gov/api/ | Every 12 hours | Global active fires |
-| **NOAA Storm Events** | https://www.ncdc.noaa.gov/stormevents/ftp.jsp | Monthly | US only |
-
-**API Query Examples:**
-
-```bash
-# USGS: Earthquakes last 7 days, M4.5+
-curl "https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&starttime=$(date -d '7 days ago' +%Y-%m-%d)&minmagnitude=4.5"
-
-# USGS: Earthquakes near a point (volcano cross-linking)
-curl "https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&latitude=19.4&longitude=-155.3&maxradiuskm=150&minmagnitude=2.5"
-
-# Smithsonian: All Holocene eruptions (GeoJSON)
-curl "https://webservices.volcano.si.edu/geoserver/GVP-VOTW/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=GVP-VOTW:Smithsonian_VOTW_Holocene_Eruptions&outputFormat=application/json"
-```
-
-**Magnitude Thresholds:**
-
-| Magnitude | Detection | Events/Year (Global) | Storage Recommendation |
-|-----------|-----------|----------------------|------------------------|
-| M0-2 | Local only | Millions | Too many, skip |
-| **M2.5+** | USGS catalog | ~15,000 | Full archive |
-| M3.0+ | Good global | ~12,000 | Display threshold |
-| **M4.5+** | Detected anywhere | ~1,500 | Preload threshold |
-| M5.0+ | Always detected | ~1,000 | Significant events |
-
-### Data Migration
-
-To migrate existing data to unified schema:
-
-```python
-# Earthquakes: rename 'time' to 'timestamp'
-df = df.rename(columns={'time': 'timestamp'})
-df['event_type'] = 'earthquake'
-
-# Wildfires: rename location columns, handle missing timestamps
-df = df.rename(columns={
-    'ignition_date': 'timestamp',
-    'centroid_lat': 'latitude',
-    'centroid_lon': 'longitude'
-})
-df['event_type'] = 'wildfire'
-# Fill NaT timestamps with year-01-01 as fallback
-df['timestamp'] = df['timestamp'].fillna(
-    pd.to_datetime(df['year'].astype(str) + '-01-01')
-)
-```
-
-### Validation Rules
-
-When creating or modifying event data:
-
-1. `timestamp` MUST be valid datetime (not NaT for required events)
-2. `latitude` MUST be in range [-90, 90]
-3. `longitude` MUST be in range [-180, 180]
-4. `event_id` MUST be unique within the dataset
-5. `loc_id` MUST match geometry files OR be a valid water body code (XOP, XOA, etc.)
-
-**IMPORTANT: Event Source Metadata Requires Manual Attention**
-
-Event sources have a more complex structure that the standard metadata generator cannot fully auto-detect:
-
-1. **Multiple files**: Event sources have both `events.parquet` (individual events) AND `{COUNTRY}.parquet` (aggregates)
-2. **Metadata generator limitation**: The generator only introspects the aggregate parquet file - it cannot detect event file columns or temporal granularity
-3. **Manual metadata fields**: Event source metadata.json files need manual maintenance for:
-   - `files` section listing all parquet files
-   - `temporal_coverage.granularity` (often "daily" or "6h" for events, not "yearly")
-   - Event-specific column documentation (lat/lon, magnitude, event_id, etc.)
-4. **Different time fields**: Events use `timestamp` (ISO datetime), aggregates use `year` (integer)
-
-When regenerating metadata for all sources, **skip or manually review event sources** to avoid losing the `files` section and event-specific details. See [Event Data Format](#event-data-format) for the full event metadata schema.
+Event sources have multiple files (`events.parquet` + `{COUNTRY}.parquet`) that require manual metadata maintenance. When regenerating metadata, skip or manually review event sources to preserve the `files` section and event-specific details.
 
 ---
 

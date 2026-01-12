@@ -436,6 +436,84 @@ def create_events_parquet(eruptions_df, volcanoes_df):
     return events_out
 
 
+def link_to_earthquakes_and_tsunamis(events_df):
+    """Add cross-links to related earthquakes and tsunamis.
+
+    Links are bidirectional:
+    - Earthquakes have volcano_event_id -> use reverse lookup by volcano_number
+    - Tsunamis have volcano_id (= volcano_number) -> direct lookup
+    """
+    print("\nLinking volcanoes to earthquakes and tsunamis...")
+
+    # Initialize link columns
+    events_df['earthquake_event_ids'] = None
+    events_df['tsunami_event_ids'] = None
+
+    # Load earthquake data
+    eq_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/earthquakes/events.parquet")
+    ts_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tsunamis/events.parquet")
+
+    eq_linked = 0
+    ts_linked = 0
+
+    # EARTHQUAKES: Match by volcano_number = earthquake's volcano_event_id (Smithsonian number)
+    if eq_path.exists():
+        eq_df = pd.read_parquet(eq_path)
+        eq_with_vol = eq_df[eq_df['volcano_event_id'].notna()].copy()
+        print(f"  Earthquakes with volcano links: {len(eq_with_vol):,}")
+
+        # Build lookup: volcano_number (Smithsonian) -> list of earthquake_event_ids
+        vol_to_earthquakes = {}
+        for _, eq in eq_with_vol.iterrows():
+            vol_num = str(eq['volcano_event_id'])  # Already Smithsonian number
+            if vol_num not in vol_to_earthquakes:
+                vol_to_earthquakes[vol_num] = []
+            vol_to_earthquakes[vol_num].append(eq['event_id'])
+
+        # Apply links to volcano events
+        earthquake_links = []
+        for idx, row in events_df.iterrows():
+            vol_num = str(row['volcano_number'])
+            if vol_num in vol_to_earthquakes:
+                earthquake_links.append(','.join(vol_to_earthquakes[vol_num]))
+                eq_linked += 1
+            else:
+                earthquake_links.append(None)
+
+        events_df['earthquake_event_ids'] = earthquake_links
+        print(f"  Volcanoes linked to earthquakes: {eq_linked:,}")
+
+    # TSUNAMIS: Direct match - tsunami.volcano_id = volcano.volcano_number
+    # Note: tsunami volcano_id is string, volcano_number is int - convert for matching
+    if ts_path.exists():
+        ts_df = pd.read_parquet(ts_path)
+        ts_with_vol = ts_df[ts_df['volcano_id'].notna()].copy()
+        print(f"  Tsunamis with volcano links: {len(ts_with_vol):,}")
+
+        # Build lookup: volcano_number (as string) -> list of tsunami_event_ids
+        vol_to_tsunamis = {}
+        for _, ts in ts_with_vol.iterrows():
+            vol_num = str(ts['volcano_id'])  # Ensure string
+            if vol_num not in vol_to_tsunamis:
+                vol_to_tsunamis[vol_num] = []
+            vol_to_tsunamis[vol_num].append(ts['event_id'])
+
+        # Apply links to volcano events
+        tsunami_links = []
+        for idx, row in events_df.iterrows():
+            vol_num = str(row['volcano_number'])  # Convert to string for matching
+            if vol_num in vol_to_tsunamis:
+                tsunami_links.append(','.join(vol_to_tsunamis[vol_num]))
+                ts_linked += 1
+            else:
+                tsunami_links.append(None)
+
+        events_df['tsunami_event_ids'] = tsunami_links
+        print(f"  Volcanoes linked to tsunamis: {ts_linked:,}")
+
+    return events_df
+
+
 def create_country_aggregates(events_df):
     """Create GLOBAL.parquet with country-year aggregates."""
     print("\nCreating country-year aggregates...")
@@ -523,6 +601,14 @@ def main():
 
     # Create output files
     events_out = create_events_parquet(eruptions_df, volcanoes_with_loc)
+
+    # Add cross-links to earthquakes and tsunamis
+    events_out = link_to_earthquakes_and_tsunamis(events_out)
+
+    # Re-save with links (overwrites the initial save from create_events_parquet)
+    output_path = OUTPUT_DIR / "events.parquet"
+    save_parquet(events_out, output_path, description="global eruption events with cross-links")
+
     aggregates = create_country_aggregates(events_out)
 
     # Print statistics

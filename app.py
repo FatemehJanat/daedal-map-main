@@ -280,24 +280,42 @@ async def get_hurricane_track(storm_id: str):
         # Sort by timestamp
         storm_df = storm_df.sort_values('timestamp')
 
-        # Convert to list of dicts
-        positions = []
+        # Convert to GeoJSON FeatureCollection
+        features = []
         for _, row in storm_df.iterrows():
-            positions.append({
-                "timestamp": row['timestamp'].isoformat() if hasattr(row['timestamp'], 'isoformat') else str(row['timestamp']),
-                "latitude": float(row['latitude']),
-                "longitude": float(row['longitude']),
-                "wind_kt": int(row['wind_kt']) if pd.notna(row['wind_kt']) else None,
-                "pressure_mb": int(row['pressure_mb']) if pd.notna(row['pressure_mb']) else None,
-                "category": row['category'] if pd.notna(row['category']) else None,
-                "status": row['status'] if pd.notna(row['status']) else None,
-                "loc_id": row['loc_id'] if pd.notna(row['loc_id']) else None
+            ts = row['timestamp'].isoformat() if hasattr(row['timestamp'], 'isoformat') else str(row['timestamp'])
+            features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [float(row['longitude']), float(row['latitude'])]
+                },
+                "properties": {
+                    "timestamp": ts,
+                    "wind_kt": int(row['wind_kt']) if pd.notna(row['wind_kt']) else None,
+                    "pressure_mb": int(row['pressure_mb']) if pd.notna(row['pressure_mb']) else None,
+                    "category": row['category'] if pd.notna(row['category']) else None,
+                    "status": row['status'] if pd.notna(row['status']) else None,
+                    "loc_id": row['loc_id'] if pd.notna(row['loc_id']) else None
+                }
             })
 
+        # Get time range
+        time_start = storm_df['timestamp'].min()
+        time_end = storm_df['timestamp'].max()
+
         return JSONResponse(content={
-            "storm_id": storm_id,
-            "position_count": len(positions),
-            "positions": positions
+            "type": "FeatureCollection",
+            "features": features,
+            "metadata": {
+                "event_id": storm_id,
+                "event_type": "hurricane",
+                "total_count": len(features),
+                "time_range": {
+                    "start": time_start.isoformat() if hasattr(time_start, 'isoformat') else str(time_start),
+                    "end": time_end.isoformat() if hasattr(time_end, 'isoformat') else str(time_end)
+                }
+            }
         })
 
     except Exception as e:
@@ -447,7 +465,7 @@ async def get_earthquakes_geojson(year: int = None, min_magnitude: float = 5.0, 
 
     try:
         # Global earthquake data
-        events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/usgs_earthquakes/events.parquet")
+        events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/earthquakes/events.parquet")
 
         if not events_path.exists():
             return JSONResponse(content={"error": "Earthquake data not available"}, status_code=404)
@@ -524,7 +542,7 @@ async def get_earthquake_sequence(sequence_id: str, min_magnitude: float = None)
 
     try:
         # Global earthquake data
-        events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/usgs_earthquakes/events.parquet")
+        events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/earthquakes/events.parquet")
 
         if not events_path.exists():
             return JSONResponse(content={"error": "Earthquake data not available"}, status_code=404)
@@ -601,7 +619,7 @@ async def get_earthquake_aftershocks(event_id: str, min_magnitude: float = None)
 
     try:
         # Global earthquake data
-        events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/usgs_earthquakes/events.parquet")
+        events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/earthquakes/events.parquet")
 
         if not events_path.exists():
             return JSONResponse(content={"error": "Earthquake data not available"}, status_code=404)
@@ -664,8 +682,12 @@ async def get_earthquake_aftershocks(event_id: str, min_magnitude: float = None)
         return JSONResponse(content={
             "type": "FeatureCollection",
             "features": features,
-            "mainshock_id": event_id,
-            "aftershock_count": len(features) - 1
+            "metadata": {
+                "event_id": event_id,
+                "event_type": "earthquake",
+                "total_count": len(features),
+                "aftershock_count": len(features) - 1
+            }
         })
 
     except Exception as e:
@@ -853,7 +875,7 @@ async def get_tsunamis_geojson(year: int = None, min_year: int = 1900, cause: st
                     "eq_magnitude": float(row['eq_magnitude']) if pd.notna(row.get('eq_magnitude')) else None,
                     "max_water_height_m": float(row['max_water_height_m']) if pd.notna(row.get('max_water_height_m')) else None,
                     "intensity": float(row['intensity']) if pd.notna(row.get('intensity')) else None,
-                    "runup_count": int(row['num_runups']) if pd.notna(row.get('num_runups')) else 0,
+                    "runup_count": int(row['runup_count']) if pd.notna(row.get('runup_count')) else 0,
                     "deaths": int(row['deaths']) if pd.notna(row.get('deaths')) else None,
                     "damage_millions": float(row['damage_millions']) if pd.notna(row.get('damage_millions')) else None,
                     "loc_id": row.get('loc_id', ''),
@@ -955,6 +977,8 @@ async def get_tsunami_runups(event_id: str):
             "source": source_event,
             "metadata": {
                 "event_id": event_id,
+                "event_type": "tsunami",
+                "total_count": len(features),
                 "runup_count": len(features)
             }
         })
@@ -1043,6 +1067,8 @@ async def get_tsunami_animation_data(event_id: str):
             "features": features,
             "metadata": {
                 "event_id": event_id,
+                "event_type": "tsunami",
+                "total_count": len(features),
                 "source_timestamp": str(row['timestamp']) if pd.notna(row.get('timestamp')) else None,
                 "runup_count": len(features) - 1,
                 "animation_mode": "radial"
@@ -1085,7 +1111,7 @@ async def get_nearby_earthquakes(
     from datetime import datetime, timedelta
 
     try:
-        events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/usgs_earthquakes/events.parquet")
+        events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/earthquakes/events.parquet")
 
         if not events_path.exists():
             return JSONResponse(content={"error": "Earthquake data not available"}, status_code=404)
@@ -1420,8 +1446,8 @@ async def get_nearby_tsunamis(
                     "max_water_height_m": float(row['max_water_height_m']) if pd.notna(row.get('max_water_height_m')) else None,
                     "intensity": float(row['intensity']) if pd.notna(row.get('intensity')) else None,
                     "deaths": int(row['deaths']) if pd.notna(row.get('deaths')) else None,
-                    "num_runups": int(row['num_runups']) if pd.notna(row.get('num_runups')) else 0,
-                    "runup_count": int(row['num_runups']) if pd.notna(row.get('num_runups')) else 0,
+                    "num_runups": int(row['runup_count']) if pd.notna(row.get('num_runups')) else 0,
+                    "runup_count": int(row['runup_count']) if pd.notna(row.get('runup_count')) else 0,
                     "year": int(row['year']) if pd.notna(row.get('year')) else None,
                     "timestamp": str(row['timestamp']) if pd.notna(row.get('timestamp')) else None,
                     "country": row.get('country', ''),
@@ -1491,7 +1517,7 @@ async def get_wildfires_geojson(
 
         # Columns to read (exclude perimeter for fast initial load)
         columns = ['event_id', 'timestamp', 'latitude', 'longitude', 'area_km2',
-                   'burned_acres', 'duration_days', 'land_cover', 'source']
+                   'burned_acres', 'duration_days', 'land_cover', 'source', 'has_progression']
         if include_perimeter:
             columns.append('perimeter')
 
@@ -1554,7 +1580,8 @@ async def get_wildfires_geojson(
                     "land_cover": row.get('land_cover', ''),
                     "source": row.get('source', 'global_fire_atlas'),
                     "latitude": float(row['latitude']),
-                    "longitude": float(row['longitude'])
+                    "longitude": float(row['longitude']),
+                    "has_progression": bool(row.get('has_progression', False))
                 }
             })
 
@@ -1664,9 +1691,14 @@ async def get_wildfire_progression(event_id: str, year: int = None):
 
         if not prog_file.exists():
             return JSONResponse(content={
-                "event_id": event_id,
-                "snapshots": [],
-                "error": "No progression data available"
+                "type": "FeatureCollection",
+                "features": [],
+                "metadata": {
+                    "event_id": event_id,
+                    "event_type": "wildfire",
+                    "total_count": 0,
+                    "error": "No progression data available"
+                }
             })
 
         # Read progression data for this fire
@@ -1677,33 +1709,187 @@ async def get_wildfire_progression(event_id: str, year: int = None):
 
         if table.num_rows == 0:
             return JSONResponse(content={
-                "event_id": event_id,
-                "snapshots": [],
-                "error": "Fire not found in progression data"
+                "type": "FeatureCollection",
+                "features": [],
+                "metadata": {
+                    "event_id": event_id,
+                    "event_type": "wildfire",
+                    "total_count": 0,
+                    "error": "Fire not found in progression data"
+                }
             })
 
-        # Convert to list of snapshots
+        # Convert to GeoJSON FeatureCollection
         df = table.to_pandas()
         df = df.sort_values('day_num')
 
-        snapshots = []
+        features = []
         for _, row in df.iterrows():
             perimeter = json_lib.loads(row['perimeter']) if isinstance(row['perimeter'], str) else row['perimeter']
-            snapshots.append({
-                "date": row['date'].strftime('%Y-%m-%d') if hasattr(row['date'], 'strftime') else str(row['date']),
-                "day_num": int(row['day_num']),
-                "area_km2": float(row['area_km2']),
-                "geometry": perimeter
+            date_str = row['date'].strftime('%Y-%m-%d') if hasattr(row['date'], 'strftime') else str(row['date'])
+            features.append({
+                "type": "Feature",
+                "geometry": perimeter,
+                "properties": {
+                    "date": date_str,
+                    "day_num": int(row['day_num']),
+                    "area_km2": float(row['area_km2'])
+                }
             })
 
+        # Get time range from dates
+        time_start = df['date'].min()
+        time_end = df['date'].max()
+
         return JSONResponse(content={
-            "event_id": event_id,
-            "total_days": len(snapshots),
-            "snapshots": snapshots
+            "type": "FeatureCollection",
+            "features": features,
+            "metadata": {
+                "event_id": event_id,
+                "event_type": "wildfire",
+                "total_count": len(features),
+                "time_range": {
+                    "start": time_start.strftime('%Y-%m-%d') if hasattr(time_start, 'strftime') else str(time_start),
+                    "end": time_end.strftime('%Y-%m-%d') if hasattr(time_end, 'strftime') else str(time_end)
+                }
+            }
         })
 
     except Exception as e:
         logger.error(f"Error fetching wildfire progression: {e}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+# === Flood Data Endpoints ===
+
+@app.get("/api/floods/geojson")
+async def get_floods_geojson(
+    year: int = None,
+    min_year: int = 1985,
+    max_year: int = None,
+    include_geometry: bool = False
+):
+    """
+    Get global floods as GeoJSON for map display.
+    Data sources: Global Flood Database (2000-2018) + Dartmouth Flood Observatory (1985-2019).
+
+    Default: Returns flood events as points (centroid of flood extent).
+    Set include_geometry=true to load full flood extent polygons from GeoJSON files.
+
+    Query params:
+    - year: Filter to single year
+    - min_year: Start year (default 1985)
+    - max_year: End year (default current)
+    - include_geometry: Load flood extent polygons (slower, more data)
+    """
+    import pandas as pd
+    import json as json_lib
+
+    try:
+        events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/floods/events.parquet")
+        geometry_dir = Path("C:/Users/Bryan/Desktop/county-map-data/global/floods/geometries")
+
+        if not events_path.exists():
+            return JSONResponse(content={"error": "Flood data not available"}, status_code=404)
+
+        df = pd.read_parquet(events_path)
+
+        # Apply year filters
+        if year is not None:
+            df = df[df['year'] == year]
+        else:
+            if min_year:
+                df = df[df['year'] >= min_year]
+            if max_year:
+                df = df[df['year'] <= max_year]
+
+        # Build GeoJSON features
+        features = []
+        for _, row in df.iterrows():
+            if pd.isna(row.get('latitude')) or pd.isna(row.get('longitude')):
+                continue
+
+            event_id = row.get('event_id', '')
+
+            # Load geometry from GeoJSON file if requested
+            geom = None
+            if include_geometry and event_id:
+                geom_file = geometry_dir / f"flood_{event_id}.geojson"
+                if geom_file.exists():
+                    try:
+                        with open(geom_file, 'r') as f:
+                            geom_data = json_lib.load(f)
+                            if geom_data.get('geometry'):
+                                geom = geom_data['geometry']
+                    except Exception as e:
+                        logger.warning(f"Failed to load flood geometry {geom_file}: {e}")
+
+            # Fall back to point if no geometry loaded
+            if not geom:
+                geom = {"type": "Point", "coordinates": [float(row['longitude']), float(row['latitude'])]}
+
+            # Build properties
+            props = {
+                "event_id": event_id,
+                "year": int(row['year']) if pd.notna(row.get('year')) else None,
+                "timestamp": row['timestamp'].isoformat() if pd.notna(row.get('timestamp')) else None,
+                "end_timestamp": row['end_timestamp'].isoformat() if pd.notna(row.get('end_timestamp')) else None,
+                "duration_days": int(row['duration_days']) if pd.notna(row.get('duration_days')) else None,
+                "country": str(row.get('country', '')) if pd.notna(row.get('country')) else None,
+                "area_km2": float(row['area_km2']) if pd.notna(row.get('area_km2')) else None,
+                "severity": int(row['severity']) if pd.notna(row.get('severity')) else None,
+                "deaths": int(row['deaths']) if pd.notna(row.get('deaths')) else None,
+                "displaced": int(row['displaced']) if pd.notna(row.get('displaced')) else None,
+                "source": str(row.get('source', '')) if pd.notna(row.get('source')) else None,
+                "has_geometry": bool(row.get('has_geometry', False)),
+                "latitude": float(row['latitude']),
+                "longitude": float(row['longitude'])
+            }
+
+            features.append({
+                "type": "Feature",
+                "geometry": geom,
+                "properties": props
+            })
+
+        return JSONResponse(content={
+            "type": "FeatureCollection",
+            "features": features,
+            "metadata": {
+                "count": len(features),
+                "min_year": min_year,
+                "max_year": max_year or 2019,
+                "include_geometry": include_geometry
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching floods: {e}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+@app.get("/api/floods/{event_id}/geometry")
+async def get_flood_geometry(event_id: str):
+    """
+    Get the flood extent polygon for a specific flood event.
+    Returns the GeoJSON geometry for displaying the flooded area.
+    """
+    import json as json_lib
+
+    try:
+        geometry_dir = Path("C:/Users/Bryan/Desktop/county-map-data/global/floods/geometries")
+        geom_file = geometry_dir / f"flood_{event_id}.geojson"
+
+        if not geom_file.exists():
+            return JSONResponse(content={"error": f"Geometry not found for {event_id}"}, status_code=404)
+
+        with open(geom_file, 'r') as f:
+            geom_data = json_lib.load(f)
+
+        return JSONResponse(content=geom_data)
+
+    except Exception as e:
+        logger.error(f"Error fetching flood geometry: {e}")
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
 
@@ -1722,19 +1908,22 @@ async def get_tornadoes_geojson(year: int = None, min_year: int = 1990, min_scal
 
     Linked tornadoes are fetched on-demand via /api/tornadoes/{id}/sequence
     when user clicks "View tornado sequence".
+
+    Data sources: USA (NOAA 1950+), Canada (CNTD 1980-2009, NTP 2017+)
     """
     import pandas as pd
 
     try:
-        events_path = Path("C:/Users/Bryan/Desktop/county-map-data/countries/USA/noaa_storms/events.parquet")
+        # Global tornadoes dataset (USA + Canada)
+        events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tornadoes/events.parquet")
 
         if not events_path.exists():
             return JSONResponse(content={"error": "Tornado data not available"}, status_code=404)
 
         df = pd.read_parquet(events_path)
 
-        # Filter to tornadoes only
-        df = df[df['event_type'] == 'Tornado'].copy()
+        # Already filtered to tornadoes only in global dataset
+        df = df.copy()
 
         # Extract year from timestamp
         time_col = 'timestamp' if 'timestamp' in df.columns else 'time'
@@ -1776,18 +1965,6 @@ async def get_tornadoes_geojson(year: int = None, min_year: int = 1990, min_scal
             if pd.isna(row['latitude']) or pd.isna(row['longitude']):
                 continue
 
-            # Calculate display radius based on EF scale
-            scale = str(row.get('tornado_scale', '')).upper()
-            scale_num = 0
-            if scale:
-                try:
-                    scale_num = int(scale.replace('EF', '').replace('F', ''))
-                except:
-                    pass
-
-            # Larger radius for stronger tornadoes
-            display_radius = 3 + (scale_num * 2)  # 3-13 pixels based on EF0-EF5
-
             time_val = row.get('timestamp') or row.get('time')
 
             # Include sequence info so frontend knows if "View sequence" is available
@@ -1805,8 +1982,8 @@ async def get_tornadoes_geojson(year: int = None, min_year: int = 1990, min_scal
                     "tornado_scale": row.get('tornado_scale', ''),
                     "tornado_length_mi": float(row['tornado_length_mi']) if pd.notna(row.get('tornado_length_mi')) else 0,
                     "tornado_width_yd": int(row['tornado_width_yd']) if pd.notna(row.get('tornado_width_yd')) else 0,
-                    "event_radius_km": float(row['event_radius_km']) if pd.notna(row.get('event_radius_km')) else 5,
-                    "display_radius": display_radius,
+                    "felt_radius_km": float(row['felt_radius_km']) if pd.notna(row.get('felt_radius_km')) else 5,
+                    "damage_radius_km": float(row['damage_radius_km']) if pd.notna(row.get('damage_radius_km')) else 0.05,
                     "timestamp": str(time_val) if pd.notna(time_val) else None,
                     "year": int(row['year']) if 'year' in row and pd.notna(row['year']) else None,
                     "deaths_direct": int(row['deaths_direct']) if pd.notna(row.get('deaths_direct')) else 0,
@@ -1846,20 +2023,16 @@ async def get_tornado_detail(event_id: str):
     import pandas as pd
 
     try:
-        events_path = Path("C:/Users/Bryan/Desktop/county-map-data/countries/USA/noaa_storms/events.parquet")
+        # Global tornadoes dataset (USA + Canada)
+        events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tornadoes/events.parquet")
 
         if not events_path.exists():
             return JSONResponse(content={"error": "Tornado data not available"}, status_code=404)
 
         df = pd.read_parquet(events_path)
 
-        # Find the specific tornado
-        # event_id may be int or string
-        try:
-            event_id_int = int(event_id)
-            tornado = df[df['event_id'] == event_id_int]
-        except:
-            tornado = df[df['event_id'].astype(str) == str(event_id)]
+        # Find the specific tornado (event_id is always string in parquet)
+        tornado = df[df['event_id'].astype(str) == str(event_id)]
 
         if len(tornado) == 0:
             return JSONResponse(content={"error": "Tornado not found"}, status_code=404)
@@ -1869,17 +2042,21 @@ async def get_tornado_detail(event_id: str):
         # Build response with track data
         time_col = 'timestamp' if 'timestamp' in row.index else 'time'
         time_val = row.get(time_col)
+        timestamp_str = str(time_val) if pd.notna(time_val) else None
 
         # Calculate impact width in km (yards to km)
         width_km = (row.get('tornado_width_yd', 0) or 0) * 0.0009144
 
-        response = {
+        # Common properties for all features
+        props = {
             "event_id": str(row['event_id']),
             "tornado_scale": row.get('tornado_scale', ''),
             "tornado_length_mi": float(row['tornado_length_mi']) if pd.notna(row.get('tornado_length_mi')) else 0,
             "tornado_width_yd": int(row['tornado_width_yd']) if pd.notna(row.get('tornado_width_yd')) else 0,
+            "felt_radius_km": float(row['felt_radius_km']) if pd.notna(row.get('felt_radius_km')) else 5,
+            "damage_radius_km": float(row['damage_radius_km']) if pd.notna(row.get('damage_radius_km')) else 0.05,
             "width_km": width_km,
-            "timestamp": str(time_val) if pd.notna(time_val) else None,
+            "timestamp": timestamp_str,
             "deaths_direct": int(row['deaths_direct']) if pd.notna(row.get('deaths_direct')) else 0,
             "deaths_indirect": int(row['deaths_indirect']) if pd.notna(row.get('deaths_indirect')) else 0,
             "injuries_direct": int(row['injuries_direct']) if pd.notna(row.get('injuries_direct')) else 0,
@@ -1887,39 +2064,50 @@ async def get_tornado_detail(event_id: str):
             "damage_property": int(row['damage_property']) if pd.notna(row.get('damage_property')) else 0,
             "damage_crops": int(row['damage_crops']) if pd.notna(row.get('damage_crops')) else 0,
             "location": row.get('location', ''),
-            "loc_id": row.get('loc_id', ''),
-            # Track endpoints
-            "start": {
-                "latitude": float(row['latitude']),
-                "longitude": float(row['longitude'])
-            },
-            "end": {
-                "latitude": float(row['end_latitude']) if pd.notna(row.get('end_latitude')) else None,
-                "longitude": float(row['end_longitude']) if pd.notna(row.get('end_longitude')) else None
-            },
-            # GeoJSON LineString for track (if end point exists)
-            "track": None
+            "loc_id": row.get('loc_id', '')
         }
 
+        features = []
+
+        # Start point feature
+        start_lat = float(row['latitude'])
+        start_lon = float(row['longitude'])
+        features.append({
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [start_lon, start_lat]
+            },
+            "properties": {**props, "point_type": "start"}
+        })
+
         # Add track LineString if we have both endpoints
-        if response["end"]["latitude"] is not None and response["end"]["longitude"] is not None:
-            response["track"] = {
+        end_lat = float(row['end_latitude']) if pd.notna(row.get('end_latitude')) else None
+        end_lon = float(row['end_longitude']) if pd.notna(row.get('end_longitude')) else None
+
+        if end_lat is not None and end_lon is not None:
+            features.append({
                 "type": "Feature",
                 "geometry": {
                     "type": "LineString",
-                    "coordinates": [
-                        [response["start"]["longitude"], response["start"]["latitude"]],
-                        [response["end"]["longitude"], response["end"]["latitude"]]
-                    ]
+                    "coordinates": [[start_lon, start_lat], [end_lon, end_lat]]
                 },
-                "properties": {
-                    "event_id": response["event_id"],
-                    "tornado_scale": response["tornado_scale"],
-                    "width_km": width_km
+                "properties": {**props, "geometry_type": "track"}
+            })
+
+        return JSONResponse(content={
+            "type": "FeatureCollection",
+            "features": features,
+            "metadata": {
+                "event_id": str(row['event_id']),
+                "event_type": "tornado",
+                "total_count": len(features),
+                "time_range": {
+                    "start": timestamp_str,
+                    "end": timestamp_str
                 }
             }
-
-        return JSONResponse(content=response)
+        })
 
     except Exception as e:
         logger.error(f"Error fetching tornado detail: {e}")
@@ -1931,24 +2119,22 @@ async def get_tornado_sequence(event_id: str):
     """
     Get a sequence of linked tornadoes (same storm system).
     Uses pre-computed sequence_id from data import (like earthquake aftershocks).
+    Note: Sequences currently only available for USA tornadoes (1hr/10km linking).
     """
     import pandas as pd
 
     try:
-        events_path = Path("C:/Users/Bryan/Desktop/county-map-data/countries/USA/noaa_storms/events.parquet")
+        # Global tornadoes dataset (USA + Canada)
+        events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tornadoes/events.parquet")
 
         if not events_path.exists():
             return JSONResponse(content={"error": "Tornado data not available"}, status_code=404)
 
         df = pd.read_parquet(events_path)
-        df = df[df['event_type'] == 'Tornado'].copy()
+        # Already filtered to tornadoes only in global dataset
 
-        # Find the seed tornado
-        try:
-            event_id_int = int(event_id)
-            seed = df[df['event_id'] == event_id_int]
-        except:
-            seed = df[df['event_id'].astype(str) == str(event_id)]
+        # Find the seed tornado (event_id is always string in parquet)
+        seed = df[df['event_id'].astype(str) == str(event_id)]
 
         if len(seed) == 0:
             return JSONResponse(content={"error": "Tornado not found"}, status_code=404)
@@ -1981,16 +2167,6 @@ async def get_tornado_sequence(event_id: str):
             time_val = row.get('timestamp')
             raw_scale = row.get('tornado_scale', '')
             scale = str(raw_scale).upper() if pd.notna(raw_scale) else ''
-            scale_num = 0
-            if scale and scale != 'NAN':
-                try:
-                    scale_num = int(scale.replace('EF', '').replace('F', ''))
-                except:
-                    pass
-
-            # Calculate display radius for this tornado
-            width_km = (row.get('tornado_width_yd', 0) or 0) * 0.0009144
-            display_radius = max(width_km, 3 + (scale_num * 2))
 
             feature = {
                 "type": "Feature",
@@ -2001,9 +2177,10 @@ async def get_tornado_sequence(event_id: str):
                 "properties": {
                     "event_id": str(row.get('event_id', '')),
                     "tornado_scale": scale if scale else '',
-                    "path_length_miles": float(row['tornado_length_mi']) if pd.notna(row.get('tornado_length_mi')) else 0,
-                    "path_width_yards": int(row['tornado_width_yd']) if pd.notna(row.get('tornado_width_yd')) else 0,
-                    "display_radius": display_radius,
+                    "tornado_length_mi": float(row['tornado_length_mi']) if pd.notna(row.get('tornado_length_mi')) else 0,
+                    "tornado_width_yd": int(row['tornado_width_yd']) if pd.notna(row.get('tornado_width_yd')) else 0,
+                    "felt_radius_km": float(row['felt_radius_km']) if pd.notna(row.get('felt_radius_km')) else 5,
+                    "damage_radius_km": float(row['damage_radius_km']) if pd.notna(row.get('damage_radius_km')) else 0.05,
                     "timestamp": str(time_val) if pd.notna(time_val) else None,
                     "year": int(row['year']) if 'year' in row and pd.notna(row['year']) else None,
                     "deaths_direct": int(row['deaths_direct']) if pd.notna(row.get('deaths_direct')) else 0,
@@ -2013,11 +2190,11 @@ async def get_tornado_sequence(event_id: str):
                     "longitude": float(row['longitude']),
                     "end_latitude": float(row['end_latitude']) if pd.notna(row.get('end_latitude')) else None,
                     "end_longitude": float(row['end_longitude']) if pd.notna(row.get('end_longitude')) else None,
-                    "is_seed": bool(row['event_id'] == seed_row['event_id']),
+                    "is_seed": str(row.get('event_id', '')) == str(seed_row.get('event_id', '')),
                     "sequence_position": int(row['sequence_position']) if pd.notna(row.get('sequence_position')) else pos,
                     "sequence_count": int(row['sequence_count']) if pd.notna(row.get('sequence_count')) else len(sequence_df),
                     "event_type": "tornado",
-                    "location": str(row.get('location', '') or '')
+                    "location": str(row.get('location', '')) if pd.notna(row.get('location')) else ''
                 }
             }
 
@@ -2036,9 +2213,12 @@ async def get_tornado_sequence(event_id: str):
         return JSONResponse(content={
             "type": "FeatureCollection",
             "features": features,
-            "sequence_count": len(features),
-            "seed_event_id": str(seed_row['event_id']),
-            "sequence_id": str(sequence_id)
+            "metadata": {
+                "event_id": str(seed_row.get('event_id', '')),
+                "event_type": "tornado",
+                "total_count": len(features),
+                "sequence_id": str(sequence_id) if pd.notna(sequence_id) else None
+            }
         })
 
     except Exception as e:

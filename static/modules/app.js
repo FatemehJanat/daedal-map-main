@@ -18,6 +18,7 @@ import { HurricaneHandler, setDependencies as setHurricaneDeps } from './hurrica
 import { OverlaySelector, setDependencies as setOverlayDeps } from './overlay-selector.js';
 import { ModelRegistry } from './models/model-registry.js';
 import { OverlayController, setDependencies as setOverlayControllerDeps } from './overlay-controller.js';
+import { DisasterPopup, setDependencies as setDisasterPopupDeps } from './disaster-popup.js';
 
 // ============================================================================
 // APP - Main application controller
@@ -46,6 +47,7 @@ export const App = {
     setOverlayDeps({ MapAdapter, ModelRegistry });
     ModelRegistry.setDependencies({ MapAdapter, TimeSlider });
     setOverlayControllerDeps({ MapAdapter, ModelRegistry, OverlaySelector, TimeSlider });
+    setDisasterPopupDeps({ MapAdapter });
 
     // Initialize components
     ChatManager.init();

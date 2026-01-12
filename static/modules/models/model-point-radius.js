@@ -10,6 +10,7 @@
  */
 
 import { CONFIG } from '../config.js';
+import { DisasterPopup } from '../disaster-popup.js';
 
 // Dependencies set via setDependencies
 let MapAdapter = null;
@@ -77,22 +78,22 @@ export const PointRadiusModel = {
       this._addWildfireLayer(options);
     } else if (eventType === 'tornado') {
       this._addTornadoLayer(options);
+    } else if (eventType === 'flood') {
+      this._addFloodLayer(options);
     } else {
       this._addGenericEventLayer(eventType, options);
     }
 
-    // Setup click handler - locks popup on click and fills radius circles
+    // Setup click handler - shows unified popup on click
     this.clickHandler = (e) => {
       // Don't show popups during animation playback
       if (TimeSlider?.isPlaying) return;
 
       if (e.features.length > 0) {
         const props = e.features[0].properties;
-        const html = this.buildPopupHtml(props, eventType);
 
-        // Show popup and lock it
-        MapAdapter.showPopup([e.lngLat.lng, e.lngLat.lat], html);
-        MapAdapter.popupLocked = true;
+        // Use unified DisasterPopup system
+        DisasterPopup.show([e.lngLat.lng, e.lngLat.lat], props, eventType);
 
         // Select this event - fills in the radius circles
         this._selectEvent(props.event_id);
@@ -288,11 +289,30 @@ export const PointRadiusModel = {
                   const progressionResponse = await fetch(progressionUrl);
                   const progressionData = await progressionResponse.json();
 
-                  if (progressionData.snapshots && progressionData.snapshots.length > 0) {
+                  // Handle both old format (snapshots array) and new FeatureCollection format
+                  let snapshots, totalDays;
+                  if (progressionData.type === 'FeatureCollection' && progressionData.features) {
+                    // New format: convert features to snapshots format
+                    snapshots = progressionData.features.map(f => ({
+                      date: f.properties.date,
+                      day_num: f.properties.day_num,
+                      area_km2: f.properties.area_km2,
+                      geometry: f.geometry
+                    }));
+                    totalDays = progressionData.metadata?.total_count || snapshots.length;
+                  } else {
+                    // Legacy format
+                    snapshots = progressionData.snapshots;
+                    totalDays = progressionData.total_days;
+                  }
+
+                  if (snapshots && snapshots.length > 0) {
                     // We have daily progression data - use it
-                    link.textContent = `Starting (${progressionData.total_days} days)...`;
+                    link.textContent = `Starting (${totalDays} days)...`;
                     link.style.color = '#ff9800';
-                    this._notifyFireProgression(progressionData, eventId, timestamp, latitude, longitude);
+                    // Build normalized data for callback
+                    const normalizedData = { snapshots, total_days: totalDays };
+                    this._notifyFireProgression(normalizedData, eventId, timestamp, latitude, longitude);
                   } else {
                     // Fall back to single perimeter
                     const perimeterUrl = year
@@ -323,6 +343,49 @@ export const PointRadiusModel = {
               });
             });
 
+            // Setup click handler for "View flood" link (flood animation)
+            const floodLinks = popupEl.querySelectorAll('.view-flood-link');
+            floodLinks.forEach(link => {
+              link.addEventListener('click', async (evt) => {
+                evt.preventDefault();
+                const eventId = link.dataset.event;
+                const durationDays = parseInt(link.dataset.duration) || 30;
+                const startTime = link.dataset.start;
+                const endTime = link.dataset.end;
+                const eventName = link.dataset.name || '';
+                const latitude = link.dataset.lat ? parseFloat(link.dataset.lat) : null;
+                const longitude = link.dataset.lon ? parseFloat(link.dataset.lon) : null;
+
+                // Update link to show loading state
+                link.textContent = 'Loading flood...';
+                link.style.pointerEvents = 'none';
+
+                try {
+                  // Fetch flood geometry
+                  const response = await fetch(`/api/floods/${eventId}/geometry`);
+                  const geometryData = await response.json();
+
+                  if (geometryData.geometry) {
+                    link.textContent = 'Starting animation...';
+                    link.style.color = '#0066cc';
+                    this._notifyFloodAnimation(geometryData, eventId, durationDays, startTime, endTime, latitude, longitude, eventName);
+                  } else {
+                    link.textContent = 'No geometry data';
+                    link.style.color = '#999';
+                  }
+                } catch (err) {
+                  console.error('Error fetching flood geometry:', err);
+                  link.textContent = 'Error loading';
+                  link.style.color = '#f44336';
+                }
+
+                // Re-enable after delay
+                setTimeout(() => {
+                  link.style.pointerEvents = 'auto';
+                }, 2000);
+              });
+            });
+
             // Setup click handler for "View tornado track" link
             const tornadoLinks = popupEl.querySelectorAll('.view-tornado-track-link');
             tornadoLinks.forEach(link => {
@@ -340,12 +403,29 @@ export const PointRadiusModel = {
                   const response = await fetch(url);
                   const data = await response.json();
 
-                  if (data.track && data.track.geometry) {
+                  // Handle both old format (data.track) and new FeatureCollection format
+                  let trackData;
+                  if (data.type === 'FeatureCollection' && data.features) {
+                    // New format: find track feature in FeatureCollection
+                    const trackFeature = data.features.find(f => f.geometry?.type === 'LineString');
+                    const pointFeature = data.features.find(f => f.geometry?.type === 'Point');
+                    if (trackFeature) {
+                      trackData = {
+                        track: trackFeature,
+                        ...pointFeature?.properties
+                      };
+                    }
+                  } else if (data.track && data.track.geometry) {
+                    // Legacy format
+                    trackData = data;
+                  }
+
+                  if (trackData && trackData.track) {
                     link.textContent = 'Showing track';
                     link.style.color = '#32cd32';
 
                     // Display the track on the map
-                    this._displayTornadoTrack(data);
+                    this._displayTornadoTrack(trackData);
                   } else {
                     link.textContent = 'No track data';
                     link.style.color = '#999';
@@ -363,15 +443,20 @@ export const PointRadiusModel = {
               });
             });
 
-            // Setup click handler for "View tornado sequence" link
+            // Setup click handler for "View tornado sequence/animate" link
             const sequenceLinks = popupEl.querySelectorAll('.view-tornado-sequence-link');
             sequenceLinks.forEach(link => {
               link.addEventListener('click', async (evt) => {
                 evt.preventDefault();
                 const eventId = link.dataset.event;
+                const hasTrack = link.dataset.hastrack === 'true';
+                const lat = parseFloat(link.dataset.lat) || null;
+                const lon = parseFloat(link.dataset.lon) || null;
+                const scale = link.dataset.scale || 'EF0';
+                const timestamp = link.dataset.timestamp || null;
 
                 // Update link to show loading state
-                link.textContent = 'Finding sequence...';
+                link.textContent = hasTrack ? 'Finding sequence...' : 'Starting animation...';
                 link.style.pointerEvents = 'none';
 
                 try {
@@ -380,20 +465,34 @@ export const PointRadiusModel = {
                   const response = await fetch(url);
                   const data = await response.json();
 
-                  if (data.features && data.features.length > 1) {
-                    link.textContent = `Found ${data.sequence_count} linked`;
+                  if (data.features && data.features.length > 0) {
+                    // Has sequence or single tornado with track - animate it
+                    const count = data.metadata?.total_count || data.features.length;
+                    link.textContent = count > 1 ? `Animating ${count} linked` : 'Animating...';
                     link.style.color = '#ffa500';
 
                     // Notify controller to display the sequence
                     this._notifyTornadoSequence(data, eventId);
+                  } else if (!hasTrack && lat && lon) {
+                    // Point-only tornado - do a simple point animation
+                    link.textContent = 'Animating point...';
+                    link.style.color = '#ffa500';
+                    this._notifyTornadoPointAnimation(eventId, lat, lon, scale, timestamp);
                   } else {
-                    link.textContent = 'No linked tornadoes';
+                    link.textContent = 'No animation data';
                     link.style.color = '#999';
                   }
                 } catch (err) {
                   console.error('Error fetching tornado sequence:', err);
-                  link.textContent = 'Error loading';
-                  link.style.color = '#f44336';
+                  // If API failed but we have point data, do point animation
+                  if (!hasTrack && lat && lon) {
+                    link.textContent = 'Animating point...';
+                    link.style.color = '#ffa500';
+                    this._notifyTornadoPointAnimation(eventId, lat, lon, scale, timestamp);
+                  } else {
+                    link.textContent = 'Error loading';
+                    link.style.color = '#f44336';
+                  }
                 }
 
                 // Re-enable after delay
@@ -445,13 +544,15 @@ export const PointRadiusModel = {
     });
 
     // Hover popup (only when not locked and not playing animation)
+    // Shows simplified preview - click for full popup
     MapAdapter.map.on('mousemove', CONFIG.layers.eventCircle, (e) => {
       // Don't show hover popups during animation playback
       if (TimeSlider?.isPlaying) return;
 
       if (e.features.length > 0 && !MapAdapter.popupLocked) {
         const props = e.features[0].properties;
-        const html = this.buildPopupHtml(props, eventType);
+        // Use simple hover preview
+        const html = this.buildHoverPreview(props, eventType);
         MapAdapter.showPopup([e.lngLat.lng, e.lngLat.lat], html);
       }
     });
@@ -460,6 +561,9 @@ export const PointRadiusModel = {
         MapAdapter.hidePopup();
       }
     });
+
+    // Setup global popup event listeners (once)
+    this._setupPopupEventListeners();
 
     console.log(`PointRadiusModel: Loaded ${geojson.features.length} ${eventType} events`);
   },
@@ -1115,8 +1219,70 @@ export const PointRadiusModel = {
   },
 
   /**
+   * Add flood-specific layer.
+   * Renders flood events as blue circles sized by affected area.
+   * Uses duration for opacity intensity.
+   * @private
+   */
+  _addFloodLayer(options = {}) {
+    const map = MapAdapter.map;
+
+    // Recency-based effects for animation
+    const recencyExpr = ['coalesce', ['get', '_recency'], 1.0];
+    const opacityExpr = (baseOpacity) => ['min', 1.0, ['*', baseOpacity, recencyExpr]];
+    const sizeBoostExpr = (baseSize) => ['*', baseSize, ['max', 1.0, recencyExpr]];
+
+    // Color gradient: lighter blue for shorter floods, darker for longer
+    const colorExpr = [
+      'interpolate', ['linear'],
+      ['log10', ['max', 1, ['coalesce', ['get', 'duration_days'], 7]]],
+      0, '#66b3ff',    // 1 day = light blue
+      1, '#3399ff',    // 10 days = medium blue
+      1.5, '#0066cc',  // 30 days = dark blue
+      2, '#003366'     // 100+ days = very dark blue
+    ];
+
+    // Size based on affected area (use dead_count as proxy for severity, or default)
+    const sizeExpr = [
+      'interpolate', ['linear'],
+      ['log10', ['max', 1, ['coalesce', ['get', 'duration_days'], 7]]],
+      0, 6,    // Short floods = small
+      1, 10,   // 10 days = medium
+      1.5, 14, // 30 days = large
+      2, 18    // 100+ days = extra large
+    ];
+
+    // Outer glow layer
+    map.addLayer({
+      id: CONFIG.layers.eventCircle + '-glow',
+      type: 'circle',
+      source: CONFIG.layers.eventSource,
+      paint: {
+        'circle-radius': sizeBoostExpr(['*', sizeExpr, 1.8]),
+        'circle-color': colorExpr,
+        'circle-opacity': opacityExpr(0.2),
+        'circle-blur': 0.8
+      }
+    });
+
+    // Main flood circle
+    map.addLayer({
+      id: CONFIG.layers.eventCircle,
+      type: 'circle',
+      source: CONFIG.layers.eventSource,
+      paint: {
+        'circle-radius': sizeBoostExpr(sizeExpr),
+        'circle-color': colorExpr,
+        'circle-opacity': opacityExpr(0.75),
+        'circle-stroke-color': '#003366',
+        'circle-stroke-width': 1.5
+      }
+    });
+  },
+
+  /**
    * Add tornado-specific layers.
-   * Uses EF/F scale for color, display_radius for impact zone.
+   * Uses EF/F scale for color, damage_radius_km for impact zone.
    * Supports drill-down to show track line when clicked.
    * @private
    */
@@ -1167,35 +1333,52 @@ export const PointRadiusModel = {
       15, ['*', kmExpr, 209]
     ];
 
-    // 1. DAMAGE RADIUS - shows width-based impact zone
-    // Only show if display_radius is available
+    // 1. FELT RADIUS - shows broader impact zone for visibility on map
+    // Uses felt_radius_km (larger) so tornadoes are easier to find
     map.addLayer({
       id: CONFIG.layers.eventRadiusOuter,
       type: 'circle',
       source: CONFIG.layers.eventSource,
-      filter: ['>', ['coalesce', ['get', 'display_radius'], 0], 0],
+      filter: ['>', ['coalesce', ['get', 'felt_radius_km'], 0], 0],
       paint: {
-        'circle-radius': kmToPixels(['get', 'display_radius']),
+        'circle-radius': kmToPixels(['get', 'felt_radius_km']),
         'circle-color': 'transparent',
         'circle-stroke-color': colorExpr,
         'circle-stroke-width': 1.5,
-        'circle-stroke-opacity': opacityExpr(0.4)
+        'circle-stroke-opacity': opacityExpr(0.3)
       }
     });
 
-    // 2. SELECTED EVENT LAYERS - filled circles for clicked event
+    // 2. SELECTED EVENT LAYERS - show both radii for clicked event
+    // 2a. FELT RADIUS (outer) - broader impact zone
+    map.addLayer({
+      id: CONFIG.layers.eventRadiusOuter + '-selected-felt',
+      type: 'circle',
+      source: CONFIG.layers.eventSource,
+      filter: ['==', ['get', 'event_id'], ''],  // Initially matches nothing
+      paint: {
+        'circle-radius': kmToPixels(['coalesce', ['get', 'felt_radius_km'], 0.1]),
+        'circle-color': colorExpr,
+        'circle-opacity': 0.15,
+        'circle-stroke-color': colorExpr,
+        'circle-stroke-width': 1.5,
+        'circle-stroke-opacity': 0.5
+      }
+    });
+
+    // 2b. DAMAGE RADIUS (inner) - actual tornado width
     map.addLayer({
       id: CONFIG.layers.eventRadiusOuter + '-selected',
       type: 'circle',
       source: CONFIG.layers.eventSource,
       filter: ['==', ['get', 'event_id'], ''],  // Initially matches nothing
       paint: {
-        'circle-radius': kmToPixels(['coalesce', ['get', 'display_radius'], 1]),
+        'circle-radius': kmToPixels(['coalesce', ['get', 'damage_radius_km'], 0.05]),
         'circle-color': colorExpr,
-        'circle-opacity': 0.2,
+        'circle-opacity': 0.3,
         'circle-stroke-color': colorExpr,
         'circle-stroke-width': 2,
-        'circle-stroke-opacity': 0.7
+        'circle-stroke-opacity': 0.8
       }
     });
 
@@ -1291,6 +1474,216 @@ export const PointRadiusModel = {
   },
 
   /**
+   * Handle sequence animation request from central dispatcher.
+   * Called by ModelRegistry when disaster-sequence-request event fires.
+   * @param {string} eventId - Event ID
+   * @param {string} eventType - Event type (earthquake, tsunami, wildfire, flood, tornado)
+   * @param {Object} props - Event properties from the clicked feature
+   */
+  async handleSequence(eventId, eventType, props) {
+    const model = this;
+
+    switch (eventType) {
+      case 'earthquake':
+        if (props.sequence_id || eventId) {
+          model._notifySequenceChange(props.sequence_id, eventId);
+        }
+        break;
+
+      case 'tsunami':
+        if (eventId) {
+          try {
+            const url = `/api/tsunamis/${eventId}/animation`;
+            const response = await fetch(url);
+            const data = await response.json();
+            if (data.features && data.features.length > 1) {
+              model._notifyTsunamiRunups(data, eventId);
+            }
+          } catch (err) {
+            console.error('Error fetching tsunami runups:', err);
+          }
+        }
+        break;
+
+      case 'wildfire':
+        if (props.event_id) {
+          const year = props.year || (props.timestamp ? new Date(props.timestamp).getFullYear() : null);
+
+          // Option 1: Try progression data (daily snapshots)
+          if (props.has_progression) {
+            try {
+              const url = year
+                ? `/api/wildfires/${props.event_id}/progression?year=${year}`
+                : `/api/wildfires/${props.event_id}/progression`;
+              const response = await fetch(url);
+              const data = await response.json();
+
+              let snapshots, totalDays;
+              if (data.type === 'FeatureCollection' && data.features) {
+                snapshots = data.features.map(f => ({
+                  date: f.properties.date,
+                  day_num: f.properties.day_num,
+                  area_km2: f.properties.area_km2,
+                  geometry: f.geometry
+                }));
+                totalDays = data.metadata?.total_count || snapshots.length;
+              } else {
+                snapshots = data.snapshots;
+                totalDays = data.total_days;
+              }
+
+              if (snapshots && snapshots.length > 0) {
+                const normalizedData = { snapshots, total_days: totalDays };
+                model._notifyFireProgression(normalizedData, props.event_id, props.timestamp, props.latitude, props.longitude);
+                break;
+              }
+            } catch (err) {
+              console.error('Error fetching fire progression:', err);
+            }
+          }
+
+          // Option 2: Try perimeter data (final shape)
+          try {
+            const perimUrl = year
+              ? `/api/wildfires/${props.event_id}/perimeter?year=${year}`
+              : `/api/wildfires/${props.event_id}/perimeter`;
+            const perimResponse = await fetch(perimUrl);
+            if (perimResponse.ok) {
+              const perimData = await perimResponse.json();
+              if (perimData.type === 'Feature' && perimData.geometry) {
+                model._notifyWildfirePerimeter({
+                  eventId: props.event_id,
+                  fireName: props.fire_name || 'Wildfire',
+                  geometry: perimData,
+                  latitude: props.latitude,
+                  longitude: props.longitude,
+                  areaKm2: props.area_km2,
+                  timestamp: props.timestamp
+                });
+                break;
+              }
+            }
+          } catch (err) {
+            console.log('No perimeter data, falling back to circle');
+          }
+
+          // Option 3: Fallback to area circle
+          if (props.latitude && props.longitude && props.area_km2 > 0) {
+            const radiusKm = Math.sqrt(props.area_km2 / Math.PI);
+            model._notifyWildfireImpact({
+              eventId: props.event_id,
+              fireName: props.fire_name || 'Wildfire',
+              latitude: props.latitude,
+              longitude: props.longitude,
+              areaKm2: props.area_km2,
+              radiusKm: radiusKm,
+              timestamp: props.timestamp
+            });
+          }
+        }
+        break;
+
+      case 'flood':
+        if (props.event_id) {
+          // Try to get geometry data first
+          if (props.has_geometry) {
+            try {
+              const url = `/api/floods/${props.event_id}/geometry`;
+              const response = await fetch(url);
+              const data = await response.json();
+              // Handle both Feature (single geometry) and FeatureCollection formats
+              if (data.type === 'Feature' && data.geometry) {
+                model._notifyFloodAnimation(data, props.event_id, props.duration_days,
+                  props.timestamp, props.end_timestamp, props.latitude, props.longitude, props.event_name);
+                break;
+              } else if (data.type === 'FeatureCollection' && data.features) {
+                model._notifyFloodAnimation(data, props.event_id, props.duration_days,
+                  props.timestamp, props.end_timestamp, props.latitude, props.longitude, props.event_name);
+                break;
+              }
+            } catch (err) {
+              console.error('Error fetching flood geometry:', err);
+            }
+          }
+          // Fallback: show area circle based on area_km2
+          if (props.latitude && props.longitude && props.area_km2 > 0) {
+            const radiusKm = Math.sqrt(props.area_km2 / Math.PI); // Circle radius from area
+            model._notifyFloodImpact({
+              eventId: props.event_id,
+              eventName: props.event_name || 'Flood',
+              latitude: props.latitude,
+              longitude: props.longitude,
+              areaKm2: props.area_km2,
+              radiusKm: radiusKm,
+              durationDays: props.duration_days,
+              timestamp: props.timestamp
+            });
+          }
+        }
+        break;
+
+      case 'tornado':
+        if (props.event_id) {
+          try {
+            const url = `/api/tornadoes/${props.event_id}/sequence`;
+            const response = await fetch(url);
+            const data = await response.json();
+
+            if (data.features && data.features.length > 0) {
+              model._notifyTornadoSequence(data, props.event_id);
+            } else {
+              const hasTrack = props.end_latitude != null || props.end_lat != null;
+              if (!hasTrack && props.latitude && props.longitude) {
+                model._notifyTornadoPointAnimation(props.event_id, props.latitude, props.longitude,
+                  props.tornado_scale, props.timestamp);
+              }
+            }
+          } catch (err) {
+            console.error('Error fetching tornado sequence:', err);
+            if (props.latitude && props.longitude) {
+              model._notifyTornadoPointAnimation(props.event_id, props.latitude, props.longitude,
+                props.tornado_scale, props.timestamp);
+            }
+          }
+        }
+        break;
+
+      case 'volcano':
+        // Show impact radius animation and/or linked earthquakes
+        console.log('PointRadiusModel: Volcano impact sequence for', eventId);
+
+        const feltRadius = props.felt_radius_km;
+        const damageRadius = props.damage_radius_km;
+        const lat = props.latitude;
+        const lon = props.longitude;
+        const volcanoName = props.volcano_name || 'Volcano';
+
+        if (feltRadius > 0 || damageRadius > 0) {
+          // Notify about volcano impact for radius animation
+          model._notifyVolcanoImpact({
+            eventId,
+            volcanoName,
+            latitude: lat,
+            longitude: lon,
+            feltRadius: feltRadius || 0,
+            damageRadius: damageRadius || 0,
+            VEI: props.VEI,
+            timestamp: props.timestamp
+          });
+        }
+
+        // Also check for linked earthquakes
+        if (props.earthquake_event_ids) {
+          console.log('Volcano has linked earthquakes:', props.earthquake_event_ids);
+        }
+        break;
+
+      default:
+        console.warn(`PointRadiusModel: Unhandled sequence type: ${eventType}`);
+    }
+  },
+
+  /**
    * Clear all event layers.
    */
   clear() {
@@ -1373,12 +1766,16 @@ export const PointRadiusModel = {
 
     const outerLayer = CONFIG.layers.eventRadiusOuter + '-selected';
     const innerLayer = CONFIG.layers.eventRadiusInner + '-selected';
+    const feltLayer = CONFIG.layers.eventRadiusOuter + '-selected-felt';
 
     if (map.getLayer(outerLayer)) {
       map.setFilter(outerLayer, filter);
     }
     if (map.getLayer(innerLayer)) {
       map.setFilter(innerLayer, filter);
+    }
+    if (map.getLayer(feltLayer)) {
+      map.setFilter(feltLayer, filter);
     }
   },
 
@@ -1515,6 +1912,94 @@ export const PointRadiusModel = {
   },
 
   /**
+   * Register callback for volcano impact animation.
+   * @param {Function} callback - Callback function receiving {eventId, volcanoName, latitude, longitude, feltRadius, damageRadius, VEI, timestamp}
+   */
+  onVolcanoImpact(callback) {
+    this.volcanoImpactCallback = callback;
+  },
+
+  /**
+   * Notify about volcano impact for radius animation.
+   * @param {Object} data - Impact data
+   */
+  _notifyVolcanoImpact(data) {
+    console.log(`PointRadiusModel: Volcano impact animation for ${data.volcanoName} (felt: ${data.feltRadius}km, damage: ${data.damageRadius}km)`);
+
+    if (this.volcanoImpactCallback) {
+      this.volcanoImpactCallback(data);
+    } else {
+      console.warn('PointRadiusModel: No volcano impact callback registered');
+    }
+  },
+
+  /**
+   * Register callback for wildfire impact animation (area circle fallback).
+   * @param {Function} callback - Callback function
+   */
+  onWildfireImpact(callback) {
+    this.wildfireImpactCallback = callback;
+  },
+
+  /**
+   * Notify about wildfire impact for area circle animation.
+   * @param {Object} data - Impact data {eventId, fireName, latitude, longitude, areaKm2, radiusKm, timestamp}
+   */
+  _notifyWildfireImpact(data) {
+    console.log(`PointRadiusModel: Wildfire impact animation for ${data.fireName} (${data.areaKm2} km2)`);
+
+    if (this.wildfireImpactCallback) {
+      this.wildfireImpactCallback(data);
+    } else {
+      console.warn('PointRadiusModel: No wildfire impact callback registered');
+    }
+  },
+
+  /**
+   * Register callback for wildfire perimeter animation (fade-in shape).
+   * @param {Function} callback - Callback function
+   */
+  onWildfirePerimeter(callback) {
+    this.wildfirePerimeterCallback = callback;
+  },
+
+  /**
+   * Notify about wildfire perimeter for fade-in animation.
+   * @param {Object} data - Perimeter data {eventId, fireName, geometry, latitude, longitude, areaKm2, timestamp}
+   */
+  _notifyWildfirePerimeter(data) {
+    console.log(`PointRadiusModel: Wildfire perimeter animation for ${data.fireName}`);
+
+    if (this.wildfirePerimeterCallback) {
+      this.wildfirePerimeterCallback(data);
+    } else {
+      console.warn('PointRadiusModel: No wildfire perimeter callback registered');
+    }
+  },
+
+  /**
+   * Register callback for flood impact animation (area circle fallback).
+   * @param {Function} callback - Callback function
+   */
+  onFloodImpact(callback) {
+    this.floodImpactCallback = callback;
+  },
+
+  /**
+   * Notify about flood impact for area circle animation.
+   * @param {Object} data - Impact data {eventId, eventName, latitude, longitude, areaKm2, radiusKm, durationDays, timestamp}
+   */
+  _notifyFloodImpact(data) {
+    console.log(`PointRadiusModel: Flood impact animation for ${data.eventName} (${data.areaKm2} km2)`);
+
+    if (this.floodImpactCallback) {
+      this.floodImpactCallback(data);
+    } else {
+      console.warn('PointRadiusModel: No flood impact callback registered');
+    }
+  },
+
+  /**
    * Notify about tsunami runups loaded for an event.
    * @param {Object} data - GeoJSON with source + runups from animation endpoint
    * @param {string} eventId - Tsunami event ID
@@ -1636,8 +2121,8 @@ export const PointRadiusModel = {
       15, km * 209
     ];
 
-    // Add impact radius along track (using display_radius)
-    if (data.display_radius > 0) {
+    // Add impact radius along track (using damage_radius_km from parquet)
+    if (data.damage_radius_km > 0) {
       map.addLayer({
         id: radiusLayerId,
         type: 'line',
@@ -1645,7 +2130,7 @@ export const PointRadiusModel = {
         filter: ['==', ['get', 'type'], 'track'],
         paint: {
           'line-color': trackColor,
-          'line-width': kmToPixels(data.display_radius * 2),
+          'line-width': kmToPixels(data.damage_radius_km * 2),
           'line-opacity': 0.25
         }
       });
@@ -1934,6 +2419,44 @@ export const PointRadiusModel = {
   },
 
   /**
+   * Register callback for flood animation events.
+   * @param {Function} callback - Callback function receiving {geometry, eventId, durationDays, startTime, endTime, latitude, longitude, eventName}
+   */
+  onFloodAnimation(callback) {
+    this.floodAnimationCallback = callback;
+  },
+
+  /**
+   * Notify about flood animation request.
+   * @param {Object} geometryData - GeoJSON geometry from API
+   * @param {string} eventId - Flood event ID
+   * @param {number} durationDays - Flood duration in days
+   * @param {string} startTime - Flood start timestamp
+   * @param {string} endTime - Flood end timestamp
+   * @param {number} latitude - Center latitude
+   * @param {number} longitude - Center longitude
+   * @param {string} eventName - Flood event name
+   */
+  _notifyFloodAnimation(geometryData, eventId, durationDays, startTime, endTime, latitude, longitude, eventName) {
+    console.log(`PointRadiusModel: Flood animation requested for ${eventId} (${durationDays} days)`);
+
+    if (this.floodAnimationCallback) {
+      this.floodAnimationCallback({
+        geometry: geometryData,
+        eventId: eventId,
+        durationDays: durationDays,
+        startTime: startTime,
+        endTime: endTime,
+        latitude: latitude,
+        longitude: longitude,
+        eventName: eventName
+      });
+    } else {
+      console.warn('PointRadiusModel: No flood animation callback registered');
+    }
+  },
+
+  /**
    * Register callback for tornado sequence events.
    * @param {Function} callback - Callback function receiving {geojson, seedEventId, sequenceCount}
    */
@@ -1947,18 +2470,52 @@ export const PointRadiusModel = {
    * @param {string} seedEventId - The tornado that was clicked
    */
   _notifyTornadoSequence(sequenceData, seedEventId) {
-    console.log(`PointRadiusModel: Tornado sequence found with ${sequenceData.sequence_count} linked tornadoes`);
+    const count = sequenceData.metadata?.total_count || sequenceData.features?.length || 0;
+    console.log(`PointRadiusModel: Tornado sequence found with ${count} linked tornadoes`);
 
     if (this.tornadoSequenceCallback) {
       this.tornadoSequenceCallback({
         geojson: sequenceData,
         seedEventId: seedEventId,
-        sequenceCount: sequenceData.sequence_count
+        sequenceCount: count
       });
     } else {
       console.warn('PointRadiusModel: No tornado sequence callback registered');
       // Fall back to just displaying the sequence on the map
       this._displayTornadoSequence(sequenceData);
+    }
+  },
+
+  /**
+   * Register callback for point-only tornado animation (no track data).
+   * @param {Function} callback - Callback function receiving {eventId, latitude, longitude, scale}
+   */
+  onTornadoPointAnimation(callback) {
+    this.tornadoPointAnimationCallback = callback;
+  },
+
+  /**
+   * Notify about point-only tornado animation request.
+   * Used for tornadoes without track endpoints (e.g., Canadian tornadoes).
+   * @param {string} eventId - Tornado event ID
+   * @param {number} latitude - Tornado location latitude
+   * @param {number} longitude - Tornado location longitude
+   * @param {string} scale - Tornado scale (EF0-EF5)
+   * @param {string} timestamp - ISO timestamp of the tornado event
+   */
+  _notifyTornadoPointAnimation(eventId, latitude, longitude, scale, timestamp) {
+    console.log(`PointRadiusModel: Point-only tornado animation for ${eventId} at ${latitude}, ${longitude}`);
+
+    if (this.tornadoPointAnimationCallback) {
+      this.tornadoPointAnimationCallback({
+        eventId: eventId,
+        latitude: latitude,
+        longitude: longitude,
+        scale: scale,
+        timestamp: timestamp
+      });
+    } else {
+      console.warn('PointRadiusModel: No tornado point animation callback registered');
     }
   },
 
@@ -2627,6 +3184,54 @@ export const PointRadiusModel = {
       if (props.event_id && props.duration_days > 1) {
         lines.push(`<a href="#" class="view-fire-link" data-event="${props.event_id}" data-duration="${props.duration_days}" data-timestamp="${props.timestamp}" data-year="${props.year || ''}" data-lat="${props.latitude || ''}" data-lon="${props.longitude || ''}" style="color:#ff9800;text-decoration:underline;cursor:pointer">View fire progression</a>`);
       }
+    } else if (eventType === 'flood') {
+      // Flood popup
+      lines.push('<strong style="color:#0066cc">Flood Event</strong>');
+
+      // Event name if available
+      if (props.event_name) {
+        lines.push(`<span style="color:#3399ff">${props.event_name}</span>`);
+      }
+
+      // Location info
+      if (props.country) {
+        lines.push(`Location: ${props.country}`);
+      }
+
+      // Duration
+      if (props.duration_days != null && props.duration_days > 0) {
+        lines.push(`Duration: ${props.duration_days} days`);
+      }
+
+      // Date range
+      if (props.timestamp && props.end_timestamp) {
+        const start = new Date(props.timestamp);
+        const end = new Date(props.end_timestamp);
+        lines.push(`${start.toLocaleDateString()} - ${end.toLocaleDateString()}`);
+      } else if (props.timestamp) {
+        const date = new Date(props.timestamp);
+        lines.push(`Started: ${date.toLocaleDateString()}`);
+      } else if (props.year) {
+        lines.push(`Year: ${props.year}`);
+      }
+
+      // Casualties
+      if (props.dead_count != null && props.dead_count > 0) {
+        lines.push(`<span style="color:#ef5350">Deaths: ${props.dead_count.toLocaleString()}</span>`);
+      }
+      if (props.displaced_count != null && props.displaced_count > 0) {
+        lines.push(`Displaced: ${props.displaced_count.toLocaleString()}`);
+      }
+
+      // Data source
+      if (props.source) {
+        lines.push(`<span style="color:#888">Source: ${props.source}</span>`);
+      }
+
+      // View flood animation link
+      if (props.event_id && props.duration_days > 1) {
+        lines.push(`<a href="#" class="view-flood-link" data-event="${props.event_id}" data-duration="${props.duration_days}" data-start="${props.timestamp || ''}" data-end="${props.end_timestamp || ''}" data-name="${props.event_name || ''}" data-lat="${props.latitude || ''}" data-lon="${props.longitude || ''}" style="color:#0066cc;text-decoration:underline;cursor:pointer">View flood extent</a>`);
+      }
     } else if (eventType === 'tornado') {
       // Tornado popup
       const scale = props.tornado_scale || 'Unknown';
@@ -2689,19 +3294,26 @@ export const PointRadiusModel = {
         lines.push(`Property damage: ${damage}`);
       }
 
-      // View track link - only if end coordinates available
-      if (props.event_id && (props.end_latitude != null || props.end_lat != null)) {
+      // View track link - only if end coordinates available (shows static track)
+      const hasTrack = props.end_latitude != null || props.end_lat != null;
+      if (props.event_id && hasTrack) {
         lines.push(`<a href="#" class="view-tornado-track-link" data-event="${props.event_id}" style="color:#32cd32;text-decoration:underline;cursor:pointer">View tornado track</a>`);
       }
 
-      // Animate tornado path(s) - always available
-      // Shows sequence if multiple linked tornadoes, single path otherwise
-      if (props.event_id && (props.end_latitude != null || props.end_lat != null)) {
+      // Animate tornado - always available
+      // With track: animates along path. Without track: zooms and shows fading circle
+      if (props.event_id) {
         const seqCount = props.sequence_count || 1;
-        const linkText = seqCount > 1
-          ? `Animate tornado sequence (${seqCount} paths)`
-          : 'Animate tornado path';
-        lines.push(`<a href="#" class="view-tornado-sequence-link" data-event="${props.event_id}" style="color:#ffa500;text-decoration:underline;cursor:pointer">${linkText}</a>`);
+        let linkText;
+        if (seqCount > 1) {
+          linkText = `Animate tornado sequence (${seqCount} paths)`;
+        } else if (hasTrack) {
+          linkText = 'Animate tornado path';
+        } else {
+          linkText = 'Animate tornado';
+        }
+        // Store hasTrack and timestamp in data attributes for animation handler
+        lines.push(`<a href="#" class="view-tornado-sequence-link" data-event="${props.event_id}" data-hastrack="${hasTrack}" data-lat="${props.latitude || ''}" data-lon="${props.longitude || ''}" data-scale="${props.tornado_scale || ''}" data-timestamp="${props.timestamp || ''}" style="color:#ffa500;text-decoration:underline;cursor:pointer">${linkText}</a>`);
       }
     } else {
       // Generic popup
@@ -2710,6 +3322,87 @@ export const PointRadiusModel = {
     }
 
     return lines.join('<br>');
+  },
+
+  /**
+   * Build simplified hover preview HTML.
+   * Shows just essential info - click for full popup.
+   * @param {Object} props - Feature properties
+   * @param {string} eventType - Event type
+   * @returns {string} HTML string
+   */
+  buildHoverPreview(props, eventType) {
+    let title = '';
+    let subtitle = '';
+    let stat = '';
+
+    switch (eventType) {
+      case 'earthquake':
+        const mag = props.magnitude?.toFixed(1) || 'N/A';
+        title = `M${mag} Earthquake`;
+        subtitle = props.place || '';
+        if (props.depth_km != null) {
+          stat = `Depth: ${props.depth_km.toFixed(1)} km`;
+        }
+        break;
+
+      case 'volcano':
+        title = props.volcano_name || 'Volcanic Eruption';
+        stat = props.VEI != null ? `VEI ${props.VEI}` : '';
+        subtitle = props.year ? (props.year < 0 ? `${Math.abs(props.year)} BCE` : `${props.year}`) : '';
+        break;
+
+      case 'tsunami':
+        if (props.is_source || props._isSource) {
+          title = 'Tsunami Source';
+          stat = props.eq_magnitude ? `M${props.eq_magnitude.toFixed(1)}` : '';
+        } else {
+          title = 'Coastal Runup';
+          stat = props.water_height_m != null ? `${props.water_height_m.toFixed(1)}m` : '';
+        }
+        subtitle = props.cause || '';
+        break;
+
+      case 'wildfire':
+        title = 'Wildfire';
+        if (props.area_km2 != null) {
+          stat = `${props.area_km2.toLocaleString(undefined, {maximumFractionDigits: 0})} km2`;
+        }
+        if (props.timestamp) {
+          subtitle = new Date(props.timestamp).toLocaleDateString();
+        }
+        break;
+
+      case 'flood':
+        title = props.event_name || 'Flood Event';
+        subtitle = props.country || '';
+        if (props.duration_days != null) {
+          stat = `${props.duration_days} days`;
+        }
+        break;
+
+      case 'tornado':
+        const scale = props.tornado_scale || 'Unknown';
+        title = `${scale} Tornado`;
+        if (props.timestamp) {
+          subtitle = new Date(props.timestamp).toLocaleDateString();
+        }
+        if (props.path_length_miles != null) {
+          stat = `${props.path_length_miles.toFixed(1)} mi path`;
+        }
+        break;
+
+      default:
+        title = `${eventType} Event`;
+        if (props.event_id) subtitle = props.event_id;
+    }
+
+    let html = `<strong>${title}</strong>`;
+    if (subtitle) html += `<br><span style="color:#666">${subtitle}</span>`;
+    if (stat) html += `<br>${stat}`;
+    html += `<br><span style="color:#0f4c75;font-size:11px">Click for details</span>`;
+
+    return html;
   },
 
   /**
@@ -2726,5 +3419,100 @@ export const PointRadiusModel = {
    */
   getActiveType() {
     return this.activeType;
+  },
+
+  /**
+   * Setup global event listeners for DisasterPopup buttons.
+   * Bridges the new popup system to existing animation handlers.
+   * @private
+   */
+  _setupPopupEventListeners() {
+    // Only setup once
+    if (this._popupListenersSetup) return;
+    this._popupListenersSetup = true;
+
+    const model = this; // Capture reference for event handlers
+
+    // NOTE: disaster-sequence-request is now handled by ModelRegistry central dispatcher
+    // which routes to this model's handleSequence() method
+
+    // Handle Related button clicks
+    document.addEventListener('disaster-related-request', async (e) => {
+      const { eventId, eventType, props } = e.detail;
+
+      switch (eventType) {
+        case 'earthquake':
+          // Find related volcanoes
+          if (props.latitude && props.longitude) {
+            try {
+              const lat = props.latitude;
+              const lon = props.longitude;
+              const timestamp = props.timestamp;
+              const year = props.year || (timestamp ? new Date(timestamp).getFullYear() : null);
+
+              let url = `/api/events/nearby-volcanoes?lat=${lat}&lon=${lon}&radius_km=150`;
+              if (timestamp) {
+                url += `&timestamp=${encodeURIComponent(timestamp)}&days_before=60`;
+              } else if (year) {
+                url += `&year=${year}`;
+              }
+
+              const response = await fetch(url);
+              const data = await response.json();
+              if (data.count > 0) {
+                model._notifyNearbyVolcanoes(data.features, lat, lon);
+              } else {
+                console.log('No nearby volcanoes found');
+              }
+            } catch (err) {
+              console.error('Error fetching nearby volcanoes:', err);
+            }
+          }
+          break;
+
+        case 'volcano':
+          // Find related earthquakes
+          if (props.latitude && props.longitude) {
+            try {
+              const lat = props.latitude;
+              const lon = props.longitude;
+              const timestamp = props.timestamp;
+              const year = props.year;
+              const volcanoName = props.volcano_name || 'volcano';
+
+              let url = `/api/events/nearby-earthquakes?lat=${lat}&lon=${lon}&radius_km=150&min_magnitude=3.0`;
+              if (timestamp) {
+                url += `&timestamp=${encodeURIComponent(timestamp)}&days_before=30&days_after=60`;
+              } else if (year) {
+                url += `&year=${year}`;
+              }
+
+              const response = await fetch(url);
+              const data = await response.json();
+              if (data.count > 0) {
+                const volcanoSeqId = `volcano-${volcanoName}-${year}`;
+                model._notifyVolcanoEarthquakes(data.features, volcanoSeqId, volcanoName, lat, lon);
+              } else {
+                console.log('No nearby earthquakes found');
+              }
+            } catch (err) {
+              console.error('Error fetching nearby earthquakes:', err);
+            }
+          }
+          break;
+
+        case 'tsunami':
+          // Show triggering earthquake - future cross-type navigation
+          if (props.parent_event_id || props.eq_event_id) {
+            console.log('Show triggering earthquake:', props.parent_event_id || props.eq_event_id);
+          }
+          break;
+
+        default:
+          console.log(`Related not implemented for ${eventType}`);
+      }
+    });
+
+    console.log('DisasterPopup event listeners initialized');
   }
 };

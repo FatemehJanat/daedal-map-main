@@ -3,9 +3,9 @@
 Quick reference for importing new data sources using the unified converter system.
 
 For detailed documentation see:
-- [data_pipeline.md](data_pipeline.md) - Full pipeline documentation (schemas, metadata, folder structure)
-- [DISASTER_DISPLAY.md](DISASTER_DISPLAY.md) - Disaster event visualization and animation
-- [GEOMETRY.md](GEOMETRY.md) - Geometry system, loc_id specification
+- [data_pipeline.md](data_pipeline.md) - Folder structure, metadata schema, routing
+- [DISASTER_DISPLAY.md](DISASTER_DISPLAY.md) - **Complete disaster schemas**, display models, API endpoints
+- [GEOMETRY.md](GEOMETRY.md) - loc_id specification, water body codes, geometry system
 
 ---
 
@@ -82,7 +82,7 @@ Do NOT include:
 - `STCOFIPS`, `GEOID`, `fips` - Redundant with loc_id
 - `STATE`, `COUNTY`, `region` - Stored in geometry, not data
 
-**Exception**: Event data (earthquakes, hurricanes) uses different schema with `event_id`, `timestamp`, etc. See [Unified Event Schema](data_pipeline.md#event-data-format) for required columns and naming conventions.
+**Exception**: Event data (earthquakes, hurricanes) uses different schema with `event_id`, `timestamp`, etc. See [DISASTER_DISPLAY.md - Complete Parquet Schemas](DISASTER_DISPLAY.md#complete-parquet-schemas) for required columns and naming conventions.
 
 ---
 
@@ -446,7 +446,7 @@ countries/{COUNTRY}/{source_id}/
 
 **events.parquet** - Individual records (optional for pre-aggregated data):
 
-> **IMPORTANT**: All event files MUST follow the [Unified Event Schema](data_pipeline.md#event-data-format) for live/historical compatibility.
+> **IMPORTANT**: All event files MUST follow the [Unified Event Schema](DISASTER_DISPLAY.md#complete-parquet-schemas) for live/historical compatibility.
 
 ### Unified Event Schema - Core Columns
 
@@ -462,288 +462,25 @@ All event files MUST include these core columns with exact names and types:
 | `loc_id` | string | Yes | Assigned location code or water body code |
 | `year` | int32 | No | Extracted from timestamp for filtering (derived column) |
 
-### Earthquake Schema
+### Disaster-Specific Schemas
 
-| Column | Type | Required | Description |
-|--------|------|----------|-------------|
-| `magnitude` | float32 | Yes | Earthquake magnitude |
-| `depth_km` | float32 | No | Depth in kilometers |
-| `felt_radius_km` | float32 | No | Approximate felt radius based on magnitude |
-| `damage_radius_km` | float32 | No | Approximate damage radius based on magnitude |
-| `place` | string | No | Location description from USGS |
-| `mainshock_id` | string | No | Event ID of mainshock (NULL if this IS the mainshock) |
-| `sequence_id` | string | No | Shared ID for all events in a sequence (e.g., `SEQ000001`) |
-| `is_mainshock` | bool | No | True if this event has detected aftershocks |
-| `aftershock_count` | int32 | No | Number of aftershocks (mainshocks only, 0 otherwise) |
+For complete schema definitions for each disaster type, see [DISASTER_DISPLAY.md - Complete Parquet Schemas](DISASTER_DISPLAY.md#complete-parquet-schemas):
 
-**Aftershock detection** uses Gardner-Knopoff (1974) empirical windows:
-- Time window: `10^(0.5*M - 1.5)` days (e.g., M7 = 10 days, M8 = 32 days)
-- Distance window: `10^(0.5*M - 0.5)` km (e.g., M7 = 100 km, M8 = 316 km)
-- Only M5.5+ earthquakes are considered as potential mainshocks
-
-### Hurricane/Cyclone Schema
-
-See [Tropical Storm Schema](#tropical-storm-schema-ibtracs) below for full two-table structure.
-
-| Column | Type | Required | Description |
-|--------|------|----------|-------------|
-| `wind_kt` | float32 | No | Sustained wind speed (knots) |
-| `pressure_mb` | float32 | No | Central pressure (millibars) |
-| `category` | string | No | Saffir-Simpson category: `TD`, `TS`, `Cat1`-`Cat5` |
-| `r34_ne/se/sw/nw` | int32 | No | 34kt wind radius by quadrant (nautical miles) |
-| `r50_ne/se/sw/nw` | int32 | No | 50kt wind radius by quadrant (nautical miles) |
-| `r64_ne/se/sw/nw` | int32 | No | 64kt wind radius by quadrant (nautical miles) |
-
-### Wildfire Schema
-
-| Column | Type | Required | Description |
-|--------|------|----------|-------------|
-| `burned_acres` | float32 | No | Total burned area in acres |
-| `perimeter` | string | No | GeoJSON string for fire boundary polygon |
-| `duration_days` | int32 | No | Fire duration in days |
-| `ignition_date` | datetime | No | Fire start date (use `timestamp` for display) |
-| `containment_date` | datetime | No | Fire containment date |
-
-### Volcano Schema
-
-| Column | Type | Required | Description |
-|--------|------|----------|-------------|
-| `VEI` | int32 | No | Volcanic Explosivity Index (0-8) |
-| `volcano_number` | int32 | No | Smithsonian volcano number |
-| `volcano_name` | string | No | Volcano name |
-| `activity_type` | string | No | Type of activity (e.g., `Explosive`, `Effusive`) |
-| `activity_area` | string | No | Specific vent/area (e.g., "East rift zone") |
-| `end_year` | int32 | No | Year eruption ended (null if ongoing) |
-| `end_timestamp` | datetime | No | End datetime (for duration calculation) |
-| `duration_days` | int32 | No | Duration in days (calculated) |
-| `is_ongoing` | bool | No | True if eruption has no end date |
-| `eruption_id` | int32 | No | Smithsonian eruption number |
-
-Example: Kilauea 1983-2018 has `duration_days=13029` (~35.7 years), `activity_area="East rift zone (Puu O'o), Halemaumau"`
-
-### Cross-Event Linking Columns
-
-For linking disaster chains (e.g., earthquake triggers tsunami):
-
-| Column | Type | Required | Description |
-|--------|------|----------|-------------|
-| `parent_event_id` | string | No | Links to triggering event |
-| `link_type` | string | No | Relationship: `aftershock`, `triggered`, `caused_by` |
-
-**Cross-Event Time Windows:**
-- Earthquake aftershocks: 0-90 days after, within rupture length
-- Volcano -> earthquakes: 30 days before to 60 days after eruption
-- Earthquake -> tsunami: 0-24 hours after, coastal areas
-- Earthquake -> volcano: 60 days before (eruption precedes quake)
-
-Optional geometry column:
-- `perimeter` - GeoJSON string for polygon events (wildfires, floods)
-
-### Tropical Storm Schema (IBTrACS)
-
-Tropical storms use a two-table structure for efficient yearly overview + drill-down animation:
-
-**storms.parquet** - Storm metadata (one row per storm):
-
-| Column | Type | Required | Description |
-|--------|------|----------|-------------|
-| `storm_id` | string | Yes | Unique storm identifier (e.g., `2005236N23285` for Katrina) |
-| `name` | string | No | Storm name (e.g., `KATRINA`, `MARIA`) |
-| `year` | int | Yes | Season year |
-| `basin` | string | Yes | Basin code: `NA`, `EP`, `WP`, `SI`, `SP`, `NI`, `SA` |
-| `subbasin` | string | No | Sub-basin code (e.g., `GM` for Gulf of Mexico) |
-| `source_agency` | string | No | Primary tracking agency (NHC, JTWC, JMA, etc.) |
-| `start_date` | datetime | Yes | First track position timestamp |
-| `end_date` | datetime | Yes | Last track position timestamp |
-| `max_wind_kt` | float | No | Maximum sustained wind (knots) |
-| `min_pressure_mb` | float | No | Minimum central pressure (millibars) |
-| `max_category` | string | Yes | Saffir-Simpson category: `TD`, `TS`, `Cat1`-`Cat5` |
-| `num_positions` | int | Yes | Number of 6-hourly track positions |
-| `made_landfall` | bool | Yes | Whether storm made landfall |
-| `track_coords` | string | Yes | **Precalculated**: JSON array of `[[lon,lat],...]` for GeoJSON LineString |
-| `bbox` | string | Yes | **Precalculated**: JSON `[minLon, minLat, maxLon, maxLat]` for spatial queries |
-| `has_wind_radii` | bool | Yes | **Precalculated**: True if any position has r34/r50/r64 data |
-
-**positions.parquet** - Track positions (6-hourly, for animation drill-down):
-
-| Column | Type | Required | Description |
-|--------|------|----------|-------------|
-| `event_id` | string | Yes | Position ID: `{storm_id}_{index}` |
-| `storm_id` | string | Yes | Parent storm ID |
-| `timestamp` | datetime | Yes | Position timestamp (6-hourly intervals) |
-| `latitude` | float | Yes | Position latitude |
-| `longitude` | float | Yes | Position longitude |
-| `wind_kt` | float | No | Sustained wind speed (knots) |
-| `pressure_mb` | float | No | Central pressure (millibars) |
-| `category` | string | No | Category at this position: `TD`, `TS`, `Cat1`-`Cat5` |
-| `basin` | string | No | Basin code |
-| `source_agency` | string | No | Agency providing this observation |
-| `status` | string | No | Storm status (e.g., `HU`, `TS`, `EX`) |
-| `loc_id` | string | Yes | Water body code (e.g., `XOA`, `XSG`) |
-| `r34_ne/se/sw/nw` | int | No | 34kt wind radius by quadrant (nautical miles) |
-| `r50_ne/se/sw/nw` | int | No | 50kt wind radius by quadrant (nautical miles) |
-| `r64_ne/se/sw/nw` | int | No | 64kt wind radius by quadrant (nautical miles) |
-
-**Precalculated fields rationale:**
-- `track_coords`: Eliminates join with positions table for yearly track display. API reads directly from storms table and builds GeoJSON LineString without aggregation.
-- `bbox`: Enables fast spatial filtering (e.g., "storms affecting Florida") without loading all coordinates.
-- `has_wind_radii`: UI can show/hide "View Wind Radii" button without querying positions table.
-
-**Basin codes:**
-- `NA` - North Atlantic (NHC)
-- `EP` - East Pacific (NHC)
-- `WP` - West Pacific (JTWC/JMA)
-- `SI` - South Indian (Reunion/BOM)
-- `SP` - South Pacific (BOM/Fiji)
-- `NI` - North Indian (IMD)
-- `SA` - South Atlantic (rare)
-
-### Tsunami Schema (NOAA NCEI)
-
-**Source:** [NOAA NCEI Global Historical Tsunami Database](https://www.ncei.noaa.gov/products/natural-hazards/tsunamis-earthquakes-volcanoes/tsunamis)
-- DOI: 10.7289/V5PN93H7
-- Coverage: 2100 BC to present (2,400+ events globally)
-- Update: Continuous (as events occur)
-- License: Public Domain (U.S. Government)
-
-**HaZEL Search Tool:** https://www.ngdc.noaa.gov/hazel/view/hazards/tsunami/event-search
-
-Tsunamis use a two-table structure: source events + runup observations. Unlike hurricanes (sequential track), tsunamis radiate outward from a source to multiple coastal points.
-
-**events.parquet** - Tsunami source events (earthquake/landslide epicenters):
-
-| Column | Type | Required | Description |
-|--------|------|----------|-------------|
-| `event_id` | string | Yes | Unique event identifier (e.g., `TS005413` for 2011 Tohoku) |
-| `timestamp` | datetime | Yes | Event datetime (source earthquake/landslide time) |
-| `year` | int | Yes | Event year (for filtering) |
-| `latitude` | float | Yes | Source latitude (earthquake epicenter) |
-| `longitude` | float | Yes | Source longitude |
-| `cause` | string | Yes | Cause type: `Earthquake`, `Landslide`, `Volcano`, `Meteorological` |
-| `cause_code` | int | No | NCEI cause code (1=Earthquake, 2=Questionable, etc.) |
-| `country` | string | No | Source country name |
-| `location` | string | No | Source location description |
-| `eq_magnitude` | float | No | Triggering earthquake magnitude (if caused by earthquake) |
-| `max_water_height_m` | float | No | Maximum observed water height (meters) at any runup |
-| `intensity` | float | No | Tsunami intensity (Soloviev-Imamura scale) |
-| `num_runups` | int | No | Number of runup observations |
-| `deaths` | int | No | Total deaths (actual or estimated) |
-| `deaths_order` | int | No | Deaths magnitude order (0=0, 1=1-10, 2=11-100, etc.) |
-| `damage_millions` | float | No | Damage in millions USD |
-| `damage_order` | int | No | Damage magnitude order |
-| `loc_id` | string | Yes | Source location code or water body code |
-| `parent_event_id` | string | No | Links to triggering earthquake (for cross-event chains) |
-
-**runups.parquet** - Runup observations (where waves were measured/observed):
-
-| Column | Type | Required | Description |
-|--------|------|----------|-------------|
-| `runup_id` | string | Yes | Unique runup identifier |
-| `event_id` | string | Yes | Parent tsunami event ID (strip TS prefix for NCEI match) |
-| `timestamp` | datetime | No | Arrival time at this location (often estimated) |
-| `year` | int | Yes | Year (for filtering) |
-| `latitude` | float | Yes | Observation latitude |
-| `longitude` | float | Yes | Observation longitude |
-| `country` | string | No | Observation country |
-| `location` | string | No | Location name (e.g., "HILO, HAWAII, HI") |
-| `water_height_m` | float | No | Maximum water height observed (meters) |
-| `horizontal_inundation_m` | float | No | How far inland water reached (meters) |
-| `dist_from_source_km` | float | No | Distance from source epicenter (km) |
-| `arrival_travel_time_min` | int | No | Travel time from source (minutes) |
-| `deaths` | int | No | Deaths at this location |
-| `deaths_order` | int | No | Deaths magnitude order |
-| `damage_order` | int | No | Damage magnitude order |
-| `loc_id` | string | Yes | Location code or water body code |
-
-**Animation/Display Logic:**
-- Source event displays like earthquake (point with magnitude sizing)
-- Click "View Runups" to show coastal observation points
-- Runups can be animated by estimated arrival time: `dist_from_source_km / 700` hours (tsunami speed ~700 km/h in deep ocean)
-- Lines can be drawn from source to runup points (radial propagation pattern)
-
-**Cross-Event Linking:**
-Tsunamis are typically triggered by earthquakes. Use `parent_event_id` to link:
-- Time window: 0-24 hours after earthquake
-- Spatial: Coastal areas near earthquake epicenter
-- Earthquake M7.5+ in oceanic/subduction zones are primary triggers
+- **Earthquake Schema** - magnitude, depth, aftershock linking (sequence_id, mainshock_id)
+- **Tropical Storm Schema** - Two-table structure (storms.parquet + positions.parquet)
+- **Tsunami Schema** - Two-table structure (events.parquet + runups.parquet)
+- **Volcano Schema** - VEI, duration, continuous eruptions
+- **Tornado Schema** - Track coordinates, sequence linking
+- **Wildfire Schema** - Progression data, perimeters
+- **Flood Schema** - Duration, geometry availability
+- **Cross-Event Linking** - parent_event_id, link_type, time windows
+- **Impact Radius Formulas** - Earthquake/volcano felt and damage radii
+- **Live Data APIs** - USGS, NOAA, NASA FIRMS update frequencies
 
 **{COUNTRY}.parquet** - Region-year aggregates (required):
 - `loc_id` - Location code
 - `year` - Year
 - Aggregated statistics (counts, sums, means, etc.)
-
----
-
-### Tornado Schema (NOAA Storm Events)
-
-**Source:** [NOAA Storm Events Database](https://www.ncdc.noaa.gov/stormevents/)
-- Coverage: USA only, 1950-present (~79,000 tornadoes)
-- Update: Monthly
-- Note: ~75% of recorded global tornadoes occur in the USA
-
-Tornadoes have start and end coordinates representing the track path. Tornadoes from the same storm system (supercell) are linked into sequences based on spatiotemporal proximity.
-
-**events.parquet** - Individual storm events (all types including tornadoes):
-
-| Column | Type | Required | Description |
-|--------|------|----------|-------------|
-| `event_id` | int64 | Yes | NOAA event ID |
-| `timestamp` | datetime | Yes | Event datetime |
-| `event_type` | string | Yes | Event type (e.g., `Tornado`, `Hail`, `Thunderstorm Wind`) |
-| `latitude` | float | Yes | Start point latitude |
-| `longitude` | float | Yes | Start point longitude |
-| `end_latitude` | float | No | End point latitude (for track) |
-| `end_longitude` | float | No | End point longitude (for track) |
-| `event_radius_km` | float | No | Approximate impact radius |
-| `magnitude` | float | No | Event magnitude (varies by type) |
-| `magnitude_type` | string | No | Magnitude unit type |
-| `tornado_scale` | string | No | EF0-EF5 or legacy F0-F5 scale |
-| `tornado_length_mi` | float | No | Track length in miles |
-| `tornado_width_yd` | int | No | Track width in yards |
-| `deaths_direct` | int | No | Direct fatalities |
-| `deaths_indirect` | int | No | Indirect fatalities |
-| `injuries_direct` | int | No | Direct injuries |
-| `injuries_indirect` | int | No | Indirect injuries |
-| `damage_property` | int64 | No | Property damage in USD |
-| `damage_crops` | int64 | No | Crop damage in USD |
-| `location` | string | No | Location description |
-| `loc_id` | string | Yes | Location code (county FIPS or water body) |
-| `sequence_id` | string | No | Tornado sequence ID (links same storm system) |
-| `sequence_position` | int | No | Position in sequence (1, 2, 3...) |
-| `sequence_count` | int | No | Total tornadoes in this sequence |
-
-**Tornado Sequence Linking:**
-
-Tornadoes are linked into sequences when they appear to be from the same storm system (supercell). Linking algorithm:
-- Time window: 3 hours between consecutive tornadoes
-- Distance threshold: 50 km from end of one tornado to start of next
-- Chain direction: Follows storm movement chronologically
-
-Sequence columns (similar to earthquake aftershock linking):
-- `sequence_id` - Event ID of the first (earliest) tornado in the chain
-- `sequence_position` - Order in sequence (1 = first, 2 = second, etc.)
-- `sequence_count` - Total number of tornadoes in this sequence
-
-**Animation/Display Logic:**
-- Overview: Points colored by EF/F scale (green to red), sized by intensity
-- Drill-down: Click tornado to view track (start-to-end line)
-- Sequence view: Click "View sequence" to show all linked tornadoes with:
-  - Track lines for each tornado
-  - Dashed connecting lines between consecutive tornadoes
-  - Green start markers, red end markers
-- Impact radius shown along track (based on tornado width)
-
-**EF Scale Colors:**
-| Scale | Wind (mph) | Color | Description |
-|-------|------------|-------|-------------|
-| EF0 | 65-85 | Pale Green | Light damage |
-| EF1 | 86-110 | Lime Green | Moderate damage |
-| EF2 | 111-135 | Gold | Significant damage |
-| EF3 | 136-165 | Dark Orange | Severe damage |
-| EF4 | 166-200 | Orange-Red | Devastating damage |
-| EF5 | >200 | Dark Red | Incredible damage |
-
-**Converter:** `data_converters/utilities/build_noaa_events.py`
 
 ---
 

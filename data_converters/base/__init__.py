@@ -39,6 +39,17 @@ from .parquet_utils import (
     get_output_paths,
 )
 
+from .noaa_categories import (
+    NOAA_CATEGORY_MAP,
+    CATEGORY_LABELS,
+    CATEGORY_MODELS,
+    get_disaster_category,
+    is_significant,
+    add_category_columns,
+    filter_significant_events,
+    get_category_stats,
+)
+
 __all__ = [
     # Constants
     'USA_STATE_FIPS',
@@ -68,4 +79,14 @@ __all__ = [
     'events_schema',
     'aggregates_schema',
     'get_output_paths',
+
+    # NOAA category utilities
+    'NOAA_CATEGORY_MAP',
+    'CATEGORY_LABELS',
+    'CATEGORY_MODELS',
+    'get_disaster_category',
+    'is_significant',
+    'add_category_columns',
+    'filter_significant_events',
+    'get_category_stats',
 ]

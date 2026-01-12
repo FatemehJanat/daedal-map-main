@@ -32,6 +32,10 @@ IMPORTED_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/Raw data/imported/no
 OUTPUT_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/global/tsunamis")
 SOURCE_ID = "noaa_global_tsunamis"
 
+# Cross-event linking paths
+EARTHQUAKES_PATH = Path("C:/Users/Bryan/Desktop/county-map-data/global/earthquakes/events.parquet")
+VOLCANOES_PATH = Path("C:/Users/Bryan/Desktop/county-map-data/global/smithsonian_volcanoes/volcanoes.parquet")
+
 # Cause codes from NOAA documentation
 CAUSE_CODES = {
     0: 'Unknown',
@@ -91,6 +95,242 @@ def haversine_km(lat1, lon1, lat2, lon2):
     c = 2 * atan2(sqrt(a), sqrt(1-a))
 
     return R * c
+
+
+def load_earthquake_data():
+    """Load USGS earthquake data for cross-event linking."""
+    if not EARTHQUAKES_PATH.exists():
+        print(f"  Note: Earthquake data not found at {EARTHQUAKES_PATH}")
+        print("  Earthquake-tsunami linking will be skipped")
+        return None
+
+    print(f"  Loading earthquake data for linking...")
+    eq_df = pd.read_parquet(EARTHQUAKES_PATH)
+    print(f"  Loaded {len(eq_df):,} earthquakes")
+    return eq_df
+
+
+def link_tsunamis_to_earthquakes(tsunamis_df, earthquakes_df):
+    """
+    Link tsunami events to their triggering earthquakes.
+
+    Linking criteria (based on seismological research):
+    - Time: 0-24 hours before tsunami timestamp
+    - Distance: Within 500km of tsunami source
+    - Magnitude: M7.0+ (threshold for tsunamigenic earthquakes)
+    - Depth: < 100km (shallow earthquakes generate tsunamis)
+
+    Returns DataFrame with parent_event_id column added
+    """
+    if earthquakes_df is None or len(earthquakes_df) == 0:
+        tsunamis_df['parent_event_id'] = None
+        tsunamis_df['eq_event_id'] = None
+        return tsunamis_df
+
+    print("\nLinking tsunamis to triggering earthquakes...")
+
+    # METHOD 1: Direct ID matching using NOAA's pre-computed links
+    # Earthquakes have tsunami_event_id that matches tsunami event_id
+    direct_linked = 0
+    proximity_linked = 0
+
+    # Build lookup: tsunami_event_id -> earthquake_event_id
+    eq_with_tsunami_links = earthquakes_df[earthquakes_df['tsunami_event_id'].notna()].copy()
+    tsunami_to_eq = dict(zip(eq_with_tsunami_links['tsunami_event_id'], eq_with_tsunami_links['event_id']))
+    print(f"  Earthquakes with direct tsunami links: {len(tsunami_to_eq):,}")
+
+    # Apply direct links first
+    parent_ids = []
+    for idx, tsunami in tsunamis_df.iterrows():
+        ts_id = tsunami['event_id']
+        if ts_id in tsunami_to_eq:
+            parent_ids.append(tsunami_to_eq[ts_id])
+            direct_linked += 1
+        else:
+            parent_ids.append(None)
+
+    tsunamis_df['parent_event_id'] = parent_ids
+    print(f"  Direct ID matches: {direct_linked:,}")
+
+    # METHOD 2: Time/location proximity for unlinked earthquake-caused tsunamis (post-1900 only)
+    unlinked_eq_tsunamis = tsunamis_df[
+        (tsunamis_df['parent_event_id'].isna()) &
+        (tsunamis_df['cause'] == 'Earthquake') &
+        (tsunamis_df['year'] >= 1900)
+    ]
+    print(f"  Unlinked earthquake-caused tsunamis (1900+): {len(unlinked_eq_tsunamis):,}")
+
+    if len(unlinked_eq_tsunamis) > 0:
+        # Filter earthquakes to tsunamigenic candidates (M7.0+, shallow)
+        eq_candidates = earthquakes_df[
+            (earthquakes_df['magnitude'] >= 7.0) &
+            (earthquakes_df['year'] >= 1900)
+        ].copy()
+
+        if 'depth_km' in eq_candidates.columns:
+            eq_candidates = eq_candidates[
+                (eq_candidates['depth_km'] < 100) | (eq_candidates['depth_km'].isna())
+            ]
+
+        # Ensure timestamp is datetime and timezone-naive for comparison
+        eq_candidates['timestamp'] = pd.to_datetime(eq_candidates['timestamp'], errors='coerce')
+        eq_candidates['timestamp'] = eq_candidates['timestamp'].dt.tz_localize(None)
+
+        for idx in unlinked_eq_tsunamis.index:
+            tsunami = tsunamis_df.loc[idx]
+            tsunami_time = pd.to_datetime(tsunami['timestamp'])
+
+            if pd.isna(tsunami_time):
+                continue
+
+            # Make timezone-naive
+            if tsunami_time.tzinfo is not None:
+                tsunami_time = tsunami_time.tz_localize(None)
+
+            # Time window: 0-24 hours before tsunami
+            time_min = tsunami_time - pd.Timedelta(hours=24)
+            time_max = tsunami_time + pd.Timedelta(hours=1)
+
+            candidates = eq_candidates[
+                (eq_candidates['timestamp'] >= time_min) &
+                (eq_candidates['timestamp'] <= time_max)
+            ]
+
+            if len(candidates) == 0:
+                continue
+
+            # Find closest within 500km
+            tsunami_lat = tsunami['latitude']
+            tsunami_lon = tsunami['longitude']
+            best_match = None
+            best_dist = 500
+
+            for _, eq in candidates.iterrows():
+                dist = haversine_km(tsunami_lat, tsunami_lon, eq['latitude'], eq['longitude'])
+                if dist is not None and dist < best_dist:
+                    best_dist = dist
+                    best_match = eq['event_id']
+
+            if best_match:
+                tsunamis_df.at[idx, 'parent_event_id'] = best_match
+                proximity_linked += 1
+
+        print(f"  Proximity matches: {proximity_linked:,}")
+
+    tsunamis_df['eq_event_id'] = tsunamis_df['parent_event_id']  # Explicit earthquake link
+    total_linked = direct_linked + proximity_linked
+    print(f"  Total linked: {total_linked:,}")
+
+    # Statistics
+    eq_caused = tsunamis_df[tsunamis_df['cause'] == 'Earthquake']
+    eq_linked = eq_caused['parent_event_id'].notna().sum()
+    rate = eq_linked / len(eq_caused) * 100 if len(eq_caused) > 0 else 0
+
+    print(f"  Earthquake-caused tsunamis: {len(eq_caused):,}")
+    print(f"  Successfully linked: {eq_linked:,} ({rate:.1f}%)")
+
+    return tsunamis_df
+
+
+def load_volcano_data():
+    """Load Smithsonian volcano data for cross-event linking."""
+    # Try eruptions first (has temporal data), fall back to volcanoes
+    eruptions_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/smithsonian_volcanoes/events.parquet")
+    volcanoes_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/volcanoes/volcanoes.parquet")
+
+    if eruptions_path.exists():
+        print(f"  Loading volcano eruption data for linking...")
+        df = pd.read_parquet(eruptions_path)
+        print(f"  Loaded {len(df):,} eruptions")
+        return df, 'eruptions'
+    elif volcanoes_path.exists():
+        print(f"  Loading volcano location data for linking...")
+        df = pd.read_parquet(volcanoes_path)
+        print(f"  Loaded {len(df):,} volcanoes")
+        return df, 'volcanoes'
+    else:
+        print(f"  Note: Volcano data not found")
+        print("  Volcano-tsunami linking will be skipped")
+        return None, None
+
+
+def link_tsunamis_to_volcanoes(tsunamis_df, volcano_data, data_type):
+    """
+    Link volcano-caused tsunamis to specific volcanoes.
+
+    Linking criteria:
+    - Cause: Must be 'Volcano'
+    - Distance: Within 200km of known volcano
+    - If eruption data: Within 1 year of eruption
+
+    Returns DataFrame with volcano_id column added
+    """
+    if volcano_data is None:
+        tsunamis_df['volcano_id'] = None
+        tsunamis_df['volcano_name'] = None
+        return tsunamis_df
+
+    print("\nLinking tsunamis to triggering volcanoes...")
+
+    # Get volcano-caused tsunamis
+    volcano_tsunamis = tsunamis_df[tsunamis_df['cause'] == 'Volcano'].copy()
+    print(f"  Volcano-caused tsunamis: {len(volcano_tsunamis):,}")
+
+    if len(volcano_tsunamis) == 0:
+        tsunamis_df['volcano_id'] = None
+        tsunamis_df['volcano_name'] = None
+        return tsunamis_df
+
+    linked_count = 0
+    volcano_ids = []
+    volcano_names = []
+
+    for idx, tsunami in tsunamis_df.iterrows():
+        volcano_id = None
+        volcano_name = None
+
+        # Only link volcano-caused tsunamis
+        if tsunami.get('cause') != 'Volcano':
+            volcano_ids.append(None)
+            volcano_names.append(None)
+            continue
+
+        tsunami_lat = tsunami['latitude']
+        tsunami_lon = tsunami['longitude']
+
+        # Find closest volcano within 200km
+        best_match_id = None
+        best_match_name = None
+        best_dist = 200  # km threshold
+
+        for _, volcano in volcano_data.iterrows():
+            vol_lat = volcano.get('latitude')
+            vol_lon = volcano.get('longitude')
+
+            if pd.isna(vol_lat) or pd.isna(vol_lon):
+                continue
+
+            dist = haversine_km(tsunami_lat, tsunami_lon, vol_lat, vol_lon)
+
+            if dist is not None and dist < best_dist:
+                best_dist = dist
+                best_match_id = volcano.get('volcano_number') or volcano.get('volcano_id')
+                best_match_name = volcano.get('volcano_name')
+
+        if best_match_id:
+            linked_count += 1
+            volcano_id = str(best_match_id)
+            volcano_name = best_match_name
+
+        volcano_ids.append(volcano_id)
+        volcano_names.append(volcano_name)
+
+    tsunamis_df['volcano_id'] = volcano_ids
+    tsunamis_df['volcano_name'] = volcano_names
+
+    print(f"  Successfully linked: {linked_count:,}")
+
+    return tsunamis_df
 
 
 def load_tsunami_data():
@@ -158,7 +398,7 @@ def process_events(events_df):
         'eq_magnitude': events_df.get('eqMagnitude'),
         'max_water_height_m': events_df.get('maxWaterHeight'),
         'intensity': events_df.get('tsIntensity'),
-        'num_runups': events_df.get('numRunups', 0),
+        'runup_count': events_df.get('numRunups', 0),
         'deaths': events_df.get('deaths'),
         'deaths_order': events_df.get('deathsAmountOrder'),
         'damage_millions': events_df.get('damageMillionsDollars'),
@@ -412,6 +652,18 @@ def main():
     # Process events
     events_out = process_events(events_df)
 
+    # Load earthquake data for cross-event linking
+    earthquakes_df = load_earthquake_data()
+
+    # Link tsunamis to triggering earthquakes
+    events_out = link_tsunamis_to_earthquakes(events_out, earthquakes_df)
+
+    # Load volcano data for cross-event linking
+    volcano_data, volcano_type = load_volcano_data()
+
+    # Link tsunamis to triggering volcanoes
+    events_out = link_tsunamis_to_volcanoes(events_out, volcano_data, volcano_type)
+
     # Process runups
     runups_out = process_runups(runups_df, events_df)
 
@@ -440,6 +692,15 @@ def main():
     print(f"\nOutput: {OUTPUT_DIR}")
     print(f"  events.parquet: {len(events_out):,} events")
     print(f"  runups.parquet: {len(runups_out):,} runups")
+
+    # Linking summary
+    print(f"\nCross-event linking:")
+    if 'parent_event_id' in events_out.columns:
+        eq_linked = events_out['parent_event_id'].notna().sum()
+        print(f"  Linked to earthquakes: {eq_linked:,} events")
+    if 'volcano_id' in events_out.columns:
+        vol_linked = events_out['volcano_id'].notna().sum()
+        print(f"  Linked to volcanoes: {vol_linked:,} events")
 
     return 0
 
