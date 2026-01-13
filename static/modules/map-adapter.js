@@ -7,6 +7,7 @@ import { CONFIG } from './config.js';
 import { LocationInfoCache } from './cache.js';
 import { PointRadiusModel } from './models/model-point-radius.js';
 import { TrackModel } from './models/model-track.js';
+import { fetchMsgpack } from './utils/fetch.js';
 
 // Dependencies set via setDependencies to avoid circular imports
 let ViewportLoader = null;
@@ -853,13 +854,7 @@ export const MapAdapter = {
 
     try {
       // Fetch cities for this location
-      const response = await fetch(`/geometry/${locId}/places`);
-      if (!response.ok) {
-        console.log('No city data available for', locId);
-        return;
-      }
-
-      const result = await response.json();
+      const result = await fetchMsgpack(`/geometry/${locId}/places`);
       if (!result.geojson || !result.geojson.features || result.geojson.features.length === 0) {
         console.log('No cities found for', locId);
         return;

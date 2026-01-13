@@ -851,6 +851,29 @@ export const TimeSlider = {
       });
     }
 
+    // Initialize speed step buttons
+    const speedDown = document.getElementById('speedDown');
+    const speedUp = document.getElementById('speedUp');
+    const SPEED_STEP = 0.02;  // Step size for +/- buttons (50 steps min to max)
+
+    if (speedDown) {
+      speedDown.addEventListener('click', () => {
+        const currentValue = parseFloat(this.speedSlider.value);
+        const newValue = Math.max(0, currentValue - SPEED_STEP);
+        this.speedSlider.value = newValue;
+        this.setSpeedFromSlider(newValue);
+      });
+    }
+
+    if (speedUp) {
+      speedUp.addEventListener('click', () => {
+        const currentValue = parseFloat(this.speedSlider.value);
+        const newValue = Math.min(1, currentValue + SPEED_STEP);
+        this.speedSlider.value = newValue;
+        this.setSpeedFromSlider(newValue);
+      });
+    }
+
     console.log('TimeSlider: Speed slider initialized');
   },
 

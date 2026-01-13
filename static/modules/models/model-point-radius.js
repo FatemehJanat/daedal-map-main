@@ -11,6 +11,7 @@
 
 import { CONFIG } from '../config.js';
 import { DisasterPopup } from '../disaster-popup.js';
+import { fetchMsgpack } from '../utils/fetch.js';
 
 // Dependencies set via setDependencies
 let MapAdapter = null;
@@ -179,8 +180,7 @@ export const PointRadiusModel = {
                     url += `&year=${year}`;
                   }
 
-                  const response = await fetch(url);
-                  const data = await response.json();
+                  const data = await fetchMsgpack(url);
 
                   if (data.count > 0) {
                     // Found earthquakes - display them
@@ -231,8 +231,7 @@ export const PointRadiusModel = {
                     url += `&year=${year}`;
                   }
 
-                  const response = await fetch(url);
-                  const data = await response.json();
+                  const data = await fetchMsgpack(url);
 
                   if (data.count > 0) {
                     // Found volcanoes - display summary
@@ -276,8 +275,7 @@ export const PointRadiusModel = {
                 try {
                   // Fetch animation data (source + runups combined)
                   const url = `/api/tsunamis/${eventId}/animation`;
-                  const response = await fetch(url);
-                  const data = await response.json();
+                  const data = await fetchMsgpack(url);
 
                   if (data.features && data.features.length > 1) {
                     // Found runups - update display
@@ -401,8 +399,7 @@ export const PointRadiusModel = {
 
                 try {
                   // Fetch flood geometry
-                  const response = await fetch(`/api/floods/${eventId}/geometry`);
-                  const geometryData = await response.json();
+                  const geometryData = await fetchMsgpack(`/api/floods/${eventId}/geometry`);
 
                   if (geometryData.geometry) {
                     link.textContent = 'Starting animation...';
@@ -439,8 +436,7 @@ export const PointRadiusModel = {
                 try {
                   // Fetch tornado detail with track data
                   const url = `/api/tornadoes/${eventId}`;
-                  const response = await fetch(url);
-                  const data = await response.json();
+                  const data = await fetchMsgpack(url);
 
                   // Handle both old format (data.track) and new FeatureCollection format
                   let trackData;
@@ -501,8 +497,7 @@ export const PointRadiusModel = {
                 try {
                   // Fetch tornado sequence (linked tornadoes from same storm system)
                   const url = `/api/tornadoes/${eventId}/sequence`;
-                  const response = await fetch(url);
-                  const data = await response.json();
+                  const data = await fetchMsgpack(url);
 
                   if (data.features && data.features.length > 0) {
                     // Has sequence or single tornado with track - animate it
@@ -1694,8 +1689,7 @@ export const PointRadiusModel = {
         if (eventId) {
           try {
             const url = `/api/tsunamis/${eventId}/animation`;
-            const response = await fetch(url);
-            const data = await response.json();
+            const data = await fetchMsgpack(url);
             if (data.features && data.features.length > 1) {
               model._notifyTsunamiRunups(data, eventId);
             }
@@ -1715,8 +1709,7 @@ export const PointRadiusModel = {
               const url = year
                 ? `/api/wildfires/${props.event_id}/progression?year=${year}`
                 : `/api/wildfires/${props.event_id}/progression`;
-              const response = await fetch(url);
-              const data = await response.json();
+              const data = await fetchMsgpack(url);
 
               let snapshots, totalDays;
               if (data.type === 'FeatureCollection' && data.features) {
@@ -1789,8 +1782,7 @@ export const PointRadiusModel = {
           if (props.has_geometry) {
             try {
               const url = `/api/floods/${props.event_id}/geometry`;
-              const response = await fetch(url);
-              const data = await response.json();
+              const data = await fetchMsgpack(url);
               // Handle both Feature (single geometry) and FeatureCollection formats
               if (data.type === 'Feature' && data.geometry) {
                 model._notifyFloodAnimation(data, props.event_id, props.duration_days,
@@ -1826,8 +1818,7 @@ export const PointRadiusModel = {
         if (props.event_id) {
           try {
             const url = `/api/tornadoes/${props.event_id}/sequence`;
-            const response = await fetch(url);
-            const data = await response.json();
+            const data = await fetchMsgpack(url);
 
             if (data.features && data.features.length > 0) {
               model._notifyTornadoSequence(data, props.event_id);
@@ -3714,8 +3705,7 @@ export const PointRadiusModel = {
                 url += `&year=${year}`;
               }
 
-              const response = await fetch(url);
-              const data = await response.json();
+              const data = await fetchMsgpack(url);
               if (data.count > 0) {
                 model._notifyNearbyVolcanoes(data.features, lat, lon);
               } else {
@@ -3744,8 +3734,7 @@ export const PointRadiusModel = {
                 url += `&year=${year}`;
               }
 
-              const response = await fetch(url);
-              const data = await response.json();
+              const data = await fetchMsgpack(url);
               if (data.count > 0) {
                 const volcanoSeqId = `volcano-${volcanoName}-${year}`;
                 model._notifyVolcanoEarthquakes(data.features, volcanoSeqId, volcanoName, lat, lon);

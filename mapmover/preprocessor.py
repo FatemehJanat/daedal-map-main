@@ -1239,6 +1239,99 @@ def detect_derived_intent(query: str) -> Optional[dict]:
 
 
 # =============================================================================
+# Filter Intent Detection (Overlay Integration)
+# =============================================================================
+
+# Patterns for reading current filter state
+FILTER_READ_PATTERNS = [
+    r"what.*(magnitude|power|size|strength|category|scale).*(?:displayed|showing|on|visible)",
+    r"what.*filters?",
+    r"what.*(earthquakes?|volcanoes?|fires?|storms?|hurricanes?|tornadoes?|floods?).*showing",
+    r"current filters?",
+    r"how many.*(earthquakes?|events?|fires?|storms?).*showing",
+    r"what.*range.*(magnitude|power|size)",
+]
+
+# Patterns for changing filters
+FILTER_CHANGE_PATTERNS = [
+    (r"(?:show|display).*mag(?:nitude)?[\s:]*(\d+\.?\d*)[\s-]+(?:to|-)[\s]*(\d+\.?\d*)", "magnitude_range"),
+    (r"(?:show|display).*mag(?:nitude)?[\s:]*(\d+\.?\d*)\s*\+", "magnitude_min"),
+    (r"(?:show|display).*(?:>=?|above|over)\s*(\d+\.?\d*)\s*mag", "magnitude_min"),
+    (r"(?:show|display).*(?:<=?|under|below)\s*(\d+\.?\d*)\s*mag", "magnitude_max"),
+    (r"(?:all|any|clear|reset|remove)\s*(?:earthquakes?|filters?|magnitude)", "clear"),
+    (r"(?:show|display).*vei\s*(\d+)\s*(?:\+|and\s*above|or\s*higher)", "vei_min"),
+    (r"(?:show|display).*category\s*(\d+)\s*(?:\+|and\s*above|or\s*higher)", "category_min"),
+    (r"(?:show|display).*(?:ef|scale)\s*(\d+)\s*(?:\+|and\s*above|or\s*higher)", "scale_min"),
+    (r"(?:show|display).*(?:over|above|>=?)\s*(\d+)\s*(?:km2|sq\s*km|square\s*km)", "area_min"),
+    (r"(?:show|display).*(?:over|above|>=?)\s*(\d+)\s*acres?", "acres_min"),
+]
+
+
+def detect_filter_intent(query: str, active_overlays: dict) -> Optional[dict]:
+    """
+    Detect if user is asking about or changing overlay filters.
+
+    Args:
+        query: User query text
+        active_overlays: Current overlay state {type, filters, allActive}
+
+    Returns:
+        dict with filter intent info, or None if no filter intent detected
+    """
+    if not active_overlays:
+        return None
+
+    query_lower = query.lower()
+    overlay_type = active_overlays.get("type")
+
+    # Check for read patterns
+    for pattern in FILTER_READ_PATTERNS:
+        if re.search(pattern, query_lower):
+            return {
+                "type": "read_filters",
+                "overlay": overlay_type,
+                "pattern": pattern
+            }
+
+    # Check for change patterns
+    for pattern, filter_type in FILTER_CHANGE_PATTERNS:
+        match = re.search(pattern, query_lower)
+        if match:
+            result = {
+                "type": "change_filters",
+                "overlay": overlay_type,
+                "filter_type": filter_type,
+                "raw_match": match.group(0)
+            }
+
+            # Extract values based on filter type
+            if filter_type == "magnitude_range":
+                result["minMagnitude"] = float(match.group(1))
+                result["maxMagnitude"] = float(match.group(2))
+            elif filter_type == "magnitude_min":
+                result["minMagnitude"] = float(match.group(1))
+            elif filter_type == "magnitude_max":
+                result["maxMagnitude"] = float(match.group(1))
+            elif filter_type == "vei_min":
+                result["minVei"] = int(match.group(1))
+            elif filter_type == "category_min":
+                result["minCategory"] = int(match.group(1))
+            elif filter_type == "scale_min":
+                result["minScale"] = int(match.group(1))
+            elif filter_type == "area_min":
+                result["minAreaKm2"] = float(match.group(1))
+            elif filter_type == "acres_min":
+                # Convert acres to km2 (1 acre = 0.00404686 km2)
+                result["minAreaKm2"] = float(match.group(1)) * 0.00404686
+            elif filter_type == "clear":
+                result["clear"] = True
+
+            return result
+
+    return None
+
+
+# =============================================================================
 # Navigation Intent Detection
 # =============================================================================
 
@@ -1614,13 +1707,15 @@ def extract_multiple_locations(query: str, viewport: dict = None) -> dict:
 # Main Preprocessor Function
 # =============================================================================
 
-def preprocess_query(query: str, viewport: dict = None) -> dict:
+def preprocess_query(query: str, viewport: dict = None, active_overlays: dict = None, cache_stats: dict = None) -> dict:
     """
     Main preprocessor function - extracts all hints from query.
 
     Args:
         query: User query text
         viewport: Optional viewport dict with {center, zoom, bounds, adminLevel}
+        active_overlays: Optional dict with {type, filters, allActive} from frontend
+        cache_stats: Optional dict with per-overlay stats {overlayId: {count, years, ...}}
 
     Returns a hints dict that can be injected into LLM context.
     """
@@ -1762,6 +1857,9 @@ def preprocess_query(query: str, viewport: dict = None) -> dict:
                         "count": len(matches)
                     }
 
+    # Detect filter-related intent (read or change filters)
+    filter_intent = detect_filter_intent(query, active_overlays) if active_overlays else None
+
     hints = {
         "original_query": query,
         "viewport": viewport,  # Pass through for downstream use
@@ -1775,6 +1873,10 @@ def preprocess_query(query: str, viewport: dict = None) -> dict:
         "reference_lookup": detect_reference_lookup(query),
         "derived_intent": detect_derived_intent(query),
         "detected_source": detected_source,  # Already detected earlier for location filtering
+        # Overlay integration (Phase 1)
+        "active_overlays": active_overlays,  # Current overlay state from frontend
+        "cache_stats": cache_stats,  # What's currently loaded in frontend cache
+        "filter_intent": filter_intent,  # User intent to read/change filters
     }
 
     # Build summary for LLM context injection
@@ -1817,9 +1919,51 @@ def preprocess_query(query: str, viewport: dict = None) -> dict:
     if hints["detected_source"]:
         summary_parts.append(f"Source specified: {hints['detected_source']['source_name']}")
 
+    # Add active overlay context
+    if active_overlays and active_overlays.get("type"):
+        overlay_type = active_overlays["type"]
+        filters = active_overlays.get("filters", {})
+        filter_desc = format_filter_description(filters, overlay_type)
+        summary_parts.append(f"OVERLAY: {overlay_type} ({filter_desc})")
+
+    # Add filter intent
+    if filter_intent:
+        if filter_intent["type"] == "read_filters":
+            summary_parts.append("INTENT: Query about current filters")
+        elif filter_intent["type"] == "change_filters":
+            summary_parts.append(f"INTENT: Change filters ({filter_intent.get('filter_type', 'unknown')})")
+
     hints["summary"] = "; ".join(summary_parts) if summary_parts else None
 
     return hints
+
+
+def format_filter_description(filters: dict, overlay_type: str) -> str:
+    """Format filter settings as human-readable description."""
+    if not filters:
+        return "no filters"
+
+    parts = []
+
+    if overlay_type == "earthquakes":
+        if filters.get("minMagnitude"):
+            parts.append(f"mag >= {filters['minMagnitude']}")
+        if filters.get("maxMagnitude"):
+            parts.append(f"mag <= {filters['maxMagnitude']}")
+    elif overlay_type == "hurricanes":
+        if filters.get("minCategory"):
+            parts.append(f"cat >= {filters['minCategory']}")
+    elif overlay_type == "volcanoes":
+        if filters.get("minVei"):
+            parts.append(f"VEI >= {filters['minVei']}")
+    elif overlay_type == "wildfires":
+        if filters.get("minAreaKm2"):
+            parts.append(f"area >= {filters['minAreaKm2']} km2")
+    elif overlay_type == "tornadoes":
+        if filters.get("minScale"):
+            parts.append(f"scale >= EF{filters['minScale']}")
+
+    return ", ".join(parts) if parts else "no filters"
 
 
 def build_tier3_context(hints: dict) -> str:
@@ -1833,6 +1977,32 @@ def build_tier3_context(hints: dict) -> str:
     # Add summary if present
     if hints.get("summary"):
         context_parts.append(f"[Preprocessor hints: {hints['summary']}]")
+
+    # Add active overlay context for LLM
+    active_overlays = hints.get("active_overlays")
+    if active_overlays and active_overlays.get("type"):
+        overlay_type = active_overlays["type"]
+        filters = active_overlays.get("filters", {})
+        filter_desc = format_filter_description(filters, overlay_type)
+        context_parts.append(f"[ACTIVE OVERLAY: {overlay_type}]")
+        if filters:
+            context_parts.append(f"[CURRENT FILTERS: {filter_desc}]")
+
+    # Add cache stats context
+    cache_stats = hints.get("cache_stats")
+    if cache_stats:
+        for overlay_id, stats in cache_stats.items():
+            count = stats.get("count", 0)
+            if count > 0:
+                extra_info = []
+                if stats.get("minMag") is not None:
+                    extra_info.append(f"mag {stats['minMag']}-{stats.get('maxMag', '?')}")
+                if stats.get("years"):
+                    years = stats["years"]
+                    if len(years) > 0:
+                        extra_info.append(f"years {years[0]}-{years[-1]}")
+                info_str = f" ({', '.join(extra_info)})" if extra_info else ""
+                context_parts.append(f"[CACHE: {count} {overlay_id} loaded{info_str}]")
 
     # Check if user explicitly mentioned a location in their query
     explicit_location = hints.get("location")

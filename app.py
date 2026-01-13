@@ -23,7 +23,8 @@ if sys.stdout.encoding != 'utf-8':
 if sys.stderr.encoding != 'utf-8':
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
-from fastapi import FastAPI, Request
+import msgpack
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -73,6 +74,33 @@ from mapmover.settings import (
     save_settings,
     init_backup_folders,
 )
+
+
+# === MessagePack Response Helpers ===
+
+def msgpack_response(data: dict, status_code: int = 200) -> Response:
+    """Standard MessagePack response for all API endpoints.
+
+    Usage:
+        return msgpack_response({"data": result, "count": len(result)})
+    """
+    return Response(
+        content=msgpack.packb(data, use_bin_type=True),
+        media_type="application/msgpack",
+        status_code=status_code
+    )
+
+
+def msgpack_error(message: str, status_code: int = 500) -> Response:
+    """Standard error response in MessagePack format."""
+    return msgpack_response({"error": message}, status_code)
+
+
+async def decode_request_body(request: Request) -> dict:
+    """Decode MessagePack request body."""
+    body_bytes = await request.body()
+    return msgpack.unpackb(body_bytes, raw=False)
+
 
 # Create FastAPI app
 app = FastAPI(
@@ -135,10 +163,10 @@ async def get_countries_geometry_endpoint(debug: bool = False):
     """
     try:
         result = get_countries_geometry_handler(debug=debug)
-        return JSONResponse(content=result)
+        return msgpack_response(result)
     except Exception as e:
         logger.error(f"Error in /geometry/countries: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 @app.get("/geometry/{loc_id}/children")
@@ -152,10 +180,10 @@ async def get_location_children_endpoint(loc_id: str):
     """
     try:
         result = get_location_children_handler(loc_id)
-        return JSONResponse(content=result)
+        return msgpack_response(result)
     except Exception as e:
         logger.error(f"Error in /geometry/{loc_id}/children: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 @app.get("/geometry/{loc_id}/places")
@@ -165,10 +193,10 @@ async def get_location_places_endpoint(loc_id: str):
     """
     try:
         result = get_location_places_handler(loc_id)
-        return JSONResponse(content=result)
+        return msgpack_response(result)
     except Exception as e:
         logger.error(f"Error in /geometry/{loc_id}/places: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 @app.get("/geometry/{loc_id}/info")
@@ -179,10 +207,10 @@ async def get_location_info_endpoint(loc_id: str):
     """
     try:
         result = get_location_info(loc_id)
-        return JSONResponse(content=result)
+        return msgpack_response(result)
     except Exception as e:
         logger.error(f"Error in /geometry/{loc_id}/info: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 @app.get("/geometry/viewport")
@@ -203,20 +231,17 @@ async def get_viewport_geometry_endpoint(level: int = 0, bbox: str = None, debug
             # Parse bbox string
             parts = [float(x) for x in bbox.split(',')]
             if len(parts) != 4:
-                return JSONResponse(
-                    content={"error": "bbox must be minLon,minLat,maxLon,maxLat"},
-                    status_code=400
-                )
+                return msgpack_error("bbox must be minLon,minLat,maxLon,maxLat", 400)
             bbox_tuple = tuple(parts)
         else:
             # Default to world view
             bbox_tuple = (-180, -90, 180, 90)
 
         result = get_viewport_geometry_handler(level, bbox_tuple, debug=debug)
-        return JSONResponse(content=result)
+        return msgpack_response(result)
     except Exception as e:
         logger.error(f"Error in /geometry/viewport: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 @app.post("/geometry/cache/clear")
@@ -224,10 +249,10 @@ async def clear_geometry_cache_endpoint():
     """Clear the geometry cache. Useful after updating data files."""
     try:
         clear_geometry_cache()
-        return JSONResponse(content={"message": "Geometry cache cleared"})
+        return msgpack_response({"message": "Geometry cache cleared"})
     except Exception as e:
         logger.error(f"Error clearing geometry cache: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 @app.post("/geometry/selection")
@@ -240,17 +265,17 @@ async def get_selection_geometry_endpoint(req: Request):
     Returns: GeoJSON FeatureCollection
     """
     try:
-        body = await req.json()
+        body = await decode_request_body(req)
         loc_ids = body.get("loc_ids", [])
 
         if not loc_ids:
-            return JSONResponse(content={"type": "FeatureCollection", "features": []})
+            return msgpack_response({"type": "FeatureCollection", "features": []})
 
         result = get_selection_geometries_handler(loc_ids)
-        return JSONResponse(content=result)
+        return msgpack_response(result)
     except Exception as e:
         logger.error(f"Error in /geometry/selection: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 # === Hurricane Data Endpoints ===
@@ -268,14 +293,14 @@ async def get_hurricane_track(storm_id: str):
         positions_path = Path("C:/Users/Bryan/Desktop/county-map-data/countries/USA/hurricanes/positions.parquet")
 
         if not positions_path.exists():
-            return JSONResponse(content={"error": "Hurricane data not available"}, status_code=404)
+            return msgpack_error("Hurricane data not available", 404)
 
         # Load and filter positions for this storm
         df = pd.read_parquet(positions_path)
         storm_df = df[df['storm_id'] == storm_id].copy()
 
         if len(storm_df) == 0:
-            return JSONResponse(content={"error": f"Storm {storm_id} not found"}, status_code=404)
+            return msgpack_error(f"Storm {storm_id} not found", 404)
 
         # Sort by timestamp
         storm_df = storm_df.sort_values('timestamp')
@@ -304,7 +329,7 @@ async def get_hurricane_track(storm_id: str):
         time_start = storm_df['timestamp'].min()
         time_end = storm_df['timestamp'].max()
 
-        return JSONResponse(content={
+        return msgpack_response({
             "type": "FeatureCollection",
             "features": features,
             "metadata": {
@@ -320,7 +345,7 @@ async def get_hurricane_track(storm_id: str):
 
     except Exception as e:
         logger.error(f"Error fetching hurricane track {storm_id}: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 @app.get("/api/hurricane/storms")
@@ -334,7 +359,7 @@ async def get_hurricane_storms(year: int = None, name: str = None, us_landfall: 
         storms_path = Path("C:/Users/Bryan/Desktop/county-map-data/countries/USA/hurricanes/storms.parquet")
 
         if not storms_path.exists():
-            return JSONResponse(content={"error": "Hurricane data not available"}, status_code=404)
+            return msgpack_error("Hurricane data not available", 404)
 
         df = pd.read_parquet(storms_path)
 
@@ -364,14 +389,14 @@ async def get_hurricane_storms(year: int = None, name: str = None, us_landfall: 
                 "end_date": str(row['end_date']) if pd.notna(row['end_date']) else None
             })
 
-        return JSONResponse(content={
+        return msgpack_response({
             "count": len(storms),
             "storms": storms
         })
 
     except Exception as e:
         logger.error(f"Error fetching hurricane storms: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 @app.get("/api/hurricane/storms/geojson")
@@ -387,7 +412,7 @@ async def get_hurricane_storms_geojson(year: int = None, us_landfall: bool = Non
         positions_path = Path("C:/Users/Bryan/Desktop/county-map-data/countries/USA/hurricanes/positions.parquet")
 
         if not storms_path.exists() or not positions_path.exists():
-            return JSONResponse(content={"error": "Hurricane data not available"}, status_code=404)
+            return msgpack_error("Hurricane data not available", 404)
 
         # Load storms
         storms_df = pd.read_parquet(storms_path)
@@ -399,7 +424,7 @@ async def get_hurricane_storms_geojson(year: int = None, us_landfall: bool = Non
             storms_df = storms_df[storms_df['us_landfall'] == us_landfall]
 
         if len(storms_df) == 0:
-            return JSONResponse(content={
+            return msgpack_response({
                 "type": "FeatureCollection",
                 "features": []
             })
@@ -442,14 +467,14 @@ async def get_hurricane_storms_geojson(year: int = None, us_landfall: bool = Non
                 }
             })
 
-        return JSONResponse(content={
+        return msgpack_response({
             "type": "FeatureCollection",
             "features": features
         })
 
     except Exception as e:
         logger.error(f"Error fetching hurricane storms GeoJSON: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 # === Earthquake Data Endpoints ===
@@ -468,7 +493,7 @@ async def get_earthquakes_geojson(year: int = None, min_magnitude: float = None,
         events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/earthquakes/events.parquet")
 
         if not events_path.exists():
-            return JSONResponse(content={"error": "Earthquake data not available"}, status_code=404)
+            return msgpack_error("Earthquake data not available", 404)
 
         df = pd.read_parquet(events_path)
 
@@ -520,14 +545,14 @@ async def get_earthquakes_geojson(year: int = None, min_magnitude: float = None,
                 }
             })
 
-        return JSONResponse(content={
+        return msgpack_response({
             "type": "FeatureCollection",
             "features": features
         })
 
     except Exception as e:
         logger.error(f"Error fetching earthquakes GeoJSON: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 @app.get("/api/earthquakes/sequence/{sequence_id}")
@@ -545,7 +570,7 @@ async def get_earthquake_sequence(sequence_id: str, min_magnitude: float = None)
         events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/earthquakes/events.parquet")
 
         if not events_path.exists():
-            return JSONResponse(content={"error": "Earthquake data not available"}, status_code=404)
+            return msgpack_error("Earthquake data not available", 404)
 
         df = pd.read_parquet(events_path)
 
@@ -553,7 +578,7 @@ async def get_earthquake_sequence(sequence_id: str, min_magnitude: float = None)
         df = df[df['sequence_id'] == sequence_id]
 
         if len(df) == 0:
-            return JSONResponse(content={"error": f"Sequence {sequence_id} not found"}, status_code=404)
+            return msgpack_error(f"Sequence {sequence_id} not found", 404)
 
         # Optional magnitude filter (but default is no filter for full sequence)
         if min_magnitude is not None:
@@ -596,7 +621,7 @@ async def get_earthquake_sequence(sequence_id: str, min_magnitude: float = None)
 
         logger.info(f"Returning {len(features)} events for sequence {sequence_id}")
 
-        return JSONResponse(content={
+        return msgpack_response({
             "type": "FeatureCollection",
             "features": features,
             "sequence_id": sequence_id
@@ -604,7 +629,7 @@ async def get_earthquake_sequence(sequence_id: str, min_magnitude: float = None)
 
     except Exception as e:
         logger.error(f"Error fetching earthquake sequence {sequence_id}: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 @app.get("/api/earthquakes/aftershocks/{event_id}")
@@ -622,7 +647,7 @@ async def get_earthquake_aftershocks(event_id: str, min_magnitude: float = None)
         events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/earthquakes/events.parquet")
 
         if not events_path.exists():
-            return JSONResponse(content={"error": "Earthquake data not available"}, status_code=404)
+            return msgpack_error("Earthquake data not available", 404)
 
         df = pd.read_parquet(events_path)
 
@@ -630,7 +655,7 @@ async def get_earthquake_aftershocks(event_id: str, min_magnitude: float = None)
         mainshock_df = df[df['event_id'] == event_id]
 
         if len(mainshock_df) == 0:
-            return JSONResponse(content={"error": f"Event {event_id} not found"}, status_code=404)
+            return msgpack_error(f"Event {event_id} not found", 404)
 
         # Get all aftershocks (events where mainshock_id = event_id)
         aftershocks_df = df[df['mainshock_id'] == event_id]
@@ -679,7 +704,7 @@ async def get_earthquake_aftershocks(event_id: str, min_magnitude: float = None)
 
         logger.info(f"Returning {len(features)} events for mainshock {event_id} (1 mainshock + {len(features)-1} aftershocks)")
 
-        return JSONResponse(content={
+        return msgpack_response({
             "type": "FeatureCollection",
             "features": features,
             "metadata": {
@@ -692,7 +717,7 @@ async def get_earthquake_aftershocks(event_id: str, min_magnitude: float = None)
 
     except Exception as e:
         logger.error(f"Error fetching aftershocks for {event_id}: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 # === Volcano Data Endpoints ===
@@ -710,7 +735,7 @@ async def get_volcanoes_geojson(active_only: bool = None):
         volcanoes_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/smithsonian_volcanoes/volcanoes.parquet")
 
         if not volcanoes_path.exists():
-            return JSONResponse(content={"error": "Volcano data not available"}, status_code=404)
+            return msgpack_error("Volcano data not available", 404)
 
         df = pd.read_parquet(volcanoes_path)
 
@@ -736,14 +761,14 @@ async def get_volcanoes_geojson(active_only: bool = None):
                 }
             })
 
-        return JSONResponse(content={
+        return msgpack_response({
             "type": "FeatureCollection",
             "features": features
         })
 
     except Exception as e:
         logger.error(f"Error fetching volcanoes GeoJSON: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 @app.get("/api/eruptions/geojson")
@@ -766,7 +791,7 @@ async def get_eruptions_geojson(year: int = None, min_vei: int = None, min_year:
         eruptions_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/smithsonian_volcanoes/events.parquet")
 
         if not eruptions_path.exists():
-            return JSONResponse(content={"error": "Eruption data not available"}, status_code=404)
+            return msgpack_error("Eruption data not available", 404)
 
         df = pd.read_parquet(eruptions_path)
 
@@ -828,14 +853,14 @@ async def get_eruptions_geojson(year: int = None, min_vei: int = None, min_year:
                 }
             })
 
-        return JSONResponse(content={
+        return msgpack_response({
             "type": "FeatureCollection",
             "features": features
         })
 
     except Exception as e:
         logger.error(f"Error fetching eruptions GeoJSON: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 # === Tsunami Data Endpoints ===
@@ -852,7 +877,7 @@ async def get_tsunamis_geojson(year: int = None, min_year: int = 1900, cause: st
         events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tsunamis/events.parquet")
 
         if not events_path.exists():
-            return JSONResponse(content={"error": "Tsunami data not available"}, status_code=404)
+            return msgpack_error("Tsunami data not available", 404)
 
         df = pd.read_parquet(events_path)
 
@@ -895,7 +920,7 @@ async def get_tsunamis_geojson(year: int = None, min_year: int = 1900, cause: st
                 }
             })
 
-        return JSONResponse(content={
+        return msgpack_response({
             "type": "FeatureCollection",
             "features": features,
             "metadata": {
@@ -906,7 +931,7 @@ async def get_tsunamis_geojson(year: int = None, min_year: int = 1900, cause: st
 
     except Exception as e:
         logger.error(f"Error fetching tsunamis GeoJSON: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 @app.get("/api/tsunamis/{event_id}/runups")
@@ -922,14 +947,14 @@ async def get_tsunami_runups(event_id: str):
         events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tsunamis/events.parquet")
 
         if not runups_path.exists():
-            return JSONResponse(content={"error": "Runup data not available"}, status_code=404)
+            return msgpack_error("Runup data not available", 404)
 
         # Load runups for this event
         runups_df = pd.read_parquet(runups_path)
         runups_df = runups_df[runups_df['event_id'] == event_id]
 
         if len(runups_df) == 0:
-            return JSONResponse(content={"error": f"No runups found for event {event_id}"}, status_code=404)
+            return msgpack_error(f"No runups found for event {event_id}", 404)
 
         # Load source event for reference
         source_event = None
@@ -983,7 +1008,7 @@ async def get_tsunami_runups(event_id: str):
                 }
             })
 
-        return JSONResponse(content={
+        return msgpack_response({
             "type": "FeatureCollection",
             "features": features,
             "source": source_event,
@@ -997,7 +1022,7 @@ async def get_tsunami_runups(event_id: str):
 
     except Exception as e:
         logger.error(f"Error fetching tsunami runups: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 @app.get("/api/tsunamis/{event_id}/animation")
@@ -1013,14 +1038,14 @@ async def get_tsunami_animation_data(event_id: str):
         events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tsunamis/events.parquet")
 
         if not events_path.exists() or not runups_path.exists():
-            return JSONResponse(content={"error": "Tsunami data not available"}, status_code=404)
+            return msgpack_error("Tsunami data not available", 404)
 
         # Load source event
         events_df = pd.read_parquet(events_path)
         event_row = events_df[events_df['event_id'] == event_id]
 
         if len(event_row) == 0:
-            return JSONResponse(content={"error": f"Event {event_id} not found"}, status_code=404)
+            return msgpack_error(f"Event {event_id} not found", 404)
 
         row = event_row.iloc[0]
 
@@ -1074,7 +1099,7 @@ async def get_tsunami_animation_data(event_id: str):
                 }
             })
 
-        return JSONResponse(content={
+        return msgpack_response({
             "type": "FeatureCollection",
             "features": features,
             "metadata": {
@@ -1089,7 +1114,7 @@ async def get_tsunami_animation_data(event_id: str):
 
     except Exception as e:
         logger.error(f"Error fetching tsunami animation data: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 @app.get("/api/events/nearby-earthquakes")
@@ -1126,7 +1151,7 @@ async def get_nearby_earthquakes(
         events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/earthquakes/events.parquet")
 
         if not events_path.exists():
-            return JSONResponse(content={"error": "Earthquake data not available"}, status_code=404)
+            return msgpack_error("Earthquake data not available", 404)
 
         df = pd.read_parquet(events_path)
 
@@ -1170,7 +1195,7 @@ async def get_nearby_earthquakes(
         df = df[df['magnitude'] >= min_magnitude]
 
         if len(df) == 0:
-            return JSONResponse(content={
+            return msgpack_response({
                 "type": "FeatureCollection",
                 "features": [],
                 "count": 0,
@@ -1206,7 +1231,7 @@ async def get_nearby_earthquakes(
 
         logger.info(f"Found {len(features)} earthquakes within {radius_km}km of ({lat}, {lon})")
 
-        return JSONResponse(content={
+        return msgpack_response({
             "type": "FeatureCollection",
             "features": features,
             "count": len(features),
@@ -1221,7 +1246,7 @@ async def get_nearby_earthquakes(
 
     except Exception as e:
         logger.error(f"Error finding nearby earthquakes: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 @app.get("/api/events/nearby-volcanoes")
@@ -1256,7 +1281,7 @@ async def get_nearby_volcanoes(
         eruptions_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/smithsonian_volcanoes/events.parquet")
 
         if not eruptions_path.exists():
-            return JSONResponse(content={"error": "Volcano data not available"}, status_code=404)
+            return msgpack_error("Volcano data not available", 404)
 
         df = pd.read_parquet(eruptions_path)
 
@@ -1300,7 +1325,7 @@ async def get_nearby_volcanoes(
                 df = df[df[vei_col] >= min_vei]
 
         if len(df) == 0:
-            return JSONResponse(content={
+            return msgpack_response({
                 "type": "FeatureCollection",
                 "features": [],
                 "count": 0,
@@ -1344,7 +1369,7 @@ async def get_nearby_volcanoes(
 
         logger.info(f"Found {len(features)} eruptions within {radius_km}km of ({lat}, {lon})")
 
-        return JSONResponse(content={
+        return msgpack_response({
             "type": "FeatureCollection",
             "features": features,
             "count": len(features),
@@ -1359,7 +1384,7 @@ async def get_nearby_volcanoes(
 
     except Exception as e:
         logger.error(f"Error finding nearby volcanoes: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 @app.get("/api/events/nearby-tsunamis")
@@ -1394,7 +1419,7 @@ async def get_nearby_tsunamis(
         tsunamis_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tsunamis/events.parquet")
 
         if not tsunamis_path.exists():
-            return JSONResponse(content={"error": "Tsunami data not available"}, status_code=404)
+            return msgpack_error("Tsunami data not available", 404)
 
         df = pd.read_parquet(tsunamis_path)
 
@@ -1431,7 +1456,7 @@ async def get_nearby_tsunamis(
             df = df[df['year'] == year]
 
         if len(df) == 0:
-            return JSONResponse(content={
+            return msgpack_response({
                 "type": "FeatureCollection",
                 "features": [],
                 "count": 0,
@@ -1472,7 +1497,7 @@ async def get_nearby_tsunamis(
 
         logger.info(f"Found {len(features)} tsunamis within {radius_km}km of ({lat}, {lon})")
 
-        return JSONResponse(content={
+        return msgpack_response({
             "type": "FeatureCollection",
             "features": features,
             "count": len(features),
@@ -1487,7 +1512,7 @@ async def get_nearby_tsunamis(
 
     except Exception as e:
         logger.error(f"Error finding nearby tsunamis: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 # === Wildfire Data Endpoints ===
@@ -1515,10 +1540,14 @@ async def get_wildfires_geojson(
     import json as json_lib
 
     try:
-        by_year_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/wildfires/by_year")
+        # Use enriched files with loc_id columns
+        by_year_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/wildfires/by_year_enriched")
+        # Fallback to raw files if enriched not available
+        if not by_year_path.exists():
+            by_year_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/wildfires/by_year")
 
         if not by_year_path.exists():
-            return JSONResponse(content={"error": "Wildfire data not available"}, status_code=404)
+            return msgpack_error("Wildfire data not available", 404)
 
         # Determine year range
         if year is not None:
@@ -1528,15 +1557,20 @@ async def get_wildfires_geojson(
             years_to_load = list(range(min_year, end_year + 1))
 
         # Columns to read (exclude perimeter for fast initial load)
+        # Include loc_id columns for location filtering
         columns = ['event_id', 'timestamp', 'latitude', 'longitude', 'area_km2',
-                   'burned_acres', 'duration_days', 'land_cover', 'source', 'has_progression']
+                   'burned_acres', 'duration_days', 'land_cover', 'source', 'has_progression',
+                   'loc_id', 'parent_loc_id', 'sibling_level', 'iso3', 'loc_confidence']
         if include_perimeter:
             columns.append('perimeter')
 
         # Load from yearly partition files with pyarrow filters
         all_tables = []
         for yr in years_to_load:
-            year_file = by_year_path / f"fires_{yr}.parquet"
+            # Use enriched files first, fallback to raw
+            year_file = by_year_path / f"fires_{yr}_enriched.parquet"
+            if not year_file.exists():
+                year_file = by_year_path / f"fires_{yr}.parquet"
             if not year_file.exists():
                 continue
 
@@ -1551,7 +1585,7 @@ async def get_wildfires_geojson(
                 all_tables.append(table)
 
         if not all_tables:
-            return JSONResponse(content={
+            return msgpack_response({
                 "type": "FeatureCollection",
                 "features": [],
                 "metadata": {"count": 0, "min_area_km2": min_area_km2, "min_year": min_year}
@@ -1594,11 +1628,17 @@ async def get_wildfires_geojson(
                     "source": row.get('source', 'global_fire_atlas'),
                     "latitude": float(row['latitude']),
                     "longitude": float(row['longitude']),
-                    "has_progression": bool(row.get('has_progression', False))
+                    "has_progression": bool(row.get('has_progression', False)),
+                    # Location assignment columns
+                    "loc_id": row.get('loc_id', ''),
+                    "parent_loc_id": row.get('parent_loc_id', ''),
+                    "sibling_level": int(row['sibling_level']) if pd.notna(row.get('sibling_level')) else None,
+                    "iso3": row.get('iso3', ''),
+                    "loc_confidence": float(row['loc_confidence']) if pd.notna(row.get('loc_confidence')) else None
                 }
             })
 
-        return JSONResponse(content={
+        return msgpack_response({
             "type": "FeatureCollection",
             "features": features,
             "metadata": {
@@ -1613,7 +1653,7 @@ async def get_wildfires_geojson(
 
     except Exception as e:
         logger.error(f"Error fetching wildfires GeoJSON: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 @app.get("/api/wildfires/{event_id}/perimeter")
@@ -1645,7 +1685,7 @@ async def get_wildfire_perimeter(event_id: str, year: int = None):
                     perimeter_str = table.column('perimeter')[0].as_py()
                     if perimeter_str:
                         perimeter = json_lib.loads(perimeter_str) if isinstance(perimeter_str, str) else perimeter_str
-                        return JSONResponse(content={
+                        return msgpack_response({
                             "type": "Feature",
                             "geometry": perimeter,
                             "properties": {"event_id": event_id, "year": year}
@@ -1660,26 +1700,26 @@ async def get_wildfire_perimeter(event_id: str, year: int = None):
             )
 
             if table.num_rows == 0:
-                return JSONResponse(content={"error": f"Fire {event_id} not found"}, status_code=404)
+                return msgpack_error(f"Fire {event_id} not found", 404)
 
             perimeter_str = table.column('perimeter')[0].as_py()
 
             if perimeter_str is None:
-                return JSONResponse(content={"error": "No perimeter data for this fire"}, status_code=404)
+                return msgpack_error("No perimeter data for this fire", 404)
 
             perimeter = json_lib.loads(perimeter_str) if isinstance(perimeter_str, str) else perimeter_str
 
-            return JSONResponse(content={
+            return msgpack_response({
                 "type": "Feature",
                 "geometry": perimeter,
                 "properties": {"event_id": event_id}
             })
 
-        return JSONResponse(content={"error": "Wildfire data not available"}, status_code=404)
+        return msgpack_error("Wildfire data not available", 404)
 
     except Exception as e:
         logger.error(f"Error fetching wildfire perimeter: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 
@@ -1703,7 +1743,7 @@ async def get_wildfire_progression(event_id: str, year: int = None):
             prog_file = progression_path / "fire_progression_2024.parquet"
 
         if not prog_file.exists():
-            return JSONResponse(content={
+            return msgpack_response({
                 "type": "FeatureCollection",
                 "features": [],
                 "metadata": {
@@ -1721,7 +1761,7 @@ async def get_wildfire_progression(event_id: str, year: int = None):
         )
 
         if table.num_rows == 0:
-            return JSONResponse(content={
+            return msgpack_response({
                 "type": "FeatureCollection",
                 "features": [],
                 "metadata": {
@@ -1754,7 +1794,7 @@ async def get_wildfire_progression(event_id: str, year: int = None):
         time_start = df['date'].min()
         time_end = df['date'].max()
 
-        return JSONResponse(content={
+        return msgpack_response({
             "type": "FeatureCollection",
             "features": features,
             "metadata": {
@@ -1770,7 +1810,7 @@ async def get_wildfire_progression(event_id: str, year: int = None):
 
     except Exception as e:
         logger.error(f"Error fetching wildfire progression: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 # === Flood Data Endpoints ===
@@ -1799,11 +1839,15 @@ async def get_floods_geojson(
     import json as json_lib
 
     try:
-        events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/floods/events.parquet")
+        # Use enriched file with loc_id columns
+        events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/floods/events_enriched.parquet")
+        # Fallback to raw file if enriched not available
+        if not events_path.exists():
+            events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/floods/events.parquet")
         geometry_dir = Path("C:/Users/Bryan/Desktop/county-map-data/global/floods/geometries")
 
         if not events_path.exists():
-            return JSONResponse(content={"error": "Flood data not available"}, status_code=404)
+            return msgpack_error("Flood data not available", 404)
 
         df = pd.read_parquet(events_path)
 
@@ -1824,18 +1868,28 @@ async def get_floods_geojson(
 
             event_id = row.get('event_id', '')
 
-            # Load geometry from GeoJSON file if requested
+            # Load geometry from perimeter column (merged from GeoJSON files) if requested
             geom = None
-            if include_geometry and event_id:
-                geom_file = geometry_dir / f"flood_{event_id}.geojson"
-                if geom_file.exists():
+            if include_geometry:
+                # Try perimeter column first (enriched file has merged geometries)
+                perimeter = row.get('perimeter')
+                if pd.notna(perimeter) and perimeter:
                     try:
-                        with open(geom_file, 'r') as f:
-                            geom_data = json_lib.load(f)
-                            if geom_data.get('geometry'):
-                                geom = geom_data['geometry']
+                        geom = json_lib.loads(perimeter) if isinstance(perimeter, str) else perimeter
                     except Exception as e:
-                        logger.warning(f"Failed to load flood geometry {geom_file}: {e}")
+                        logger.warning(f"Failed to parse flood perimeter for {event_id}: {e}")
+
+                # Fallback to GeoJSON file if no perimeter column
+                if not geom and event_id:
+                    geom_file = geometry_dir / f"flood_{event_id}.geojson"
+                    if geom_file.exists():
+                        try:
+                            with open(geom_file, 'r') as f:
+                                geom_data = json_lib.load(f)
+                                if geom_data.get('geometry'):
+                                    geom = geom_data['geometry']
+                        except Exception as e:
+                            logger.warning(f"Failed to load flood geometry {geom_file}: {e}")
 
             # Fall back to point if no geometry loaded
             if not geom:
@@ -1856,7 +1910,13 @@ async def get_floods_geojson(
                 "source": str(row.get('source', '')) if pd.notna(row.get('source')) else None,
                 "has_geometry": bool(row.get('has_geometry', False)),
                 "latitude": float(row['latitude']),
-                "longitude": float(row['longitude'])
+                "longitude": float(row['longitude']),
+                # Location assignment columns
+                "loc_id": str(row.get('loc_id', '')) if pd.notna(row.get('loc_id')) else None,
+                "parent_loc_id": str(row.get('parent_loc_id', '')) if pd.notna(row.get('parent_loc_id')) else None,
+                "sibling_level": int(row['sibling_level']) if pd.notna(row.get('sibling_level')) else None,
+                "iso3": str(row.get('iso3', '')) if pd.notna(row.get('iso3')) else None,
+                "loc_confidence": float(row['loc_confidence']) if pd.notna(row.get('loc_confidence')) else None
             }
 
             features.append({
@@ -1865,7 +1925,7 @@ async def get_floods_geojson(
                 "properties": props
             })
 
-        return JSONResponse(content={
+        return msgpack_response({
             "type": "FeatureCollection",
             "features": features,
             "metadata": {
@@ -1878,7 +1938,7 @@ async def get_floods_geojson(
 
     except Exception as e:
         logger.error(f"Error fetching floods: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 @app.get("/api/floods/{event_id}/geometry")
@@ -1894,16 +1954,16 @@ async def get_flood_geometry(event_id: str):
         geom_file = geometry_dir / f"flood_{event_id}.geojson"
 
         if not geom_file.exists():
-            return JSONResponse(content={"error": f"Geometry not found for {event_id}"}, status_code=404)
+            return msgpack_error(f"Geometry not found for {event_id}", 404)
 
         with open(geom_file, 'r') as f:
             geom_data = json_lib.load(f)
 
-        return JSONResponse(content=geom_data)
+        return msgpack_response(geom_data)
 
     except Exception as e:
         logger.error(f"Error fetching flood geometry: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 # === Tornado Data Endpoints ===
@@ -1931,7 +1991,7 @@ async def get_tornadoes_geojson(year: int = None, min_year: int = 1990, min_scal
         events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tornadoes/events.parquet")
 
         if not events_path.exists():
-            return JSONResponse(content={"error": "Tornado data not available"}, status_code=404)
+            return msgpack_error("Tornado data not available", 404)
 
         df = pd.read_parquet(events_path)
 
@@ -2017,14 +2077,14 @@ async def get_tornadoes_geojson(year: int = None, min_year: int = 1990, min_scal
                 }
             })
 
-        return JSONResponse(content={
+        return msgpack_response({
             "type": "FeatureCollection",
             "features": features
         })
 
     except Exception as e:
         logger.error(f"Error fetching tornadoes GeoJSON: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 @app.get("/api/tornadoes/{event_id}")
@@ -2040,7 +2100,7 @@ async def get_tornado_detail(event_id: str):
         events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tornadoes/events.parquet")
 
         if not events_path.exists():
-            return JSONResponse(content={"error": "Tornado data not available"}, status_code=404)
+            return msgpack_error("Tornado data not available", 404)
 
         df = pd.read_parquet(events_path)
 
@@ -2048,7 +2108,7 @@ async def get_tornado_detail(event_id: str):
         tornado = df[df['event_id'].astype(str) == str(event_id)]
 
         if len(tornado) == 0:
-            return JSONResponse(content={"error": "Tornado not found"}, status_code=404)
+            return msgpack_error("Tornado not found", 404)
 
         row = tornado.iloc[0]
 
@@ -2108,7 +2168,7 @@ async def get_tornado_detail(event_id: str):
                 "properties": {**props, "geometry_type": "track"}
             })
 
-        return JSONResponse(content={
+        return msgpack_response({
             "type": "FeatureCollection",
             "features": features,
             "metadata": {
@@ -2124,7 +2184,7 @@ async def get_tornado_detail(event_id: str):
 
     except Exception as e:
         logger.error(f"Error fetching tornado detail: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 @app.get("/api/tornadoes/{event_id}/sequence")
@@ -2141,7 +2201,7 @@ async def get_tornado_sequence(event_id: str):
         events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tornadoes/events.parquet")
 
         if not events_path.exists():
-            return JSONResponse(content={"error": "Tornado data not available"}, status_code=404)
+            return msgpack_error("Tornado data not available", 404)
 
         df = pd.read_parquet(events_path)
         # Already filtered to tornadoes only in global dataset
@@ -2150,7 +2210,7 @@ async def get_tornado_sequence(event_id: str):
         seed = df[df['event_id'].astype(str) == str(event_id)]
 
         if len(seed) == 0:
-            return JSONResponse(content={"error": "Tornado not found"}, status_code=404)
+            return msgpack_error("Tornado not found", 404)
 
         seed_row = seed.iloc[0]
 
@@ -2223,7 +2283,7 @@ async def get_tornado_sequence(event_id: str):
 
             features.append(feature)
 
-        return JSONResponse(content={
+        return msgpack_response({
             "type": "FeatureCollection",
             "features": features,
             "metadata": {
@@ -2236,7 +2296,7 @@ async def get_tornado_sequence(event_id: str):
 
     except Exception as e:
         logger.error(f"Error fetching tornado sequence: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 # === Tropical Storm Data Endpoints ===
@@ -2255,7 +2315,7 @@ async def get_storms_geojson(year: int = None, min_year: int = 1950, basin: str 
         positions_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tropical_storms/positions.parquet")
 
         if not storms_path.exists():
-            return JSONResponse(content={"error": "Storm data not available"}, status_code=404)
+            return msgpack_error("Storm data not available", 404)
 
         storms_df = pd.read_parquet(storms_path)
         positions_df = pd.read_parquet(positions_path)
@@ -2321,7 +2381,7 @@ async def get_storms_geojson(year: int = None, min_year: int = 1950, basin: str 
 
         logger.info(f"Returning {len(features)} storms for year={year}, min_year={min_year}, basin={basin}")
 
-        return JSONResponse(content={
+        return msgpack_response({
             "type": "FeatureCollection",
             "features": features,
             "count": len(features)
@@ -2329,7 +2389,7 @@ async def get_storms_geojson(year: int = None, min_year: int = 1950, basin: str 
 
     except Exception as e:
         logger.error(f"Error fetching storms GeoJSON: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 @app.get("/api/storms/{storm_id}/track")
@@ -2345,13 +2405,13 @@ async def get_storm_track(storm_id: str):
         storms_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tropical_storms/storms.parquet")
 
         if not positions_path.exists():
-            return JSONResponse(content={"error": "Storm data not available"}, status_code=404)
+            return msgpack_error("Storm data not available", 404)
 
         positions_df = pd.read_parquet(positions_path)
         storm_positions = positions_df[positions_df['storm_id'] == storm_id].sort_values('timestamp')
 
         if len(storm_positions) == 0:
-            return JSONResponse(content={"error": f"Storm {storm_id} not found"}, status_code=404)
+            return msgpack_error(f"Storm {storm_id} not found", 404)
 
         # Get storm metadata
         storms_df = pd.read_parquet(storms_path)
@@ -2384,7 +2444,7 @@ async def get_storm_track(storm_id: str):
                 "r64_nw": int(pos['r64_nw']) if pd.notna(pos.get('r64_nw')) else None,
             })
 
-        return JSONResponse(content={
+        return msgpack_response({
             "storm_id": storm_id,
             "name": storm_name,
             "positions": positions,
@@ -2393,7 +2453,7 @@ async def get_storm_track(storm_id: str):
 
     except Exception as e:
         logger.error(f"Error fetching storm track: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 @app.get("/api/storms/tracks/geojson")
@@ -2411,7 +2471,7 @@ async def get_storm_tracks_geojson(year: int = None, min_year: int = 1950, basin
         positions_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tropical_storms/positions.parquet")
 
         if not storms_path.exists():
-            return JSONResponse(content={"error": "Storm data not available"}, status_code=404)
+            return msgpack_error("Storm data not available", 404)
 
         storms_df = pd.read_parquet(storms_path)
         positions_df = pd.read_parquet(positions_path)
@@ -2477,7 +2537,7 @@ async def get_storm_tracks_geojson(year: int = None, min_year: int = 1950, basin
 
         logger.info(f"Returning {len(features)} storm tracks for year={year}, min_year={min_year}, basin={basin}, min_category={min_category}")
 
-        return JSONResponse(content={
+        return msgpack_response({
             "type": "FeatureCollection",
             "features": features,
             "count": len(features)
@@ -2485,7 +2545,7 @@ async def get_storm_tracks_geojson(year: int = None, min_year: int = 1950, basin
 
     except Exception as e:
         logger.error(f"Error fetching storm tracks GeoJSON: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 @app.get("/api/storms/list")
@@ -2500,7 +2560,7 @@ async def get_storms_list(year: int = None, min_year: int = 1950, basin: str = N
         storms_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tropical_storms/storms.parquet")
 
         if not storms_path.exists():
-            return JSONResponse(content={"error": "Storm data not available"}, status_code=404)
+            return msgpack_error("Storm data not available", 404)
 
         storms_df = pd.read_parquet(storms_path)
 
@@ -2533,14 +2593,14 @@ async def get_storms_list(year: int = None, min_year: int = 1950, basin: str = N
                 "start_date": str(storm['start_date']) if pd.notna(storm.get('start_date')) else None,
             })
 
-        return JSONResponse(content={
+        return msgpack_response({
             "storms": storms,
             "count": len(storms)
         })
 
     except Exception as e:
         logger.error(f"Error fetching storms list: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 # === Reference Data Endpoints ===
@@ -2556,12 +2616,12 @@ async def get_admin_levels():
         if ref_path.exists():
             with open(ref_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            return JSONResponse(content=data)
+            return msgpack_response(data)
         else:
-            return JSONResponse(content={"error": "admin_levels.json not found"}, status_code=404)
+            return msgpack_error("admin_levels.json not found", 404)
     except Exception as e:
         logger.error(f"Error loading admin_levels.json: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 # === Settings Endpoints ===
@@ -2574,10 +2634,10 @@ async def get_settings():
     """
     try:
         settings = get_settings_with_status()
-        return JSONResponse(content=settings)
+        return msgpack_response(settings)
     except Exception as e:
         logger.error(f"Error getting settings: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 @app.post("/settings")
@@ -2587,7 +2647,7 @@ async def update_settings(req: Request):
     Accepts: { backup_path: "..." }
     """
     try:
-        data = await req.json()
+        data = await decode_request_body(req)
         backup_path = data.get("backup_path", "")
 
         # Save the settings
@@ -2595,15 +2655,12 @@ async def update_settings(req: Request):
 
         if success:
             settings = get_settings_with_status()
-            return JSONResponse(content={"success": True, "settings": settings})
+            return msgpack_response({"success": True, "settings": settings})
         else:
-            return JSONResponse(
-                content={"error": "Failed to save settings"},
-                status_code=500
-            )
+            return msgpack_error("Failed to save settings", 500)
     except Exception as e:
         logger.error(f"Error updating settings: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
 
 
 @app.post("/settings/init-folders")
@@ -2613,27 +2670,151 @@ async def initialize_folders(req: Request):
     Creates geometry/ and data/ folders at the backup path.
     """
     try:
-        data = await req.json()
+        data = await decode_request_body(req)
         backup_path = data.get("backup_path", "")
 
         if not backup_path:
-            return JSONResponse(
-                content={"error": "Backup path is required"},
-                status_code=400
-            )
+            return msgpack_error("Backup path is required", 400)
 
         # Save the path and create folders
         save_settings({"backup_path": backup_path})
         folders = init_backup_folders(backup_path)
 
-        return JSONResponse(content={
+        return msgpack_response({
             "success": True,
             "folders": folders,
             "message": f"Initialized folders at {backup_path}"
         })
     except Exception as e:
         logger.error(f"Error initializing folders: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return msgpack_error(str(e), 500)
+
+
+# === Filter Intent Handler (Overlay Integration) ===
+
+def handle_filter_intent(filter_intent: dict, cache_stats: dict, active_overlays: dict) -> dict:
+    """
+    Handle filter-related queries without LLM call.
+
+    Returns response dict or None if should fall through to LLM.
+    """
+    if not filter_intent:
+        return None
+
+    intent_type = filter_intent.get("type")
+    overlay = filter_intent.get("overlay")
+
+    if intent_type == "read_filters":
+        # User is asking about current filters - respond from cache
+        if not overlay:
+            return {
+                "type": "chat",
+                "message": "No overlay is currently active. Enable an overlay from the right panel to see event data.",
+                "from_cache": True
+            }
+
+        stats = cache_stats.get(overlay, {}) if cache_stats else {}
+        filters = active_overlays.get("filters", {}) if active_overlays else {}
+        count = stats.get("count", 0)
+
+        # Build response message based on overlay type
+        if overlay == "earthquakes":
+            min_mag = stats.get("minMag") or filters.get("minMagnitude", "?")
+            max_mag = stats.get("maxMag") or "?"
+            message = f"Currently showing {count} earthquakes"
+            if min_mag != "?":
+                message += f", magnitude {min_mag} to {max_mag}"
+            message += "."
+        elif overlay == "hurricanes":
+            cats = stats.get("categories", [])
+            message = f"Currently showing {count} hurricanes"
+            if cats:
+                message += f" (categories: {', '.join(str(c) for c in cats)})"
+            message += "."
+        elif overlay == "wildfires":
+            min_area = stats.get("minAreaKm2") or filters.get("minAreaKm2", "?")
+            message = f"Currently showing {count} wildfires"
+            if min_area != "?":
+                message += f" (minimum {min_area} km2)"
+            message += "."
+        elif overlay == "volcanoes":
+            min_vei = stats.get("minVei") or filters.get("minVei", "?")
+            max_vei = stats.get("maxVei") or "?"
+            message = f"Currently showing {count} volcanic eruptions"
+            if min_vei != "?":
+                message += f", VEI {min_vei} to {max_vei}"
+            message += "."
+        elif overlay == "tornadoes":
+            scales = stats.get("scales", [])
+            message = f"Currently showing {count} tornadoes"
+            if scales:
+                message += f" (scales: {', '.join(str(s) for s in scales)})"
+            message += "."
+        else:
+            message = f"Currently showing {count} {overlay} events."
+
+        # Add year range if available
+        years = stats.get("years", [])
+        if years and len(years) > 0:
+            message += f" Data loaded for {years[0]}-{years[-1]}."
+
+        return {
+            "type": "cache_answer",
+            "message": message,
+            "from_cache": True,
+            "overlay": overlay,
+            "stats": stats
+        }
+
+    elif intent_type == "change_filters":
+        # User wants to change filters - return filter_update response
+        new_filters = {}
+
+        if "minMagnitude" in filter_intent:
+            new_filters["minMagnitude"] = filter_intent["minMagnitude"]
+        if "maxMagnitude" in filter_intent:
+            new_filters["maxMagnitude"] = filter_intent["maxMagnitude"]
+        if "minVei" in filter_intent:
+            new_filters["minVei"] = filter_intent["minVei"]
+        if "minCategory" in filter_intent:
+            new_filters["minCategory"] = filter_intent["minCategory"]
+        if "minScale" in filter_intent:
+            new_filters["minScale"] = filter_intent["minScale"]
+        if "minAreaKm2" in filter_intent:
+            new_filters["minAreaKm2"] = filter_intent["minAreaKm2"]
+        if filter_intent.get("clear"):
+            new_filters["clear"] = True
+
+        # Build confirmation message
+        if new_filters.get("clear"):
+            message = f"Clearing filters for {overlay}. Showing all events."
+        else:
+            filter_parts = []
+            if "minMagnitude" in new_filters and "maxMagnitude" in new_filters:
+                filter_parts.append(f"magnitude {new_filters['minMagnitude']}-{new_filters['maxMagnitude']}")
+            elif "minMagnitude" in new_filters:
+                filter_parts.append(f"magnitude {new_filters['minMagnitude']}+")
+            elif "maxMagnitude" in new_filters:
+                filter_parts.append(f"magnitude up to {new_filters['maxMagnitude']}")
+            if "minVei" in new_filters:
+                filter_parts.append(f"VEI {new_filters['minVei']}+")
+            if "minCategory" in new_filters:
+                filter_parts.append(f"category {new_filters['minCategory']}+")
+            if "minScale" in new_filters:
+                filter_parts.append(f"EF{new_filters['minScale']}+")
+            if "minAreaKm2" in new_filters:
+                filter_parts.append(f"area {new_filters['minAreaKm2']}+ km2")
+
+            message = f"Updating {overlay} to show " + ", ".join(filter_parts) + "."
+
+        return {
+            "type": "filter_update",
+            "message": message,
+            "overlay": overlay,
+            "filters": new_filters
+        }
+
+    return None
 
 
 # === Chat Endpoint (Order Taker Model) ===
@@ -2653,7 +2834,7 @@ async def chat_endpoint(req: Request):
     - confirmed_order: dict - If present, execute this order directly
     """
     try:
-        body = await req.json()
+        body = await decode_request_body(req)
 
         # Check if this is a confirmed order execution
         if body.get("confirmed_order"):
@@ -2674,10 +2855,10 @@ async def chat_endpoint(req: Request):
                     response["metric_key"] = result.get("metric_key")
                     response["available_metrics"] = result.get("available_metrics", [])
                     response["metric_year_ranges"] = result.get("metric_year_ranges", {})
-                return JSONResponse(content=response)
+                return msgpack_response(response)
             except Exception as e:
                 logger.error(f"Order execution error: {e}")
-                return JSONResponse(content={
+                return msgpack_response({
                     "type": "error",
                     "message": str(e)
                 }, status_code=400)
@@ -2687,14 +2868,18 @@ async def chat_endpoint(req: Request):
         chat_history = body.get("chatHistory", [])
         viewport = body.get("viewport")  # {center, zoom, bounds, adminLevel}
         resolved_location = body.get("resolved_location")  # From disambiguation selection
+        active_overlays = body.get("activeOverlays")  # {type, filters, allActive}
+        cache_stats = body.get("cacheStats")  # {overlayId: {count, years, minMag, ...}}
 
         if not query:
-            return JSONResponse(content={"error": "No query provided"}, status_code=400)
+            return msgpack_error("No query provided", 400)
 
         logger.debug(f"Chat query: {query[:100]}...")
+        if active_overlays and active_overlays.get("type"):
+            logger.debug(f"Active overlay: {active_overlays.get('type')} with filters: {active_overlays.get('filters')}")
 
         # Run preprocessor to extract hints (Tier 2) with viewport context
-        hints = preprocess_query(query, viewport=viewport)
+        hints = preprocess_query(query, viewport=viewport, active_overlays=active_overlays, cache_stats=cache_stats)
         if hints.get("summary"):
             logger.debug(f"Preprocessor hints: {hints['summary']}")
 
@@ -2729,7 +2914,7 @@ async def chat_endpoint(req: Request):
                 from mapmover.data_loading import fetch_geometries_by_loc_ids
                 geojson = fetch_geometries_by_loc_ids(loc_ids_to_show)
 
-                return JSONResponse(content={
+                return msgpack_response({
                     "type": "navigate",
                     "message": f"Showing {len(loc_ids_to_show)} locations on the map. Click any location to see data options.",
                     "locations": previous_options if previous_options else [{"loc_id": lid} for lid in loc_ids_to_show],
@@ -2739,7 +2924,7 @@ async def chat_endpoint(req: Request):
                 })
             else:
                 # No previous disambiguation found - tell user
-                return JSONResponse(content={
+                return msgpack_response({
                     "type": "chat",
                     "reply": "I don't have a list of locations to display. Please first ask about specific locations (e.g., 'show me washington county') to get a list.",
                 })
@@ -2760,7 +2945,7 @@ async def chat_endpoint(req: Request):
                 logger.debug(f"Drill-down request: {name} -> {drill_level}")
 
                 # Return a drilldown response that tells frontend to drill into this location
-                return JSONResponse(content={
+                return msgpack_response({
                     "type": "drilldown",
                     "message": f"Showing {drill_level} of {name}...",
                     "loc_id": loc_id,
@@ -2794,7 +2979,7 @@ async def chat_endpoint(req: Request):
             else:
                 message = f"Showing {len(locations)} locations: {', '.join(loc_names[:5])}{'...' if len(loc_names) > 5 else ''}. What data would you like to see?"
 
-            return JSONResponse(content={
+            return msgpack_response({
                 "type": "navigate",
                 "message": message,
                 "locations": locations,
@@ -2810,7 +2995,7 @@ async def chat_endpoint(req: Request):
             query_term = disambiguation.get("query_term", "location")
             logger.debug(f"Disambiguation needed for '{query_term}' with {len(options)} options")
 
-            return JSONResponse(content={
+            return msgpack_response({
                 "type": "disambiguate",
                 "message": f"I found {len(options)} locations matching '{query_term}'. Please click on the one you meant:",
                 "query_term": query_term,
@@ -2818,6 +3003,14 @@ async def chat_endpoint(req: Request):
                 "options": options,  # List of {matched_term, iso3, country_name, loc_id, admin_level}
                 "geojson": {"type": "FeatureCollection", "features": []},
             })
+
+        # Check for filter intent - respond from cache without LLM call
+        filter_intent = hints.get("filter_intent")
+        if filter_intent:
+            filter_response = handle_filter_intent(filter_intent, cache_stats, active_overlays)
+            if filter_response:
+                logger.debug(f"Filter intent handled: {filter_intent.get('type')}")
+                return msgpack_response(filter_response)
 
         # Single LLM call to interpret request (with Tier 3/4 context from hints)
         result = interpret_request(query, chat_history, hints=hints)
@@ -2834,7 +3027,7 @@ async def chat_endpoint(req: Request):
             )
 
             # Return order for UI confirmation
-            return JSONResponse(content={
+            return msgpack_response({
                 "type": "order",
                 "order": {
                     **result["order"],
@@ -2848,7 +3041,7 @@ async def chat_endpoint(req: Request):
             })
         elif result["type"] == "clarify":
             # Need more information from user
-            return JSONResponse(content={
+            return msgpack_response({
                 "type": "clarify",
                 "message": result["message"],
                 "geojson": {"type": "FeatureCollection", "features": []},
@@ -2856,7 +3049,7 @@ async def chat_endpoint(req: Request):
             })
         else:
             # General chat response (not a data request)
-            return JSONResponse(content={
+            return msgpack_response({
                 "type": "chat",
                 "message": result["message"],
                 "geojson": {"type": "FeatureCollection", "features": []},
@@ -2866,7 +3059,7 @@ async def chat_endpoint(req: Request):
     except Exception as e:
         logger.error(f"Chat error: {e}")
         traceback.print_exc()
-        return JSONResponse(content={
+        return msgpack_response({
             "type": "error",
             "message": "Sorry, I encountered an error. Please try again.",
             "geojson": {"type": "FeatureCollection", "features": []},

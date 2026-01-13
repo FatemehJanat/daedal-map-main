@@ -282,7 +282,12 @@ Example: Kilauea 1983-2018 has `duration_days=13029` (~35.7 years), `activity_ar
 
 ### Wildfire Schema
 
-**File:** `global/wildfires/fires.parquet` (13.3M fires by year)
+**Files:**
+- `global/wildfires/by_year/fires_{year}.parquet` - Raw fire events (13.3M fires total)
+- `global/wildfires/by_year_enriched/fires_{year}_enriched.parquet` - With loc_id columns
+- `global/wildfires/fire_progression_{year}.parquet` - Daily progression with loc_id
+
+**fires_{year}_enriched.parquet** - Enriched fire events with location data:
 
 | Column | Type | Required | Description |
 |--------|------|----------|-------------|
@@ -297,8 +302,13 @@ Example: Kilauea 1983-2018 has `duration_days=13029` (~35.7 years), `activity_ar
 | `source` | string | No | Data source (e.g., "Global Fire Atlas") |
 | `has_progression` | bool | No | True if progression data available |
 | `perimeter` | string | No | GeoJSON polygon of final fire boundary |
+| `loc_id` | string | Yes | Location code (e.g., "USA-CA-FIRE-12345") |
+| `parent_loc_id` | string | Yes | Parent admin unit (e.g., "USA-CA") |
+| `sibling_level` | int | Yes | Admin level where fire becomes a sibling (1-3) |
+| `iso3` | string | Yes | Country code (e.g., "USA") |
+| `loc_confidence` | float | Yes | Confidence score of location assignment (0-1) |
 
-**fire_progression_{year}.parquet** - Daily burn snapshots for animation:
+**fire_progression_{year}.parquet** - Daily burn snapshots with location data:
 
 | Column | Type | Required | Description |
 |--------|------|----------|-------------|
@@ -307,10 +317,21 @@ Example: Kilauea 1983-2018 has `duration_days=13029` (~35.7 years), `activity_ar
 | `day_num` | int | Yes | Day number from fire start (1-based) |
 | `area_km2` | float | Yes | Cumulative burned area to this date |
 | `perimeter` | string | Yes | GeoJSON polygon of burn area |
+| `loc_id` | string | Yes | Location code (joined from enriched fires) |
+| `parent_loc_id` | string | Yes | Parent admin unit |
+| `sibling_level` | int | Yes | Admin level where fire becomes a sibling |
+| `iso3` | string | Yes | Country code |
+| `loc_confidence` | float | Yes | Confidence score of location assignment |
 
 ### Flood Schema
 
-**File:** `global/floods/events.parquet` (4,825 events)
+**Files:**
+- `global/floods/events.parquet` - Raw flood events (4,825 events, 1985-2019)
+- `global/floods/events_with_geometry.parquet` - Events with merged perimeter column
+- `global/floods/events_enriched.parquet` - With loc_id columns (use this for display)
+- `global/floods/geometries/{dfo_id}.geojson` - Individual flood perimeter files
+
+**events_enriched.parquet** - Enriched flood events with location data:
 
 | Column | Type | Required | Description |
 |--------|------|----------|-------------|
@@ -321,7 +342,6 @@ Example: Kilauea 1983-2018 has `duration_days=13029` (~35.7 years), `activity_ar
 | `latitude` | float | Yes | Flood centroid latitude |
 | `longitude` | float | Yes | Flood centroid longitude |
 | `country` | string | No | Primary affected country |
-| `loc_id` | string | Yes | Location code |
 | `area_km2` | float | No | Affected area in km2 |
 | `duration_days` | int | No | Flood duration in days |
 | `severity` | string | No | Severity level (e.g., "Large", "Very Large") |
@@ -333,6 +353,12 @@ Example: Kilauea 1983-2018 has `duration_days=13029` (~35.7 years), `activity_ar
 | `glide_index` | string | No | GLIDE index |
 | `has_geometry` | bool | No | True if polygon geometry available |
 | `has_progression` | bool | No | True if progression data available |
+| `perimeter` | string | No | GeoJSON polygon of flood extent |
+| `loc_id` | string | Yes | Location code (e.g., "USA-LA-FLOOD-1234") |
+| `parent_loc_id` | string | Yes | Parent admin unit (e.g., "USA-LA") |
+| `sibling_level` | int | Yes | Admin level where flood becomes a sibling (1-3) |
+| `iso3` | string | Yes | Country code (e.g., "USA") |
+| `loc_confidence` | float | Yes | Confidence score of location assignment (0-1) |
 
 ### Cross-Event Linking Columns
 

@@ -1122,6 +1122,16 @@ const DisasterPopup = {
         if (data.has_progression) {
           lines.push(`<div class="detail-row"><span class="detail-label">Progression Data:</span> Available</div>`);
         }
+        // Location assignment data
+        if (data.loc_id) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Location ID:</span> ${data.loc_id}</div>`);
+        }
+        if (data.parent_loc_id) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Parent Region:</span> ${data.parent_loc_id}</div>`);
+        }
+        if (data.iso3) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Country:</span> ${data.iso3}</div>`);
+        }
         break;
 
       case 'hurricane':
@@ -1173,6 +1183,16 @@ const DisasterPopup = {
         }
         if (data.has_progression) {
           lines.push(`<div class="detail-row"><span class="detail-label">Progression Data:</span> Available</div>`);
+        }
+        // Location assignment data
+        if (data.loc_id) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Location ID:</span> ${data.loc_id}</div>`);
+        }
+        if (data.parent_loc_id) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Parent Region:</span> ${data.parent_loc_id}</div>`);
+        }
+        if (data.iso3) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Country:</span> ${data.iso3}</div>`);
         }
         break;
     }

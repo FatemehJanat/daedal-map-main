@@ -14,6 +14,7 @@ import EventAnimator, { AnimationMode, setDependencies as setEventAnimatorDeps }
 import { TIME_SYSTEM } from './time-slider.js';
 import { CONFIG } from './config.js';
 import { DetailedEventCache } from './cache.js';
+import { fetchMsgpack } from './utils/fetch.js';
 
 // Dependencies set via setDependencies
 let MapAdapter = null;
@@ -420,17 +421,51 @@ const displayedYear = {};
 // Cache year ranges per overlay (for recalculating combined range when overlays change)
 const yearRangeCache = {};
 
+// Active filter overrides per overlay (for chat-based filter modifications)
+// These override the defaults in OVERLAY_ENDPOINTS.params
+const activeFilters = {};  // overlayId -> {minMagnitude, maxMagnitude, ...}
+
 /**
  * Build URL for fetching a specific year's data.
  * @param {Object} endpoint - Endpoint config from OVERLAY_ENDPOINTS
  * @param {number} year - Year to fetch
+ * @param {string} overlayId - Overlay ID for looking up active filters
  * @returns {string} Full URL with year and other params
  */
-function buildYearUrl(endpoint, year) {
+function buildYearUrl(endpoint, year, overlayId = null) {
   const url = new URL(endpoint.baseUrl, window.location.origin);
 
-  // Add fixed params (like min_magnitude, min_category, etc.)
-  for (const [key, value] of Object.entries(endpoint.params || {})) {
+  // Start with default params from endpoint config
+  const defaultParams = endpoint.params || {};
+
+  // Get active filter overrides (from chat-based filter changes)
+  const overrides = overlayId ? (activeFilters[overlayId] || {}) : {};
+
+  // Build effective params, with overrides taking precedence
+  const effectiveParams = { ...defaultParams };
+
+  // Map user-friendly filter names to API param names
+  if (overrides.minMagnitude !== undefined) {
+    effectiveParams.min_magnitude = String(overrides.minMagnitude);
+  }
+  if (overrides.maxMagnitude !== undefined) {
+    effectiveParams.max_magnitude = String(overrides.maxMagnitude);
+  }
+  if (overrides.minCategory !== undefined) {
+    effectiveParams.min_category = `Cat${overrides.minCategory}`;
+  }
+  if (overrides.minScale !== undefined) {
+    effectiveParams.min_scale = `EF${overrides.minScale}`;
+  }
+  if (overrides.minAreaKm2 !== undefined) {
+    effectiveParams.min_area_km2 = String(overrides.minAreaKm2);
+  }
+  if (overrides.minVei !== undefined) {
+    effectiveParams.min_vei = String(overrides.minVei);
+  }
+
+  // Add all params to URL
+  for (const [key, value] of Object.entries(effectiveParams)) {
     url.searchParams.set(key, value);
   }
 
@@ -468,24 +503,12 @@ async function loadYearData(overlayId, year, signal = null) {
     return false;
   }
 
-  const url = buildYearUrl(endpoint, year);
+  const url = buildYearUrl(endpoint, year, overlayId);
   console.log(`OverlayController: Fetching ${overlayId} for year ${year}`);
 
   try {
     const fetchOptions = signal ? { signal } : {};
-    const response = await fetch(url, fetchOptions);
-
-    if (!response.ok) {
-      // 404 is OK - just means no data for that year
-      if (response.status === 404) {
-        loadedYears[overlayId].add(year);  // Mark as checked
-        console.log(`OverlayController: No ${overlayId} data for ${year}`);
-        return false;
-      }
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-
-    const geojson = await response.json();
+    const geojson = await fetchMsgpack(url, fetchOptions);
     const featureCount = geojson.features?.length || 0;
 
     // Initialize cache if needed
@@ -2890,8 +2913,7 @@ export const OverlayController = {
       // Fetch from API
       const trackUrl = OVERLAY_ENDPOINTS.hurricanes.trackEndpoint.replace('{storm_id}', stormId);
       try {
-        const response = await fetch(trackUrl);
-        data = await response.json();
+        data = await fetchMsgpack(trackUrl);
         // Cache for future use
         DetailedEventCache.set(stormId, data, 'hurricane');
       } catch (err) {
@@ -2979,8 +3001,7 @@ export const OverlayController = {
       // Fetch from API
       const trackUrl = OVERLAY_ENDPOINTS.hurricanes.trackEndpoint.replace('{storm_id}', stormId);
       try {
-        const response = await fetch(trackUrl);
-        data = await response.json();
+        data = await fetchMsgpack(trackUrl);
         DetailedEventCache.set(stormId, data, 'hurricane');
       } catch (err) {
         console.error('OverlayController: Error fetching hurricane track for rolling:', err);
@@ -3010,6 +3031,12 @@ export const OverlayController = {
 
     // Start rolling mode animation
     TrackAnimator.startRolling(stormId, positions, { stormName });
+
+    // Immediately re-render hurricanes overlay to filter out the storm being animated
+    // This prevents a flash of the full track before the animated track takes over
+    if (TimeSlider?.currentTime) {
+      this.renderFilteredData('hurricanes', TimeSlider.currentTime, { useTimestamp: true });
+    }
   },
 
   /**
@@ -3020,6 +3047,12 @@ export const OverlayController = {
       TrackAnimator.stop();
     }
     this.rollingAnimationStormId = null;
+
+    // Immediately re-render hurricanes overlay to show the storm back in overview
+    // This prevents a gap between animation ending and overview appearing
+    if (TimeSlider?.currentTime) {
+      this.renderFilteredData('hurricanes', TimeSlider.currentTime, { useTimestamp: true });
+    }
   },
 
   /**
@@ -3229,14 +3262,7 @@ export const OverlayController = {
       }
 
       console.log(`OverlayController: Fetching sequence from ${endpoint}`);
-      const response = await fetch(endpoint);
-
-      if (!response.ok) {
-        console.error(`OverlayController: Failed to fetch sequence: ${response.status}`);
-        return [];
-      }
-
-      const data = await response.json();
+      const data = await fetchMsgpack(endpoint);
 
       if (!data.features || data.features.length === 0) {
         console.warn(`OverlayController: No features in sequence response`);
@@ -3491,6 +3517,11 @@ export const OverlayController = {
         console.log(`OverlayController: Storm ${this.rollingAnimationStormId} exited active period, stopping rolling animation`);
         this.stopHurricaneRollingAnimation();
       }
+    }
+
+    // Don't START new animations when paused - but keep existing ones frozen
+    if (!TimeSlider?.isPlaying) {
+      return;
     }
 
     // If there are active hurricanes and we're not already animating one, start
@@ -3891,11 +3922,7 @@ export const OverlayController = {
         data = cached.data;
       } else {
         // Fetch from API
-        const response = await fetch(`/api/storms/${encodeURIComponent(stormId)}/track`);
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-        data = await response.json();
+        data = await fetchMsgpack(`/api/storms/${encodeURIComponent(stormId)}/track`);
         // Cache for future use
         DetailedEventCache.set(stormId, data, 'hurricane');
       }
@@ -4252,5 +4279,96 @@ export const OverlayController = {
     console.log(`Total: ${stats.totals.features} features across ${stats.totals.yearsLoaded} year-loads (~${stats.totals.estimatedMemoryMB} MB)`);
 
     return stats;
+  },
+
+  /**
+   * Get current filter settings for an overlay.
+   * Returns active overrides merged with defaults from OVERLAY_ENDPOINTS.
+   * @param {string} overlayId - Overlay ID
+   * @returns {Object} Current filter settings
+   */
+  getActiveFilters(overlayId) {
+    const config = OVERLAY_ENDPOINTS[overlayId];
+    if (!config) return {};
+
+    // Start with defaults from config
+    const filters = {};
+
+    // Map API params to user-friendly filter names
+    if (config.params.min_magnitude) {
+      filters.minMagnitude = parseFloat(config.params.min_magnitude);
+    }
+    if (config.params.min_category) {
+      filters.minCategory = config.params.min_category;
+    }
+    if (config.params.min_scale) {
+      filters.minScale = config.params.min_scale;
+    }
+    if (config.params.min_area_km2) {
+      filters.minAreaKm2 = parseFloat(config.params.min_area_km2);
+    }
+
+    // Override with active filter settings (from chat-based changes)
+    const overrides = activeFilters[overlayId] || {};
+    return { ...filters, ...overrides };
+  },
+
+  /**
+   * Update filter settings for an overlay.
+   * Triggers cache clear and data reload.
+   * @param {string} overlayId - Overlay ID
+   * @param {Object} newFilters - New filter values to apply
+   */
+  updateFilters(overlayId, newFilters) {
+    if (!OVERLAY_ENDPOINTS[overlayId]) {
+      console.warn(`Unknown overlay: ${overlayId}`);
+      return;
+    }
+
+    // Merge with existing overrides
+    activeFilters[overlayId] = {
+      ...(activeFilters[overlayId] || {}),
+      ...newFilters
+    };
+
+    console.log(`OverlayController: Updated filters for ${overlayId}:`, activeFilters[overlayId]);
+  },
+
+  /**
+   * Clear filter overrides for an overlay (revert to defaults).
+   * @param {string} overlayId - Overlay ID
+   */
+  clearFilters(overlayId) {
+    delete activeFilters[overlayId];
+    console.log(`OverlayController: Cleared filters for ${overlayId}`);
+  },
+
+  /**
+   * Reload an overlay with current filter settings.
+   * Clears cache and refetches data.
+   * @param {string} overlayId - Overlay ID
+   */
+  async reloadOverlay(overlayId) {
+    if (!OVERLAY_ENDPOINTS[overlayId]) {
+      console.warn(`Unknown overlay: ${overlayId}`);
+      return;
+    }
+
+    console.log(`OverlayController: Reloading ${overlayId} with filters:`, this.getActiveFilters(overlayId));
+
+    // Clear cache for this overlay
+    delete dataCache[overlayId];
+    delete loadedYears[overlayId];
+    delete yearRangeCache[overlayId];
+
+    // Check if overlay is currently active
+    const isActive = OverlaySelector?.getActiveOverlays()?.includes(overlayId);
+    if (!isActive) {
+      console.log(`OverlayController: ${overlayId} not active, skipping reload`);
+      return;
+    }
+
+    // Reload the overlay
+    await this.loadOverlay(overlayId);
   }
 };

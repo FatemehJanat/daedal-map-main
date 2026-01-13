@@ -4,6 +4,7 @@
  */
 
 import { CONFIG } from './config.js';
+import { fetchMsgpack } from './utils/fetch.js';
 
 // ============================================================================
 // GEOMETRY CACHE - In-memory cache for viewport-loaded features
@@ -195,9 +196,7 @@ export const LocationInfoCache = {
     if (cached) return cached;
 
     try {
-      const response = await fetch(`/geometry/${locId}/info`);
-      if (!response.ok) return null;
-      const data = await response.json();
+      const data = await fetchMsgpack(`/geometry/${locId}/info`);
       this.set(locId, data);
       return data;
     } catch (error) {

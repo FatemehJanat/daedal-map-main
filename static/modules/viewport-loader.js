@@ -6,6 +6,7 @@
 
 import { CONFIG } from './config.js';
 import { GeometryCache } from './cache.js';
+import { fetchMsgpack } from './utils/fetch.js';
 
 // These will be set by app.js to avoid circular dependencies
 let MapAdapter = null;
@@ -227,15 +228,13 @@ export const ViewportLoader = {
       const url = `${CONFIG.api.viewport}?level=${adminLevel}&bbox=${bbox}${debugParam}`;
       console.log(`[${thisRequestId}] Fetching level ${adminLevel}`);
 
-      const response = await fetch(url, { signal: this.abortController.signal });
+      const data = await fetchMsgpack(url, { signal: this.abortController.signal });
 
       // Check if this request was superseded by a newer one
       if (thisRequestId !== this.requestId) {
         console.log(`[${thisRequestId}] Discarding stale response (current is ${this.requestId})`);
         return;
       }
-
-      const data = await response.json();
 
       // Double-check we're still on the same level (user might have zoomed while parsing)
       if (adminLevel !== this.currentAdminLevel) {

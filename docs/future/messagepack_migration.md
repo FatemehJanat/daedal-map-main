@@ -23,22 +23,22 @@ Migration from JSON to MessagePack serialization for all API endpoints.
 
 Add to `requirements.txt`:
 ```
-msgpack>=1.0.0
+msgpack>=1.0.0  # MessagePack serialization (2-5x faster, 30-50% smaller)
 ```
+
+**Status: DONE** - Added on line 18 of requirements.txt
 
 Note: Already have `orjson` for fast JSON - msgpack replaces this use case.
 
 ### Frontend (JavaScript)
 
-Add via npm or CDN:
-```bash
-npm install @msgpack/msgpack
-```
-
-Or use CDN in index.html:
+Use CDN in templates/index.html (line 2012, before app.js):
 ```html
 <script src="https://unpkg.com/@msgpack/msgpack"></script>
+<script type="module" src="/static/modules/app.js"></script>
 ```
+
+**Decision: CDN** - No build process needed, simpler integration.
 
 ---
 
@@ -46,7 +46,7 @@ Or use CDN in index.html:
 
 ### Backend Helper (app.py)
 
-Create standardized response functions that all endpoints will use:
+Add after imports (around line 30):
 
 ```python
 import msgpack
@@ -71,13 +71,16 @@ def msgpack_error(message: str, status_code: int = 500) -> Response:
 
 ### Frontend Helper (static/modules/utils/fetch.js)
 
-Create new utility module for MessagePack fetch operations:
+Create new utility module:
 
 ```javascript
-// MessagePack fetch utilities
-// All API calls should use these instead of raw fetch()
+/**
+ * MessagePack fetch utilities
+ * All API calls should use these instead of raw fetch()
+ */
 
-import { decode, encode } from '@msgpack/msgpack';
+// MessagePack library loaded via CDN, available as window.MessagePack
+const { decode, encode } = window.MessagePack || {};
 
 /**
  * Fetch data from API endpoint with MessagePack decoding.
@@ -101,7 +104,6 @@ export async function fetchMsgpack(url, options = {}) {
             const decoded = decode(new Uint8Array(buffer));
             errorMsg = decoded.error || errorMsg;
         } catch (e) {
-            // Response wasn't msgpack, use status text
             errorMsg = response.statusText;
         }
         throw new Error(errorMsg);
@@ -134,8 +136,52 @@ export async function postMsgpack(url, data) {
 
 ### Scope
 
-- 40 API endpoints in app.py
-- All currently return `JSONResponse(content=...)`
+**41 endpoints** in app.py (verified via grep):
+
+| Line | Endpoint | Type |
+|------|----------|------|
+| 113 | /health | GET |
+| 121 | / | GET (HTML) |
+| 130 | /geometry/countries | GET |
+| 144 | /geometry/{loc_id}/children | GET |
+| 161 | /geometry/{loc_id}/places | GET |
+| 174 | /geometry/{loc_id}/info | GET |
+| 188 | /geometry/viewport | GET |
+| 222 | /geometry/cache/clear | POST |
+| 233 | /geometry/selection | POST |
+| 258 | /api/hurricane/track/{storm_id} | GET |
+| 326 | /api/hurricane/storms | GET |
+| 377 | /api/hurricane/storms/geojson | GET |
+| 457 | /api/earthquakes/geojson | GET |
+| 533 | /api/earthquakes/sequence/{sequence_id} | GET |
+| 610 | /api/earthquakes/aftershocks/{event_id} | GET |
+| 700 | /api/volcanoes/geojson | GET |
+| 749 | /api/eruptions/geojson | GET |
+| 843 | /api/tsunamis/geojson | GET |
+| 912 | /api/tsunamis/{event_id}/runups | GET |
+| 1003 | /api/tsunamis/{event_id}/animation | GET |
+| 1095 | /api/events/nearby-earthquakes | GET |
+| 1227 | /api/events/nearby-volcanoes | GET |
+| 1365 | /api/events/nearby-tsunamis | GET |
+| 1495 | /api/wildfires/geojson | GET |
+| 1619 | /api/wildfires/{event_id}/perimeter | GET |
+| 1687 | /api/wildfires/{event_id}/progression | GET |
+| 1778 | /api/floods/geojson | GET |
+| 1884 | /api/floods/{event_id}/geometry | GET |
+| 1911 | /api/tornadoes/geojson | GET |
+| 2030 | /api/tornadoes/{event_id} | GET |
+| 2130 | /api/tornadoes/{event_id}/sequence | GET |
+| 2244 | /api/storms/geojson | GET |
+| 2335 | /api/storms/{storm_id}/track | GET |
+| 2399 | /api/storms/tracks/geojson | GET |
+| 2491 | /api/storms/list | GET |
+| 2548 | /reference/admin-levels | GET |
+| 2569 | /settings | GET |
+| 2583 | /settings | POST |
+| 2609 | /settings/init-folders | POST |
+| 2641 | /chat | POST |
+
+**135 JSONResponse calls** to replace (verified via grep)
 
 ### Approach
 
@@ -160,14 +206,13 @@ return JSONResponse(content={"error": str(e)}, status_code=500)
 return msgpack_error(str(e), 500)
 ```
 
-4. For POST endpoints, add request body decoding:
+4. For POST endpoints (geometry/selection, settings, chat), add request body decoding:
 
 ```python
 # FROM:
 body = await request.json()
 
 # TO:
-import msgpack
 body_bytes = await request.body()
 body = msgpack.unpackb(body_bytes, raw=False)
 ```
@@ -176,11 +221,18 @@ body = msgpack.unpackb(body_bytes, raw=False)
 
 | Category | Count | Complexity |
 |----------|-------|------------|
-| Geometry endpoints | 5 | Simple replacement |
-| Event endpoints (earthquake, volcano, etc.) | 20+ | Simple replacement |
+| Geometry endpoints | 7 | Simple replacement |
+| Hurricane/Storm endpoints | 7 | Simple replacement |
+| Earthquake endpoints | 3 | Simple replacement |
+| Volcano endpoints | 2 | Simple replacement |
+| Tsunami endpoints | 3 | Simple replacement |
+| Wildfire endpoints | 3 | Simple replacement |
+| Flood endpoints | 2 | Simple replacement |
+| Tornado endpoints | 3 | Simple replacement |
+| Nearby events endpoints | 3 | Simple replacement |
 | Settings endpoints | 3 | Bidirectional (POST) |
 | Chat endpoint | 1 | Bidirectional (POST) |
-| Reference endpoints | 2 | Simple replacement |
+| Reference/Health | 3 | Simple replacement |
 
 ---
 
@@ -188,9 +240,50 @@ body = msgpack.unpackb(body_bytes, raw=False)
 
 ### Scope
 
-- 34 fetch() calls across 12 modules
-- 6 JSON.stringify() calls for POST requests
-- 4 JSON.parse() calls for nested data
+**22 JS modules** in static/modules/ (verified via glob):
+
+```
+sidebar.js
+choropleth.js
+popup-builder.js
+chat-panel.js
+navigation.js
+selection-manager.js
+viewport-loader.js
+overlay-selector.js
+hurricane-handler.js
+config.js
+time-slider.js
+models/model-registry.js
+event-animator.js
+cache.js
+map-adapter.js
+track-animator.js
+app.js
+overlay-controller.js
+disaster-popup.js
+models/model-point-radius.js
+models/model-track.js
+models/model-polygon.js
+```
+
+### Files to Update (needs fetch() audit)
+
+| File | Likely fetch() calls | POST calls | Notes |
+|------|----------------------|------------|-------|
+| overlay-controller.js | 10+ | 0 | Main data loading |
+| models/model-point-radius.js | 5+ | 0 | Event data fetching |
+| chat-panel.js | 2+ | 1+ | Has POST to /chat |
+| viewport-loader.js | 1+ | 0 | Geometry loading |
+| app.js | 2+ | 0 | Initial setup |
+| cache.js | 1+ | 0 | Data caching |
+| selection-manager.js | 1+ | 1 | POST to /geometry/selection |
+| sidebar.js | 3+ | 1+ | Settings POST |
+| map-adapter.js | 1+ | 0 | |
+| popup-builder.js | 1+ | 0 | May have JSON.parse() |
+| hurricane-handler.js | 2+ | 0 | Storm track loading |
+| track-animator.js | 1+ | 0 | Track data |
+| event-animator.js | 1+ | 0 | Animation data |
 
 ### Approach
 
@@ -227,22 +320,6 @@ const data = await response.json();
 // TO:
 const data = await postMsgpack(url, payload);
 ```
-
-### Files to Update
-
-| File | fetch() calls | POST calls | Notes |
-|------|---------------|------------|-------|
-| model-point-radius.js | ~20 | 0 | Largest file |
-| overlay-controller.js | 3 | 0 | |
-| chat-panel.js | 5 | 1+ | Has POST |
-| viewport-loader.js | 1 | 0 | |
-| app.js | 2 | 0 | |
-| cache.js | 1 | 0 | |
-| selection-manager.js | 1 | 1 | Has POST |
-| sidebar.js | 3 | 1+ | Has POST |
-| map-adapter.js | 1 | 0 | |
-| popup-builder.js | 1 | 0 | Has JSON.parse() |
-| hurricane-handler.js | 1 | 0 | |
 
 ---
 
@@ -329,22 +406,23 @@ def msgpack_response(data, status_code=200):
 
 Recommended sequence:
 
-1. Add dependencies (msgpack Python, @msgpack/msgpack JS)
-2. Create helper functions (both backend and frontend)
-3. Migrate ONE simple endpoint + ONE frontend consumer as proof of concept
-4. Migrate remaining backend endpoints (batch work)
-5. Migrate remaining frontend modules (batch work)
-6. Update CLAUDE.md with conventions
-7. Remove JSONResponse import
-8. Test full application
+1. [x] Add msgpack to requirements.txt
+2. [ ] Add MessagePack CDN to templates/index.html (line 2012)
+3. [ ] Create utils/fetch.js with helper functions
+4. [ ] Add msgpack_response helpers to app.py
+5. [ ] Migrate ONE simple endpoint + ONE frontend consumer as proof of concept
+6. [ ] Migrate remaining backend endpoints (batch work)
+7. [ ] Migrate remaining frontend modules (batch work)
+8. [ ] Update CLAUDE.md with conventions
+9. [ ] Remove JSONResponse import
+10. [ ] Test full application
 
 ---
 
-## Open Questions
+## Decisions Made
 
-- [ ] CDN vs npm for frontend msgpack library?
-- [ ] Keep JSON fallback for debugging/curl testing?
-- [ ] Add Accept header negotiation for gradual rollout?
+- [x] **CDN for frontend** - Use unpkg CDN, no build process needed
+- [x] **No JSON fallback** - Clean migration, use browser DevTools for debugging
 
 ---
 
@@ -358,4 +436,5 @@ Recommended sequence:
 ---
 
 *Created: 2026-01-11*
-*Status: Planning*
+*Updated: 2026-01-12*
+*Status: In Progress (requirements.txt done)*

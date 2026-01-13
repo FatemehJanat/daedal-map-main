@@ -5,6 +5,7 @@
  */
 
 import { CONFIG } from './config.js';
+import { postMsgpack } from './utils/fetch.js';
 
 // Dependencies set via setDependencies to avoid circular imports
 let MapAdapter = null;
@@ -210,17 +211,7 @@ export const SelectionManager = {
 
     try {
       // Fetch geometries for the candidate loc_ids
-      const response = await fetch('/geometry/selection', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ loc_ids: locIds })
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch selection geometries');
-      }
-
-      const geojson = await response.json();
+      const geojson = await postMsgpack('/geometry/selection', { loc_ids: locIds });
 
       if (!geojson.features || geojson.features.length === 0) {
         console.warn('SelectionManager: No geometries returned');

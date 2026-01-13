@@ -145,9 +145,13 @@ def process_fire(fire, tif_current_path, tif_prev_path, current_year, simplify_t
                 except Exception:
                     data_prev = None
 
-            # Rasterize fire perimeter as mask
-            fire_gdf = gpd.GeoDataFrame({'geometry': [fire.geometry]}, crs='EPSG:4326').to_crs(raster_crs)
-            fire_geom = fire_gdf.geometry.iloc[0]
+            # Transform fire perimeter to raster CRS (using pyproj directly)
+            from pyproj import Transformer
+            from shapely.ops import transform as shapely_transform
+
+            to_raster = Transformer.from_crs('EPSG:4326', raster_crs, always_xy=True)
+            to_wgs84 = Transformer.from_crs(raster_crs, 'EPSG:4326', always_xy=True)
+            fire_geom = shapely_transform(to_raster.transform, fire.geometry)
 
             mask = rasterize(
                 [(fire_geom, 1)],
@@ -174,13 +178,16 @@ def process_fire(fire, tif_current_path, tif_prev_path, current_year, simplify_t
                 cumulative_mask = np.zeros_like(data_current, dtype=bool)
 
                 # Process previous year days
+                last_pixel_count = 0
                 for doy in days_prev:
                     if data_prev is not None and data_prev.shape == data_current.shape:
                         new_burn = (data_prev == doy) & (mask == 1)
                         cumulative_mask = cumulative_mask | new_burn
 
-                    if cumulative_mask.sum() > 0:
-                        poly = extract_polygon(cumulative_mask, win_transform, raster_crs, simplify_tolerance)
+                    pixel_count = cumulative_mask.sum()
+                    # Only extract polygon if mask changed (new pixels burned)
+                    if pixel_count > 0 and pixel_count != last_pixel_count:
+                        poly = extract_polygon(cumulative_mask, win_transform, raster_crs, simplify_tolerance, to_wgs84)
                         if poly:
                             date = doy_to_date(doy, prev_year)
                             results.append({
@@ -190,6 +197,7 @@ def process_fire(fire, tif_current_path, tif_prev_path, current_year, simplify_t
                                 'area_km2': poly.area * 12321,
                                 'perimeter': json.dumps(mapping(poly))
                             })
+                        last_pixel_count = pixel_count
                     day_num += 1
 
                 # Process current year days
@@ -197,8 +205,10 @@ def process_fire(fire, tif_current_path, tif_prev_path, current_year, simplify_t
                     new_burn = (data_current == doy) & (mask == 1)
                     cumulative_mask = cumulative_mask | new_burn
 
-                    if cumulative_mask.sum() > 0:
-                        poly = extract_polygon(cumulative_mask, win_transform, raster_crs, simplify_tolerance)
+                    pixel_count = cumulative_mask.sum()
+                    # Only extract polygon if mask changed (new pixels burned)
+                    if pixel_count > 0 and pixel_count != last_pixel_count:
+                        poly = extract_polygon(cumulative_mask, win_transform, raster_crs, simplify_tolerance, to_wgs84)
                         if poly:
                             date = doy_to_date(doy, current_year)
                             results.append({
@@ -208,18 +218,22 @@ def process_fire(fire, tif_current_path, tif_prev_path, current_year, simplify_t
                                 'area_km2': poly.area * 12321,
                                 'perimeter': json.dumps(mapping(poly))
                             })
+                        last_pixel_count = pixel_count
                     day_num += 1
 
             else:
                 # Fire entirely within current year
                 cumulative_mask = np.zeros_like(data_current, dtype=bool)
+                last_pixel_count = 0
 
                 for day_num, doy in enumerate(range(start_doy, end_doy + 1), 1):
                     new_burn = (data_current == doy) & (mask == 1)
                     cumulative_mask = cumulative_mask | new_burn
 
-                    if cumulative_mask.sum() > 0:
-                        poly = extract_polygon(cumulative_mask, win_transform, raster_crs, simplify_tolerance)
+                    pixel_count = cumulative_mask.sum()
+                    # Only extract polygon if mask changed (new pixels burned)
+                    if pixel_count > 0 and pixel_count != last_pixel_count:
+                        poly = extract_polygon(cumulative_mask, win_transform, raster_crs, simplify_tolerance, to_wgs84)
                         if poly:
                             date = doy_to_date(doy, current_year)
                             results.append({
@@ -229,6 +243,7 @@ def process_fire(fire, tif_current_path, tif_prev_path, current_year, simplify_t
                                 'area_km2': poly.area * 12321,
                                 'perimeter': json.dumps(mapping(poly))
                             })
+                        last_pixel_count = pixel_count
 
     except Exception as e:
         # Log but don't fail - continue with other fires
@@ -238,8 +253,11 @@ def process_fire(fire, tif_current_path, tif_prev_path, current_year, simplify_t
     return results
 
 
-def extract_polygon(mask, transform, src_crs, simplify_tolerance):
-    """Extract and simplify polygon from binary mask."""
+def extract_polygon(mask, transform, src_crs, simplify_tolerance, transformer=None):
+    """
+    Extract and simplify polygon from binary mask.
+    Uses pyproj transformer directly instead of GeoDataFrame for speed.
+    """
     try:
         polys = []
         for geom, val in shapes(mask.astype(np.uint8), transform=transform):
@@ -251,9 +269,13 @@ def extract_polygon(mask, transform, src_crs, simplify_tolerance):
 
         merged = unary_union(polys)
 
-        # Transform to WGS84
-        result_gdf = gpd.GeoDataFrame(geometry=[merged], crs=src_crs).to_crs('EPSG:4326')
-        result_geom = result_gdf.geometry.iloc[0]
+        # Transform to WGS84 using pyproj (faster than GeoDataFrame)
+        if transformer is None:
+            from pyproj import Transformer
+            transformer = Transformer.from_crs(src_crs, 'EPSG:4326', always_xy=True)
+
+        from shapely.ops import transform as shapely_transform
+        result_geom = shapely_transform(transformer.transform, merged)
 
         # Simplify
         if simplify_tolerance > 0:

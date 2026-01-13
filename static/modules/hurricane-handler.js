@@ -3,6 +3,8 @@
  * When a storm is selected, fetches track data and creates a sub-scale tab.
  */
 
+import { fetchMsgpack } from './utils/fetch.js';
+
 // Dependencies set via setDependencies
 let TimeSlider = null;
 let MapAdapter = null;
@@ -75,12 +77,7 @@ export const HurricaneHandler = {
       return this.trackCache[stormId];
     }
 
-    const response = await fetch(`/api/hurricane/track/${stormId}`);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch track: ${response.status}`);
-    }
-
-    const data = await response.json();
+    const data = await fetchMsgpack(`/api/hurricane/track/${stormId}`);
 
     // Handle both old format (positions array) and new FeatureCollection format
     let positions;

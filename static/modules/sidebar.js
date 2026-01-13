@@ -3,6 +3,8 @@
  * Combines ResizeManager, SidebarResizer, and SettingsManager.
  */
 
+import { fetchMsgpack, postMsgpack } from './utils/fetch.js';
+
 // ============================================================================
 // RESIZE MANAGER - Draggable resize handles for sidebar sections
 // ============================================================================
@@ -298,12 +300,9 @@ export const SettingsManager = {
    */
   async loadSettings() {
     try {
-      const response = await fetch('/settings');
-      if (response.ok) {
-        const settings = await response.json();
-        this.elements.backupPathInput.value = settings.backup_path || '';
-        this.updateConfigDisplay(settings);
-      }
+      const settings = await fetchMsgpack('/settings');
+      this.elements.backupPathInput.value = settings.backup_path || '';
+      this.updateConfigDisplay(settings);
     } catch (error) {
       console.log('Could not load settings:', error.message);
       this.updateConfigDisplay({ error: 'Could not connect to server' });
@@ -317,15 +316,8 @@ export const SettingsManager = {
     const backupPath = this.elements.backupPathInput.value.trim();
 
     try {
-      const response = await fetch('/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ backup_path: backupPath })
-      });
-
-      const result = await response.json();
-
-      if (response.ok) {
+      const result = await postMsgpack('/settings', { backup_path: backupPath });
+      if (result.success) {
         this.showStatus('Settings saved successfully!', 'success');
         this.updateConfigDisplay(result.settings || { backup_path: backupPath });
       } else {
@@ -348,15 +340,8 @@ export const SettingsManager = {
     }
 
     try {
-      const response = await fetch('/settings/init-folders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ backup_path: backupPath })
-      });
-
-      const result = await response.json();
-
-      if (response.ok) {
+      const result = await postMsgpack('/settings/init-folders', { backup_path: backupPath });
+      if (result.success) {
         this.showStatus('Folders initialized: ' + result.folders.join(', '), 'success');
         this.loadSettings();
       } else {

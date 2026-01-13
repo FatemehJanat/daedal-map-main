@@ -593,12 +593,422 @@ return {
 
 ---
 
+## Overlay Context Integration (Merged from disaster_integration)
+
+Now that overlay state and cache stats are passed to the chat system, the LLM can make context-aware decisions about data sources.
+
+### Active Overlay Context in Tier 3
+
+The preprocessor now receives:
+- `activeOverlays`: {type, filters, allActive}
+- `cacheStats`: {overlayId: {count, years, minMag, maxMag, ...}}
+
+This should be included in the LLM context so it can make intelligent routing decisions.
+
+### Context-Aware Response Types
+
+| Active Overlay | Query Topic | LLM Decision | Response |
+|---------------|-------------|--------------|----------|
+| earthquakes | earthquakes | Use events cache | Answer from cache, no DB query needed |
+| demographics | earthquakes | Use aggregates | "Showing earthquake impact stats by county" |
+| none | earthquakes | Suggest overlay | "Enable the Earthquakes overlay to see events on the map" |
+| earthquakes | volcanoes | Overlay mismatch | "You're asking about volcanoes but have earthquakes active. Switch overlay?" |
+
+### LLM Context Format
+
+```
+[OVERLAY CONTEXT]
+Active overlay: earthquakes
+Current filters: magnitude >= 5.5, years 2010-2024
+Cache status: 1,247 events loaded (mag 5.5-9.1)
+
+If user asks about displayed events, reference the cache stats above.
+If user asks about a different disaster type, suggest switching overlays.
+If no overlay is active and user asks about disasters, suggest enabling one.
+```
+
+### Filter Intent Integration
+
+Filter intents (read_filters, change_filters) are now detected by preprocessor and included in candidates:
+
+```python
+candidates["filter_intent"] = {
+    "type": "read_filters",  # or "change_filters"
+    "overlay": "earthquakes",
+    "confidence": 0.9,
+    "parsed_values": {"minMagnitude": 3.0, "maxMagnitude": 5.0}  # if change
+}
+```
+
+The LLM decides whether to:
+1. Answer from cache (filter read)
+2. Return filter_update response (filter change)
+3. Ask for clarification (ambiguous filter request)
+
+---
+
+## Phase 5: Disaster Location Filtering (NEW - 2026-01-12)
+
+This section documents the critical gap in chat-disaster integration: **location-based filtering**.
+
+### The Core Problem
+
+The entire system is missing location-based disaster filtering. Users cannot ask:
+- "Show me earthquakes in California"
+- "Tornadoes in Texas counties"
+- "Which fires affected North Africa"
+- "How many floods were in Indonesia"
+
+Even though disaster data has `loc_id` columns (tornadoes have county-level loc_ids like `USA-TX-48451`), there's no way to filter by location anywhere in the stack.
+
+### Current State: Severity Filters Only
+
+| Component | Has Severity Filters | Has Location Filters |
+|-----------|---------------------|----------------------|
+| API Endpoints | YES (magnitude, scale, VEI, area) | NO |
+| Overlay Controller | YES (buildYearUrl) | NO |
+| Preprocessor | YES (detect_filter_intent) | NO |
+| Chat Panel | YES (applyFilterUpdate) | NO |
+
+### Disaster loc_id Status
+
+| Dataset | Has loc_id | Granularity | Can Filter By Location |
+|---------|-----------|-------------|------------------------|
+| Tornadoes | YES | County (USA-TX-48451) | NO - API doesn't accept it |
+| Earthquakes | YES | Country only (USA, JPN) | NO |
+| Volcanoes | YES | Country only (GRC, TZA) | NO |
+| Tsunamis | YES | Ocean codes (XOO, XOI) | NO |
+| Tropical Storms | YES | Ocean codes (XOI, XOP) | NO |
+| Floods | Column exists, ALL NULL | None | NO - needs loc_id assignment |
+| Wildfires | NO column | None | NO - needs loc_id assignment |
+
+**Key insight**: Tornadoes have proper county-level loc_ids and could support fast location queries, but the infrastructure to use them doesn't exist.
+
+### Performance Implication
+
+**With loc_ids (fast path):**
+```python
+# "Tornadoes in Texas" - instant string filter
+df[df['loc_id'].str.startswith('USA-TX')]  # ~50ms
+```
+
+**Without loc_ids (slow path):**
+```python
+# Point-in-polygon for every event against geometry
+for fire in fires:  # 106K fires
+    for county in texas_counties:  # 254 counties
+        if county.contains(Point(fire.lon, fire.lat)):  # EXPENSIVE
+```
+
+---
+
+### Issue 1: API Endpoints Don't Accept Location Params
+
+**app.py - All disaster endpoints missing loc_id:**
+
+| Endpoint | Current Params | Missing |
+|----------|---------------|---------|
+| `/api/earthquakes/geojson` | year, min_magnitude, limit | loc_id, loc_prefix, state |
+| `/api/tornadoes/geojson` | year, min_year, min_scale | loc_id, loc_prefix, state |
+| `/api/wildfires/geojson` | year, min_area_km2 | loc_id, loc_prefix, country |
+| `/api/hurricanes/storms` | year, us_landfall | loc_id, state |
+| `/api/floods/geojson` | year, include_geometry | loc_id, country |
+| `/api/eruptions/geojson` | year, min_vei | loc_id, country |
+| `/api/tsunamis/geojson` | year, cause | loc_id, country |
+
+**Required change:**
+```python
+@app.get("/api/tornadoes/geojson")
+async def get_tornadoes_geojson(
+    year: int = None,
+    min_scale: str = None,
+    loc_id: str = None,      # NEW: exact match "USA-TX-48201"
+    loc_prefix: str = None   # NEW: prefix match "USA-TX" for all Texas
+):
+    df = pd.read_parquet(events_path)
+
+    # NEW: Location filtering
+    if loc_id:
+        df = df[df['loc_id'] == loc_id]
+    elif loc_prefix:
+        df = df[df['loc_id'].str.startswith(loc_prefix)]
+```
+
+---
+
+### Issue 2: Preprocessor Only Detects Severity Filters
+
+**preprocessor.py:1270-1331** - `detect_filter_intent()` handles:
+- minMagnitude/maxMagnitude (earthquakes)
+- minVei (volcanoes)
+- minCategory (hurricanes)
+- minScale (tornadoes)
+- minAreaKm2 (wildfires)
+
+**Missing:** No detection for location filters.
+
+**Pattern examples not detected:**
+- "earthquakes in California" -> should extract loc_prefix: "USA-CA"
+- "tornadoes in Harris County Texas" -> should extract loc_id: "USA-TX-48201"
+- "fires in Australia" -> should extract loc_prefix: "AUS"
+
+**Required change:**
+```python
+def detect_location_filter_intent(query, active_overlays):
+    """
+    Detect location-based filter requests for disaster overlays.
+
+    Returns:
+        {
+            "overlay": "earthquakes",
+            "location_filter": {
+                "loc_id": "USA-CA-6037",      # Exact match
+                "loc_prefix": "USA-CA",        # Prefix match
+                "country": "USA"               # Country filter
+            }
+        }
+    """
+    # Pattern: "{disaster} in {location}"
+    # Pattern: "{location} {disaster}"
+    # Pattern: "{disaster} near {city}"
+```
+
+---
+
+### Issue 3: Overlay Controller Can't Apply Location Filters
+
+**overlay-controller.js:435-476** - `buildYearUrl()` only sends severity params:
+```javascript
+if (overrides.minMagnitude !== undefined) {
+  effectiveParams.min_magnitude = String(overrides.minMagnitude);
+}
+// ... minCategory, minScale, minAreaKm2, minVei
+// NO loc_id, loc_prefix, or geographic params
+```
+
+**Required change:**
+```javascript
+// Add to buildYearUrl():
+if (overrides.locId) {
+  effectiveParams.loc_id = overrides.locId;
+}
+if (overrides.locPrefix) {
+  effectiveParams.loc_prefix = overrides.locPrefix;
+}
+if (overrides.bbox) {
+  effectiveParams.bbox = overrides.bbox.join(',');
+}
+```
+
+**Also missing from getActiveFilters() (line 4290-4314):**
+- minVei not returned (bug)
+- No location filter state returned
+
+---
+
+### Issue 4: Chat Panel Doesn't Send Location Context for Disasters
+
+**chat-panel.js:370-414** - `sendQuery()` sends:
+- query text
+- viewport bounds (general)
+- activeOverlays (type + severity filters only)
+- cacheStats (counts, years, magnitude ranges)
+
+**Missing:** No explicit location filter for disaster queries.
+
+**Required change to applyFilterUpdate():**
+```javascript
+applyFilterUpdate(response) {
+  const overlay = response.overlay;
+  const filters = response.filters;
+
+  // Existing severity filters
+  if (filters.clear) {
+    OverlayController.clearFilters(overlay);
+  } else {
+    OverlayController.updateFilters(overlay, filters);
+  }
+
+  // NEW: Location filters
+  if (response.location_filter) {
+    OverlayController.updateFilters(overlay, {
+      locId: response.location_filter.loc_id,
+      locPrefix: response.location_filter.loc_prefix
+    });
+  }
+
+  OverlayController.reloadOverlay(overlay);
+}
+```
+
+---
+
+### Issue 5: Early Returns Bypass Location+Disaster Combination
+
+**preprocessor.py:1732-1764** - Navigation early returns prevent combining location with disaster context:
+
+```python
+# Line 1764: Location extraction only if NOT navigation
+if not navigation and not disambiguation:
+    location_result = extract_country_from_query(query, viewport=viewport)
+```
+
+Queries like "show me California earthquakes" might:
+1. Trigger navigation path (matches "show me")
+2. Extract "California" as navigation target
+3. Never connect it to "earthquakes" filter context
+
+**Required change:** Don't early-return for navigation when disaster keywords present. Instead, pass both location AND disaster context to LLM for proper interpretation.
+
+---
+
+### Issue 6: Missing Cross-Reference Between Location and Overlay
+
+**Current flow:**
+1. Preprocessor detects "California" -> location candidate
+2. Preprocessor detects "earthquakes" -> topic candidate
+3. These are NOT connected
+
+**Required flow:**
+1. Preprocessor detects "California" -> location candidate
+2. Preprocessor detects "earthquakes" -> maps to overlay
+3. Preprocessor connects them: "filter earthquakes overlay to California"
+4. Returns: `{overlay: "earthquakes", location_filter: {loc_prefix: "USA-CA"}}`
+
+---
+
+### Implementation Plan
+
+#### Phase 5.1: Add loc_id to API endpoints (Backend)
+
+Files: `app.py`
+
+For each disaster endpoint:
+1. Add `loc_id: str = None` parameter
+2. Add `loc_prefix: str = None` parameter
+3. Add filtering logic before returning GeoJSON
+
+Priority order (based on loc_id quality):
+1. Tornadoes - has county-level loc_ids
+2. Earthquakes - has country-level loc_ids
+3. Volcanoes - has country-level loc_ids
+4. Tsunamis - has ocean codes
+5. Hurricanes - has ocean codes
+6. Floods - needs loc_id assignment first
+7. Wildfires - needs loc_id assignment first
+
+#### Phase 5.2: Add location filter detection (Preprocessor)
+
+Files: `mapmover/preprocessor.py`
+
+1. Create `detect_location_filter_intent(query, active_overlays)`
+2. Add patterns for "{disaster} in {location}"
+3. Connect location detection to overlay context
+4. Return combined filter intent
+
+#### Phase 5.3: Wire location filters through overlay controller (Frontend)
+
+Files: `static/modules/overlay-controller.js`
+
+1. Add `locId`, `locPrefix` to `buildYearUrl()`
+2. Add location filters to `getActiveFilters()`
+3. Fix missing `minVei` in `getActiveFilters()`
+
+#### Phase 5.4: Update chat response handling (Frontend)
+
+Files: `static/modules/chat-panel.js`
+
+1. Add `location_filter` handling to `applyFilterUpdate()`
+2. Include location scope in `getCacheStats()`
+3. Pass location context with disaster queries
+
+#### Phase 5.5: Add filter_update response for locations (Backend)
+
+Files: `app.py` - `handle_filter_intent()`
+
+1. Handle location filter intents
+2. Return `filter_update` response with `location_filter` field
+3. Build confirmation messages ("Filtering earthquakes to California...")
+
+---
+
+### Test Cases
+
+Once implemented, these queries should work:
+
+| Query | Expected Behavior |
+|-------|-------------------|
+| "earthquakes in California" | Filter earthquakes overlay to loc_prefix USA-CA |
+| "tornadoes in Harris County Texas" | Filter to loc_id USA-TX-48201 |
+| "show me Texas tornadoes" | Same as above with USA-TX prefix |
+| "which fires affected Australia" | Filter wildfires to loc_prefix AUS |
+| "how many floods in Indonesia" | Count floods with loc_prefix IDN |
+| "clear location filter" | Remove loc_id/loc_prefix constraints |
+| "magnitude 6+ in Japan" | Combine severity + location filters |
+
+---
+
+### Dependencies
+
+Before Phase 5 can be fully effective:
+
+1. **Wildfires need loc_ids** - Currently no loc_id column
+2. **Floods need loc_ids** - Column exists but all NULL
+3. **Earthquakes could be improved** - Only country-level, could add state/county
+4. **Tropical storms need land loc_ids** - Only ocean codes currently
+
+The user is building a converter for fires and floods that will add loc_ids. Once that's complete, all disaster types can support location filtering.
+
+---
+
+## Brainstorm: Open Questions
+
+### 1. How aggressive should candidate pruning be?
+
+Current plan: Keep top 3 candidates per category. But should we:
+- Keep ALL candidates and let LLM see everything?
+- Prune more aggressively (top 2) to reduce token cost?
+- Use different thresholds per category?
+
+### 2. Should disambiguation happen client-side or server-side?
+
+Options:
+- **Server-side (current plan)**: LLM returns disambiguate response, frontend shows options
+- **Client-side**: Frontend detects ambiguous terms, shows picker before sending query
+- **Hybrid**: Simple disambiguations client-side, complex ones via LLM
+
+### 3. How to handle multi-intent queries?
+
+Example: "show me earthquakes in California and navigate to Los Angeles"
+- Two intents: data_request + navigation
+- Execute both? Prioritize one? Ask user?
+
+### 4. What's the right confidence threshold?
+
+When should LLM proceed vs ask for clarification?
+- High confidence (>0.8): Proceed with best interpretation
+- Medium (0.5-0.8): Include alternatives in response
+- Low (<0.5): Ask user to clarify
+
+### 5. Order state: Session vs Frontend?
+
+For "same data for Poland" pattern:
+- **Session state**: Backend tracks active order, survives refresh
+- **Frontend state**: OrderManager tracks, lost on refresh
+- **Chat history**: LLM infers from conversation, no explicit state
+
+---
+
 ## Decision Points for User
 
 1. **Scope**: Full refactor vs. targeted fix for source-vs-location conflict?
 2. **LLM cost**: Accept slightly higher token usage for better accuracy?
 3. **Timeline**: Phased migration or big-bang rewrite?
+4. **Overlay integration**: Let LLM handle overlay mismatch guidance?
+5. **Candidate limit**: Top 3 per category, or different strategy?
 
 ---
 
-*Last Updated: 2026-01-07*
+*Last Updated: 2026-01-12*
+*Merged overlay context integration from chat_disaster_integration.md*
+*Added Phase 5: Disaster Location Filtering - comprehensive analysis of loc_id filtering gaps*

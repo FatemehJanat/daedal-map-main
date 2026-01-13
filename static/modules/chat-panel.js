@@ -4,16 +4,21 @@
  */
 
 import { CONFIG } from './config.js';
+import { fetchMsgpack, postMsgpack } from './utils/fetch.js';
 
 // Dependencies set via setDependencies to avoid circular imports
 let MapAdapter = null;
 let App = null;
 let SelectionManager = null;
+let OverlayController = null;
+let OverlaySelector = null;
 
 export function setDependencies(deps) {
   MapAdapter = deps.MapAdapter;
   App = deps.App;
   SelectionManager = deps.SelectionManager;
+  OverlayController = deps.OverlayController;
+  OverlaySelector = deps.OverlaySelector;
 }
 
 // ============================================================================
@@ -160,6 +165,17 @@ export const ChatManager = {
           App?.displayData(response);
           break;
 
+        case 'cache_answer':
+          // Answer from frontend cache (filter queries)
+          this.addMessage(response.message || 'Here is the current state.', 'assistant');
+          break;
+
+        case 'filter_update':
+          // Filter modification - apply to overlay and reload data
+          this.addMessage(response.message || 'Updating filters.', 'assistant');
+          this.applyFilterUpdate(response);
+          break;
+
         case 'chat':
         default:
           // General chat response or legacy format
@@ -265,17 +281,7 @@ export const ChatManager = {
 
     try {
       // Fetch geometries for the locations
-      const geomResponse = await fetch('/geometry/selection', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ loc_ids: locIds })
-      });
-
-      if (!geomResponse.ok) {
-        throw new Error('Failed to fetch location geometries');
-      }
-
-      const geojson = await geomResponse.json();
+      const geojson = await postMsgpack('/geometry/selection', { loc_ids: locIds });
 
       if (geojson.features && geojson.features.length > 0) {
         // Calculate bounding box for all features
@@ -331,34 +337,28 @@ export const ChatManager = {
       ? `${API_BASE_URL}/chat`
       : '/chat';
 
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        query,
-        viewport: {
-          center: { lat: view.center.lat, lng: view.center.lng },
-          zoom: view.zoom,
-          bounds: view.bounds,
-          adminLevel: view.adminLevel
-        },
-        chatHistory: this.history.slice(-10),
-        sessionId: this.sessionId,
-        // Disambiguation resolution - tell backend which location was selected
-        resolved_location: {
-          loc_id: location.loc_id,
-          iso3: location.iso3,
-          matched_term: location.matched_term,
-          country_name: location.country_name
-        }
-      })
+    const data = await postMsgpack(apiUrl, {
+      query,
+      viewport: {
+        center: { lat: view.center.lat, lng: view.center.lng },
+        zoom: view.zoom,
+        bounds: view.bounds,
+        adminLevel: view.adminLevel
+      },
+      chatHistory: this.history.slice(-10),
+      sessionId: this.sessionId,
+      // Disambiguation resolution - tell backend which location was selected
+      resolved_location: {
+        loc_id: location.loc_id,
+        iso3: location.iso3,
+        matched_term: location.matched_term,
+        country_name: location.country_name
+      },
+      // Include active overlay state for context-aware responses
+      activeOverlays: this.getActiveOverlays(),
+      // Include cache stats so backend knows what's already loaded
+      cacheStats: this.getCacheStats()
     });
-
-    if (!response.ok) {
-      throw new Error('Failed to get response: ' + response.statusText);
-    }
-
-    const data = await response.json();
     this.history.push({ role: 'assistant', content: data.message || data.summary });
 
     return data;
@@ -389,31 +389,25 @@ export const ChatManager = {
       };
     }
 
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        query,
-        viewport: {
-          center: { lat: view.center.lat, lng: view.center.lng },
-          zoom: view.zoom,
-          bounds: view.bounds,  // {west, south, east, north}
-          adminLevel: view.adminLevel
-        },
-        chatHistory: this.history.slice(-10),
-        sessionId: this.sessionId,
-        // Include navigation location as resolved context if available
-        resolved_location: resolvedLocation,
-        // Include previous disambiguation options for "show them all" follow-up
-        previous_disambiguation_options: this.lastDisambiguationOptions || []
-      })
+    const data = await postMsgpack(apiUrl, {
+      query,
+      viewport: {
+        center: { lat: view.center.lat, lng: view.center.lng },
+        zoom: view.zoom,
+        bounds: view.bounds,  // {west, south, east, north}
+        adminLevel: view.adminLevel
+      },
+      chatHistory: this.history.slice(-10),
+      sessionId: this.sessionId,
+      // Include navigation location as resolved context if available
+      resolved_location: resolvedLocation,
+      // Include previous disambiguation options for "show them all" follow-up
+      previous_disambiguation_options: this.lastDisambiguationOptions || [],
+      // Include active overlay state for context-aware responses
+      activeOverlays: this.getActiveOverlays(),
+      // Include cache stats so backend knows what's already loaded
+      cacheStats: this.getCacheStats()
     });
-
-    if (!response.ok) {
-      throw new Error('Failed to get response: ' + response.statusText);
-    }
-
-    const data = await response.json();
     this.history.push({ role: 'assistant', content: data.message || data.summary });
 
     return data;
@@ -474,6 +468,111 @@ export const ChatManager = {
     messages.appendChild(indicator);
     messages.scrollTop = messages.scrollHeight;
     return indicator;
+  },
+
+  /**
+   * Get active overlay state for chat context.
+   * Returns which overlays are active and their current filter settings.
+   * @returns {Object} Active overlay info {type, filters}
+   */
+  getActiveOverlays() {
+    const activeList = OverlaySelector?.getActiveOverlays() || [];
+    if (activeList.length === 0) {
+      return { type: null, filters: {} };
+    }
+
+    // Primary overlay is first active one (most recently enabled)
+    const primaryOverlay = activeList[0];
+
+    // Get current filter params from OverlayController
+    const filters = OverlayController?.getActiveFilters?.(primaryOverlay) || {};
+
+    return {
+      type: primaryOverlay,
+      filters: filters,
+      allActive: activeList  // In case multiple overlays are active
+    };
+  },
+
+  /**
+   * Get cache statistics for chat context.
+   * Returns info about what data is currently loaded/displayed.
+   * @returns {Object} Cache stats per overlay
+   */
+  getCacheStats() {
+    if (!OverlayController) return {};
+
+    const stats = {};
+    const activeList = OverlaySelector?.getActiveOverlays() || [];
+
+    for (const overlayId of activeList) {
+      const cached = OverlayController.getCachedData(overlayId);
+      if (cached && cached.features) {
+        const features = cached.features;
+        stats[overlayId] = {
+          count: features.length,
+          years: OverlayController.getLoadedYears(overlayId)
+        };
+
+        // Add overlay-specific stats
+        if (overlayId === 'earthquakes') {
+          const mags = features.map(f => f.properties?.magnitude).filter(m => m != null);
+          if (mags.length > 0) {
+            stats[overlayId].minMag = Math.min(...mags);
+            stats[overlayId].maxMag = Math.max(...mags);
+          }
+        } else if (overlayId === 'hurricanes') {
+          const cats = features.map(f => f.properties?.max_category).filter(c => c != null);
+          if (cats.length > 0) {
+            stats[overlayId].categories = [...new Set(cats)].sort();
+          }
+        } else if (overlayId === 'wildfires') {
+          const areas = features.map(f => f.properties?.area_km2).filter(a => a != null);
+          if (areas.length > 0) {
+            stats[overlayId].minAreaKm2 = Math.min(...areas);
+            stats[overlayId].maxAreaKm2 = Math.max(...areas);
+          }
+        } else if (overlayId === 'volcanoes') {
+          const veis = features.map(f => f.properties?.vei).filter(v => v != null);
+          if (veis.length > 0) {
+            stats[overlayId].minVei = Math.min(...veis);
+            stats[overlayId].maxVei = Math.max(...veis);
+          }
+        } else if (overlayId === 'tornadoes') {
+          const scales = features.map(f => f.properties?.scale).filter(s => s != null);
+          if (scales.length > 0) {
+            stats[overlayId].scales = [...new Set(scales)].sort();
+          }
+        }
+      }
+    }
+
+    return stats;
+  },
+
+  /**
+   * Apply filter update from chat response.
+   * Updates overlay filters and triggers data reload.
+   * @param {Object} response - Filter update response {overlay, filters}
+   */
+  applyFilterUpdate(response) {
+    const { overlay, filters } = response;
+
+    if (!OverlayController) {
+      console.warn('OverlayController not available for filter update');
+      return;
+    }
+
+    if (filters.clear) {
+      // Clear filters and reload with defaults
+      OverlayController.clearFilters?.(overlay);
+    } else {
+      // Apply new filters
+      OverlayController.updateFilters?.(overlay, filters);
+    }
+
+    // Reload the overlay with new filters
+    OverlayController.reloadOverlay?.(overlay);
   }
 };
 
@@ -721,15 +820,9 @@ export const OrderManager = {
 
       console.log('Sending order:', JSON.stringify(this.currentOrder, null, 2));
 
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          confirmed_order: this.currentOrder
-        })
+      const data = await postMsgpack(apiUrl, {
+        confirmed_order: this.currentOrder
       });
-
-      const data = await response.json();
 
       console.log('Received response:', {
         type: data.type,

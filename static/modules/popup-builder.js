@@ -3,6 +3,8 @@
  * Handles formatting and display of feature properties.
  */
 
+import { fetchMsgpack } from './utils/fetch.js';
+
 // Dependencies set via setDependencies to avoid circular imports
 let App = null;
 
@@ -30,10 +32,7 @@ export const PopupBuilder = {
     this.adminLevelsLoading = true;
 
     try {
-      const response = await fetch('/reference/admin-levels');
-      if (response.ok) {
-        this.adminLevels = await response.json();
-      }
+      this.adminLevels = await fetchMsgpack('/reference/admin-levels');
     } catch (e) {
       console.warn('Failed to load admin levels:', e);
     }

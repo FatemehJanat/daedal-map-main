@@ -5,6 +5,7 @@
 
 import { CONFIG } from './config.js';
 import { GeometryCache } from './cache.js';
+import { fetchMsgpack } from './utils/fetch.js';
 import { ViewportLoader, setDependencies as setViewportDeps } from './viewport-loader.js';
 import { MapAdapter, setDependencies as setMapDeps } from './map-adapter.js';
 import { NavigationManager, setDependencies as setNavDeps } from './navigation.js';
@@ -39,7 +40,7 @@ export const App = {
     setMapDeps({ ViewportLoader, NavigationManager, App, PopupBuilder });
     setNavDeps({ MapAdapter, ViewportLoader, App });
     setPopupDeps({ App });
-    setChatDeps({ MapAdapter, App, SelectionManager });
+    setChatDeps({ MapAdapter, App, SelectionManager, OverlayController, OverlaySelector });
     setTimeDeps({ MapAdapter, ChoroplethManager });
     setChoroDeps({ MapAdapter });
     setSelectionDeps({ MapAdapter, ChatManager });
@@ -154,8 +155,7 @@ export const App = {
       const url = this.debugMode
         ? `${CONFIG.api.countries}?debug=true`
         : CONFIG.api.countries;
-      const response = await fetch(url);
-      const result = await response.json();
+      const result = await fetchMsgpack(url);
 
       if (result.geojson && result.geojson.features.length > 0) {
         this.currentData = {
@@ -255,8 +255,7 @@ export const App = {
       }
 
       const url = CONFIG.api.children.replace('{loc_id}', locId);
-      const response = await fetch(url);
-      const result = await response.json();
+      const result = await fetchMsgpack(url);
 
       if (result.geojson && result.geojson.features.length > 0) {
         this.currentData = {
