@@ -13,6 +13,7 @@ import { TrackAnimator, setDependencies as setTrackAnimatorDeps } from './track-
 import EventAnimator, { AnimationMode, setDependencies as setEventAnimatorDeps } from './event-animator.js';
 import { TIME_SYSTEM } from './time-slider.js';
 import { CONFIG } from './config.js';
+import { DetailedEventCache } from './cache.js';
 
 // Dependencies set via setDependencies
 let MapAdapter = null;
@@ -53,57 +54,488 @@ function gardnerKnopoffTimeWindow(magnitude) {
   return Math.pow(10, 0.5 * magnitude - 1.5);
 }
 
-// API endpoints for each overlay type (min_year=2020 for faster loading)
+// API endpoints for each overlay type
+// Severity filters reduce data volume for initial load:
+// - Earthquakes: M5.5+ (significant events)
+// - Hurricanes: Cat1+ (named hurricanes only, excludes TD/TS)
+// - Tornadoes: EF2+ (significant damage)
+// - Wildfires: 100km2+ (major fires)
+// - Volcanoes, Tsunamis, Floods: no filter (small datasets)
+//
+// Year-based lazy loading: Data is fetched per-year as user navigates time.
+// On overlay enable: fetch current year
+// On TimeSlider change: fetch that year if not cached
 const OVERLAY_ENDPOINTS = {
   earthquakes: {
-    list: '/api/earthquakes/geojson?min_magnitude=5.5&min_year=2020',
+    baseUrl: '/api/earthquakes/geojson',
+    params: { min_magnitude: '5.5' },
     eventType: 'earthquake',
     yearField: 'year'
   },
   hurricanes: {
-    list: '/api/storms/tracks/geojson?min_year=2020',
+    baseUrl: '/api/storms/tracks/geojson',
+    params: { min_category: 'Cat1' },
     trackEndpoint: '/api/storms/{storm_id}/track',
     eventType: 'hurricane',
     yearField: 'year'
   },
   volcanoes: {
-    list: '/api/eruptions/geojson?min_year=2020',
+    baseUrl: '/api/eruptions/geojson',
+    params: { exclude_ongoing: 'true' },
     eventType: 'volcano',
     yearField: 'year'
   },
   wildfires: {
-    list: '/api/wildfires/geojson?min_year=2020',
+    baseUrl: '/api/wildfires/geojson',
+    params: { min_area_km2: '500', include_perimeter: 'true' },  // 500km2 (~193 sq mi) = large fires
     eventType: 'wildfire',
     yearField: 'year'
   },
   tsunamis: {
-    list: '/api/tsunamis/geojson?min_year=2020',
+    baseUrl: '/api/tsunamis/geojson',
+    params: {},
     animationEndpoint: '/api/tsunamis/{event_id}/animation',
     eventType: 'tsunami',
     yearField: 'year'
   },
   tornadoes: {
-    list: '/api/tornadoes/geojson?min_year=2020',
+    baseUrl: '/api/tornadoes/geojson',
+    params: { min_scale: 'EF2' },
     detailEndpoint: '/api/tornadoes/{event_id}',
     eventType: 'tornado',
     yearField: 'year'
   },
   floods: {
-    list: '/api/floods/geojson?min_year=2020',
+    baseUrl: '/api/floods/geojson',
+    params: { include_geometry: 'true' },
     geometryEndpoint: '/api/floods/{event_id}/geometry',
     eventType: 'flood',
-    yearField: 'year'
+    yearField: 'year',
+    maxYear: 2019  // Flood data ends at 2019
   }
 };
 
+/**
+ * Event lifecycle configuration for timestamp-based filtering.
+ * Each disaster type defines how to calculate start/end times and fade duration.
+ * See docs/future/rolling_time.md for full documentation.
+ */
+const EVENT_LIFECYCLE = {
+  earthquake: {
+    // Earthquake with expanding "aftershock zone" circle
+    // Circle expands over days/weeks based on magnitude (from aftershock data analysis)
+    getStartMs: (f) => new Date(f.properties.timestamp).getTime(),
+    getEndMs: (f) => {
+      // End time = when the expanding circle reaches max radius
+      // Based on data: M5.5: ~4d, M6: ~9d, M6.5-7.5: ~20-25d, M8+: ~30d
+      const start = new Date(f.properties.timestamp).getTime();
+      const mag = f.properties.magnitude || 5;
+      // Expansion duration scales with magnitude: ~4 days at M5, ~30 days at M8
+      const expansionDays = Math.min(30, 4 * Math.pow(1.5, mag - 5));
+      return start + expansionDays * 24 * 60 * 60 * 1000;
+    },
+    defaultDuration: 7 * 24 * 60 * 60 * 1000,  // 7 days default
+    // Quick fade after expansion completes (aftershock sequence ending)
+    fadeDuration: 7 * 24 * 60 * 60 * 1000,  // 7 days
+    // Aftershock wave speed from data analysis (distance/time of aftershocks):
+    // M5-6: ~0.3 km/h (7 km/day), M7-8: ~1-2 km/h (25-50 km/day)
+    // Bigger earthquakes = faster expansion (more impressive on map)
+    getWaveSpeedKmPerMs: (f) => {
+      const mag = f.properties.magnitude || 5;
+      // Base: 0.3 km/h at M5, doubles per magnitude unit
+      // 0.3 km/h = 0.0833 km/min = 0.00139 km/sec = 0.00000139 km/ms
+      const baseSpeed = 0.00000139;  // 0.3 km/h in km/ms
+      return baseSpeed * Math.pow(2, mag - 5);
+    },
+    // Max radius from data (use felt_radius_km, default by magnitude)
+    getMaxWaveRadiusKm: (f) => {
+      if (f.properties.felt_radius_km) return f.properties.felt_radius_km;
+      // Default based on magnitude: M5: ~30km, M6: ~80km, M7: ~180km, M8: ~400km
+      const mag = f.properties.magnitude || 5;
+      return 30 * Math.pow(2.5, mag - 5);
+    }
+  },
+
+  hurricane: {
+    // Track event - spans start_date to end_date
+    getStartMs: (f) => new Date(f.properties.start_date).getTime(),
+    getEndMs: (f) => new Date(f.properties.end_date).getTime(),
+    defaultDuration: 7 * 24 * 60 * 60 * 1000,  // 7 days if missing
+    fadeDuration: 30 * 24 * 60 * 60 * 1000     // 30 days after dissipation
+  },
+
+  tsunami: {
+    // Propagation event - wave expands to furthest runup location
+    // Uses max_runup_dist_km from data (distance to furthest observed runup)
+    getStartMs: (f) => new Date(f.properties.timestamp).getTime(),
+    getEndMs: (f) => {
+      const start = new Date(f.properties.timestamp).getTime();
+      // End time = when wave reaches furthest runup
+      // Wave speed ~720 km/h, calculate from max distance
+      const maxDist = f.properties.max_runup_dist_km || 500;  // Default 500km
+      const travelHours = maxDist / 720;
+      return start + travelHours * 60 * 60 * 1000;
+    },
+    defaultDuration: 2 * 60 * 60 * 1000,  // 2 hours default
+    fadeDuration: 30 * 24 * 60 * 60 * 1000, // 30 days
+    // Wave speed: ~720 km/h in open ocean
+    waveSpeedKmPerMs: 0.0002,  // 720 km/h in km/ms
+    // Max radius from data (furthest runup location)
+    getMaxWaveRadiusKm: (f) => {
+      return f.properties.max_runup_dist_km || 500;  // Default 500km
+    }
+  },
+
+  volcano: {
+    // Volcanic eruption with expanding ash cloud/felt radius
+    // Uses actual felt_radius_km from data, VEI calculation as fallback
+    getStartMs: (f) => new Date(f.properties.timestamp).getTime(),
+    getEndMs: (f) => {
+      // If eruption has known duration, use that
+      if (f.properties.end_timestamp) {
+        return new Date(f.properties.end_timestamp).getTime();
+      }
+      if (f.properties.duration_days) {
+        return new Date(f.properties.timestamp).getTime() +
+               f.properties.duration_days * 24 * 60 * 60 * 1000;
+      }
+      if (f.properties.is_ongoing) {
+        return Date.now();  // Still active
+      }
+      // Expansion time: circle grows to felt_radius over several hours
+      // Higher VEI = faster expansion but larger radius, so ~similar duration
+      const start = new Date(f.properties.timestamp).getTime();
+      const vei = f.properties.VEI || f.properties.vei || 2;
+      const maxRadius = f.properties.felt_radius_km || Math.pow(2, vei) * 12.5;
+      const speedKmH = 10 * Math.pow(1.6, vei - 2);
+      const expansionHours = maxRadius / speedKmH;
+      return start + expansionHours * 60 * 60 * 1000;
+    },
+    defaultDuration: 24 * 60 * 60 * 1000,  // 24 hours default expansion
+    fadeDuration: 30 * 24 * 60 * 60 * 1000,  // 30 days fade
+    // Ash cloud expansion speed - VEI-based
+    // VEI 2: ~10 km/h, VEI 4: ~26 km/h, VEI 6: ~66 km/h
+    getWaveSpeedKmPerMs: (f) => {
+      const vei = f.properties.VEI || f.properties.vei || 2;
+      // Base: 10 km/h at VEI 2, scales with VEI
+      const speedKmH = 10 * Math.pow(1.6, vei - 2);
+      return speedKmH / 3600000;  // Convert km/h to km/ms
+    },
+    // Max radius from actual data (felt_radius_km), VEI fallback
+    // Data: VEI 2: ~23km, VEI 4: ~105km, VEI 6: ~478km, VEI 7: ~1021km
+    getMaxWaveRadiusKm: (f) => {
+      if (f.properties.felt_radius_km) return f.properties.felt_radius_km;
+      const vei = f.properties.VEI || f.properties.vei || 2;
+      return Math.pow(2, vei) * 12.5;  // Fallback calculation
+    }
+  },
+
+  tornado: {
+    // Instant track event
+    getStartMs: (f) => new Date(f.properties.timestamp).getTime(),
+    getEndMs: (f) => {
+      // Estimate from track length: ~1 mile/minute typical speed
+      const lengthMi = f.properties.tornado_length_mi || 1;
+      return new Date(f.properties.timestamp).getTime() + lengthMi * 60 * 1000;
+    },
+    defaultDuration: 30 * 60 * 1000,       // 30 minutes
+    fadeDuration: 14 * 24 * 60 * 60 * 1000 // 14 days
+  },
+
+  wildfire: {
+    // Duration event with progression
+    getStartMs: (f) => new Date(f.properties.timestamp).getTime(),
+    getEndMs: (f) => {
+      if (f.properties.duration_days) {
+        return new Date(f.properties.timestamp).getTime() +
+               f.properties.duration_days * 24 * 60 * 60 * 1000;
+      }
+      return new Date(f.properties.timestamp).getTime() + 30 * 24 * 60 * 60 * 1000;
+    },
+    defaultDuration: 30 * 24 * 60 * 60 * 1000,  // 30 days
+    fadeDuration: 30 * 24 * 60 * 60 * 1000      // 30 days
+  },
+
+  flood: {
+    // Duration event
+    getStartMs: (f) => new Date(f.properties.timestamp).getTime(),
+    getEndMs: (f) => {
+      if (f.properties.end_timestamp) {
+        return new Date(f.properties.end_timestamp).getTime();
+      }
+      if (f.properties.duration_days) {
+        return new Date(f.properties.timestamp).getTime() +
+               f.properties.duration_days * 24 * 60 * 60 * 1000;
+      }
+      return new Date(f.properties.timestamp).getTime() + 21 * 24 * 60 * 60 * 1000;
+    },
+    defaultDuration: 21 * 24 * 60 * 60 * 1000,  // 21 days
+    fadeDuration: 30 * 24 * 60 * 60 * 1000      // 30 days
+  }
+};
+
+/**
+ * Filter and annotate features by lifecycle state.
+ * Adds animation properties for expanding circle effects:
+ * - _radiusProgress: 0-1 progress through active+animation period (for expanding circles)
+ * - _waveRadiusKm: For tsunamis, the current wave radius in km
+ * @param {Array} features - GeoJSON features
+ * @param {number} currentMs - Current time in milliseconds
+ * @param {string} eventType - Event type key (earthquake, hurricane, etc.)
+ * @returns {Array} Filtered features with _opacity, _phase, _radiusProgress properties
+ */
+function filterByLifecycle(features, currentMs, eventType) {
+  const config = EVENT_LIFECYCLE[eventType];
+  if (!config) {
+    // Fallback: show all features at full opacity
+    return features.map(f => ({
+      ...f,
+      properties: { ...f.properties, _opacity: 1.0, _phase: 'active', _radiusProgress: 1.0 }
+    }));
+  }
+
+  return features.map(f => {
+    let startMs, endMs;
+    try {
+      startMs = config.getStartMs(f);
+      endMs = config.getEndMs(f);
+    } catch (e) {
+      // If timestamp parsing fails, show at full opacity
+      return {
+        ...f,
+        properties: { ...f.properties, _opacity: 1.0, _phase: 'active', _radiusProgress: 1.0 }
+      };
+    }
+
+    // Handle invalid dates
+    if (isNaN(startMs) || isNaN(endMs)) {
+      return {
+        ...f,
+        properties: { ...f.properties, _opacity: 1.0, _phase: 'active', _radiusProgress: 1.0 }
+      };
+    }
+
+    const fadeDuration = config.getFadeDuration?.(f) || config.fadeDuration;
+    const fadeEndMs = endMs + fadeDuration;
+
+    // Not visible yet
+    if (currentMs < startMs) return null;
+
+    // Already faded out
+    if (currentMs > fadeEndMs) return null;
+
+    // Calculate phase and opacity
+    let opacity = 1.0;
+    let phase = 'active';
+    let radiusProgress = 1.0;
+
+    if (currentMs <= endMs) {
+      // In active period - calculate expansion progress
+      phase = 'active';
+      const activeDuration = Math.max(endMs - startMs, config.defaultDuration || 60000);
+      // Animation duration: 10% of active period or 5 days, whichever is smaller
+      const animationDuration = Math.min(activeDuration * 0.1, 5 * 24 * 60 * 60 * 1000);
+      const elapsed = currentMs - startMs;
+      if (elapsed < animationDuration) {
+        // Expanding phase - ease out for natural feel
+        radiusProgress = easeOutQuad(elapsed / animationDuration);
+      } else {
+        radiusProgress = 1.0;
+      }
+    } else {
+      // In fade period
+      phase = 'fading';
+      opacity = 1.0 - (currentMs - endMs) / fadeDuration;
+      opacity = Math.max(0, Math.min(1, opacity));  // Clamp 0-1
+      radiusProgress = 1.0;  // Full size during fade
+    }
+
+    // Build properties with animation data
+    const props = {
+      ...f.properties,
+      _opacity: opacity,
+      _phase: phase,
+      _radiusProgress: radiusProgress
+    };
+
+    // Calculate expanding wave radius based on event type
+    const elapsed = currentMs - startMs;
+
+    if (eventType === 'earthquake') {
+      // Aftershock zone expansion: ~0.3-3 km/h based on magnitude
+      // Data-driven speeds from aftershock distance/time analysis
+      const waveSpeed = config.getWaveSpeedKmPerMs?.(f) || config.waveSpeedKmPerMs || 0.00000139;
+      const maxRadius = config.getMaxWaveRadiusKm?.(f) || f.properties.felt_radius_km || 300;
+      const currentRadius = Math.min(elapsed * waveSpeed, maxRadius);
+      props._waveRadiusKm = currentRadius;
+      // Also set progress for any layers using it
+      props._radiusProgress = maxRadius > 0 ? currentRadius / maxRadius : 1.0;
+    }
+
+    if (eventType === 'volcano') {
+      // Ash cloud expansion: VEI-based speed (10-100 km/h)
+      const waveSpeed = config.getWaveSpeedKmPerMs?.(f) || config.waveSpeedKmPerMs || 0.0000028;
+      const maxRadius = config.getMaxWaveRadiusKm?.(f) || 100;
+      const currentRadius = Math.min(elapsed * waveSpeed, maxRadius);
+      props._waveRadiusKm = currentRadius;
+      props._radiusProgress = maxRadius > 0 ? currentRadius / maxRadius : 1.0;
+    }
+
+    if (eventType === 'tsunami') {
+      // Tsunami waves travel ~720 km/h, expand to furthest runup location
+      // All events in events.parquet are sources (runups are in separate file)
+      const waveSpeed = config.waveSpeedKmPerMs || 0.0002;  // 720 km/h
+      const maxRadius = config.getMaxWaveRadiusKm?.(f) || f.properties.max_runup_dist_km || 500;
+      const currentRadius = Math.min(elapsed * waveSpeed, maxRadius);
+      props._waveRadiusKm = currentRadius;
+      props._radiusProgress = maxRadius > 0 ? currentRadius / maxRadius : 1.0;
+    }
+
+    return {
+      ...f,
+      properties: props
+    };
+  }).filter(Boolean);
+}
+
+/**
+ * Ease out quadratic - starts fast, slows down
+ */
+function easeOutQuad(t) {
+  return t * (2 - t);
+}
+
+// Feature flag to enable/disable lifecycle filtering (for gradual rollout)
+let useLifecycleFiltering = true;
+
 // Cache for loaded overlay data (full unfiltered datasets)
 const dataCache = {};
+
+// Track which years have been loaded per overlay (for lazy loading)
+const loadedYears = {};  // overlayId -> Set of years
 
 // Track current displayed year per overlay
 const displayedYear = {};
 
 // Cache year ranges per overlay (for recalculating combined range when overlays change)
 const yearRangeCache = {};
+
+/**
+ * Build URL for fetching a specific year's data.
+ * @param {Object} endpoint - Endpoint config from OVERLAY_ENDPOINTS
+ * @param {number} year - Year to fetch
+ * @returns {string} Full URL with year and other params
+ */
+function buildYearUrl(endpoint, year) {
+  const url = new URL(endpoint.baseUrl, window.location.origin);
+
+  // Add fixed params (like min_magnitude, min_category, etc.)
+  for (const [key, value] of Object.entries(endpoint.params || {})) {
+    url.searchParams.set(key, value);
+  }
+
+  // Add year filter - use 'year' param which all APIs support for single-year filtering
+  url.searchParams.set('year', year);
+
+  return url.toString();
+}
+
+/**
+ * Load data for a specific year and merge into cache.
+ * Skips if year already loaded.
+ * @param {string} overlayId - Overlay ID
+ * @param {number} year - Year to load
+ * @param {AbortSignal} signal - Optional abort signal
+ * @returns {Promise<boolean>} True if new data was loaded
+ */
+async function loadYearData(overlayId, year, signal = null) {
+  const endpoint = OVERLAY_ENDPOINTS[overlayId];
+  if (!endpoint) return false;
+
+  // Check maxYear constraint (e.g., floods end at 2019)
+  if (endpoint.maxYear && year > endpoint.maxYear) {
+    console.log(`OverlayController: ${overlayId} has no data for ${year} (max: ${endpoint.maxYear})`);
+    return false;
+  }
+
+  // Initialize loadedYears set if needed
+  if (!loadedYears[overlayId]) {
+    loadedYears[overlayId] = new Set();
+  }
+
+  // Skip if already loaded
+  if (loadedYears[overlayId].has(year)) {
+    return false;
+  }
+
+  const url = buildYearUrl(endpoint, year);
+  console.log(`OverlayController: Fetching ${overlayId} for year ${year}`);
+
+  try {
+    const fetchOptions = signal ? { signal } : {};
+    const response = await fetch(url, fetchOptions);
+
+    if (!response.ok) {
+      // 404 is OK - just means no data for that year
+      if (response.status === 404) {
+        loadedYears[overlayId].add(year);  // Mark as checked
+        console.log(`OverlayController: No ${overlayId} data for ${year}`);
+        return false;
+      }
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const geojson = await response.json();
+    const featureCount = geojson.features?.length || 0;
+
+    // Initialize cache if needed
+    if (!dataCache[overlayId]) {
+      dataCache[overlayId] = { type: 'FeatureCollection', features: [] };
+    }
+
+    // Merge new features (avoid duplicates by event_id if available)
+    if (featureCount > 0) {
+      const existingIds = new Set(
+        dataCache[overlayId].features
+          .map(f => f.properties?.event_id || f.properties?.storm_id || f.id)
+          .filter(Boolean)
+      );
+
+      const newFeatures = geojson.features.filter(f => {
+        const id = f.properties?.event_id || f.properties?.storm_id || f.id;
+        return !id || !existingIds.has(id);
+      });
+
+      dataCache[overlayId].features.push(...newFeatures);
+      console.log(`OverlayController: Added ${newFeatures.length} ${overlayId} features for ${year} (total: ${dataCache[overlayId].features.length})`);
+    } else {
+      console.log(`OverlayController: No ${overlayId} events in ${year}`);
+    }
+
+    // Mark year as loaded
+    loadedYears[overlayId].add(year);
+
+    // Update year range cache
+    if (!yearRangeCache[overlayId]) {
+      yearRangeCache[overlayId] = { min: year, max: year, available: [] };
+    }
+    yearRangeCache[overlayId].min = Math.min(yearRangeCache[overlayId].min, year);
+    yearRangeCache[overlayId].max = Math.max(yearRangeCache[overlayId].max, year);
+    if (!yearRangeCache[overlayId].available.includes(year) && featureCount > 0) {
+      yearRangeCache[overlayId].available.push(year);
+      yearRangeCache[overlayId].available.sort((a, b) => a - b);
+    }
+
+    return featureCount > 0;
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      console.log(`OverlayController: Year fetch aborted for ${overlayId} ${year}`);
+      return false;
+    }
+    console.error(`OverlayController: Failed to load ${overlayId} for ${year}:`, error);
+    return false;
+  }
+}
 
 export const OverlayController = {
   // Currently loading overlays (prevent duplicate requests)
@@ -2447,12 +2879,28 @@ export const OverlayController = {
     MapAdapter?.hidePopup?.();
     MapAdapter.popupLocked = false;
 
-    // Fetch track data
-    const trackUrl = OVERLAY_ENDPOINTS.hurricanes.trackEndpoint.replace('{storm_id}', stormId);
-    try {
-      const response = await fetch(trackUrl);
-      const data = await response.json();
+    // Check cache first - avoids duplicate API calls on rewind/replay
+    // TODO: Consider using loc_id as cache key once unified across event types
+    let data;
+    const cached = DetailedEventCache.get(stormId);
+    if (cached) {
+      console.log(`OverlayController: Using cached track data for ${stormId}`);
+      data = cached.data;
+    } else {
+      // Fetch from API
+      const trackUrl = OVERLAY_ENDPOINTS.hurricanes.trackEndpoint.replace('{storm_id}', stormId);
+      try {
+        const response = await fetch(trackUrl);
+        data = await response.json();
+        // Cache for future use
+        DetailedEventCache.set(stormId, data, 'hurricane');
+      } catch (err) {
+        console.error('OverlayController: Error fetching hurricane track:', err);
+        return;
+      }
+    }
 
+    try {
       if (!data || (!data.positions && !data.features)) {
         console.warn('OverlayController: No track data for storm', stormId);
         return;
@@ -2497,6 +2945,81 @@ export const OverlayController = {
     } catch (err) {
       console.error('OverlayController: Error fetching hurricane track:', err);
     }
+  },
+
+  // Track the storm currently in rolling animation
+  rollingAnimationStormId: null,
+
+  /**
+   * Start rolling mode animation for a hurricane.
+   * Called when a hurricane enters its active period during rolling time.
+   * Uses TrackAnimator in rolling mode (no zoom, no TimeSlider takeover).
+   * @param {string} stormId - Storm ID
+   * @param {string} stormName - Storm name
+   */
+  async startHurricaneRollingAnimation(stormId, stormName) {
+    // Already animating this storm
+    if (this.rollingAnimationStormId === stormId) return;
+
+    // Stop previous rolling animation if any
+    if (TrackAnimator.isActive && TrackAnimator.rollingMode) {
+      TrackAnimator.stop();
+    }
+
+    console.log(`OverlayController: Starting rolling animation for ${stormName} (${stormId})`);
+    this.rollingAnimationStormId = stormId;
+
+    // Check cache first
+    let data;
+    const cached = DetailedEventCache.get(stormId);
+    if (cached) {
+      console.log(`OverlayController: Using cached track data for rolling animation`);
+      data = cached.data;
+    } else {
+      // Fetch from API
+      const trackUrl = OVERLAY_ENDPOINTS.hurricanes.trackEndpoint.replace('{storm_id}', stormId);
+      try {
+        const response = await fetch(trackUrl);
+        data = await response.json();
+        DetailedEventCache.set(stormId, data, 'hurricane');
+      } catch (err) {
+        console.error('OverlayController: Error fetching hurricane track for rolling:', err);
+        this.rollingAnimationStormId = null;
+        return;
+      }
+    }
+
+    // Normalize to positions array
+    let positions = data.positions;
+    if (!positions && data.features) {
+      positions = data.features.map(f => ({
+        timestamp: f.properties.timestamp,
+        latitude: f.geometry.coordinates[1],
+        longitude: f.geometry.coordinates[0],
+        wind_kt: f.properties.wind_kt,
+        category: f.properties.category,
+        ...f.properties
+      }));
+    }
+
+    if (!positions || positions.length === 0) {
+      console.warn('OverlayController: Empty track positions for rolling animation');
+      this.rollingAnimationStormId = null;
+      return;
+    }
+
+    // Start rolling mode animation
+    TrackAnimator.startRolling(stormId, positions, { stormName });
+  },
+
+  /**
+   * Stop rolling mode animation for hurricanes.
+   */
+  stopHurricaneRollingAnimation() {
+    if (TrackAnimator.isActive && TrackAnimator.rollingMode) {
+      TrackAnimator.stop();
+    }
+    this.rollingAnimationStormId = null;
   },
 
   /**
@@ -2677,6 +3200,17 @@ export const OverlayController = {
    */
   async fetchSequenceData(sequenceId, eventType = 'earthquake', eventId = null) {
     try {
+      // Cache key: prefer eventId, fall back to sequenceId
+      // TODO: Consider using loc_id as cache key once unified across event types
+      const cacheKey = eventId || sequenceId;
+
+      // Check cache first - avoids duplicate API calls on rewind/replay
+      const cached = DetailedEventCache.get(cacheKey);
+      if (cached) {
+        console.log(`OverlayController: Using cached sequence data for ${cacheKey}`);
+        return cached.data;
+      }
+
       // Build API endpoint based on event type
       let endpoint;
       if (eventType === 'earthquake') {
@@ -2709,6 +3243,9 @@ export const OverlayController = {
         return [];
       }
 
+      // Cache the features array for future use
+      DetailedEventCache.set(cacheKey, data.features, eventType);
+
       return data.features;
 
     } catch (error) {
@@ -2716,6 +3253,9 @@ export const OverlayController = {
       return [];
     }
   },
+
+  // Track last timestamp for lifecycle filtering (to avoid redundant renders)
+  lastTimeSliderTimestamp: null,
 
   /**
    * Handle TimeSlider change event from listener.
@@ -2730,10 +3270,37 @@ export const OverlayController = {
       return;  // Don't do normal year-based filtering
     }
 
-    const year = this.getYearFromTime(time);
-    if (year !== this.lastTimeSliderYear) {
-      this.lastTimeSliderYear = year;
-      this.onTimeChange(year);
+    // If TrackAnimator is active
+    if (TrackAnimator.isActive) {
+      if (TrackAnimator.rollingMode) {
+        // Rolling mode: forward timestamp AND continue with normal filtering
+        TrackAnimator.setTimestamp(time);
+        // Don't return - still need to update other overlays
+      } else {
+        // Focused mode: TrackAnimator handles its own rendering
+        return;
+      }
+    }
+
+    // Determine if this is a timestamp (for lifecycle filtering)
+    const isTimestamp = Math.abs(time) >= 50000;
+
+    if (useLifecycleFiltering && isTimestamp) {
+      // NEW: Timestamp-based lifecycle filtering
+      // Throttle updates to avoid excessive re-renders (render every ~6 hours of slider time)
+      const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+      if (this.lastTimeSliderTimestamp === null ||
+          Math.abs(time - this.lastTimeSliderTimestamp) >= SIX_HOURS_MS) {
+        this.lastTimeSliderTimestamp = time;
+        this.onTimeChangeTimestamp(time);
+      }
+    } else {
+      // LEGACY: Year-based filtering
+      const year = this.getYearFromTime(time);
+      if (year !== this.lastTimeSliderYear) {
+        this.lastTimeSliderYear = year;
+        this.onTimeChange(year);
+      }
     }
   },
 
@@ -2771,7 +3338,34 @@ export const OverlayController = {
   },
 
   /**
+   * Get current timestamp from TimeSlider.
+   * @returns {number|null}
+   */
+  getCurrentTimestamp() {
+    return TimeSlider?.currentTime || null;
+  },
+
+  /**
+   * Render overlay with current time using appropriate filtering mode.
+   * Uses lifecycle filtering if enabled, otherwise falls back to year-based.
+   * @param {string} overlayId - Overlay ID
+   */
+  renderCurrentData(overlayId) {
+    if (useLifecycleFiltering) {
+      const timestamp = this.getCurrentTimestamp();
+      if (timestamp) {
+        this.renderFilteredData(overlayId, timestamp, { useTimestamp: true });
+      }
+    } else {
+      const year = this.getCurrentYear();
+      this.renderFilteredData(overlayId, year);
+    }
+  },
+
+  /**
    * Handle TimeSlider year change - update all active overlays.
+   * LEGACY: Year-based filtering (used when useLifecycleFiltering is false)
+   * Loads missing year data on-demand.
    * @param {number} year - New year
    */
   onTimeChange(year) {
@@ -2783,10 +3377,129 @@ export const OverlayController = {
       const endpoint = OVERLAY_ENDPOINTS[overlayId];
       if (!endpoint || !endpoint.yearField) continue;
 
-      // Only update if we have cached data and year changed
-      if (dataCache[overlayId] && displayedYear[overlayId] !== year) {
+      // Check if this year is loaded, if not load it
+      if (!loadedYears[overlayId]?.has(year)) {
+        this.loadYearAndRender(overlayId, year);
+      } else if (displayedYear[overlayId] !== year) {
+        // Year already loaded, just re-render
         this.renderFilteredData(overlayId, year);
       }
+    }
+  },
+
+  /**
+   * Handle TimeSlider timestamp change - update all active overlays with lifecycle filtering.
+   * NEW: Timestamp-based filtering (used when useLifecycleFiltering is true)
+   * Also handles hurricane rolling animation (progressive track drawing during active period).
+   * Loads missing year data on-demand.
+   * @param {number} timestamp - Current timestamp in milliseconds
+   */
+  onTimeChangeTimestamp(timestamp) {
+    const activeOverlays = OverlaySelector?.getActiveOverlays() || [];
+    const year = this.getYearFromTime(timestamp);
+
+    for (const overlayId of activeOverlays) {
+      if (overlayId === 'demographics') continue;
+
+      const endpoint = OVERLAY_ENDPOINTS[overlayId];
+      if (!endpoint) continue;
+
+      // Check if this year is loaded, if not load it
+      if (year && !loadedYears[overlayId]?.has(year)) {
+        this.loadYearAndRender(overlayId, year, timestamp);
+      } else if (dataCache[overlayId]) {
+        // Year already loaded, render with lifecycle filtering
+        this.renderFilteredData(overlayId, timestamp, { useTimestamp: true });
+
+        // For hurricanes, check if we should start rolling animation
+        if (overlayId === 'hurricanes') {
+          this.checkHurricaneRollingAnimation(timestamp);
+        }
+      }
+    }
+  },
+
+  /**
+   * Load a year's data and render.
+   * Used for lazy loading when user navigates to a year not yet cached.
+   * @param {string} overlayId - Overlay ID
+   * @param {number} year - Year to load
+   * @param {number} timestamp - Optional timestamp for lifecycle filtering
+   */
+  async loadYearAndRender(overlayId, year, timestamp = null) {
+    const endpoint = OVERLAY_ENDPOINTS[overlayId];
+    if (!endpoint) return;
+
+    // Load the year data
+    const loaded = await loadYearData(overlayId, year);
+
+    // Check if overlay is still active
+    const activeOverlays = OverlaySelector?.getActiveOverlays() || [];
+    if (!activeOverlays.includes(overlayId)) return;
+
+    // Check if we're still at the same time (user might have moved)
+    if (timestamp && useLifecycleFiltering) {
+      const currentYear = this.getYearFromTime(TimeSlider?.currentTime);
+      if (currentYear !== year) return;  // User moved on, skip render
+
+      this.renderFilteredData(overlayId, timestamp, { useTimestamp: true });
+
+      // For hurricanes, check if we should start rolling animation
+      if (overlayId === 'hurricanes') {
+        this.checkHurricaneRollingAnimation(timestamp);
+      }
+    } else {
+      // Year-based rendering
+      this.renderFilteredData(overlayId, year);
+    }
+
+    if (loaded) {
+      console.log(`OverlayController: Loaded and rendered ${overlayId} for year ${year}`);
+    }
+  },
+
+  /**
+   * Check if we should start/stop hurricane rolling animation.
+   * Starts animation when a hurricane enters active period, stops when it exits.
+   * @param {number} timestamp - Current timestamp in milliseconds
+   */
+  checkHurricaneRollingAnimation(timestamp) {
+    const cachedData = dataCache['hurricanes'];
+    if (!cachedData?.features) return;
+
+    const config = EVENT_LIFECYCLE['hurricane'];
+    if (!config) return;
+
+    // Find hurricanes in their active period (not fading)
+    const activeHurricanes = cachedData.features.filter(f => {
+      try {
+        const startMs = config.getStartMs(f);
+        const endMs = config.getEndMs(f);
+        // Active if: startMs <= timestamp <= endMs
+        return timestamp >= startMs && timestamp <= endMs;
+      } catch (e) {
+        return false;
+      }
+    });
+
+    // If the currently animating storm is no longer active, stop it
+    if (this.rollingAnimationStormId) {
+      const stillActive = activeHurricanes.some(f =>
+        f.properties.storm_id === this.rollingAnimationStormId
+      );
+      if (!stillActive) {
+        console.log(`OverlayController: Storm ${this.rollingAnimationStormId} exited active period, stopping rolling animation`);
+        this.stopHurricaneRollingAnimation();
+      }
+    }
+
+    // If there are active hurricanes and we're not already animating one, start
+    if (activeHurricanes.length > 0 && !this.rollingAnimationStormId) {
+      // Pick the first active hurricane (could enhance to pick most significant)
+      const storm = activeHurricanes[0];
+      const stormId = storm.properties.storm_id;
+      const stormName = storm.properties.name || stormId;
+      this.startHurricaneRollingAnimation(stormId, stormName);
     }
   },
 
@@ -2830,7 +3543,8 @@ export const OverlayController = {
 
   /**
    * Load and display an overlay.
-   * Fetches ALL data, caches it, then filters by current year for display.
+   * Uses year-based lazy loading: only loads current year initially.
+   * Additional years are loaded on-demand as user navigates time.
    * @param {string} overlayId - Overlay ID
    */
   async loadOverlay(overlayId) {
@@ -2858,17 +3572,25 @@ export const OverlayController = {
     this.loading.add(overlayId);
 
     try {
-      // Fetch ALL data (no year filter - we filter client-side)
-      const url = endpoint.list;
-      console.log(`OverlayController: Fetching ${url}`);
-
-      const response = await fetch(url, { signal: abortController.signal });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      // Get current year from TimeSlider or use current calendar year
+      let currentYear = new Date().getFullYear();
+      if (TimeSlider?.currentTime) {
+        // If TimeSlider has a timestamp, extract year from it
+        const sliderYear = new Date(TimeSlider.currentTime).getFullYear();
+        if (sliderYear > 1900 && sliderYear < 3000) {
+          currentYear = sliderYear;
+        }
       }
 
-      const geojson = await response.json();
+      // Respect maxYear constraint (e.g., floods end at 2019)
+      if (endpoint.maxYear && currentYear > endpoint.maxYear) {
+        currentYear = endpoint.maxYear;
+      }
+
+      console.log(`OverlayController: Loading ${overlayId} starting with year ${currentYear}`);
+
+      // Load current year's data
+      const loaded = await loadYearData(overlayId, currentYear, abortController.signal);
 
       // Check if overlay was disabled while we were fetching
       const activeOverlays = OverlaySelector?.getActiveOverlays() || [];
@@ -2877,49 +3599,34 @@ export const OverlayController = {
         return;
       }
 
-      // Cache the full dataset
-      dataCache[overlayId] = geojson;
-
-      console.log(`OverlayController: Cached ${geojson.features?.length || 0} ${overlayId} features`);
-
-      // Update TimeSlider range if this overlay has year filtering
+      // Initialize TimeSlider for this overlay
       if (endpoint.yearField && TimeSlider) {
-        // Extract unique years from actual data (not hardcoded config)
-        const availableYears = new Set();
-        for (const feature of geojson.features) {
-          const year = feature.properties[endpoint.yearField];
-          if (year != null) {
-            availableYears.add(parseInt(year));
-          }
-        }
-        const sortedYears = Array.from(availableYears).sort((a, b) => a - b);
+        // Set TimeSlider to current year with wide available range
+        // More years will be added as user navigates
+        const minYear = 1900;  // Allow navigation back in time
+        const maxYear = new Date().getFullYear();
 
-        if (sortedYears.length > 0) {
-          // Derive min/max from actual data, not hardcoded config
-          const minYear = sortedYears[0];
-          const maxYear = sortedYears[sortedYears.length - 1];
-
-          // Cache year range for this overlay (for recalculating when overlays change)
+        // Initialize year range cache
+        if (!yearRangeCache[overlayId]) {
           yearRangeCache[overlayId] = {
-            min: minYear,
-            max: maxYear,
-            available: sortedYears
+            min: currentYear,
+            max: currentYear,
+            available: loaded ? [currentYear] : []
           };
-
-          TimeSlider.setTimeRange({
-            min: minYear,
-            max: maxYear,
-            granularity: 'yearly',
-            available: sortedYears  // Only step to years with data
-          });
-          TimeSlider.show();  // Show TimeSlider when overlay with year data loads
-          console.log(`OverlayController: TimeSlider range ${minYear}-${maxYear} (from data), ${sortedYears.length} years with data`);
         }
+
+        TimeSlider.setTimeRange({
+          min: minYear,
+          max: maxYear,
+          granularity: 'yearly',
+          available: null  // Don't restrict to specific years - allow free navigation
+        });
+        TimeSlider.show();
+        console.log(`OverlayController: TimeSlider range ${minYear}-${maxYear}, loaded year ${currentYear}`);
       }
 
-      // Render filtered by current year (or all if no year filter)
-      const currentYear = this.getCurrentYear();
-      this.renderFilteredData(overlayId, currentYear);
+      // Render with current time (uses lifecycle filtering if enabled)
+      this.renderCurrentData(overlayId);
 
     } catch (error) {
       // Don't log abort errors - they're expected when user disables overlay
@@ -2936,21 +3643,45 @@ export const OverlayController = {
   },
 
   /**
-   * Filter cached data by year and render.
+   * Filter cached data and render.
+   * Supports both year-based filtering (legacy) and timestamp-based lifecycle filtering (new).
    * @param {string} overlayId - Overlay ID
-   * @param {number|null} year - Year to filter by, or null for all
+   * @param {number|null} yearOrTimestamp - Year or timestamp to filter by
+   * @param {object} options - Optional settings
+   * @param {boolean} options.useTimestamp - If true, treat value as timestamp for lifecycle filtering
    */
-  renderFilteredData(overlayId, year) {
+  renderFilteredData(overlayId, yearOrTimestamp, options = {}) {
     const endpoint = OVERLAY_ENDPOINTS[overlayId];
     const cachedData = dataCache[overlayId];
 
     if (!endpoint || !cachedData) return;
 
     let filteredGeojson;
+    const useTimestamp = options.useTimestamp && useLifecycleFiltering;
 
-    // Filter by year if overlay supports it and year is set
-    if (endpoint.yearField && year) {
-      const yearNum = parseInt(year);
+    if (useTimestamp && yearOrTimestamp) {
+      // NEW: Timestamp-based lifecycle filtering
+      const currentMs = yearOrTimestamp;
+      let filtered = filterByLifecycle(
+        cachedData.features,
+        currentMs,
+        endpoint.eventType
+      );
+
+      // For hurricanes, exclude storms currently in rolling animation (avoid duplicate rendering)
+      if (overlayId === 'hurricanes' && this.rollingAnimationStormId) {
+        filtered = filtered.filter(f => f.properties.storm_id !== this.rollingAnimationStormId);
+      }
+
+      filteredGeojson = {
+        type: 'FeatureCollection',
+        features: filtered
+      };
+      const dateStr = new Date(currentMs).toISOString().split('T')[0];
+      console.log(`OverlayController: Lifecycle filtered ${cachedData.features.length} -> ${filtered.length} for ${dateStr}`);
+    } else if (endpoint.yearField && yearOrTimestamp) {
+      // LEGACY: Year-based filtering
+      const yearNum = parseInt(yearOrTimestamp);
       const filtered = cachedData.features.filter(f => {
         const propYear = f.properties[endpoint.yearField];
         if (propYear == null) return false;
@@ -2965,8 +3696,8 @@ export const OverlayController = {
       filteredGeojson = cachedData;
     }
 
-    // Track displayed year
-    displayedYear[overlayId] = year;
+    // Track displayed year (for legacy compatibility)
+    displayedYear[overlayId] = useTimestamp ? this.getYearFromTime(yearOrTimestamp) : yearOrTimestamp;
 
     // Render using appropriate model
     const rendered = ModelRegistry?.render(filteredGeojson, endpoint.eventType, {
@@ -2974,8 +3705,10 @@ export const OverlayController = {
     });
 
     if (rendered) {
-      const yearStr = year ? ` for ${year}` : ' (all years)';
-      console.log(`OverlayController: Rendered ${filteredGeojson.features?.length || 0} ${overlayId}${yearStr}`);
+      const timeStr = useTimestamp
+        ? ` at ${new Date(yearOrTimestamp).toISOString().split('T')[0]}`
+        : (yearOrTimestamp ? ` for ${yearOrTimestamp}` : ' (all years)');
+      console.log(`OverlayController: Rendered ${filteredGeojson.features?.length || 0} ${overlayId}${timeStr}`);
     }
   },
 
@@ -2994,15 +3727,33 @@ export const OverlayController = {
       console.log(`OverlayController: Aborted pending fetch for ${overlayId}`);
     }
 
-    // Get the model and clear it
+    // For hurricanes, also stop any rolling animation in progress
+    if (overlayId === 'hurricanes') {
+      this.stopHurricaneRollingAnimation();
+    }
+
+    // Get the model and clear it (use type-specific clear if available)
     const model = ModelRegistry?.getModelForType(endpoint.eventType);
-    if (model?.clear) {
-      model.clear();
+    if (model) {
+      if (model.clearType) {
+        // Type-specific clear (PointRadiusModel) - only clears this event type
+        model.clearType(endpoint.eventType);
+      } else if (model.clear) {
+        // General clear (TrackModel, PolygonModel) - clears all for this model
+        model.clear();
+      }
+    }
+
+    // Hide popup if it was showing data for this overlay
+    if (MapAdapter?.popup?.isOpen?.()) {
+      MapAdapter.hidePopup();
+      MapAdapter.popupLocked = false;
     }
 
     // Clear caches
     delete dataCache[overlayId];
     delete yearRangeCache[overlayId];
+    delete loadedYears[overlayId];
 
     // Recalculate TimeSlider range from remaining active overlays
     this.recalculateTimeRange();
@@ -3131,13 +3882,23 @@ export const OverlayController = {
       // Hide the hurricane overlay to focus on this single track
       this._hideHurricaneOverlay();
 
-      // Use global tropical storms API
-      const response = await fetch(`/api/storms/${encodeURIComponent(stormId)}/track`);
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+      // Check cache first - avoids duplicate API calls on rewind/replay
+      // TODO: Consider using loc_id as cache key once unified across event types
+      let data;
+      const cached = DetailedEventCache.get(stormId);
+      if (cached) {
+        console.log(`OverlayController: Using cached track data for ${stormId}`);
+        data = cached.data;
+      } else {
+        // Fetch from API
+        const response = await fetch(`/api/storms/${encodeURIComponent(stormId)}/track`);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        data = await response.json();
+        // Cache for future use
+        DetailedEventCache.set(stormId, data, 'hurricane');
       }
-
-      const data = await response.json();
 
       if (!data.positions || data.positions.length === 0) {
         console.warn(`OverlayController: No positions found for storm ${stormId}`);
@@ -3434,5 +4195,62 @@ export const OverlayController = {
     for (const key in dataCache) {
       delete dataCache[key];
     }
+    for (const key in loadedYears) {
+      delete loadedYears[key];
+    }
+    for (const key in yearRangeCache) {
+      delete yearRangeCache[key];
+    }
+  },
+
+  /**
+   * Get loaded years for an overlay (for debugging).
+   * @param {string} overlayId - Overlay ID
+   * @returns {Array} Array of loaded years
+   */
+  getLoadedYears(overlayId) {
+    return loadedYears[overlayId] ? Array.from(loadedYears[overlayId]).sort((a, b) => a - b) : [];
+  },
+
+  /**
+   * Get cache statistics for monitoring memory usage.
+   * Call from console: OverlayController.getCacheStats()
+   * @returns {Object} Cache statistics
+   */
+  getCacheStats() {
+    const stats = {
+      overlays: {},
+      totals: {
+        features: 0,
+        yearsLoaded: 0,
+        overlaysActive: 0
+      }
+    };
+
+    for (const overlayId of Object.keys(OVERLAY_ENDPOINTS)) {
+      const features = dataCache[overlayId]?.features || [];
+      const years = loadedYears[overlayId] ? Array.from(loadedYears[overlayId]).sort((a, b) => a - b) : [];
+
+      if (features.length > 0 || years.length > 0) {
+        stats.overlays[overlayId] = {
+          features: features.length,
+          yearsLoaded: years.length,
+          years: years,
+          yearRange: years.length > 0 ? `${years[0]}-${years[years.length - 1]}` : 'none'
+        };
+
+        stats.totals.features += features.length;
+        stats.totals.yearsLoaded += years.length;
+        stats.totals.overlaysActive++;
+      }
+    }
+
+    // Estimate memory (rough: ~1KB per feature on average)
+    stats.totals.estimatedMemoryMB = (stats.totals.features * 1024 / 1024 / 1024).toFixed(2);
+
+    console.table(stats.overlays);
+    console.log(`Total: ${stats.totals.features} features across ${stats.totals.yearsLoaded} year-loads (~${stats.totals.estimatedMemoryMB} MB)`);
+
+    return stats;
   }
 };

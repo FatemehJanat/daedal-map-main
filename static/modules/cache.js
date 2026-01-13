@@ -84,6 +84,75 @@ export const GeometryCache = {
 // LOCATION INFO CACHE - API response cache for location details
 // ============================================================================
 
+// ============================================================================
+// DETAILED EVENT CACHE - Stores detailed animation data (tracks, sequences)
+// Prevents duplicate API calls when replaying/rewinding through events.
+// TODO: Consider using loc_id as cache key once all event types have it unified
+// ============================================================================
+
+export const DetailedEventCache = {
+  cache: new Map(),  // eventId/stormId -> {data, eventType}
+  maxSize: 200,      // Limit to ~200 detailed events to prevent memory bloat
+
+  /**
+   * Get cached detailed data for an event
+   * @param {string} eventId - Event ID (event_id, storm_id, etc.)
+   * @returns {Object|null} Cached data or null
+   */
+  get(eventId) {
+    return this.cache.get(eventId) || null;
+  },
+
+  /**
+   * Check if event data is cached
+   * @param {string} eventId - Event ID
+   * @returns {boolean}
+   */
+  has(eventId) {
+    return this.cache.has(eventId);
+  },
+
+  /**
+   * Store detailed event data in cache
+   * @param {string} eventId - Event ID (event_id, storm_id, etc.)
+   * @param {Object} data - Detailed event data from API
+   * @param {string} eventType - Event type for debugging
+   */
+  set(eventId, data, eventType = 'unknown') {
+    // LRU eviction if at max size
+    if (this.cache.size >= this.maxSize) {
+      const oldest = this.cache.keys().next().value;
+      this.cache.delete(oldest);
+      console.log(`DetailedEventCache: Evicted ${oldest} (at max size ${this.maxSize})`);
+    }
+    this.cache.set(eventId, { data, eventType });
+    console.log(`DetailedEventCache: Cached ${eventType} ${eventId} (${this.cache.size}/${this.maxSize})`);
+  },
+
+  /**
+   * Clear all cached data
+   */
+  clear() {
+    const size = this.cache.size;
+    this.cache.clear();
+    console.log(`DetailedEventCache: Cleared ${size} entries`);
+  },
+
+  /**
+   * Get cache stats for debugging
+   */
+  getStats() {
+    return {
+      size: this.cache.size,
+      maxSize: this.maxSize,
+      eventTypes: [...this.cache.values()].reduce((acc, v) => {
+        acc[v.eventType] = (acc[v.eventType] || 0) + 1;
+        return acc;
+      }, {})
+    };
+  }
+};
+
 export const LocationInfoCache = {
   cache: new Map(),
   maxSize: 500,

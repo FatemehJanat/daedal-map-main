@@ -1709,7 +1709,7 @@ export const EventAnimator = {
 
   /**
    * Calculate viewport bounds for earthquake animation.
-   * Initial: mainshock damage radius (tight view)
+   * Initial: mainshock felt radius (outer radius view)
    * Final: mainshock felt radius + all aftershock felt radii (wide view)
    * @private
    */
@@ -1717,11 +1717,10 @@ export const EventAnimator = {
     if (!this._eqMainshock) return;
 
     const mainCoords = this._eqMainshock.geometry.coordinates;
-    const damageRadiusKm = this._eqMainshock.properties.damage_radius_km || 50;
     const feltRadiusKm = this._eqMainshock.properties.felt_radius_km || 200;
 
-    // Initial bounds: damage radius (tight)
-    this._eqInitialBounds = this._boundsFromCenterRadius(mainCoords, damageRadiusKm);
+    // Initial bounds: felt radius (outer radius)
+    this._eqInitialBounds = this._boundsFromCenterRadius(mainCoords, feltRadiusKm);
 
     // Final bounds: felt radius
     this._eqFinalBounds = this._boundsFromCenterRadius(mainCoords, feltRadiusKm);

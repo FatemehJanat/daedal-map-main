@@ -44,6 +44,7 @@ const LAYERS = {
 export const TrackAnimator = {
   // Current animation state
   isActive: false,
+  rollingMode: false,  // True when driven by global TimeSlider (no zoom, no scale takeover)
   stormId: null,
   stormName: null,
   positions: [],
@@ -110,6 +111,59 @@ export const TrackAnimator = {
     this.setPosition(0);
 
     this.isActive = true;
+  },
+
+  /**
+   * Start track animation in rolling mode (driven by global TimeSlider).
+   * Skips auto-zoom and TimeSlider scale creation.
+   * Called when a storm enters its active period during rolling time playback.
+   * @param {string} stormId - Storm identifier
+   * @param {Array} positions - Array of position objects with timestamp, lat, lon, wind_kt, etc.
+   * @param {Object} options - {stormName}
+   */
+  startRolling(stormId, positions, options = {}) {
+    if (!MapAdapter?.map) {
+      console.warn('TrackAnimator: MapAdapter not available');
+      return;
+    }
+
+    if (!positions || positions.length === 0) {
+      console.warn('TrackAnimator: No positions provided');
+      return;
+    }
+
+    // Sort positions by timestamp
+    this.positions = [...positions].sort((a, b) =>
+      new Date(a.timestamp) - new Date(b.timestamp)
+    );
+
+    this.stormId = stormId;
+    this.stormName = options.stormName || stormId;
+    this.rollingMode = true;
+    this.currentIndex = 0;
+    this.trackCoords = [];
+
+    // Calculate time range
+    this.startTime = new Date(this.positions[0].timestamp).getTime();
+    this.endTime = new Date(this.positions[this.positions.length - 1].timestamp).getTime();
+
+    console.log(`TrackAnimator: Starting rolling mode for ${this.stormName} with ${this.positions.length} positions`);
+
+    // Clear existing track layers
+    this.clearLayers();
+
+    // Initialize layers
+    this.initializeLayers();
+
+    // NO fitToTrack() - don't zoom
+    // NO setupTimeSlider() - use global TimeSlider
+
+    this.isActive = true;
+
+    // Set initial position based on current global time
+    if (TimeSlider?.currentTime) {
+      this.setTimestamp(TimeSlider.currentTime);
+    }
   },
 
   /**
@@ -534,44 +588,48 @@ export const TrackAnimator = {
    * Stop track animation and cleanup.
    */
   stop() {
-    console.log('TrackAnimator: Stopping');
+    console.log(`TrackAnimator: Stopping${this.rollingMode ? ' (rolling mode)' : ''}`);
 
     this.clearLayers();
 
-    // Remove exit button
-    const exitBtn = document.getElementById('track-exit-btn');
-    if (exitBtn) exitBtn.remove();
+    // Only do TimeSlider cleanup if NOT in rolling mode (focused mode created its own scale)
+    if (!this.rollingMode) {
+      // Remove exit button
+      const exitBtn = document.getElementById('track-exit-btn');
+      if (exitBtn) exitBtn.remove();
 
-    // Remove TimeSlider scale and listener
-    if (TimeSlider) {
-      // Exit event animation mode - restore yearly overview speed
-      if (TimeSlider.exitEventAnimation) {
-        TimeSlider.exitEventAnimation();
-      }
-
-      if (this._timeChangeHandler) {
-        TimeSlider.removeChangeListener(this._timeChangeHandler);
-        this._timeChangeHandler = null;
-      }
-      if (this.scaleId) {
-        TimeSlider.removeScale(this.scaleId);
-        // Only switch to primary if it exists (may not exist if only overlays are displayed)
-        if (TimeSlider.scales?.find(s => s.id === 'primary')) {
-          TimeSlider.setActiveScale('primary');
-        } else if (TimeSlider.scales?.length === 0) {
-          // No scales left, hide the time slider
-          TimeSlider.hide();
+      // Remove TimeSlider scale and listener
+      if (TimeSlider) {
+        // Exit event animation mode - restore yearly overview speed
+        if (TimeSlider.exitEventAnimation) {
+          TimeSlider.exitEventAnimation();
         }
-        this.scaleId = null;
-      }
-    }
 
-    // Call exit callback
-    if (this.onExit) {
-      this.onExit();
+        if (this._timeChangeHandler) {
+          TimeSlider.removeChangeListener(this._timeChangeHandler);
+          this._timeChangeHandler = null;
+        }
+        if (this.scaleId) {
+          TimeSlider.removeScale(this.scaleId);
+          // Only switch to primary if it exists (may not exist if only overlays are displayed)
+          if (TimeSlider.scales?.find(s => s.id === 'primary')) {
+            TimeSlider.setActiveScale('primary');
+          } else if (TimeSlider.scales?.length === 0) {
+            // No scales left, hide the time slider
+            TimeSlider.hide();
+          }
+          this.scaleId = null;
+        }
+      }
+
+      // Call exit callback (only for focused mode)
+      if (this.onExit) {
+        this.onExit();
+      }
     }
 
     this.isActive = false;
+    this.rollingMode = false;
     this.stormId = null;
     this.positions = [];
     this.trackCoords = [];

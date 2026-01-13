@@ -8,24 +8,48 @@ Data download status and research notes.
 
 ---
 
-## Processed Data (Ready for Map)
+## Global Disaster Sources
 
-Location: `county-map-data/`
+Location: `county-map-data/global/`
 
-| Source | File | Records | Coverage |
-|--------|------|---------|----------|
-| FEMA NRI | USA.parquet | 12,747 | 2021-2025, 18 hazards |
-| FEMA Disasters | USA.parquet | 46,901 | 1953-2025 |
-| NOAA Storms | events.parquet | 1.2M | 1950-2025 |
-| USGS Earthquakes | events.parquet | 1M+ | Global 1900+ |
-| IBTrACS Hurricanes | storms.parquet + positions.parquet | 14K storms | Global 1842+ |
-| NOAA Tsunamis | events.parquet + runups.parquet | 2,600 events | Global, historical |
-| Smithsonian Volcanoes | events.parquet | 11,000 eruptions | Holocene |
-| Global Fire Atlas | fires.parquet | 2GB+ | Global 2003-2016 |
-| MTBS Wildfires | events.parquet | 25,000 | USA 1984-2023 |
-| US Drought Monitor | USA.parquet | 90,188 | 2000-2026 |
-| Wildfire Risk | USA.parquet | 3,144 | 2022 snapshot |
-| Global Floods | events.parquet | 4,825 | 1985-2019 |
+| Source | Path | Total Records | Filtered (frontend) | Years |
+|--------|------|---------------|---------------------|-------|
+| USGS Earthquakes | usgs_earthquakes/ | 1,053,285 | 2,804 (M5.5+, 2020+) | 1900-2026 |
+| IBTrACS Hurricanes | tropical_storms/ | 13,541 storms | 273 (Cat1+, 2020+) | 1842-2026 |
+| NOAA Tsunamis | tsunamis/ | 2,619 events | 105 (2020+) | -2000-2025 |
+| Smithsonian Volcanoes | smithsonian_volcanoes/ | 11,079 eruptions | 194 (2020+) | Holocene |
+| Global Wildfires | wildfires/by_year/ | ~940K/year | ~3,200/year (100km2+) | 2002-2024 |
+| Global Floods | floods/ | 4,825 events | 1,239 (2010+) | 1985-2019 |
+
+### Frontend Filter Summary
+
+Default overlay filters (in overlay-controller.js) reduce data for initial load:
+
+| Overlay | Filter | Rationale |
+|---------|--------|-----------|
+| Earthquakes | M5.5+, 2020+ | Significant events only |
+| Hurricanes | Cat1+, 2020+ | Named hurricanes, excludes TD/TS |
+| Tornadoes | EF2+, 2020+ | Significant damage threshold |
+| Wildfires | 100km2+, 2020+ | Major fires only |
+| Volcanoes | 2020+ | Small dataset, no severity filter |
+| Tsunamis | 2020+ | Small dataset, no severity filter |
+| Floods | 2010+ | Data ends 2019 |
+
+---
+
+## US-Specific Sources
+
+Location: `county-map-data/countries/USA/`
+
+| Source | Path | Total Records | Filtered | Years |
+|--------|------|---------------|----------|-------|
+| NOAA Storms (all) | noaa_storms/ | 1.2M events | - | 1950-2025 |
+| - Tornadoes | (subset) | 79,038 | 1,154 (EF2+, 2020+) | 1950-2025 |
+| FEMA Disasters | fema_disasters/ | 46,901 | - | 1953-2025 |
+| FEMA NRI | fema_nri/ | 12,747 | - | 2021-2025 |
+| US Wildfires | wildfires/ | 30,733 | - | 1984-2023 |
+| US Drought Monitor | usdm_drought/ | 90,188 | - | 2000-2026 |
+| Wildfire Risk | wildfire_risk/ | 3,144 | - | 2022 snapshot |
 
 ---
 
@@ -33,31 +57,66 @@ Location: `county-map-data/`
 
 Location: `county-map-data/Raw data/`
 
+### Canada
 | Source | Size | Status |
 |--------|------|--------|
 | Canada Fire (CNFDB) | 789 MB | Downloaded |
 | Canada Drought | 1.0 GB | Downloaded |
 | Canada Earthquakes | 12 MB | Downloaded |
+
+### Australia
+| Source | Size | Status |
+|--------|------|--------|
 | Australia Cyclones | 7.6 MB | Downloaded |
+
+### Europe
+| Source | Size | Status |
+|--------|------|--------|
+| Eurostat NUTS 3 | 5.9 MB | Downloaded |
+
+### Other/Global
+| Source | Size | Status |
+|--------|------|--------|
 | HDX/EM-DAT Global | 390 KB | Downloaded |
 | ReliefWeb | 6.9 MB | Downloaded |
 | EPA Air Quality | 2.8 MB | Downloaded |
 | EIA Energy | 1.4 GB | Downloaded |
-| Eurostat NUTS 3 | 5.9 MB | Downloaded |
+| Flood Events (GFM) | 732 KB | Downloaded |
+| Flood Events (GFD) | 1.2 MB | Downloaded |
 
 ---
 
 ## Download Scripts
 
-Location: `data_converters/`
+Location: `data_converters/downloaders/`
 
+### Global
+| Script | Status |
+|--------|--------|
+| download_global_earthquakes.py | Working |
+| download_ibtracs.py | Working |
+| download_global_volcanoes.py | Working |
+| download_global_tsunamis.py | Working |
+| download_flood_events.py | Working |
+| download_lance_floods.py | Built (needs Earthdata account) |
+| download_nasa_firms.py | Working |
+
+### USA
 | Script | Status |
 |--------|--------|
 | download_fema_all.py | Working |
 | download_and_extract_noaa.py | Working |
 | download_usdm_drought.py | Working |
+
+### Canada
+| Script | Status |
+|--------|--------|
 | download_canada_fires.py | Working |
 | download_canada_earthquakes.py | Working |
+
+### Other
+| Script | Status |
+|--------|--------|
 | download_australia_cyclones.py | Working |
 | download_hdx_disasters.py | Working |
 | download_reliefweb.py | Working |
@@ -70,6 +129,7 @@ Location: `data_converters/`
 
 | Hazard | Current | Gap |
 |--------|---------|-----|
+| Floods | 1985-2019 | 2020-present (use LANCE + event triggers) |
 | Heat/Cold Wave | Limited NOAA | NCEI temperature extremes |
 | Pre-2000 Drought | USDM 2000+ | Palmer Drought Index |
 | Coastal Flooding | Model only | Event database |
@@ -87,6 +147,7 @@ Location: `data_converters/`
 ## Future Work
 
 **In Progress:**
+- Fill flood gap 2020-present (event-driven LANCE approach)
 - Create converters for international data (Canada, Australia, Europe)
 - Import international geometry (LGA, CSD, NUTS boundaries)
 

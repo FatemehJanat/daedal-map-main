@@ -455,10 +455,10 @@ async def get_hurricane_storms_geojson(year: int = None, us_landfall: bool = Non
 # === Earthquake Data Endpoints ===
 
 @app.get("/api/earthquakes/geojson")
-async def get_earthquakes_geojson(year: int = None, min_magnitude: float = 5.0, limit: int = None):
+async def get_earthquakes_geojson(year: int = None, min_magnitude: float = None, limit: int = None):
     """
     Get earthquakes as GeoJSON points for map display.
-    Default: M5.0+ earthquakes (significant ones visible on map).
+    No default magnitude filter - frontend controls filtering.
     Uses global data if available, falls back to USA data.
     """
     import pandas as pd
@@ -747,11 +747,17 @@ async def get_volcanoes_geojson(active_only: bool = None):
 
 
 @app.get("/api/eruptions/geojson")
-async def get_eruptions_geojson(year: int = None, min_vei: int = None):
+async def get_eruptions_geojson(year: int = None, min_vei: int = None, min_year: int = None, exclude_ongoing: bool = False):
     """
     Get volcanic eruptions as GeoJSON points for map display.
     Radii are pre-calculated in the data pipeline using VEI-based formulas.
     Uses global data if available, falls back to USA data.
+
+    Query params:
+    - year: Filter to single year
+    - min_year: Minimum year filter
+    - min_vei: Minimum VEI filter
+    - exclude_ongoing: If true, exclude ongoing eruptions (for animated overlays)
     """
     import pandas as pd
 
@@ -772,8 +778,14 @@ async def get_eruptions_geojson(year: int = None, min_vei: int = None):
         # Apply filters
         if year is not None and 'year' in df.columns:
             df = df[df['year'] == year]
+        if min_year is not None and 'year' in df.columns:
+            df = df[df['year'] >= min_year]
         if min_vei is not None and 'vei' in df.columns:
             df = df[df['vei'] >= min_vei]
+
+        # Exclude ongoing eruptions (for animated timeline - they have no end date)
+        if exclude_ongoing and 'is_ongoing' in df.columns:
+            df = df[df['is_ongoing'] != True]
 
         # Build GeoJSON features
         features = []
@@ -1485,15 +1497,15 @@ async def get_wildfires_geojson(
     year: int = None,
     min_year: int = 2010,
     max_year: int = None,
-    min_area_km2: float = 100.0,
+    min_area_km2: float = None,
     include_perimeter: bool = False
 ):
     """
     Get wildfires as GeoJSON for map display.
     Uses Global Fire Atlas data with yearly partitions for efficient loading.
 
-    Default: >= 100km2 fires as points from 2010+ (~54k fires, ~5MB as points).
-    Set include_perimeter=true to get polygon geometries (~137MB for full range).
+    No default area filter - frontend controls filtering.
+    Set include_perimeter=true to get polygon geometries.
 
     Memory-efficient: Uses yearly parquet files with pyarrow predicate pushdown.
     """
@@ -1529,10 +1541,11 @@ async def get_wildfires_geojson(
                 continue
 
             # Pyarrow predicate pushdown - only reads matching row groups
+            filters = [('area_km2', '>=', min_area_km2)] if min_area_km2 is not None else None
             table = pq.read_table(
                 year_file,
                 columns=columns,
-                filters=[('area_km2', '>=', min_area_km2)]
+                filters=filters
             )
             if table.num_rows > 0:
                 all_tables.append(table)
@@ -2384,11 +2397,12 @@ async def get_storm_track(storm_id: str):
 
 
 @app.get("/api/storms/tracks/geojson")
-async def get_storm_tracks_geojson(year: int = None, min_year: int = 1950, basin: str = None):
+async def get_storm_tracks_geojson(year: int = None, min_year: int = 1950, basin: str = None, min_category: str = None):
     """
     Get storm tracks as GeoJSON LineStrings for yearly overview display.
     Each storm is a LineString colored by max category.
     Loads all storms from min_year (default 1950) to present.
+    Optional min_category filter: TD, TS, Cat1, Cat2, Cat3, Cat4, Cat5
     """
     import pandas as pd
 
@@ -2411,6 +2425,14 @@ async def get_storm_tracks_geojson(year: int = None, min_year: int = 1950, basin
         # Basin filter
         if basin is not None:
             storms_df = storms_df[storms_df['basin'] == basin.upper()]
+
+        # Category filter - filter by minimum category
+        if min_category is not None:
+            cat_order = {'TD': 0, 'TS': 1, 'Cat1': 2, 'Cat2': 3, 'Cat3': 4, 'Cat4': 5, 'Cat5': 6}
+            min_cat_val = cat_order.get(min_category, 0)
+            storms_df['cat_val'] = storms_df['max_category'].map(lambda x: cat_order.get(x, 0))
+            storms_df = storms_df[storms_df['cat_val'] >= min_cat_val]
+            storms_df = storms_df.drop(columns=['cat_val'])
 
         # Build storm metadata lookup dict (O(1) access)
         storms_df = storms_df.set_index('storm_id')
@@ -2453,7 +2475,7 @@ async def get_storm_tracks_geojson(year: int = None, min_year: int = 1950, basin
                 }
             })
 
-        logger.info(f"Returning {len(features)} storm tracks for year={year}, min_year={min_year}, basin={basin}")
+        logger.info(f"Returning {len(features)} storm tracks for year={year}, min_year={min_year}, basin={basin}, min_category={min_category}")
 
         return JSONResponse(content={
             "type": "FeatureCollection",

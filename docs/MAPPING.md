@@ -803,6 +803,80 @@ async handleSequence(eventId, eventType, props) {
 | sequence-change | Notify animation start | model-point-radius.js |
 | track-drill-down | Hurricane track animation | model-track.js |
 
+### Unified Popup Styling
+
+All disaster types use consistent popup styling via DisasterPopup module:
+
+**Click Popup Structure:**
+```
++------------------------------------------+
+|  [Icon] EVENT TITLE                      |  <- Color-coded header
+|  Location - Date Range                   |
++------------------------------------------+
+|  +--------+  +--------+  +--------+      |
+|  | Power  |  | Time   |  | Impact |      |  <- Three stat cards
+|  | M 7.2  |  | 45 d   |  | 2.9K   |      |
+|  +--------+  +--------+  +--------+      |
++------------------------------------------+
+| [Overview] [Impact] [Technical] [Source] |  <- Four tabs
++------------------------------------------+
+```
+
+**Hover Popup:**
+- Compact tooltip with color-coded left border
+- Shows: icon, title, date, primary intensity, "Click for details"
+- Built by `DisasterPopup.buildHoverHtml()`
+
+### Polygon Model Layer Management
+
+PolygonModel supports multiple overlay types simultaneously via type-specific layer IDs:
+
+```javascript
+// Layer ID pattern: {eventType}-polygon-{baseId}
+'flood-polygon-source'      // GeoJSON source
+'flood-polygon-fill'        // Fill layer
+'flood-polygon-stroke'      // Stroke layer
+'flood-polygon-label'       // Label layer
+
+// State tracking
+activeTypes: new Set(),     // {'flood', 'wildfire'}
+clickHandlers: new Map(),   // Per-type click handlers
+hoverHandlers: new Map(),   // Per-type hover handlers
+```
+
+This prevents layer ID conflicts when rendering floods and wildfires together.
+
+### Rolling Time Animation
+
+Timestamp-based lifecycle filtering replaces year-based filtering for smooth event appearance/disappearance.
+
+**Configuration:** EVENT_LIFECYCLE in overlay-controller.js defines per-type lifecycle:
+
+```javascript
+// Example: Earthquake lifecycle
+earthquake: {
+  getStartMs: (f) => new Date(f.properties.timestamp).getTime(),
+  getEndMs: (f) => /* magnitude-based: 4-30 days expansion */,
+  fadeDuration: /* magnitude-scaled */,
+  getWaveSpeedKmPerMs: (f) => /* 0.3-3 km/h based on magnitude */
+}
+```
+
+**Filtering:** filterByLifecycle() annotates features with animation properties:
+- `_opacity`: 0-1 for fade effect
+- `_phase`: "active" or "fading"
+- `_radiusProgress`: 0-1 for expanding circles
+- `_waveRadiusKm`: Current wave radius
+
+**Model Support:**
+- model-point-radius.js: `['coalesce', ['get', '_opacity'], 1.0]` in paint expressions
+- model-track.js: `['*', 0.8, lifecycleOpacity]` for line-opacity
+- model-polygon.js: Not yet implemented (static opacity)
+
+**Speed-Adaptive Windows:** getWindowDuration() scales visibility window with playback speed.
+
+See [DISASTER_DISPLAY.md](DISASTER_DISPLAY.md#rolling-time-animation) for full implementation details.
+
 ---
 
 ## Module Reference
@@ -827,4 +901,4 @@ See [FRONTEND_MODULES.md](FRONTEND_MODULES.md) for detailed module documentation
 
 ---
 
-*Last Updated: 2026-01-11*
+*Last Updated: 2026-01-12*

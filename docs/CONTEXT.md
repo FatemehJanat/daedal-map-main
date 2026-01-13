@@ -17,6 +17,7 @@ Technical index for understanding the system architecture. For a non-technical o
 | [GEOMETRY.md](GEOMETRY.md) | Geometry system, loc_id specification |
 | [CHAT.md](CHAT.md) | Chat system, LLM prompting, order model |
 | [MAPPING.md](MAPPING.md) | Frontend visualization, MapLibre, choropleth |
+| [DISASTER_DISPLAY.md](DISASTER_DISPLAY.md) | Disaster schemas, display models, animation system |
 | [FRONTEND_MODULES.md](FRONTEND_MODULES.md) | ES6 module structure |
 | [ADMIN_DASHBOARD.md](ADMIN_DASHBOARD.md) | Admin dashboard design, import wizard |
 
@@ -148,7 +149,15 @@ county-map/                      # Main repository
 |       time-slider.js           # Time series playback
 |       choropleth.js            # Color scaling
 |       chat-panel.js            # Chat UI
-|       (+ 6 more modules)
+|       event-animator.js        # Disaster event animation
+|       track-animator.js        # Hurricane track animation
+|       overlay-controller.js    # Disaster overlay data loading
+|       overlay-selector.js      # Disaster toggle UI
+|       models/                  # Disaster display models
+|         model-point-radius.js  # Earthquakes, volcanoes, tornadoes
+|         model-track.js         # Hurricane tracks
+|         model-polygon.js       # Wildfires, floods
+|         model-registry.js      # Routes events to models
 |
 +-- BUILD (Offline Tools) --------------------------------------
 |
@@ -263,6 +272,24 @@ USA    | 2021 | 4800    | 14.5
 - Global countries: `global/geometry.csv`
 - Per-country subdivisions: `countries/{ISO3}/geometry.parquet`
 
+### Disaster Display System
+
+Global disaster events with time-based animation. See [DISASTER_DISPLAY.md](DISASTER_DISPLAY.md).
+
+**Disaster Types:** Earthquakes, Tropical Storms, Tsunamis, Volcanoes, Wildfires, Tornadoes, Floods
+
+**Display Models:**
+- Point + Radius: Earthquakes, volcanoes, tornadoes (magnitude-based circles)
+- Track/Trail: Hurricanes (progressive line drawing)
+- Radial: Tsunamis (expanding wave from source)
+- Polygon: Wildfires, floods (area boundaries over time)
+
+**Key Files:**
+- Converters: [data_converters/](../data_converters/) (convert_global_earthquakes.py, convert_ibtracs.py, etc.)
+- Display models: [static/modules/models/](../static/modules/models/) (model-point-radius.js, model-track.js)
+- Animation: [static/modules/event-animator.js](../static/modules/event-animator.js), [static/modules/track-animator.js](../static/modules/track-animator.js)
+- API endpoints: [app.py](../app.py) (/api/earthquakes/geojson, /api/storms/geojson, etc.)
+
 ---
 
 ## Quick Commands
@@ -290,6 +317,19 @@ USA    | 2021 | 4800    | 14.5
 | un_sdg_01-17 | 200+ countries | 2000-2023 | UN SDGs |
 | world_factbook | 250+ countries | 2007-2008 | Reference |
 | eurostat | 37 European | 2000-2024 | Demographics/Economy |
+
+### Global Disaster Sources
+
+| Source | Data Path | Events | Years |
+|--------|-----------|--------|-------|
+| USGS Earthquakes | global/usgs_earthquakes/ | 1M+ | 1900-present |
+| NOAA IBTrACS | global/tropical_storms/ | 13K storms | 1842-present |
+| NOAA Tsunamis | global/tsunamis/ | 2.6K events | 2100 BC-present |
+| Smithsonian Volcanoes | global/smithsonian_volcanoes/ | 11K eruptions | Holocene |
+| Global Fire Atlas | global/wildfires/ | 13.3M fires | 2002-2024 |
+| NOAA Storm Events | countries/USA/noaa_storms/ | 79K tornadoes | 1950-present |
+
+See [DISASTER_DISPLAY.md](DISASTER_DISPLAY.md) for complete schemas and display models.
 
 ### Country-Specific Sources
 
@@ -433,4 +473,4 @@ Production testing on Railway platform:
 
 ---
 
-*Last Updated: 2026-01-07*
+*Last Updated: 2026-01-12*

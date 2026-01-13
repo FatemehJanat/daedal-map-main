@@ -85,6 +85,9 @@ export const App = {
     NavigationManager.initLevelButtons();
     NavigationManager.updateLevelButtons(ViewportLoader.currentAdminLevel);
 
+    // Setup globe toggle checkbox
+    this.setupGlobeToggle();
+
     console.log('Map Explorer ready');
     console.log('Press D to toggle debug mode (hierarchy depth colors)');
   },
@@ -103,6 +106,18 @@ export const App = {
         this.toggleDebugMode();
       }
     });
+  },
+
+  /**
+   * Setup globe/3D toggle checkbox
+   */
+  setupGlobeToggle() {
+    const checkbox = document.getElementById('globeCheckbox');
+    if (checkbox) {
+      checkbox.addEventListener('change', (e) => {
+        MapAdapter.toggleGlobe(e.target.checked);
+      });
+    }
   },
 
   /**
@@ -571,4 +586,5 @@ document.addEventListener('DOMContentLoaded', () => {
 // Export for global access if needed
 if (typeof window !== 'undefined') {
   window.App = App;
+  window.OverlayController = OverlayController;  // For debugging: OverlayController.getCacheStats()
 }

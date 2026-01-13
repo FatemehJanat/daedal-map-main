@@ -24,22 +24,51 @@ export function setDependencies(deps) {
 }
 
 export const PointRadiusModel = {
-  // Currently active event type
-  activeType: null,
+  // Currently active event types (supports multiple overlays simultaneously)
+  activeTypes: new Set(),
 
-  // Click handler references for cleanup
-  clickHandler: null,
+  // Click handler references for cleanup (per event type)
+  clickHandlers: new Map(),  // eventType -> handler
   _mapClickHandler: null,
 
   // Selected event tracking
   selectedEventId: null,
+  selectedEventType: null,
 
   // Aftershock sequence tracking
   activeSequenceId: null,
   sequenceChangeCallback: null,  // Called when sequence selection changes
 
   /**
+   * Generate type-specific layer ID.
+   * @param {string} baseId - Base ID like 'source', 'circle', 'radius-outer'
+   * @param {string} eventType - Event type like 'earthquake', 'volcano'
+   * @returns {string} Type-specific ID like 'earthquake-source'
+   */
+  _layerId(baseId, eventType) {
+    return `${eventType}-${baseId}`;
+  },
+
+  // Legacy single-type property for backwards compatibility
+  get activeType() {
+    return this.activeTypes.size > 0 ? [...this.activeTypes][0] : null;
+  },
+  set activeType(val) {
+    // Legacy setter - add to set if truthy, otherwise handled by clearType
+    if (val) this.activeTypes.add(val);
+  },
+
+  // Legacy single click handler for backwards compatibility
+  get clickHandler() {
+    return this.clickHandlers.size > 0 ? [...this.clickHandlers.values()][0] : null;
+  },
+  set clickHandler(val) {
+    // Legacy setter - handled by type-specific handlers now
+  },
+
+  /**
    * Render point events on the map.
+   * Supports multiple event types simultaneously (earthquakes + volcanoes + tornadoes, etc.)
    * @param {Object} geojson - GeoJSON FeatureCollection with Point features
    * @param {string} eventType - 'earthquake', 'volcano', 'tornado', etc.
    * @param {Object} options - {showFeltRadius, showDamageRadius, onEventClick}
@@ -51,41 +80,51 @@ export const PointRadiusModel = {
     }
 
     if (!geojson || !geojson.features || geojson.features.length === 0) {
-      console.log('PointRadiusModel: No features to display');
+      console.log(`PointRadiusModel: No ${eventType} features to display`);
+      // Clear this type's layers if no data
+      this.clearType(eventType);
       return;
     }
 
-    // Clear existing layers
-    this.clear();
+    // Check if source already exists - if so, just update data (no flash)
+    const sourceId = this._layerId('source', eventType);
+    const existingSource = MapAdapter.map.getSource(sourceId);
 
-    // Store active type
-    this.activeType = eventType;
+    if (existingSource) {
+      // Source exists - just update data, don't recreate layers
+      existingSource.setData(geojson);
+      return true;
+    }
 
-    // Add event source
-    MapAdapter.map.addSource(CONFIG.layers.eventSource, {
+    // First time render - create source and layers
+    // Track this type as active
+    this.activeTypes.add(eventType);
+
+    // Add type-specific source (allows multiple overlays)
+    MapAdapter.map.addSource(sourceId, {
       type: 'geojson',
       data: geojson
     });
 
-    // Build layers based on event type
+    // Build layers based on event type (pass eventType for type-specific layer IDs)
     if (eventType === 'earthquake') {
-      this._addEarthquakeLayer(options);
+      this._addEarthquakeLayer(eventType, options);
     } else if (eventType === 'volcano') {
-      this._addVolcanoLayer(options);
+      this._addVolcanoLayer(eventType, options);
     } else if (eventType === 'tsunami') {
-      this._addTsunamiLayer(options);
+      this._addTsunamiLayer(eventType, options);
     } else if (eventType === 'wildfire') {
-      this._addWildfireLayer(options);
+      this._addWildfireLayer(eventType, options);
     } else if (eventType === 'tornado') {
-      this._addTornadoLayer(options);
+      this._addTornadoLayer(eventType, options);
     } else if (eventType === 'flood') {
-      this._addFloodLayer(options);
+      this._addFloodLayer(eventType, options);
     } else {
       this._addGenericEventLayer(eventType, options);
     }
 
     // Setup click handler - shows unified popup on click
-    this.clickHandler = (e) => {
+    const clickHandler = (e) => {
       // Don't show popups during animation playback
       if (TimeSlider?.isPlaying) return;
 
@@ -510,57 +549,98 @@ export const PointRadiusModel = {
         }
       }
     };
-    MapAdapter.map.on('click', CONFIG.layers.eventCircle, this.clickHandler);
+
+    // Use type-specific layer IDs for click handlers
+    const circleLayerId = this._layerId('circle', eventType);
+    const fillLayerId = this._layerId('circle-fill', eventType);
+
+    // Store handler reference per type for cleanup
+    this.clickHandlers.set(eventType, clickHandler);
+
+    // Register click handler on circle layer
+    if (MapAdapter.map.getLayer(circleLayerId)) {
+      MapAdapter.map.on('click', circleLayerId, clickHandler);
+    }
 
     // Also handle clicks on polygon fill layer (for wildfires with perimeters)
-    MapAdapter.map.on('click', CONFIG.layers.eventCircle + '-fill', this.clickHandler);
+    if (MapAdapter.map.getLayer(fillLayerId)) {
+      MapAdapter.map.on('click', fillLayerId, clickHandler);
+    }
 
-    // Click elsewhere to unlock popup and deselect
-    this._mapClickHandler = (e) => {
-      // Check if click was on an event feature (both circle and polygon fill layers)
-      const layersToCheck = [CONFIG.layers.eventCircle];
-      // Also check polygon fill layer if it exists (for wildfires)
-      if (MapAdapter.map.getLayer(CONFIG.layers.eventCircle + '-fill')) {
-        layersToCheck.push(CONFIG.layers.eventCircle + '-fill');
-      }
-      const features = MapAdapter.map.queryRenderedFeatures(e.point, {
-        layers: layersToCheck
+    // Click elsewhere to unlock popup and deselect (only setup once)
+    if (!this._mapClickHandler) {
+      this._mapClickHandler = (e) => {
+        // Check if click was on any active event layer
+        const layersToCheck = [];
+        for (const type of this.activeTypes) {
+          const circleId = this._layerId('circle', type);
+          const fillId = this._layerId('circle-fill', type);
+          if (MapAdapter.map.getLayer(circleId)) layersToCheck.push(circleId);
+          if (MapAdapter.map.getLayer(fillId)) layersToCheck.push(fillId);
+        }
+
+        if (layersToCheck.length > 0) {
+          const features = MapAdapter.map.queryRenderedFeatures(e.point, {
+            layers: layersToCheck
+          });
+          if (features.length === 0 && MapAdapter.popupLocked) {
+            MapAdapter.popupLocked = false;
+            MapAdapter.hidePopup();
+            this._selectEvent(null);  // Clear selection
+            this.highlightSequence(null);  // Clear sequence highlight
+          }
+        }
+      };
+      MapAdapter.map.on('click', this._mapClickHandler);
+    }
+
+    // Hover cursor (type-specific)
+    if (MapAdapter.map.getLayer(circleLayerId)) {
+      MapAdapter.map.on('mouseenter', circleLayerId, () => {
+        MapAdapter.map.getCanvas().style.cursor = 'pointer';
       });
-      if (features.length === 0 && MapAdapter.popupLocked) {
-        MapAdapter.popupLocked = false;
-        MapAdapter.hidePopup();
-        this._selectEvent(null);  // Clear selection
-        this.highlightSequence(null);  // Clear sequence highlight
-      }
-    };
-    MapAdapter.map.on('click', this._mapClickHandler);
+      MapAdapter.map.on('mouseleave', circleLayerId, () => {
+        MapAdapter.map.getCanvas().style.cursor = '';
+      });
 
-    // Hover cursor
-    MapAdapter.map.on('mouseenter', CONFIG.layers.eventCircle, () => {
-      MapAdapter.map.getCanvas().style.cursor = 'pointer';
-    });
-    MapAdapter.map.on('mouseleave', CONFIG.layers.eventCircle, () => {
-      MapAdapter.map.getCanvas().style.cursor = '';
-    });
+      // Hover popup (only when not locked and not playing animation)
+      MapAdapter.map.on('mousemove', circleLayerId, (e) => {
+        if (TimeSlider?.isPlaying) return;
+        if (e.features.length > 0 && !MapAdapter.popupLocked) {
+          const props = e.features[0].properties;
+          const html = DisasterPopup.buildHoverHtml(props, eventType);
+          MapAdapter.showPopup([e.lngLat.lng, e.lngLat.lat], html);
+        }
+      });
+      MapAdapter.map.on('mouseleave', circleLayerId, () => {
+        if (!MapAdapter.popupLocked) {
+          MapAdapter.hidePopup();
+        }
+      });
+    }
 
-    // Hover popup (only when not locked and not playing animation)
-    // Shows simplified preview - click for full popup
-    MapAdapter.map.on('mousemove', CONFIG.layers.eventCircle, (e) => {
-      // Don't show hover popups during animation playback
-      if (TimeSlider?.isPlaying) return;
-
-      if (e.features.length > 0 && !MapAdapter.popupLocked) {
-        const props = e.features[0].properties;
-        // Use simple hover preview
-        const html = this.buildHoverPreview(props, eventType);
-        MapAdapter.showPopup([e.lngLat.lng, e.lngLat.lat], html);
-      }
-    });
-    MapAdapter.map.on('mouseleave', CONFIG.layers.eventCircle, () => {
-      if (!MapAdapter.popupLocked) {
-        MapAdapter.hidePopup();
-      }
-    });
+    // Hover handlers for polygon fill layer (wildfire/flood perimeters)
+    if (MapAdapter.map.getLayer(fillLayerId)) {
+      MapAdapter.map.on('mouseenter', fillLayerId, () => {
+        MapAdapter.map.getCanvas().style.cursor = 'pointer';
+      });
+      MapAdapter.map.on('mouseleave', fillLayerId, () => {
+        MapAdapter.map.getCanvas().style.cursor = '';
+      });
+      MapAdapter.map.on('mousemove', fillLayerId, (e) => {
+        if (TimeSlider?.isPlaying) return;
+        if (e.features.length > 0 && !MapAdapter.popupLocked) {
+          const props = e.features[0].properties;
+          const html = DisasterPopup.buildHoverHtml(props, eventType);
+          MapAdapter.showPopup([e.lngLat.lng, e.lngLat.lat], html);
+        }
+      });
+      MapAdapter.map.on('mouseleave', fillLayerId, () => {
+        if (!MapAdapter.popupLocked) {
+          MapAdapter.hidePopup();
+        }
+      });
+    }
 
     // Setup global popup event listeners (once)
     this._setupPopupEventListeners();
@@ -576,11 +656,14 @@ export const PointRadiusModel = {
    * - damage_radius_km: distance with potential structural damage (MMI VI+)
    *
    * km-to-pixel conversion: pixels = km * 2^zoom / 156.5 (at equator)
+   * @param {string} eventType - Event type for layer ID namespacing
+   * @param {Object} options - Display options
    * @private
    */
-  _addEarthquakeLayer(options = {}) {
+  _addEarthquakeLayer(eventType, options = {}) {
     const colors = CONFIG.earthquakeColors;
     const map = MapAdapter.map;
+    const sourceId = this._layerId('source', eventType);
 
     // Color expression based on magnitude
     const colorExpr = [
@@ -616,16 +699,17 @@ export const PointRadiusModel = {
     // Shows how far the earthquake could be felt
     if (options.showFeltRadius !== false) {
       map.addLayer({
-        id: CONFIG.layers.eventRadiusOuter,
+        id: this._layerId('radius-outer', eventType),
         type: 'circle',
-        source: CONFIG.layers.eventSource,
+        source: sourceId,
         filter: ['>', ['get', 'felt_radius_km'], 0],
         paint: {
           'circle-radius': kmToPixels(['get', 'felt_radius_km']),
           'circle-color': 'transparent',
           'circle-stroke-color': colorExpr,  // Same color as magnitude
           'circle-stroke-width': 1.5,
-          'circle-stroke-opacity': 0.35
+          'circle-stroke-opacity': 0.35,
+          'circle-pitch-alignment': 'map'  // Follow globe surface
         }
       });
     }
@@ -634,16 +718,17 @@ export const PointRadiusModel = {
     // Shows potential structural damage zone (only M5+)
     if (options.showDamageRadius !== false) {
       map.addLayer({
-        id: CONFIG.layers.eventRadiusInner,
+        id: this._layerId('radius-inner', eventType),
         type: 'circle',
-        source: CONFIG.layers.eventSource,
+        source: sourceId,
         filter: ['>', ['get', 'damage_radius_km'], 0],
         paint: {
           'circle-radius': kmToPixels(['get', 'damage_radius_km']),
           'circle-color': 'transparent',
           'circle-stroke-color': colorExpr,  // Same color as magnitude
           'circle-stroke-width': 2.5,
-          'circle-stroke-opacity': 0.7
+          'circle-stroke-opacity': 0.7,
+          'circle-pitch-alignment': 'map'  // Follow globe surface
         }
       });
     }
@@ -654,9 +739,9 @@ export const PointRadiusModel = {
 
     // Selected felt radius - filled
     map.addLayer({
-      id: CONFIG.layers.eventRadiusOuter + '-selected',
+      id: this._layerId('radius-outer-selected', eventType),
       type: 'circle',
-      source: CONFIG.layers.eventSource,
+      source: sourceId,
       filter: ['==', ['get', 'event_id'], ''],  // Initially matches nothing
       paint: {
         'circle-radius': kmToPixels(['get', 'felt_radius_km']),
@@ -664,15 +749,16 @@ export const PointRadiusModel = {
         'circle-opacity': 0.15,
         'circle-stroke-color': colorExpr,
         'circle-stroke-width': 2,
-        'circle-stroke-opacity': 0.6
+        'circle-stroke-opacity': 0.6,
+        'circle-pitch-alignment': 'map'
       }
     });
 
     // Selected damage radius - filled
     map.addLayer({
-      id: CONFIG.layers.eventRadiusInner + '-selected',
+      id: this._layerId('radius-inner-selected', eventType),
       type: 'circle',
-      source: CONFIG.layers.eventSource,
+      source: sourceId,
       filter: ['==', ['get', 'event_id'], ''],  // Initially matches nothing
       paint: {
         'circle-radius': kmToPixels(['get', 'damage_radius_km']),
@@ -680,7 +766,49 @@ export const PointRadiusModel = {
         'circle-opacity': 0.25,
         'circle-stroke-color': colorExpr,
         'circle-stroke-width': 3,
-        'circle-stroke-opacity': 0.9
+        'circle-stroke-opacity': 0.9,
+        'circle-pitch-alignment': 'map'
+      }
+    });
+
+    // EXPANDING WAVEFRONT LAYERS - animated aftershock zone ripples
+    // Uses _waveRadiusKm property set by filterByLifecycle() in overlay-controller.js
+    // Aftershock zones expand slowly (~0.3-3 km/h based on magnitude) over days/weeks
+
+    // Primary aftershock zone ring
+    map.addLayer({
+      id: this._layerId('wavefront', eventType),
+      type: 'circle',
+      source: sourceId,
+      filter: ['all',
+        ['has', '_waveRadiusKm'],
+        ['>', ['get', '_waveRadiusKm'], 0]
+      ],
+      paint: {
+        'circle-radius': kmToPixels(['get', '_waveRadiusKm']),
+        'circle-color': 'transparent',
+        'circle-stroke-color': colorExpr,
+        'circle-stroke-width': 2.5,
+        'circle-stroke-opacity': ['*', 0.7, ['coalesce', ['get', '_opacity'], 1.0]],
+        'circle-pitch-alignment': 'map'  // Follow globe surface
+      }
+    });
+
+    // Outer glow - aftershock influence zone
+    map.addLayer({
+      id: this._layerId('wavefront-glow', eventType),
+      type: 'circle',
+      source: sourceId,
+      filter: ['all',
+        ['has', '_waveRadiusKm'],
+        ['>', ['get', '_waveRadiusKm'], 10]  // Only show when radius > 10km
+      ],
+      paint: {
+        'circle-radius': kmToPixels(['+', ['get', '_waveRadiusKm'], 15]),
+        'circle-color': colorExpr,
+        'circle-opacity': ['*', 0.1, ['coalesce', ['get', '_opacity'], 1.0]],
+        'circle-blur': 0.6,
+        'circle-pitch-alignment': 'map'
       }
     });
 
@@ -689,8 +817,15 @@ export const PointRadiusModel = {
     // Use coalesce to default to 1.0 if _recency not present (normal display)
     const recencyExpr = ['coalesce', ['get', '_recency'], 1.0];
 
-    // Opacity: cap at 1.0 (recency can be > 1.0 for flash effect)
-    const opacityExpr = (baseOpacity) => ['min', 1.0, ['*', baseOpacity, recencyExpr]];
+    // Lifecycle opacity: 1.0 = active, 0.0-1.0 = fading out
+    // Set by filterByLifecycle() in overlay-controller.js
+    const lifecycleOpacity = ['coalesce', ['get', '_opacity'], 1.0];
+
+    // Opacity: multiply base * recency * lifecycle, cap at 1.0
+    const opacityExpr = (baseOpacity) => [
+      'min', 1.0,
+      ['*', baseOpacity, ['*', recencyExpr, lifecycleOpacity]]
+    ];
 
     // Size boost for new events: when recency > 1.0, add extra size
     // At recency 1.5: adds 50% extra size. At recency 1.0 or below: no boost.
@@ -701,9 +836,9 @@ export const PointRadiusModel = {
 
     // 3. EPICENTER GLOW - subtle glow behind the marker
     map.addLayer({
-      id: CONFIG.layers.eventCircle + '-glow',
+      id: this._layerId('circle-glow', eventType),
       type: 'circle',
-      source: CONFIG.layers.eventSource,
+      source: sourceId,
       paint: {
         'circle-radius': sizeBoostExpr(['+', epicenterSize, 4]),
         'circle-color': colorExpr,
@@ -714,9 +849,9 @@ export const PointRadiusModel = {
 
     // 4. EPICENTER MARKER - small solid circle at exact location
     map.addLayer({
-      id: CONFIG.layers.eventCircle,
+      id: this._layerId('circle', eventType),
       type: 'circle',
-      source: CONFIG.layers.eventSource,
+      source: sourceId,
       paint: {
         'circle-radius': sizeBoostExpr(epicenterSize),
         'circle-color': colorExpr,
@@ -730,14 +865,15 @@ export const PointRadiusModel = {
   /**
    * Add volcano-specific layers.
    * Uses VEI for color, felt_radius_km/damage_radius_km for radius circles.
+   * @param {string} eventType - Event type for layer ID namespacing
+   * @param {Object} options - Display options
    * @private
    */
-  _addVolcanoLayer(options = {}) {
+  _addVolcanoLayer(eventType, options = {}) {
     const map = MapAdapter.map;
+    const sourceId = this._layerId('source', eventType);
 
     // Color by VEI (Volcanic Explosivity Index)
-    // Pale yellow (weakest) to dark red (strongest) - visible on dark maps
-    // Must check VEI is not null - ['has', 'VEI'] returns true for null values
     const hasValidVEI = ['all', ['has', 'VEI'], ['!=', ['get', 'VEI'], null]];
     const colorExpr = [
       'case',
@@ -752,24 +888,18 @@ export const PointRadiusModel = {
         6, '#bd0026',   // Colossal - dark red
         7, '#800026'    // Super-colossal - maroon
       ],
-      // No VEI or null VEI - bright green (clearly marks unknown/unrated eruptions)
-      '#44ff44'
+      '#44ff44'  // No VEI - bright green
     ];
 
-    // Epicenter marker size based on VEI
     const epicenterSize = [
       'case',
       hasValidVEI, [
         'interpolate', ['linear'], ['get', 'VEI'],
-        0, 4,
-        3, 6,
-        5, 9,
-        7, 12
+        0, 4, 3, 6, 5, 9, 7, 12
       ],
-      6  // Default size for unknown VEI
+      6
     ];
 
-    // Helper: convert km to pixels at current zoom (same as earthquakes)
     const kmToPixels = (kmExpr) => [
       'interpolate', ['exponential', 2], ['zoom'],
       0, ['/', kmExpr, 156.5],
@@ -778,103 +908,141 @@ export const PointRadiusModel = {
       15, ['*', kmExpr, 209]
     ];
 
-    // 1. FELT RADIUS - outer circle (thinner, less opaque)
-    // Shows ash fall and noticeable effects zone
     if (options.showFeltRadius !== false) {
       map.addLayer({
-        id: CONFIG.layers.eventRadiusOuter,
+        id: this._layerId('radius-outer', eventType),
         type: 'circle',
-        source: CONFIG.layers.eventSource,
+        source: sourceId,
         filter: ['>', ['get', 'felt_radius_km'], 0],
         paint: {
           'circle-radius': kmToPixels(['get', 'felt_radius_km']),
           'circle-color': 'transparent',
           'circle-stroke-color': colorExpr,
           'circle-stroke-width': 1.5,
-          'circle-stroke-opacity': 0.35
+          'circle-stroke-opacity': 0.35,
+          'circle-pitch-alignment': 'map'
         }
       });
     }
 
-    // 2. DAMAGE RADIUS - inner circle (thicker, more opaque)
-    // Shows pyroclastic flow / heavy ashfall danger zone
     if (options.showDamageRadius !== false) {
       map.addLayer({
-        id: CONFIG.layers.eventRadiusInner,
+        id: this._layerId('radius-inner', eventType),
         type: 'circle',
-        source: CONFIG.layers.eventSource,
+        source: sourceId,
         filter: ['>', ['get', 'damage_radius_km'], 0],
         paint: {
           'circle-radius': kmToPixels(['get', 'damage_radius_km']),
           'circle-color': 'transparent',
           'circle-stroke-color': colorExpr,
           'circle-stroke-width': 2.5,
-          'circle-stroke-opacity': 0.7
+          'circle-stroke-opacity': 0.7,
+          'circle-pitch-alignment': 'map'
         }
       });
     }
 
-    // SELECTED EVENT LAYERS - filled circles for the selected event
-    // Selected felt radius - filled
     map.addLayer({
-      id: CONFIG.layers.eventRadiusOuter + '-selected',
+      id: this._layerId('radius-outer-selected', eventType),
       type: 'circle',
-      source: CONFIG.layers.eventSource,
-      filter: ['==', ['get', 'event_id'], ''],  // Initially matches nothing
+      source: sourceId,
+      filter: ['==', ['get', 'event_id'], ''],
       paint: {
         'circle-radius': kmToPixels(['get', 'felt_radius_km']),
         'circle-color': colorExpr,
         'circle-opacity': 0.15,
         'circle-stroke-color': colorExpr,
         'circle-stroke-width': 2,
-        'circle-stroke-opacity': 0.6
+        'circle-stroke-opacity': 0.6,
+        'circle-pitch-alignment': 'map'
       }
     });
 
-    // Selected damage radius - filled
     map.addLayer({
-      id: CONFIG.layers.eventRadiusInner + '-selected',
+      id: this._layerId('radius-inner-selected', eventType),
       type: 'circle',
-      source: CONFIG.layers.eventSource,
-      filter: ['==', ['get', 'event_id'], ''],  // Initially matches nothing
+      source: sourceId,
+      filter: ['==', ['get', 'event_id'], ''],
       paint: {
         'circle-radius': kmToPixels(['get', 'damage_radius_km']),
         'circle-color': colorExpr,
         'circle-opacity': 0.25,
         'circle-stroke-color': colorExpr,
         'circle-stroke-width': 3,
-        'circle-stroke-opacity': 0.9
+        'circle-stroke-opacity': 0.9,
+        'circle-pitch-alignment': 'map'
       }
     });
 
-    // Recency-based effects for animation
-    // _recency: 1.5 = brand new (flash), 1.0 = recent, 0.0 = fading out
+    // EXPANDING WAVEFRONT LAYERS - animated ash cloud/felt radius expansion
+    // Uses _waveRadiusKm property set by filterByLifecycle() in overlay-controller.js
+    // Target radius from data: VEI 2 ~23km, VEI 4 ~105km, VEI 6 ~478km, VEI 7 ~1021km
+
+    // Primary ash cloud ring
+    map.addLayer({
+      id: this._layerId('wavefront', eventType),
+      type: 'circle',
+      source: sourceId,
+      filter: ['all',
+        ['has', '_waveRadiusKm'],
+        ['>', ['get', '_waveRadiusKm'], 0]
+      ],
+      paint: {
+        'circle-radius': kmToPixels(['get', '_waveRadiusKm']),
+        'circle-color': 'transparent',
+        'circle-stroke-color': colorExpr,
+        'circle-stroke-width': 2,
+        'circle-stroke-opacity': ['*', 0.6, ['coalesce', ['get', '_opacity'], 1.0]],
+        'circle-pitch-alignment': 'map'  // Follow globe surface
+      }
+    });
+
+    // Outer glow - ash fallout zone (diffuse impact area)
+    map.addLayer({
+      id: this._layerId('wavefront-glow', eventType),
+      type: 'circle',
+      source: sourceId,
+      filter: ['all',
+        ['has', '_waveRadiusKm'],
+        ['>', ['get', '_waveRadiusKm'], 5]
+      ],
+      paint: {
+        'circle-radius': kmToPixels(['+', ['get', '_waveRadiusKm'], 10]),
+        'circle-color': colorExpr,
+        'circle-opacity': ['*', 0.12, ['coalesce', ['get', '_opacity'], 1.0]],
+        'circle-blur': 0.7,
+        'circle-pitch-alignment': 'map'
+      }
+    });
+
     const recencyExpr = ['coalesce', ['get', '_recency'], 1.0];
-    const opacityExpr = (baseOpacity) => ['min', 1.0, ['*', baseOpacity, recencyExpr]];
+    const lifecycleOpacity = ['coalesce', ['get', '_opacity'], 1.0];
+    const opacityExpr = (baseOpacity) => [
+      'min', 1.0,
+      ['*', baseOpacity, ['*', recencyExpr, lifecycleOpacity]]
+    ];
     const sizeBoostExpr = (baseSize) => ['*', baseSize, ['max', 1.0, recencyExpr]];
 
-    // 3. EPICENTER GLOW
     map.addLayer({
-      id: CONFIG.layers.eventCircle + '-glow',
+      id: this._layerId('circle-glow', eventType),
       type: 'circle',
-      source: CONFIG.layers.eventSource,
+      source: sourceId,
       paint: {
         'circle-radius': sizeBoostExpr(['+', epicenterSize, 4]),
         'circle-color': colorExpr,
-        'circle-opacity': opacityExpr(0.3),  // Fade with recency, cap at 1.0
+        'circle-opacity': opacityExpr(0.3),
         'circle-blur': 1
       }
     });
 
-    // 4. EPICENTER MARKER
     map.addLayer({
-      id: CONFIG.layers.eventCircle,
+      id: this._layerId('circle', eventType),
       type: 'circle',
-      source: CONFIG.layers.eventSource,
+      source: sourceId,
       paint: {
         'circle-radius': sizeBoostExpr(epicenterSize),
         'circle-color': colorExpr,
-        'circle-opacity': opacityExpr(0.85),  // Fade with recency, cap at 1.0
+        'circle-opacity': opacityExpr(0.85),
         'circle-stroke-color': '#333333',
         'circle-stroke-width': 1
       }
@@ -886,14 +1054,21 @@ export const PointRadiusModel = {
    * Handles both source epicenters (cyan) and coastal runup points (teal).
    * Uses is_source property to distinguish source from runup points.
    * Includes impact radius rings scaled by runup_count (log scale).
+   * @param {string} eventType - Event type for layer ID namespacing
+   * @param {Object} options - Display options
    * @private
    */
-  _addTsunamiLayer(options = {}) {
+  _addTsunamiLayer(eventType, options = {}) {
     const map = MapAdapter.map;
+    const sourceId = this._layerId('source', eventType);
 
     // Recency-based effects for animation
     const recencyExpr = ['coalesce', ['get', '_recency'], 1.0];
-    const opacityExpr = (baseOpacity) => ['min', 1.0, ['*', baseOpacity, recencyExpr]];
+    const lifecycleOpacity = ['coalesce', ['get', '_opacity'], 1.0];
+    const opacityExpr = (baseOpacity) => [
+      'min', 1.0,
+      ['*', baseOpacity, ['*', recencyExpr, lifecycleOpacity]]
+    ];
     const sizeBoostExpr = (baseSize) => ['*', baseSize, ['max', 1.0, recencyExpr]];
 
     // Colors: Source = cyan, Runup = teal/green
@@ -957,9 +1132,9 @@ export const PointRadiusModel = {
     // 1. CONNECTION LINES (source to runups) - optional
     if (options.showConnections !== false) {
       map.addLayer({
-        id: CONFIG.layers.eventSource + '-connections',
+        id: this._layerId('connections', eventType),
         type: 'line',
-        source: CONFIG.layers.eventSource,
+        source: sourceId,
         filter: ['==', ['geometry-type'], 'LineString'],
         paint: {
           'line-color': '#26c6da',
@@ -973,9 +1148,9 @@ export const PointRadiusModel = {
     // 2. IMPACT RADIUS RING - shows tsunami reach based on runup_count
     // Only for source events (is_source: true)
     map.addLayer({
-      id: CONFIG.layers.eventRadiusOuter,
+      id: this._layerId('radius-outer', eventType),
       type: 'circle',
-      source: CONFIG.layers.eventSource,
+      source: sourceId,
       filter: ['all',
         ['==', ['geometry-type'], 'Point'],
         ['==', ['get', 'is_source'], true],
@@ -986,15 +1161,16 @@ export const PointRadiusModel = {
         'circle-color': 'transparent',
         'circle-stroke-color': '#00bcd4',  // Cyan ring
         'circle-stroke-width': 1.5,
-        'circle-stroke-opacity': opacityExpr(0.35)
+        'circle-stroke-opacity': opacityExpr(0.35),
+        'circle-pitch-alignment': 'map'  // Follow globe surface
       }
     });
 
     // 3. INNER IMPACT RING - smaller ring for high-impact events (100+ runups)
     map.addLayer({
-      id: CONFIG.layers.eventRadiusInner,
+      id: this._layerId('radius-inner', eventType),
       type: 'circle',
-      source: CONFIG.layers.eventSource,
+      source: sourceId,
       filter: ['all',
         ['==', ['geometry-type'], 'Point'],
         ['==', ['get', 'is_source'], true],
@@ -1005,15 +1181,16 @@ export const PointRadiusModel = {
         'circle-color': 'transparent',
         'circle-stroke-color': '#00bcd4',
         'circle-stroke-width': 2.5,
-        'circle-stroke-opacity': opacityExpr(0.6)
+        'circle-stroke-opacity': opacityExpr(0.6),
+        'circle-pitch-alignment': 'map'
       }
     });
 
     // 4. SELECTED EVENT LAYERS - filled circles for clicked event
     map.addLayer({
-      id: CONFIG.layers.eventRadiusOuter + '-selected',
+      id: this._layerId('radius-outer-selected', eventType),
       type: 'circle',
-      source: CONFIG.layers.eventSource,
+      source: sourceId,
       filter: ['==', ['get', 'event_id'], ''],  // Initially matches nothing
       paint: {
         'circle-radius': kmToPixels(impactRadiusKm),
@@ -1021,14 +1198,15 @@ export const PointRadiusModel = {
         'circle-opacity': 0.12,
         'circle-stroke-color': '#00bcd4',
         'circle-stroke-width': 2,
-        'circle-stroke-opacity': 0.5
+        'circle-stroke-opacity': 0.5,
+        'circle-pitch-alignment': 'map'
       }
     });
 
     map.addLayer({
-      id: CONFIG.layers.eventRadiusInner + '-selected',
+      id: this._layerId('radius-inner-selected', eventType),
       type: 'circle',
-      source: CONFIG.layers.eventSource,
+      source: sourceId,
       filter: ['==', ['get', 'event_id'], ''],
       paint: {
         'circle-radius': kmToPixels(['/', impactRadiusKm, 3]),
@@ -1036,19 +1214,19 @@ export const PointRadiusModel = {
         'circle-opacity': 0.2,
         'circle-stroke-color': '#00bcd4',
         'circle-stroke-width': 3,
-        'circle-stroke-opacity': 0.7
+        'circle-stroke-opacity': 0.7,
+        'circle-pitch-alignment': 'map'
       }
     });
 
-    // 5. WAVE FRONT CIRCLE - animated growing circle during radial animation
-    // Uses _waveRadiusKm property set by EventAnimator
+    // 5. WAVE FRONT CIRCLE - tsunami wave expanding to furthest runup location
+    // Uses _waveRadiusKm from filterByLifecycle, target = max_runup_dist_km from data
     map.addLayer({
-      id: CONFIG.layers.eventSource + '-wavefront',
+      id: this._layerId('wavefront', eventType),
       type: 'circle',
-      source: CONFIG.layers.eventSource,
+      source: sourceId,
       filter: ['all',
         ['==', ['geometry-type'], 'Point'],
-        ['==', ['get', 'is_source'], true],
         ['has', '_waveRadiusKm'],
         ['>', ['get', '_waveRadiusKm'], 0]
       ],
@@ -1057,35 +1235,35 @@ export const PointRadiusModel = {
         'circle-color': 'transparent',
         'circle-stroke-color': '#4dd0e1',  // Teal wave front
         'circle-stroke-width': 3,
-        'circle-stroke-opacity': 0.7,
+        'circle-stroke-opacity': ['*', 0.7, ['coalesce', ['get', '_opacity'], 1.0]],
         'circle-pitch-alignment': 'map'
       }
     });
 
     // 6. WAVE FRONT GLOW - subtle glow around wave front
     map.addLayer({
-      id: CONFIG.layers.eventSource + '-wavefront-glow',
+      id: this._layerId('wavefront-glow', eventType),
       type: 'circle',
-      source: CONFIG.layers.eventSource,
+      source: sourceId,
       filter: ['all',
         ['==', ['geometry-type'], 'Point'],
-        ['==', ['get', 'is_source'], true],
         ['has', '_waveRadiusKm'],
         ['>', ['get', '_waveRadiusKm'], 0]
       ],
       paint: {
         'circle-radius': kmToPixels(['+', ['get', '_waveRadiusKm'], 20]),
         'circle-color': '#4dd0e1',
-        'circle-opacity': 0.08,
-        'circle-blur': 0.8
+        'circle-opacity': ['*', 0.08, ['coalesce', ['get', '_opacity'], 1.0]],
+        'circle-blur': 0.8,
+        'circle-pitch-alignment': 'map'  // Follow globe surface
       }
     });
 
     // 7. GLOW layer
     map.addLayer({
-      id: CONFIG.layers.eventCircle + '-glow',
+      id: this._layerId('circle-glow', eventType),
       type: 'circle',
-      source: CONFIG.layers.eventSource,
+      source: sourceId,
       filter: ['==', ['geometry-type'], 'Point'],
       paint: {
         'circle-radius': sizeBoostExpr(['+', sizeExpr, 4]),
@@ -1097,9 +1275,9 @@ export const PointRadiusModel = {
 
     // 8. MAIN CIRCLE layer
     map.addLayer({
-      id: CONFIG.layers.eventCircle,
+      id: this._layerId('circle', eventType),
       type: 'circle',
-      source: CONFIG.layers.eventSource,
+      source: sourceId,
       filter: ['==', ['geometry-type'], 'Point'],
       paint: {
         'circle-radius': sizeBoostExpr(sizeExpr),
@@ -1125,12 +1303,17 @@ export const PointRadiusModel = {
    * Size/color based on area_km2 (log scale), orange/red coloring.
    * @private
    */
-  _addWildfireLayer(options = {}) {
+  _addWildfireLayer(eventType, options = {}) {
     const map = MapAdapter.map;
+    const sourceId = this._layerId('source', eventType);
 
     // Recency-based effects for animation
     const recencyExpr = ['coalesce', ['get', '_recency'], 1.0];
-    const opacityExpr = (baseOpacity) => ['min', 1.0, ['*', baseOpacity, recencyExpr]];
+    const lifecycleOpacity = ['coalesce', ['get', '_opacity'], 1.0];
+    const opacityExpr = (baseOpacity) => [
+      'min', 1.0,
+      ['*', baseOpacity, ['*', recencyExpr, lifecycleOpacity]]
+    ];
     const sizeBoostExpr = (baseSize) => ['*', baseSize, ['max', 1.0, recencyExpr]];
 
     // Color gradient: smaller fires = orange, larger = deep red
@@ -1156,9 +1339,9 @@ export const PointRadiusModel = {
 
     // Polygon fill layer
     map.addLayer({
-      id: CONFIG.layers.eventCircle + '-fill',
+      id: this._layerId('circle-fill', eventType),
       type: 'fill',
-      source: CONFIG.layers.eventSource,
+      source: sourceId,
       filter: polygonFilter,
       paint: {
         'fill-color': colorExpr,
@@ -1168,9 +1351,9 @@ export const PointRadiusModel = {
 
     // Polygon stroke layer
     map.addLayer({
-      id: CONFIG.layers.eventCircle + '-stroke',
+      id: this._layerId('circle-stroke', eventType),
       type: 'line',
-      source: CONFIG.layers.eventSource,
+      source: sourceId,
       filter: polygonFilter,
       paint: {
         'line-color': '#ffcc00',
@@ -1190,9 +1373,9 @@ export const PointRadiusModel = {
 
     // Outer glow layer (points only)
     map.addLayer({
-      id: CONFIG.layers.eventCircle + '-glow',
+      id: this._layerId('circle-glow', eventType),
       type: 'circle',
-      source: CONFIG.layers.eventSource,
+      source: sourceId,
       filter: pointFilter,
       paint: {
         'circle-radius': sizeBoostExpr(['*', sizeExpr, 2]),
@@ -1204,9 +1387,9 @@ export const PointRadiusModel = {
 
     // Main fire circle (points only)
     map.addLayer({
-      id: CONFIG.layers.eventCircle,
+      id: this._layerId('circle', eventType),
       type: 'circle',
-      source: CONFIG.layers.eventSource,
+      source: sourceId,
       filter: pointFilter,
       paint: {
         'circle-radius': sizeBoostExpr(sizeExpr),
@@ -1224,12 +1407,17 @@ export const PointRadiusModel = {
    * Uses duration for opacity intensity.
    * @private
    */
-  _addFloodLayer(options = {}) {
+  _addFloodLayer(eventType, options = {}) {
     const map = MapAdapter.map;
+    const sourceId = this._layerId('source', eventType);
 
     // Recency-based effects for animation
     const recencyExpr = ['coalesce', ['get', '_recency'], 1.0];
-    const opacityExpr = (baseOpacity) => ['min', 1.0, ['*', baseOpacity, recencyExpr]];
+    const lifecycleOpacity = ['coalesce', ['get', '_opacity'], 1.0];
+    const opacityExpr = (baseOpacity) => [
+      'min', 1.0,
+      ['*', baseOpacity, ['*', recencyExpr, lifecycleOpacity]]
+    ];
     const sizeBoostExpr = (baseSize) => ['*', baseSize, ['max', 1.0, recencyExpr]];
 
     // Color gradient: lighter blue for shorter floods, darker for longer
@@ -1254,9 +1442,9 @@ export const PointRadiusModel = {
 
     // Outer glow layer
     map.addLayer({
-      id: CONFIG.layers.eventCircle + '-glow',
+      id: this._layerId('circle-glow', eventType),
       type: 'circle',
-      source: CONFIG.layers.eventSource,
+      source: sourceId,
       paint: {
         'circle-radius': sizeBoostExpr(['*', sizeExpr, 1.8]),
         'circle-color': colorExpr,
@@ -1267,9 +1455,9 @@ export const PointRadiusModel = {
 
     // Main flood circle
     map.addLayer({
-      id: CONFIG.layers.eventCircle,
+      id: this._layerId('circle', eventType),
       type: 'circle',
-      source: CONFIG.layers.eventSource,
+      source: sourceId,
       paint: {
         'circle-radius': sizeBoostExpr(sizeExpr),
         'circle-color': colorExpr,
@@ -1286,12 +1474,17 @@ export const PointRadiusModel = {
    * Supports drill-down to show track line when clicked.
    * @private
    */
-  _addTornadoLayer(options = {}) {
+  _addTornadoLayer(eventType, options = {}) {
     const map = MapAdapter.map;
+    const sourceId = this._layerId('source', eventType);
 
     // Recency-based effects for animation
     const recencyExpr = ['coalesce', ['get', '_recency'], 1.0];
-    const opacityExpr = (baseOpacity) => ['min', 1.0, ['*', baseOpacity, recencyExpr]];
+    const lifecycleOpacity = ['coalesce', ['get', '_opacity'], 1.0];
+    const opacityExpr = (baseOpacity) => [
+      'min', 1.0,
+      ['*', baseOpacity, ['*', recencyExpr, lifecycleOpacity]]
+    ];
     const sizeBoostExpr = (baseSize) => ['*', baseSize, ['max', 1.0, recencyExpr]];
 
     // Color by tornado scale (EF0-EF5 or legacy F0-F5)
@@ -1336,9 +1529,9 @@ export const PointRadiusModel = {
     // 1. FELT RADIUS - shows broader impact zone for visibility on map
     // Uses felt_radius_km (larger) so tornadoes are easier to find
     map.addLayer({
-      id: CONFIG.layers.eventRadiusOuter,
+      id: this._layerId('radius-outer', eventType),
       type: 'circle',
-      source: CONFIG.layers.eventSource,
+      source: sourceId,
       filter: ['>', ['coalesce', ['get', 'felt_radius_km'], 0], 0],
       paint: {
         'circle-radius': kmToPixels(['get', 'felt_radius_km']),
@@ -1352,9 +1545,9 @@ export const PointRadiusModel = {
     // 2. SELECTED EVENT LAYERS - show both radii for clicked event
     // 2a. FELT RADIUS (outer) - broader impact zone
     map.addLayer({
-      id: CONFIG.layers.eventRadiusOuter + '-selected-felt',
+      id: this._layerId('radius-outer-selected-felt', eventType),
       type: 'circle',
-      source: CONFIG.layers.eventSource,
+      source: sourceId,
       filter: ['==', ['get', 'event_id'], ''],  // Initially matches nothing
       paint: {
         'circle-radius': kmToPixels(['coalesce', ['get', 'felt_radius_km'], 0.1]),
@@ -1368,9 +1561,9 @@ export const PointRadiusModel = {
 
     // 2b. DAMAGE RADIUS (inner) - actual tornado width
     map.addLayer({
-      id: CONFIG.layers.eventRadiusOuter + '-selected',
+      id: this._layerId('radius-outer-selected', eventType),
       type: 'circle',
-      source: CONFIG.layers.eventSource,
+      source: sourceId,
       filter: ['==', ['get', 'event_id'], ''],  // Initially matches nothing
       paint: {
         'circle-radius': kmToPixels(['coalesce', ['get', 'damage_radius_km'], 0.05]),
@@ -1388,9 +1581,9 @@ export const PointRadiusModel = {
 
     // 4. GLOW layer
     map.addLayer({
-      id: CONFIG.layers.eventCircle + '-glow',
+      id: this._layerId('circle-glow', eventType),
       type: 'circle',
-      source: CONFIG.layers.eventSource,
+      source: sourceId,
       paint: {
         'circle-radius': sizeBoostExpr(['+', sizeExpr, 4]),
         'circle-color': colorExpr,
@@ -1401,9 +1594,9 @@ export const PointRadiusModel = {
 
     // 5. MAIN TORNADO MARKER
     map.addLayer({
-      id: CONFIG.layers.eventCircle,
+      id: this._layerId('circle', eventType),
       type: 'circle',
-      source: CONFIG.layers.eventSource,
+      source: sourceId,
       paint: {
         'circle-radius': sizeBoostExpr(sizeExpr),
         'circle-color': colorExpr,
@@ -1420,18 +1613,23 @@ export const PointRadiusModel = {
    */
   _addGenericEventLayer(eventType, options = {}) {
     const map = MapAdapter.map;
+    const sourceId = this._layerId('source', eventType);
 
     // Recency-based effects for animation
     // _recency: 1.5 = brand new (flash), 1.0 = recent, 0.0 = fading out
     const recencyExpr = ['coalesce', ['get', '_recency'], 1.0];
-    const opacityExpr = (baseOpacity) => ['min', 1.0, ['*', baseOpacity, recencyExpr]];
+    const lifecycleOpacity = ['coalesce', ['get', '_opacity'], 1.0];
+    const opacityExpr = (baseOpacity) => [
+      'min', 1.0,
+      ['*', baseOpacity, ['*', recencyExpr, lifecycleOpacity]]
+    ];
     const sizeBoostExpr = (baseSize) => ['*', baseSize, ['max', 1.0, recencyExpr]];
 
     // Default yellow/orange coloring
     map.addLayer({
-      id: CONFIG.layers.eventCircle + '-glow',
+      id: this._layerId('circle-glow', eventType),
       type: 'circle',
-      source: CONFIG.layers.eventSource,
+      source: sourceId,
       paint: {
         'circle-radius': sizeBoostExpr(12),
         'circle-color': '#ffcc00',
@@ -1441,9 +1639,9 @@ export const PointRadiusModel = {
     });
 
     map.addLayer({
-      id: CONFIG.layers.eventCircle,
+      id: this._layerId('circle', eventType),
       type: 'circle',
-      source: CONFIG.layers.eventSource,
+      source: sourceId,
       paint: {
         'circle-radius': sizeBoostExpr(6),
         'circle-color': '#ffcc00',
@@ -1463,12 +1661,14 @@ export const PointRadiusModel = {
   update(geojson, options = {}) {
     if (!MapAdapter?.map) return;
 
-    const source = MapAdapter.map.getSource(CONFIG.layers.eventSource);
+    // Determine event type from options or fall back to first active type
+    const eventType = options.eventType || this.activeType || 'generic_event';
+    const sourceId = this._layerId('source', eventType);
+    const source = MapAdapter.map.getSource(sourceId);
     if (source) {
       source.setData(geojson);
     } else {
       // Source doesn't exist, need to render with proper event type
-      const eventType = options.eventType || this.activeType || 'generic_event';
       this.render(geojson, eventType, options);
     }
   },
@@ -1684,42 +1884,41 @@ export const PointRadiusModel = {
   },
 
   /**
-   * Clear all event layers.
+   * Clear layers for a specific event type only.
+   * Allows multiple overlays to coexist without interfering.
+   * @param {string} eventType - Event type to clear (e.g., 'earthquake', 'volcano')
    */
-  clear() {
-    if (!MapAdapter?.map) return;
+  clearType(eventType) {
+    if (!MapAdapter?.map || !eventType) return;
 
     const map = MapAdapter.map;
 
-    // Remove click handlers
-    if (this.clickHandler) {
-      map.off('click', CONFIG.layers.eventCircle, this.clickHandler);
-      map.off('click', CONFIG.layers.eventCircle + '-fill', this.clickHandler);  // Polygon fill
-      this.clickHandler = null;
-    }
-    if (this._mapClickHandler) {
-      map.off('click', this._mapClickHandler);
-      this._mapClickHandler = null;
+    // Remove click handler for this type
+    const handler = this.clickHandlers.get(eventType);
+    if (handler) {
+      const circleLayerId = this._layerId('circle', eventType);
+      const fillLayerId = this._layerId('circle-fill', eventType);
+      map.off('click', circleLayerId, handler);
+      map.off('click', fillLayerId, handler);
+      this.clickHandlers.delete(eventType);
     }
 
-    // Unlock popup
-    MapAdapter.popupLocked = false;
-
-    // Remove layers (including selection, sequence highlight, polygon, and tsunami layers)
+    // Build list of type-specific layer IDs to remove
     const layerIds = [
-      CONFIG.layers.eventCircle,
-      CONFIG.layers.eventCircle + '-glow',
-      CONFIG.layers.eventCircle + '-fill',    // Wildfire polygon fill
-      CONFIG.layers.eventCircle + '-stroke',  // Wildfire polygon stroke
-      CONFIG.layers.eventCircle + '-sequence',  // Green sequence highlight
-      CONFIG.layers.eventLabel,
-      CONFIG.layers.eventRadiusOuter,
-      CONFIG.layers.eventRadiusInner,
-      CONFIG.layers.eventRadiusOuter + '-selected',
-      CONFIG.layers.eventRadiusInner + '-selected',
-      CONFIG.layers.eventSource + '-connections',  // Tsunami connection lines
-      CONFIG.layers.eventSource + '-wavefront',     // Tsunami wave front
-      CONFIG.layers.eventSource + '-wavefront-glow' // Wave front glow
+      this._layerId('circle', eventType),
+      this._layerId('circle-glow', eventType),
+      this._layerId('circle-fill', eventType),     // Wildfire polygon fill
+      this._layerId('circle-stroke', eventType),   // Wildfire polygon stroke
+      this._layerId('circle-sequence', eventType), // Green sequence highlight
+      this._layerId('label', eventType),
+      this._layerId('radius-outer', eventType),
+      this._layerId('radius-inner', eventType),
+      this._layerId('radius-outer-selected', eventType),
+      this._layerId('radius-inner-selected', eventType),
+      this._layerId('radius-outer-selected-felt', eventType), // Tornado felt radius selected
+      this._layerId('connections', eventType),     // Tsunami connection lines
+      this._layerId('wavefront', eventType),       // Tsunami wave front
+      this._layerId('wavefront-glow', eventType)   // Wave front glow
     ];
 
     for (const layerId of layerIds) {
@@ -1728,54 +1927,104 @@ export const PointRadiusModel = {
       }
     }
 
-    // Remove source
-    if (map.getSource(CONFIG.layers.eventSource)) {
-      map.removeSource(CONFIG.layers.eventSource);
+    // Remove type-specific source
+    const sourceId = this._layerId('source', eventType);
+    if (map.getSource(sourceId)) {
+      map.removeSource(sourceId);
     }
 
-    // Clean up runups mode state
-    this._inRunupsMode = false;
-    this._originalTsunamiData = null;
-    this._hideRunupsExitControl();
+    // Remove from active types
+    this.activeTypes.delete(eventType);
 
-    // Clean up track mode state (tornado drill-down)
-    this._clearTornadoTrack();
-    this._inTrackMode = false;
-    this._hideTrackExitControl();
+    // Clear selection if it was this type
+    if (this.selectedEventType === eventType) {
+      this.selectedEventId = null;
+      this.selectedEventType = null;
+    }
 
-    this.activeType = null;
+    // Clear sequence if it was this type
+    if (eventType === 'earthquake') {
+      this.activeSequenceId = null;
+    }
+
+    // Type-specific cleanup
+    if (eventType === 'tsunami') {
+      this._inRunupsMode = false;
+      this._originalTsunamiData = null;
+      this._hideRunupsExitControl();
+    }
+    if (eventType === 'tornado') {
+      this._clearTornadoTrack();
+      this._inTrackMode = false;
+      this._hideTrackExitControl();
+    }
+  },
+
+  /**
+   * Clear all event layers for all types.
+   */
+  clear() {
+    if (!MapAdapter?.map) return;
+
+    // Clear each active type
+    for (const eventType of [...this.activeTypes]) {
+      this.clearType(eventType);
+    }
+
+    // Remove global map click handler
+    if (this._mapClickHandler) {
+      MapAdapter.map.off('click', this._mapClickHandler);
+      this._mapClickHandler = null;
+    }
+
+    // Unlock popup
+    MapAdapter.popupLocked = false;
+
+    // Clear all tracking state
+    this.activeTypes.clear();
+    this.clickHandlers.clear();
     this.selectedEventId = null;
+    this.selectedEventType = null;
     this.activeSequenceId = null;
   },
 
   /**
    * Select an event to highlight with filled radius circles.
    * @param {string|null} eventId - Event ID to select, or null to deselect
+   * @param {string} eventType - Event type for layer ID resolution (optional, uses selectedEventType if not provided)
    * @private
    */
-  _selectEvent(eventId) {
+  _selectEvent(eventId, eventType = null) {
     if (!MapAdapter?.map) return;
 
     const map = MapAdapter.map;
     this.selectedEventId = eventId;
+
+    // Use provided type, or fall back to tracked selected type, or iterate all active types
+    const typesToUpdate = eventType
+      ? [eventType]
+      : (this.selectedEventType ? [this.selectedEventType] : Array.from(this.activeTypes));
 
     // Update filters on selection layers
     const filter = eventId
       ? ['==', ['get', 'event_id'], eventId]
       : ['==', ['get', 'event_id'], ''];  // Matches nothing
 
-    const outerLayer = CONFIG.layers.eventRadiusOuter + '-selected';
-    const innerLayer = CONFIG.layers.eventRadiusInner + '-selected';
-    const feltLayer = CONFIG.layers.eventRadiusOuter + '-selected-felt';
+    // Update selection layers for each active type
+    for (const type of typesToUpdate) {
+      const outerLayer = this._layerId('radius-outer-selected', type);
+      const innerLayer = this._layerId('radius-inner-selected', type);
+      const feltLayer = this._layerId('radius-outer-selected-felt', type);
 
-    if (map.getLayer(outerLayer)) {
-      map.setFilter(outerLayer, filter);
-    }
-    if (map.getLayer(innerLayer)) {
-      map.setFilter(innerLayer, filter);
-    }
-    if (map.getLayer(feltLayer)) {
-      map.setFilter(feltLayer, filter);
+      if (map.getLayer(outerLayer)) {
+        map.setFilter(outerLayer, filter);
+      }
+      if (map.getLayer(innerLayer)) {
+        map.setFilter(innerLayer, filter);
+      }
+      if (map.getLayer(feltLayer)) {
+        map.setFilter(feltLayer, filter);
+      }
     }
   },
 
@@ -1783,22 +2032,26 @@ export const PointRadiusModel = {
    * Highlight an aftershock sequence on the map.
    * Shows all events in the sequence with enhanced visibility.
    * @param {string|null} sequenceId - Sequence ID to highlight, or null to clear
+   * @param {string} eventType - Event type (defaults to 'earthquake' since sequences are earthquake-specific)
    */
-  highlightSequence(sequenceId) {
+  highlightSequence(sequenceId, eventType = 'earthquake') {
     if (!MapAdapter?.map) return;
 
     const map = MapAdapter.map;
     const prevSequence = this.activeSequenceId;
     this.activeSequenceId = sequenceId;
 
+    const sourceId = this._layerId('source', eventType);
+    const circleLayerId = this._layerId('circle', eventType);
+
     // Add sequence highlight layer if it doesn't exist
-    const seqLayerId = CONFIG.layers.eventCircle + '-sequence';
-    if (!map.getLayer(seqLayerId) && map.getSource(CONFIG.layers.eventSource)) {
+    const seqLayerId = this._layerId('circle-sequence', eventType);
+    if (!map.getLayer(seqLayerId) && map.getSource(sourceId)) {
       // Add a highlight ring around sequence events
       map.addLayer({
         id: seqLayerId,
         type: 'circle',
-        source: CONFIG.layers.eventSource,
+        source: sourceId,
         filter: ['==', ['get', 'sequence_id'], ''],  // Initially matches nothing
         paint: {
           'circle-radius': [
@@ -1813,7 +2066,7 @@ export const PointRadiusModel = {
           'circle-stroke-width': 3,
           'circle-stroke-opacity': 0.9
         }
-      }, CONFIG.layers.eventCircle);  // Place below epicenters
+      }, circleLayerId);  // Place below epicenters
     }
 
     // Update filter
@@ -2027,7 +2280,8 @@ export const PointRadiusModel = {
   _displayTsunamiRunups(geojson) {
     if (!MapAdapter?.map) return;
 
-    const source = MapAdapter.map.getSource(CONFIG.layers.eventSource);
+    const sourceId = this._layerId('source', 'tsunami');
+    const source = MapAdapter.map.getSource(sourceId);
     if (source) {
       // Store original data if not already in runups mode
       if (!this._inRunupsMode && source._data) {
@@ -2266,7 +2520,8 @@ export const PointRadiusModel = {
       return;
     }
 
-    const source = MapAdapter?.map?.getSource(CONFIG.layers.eventSource);
+    const sourceId = this._layerId('source', 'tsunami');
+    const source = MapAdapter?.map?.getSource(sourceId);
     if (source) {
       source.setData(this._originalTsunamiData);
       console.log('PointRadiusModel: Restored original tsunami data');
@@ -2944,12 +3199,14 @@ export const PointRadiusModel = {
   /**
    * Get events in a sequence.
    * @param {string} sequenceId - Sequence ID
+   * @param {string} eventType - Event type (defaults to 'earthquake' since sequences are earthquake-specific)
    * @returns {Array} Array of features in the sequence
    */
-  getSequenceEvents(sequenceId) {
+  getSequenceEvents(sequenceId, eventType = 'earthquake') {
     if (!MapAdapter?.map) return [];
 
-    const source = MapAdapter.map.getSource(CONFIG.layers.eventSource);
+    const sourceId = this._layerId('source', eventType);
+    const source = MapAdapter.map.getSource(sourceId);
     if (!source || !source._data) return [];
 
     return source._data.features.filter(f =>

@@ -815,6 +815,136 @@ At 60fps, you have ~16ms per frame:
 
 ---
 
+## deck.gl Animation Integration Architecture
+
+The current animation system is designed for clean deck.gl integration when advanced effects are needed.
+
+### Current Architecture (Ready for Extension)
+
+```
+                    +------------------+
+                    |    TimeSlider    |  (Playback control, speed, scrubbing)
+                    +------------------+
+                            |
+                            v
+                    +------------------+
+                    |  EventAnimator   |  (Timing, state machine, frame coordination)
+                    +------------------+
+                            |
+                            v
+                    +------------------+
+                    |  ModelRegistry   |  (Routes to appropriate display model)
+                    +------------------+
+                            |
+            +---------------+---------------+
+            |               |               |
+            v               v               v
+     +-----------+   +-----------+   +-----------+
+     |PointRadius|   |   Track   |   |  Polygon  |  (MapLibre layers)
+     |   Model   |   |   Model   |   |   Model   |
+     +-----------+   +-----------+   +-----------+
+                            |
+                            v (future)
+                    +------------------+
+                    |   Effects Layer  |  (deck.gl overlays)
+                    +------------------+
+```
+
+### Extension Point Pattern
+
+The key insight: **deck.gl adds as a layer ON TOP of MapLibre**, not replacing it.
+
+```javascript
+// Current: MapLibre handles base map + feature layers
+const map = new maplibregl.Map({ container: 'map' });
+
+// Future: deck.gl overlay for effects only
+const deckOverlay = new MapboxOverlay({
+  layers: [
+    new ParticleLayer({ ... }),  // Volcano ash particles
+    new RippleLayer({ ... }),    // Earthquake wave effects
+    new AnimatedPathLayer({ ... }) // Storm track animations
+  ]
+});
+map.addControl(deckOverlay);
+```
+
+**No changes needed to:**
+- EventAnimator (timing/state stays the same)
+- TimeSlider (playback control unchanged)
+- Model render() methods (they continue to work)
+- DisasterPopup (interaction still works)
+
+### Components and Their Roles
+
+| Component | Current Role | deck.gl Upgrade Role |
+|-----------|-------------|---------------------|
+| **EventAnimator** | Timing, frame dispatch | Same - dispatch to effects too |
+| **TimeSlider** | User playback control | Same - no changes |
+| **PointRadiusModel** | MapLibre circles/labels | Keep for base markers |
+| **TrackModel** | MapLibre lines/cones | Keep for base paths |
+| **PolygonModel** | MapLibre fills/strokes | Keep for base areas |
+| **EffectsLayer** (new) | N/A | deck.gl particles/ripples |
+
+### Effect Types Per Disaster
+
+| Disaster Type | Base Layer (MapLibre) | Effect Layer (deck.gl) |
+|--------------|----------------------|----------------------|
+| **Earthquake** | Epicenter marker + radius | Seismic wave ripples, ground shake lines |
+| **Tsunami** | Warning zone circle | Expanding wave rings, ocean texture distortion |
+| **Volcano** | Location marker | Ash particle flow, plume animation |
+| **Hurricane** | Track line + cone | Spiral wind particles, rain bands |
+| **Wildfire** | Perimeter polygon | Ember particles, heat shimmer |
+| **Flood** | Affected area polygon | Water flow particles, wave patterns |
+
+### Implementation Approach
+
+**Phase 1 (Current):** CSS + MapLibre animations
+- Pulsing markers, expanding circles
+- Works for ~20 concurrent events at 30fps
+- Simple, no additional dependencies
+
+**Phase 2:** Canvas 2D overlay
+- Custom canvas element over map
+- Draw particles/ripples in 2D context
+- Works for ~100 events at 45fps
+- Medium complexity
+
+**Phase 3:** deck.gl WebGL integration
+- GPU-accelerated particle systems
+- 1000+ particles at 60fps
+- Advanced effects (flow fields, instancing)
+- Requires deck.gl dependency
+
+### Integration Code Pattern
+
+When ready to add deck.gl:
+
+```javascript
+// In EventAnimator.playSequence() or similar
+if (effectsEnabled && EffectsLayer) {
+  EffectsLayer.addEffect({
+    type: 'ripple',
+    center: [lon, lat],
+    magnitude: event.magnitude,
+    startTime: Date.now(),
+    duration: 3000
+  });
+}
+```
+
+The effects layer maintains its own render loop synced to requestAnimationFrame, reading from an effects queue that the animator populates.
+
+### Why This Architecture Works
+
+1. **Separation of concerns:** Base rendering (MapLibre) vs effects (deck.gl)
+2. **Graceful degradation:** Effects optional, base map always works
+3. **No code rewrites:** Existing models continue unchanged
+4. **Additive complexity:** Only add deck.gl when needed for specific effects
+5. **Performance scaling:** CSS (20 events) -> Canvas (100) -> WebGL (1000+)
+
+---
+
 ## Infrastructure Split
 
 Separating data collection (lightweight, always-on) from data processing (GPU-heavy, on-demand):

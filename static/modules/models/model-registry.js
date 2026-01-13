@@ -136,13 +136,50 @@ export const ModelRegistry = {
   },
 
   /**
-   * Render data using appropriate model
+   * Render data using appropriate model.
+   * For wildfire/flood, detects geometry type and uses polygon model when available.
    * @param {Object} geojson - GeoJSON data
    * @param {string} eventType - Event type
    * @param {Object} options - Render options
    * @returns {boolean} True if rendered
    */
   render(geojson, eventType, options = {}) {
+    // For wildfire/flood, check geometry type and use polygon model if available
+    if ((eventType === 'wildfire' || eventType === 'flood') && geojson?.features?.length > 0) {
+      const hasPolygons = geojson.features.some(f => {
+        const geoType = f.geometry?.type;
+        return geoType === 'Polygon' || geoType === 'MultiPolygon';
+      });
+
+      if (hasPolygons) {
+        // Separate polygons from points
+        const polygonFeatures = geojson.features.filter(f => {
+          const geoType = f.geometry?.type;
+          return geoType === 'Polygon' || geoType === 'MultiPolygon';
+        });
+        const pointFeatures = geojson.features.filter(f => {
+          const geoType = f.geometry?.type;
+          return geoType === 'Point';
+        });
+
+        // Render polygons with polygon model
+        if (polygonFeatures.length > 0) {
+          const polygonGeoJson = { type: 'FeatureCollection', features: polygonFeatures };
+          models['polygon'].render(polygonGeoJson, eventType, options);
+        }
+
+        // Render remaining points with point-radius model (fallback for events without geometry)
+        if (pointFeatures.length > 0) {
+          const pointGeoJson = { type: 'FeatureCollection', features: pointFeatures };
+          models['point-radius'].render(pointGeoJson, eventType, options);
+        }
+
+        console.log(`ModelRegistry: ${eventType} split render - ${polygonFeatures.length} polygons, ${pointFeatures.length} points`);
+        return true;
+      }
+    }
+
+    // Default: use model from TYPE_TO_MODEL mapping
     const model = this.getModelForType(eventType);
     if (model) {
       model.render(geojson, eventType, options);

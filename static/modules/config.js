@@ -76,12 +76,24 @@ export const CONFIG = {
     windRadii34: 'wind-radii-34',
     windRadii50: 'wind-radii-50',
     windRadii64: 'wind-radii-64',
-    // Event layer (earthquakes, volcanoes, etc.)
+    // Event layer base IDs (use getEventLayerId for type-specific IDs)
+    // Legacy IDs kept for backwards compatibility during transition
     eventSource: 'event-points',
     eventCircle: 'event-circle',
     eventLabel: 'event-label',
     eventRadiusOuter: 'event-radius-outer',
-    eventRadiusInner: 'event-radius-inner'
+    eventRadiusInner: 'event-radius-inner',
+
+    /**
+     * Generate type-specific layer ID for multi-overlay support.
+     * Allows earthquakes, volcanoes, tornadoes, etc. to coexist on map.
+     * @param {string} baseId - Base layer ID (e.g., 'circle', 'source', 'radius-outer')
+     * @param {string} eventType - Event type (e.g., 'earthquake', 'volcano')
+     * @returns {string} Type-specific layer ID (e.g., 'earthquake-circle')
+     */
+    getEventLayerId(baseId, eventType) {
+      return `${eventType}-${baseId}`;
+    }
   },
 
   // Selection mode colors (for disambiguation highlighting)

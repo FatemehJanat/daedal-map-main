@@ -603,81 +603,67 @@ export const TimeSlider = {
   },
 
   /**
-   * Format time label based on current granularity.
-   * All times are now stored internally as timestamps.
-   * During playback, shows simplified output (just year or month/year).
-   * When paused, shows full detail.
+   * Format time label based on current speed setting.
+   * Shows appropriate granularity matching the speed:
+   * - At 1yr/sec: show just year (2024)
+   * - At 1mo/sec: show month + year (Jan 2024)
+   * - At 1w/sec: show week number (Week 12, 2024)
+   * - At 1d/sec: show day + month + year (Jan 15, 2024)
+   * - At hour/min: show full date + time
    */
   formatTimeLabel(time) {
-    // Convert timestamp to Date for formatting
     const date = new Date(time);
     const year = date.getUTCFullYear();
 
-    // For yearly+ granularity, display as year(s)
-    if (!this.useTimestamps) {
-      switch (this.granularity) {
-        case '5y':
-          // Handle negative years (BCE)
-          if (year < 0) {
-            return `${Math.abs(year)} - ${Math.abs(year - 4)} BCE`;
-          }
-          return `${year}-${year + 4}`;
-        case '10y':
-          if (year < 0) {
-            return `${Math.abs(year)} - ${Math.abs(year - 9)} BCE`;
-          }
-          return `${year}-${year + 9}`;
-        default:
-          // Negative years displayed as "XXXX BCE"
-          if (year < 0) {
-            return `${Math.abs(year)} BCE`;
-          }
-          return year.toString();
-      }
+    // Handle negative years (BCE)
+    if (year < 0) {
+      return `${Math.abs(year)} BCE`;
     }
 
-    // For sub-yearly granularity, format as date/time
+    // Get current speed to determine display granularity
+    const hoursPerSecond = this.stepsPerFrame * 6 * TIME_SYSTEM.MAX_FPS;
 
-    // During playback, show simplified format (less flashing text)
-    if (this.isPlaying) {
-      switch (this.granularity) {
-        case '6h':
-        case 'daily':
-          // During fast playback, just show month/year to reduce flashing
-          return date.toLocaleDateString('en-US', {
-            month: 'short', year: 'numeric', timeZone: 'UTC'
-          });
-        case 'weekly':
-        case 'monthly':
-          // Show just year for monthly/weekly during playback
-          return year.toString();
-        default:
-          return year.toString();
-      }
+    // At yearly+ speeds, just show year
+    if (hoursPerSecond >= 8760) {
+      return year.toString();
     }
 
-    // When paused, show full detail
-    switch (this.granularity) {
-      case '6h':
-        return date.toLocaleString('en-US', {
-          month: 'short', day: 'numeric', year: 'numeric',
-          hour: '2-digit', minute: '2-digit', timeZone: 'UTC'
-        });
-      case 'daily':
-        return date.toLocaleDateString('en-US', {
-          month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC'
-        });
-      case 'weekly':
-        return `Week of ${date.toLocaleDateString('en-US', {
-          month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC'
-        })}`;
-      case 'monthly':
-        return date.toLocaleDateString('en-US', {
-          month: 'short', year: 'numeric', timeZone: 'UTC'
-        });
-      default:
-        return year.toString();
+    // At monthly speeds, show month + year
+    if (hoursPerSecond >= 720) {
+      return date.toLocaleDateString('en-US', {
+        month: 'short', year: 'numeric', timeZone: 'UTC'
+      });
     }
+
+    // At weekly speeds, show week number + year
+    if (hoursPerSecond >= 168) {
+      // Calculate week number (1-52)
+      const startOfYear = new Date(Date.UTC(year, 0, 1));
+      const dayOfYear = Math.floor((date - startOfYear) / (24 * 60 * 60 * 1000));
+      const weekNum = Math.ceil((dayOfYear + 1) / 7);
+      return `Week ${weekNum}, ${year}`;
+    }
+
+    // At daily speeds, show day + month + year
+    if (hoursPerSecond >= 24) {
+      return date.toLocaleDateString('en-US', {
+        month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC'
+      });
+    }
+
+    // At hourly speeds, show date + time (no seconds)
+    if (hoursPerSecond >= 1) {
+      return date.toLocaleString('en-US', {
+        month: 'short', day: 'numeric', year: 'numeric',
+        hour: 'numeric', timeZone: 'UTC'
+      });
+    }
+
+    // At minute speeds, show full date + time with minutes
+    return date.toLocaleString('en-US', {
+      month: 'short', day: 'numeric', year: 'numeric',
+      hour: 'numeric', minute: '2-digit', timeZone: 'UTC'
+    });
   },
 
   /**
@@ -1072,18 +1058,72 @@ export const TimeSlider = {
   },
 
   /**
-   * Step to next available time
+   * Get step size based on current speed.
+   * Returns milliseconds matching what the speed label shows.
+   * If label says "1mo/sec", step is 1 month. If "1yr/sec", step is 1 year.
+   * @returns {number} Step size in milliseconds
+   */
+  getSpeedBasedStep() {
+    const hoursPerSecond = this.stepsPerFrame * 6 * TIME_SYSTEM.MAX_FPS;
+
+    // Match step size to what speed label displays
+    if (hoursPerSecond < 1) {
+      // Minutes - step by displayed minutes
+      const mins = Math.round(hoursPerSecond * 60);
+      return Math.max(1, mins) * 60 * 1000;
+    }
+    if (hoursPerSecond < 24) {
+      // Hours - step by displayed hours
+      const hours = Math.round(hoursPerSecond);
+      return Math.max(1, hours) * 60 * 60 * 1000;
+    }
+    if (hoursPerSecond < 168) {
+      // Days - step by displayed days
+      const days = Math.round(hoursPerSecond / 24);
+      return Math.max(1, days) * 24 * 60 * 60 * 1000;
+    }
+    if (hoursPerSecond < 720) {
+      // Weeks - step by displayed weeks
+      const weeks = Math.round(hoursPerSecond / 168);
+      return Math.max(1, weeks) * 7 * 24 * 60 * 60 * 1000;
+    }
+    if (hoursPerSecond < 8760) {
+      // Months - step by displayed months
+      const months = Math.round(hoursPerSecond / 720);
+      return Math.max(1, months) * 30 * 24 * 60 * 60 * 1000;
+    }
+    // Years - step by displayed years (rounded to nearest 0.1)
+    const years = Math.round(hoursPerSecond / 8760 * 10) / 10;
+    return Math.max(1, Math.round(years)) * 365 * 24 * 60 * 60 * 1000;
+  },
+
+  /**
+   * Step to next time (amount based on current speed)
    */
   stepToNext() {
-    const nextTime = this.getNextAvailableTime(this.currentTime);
+    const stepMs = this.getSpeedBasedStep();
+    let nextTime = this.currentTime + stepMs;
+
+    // Clamp to max
+    if (nextTime > this.maxTime) {
+      nextTime = this.maxTime;
+    }
+
     this.setTime(nextTime);
   },
 
   /**
-   * Step to previous available time
+   * Step to previous time (amount based on current speed)
    */
   stepToPrev() {
-    const prevTime = this.getPrevAvailableTime(this.currentTime);
+    const stepMs = this.getSpeedBasedStep();
+    let prevTime = this.currentTime - stepMs;
+
+    // Clamp to min
+    if (prevTime < this.minTime) {
+      prevTime = this.minTime;
+    }
+
     this.setTime(prevTime);
   },
 

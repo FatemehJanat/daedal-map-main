@@ -225,6 +225,18 @@ export const MapAdapter = {
   },
 
   /**
+   * Toggle globe projection on/off
+   * @param {boolean} enabled - True for globe, false for flat mercator
+   */
+  toggleGlobe(enabled) {
+    if (enabled) {
+      this.enableGlobe();
+    } else {
+      this.disableGlobe();
+    }
+  },
+
+  /**
    * Load GeoJSON data onto the map
    * @param {Object} geojson - GeoJSON FeatureCollection
    * @param {boolean} debugMode - If true, use hierarchy-depth colors

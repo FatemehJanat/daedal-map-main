@@ -7,24 +7,23 @@
  * - Stroke outline for visibility
  * - Severity-based color coding
  * - Optional animation for active events
+ *
+ * Supports multiple event types simultaneously via type-specific layer IDs.
  */
 
 import { CONFIG } from '../config.js';
+import { DisasterPopup } from '../disaster-popup.js';
 
 // Dependencies set via setDependencies
 let MapAdapter = null;
+let TimeSlider = null;
 
 export function setDependencies(deps) {
   MapAdapter = deps.MapAdapter;
+  if (deps.TimeSlider) {
+    TimeSlider = deps.TimeSlider;
+  }
 }
-
-// Layer IDs for polygon events
-const LAYERS = {
-  source: 'polygon-events',
-  fill: 'polygon-events-fill',
-  stroke: 'polygon-events-stroke',
-  label: 'polygon-events-label'
-};
 
 // Color schemes for different polygon event types
 const COLORS = {
@@ -69,11 +68,22 @@ const COLORS = {
 };
 
 export const PolygonModel = {
-  // Currently active event type
-  activeType: null,
+  // Currently active event types (supports multiple overlays simultaneously)
+  activeTypes: new Set(),
 
-  // Click handler reference for cleanup
-  clickHandler: null,
+  // Handler references for cleanup (per event type)
+  clickHandlers: new Map(),      // eventType -> handler
+  hoverHandlers: new Map(),      // eventType -> {mouseenter, mouseleave, mousemove, mouseleavePopup}
+
+  /**
+   * Generate type-specific layer ID.
+   * @param {string} baseId - Base ID like 'source', 'fill', 'stroke'
+   * @param {string} eventType - Event type like 'wildfire', 'flood'
+   * @returns {string} Type-specific ID like 'wildfire-polygon-source'
+   */
+  _layerId(baseId, eventType) {
+    return `${eventType}-polygon-${baseId}`;
+  },
 
   /**
    * Get color scheme for an event type.
@@ -134,6 +144,7 @@ export const PolygonModel = {
 
   /**
    * Render polygon events on the map.
+   * Supports multiple event types simultaneously (e.g., floods + wildfires).
    * @param {Object} geojson - GeoJSON FeatureCollection with Polygon/MultiPolygon features
    * @param {string} eventType - 'wildfire', 'flood', 'ash_cloud', etc.
    * @param {Object} options - {onEventClick, showLabels}
@@ -145,30 +156,41 @@ export const PolygonModel = {
     }
 
     if (!geojson || !geojson.features || geojson.features.length === 0) {
-      console.log('PolygonModel: No features to display');
+      console.log(`PolygonModel: No ${eventType} features to display, clearing existing layers`);
+      this.clearType(eventType);
       return;
     }
 
-    // Clear existing layers
-    this.clear();
-
-    // Store active type
-    this.activeType = eventType;
-
     const map = MapAdapter.map;
+    const sourceId = this._layerId('source', eventType);
+    const fillId = this._layerId('fill', eventType);
+    const strokeId = this._layerId('stroke', eventType);
+    const labelId = this._layerId('label', eventType);
+
+    // Check if source already exists - if so, just update data (no flash)
+    const existingSource = map.getSource(sourceId);
+    if (existingSource) {
+      // Source exists - just update data, don't recreate layers
+      existingSource.setData(geojson);
+      return true;
+    }
+
+    // First time render for this type - create source and layers
+    this.activeTypes.add(eventType);
+
     const colors = this._getColors(eventType);
 
     // Add source
-    map.addSource(LAYERS.source, {
+    map.addSource(sourceId, {
       type: 'geojson',
       data: geojson
     });
 
     // Add fill layer
     map.addLayer({
-      id: LAYERS.fill,
+      id: fillId,
       type: 'fill',
-      source: LAYERS.source,
+      source: sourceId,
       paint: {
         'fill-color': this._buildFillColorExpr(eventType),
         'fill-opacity': colors.fillOpacity
@@ -177,9 +199,9 @@ export const PolygonModel = {
 
     // Add stroke layer
     map.addLayer({
-      id: LAYERS.stroke,
+      id: strokeId,
       type: 'line',
-      source: LAYERS.source,
+      source: sourceId,
       paint: {
         'line-color': colors.stroke,
         'line-width': colors.strokeWidth,
@@ -190,9 +212,9 @@ export const PolygonModel = {
     // Add labels if requested
     if (options.showLabels !== false) {
       map.addLayer({
-        id: LAYERS.label,
+        id: labelId,
         type: 'symbol',
-        source: LAYERS.source,
+        source: sourceId,
         minzoom: 6,
         layout: {
           'text-field': ['coalesce', ['get', 'name'], ['get', 'event_name'], ''],
@@ -208,71 +230,119 @@ export const PolygonModel = {
       });
     }
 
-    // Setup click handler
-    if (options.onEventClick) {
-      this.clickHandler = (e) => {
-        if (e.features.length > 0) {
-          const props = e.features[0].properties;
+    // Setup click handler - shows unified popup on click
+    const clickHandler = (e) => {
+      // Don't show popups during animation playback
+      if (TimeSlider?.isPlaying) return;
+
+      if (e.features.length > 0) {
+        const props = e.features[0].properties;
+        // Use click location for popup
+        const coords = e.lngLat ? [e.lngLat.lng, e.lngLat.lat] : null;
+
+        if (coords) {
+          // Show unified disaster popup
+          DisasterPopup.show(coords, props, eventType);
+        }
+
+        // Call optional click callback
+        if (options.onEventClick) {
           options.onEventClick(props);
         }
-      };
-      map.on('click', LAYERS.fill, this.clickHandler);
-    }
+      }
+    };
 
-    // Hover cursor
-    map.on('mouseenter', LAYERS.fill, () => {
+    // Store handler reference per type for cleanup
+    this.clickHandlers.set(eventType, clickHandler);
+
+    // Register click handler on fill layer
+    map.on('click', fillId, clickHandler);
+
+    // Create named hover handlers for proper cleanup
+    const mouseenterHandler = () => {
       map.getCanvas().style.cursor = 'pointer';
-    });
-    map.on('mouseleave', LAYERS.fill, () => {
+    };
+    const mouseleaveHandler = () => {
       map.getCanvas().style.cursor = '';
-    });
-
-    // Hover popup
-    map.on('mousemove', LAYERS.fill, (e) => {
+    };
+    const mousemoveHandler = (e) => {
+      if (TimeSlider?.isPlaying) return;
       if (e.features.length > 0 && !MapAdapter.popupLocked) {
         const props = e.features[0].properties;
-        const html = this.buildPopupHtml(props, eventType);
+        const html = DisasterPopup.buildHoverHtml(props, eventType);
         MapAdapter.showPopup([e.lngLat.lng, e.lngLat.lat], html);
       }
-    });
-    map.on('mouseleave', LAYERS.fill, () => {
+    };
+    const mouseleavePopupHandler = () => {
       if (!MapAdapter.popupLocked) {
         MapAdapter.hidePopup();
       }
+    };
+
+    // Store hover handlers for cleanup
+    this.hoverHandlers.set(eventType, {
+      mouseenter: mouseenterHandler,
+      mouseleave: mouseleaveHandler,
+      mousemove: mousemoveHandler,
+      mouseleavePopup: mouseleavePopupHandler
     });
+
+    // Register hover handlers
+    map.on('mouseenter', fillId, mouseenterHandler);
+    map.on('mouseleave', fillId, mouseleaveHandler);
+    map.on('mousemove', fillId, mousemoveHandler);
+    map.on('mouseleave', fillId, mouseleavePopupHandler);
 
     console.log(`PolygonModel: Loaded ${geojson.features.length} ${eventType} features`);
   },
 
   /**
-   * Update polygon layer data (for time-based filtering).
+   * Update polygon layer data for a specific event type (for time-based filtering).
    * @param {Object} geojson - Filtered GeoJSON FeatureCollection
+   * @param {string} eventType - Event type to update
    */
-  update(geojson) {
+  update(geojson, eventType) {
     if (!MapAdapter?.map) return;
 
-    const source = MapAdapter.map.getSource(LAYERS.source);
+    const sourceId = this._layerId('source', eventType);
+    const source = MapAdapter.map.getSource(sourceId);
     if (source) {
       source.setData(geojson);
     }
   },
 
   /**
-   * Clear all polygon layers.
+   * Clear layers for a specific event type.
+   * @param {string} eventType - Event type to clear
    */
-  clear() {
+  clearType(eventType) {
     if (!MapAdapter?.map) return;
 
     const map = MapAdapter.map;
+    const sourceId = this._layerId('source', eventType);
+    const fillId = this._layerId('fill', eventType);
+    const strokeId = this._layerId('stroke', eventType);
+    const labelId = this._layerId('label', eventType);
 
-    // Remove click handler
-    if (this.clickHandler) {
-      map.off('click', LAYERS.fill, this.clickHandler);
-      this.clickHandler = null;
+    // Remove click handler for this type
+    const clickHandler = this.clickHandlers.get(eventType);
+    if (clickHandler) {
+      map.off('click', fillId, clickHandler);
+      this.clickHandlers.delete(eventType);
+    }
+
+    // Remove hover handlers for this type
+    const hoverH = this.hoverHandlers.get(eventType);
+    if (hoverH) {
+      map.off('mouseenter', fillId, hoverH.mouseenter);
+      map.off('mouseleave', fillId, hoverH.mouseleave);
+      map.off('mousemove', fillId, hoverH.mousemove);
+      map.off('mouseleave', fillId, hoverH.mouseleavePopup);
+      this.hoverHandlers.delete(eventType);
     }
 
     // Remove layers
-    const layerIds = [LAYERS.label, LAYERS.stroke, LAYERS.fill];
+    const layerIds = [labelId, strokeId, fillId];
     for (const layerId of layerIds) {
       if (map.getLayer(layerId)) {
         map.removeLayer(layerId);
@@ -280,11 +350,28 @@ export const PolygonModel = {
     }
 
     // Remove source
-    if (map.getSource(LAYERS.source)) {
-      map.removeSource(LAYERS.source);
+    if (map.getSource(sourceId)) {
+      map.removeSource(sourceId);
     }
 
-    this.activeType = null;
+    this.activeTypes.delete(eventType);
+  },
+
+  /**
+   * Clear all polygon layers for all event types.
+   */
+  clear() {
+    if (!MapAdapter?.map) return;
+
+    // Clear each active type
+    for (const eventType of [...this.activeTypes]) {
+      this.clearType(eventType);
+    }
+
+    // Clear tracking state
+    this.activeTypes.clear();
+    this.clickHandlers.clear();
+    this.hoverHandlers.clear();
   },
 
   /**
@@ -387,18 +474,32 @@ export const PolygonModel = {
   },
 
   /**
-   * Check if this model is currently active.
+   * Check if this model is currently active (has any active types).
    * @returns {boolean}
    */
   isActive() {
-    return this.activeType !== null;
+    return this.activeTypes.size > 0;
   },
 
   /**
-   * Get the currently active event type.
-   * @returns {string|null}
+   * Check if a specific event type is active.
+   * @param {string} eventType - Event type to check
+   * @returns {boolean}
    */
-  getActiveType() {
-    return this.activeType;
+  isTypeActive(eventType) {
+    return this.activeTypes.has(eventType);
+  },
+
+  /**
+   * Get all currently active event types.
+   * @returns {string[]} Array of active event types
+   */
+  getActiveTypes() {
+    return [...this.activeTypes];
+  },
+
+  // Legacy getter for backwards compatibility
+  get activeType() {
+    return this.activeTypes.size > 0 ? [...this.activeTypes][0] : null;
   }
 };

@@ -123,7 +123,125 @@ Only work needed per new source = write converter.
 
 ---
 
-## Phase 5: Real-time / Climate Expansion
+## Phase 5: NASA LANCE Flood Integration
+
+Goal: Fill flood data gap (2020-present) and enable near-real-time flood monitoring.
+
+### Current State
+
+| Period | Source | Status |
+|--------|--------|--------|
+| 1985-1999 | DFO (metadata only) | Have it |
+| 2000-2018 | DFO + GFD satellite | Have it |
+| 2019 | DFO only | Have it |
+| 2020-present | **Gap** | Need NASA LANCE |
+
+### NASA LANCE NRT Global Flood Product
+
+**Source:** https://www.earthdata.nasa.gov/data/instruments/viirs/near-real-time-data/nrt-global-flood-products
+
+| Feature | Details |
+|---------|---------|
+| Resolution | 250m (MODIS), 375m (VIIRS) |
+| Latency | ~3 hours from satellite pass |
+| Archive | 2003-2024 (22 years reprocessed) |
+| Composites | 1-day, 2-day, 3-day (cloud filtering) |
+| License | NASA open data (no restrictions) |
+| Access | Earthdata login (free) |
+
+**Data Products:**
+- MCDWD_L3_NRT (MODIS): https://nrt3.modaps.eosdis.nasa.gov/archive/allData/61/MCDWD_L3_NRT
+- VCDWD_L3_NRT (VIIRS): https://nrt3.modaps.eosdis.nasa.gov/archive/allData/5200/VCDWD_L3_NRT
+
+**Dec 2025 Update:** Added "recurring flood" class to distinguish normal vs unusual flooding.
+
+### Processing Pipeline (Streaming Approach)
+
+```
+Weekly cron job:
+1. Download last 7 days of LANCE tiles (~15-30 GB temp)
+2. For each day:
+   - Extract flood pixels (HDF band: flooded=1,2,3)
+   - Vectorize to polygons (rasterio.features.shapes)
+   - Simplify geometry (shapely.simplify)
+   - Calculate centroid, area_km2, bbox
+   - Spatial join for country/loc_id
+   - Append to events.parquet
+3. Delete raw HDF files
+4. Repeat next week
+```
+
+**Storage estimate:** ~200 MB/year processed (vs 50-100 GB/year raw)
+
+### Output Schema
+
+```python
+{
+  'event_id': 'LANCE-2024-01-15-h08v05',
+  'timestamp': '2024-01-15',
+  'latitude': 28.5,
+  'longitude': -81.2,
+  'area_km2': 245.8,
+  'flood_class': 2,        # 1=water, 2=flood, 3=recurring
+  'composite_days': 3,     # 1, 2, or 3 day composite
+  'country': 'USA',
+  'loc_id': 'USA/FL/Orange',
+  'source': 'NASA_LANCE',
+  'geometry': {...}        # simplified polygon
+}
+```
+
+### Implementation Files
+
+| File | Purpose |
+|------|---------|
+| download_lance_floods.py | Fetch HDF tiles from NASA |
+| process_lance_floods.py | Vectorize, simplify, merge |
+| convert_lance_floods.py | Convert to events.parquet |
+
+### Dependencies
+
+- Earthdata account (free registration)
+- rasterio (HDF/GeoTIFF reading)
+- shapely (geometry simplification)
+- h5py or pyhdf (HDF4 format)
+
+### Questions to Research
+
+- Does LANCE provide daily progression (duration bands)?
+- Can we get flood extent growth over time for animation?
+- What's in the "duration" band of LANCE products?
+
+### Simpler Event-Driven Approach (Recommended)
+
+Instead of downloading all LANCE tiles globally, use flood event catalogs as triggers:
+
+**Available Event Catalogs:**
+
+| Source | Events | Years | Has Coords | Has Polygons |
+|--------|--------|-------|------------|--------------|
+| GFD (already have) | 4,825 | 1985-2019 | Yes | Some |
+| Global Flood Monitor | 26,552 | 2014-2023 | Via geonames | No |
+| GFD QC (new) | 913 | 2000-2010 | Yes | Yes |
+
+**Implementation:**
+1. Download event catalogs: `download_flood_events.py --all`
+2. Merge into unified event list with date/location
+3. For 2020-present: Use event list to trigger LANCE downloads for specific dates/tiles
+4. Process only those tiles into flood extent polygons
+
+**Benefits:**
+- Reduces download from ~1.4 TB to ~50-100 GB (event-targeted only)
+- Already have 2000-2018 coverage via GFD
+- Global Flood Monitor provides 2014-2023 event triggers
+
+**Files:**
+- `download_flood_events.py` - Downloads event catalogs from GFM, GFD
+- `convert_flood_events.py` - Merges sources into unified list (TODO)
+
+---
+
+## Phase 6: Real-time / Climate Expansion
 
 Goal: Add live data streams and climate datasets.
 

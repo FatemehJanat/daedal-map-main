@@ -598,6 +598,12 @@ def generate_metadata(events_df, runups_df):
                 "unit": "meters",
                 "file": "events.parquet"
             },
+            "max_runup_dist_km": {
+                "name": "Max Runup Distance",
+                "description": "Distance to furthest runup observation (wave reach)",
+                "unit": "km",
+                "file": "events.parquet"
+            },
             "intensity": {
                 "name": "Tsunami Intensity",
                 "description": "Soloviev-Imamura intensity scale",
@@ -666,6 +672,16 @@ def main():
 
     # Process runups
     runups_out = process_runups(runups_df, events_df)
+
+    # Calculate max runup distance per event for wave radius visualization
+    print("\nCalculating max runup distances...")
+    if 'dist_from_source_km' in runups_out.columns:
+        max_dist = runups_out.groupby('event_id')['dist_from_source_km'].max().reset_index()
+        max_dist.columns = ['event_id', 'max_runup_dist_km']
+        events_out = events_out.merge(max_dist, on='event_id', how='left')
+        has_dist = events_out['max_runup_dist_km'].notna().sum()
+        print(f"  {has_dist:,}/{len(events_out):,} events have max runup distance")
+        print(f"  Distance range: {events_out['max_runup_dist_km'].min():.1f} - {events_out['max_runup_dist_km'].max():.1f} km")
 
     # Print statistics
     print_statistics(events_out, runups_out)

@@ -1085,19 +1085,230 @@ Example responses:
 - [x] Tsunami display (Radial propagation)
 - [x] Wildfire display (Polygon)
 - [x] Tornado display (Point + Track drill-down)
+- [x] Flood display (Point+Radius for overview, Polygon on-demand)
 - [x] Time slider (variable granularity, speed control)
 - [x] Overlay selector UI
 - [x] EventAnimator (unified controller)
+- [x] Unified DisasterPopup module (see Implementation Notes below)
+- [x] Type-specific polygon layer IDs (multiple overlay types render simultaneously)
+- [x] Unified hover styling (buildHoverHtml with color-coded borders)
+- [x] Date range formatting (formatDate, formatDateRange)
+- [x] Impact tab with deaths/injuries/damage display
+- [x] Rolling time animation (lifecycle filtering, speed-adaptive windows)
 
 ### In Progress
 
 - [ ] Fire progression animation (converter ready)
 - [ ] Drought choropleth animation
+- [ ] Polygon _opacity support (model-polygon.js still uses static opacity)
 
 ### Future
 
-- [ ] Flood polygon display
 - [ ] Live data pipeline
+- [ ] deck.gl animation effects (see [native_refactor.md](future/native_refactor.md#deckgl-animation-integration-architecture))
+
+---
+
+## Implementation Notes
+
+### DisasterPopup Module
+
+**File:** `static/modules/disaster-popup.js`
+
+Unified popup system providing consistent styling across all disaster types.
+
+#### Color and Icon Configuration
+
+```javascript
+const colors = {
+  earthquake: '#e74c3c',    // Red
+  tsunami: '#3498db',       // Blue
+  volcano: '#e67e22',       // Orange
+  hurricane: '#9b59b6',     // Purple
+  tornado: '#27ae60',       // Green
+  wildfire: '#f39c12',      // Amber
+  flood: '#2980b9',         // Dark blue
+  generic: '#7f8c8d'        // Gray
+};
+
+const icons = {
+  earthquake: 'E', tsunami: 'W', volcano: 'V',
+  hurricane: 'H', tornado: 'T', wildfire: 'F', flood: 'FL'
+};
+```
+
+#### Key Formatting Methods
+
+| Method | Purpose | Example Output |
+|--------|---------|----------------|
+| `formatPower(props, type)` | Intensity metric | `{ label: 'Magnitude', value: 'M 7.2', detail: 'Mw' }` |
+| `formatTime(props, type)` | Duration/timing | `{ label: 'Duration', value: '45 days', detail: '' }` |
+| `formatImpact(props, type)` | Impact metric | `{ label: 'Deaths', value: '2.9K', detail: '' }` |
+| `formatDate(timestamp)` | Single date | `"Jan 15, 2024"` |
+| `formatDateRange(start, end)` | Date range | `"Jul 28 - Aug 5, 2024"` |
+| `formatCurrency(value)` | USD formatting | `"$14.5B"` |
+| `formatLargeNumber(num)` | Number abbreviation | `"2.9K"` |
+
+#### Popup Tabs
+
+Four tabs in detailed view, built by separate methods:
+
+| Tab | Method | Content |
+|-----|--------|---------|
+| Overview | `buildOverviewTab()` | Location, coordinates, date/duration, type-specific context |
+| Impact | `buildImpactTab()` | Deaths, injuries, displaced, property/crop damage |
+| Technical | `buildTechnicalTab()` | Magnitude, depth, VEI, wind speed, path dimensions |
+| Source | `buildSourceTab()` | Data source links, event IDs |
+
+#### Hover Popup
+
+`buildHoverHtml(props, eventType)` creates compact hover tooltip:
+- Color-coded left border matching disaster type
+- Icon badge with type color
+- Event title
+- Date (range if available)
+- Primary intensity value
+- "Click for details" hint
+
+### Polygon Model Type-Specific Layers
+
+**File:** `static/modules/models/model-polygon.js`
+
+Supports multiple polygon overlay types (floods + wildfires) rendering simultaneously without layer ID conflicts.
+
+#### Layer ID Pattern
+
+```javascript
+_layerId(baseId, eventType) {
+  return `${eventType}-polygon-${baseId}`;
+}
+// Examples: 'flood-polygon-fill', 'wildfire-polygon-stroke'
+```
+
+#### State Tracking
+
+```javascript
+activeTypes: new Set(),           // Set of active event types
+clickHandlers: new Map(),         // eventType -> click handler function
+hoverHandlers: new Map(),         // eventType -> {mouseenter, mouseleave, mousemove, mouseleavePopup}
+```
+
+#### Handler Cleanup
+
+Named functions stored for proper `map.off()` cleanup:
+
+```javascript
+// On render - store named handlers
+this.hoverHandlers.set(eventType, {
+  mouseenter: mouseenterHandler,
+  mouseleave: mouseleaveHandler,
+  mousemove: mousemoveHandler,
+  mouseleavePopup: mouseleavePopupHandler
+});
+
+// On clear - remove by reference
+const hoverH = this.hoverHandlers.get(eventType);
+map.off('mouseenter', fillId, hoverH.mouseenter);
+map.off('mouseleave', fillId, hoverH.mouseleave);
+// ...
+```
+
+### Rolling Time Animation
+
+**Files:**
+- `static/modules/overlay-controller.js` - EVENT_LIFECYCLE config, filterByLifecycle()
+- `static/modules/time-slider.js` - getWindowDuration(), speed-adaptive windows
+- `static/modules/event-animator.js` - Rolling mode support
+
+#### Event Lifecycle Configuration
+
+Events appear based on timestamp, stay visible during active period, then fade out:
+
+```
+Timeline:
+    start_ms              end_ms                  fade_ms
+        |                    |                       |
+        v                    v                       v
+--------|====================|~~~~~~~~~~~~~~~~~~~~~~~|--------
+        |     ACTIVE         |       FADING          |
+        |   (full opacity)   |   (opacity 1.0->0)    |
+```
+
+Per-type lifecycle in EVENT_LIFECYCLE (overlay-controller.js:123-275):
+
+| Type | Start Field | End Calculation | Fade Duration |
+|------|-------------|-----------------|---------------|
+| Earthquake | `timestamp` | Magnitude-based (4-30 days) | Magnitude-scaled |
+| Hurricane | `start_date` | `end_date` | 30 days |
+| Tsunami | `timestamp` | Wave speed + max distance | 7 days |
+| Volcano | `timestamp` | end_timestamp or duration_days | 30 days |
+| Tornado | `timestamp` | Path length estimate | 1 day |
+| Wildfire | `timestamp` | duration_days or 30 days | 14 days |
+| Flood | `timestamp` | end_timestamp or duration_days | 30 days |
+
+#### filterByLifecycle Function
+
+Returns features annotated with animation properties:
+
+```javascript
+// overlay-controller.js:287-397
+function filterByLifecycle(features, currentMs, eventType) {
+  // Returns features with:
+  // - _opacity: 0-1 for fade effect
+  // - _phase: "active" or "fading"
+  // - _radiusProgress: 0-1 for expanding circles
+  // - _waveRadiusKm: Current wave radius in km
+}
+```
+
+#### _opacity Support in Models
+
+| Model | _opacity Support | Notes |
+|-------|-----------------|-------|
+| model-point-radius.js | Yes (13 instances) | circle-opacity, circle-stroke-opacity |
+| model-track.js | Yes | line-opacity for track and glow layers |
+| model-polygon.js | No | Still uses static fillOpacity values |
+
+Point radius example (model-point-radius.js:815-828):
+
+```javascript
+const lifecycleOpacity = ['coalesce', ['get', '_opacity'], 1.0];
+const opacityExpr = (baseOpacity) => [
+  'min', 1.0,
+  ['*', baseOpacity, ['*', recencyExpr, lifecycleOpacity]]
+];
+```
+
+#### Speed-Adaptive Windows
+
+Window duration scales with playback speed (time-slider.js:104-107):
+
+```javascript
+getWindowDuration(stepsPerFrame) {
+  const WINDOW_MULTIPLIER = 4;
+  return this.BASE_STEP_MS * Math.max(1, stepsPerFrame) * WINDOW_MULTIPLIER;
+}
+```
+
+| Speed | Window Duration | Effect |
+|-------|-----------------|--------|
+| Slow | Shorter window | Only recent events |
+| Fast | Longer window | More events accumulate |
+
+Adaptive fade (time-slider.js:872-881):
+
+```javascript
+getEventOpacity(eventTime, currentTime) {
+  const windowDuration = this.getVisibilityWindow();
+  const age = currentTime - eventTime;
+  // Linear fade from 1.0 (new) to 0.2 (about to disappear)
+  return 1.0 - (age / windowDuration) * 0.8;
+}
+```
+
+#### Hurricane Rolling Mode
+
+Hurricanes use TrackAnimator.startRolling() for progressive track drawing during rolling playback (overlay-controller.js:2950-3023).
 
 ---
 
@@ -1121,4 +1332,4 @@ See `docs/future/native_refactor.md` for planned live architecture.
 
 ---
 
-*Last Updated: 2026-01-11*
+*Last Updated: 2026-01-12*

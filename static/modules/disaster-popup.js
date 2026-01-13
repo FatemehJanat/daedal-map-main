@@ -110,23 +110,42 @@ const DisasterPopup = {
   },
 
   /**
+   * Calculate duration in days from two timestamps
+   */
+  calculateDurationDays(start, end) {
+    const startDate = new Date(start);
+    const endDate = new Date(end);
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) return null;
+    return Math.round((endDate - startDate) / (1000 * 60 * 60 * 24));
+  },
+
+  /**
+   * Format duration days into human readable string
+   */
+  formatDurationDays(days) {
+    if (days == null || days <= 0) return null;
+    if (days >= 365) {
+      const years = (days / 365).toFixed(1);
+      return { label: 'Duration', value: `${years} yr`, detail: `${days} days` };
+    }
+    if (days >= 30) {
+      const months = Math.round(days / 30);
+      return { label: 'Duration', value: `${months} mo`, detail: `${days} days` };
+    }
+    return { label: 'Duration', value: `${days} days`, detail: '' };
+  },
+
+  /**
    * Format time/duration stat based on disaster type
    */
   formatTime(props, eventType) {
-    // Check for duration first
+    // Check for explicit duration first
     const durationDays = props.duration_days;
     const durationMinutes = props.duration_minutes;
 
     if (durationDays != null && durationDays > 0) {
-      if (durationDays >= 365) {
-        const years = (durationDays / 365).toFixed(1);
-        return { label: 'Duration', value: `${years} yr`, detail: 'Active period' };
-      }
-      if (durationDays >= 30) {
-        const months = Math.round(durationDays / 30);
-        return { label: 'Duration', value: `${months} mo`, detail: `${durationDays} days` };
-      }
-      return { label: 'Duration', value: `${durationDays} days`, detail: '' };
+      const formatted = this.formatDurationDays(durationDays);
+      if (formatted) return formatted;
     }
 
     if (durationMinutes != null && durationMinutes > 0) {
@@ -135,6 +154,18 @@ const DisasterPopup = {
         return { label: 'Duration', value: `${hours} hr`, detail: '' };
       }
       return { label: 'Duration', value: `${durationMinutes} min`, detail: '' };
+    }
+
+    // Calculate duration from start/end timestamps if available
+    if (props.start_date && props.end_date) {
+      const days = this.calculateDurationDays(props.start_date, props.end_date);
+      const formatted = this.formatDurationDays(days);
+      if (formatted) return formatted;
+    }
+    if (props.timestamp && props.end_timestamp) {
+      const days = this.calculateDurationDays(props.timestamp, props.end_timestamp);
+      const formatted = this.formatDurationDays(days);
+      if (formatted) return formatted;
     }
 
     // Type-specific time formatting
@@ -158,13 +189,7 @@ const DisasterPopup = {
 
       case 'hurricane':
       case 'tropical_storm':
-        // Calculate from start_date and end_date
-        if (props.start_date && props.end_date) {
-          const start = new Date(props.start_date);
-          const end = new Date(props.end_date);
-          const days = Math.round((end - start) / (1000 * 60 * 60 * 24));
-          return { label: 'Duration', value: `${days} days`, detail: '' };
-        }
+        // Already handled above, fallback
         return { label: 'Duration', value: 'N/A', detail: '' };
 
       case 'tornado':
@@ -183,6 +208,22 @@ const DisasterPopup = {
         if (props.is_ongoing) {
           return { label: 'Status', value: 'Ongoing', detail: 'Still active' };
         }
+        // Try to calculate from timestamp + end_year
+        if (props.timestamp && props.end_year) {
+          const startYear = new Date(props.timestamp).getUTCFullYear();
+          const yearDiff = props.end_year - startYear;
+          if (yearDiff > 0) {
+            return { label: 'Duration', value: `${yearDiff} yr`, detail: '' };
+          }
+        }
+        return { label: 'Duration', value: 'N/A', detail: '' };
+
+      case 'wildfire':
+        // Wildfires should have duration_days from data
+        return { label: 'Duration', value: 'N/A', detail: '' };
+
+      case 'flood':
+        // Floods should have duration_days or timestamps
         return { label: 'Duration', value: 'N/A', detail: '' };
 
       default:
@@ -191,21 +232,48 @@ const DisasterPopup = {
   },
 
   /**
+   * Format large numbers with K/M/B suffix
+   */
+  formatLargeNumber(num) {
+    if (num >= 1e9) return `${(num / 1e9).toFixed(1)}B`;
+    if (num >= 1e6) return `${(num / 1e6).toFixed(1)}M`;
+    if (num >= 1e3) return `${(num / 1e3).toFixed(1)}K`;
+    return num.toLocaleString();
+  },
+
+  /**
    * Format impact stat based on disaster type
    */
   formatImpact(props, eventType) {
+    // Check for deaths first - always a primary impact metric
+    const deaths = props.deaths || props.deaths_direct;
+    if (deaths != null && deaths > 0) {
+      return { label: 'Deaths', value: this.formatLargeNumber(deaths), detail: '' };
+    }
+
     switch (eventType) {
       case 'earthquake':
         const feltKm = props.felt_radius_km;
         if (feltKm != null && feltKm > 0) {
+          if (feltKm >= 1000) {
+            return { label: 'Felt', value: `${(feltKm/1000).toFixed(1)}K km`, detail: 'Radius' };
+          }
           return { label: 'Felt', value: `${Math.round(feltKm)} km`, detail: 'Radius' };
+        }
+        // Fallback to depth
+        if (props.depth_km != null) {
+          return { label: 'Depth', value: `${props.depth_km.toFixed(1)} km`, detail: '' };
         }
         return { label: 'Impact', value: 'N/A', detail: '' };
 
       case 'tsunami':
         const runups = props.runup_count;
         if (runups != null && runups > 0) {
-          return { label: 'Runups', value: runups.toString(), detail: 'Observations' };
+          return { label: 'Runups', value: runups.toString(), detail: 'Coastal impacts' };
+        }
+        // Show max distance if available
+        if (props.max_runup_dist_km != null && props.max_runup_dist_km > 0) {
+          return { label: 'Reach', value: `${Math.round(props.max_runup_dist_km)} km`, detail: 'Max distance' };
         }
         return { label: 'Impact', value: 'N/A', detail: '' };
 
@@ -214,10 +282,22 @@ const DisasterPopup = {
         if (damageKm != null && damageKm > 0) {
           return { label: 'Damage', value: `${Math.round(damageKm)} km`, detail: 'Radius' };
         }
+        // Show felt radius as fallback
+        if (props.felt_radius_km != null && props.felt_radius_km > 0) {
+          return { label: 'Felt', value: `${Math.round(props.felt_radius_km)} km`, detail: 'Radius' };
+        }
         return { label: 'Impact', value: 'N/A', detail: '' };
 
       case 'hurricane':
       case 'tropical_storm':
+        // Show if it made landfall
+        if (props.made_landfall === true) {
+          const maxWind = props.max_wind_kt || props.wind_kt;
+          return { label: 'Landfall', value: 'Yes', detail: maxWind ? `${maxWind} kt max` : '' };
+        }
+        if (props.made_landfall === false) {
+          return { label: 'Landfall', value: 'No', detail: 'Remained at sea' };
+        }
         const maxWind = props.max_wind_kt || props.wind_kt;
         if (maxWind != null) {
           return { label: 'Wind', value: `${maxWind} kt`, detail: 'Maximum' };
@@ -228,30 +308,42 @@ const DisasterPopup = {
         const pathLen = props.path_length_miles || props.tornado_length_mi;
         const pathWidth = props.path_width_yards || props.tornado_width_yd;
         if (pathLen != null && pathLen > 0) {
-          const widthStr = pathWidth ? ` x ${pathWidth}yd` : '';
+          const widthStr = pathWidth ? `${pathWidth} yd wide` : '';
           return { label: 'Path', value: `${pathLen.toFixed(1)} mi`, detail: widthStr };
         }
         return { label: 'Impact', value: 'N/A', detail: '' };
 
       case 'wildfire':
-        const spread = props.spread_speed || props.spread_km_day;
-        if (spread != null) {
-          return { label: 'Spread', value: `${spread.toFixed(1)} km/d`, detail: '' };
+        // Show area burned in appropriate units
+        const areaKm2 = props.area_km2;
+        if (areaKm2 != null && areaKm2 > 0) {
+          if (areaKm2 >= 1000) {
+            return { label: 'Burned', value: `${(areaKm2/1000).toFixed(1)}K km2`, detail: '' };
+          }
+          return { label: 'Burned', value: `${Math.round(areaKm2)} km2`, detail: '' };
         }
-        const fireDuration = props.duration_days;
-        if (fireDuration != null) {
-          return { label: 'Duration', value: `${fireDuration} days`, detail: '' };
+        const acres = props.burned_acres;
+        if (acres != null && acres > 0) {
+          if (acres >= 1000) {
+            return { label: 'Burned', value: `${(acres/1000).toFixed(1)}K ac`, detail: '' };
+          }
+          return { label: 'Burned', value: `${Math.round(acres)} ac`, detail: '' };
         }
         return { label: 'Impact', value: 'N/A', detail: '' };
 
       case 'flood':
-        const dead = props.deaths;
-        if (dead != null && dead > 0) {
-          return { label: 'Deaths', value: dead.toLocaleString(), detail: '' };
-        }
-        const displaced = props.displaced_count;
+        // Show displaced population
+        const displaced = props.displaced;
         if (displaced != null && displaced > 0) {
-          return { label: 'Displaced', value: displaced.toLocaleString(), detail: '' };
+          return { label: 'Displaced', value: this.formatLargeNumber(displaced), detail: 'People' };
+        }
+        // Show area affected
+        const floodArea = props.area_km2;
+        if (floodArea != null && floodArea > 0) {
+          if (floodArea >= 1000) {
+            return { label: 'Area', value: `${(floodArea/1000).toFixed(1)}K km2`, detail: 'Affected' };
+          }
+          return { label: 'Area', value: `${Math.round(floodArea)} km2`, detail: 'Affected' };
         }
         return { label: 'Impact', value: 'N/A', detail: '' };
 
@@ -317,6 +409,47 @@ const DisasterPopup = {
   },
 
   /**
+   * Format a date nicely (e.g., "Jan 15, 2020")
+   */
+  formatDate(timestamp) {
+    if (!timestamp) return null;
+    const date = new Date(timestamp);
+    if (isNaN(date.getTime())) return null;
+    // Check for very old dates (before year 100)
+    const year = date.getUTCFullYear();
+    if (year < 100 && year > -100) {
+      return year < 0 ? `${Math.abs(year)} BCE` : `${year} CE`;
+    }
+    return date.toLocaleDateString('en-US', {
+      month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC'
+    });
+  },
+
+  /**
+   * Format a date range (e.g., "Jul 28 - Aug 5, 2020")
+   */
+  formatDateRange(startTimestamp, endTimestamp) {
+    const start = new Date(startTimestamp);
+    const end = new Date(endTimestamp);
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) return null;
+
+    const startYear = start.getUTCFullYear();
+    const endYear = end.getUTCFullYear();
+
+    if (startYear === endYear) {
+      // Same year: "Jul 28 - Aug 5, 2020"
+      const startStr = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+      const endStr = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+      return `${startStr} - ${endStr}`;
+    } else {
+      // Different years: "Dec 28, 2019 - Jan 5, 2020"
+      const startStr = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+      const endStr = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+      return `${startStr} - ${endStr}`;
+    }
+  },
+
+  /**
    * Get event subtitle (location, date)
    */
   getSubtitle(props, eventType) {
@@ -325,19 +458,29 @@ const DisasterPopup = {
     // Location
     if (props.place) {
       parts.push(props.place);
+    } else if (props.location) {
+      parts.push(props.location);
     } else if (props.location_name) {
       parts.push(props.location_name);
     } else if (props.country) {
       parts.push(props.country);
     }
 
-    // Date
-    if (props.timestamp) {
-      const date = new Date(props.timestamp);
-      if (!isNaN(date.getTime())) {
-        parts.push(date.toLocaleDateString());
-      }
+    // Date - prefer date ranges for events with duration
+    if (props.start_date && props.end_date) {
+      // Hurricane/storm date range
+      const range = this.formatDateRange(props.start_date, props.end_date);
+      if (range) parts.push(range);
+    } else if (props.timestamp && props.end_timestamp) {
+      // Volcano/flood date range
+      const range = this.formatDateRange(props.timestamp, props.end_timestamp);
+      if (range) parts.push(range);
+    } else if (props.timestamp) {
+      // Single timestamp
+      const dateStr = this.formatDate(props.timestamp);
+      if (dateStr) parts.push(dateStr);
     } else if (props.year) {
+      // Fallback to year only
       const yr = props.year < 0 ? `${Math.abs(props.year)} BCE` : props.year;
       parts.push(yr.toString());
     }
@@ -581,9 +724,14 @@ const DisasterPopup = {
     // Location
     if (data.place) {
       lines.push(`<div class="detail-row"><span class="detail-label">Location:</span> ${data.place}</div>`);
+    } else if (data.location) {
+      lines.push(`<div class="detail-row"><span class="detail-label">Location:</span> ${data.location}</div>`);
     }
     if (data.country) {
       lines.push(`<div class="detail-row"><span class="detail-label">Country:</span> ${data.country}</div>`);
+    }
+    if (data.region) {
+      lines.push(`<div class="detail-row"><span class="detail-label">Region:</span> ${data.region}</div>`);
     }
 
     // Coordinates
@@ -591,24 +739,128 @@ const DisasterPopup = {
       lines.push(`<div class="detail-row"><span class="detail-label">Coordinates:</span> ${data.latitude.toFixed(4)}, ${data.longitude.toFixed(4)}</div>`);
     }
 
-    // Date/time
-    if (data.timestamp) {
-      const date = new Date(data.timestamp);
-      lines.push(`<div class="detail-row"><span class="detail-label">Date/Time:</span> ${date.toLocaleString()}</div>`);
+    // Date/time - show full range if available
+    if (data.start_date && data.end_date) {
+      const range = this.formatDateRange(data.start_date, data.end_date);
+      if (range) {
+        lines.push(`<div class="detail-row"><span class="detail-label">Active Period:</span> ${range}</div>`);
+      }
+    } else if (data.timestamp && data.end_timestamp) {
+      const range = this.formatDateRange(data.timestamp, data.end_timestamp);
+      if (range) {
+        lines.push(`<div class="detail-row"><span class="detail-label">Active Period:</span> ${range}</div>`);
+      }
+    } else if (data.timestamp) {
+      const dateStr = this.formatDate(data.timestamp);
+      if (dateStr) {
+        lines.push(`<div class="detail-row"><span class="detail-label">Date:</span> ${dateStr}</div>`);
+      }
     } else if (data.year) {
       const yr = data.year < 0 ? `${Math.abs(data.year)} BCE` : data.year;
       lines.push(`<div class="detail-row"><span class="detail-label">Year:</span> ${yr}</div>`);
     }
 
-    // Type-specific
-    if (eventType === 'tsunami' && data.cause) {
-      lines.push(`<div class="detail-row"><span class="detail-label">Cause:</span> ${data.cause}</div>`);
+    // Duration (explicit or calculated)
+    if (data.duration_days != null && data.duration_days > 0) {
+      lines.push(`<div class="detail-row"><span class="detail-label">Duration:</span> ${data.duration_days} days</div>`);
     }
-    if (eventType === 'volcano' && data.activity_type) {
-      lines.push(`<div class="detail-row"><span class="detail-label">Activity:</span> ${data.activity_type}</div>`);
+
+    // Type-specific overview data
+    switch (eventType) {
+      case 'earthquake':
+        if (data.is_mainshock === true) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Type:</span> Mainshock</div>`);
+        } else if (data.is_mainshock === false) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Type:</span> Aftershock</div>`);
+        }
+        if (data.aftershock_count > 0) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Aftershocks:</span> ${data.aftershock_count}</div>`);
+        }
+        break;
+
+      case 'tsunami':
+        if (data.cause) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Cause:</span> ${data.cause}</div>`);
+        }
+        if (data.runup_count > 0) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Runup Count:</span> ${data.runup_count} observations</div>`);
+        }
+        break;
+
+      case 'volcano':
+        if (data.volcano_name) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Volcano:</span> ${data.volcano_name}</div>`);
+        }
+        if (data.activity_type) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Activity:</span> ${data.activity_type}</div>`);
+        }
+        if (data.is_ongoing) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Status:</span> Ongoing eruption</div>`);
+        }
+        break;
+
+      case 'hurricane':
+      case 'tropical_storm':
+        if (data.name) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Storm Name:</span> ${data.name}</div>`);
+        }
+        if (data.basin) {
+          const basinNames = { NA: 'North Atlantic', EP: 'East Pacific', WP: 'West Pacific', NI: 'North Indian', SI: 'South Indian', SP: 'South Pacific' };
+          lines.push(`<div class="detail-row"><span class="detail-label">Basin:</span> ${basinNames[data.basin] || data.basin}</div>`);
+        }
+        if (data.made_landfall === true) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Landfall:</span> Yes</div>`);
+        } else if (data.made_landfall === false) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Landfall:</span> No (remained at sea)</div>`);
+        }
+        if (data.num_positions > 0) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Track Points:</span> ${data.num_positions}</div>`);
+        }
+        break;
+
+      case 'tornado':
+        if (data.tornado_scale) {
+          const desc = this.getTornadoDescription(data.tornado_scale);
+          lines.push(`<div class="detail-row"><span class="detail-label">Scale:</span> ${data.tornado_scale}${desc ? ` (${desc})` : ''}</div>`);
+        }
+        if (data.sequence_count > 1) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Outbreak:</span> Part of ${data.sequence_count}-tornado sequence</div>`);
+        }
+        break;
+
+      case 'wildfire':
+        if (data.land_cover) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Vegetation:</span> ${data.land_cover}</div>`);
+        }
+        if (data.has_progression) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Progression:</span> Daily spread data available</div>`);
+        }
+        break;
+
+      case 'flood':
+        if (data.severity != null) {
+          const severityLabels = { 1: 'Minor', 2: 'Moderate', 3: 'Severe' };
+          lines.push(`<div class="detail-row"><span class="detail-label">Severity:</span> ${severityLabels[data.severity] || data.severity}</div>`);
+        }
+        if (data.has_geometry) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Extent:</span> Flood polygon available</div>`);
+        }
+        break;
     }
 
     return lines.join('\n') || '<div class="detail-empty">No overview data available</div>';
+  },
+
+  /**
+   * Format currency value
+   */
+  formatCurrency(value) {
+    if (value == null || value <= 0) return null;
+    if (value >= 1e12) return `$${(value / 1e12).toFixed(1)}T`;
+    if (value >= 1e9) return `$${(value / 1e9).toFixed(1)}B`;
+    if (value >= 1e6) return `$${(value / 1e6).toFixed(1)}M`;
+    if (value >= 1e3) return `$${(value / 1e3).toFixed(0)}K`;
+    return `$${value.toLocaleString()}`;
   },
 
   /**
@@ -617,40 +869,113 @@ const DisasterPopup = {
   buildImpactTab(data, eventType) {
     const lines = [];
 
-    // Deaths (deaths_direct used by tornadoes)
+    // Human impact section
+    let hasHumanImpact = false;
+
+    // Deaths - check multiple field names
     const deaths = data.deaths || data.deaths_direct;
     if (deaths != null && deaths > 0) {
       lines.push(`<div class="detail-row impact-deaths"><span class="detail-label">Deaths:</span> ${deaths.toLocaleString()}</div>`);
+      hasHumanImpact = true;
     }
 
-    // Injuries
+    // Indirect deaths (for tornadoes)
+    if (data.deaths_indirect != null && data.deaths_indirect > 0) {
+      lines.push(`<div class="detail-row"><span class="detail-label">Indirect Deaths:</span> ${data.deaths_indirect.toLocaleString()}</div>`);
+      hasHumanImpact = true;
+    }
+
+    // Injuries - check multiple field names
     const injuries = data.injuries || data.injuries_direct;
     if (injuries != null && injuries > 0) {
       lines.push(`<div class="detail-row"><span class="detail-label">Injuries:</span> ${injuries.toLocaleString()}</div>`);
+      hasHumanImpact = true;
     }
 
-    // Displaced
-    if (data.displaced_count != null && data.displaced_count > 0) {
-      lines.push(`<div class="detail-row"><span class="detail-label">Displaced:</span> ${data.displaced_count.toLocaleString()}</div>`);
+    // Indirect injuries (for tornadoes)
+    if (data.injuries_indirect != null && data.injuries_indirect > 0) {
+      lines.push(`<div class="detail-row"><span class="detail-label">Indirect Injuries:</span> ${data.injuries_indirect.toLocaleString()}</div>`);
+      hasHumanImpact = true;
     }
 
-    // Damage
-    const damage = data.damage_usd || data.damage_property;
-    if (damage != null && damage > 0) {
-      let damageStr;
-      if (damage >= 1e9) {
-        damageStr = `$${(damage / 1e9).toFixed(1)}B`;
-      } else if (damage >= 1e6) {
-        damageStr = `$${(damage / 1e6).toFixed(1)}M`;
-      } else {
-        damageStr = `$${damage.toLocaleString()}`;
-      }
-      lines.push(`<div class="detail-row"><span class="detail-label">Damage:</span> ${damageStr}</div>`);
+    // Displaced population
+    const displaced = data.displaced || data.displaced_count;
+    if (displaced != null && displaced > 0) {
+      lines.push(`<div class="detail-row"><span class="detail-label">Displaced:</span> ${this.formatLargeNumber(displaced)} people</div>`);
+      hasHumanImpact = true;
+    }
+
+    // Houses destroyed
+    if (data.houses_destroyed != null && data.houses_destroyed > 0) {
+      lines.push(`<div class="detail-row"><span class="detail-label">Houses Destroyed:</span> ${this.formatLargeNumber(data.houses_destroyed)}</div>`);
+      hasHumanImpact = true;
+    }
+
+    // Add separator if we have human impact
+    if (hasHumanImpact && (data.damage_usd || data.damage_property || data.damage_crops || data.damage_millions)) {
+      lines.push(`<div class="detail-separator"></div>`);
+    }
+
+    // Economic impact section
+    // Property damage - check multiple field names
+    const propertyDamage = data.damage_property || data.damage_usd;
+    const propertyStr = this.formatCurrency(propertyDamage);
+    if (propertyStr) {
+      lines.push(`<div class="detail-row"><span class="detail-label">Property Damage:</span> ${propertyStr}</div>`);
+    }
+
+    // Damage in millions (older records)
+    if (data.damage_millions != null && data.damage_millions > 0 && !propertyDamage) {
+      lines.push(`<div class="detail-row"><span class="detail-label">Damage:</span> $${data.damage_millions.toLocaleString()}M</div>`);
+    }
+
+    // Crop damage (for tornadoes)
+    const cropStr = this.formatCurrency(data.damage_crops);
+    if (cropStr) {
+      lines.push(`<div class="detail-row"><span class="detail-label">Crop Damage:</span> ${cropStr}</div>`);
+    }
+
+    // Physical extent section
+    if (lines.length > 0 && (data.area_km2 || data.burned_acres || data.felt_radius_km)) {
+      lines.push(`<div class="detail-separator"></div>`);
     }
 
     // Area affected
-    if (data.area_km2 != null) {
-      lines.push(`<div class="detail-row"><span class="detail-label">Area:</span> ${data.area_km2.toLocaleString()} km2</div>`);
+    if (data.area_km2 != null && data.area_km2 > 0) {
+      const areaStr = data.area_km2 >= 1000 ? `${(data.area_km2/1000).toFixed(1)}K km2` : `${Math.round(data.area_km2)} km2`;
+      lines.push(`<div class="detail-row"><span class="detail-label">Area Affected:</span> ${areaStr}</div>`);
+    }
+
+    // Burned acres (for wildfires)
+    if (data.burned_acres != null && data.burned_acres > 0) {
+      const acresStr = data.burned_acres >= 1000 ? `${(data.burned_acres/1000).toFixed(1)}K acres` : `${Math.round(data.burned_acres)} acres`;
+      lines.push(`<div class="detail-row"><span class="detail-label">Burned Area:</span> ${acresStr}</div>`);
+    }
+
+    // Felt radius (for earthquakes)
+    if (data.felt_radius_km != null && data.felt_radius_km > 0) {
+      const feltStr = data.felt_radius_km >= 1000 ? `${(data.felt_radius_km/1000).toFixed(1)}K km` : `${Math.round(data.felt_radius_km)} km`;
+      lines.push(`<div class="detail-row"><span class="detail-label">Felt Radius:</span> ${feltStr}</div>`);
+    }
+
+    // Damage radius
+    if (data.damage_radius_km != null && data.damage_radius_km > 0) {
+      lines.push(`<div class="detail-row"><span class="detail-label">Damage Radius:</span> ${Math.round(data.damage_radius_km)} km</div>`);
+    }
+
+    // Max runup distance (for tsunamis)
+    if (data.max_runup_dist_km != null && data.max_runup_dist_km > 0) {
+      lines.push(`<div class="detail-row"><span class="detail-label">Max Reach:</span> ${Math.round(data.max_runup_dist_km)} km</div>`);
+    }
+
+    // Tornado path
+    const pathLen = data.path_length_miles || data.tornado_length_mi;
+    const pathWidth = data.path_width_yards || data.tornado_width_yd;
+    if (pathLen != null && pathLen > 0) {
+      lines.push(`<div class="detail-row"><span class="detail-label">Path Length:</span> ${pathLen.toFixed(1)} miles</div>`);
+    }
+    if (pathWidth != null && pathWidth > 0) {
+      lines.push(`<div class="detail-row"><span class="detail-label">Path Width:</span> ${pathWidth} yards</div>`);
     }
 
     return lines.join('\n') || '<div class="detail-empty">No impact data recorded</div>';
@@ -670,11 +995,29 @@ const DisasterPopup = {
         if (data.depth_km != null) {
           lines.push(`<div class="detail-row"><span class="detail-label">Depth:</span> ${data.depth_km.toFixed(1)} km</div>`);
         }
+        if (data.intensity != null) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Intensity:</span> ${data.intensity} (MMI)</div>`);
+        }
         if (data.felt_radius_km != null) {
-          lines.push(`<div class="detail-row"><span class="detail-label">Felt radius:</span> ${Math.round(data.felt_radius_km)} km</div>`);
+          const feltStr = data.felt_radius_km >= 1000 ? `${(data.felt_radius_km/1000).toFixed(1)}K km` : `${Math.round(data.felt_radius_km)} km`;
+          lines.push(`<div class="detail-row"><span class="detail-label">Felt Radius:</span> ${feltStr}</div>`);
         }
         if (data.damage_radius_km != null) {
-          lines.push(`<div class="detail-row"><span class="detail-label">Damage radius:</span> ${Math.round(data.damage_radius_km)} km</div>`);
+          lines.push(`<div class="detail-row"><span class="detail-label">Damage Radius:</span> ${Math.round(data.damage_radius_km)} km</div>`);
+        }
+        // Sequence info
+        if (data.mainshock_id) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Mainshock ID:</span> ${data.mainshock_id}</div>`);
+        }
+        if (data.sequence_id) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Sequence ID:</span> ${data.sequence_id}</div>`);
+        }
+        // Related events
+        if (data.tsunami_event_id) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Triggered Tsunami:</span> ${data.tsunami_event_id}</div>`);
+        }
+        if (data.volcano_event_id) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Related Volcano:</span> ${data.volcano_event_id}</div>`);
         }
         break;
 
@@ -683,59 +1026,153 @@ const DisasterPopup = {
           lines.push(`<div class="detail-row"><span class="detail-label">Triggering EQ:</span> M${data.eq_magnitude.toFixed(1)}</div>`);
         }
         if (data.max_water_height_m != null) {
-          lines.push(`<div class="detail-row"><span class="detail-label">Max wave:</span> ${data.max_water_height_m.toFixed(1)} m</div>`);
+          lines.push(`<div class="detail-row"><span class="detail-label">Max Wave Height:</span> ${data.max_water_height_m.toFixed(1)} m</div>`);
         }
-        if (data.runup_count != null) {
-          lines.push(`<div class="detail-row"><span class="detail-label">Runups:</span> ${data.runup_count}</div>`);
+        if (data.intensity != null) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Tsunami Intensity:</span> ${data.intensity}</div>`);
+        }
+        if (data.runup_count != null && data.runup_count > 0) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Runup Observations:</span> ${data.runup_count}</div>`);
+        }
+        if (data.max_runup_dist_km != null && data.max_runup_dist_km > 0) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Furthest Runup:</span> ${Math.round(data.max_runup_dist_km)} km</div>`);
+        }
+        // Related events
+        if (data.eq_event_id) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Source EQ ID:</span> ${data.eq_event_id}</div>`);
+        }
+        if (data.volcano_name) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Source Volcano:</span> ${data.volcano_name}</div>`);
         }
         break;
 
       case 'volcano':
         if (data.VEI != null) {
-          lines.push(`<div class="detail-row"><span class="detail-label">VEI:</span> ${data.VEI}</div>`);
+          const veiDesc = ['Non-explosive', 'Gentle', 'Explosive', 'Severe', 'Cataclysmic', 'Paroxysmal', 'Colossal', 'Super-colossal', 'Mega-colossal'];
+          lines.push(`<div class="detail-row"><span class="detail-label">VEI:</span> ${data.VEI}${veiDesc[data.VEI] ? ` (${veiDesc[data.VEI]})` : ''}</div>`);
         }
         if (data.activity_type) {
-          lines.push(`<div class="detail-row"><span class="detail-label">Type:</span> ${data.activity_type}</div>`);
+          lines.push(`<div class="detail-row"><span class="detail-label">Activity Type:</span> ${data.activity_type}</div>`);
         }
-        if (data.felt_radius_km != null) {
-          lines.push(`<div class="detail-row"><span class="detail-label">Felt radius:</span> ${Math.round(data.felt_radius_km)} km</div>`);
+        if (data.activity_area) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Activity Area:</span> ${data.activity_area}</div>`);
+        }
+        if (data.volcano_number) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Volcano Number:</span> ${data.volcano_number}</div>`);
+        }
+        if (data.felt_radius_km != null && data.felt_radius_km > 0) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Felt Radius:</span> ${Math.round(data.felt_radius_km)} km</div>`);
+        }
+        if (data.damage_radius_km != null && data.damage_radius_km > 0) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Damage Radius:</span> ${Math.round(data.damage_radius_km)} km</div>`);
+        }
+        // Related events
+        if (data.earthquake_event_ids) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Related EQs:</span> ${data.earthquake_event_ids}</div>`);
+        }
+        if (data.tsunami_event_ids) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Triggered Tsunamis:</span> ${data.tsunami_event_ids}</div>`);
         }
         break;
 
       case 'tornado':
         if (data.tornado_scale) {
-          lines.push(`<div class="detail-row"><span class="detail-label">Scale:</span> ${data.tornado_scale}</div>`);
+          const desc = this.getTornadoDescription(data.tornado_scale);
+          lines.push(`<div class="detail-row"><span class="detail-label">Scale:</span> ${data.tornado_scale}${desc ? ` (${desc})` : ''}</div>`);
         }
-        if (data.path_length_miles != null) {
-          lines.push(`<div class="detail-row"><span class="detail-label">Path length:</span> ${data.path_length_miles.toFixed(1)} miles</div>`);
+        if (data.magnitude != null) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Magnitude:</span> ${data.magnitude}</div>`);
         }
-        if (data.path_width_yards != null) {
-          lines.push(`<div class="detail-row"><span class="detail-label">Path width:</span> ${data.path_width_yards} yards</div>`);
+        const pathLen = data.path_length_miles || data.tornado_length_mi;
+        if (pathLen != null && pathLen > 0) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Path Length:</span> ${pathLen.toFixed(1)} miles</div>`);
+        }
+        const pathWidth = data.path_width_yards || data.tornado_width_yd;
+        if (pathWidth != null && pathWidth > 0) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Path Width:</span> ${pathWidth} yards</div>`);
+        }
+        // End coordinates
+        if (data.end_latitude != null && data.end_longitude != null) {
+          lines.push(`<div class="detail-row"><span class="detail-label">End Point:</span> ${data.end_latitude.toFixed(4)}, ${data.end_longitude.toFixed(4)}</div>`);
+        }
+        // Sequence info
+        if (data.sequence_count > 1) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Outbreak Size:</span> ${data.sequence_count} tornadoes</div>`);
+        }
+        if (data.sequence_position != null) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Sequence Position:</span> #${data.sequence_position}</div>`);
         }
         break;
 
       case 'wildfire':
-        if (data.area_km2 != null) {
-          lines.push(`<div class="detail-row"><span class="detail-label">Area:</span> ${data.area_km2.toLocaleString()} km2</div>`);
+        if (data.area_km2 != null && data.area_km2 > 0) {
+          const areaStr = data.area_km2 >= 1000 ? `${(data.area_km2/1000).toFixed(1)}K km2` : `${data.area_km2.toFixed(1)} km2`;
+          lines.push(`<div class="detail-row"><span class="detail-label">Area:</span> ${areaStr}</div>`);
         }
-        if (data.duration_days != null) {
+        if (data.burned_acres != null && data.burned_acres > 0) {
+          const acresStr = data.burned_acres >= 1000 ? `${(data.burned_acres/1000).toFixed(1)}K acres` : `${Math.round(data.burned_acres)} acres`;
+          lines.push(`<div class="detail-row"><span class="detail-label">Burned Acres:</span> ${acresStr}</div>`);
+        }
+        if (data.duration_days != null && data.duration_days > 0) {
           lines.push(`<div class="detail-row"><span class="detail-label">Duration:</span> ${data.duration_days} days</div>`);
         }
         if (data.land_cover) {
           lines.push(`<div class="detail-row"><span class="detail-label">Vegetation:</span> ${data.land_cover}</div>`);
         }
+        if (data.has_progression) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Progression Data:</span> Available</div>`);
+        }
         break;
 
       case 'hurricane':
       case 'tropical_storm':
+        if (data.max_category) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Max Category:</span> ${data.max_category}</div>`);
+        }
         if (data.max_wind_kt != null) {
-          lines.push(`<div class="detail-row"><span class="detail-label">Max wind:</span> ${data.max_wind_kt} kt</div>`);
+          lines.push(`<div class="detail-row"><span class="detail-label">Max Wind:</span> ${data.max_wind_kt} kt (${Math.round(data.max_wind_kt * 1.15)} mph)</div>`);
         }
         if (data.min_pressure_mb != null) {
-          lines.push(`<div class="detail-row"><span class="detail-label">Min pressure:</span> ${data.min_pressure_mb} mb</div>`);
+          lines.push(`<div class="detail-row"><span class="detail-label">Min Pressure:</span> ${data.min_pressure_mb} mb</div>`);
         }
         if (data.basin) {
-          lines.push(`<div class="detail-row"><span class="detail-label">Basin:</span> ${data.basin}</div>`);
+          const basinNames = { NA: 'North Atlantic', EP: 'East Pacific', WP: 'West Pacific', NI: 'North Indian', SI: 'South Indian', SP: 'South Pacific' };
+          lines.push(`<div class="detail-row"><span class="detail-label">Basin:</span> ${basinNames[data.basin] || data.basin}</div>`);
+        }
+        if (data.subbasin) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Sub-basin:</span> ${data.subbasin}</div>`);
+        }
+        if (data.source_agency) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Source Agency:</span> ${data.source_agency}</div>`);
+        }
+        if (data.has_wind_radii) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Wind Radii:</span> Available</div>`);
+        }
+        break;
+
+      case 'flood':
+        if (data.severity != null) {
+          const severityLabels = { 1: 'Minor (1)', 2: 'Moderate (2)', 3: 'Severe (3)' };
+          lines.push(`<div class="detail-row"><span class="detail-label">Severity:</span> ${severityLabels[data.severity] || data.severity}</div>`);
+        }
+        if (data.area_km2 != null && data.area_km2 > 0) {
+          const areaStr = data.area_km2 >= 1000 ? `${(data.area_km2/1000).toFixed(1)}K km2` : `${Math.round(data.area_km2)} km2`;
+          lines.push(`<div class="detail-row"><span class="detail-label">Area:</span> ${areaStr}</div>`);
+        }
+        if (data.duration_days != null && data.duration_days > 0) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Duration:</span> ${data.duration_days} days</div>`);
+        }
+        if (data.dfo_id) {
+          lines.push(`<div class="detail-row"><span class="detail-label">DFO ID:</span> ${data.dfo_id}</div>`);
+        }
+        if (data.glide_index) {
+          lines.push(`<div class="detail-row"><span class="detail-label">GLIDE Index:</span> ${data.glide_index}</div>`);
+        }
+        if (data.has_geometry) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Flood Polygon:</span> Available</div>`);
+        }
+        if (data.has_progression) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Progression Data:</span> Available</div>`);
         }
         break;
     }
@@ -945,6 +1382,49 @@ const DisasterPopup = {
     `;
 
     return html;
+  },
+
+  /**
+   * Build unified hover HTML for all disaster types.
+   * Styled to match the click popups with color-coding.
+   * Shows: Name, Date, Intensity, "Click for details"
+   * @param {Object} props - Feature properties
+   * @param {string} eventType - Event type
+   * @returns {string} HTML string
+   */
+  buildHoverHtml(props, eventType) {
+    const icon = this.icons[eventType] || this.icons.generic;
+    const color = this.colors[eventType] || this.colors.generic;
+    const title = this.getTitle(props, eventType);
+
+    // Get date - prefer date ranges, fallback to single date/year
+    let dateStr = '';
+    if (props.start_date && props.end_date) {
+      dateStr = this.formatDateRange(props.start_date, props.end_date) || '';
+    } else if (props.timestamp && props.end_timestamp) {
+      dateStr = this.formatDateRange(props.timestamp, props.end_timestamp) || '';
+    } else if (props.timestamp) {
+      dateStr = this.formatDate(props.timestamp) || '';
+    } else if (props.year) {
+      dateStr = props.year < 0 ? `${Math.abs(props.year)} BCE` : props.year.toString();
+    }
+
+    // Get intensity/power value
+    const power = this.formatPower(props, eventType);
+    const intensityStr = power.value !== 'N/A' ? power.value : '';
+
+    // Build compact hover HTML with styling
+    return `
+      <div class="disaster-hover" style="border-left: 3px solid ${color}">
+        <div class="hover-header">
+          <span class="hover-icon" style="background: ${color}">${icon}</span>
+          <span class="hover-title">${title}</span>
+        </div>
+        ${dateStr ? `<div class="hover-date">${dateStr}</div>` : ''}
+        ${intensityStr ? `<div class="hover-intensity">${intensityStr}${power.detail ? ` <span class="hover-detail">${power.detail}</span>` : ''}</div>` : ''}
+        <div class="hover-hint">Click for details</div>
+      </div>
+    `;
   },
 
   /**

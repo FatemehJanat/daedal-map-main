@@ -87,6 +87,34 @@
       font-family: monospace;
     }
 
+    /* Globe toggle */
+    #globeToggle {
+      position: absolute;
+      top: 10px;
+      right: 100px;
+      z-index: 1000;
+      background: rgba(0, 0, 0, 0.7);
+      padding: 6px 10px;
+      border-radius: 4px;
+      color: white;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    #globeToggle label {
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    #globeToggle input[type="checkbox"] {
+      width: 14px;
+      height: 14px;
+      cursor: pointer;
+      accent-color: #5dade2;
+    }
+
     /* Admin level buttons - quick zoom to specific levels */
     #levelButtons {
       position: absolute;
@@ -1557,6 +1585,17 @@
       border-bottom: none;
     }
 
+    .detail-separator {
+      height: 1px;
+      background: #ddd;
+      margin: 8px 0;
+    }
+
+    .impact-deaths {
+      color: #c62828;
+      font-weight: 500;
+    }
+
     .detail-label {
       font-weight: 500;
       color: #666;
@@ -1582,6 +1621,67 @@
 
     .impact-deaths {
       color: #d32f2f;
+    }
+
+    /* Unified Disaster Hover Styles */
+    .disaster-hover {
+      background: #fff;
+      padding: 8px 10px;
+      border-radius: 4px;
+      min-width: 160px;
+      max-width: 240px;
+    }
+
+    .hover-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+
+    .hover-icon {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: bold;
+      color: white;
+      flex-shrink: 0;
+    }
+
+    .hover-title {
+      font-weight: 600;
+      font-size: 13px;
+      color: #333;
+      line-height: 1.2;
+    }
+
+    .hover-date {
+      font-size: 11px;
+      color: #666;
+      margin-bottom: 2px;
+    }
+
+    .hover-intensity {
+      font-size: 12px;
+      color: #444;
+      font-weight: 500;
+    }
+
+    .hover-detail {
+      font-weight: 400;
+      color: #888;
+      font-size: 11px;
+    }
+
+    .hover-hint {
+      font-size: 10px;
+      color: #0f4c75;
+      margin-top: 6px;
+      font-style: italic;
     }
 
     /* Sequence view styles */
@@ -1845,6 +1945,9 @@
   <div id="mapContainer">
     <div id="map"></div>
     <div id="breadcrumb"></div>
+    <div id="globeToggle">
+      <label><input type="checkbox" id="globeCheckbox"> Globe</label>
+    </div>
     <div id="zoomLevel">Zoom: 0.0</div>
     <div id="levelButtons">
       <button data-level="0" title="Countries (zoom ~2)">World</button>

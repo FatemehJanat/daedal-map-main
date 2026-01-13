@@ -78,14 +78,22 @@ export const TrackModel = {
     }
 
     if (!geojson || !geojson.features || geojson.features.length === 0) {
-      console.log('TrackModel: No features to display');
+      console.log('TrackModel: No features to display, clearing existing layers');
+      this.clear();
       return;
     }
 
-    // Clear existing layers
-    this.clearMarkers();
-
     const map = MapAdapter.map;
+
+    // Check if source already exists - if so, just update data (no flash)
+    const existingSource = map.getSource(CONFIG.layers.hurricaneSource);
+    if (existingSource) {
+      // Source exists - just update data, don't recreate layers
+      existingSource.setData(geojson);
+      return true;
+    }
+
+    // First time render - create source and layers
     const categoryColorExpr = this._buildCategoryColorExpr();
 
     // Detect geometry type from first feature
@@ -114,9 +122,13 @@ export const TrackModel = {
 
   /**
    * Render storm track lines for yearly overview.
+   * Supports lifecycle opacity via _opacity property for rolling time animation.
    * @private
    */
   _renderTrackLines(map, categoryColorExpr, options) {
+    // Lifecycle opacity expression: uses _opacity property or defaults to 1.0
+    const lifecycleOpacity = ['coalesce', ['get', '_opacity'], 1.0];
+
     // Add track line layer (colored by max category)
     map.addLayer({
       id: CONFIG.layers.hurricaneCircle + '-lines',
@@ -130,7 +142,7 @@ export const TrackModel = {
           5, 3,
           8, 4
         ],
-        'line-opacity': 0.8
+        'line-opacity': ['*', 0.8, lifecycleOpacity]
       }
     });
 
@@ -147,7 +159,7 @@ export const TrackModel = {
           5, 8,
           8, 12
         ],
-        'line-opacity': 0.2,
+        'line-opacity': ['*', 0.2, lifecycleOpacity],
         'line-blur': 3
       }
     }, CONFIG.layers.hurricaneCircle + '-lines');  // Below main line
@@ -186,16 +198,8 @@ export const TrackModel = {
       if (e.features.length > 0) {
         const feature = e.features[0];
         const props = feature.properties;
-        // Use first point of track (genesis location) for popup position
-        let coords = null;
-        if (feature.geometry?.coordinates?.length > 0) {
-          const firstPoint = feature.geometry.coordinates[0];
-          coords = Array.isArray(firstPoint[0]) ? firstPoint[0] : firstPoint;
-        }
-        // Fallback to click location if no geometry
-        if (!coords && e.lngLat) {
-          coords = [e.lngLat.lng, e.lngLat.lat];
-        }
+        // Use click location for popup position (not genesis point)
+        const coords = e.lngLat ? [e.lngLat.lng, e.lngLat.lat] : null;
         // Show unified disaster popup
         if (coords) {
           DisasterPopup.show(coords, props, 'hurricane');
@@ -210,6 +214,19 @@ export const TrackModel = {
     });
     map.on('mouseleave', CONFIG.layers.hurricaneCircle + '-lines', () => {
       map.getCanvas().style.cursor = '';
+      if (!MapAdapter.popupLocked) {
+        MapAdapter.hidePopup();
+      }
+    });
+
+    // Hover popup for lines - use unified DisasterPopup hover system
+    map.on('mousemove', CONFIG.layers.hurricaneCircle + '-lines', (e) => {
+      if (TimeSlider?.isPlaying) return;
+      if (e.features.length > 0 && !MapAdapter.popupLocked) {
+        const props = e.features[0].properties;
+        const html = DisasterPopup.buildHoverHtml(props, 'hurricane');
+        MapAdapter.showPopup([e.lngLat.lng, e.lngLat.lat], html);
+      }
     });
   },
 
@@ -293,6 +310,19 @@ export const TrackModel = {
     });
     map.on('mouseleave', CONFIG.layers.hurricaneCircle, () => {
       map.getCanvas().style.cursor = '';
+      if (!MapAdapter.popupLocked) {
+        MapAdapter.hidePopup();
+      }
+    });
+
+    // Hover popup for points - use unified DisasterPopup hover system
+    map.on('mousemove', CONFIG.layers.hurricaneCircle, (e) => {
+      if (TimeSlider?.isPlaying) return;
+      if (e.features.length > 0 && !MapAdapter.popupLocked) {
+        const props = e.features[0].properties;
+        const html = DisasterPopup.buildHoverHtml(props, 'hurricane');
+        MapAdapter.showPopup([e.lngLat.lng, e.lngLat.lat], html);
+      }
     });
   },
 
