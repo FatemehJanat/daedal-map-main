@@ -31,3 +31,11 @@ import { fetchMsgpack, postMsgpack } from './utils/fetch.js';
 const data = await fetchMsgpack('/api/earthquakes');
 const result = await postMsgpack('/api/settings', { theme: 'dark' });
 ```
+
+When in doubt read C:\Users\Bryan\Desktop\county-map\docs\CONTEXT.md to help guide you to the right path to understanding.
+
+No coding with emojis, only characters that dont cause encoding issues.
+
+The project is on windows, when doing folder searches and bash commands dont try linux they'll fail everytime.
+
+launch agents in county-map folder, not webtest when you're searching for code

@@ -21,10 +21,10 @@ export const CONFIG = {
 
   // Colors
   colors: {
-    // Focal area (center of viewport) - green tones
-    focalFill: '#228855',       // Green
+    // Focal area (center of viewport) - purple tones
+    focalFill: '#8844aa',       // Purple
     focalFillOpacity: 0.45,
-    focalStroke: '#116633',     // Dark green stroke
+    focalStroke: '#663388',     // Dark purple stroke
     // Surrounding areas - blue tones
     fill: '#2266aa',            // Blue
     fillOpacity: 0.35,

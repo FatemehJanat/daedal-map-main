@@ -14,12 +14,13 @@ Location: `county-map-data/global/`
 
 | Source | Path | Total Records | Filtered (frontend) | Years |
 |--------|------|---------------|---------------------|-------|
-| USGS Earthquakes | usgs_earthquakes/ | 1,053,285 | 2,804 (M5.5+, 2020+) | 1900-2026 |
+| USGS Earthquakes | earthquakes/ | 1,055,868 | 2,804 (M5.5+, 2020+) | 2150 BC-2026 |
 | IBTrACS Hurricanes | tropical_storms/ | 13,541 storms | 273 (Cat1+, 2020+) | 1842-2026 |
 | NOAA Tsunamis | tsunamis/ | 2,619 events | 105 (2020+) | -2000-2025 |
 | Smithsonian Volcanoes | smithsonian_volcanoes/ | 11,079 eruptions | 194 (2020+) | Holocene |
 | Global Wildfires | wildfires/by_year/ | ~940K/year | ~3,200/year (100km2+) | 2002-2024 |
 | Global Floods | floods/ | 4,825 events | 1,239 (2010+) | 1985-2019 |
+| Global Landslides | landslides/ | 45,483 events | TBD | 1760-2025 |
 
 ### Frontend Filter Summary
 
@@ -53,36 +54,38 @@ Location: `county-map-data/countries/USA/`
 
 ---
 
-## Raw Data (Downloaded, Needs Processing)
+## Raw Data Status
 
 Location: `county-map-data/Raw data/`
 
-### Canada
-| Source | Size | Status |
-|--------|------|--------|
-| Canada Fire (CNFDB) | 789 MB | Downloaded |
-| Canada Drought | 1.0 GB | Downloaded |
-| Canada Earthquakes | 12 MB | Downloaded |
+**Note:** See [RAW_DATA_CLEANUP_STATUS.md](RAW_DATA_CLEANUP_STATUS.md) for detailed cleanup guidance
 
-### Australia
-| Source | Size | Status |
-|--------|------|--------|
-| Australia Cyclones | 7.6 MB | Downloaded |
+### Converted (Raw Data Can Be Deleted)
 
-### Europe
-| Source | Size | Status |
-|--------|------|--------|
-| Eurostat NUTS 3 | 5.9 MB | Downloaded |
+| Source | Raw Size | Processed Location | Records |
+|--------|----------|-------------------|---------|
+| Eurostat NUTS 3 | 6 MB | global/eurostat/ | NUTS3 regions |
+| ReliefWeb | Empty | global/reliefweb_disasters/ | 18,371 disasters |
+| DesInventar | ~100 MB | global/desinventar/ | 86 countries |
+| PAGER-CAT | 31 MB | global/pager_cat/ | 7,500+ earthquakes |
+| NASA Landslides | 3.4 MB | global/nasa_landslides/ | 11,033 events |
+| Flood Events (GFM/GFD) | 2 MB | global/floods/ | 4,825 events |
+| Canada Earthquakes | 12 MB | countries/CAN/nrcan_earthquakes/ | 101,366 events |
+| Australia Cyclones | 7.6 MB | countries/AUS/bom_cyclones/ | 31,221 positions |
 
-### Other/Global
-| Source | Size | Status |
-|--------|------|--------|
-| HDX/EM-DAT Global | 390 KB | Downloaded |
-| ReliefWeb | 6.9 MB | Downloaded |
-| EPA Air Quality | 2.8 MB | Downloaded |
-| EIA Energy | 1.4 GB | Downloaded |
-| Flood Events (GFM) | 732 KB | Downloaded |
-| Flood Events (GFD) | 1.2 MB | Downloaded |
+**Action:** Raw data for above sources can be deleted (keep metadata JSONs for re-download info)
+
+### Unprocessed (Needs Decision)
+
+| Source | Size | Location | Recommendation |
+|--------|------|----------|----------------|
+| Canada Fire (CNFDB) | 789 MB | Raw data/imported/canada/cnfdb/ | **PROCESS - fills critical gap** |
+| Canada Drought | 1.0 GB | Raw data/imported/canada/drought/ | **PROCESS - no global drought** |
+| EPA Air Quality | 2.8 MB | Raw data/imported/epa_aqs/ | OUT OF SCOPE? |
+| EIA Energy | 1.4 GB | Raw data/eia/ | OUT OF SCOPE? |
+| HDX/EM-DAT | 390 KB | Raw data/imported/hdx/ | DELETE - DesInventar covers this |
+
+**Note:** See [CANADA_DATA_ANALYSIS.md](CANADA_DATA_ANALYSIS.md) for detailed drought/fire gap analysis.
 
 ---
 
@@ -139,17 +142,24 @@ Location: `data_converters/downloaders/`
 | Source | Issue |
 |--------|-------|
 | FEMA NFHL Flood Zones | hazards.fema.gov infrastructure down |
-| DesInventar (82 countries) | Server defunct |
 | Canadian Disaster Database | Interactive only, no bulk API |
 
 ---
 
 ## Future Work
 
+See [disaster_upgrades.md](future/disaster_upgrades.md) for comprehensive upgrade plans including:
+- Fire aggregates product (multi-region fire impact tracking)
+- Global fire risk product (inspired by US USFS wildfire risk)
+- loc_id enrichment for fires and floods
+- Fire progression data gaps (2008 incomplete)
+- Live data pipeline integration
+
 **In Progress:**
 - Fill flood gap 2020-present (event-driven LANCE approach)
 - Create converters for international data (Canada, Australia, Europe)
 - Import international geometry (LGA, CSD, NUTS boundaries)
+- Fire/flood loc_id enrichment (~20 hours processing)
 
 **Blocked:**
 - FEMA NFHL flood zones (infrastructure down)
@@ -158,6 +168,48 @@ Location: `data_converters/downloaders/`
 - NRI Census Tracts (85K+ records, finer granularity)
 - CDC PLACES county health data
 - NOAA Sea Level Rise projections
+
+---
+
+---
+
+## Impact Data Sources
+
+Location: `county-map-data/global/`
+
+### Converted Multi-Hazard Databases
+
+| Source | Events | Coverage | Impact Data | Status |
+|--------|--------|----------|-------------|--------|
+| **DesInventar** | 86 countries | Multi-hazard | Deaths, injuries, damage, houses destroyed | COMPLETE |
+| **ReliefWeb** | 18,371 disasters | Global, 1981+ | Humanitarian impact (text-based) | COMPLETE |
+| **PAGER-CAT** | 7,500+ earthquakes | Global, 1900-2007 | Deaths, injuries, damage (detailed) | COMPLETE |
+
+### Unified Landslide Catalog
+
+**Source:** Merged from DesInventar, NASA GLC, and NOAA Debris Flows
+**Location:** `global/landslides/`
+
+| Metric | Value |
+|--------|-------|
+| Total Events | 45,483 unique events |
+| Countries | 160 |
+| Time Span | 1760-2025 (344 years) |
+| Deaths Documented | 60,485 |
+| Injuries Documented | 17,499 |
+| Damage (US only) | $1.6 billion |
+
+**Source breakdown:**
+- DesInventar: 32,039 landslides (33 countries, Latin America + South Asia)
+- NASA GLC: 10,937 landslides (116 countries, global news-based)
+- NOAA: 2,411 debris flows (39 US states)
+- Multi-source verified: 96 events (0.2%)
+
+**Key features:**
+- Multi-source verification for critical events
+- Structured impact data (no text parsing needed)
+- Geographic precision with lat/lon coordinates
+- Country-level source tracking in metadata
 
 ---
 

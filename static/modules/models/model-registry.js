@@ -27,6 +27,7 @@ const TYPE_TO_MODEL = {
   // Polygon events (Model C) - but using point-radius for overview
   wildfire: 'point-radius',  // Points for overview, perimeter on-demand for animation
   flood: 'point-radius',     // Points for overview, polygon on-demand for animation
+  drought: 'polygon',        // Drought polygons for choropleth animation
   ash_cloud: 'polygon',
   drought_area: 'polygon'
 };

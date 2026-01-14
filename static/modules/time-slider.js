@@ -149,6 +149,15 @@ export const TimeSlider = {
   _previousSpeedSlider: null, // Saved speed when entering event mode
   playTimeout: null,       // For new stepsPerFrame-based playback
 
+  // Time range bounds - constrain playback/stepping to subset of full range
+  lowerBoundSlider: null,  // DOM element for lower bound slider
+  upperBoundSlider: null,  // DOM element for upper bound slider
+  lowerBoundLabel: null,   // DOM element for lower bound label
+  upperBoundLabel: null,   // DOM element for upper bound label
+  clearBoundsBtn: null,    // DOM element for clear bounds button
+  boundMinTime: null,      // Lower bound time (null = use minTime)
+  boundMaxTime: null,      // Upper bound time (null = use maxTime)
+
   // Data state
   timeData: null,      // {time: {loc_id: {metric: value}}} - original data (time = year or timestamp)
   timeDataFilled: null, // {time: {loc_id: {metric, data_time}}} - with gaps filled
@@ -262,6 +271,13 @@ export const TimeSlider = {
     this.tabContainer = document.getElementById('timeSliderTabs');
     this.metricTabContainer = document.getElementById('metricTabs');
 
+    // Cache bounds control elements
+    this.lowerBoundSlider = document.getElementById('lowerBoundSlider');
+    this.upperBoundSlider = document.getElementById('upperBoundSlider');
+    this.lowerBoundLabel = document.getElementById('lowerBoundLabel');
+    this.upperBoundLabel = document.getElementById('upperBoundLabel');
+    this.clearBoundsBtn = document.getElementById('clearBoundsBtn');
+
     if (!this.container || !this.slider) {
       console.warn('TimeSlider: DOM elements not found');
       return;
@@ -272,7 +288,7 @@ export const TimeSlider = {
     this.useTimestamps = ['6h', 'daily', 'weekly', 'monthly'].includes(this.granularity);
 
     // Set default range - normalize to timestamps
-    const defaultMinYear = options.minTime || 1900;
+    const defaultMinYear = options.minTime || 2000;
     const defaultMaxYear = options.maxTime || new Date().getFullYear();
     this.minTime = this.normalizeToTimestamp(defaultMinYear);
     this.maxTime = this.normalizeToTimestamp(defaultMaxYear);
@@ -285,6 +301,18 @@ export const TimeSlider = {
     this.minLabel.textContent = this.formatTimeLabel(this.minTime);
     this.maxLabel.textContent = this.formatTimeLabel(this.maxTime);
     this.yearLabel.textContent = this.formatTimeLabel(this.currentTime);
+
+    // Configure bounds sliders with default range
+    if (this.lowerBoundSlider && this.upperBoundSlider) {
+      this.lowerBoundSlider.min = this.minTime;
+      this.lowerBoundSlider.max = this.maxTime;
+      this.lowerBoundSlider.value = this.minTime;
+      this.upperBoundSlider.min = this.minTime;
+      this.upperBoundSlider.max = this.maxTime;
+      this.upperBoundSlider.value = this.maxTime;
+      this.lowerBoundLabel.textContent = this.formatTimeLabel(this.minTime);
+      this.upperBoundLabel.textContent = this.formatTimeLabel(this.maxTime);
+    }
 
     // Setup event listeners (only once)
     if (!this.listenersSetup) {
@@ -979,6 +1007,21 @@ export const TimeSlider = {
     this.configureSliderScale();
     this.titleLabel.textContent = metricKey || 'Time';
 
+    // Configure bounds sliders to match main slider range
+    if (this.lowerBoundSlider && this.upperBoundSlider) {
+      this.lowerBoundSlider.min = this.useIndexedScale ? 0 : this.minTime;
+      this.lowerBoundSlider.max = this.useIndexedScale ? this.sortedTimes.length - 1 : this.maxTime;
+      this.lowerBoundSlider.value = this.lowerBoundSlider.min;
+      this.upperBoundSlider.min = this.useIndexedScale ? 0 : this.minTime;
+      this.upperBoundSlider.max = this.useIndexedScale ? this.sortedTimes.length - 1 : this.maxTime;
+      this.upperBoundSlider.value = this.upperBoundSlider.max;
+      this.lowerBoundLabel.textContent = this.formatTimeLabel(this.minTime);
+      this.upperBoundLabel.textContent = this.formatTimeLabel(this.maxTime);
+      // Reset bounds to null (full range)
+      this.boundMinTime = null;
+      this.boundMaxTime = null;
+    }
+
     // Setup event listeners (only once)
     if (!this.listenersSetup) {
       this.setupEventListeners();
@@ -1054,6 +1097,61 @@ export const TimeSlider = {
         this.playFast(1);  // Fast forward
       }
     });
+
+    // Time range bounds controls
+    this.lowerBoundSlider?.addEventListener('input', (e) => {
+      // Get values from sliders (handle both indexed and linear modes)
+      let lowerValue, upperValue;
+      if (this.useIndexedScale) {
+        lowerValue = this.indexToTime(parseInt(this.lowerBoundSlider.value));
+        upperValue = this.indexToTime(parseInt(this.upperBoundSlider.value));
+      } else {
+        lowerValue = this.useTimestamps ? parseFloat(this.lowerBoundSlider.value) : parseInt(this.lowerBoundSlider.value);
+        upperValue = this.useTimestamps ? parseFloat(this.upperBoundSlider.value) : parseInt(this.upperBoundSlider.value);
+      }
+
+      // Ensure lower doesn't exceed upper
+      if (lowerValue > upperValue) {
+        this.lowerBoundSlider.value = this.upperBoundSlider.value;
+        this.boundMinTime = upperValue;
+      } else {
+        this.boundMinTime = lowerValue;
+      }
+      this.lowerBoundLabel.textContent = this.formatTimeLabel(this.boundMinTime);
+      console.log(`Lower bound set to ${this.formatTimeLabel(this.boundMinTime)}`);
+    });
+
+    this.upperBoundSlider?.addEventListener('input', (e) => {
+      // Get values from sliders (handle both indexed and linear modes)
+      let lowerValue, upperValue;
+      if (this.useIndexedScale) {
+        lowerValue = this.indexToTime(parseInt(this.lowerBoundSlider.value));
+        upperValue = this.indexToTime(parseInt(this.upperBoundSlider.value));
+      } else {
+        lowerValue = this.useTimestamps ? parseFloat(this.lowerBoundSlider.value) : parseInt(this.lowerBoundSlider.value);
+        upperValue = this.useTimestamps ? parseFloat(this.upperBoundSlider.value) : parseInt(this.upperBoundSlider.value);
+      }
+
+      // Ensure upper doesn't go below lower
+      if (upperValue < lowerValue) {
+        this.upperBoundSlider.value = this.lowerBoundSlider.value;
+        this.boundMaxTime = lowerValue;
+      } else {
+        this.boundMaxTime = upperValue;
+      }
+      this.upperBoundLabel.textContent = this.formatTimeLabel(this.boundMaxTime);
+      console.log(`Upper bound set to ${this.formatTimeLabel(this.boundMaxTime)}`);
+    });
+
+    this.clearBoundsBtn?.addEventListener('click', () => {
+      this.boundMinTime = null;
+      this.boundMaxTime = null;
+      this.lowerBoundSlider.value = this.lowerBoundSlider.min;
+      this.upperBoundSlider.value = this.upperBoundSlider.max;
+      this.lowerBoundLabel.textContent = this.formatTimeLabel(this.minTime);
+      this.upperBoundLabel.textContent = this.formatTimeLabel(this.maxTime);
+      console.log('Bounds cleared');
+    });
   },
 
   /**
@@ -1122,14 +1220,18 @@ export const TimeSlider = {
 
   /**
    * Step to next time (amount based on current speed)
+   * Respects time range bounds if set
    */
   stepToNext() {
     const stepMs = this.getSpeedBasedStep();
     let nextTime = this.currentTime + stepMs;
 
-    // Clamp to max
-    if (nextTime > this.maxTime) {
-      nextTime = this.maxTime;
+    // Use bounded max if set, otherwise use global max
+    const effectiveMax = this.boundMaxTime !== null ? this.boundMaxTime : this.maxTime;
+
+    // Clamp to effective max
+    if (nextTime > effectiveMax) {
+      nextTime = effectiveMax;
     }
 
     this.setTime(nextTime);
@@ -1137,14 +1239,18 @@ export const TimeSlider = {
 
   /**
    * Step to previous time (amount based on current speed)
+   * Respects time range bounds if set
    */
   stepToPrev() {
     const stepMs = this.getSpeedBasedStep();
     let prevTime = this.currentTime - stepMs;
 
-    // Clamp to min
-    if (prevTime < this.minTime) {
-      prevTime = this.minTime;
+    // Use bounded min if set, otherwise use global min
+    const effectiveMin = this.boundMinTime !== null ? this.boundMinTime : this.minTime;
+
+    // Clamp to effective min
+    if (prevTime < effectiveMin) {
+      prevTime = effectiveMin;
     }
 
     this.setTime(prevTime);
@@ -1793,14 +1899,18 @@ export const TimeSlider = {
         // Always advance every frame (no slideshow mode holding)
         const stepMs = TIME_SYSTEM.BASE_STEP_MS * this.stepsPerFrame;
 
+        // Use bounded range if set, otherwise use global range
+        const effectiveMin = this.boundMinTime !== null ? this.boundMinTime : this.minTime;
+        const effectiveMax = this.boundMaxTime !== null ? this.boundMaxTime : this.maxTime;
+
         let nextTime;
         if (this.playDirection === 1) {
           nextTime = this.currentTime + stepMs;
-          // Check for end
-          if (nextTime > this.maxTime) {
+          // Check for end (use effective max)
+          if (nextTime > effectiveMax) {
             if (this.loopEnabled) {
-              // Loop back to start
-              nextTime = this.minTime;
+              // Loop back to start (use effective min)
+              nextTime = effectiveMin;
             } else {
               this.pause();
               return;
@@ -1808,11 +1918,11 @@ export const TimeSlider = {
           }
         } else {
           nextTime = this.currentTime - stepMs;
-          // Check for start
-          if (nextTime < this.minTime) {
+          // Check for start (use effective min)
+          if (nextTime < effectiveMin) {
             if (this.loopEnabled) {
-              // Loop back to end
-              nextTime = this.maxTime;
+              // Loop back to end (use effective max)
+              nextTime = effectiveMax;
             } else {
               this.pause();
               return;
@@ -1831,14 +1941,19 @@ export const TimeSlider = {
       // Legacy mode: granularity-based playback (fallback if no speed slider)
       const interval = this.getPlaybackInterval();
 
+      // Use bounded range if set, otherwise use global range
+      const effectiveMin = this.boundMinTime !== null ? this.boundMinTime : this.minTime;
+      const effectiveMax = this.boundMaxTime !== null ? this.boundMaxTime : this.maxTime;
+
       this.playInterval = setInterval(() => {
         let nextTime;
         if (this.playDirection === 1) {
           nextTime = this.getNextAvailableTime(this.currentTime);
-          if (nextTime <= this.currentTime && this.sortedTimes.length > 1) {
+          // Check if we've reached the effective max or wrapped around
+          if (nextTime <= this.currentTime || nextTime > effectiveMax) {
             if (this.loopEnabled) {
-              // Loop back to start
-              nextTime = this.sortedTimes[0] || this.minTime;
+              // Loop back to start (use effective min)
+              nextTime = effectiveMin;
             } else {
               this.pause();
               return;
@@ -1846,10 +1961,11 @@ export const TimeSlider = {
           }
         } else {
           nextTime = this.getPrevAvailableTime(this.currentTime);
-          if (nextTime >= this.currentTime && this.sortedTimes.length > 1) {
+          // Check if we've reached the effective min or wrapped around
+          if (nextTime >= this.currentTime || nextTime < effectiveMin) {
             if (this.loopEnabled) {
-              // Loop back to end
-              nextTime = this.sortedTimes[this.sortedTimes.length - 1] || this.maxTime;
+              // Loop back to end (use effective max)
+              nextTime = effectiveMax;
             } else {
               this.pause();
               return;

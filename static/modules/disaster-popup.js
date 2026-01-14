@@ -25,6 +25,7 @@ const DisasterPopup = {
     tornado: 'N',
     wildfire: 'W',
     flood: 'F',
+    drought: 'D',
     generic: '*'
   },
 
@@ -37,6 +38,7 @@ const DisasterPopup = {
     tornado: '#32cd32',
     wildfire: '#ff6600',
     flood: '#0066cc',
+    drought: '#d2691e',  // Saddle brown for drought
     generic: '#888888'
   },
 
@@ -101,6 +103,14 @@ const DisasterPopup = {
         const floodArea = props.area_km2;
         if (floodArea != null) {
           return { label: 'Area', value: `${Math.round(floodArea)} km2`, detail: 'Affected area' };
+        }
+        return { label: 'Severity', value: 'N/A', detail: '' };
+
+      case 'drought':
+        const droughtSeverity = props.severity;
+        const severityName = props.severity_name;
+        if (droughtSeverity) {
+          return { label: 'Severity', value: droughtSeverity, detail: severityName || '' };
         }
         return { label: 'Severity', value: 'N/A', detail: '' };
 
@@ -905,9 +915,21 @@ const DisasterPopup = {
       hasHumanImpact = true;
     }
 
+    // Missing persons
+    if (data.missing != null && data.missing > 0) {
+      lines.push(`<div class="detail-row"><span class="detail-label">Missing:</span> ${this.formatLargeNumber(data.missing)} people</div>`);
+      hasHumanImpact = true;
+    }
+
     // Houses destroyed
     if (data.houses_destroyed != null && data.houses_destroyed > 0) {
       lines.push(`<div class="detail-row"><span class="detail-label">Houses Destroyed:</span> ${this.formatLargeNumber(data.houses_destroyed)}</div>`);
+      hasHumanImpact = true;
+    }
+
+    // Houses damaged
+    if (data.houses_damaged != null && data.houses_damaged > 0) {
+      lines.push(`<div class="detail-row"><span class="detail-label">Houses Damaged:</span> ${this.formatLargeNumber(data.houses_damaged)}</div>`);
       hasHumanImpact = true;
     }
 

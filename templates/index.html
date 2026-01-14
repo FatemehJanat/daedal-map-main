@@ -665,6 +665,98 @@
       accent-color: #5dade2;
     }
 
+    /* Time Range Bounds - constrains playback/stepping to subset of time range */
+    .time-range-bounds {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid #3d3d5c;
+    }
+
+    .bounds-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .bounds-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: #a0a0a0;
+    }
+
+    .bounds-clear-btn {
+      padding: 2px 8px;
+      font-size: 10px;
+      background: #2d2d44;
+      color: #888;
+      border: 1px solid #3d3d5c;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+
+    .bounds-clear-btn:hover {
+      background: #3d3d5c;
+      color: #d0d0d0;
+    }
+
+    .bounds-sliders {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .bound-control {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .bound-label {
+      font-size: 10px;
+      color: #888;
+      min-width: 35px;
+    }
+
+    .bound-slider {
+      flex: 1;
+      height: 4px;
+      -webkit-appearance: none;
+      appearance: none;
+      background: #3d3d5c;
+      border-radius: 2px;
+      outline: none;
+    }
+
+    .bound-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 12px;
+      height: 12px;
+      background: #ff9800;
+      border-radius: 50%;
+      cursor: pointer;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+    }
+
+    .bound-slider::-moz-range-thumb {
+      width: 12px;
+      height: 12px;
+      background: #ff9800;
+      border-radius: 50%;
+      cursor: pointer;
+      border: none;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+    }
+
+    .bound-value {
+      font-size: 10px;
+      font-weight: 600;
+      color: #ff9800;
+      min-width: 45px;
+      text-align: right;
+    }
+
     /* Choropleth Legend - dark */
     #choroplethLegend {
       position: absolute;
@@ -1974,6 +2066,7 @@
     <div id="breadcrumb"></div>
     <div id="globeToggle">
       <label><input type="checkbox" id="globeCheckbox"> Globe</label>
+      <label><input type="checkbox" id="satCheckbox"> Sat</label>
     </div>
     <div id="zoomLevel">Zoom: 0.0</div>
     <div id="levelButtons">
@@ -2025,6 +2118,25 @@
         <input type="checkbox" id="loopCheckbox">
         <span>Loop</span>
       </label>
+    </div>
+    <!-- Time Range Bounds -->
+    <div class="time-range-bounds">
+      <div class="bounds-header">
+        <span class="bounds-title">Time Range Bounds</span>
+        <button id="clearBoundsBtn" class="bounds-clear-btn" title="Clear bounds">Clear</button>
+      </div>
+      <div class="bounds-sliders">
+        <div class="bound-control">
+          <span class="bound-label">Start:</span>
+          <input type="range" id="lowerBoundSlider" min="2000" max="2023" value="2000" class="bound-slider">
+          <span id="lowerBoundLabel" class="bound-value">2000</span>
+        </div>
+        <div class="bound-control">
+          <span class="bound-label">End:</span>
+          <input type="range" id="upperBoundSlider" min="2000" max="2023" value="2023" class="bound-slider">
+          <span id="upperBoundLabel" class="bound-value">2023</span>
+        </div>
+      </div>
     </div>
   </div>
 

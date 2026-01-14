@@ -113,6 +113,13 @@ const OVERLAY_ENDPOINTS = {
     eventType: 'flood',
     yearField: 'year',
     maxYear: 2019  // Flood data ends at 2019
+  },
+  drought: {
+    baseUrl: '/api/drought/geojson',
+    params: { country: 'CAN' },
+    eventType: 'drought',
+    yearField: 'year',
+    minYear: 2019  // Canada drought data starts at 2019
   }
 };
 
@@ -272,6 +279,23 @@ const EVENT_LIFECYCLE = {
     },
     defaultDuration: 21 * 24 * 60 * 60 * 1000,  // 21 days
     fadeDuration: 30 * 24 * 60 * 60 * 1000      // 30 days
+  },
+
+  drought: {
+    // Monthly snapshot duration event
+    getStartMs: (f) => new Date(f.properties.timestamp).getTime(),
+    getEndMs: (f) => {
+      if (f.properties.end_timestamp) {
+        return new Date(f.properties.end_timestamp).getTime();
+      }
+      if (f.properties.duration_days) {
+        return new Date(f.properties.timestamp).getTime() +
+               f.properties.duration_days * 24 * 60 * 60 * 1000;
+      }
+      return new Date(f.properties.timestamp).getTime() + 30 * 24 * 60 * 60 * 1000;
+    },
+    defaultDuration: 30 * 24 * 60 * 60 * 1000,  // 30 days
+    fadeDuration: 0  // No fade between monthly snapshots
   }
 };
 
@@ -2972,6 +2996,9 @@ export const OverlayController = {
   // Track the storm currently in rolling animation
   rollingAnimationStormId: null,
 
+  // Abort controller for hurricane track fetches (to cancel when overlay disabled)
+  trackFetchAbortController: null,
+
   /**
    * Start rolling mode animation for a hurricane.
    * Called when a hurricane enters its active period during rolling time.
@@ -2980,12 +3007,21 @@ export const OverlayController = {
    * @param {string} stormName - Storm name
    */
   async startHurricaneRollingAnimation(stormId, stormName) {
+    // Check if hurricanes overlay is still active
+    const activeOverlays = OverlaySelector?.getActiveOverlays() || [];
+    if (!activeOverlays.includes('hurricanes')) return;
+
     // Already animating this storm
     if (this.rollingAnimationStormId === stormId) return;
 
     // Stop previous rolling animation if any
     if (TrackAnimator.isActive && TrackAnimator.rollingMode) {
       TrackAnimator.stop();
+    }
+
+    // Abort any pending track fetch
+    if (this.trackFetchAbortController) {
+      this.trackFetchAbortController.abort();
     }
 
     console.log(`OverlayController: Starting rolling animation for ${stormName} (${stormId})`);
@@ -2998,16 +3034,29 @@ export const OverlayController = {
       console.log(`OverlayController: Using cached track data for rolling animation`);
       data = cached.data;
     } else {
-      // Fetch from API
+      // Fetch from API with abort signal
       const trackUrl = OVERLAY_ENDPOINTS.hurricanes.trackEndpoint.replace('{storm_id}', stormId);
+      this.trackFetchAbortController = new AbortController();
       try {
-        data = await fetchMsgpack(trackUrl);
+        data = await fetchMsgpack(trackUrl, { signal: this.trackFetchAbortController.signal });
         DetailedEventCache.set(stormId, data, 'hurricane');
       } catch (err) {
+        if (err.name === 'AbortError') {
+          console.log(`OverlayController: Track fetch aborted for ${stormId}`);
+          return;
+        }
         console.error('OverlayController: Error fetching hurricane track for rolling:', err);
         this.rollingAnimationStormId = null;
         return;
       }
+    }
+
+    // After async fetch, verify we should still animate this storm
+    // (overlay may have been disabled, or a different storm started)
+    const stillActive = OverlaySelector?.getActiveOverlays()?.includes('hurricanes');
+    if (!stillActive || this.rollingAnimationStormId !== stormId) {
+      console.log(`OverlayController: Skipping animation for ${stormId} (context changed)`);
+      return;
     }
 
     // Normalize to positions array
@@ -3043,6 +3092,12 @@ export const OverlayController = {
    * Stop rolling mode animation for hurricanes.
    */
   stopHurricaneRollingAnimation() {
+    // Abort any pending track fetch
+    if (this.trackFetchAbortController) {
+      this.trackFetchAbortController.abort();
+      this.trackFetchAbortController = null;
+    }
+
     if (TrackAnimator.isActive && TrackAnimator.rollingMode) {
       TrackAnimator.stop();
     }
@@ -3463,17 +3518,18 @@ export const OverlayController = {
     const activeOverlays = OverlaySelector?.getActiveOverlays() || [];
     if (!activeOverlays.includes(overlayId)) return;
 
-    // Check if we're still at the same time (user might have moved)
-    if (timestamp && useLifecycleFiltering) {
-      const currentYear = this.getYearFromTime(TimeSlider?.currentTime);
-      if (currentYear !== year) return;  // User moved on, skip render
-
-      this.renderFilteredData(overlayId, timestamp, { useTimestamp: true });
+    // After loading, always render with CURRENT time (not the timestamp that triggered load)
+    // This fixes gaps during fast playback where animation moves while data is loading
+    if (useLifecycleFiltering && TimeSlider?.currentTime) {
+      const currentTimestamp = TimeSlider.currentTime;
+      this.renderFilteredData(overlayId, currentTimestamp, { useTimestamp: true });
 
       // For hurricanes, check if we should start rolling animation
       if (overlayId === 'hurricanes') {
-        this.checkHurricaneRollingAnimation(timestamp);
+        this.checkHurricaneRollingAnimation(currentTimestamp);
       }
+    } else if (timestamp && useLifecycleFiltering) {
+      this.renderFilteredData(overlayId, timestamp, { useTimestamp: true });
     } else {
       // Year-based rendering
       this.renderFilteredData(overlayId, year);
@@ -4213,6 +4269,29 @@ export const OverlayController = {
    */
   getCachedData(overlayId) {
     return dataCache[overlayId] || null;
+  },
+
+  /**
+   * Re-render all active overlays from cache (no data fetching).
+   * Use after map style changes that clear layers but shouldn't reload data.
+   */
+  rerenderFromCache() {
+    const activeOverlays = OverlaySelector?.getActiveOverlays() || [];
+
+    for (const overlayId of activeOverlays) {
+      if (overlayId === 'demographics') continue;
+      if (!dataCache[overlayId]) continue;
+
+      // Use current time slider state to render
+      if (useLifecycleFiltering && TimeSlider?.currentTime) {
+        this.renderFilteredData(overlayId, TimeSlider.currentTime, { useTimestamp: true });
+      } else {
+        const year = TimeSlider?.currentTime ? this.getYearFromTime(TimeSlider.currentTime) : new Date().getFullYear();
+        this.renderFilteredData(overlayId, year);
+      }
+    }
+
+    console.log('OverlayController: Re-rendered overlays from cache');
   },
 
   /**

@@ -25,9 +25,10 @@ This document contains:
 | **Tsunamis** | NOAA NCEI | Yes (as events) | Wave propagation | 2100 BC-present | Radial |
 | **Volcanoes** | Smithsonian GVP | Yes (weekly) | Static (with duration) | Holocene | Point + Radius |
 | **Wildfires** | Global Fire Atlas | Zenodo (periodic) | Daily progression | 2002-2024 | Polygon |
-| **Drought** | US Drought Monitor | Yes (weekly) | Weekly snapshots | 2000-present | Choropleth |
+| **Drought** | US/Canada Monitors | Yes (weekly/monthly) | Choropleth animation | 2000-present (USA), 2019-present (CAN) | Choropleth |
 | **Tornadoes** | NOAA Storm Events | Yes (monthly) | Track drill-down | 1950-present | Point + Track |
-| **Floods** | (future) | - | - | - | Polygon |
+| **Landslides** | Unified Global Catalog | No | Point display | 1760-present | Point + Radius |
+| **Floods** | Global Flood Database | No | Polygon display | 1985-2019 | Polygon |
 
 **Display Models:**
 - **Point + Radius**: Static points with magnitude-based circles (felt/damage radius)
@@ -102,6 +103,22 @@ All event parquet files MUST have these columns:
 | `loc_id` | string | Yes | Location code or water body code |
 | `year` | int32 | No | Extracted from timestamp for filtering |
 
+### Common Impact Columns (Optional)
+
+Standard column names for impact data. The frontend popup (disaster-popup.js) uses fallback chains to handle variations across disaster types. See [disaster_upgrades.md](future/disaster_upgrades.md#unified-impact-column-naming) for full details.
+
+| Column | Type | Description | Fallback |
+|--------|------|-------------|----------|
+| `deaths` | int32 | Total fatalities | `deaths_direct` (tornadoes) |
+| `injuries` | int32 | Total injuries | `injuries_direct` (tornadoes) |
+| `missing` | int32 | Missing persons | - |
+| `displaced` | int32 | People displaced | `displaced_count` |
+| `damage_usd` | float64 | Total damage in USD | `damage_property`, `damage_millions * 1M` |
+| `houses_destroyed` | int32 | Houses completely destroyed | - |
+| `houses_damaged` | int32 | Houses damaged | - |
+
+**Note:** Tornadoes use `deaths_direct/indirect`, `injuries_direct/indirect`, `damage_property/crops` - popup handles both formats.
+
 ### Earthquake Schema
 
 **File:** `global/usgs_earthquakes/events.parquet` (1,053,285 events)
@@ -117,6 +134,17 @@ All event parquet files MUST have these columns:
 | `sequence_id` | string | No | Shared ID for all events in a sequence |
 | `is_mainshock` | bool | No | True if this event has detected aftershocks |
 | `aftershock_count` | int32 | No | Number of aftershocks (mainshocks only) |
+| `deaths` | int32 | No | Total fatalities (from NOAA NCEI merge) |
+| `injuries` | int32 | No | Total injuries (from NOAA NCEI merge) |
+| `missing` | int32 | No | Missing persons (from NOAA NCEI merge) |
+| `damage_usd` | float64 | No | Damage in USD (from NOAA NCEI merge) |
+| `houses_damaged` | int32 | No | Houses damaged (from NOAA NCEI merge) |
+| `houses_destroyed` | int32 | No | Houses destroyed (from NOAA NCEI merge) |
+| `noaa_id` | int32 | No | NOAA NCEI significant earthquake ID |
+| `noaa_tsunami_id` | int32 | No | Linked tsunami event ID (from NOAA) |
+| `noaa_volcano_id` | int32 | No | Linked volcano event ID (from NOAA) |
+
+**Impact data source:** NOAA NCEI Significant Earthquake Database (6,627 events with deaths/damage, merged by location+magnitude matching). See [disaster_upgrades.md](future/disaster_upgrades.md#noaa-significant-earthquakes-downloaded---merge-required).
 
 **Aftershock detection** uses Gardner-Knopoff (1974) empirical windows:
 - Time window: `10^(0.5*M - 1.5)` days (e.g., M7 = 10 days, M8 = 32 days)
@@ -234,6 +262,17 @@ Tsunamis use a two-table structure: source events + runup observations. Unlike h
 | `is_ongoing` | bool | No | True if eruption has no end date |
 | `felt_radius_km` | float32 | No | Approximate felt radius based on VEI |
 | `damage_radius_km` | float32 | No | Approximate damage radius based on VEI |
+| `earthquake_event_ids` | string | No | Linked earthquake event IDs (JSON array) |
+| `tsunami_event_ids` | string | No | Linked tsunami event IDs (JSON array) |
+| `deaths` | int32 | No | Total fatalities (from NOAA NCEI merge) |
+| `injuries` | int32 | No | Total injuries (from NOAA NCEI merge) |
+| `missing` | int32 | No | Missing persons (from NOAA NCEI merge) |
+| `damage_usd` | float64 | No | Damage in USD (from NOAA NCEI merge) |
+| `houses_destroyed` | int32 | No | Houses destroyed (from NOAA NCEI merge) |
+| `eruption_agent` | string | No | Primary hazard agent (T=Tephra, L=Lava, P=Pyroclastic, etc.) |
+| `noaa_id` | int32 | No | NOAA NCEI significant volcano ID |
+
+**Impact data source:** NOAA NCEI Significant Volcanic Eruptions Database (200 historical events with deaths/damage, merged by volcano_number+year matching). See [disaster_upgrades.md](future/disaster_upgrades.md#noaa-significant-volcanoes-downloaded---merge-required).
 
 Example: Kilauea 1983-2018 has `duration_days=13029` (~35.7 years), `activity_area="East rift zone (Puu O'o), Halemaumau"`
 
@@ -359,6 +398,141 @@ Example: Kilauea 1983-2018 has `duration_days=13029` (~35.7 years), `activity_ar
 | `sibling_level` | int | Yes | Admin level where flood becomes a sibling (1-3) |
 | `iso3` | string | Yes | Country code (e.g., "USA") |
 | `loc_confidence` | float | Yes | Confidence score of location assignment (0-1) |
+
+### Drought Schema (Snapshots - Canada)
+
+**File:** `countries/CAN/drought/snapshots.parquet`
+
+Temporal drought data for choropleth animation. Shows monthly drought area polygons colored by severity.
+
+| Column | Type | Required | Description |
+|--------|------|----------|-------------|
+| `snapshot_id` | string | Yes | Unique identifier: `CAN-{YYYYMM}-{severity}` |
+| `timestamp` | datetime64 | Yes | First day of month (e.g., 2021-07-01) |
+| `year` | int32 | Yes | Year (for filtering) |
+| `month` | int32 | Yes | Month number (1-12) |
+| `severity` | string | Yes | Drought level: `D0`, `D1`, `D2`, `D3`, `D4` |
+| `severity_code` | int32 | Yes | Numeric code: 0-4 |
+| `severity_name` | string | Yes | Full name: `Abnormally Dry`, `Moderate`, `Severe`, `Extreme`, `Exceptional` |
+| `geometry` | string | Yes | GeoJSON polygon(s) of drought area |
+| `area_km2` | float32 | No | Total affected area in km2 |
+| `iso3` | string | Yes | Country code: `CAN` |
+| `provinces_affected` | string | No | Comma-separated province codes |
+
+**Severity Colors (D0-D4):**
+- D0 (Abnormally Dry): Yellow (#FFFFE0)
+- D1 (Moderate Drought): Tan (#FCD37F)
+- D2 (Severe Drought): Orange (#FFAA00)
+- D3 (Extreme Drought): Red (#E60000)
+- D4 (Exceptional Drought): Dark Red (#730000)
+
+**Choropleth Animation:**
+1. Load all snapshots for selected year
+2. Group by month
+3. Display severity polygons as colored overlay
+4. Animate month-by-month showing drought expansion/contraction
+5. Multiple severity levels overlay with higher severity on top
+
+### Drought Schema (Aggregates - USA)
+
+**File:** `countries/USA/usdm_drought/USA.parquet`
+
+County-level yearly statistics for analysis (already exists).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `loc_id` | string | County/state loc_id |
+| `year` | int32 | Year |
+| `max_drought_severity` | float32 | Maximum severity reached |
+| `avg_drought_severity` | float32 | Average severity |
+| `weeks_in_drought` | int32 | Total weeks with any drought |
+| `weeks_d0` through `weeks_d4` | int32 | Weeks at each severity level |
+| `pct_year_in_drought` | float32 | Percentage of year in drought |
+| `pct_year_severe` | float32 | Percentage of year in severe+ (D2+) |
+
+### Landslide Schema
+
+**File:** `global/landslides/events.parquet` (45,483 events)
+
+Unified catalog merged from DesInventar, NASA GLC, and NOAA Debris Flows covering 160 countries, 1760-2025.
+
+| Column | Type | Required | Description |
+|--------|------|----------|-------------|
+| **Core Event Columns** | | | |
+| `event_id` | string | Yes | Unique identifier |
+| `timestamp` | datetime64 | Yes | Event time (UTC, ISO 8601) |
+| `year` | int32 | Yes | Event year |
+| `latitude` | float64 | Yes | Event latitude (WGS84) |
+| `longitude` | float64 | Yes | Event longitude (WGS84) |
+| `event_type` | string | Yes | Always `landslide` |
+| `loc_id` | string | Yes | Location code |
+| `parent_loc_id` | string | No | Parent admin unit |
+| `iso3` | string | Yes | Country code |
+| **Landslide Characteristics** | | | |
+| `landslide_type` | string | No | Type: `landslide`, `mudslide`, `debris_flow`, `rockfall` |
+| `landslide_size` | string | No | Size: `small`, `medium`, `large`, `catastrophic` |
+| `trigger` | string | No | Trigger: `rainfall`, `earthquake`, `volcanic`, `snowmelt` |
+| `area_km2` | float32 | No | Affected area |
+| `felt_radius_km` | float32 | No | Approximate impact radius |
+| `damage_radius_km` | float32 | No | Core damage radius |
+| **Impact Data** | | | |
+| `deaths` | int32 | No | Total fatalities |
+| `injuries` | int32 | No | Total injuries |
+| `missing` | int32 | No | Missing persons |
+| `houses_destroyed` | int32 | No | Houses destroyed |
+| `houses_damaged` | int32 | No | Houses damaged |
+| `damage_usd` | float64 | No | Damage in USD |
+| **Source Tracking** | | | |
+| `source` | string | Yes | Source: `desinventar`, `nasa_glc`, `noaa` |
+| `source_event_id` | string | No | Original event ID |
+| `verified` | bool | No | Multi-source verification flag |
+| **Cross-Event Linking** | | | |
+| `parent_event_id` | string | No | Triggering earthquake/volcanic event ID |
+| `link_type` | string | No | Relationship type |
+
+**Landslide Radius Calculation:**
+
+Radii estimated from impact data or size category:
+
+```python
+def calculate_landslide_radii(event):
+    """Calculate felt and damage radii for landslide display."""
+    # Option 1: From area (if available)
+    if event.get('area_km2'):
+        felt_radius = np.sqrt(event['area_km2'] / np.pi)
+        damage_radius = felt_radius * 0.2
+        return (felt_radius, damage_radius)
+
+    # Option 2: From impact (if available)
+    impact = (event.get('deaths', 0) +
+              event.get('injuries', 0) * 0.5 +
+              event.get('houses_destroyed', 0) * 10)
+    if impact > 0:
+        felt_radius = min(50, 0.5 * (1 + np.log10(1 + impact)))
+        damage_radius = felt_radius * 0.3
+        return (felt_radius, damage_radius)
+
+    # Option 3: From size category
+    size_radii = {
+        'small': (0.5, 0.1),
+        'medium': (2.0, 0.5),
+        'large': (5.0, 1.5),
+        'catastrophic': (20.0, 8.0)
+    }
+    return size_radii.get(event.get('landslide_size', 'small'))
+```
+
+**Landslide Popup Quick Stats:**
+
+| Card 1 (Power) | Card 2 (Time) | Card 3 (Impact) |
+|----------------|---------------|-----------------|
+| Type + Size | Event date | Deaths OR Area |
+
+**Data Quality:**
+- 45,483 total events
+- Deaths documented: 16.7% (7,586 events, 60,485 total deaths)
+- Injuries documented: 8.2% (3,729 events)
+- Damage USD: 5.4% (2,467 events, $1.6B total)
 
 ### Cross-Event Linking Columns
 
@@ -641,7 +815,7 @@ USA tornadoes from NOAA Storm Events database (1950-present). No reliable global
 
 | Model | File | Disasters |
 |-------|------|-----------|
-| Point+Radius | model-point-radius.js | Earthquakes, Volcanoes, Tornadoes |
+| Point+Radius | model-point-radius.js | Earthquakes, Volcanoes, Tornadoes, Landslides |
 | Track/Trail | model-track.js | Hurricanes, Cyclones |
 | Polygon/Area | model-polygon.js | Wildfires, Floods |
 | Choropleth | choropleth.js | Drought, Aggregates |
@@ -651,11 +825,11 @@ USA tornadoes from NOAA Storm Events database (1950-present). No reliable global
 
 | File | Purpose |
 |------|---------|
-| `models/model-point-radius.js` | Earthquake, volcano, tornado rendering |
+| `models/model-point-radius.js` | Earthquake, volcano, tornado, landslide rendering |
 | `models/model-track.js` | Hurricane track rendering |
 | `models/model-polygon.js` | Wildfire polygon rendering |
 | `models/model-registry.js` | Routes event types to models |
-| `event-animator.js` | Unified animation controller (earthquakes, tsunamis, wildfires, tornadoes) |
+| `event-animator.js` | Unified animation controller (earthquakes, tsunamis, wildfires, tornadoes, landslides) |
 | `track-animator.js` | Hurricane track animation |
 | `overlay-selector.js` | UI checkbox panel |
 | `overlay-controller.js` | Data loading orchestration |
@@ -674,6 +848,8 @@ USA tornadoes from NOAA Storm Events database (1950-present). No reliable global
 |   [ ] Volcanoes  |
 |   [ ] Tsunamis   |
 |   [ ] Tornadoes  |
+|   [ ] Landslides |
+|   [ ] Drought    |
 +------------------+
 ```
 
@@ -706,6 +882,8 @@ Events fade from full opacity to 0 as they leave the window.
 | `/api/wildfires/geojson` | year |
 | `/api/tsunamis/geojson` | year |
 | `/api/tornadoes/geojson` | year, min_scale |
+| `/api/drought/geojson` | year, month, severity, country |
+| `/api/landslides/geojson` | year, min_deaths, country |
 
 ### Drill-Down Endpoints
 
@@ -1122,16 +1300,15 @@ Example responses:
 - [x] Impact tab with deaths/injuries/damage display
 - [x] Rolling time animation (lifecycle filtering, speed-adaptive windows)
 
-### In Progress
+### In Progress / Future
 
-- [ ] Fire progression animation (converter ready)
-- [ ] Drought choropleth animation
-- [ ] Polygon _opacity support (model-polygon.js still uses static opacity)
-
-### Future
-
-- [ ] Live data pipeline
-- [ ] deck.gl animation effects (see [native_refactor.md](future/native_refactor.md#deckgl-animation-integration-architecture))
+See [disaster_upgrades.md](future/disaster_upgrades.md) for planned improvements including:
+- Fire progression animation
+- Drought choropleth animation
+- Polygon _opacity support
+- Live data pipeline
+- Fire aggregates product
+- Global fire risk product
 
 ---
 
@@ -1340,22 +1517,12 @@ Hurricanes use TrackAnimator.startRolling() for progressive track drawing during
 
 ## Live Data Sources (Future)
 
-See `docs/future/native_refactor.md` for planned live architecture.
-
-**Key APIs:**
-- USGS Earthquakes: Real-time, minutes latency
-- NASA FIRMS: 12-hour latency, global fires
-- NOAA DART Buoys: 15-second samples during tsunami events
-- IOC Sea Level: 1-minute values globally
-
----
+See [disaster_upgrades.md](future/disaster_upgrades.md) for live data plans and [native_refactor.md](future/native_refactor.md) for architecture.
 
 ## Known Issues
 
-**Volcano prehistoric data:** Smithsonian GVP includes eruptions back to ~1280 CE which overflow pandas datetime. Only 36% have valid timestamps.
-
-**Map projection:** Globe projection disabled due to animation interference. Uses Mercator only.
+See [disaster_upgrades.md](future/disaster_upgrades.md) for full list of known issues and data gaps.
 
 ---
 
-*Last Updated: 2026-01-12*
+*Last Updated: 2026-01-13*

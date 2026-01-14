@@ -14,12 +14,14 @@ let ViewportLoader = null;
 let NavigationManager = null;
 let App = null;
 let PopupBuilder = null;
+let OverlayController = null;
 
 export function setDependencies(deps) {
   ViewportLoader = deps.ViewportLoader;
   NavigationManager = deps.NavigationManager;
   App = deps.App;
   PopupBuilder = deps.PopupBuilder;
+  OverlayController = deps.OverlayController;
 }
 
 // ============================================================================
@@ -235,6 +237,65 @@ export const MapAdapter = {
     } else {
       this.disableGlobe();
     }
+  },
+
+  // Track satellite mode state
+  satelliteMode: false,
+
+  // Map style URLs
+  STYLES: {
+    dark: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+    satellite: {
+      version: 8,
+      sources: {
+        'satellite': {
+          type: 'raster',
+          tiles: [
+            'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+          ],
+          tileSize: 256,
+          attribution: 'Tiles: Esri - Source: Esri, Maxar, Earthstar Geographics'
+        }
+      },
+      layers: [
+        {
+          id: 'satellite-layer',
+          type: 'raster',
+          source: 'satellite',
+          minzoom: 0,
+          maxzoom: 19
+        }
+      ]
+    }
+  },
+
+  /**
+   * Toggle satellite view on/off
+   * @param {boolean} enabled - True for satellite, false for dark map
+   */
+  toggleSatellite(enabled) {
+    this.satelliteMode = enabled;
+    const style = enabled ? this.STYLES.satellite : this.STYLES.dark;
+
+    // Store current projection state
+    const wasGlobeEnabled = this.map.getProjection()?.type === 'globe';
+
+    this.map.setStyle(style);
+
+    // Re-apply projection and overlays after style loads
+    this.map.once('style.load', () => {
+      // Restore globe if it was enabled
+      if (wasGlobeEnabled) {
+        this.enableGlobe();
+      }
+
+      // Re-render overlays from cache (don't reload data)
+      if (OverlayController) {
+        OverlayController.rerenderFromCache();
+      }
+
+      console.log(`Satellite mode: ${enabled ? 'ON' : 'OFF'}`);
+    });
   },
 
   /**

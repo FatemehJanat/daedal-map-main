@@ -1941,6 +1941,134 @@ async def get_floods_geojson(
         return msgpack_error(str(e), 500)
 
 
+@app.get("/api/drought/geojson")
+async def get_drought_geojson(
+    country: str = 'CAN',
+    year: int = None,
+    month: int = None,
+    severity: str = None,
+    min_year: int = None,
+    max_year: int = None
+):
+    """
+    Get drought monitoring data as GeoJSON for choropleth animation.
+    Data sources: Agriculture Canada Drought Monitor (2019-present).
+
+    Returns monthly drought area polygons colored by severity (D0-D4).
+
+    Query params:
+    - country: Country code (default 'CAN')
+    - year: Filter to single year
+    - month: Filter to specific month (1-12)
+    - severity: Filter to severity level (D0, D1, D2, D3, D4)
+    - min_year: Start year (default 2019)
+    - max_year: End year (default current)
+    """
+    import pandas as pd
+    import json as json_lib
+    from shapely import wkt
+    from shapely.geometry import mapping
+
+    try:
+        # Route to correct country data file
+        if country == 'CAN':
+            data_path = Path("C:/Users/Bryan/Desktop/county-map-data/countries/CAN/drought/snapshots.parquet")
+        else:
+            return msgpack_error(f"Drought data not available for country: {country}", 404)
+
+        if not data_path.exists():
+            return msgpack_error("Drought data not available", 404)
+
+        df = pd.read_parquet(data_path)
+
+        # Apply filters
+        if year is not None:
+            df = df[df['year'] == year]
+        else:
+            if min_year:
+                df = df[df['year'] >= min_year]
+            if max_year:
+                df = df[df['year'] <= max_year]
+
+        if month is not None:
+            df = df[df['month'] == month]
+
+        if severity:
+            df = df[df['severity'] == severity.upper()]
+
+        # Sort by severity_code so D0 renders first, D4 renders last (on top)
+        df = df.sort_values('severity_code')
+
+        # Helper to convert pandas/numpy types to Python native types for msgpack
+        def to_python(val):
+            if pd.isna(val):
+                return None
+            if hasattr(val, 'item'):  # numpy scalar
+                return val.item()
+            return val
+
+        # Build GeoJSON features
+        features = []
+        for _, row in df.iterrows():
+            # Parse WKT geometry to GeoJSON
+            geom = None
+            if pd.notna(row.get('geometry')):
+                try:
+                    # Convert WKT to Shapely geometry, then to GeoJSON
+                    shapely_geom = wkt.loads(row['geometry'])
+                    geom = mapping(shapely_geom)
+                except Exception as e:
+                    logger.warning(f"Failed to parse drought geometry for {row.get('snapshot_id')}: {e}")
+                    continue
+
+            if not geom:
+                continue
+
+            # Build properties - convert all numpy types to native Python
+            props = {
+                "snapshot_id": str(row.get('snapshot_id', '')),
+                "timestamp": row['timestamp'].isoformat() if pd.notna(row.get('timestamp')) else None,
+                "end_timestamp": row['end_timestamp'].isoformat() if pd.notna(row.get('end_timestamp')) else None,
+                "duration_days": to_python(row.get('duration_days')),
+                "year": to_python(row.get('year')),
+                "month": to_python(row.get('month')),
+                "severity": str(row.get('severity', '')),
+                "severity_code": to_python(row.get('severity_code')),
+                "severity_name": str(row.get('severity_name', '')),
+                "area_km2": to_python(row.get('area_km2')),
+                "iso3": str(row.get('iso3', '')),
+                "provinces_affected": str(row.get('provinces_affected', '')) if pd.notna(row.get('provinces_affected')) else None
+            }
+
+            features.append({
+                "type": "Feature",
+                "geometry": geom,
+                "properties": props
+            })
+
+        # Calculate max_year safely (convert numpy type to Python int)
+        max_year_value = None
+        if max_year:
+            max_year_value = max_year
+        elif len(df) > 0:
+            max_year_value = int(df['year'].max())
+
+        return msgpack_response({
+            "type": "FeatureCollection",
+            "features": features,
+            "metadata": {
+                "count": len(features),
+                "country": country,
+                "min_year": min_year or 2019,
+                "max_year": max_year_value
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching drought data: {e}")
+        return msgpack_error(str(e), 500)
+
+
 @app.get("/api/floods/{event_id}/geometry")
 async def get_flood_geometry(event_id: str):
     """

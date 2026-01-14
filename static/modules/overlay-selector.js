@@ -99,6 +99,16 @@ const CATEGORIES = [
         model: 'point-radius',
         icon: 'F',
         hasYearFilter: true
+      },
+      {
+        id: 'drought',
+        label: 'Drought',
+        description: 'Canada drought monitoring (2019-2025)',
+        default: false,
+        locked: false,
+        model: 'polygon',
+        icon: 'D',
+        hasYearFilter: true
       }
     ]
   },

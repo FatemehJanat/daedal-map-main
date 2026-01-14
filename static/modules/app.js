@@ -37,7 +37,7 @@ export const App = {
 
     // Wire up circular dependencies
     setViewportDeps({ MapAdapter, NavigationManager, App, TimeSlider });
-    setMapDeps({ ViewportLoader, NavigationManager, App, PopupBuilder });
+    setMapDeps({ ViewportLoader, NavigationManager, App, PopupBuilder, OverlayController });
     setNavDeps({ MapAdapter, ViewportLoader, App });
     setPopupDeps({ App });
     setChatDeps({ MapAdapter, App, SelectionManager, OverlayController, OverlaySelector });
@@ -89,6 +89,9 @@ export const App = {
     // Setup globe toggle checkbox
     this.setupGlobeToggle();
 
+    // Setup satellite toggle checkbox
+    this.setupSatelliteToggle();
+
     console.log('Map Explorer ready');
     console.log('Press D to toggle debug mode (hierarchy depth colors)');
   },
@@ -117,6 +120,18 @@ export const App = {
     if (checkbox) {
       checkbox.addEventListener('change', (e) => {
         MapAdapter.toggleGlobe(e.target.checked);
+      });
+    }
+  },
+
+  /**
+   * Setup satellite view toggle checkbox
+   */
+  setupSatelliteToggle() {
+    const checkbox = document.getElementById('satCheckbox');
+    if (checkbox) {
+      checkbox.addEventListener('change', (e) => {
+        MapAdapter.toggleSatellite(e.target.checked);
       });
     }
   },
