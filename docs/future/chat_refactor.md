@@ -1009,6 +1009,231 @@ For "same data for Poland" pattern:
 
 ---
 
-*Last Updated: 2026-01-12*
+## Phase 6: Demographics Overlay Integration (NEW - 2026-01-14)
+
+This section documents the gap between chat-based demographics requests and the overlay system.
+
+### The Core Problem
+
+Demographics data from chat displays directly on the map regardless of overlay state. The user cannot:
+- Control when demographics data appears (should require Demographics overlay enabled)
+- Drill into sub-regions (e.g., Australia -> states -> counties)
+- Clear demographics display by toggling overlay off
+
+### Current State: Chat Bypasses Overlay System
+
+| Component | Behavior | Problem |
+|-----------|----------|---------|
+| OrderManager.confirmOrder() | Calls App.displayData() directly | Ignores overlay state |
+| App.displayData() | Renders to map immediately | No overlay check |
+| ViewportLoader | Suspended during order mode | No drill-down loading |
+| Demographics overlay toggle | Has no effect on chat data | Disconnect |
+
+### Observed Bug Flow
+
+1. User asks "show me births and deaths for Australia"
+2. Chat creates order with 2 items (births, deaths)
+3. User clicks "Display on Map"
+4. Data renders to map immediately
+5. Demographics overlay is NOT enabled
+6. User cannot zoom into states/territories
+7. User cannot toggle off the display
+
+### Expected Behavior
+
+| User Action | Expected Result |
+|-------------|-----------------|
+| Confirm demographics order | Enable Demographics overlay automatically |
+| Toggle Demographics OFF | Clear demographics choropleth from map |
+| Zoom into Australia | Load state-level data (drill-down) |
+| Toggle Demographics ON (no order) | Show last ordered data or prompt for query |
+
+### Root Cause Analysis
+
+**app.js:338-455** - `displayData()` has no overlay awareness:
+
+```javascript
+displayData(data) {
+  this.currentData = data;
+  ViewportLoader.orderMode = true;  // Suspends viewport loading
+  // ... renders directly, never checks overlay state
+}
+```
+
+**chat-panel.js:835-846** - `confirmOrder()` renders without overlay:
+
+```javascript
+if (data.type === 'data' && data.geojson) {
+  App?.displayData(data);  // Direct render, no overlay enable
+}
+```
+
+**overlay-controller.js** - Demographics overlay exists but is disconnected from chat:
+
+```javascript
+// Demographics overlay config exists
+// But chat data doesn't flow through it
+```
+
+---
+
+### Implementation Plan
+
+#### Phase 6.1: Enable Overlay on Demographics Order
+
+**Files:** `static/modules/chat-panel.js`, `static/modules/app.js`
+
+When confirming a demographics order:
+1. Detect if order is demographics-related (source_id matches demographic sources)
+2. Enable Demographics overlay via OverlaySelector
+3. Store current order data in overlay state
+4. Render through overlay system, not direct displayData()
+
+```javascript
+// chat-panel.js - confirmOrder()
+if (data.type === 'data' && data.geojson) {
+  const isDemographics = this.isDemographicsOrder(this.currentOrder);
+
+  if (isDemographics) {
+    // Enable overlay and let it handle display
+    OverlaySelector.enableOverlay('demographics');
+    DemographicsOverlay.setOrderData(data);
+  } else {
+    // Non-demographic data (events, etc.)
+    App?.displayData(data);
+  }
+}
+```
+
+#### Phase 6.2: Create Demographics Overlay Controller
+
+**Files:** New `static/modules/demographics-overlay.js` or extend `overlay-controller.js`
+
+Demographics overlay should:
+1. Store current order data
+2. Render choropleth when enabled
+3. Clear choropleth when disabled
+4. Support drill-down via ViewportLoader
+
+```javascript
+const DemographicsOverlay = {
+  currentData: null,
+
+  setOrderData(data) {
+    this.currentData = data;
+    if (OverlaySelector.isEnabled('demographics')) {
+      this.render();
+    }
+  },
+
+  onEnable() {
+    if (this.currentData) {
+      this.render();
+    } else {
+      // Prompt user to request data via chat
+      ChatManager.addMessage('Ask for demographic data to display.', 'system');
+    }
+  },
+
+  onDisable() {
+    ChoroplethManager.reset();
+    TimeSlider.reset();
+  },
+
+  render() {
+    // Use existing displayData flow but through overlay
+    App.displayData(this.currentData);
+  }
+};
+```
+
+#### Phase 6.3: Enable Drill-Down for Demographics
+
+**Files:** `static/modules/viewport-loader.js`, `app.py`
+
+Currently `ViewportLoader.orderMode = true` suspends all viewport loading. Instead:
+
+1. Keep viewport loading active for demographics
+2. When zooming, fetch child region data for current metric
+3. Merge child data into TimeSlider state
+
+```javascript
+// viewport-loader.js
+async loadViewport(bounds) {
+  // Don't skip if demographics overlay is active
+  if (this.orderMode && !OverlaySelector.isEnabled('demographics')) {
+    return;
+  }
+
+  if (OverlaySelector.isEnabled('demographics') && DemographicsOverlay.currentData) {
+    // Load child regions for current order
+    const order = DemographicsOverlay.currentData;
+    const childData = await this.fetchChildRegions(bounds, order);
+    TimeSlider.mergeData(childData);
+  }
+}
+```
+
+**Backend support needed:**
+
+```python
+@app.post("/api/demographics/drill")
+async def demographics_drill(request: Request):
+    """
+    Fetch child region data for current order.
+    Called when user zooms into a region.
+    """
+    body = await decode_request_body(request)
+    parent_loc_id = body.get('parent_loc_id')
+    metrics = body.get('metrics')
+    years = body.get('years')
+
+    # Get children of parent
+    children = get_child_regions(parent_loc_id)
+
+    # Fetch data for children
+    data = fetch_demographics_data(children, metrics, years)
+
+    return msgpack_response(data)
+```
+
+---
+
+### Test Cases
+
+| Query | Expected Behavior |
+|-------|-------------------|
+| "births for Australia" + Display | Demographics overlay enables, Australia choropleth shows |
+| Toggle Demographics OFF | Choropleth clears |
+| Toggle Demographics ON | Previous data re-renders |
+| Zoom into Australia | States load with same metric |
+| "deaths for Texas" | Demographics enables, Texas shows, zoom shows counties |
+| Clear order | Demographics overlay disables (or shows prompt) |
+
+---
+
+### Dependencies
+
+1. **OverlaySelector API** - Need `enableOverlay(id)` and `isEnabled(id)` methods
+2. **TimeSlider.mergeData()** - Need ability to add child region data
+3. **Backend drill endpoint** - New API for fetching child data
+4. **Order-to-overlay mapping** - Detect which orders are demographics vs events
+
+---
+
+### Related Issues
+
+1. **Order panel flash/disappear** - OrderManager renders then something clears it
+   - Likely race condition with overlay state
+   - Fix: Ensure order display is stable before overlay toggle
+
+2. **'event-circle' layer error** - Disaster click handler queries missing layer
+   - Quick fix: Guard with layer existence check
+   - Location: `map-adapter.js:707`
+
+---
+
+*Last Updated: 2026-01-14*
 *Merged overlay context integration from chat_disaster_integration.md*
 *Added Phase 5: Disaster Location Filtering - comprehensive analysis of loc_id filtering gaps*
+*Added Phase 6: Demographics Overlay Integration - chat-overlay disconnect and drill-down*

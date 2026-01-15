@@ -9,7 +9,7 @@
  * 4. When TimeSlider changes -> filter cached data and update display
  */
 
-import { TrackAnimator, setDependencies as setTrackAnimatorDeps } from './track-animator.js';
+import { TrackAnimator, MultiTrackAnimator, setDependencies as setTrackAnimatorDeps } from './track-animator.js';
 import EventAnimator, { AnimationMode, setDependencies as setEventAnimatorDeps } from './event-animator.js';
 import { TIME_SYSTEM } from './time-slider.js';
 import { CONFIG } from './config.js';
@@ -414,6 +414,38 @@ function filterByLifecycle(features, currentMs, eventType) {
       const currentRadius = Math.min(elapsed * waveSpeed, maxRadius);
       props._waveRadiusKm = currentRadius;
       props._radiusProgress = maxRadius > 0 ? currentRadius / maxRadius : 1.0;
+    }
+
+    // Hurricane track progressive display - trim LineString based on time progress
+    if (eventType === 'hurricane' && f.geometry?.type === 'LineString') {
+      const totalDuration = endMs - startMs;
+      // Calculate animation progress (0 to 1) based on time within active period
+      let animationProgress;
+      if (phase === 'active' && totalDuration > 0) {
+        animationProgress = Math.min(1, elapsed / totalDuration);
+      } else {
+        // Fading phase or completed - show full track
+        animationProgress = 1.0;
+      }
+      props._animationProgress = animationProgress;
+
+      // Trim the LineString coordinates to show progressive track
+      const coords = f.geometry.coordinates;
+      if (coords && coords.length > 1 && animationProgress < 1.0) {
+        // Calculate how many points to show (at least 1)
+        const numPoints = Math.max(1, Math.ceil(animationProgress * coords.length));
+        const trimmedCoords = coords.slice(0, numPoints);
+
+        // Return feature with trimmed geometry
+        return {
+          type: 'Feature',
+          geometry: {
+            type: 'LineString',
+            coordinates: trimmedCoords
+          },
+          properties: props
+        };
+      }
     }
 
     return {
@@ -2993,121 +3025,12 @@ export const OverlayController = {
     }
   },
 
-  // Track the storm currently in rolling animation
-  rollingAnimationStormId: null,
-
-  // Abort controller for hurricane track fetches (to cancel when overlay disabled)
-  trackFetchAbortController: null,
-
   /**
-   * Start rolling mode animation for a hurricane.
-   * Called when a hurricane enters its active period during rolling time.
-   * Uses TrackAnimator in rolling mode (no zoom, no TimeSlider takeover).
-   * @param {string} stormId - Storm ID
-   * @param {string} stormName - Storm name
-   */
-  async startHurricaneRollingAnimation(stormId, stormName) {
-    // Check if hurricanes overlay is still active
-    const activeOverlays = OverlaySelector?.getActiveOverlays() || [];
-    if (!activeOverlays.includes('hurricanes')) return;
-
-    // Already animating this storm
-    if (this.rollingAnimationStormId === stormId) return;
-
-    // Stop previous rolling animation if any
-    if (TrackAnimator.isActive && TrackAnimator.rollingMode) {
-      TrackAnimator.stop();
-    }
-
-    // Abort any pending track fetch
-    if (this.trackFetchAbortController) {
-      this.trackFetchAbortController.abort();
-    }
-
-    console.log(`OverlayController: Starting rolling animation for ${stormName} (${stormId})`);
-    this.rollingAnimationStormId = stormId;
-
-    // Check cache first
-    let data;
-    const cached = DetailedEventCache.get(stormId);
-    if (cached) {
-      console.log(`OverlayController: Using cached track data for rolling animation`);
-      data = cached.data;
-    } else {
-      // Fetch from API with abort signal
-      const trackUrl = OVERLAY_ENDPOINTS.hurricanes.trackEndpoint.replace('{storm_id}', stormId);
-      this.trackFetchAbortController = new AbortController();
-      try {
-        data = await fetchMsgpack(trackUrl, { signal: this.trackFetchAbortController.signal });
-        DetailedEventCache.set(stormId, data, 'hurricane');
-      } catch (err) {
-        if (err.name === 'AbortError') {
-          console.log(`OverlayController: Track fetch aborted for ${stormId}`);
-          return;
-        }
-        console.error('OverlayController: Error fetching hurricane track for rolling:', err);
-        this.rollingAnimationStormId = null;
-        return;
-      }
-    }
-
-    // After async fetch, verify we should still animate this storm
-    // (overlay may have been disabled, or a different storm started)
-    const stillActive = OverlaySelector?.getActiveOverlays()?.includes('hurricanes');
-    if (!stillActive || this.rollingAnimationStormId !== stormId) {
-      console.log(`OverlayController: Skipping animation for ${stormId} (context changed)`);
-      return;
-    }
-
-    // Normalize to positions array
-    let positions = data.positions;
-    if (!positions && data.features) {
-      positions = data.features.map(f => ({
-        timestamp: f.properties.timestamp,
-        latitude: f.geometry.coordinates[1],
-        longitude: f.geometry.coordinates[0],
-        wind_kt: f.properties.wind_kt,
-        category: f.properties.category,
-        ...f.properties
-      }));
-    }
-
-    if (!positions || positions.length === 0) {
-      console.warn('OverlayController: Empty track positions for rolling animation');
-      this.rollingAnimationStormId = null;
-      return;
-    }
-
-    // Start rolling mode animation
-    TrackAnimator.startRolling(stormId, positions, { stormName });
-
-    // Immediately re-render hurricanes overlay to filter out the storm being animated
-    // This prevents a flash of the full track before the animated track takes over
-    if (TimeSlider?.currentTime) {
-      this.renderFilteredData('hurricanes', TimeSlider.currentTime, { useTimestamp: true });
-    }
-  },
-
-  /**
-   * Stop rolling mode animation for hurricanes.
+   * Cleanup any stray MultiTrackAnimator animations when overlay is disabled.
+   * Note: Rolling mode is deprecated - progressive tracks now handled by filterByLifecycle.
    */
   stopHurricaneRollingAnimation() {
-    // Abort any pending track fetch
-    if (this.trackFetchAbortController) {
-      this.trackFetchAbortController.abort();
-      this.trackFetchAbortController = null;
-    }
-
-    if (TrackAnimator.isActive && TrackAnimator.rollingMode) {
-      TrackAnimator.stop();
-    }
-    this.rollingAnimationStormId = null;
-
-    // Immediately re-render hurricanes overlay to show the storm back in overview
-    // This prevents a gap between animation ending and overview appearing
-    if (TimeSlider?.currentTime) {
-      this.renderFilteredData('hurricanes', TimeSlider.currentTime, { useTimestamp: true });
-    }
+    MultiTrackAnimator.stopAll();
   },
 
   /**
@@ -3351,16 +3274,9 @@ export const OverlayController = {
       return;  // Don't do normal year-based filtering
     }
 
-    // If TrackAnimator is active
+    // If TrackAnimator (focused mode) is active, it handles its own rendering
     if (TrackAnimator.isActive) {
-      if (TrackAnimator.rollingMode) {
-        // Rolling mode: forward timestamp AND continue with normal filtering
-        TrackAnimator.setTimestamp(time);
-        // Don't return - still need to update other overlays
-      } else {
-        // Focused mode: TrackAnimator handles its own rendering
-        return;
-      }
+      return;
     }
 
     // Determine if this is a timestamp (for lifecycle filtering)
@@ -3541,53 +3457,11 @@ export const OverlayController = {
   },
 
   /**
-   * Check if we should start/stop hurricane rolling animation.
-   * Starts animation when a hurricane enters active period, stops when it exits.
-   * @param {number} timestamp - Current timestamp in milliseconds
+   * DEPRECATED: No-op. Hurricane animation now handled by filterByLifecycle.
+   * Kept for API compatibility - callers don't need to be updated.
    */
-  checkHurricaneRollingAnimation(timestamp) {
-    const cachedData = dataCache['hurricanes'];
-    if (!cachedData?.features) return;
-
-    const config = EVENT_LIFECYCLE['hurricane'];
-    if (!config) return;
-
-    // Find hurricanes in their active period (not fading)
-    const activeHurricanes = cachedData.features.filter(f => {
-      try {
-        const startMs = config.getStartMs(f);
-        const endMs = config.getEndMs(f);
-        // Active if: startMs <= timestamp <= endMs
-        return timestamp >= startMs && timestamp <= endMs;
-      } catch (e) {
-        return false;
-      }
-    });
-
-    // If the currently animating storm is no longer active, stop it
-    if (this.rollingAnimationStormId) {
-      const stillActive = activeHurricanes.some(f =>
-        f.properties.storm_id === this.rollingAnimationStormId
-      );
-      if (!stillActive) {
-        console.log(`OverlayController: Storm ${this.rollingAnimationStormId} exited active period, stopping rolling animation`);
-        this.stopHurricaneRollingAnimation();
-      }
-    }
-
-    // Don't START new animations when paused - but keep existing ones frozen
-    if (!TimeSlider?.isPlaying) {
-      return;
-    }
-
-    // If there are active hurricanes and we're not already animating one, start
-    if (activeHurricanes.length > 0 && !this.rollingAnimationStormId) {
-      // Pick the first active hurricane (could enhance to pick most significant)
-      const storm = activeHurricanes[0];
-      const stormId = storm.properties.storm_id;
-      const stormName = storm.properties.name || stormId;
-      this.startHurricaneRollingAnimation(stormId, stormName);
-    }
+  checkHurricaneRollingAnimation() {
+    // filterByLifecycle handles progressive track display via timestamp trimming
   },
 
   /**
@@ -3664,7 +3538,7 @@ export const OverlayController = {
       if (TimeSlider?.currentTime) {
         // If TimeSlider has a timestamp, extract year from it
         const sliderYear = new Date(TimeSlider.currentTime).getFullYear();
-        if (sliderYear > 1900 && sliderYear < 3000) {
+        if (sliderYear >= 2000 && sliderYear < 3000) {
           currentYear = sliderYear;
         }
       }
@@ -3690,7 +3564,7 @@ export const OverlayController = {
       if (endpoint.yearField && TimeSlider) {
         // Set TimeSlider to current year with wide available range
         // More years will be added as user navigates
-        const minYear = 1900;  // Allow navigation back in time
+        const minYear = 2000;  // System limit - more data available via chat in future
         const maxYear = new Date().getFullYear();
 
         // Initialize year range cache
@@ -3748,17 +3622,13 @@ export const OverlayController = {
 
     if (useTimestamp && yearOrTimestamp) {
       // NEW: Timestamp-based lifecycle filtering
+      // Hurricane tracks are progressively trimmed by filterByLifecycle based on _animationProgress
       const currentMs = yearOrTimestamp;
-      let filtered = filterByLifecycle(
+      const filtered = filterByLifecycle(
         cachedData.features,
         currentMs,
         endpoint.eventType
       );
-
-      // For hurricanes, exclude storms currently in rolling animation (avoid duplicate rendering)
-      if (overlayId === 'hurricanes' && this.rollingAnimationStormId) {
-        filtered = filtered.filter(f => f.properties.storm_id !== this.rollingAnimationStormId);
-      }
 
       filteredGeojson = {
         type: 'FeatureCollection',

@@ -4,19 +4,26 @@ Design document for implementing consistent three-phase animation across all dis
 
 ---
 
-## Current State
+## Current State (Post-Implementation)
 
-Each disaster type has ad-hoc animation behavior:
-- Earthquakes: Show expanding circle immediately (no "start" phase)
-- Hurricanes: TrackAnimator draws progressive track, but flash issues at start/end
-- Tsunamis: Expanding wave circle (similar to earthquake)
+Unified time-based animation system implemented:
+- Earthquakes: Expanding circle based on timestamp (magnitude-driven speed/radius)
+- Hurricanes: Progressive track drawing via coordinate trimming in filterByLifecycle
+- Tsunamis: Expanding wave based on 720 km/h propagation speed
+- Volcanoes: Expanding ash cloud based on VEI
 - Others: Static display with opacity fade
 
-**Problems:**
-1. No consistent "start" phase - full display appears instantly
-2. Animation only works during playback (stepping shows inconsistent state)
-3. Click interaction lost during some animations (TrackAnimator)
-4. Flash artifacts at phase transitions
+**Solved Problems:**
+1. All animations are time-based (not playback-based) - works when stepping/scrubbing
+2. Hurricane tracks no longer use separate MultiTrackAnimator for rolling mode
+3. Click interaction preserved (TrackModel handles all phases)
+4. No flash artifacts (single rendering path via filterByLifecycle)
+
+**Remaining Work:**
+- Tornado: Could use progressive track (currently uses separate click animation)
+- Wildfire: Has separate progression system (not unified)
+- Flood: Static display (no expansion animation)
+- "Start" phase (single dot): Not implemented - events appear with small radius
 
 ---
 
@@ -246,43 +253,43 @@ This means:
 
 ## Implementation Order
 
-### Phase 1: Core Infrastructure
-- [ ] Update filterByLifecycle to calculate _animationProgress
-- [ ] Add _phase property ('start', 'active', 'fading')
-- [ ] Pass progress to model render calls
+### Phase 1: Core Infrastructure - COMPLETE
+- [x] Update filterByLifecycle to calculate _animationProgress
+- [x] Add _phase property ('active', 'fading')
+- [x] Pass progress to model render calls
 
-### Phase 2: Hurricane Track Progressive Display
-- [ ] Add line-trim support to TrackModel
-- [ ] Build LineString from track positions in filterByLifecycle
-- [ ] Remove TrackAnimator rolling mode dependency
-- [ ] Test: track draws progressively based on timestamp
+### Phase 2: Hurricane Track Progressive Display - COMPLETE
+- [x] Trim LineString coordinates in filterByLifecycle based on _animationProgress
+- [x] Remove MultiTrackAnimator rolling mode dependency
+- [x] Test: track draws progressively based on timestamp
+- Note: line-trim not used (MapLibre doesn't support it); coordinates trimmed instead
 
-### Phase 3: Earthquake/Tsunami Expanding Radius
-- [ ] Modify PointRadiusModel to use _animationProgress for radius
-- [ ] Test: circles expand from 0 to max based on timestamp
+### Phase 3: Earthquake/Tsunami Expanding Radius - COMPLETE
+- [x] PointRadiusModel uses _waveRadiusKm for expanding circles
+- [x] Earthquakes, tsunamis, volcanoes expand based on timestamp
 
-### Phase 4: Other Types
-- [ ] Volcano: Same as earthquake (expanding circle)
-- [ ] Tornado: Same as hurricane (progressive track)
-- [ ] Wildfire: Polygon interpolation (if progression data available)
-- [ ] Flood: Circle/polygon expansion
+### Phase 4: Other Types - PARTIAL
+- [x] Volcano: Expanding circle (same as earthquake)
+- [ ] Tornado: Progressive track (uses separate click-based animation)
+- [ ] Wildfire: Polygon interpolation (uses separate progression system)
+- [ ] Flood: Circle/polygon expansion (static display currently)
 
-### Phase 5: Cleanup
-- [ ] Remove TrackAnimator rolling mode
-- [ ] Update documentation
-- [ ] Remove isPlaying checks from animation code
+### Phase 5: Cleanup - COMPLETE
+- [x] MultiTrackAnimator rolling mode disabled (checkHurricaneRollingAnimation returns early)
+- [x] Documentation updated
+- [x] Animation is time-based (timestamp comparison), not playback-based
 
 ---
 
-## Files to Modify
+## Files Modified
 
-| File | Changes |
-|------|---------|
-| overlay-controller.js | Update filterByLifecycle, remove rolling animation calls |
-| model-point-radius.js | Use _animationProgress for circle-radius |
-| model-track.js | Add line-trim for progressive track, built-in progress |
-| model-polygon.js | Add _animationProgress support |
-| track-animator.js | Remove rolling mode (keep focused drill-down mode) |
+| File | Changes | Status |
+|------|---------|--------|
+| overlay-controller.js | filterByLifecycle calculates _animationProgress, trims hurricane LineStrings, disabled MultiTrackAnimator rolling mode | DONE |
+| model-point-radius.js | Uses _waveRadiusKm for expanding circles (earthquakes, tsunamis, volcanoes) | DONE |
+| model-track.js | Uses _opacity for lifecycle fade; progressive track via trimmed coordinates | DONE |
+| track-animator.js | Rolling mode disabled; focused drill-down mode preserved for individual storm animation | DONE |
+| model-polygon.js | Uses _opacity for lifecycle fade | DONE |
 
 ---
 
@@ -311,4 +318,5 @@ This means:
 ---
 
 *Created: 2026-01-12*
-*Status: Planning*
+*Updated: 2026-01-14*
+*Status: IMPLEMENTED (Phases 1-3, 5 complete; Phase 4 partial)*

@@ -379,14 +379,25 @@
       gap: 10px;
     }
 
-    #timeSlider {
+    /* Slider track container - holds slider and trim handles */
+    .slider-track-container {
       flex: 1;
+      position: relative;
+      height: 32px;
+      display: flex;
+      align-items: center;
+    }
+
+    #timeSlider {
+      width: 100%;
       height: 6px;
       -webkit-appearance: none;
       appearance: none;
       background: #3d3d5c;
       border-radius: 3px;
       outline: none;
+      position: relative;
+      z-index: 6;
     }
 
     #timeSlider::-webkit-slider-thumb {
@@ -398,6 +409,8 @@
       border-radius: 50%;
       cursor: pointer;
       box-shadow: 0 2px 4px rgba(0,0,0,0.4);
+      position: relative;
+      z-index: 5;
     }
 
     #timeSlider::-moz-range-thumb {
@@ -408,11 +421,80 @@
       cursor: pointer;
       border: none;
       box-shadow: 0 2px 4px rgba(0,0,0,0.4);
+      position: relative;
+      z-index: 5;
+    }
+
+    /* Trim handles - vertical bars for cropping time range */
+    .trim-handle {
+      position: absolute;
+      width: 8px;
+      height: 28px;
+      background: #ff9800;
+      border-radius: 2px;
+      cursor: ew-resize;
+      z-index: 4;
+      top: 50%;
+      transform: translateY(-50%);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+      transition: background 0.15s;
+    }
+
+    .trim-handle:hover {
+      background: #ffb74d;
+    }
+
+    .trim-handle:active {
+      background: #f57c00;
+    }
+
+    .trim-handle-label {
+      position: absolute;
+      top: -18px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 9px;
+      font-weight: 600;
+      color: #ff9800;
+      white-space: nowrap;
+      pointer-events: none;
+    }
+
+    #lowerTrimHandle {
+      left: 0;
+    }
+
+    #upperTrimHandle {
+      right: 0;
+    }
+
+    /* Trim overlay - dims the excluded areas */
+    .trim-overlay {
+      position: absolute;
+      top: 0;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.4);
+      pointer-events: none;
+      z-index: 1;
+      border-radius: 3px;
+    }
+
+    #trimOverlayLeft {
+      left: 0;
+      width: 0;
+      border-radius: 3px 0 0 3px;
+    }
+
+    #trimOverlayRight {
+      right: 0;
+      width: 0;
+      border-radius: 0 3px 3px 0;
     }
 
     .time-slider-labels {
       display: flex;
       justify-content: space-between;
+      align-items: center;
       font-size: 11px;
       color: #888;
       margin-top: 4px;
@@ -665,29 +747,10 @@
       accent-color: #5dade2;
     }
 
-    /* Time Range Bounds - constrains playback/stepping to subset of time range */
-    .time-range-bounds {
-      margin-top: 10px;
-      padding-top: 10px;
-      border-top: 1px solid #3d3d5c;
-    }
-
-    .bounds-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 8px;
-    }
-
-    .bounds-title {
-      font-size: 11px;
-      font-weight: 600;
-      color: #a0a0a0;
-    }
-
+    /* Reset trim button - clears the trim handles back to full range */
     .bounds-clear-btn {
       padding: 2px 8px;
-      font-size: 10px;
+      font-size: 9px;
       background: #2d2d44;
       color: #888;
       border: 1px solid #3d3d5c;
@@ -698,63 +761,6 @@
     .bounds-clear-btn:hover {
       background: #3d3d5c;
       color: #d0d0d0;
-    }
-
-    .bounds-sliders {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-
-    .bound-control {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .bound-label {
-      font-size: 10px;
-      color: #888;
-      min-width: 35px;
-    }
-
-    .bound-slider {
-      flex: 1;
-      height: 4px;
-      -webkit-appearance: none;
-      appearance: none;
-      background: #3d3d5c;
-      border-radius: 2px;
-      outline: none;
-    }
-
-    .bound-slider::-webkit-slider-thumb {
-      -webkit-appearance: none;
-      appearance: none;
-      width: 12px;
-      height: 12px;
-      background: #ff9800;
-      border-radius: 50%;
-      cursor: pointer;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.4);
-    }
-
-    .bound-slider::-moz-range-thumb {
-      width: 12px;
-      height: 12px;
-      background: #ff9800;
-      border-radius: 50%;
-      cursor: pointer;
-      border: none;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.4);
-    }
-
-    .bound-value {
-      font-size: 10px;
-      font-weight: 600;
-      color: #ff9800;
-      min-width: 45px;
-      text-align: right;
     }
 
     /* Choropleth Legend - dark */
@@ -2100,10 +2106,21 @@
       <button id="stepBackBtn" class="time-btn" title="Previous year">&lt;</button>
       <button id="playBtn" class="time-btn play" title="Play/Pause">|&gt;</button>
       <button id="stepFwdBtn" class="time-btn" title="Next year">&gt;</button>
-      <input type="range" id="timeSlider" min="2000" max="2023" value="2023">
+      <div class="slider-track-container">
+        <div id="trimOverlayLeft" class="trim-overlay"></div>
+        <div id="trimOverlayRight" class="trim-overlay"></div>
+        <input type="range" id="timeSlider" min="2000" max="2023" value="2023">
+        <div id="lowerTrimHandle" class="trim-handle" title="Drag to set start bound">
+          <span class="trim-handle-label" id="lowerBoundLabel">2000</span>
+        </div>
+        <div id="upperTrimHandle" class="trim-handle" title="Drag to set end bound">
+          <span class="trim-handle-label" id="upperBoundLabel">2023</span>
+        </div>
+      </div>
     </div>
     <div class="time-slider-labels">
       <span id="minYearLabel">2000</span>
+      <button id="clearBoundsBtn" class="bounds-clear-btn" title="Reset trim to full range">Reset Trim</button>
       <span id="maxYearLabel">2023</span>
     </div>
     <!-- Speed Control (Phase 7 - Unified Speed Slider) -->
@@ -2118,25 +2135,6 @@
         <input type="checkbox" id="loopCheckbox">
         <span>Loop</span>
       </label>
-    </div>
-    <!-- Time Range Bounds -->
-    <div class="time-range-bounds">
-      <div class="bounds-header">
-        <span class="bounds-title">Time Range Bounds</span>
-        <button id="clearBoundsBtn" class="bounds-clear-btn" title="Clear bounds">Clear</button>
-      </div>
-      <div class="bounds-sliders">
-        <div class="bound-control">
-          <span class="bound-label">Start:</span>
-          <input type="range" id="lowerBoundSlider" min="2000" max="2023" value="2000" class="bound-slider">
-          <span id="lowerBoundLabel" class="bound-value">2000</span>
-        </div>
-        <div class="bound-control">
-          <span class="bound-label">End:</span>
-          <input type="range" id="upperBoundSlider" min="2000" max="2023" value="2023" class="bound-slider">
-          <span id="upperBoundLabel" class="bound-value">2023</span>
-        </div>
-      </div>
     </div>
   </div>
 

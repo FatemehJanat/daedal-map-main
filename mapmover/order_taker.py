@@ -302,7 +302,7 @@ def interpret_request(user_query: str, chat_history: list = None, hints: dict = 
     content = response.choices[0].message.content.strip()
 
     # Parse response
-    return parse_llm_response(content)
+    return parse_llm_response(content, hints=hints)
 
 
 def validate_order_item(item: dict) -> dict:
@@ -403,7 +403,7 @@ def validate_order(order: dict) -> dict:
     return order
 
 
-def parse_llm_response(content: str) -> dict:
+def parse_llm_response(content: str, hints: dict = None) -> dict:
     """Parse LLM response into structured result."""
 
     # Check for JSON block

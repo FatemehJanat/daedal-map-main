@@ -58,8 +58,6 @@ Location: `county-map-data/countries/USA/`
 
 Location: `county-map-data/Raw data/`
 
-**Note:** See [RAW_DATA_CLEANUP_STATUS.md](RAW_DATA_CLEANUP_STATUS.md) for detailed cleanup guidance
-
 ### Converted (Raw Data Can Be Deleted)
 
 | Source | Raw Size | Processed Location | Records |
@@ -79,13 +77,25 @@ Location: `county-map-data/Raw data/`
 
 | Source | Size | Location | Recommendation |
 |--------|------|----------|----------------|
-| Canada Fire (CNFDB) | 789 MB | Raw data/imported/canada/cnfdb/ | **PROCESS - fills critical gap** |
-| Canada Drought | 1.0 GB | Raw data/imported/canada/drought/ | **PROCESS - no global drought** |
-| EPA Air Quality | 2.8 MB | Raw data/imported/epa_aqs/ | OUT OF SCOPE? |
-| EIA Energy | 1.4 GB | Raw data/eia/ | OUT OF SCOPE? |
+| Canada Fire (CNFDB) | 789 MB | Raw data/imported/canada/cnfdb/ | **PROCESS** - see disaster_upgrades.md |
+| Canada Drought | 1.0 GB | Raw data/imported/canada/drought/ | **PROCESS** - see disaster_upgrades.md |
+| EPA Air Quality | 2.8 MB | Raw data/imported/epa_aqs/ | OUT OF SCOPE |
+| EIA Energy | 1.4 GB | Raw data/eia/ | OUT OF SCOPE |
 | HDX/EM-DAT | 390 KB | Raw data/imported/hdx/ | DELETE - DesInventar covers this |
 
-**Note:** See [CANADA_DATA_ANALYSIS.md](CANADA_DATA_ANALYSIS.md) for detailed drought/fire gap analysis.
+### Re-Download Instructions
+
+If raw data needs to be re-downloaded after deletion:
+
+| Source | Download URL |
+|--------|--------------|
+| DesInventar | https://www.desinventar.net/DesInventar/download.jsp (manual) |
+| PAGER-CAT | https://www.sciencebase.gov/catalog/item/5bc730dde4b0fc368ebcad8a |
+| NASA Landslides | https://data.humdata.org/dataset/global-landslide-catalogue-nasa |
+| Flood Data | https://global-flood-database.cloudtostreet.ai/ |
+| Eurostat | https://ec.europa.eu/eurostat/ |
+| Canada Earthquakes | https://earthquakescanada.nrcan.gc.ca/ |
+| Australia Cyclones | http://www.bom.gov.au/cyclone/history/ |
 
 ---
 
@@ -213,4 +223,4 @@ Location: `county-map-data/global/`
 
 ---
 
-*Last Updated: January 2026*
+*Last Updated: 2026-01-14*

@@ -869,21 +869,37 @@ Globe projection disabled due to animation interference. Uses Mercator only.
 
 ### Canada Coverage Gaps - PRIORITY
 
-**See [CANADA_DATA_ANALYSIS.md](CANADA_DATA_ANALYSIS.md) for detailed analysis.**
-
 | Hazard | Current Global | Canada Raw Data | Gap Impact | Action |
 |--------|---------------|-----------------|------------|--------|
 | **Drought** | USA only (2000-2026) | 2019-2025 monthly (1 GB) | ZERO global drought | **PROCESS** |
 | **Fires** | 38 Canada fires in 2024 | CNFDB thousands (789 MB) | 99.9% missing | **PROCESS** |
 
-**Key findings:**
-- **Drought:** No global drought product exists. Canada + USA = North America coverage only.
-- **Fires:** Global FIRMS has only 38 Canada fires in 2024. CNFDB (Canadian National Fire Database) has thousands of official ground-truth fires.
+#### Canada Drought Monitor
 
-**Next steps:**
-1. Create `convert_canada_drought.py` converter (GeoJSON → parquet)
-2. Create `convert_canada_fires.py` converter (shapefile → parquet)
-3. Output to `countries/CAN/drought/` and `countries/CAN/wildfires/`
+**Source:** Agriculture and Agri-Food Canada (Open Government License)
+**Location:** `Raw data/imported/canada/drought/`
+**Coverage:** 2019-2025 (monthly), 325 GeoJSON files (~1 GB)
+**Severity Scale:** D0-D4 (same as USA Drought Monitor)
+
+Processing Canada drought creates North America coverage (USA 2000-2026, CAN 2019-2025).
+
+**Converter:** `convert_canada_drought.py`
+**Output:** `countries/CAN/drought/CAN.parquet`
+**Schema:** snapshot_id, timestamp, severity, geometry, area_km2, provinces_affected
+
+#### Canada National Fire Database (CNFDB)
+
+**Source:** Natural Resources Canada - Canadian Forest Service (Open Government License)
+**Location:** `Raw data/imported/canada/cnfdb/`
+**Files:** Fire points (30 MB), Fire polygons (743 MB), Large fires subset (2.4 MB)
+
+Global FIRMS has only 38 Canada fires in 2024 - CNFDB has thousands of ground-truth fires from Canadian fire management agencies.
+
+**Converter:** `convert_canada_fires.py`
+**Output:** `countries/CAN/wildfires/events.parquet`
+**Schema:** event_id, timestamp, latitude, longitude, area_km2, fire_cause, province, has_polygon
+
+**Note:** Data completeness varies by province and year per source metadata.
 
 ### Blocked Sources
 
@@ -895,5 +911,167 @@ Globe projection disabled due to animation interference. Uses Mercator only.
 
 ---
 
-*Last Updated: 2026-01-13*
+## Code Optimizations (app.py)
+
+The disaster endpoints in `app.py` have grown to 3,200+ lines with 40 endpoints. Several patterns repeat across endpoints and could be consolidated.
+
+### GeoJSON Builder Helper
+
+**Problem:** Every endpoint manually builds GeoJSON features with repetitive patterns:
+- `for _, row in df.iterrows()` loops
+- `pd.notna()` checks for every property
+- Type conversions (int, float, str) with null handling
+- Point geometry construction from lat/lon
+
+**Current pattern (repeated 24+ times):**
+```python
+features = []
+for _, row in df.iterrows():
+    if pd.isna(row['latitude']) or pd.isna(row['longitude']):
+        continue
+    features.append({
+        "type": "Feature",
+        "geometry": {
+            "type": "Point",
+            "coordinates": [float(row['longitude']), float(row['latitude'])]
+        },
+        "properties": {
+            "event_id": row.get('event_id', ''),
+            "magnitude": float(row['magnitude']) if pd.notna(row['magnitude']) else None,
+            # ... 10-20 more properties with pd.notna() checks
+        }
+    })
+```
+
+**Proposed helper:**
+```python
+def build_geojson_features(df, property_map, geometry_type='Point',
+                           lat_col='latitude', lon_col='longitude'):
+    """
+    Convert DataFrame to GeoJSON features.
+
+    Args:
+        df: pandas DataFrame
+        property_map: dict mapping property names to (column, type, default)
+            e.g., {'magnitude': ('magnitude', float, None)}
+        geometry_type: 'Point', 'LineString', or 'Polygon'
+        lat_col, lon_col: column names for coordinates
+
+    Returns:
+        list of GeoJSON Feature dicts
+    """
+    features = []
+    for _, row in df.iterrows():
+        if pd.isna(row[lat_col]) or pd.isna(row[lon_col]):
+            continue
+
+        props = {}
+        for prop_name, (col, dtype, default) in property_map.items():
+            val = row.get(col)
+            if pd.notna(val):
+                props[prop_name] = dtype(val) if dtype else val
+            else:
+                props[prop_name] = default
+
+        features.append({
+            "type": "Feature",
+            "geometry": {
+                "type": geometry_type,
+                "coordinates": [float(row[lon_col]), float(row[lat_col])]
+            },
+            "properties": props
+        })
+    return features
+```
+
+**Simplified endpoint:**
+```python
+@app.get("/api/earthquakes/geojson")
+async def get_earthquakes_geojson(year: int = None):
+    df = pd.read_parquet(earthquakes_path)
+    if year: df = df[df['year'] == year]
+
+    features = build_geojson_features(df, {
+        'event_id': ('event_id', str, ''),
+        'magnitude': ('magnitude', float, None),
+        'depth_km': ('depth_km', float, None),
+        'timestamp': ('timestamp', str, None),
+        'year': ('year', int, None),
+    })
+    return msgpack_response({"type": "FeatureCollection", "features": features})
+```
+
+**Estimated savings:** ~500-800 lines across all endpoints.
+
+### Nearby Events Consolidation
+
+**Problem:** Three nearly identical functions for finding nearby events:
+- `get_nearby_earthquakes()` - 132 lines
+- `get_nearby_volcanoes()` - 138 lines
+- `get_nearby_tsunamis()` - 130 lines
+
+All follow the same pattern:
+1. Calculate distance from reference point
+2. Filter by radius
+3. Sort by distance
+4. Return as GeoJSON
+
+**Proposed consolidation:**
+```python
+async def get_nearby_events(
+    event_type: str,  # 'earthquake', 'volcano', 'tsunami'
+    lat: float,
+    lon: float,
+    radius_km: float = 500,
+    limit: int = 50
+):
+    # Load appropriate parquet file based on event_type
+    # Apply haversine distance filter
+    # Build GeoJSON with event-type-specific properties
+```
+
+**Estimated savings:** ~260 lines (keep one generic function + thin wrappers).
+
+### Common Filter Patterns
+
+Many endpoints repeat the same filter logic:
+```python
+if year is not None:
+    df = df[df['year'] == year]
+elif min_year is not None:
+    df = df[df['year'] >= min_year]
+```
+
+**Proposed helper:**
+```python
+def apply_year_filter(df, year=None, min_year=None, max_year=None):
+    if year is not None:
+        return df[df['year'] == year]
+    if min_year is not None:
+        df = df[df['year'] >= min_year]
+    if max_year is not None:
+        df = df[df['year'] <= max_year]
+    return df
+```
+
+### Implementation Priority
+
+| Optimization | Lines Saved | Effort | Risk |
+|--------------|-------------|--------|------|
+| GeoJSON helper | ~600 | Medium | Low - pure refactor |
+| Nearby consolidation | ~260 | Medium | Low - same logic |
+| Year filter helper | ~100 | Low | Low |
+| **Total** | **~960** | | |
+
+### Notes
+
+- All changes are internal refactoring - API contracts unchanged
+- Should add unit tests before refactoring
+- Consider creating `app_helpers.py` for shared functions
+- MessagePack responses already consolidated via `msgpack_response()`
+
+---
+
+*Last Updated: 2026-01-14*
 *Added: International risk frameworks (INFORM, WorldRiskIndex, DRMKC, Japan, Australia)*
+*Merged: Canada data analysis inline (drought monitor, CNFDB fires)*

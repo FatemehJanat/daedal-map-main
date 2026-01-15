@@ -74,6 +74,65 @@ See also: [DISASTER_DISPLAY.md](DISASTER_DISPLAY.md) for frontend rendering of e
 
 ---
 
+## Country-Specific loc_id Formats
+
+When importing data, use these exact formats. Inconsistent formatting causes join failures.
+
+### United States (USA)
+
+| Level | Format | Example | Notes |
+|-------|--------|---------|-------|
+| Country | `USA` | `USA` | |
+| State | `USA-{ST}` | `USA-CA` | 2-letter state code |
+| County | `USA-{ST}-{FIPS}` | `USA-CA-6037` | **NO leading zeros** on FIPS |
+| ZCTA | `USA-{ST}-Z{ZIP5}` | `USA-CA-Z90210` | Z prefix for ZIP codes |
+| Tract | `USA-{ST}-{FIPS}-T{TRACT}` | `USA-CA-6037-T123456` | T prefix for tracts |
+
+**IMPORTANT**: County FIPS codes should NOT have leading zeros. Use `USA-CA-6037` not `USA-CA-06037`. This is critical for join compatibility across all USA datasets.
+
+### Canada (CAN)
+
+| Level | Format | Example | Notes |
+|-------|--------|---------|-------|
+| Country | `CAN` | `CAN` | |
+| Province | `CAN-{PR}` | `CAN-BC` | 2-letter province code |
+| Census Division | `CAN-{PR}-{CDUID}` | `CAN-BC-5915` | 4-digit StatsCan CDUID |
+| Census Subdivision | `CAN-{PR}-{CDUID}-{CSD}` | `CAN-BC-5915-001` | 3-digit CSD code |
+
+Province codes: AB, BC, MB, NB, NL, NS, NT, NU, ON, PE, QC, SK, YT
+
+Note: Canada country data uses numeric census division codes (e.g., `CAN-BC-5915`). GADM uses alpha codes (e.g., `CAN-AB-EI`) which are incompatible at level 2. Use crosswalk file for GADM fallback.
+
+### Australia (AUS)
+
+| Level | Format | Example | Notes |
+|-------|--------|---------|-------|
+| Country | `AUS` | `AUS` | |
+| State | `AUS-{ST}` | `AUS-NSW` | **3-letter** state code |
+| LGA | `AUS-{ST}-{LGA}` | `AUS-NSW-10050` | 5-digit ABS LGA code |
+
+State codes: ACT, NSW, NT, OT, QLD, SA, TAS, VIC, WA
+
+**IMPORTANT**: Use 3-letter codes (ACT, NSW, QLD, TAS, VIC), not GADM 2-letter codes (AC, NS, QL, TS, VI). GADM uses different abbreviations - use crosswalk file for GADM fallback.
+
+### Europe (NUTS)
+
+| Level | Format | Example | Notes |
+|-------|--------|---------|-------|
+| Country | `{ISO3}` | `DEU` | |
+| NUTS1 | `{ISO3}-{NUTS1}` | `DEU-DE1` | Region code |
+| NUTS2 | `{ISO3}-{NUTS2}` | `DEU-DE11` | Sub-region |
+| NUTS3 | `{ISO3}-{NUTS3}` | `DEU-DE111` | Local admin |
+
+European data uses Eurostat NUTS codes stored in `countries/EUR/`:
+- `EUR/eurostat.parquet` - Combined Eurostat data for all 37 countries
+- `EUR/geometry.parquet` - Combined NUTS geometry (2,015 regions)
+- `EUR/crosswalk.json` - Documents NUTS vs GADM incompatibility
+
+Country-specific non-Eurostat data can be added in `EUR/{ISO3}/` subfolders (e.g., `EUR/DEU/destatis/`).
+
+---
+
 ## Event Data Format
 
 Event-based data (earthquakes, hurricanes, wildfires, etc.) uses a unified schema. For complete schema definitions, see [DISASTER_DISPLAY.md - Complete Parquet Schemas](DISASTER_DISPLAY.md#complete-parquet-schemas).
@@ -154,9 +213,20 @@ county-map-data/
       census_population/
         USA.parquet
         metadata.json
-    DEU/                      # Future country folders
-      geometry.parquet
+    CAN/
+      geometry.parquet        # Canadian census divisions
+      crosswalk.json          # StatsCan -> GADM mapping
       ...
+    AUS/
+      geometry.parquet        # Australian LGAs
+      crosswalk.json          # ABS -> GADM mapping
+      ...
+    EUR/                      # European regional folder
+      eurostat.parquet        # Combined Eurostat data (37 countries)
+      geometry.parquet        # Combined NUTS geometry (2,015 regions)
+      crosswalk.json          # NUTS -> GADM documentation
+      DEU/                    # Country-specific German data (future)
+      FRA/                    # Country-specific French data (future)
 
   geometry/                   # Fallback geometry bank
     USA.parquet               # GADM admin levels (when no data folder exists)

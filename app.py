@@ -26,7 +26,7 @@ if sys.stderr.encoding != 'utf-8':
 import msgpack
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 
@@ -100,6 +100,224 @@ async def decode_request_body(request: Request) -> dict:
     """Decode MessagePack request body."""
     body_bytes = await request.body()
     return msgpack.unpackb(body_bytes, raw=False)
+
+
+# === Data Processing Helpers ===
+
+def ensure_year_column(df):
+    """
+    Extract year from timestamp column if not already present.
+    Modifies DataFrame in place and returns it.
+
+    Usage:
+        df = ensure_year_column(df)
+    """
+    import pandas as pd
+    if 'year' not in df.columns and 'timestamp' in df.columns:
+        df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+        df['year'] = df['timestamp'].dt.year
+    return df
+
+
+def filter_by_proximity(df, lat: float, lon: float, radius_km: float,
+                        lat_col: str = 'latitude', lon_col: str = 'longitude'):
+    """
+    Filter DataFrame to rows within radius_km of a point.
+    Uses approximate Haversine distance (rectangular bounding box).
+
+    Usage:
+        df = filter_by_proximity(df, 35.0, -120.0, 150.0)
+    """
+    import numpy as np
+    lat_range = radius_km / 111.0
+    lon_range = radius_km / (111.0 * max(0.01, np.cos(np.radians(lat))))
+
+    return df[
+        (df[lat_col] >= lat - lat_range) &
+        (df[lat_col] <= lat + lat_range) &
+        (df[lon_col] >= lon - lon_range) &
+        (df[lon_col] <= lon + lon_range)
+    ]
+
+
+def filter_by_time_window(df, timestamp: str, days_before: int, days_after: int,
+                          time_col: str = 'timestamp'):
+    """
+    Filter DataFrame to rows within a time window around a timestamp.
+    Handles timezone conversion automatically.
+
+    Usage:
+        df = filter_by_time_window(df, "2024-01-15T12:00:00Z", 30, 60)
+    """
+    import pandas as pd
+    from datetime import timedelta
+
+    try:
+        event_time = pd.to_datetime(timestamp)
+        if event_time.tzinfo is not None:
+            event_time = event_time.tz_convert('UTC').tz_localize(None)
+
+        start_time = event_time - timedelta(days=days_before)
+        end_time = event_time + timedelta(days=days_after)
+
+        df[time_col] = pd.to_datetime(df[time_col], errors='coerce')
+        if df[time_col].dt.tz is not None:
+            df[time_col] = df[time_col].dt.tz_convert('UTC').dt.tz_localize(None)
+
+        return df[(df[time_col] >= start_time) & (df[time_col] <= end_time)]
+    except Exception as e:
+        logger.warning(f"Could not parse timestamp {timestamp}: {e}")
+        return df
+
+
+def build_geojson_features(df, property_builders: dict,
+                           lat_col: str = 'latitude', lon_col: str = 'longitude'):
+    """
+    Build GeoJSON Point features from a DataFrame.
+
+    Args:
+        df: DataFrame with lat/lon columns
+        property_builders: Dict mapping property names to builder functions.
+            Each function receives a row and returns the property value.
+            Example: {"magnitude": lambda r: safe_float(r, 'magnitude')}
+        lat_col: Name of latitude column
+        lon_col: Name of longitude column
+
+    Returns:
+        List of GeoJSON Feature dicts
+
+    Usage:
+        features = build_geojson_features(df, {
+            "event_id": lambda r: r.get('event_id', ''),
+            "magnitude": lambda r: safe_float(r, 'magnitude'),
+        })
+    """
+    import pandas as pd
+    features = []
+
+    for _, row in df.iterrows():
+        if pd.isna(row[lat_col]) or pd.isna(row[lon_col]):
+            continue
+
+        props = {name: builder(row) for name, builder in property_builders.items()}
+
+        features.append({
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [float(row[lon_col]), float(row[lat_col])]
+            },
+            "properties": props
+        })
+
+    return features
+
+
+# Property extraction helpers for build_geojson_features
+def safe_float(row, col, default=None):
+    """Safely extract float from row, returns default if NA."""
+    import pandas as pd
+    val = row.get(col)
+    return float(val) if pd.notna(val) else default
+
+def safe_int(row, col, default=None):
+    """Safely extract int from row, returns default if NA."""
+    import pandas as pd
+    val = row.get(col)
+    return int(val) if pd.notna(val) else default
+
+def safe_str(row, col, default=''):
+    """Safely extract string from row, returns default if NA."""
+    import pandas as pd
+    val = row.get(col)
+    return str(val) if pd.notna(val) else default
+
+def safe_bool(row, col, default=False):
+    """Safely extract bool from row, returns default if NA."""
+    import pandas as pd
+    val = row.get(col)
+    return bool(val) if pd.notna(val) else default
+
+
+# Reusable property builders for common event types
+def get_earthquake_property_builders():
+    """Return property builders dict for earthquake GeoJSON features."""
+    return {
+        "event_id": lambda r: r.get('event_id', ''),
+        "magnitude": lambda r: safe_float(r, 'magnitude'),
+        "depth_km": lambda r: safe_float(r, 'depth_km'),
+        "felt_radius_km": lambda r: safe_float(r, 'felt_radius_km', 0),
+        "damage_radius_km": lambda r: safe_float(r, 'damage_radius_km', 0),
+        "place": lambda r: r.get('place', ''),
+        "time": lambda r: safe_str(r, 'timestamp', None),
+        "timestamp": lambda r: safe_str(r, 'timestamp', None),
+        "year": lambda r: safe_int(r, 'year'),
+        "loc_id": lambda r: r.get('loc_id', ''),
+        "latitude": lambda r: safe_float(r, 'latitude'),
+        "longitude": lambda r: safe_float(r, 'longitude'),
+        "mainshock_id": lambda r: r.get('mainshock_id') if r.get('mainshock_id') else None,
+        "sequence_id": lambda r: r.get('sequence_id') if r.get('sequence_id') else None,
+        "is_mainshock": lambda r: safe_bool(r, 'is_mainshock', False),
+        "aftershock_count": lambda r: safe_int(r, 'aftershock_count', 0),
+    }
+
+
+def get_eruption_property_builders():
+    """Return property builders dict for volcanic eruption GeoJSON features."""
+    return {
+        "event_id": lambda r: r.get('event_id', ''),
+        "eruption_id": lambda r: safe_int(r, 'eruption_id'),
+        "volcano_name": lambda r: r.get('volcano_name', ''),
+        "VEI": lambda r: safe_int(r, 'vei') or safe_int(r, 'VEI'),
+        "felt_radius_km": lambda r: safe_float(r, 'felt_radius_km', 10.0),
+        "damage_radius_km": lambda r: safe_float(r, 'damage_radius_km', 3.0),
+        "activity_type": lambda r: r.get('activity_type', ''),
+        "activity_area": lambda r: safe_str(r, 'activity_area', None),
+        "year": lambda r: safe_int(r, 'year'),
+        "end_year": lambda r: safe_int(r, 'end_year'),
+        "timestamp": lambda r: safe_str(r, 'timestamp', None),
+        "end_timestamp": lambda r: safe_str(r, 'end_timestamp', None),
+        "duration_days": lambda r: safe_float(r, 'duration_days'),
+        "is_ongoing": lambda r: safe_bool(r, 'is_ongoing', False),
+        "loc_id": lambda r: r.get('loc_id', ''),
+        "latitude": lambda r: safe_float(r, 'latitude'),
+        "longitude": lambda r: safe_float(r, 'longitude'),
+    }
+
+
+def get_volcano_catalog_property_builders():
+    """Return property builders dict for volcano catalog (not eruption events)."""
+    return {
+        "volcano_id": lambda r: r.get('volcano_id', ''),
+        "volcano_name": lambda r: r.get('volcano_name', ''),
+        "VEI": lambda r: safe_int(r, 'last_known_VEI'),
+        "eruption_count": lambda r: safe_int(r, 'eruption_count', 0),
+        "last_eruption_year": lambda r: safe_int(r, 'last_eruption_year'),
+        "loc_id": lambda r: r.get('loc_id', ''),
+    }
+
+
+def get_tsunami_property_builders():
+    """Return property builders dict for tsunami source event GeoJSON features."""
+    return {
+        "event_id": lambda r: r.get('event_id', ''),
+        "year": lambda r: safe_int(r, 'year'),
+        "timestamp": lambda r: safe_str(r, 'timestamp', None),
+        "country": lambda r: r.get('country', ''),
+        "location": lambda r: safe_str(r, 'location', None),
+        "cause": lambda r: r.get('cause', ''),
+        "cause_code": lambda r: safe_int(r, 'cause_code'),
+        "eq_magnitude": lambda r: safe_float(r, 'eq_magnitude'),
+        "max_water_height_m": lambda r: safe_float(r, 'max_water_height_m'),
+        "intensity": lambda r: safe_float(r, 'intensity'),
+        "runup_count": lambda r: safe_int(r, 'runup_count', 0),
+        "deaths": lambda r: safe_int(r, 'deaths'),
+        "damage_millions": lambda r: safe_float(r, 'damage_millions'),
+        "loc_id": lambda r: r.get('loc_id', ''),
+        "latitude": lambda r: safe_float(r, 'latitude'),
+        "longitude": lambda r: safe_float(r, 'longitude'),
+        "is_source": lambda r: True,  # Mark as source event
+    }
 
 
 # Create FastAPI app
@@ -484,66 +702,26 @@ async def get_earthquakes_geojson(year: int = None, min_magnitude: float = None,
     """
     Get earthquakes as GeoJSON points for map display.
     No default magnitude filter - frontend controls filtering.
-    Uses global data if available, falls back to USA data.
     """
     import pandas as pd
 
     try:
-        # Global earthquake data
         events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/earthquakes/events.parquet")
-
         if not events_path.exists():
             return msgpack_error("Earthquake data not available", 404)
 
         df = pd.read_parquet(events_path)
-
-        # Extract year from timestamp if not already present
-        if 'year' not in df.columns and 'timestamp' in df.columns:
-            df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
-            df['year'] = df['timestamp'].dt.year
+        df = ensure_year_column(df)
 
         # Apply filters
         if year is not None and 'year' in df.columns:
             df = df[df['year'] == year]
         if min_magnitude is not None:
             df = df[df['magnitude'] >= min_magnitude]
-
-        # Optional limit
         if limit is not None and limit > 0:
             df = df.nlargest(limit, 'magnitude')
 
-        # Build GeoJSON features
-        features = []
-        for _, row in df.iterrows():
-            if pd.isna(row['latitude']) or pd.isna(row['longitude']):
-                continue
-
-            features.append({
-                "type": "Feature",
-                "geometry": {
-                    "type": "Point",
-                    "coordinates": [float(row['longitude']), float(row['latitude'])]
-                },
-                "properties": {
-                    "event_id": row.get('event_id', ''),
-                    "magnitude": float(row['magnitude']) if pd.notna(row['magnitude']) else None,
-                    "depth_km": float(row['depth_km']) if pd.notna(row.get('depth_km')) else None,
-                    "felt_radius_km": float(row['felt_radius_km']) if pd.notna(row.get('felt_radius_km')) else 0,
-                    "damage_radius_km": float(row['damage_radius_km']) if pd.notna(row.get('damage_radius_km')) else 0,
-                    "place": row.get('place', ''),
-                    "time": str(row['timestamp']) if pd.notna(row.get('timestamp')) else None,
-                    "timestamp": str(row['timestamp']) if pd.notna(row.get('timestamp')) else None,
-                    "year": int(row['year']) if 'year' in row and pd.notna(row['year']) else None,
-                    "loc_id": row.get('loc_id', ''),
-                    "latitude": float(row['latitude']),
-                    "longitude": float(row['longitude']),
-                    # Aftershock sequence columns
-                    "mainshock_id": row.get('mainshock_id') if pd.notna(row.get('mainshock_id')) else None,
-                    "sequence_id": row.get('sequence_id') if pd.notna(row.get('sequence_id')) else None,
-                    "is_mainshock": bool(row.get('is_mainshock')) if pd.notna(row.get('is_mainshock')) else False,
-                    "aftershock_count": int(row.get('aftershock_count', 0)) if pd.notna(row.get('aftershock_count')) else 0
-                }
-            })
+        features = build_geojson_features(df, get_earthquake_property_builders())
 
         return msgpack_response({
             "type": "FeatureCollection",
@@ -560,64 +738,25 @@ async def get_earthquake_sequence(sequence_id: str, min_magnitude: float = None)
     """
     Get all earthquakes in a specific aftershock sequence.
     No magnitude filter by default - returns ALL events in the sequence.
-    This allows viewing the full aftershock sequence even when the main
-    earthquake list is filtered to M4.5+.
     """
     import pandas as pd
 
     try:
-        # Global earthquake data
         events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/earthquakes/events.parquet")
-
         if not events_path.exists():
             return msgpack_error("Earthquake data not available", 404)
 
         df = pd.read_parquet(events_path)
-
-        # Filter to this sequence only
         df = df[df['sequence_id'] == sequence_id]
 
         if len(df) == 0:
             return msgpack_error(f"Sequence {sequence_id} not found", 404)
 
-        # Optional magnitude filter (but default is no filter for full sequence)
         if min_magnitude is not None:
             df = df[df['magnitude'] >= min_magnitude]
 
-        # Extract year from timestamp if not already present
-        if 'year' not in df.columns and 'timestamp' in df.columns:
-            df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
-            df['year'] = df['timestamp'].dt.year
-
-        # Build GeoJSON features
-        features = []
-        for _, row in df.iterrows():
-            if pd.isna(row['latitude']) or pd.isna(row['longitude']):
-                continue
-
-            features.append({
-                "type": "Feature",
-                "geometry": {
-                    "type": "Point",
-                    "coordinates": [float(row['longitude']), float(row['latitude'])]
-                },
-                "properties": {
-                    "event_id": row.get('event_id', ''),
-                    "magnitude": float(row['magnitude']) if pd.notna(row['magnitude']) else None,
-                    "depth_km": float(row['depth_km']) if pd.notna(row.get('depth_km')) else None,
-                    "felt_radius_km": float(row['felt_radius_km']) if pd.notna(row.get('felt_radius_km')) else 0,
-                    "damage_radius_km": float(row['damage_radius_km']) if pd.notna(row.get('damage_radius_km')) else 0,
-                    "place": row.get('place', ''),
-                    "timestamp": str(row['timestamp']) if pd.notna(row.get('timestamp')) else None,
-                    "time": str(row['timestamp']) if pd.notna(row.get('timestamp')) else None,
-                    "year": int(row['year']) if 'year' in row and pd.notna(row['year']) else None,
-                    "loc_id": row.get('loc_id', ''),
-                    "mainshock_id": row.get('mainshock_id') if pd.notna(row.get('mainshock_id')) else None,
-                    "sequence_id": row.get('sequence_id') if pd.notna(row.get('sequence_id')) else None,
-                    "is_mainshock": bool(row.get('is_mainshock')) if pd.notna(row.get('is_mainshock')) else False,
-                    "aftershock_count": int(row.get('aftershock_count', 0)) if pd.notna(row.get('aftershock_count')) else 0
-                }
-            })
+        df = ensure_year_column(df)
+        features = build_geojson_features(df, get_earthquake_property_builders())
 
         logger.info(f"Returning {len(features)} events for sequence {sequence_id}")
 
@@ -636,73 +775,31 @@ async def get_earthquake_sequence(sequence_id: str, min_magnitude: float = None)
 async def get_earthquake_aftershocks(event_id: str, min_magnitude: float = None):
     """
     Get all aftershocks for a specific mainshock by event_id.
-    This queries by mainshock_id, which correctly captures all aftershocks
-    even when a large aftershock becomes a mainshock itself (nested sequences).
     Returns the mainshock plus all events where mainshock_id = event_id.
     """
     import pandas as pd
 
     try:
-        # Global earthquake data
         events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/earthquakes/events.parquet")
-
         if not events_path.exists():
             return msgpack_error("Earthquake data not available", 404)
 
         df = pd.read_parquet(events_path)
 
-        # Get the mainshock itself
         mainshock_df = df[df['event_id'] == event_id]
-
         if len(mainshock_df) == 0:
             return msgpack_error(f"Event {event_id} not found", 404)
 
-        # Get all aftershocks (events where mainshock_id = event_id)
         aftershocks_df = df[df['mainshock_id'] == event_id]
-
-        # Combine mainshock and aftershocks
         result_df = pd.concat([mainshock_df, aftershocks_df], ignore_index=True)
 
-        # Optional magnitude filter
         if min_magnitude is not None:
             result_df = result_df[result_df['magnitude'] >= min_magnitude]
 
-        # Extract year from timestamp if not already present
-        if 'year' not in result_df.columns and 'timestamp' in result_df.columns:
-            result_df['timestamp'] = pd.to_datetime(result_df['timestamp'], errors='coerce')
-            result_df['year'] = result_df['timestamp'].dt.year
+        result_df = ensure_year_column(result_df)
+        features = build_geojson_features(result_df, get_earthquake_property_builders())
 
-        # Build GeoJSON features
-        features = []
-        for _, row in result_df.iterrows():
-            if pd.isna(row['latitude']) or pd.isna(row['longitude']):
-                continue
-
-            features.append({
-                "type": "Feature",
-                "geometry": {
-                    "type": "Point",
-                    "coordinates": [float(row['longitude']), float(row['latitude'])]
-                },
-                "properties": {
-                    "event_id": row.get('event_id', ''),
-                    "magnitude": float(row['magnitude']) if pd.notna(row['magnitude']) else None,
-                    "depth_km": float(row['depth_km']) if pd.notna(row.get('depth_km')) else None,
-                    "felt_radius_km": float(row['felt_radius_km']) if pd.notna(row.get('felt_radius_km')) else 0,
-                    "damage_radius_km": float(row['damage_radius_km']) if pd.notna(row.get('damage_radius_km')) else 0,
-                    "place": row.get('place', ''),
-                    "timestamp": str(row['timestamp']) if pd.notna(row.get('timestamp')) else None,
-                    "time": str(row['timestamp']) if pd.notna(row.get('timestamp')) else None,
-                    "year": int(row['year']) if 'year' in row and pd.notna(row['year']) else None,
-                    "loc_id": row.get('loc_id', ''),
-                    "mainshock_id": row.get('mainshock_id') if pd.notna(row.get('mainshock_id')) else None,
-                    "sequence_id": row.get('sequence_id') if pd.notna(row.get('sequence_id')) else None,
-                    "is_mainshock": bool(row.get('is_mainshock')) if pd.notna(row.get('is_mainshock')) else False,
-                    "aftershock_count": int(row.get('aftershock_count', 0)) if pd.notna(row.get('aftershock_count')) else 0
-                }
-            })
-
-        logger.info(f"Returning {len(features)} events for mainshock {event_id} (1 mainshock + {len(features)-1} aftershocks)")
+        logger.info(f"Returning {len(features)} events for mainshock {event_id}")
 
         return msgpack_response({
             "type": "FeatureCollection",
@@ -724,42 +821,16 @@ async def get_earthquake_aftershocks(event_id: str, min_magnitude: float = None)
 
 @app.get("/api/volcanoes/geojson")
 async def get_volcanoes_geojson(active_only: bool = None):
-    """
-    Get volcanoes as GeoJSON points for map display.
-    Uses global data if available, falls back to USA data.
-    """
+    """Get volcanoes as GeoJSON points for map display."""
     import pandas as pd
 
     try:
-        # Global volcano data
         volcanoes_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/smithsonian_volcanoes/volcanoes.parquet")
-
         if not volcanoes_path.exists():
             return msgpack_error("Volcano data not available", 404)
 
         df = pd.read_parquet(volcanoes_path)
-
-        # Build GeoJSON features
-        features = []
-        for _, row in df.iterrows():
-            if pd.isna(row['latitude']) or pd.isna(row['longitude']):
-                continue
-
-            features.append({
-                "type": "Feature",
-                "geometry": {
-                    "type": "Point",
-                    "coordinates": [float(row['longitude']), float(row['latitude'])]
-                },
-                "properties": {
-                    "volcano_id": row.get('volcano_id', ''),
-                    "volcano_name": row.get('volcano_name', ''),
-                    "VEI": int(row['last_known_VEI']) if pd.notna(row.get('last_known_VEI')) else None,
-                    "eruption_count": int(row['eruption_count']) if pd.notna(row.get('eruption_count')) else 0,
-                    "last_eruption_year": int(row['last_eruption_year']) if pd.notna(row.get('last_eruption_year')) else None,
-                    "loc_id": row.get('loc_id', '')
-                }
-            })
+        features = build_geojson_features(df, get_volcano_catalog_property_builders())
 
         return msgpack_response({
             "type": "FeatureCollection",
@@ -776,29 +847,16 @@ async def get_eruptions_geojson(year: int = None, min_vei: int = None, min_year:
     """
     Get volcanic eruptions as GeoJSON points for map display.
     Radii are pre-calculated in the data pipeline using VEI-based formulas.
-    Uses global data if available, falls back to USA data.
-
-    Query params:
-    - year: Filter to single year
-    - min_year: Minimum year filter
-    - min_vei: Minimum VEI filter
-    - exclude_ongoing: If true, exclude ongoing eruptions (for animated overlays)
     """
     import pandas as pd
 
     try:
-        # Global eruption data
         eruptions_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/smithsonian_volcanoes/events.parquet")
-
         if not eruptions_path.exists():
             return msgpack_error("Eruption data not available", 404)
 
         df = pd.read_parquet(eruptions_path)
-
-        # Extract year from timestamp if not already present
-        if 'year' not in df.columns and 'timestamp' in df.columns:
-            df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
-            df['year'] = df['timestamp'].dt.year
+        df = ensure_year_column(df)
 
         # Apply filters
         if year is not None and 'year' in df.columns:
@@ -807,51 +865,10 @@ async def get_eruptions_geojson(year: int = None, min_vei: int = None, min_year:
             df = df[df['year'] >= min_year]
         if min_vei is not None and 'vei' in df.columns:
             df = df[df['vei'] >= min_vei]
-
-        # Exclude ongoing eruptions (for animated timeline - they have no end date)
         if exclude_ongoing and 'is_ongoing' in df.columns:
             df = df[df['is_ongoing'] != True]
 
-        # Build GeoJSON features
-        features = []
-        for _, row in df.iterrows():
-            if pd.isna(row['latitude']) or pd.isna(row['longitude']):
-                continue
-
-            # Handle both 'vei' and 'VEI' column names
-            vei_val = row.get('vei') or row.get('VEI')
-            vei_int = int(vei_val) if pd.notna(vei_val) else None
-
-            # Read pre-calculated radii from parquet (standard event schema)
-            felt_radius = float(row['felt_radius_km']) if pd.notna(row.get('felt_radius_km')) else 10.0
-            damage_radius = float(row['damage_radius_km']) if pd.notna(row.get('damage_radius_km')) else 3.0
-
-            features.append({
-                "type": "Feature",
-                "geometry": {
-                    "type": "Point",
-                    "coordinates": [float(row['longitude']), float(row['latitude'])]
-                },
-                "properties": {
-                    "event_id": row.get('event_id', ''),
-                    "eruption_id": int(row['eruption_id']) if pd.notna(row.get('eruption_id')) else None,
-                    "volcano_name": row.get('volcano_name', ''),
-                    "VEI": vei_int,
-                    "felt_radius_km": felt_radius,
-                    "damage_radius_km": damage_radius,
-                    "activity_type": row.get('activity_type', ''),
-                    "activity_area": row.get('activity_area', '') if pd.notna(row.get('activity_area')) else None,
-                    "year": int(row['year']) if pd.notna(row.get('year')) else None,
-                    "end_year": int(row['end_year']) if pd.notna(row.get('end_year')) else None,
-                    "timestamp": str(row['timestamp']) if pd.notna(row.get('timestamp')) else None,
-                    "end_timestamp": str(row['end_timestamp']) if pd.notna(row.get('end_timestamp')) else None,
-                    "duration_days": float(row['duration_days']) if pd.notna(row.get('duration_days')) else None,
-                    "is_ongoing": bool(row['is_ongoing']) if pd.notna(row.get('is_ongoing')) else False,
-                    "loc_id": row.get('loc_id', ''),
-                    "latitude": float(row['latitude']),
-                    "longitude": float(row['longitude'])
-                }
-            })
+        features = build_geojson_features(df, get_eruption_property_builders())
 
         return msgpack_response({
             "type": "FeatureCollection",
@@ -867,15 +884,11 @@ async def get_eruptions_geojson(year: int = None, min_vei: int = None, min_year:
 
 @app.get("/api/tsunamis/geojson")
 async def get_tsunamis_geojson(year: int = None, min_year: int = 1900, cause: str = None):
-    """
-    Get tsunami source events as GeoJSON points for map display.
-    Uses global NOAA NCEI data.
-    """
+    """Get tsunami source events as GeoJSON points for map display."""
     import pandas as pd
 
     try:
         events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tsunamis/events.parquet")
-
         if not events_path.exists():
             return msgpack_error("Tsunami data not available", 404)
 
@@ -886,39 +899,10 @@ async def get_tsunamis_geojson(year: int = None, min_year: int = 1900, cause: st
             df = df[df['year'] == year]
         elif min_year is not None:
             df = df[df['year'] >= min_year]
-
         if cause is not None:
             df = df[df['cause'].str.lower() == cause.lower()]
 
-        # Build GeoJSON features
-        features = []
-        for _, row in df.iterrows():
-            if pd.isna(row['latitude']) or pd.isna(row['longitude']):
-                continue
-
-            features.append({
-                "type": "Feature",
-                "geometry": {
-                    "type": "Point",
-                    "coordinates": [float(row['longitude']), float(row['latitude'])]
-                },
-                "properties": {
-                    "event_id": row.get('event_id', ''),
-                    "year": int(row['year']) if pd.notna(row.get('year')) else None,
-                    "timestamp": str(row['timestamp']) if pd.notna(row.get('timestamp')) else None,
-                    "country": row.get('country', ''),
-                    "location": row.get('location', '') if pd.notna(row.get('location')) else None,
-                    "cause": row.get('cause', ''),
-                    "eq_magnitude": float(row['eq_magnitude']) if pd.notna(row.get('eq_magnitude')) else None,
-                    "max_water_height_m": float(row['max_water_height_m']) if pd.notna(row.get('max_water_height_m')) else None,
-                    "intensity": float(row['intensity']) if pd.notna(row.get('intensity')) else None,
-                    "runup_count": int(row['runup_count']) if pd.notna(row.get('runup_count')) else 0,
-                    "deaths": int(row['deaths']) if pd.notna(row.get('deaths')) else None,
-                    "damage_millions": float(row['damage_millions']) if pd.notna(row.get('damage_millions')) else None,
-                    "loc_id": row.get('loc_id', ''),
-                    "is_source": True  # Mark as source event for display
-                }
-            })
+        features = build_geojson_features(df, get_tsunami_property_builders())
 
         return msgpack_response({
             "type": "FeatureCollection",
@@ -1128,70 +1112,23 @@ async def get_nearby_earthquakes(
     days_after: int = 60,
     min_magnitude: float = 3.0
 ):
-    """
-    Find earthquakes near a location within a time window.
-    Used for cross-linking volcanic eruptions to related earthquakes.
-
-    Parameters:
-    - lat, lon: Center point (volcano location)
-    - timestamp: ISO timestamp of eruption (searches before AND after)
-    - year: Fallback if no timestamp (searches whole year)
-    - radius_km: Search radius (default 150km for volcanic influence)
-    - days_before: Days to search before event (precursor quakes)
-    - days_after: Days to search after event (triggered quakes)
-    - min_magnitude: Minimum magnitude (default 3.0)
-
-    Returns GeoJSON with earthquakes in the window, plus metadata.
-    """
+    """Find earthquakes near a location within a time window."""
     import pandas as pd
-    import numpy as np
-    from datetime import datetime, timedelta
 
     try:
         events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/earthquakes/events.parquet")
-
         if not events_path.exists():
             return msgpack_error("Earthquake data not available", 404)
 
         df = pd.read_parquet(events_path)
+        df = filter_by_proximity(df, lat, lon, radius_km)
 
-        # Haversine distance filter (approximate, using km)
-        # At equator: 1 degree = ~111km
-        lat_range = radius_km / 111.0
-        lon_range = radius_km / (111.0 * np.cos(np.radians(lat)))
-
-        df = df[
-            (df['latitude'] >= lat - lat_range) &
-            (df['latitude'] <= lat + lat_range) &
-            (df['longitude'] >= lon - lon_range) &
-            (df['longitude'] <= lon + lon_range)
-        ]
-
-        # Time filter - search both BEFORE and AFTER the event
         if timestamp:
-            try:
-                event_time = pd.to_datetime(timestamp)
-                # Convert to timezone-naive for comparison with datetime64
-                if event_time.tzinfo is not None:
-                    event_time = event_time.tz_convert('UTC').tz_localize(None)
-                start_time = event_time - timedelta(days=days_before)
-                end_time = event_time + timedelta(days=days_after)
-                df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
-                # Make df timestamps timezone-naive too
-                if df['timestamp'].dt.tz is not None:
-                    df['timestamp'] = df['timestamp'].dt.tz_convert('UTC').dt.tz_localize(None)
-                df = df[(df['timestamp'] >= start_time) & (df['timestamp'] <= end_time)]
-                logger.info(f"Searching earthquakes from {start_time} to {end_time}")
-            except Exception as e:
-                logger.warning(f"Could not parse timestamp {timestamp}: {e}")
+            df = filter_by_time_window(df, timestamp, days_before, days_after)
         elif year:
-            # Fallback: filter by year
-            if 'year' not in df.columns and 'timestamp' in df.columns:
-                df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
-                df['year'] = df['timestamp'].dt.year
+            df = ensure_year_column(df)
             df = df[df['year'] == year]
 
-        # Magnitude filter
         df = df[df['magnitude'] >= min_magnitude]
 
         if len(df) == 0:
@@ -1202,32 +1139,8 @@ async def get_nearby_earthquakes(
                 "search_params": {"lat": lat, "lon": lon, "radius_km": radius_km}
             })
 
-        # Build GeoJSON features
-        features = []
-        for _, row in df.iterrows():
-            if pd.isna(row['latitude']) or pd.isna(row['longitude']):
-                continue
-
-            features.append({
-                "type": "Feature",
-                "geometry": {
-                    "type": "Point",
-                    "coordinates": [float(row['longitude']), float(row['latitude'])]
-                },
-                "properties": {
-                    "event_id": row.get('event_id', ''),
-                    "magnitude": float(row['magnitude']) if pd.notna(row['magnitude']) else None,
-                    "depth_km": float(row['depth_km']) if pd.notna(row.get('depth_km')) else None,
-                    "felt_radius_km": float(row['felt_radius_km']) if pd.notna(row.get('felt_radius_km')) else 0,
-                    "damage_radius_km": float(row['damage_radius_km']) if pd.notna(row.get('damage_radius_km')) else 0,
-                    "place": row.get('place', ''),
-                    "timestamp": str(row['timestamp']) if pd.notna(row.get('timestamp')) else None,
-                    "time": str(row['timestamp']) if pd.notna(row.get('timestamp')) else None,
-                    "year": int(row['year']) if 'year' in row and pd.notna(row['year']) else None,
-                    "sequence_id": row.get('sequence_id') if pd.notna(row.get('sequence_id')) else None,
-                    "is_mainshock": bool(row.get('is_mainshock')) if pd.notna(row.get('is_mainshock')) else False
-                }
-            })
+        df = ensure_year_column(df)
+        features = build_geojson_features(df, get_earthquake_property_builders())
 
         logger.info(f"Found {len(features)} earthquakes within {radius_km}km of ({lat}, {lon})")
 
@@ -1236,11 +1149,8 @@ async def get_nearby_earthquakes(
             "features": features,
             "count": len(features),
             "search_params": {
-                "lat": lat,
-                "lon": lon,
-                "radius_km": radius_km,
-                "days_after": days_after,
-                "min_magnitude": min_magnitude
+                "lat": lat, "lon": lon, "radius_km": radius_km,
+                "days_after": days_after, "min_magnitude": min_magnitude
             }
         })
 
@@ -1259,66 +1169,23 @@ async def get_nearby_volcanoes(
     days_before: int = 30,
     min_vei: int = None
 ):
-    """
-    Find volcanic eruptions near a location within a time window.
-    Used for cross-linking earthquakes to potential volcanic triggers.
-
-    Parameters:
-    - lat, lon: Center point (earthquake epicenter)
-    - timestamp: ISO timestamp to search before (preferred)
-    - year: Fallback if no timestamp (searches whole year)
-    - radius_km: Search radius (default 150km for volcanic influence)
-    - days_before: Time window before event (default 30 days - eruption precedes quake)
-    - min_vei: Minimum VEI (optional)
-
-    Returns GeoJSON with eruptions in the window, plus metadata.
-    """
+    """Find volcanic eruptions near a location within a time window."""
     import pandas as pd
-    import numpy as np
-    from datetime import datetime, timedelta
 
     try:
         eruptions_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/smithsonian_volcanoes/events.parquet")
-
         if not eruptions_path.exists():
             return msgpack_error("Volcano data not available", 404)
 
         df = pd.read_parquet(eruptions_path)
+        df = filter_by_proximity(df, lat, lon, radius_km)
 
-        # Haversine distance filter (approximate, using km)
-        lat_range = radius_km / 111.0
-        lon_range = radius_km / (111.0 * np.cos(np.radians(lat)))
-
-        df = df[
-            (df['latitude'] >= lat - lat_range) &
-            (df['latitude'] <= lat + lat_range) &
-            (df['longitude'] >= lon - lon_range) &
-            (df['longitude'] <= lon + lon_range)
-        ]
-
-        # Time filter - look BEFORE the earthquake (eruption triggers quake)
         if timestamp:
-            try:
-                end_time = pd.to_datetime(timestamp)
-                # Convert to timezone-naive for comparison with datetime64
-                if end_time.tzinfo is not None:
-                    end_time = end_time.tz_convert('UTC').tz_localize(None)
-                start_time = end_time - timedelta(days=days_before)
-                df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
-                # Make df timestamps timezone-naive too
-                if df['timestamp'].dt.tz is not None:
-                    df['timestamp'] = df['timestamp'].dt.tz_convert('UTC').dt.tz_localize(None)
-                df = df[(df['timestamp'] >= start_time) & (df['timestamp'] <= end_time)]
-            except Exception as e:
-                logger.warning(f"Could not parse timestamp {timestamp}: {e}")
+            df = filter_by_time_window(df, timestamp, days_before, 0)  # Only look before
         elif year:
-            # Fallback: filter by year
-            if 'year' not in df.columns and 'timestamp' in df.columns:
-                df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
-                df['year'] = df['timestamp'].dt.year
+            df = ensure_year_column(df)
             df = df[df['year'] == year]
 
-        # VEI filter
         if min_vei is not None:
             vei_col = 'vei' if 'vei' in df.columns else 'VEI'
             if vei_col in df.columns:
@@ -1332,40 +1199,7 @@ async def get_nearby_volcanoes(
                 "search_params": {"lat": lat, "lon": lon, "radius_km": radius_km}
             })
 
-        # Build GeoJSON features
-        features = []
-        for _, row in df.iterrows():
-            if pd.isna(row['latitude']) or pd.isna(row['longitude']):
-                continue
-
-            vei_val = row.get('vei') or row.get('VEI')
-            vei_int = int(vei_val) if pd.notna(vei_val) else None
-
-            features.append({
-                "type": "Feature",
-                "geometry": {
-                    "type": "Point",
-                    "coordinates": [float(row['longitude']), float(row['latitude'])]
-                },
-                "properties": {
-                    "event_id": row.get('event_id', ''),
-                    "eruption_id": int(row['eruption_id']) if pd.notna(row.get('eruption_id')) else None,
-                    "volcano_name": row.get('volcano_name', ''),
-                    "VEI": vei_int,
-                    "felt_radius_km": float(row['felt_radius_km']) if pd.notna(row.get('felt_radius_km')) else 10.0,
-                    "damage_radius_km": float(row['damage_radius_km']) if pd.notna(row.get('damage_radius_km')) else 3.0,
-                    "activity_type": row.get('activity_type', ''),
-                    "activity_area": row.get('activity_area', '') if pd.notna(row.get('activity_area')) else None,
-                    "year": int(row['year']) if pd.notna(row.get('year')) else None,
-                    "end_year": int(row['end_year']) if pd.notna(row.get('end_year')) else None,
-                    "timestamp": str(row['timestamp']) if pd.notna(row.get('timestamp')) else None,
-                    "end_timestamp": str(row['end_timestamp']) if pd.notna(row.get('end_timestamp')) else None,
-                    "duration_days": float(row['duration_days']) if pd.notna(row.get('duration_days')) else None,
-                    "is_ongoing": bool(row['is_ongoing']) if pd.notna(row.get('is_ongoing')) else False,
-                    "latitude": float(row['latitude']),
-                    "longitude": float(row['longitude'])
-                }
-            })
+        features = build_geojson_features(df, get_eruption_property_builders())
 
         logger.info(f"Found {len(features)} eruptions within {radius_km}km of ({lat}, {lon})")
 
@@ -1374,11 +1208,8 @@ async def get_nearby_volcanoes(
             "features": features,
             "count": len(features),
             "search_params": {
-                "lat": lat,
-                "lon": lon,
-                "radius_km": radius_km,
-                "days_before": days_before,
-                "min_vei": min_vei
+                "lat": lat, "lon": lon, "radius_km": radius_km,
+                "days_before": days_before, "min_vei": min_vei
             }
         })
 
@@ -1397,62 +1228,21 @@ async def get_nearby_tsunamis(
     days_before: int = 1,
     days_after: int = 30
 ):
-    """
-    Find tsunamis near a location within a time window.
-    Used for cross-linking earthquakes to tsunami effects.
-
-    Parameters:
-    - lat, lon: Center point (earthquake epicenter)
-    - timestamp: ISO timestamp to search around (preferred)
-    - year: Fallback if no timestamp (searches whole year)
-    - radius_km: Search radius (default 300km - tsunamis travel far)
-    - days_before: Time window before event (default 1 day)
-    - days_after: Time window after event (default 30 days)
-
-    Returns GeoJSON with tsunamis in the window, plus metadata.
-    """
+    """Find tsunamis near a location within a time window."""
     import pandas as pd
-    import numpy as np
-    from datetime import datetime, timedelta
 
     try:
         tsunamis_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tsunamis/events.parquet")
-
         if not tsunamis_path.exists():
             return msgpack_error("Tsunami data not available", 404)
 
         df = pd.read_parquet(tsunamis_path)
+        df = filter_by_proximity(df, lat, lon, radius_km)
 
-        # Haversine distance filter (approximate, using km)
-        lat_range = radius_km / 111.0
-        lon_range = radius_km / (111.0 * np.cos(np.radians(lat)))
-
-        df = df[
-            (df['latitude'] >= lat - lat_range) &
-            (df['latitude'] <= lat + lat_range) &
-            (df['longitude'] >= lon - lon_range) &
-            (df['longitude'] <= lon + lon_range)
-        ]
-
-        # Time filter - look around the earthquake (tsunami follows quake)
         if timestamp:
-            try:
-                center_time = pd.to_datetime(timestamp)
-                if center_time.tzinfo is not None:
-                    center_time = center_time.tz_convert('UTC').tz_localize(None)
-                start_time = center_time - timedelta(days=days_before)
-                end_time = center_time + timedelta(days=days_after)
-                df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
-                if df['timestamp'].dt.tz is not None:
-                    df['timestamp'] = df['timestamp'].dt.tz_convert('UTC').dt.tz_localize(None)
-                df = df[(df['timestamp'] >= start_time) & (df['timestamp'] <= end_time)]
-            except Exception as e:
-                logger.warning(f"Could not parse timestamp {timestamp}: {e}")
+            df = filter_by_time_window(df, timestamp, days_before, days_after)
         elif year:
-            # Fallback: filter by year
-            if 'year' not in df.columns and 'timestamp' in df.columns:
-                df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
-                df['year'] = df['timestamp'].dt.year
+            df = ensure_year_column(df)
             df = df[df['year'] == year]
 
         if len(df) == 0:
@@ -1463,37 +1253,7 @@ async def get_nearby_tsunamis(
                 "search_params": {"lat": lat, "lon": lon, "radius_km": radius_km}
             })
 
-        # Build GeoJSON features
-        features = []
-        for _, row in df.iterrows():
-            if pd.isna(row['latitude']) or pd.isna(row['longitude']):
-                continue
-
-            features.append({
-                "type": "Feature",
-                "geometry": {
-                    "type": "Point",
-                    "coordinates": [float(row['longitude']), float(row['latitude'])]
-                },
-                "properties": {
-                    "event_id": row.get('event_id', ''),
-                    "cause": row.get('cause', ''),
-                    "cause_code": int(row['cause_code']) if pd.notna(row.get('cause_code')) else None,
-                    "eq_magnitude": float(row['eq_magnitude']) if pd.notna(row.get('eq_magnitude')) else None,
-                    "max_water_height_m": float(row['max_water_height_m']) if pd.notna(row.get('max_water_height_m')) else None,
-                    "intensity": float(row['intensity']) if pd.notna(row.get('intensity')) else None,
-                    "deaths": int(row['deaths']) if pd.notna(row.get('deaths')) else None,
-                    "num_runups": int(row['runup_count']) if pd.notna(row.get('num_runups')) else 0,
-                    "runup_count": int(row['runup_count']) if pd.notna(row.get('runup_count')) else 0,
-                    "year": int(row['year']) if pd.notna(row.get('year')) else None,
-                    "timestamp": str(row['timestamp']) if pd.notna(row.get('timestamp')) else None,
-                    "country": row.get('country', ''),
-                    "location": row.get('location', ''),
-                    "latitude": float(row['latitude']),
-                    "longitude": float(row['longitude']),
-                    "is_source": True  # Mark as source for display styling
-                }
-            })
+        features = build_geojson_features(df, get_tsunami_property_builders())
 
         logger.info(f"Found {len(features)} tsunamis within {radius_km}km of ({lat}, {lon})")
 
@@ -1502,11 +1262,8 @@ async def get_nearby_tsunamis(
             "features": features,
             "count": len(features),
             "search_params": {
-                "lat": lat,
-                "lon": lon,
-                "radius_km": radius_km,
-                "days_before": days_before,
-                "days_after": days_after
+                "lat": lat, "lon": lon, "radius_km": radius_km,
+                "days_before": days_before, "days_after": days_after
             }
         })
 

@@ -183,6 +183,10 @@ All locations use standardized loc_id format based on admin levels:
 - `XSH` - Hudson Bay
 - `XSB` - Bering Sea
 
+### Country-Specific loc_id Formats
+
+When importing data, use these exact formats. Inconsistent formatting causes join failures. USA, Canada, Australia, and European countries have specific rules - see [data_pipeline.md - Country-Specific loc_id Formats](data_pipeline.md#country-specific-loc_id-formats) for details.
+
 ---
 
 ## Geometry File Standards

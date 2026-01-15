@@ -150,13 +150,18 @@ export const TimeSlider = {
   playTimeout: null,       // For new stepsPerFrame-based playback
 
   // Time range bounds - constrain playback/stepping to subset of full range
-  lowerBoundSlider: null,  // DOM element for lower bound slider
-  upperBoundSlider: null,  // DOM element for upper bound slider
+  sliderTrackContainer: null,  // DOM container holding slider and trim handles
+  lowerTrimHandle: null,   // DOM element for lower trim handle (draggable bar)
+  upperTrimHandle: null,   // DOM element for upper trim handle (draggable bar)
   lowerBoundLabel: null,   // DOM element for lower bound label
   upperBoundLabel: null,   // DOM element for upper bound label
+  trimOverlayLeft: null,   // DOM element for left dim overlay
+  trimOverlayRight: null,  // DOM element for right dim overlay
   clearBoundsBtn: null,    // DOM element for clear bounds button
   boundMinTime: null,      // Lower bound time (null = use minTime)
   boundMaxTime: null,      // Upper bound time (null = use maxTime)
+  _isDraggingTrim: false,  // Track if currently dragging a trim handle
+  _activeTrimHandle: null, // Which handle is being dragged ('lower' or 'upper')
 
   // Data state
   timeData: null,      // {time: {loc_id: {metric: value}}} - original data (time = year or timestamp)
@@ -271,11 +276,14 @@ export const TimeSlider = {
     this.tabContainer = document.getElementById('timeSliderTabs');
     this.metricTabContainer = document.getElementById('metricTabs');
 
-    // Cache bounds control elements
-    this.lowerBoundSlider = document.getElementById('lowerBoundSlider');
-    this.upperBoundSlider = document.getElementById('upperBoundSlider');
+    // Cache trim handle elements (new video-editor style bounds)
+    this.sliderTrackContainer = document.querySelector('.slider-track-container');
+    this.lowerTrimHandle = document.getElementById('lowerTrimHandle');
+    this.upperTrimHandle = document.getElementById('upperTrimHandle');
     this.lowerBoundLabel = document.getElementById('lowerBoundLabel');
     this.upperBoundLabel = document.getElementById('upperBoundLabel');
+    this.trimOverlayLeft = document.getElementById('trimOverlayLeft');
+    this.trimOverlayRight = document.getElementById('trimOverlayRight');
     this.clearBoundsBtn = document.getElementById('clearBoundsBtn');
 
     if (!this.container || !this.slider) {
@@ -302,16 +310,12 @@ export const TimeSlider = {
     this.maxLabel.textContent = this.formatTimeLabel(this.maxTime);
     this.yearLabel.textContent = this.formatTimeLabel(this.currentTime);
 
-    // Configure bounds sliders with default range
-    if (this.lowerBoundSlider && this.upperBoundSlider) {
-      this.lowerBoundSlider.min = this.minTime;
-      this.lowerBoundSlider.max = this.maxTime;
-      this.lowerBoundSlider.value = this.minTime;
-      this.upperBoundSlider.min = this.minTime;
-      this.upperBoundSlider.max = this.maxTime;
-      this.upperBoundSlider.value = this.maxTime;
+    // Configure trim handles with default range (at extremes = no trim)
+    if (this.lowerTrimHandle && this.upperTrimHandle) {
       this.lowerBoundLabel.textContent = this.formatTimeLabel(this.minTime);
       this.upperBoundLabel.textContent = this.formatTimeLabel(this.maxTime);
+      // Position handles at extremes (full range, no trim)
+      this.updateTrimHandlePositions();
     }
 
     // Setup event listeners (only once)
@@ -1007,19 +1011,11 @@ export const TimeSlider = {
     this.configureSliderScale();
     this.titleLabel.textContent = metricKey || 'Time';
 
-    // Configure bounds sliders to match main slider range
-    if (this.lowerBoundSlider && this.upperBoundSlider) {
-      this.lowerBoundSlider.min = this.useIndexedScale ? 0 : this.minTime;
-      this.lowerBoundSlider.max = this.useIndexedScale ? this.sortedTimes.length - 1 : this.maxTime;
-      this.lowerBoundSlider.value = this.lowerBoundSlider.min;
-      this.upperBoundSlider.min = this.useIndexedScale ? 0 : this.minTime;
-      this.upperBoundSlider.max = this.useIndexedScale ? this.sortedTimes.length - 1 : this.maxTime;
-      this.upperBoundSlider.value = this.upperBoundSlider.max;
-      this.lowerBoundLabel.textContent = this.formatTimeLabel(this.minTime);
-      this.upperBoundLabel.textContent = this.formatTimeLabel(this.maxTime);
-      // Reset bounds to null (full range)
+    // Reset trim handles to full range (no trim)
+    if (this.lowerTrimHandle && this.upperTrimHandle) {
       this.boundMinTime = null;
       this.boundMaxTime = null;
+      this.updateTrimHandlePositions();
     }
 
     // Setup event listeners (only once)
@@ -1098,60 +1094,139 @@ export const TimeSlider = {
       }
     });
 
-    // Time range bounds controls
-    this.lowerBoundSlider?.addEventListener('input', (e) => {
-      // Get values from sliders (handle both indexed and linear modes)
-      let lowerValue, upperValue;
-      if (this.useIndexedScale) {
-        lowerValue = this.indexToTime(parseInt(this.lowerBoundSlider.value));
-        upperValue = this.indexToTime(parseInt(this.upperBoundSlider.value));
-      } else {
-        lowerValue = this.useTimestamps ? parseFloat(this.lowerBoundSlider.value) : parseInt(this.lowerBoundSlider.value);
-        upperValue = this.useTimestamps ? parseFloat(this.upperBoundSlider.value) : parseInt(this.upperBoundSlider.value);
-      }
-
-      // Ensure lower doesn't exceed upper
-      if (lowerValue > upperValue) {
-        this.lowerBoundSlider.value = this.upperBoundSlider.value;
-        this.boundMinTime = upperValue;
-      } else {
-        this.boundMinTime = lowerValue;
-      }
-      this.lowerBoundLabel.textContent = this.formatTimeLabel(this.boundMinTime);
-      console.log(`Lower bound set to ${this.formatTimeLabel(this.boundMinTime)}`);
-    });
-
-    this.upperBoundSlider?.addEventListener('input', (e) => {
-      // Get values from sliders (handle both indexed and linear modes)
-      let lowerValue, upperValue;
-      if (this.useIndexedScale) {
-        lowerValue = this.indexToTime(parseInt(this.lowerBoundSlider.value));
-        upperValue = this.indexToTime(parseInt(this.upperBoundSlider.value));
-      } else {
-        lowerValue = this.useTimestamps ? parseFloat(this.lowerBoundSlider.value) : parseInt(this.lowerBoundSlider.value);
-        upperValue = this.useTimestamps ? parseFloat(this.upperBoundSlider.value) : parseInt(this.upperBoundSlider.value);
-      }
-
-      // Ensure upper doesn't go below lower
-      if (upperValue < lowerValue) {
-        this.upperBoundSlider.value = this.lowerBoundSlider.value;
-        this.boundMaxTime = lowerValue;
-      } else {
-        this.boundMaxTime = upperValue;
-      }
-      this.upperBoundLabel.textContent = this.formatTimeLabel(this.boundMaxTime);
-      console.log(`Upper bound set to ${this.formatTimeLabel(this.boundMaxTime)}`);
-    });
+    // Time range bounds controls - drag handling for trim handles
+    this.setupTrimHandleDrag();
 
     this.clearBoundsBtn?.addEventListener('click', () => {
-      this.boundMinTime = null;
-      this.boundMaxTime = null;
-      this.lowerBoundSlider.value = this.lowerBoundSlider.min;
-      this.upperBoundSlider.value = this.upperBoundSlider.max;
-      this.lowerBoundLabel.textContent = this.formatTimeLabel(this.minTime);
-      this.upperBoundLabel.textContent = this.formatTimeLabel(this.maxTime);
-      console.log('Bounds cleared');
+      this.resetTrimBounds();
     });
+  },
+
+  /**
+   * Setup drag handling for trim handles (video editor style).
+   * Handles mousedown/mousemove/mouseup and touch events.
+   */
+  setupTrimHandleDrag() {
+    if (!this.lowerTrimHandle || !this.upperTrimHandle || !this.sliderTrackContainer) {
+      return;
+    }
+
+    const startDrag = (e, handle) => {
+      e.preventDefault();
+      this._isDraggingTrim = true;
+      this._activeTrimHandle = handle;
+      document.body.style.cursor = 'ew-resize';
+      document.body.style.userSelect = 'none';
+    };
+
+    const onDrag = (e) => {
+      if (!this._isDraggingTrim || !this._activeTrimHandle) return;
+
+      const rect = this.sliderTrackContainer.getBoundingClientRect();
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+
+      // Calculate position as percentage of container width
+      let percent = (clientX - rect.left) / rect.width;
+      percent = Math.max(0, Math.min(1, percent));
+
+      // Convert percentage to time value
+      const timeRange = this.maxTime - this.minTime;
+      const time = this.minTime + (percent * timeRange);
+
+      if (this._activeTrimHandle === 'lower') {
+        // Lower handle: can't exceed upper bound or current upper handle position
+        const upperLimit = this.boundMaxTime !== null ? this.boundMaxTime : this.maxTime;
+        const clampedTime = Math.min(time, upperLimit);
+        this.boundMinTime = clampedTime;
+        this.lowerBoundLabel.textContent = this.formatTimeLabel(clampedTime);
+      } else {
+        // Upper handle: can't go below lower bound or current lower handle position
+        const lowerLimit = this.boundMinTime !== null ? this.boundMinTime : this.minTime;
+        const clampedTime = Math.max(time, lowerLimit);
+        this.boundMaxTime = clampedTime;
+        this.upperBoundLabel.textContent = this.formatTimeLabel(clampedTime);
+      }
+
+      this.updateTrimHandlePositions();
+    };
+
+    const endDrag = () => {
+      if (!this._isDraggingTrim) return;
+      this._isDraggingTrim = false;
+      this._activeTrimHandle = null;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+
+      // Log final bounds
+      const lower = this.boundMinTime !== null ? this.formatTimeLabel(this.boundMinTime) : 'start';
+      const upper = this.boundMaxTime !== null ? this.formatTimeLabel(this.boundMaxTime) : 'end';
+      console.log(`Trim bounds set: ${lower} to ${upper}`);
+    };
+
+    // Mouse events for lower handle
+    this.lowerTrimHandle.addEventListener('mousedown', (e) => startDrag(e, 'lower'));
+
+    // Mouse events for upper handle
+    this.upperTrimHandle.addEventListener('mousedown', (e) => startDrag(e, 'upper'));
+
+    // Touch events for lower handle
+    this.lowerTrimHandle.addEventListener('touchstart', (e) => startDrag(e, 'lower'), { passive: false });
+
+    // Touch events for upper handle
+    this.upperTrimHandle.addEventListener('touchstart', (e) => startDrag(e, 'upper'), { passive: false });
+
+    // Global move and end events (on document to capture drag outside container)
+    document.addEventListener('mousemove', onDrag);
+    document.addEventListener('mouseup', endDrag);
+    document.addEventListener('touchmove', onDrag, { passive: false });
+    document.addEventListener('touchend', endDrag);
+  },
+
+  /**
+   * Update trim handle positions and overlays based on current bounds.
+   * Positions handles as percentage of slider track width.
+   */
+  updateTrimHandlePositions() {
+    if (!this.sliderTrackContainer || !this.lowerTrimHandle || !this.upperTrimHandle) {
+      return;
+    }
+
+    const timeRange = this.maxTime - this.minTime;
+    if (timeRange <= 0) return;
+
+    // Calculate percentages for lower and upper bounds
+    const lowerTime = this.boundMinTime !== null ? this.boundMinTime : this.minTime;
+    const upperTime = this.boundMaxTime !== null ? this.boundMaxTime : this.maxTime;
+
+    const lowerPercent = ((lowerTime - this.minTime) / timeRange) * 100;
+    const upperPercent = ((upperTime - this.minTime) / timeRange) * 100;
+
+    // Position handles (left edge of handle at the percentage point)
+    this.lowerTrimHandle.style.left = `calc(${lowerPercent}% - 4px)`;
+    this.upperTrimHandle.style.left = `calc(${upperPercent}% - 4px)`;
+    this.upperTrimHandle.style.right = 'auto';  // Override default right:0
+
+    // Update dim overlays
+    if (this.trimOverlayLeft) {
+      this.trimOverlayLeft.style.width = `${lowerPercent}%`;
+    }
+    if (this.trimOverlayRight) {
+      this.trimOverlayRight.style.width = `${100 - upperPercent}%`;
+    }
+
+    // Update labels
+    this.lowerBoundLabel.textContent = this.formatTimeLabel(lowerTime);
+    this.upperBoundLabel.textContent = this.formatTimeLabel(upperTime);
+  },
+
+  /**
+   * Reset trim bounds to full range (no trim).
+   */
+  resetTrimBounds() {
+    this.boundMinTime = null;
+    this.boundMaxTime = null;
+    this.updateTrimHandlePositions();
+    console.log('Trim bounds cleared');
   },
 
   /**

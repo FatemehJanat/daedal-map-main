@@ -323,8 +323,7 @@ export const PointRadiusModel = {
                   const progressionUrl = year
                     ? `/api/wildfires/${eventId}/progression?year=${year}`
                     : `/api/wildfires/${eventId}/progression`;
-                  const progressionResponse = await fetch(progressionUrl);
-                  const progressionData = await progressionResponse.json();
+                  const progressionData = await fetchMsgpack(progressionUrl);
 
                   // Handle both old format (snapshots array) and new FeatureCollection format
                   let snapshots, totalDays;
@@ -355,8 +354,7 @@ export const PointRadiusModel = {
                     const perimeterUrl = year
                       ? `/api/wildfires/${eventId}/perimeter?year=${year}`
                       : `/api/wildfires/${eventId}/perimeter`;
-                    const perimeterResponse = await fetch(perimeterUrl);
-                    const perimeterData = await perimeterResponse.json();
+                    const perimeterData = await fetchMsgpack(perimeterUrl);
 
                     if (perimeterData.geometry) {
                       link.textContent = 'Starting animation...';
@@ -1740,21 +1738,18 @@ export const PointRadiusModel = {
             const perimUrl = year
               ? `/api/wildfires/${props.event_id}/perimeter?year=${year}`
               : `/api/wildfires/${props.event_id}/perimeter`;
-            const perimResponse = await fetch(perimUrl);
-            if (perimResponse.ok) {
-              const perimData = await perimResponse.json();
-              if (perimData.type === 'Feature' && perimData.geometry) {
-                model._notifyWildfirePerimeter({
-                  eventId: props.event_id,
-                  fireName: props.fire_name || 'Wildfire',
-                  geometry: perimData,
-                  latitude: props.latitude,
-                  longitude: props.longitude,
-                  areaKm2: props.area_km2,
-                  timestamp: props.timestamp
-                });
-                break;
-              }
+            const perimData = await fetchMsgpack(perimUrl);
+            if (perimData.type === 'Feature' && perimData.geometry) {
+              model._notifyWildfirePerimeter({
+                eventId: props.event_id,
+                fireName: props.fire_name || 'Wildfire',
+                geometry: perimData,
+                latitude: props.latitude,
+                longitude: props.longitude,
+                areaKm2: props.area_km2,
+                timestamp: props.timestamp
+              });
+              break;
             }
           } catch (err) {
             console.log('No perimeter data, falling back to circle');

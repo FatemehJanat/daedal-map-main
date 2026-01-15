@@ -75,39 +75,36 @@ Layered improvements, each independent:
 
 | Layer | Change | Speedup | Effort |
 |-------|--------|---------|--------|
-| **Storage** | CSV -> Parquet | 5-10x | Done |
-| **Serialization** | JSON -> MessagePack | 2-5x | Easy |
+| **Storage** | CSV -> Parquet | 5-10x | DONE |
+| **Serialization** | JSON -> MessagePack | 2-5x | DONE (2026-01-14) |
 | **Processing** | Pandas -> Polars | 5-20x | Medium |
 | **Rendering** | Leaflet -> deck.gl | 10x+ | Medium |
 | **Architecture** | Browser -> Native | 2-3x | High |
 
-### Layer 1: MessagePack (Easy)
+### Layer 1: MessagePack - COMPLETE (2026-01-14)
 
-Replace JSON with binary MessagePack:
+Binary MessagePack serialization implemented across all endpoints.
 
+**Backend (app.py):**
 ```python
-# Flask backend
-import msgpack
-
-@app.route('/api/data')
-def get_data():
-    data = load_and_process()
-    return Response(
-        msgpack.packb(data),
-        mimetype='application/msgpack'
-    )
+from msgpack import packb
+def msgpack_response(data, status=200):
+    return Response(packb(data), status=status, media_type='application/msgpack')
 ```
 
+**Frontend (static/modules/utils/fetch.js):**
 ```javascript
-// Frontend
-import msgpack from '@msgpack/msgpack';
-
-const response = await fetch('/api/data');
-const buffer = await response.arrayBuffer();
-const data = msgpack.decode(new Uint8Array(buffer));
+export async function fetchMsgpack(url) {
+    const response = await fetch(url);
+    const buffer = await response.arrayBuffer();
+    return msgpack.decode(new Uint8Array(buffer));
+}
 ```
 
-**Gains:** 2-3x faster API responses, 50% smaller payloads
+**Results:**
+- 61 endpoints converted to msgpack_response()
+- All frontend modules use fetchMsgpack/postMsgpack
+- ~30-50% smaller payloads, 2-3x faster API responses
 
 ### Layer 2: Polars (Medium)
 
@@ -273,7 +270,8 @@ Native App
 - Limits: Memory cap, no GPU compute, JSON overhead
 
 ### Phase 1: Optimize Within Browser
-- MessagePack for serialization
+- MessagePack for serialization - DONE
+- Unified lifecycle animation (time-based, not playback-based) - IN PROGRESS
 - Polars for data processing
 - deck.gl for rendering
 - Client-side caching (IndexedDB)
@@ -818,6 +816,33 @@ At 60fps, you have ~16ms per frame:
 ## deck.gl Animation Integration Architecture
 
 The current animation system is designed for clean deck.gl integration when advanced effects are needed.
+
+### Lifecycle Animation System (Foundation)
+
+The unified lifecycle animation refactor (see `lifecycle_animation_refactor.md`) provides the foundation for deck.gl effects:
+
+**Key properties calculated per-feature:**
+- `_animationProgress` (0-1) - How far through animation
+- `_phase` ('active' | 'fading') - Current display phase
+- `_opacity` - Fade value for exiting events
+- `_waveRadiusKm` - Expanding radius for point events
+
+**Why this enables deck.gl:**
+1. **Time-based, not playback-based** - Animation state derived from timestamp comparison, not isPlaying flag
+2. **Per-feature properties** - deck.gl layers can read same properties as MapLibre layers
+3. **Consistent data flow** - Same GeoJSON features drive both base layers and effect layers
+4. **Phase transitions** - Clean start/active/fading phases map to effect intensity
+
+**Example deck.gl integration:**
+```javascript
+// RippleLayer reads same _animationProgress as MapLibre circle-radius
+new RippleLayer({
+  data: earthquakeFeatures,
+  getRadius: d => d.properties._waveRadiusKm * 1000,
+  getIntensity: d => 1 - d.properties._animationProgress,
+  getOpacity: d => d.properties._opacity
+});
+```
 
 ### Current Architecture (Ready for Extension)
 
