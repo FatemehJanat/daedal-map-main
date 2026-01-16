@@ -349,12 +349,12 @@ export const ViewportLoader = {
   onMoveEnd() {
     if (!MapAdapter?.map) return;
 
-    // Only load viewport geometry if demographics overlay is active
-    // This keeps the map clean until user explicitly enables demographics
+    // Demographics overlay must be active for any viewport-based loading or filtering
+    // Chat orders automatically enable demographics overlay when displaying demographic data
     const OverlaySelector = window.OverlaySelector;
     const activeOverlays = OverlaySelector?.getActiveOverlays?.() || [];
     if (!activeOverlays.includes('demographics')) {
-      return;  // Skip loading if demographics not enabled
+      return;  // Skip if demographics not enabled
     }
 
     const currentZoom = MapAdapter.map.getZoom();
@@ -364,6 +364,14 @@ export const ViewportLoader = {
 
     // Update lastZoom for next comparison
     this.lastZoom = currentZoom;
+
+    // In order mode, filter displayed data by admin level instead of loading new data
+    if (this.orderMode) {
+      if (wasZoom) {
+        this.onViewportChange();  // This will filter the order data by admin level
+      }
+      return;  // Don't load new data in order mode
+    }
 
     if (wasZoom) {
       // Zoom operation: check if admin level should change

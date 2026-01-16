@@ -26,6 +26,7 @@ const DisasterPopup = {
     wildfire: 'W',
     flood: 'F',
     drought: 'D',
+    landslide: 'L',
     generic: '*'
   },
 
@@ -39,6 +40,7 @@ const DisasterPopup = {
     wildfire: '#ff6600',
     flood: '#0066cc',
     drought: '#d2691e',  // Saddle brown for drought
+    landslide: '#8b4513',  // Sienna brown for landslides
     generic: '#888888'
   },
 
@@ -113,6 +115,13 @@ const DisasterPopup = {
           return { label: 'Severity', value: droughtSeverity, detail: severityName || '' };
         }
         return { label: 'Severity', value: 'N/A', detail: '' };
+
+      case 'landslide':
+        const deaths = props.deaths;
+        if (deaths != null && deaths > 0) {
+          return { label: 'Deaths', value: deaths.toString(), detail: 'Fatalities' };
+        }
+        return { label: 'Impact', value: 'Recorded', detail: '' };
 
       default:
         return { label: 'Power', value: 'N/A', detail: '' };
@@ -236,6 +245,10 @@ const DisasterPopup = {
         // Floods should have duration_days or timestamps
         return { label: 'Duration', value: 'N/A', detail: '' };
 
+      case 'landslide':
+        // Landslides are sudden events
+        return { label: 'Time', value: 'Sudden', detail: 'Minutes to hours' };
+
       default:
         return { label: 'Time', value: 'N/A', detail: '' };
     }
@@ -357,6 +370,18 @@ const DisasterPopup = {
         }
         return { label: 'Impact', value: 'N/A', detail: '' };
 
+      case 'landslide':
+        // Show affected or houses destroyed
+        const affected = props.affected;
+        if (affected != null && affected > 0) {
+          return { label: 'Affected', value: this.formatLargeNumber(affected), detail: 'People' };
+        }
+        const houses = props.houses_destroyed;
+        if (houses != null && houses > 0) {
+          return { label: 'Homes', value: this.formatLargeNumber(houses), detail: 'Destroyed' };
+        }
+        return { label: 'Impact', value: 'Recorded', detail: '' };
+
       default:
         return { label: 'Impact', value: 'N/A', detail: '' };
     }
@@ -412,6 +437,9 @@ const DisasterPopup = {
 
       case 'flood':
         return props.event_name || 'Flood Event';
+
+      case 'landslide':
+        return props.event_name || 'Landslide';
 
       default:
         return `${eventType} Event`;
@@ -534,6 +562,10 @@ const DisasterPopup = {
         // Always show - at minimum displays area circle, enhanced with geometry data
         return true;
 
+      case 'landslide':
+        // No sequence data for landslides
+        return false;
+
       default:
         return false;
     }
@@ -574,6 +606,9 @@ const DisasterPopup = {
 
       case 'flood':
         return 'Extent';
+
+      case 'landslide':
+        return 'Impact';
 
       default:
         return 'Sequence';
@@ -854,6 +889,18 @@ const DisasterPopup = {
         }
         if (data.has_geometry) {
           lines.push(`<div class="detail-row"><span class="detail-label">Extent:</span> Flood polygon available</div>`);
+        }
+        break;
+
+      case 'landslide':
+        if (data.source) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Source:</span> ${data.source}</div>`);
+        }
+        if (data.injuries != null && data.injuries > 0) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Injuries:</span> ${data.injuries.toLocaleString()}</div>`);
+        }
+        if (data.missing != null && data.missing > 0) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Missing:</span> ${data.missing.toLocaleString()}</div>`);
         }
         break;
     }
@@ -1217,6 +1264,24 @@ const DisasterPopup = {
           lines.push(`<div class="detail-row"><span class="detail-label">Country:</span> ${data.iso3}</div>`);
         }
         break;
+
+      case 'landslide':
+        if (data.source) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Data Source:</span> ${data.source}</div>`);
+        }
+        if (data.source_id) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Source ID:</span> ${data.source_id}</div>`);
+        }
+        if (data.houses_destroyed != null && data.houses_destroyed > 0) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Homes Destroyed:</span> ${data.houses_destroyed.toLocaleString()}</div>`);
+        }
+        if (data.damage_usd != null && data.damage_usd > 0) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Damage:</span> ${this.formatCurrency(data.damage_usd)}</div>`);
+        }
+        if (data.loc_id) {
+          lines.push(`<div class="detail-row"><span class="detail-label">Location ID:</span> ${data.loc_id}</div>`);
+        }
+        break;
     }
 
     return lines.join('\n') || '<div class="detail-empty">No technical data available</div>';
@@ -1230,43 +1295,109 @@ const DisasterPopup = {
 
     // Source URLs by type - most data sources have predictable URL patterns
     const sourceUrlBuilders = {
-      earthquake: (id) => id ? `https://earthquake.usgs.gov/earthquakes/eventpage/${id}` : null,
+      earthquake: (id, data) => {
+        // USGS IDs (like us7000rnr8, ak2026xxx) link directly to eventpage
+        // NOAA-SIG IDs are internal - link to NCEI significant earthquake search
+        if (id && !id.startsWith('NOAA-SIG')) {
+          return `https://earthquake.usgs.gov/earthquakes/eventpage/${id}`;
+        }
+        // For NOAA significant earthquakes, link to NCEI search with year filter
+        if (data.year) {
+          return `https://www.ngdc.noaa.gov/hazel/view/hazards/earthquake/search?minYear=${data.year}&maxYear=${data.year}`;
+        }
+        return 'https://www.ngdc.noaa.gov/hazel/view/hazards/earthquake/search';
+      },
       tsunami: (id, data) => {
-        // NOAA NCEI tsunami events - link to event search
-        if (id) return `https://www.ngdc.noaa.gov/hazel/view/hazards/tsunami/event-more-info/${id}`;
-        return null;
+        // Our IDs are internal (TS000001) - link to NCEI search filtered by year
+        if (data.year) {
+          return `https://www.ngdc.noaa.gov/hazel/view/hazards/tsunami/search?minYear=${data.year}&maxYear=${data.year}`;
+        }
+        return 'https://www.ngdc.noaa.gov/hazel/view/hazards/tsunami/search';
       },
       volcano: (id, data) => {
-        // Smithsonian GVP uses volcano number, not event_id
+        // Smithsonian GVP - volcano_number links to volcano page, eruption_id to eruption
         const vnum = data.volcano_number || data.vnum;
-        if (vnum) return `https://volcano.si.edu/volcano.cfm?vn=${vnum}`;
-        return null;
+        const eruptionId = data.eruption_id;
+        if (vnum && eruptionId) {
+          return `https://volcano.si.edu/volcano.cfm?vn=${vnum}&vtab=Eruptions#erupt_${eruptionId}`;
+        }
+        if (vnum) {
+          return `https://volcano.si.edu/volcano.cfm?vn=${vnum}`;
+        }
+        return 'https://volcano.si.edu/';
       },
       hurricane: (id, data) => {
-        // IBTrACS storms can be looked up by storm_id (SID format)
+        // IBTrACS - search by storm name and year works best
+        const name = data.name;
+        const year = data.year;
+        if (name && year) {
+          return `https://www.ncei.noaa.gov/products/international-best-track-archive?name=${encodeURIComponent(name)}&year=${year}`;
+        }
         const sid = data.storm_id || id;
-        if (sid) return `https://www.ncei.noaa.gov/products/international-best-track-archive?name=${sid}`;
-        return null;
+        if (sid) {
+          return `https://www.ncei.noaa.gov/products/international-best-track-archive?sid=${sid}`;
+        }
+        return 'https://www.ncei.noaa.gov/products/international-best-track-archive';
+      },
+      tropical_storm: (id, data) => {
+        // Same as hurricane
+        const name = data.name;
+        const year = data.year;
+        if (name && year) {
+          return `https://www.ncei.noaa.gov/products/international-best-track-archive?name=${encodeURIComponent(name)}&year=${year}`;
+        }
+        return 'https://www.ncei.noaa.gov/products/international-best-track-archive';
       },
       tornado: (id, data) => {
-        // NOAA Storm Events Database - link to event details if episode/event IDs available
-        const episodeId = data.episode_id;
-        const eventId = data.event_id || id;
-        if (episodeId) return `https://www.ncdc.noaa.gov/stormevents/eventdetails.jsp?id=${eventId}`;
-        return null;
+        // NOAA Storm Events Database - search by date and location
+        const year = data.year || (data.timestamp ? new Date(data.timestamp).getUTCFullYear() : null);
+        if (year) {
+          return `https://www.ncdc.noaa.gov/stormevents/choosedates.jsp?staession=false&begyear=${year}&endyear=${year}&eventType=Tornado`;
+        }
+        return 'https://www.ncdc.noaa.gov/stormevents/';
       },
       wildfire: (id, data) => {
-        // NASA FIRMS or Global Fire Atlas - link to FIRMS map
+        // NASA FIRMS map centered on fire location
         if (data.latitude && data.longitude) {
-          return `https://firms.modaps.eosdis.nasa.gov/map/#d:24hrs;@${data.longitude},${data.latitude},10z`;
+          const lat = data.latitude.toFixed(4);
+          const lon = data.longitude.toFixed(4);
+          return `https://firms.modaps.eosdis.nasa.gov/map/#d:24hrs;@${lon},${lat},10z`;
         }
-        return null;
+        return 'https://firms.modaps.eosdis.nasa.gov/map/';
       },
       flood: (id, data) => {
-        // DFO Flood Observatory archive
-        const dfoId = data.dfo_id || data.flood_id || id;
-        if (dfoId) return `https://floodobservatory.colorado.edu/Archives/index.html`;
-        return null;
+        // DFO Flood Observatory - link to archive with year if available
+        const year = data.year || (data.timestamp ? new Date(data.timestamp).getUTCFullYear() : null);
+        if (year && year >= 1985) {
+          return `https://floodobservatory.colorado.edu/Archives/ArchiveNotes${year}.html`;
+        }
+        return 'https://floodobservatory.colorado.edu/Archives/index.html';
+      },
+      drought: (id, data) => {
+        // US Drought Monitor for US events, otherwise general
+        const country = data.country || data.iso3;
+        if (country === 'USA' || country === 'US') {
+          return 'https://droughtmonitor.unl.edu/';
+        }
+        return 'https://spei.csic.es/map/maps.html';
+      },
+      landslide: (id, data) => {
+        // Source-specific URLs
+        const source = data.source;
+        if (source === 'NASA_GLC' || source === 'nasa') {
+          return 'https://gpm.nasa.gov/landslides/';
+        }
+        if (source === 'DesInventar' || source === 'desinventar') {
+          const country = data.country || data.iso3;
+          if (country) {
+            return `https://www.desinventar.net/DesInventar/profiletab.jsp?countrycode=${country.toLowerCase()}`;
+          }
+          return 'https://www.desinventar.net/';
+        }
+        if (source === 'NOAA') {
+          return 'https://www.ncei.noaa.gov/access/monitoring/monthly-report/';
+        }
+        return 'https://gpm.nasa.gov/landslides/';
       }
     };
 
@@ -1275,10 +1406,13 @@ const DisasterPopup = {
       earthquake: 'USGS Earthquake Catalog',
       tsunami: 'NOAA NCEI Tsunami Database',
       volcano: 'Smithsonian Global Volcanism Program',
-      hurricane: 'NOAA IBTrACS',
+      hurricane: 'IBTrACS',
+      tropical_storm: 'IBTrACS',
       tornado: 'NOAA Storm Events Database',
       wildfire: 'NASA FIRMS / Global Fire Atlas',
-      flood: 'DFO Flood Observatory'
+      flood: 'DFO Flood Observatory',
+      drought: 'US Drought Monitor',
+      landslide: 'NASA Global Landslide Catalog'
     };
 
     // Build source URL if available

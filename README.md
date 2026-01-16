@@ -58,16 +58,32 @@ Explore geographic data through natural conversation. Ask questions about countr
 
 ## Documentation
 
-For technical documentation, see [docs/CONTEXT.md](docs/CONTEXT.md).
-
 | Document | Purpose |
 |----------|---------|
-| [docs/CONTEXT.md](docs/CONTEXT.md) | System architecture and technical index |
-| [docs/DATA_PIPELINE.md](docs/DATA_PIPELINE.md) | Data format and import process |
-| [docs/GEOMETRY.md](docs/GEOMETRY.md) | Geography system and location IDs |
-| [docs/CHAT.md](docs/CHAT.md) | Chat interface and LLM system |
-| [docs/MAPPING.md](docs/MAPPING.md) | Frontend visualization |
-| [docs/ADMIN_DASHBOARD.md](docs/ADMIN_DASHBOARD.md) | Admin tools for data management |
+| [docs/DATA_SCHEMAS.md](docs/DATA_SCHEMAS.md) | Data formats, loc_id specification, parquet schemas |
+| [docs/public reference.md](docs/public%20reference.md) | Data source attribution and licensing |
+| [examples/](examples/) | Sample converters for adding your own data |
+
+---
+
+## Adding Your Own Data
+
+This project uses a simple schema that makes it easy to add your own datasets:
+
+```python
+import pandas as pd
+
+# Your data needs loc_id (location) and year columns
+df = pd.DataFrame({
+    "loc_id": ["USA-CA", "USA-TX", "USA-NY"],
+    "year": [2020, 2020, 2020],
+    "my_metric": [100, 200, 150]
+})
+
+df.to_parquet("county-map-data/countries/USA/my_source/aggregates.parquet")
+```
+
+See [docs/DATA_SCHEMAS.md](docs/DATA_SCHEMAS.md) for the full specification.
 
 ---
 
@@ -77,4 +93,4 @@ MIT License
 
 ---
 
-*Last Updated: 2026-01-01*
+*Last Updated: 2026-01-15*

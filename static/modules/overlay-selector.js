@@ -100,16 +100,27 @@ const CATEGORIES = [
         icon: 'F',
         hasYearFilter: true
       },
-      {
-        id: 'drought',
-        label: 'Drought',
-        description: 'Canada drought monitoring (2019-2025)',
-        default: false,
-        locked: false,
-        model: 'polygon',
-        icon: 'D',
-        hasYearFilter: true
-      }
+      // DISABLED: Drought and Landslides - uncomment to re-enable
+      // {
+      //   id: 'drought',
+      //   label: 'Drought',
+      //   description: 'Canada drought monitoring (2019-2025)',
+      //   default: false,
+      //   locked: false,
+      //   model: 'polygon',
+      //   icon: 'D',
+      //   hasYearFilter: true
+      // },
+      // {
+      //   id: 'landslides',
+      //   label: 'Landslides',
+      //   description: 'Global landslides (deaths >= 1)',
+      //   default: false,
+      //   locked: false,
+      //   model: 'point-radius',
+      //   icon: 'L',
+      //   hasYearFilter: true
+      // }
     ]
   },
   {

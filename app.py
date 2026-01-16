@@ -45,6 +45,11 @@ from mapmover import (
     # Logging
     logger,
     log_error_to_cloud,
+    # Paths
+    DATA_ROOT,
+    GLOBAL_DIR,
+    COUNTRIES_DIR,
+    get_dataset_path,
 )
 
 # Order Taker system (Phase 1B - replaces old multi-LLM chat)
@@ -320,6 +325,40 @@ def get_tsunami_property_builders():
     }
 
 
+def get_landslide_property_builders():
+    """Return property builders dict for landslide GeoJSON features.
+
+    Intensity is based on deaths using log scale for circle sizing:
+    - 0 deaths = intensity 1 (base size)
+    - 1 death = intensity 1
+    - 10 deaths = intensity 2
+    - 100 deaths = intensity 3
+    - 1000 deaths = intensity 4
+    """
+    import math
+    return {
+        "event_id": lambda r: r.get('event_id', ''),
+        "year": lambda r: safe_int(r, 'year'),
+        "timestamp": lambda r: safe_str(r, 'timestamp', None),
+        "event_name": lambda r: safe_str(r, 'event_name', None),
+        "deaths": lambda r: safe_int(r, 'deaths', 0),
+        "injuries": lambda r: safe_int(r, 'injuries', 0),
+        "missing": lambda r: safe_int(r, 'missing', 0),
+        "affected": lambda r: safe_int(r, 'affected', 0),
+        "houses_destroyed": lambda r: safe_int(r, 'houses_destroyed', 0),
+        "damage_usd": lambda r: safe_float(r, 'damage_usd'),
+        "source": lambda r: r.get('source', ''),
+        "loc_id": lambda r: r.get('loc_id', ''),
+        "latitude": lambda r: safe_float(r, 'latitude'),
+        "longitude": lambda r: safe_float(r, 'longitude'),
+        # Intensity based on deaths for circle sizing (log scale, capped at 5)
+        "intensity": lambda r: min(5, 1 + math.log10(max(1, safe_int(r, 'deaths', 0) or 1))),
+        # Radius based on deaths (5-30km visual range)
+        "felt_radius_km": lambda r: 5 + 5 * min(5, math.log10(max(1, safe_int(r, 'deaths', 0) or 1))),
+        "damage_radius_km": lambda r: 2 + 3 * min(5, math.log10(max(1, safe_int(r, 'deaths', 0) or 1))),
+    }
+
+
 # Create FastAPI app
 app = FastAPI(
     title="County Map API",
@@ -508,7 +547,7 @@ async def get_hurricane_track(storm_id: str):
 
     try:
         # Path to hurricane positions parquet
-        positions_path = Path("C:/Users/Bryan/Desktop/county-map-data/countries/USA/hurricanes/positions.parquet")
+        positions_path = COUNTRIES_DIR / "USA" / "hurricanes/positions.parquet"
 
         if not positions_path.exists():
             return msgpack_error("Hurricane data not available", 404)
@@ -574,7 +613,7 @@ async def get_hurricane_storms(year: int = None, name: str = None, us_landfall: 
     import pandas as pd
 
     try:
-        storms_path = Path("C:/Users/Bryan/Desktop/county-map-data/countries/USA/hurricanes/storms.parquet")
+        storms_path = COUNTRIES_DIR / "USA" / "hurricanes/storms.parquet"
 
         if not storms_path.exists():
             return msgpack_error("Hurricane data not available", 404)
@@ -626,8 +665,8 @@ async def get_hurricane_storms_geojson(year: int = None, us_landfall: bool = Non
     import pandas as pd
 
     try:
-        storms_path = Path("C:/Users/Bryan/Desktop/county-map-data/countries/USA/hurricanes/storms.parquet")
-        positions_path = Path("C:/Users/Bryan/Desktop/county-map-data/countries/USA/hurricanes/positions.parquet")
+        storms_path = COUNTRIES_DIR / "USA" / "hurricanes/storms.parquet"
+        positions_path = COUNTRIES_DIR / "USA" / "hurricanes/positions.parquet"
 
         if not storms_path.exists() or not positions_path.exists():
             return msgpack_error("Hurricane data not available", 404)
@@ -706,7 +745,7 @@ async def get_earthquakes_geojson(year: int = None, min_magnitude: float = None,
     import pandas as pd
 
     try:
-        events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/earthquakes/events.parquet")
+        events_path = GLOBAL_DIR / "earthquakes/events.parquet"
         if not events_path.exists():
             return msgpack_error("Earthquake data not available", 404)
 
@@ -742,7 +781,7 @@ async def get_earthquake_sequence(sequence_id: str, min_magnitude: float = None)
     import pandas as pd
 
     try:
-        events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/earthquakes/events.parquet")
+        events_path = GLOBAL_DIR / "earthquakes/events.parquet"
         if not events_path.exists():
             return msgpack_error("Earthquake data not available", 404)
 
@@ -780,7 +819,7 @@ async def get_earthquake_aftershocks(event_id: str, min_magnitude: float = None)
     import pandas as pd
 
     try:
-        events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/earthquakes/events.parquet")
+        events_path = GLOBAL_DIR / "earthquakes/events.parquet"
         if not events_path.exists():
             return msgpack_error("Earthquake data not available", 404)
 
@@ -825,7 +864,7 @@ async def get_volcanoes_geojson(active_only: bool = None):
     import pandas as pd
 
     try:
-        volcanoes_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/smithsonian_volcanoes/volcanoes.parquet")
+        volcanoes_path = GLOBAL_DIR / "smithsonian_volcanoes/volcanoes.parquet"
         if not volcanoes_path.exists():
             return msgpack_error("Volcano data not available", 404)
 
@@ -851,7 +890,7 @@ async def get_eruptions_geojson(year: int = None, min_vei: int = None, min_year:
     import pandas as pd
 
     try:
-        eruptions_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/smithsonian_volcanoes/events.parquet")
+        eruptions_path = GLOBAL_DIR / "smithsonian_volcanoes/events.parquet"
         if not eruptions_path.exists():
             return msgpack_error("Eruption data not available", 404)
 
@@ -888,7 +927,7 @@ async def get_tsunamis_geojson(year: int = None, min_year: int = 1900, cause: st
     import pandas as pd
 
     try:
-        events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tsunamis/events.parquet")
+        events_path = GLOBAL_DIR / "tsunamis/events.parquet"
         if not events_path.exists():
             return msgpack_error("Tsunami data not available", 404)
 
@@ -927,8 +966,8 @@ async def get_tsunami_runups(event_id: str):
     import pandas as pd
 
     try:
-        runups_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tsunamis/runups.parquet")
-        events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tsunamis/events.parquet")
+        runups_path = GLOBAL_DIR / "tsunamis/runups.parquet"
+        events_path = GLOBAL_DIR / "tsunamis/events.parquet"
 
         if not runups_path.exists():
             return msgpack_error("Runup data not available", 404)
@@ -1018,8 +1057,8 @@ async def get_tsunami_animation_data(event_id: str):
     import pandas as pd
 
     try:
-        runups_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tsunamis/runups.parquet")
-        events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tsunamis/events.parquet")
+        runups_path = GLOBAL_DIR / "tsunamis/runups.parquet"
+        events_path = GLOBAL_DIR / "tsunamis/events.parquet"
 
         if not events_path.exists() or not runups_path.exists():
             return msgpack_error("Tsunami data not available", 404)
@@ -1101,6 +1140,61 @@ async def get_tsunami_animation_data(event_id: str):
         return msgpack_error(str(e), 500)
 
 
+# === Landslide Data Endpoints ===
+
+@app.get("/api/landslides/geojson")
+async def get_landslides_geojson(
+    year: int = None,
+    min_deaths: int = 1,
+    require_coords: bool = True
+):
+    """
+    Get landslide events as GeoJSON points for map display.
+
+    Args:
+        year: Filter by specific year
+        min_deaths: Minimum deaths to include (default 1 to filter minor events)
+        require_coords: Only return events with valid coordinates (default True)
+    """
+    import pandas as pd
+
+    try:
+        events_path = GLOBAL_DIR / "landslides/events.parquet"
+        if not events_path.exists():
+            return msgpack_error("Landslide data not available", 404)
+
+        df = pd.read_parquet(events_path)
+
+        # Filter for events with coordinates if required
+        if require_coords:
+            df = df[df['latitude'].notna() & df['longitude'].notna()]
+
+        # Apply year filter
+        if year is not None:
+            df = df[df['year'] == year]
+
+        # Apply deaths filter
+        if min_deaths > 0:
+            df['deaths_val'] = df['deaths'].fillna(0)
+            df = df[df['deaths_val'] >= min_deaths]
+            df = df.drop(columns=['deaths_val'])
+
+        features = build_geojson_features(df, get_landslide_property_builders())
+
+        return msgpack_response({
+            "type": "FeatureCollection",
+            "features": features,
+            "metadata": {
+                "count": len(features),
+                "year_range": [int(df['year'].min()), int(df['year'].max())] if len(df) > 0 else None
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching landslides GeoJSON: {e}")
+        return msgpack_error(str(e), 500)
+
+
 @app.get("/api/events/nearby-earthquakes")
 async def get_nearby_earthquakes(
     lat: float,
@@ -1116,7 +1210,7 @@ async def get_nearby_earthquakes(
     import pandas as pd
 
     try:
-        events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/earthquakes/events.parquet")
+        events_path = GLOBAL_DIR / "earthquakes/events.parquet"
         if not events_path.exists():
             return msgpack_error("Earthquake data not available", 404)
 
@@ -1173,7 +1267,7 @@ async def get_nearby_volcanoes(
     import pandas as pd
 
     try:
-        eruptions_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/smithsonian_volcanoes/events.parquet")
+        eruptions_path = GLOBAL_DIR / "smithsonian_volcanoes/events.parquet"
         if not eruptions_path.exists():
             return msgpack_error("Volcano data not available", 404)
 
@@ -1232,7 +1326,7 @@ async def get_nearby_tsunamis(
     import pandas as pd
 
     try:
-        tsunamis_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tsunamis/events.parquet")
+        tsunamis_path = GLOBAL_DIR / "tsunamis/events.parquet"
         if not tsunamis_path.exists():
             return msgpack_error("Tsunami data not available", 404)
 
@@ -1298,10 +1392,10 @@ async def get_wildfires_geojson(
 
     try:
         # Use enriched files with loc_id columns
-        by_year_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/wildfires/by_year_enriched")
+        by_year_path = GLOBAL_DIR / "wildfires/by_year_enriched"
         # Fallback to raw files if enriched not available
         if not by_year_path.exists():
-            by_year_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/wildfires/by_year")
+            by_year_path = GLOBAL_DIR / "wildfires/by_year"
 
         if not by_year_path.exists():
             return msgpack_error("Wildfire data not available", 404)
@@ -1426,8 +1520,8 @@ async def get_wildfire_perimeter(event_id: str, year: int = None):
     import json as json_lib
 
     try:
-        by_year_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/wildfires/by_year")
-        main_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/wildfires/fires.parquet")
+        by_year_path = GLOBAL_DIR / "wildfires/by_year"
+        main_path = GLOBAL_DIR / "wildfires/fires.parquet"
 
         # Try yearly partition first if year provided (much more efficient)
         if year is not None and by_year_path.exists():
@@ -1491,7 +1585,7 @@ async def get_wildfire_progression(event_id: str, year: int = None):
     import json as json_lib
 
     try:
-        progression_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/wildfires")
+        progression_path = GLOBAL_DIR / "wildfires"
 
         # Try year-specific file first
         if year:
@@ -1597,11 +1691,11 @@ async def get_floods_geojson(
 
     try:
         # Use enriched file with loc_id columns
-        events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/floods/events_enriched.parquet")
+        events_path = GLOBAL_DIR / "floods/events_enriched.parquet"
         # Fallback to raw file if enriched not available
         if not events_path.exists():
-            events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/floods/events.parquet")
-        geometry_dir = Path("C:/Users/Bryan/Desktop/county-map-data/global/floods/geometries")
+            events_path = GLOBAL_DIR / "floods/events.parquet"
+        geometry_dir = GLOBAL_DIR / "floods/geometries"
 
         if not events_path.exists():
             return msgpack_error("Flood data not available", 404)
@@ -1729,7 +1823,7 @@ async def get_drought_geojson(
     try:
         # Route to correct country data file
         if country == 'CAN':
-            data_path = Path("C:/Users/Bryan/Desktop/county-map-data/countries/CAN/drought/snapshots.parquet")
+            data_path = COUNTRIES_DIR / "CAN" / "drought/snapshots.parquet"
         else:
             return msgpack_error(f"Drought data not available for country: {country}", 404)
 
@@ -1835,7 +1929,7 @@ async def get_flood_geometry(event_id: str):
     import json as json_lib
 
     try:
-        geometry_dir = Path("C:/Users/Bryan/Desktop/county-map-data/global/floods/geometries")
+        geometry_dir = GLOBAL_DIR / "floods/geometries"
         geom_file = geometry_dir / f"flood_{event_id}.geojson"
 
         if not geom_file.exists():
@@ -1873,7 +1967,7 @@ async def get_tornadoes_geojson(year: int = None, min_year: int = 1990, min_scal
 
     try:
         # Global tornadoes dataset (USA + Canada)
-        events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tornadoes/events.parquet")
+        events_path = GLOBAL_DIR / "tornadoes/events.parquet"
 
         if not events_path.exists():
             return msgpack_error("Tornado data not available", 404)
@@ -1982,7 +2076,7 @@ async def get_tornado_detail(event_id: str):
 
     try:
         # Global tornadoes dataset (USA + Canada)
-        events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tornadoes/events.parquet")
+        events_path = GLOBAL_DIR / "tornadoes/events.parquet"
 
         if not events_path.exists():
             return msgpack_error("Tornado data not available", 404)
@@ -2083,7 +2177,7 @@ async def get_tornado_sequence(event_id: str):
 
     try:
         # Global tornadoes dataset (USA + Canada)
-        events_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tornadoes/events.parquet")
+        events_path = GLOBAL_DIR / "tornadoes/events.parquet"
 
         if not events_path.exists():
             return msgpack_error("Tornado data not available", 404)
@@ -2196,8 +2290,8 @@ async def get_storms_geojson(year: int = None, min_year: int = 1950, basin: str 
     import pandas as pd
 
     try:
-        storms_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tropical_storms/storms.parquet")
-        positions_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tropical_storms/positions.parquet")
+        storms_path = GLOBAL_DIR / "tropical_storms/storms.parquet"
+        positions_path = GLOBAL_DIR / "tropical_storms/positions.parquet"
 
         if not storms_path.exists():
             return msgpack_error("Storm data not available", 404)
@@ -2286,8 +2380,8 @@ async def get_storm_track(storm_id: str):
     import pandas as pd
 
     try:
-        positions_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tropical_storms/positions.parquet")
-        storms_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tropical_storms/storms.parquet")
+        positions_path = GLOBAL_DIR / "tropical_storms/positions.parquet"
+        storms_path = GLOBAL_DIR / "tropical_storms/storms.parquet"
 
         if not positions_path.exists():
             return msgpack_error("Storm data not available", 404)
@@ -2352,8 +2446,8 @@ async def get_storm_tracks_geojson(year: int = None, min_year: int = 1950, basin
     import pandas as pd
 
     try:
-        storms_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tropical_storms/storms.parquet")
-        positions_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tropical_storms/positions.parquet")
+        storms_path = GLOBAL_DIR / "tropical_storms/storms.parquet"
+        positions_path = GLOBAL_DIR / "tropical_storms/positions.parquet"
 
         if not storms_path.exists():
             return msgpack_error("Storm data not available", 404)
@@ -2442,7 +2536,7 @@ async def get_storms_list(year: int = None, min_year: int = 1950, basin: str = N
     import pandas as pd
 
     try:
-        storms_path = Path("C:/Users/Bryan/Desktop/county-map-data/global/tropical_storms/storms.parquet")
+        storms_path = GLOBAL_DIR / "tropical_storms/storms.parquet"
 
         if not storms_path.exists():
             return msgpack_error("Storm data not available", 404)
@@ -2900,6 +2994,11 @@ async def chat_endpoint(req: Request):
         # Single LLM call to interpret request (with Tier 3/4 context from hints)
         result = interpret_request(query, chat_history, hints=hints)
 
+        # =======================================================================
+        # POST-LLM ROUTING (Phase 4 Refactor)
+        # Handle all response types from LLM
+        # =======================================================================
+
         if result["type"] == "order":
             # Run postprocessor to validate and expand derived fields
             processed = postprocess_order(result["order"], hints)
@@ -2924,6 +3023,55 @@ async def chat_endpoint(req: Request):
                 "validation_summary": processed.get("validation_summary"),
                 "all_valid": processed.get("all_valid", True)
             })
+
+        elif result["type"] == "navigate":
+            # LLM decided this is a navigation request (Phase 4 - post-LLM routing)
+            locations = result.get("locations", [])
+            loc_ids = [loc.get("loc_id") for loc in locations if loc.get("loc_id")]
+            message = result.get("message", f"Showing {len(locations)} location(s)")
+
+            logger.debug(f"LLM navigation: {len(locations)} locations")
+
+            return msgpack_response({
+                "type": "navigate",
+                "message": message,
+                "locations": locations,
+                "loc_ids": loc_ids,
+                "original_query": query,
+                "geojson": {"type": "FeatureCollection", "features": []},
+            })
+
+        elif result["type"] == "disambiguate":
+            # LLM decided disambiguation is needed (Phase 4 - post-LLM routing)
+            options = result.get("options", [])
+            message = result.get("message", f"Multiple locations found. Please select one.")
+
+            logger.debug(f"LLM disambiguation: {len(options)} options")
+
+            return msgpack_response({
+                "type": "disambiguate",
+                "message": message,
+                "query_term": result.get("query_term", "location"),
+                "original_query": query,
+                "options": options,
+                "geojson": {"type": "FeatureCollection", "features": []},
+            })
+
+        elif result["type"] == "filter_update":
+            # LLM decided to update overlay filters (Phase 4 - post-LLM routing)
+            overlay = result.get("overlay", "")
+            filters = result.get("filters", {})
+            message = result.get("message", f"Updating {overlay} filters")
+
+            logger.debug(f"LLM filter update: {overlay} -> {filters}")
+
+            return msgpack_response({
+                "type": "filter_update",
+                "overlay": overlay,
+                "filters": filters,
+                "message": message,
+            })
+
         elif result["type"] == "clarify":
             # Need more information from user
             return msgpack_response({
@@ -2932,11 +3080,12 @@ async def chat_endpoint(req: Request):
                 "geojson": {"type": "FeatureCollection", "features": []},
                 "needsMoreInfo": True
             })
+
         else:
             # General chat response (not a data request)
             return msgpack_response({
                 "type": "chat",
-                "message": result["message"],
+                "message": result.get("message", "I'm not sure how to help with that."),
                 "geojson": {"type": "FeatureCollection", "features": []},
                 "needsMoreInfo": False
             })

@@ -16,6 +16,7 @@ const TYPE_TO_MODEL = {
   volcano: 'point-radius',
   tornado: 'point-radius',
   tsunami: 'point-radius',
+  landslide: 'point-radius',
   generic_event: 'point-radius',
 
   // Track events (Model B)

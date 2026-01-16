@@ -8,17 +8,22 @@ For historical data:
 This script updates all event parquet files to match the unified event schema.
 """
 
+import sys
 import pandas as pd
 from pathlib import Path
 
+# Add parent directory to path for mapmover imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from mapmover.paths import COUNTRIES_DIR
+
 # Event parquet files to update
 EVENT_FILES = [
-    "C:/Users/Bryan/Desktop/county-map-data/countries/USA/usgs_earthquakes/events.parquet",
-    "C:/Users/Bryan/Desktop/county-map-data/countries/USA/hurricanes/positions.parquet",
-    "C:/Users/Bryan/Desktop/county-map-data/countries/USA/wildfires/fires.parquet",
-    "C:/Users/Bryan/Desktop/county-map-data/countries/USA/volcanoes/eruptions.parquet",
-    "C:/Users/Bryan/Desktop/county-map-data/countries/USA/tsunamis/events.parquet",
-    "C:/Users/Bryan/Desktop/county-map-data/countries/USA/noaa_storms/events.parquet",
+    str(COUNTRIES_DIR / "USA" / "usgs_earthquakes" / "events.parquet"),
+    str(COUNTRIES_DIR / "USA" / "hurricanes" / "positions.parquet"),
+    str(COUNTRIES_DIR / "USA" / "wildfires" / "fires.parquet"),
+    str(COUNTRIES_DIR / "USA" / "volcanoes" / "eruptions.parquet"),
+    str(COUNTRIES_DIR / "USA" / "tsunamis" / "events.parquet"),
+    str(COUNTRIES_DIR / "USA" / "noaa_storms" / "events.parquet"),
 ]
 
 # Column name that contains the timestamp (varies by file)

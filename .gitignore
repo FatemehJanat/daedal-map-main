@@ -1,5 +1,22 @@
+# =============================================================================
+# county-map (PUBLIC REPO) - .gitignore
+# =============================================================================
+# This is the open-source public repo. It contains:
+# - The web app (FastAPI + frontend)
+# - Example converters (in examples/)
+# - Schema documentation
+#
+# It does NOT contain:
+# - Production converters (county-map-private)
+# - Processed data files (county-map-data)
+# - Raw downloaded data (county-map-raw)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
 # Python
+# -----------------------------------------------------------------------------
 venv/
+.venv/
 __pycache__/
 *.pyc
 *.pyo
@@ -10,41 +27,56 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+.pytest_cache/
+.mypy_cache/
 
+# -----------------------------------------------------------------------------
 # Node
+# -----------------------------------------------------------------------------
 node_modules/
 package-lock.json
 
-# Data folders (raw data not tracked)
+# -----------------------------------------------------------------------------
+# Data folders (never track in public repo)
+# -----------------------------------------------------------------------------
 data/
-data_pipeline/data_loading/
+data_pipeline/
 
-# Cleaned data IS tracked (needed for deployment)
-# data_pipeline/data_cleaned/  <- now tracked
-
+# -----------------------------------------------------------------------------
 # Logs and temp files
+# -----------------------------------------------------------------------------
 logs/
 *.log
 *.tmp
+nul
 
-# Environment and secrets
+# -----------------------------------------------------------------------------
+# Environment and secrets (NEVER commit these)
+# -----------------------------------------------------------------------------
 .env
-.env.local
+.env.*
+!.env.example
 config.local.json
 settings.json
+*.local.json
 
+# -----------------------------------------------------------------------------
 # OS files
+# -----------------------------------------------------------------------------
 .DS_Store
 Thumbs.db
-nul
 *.swp
 *.swo
 *~
 
+# -----------------------------------------------------------------------------
 # IDE
+# -----------------------------------------------------------------------------
 .vscode/
 .idea/
 *.code-workspace
 
-# Keep metadata folder tracked
-!data_pipeline/metadata/
+# -----------------------------------------------------------------------------
+# Claude Code settings (local only)
+# -----------------------------------------------------------------------------
+.claude/settings.local.json

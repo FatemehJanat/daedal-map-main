@@ -20,9 +20,11 @@ import pandas as pd
 from pathlib import Path
 from typing import Optional, Dict, List, Any, Union
 
+from .paths import GEOMETRY_DIR
+
 # Paths
 SCRIPT_DIR = Path(__file__).parent
-GEOMETRY_PATH = Path(r"C:\Users\Bryan\Desktop\county-map-data\geometry")
+GEOMETRY_PATH = GEOMETRY_DIR
 CONVERSIONS_FILE = SCRIPT_DIR / "conversions.json"
 
 # Cache

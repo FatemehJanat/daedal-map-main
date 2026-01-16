@@ -120,6 +120,12 @@ const OVERLAY_ENDPOINTS = {
     eventType: 'drought',
     yearField: 'year',
     minYear: 2019  // Canada drought data starts at 2019
+  },
+  landslides: {
+    baseUrl: '/api/landslides/geojson',
+    params: { min_deaths: '1', require_coords: 'true' },
+    eventType: 'landslide',
+    yearField: 'year'
   }
 };
 
@@ -296,6 +302,23 @@ const EVENT_LIFECYCLE = {
     },
     defaultDuration: 30 * 24 * 60 * 60 * 1000,  // 30 days
     fadeDuration: 0  // No fade between monthly snapshots
+  },
+
+  landslide: {
+    // Point event with expanding circle based on deaths (intensity)
+    // Circle expands quickly, stays visible based on severity
+    getStartMs: (f) => new Date(f.properties.timestamp).getTime(),
+    getEndMs: (f) => {
+      const start = new Date(f.properties.timestamp).getTime();
+      // Higher intensity (more deaths) = longer visibility: 3-14 days
+      const intensity = f.properties.intensity || 1;
+      const durationDays = 3 + 2 * intensity;  // 5 days at intensity 1, 13 days at intensity 5
+      return start + durationDays * 24 * 60 * 60 * 1000;
+    },
+    defaultDuration: 7 * 24 * 60 * 60 * 1000,  // 7 days default
+    fadeDuration: 30 * 24 * 60 * 60 * 1000,    // 30 days fade
+    // Use felt_radius_km from data for circle sizing
+    getMaxWaveRadiusKm: (f) => f.properties.felt_radius_km || 10
   }
 };
 

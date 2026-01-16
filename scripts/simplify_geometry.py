@@ -28,6 +28,10 @@ from datetime import datetime
 
 import pandas as pd
 
+# Add parent directory to path for mapmover imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from mapmover.paths import DATA_ROOT
+
 # Lazy import shapely (not always installed)
 try:
     from shapely import simplify as shapely_simplify
@@ -38,7 +42,6 @@ except ImportError:
     print("WARNING: shapely not installed. Install with: pip install shapely")
 
 # Configuration
-DATA_ROOT = Path("C:/Users/Bryan/Desktop/county-map-data")
 BACKUP_DIR = DATA_ROOT / "backups" / f"geometry_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
 # Tolerance by admin level

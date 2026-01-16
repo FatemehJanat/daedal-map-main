@@ -2,6 +2,7 @@
 mapmover package - Runtime application logic for the county-map application.
 
 This package provides:
+- Path configuration (paths.py)
 - Geography and regional groupings (geography.py)
 - Data loading and catalog management (data_loading.py)
 - Geometry enrichment (geometry_enrichment.py)
@@ -15,6 +16,44 @@ This package provides:
 
 Note: Build tools (geometry processing, catalog generation) are in the build/ folder.
 """
+
+# Path configuration (import first as other modules may depend on it)
+from .paths import (
+    # Root directories
+    PROJECT_ROOT,
+    GLOBAL_ROOT,
+    APP_ROOT,
+    PRIVATE_ROOT,
+    DATA_ROOT,
+    RAW_ROOT,
+    # Data paths
+    COUNTRIES_DIR,
+    GLOBAL_DIR,
+    GEOMETRY_DIR,
+    CATALOG_PATH,
+    INDEX_PATH,
+    # App paths
+    STATIC_DIR,
+    TEMPLATES_DIR,
+    LOGS_DIR,
+    CONFIG_PATH,
+    SETTINGS_PATH,
+    # Private paths
+    BUILD_DIR,
+    CONVERTERS_DIR,
+    DOWNLOADERS_DIR,
+    # Raw paths
+    RAW_DATA_DIR,
+    SOURCE_DATA_DIR,
+    BACKUPS_DIR,
+    # Helper functions
+    get_country_dir,
+    get_country_index,
+    get_dataset_path,
+    get_geometry_path,
+    ensure_dir,
+    validate_paths,
+)
 
 # Re-export key functions for convenience
 from .constants import (
@@ -99,6 +138,35 @@ from .postprocessor import postprocess_order, get_display_items
 
 __version__ = "2.0.0"
 __all__ = [
+    # Paths
+    "PROJECT_ROOT",
+    "GLOBAL_ROOT",
+    "APP_ROOT",
+    "PRIVATE_ROOT",
+    "DATA_ROOT",
+    "RAW_ROOT",
+    "COUNTRIES_DIR",
+    "GLOBAL_DIR",
+    "GEOMETRY_DIR",
+    "CATALOG_PATH",
+    "INDEX_PATH",
+    "STATIC_DIR",
+    "TEMPLATES_DIR",
+    "LOGS_DIR",
+    "CONFIG_PATH",
+    "SETTINGS_PATH",
+    "BUILD_DIR",
+    "CONVERTERS_DIR",
+    "DOWNLOADERS_DIR",
+    "RAW_DATA_DIR",
+    "SOURCE_DATA_DIR",
+    "BACKUPS_DIR",
+    "get_country_dir",
+    "get_country_index",
+    "get_dataset_path",
+    "get_geometry_path",
+    "ensure_dir",
+    "validate_paths",
     # Constants
     "state_abbreviations",
     "UNIT_MULTIPLIERS",

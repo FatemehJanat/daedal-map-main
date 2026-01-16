@@ -23,14 +23,15 @@ from typing import Optional
 import logging
 
 from .data_loading import load_catalog, load_source_metadata
+from .paths import DATA_ROOT, GEOMETRY_DIR as GEOM_DIR, COUNTRIES_DIR
 
 logger = logging.getLogger(__name__)
 
 # Paths
 CONVERSIONS_PATH = Path(__file__).parent / "conversions.json"
 REFERENCE_DIR = Path(__file__).parent / "reference"
-DATA_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/data")
-GEOMETRY_DIR = Path("C:/Users/Bryan/Desktop/county-map-data/geometry")
+DATA_DIR = DATA_ROOT / "data"
+GEOMETRY_DIR = GEOM_DIR
 
 # Parquet cache for location lookups
 _PARQUET_NAMES_CACHE = {}  # iso3 -> {name_lower: loc_id}
@@ -494,9 +495,9 @@ def load_country_index(iso3: str) -> Optional[dict]:
     Load a country's index.json file for context injection.
     Contains llm_summary and dataset categories.
     """
-    # Try both county-map-data paths
+    # Try country index path
     paths_to_try = [
-        Path("C:/Users/Bryan/Desktop/county-map-data/countries") / iso3.upper() / "index.json",
+        COUNTRIES_DIR / iso3.upper() / "index.json",
     ]
 
     for index_path in paths_to_try:
@@ -1426,6 +1427,386 @@ def detect_source_from_query(query: str) -> Optional[dict]:
     return None
 
 
+# =============================================================================
+# CANDIDATE-BASED DETECTION (Phase 1 Refactor)
+# =============================================================================
+# These functions return ALL candidates with confidence scores, letting the LLM
+# decide which interpretation is correct based on full context.
+
+def detect_source_candidates(query: str) -> dict:
+    """
+    Detect all possible source matches in query with confidence scores.
+
+    Returns dict with:
+    - candidates: List of all matches sorted by confidence (highest first)
+    - best: The highest confidence match (or None)
+
+    Confidence scoring:
+    - Full source_name match: 1.0
+    - source_id match: 0.9
+    - Partial name (>8 chars): 0.7
+    - Partial name (4-8 chars): 0.5
+    - Boost if query contains "data", "statistics", "source": +0.1
+    """
+    query_lower = query.lower()
+    catalog = load_catalog()
+
+    if not catalog:
+        return {"candidates": [], "best": None}
+
+    sources = catalog.get("sources", [])
+    candidates = []
+
+    # Check for data-related keywords that boost source interpretation
+    data_keywords = ["data", "statistics", "dataset", "source", "metrics", "from the"]
+    has_data_context = any(kw in query_lower for kw in data_keywords)
+    data_boost = 0.1 if has_data_context else 0.0
+
+    for source in sources:
+        source_id = source.get("source_id", "")
+        source_name = source.get("source_name", "")
+        source_name_lower = source_name.lower() if source_name else ""
+
+        # Check if full source_name appears in query
+        if source_name and source_name_lower in query_lower:
+            candidates.append({
+                "source_id": source_id,
+                "source_name": source_name,
+                "confidence": min(1.0, 1.0 + data_boost),
+                "match_type": "full_name",
+                "matched_text": source_name
+            })
+        # Check partial name matches
+        elif source_name:
+            name_parts = [p.strip() for p in source_name.replace(' - ', '|').replace(': ', '|').split('|')]
+            for part in name_parts:
+                part_lower = part.lower()
+                if len(part) >= 4 and part_lower in query_lower:
+                    # Score based on match length
+                    if len(part) >= 8:
+                        base_score = 0.7
+                    else:
+                        base_score = 0.5
+                    candidates.append({
+                        "source_id": source_id,
+                        "source_name": source_name,
+                        "confidence": min(1.0, base_score + data_boost),
+                        "match_type": "partial_name",
+                        "matched_text": part
+                    })
+                    break  # Only add once per source
+
+        # Check if source_id appears (for power users)
+        if source_id and source_id.lower() in query_lower:
+            candidates.append({
+                "source_id": source_id,
+                "source_name": source_name or source_id,
+                "confidence": min(1.0, 0.9 + data_boost),
+                "match_type": "source_id",
+                "matched_text": source_id
+            })
+
+    # Sort by confidence (highest first)
+    candidates = sorted(candidates, key=lambda x: -x["confidence"])
+
+    # Remove duplicates (keep highest confidence per source_id)
+    seen = set()
+    unique_candidates = []
+    for c in candidates:
+        if c["source_id"] not in seen:
+            seen.add(c["source_id"])
+            unique_candidates.append(c)
+
+    return {
+        "candidates": unique_candidates,
+        "best": unique_candidates[0] if unique_candidates else None
+    }
+
+
+def detect_location_candidates(query: str, viewport: dict = None) -> dict:
+    """
+    Detect all possible location matches in query with confidence scores.
+
+    Returns dict with:
+    - candidates: List of all matches sorted by confidence (highest first)
+    - best: The highest confidence match (or None)
+
+    Confidence scoring:
+    - Exact country name: 1.0
+    - Capital city: 0.9
+    - Admin1 (state/province): 0.8
+    - Admin2 (county) in viewport: 0.6
+    - Partial word match: 0.4
+    - Stop word match: 0.1 (very low - likely false positive)
+    """
+    # Normalize query to handle possessive forms
+    normalized_query = normalize_query_for_location_matching(query)
+    query_lower = normalized_query.lower()
+
+    candidates = []
+
+    # 1. Check country names (highest priority)
+    name_to_iso3 = build_name_to_iso3()
+    sorted_names = sorted(name_to_iso3.keys(), key=len, reverse=True)
+
+    for name in sorted_names:
+        pattern = r'\b' + re.escape(name) + r'\b'
+        if re.search(pattern, query_lower):
+            iso3 = name_to_iso3[name]
+            # Get proper country name
+            iso_data = load_reference_file(REFERENCE_DIR / "iso_codes.json")
+            country_name = iso_data.get("iso3_to_name", {}).get(iso3, name.title()) if iso_data else name.title()
+
+            candidates.append({
+                "matched_term": name,
+                "iso3": iso3,
+                "loc_id": iso3,
+                "country_name": country_name,
+                "confidence": 1.0,
+                "match_type": "country",
+                "is_subregion": False
+            })
+
+    # 2. Check capital cities
+    subregion_to_iso3 = build_subregion_to_iso3()
+    sorted_subregions = sorted(subregion_to_iso3.keys(), key=len, reverse=True)
+
+    for subregion in sorted_subregions:
+        pattern = r'\b' + re.escape(subregion) + r'\b'
+        if re.search(pattern, query_lower):
+            iso3 = subregion_to_iso3[subregion]
+            iso_data = load_reference_file(REFERENCE_DIR / "iso_codes.json")
+            country_name = iso_data.get("iso3_to_name", {}).get(iso3, subregion.title()) if iso_data else subregion.title()
+
+            candidates.append({
+                "matched_term": subregion,
+                "iso3": iso3,
+                "loc_id": iso3,
+                "country_name": country_name,
+                "confidence": 0.9,
+                "match_type": "capital",
+                "is_subregion": True
+            })
+
+    # 3. Check viewport locations (lower priority)
+    if viewport:
+        viewport_result = lookup_location_in_viewport(query, viewport)
+        if viewport_result.get("matches"):
+            for match in viewport_result["matches"]:
+                # Check if this term is a stop word
+                matched_term = match.get("matched_term", "").lower()
+                if matched_term in LOCATION_STOP_WORDS:
+                    confidence = 0.1  # Very low for stop words
+                else:
+                    # Score based on admin level
+                    admin_level = match.get("admin_level", 3)
+                    if admin_level == 1:
+                        confidence = 0.8  # State/province
+                    elif admin_level == 2:
+                        confidence = 0.6  # County
+                    else:
+                        confidence = 0.4  # City/town
+
+                candidates.append({
+                    "matched_term": match.get("matched_term", ""),
+                    "iso3": match.get("iso3", ""),
+                    "loc_id": match.get("loc_id", ""),
+                    "country_name": match.get("country_name", ""),
+                    "confidence": confidence,
+                    "match_type": "viewport",
+                    "is_subregion": True,
+                    "admin_level": admin_level
+                })
+
+    # Sort by confidence (highest first)
+    candidates = sorted(candidates, key=lambda x: -x["confidence"])
+
+    # Remove duplicates (keep highest confidence per loc_id)
+    seen = set()
+    unique_candidates = []
+    for c in candidates:
+        loc_key = c.get("loc_id") or c.get("iso3")
+        if loc_key and loc_key not in seen:
+            seen.add(loc_key)
+            unique_candidates.append(c)
+
+    return {
+        "candidates": unique_candidates,
+        "best": unique_candidates[0] if unique_candidates else None
+    }
+
+
+def detect_intent_candidates(query: str, source_candidates: dict, location_candidates: dict) -> dict:
+    """
+    Detect possible user intents with confidence scores.
+
+    Intents:
+    - data_request: User wants to see data
+    - navigation: User wants to zoom/navigate to a location
+    - reference_lookup: User asking about facts (capital, currency, etc.)
+    - filter_change: User wants to adjust filters
+    - show_borders: User wants to see geometry without data
+
+    Returns dict with:
+    - candidates: List of intents sorted by confidence
+    - best: The highest confidence intent
+    """
+    query_lower = query.lower().strip()
+    candidates = []
+
+    # Check for data request signals
+    data_score = 0.0
+    if any(kw in query_lower for kw in ["data", "statistics", "metrics", "show me data"]):
+        data_score += 0.4
+    if any(kw in query_lower for kw in ["from the", "from", "dataset"]):
+        data_score += 0.2
+    if source_candidates.get("best"):
+        data_score += 0.3  # Source mentioned = likely data request
+    if any(kw in query_lower for kw in ["population", "gdp", "births", "deaths", "economy"]):
+        data_score += 0.2  # Metric keywords
+
+    if data_score > 0:
+        candidates.append({
+            "type": "data_request",
+            "confidence": min(1.0, data_score),
+            "signals": ["source_mentioned"] if source_candidates.get("best") else []
+        })
+
+    # Check for navigation signals
+    nav_score = 0.0
+    nav_result = detect_navigation_intent(query)
+    if nav_result.get("is_navigation"):
+        nav_score += 0.5
+        # But reduce if data keywords present
+        if "data" in query_lower or source_candidates.get("best"):
+            nav_score -= 0.3
+
+    if location_candidates.get("best") and nav_score == 0:
+        # Location mentioned but no explicit nav pattern - could be either
+        nav_score += 0.3
+
+    if nav_score > 0:
+        candidates.append({
+            "type": "navigation",
+            "confidence": max(0.0, min(1.0, nav_score)),
+            "pattern": nav_result.get("pattern"),
+            "location_text": nav_result.get("location_text")
+        })
+
+    # Check for reference lookup (capital, currency, language, etc.)
+    ref_score = 0.0
+    ref_patterns = [
+        (r"capital of", 0.9),
+        (r"what.+capital", 0.9),
+        (r"currency", 0.8),
+        (r"language.+spoken", 0.8),
+        (r"what language", 0.8),
+        (r"sdg\s*\d+", 0.9),
+        (r"goal\s*\d+", 0.8),
+    ]
+    for pattern, score in ref_patterns:
+        if re.search(pattern, query_lower):
+            ref_score = max(ref_score, score)
+
+    if ref_score > 0:
+        candidates.append({
+            "type": "reference_lookup",
+            "confidence": ref_score,
+            "signals": []
+        })
+
+    # Check for show borders intent
+    show_borders = detect_show_borders_intent(query)
+    if show_borders.get("is_show_borders"):
+        candidates.append({
+            "type": "show_borders",
+            "confidence": 0.9,
+            "pattern": show_borders.get("pattern")
+        })
+
+    # Check for filter change intent
+    filter_result = detect_filter_intent(query, {}) or {}
+    if filter_result.get("is_filter_intent"):
+        candidates.append({
+            "type": "filter_change",
+            "confidence": 0.85,
+            "filter_type": filter_result.get("filter_type"),
+            "parsed_values": filter_result.get("parsed_values", {})
+        })
+
+    # Sort by confidence
+    candidates = sorted(candidates, key=lambda x: -x["confidence"])
+
+    return {
+        "candidates": candidates,
+        "best": candidates[0] if candidates else {"type": "data_request", "confidence": 0.5}
+    }
+
+
+def adjust_scores_with_context(source_candidates: dict, location_candidates: dict, intent_candidates: dict) -> dict:
+    """
+    Cross-reference candidates to adjust confidence scores.
+
+    Key adjustments:
+    - Penalize location if it's a substring of a detected source name
+    - Boost source if query has data-related keywords
+    - Reduce navigation confidence if source is mentioned
+    """
+    adjusted_locations = []
+
+    # Get matched source text for comparison
+    source_texts = set()
+    for sc in source_candidates.get("candidates", []):
+        source_name = sc.get("source_name", "").lower()
+        source_texts.add(source_name)
+        # Also add individual words from source name
+        for word in source_name.split():
+            if len(word) >= 4:
+                source_texts.add(word)
+
+    # Adjust location scores
+    for loc in location_candidates.get("candidates", []):
+        matched_term = loc.get("matched_term", "").lower()
+
+        # Check if location term appears in any source name
+        term_in_source = any(matched_term in st for st in source_texts)
+
+        if term_in_source:
+            # Heavily penalize - this is likely a false positive
+            loc["confidence"] = max(0.0, loc["confidence"] - 0.5)
+            loc["penalized_reason"] = "term_in_source_name"
+
+        adjusted_locations.append(loc)
+
+    # Re-sort after adjustments
+    adjusted_locations = sorted(adjusted_locations, key=lambda x: -x["confidence"])
+
+    # Update best
+    location_candidates["candidates"] = adjusted_locations
+    location_candidates["best"] = adjusted_locations[0] if adjusted_locations else None
+
+    # Adjust intent scores based on source detection
+    adjusted_intents = []
+    for intent in intent_candidates.get("candidates", []):
+        if intent["type"] == "navigation" and source_candidates.get("best"):
+            # Source mentioned - reduce navigation confidence
+            if source_candidates["best"]["confidence"] > 0.7:
+                intent["confidence"] = max(0.0, intent["confidence"] - 0.3)
+                intent["adjusted_reason"] = "source_detected"
+
+        adjusted_intents.append(intent)
+
+    adjusted_intents = sorted(adjusted_intents, key=lambda x: -x["confidence"])
+    intent_candidates["candidates"] = adjusted_intents
+    intent_candidates["best"] = adjusted_intents[0] if adjusted_intents else None
+
+    return {
+        "sources": source_candidates,
+        "locations": location_candidates,
+        "intents": intent_candidates
+    }
+
+
 def detect_show_borders_intent(query: str) -> dict:
     """
     Detect if query is asking to display geometry/borders without data.
@@ -1860,6 +2241,23 @@ def preprocess_query(query: str, viewport: dict = None, active_overlays: dict = 
     # Detect filter-related intent (read or change filters)
     filter_intent = detect_filter_intent(query, active_overlays) if active_overlays else None
 
+    # ==========================================================================
+    # CANDIDATE-BASED DETECTION (Phase 1 Refactor)
+    # Gather ALL candidates with confidence scores - LLM decides interpretation
+    # ==========================================================================
+    source_candidates = detect_source_candidates(query)
+    location_candidates = detect_location_candidates(query, viewport)
+    intent_candidates = detect_intent_candidates(query, source_candidates, location_candidates)
+
+    # Cross-reference to adjust scores (e.g., penalize "bureau" location if "Bureau of Statistics" source detected)
+    adjusted = adjust_scores_with_context(source_candidates, location_candidates, intent_candidates)
+
+    candidates = {
+        "sources": adjusted["sources"],
+        "locations": adjusted["locations"],
+        "intents": adjusted["intents"],
+    }
+
     hints = {
         "original_query": query,
         "viewport": viewport,  # Pass through for downstream use
@@ -1877,6 +2275,8 @@ def preprocess_query(query: str, viewport: dict = None, active_overlays: dict = 
         "active_overlays": active_overlays,  # Current overlay state from frontend
         "cache_stats": cache_stats,  # What's currently loaded in frontend cache
         "filter_intent": filter_intent,  # User intent to read/change filters
+        # CANDIDATE-BASED (Phase 1 Refactor) - all interpretations with confidence scores
+        "candidates": candidates,
     }
 
     # Build summary for LLM context injection
@@ -1977,6 +2377,54 @@ def build_tier3_context(hints: dict) -> str:
     # Add summary if present
     if hints.get("summary"):
         context_parts.append(f"[Preprocessor hints: {hints['summary']}]")
+
+    # ==========================================================================
+    # CANDIDATE-BASED CONTEXT (Phase 1 Refactor)
+    # Present ALL interpretation candidates to LLM with confidence scores
+    # ==========================================================================
+    candidates = hints.get("candidates")
+    if candidates:
+        candidate_lines = ["[INTERPRETATION CANDIDATES - Review all options before deciding:]"]
+
+        # Intent candidates
+        intents = candidates.get("intents", {}).get("candidates", [])
+        if intents:
+            candidate_lines.append("\nPossible intents (pick most likely based on full query):")
+            for intent in intents[:3]:
+                conf = intent.get("confidence", 0)
+                itype = intent.get("type", "unknown")
+                reason = f" [{intent.get('adjusted_reason')}]" if intent.get("adjusted_reason") else ""
+                candidate_lines.append(f"  - {itype}: {conf:.2f}{reason}")
+
+        # Source candidates
+        sources = candidates.get("sources", {}).get("candidates", [])
+        if sources:
+            candidate_lines.append("\nPossible data sources mentioned:")
+            for src in sources[:3]:
+                conf = src.get("confidence", 0)
+                name = src.get("source_name", "?")
+                matched = src.get("matched_text", "")
+                candidate_lines.append(f"  - {name}: {conf:.2f} (matched: '{matched}')")
+
+        # Location candidates (with penalty notes)
+        locations = candidates.get("locations", {}).get("candidates", [])
+        if locations:
+            candidate_lines.append("\nPossible locations:")
+            for loc in locations[:5]:
+                conf = loc.get("confidence", 0)
+                term = loc.get("matched_term", "?")
+                loc_id = loc.get("loc_id", loc.get("iso3", "?"))
+                mtype = loc.get("match_type", "")
+                penalty = ""
+                if loc.get("penalized_reason") == "term_in_source_name":
+                    penalty = " [LIKELY FALSE POSITIVE - term appears in source name]"
+                candidate_lines.append(f"  - '{term}' -> {loc_id}: {conf:.2f} ({mtype}){penalty}")
+
+        # Only add if we have actual candidates to show
+        if len(candidate_lines) > 1:
+            candidate_lines.append("\nBased on the full query context, determine which interpretation is correct.")
+            candidate_lines.append("If the query is about data/statistics, prefer data_request intent even if it starts with 'show me'.")
+            context_parts.append("\n".join(candidate_lines))
 
     # Add active overlay context for LLM
     active_overlays = hints.get("active_overlays")

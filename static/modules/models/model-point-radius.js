@@ -120,6 +120,8 @@ export const PointRadiusModel = {
       this._addTornadoLayer(eventType, options);
     } else if (eventType === 'flood') {
       this._addFloodLayer(eventType, options);
+    } else if (eventType === 'landslide') {
+      this._addLandslideLayer(eventType, options);
     } else {
       this._addGenericEventLayer(eventType, options);
     }
@@ -1586,6 +1588,73 @@ export const PointRadiusModel = {
     });
 
     // 5. MAIN TORNADO MARKER
+    map.addLayer({
+      id: this._layerId('circle', eventType),
+      type: 'circle',
+      source: sourceId,
+      paint: {
+        'circle-radius': sizeBoostExpr(sizeExpr),
+        'circle-color': colorExpr,
+        'circle-opacity': opacityExpr(0.9),
+        'circle-stroke-color': '#222222',
+        'circle-stroke-width': 1
+      }
+    });
+  },
+
+  /**
+   * Add landslide layer - brown points scaled by intensity (deaths).
+   * @private
+   */
+  _addLandslideLayer(eventType, options = {}) {
+    const map = MapAdapter.map;
+    const sourceId = this._layerId('source', eventType);
+
+    // Recency-based effects for animation
+    const recencyExpr = ['coalesce', ['get', '_recency'], 1.0];
+    const lifecycleOpacity = ['coalesce', ['get', '_opacity'], 1.0];
+    const opacityExpr = (baseOpacity) => [
+      'min', 1.0,
+      ['*', baseOpacity, ['*', recencyExpr, lifecycleOpacity]]
+    ];
+    const sizeBoostExpr = (baseSize) => ['*', baseSize, ['max', 1.0, recencyExpr]];
+
+    // Color gradient: lighter brown for less intense, darker for more deaths
+    const colorExpr = [
+      'interpolate', ['linear'],
+      ['coalesce', ['get', 'intensity'], 1],
+      1, '#cd853f',    // Low intensity = peru/tan
+      2, '#a0522d',    // Moderate = sienna
+      3, '#8b4513',    // High = saddle brown
+      4, '#654321',    // Very high = dark brown
+      5, '#3d2314'     // Extreme = very dark brown
+    ];
+
+    // Size based on intensity (deaths-based, calculated in backend)
+    const sizeExpr = [
+      'interpolate', ['linear'],
+      ['coalesce', ['get', 'intensity'], 1],
+      1, 6,    // Low intensity = small
+      2, 8,    // Moderate
+      3, 11,   // High
+      4, 14,   // Very high
+      5, 18    // Extreme
+    ];
+
+    // Outer glow layer
+    map.addLayer({
+      id: this._layerId('circle-glow', eventType),
+      type: 'circle',
+      source: sourceId,
+      paint: {
+        'circle-radius': sizeBoostExpr(['*', sizeExpr, 1.8]),
+        'circle-color': colorExpr,
+        'circle-opacity': opacityExpr(0.25),
+        'circle-blur': 0.8
+      }
+    });
+
+    // Main landslide circle
     map.addLayer({
       id: this._layerId('circle', eventType),
       type: 'circle',
@@ -3632,6 +3701,16 @@ export const PointRadiusModel = {
         }
         if (props.path_length_miles != null) {
           stat = `${props.path_length_miles.toFixed(1)} mi path`;
+        }
+        break;
+
+      case 'landslide':
+        title = props.event_name || 'Landslide';
+        if (props.timestamp) {
+          subtitle = new Date(props.timestamp).toLocaleDateString();
+        }
+        if (props.deaths != null && props.deaths > 0) {
+          stat = `${props.deaths} deaths`;
         }
         break;
 

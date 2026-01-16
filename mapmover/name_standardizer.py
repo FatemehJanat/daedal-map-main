@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Set
 from rapidfuzz import fuzz, process
 
+from .paths import GEOMETRY_DIR
+
 
 class NameStandardizer:
     """Standardizes place names to match canonical geometry datasets."""
@@ -535,8 +537,7 @@ class NameStandardizer:
         admin_level: int = None
     ) -> Optional[str]:
         """Look up a name in country parquet file."""
-        geometry_path = Path(r"C:\Users\Bryan\Desktop\county-map-data\geometry")
-        parquet_file = geometry_path / f"{country}.parquet"
+        parquet_file = GEOMETRY_DIR / f"{country}.parquet"
 
         if not parquet_file.exists():
             return None

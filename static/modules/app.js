@@ -408,6 +408,14 @@ export const App = {
       console.log(`Year range: ${data.year_range.min} - ${data.year_range.max}`);
       console.log('DEBUG app.js: metric_year_ranges from response:', data.metric_year_ranges);
 
+      // Auto-enable demographics overlay for demographic data from chat orders
+      // This ensures viewport-based admin level filtering works
+      const OverlaySelector = window.OverlaySelector;
+      if (OverlaySelector && !OverlaySelector.isActive('demographics')) {
+        console.log('Auto-enabling demographics overlay for chat order data');
+        OverlaySelector.setActive('demographics', true);
+      }
+
       // Hide any existing slider/legend first
       TimeSlider.reset();
       ChoroplethManager.reset();
