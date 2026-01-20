@@ -2784,6 +2784,264 @@ async def get_storms_list(year: int = None, min_year: int = None, basin: str = N
         return msgpack_error(str(e), 500)
 
 
+# === Weather Grid Endpoints ===
+
+@app.get("/api/weather/grid")
+async def get_weather_grid(
+    tier: str,
+    variable: str = "temp_c",
+    year: int = None
+):
+    """
+    Get weather grid data for animation.
+
+    Loads parquet files and pivots to wide format for efficient animation.
+    Returns timestamps array + values array (16,200 values per timestamp).
+
+    Args:
+        tier: 'hourly', 'weekly', or 'monthly'
+        variable: 'temp_c', 'humidity', or 'snow_depth_m'
+        year: For monthly tier, which year to load
+    """
+    import pandas as pd
+    import numpy as np
+    from glob import glob
+    from datetime import datetime, timezone
+
+    try:
+        weather_base = GLOBAL_DIR / "climate" / "weather"
+
+        # Validate tier
+        if tier not in ('hourly', 'weekly', 'monthly'):
+            return msgpack_error(f"Invalid tier: {tier}. Must be hourly, weekly, or monthly", 400)
+
+        # Validate variable
+        if variable not in ('temp_c', 'humidity', 'snow_depth_m'):
+            return msgpack_error(f"Invalid variable: {variable}. Must be temp_c, humidity, or snow_depth_m", 400)
+
+        # Tier cascade: if requested tier unavailable for year, fall back to finer resolution
+        actual_tier = tier
+        files = []
+
+        def get_files_for_tier(t, y):
+            """Get parquet files for a tier/year combo."""
+            t_dir = weather_base / t
+            if not t_dir.exists():
+                return []
+
+            if t == 'monthly':
+                if y is None:
+                    return []
+                y_dir = t_dir / str(y)
+                if not y_dir.exists():
+                    return []
+                return sorted(glob(str(y_dir / "*.parquet")))
+            elif t == 'weekly':
+                # For weekly, filter to requested year if specified
+                all_files = sorted(glob(str(t_dir / "**" / "*.parquet"), recursive=True))
+                if y is not None:
+                    return [f for f in all_files if f"/{y}/" in f.replace("\\", "/") or f"\\{y}\\" in f]
+                return all_files
+            else:  # hourly
+                # For hourly, filter to requested year if specified
+                all_files = sorted(glob(str(t_dir / "**" / "*.parquet"), recursive=True))
+                if y is not None:
+                    return [f for f in all_files if f"/{y}/" in f.replace("\\", "/") or f"\\{y}\\" in f]
+                return all_files
+
+        # Try requested tier first
+        files = get_files_for_tier(tier, year)
+
+        # Cascade: monthly -> weekly -> hourly
+        if not files and tier == 'monthly':
+            logger.info(f"No monthly data for {year}, trying weekly")
+            files = get_files_for_tier('weekly', year)
+            if files:
+                actual_tier = 'weekly'
+
+        if not files and tier in ('monthly', 'weekly'):
+            logger.info(f"No weekly data for {year}, trying hourly")
+            files = get_files_for_tier('hourly', year)
+            if files:
+                actual_tier = 'hourly'
+
+        if not files:
+            return msgpack_error(f"No {tier} data files found for year {year}", 404)
+
+        # Read and pivot data
+        timestamps = []
+        all_values = []
+
+        for filepath in files:
+            try:
+                df = pd.read_parquet(filepath, columns=['lat', 'lon', variable])
+
+                # Parse timestamp from path based on actual tier (not requested tier)
+                path_parts = Path(filepath).parts
+                if actual_tier == 'monthly':
+                    # monthly/YYYY/MM.parquet
+                    yr = int(path_parts[-2])
+                    mo = int(path_parts[-1].replace('.parquet', ''))
+                    ts = datetime(yr, mo, 1, tzinfo=timezone.utc)
+                elif actual_tier == 'weekly':
+                    # weekly/YYYY/WW.parquet
+                    yr = int(path_parts[-2])
+                    wk = int(path_parts[-1].replace('.parquet', ''))
+                    # Convert ISO week to timestamp (Monday of that week)
+                    ts = datetime.strptime(f'{yr}-W{wk:02d}-1', '%G-W%V-%u').replace(tzinfo=timezone.utc)
+                else:  # hourly
+                    # hourly/YYYY/MM/DD/HH.parquet
+                    yr = int(path_parts[-4])
+                    mo = int(path_parts[-3])
+                    dy = int(path_parts[-2])
+                    hr = int(path_parts[-1].replace('.parquet', ''))
+                    ts = datetime(yr, mo, dy, hr, tzinfo=timezone.utc)
+
+                # Sort by lat (desc) then lon (asc) for consistent grid ordering
+                df = df.sort_values(['lat', 'lon'], ascending=[False, True])
+
+                # Extract values (16,200 per file)
+                values = df[variable].values.tolist()
+
+                # Replace NaN with None for JSON compatibility
+                values = [None if (isinstance(v, float) and np.isnan(v)) else v for v in values]
+
+                timestamps.append(int(ts.timestamp() * 1000))  # ms since epoch
+                all_values.append(values)
+
+            except Exception as e:
+                logger.warning(f"Could not read {filepath}: {e}")
+                continue
+
+        if not timestamps:
+            return msgpack_error("No valid data files could be read", 500)
+
+        # Sort by timestamp
+        sorted_pairs = sorted(zip(timestamps, all_values), key=lambda x: x[0])
+        timestamps = [p[0] for p in sorted_pairs]
+        all_values = [p[1] for p in sorted_pairs]
+
+        # Color scale configuration
+        color_scales = {
+            'temp_c': {
+                'min': -40, 'max': 45,
+                'stops': [
+                    [-40, '#00008B'], [-30, '#0000FF'], [-10, '#87CEEB'],
+                    [0, '#FFFFFF'], [10, '#FFFF99'], [25, '#FFA500'],
+                    [35, '#FF0000'], [45, '#8B0000']
+                ]
+            },
+            'humidity': {
+                'min': 0, 'max': 100,
+                'stops': [
+                    [0, '#FFFFFF'], [25, '#E0FFFF'], [50, '#87CEEB'],
+                    [75, '#4682B4'], [100, '#000080']
+                ]
+            },
+            'snow_depth_m': {
+                'min': 0, 'max': 2,
+                'stops': [
+                    [0, '#FFFFFF'], [0.1, '#FFFFFF'], [0.5, '#E6E6FA'],
+                    [1.0, '#9370DB'], [2.0, '#4B0082']
+                ]
+            }
+        }
+
+        return msgpack_response({
+            'tier': actual_tier,  # Actual tier returned (may differ from requested due to cascade)
+            'requested_tier': tier,
+            'variable': variable,
+            'timestamps': timestamps,
+            'values': all_values,
+            'grid': {
+                'lat_min': -89, 'lat_max': 89, 'lat_step': 2,
+                'lon_min': -179, 'lon_max': 179, 'lon_step': 2,
+                'rows': 90, 'cols': 180
+            },
+            'color_scale': color_scales.get(variable, color_scales['temp_c']),
+            'count': len(timestamps)
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching weather grid: {e}")
+        traceback.print_exc()
+        return msgpack_error(str(e), 500)
+
+
+@app.get("/api/weather/available")
+async def get_weather_available():
+    """
+    Get available time ranges for each weather tier.
+    Used by frontend to know what data can be requested.
+    """
+    from glob import glob
+    from datetime import datetime, timezone
+
+    try:
+        weather_base = GLOBAL_DIR / "climate" / "weather"
+        result = {}
+
+        # Check hourly
+        hourly_dir = weather_base / "hourly"
+        if hourly_dir.exists():
+            files = sorted(glob(str(hourly_dir / "**" / "*.parquet"), recursive=True))
+            if files:
+                # Parse first and last file timestamps
+                first = files[0]
+                last = files[-1]
+                # hourly/YYYY/MM/DD/HH.parquet
+                fp = Path(first).parts
+                lp = Path(last).parts
+                first_ts = datetime(int(fp[-4]), int(fp[-3]), int(fp[-2]), int(fp[-1].replace('.parquet', '')), tzinfo=timezone.utc)
+                last_ts = datetime(int(lp[-4]), int(lp[-3]), int(lp[-2]), int(lp[-1].replace('.parquet', '')), tzinfo=timezone.utc)
+                result['hourly'] = {
+                    'min': first_ts.isoformat(),
+                    'max': last_ts.isoformat(),
+                    'count': len(files)
+                }
+
+        # Check weekly
+        weekly_dir = weather_base / "weekly"
+        if weekly_dir.exists():
+            files = sorted(glob(str(weekly_dir / "**" / "*.parquet"), recursive=True))
+            if files:
+                # Get year range
+                years = set()
+                for f in files:
+                    fp = Path(f).parts
+                    years.add(int(fp[-2]))
+                result['weekly'] = {
+                    'min_year': min(years),
+                    'max_year': max(years),
+                    'count': len(files)
+                }
+
+        # Check monthly
+        monthly_dir = weather_base / "monthly"
+        if monthly_dir.exists():
+            # Get year directories
+            year_dirs = sorted([d for d in monthly_dir.iterdir() if d.is_dir() and d.name.isdigit()])
+            if year_dirs:
+                # Count all files
+                all_files = glob(str(monthly_dir / "**" / "*.parquet"), recursive=True)
+                result['monthly'] = {
+                    'min_year': int(year_dirs[0].name),
+                    'max_year': int(year_dirs[-1].name),
+                    'years': [int(d.name) for d in year_dirs],
+                    'count': len(all_files)
+                }
+
+        # Default min year for time slider (matches disaster APIs)
+        # Earlier years still accessible via chat/explicit request
+        result['default_min_year'] = 2000
+
+        return msgpack_response(result)
+
+    except Exception as e:
+        logger.error(f"Error checking weather availability: {e}")
+        return msgpack_error(str(e), 500)
+
+
 # === Reference Data Endpoints ===
 
 @app.get("/reference/admin-levels")

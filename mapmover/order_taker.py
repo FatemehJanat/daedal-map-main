@@ -11,7 +11,7 @@ This replaces the old multi-LLM chat system with a simpler "Fast Food Kiosk" mod
 
 import json
 from pathlib import Path
-from openai import OpenAI
+from anthropic import Anthropic
 from dotenv import load_dotenv
 
 from .data_loading import load_catalog, load_source_metadata
@@ -329,16 +329,27 @@ def interpret_request(user_query: str, chat_history: list = None, hints: dict = 
 
     messages.append({"role": "user", "content": user_query})
 
-    # Single LLM call
-    client = OpenAI()
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=messages,
+    # Single LLM call using Claude
+    client = Anthropic()
+
+    # Extract system prompt from messages (Anthropic handles it separately)
+    system_content = ""
+    chat_messages = []
+    for msg in messages:
+        if msg["role"] == "system":
+            system_content += msg["content"] + "\n\n"
+        else:
+            chat_messages.append(msg)
+
+    response = client.messages.create(
+        model="claude-haiku-4-5",
+        system=system_content.strip(),
+        messages=chat_messages,
         temperature=0.3,
         max_tokens=500
     )
 
-    content = response.choices[0].message.content.strip()
+    content = response.content[0].text.strip()
 
     # Parse response
     return parse_llm_response(content, hints=hints)

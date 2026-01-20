@@ -131,38 +131,61 @@ const CATEGORIES = [
     expanded: false,
     overlays: [
       {
-        id: 'wind-patterns',
-        label: 'Wind Patterns',
-        description: 'Global wind circulation',
+        id: 'temperature',
+        label: 'Temperature',
+        description: 'Global temperature (1940-present)',
         default: false,
         locked: false,
-        model: 'vector',
-        icon: '~',
-        hasYearFilter: false,
-        placeholder: true
-      },
-      {
-        id: 'currents',
-        label: 'Ocean Currents',
-        description: 'Ocean circulation patterns',
-        default: false,
-        locked: false,
-        model: 'vector',
-        icon: '=',
-        hasYearFilter: false,
-        placeholder: true
-      },
-      {
-        id: 'pollution',
-        label: 'Pollution',
-        description: 'Air and water quality data',
-        default: false,
-        locked: false,
-        model: 'heatmap',
-        icon: 'P',
+        model: 'weather-grid',
+        icon: '*',
         hasYearFilter: true,
-        placeholder: true
-      }
+        variable: 'temp_c'
+      },
+      {
+        id: 'humidity',
+        label: 'Humidity',
+        description: 'Relative humidity (live data only)',
+        default: false,
+        locked: false,
+        model: 'weather-grid',
+        icon: '%',
+        hasYearFilter: true,
+        variable: 'humidity'
+      },
+      {
+        id: 'snow-depth',
+        label: 'Snow Depth',
+        description: 'Snow depth (live data only)',
+        default: false,
+        locked: false,
+        model: 'weather-grid',
+        icon: '#',
+        hasYearFilter: true,
+        variable: 'snow_depth_m'
+      },
+      // PLACEHOLDER: Wind and ocean overlays for future deck.gl implementation
+      // {
+      //   id: 'wind-patterns',
+      //   label: 'Wind Patterns',
+      //   description: 'Global wind circulation',
+      //   default: false,
+      //   locked: false,
+      //   model: 'vector',
+      //   icon: '~',
+      //   hasYearFilter: false,
+      //   placeholder: true
+      // },
+      // {
+      //   id: 'currents',
+      //   label: 'Ocean Currents',
+      //   description: 'Ocean circulation patterns',
+      //   default: false,
+      //   locked: false,
+      //   model: 'vector',
+      //   icon: '=',
+      //   hasYearFilter: false,
+      //   placeholder: true
+      // }
     ]
   }
 ];

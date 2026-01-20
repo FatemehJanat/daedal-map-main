@@ -117,7 +117,7 @@ export const SPEED_PRESETS = {
   DAILY: 0.30,        // ~4 steps/frame (1 day)
   WEEKLY: 0.45,       // ~28 steps/frame (1 week)
   MONTHLY: 0.60,      // ~120 steps/frame (1 month)
-  YEARLY: 0.72,       // ~97 steps/frame (1yr/sec) - DEFAULT for world view
+  YEARLY: 0.72,      // ~97 steps/frame (1yr/sec) - DEFAULT for world view
   OVERVIEW: 1.0       // 1460 steps/frame (~15yr/sec) - very fast scan
 };
 
@@ -144,7 +144,7 @@ export const TimeSlider = {
   loopCheckbox: null,      // DOM element for loop checkbox
   loopEnabled: true,       // Whether animation should loop (default on)
   stepsPerFrame: 97,       // Current speed (default: ~1yr/sec at 15 FPS)
-  speedSliderValue: 0.72,  // Current slider position (0-1), default = ~1yr/sec
+  speedSliderValue: 0.72, // Current slider position (0-1), default = ~1yr/sec
   _inEventMode: false,     // True when animating specific event (vs world view)
   _previousSpeedSlider: null, // Saved speed when entering event mode
   playTimeout: null,       // For new stepsPerFrame-based playback
@@ -2139,7 +2139,7 @@ export const TimeSlider = {
 
     // Clear unified speed control state (Phase 7)
     this.stepsPerFrame = 97;  // Reset to default (~1yr/sec)
-    this.speedSliderValue = 0.72;  // Reset to ~1yr/sec preset
+    this.speedSliderValue = 0.72; // Reset to ~1yr/sec preset
     this.loopEnabled = true;  // Keep loop enabled (default on)
     this._inEventMode = false;
     this._previousSpeedSlider = null;

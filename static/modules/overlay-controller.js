@@ -15,6 +15,7 @@ import { TIME_SYSTEM } from './time-slider.js';
 import { CONFIG } from './config.js';
 import { DetailedEventCache } from './cache.js';
 import { fetchMsgpack } from './utils/fetch.js';
+import { WeatherGridModel, setDependencies as setWeatherGridDeps } from './models/model-weather-grid.js';
 
 // Dependencies set via setDependencies
 let MapAdapter = null;
@@ -41,6 +42,11 @@ export function setDependencies(deps) {
     TimeSlider: deps.TimeSlider,
     ModelRegistry: deps.ModelRegistry,
     TIME_SYSTEM: TIME_SYSTEM
+  });
+
+  // Wire dependencies to WeatherGridModel
+  setWeatherGridDeps({
+    MapAdapter: deps.MapAdapter
   });
 }
 
@@ -126,6 +132,25 @@ const OVERLAY_ENDPOINTS = {
     params: { min_deaths: '1', require_coords: 'true' },
     eventType: 'landslide',
     yearField: 'year'
+  },
+  // Weather/Climate overlays - grid data format (not GeoJSON)
+  temperature: {
+    baseUrl: '/api/weather/grid',
+    params: { variable: 'temp_c', tier: 'monthly' },
+    isWeatherGrid: true,
+    minYear: 1940
+  },
+  humidity: {
+    baseUrl: '/api/weather/grid',
+    params: { variable: 'humidity', tier: 'monthly' },
+    isWeatherGrid: true,
+    minYear: 1940
+  },
+  'snow-depth': {
+    baseUrl: '/api/weather/grid',
+    params: { variable: 'snow_depth_m', tier: 'monthly' },
+    isWeatherGrid: true,
+    minYear: 1940
   }
 };
 
@@ -593,6 +618,91 @@ function buildYearUrl(endpoint, year, overlayId = null) {
 }
 
 /**
+ * Load weather grid data for a specific year.
+ * Weather data uses a different format than GeoJSON overlays.
+ * @param {string} overlayId - Overlay ID (temperature, humidity, snow-depth)
+ * @param {number} year - Year to load
+ * @param {Object} endpoint - Endpoint config from OVERLAY_ENDPOINTS
+ * @param {AbortSignal} signal - Optional abort signal
+ * @returns {Promise<boolean>} True if data was loaded
+ */
+async function loadWeatherYearData(overlayId, year, endpoint, signal = null) {
+  // Build URL for weather API
+  const url = new URL(endpoint.baseUrl, window.location.origin);
+  url.searchParams.set('tier', endpoint.params.tier || 'monthly');
+  url.searchParams.set('variable', endpoint.params.variable);
+  url.searchParams.set('year', year);
+
+  console.log(`OverlayController: Fetching weather ${overlayId} for year ${year}`);
+
+  try {
+    const fetchOptions = signal ? { signal } : {};
+    const data = await fetchMsgpack(url.toString(), fetchOptions);
+
+    if (data.error) {
+      console.error(`OverlayController: Weather API error for ${overlayId}:`, data.error);
+      loadedYears[overlayId]?.delete(year);
+      return false;
+    }
+
+    // Log if tier cascade occurred (e.g., monthly -> hourly for recent data)
+    if (data.tier && data.requested_tier && data.tier !== data.requested_tier) {
+      console.log(`OverlayController: Tier cascade for ${overlayId} ${year}: ${data.requested_tier} -> ${data.tier}`);
+    }
+
+    // Initialize cache structure for weather data
+    // Format: dataCache[overlayId] = { years: { 2020: {...}, 2021: {...} }, colorScale: {...}, grid: {...} }
+    if (!dataCache[overlayId]) {
+      dataCache[overlayId] = { years: {}, colorScale: null, grid: null };
+    }
+
+    // Store the year's data (include actual tier for reference)
+    dataCache[overlayId].years[year] = {
+      timestamps: data.timestamps,
+      values: data.values,
+      tier: data.tier  // Actual tier returned (may differ from requested due to cascade)
+    };
+
+    // Store color scale and grid info (same for all years of same variable)
+    if (data.color_scale) {
+      dataCache[overlayId].colorScale = data.color_scale;
+    }
+    if (data.grid) {
+      dataCache[overlayId].grid = data.grid;
+    }
+
+    const frameCount = data.timestamps?.length || 0;
+    console.log(`OverlayController: Cached weather ${overlayId} year ${year} (${frameCount} frames)`);
+
+    // Update year range cache
+    if (!yearRangeCache[overlayId]) {
+      yearRangeCache[overlayId] = { min: year, max: year, available: [] };
+    }
+    yearRangeCache[overlayId].min = Math.min(yearRangeCache[overlayId].min, year);
+    yearRangeCache[overlayId].max = Math.max(yearRangeCache[overlayId].max, year);
+    if (!yearRangeCache[overlayId].available.includes(year)) {
+      yearRangeCache[overlayId].available.push(year);
+      yearRangeCache[overlayId].available.sort((a, b) => a - b);
+    }
+
+    // Dispatch cache update event
+    window.dispatchEvent(new CustomEvent('overlayCacheUpdated', { detail: { overlayId, year } }));
+
+    return true;
+  } catch (error) {
+    // Remove from loadedYears so it can be retried
+    loadedYears[overlayId]?.delete(year);
+
+    if (error.name === 'AbortError') {
+      console.log(`OverlayController: Weather fetch aborted for ${overlayId} ${year}`);
+      return false;
+    }
+    console.error(`OverlayController: Failed to load weather ${overlayId} for ${year}:`, error);
+    return false;
+  }
+}
+
+/**
  * Load data for a specific year and merge into cache.
  * Skips if year already loaded.
  * @param {string} overlayId - Overlay ID
@@ -610,6 +720,12 @@ async function loadYearData(overlayId, year, signal = null) {
     return false;
   }
 
+  // Check minYear constraint (e.g., temperature starts at 1940)
+  if (endpoint.minYear && year < endpoint.minYear) {
+    console.log(`OverlayController: ${overlayId} has no data for ${year} (min: ${endpoint.minYear})`);
+    return false;
+  }
+
   // Initialize loadedYears set if needed
   if (!loadedYears[overlayId]) {
     loadedYears[overlayId] = new Set();
@@ -617,12 +733,18 @@ async function loadYearData(overlayId, year, signal = null) {
 
   // Skip if already loaded or currently loading
   if (loadedYears[overlayId].has(year)) {
+    console.log(`OverlayController: ${overlayId} year ${year} already cached`);
     return false;
   }
 
   // Mark as loading BEFORE fetch to prevent race condition
   // Multiple rapid calls would otherwise all pass the check above
   loadedYears[overlayId].add(year);
+
+  // Weather grid overlays use different URL format and storage
+  if (endpoint.isWeatherGrid) {
+    return await loadWeatherYearData(overlayId, year, endpoint, signal);
+  }
 
   const url = buildYearUrl(endpoint, year, overlayId);
   console.log(`OverlayController: Fetching ${overlayId} for year ${year}`);
@@ -3481,6 +3603,14 @@ export const OverlayController = {
     for (const overlayId of activeOverlays) {
       if (overlayId === 'demographics') continue;
 
+      // Handle weather grid overlays
+      const overlayConfig = OverlaySelector?.getOverlayConfig(overlayId);
+      if (overlayConfig?.model === 'weather-grid') {
+        // Reload weather data for the new year
+        this.reloadWeatherGridForYear(overlayId, overlayConfig, year);
+        continue;
+      }
+
       const endpoint = OVERLAY_ENDPOINTS[overlayId];
       if (!endpoint || !endpoint.yearField) continue;
 
@@ -3491,6 +3621,44 @@ export const OverlayController = {
         // Year already loaded, just re-render
         this.renderFilteredData(overlayId, year);
       }
+    }
+  },
+
+  /**
+   * Reload weather grid data for a specific year.
+   * Called when time slider year changes.
+   * @param {string} overlayId - Overlay ID
+   * @param {Object} config - Overlay config
+   * @param {number} year - Year to load
+   */
+  async reloadWeatherGridForYear(overlayId, config, year) {
+    // Check if already cached
+    const alreadyCached = loadedYears[overlayId]?.has(year);
+
+    if (alreadyCached) {
+      console.log(`OverlayController: Using cached weather ${overlayId} for year ${year}`);
+    } else {
+      // Load via the cache system (will fetch and store in dataCache)
+      await loadYearData(overlayId, year);
+    }
+
+    // Get cached data and pass to display model
+    const cachedData = dataCache[overlayId];
+    if (cachedData?.years?.[year]) {
+      // Display from cache (instances are created automatically)
+      WeatherGridModel.displayFromCache(
+        overlayId,
+        cachedData.years[year],
+        cachedData.colorScale,
+        cachedData.grid
+      );
+
+      // Render at current time slider position
+      if (TimeSlider?.currentTime) {
+        WeatherGridModel.renderAtTimestamp(overlayId, TimeSlider.currentTime);
+      }
+
+      console.log(`OverlayController: Weather grid ${overlayId} displayed for ${year}`);
     }
   },
 
@@ -3507,6 +3675,23 @@ export const OverlayController = {
 
     for (const overlayId of activeOverlays) {
       if (overlayId === 'demographics') continue;
+
+      // Handle weather grid overlays
+      const overlayConfig = OverlaySelector?.getOverlayConfig(overlayId);
+      if (overlayConfig?.model === 'weather-grid') {
+        if (WeatherGridModel.hasInstance(overlayId)) {
+          // Check if we need to load a different year's data
+          const range = WeatherGridModel.getTimestampRange(overlayId);
+          if (range && (timestamp < range.min || timestamp > range.max)) {
+            // Timestamp is outside loaded data range - reload for new year
+            this.reloadWeatherGridForYear(overlayId, overlayConfig, year);
+          } else {
+            // Render frame at current timestamp
+            WeatherGridModel.renderAtTimestamp(overlayId, timestamp);
+          }
+        }
+        continue;
+      }
 
       const endpoint = OVERLAY_ENDPOINTS[overlayId];
       if (!endpoint) continue;
@@ -3605,11 +3790,85 @@ export const OverlayController = {
       return;
     }
 
+    // Weather grid overlays (temperature, humidity, snow-depth)
+    const overlayConfig = OverlaySelector?.getOverlayConfig(overlayId);
+    if (overlayConfig?.model === 'weather-grid') {
+      if (isActive) {
+        await this.loadWeatherGridOverlay(overlayId, overlayConfig);
+      } else {
+        this.clearWeatherGridOverlay(overlayId);
+      }
+      return;
+    }
+
     if (isActive) {
       await this.loadOverlay(overlayId);
     } else {
       this.clearOverlay(overlayId);
     }
+  },
+
+  /**
+   * Load and display a weather grid overlay.
+   * @param {string} overlayId - Overlay ID (temperature, humidity, snow-depth)
+   * @param {Object} config - Overlay configuration from OverlaySelector
+   */
+  async loadWeatherGridOverlay(overlayId, config) {
+    // Determine year based on current time slider position
+    let year = new Date().getFullYear();
+
+    if (TimeSlider?.currentTime) {
+      const currentDate = new Date(TimeSlider.currentTime);
+      year = currentDate.getFullYear();
+    }
+
+    console.log(`OverlayController: Loading weather grid ${overlayId} for year ${year}`);
+
+    // Load data via cache system
+    await loadYearData(overlayId, year);
+
+    // Get cached data and display (instances are created automatically)
+    const cachedData = dataCache[overlayId];
+    if (cachedData?.years?.[year]) {
+      WeatherGridModel.displayFromCache(
+        overlayId,
+        cachedData.years[year],
+        cachedData.colorScale,
+        cachedData.grid
+      );
+
+      // Set TimeSlider to full historical range (1940-present as timestamps)
+      if (TimeSlider) {
+        const minDate = new Date(Date.UTC(1940, 0, 1));  // Jan 1, 1940
+        const maxDate = new Date();  // Now
+        TimeSlider.setTimeRange({
+          min: minDate.getTime(),
+          max: maxDate.getTime(),
+          granularity: 'timestamp',
+          available: null
+        });
+        TimeSlider.show();
+
+        // Position slider at start of loaded data
+        const yearData = cachedData.years[year];
+        if (yearData?.timestamps?.length > 0) {
+          TimeSlider.setTime(yearData.timestamps[0]);
+        }
+      }
+
+      console.log(`OverlayController: Weather grid ${overlayId} loaded for year ${year}`);
+    } else {
+      console.error(`OverlayController: Failed to load weather grid ${overlayId}`);
+    }
+  },
+
+  /**
+   * Clear a weather grid overlay.
+   * @param {string} overlayId - Overlay ID
+   */
+  clearWeatherGridOverlay(overlayId) {
+    WeatherGridModel.hide(overlayId);
+    console.log(`OverlayController: Cleared weather grid ${overlayId}`);
   },
 
   /**

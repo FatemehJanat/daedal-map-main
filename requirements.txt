@@ -6,7 +6,7 @@ uvicorn>=0.24.0
 python-dotenv>=1.0.0
 
 # LLM integration
-openai>=1.0.0
+anthropic>=0.18.0
 
 # HTTP requests
 requests>=2.31.0

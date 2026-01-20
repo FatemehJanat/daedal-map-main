@@ -159,8 +159,16 @@ export const App = {
     try {
       console.log('Loading countries...');
 
-      // Reset time slider and choropleth when going back to world view
-      TimeSlider.reset();
+      // Only reset time slider if NO active overlay needs it (OR gate logic)
+      const activeOverlays = OverlaySelector?.getActiveOverlays() || [];
+      const anyOverlayNeedsSlider = activeOverlays.some(id => {
+        const config = OverlaySelector.getOverlayConfig(id);
+        return config?.hasYearFilter === true;
+      });
+
+      if (!anyOverlayNeedsSlider) {
+        TimeSlider.reset();
+      }
       ChoroplethManager.reset();
 
       // Re-enable viewport loading (exit order mode)
