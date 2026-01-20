@@ -77,7 +77,7 @@ export const HurricaneHandler = {
       return this.trackCache[stormId];
     }
 
-    const data = await fetchMsgpack(`/api/hurricane/track/${stormId}`);
+    const data = await fetchMsgpack(`/api/storms/${stormId}/track`);
 
     // Handle both old format (positions array) and new FeatureCollection format
     let positions;

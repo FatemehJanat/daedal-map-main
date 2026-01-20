@@ -883,6 +883,28 @@
       font-weight: 600;
     }
 
+    #sidebarHeaderButtons {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    #newChatBtn {
+      background: #2c3e50;
+      border: 1px solid #4a5f72;
+      color: #bdc3c7;
+      font-size: 12px;
+      padding: 5px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background 0.2s, color 0.2s;
+    }
+
+    #newChatBtn:hover {
+      background: #34495e;
+      color: white;
+    }
+
     #closeSidebar {
       background: none;
       border: none;
@@ -939,6 +961,50 @@
       color: #c9b458;
       font-size: 12px;
       padding: 8px 12px;
+    }
+
+    /* Recovery prompt */
+    .chat-message.recovery-prompt {
+      background: #2a3f5f;
+      border: 1px solid #3d5a80;
+    }
+
+    .recovery-buttons {
+      display: flex;
+      gap: 10px;
+      margin-top: 5px;
+    }
+
+    .recovery-btn {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      transition: background 0.2s, transform 0.1s;
+    }
+
+    .recovery-btn:hover {
+      transform: translateY(-1px);
+    }
+
+    .recovery-btn.recover {
+      background: #2e7d32;
+      color: white;
+    }
+
+    .recovery-btn.recover:hover {
+      background: #388e3c;
+    }
+
+    .recovery-btn.fresh {
+      background: #455a64;
+      color: white;
+    }
+
+    .recovery-btn.fresh:hover {
+      background: #546e7a;
     }
 
     /* Show on map button */
@@ -1157,11 +1223,236 @@
       background: #4d4d6c;
     }
 
+    .order-btn.save {
+      background: #2a5a8a;
+      color: #d0d0d0;
+      flex: 0.7;
+    }
+
+    .order-btn.save:hover {
+      background: #3a6a9a;
+    }
+
+    .order-btn.save:disabled {
+      background: #3d3d5c;
+      color: #666;
+      cursor: not-allowed;
+    }
+
+    /* Saved Orders List */
+    .saved-orders-list {
+      background: #2a2a4a;
+      border: 1px solid #3d3d5c;
+      border-radius: 6px;
+      margin-top: 10px;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+
+    .saved-orders-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 10px;
+      background: #1e1e3c;
+      border-bottom: 1px solid #3d3d5c;
+      font-size: 12px;
+      font-weight: 600;
+      color: #d0d0d0;
+    }
+
+    .saved-orders-close {
+      background: none;
+      border: none;
+      color: #888;
+      cursor: pointer;
+      font-size: 14px;
+      padding: 0 4px;
+    }
+
+    .saved-orders-close:hover {
+      color: #fff;
+    }
+
+    .saved-orders-items {
+      padding: 6px;
+    }
+
+    .saved-order-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 10px;
+      margin: 4px 0;
+      background: #1e1e3c;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .saved-order-item:hover {
+      background: #2a3a5a;
+    }
+
+    .saved-order-name {
+      font-size: 12px;
+      color: #d0d0d0;
+      flex: 1;
+    }
+
+    .saved-order-actions {
+      display: flex;
+      gap: 4px;
+    }
+
+    .saved-order-btn {
+      background: none;
+      border: none;
+      color: #888;
+      cursor: pointer;
+      font-size: 11px;
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+
+    .saved-order-btn:hover {
+      background: #3d3d5c;
+      color: #fff;
+    }
+
+    .saved-order-btn.delete:hover {
+      background: #8b3a3a;
+    }
+
+    .saved-orders-empty {
+      padding: 12px;
+      text-align: center;
+      color: #666;
+      font-size: 12px;
+      font-style: italic;
+    }
+
+    /* Saved Orders Indicator */
+    .saved-orders-indicator {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 10px;
+      margin-top: 8px;
+      background: #1e1e3c;
+      border-radius: 4px;
+      font-size: 11px;
+      color: #888;
+    }
+
+    .saved-orders-toggle {
+      background: #2a5a8a;
+      border: none;
+      color: #d0d0d0;
+      font-size: 10px;
+      padding: 3px 8px;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+
+    .saved-orders-toggle:hover {
+      background: #3a6a9a;
+    }
+
     .order-summary {
       font-size: 12px;
       color: #888;
       margin-bottom: 10px;
       font-style: italic;
+    }
+
+    /* Cache Status Display */
+    .cache-status {
+      font-size: 11px;
+      color: #888;
+      padding: 8px 10px;
+      margin-top: 8px;
+      border-top: 1px solid #3d3d5c;
+      text-align: center;
+    }
+
+    .cache-status.has-data {
+      color: #5dade2;
+    }
+
+    .cache-status.warning {
+      color: #f39c12;
+    }
+
+    /* Order Queue Status (Phase 2 async processing) */
+    .order-queue-status {
+      padding: 10px;
+      margin-bottom: 8px;
+      border-radius: 6px;
+      background: #2a2a4a;
+      border-left: 3px solid #5dade2;
+    }
+
+    .order-queue-status.status-pending {
+      border-left-color: #f39c12;
+    }
+
+    .order-queue-status.status-executing {
+      border-left-color: #5dade2;
+    }
+
+    .order-queue-status.status-complete {
+      border-left-color: #27ae60;
+    }
+
+    .order-queue-status.status-failed {
+      border-left-color: #e74c3c;
+    }
+
+    .queue-status-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+
+    .queue-status-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: #fff;
+    }
+
+    .queue-status-progress {
+      font-size: 11px;
+      color: #888;
+    }
+
+    .queue-progress-bar {
+      height: 4px;
+      background: #1a1a2e;
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .queue-progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #5dade2, #3498db);
+      transition: width 0.3s ease;
+    }
+
+    .status-executing .queue-progress-fill {
+      animation: pulse-progress 1.5s infinite;
+    }
+
+    @keyframes pulse-progress {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+
+    .queue-status-message {
+      font-size: 11px;
+      color: #888;
+      margin-top: 4px;
     }
 
     /* Sidebar footer with settings link */
@@ -1370,6 +1661,67 @@
     @keyframes typing {
       0%, 60%, 100% { transform: translateY(0); }
       30% { transform: translateY(-4px); }
+    }
+
+    /* Loading indicator with stages - dark */
+    .loading-indicator {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      background: #2d2d44;
+      border-radius: 12px;
+      align-self: flex-start;
+      border-bottom-left-radius: 4px;
+      min-width: 140px;
+    }
+
+    .loading-spinner {
+      width: 16px;
+      height: 16px;
+      border: 2px solid #444;
+      border-top-color: #7c8aff;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    .loading-text {
+      color: #aaa;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    /* Stage-specific colors */
+    .loading-indicator[data-stage="analyzing"] .loading-spinner {
+      border-top-color: #64b5f6;  /* Blue */
+    }
+    .loading-indicator[data-stage="analyzing"] .loading-text {
+      color: #64b5f6;
+    }
+
+    .loading-indicator[data-stage="thinking"] .loading-spinner {
+      border-top-color: #ba68c8;  /* Purple */
+    }
+    .loading-indicator[data-stage="thinking"] .loading-text {
+      color: #ba68c8;
+    }
+
+    .loading-indicator[data-stage="preparing"] .loading-spinner {
+      border-top-color: #81c784;  /* Green */
+    }
+    .loading-indicator[data-stage="preparing"] .loading-text {
+      color: #81c784;
+    }
+
+    .loading-indicator[data-stage="fetching"] .loading-spinner {
+      border-top-color: #ffb74d;  /* Orange */
+    }
+    .loading-indicator[data-stage="fetching"] .loading-text {
+      color: #ffb74d;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
     }
 
     /* MapLibre popup styling - compact sizing */
@@ -1979,7 +2331,10 @@
     <div id="sidebarResizeHandle" title="Drag to resize"></div>
     <div id="sidebarHeader">
       <h2>Map Explorer</h2>
-      <button id="closeSidebar" title="Close">&times;</button>
+      <div id="sidebarHeaderButtons">
+        <button id="newChatBtn" title="Start new chat session">New Chat</button>
+        <button id="closeSidebar" title="Close">&times;</button>
+      </div>
     </div>
 
     <div id="chatContainer">
@@ -2015,7 +2370,27 @@
         <div class="order-items" id="orderItems"></div>
         <div class="order-actions">
           <button class="order-btn cancel" id="orderCancelBtn">Clear</button>
+          <button class="order-btn save" id="orderSaveBtn" title="Save this order for later">Save</button>
           <button class="order-btn confirm" id="orderConfirmBtn">Display on Map</button>
+        </div>
+        <!-- Saved Orders Indicator -->
+        <div id="savedOrdersIndicator" class="saved-orders-indicator" style="display: none;">
+          <span id="savedOrdersCount">0 saved orders</span>
+          <button class="saved-orders-toggle" id="savedOrdersToggle">View</button>
+        </div>
+        <!-- Saved Orders List -->
+        <div id="savedOrdersList" class="saved-orders-list" style="display: none;">
+          <div class="saved-orders-header">
+            <span>Saved Orders</span>
+            <button class="saved-orders-close" id="savedOrdersClose">x</button>
+          </div>
+          <div class="saved-orders-items" id="savedOrdersItems">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+        <!-- Cache Status -->
+        <div id="cacheStatus" class="cache-status">
+          <span id="cacheStatusText">Cache: empty</span>
         </div>
       </div>
     </div>

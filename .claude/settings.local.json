@@ -3,7 +3,7 @@
     "allow": [
       "Bash(python:*)",
       "Bash(findstr:*)",
-      "Bash(ls -la \"C:\\\\Users\\\\Bryan\\\\Desktop\\\\county-map-data\\\\countries\\\\USA\"\" 2>/dev/null || echo \"Directory not found \")",
+      "Bash(ls -la \"C:\\\\Users\\\\Bryan\\\\Desktop\\\\global map\\\\county-map-data\\\\countries\\\\USA\"\" 2>/dev/null || echo \"Directory not found \")",
       "Bash(powershell -Command:*)",
       "Read(//c/Users/Bryan/Desktop/global map/county-map-data/global/tornadoes/**)",
       "Read(//c/Users/Bryan/Desktop/global map/county-map-data/countries/EUR/**)",

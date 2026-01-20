@@ -491,6 +491,31 @@ let useLifecycleFiltering = true;
 // Cache for loaded overlay data (full unfiltered datasets)
 const dataCache = {};
 
+/**
+ * Calculate total cache size - exact bytes via JSON serialization
+ * @returns {Object} { totalFeatures, bytes, sizeMB, perOverlay }
+ */
+function calculateCacheSize() {
+  let totalFeatures = 0;
+  let totalBytes = 0;
+  const perOverlay = {};
+
+  for (const overlayId of Object.keys(dataCache)) {
+    const features = dataCache[overlayId]?.features || [];
+    if (features.length > 0) {
+      // Get exact byte size via JSON serialization
+      const bytes = new Blob([JSON.stringify(features)]).size;
+      perOverlay[overlayId] = { features: features.length, bytes };
+      totalFeatures += features.length;
+      totalBytes += bytes;
+    }
+  }
+
+  const sizeMB = (totalBytes / (1024 * 1024)).toFixed(2);
+
+  return { totalFeatures, bytes: totalBytes, sizeMB, perOverlay };
+}
+
 // Track which years have been loaded per overlay (for lazy loading)
 const loadedYears = {};  // overlayId -> Set of years
 
@@ -503,6 +528,11 @@ const yearRangeCache = {};
 // Active filter overrides per overlay (for chat-based filter modifications)
 // These override the defaults in OVERLAY_ENDPOINTS.params
 const activeFilters = {};  // overlayId -> {minMagnitude, maxMagnitude, ...}
+
+// Track filters that were used when data was LOADED (for Phase 7 cache awareness)
+// This lets chat know if a request can be satisfied from cache without new API call
+// Example: loaded with minMagnitude=5.0, display set to 6.0 - can filter to 5.5 from cache
+const loadedFilters = {};  // overlayId -> {minMagnitude, minVei, ...}
 
 /**
  * Build URL for fetching a specific year's data.
@@ -543,6 +573,14 @@ function buildYearUrl(endpoint, year, overlayId = null) {
     effectiveParams.min_vei = String(overrides.minVei);
   }
 
+  // Location filters (for disaster queries like "earthquakes in California")
+  if (overrides.locPrefix !== undefined) {
+    effectiveParams.loc_prefix = overrides.locPrefix;
+  }
+  if (overrides.affectedLocId !== undefined) {
+    effectiveParams.affected_loc_id = overrides.affectedLocId;
+  }
+
   // Add all params to URL
   for (const [key, value] of Object.entries(effectiveParams)) {
     url.searchParams.set(key, value);
@@ -577,10 +615,14 @@ async function loadYearData(overlayId, year, signal = null) {
     loadedYears[overlayId] = new Set();
   }
 
-  // Skip if already loaded
+  // Skip if already loaded or currently loading
   if (loadedYears[overlayId].has(year)) {
     return false;
   }
+
+  // Mark as loading BEFORE fetch to prevent race condition
+  // Multiple rapid calls would otherwise all pass the check above
+  loadedYears[overlayId].add(year);
 
   const url = buildYearUrl(endpoint, year, overlayId);
   console.log(`OverlayController: Fetching ${overlayId} for year ${year}`);
@@ -610,12 +652,18 @@ async function loadYearData(overlayId, year, signal = null) {
 
       dataCache[overlayId].features.push(...newFeatures);
       console.log(`OverlayController: Added ${newFeatures.length} ${overlayId} features for ${year} (total: ${dataCache[overlayId].features.length})`);
+
+      // Log total cache size when new data received
+      const cacheSize = calculateCacheSize();
+      console.log(`OverlayController: Total cache: ${cacheSize.totalFeatures} features (${cacheSize.sizeMB} MB)`);
+
+      // Dispatch event for UI to update cache status display
+      window.dispatchEvent(new CustomEvent('overlayCacheUpdated', { detail: cacheSize }));
     } else {
       console.log(`OverlayController: No ${overlayId} events in ${year}`);
     }
 
-    // Mark year as loaded
-    loadedYears[overlayId].add(year);
+    // Year already marked as loaded before fetch (to prevent race condition)
 
     // Update year range cache
     if (!yearRangeCache[overlayId]) {
@@ -628,8 +676,47 @@ async function loadYearData(overlayId, year, signal = null) {
       yearRangeCache[overlayId].available.sort((a, b) => a - b);
     }
 
+    // Track filters used at load time (Phase 7 cache awareness)
+    // Record the LEAST restrictive filters used - if we load M5.0+ data, we can filter to M6.0+ from cache
+    const defaultParams = endpoint.params || {};
+    const overrides = activeFilters[overlayId] || {};
+    const effectiveFilters = { ...defaultParams, ...overrides };
+
+    if (!loadedFilters[overlayId]) {
+      loadedFilters[overlayId] = {};
+    }
+    // Keep track of the least restrictive filter values we've loaded
+    // For min filters: keep the smaller value (loaded M5.0, then M4.0 = can filter to anything >= M4.0)
+    if (effectiveFilters.min_magnitude !== undefined) {
+      const current = loadedFilters[overlayId].minMagnitude;
+      loadedFilters[overlayId].minMagnitude = current !== undefined
+        ? Math.min(current, effectiveFilters.min_magnitude)
+        : effectiveFilters.min_magnitude;
+    }
+    if (effectiveFilters.min_vei !== undefined) {
+      const current = loadedFilters[overlayId].minVei;
+      loadedFilters[overlayId].minVei = current !== undefined
+        ? Math.min(current, effectiveFilters.min_vei)
+        : effectiveFilters.min_vei;
+    }
+    if (effectiveFilters.min_category !== undefined) {
+      loadedFilters[overlayId].minCategory = effectiveFilters.min_category;
+    }
+    if (effectiveFilters.min_scale !== undefined) {
+      loadedFilters[overlayId].minScale = effectiveFilters.min_scale;
+    }
+    if (effectiveFilters.min_area_km2 !== undefined) {
+      const current = loadedFilters[overlayId].minAreaKm2;
+      loadedFilters[overlayId].minAreaKm2 = current !== undefined
+        ? Math.min(current, effectiveFilters.min_area_km2)
+        : effectiveFilters.min_area_km2;
+    }
+
     return featureCount > 0;
   } catch (error) {
+    // Remove from loadedYears so it can be retried
+    loadedYears[overlayId]?.delete(year);
+
     if (error.name === 'AbortError') {
       console.log(`OverlayController: Year fetch aborted for ${overlayId} ${year}`);
       return false;
@@ -4200,10 +4287,13 @@ export const OverlayController = {
     for (const key in yearRangeCache) {
       delete yearRangeCache[key];
     }
+    for (const key in loadedFilters) {
+      delete loadedFilters[key];
+    }
   },
 
   /**
-   * Get loaded years for an overlay (for debugging).
+   * Get loaded years for an overlay.
    * @param {string} overlayId - Overlay ID
    * @returns {Array} Array of loaded years
    */
@@ -4212,15 +4302,30 @@ export const OverlayController = {
   },
 
   /**
+   * Get the filter thresholds that were used when loading data.
+   * This tells chat what data is actually in cache vs what's currently displayed.
+   * Example: loaded M5.0+ but displaying M6.0+ - can filter to M5.5+ from cache.
+   * @param {string} overlayId - Overlay ID
+   * @returns {Object} Filter thresholds used at load time
+   */
+  getLoadedFilters(overlayId) {
+    return loadedFilters[overlayId] || {};
+  },
+
+  /**
    * Get cache statistics for monitoring memory usage.
    * Call from console: OverlayController.getCacheStats()
    * @returns {Object} Cache statistics
    */
   getCacheStats() {
+    // Get exact size measurements
+    const sizeInfo = calculateCacheSize();
+
     const stats = {
       overlays: {},
       totals: {
         features: 0,
+        bytes: 0,
         yearsLoaded: 0,
         overlaysActive: 0
       }
@@ -4229,26 +4334,28 @@ export const OverlayController = {
     for (const overlayId of Object.keys(OVERLAY_ENDPOINTS)) {
       const features = dataCache[overlayId]?.features || [];
       const years = loadedYears[overlayId] ? Array.from(loadedYears[overlayId]).sort((a, b) => a - b) : [];
+      const overlaySize = sizeInfo.perOverlay[overlayId] || { features: 0, bytes: 0 };
 
       if (features.length > 0 || years.length > 0) {
         stats.overlays[overlayId] = {
           features: features.length,
+          sizeMB: (overlaySize.bytes / (1024 * 1024)).toFixed(2),
           yearsLoaded: years.length,
           years: years,
           yearRange: years.length > 0 ? `${years[0]}-${years[years.length - 1]}` : 'none'
         };
 
         stats.totals.features += features.length;
+        stats.totals.bytes += overlaySize.bytes;
         stats.totals.yearsLoaded += years.length;
         stats.totals.overlaysActive++;
       }
     }
 
-    // Estimate memory (rough: ~1KB per feature on average)
-    stats.totals.estimatedMemoryMB = (stats.totals.features * 1024 / 1024 / 1024).toFixed(2);
+    stats.totals.sizeMB = (stats.totals.bytes / (1024 * 1024)).toFixed(2);
 
     console.table(stats.overlays);
-    console.log(`Total: ${stats.totals.features} features across ${stats.totals.yearsLoaded} year-loads (~${stats.totals.estimatedMemoryMB} MB)`);
+    console.log(`Total: ${stats.totals.features} features across ${stats.totals.yearsLoaded} year-loads (${stats.totals.sizeMB} MB)`);
 
     return stats;
   },

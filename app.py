@@ -12,6 +12,7 @@ All business logic is in the mapmover/ package - this file only handles:
 import sys
 import io
 import json
+import hashlib
 import logging
 import traceback
 from datetime import datetime
@@ -26,7 +27,7 @@ if sys.stderr.encoding != 'utf-8':
 import msgpack
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 
@@ -50,6 +51,13 @@ from mapmover import (
     GLOBAL_DIR,
     COUNTRIES_DIR,
     get_dataset_path,
+    # Disaster filters
+    apply_location_filters,
+    get_default_min_year,
+    # Session cache
+    session_manager,
+    # Package optimizer
+    PackageOptimizer,
 )
 
 # Order Taker system (Phase 1B - replaces old multi-LLM chat)
@@ -61,6 +69,9 @@ from mapmover.preprocessor import preprocess_query
 
 # Postprocessor for validation and derived field expansion
 from mapmover.postprocessor import postprocess_order, get_display_items
+
+# Order Queue for async processing (Phase 2)
+from mapmover.order_queue import order_queue, processor as order_processor
 
 # Geometry handlers (parquet-based)
 from mapmover.geometry_handlers import (
@@ -183,7 +194,7 @@ def build_geojson_features(df, property_builders: dict,
     Args:
         df: DataFrame with lat/lon columns
         property_builders: Dict mapping property names to builder functions.
-            Each function receives a row and returns the property value.
+            Each function receives a row dict and returns the property value.
             Example: {"magnitude": lambda r: safe_float(r, 'magnitude')}
         lat_col: Name of latitude column
         lon_col: Name of longitude column
@@ -196,14 +207,23 @@ def build_geojson_features(df, property_builders: dict,
             "event_id": lambda r: r.get('event_id', ''),
             "magnitude": lambda r: safe_float(r, 'magnitude'),
         })
+
+    Performance: Uses to_dict('records') instead of iterrows() for 10-100x speedup.
     """
     import pandas as pd
+
+    # Filter out rows with null coordinates using vectorized operation
+    valid_mask = df[lat_col].notna() & df[lon_col].notna()
+    valid_df = df[valid_mask]
+
+    if valid_df.empty:
+        return []
+
+    # Convert to list of dicts - MUCH faster than iterrows() (10-100x)
+    records = valid_df.to_dict('records')
+
     features = []
-
-    for _, row in df.iterrows():
-        if pd.isna(row[lat_col]) or pd.isna(row[lon_col]):
-            continue
-
+    for row in records:
         props = {name: builder(row) for name, builder in property_builders.items()}
 
         features.append({
@@ -386,11 +406,25 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize data catalog and load conversions on startup."""
+    """Initialize data catalog, conversions, and order processor on startup."""
     logger.info("Starting county-map API...")
     load_conversions()
     initialize_catalog()
-    logger.info("Startup complete - data catalog initialized")
+
+    # Set up order processor with async wrapper for execute_order
+    async def async_execute_order(items, hints):
+        """Async wrapper for synchronous execute_order."""
+        import asyncio
+        loop = asyncio.get_event_loop()
+        order = {"items": items, "summary": hints.get("summary", "")}
+        # Run synchronous execute_order in thread pool
+        result = await loop.run_in_executor(None, execute_order, order)
+        return result
+
+    order_processor.set_executor(async_execute_order)
+    await order_processor.start()
+
+    logger.info("Startup complete - data catalog and order processor initialized")
 
 
 # === Health Check ===
@@ -535,217 +569,28 @@ async def get_selection_geometry_endpoint(req: Request):
         return msgpack_error(str(e), 500)
 
 
-# === Hurricane Data Endpoints ===
-
-@app.get("/api/hurricane/track/{storm_id}")
-async def get_hurricane_track(storm_id: str):
-    """
-    Get 6-hourly track positions for a specific hurricane.
-    Returns timestamp, lat/lon, wind speed, pressure, category for each position.
-    """
-    import pandas as pd
-
-    try:
-        # Path to hurricane positions parquet
-        positions_path = COUNTRIES_DIR / "USA" / "hurricanes/positions.parquet"
-
-        if not positions_path.exists():
-            return msgpack_error("Hurricane data not available", 404)
-
-        # Load and filter positions for this storm
-        df = pd.read_parquet(positions_path)
-        storm_df = df[df['storm_id'] == storm_id].copy()
-
-        if len(storm_df) == 0:
-            return msgpack_error(f"Storm {storm_id} not found", 404)
-
-        # Sort by timestamp
-        storm_df = storm_df.sort_values('timestamp')
-
-        # Convert to GeoJSON FeatureCollection
-        features = []
-        for _, row in storm_df.iterrows():
-            ts = row['timestamp'].isoformat() if hasattr(row['timestamp'], 'isoformat') else str(row['timestamp'])
-            features.append({
-                "type": "Feature",
-                "geometry": {
-                    "type": "Point",
-                    "coordinates": [float(row['longitude']), float(row['latitude'])]
-                },
-                "properties": {
-                    "timestamp": ts,
-                    "wind_kt": int(row['wind_kt']) if pd.notna(row['wind_kt']) else None,
-                    "pressure_mb": int(row['pressure_mb']) if pd.notna(row['pressure_mb']) else None,
-                    "category": row['category'] if pd.notna(row['category']) else None,
-                    "status": row['status'] if pd.notna(row['status']) else None,
-                    "loc_id": row['loc_id'] if pd.notna(row['loc_id']) else None
-                }
-            })
-
-        # Get time range
-        time_start = storm_df['timestamp'].min()
-        time_end = storm_df['timestamp'].max()
-
-        return msgpack_response({
-            "type": "FeatureCollection",
-            "features": features,
-            "metadata": {
-                "event_id": storm_id,
-                "event_type": "hurricane",
-                "total_count": len(features),
-                "time_range": {
-                    "start": time_start.isoformat() if hasattr(time_start, 'isoformat') else str(time_start),
-                    "end": time_end.isoformat() if hasattr(time_end, 'isoformat') else str(time_end)
-                }
-            }
-        })
-
-    except Exception as e:
-        logger.error(f"Error fetching hurricane track {storm_id}: {e}")
-        return msgpack_error(str(e), 500)
-
-
-@app.get("/api/hurricane/storms")
-async def get_hurricane_storms(year: int = None, name: str = None, us_landfall: bool = None):
-    """
-    Get list of hurricanes/storms with optional filters.
-    """
-    import pandas as pd
-
-    try:
-        storms_path = COUNTRIES_DIR / "USA" / "hurricanes/storms.parquet"
-
-        if not storms_path.exists():
-            return msgpack_error("Hurricane data not available", 404)
-
-        df = pd.read_parquet(storms_path)
-
-        # Apply filters
-        if year is not None:
-            df = df[df['year'] == year]
-        if name is not None:
-            df = df[df['name'].str.upper() == name.upper()]
-        if us_landfall is not None:
-            df = df[df['us_landfall'] == us_landfall]
-
-        # Sort by year desc, max_wind desc
-        df = df.sort_values(['year', 'max_wind_kt'], ascending=[False, False])
-
-        # Convert to list
-        storms = []
-        for _, row in df.iterrows():
-            storms.append({
-                "storm_id": row['storm_id'],
-                "name": row['name'],
-                "year": int(row['year']),
-                "basin": row['basin'],
-                "max_wind_kt": int(row['max_wind_kt']) if pd.notna(row['max_wind_kt']) else None,
-                "max_category": row['max_category'] if pd.notna(row['max_category']) else None,
-                "us_landfall": bool(row['us_landfall']) if pd.notna(row['us_landfall']) else False,
-                "start_date": str(row['start_date']) if pd.notna(row['start_date']) else None,
-                "end_date": str(row['end_date']) if pd.notna(row['end_date']) else None
-            })
-
-        return msgpack_response({
-            "count": len(storms),
-            "storms": storms
-        })
-
-    except Exception as e:
-        logger.error(f"Error fetching hurricane storms: {e}")
-        return msgpack_error(str(e), 500)
-
-
-@app.get("/api/hurricane/storms/geojson")
-async def get_hurricane_storms_geojson(year: int = None, us_landfall: bool = None):
-    """
-    Get storms as GeoJSON points (for map marker display).
-    Each storm is placed at its max intensity position.
-    """
-    import pandas as pd
-
-    try:
-        storms_path = COUNTRIES_DIR / "USA" / "hurricanes/storms.parquet"
-        positions_path = COUNTRIES_DIR / "USA" / "hurricanes/positions.parquet"
-
-        if not storms_path.exists() or not positions_path.exists():
-            return msgpack_error("Hurricane data not available", 404)
-
-        # Load storms
-        storms_df = pd.read_parquet(storms_path)
-
-        # Apply filters
-        if year is not None:
-            storms_df = storms_df[storms_df['year'] == year]
-        if us_landfall is not None:
-            storms_df = storms_df[storms_df['us_landfall'] == us_landfall]
-
-        if len(storms_df) == 0:
-            return msgpack_response({
-                "type": "FeatureCollection",
-                "features": []
-            })
-
-        # Load positions for these storms
-        positions_df = pd.read_parquet(positions_path)
-        storm_ids = storms_df['storm_id'].tolist()
-        positions_df = positions_df[positions_df['storm_id'].isin(storm_ids)]
-
-        # Find max intensity position for each storm
-        max_positions = positions_df.loc[
-            positions_df.groupby('storm_id')['wind_kt'].idxmax()
-        ][['storm_id', 'latitude', 'longitude', 'timestamp', 'category']].copy()
-
-        # Merge with storm metadata
-        merged = storms_df.merge(max_positions, on='storm_id', how='left')
-
-        # Build GeoJSON features
-        features = []
-        for _, row in merged.iterrows():
-            if pd.isna(row['latitude']) or pd.isna(row['longitude']):
-                continue
-
-            features.append({
-                "type": "Feature",
-                "geometry": {
-                    "type": "Point",
-                    "coordinates": [float(row['longitude']), float(row['latitude'])]
-                },
-                "properties": {
-                    "storm_id": row['storm_id'],
-                    "name": row['name'] if pd.notna(row['name']) else row['storm_id'],
-                    "year": int(row['year']),
-                    "max_wind_kt": int(row['max_wind_kt']) if pd.notna(row['max_wind_kt']) else None,
-                    "max_category": row['max_category'] if pd.notna(row['max_category']) else None,
-                    "category": row['category'] if pd.notna(row['category']) else None,
-                    "us_landfall": bool(row['us_landfall']) if pd.notna(row['us_landfall']) else False,
-                    "start_date": str(row['start_date']) if pd.notna(row['start_date']) else None,
-                    "end_date": str(row['end_date']) if pd.notna(row['end_date']) else None
-                }
-            })
-
-        return msgpack_response({
-            "type": "FeatureCollection",
-            "features": features
-        })
-
-    except Exception as e:
-        logger.error(f"Error fetching hurricane storms GeoJSON: {e}")
-        return msgpack_error(str(e), 500)
-
-
 # === Earthquake Data Endpoints ===
 
 @app.get("/api/earthquakes/geojson")
-async def get_earthquakes_geojson(year: int = None, min_magnitude: float = None, limit: int = None):
+async def get_earthquakes_geojson(
+    year: int = None,
+    min_magnitude: float = None,
+    limit: int = None,
+    loc_prefix: str = None,
+    affected_loc_id: str = None
+):
     """
     Get earthquakes as GeoJSON points for map display.
     No default magnitude filter - frontend controls filtering.
+
+    Location filters:
+    - loc_prefix: Filter by event epicenter location (e.g., "USA", "USA-CA")
+    - affected_loc_id: Filter to events that affected this admin region (uses event_areas table)
     """
     import pandas as pd
 
     try:
-        events_path = GLOBAL_DIR / "earthquakes/events.parquet"
+        events_path = GLOBAL_DIR / "disasters/earthquakes/events.parquet"
         if not events_path.exists():
             return msgpack_error("Earthquake data not available", 404)
 
@@ -757,6 +602,14 @@ async def get_earthquakes_geojson(year: int = None, min_magnitude: float = None,
             df = df[df['year'] == year]
         if min_magnitude is not None:
             df = df[df['magnitude'] >= min_magnitude]
+
+        # Location filters (shared helper)
+        df = apply_location_filters(
+            df, 'earthquakes',
+            loc_prefix=loc_prefix,
+            affected_loc_id=affected_loc_id
+        )
+
         if limit is not None and limit > 0:
             df = df.nlargest(limit, 'magnitude')
 
@@ -781,7 +634,7 @@ async def get_earthquake_sequence(sequence_id: str, min_magnitude: float = None)
     import pandas as pd
 
     try:
-        events_path = GLOBAL_DIR / "earthquakes/events.parquet"
+        events_path = GLOBAL_DIR / "disasters/earthquakes/events.parquet"
         if not events_path.exists():
             return msgpack_error("Earthquake data not available", 404)
 
@@ -819,7 +672,7 @@ async def get_earthquake_aftershocks(event_id: str, min_magnitude: float = None)
     import pandas as pd
 
     try:
-        events_path = GLOBAL_DIR / "earthquakes/events.parquet"
+        events_path = GLOBAL_DIR / "disasters/earthquakes/events.parquet"
         if not events_path.exists():
             return msgpack_error("Earthquake data not available", 404)
 
@@ -864,7 +717,7 @@ async def get_volcanoes_geojson(active_only: bool = None):
     import pandas as pd
 
     try:
-        volcanoes_path = GLOBAL_DIR / "smithsonian_volcanoes/volcanoes.parquet"
+        volcanoes_path = GLOBAL_DIR / "disasters/volcanoes/volcanoes.parquet"
         if not volcanoes_path.exists():
             return msgpack_error("Volcano data not available", 404)
 
@@ -882,15 +735,26 @@ async def get_volcanoes_geojson(active_only: bool = None):
 
 
 @app.get("/api/eruptions/geojson")
-async def get_eruptions_geojson(year: int = None, min_vei: int = None, min_year: int = None, exclude_ongoing: bool = False):
+async def get_eruptions_geojson(
+    year: int = None,
+    min_vei: int = None,
+    min_year: int = None,
+    exclude_ongoing: bool = False,
+    loc_prefix: str = None,
+    affected_loc_id: str = None
+):
     """
     Get volcanic eruptions as GeoJSON points for map display.
     Radii are pre-calculated in the data pipeline using VEI-based formulas.
+
+    Location filters:
+    - loc_prefix: Filter by volcano location (e.g., "IDN" for Indonesia, "USA" for US)
+    - affected_loc_id: Filter to eruptions that affected this admin region
     """
     import pandas as pd
 
     try:
-        eruptions_path = GLOBAL_DIR / "smithsonian_volcanoes/events.parquet"
+        eruptions_path = GLOBAL_DIR / "disasters/volcanoes/events.parquet"
         if not eruptions_path.exists():
             return msgpack_error("Eruption data not available", 404)
 
@@ -907,6 +771,13 @@ async def get_eruptions_geojson(year: int = None, min_vei: int = None, min_year:
         if exclude_ongoing and 'is_ongoing' in df.columns:
             df = df[df['is_ongoing'] != True]
 
+        # Location filters (shared helper)
+        df = apply_location_filters(
+            df, 'volcanoes',
+            loc_prefix=loc_prefix,
+            affected_loc_id=affected_loc_id
+        )
+
         features = build_geojson_features(df, get_eruption_property_builders())
 
         return msgpack_response({
@@ -922,12 +793,28 @@ async def get_eruptions_geojson(year: int = None, min_vei: int = None, min_year:
 # === Tsunami Data Endpoints ===
 
 @app.get("/api/tsunamis/geojson")
-async def get_tsunamis_geojson(year: int = None, min_year: int = 1900, cause: str = None):
-    """Get tsunami source events as GeoJSON points for map display."""
+async def get_tsunamis_geojson(
+    year: int = None,
+    min_year: int = None,
+    cause: str = None,
+    loc_prefix: str = None,
+    affected_loc_id: str = None
+):
+    """
+    Get tsunami source events as GeoJSON points for map display.
+    Default: tsunamis from tide gauge era (1900) to present.
+
+    Location filters:
+    - loc_prefix: Filter by event origin location (e.g., "XOO" for Pacific, "JPN" for Japan)
+    - affected_loc_id: Filter to events that affected this admin region (via runup locations)
+    """
+    # Get default min_year from metadata if not provided
+    if min_year is None:
+        min_year = get_default_min_year('tsunamis', fallback=1900)
     import pandas as pd
 
     try:
-        events_path = GLOBAL_DIR / "tsunamis/events.parquet"
+        events_path = GLOBAL_DIR / "disasters/tsunamis/events.parquet"
         if not events_path.exists():
             return msgpack_error("Tsunami data not available", 404)
 
@@ -940,6 +827,13 @@ async def get_tsunamis_geojson(year: int = None, min_year: int = 1900, cause: st
             df = df[df['year'] >= min_year]
         if cause is not None:
             df = df[df['cause'].str.lower() == cause.lower()]
+
+        # Location filters (shared helper)
+        df = apply_location_filters(
+            df, 'tsunamis',
+            loc_prefix=loc_prefix,
+            affected_loc_id=affected_loc_id
+        )
 
         features = build_geojson_features(df, get_tsunami_property_builders())
 
@@ -966,8 +860,8 @@ async def get_tsunami_runups(event_id: str):
     import pandas as pd
 
     try:
-        runups_path = GLOBAL_DIR / "tsunamis/runups.parquet"
-        events_path = GLOBAL_DIR / "tsunamis/events.parquet"
+        runups_path = GLOBAL_DIR / "disasters/tsunamis/runups.parquet"
+        events_path = GLOBAL_DIR / "disasters/tsunamis/events.parquet"
 
         if not runups_path.exists():
             return msgpack_error("Runup data not available", 404)
@@ -1057,8 +951,8 @@ async def get_tsunami_animation_data(event_id: str):
     import pandas as pd
 
     try:
-        runups_path = GLOBAL_DIR / "tsunamis/runups.parquet"
-        events_path = GLOBAL_DIR / "tsunamis/events.parquet"
+        runups_path = GLOBAL_DIR / "disasters/tsunamis/runups.parquet"
+        events_path = GLOBAL_DIR / "disasters/tsunamis/events.parquet"
 
         if not events_path.exists() or not runups_path.exists():
             return msgpack_error("Tsunami data not available", 404)
@@ -1159,7 +1053,7 @@ async def get_landslides_geojson(
     import pandas as pd
 
     try:
-        events_path = GLOBAL_DIR / "landslides/events.parquet"
+        events_path = GLOBAL_DIR / "disasters/landslides/events.parquet"
         if not events_path.exists():
             return msgpack_error("Landslide data not available", 404)
 
@@ -1210,7 +1104,7 @@ async def get_nearby_earthquakes(
     import pandas as pd
 
     try:
-        events_path = GLOBAL_DIR / "earthquakes/events.parquet"
+        events_path = GLOBAL_DIR / "disasters/earthquakes/events.parquet"
         if not events_path.exists():
             return msgpack_error("Earthquake data not available", 404)
 
@@ -1267,7 +1161,7 @@ async def get_nearby_volcanoes(
     import pandas as pd
 
     try:
-        eruptions_path = GLOBAL_DIR / "smithsonian_volcanoes/events.parquet"
+        eruptions_path = GLOBAL_DIR / "disasters/volcanoes/events.parquet"
         if not eruptions_path.exists():
             return msgpack_error("Volcano data not available", 404)
 
@@ -1326,7 +1220,7 @@ async def get_nearby_tsunamis(
     import pandas as pd
 
     try:
-        tsunamis_path = GLOBAL_DIR / "tsunamis/events.parquet"
+        tsunamis_path = GLOBAL_DIR / "disasters/tsunamis/events.parquet"
         if not tsunamis_path.exists():
             return msgpack_error("Tsunami data not available", 404)
 
@@ -1366,104 +1260,348 @@ async def get_nearby_tsunamis(
         return msgpack_error(str(e), 500)
 
 
+@app.get("/api/events/related/{loc_id:path}")
+async def get_related_events(loc_id: str):
+    """
+    Get related disaster events for a given event loc_id.
+
+    Uses links.parquet to find:
+    - Events this event triggered (children)
+    - Events that triggered this event (parents)
+
+    Returns event details with link type information.
+    """
+    import pandas as pd
+
+    try:
+        links_path = GLOBAL_DIR / "disasters/links.parquet"
+        if not links_path.exists():
+            return msgpack_response({
+                "event_id": loc_id,
+                "related": [],
+                "message": "Links data not available"
+            })
+
+        links_df = pd.read_parquet(links_path)
+
+        # Find events where this event is the parent (triggered)
+        children = links_df[links_df['parent_loc_id'] == loc_id].copy()
+        children['direction'] = 'triggered'
+        children['related_loc_id'] = children['child_loc_id']
+
+        # Find events where this event is the child (triggered by)
+        parents = links_df[links_df['child_loc_id'] == loc_id].copy()
+        parents['direction'] = 'triggered_by'
+        parents['related_loc_id'] = parents['parent_loc_id']
+
+        # Combine and deduplicate
+        related = pd.concat([children, parents], ignore_index=True)
+
+        if len(related) == 0:
+            return msgpack_response({
+                "event_id": loc_id,
+                "related": [],
+                "count": 0
+            })
+
+        # Extract event type from loc_id (format: {region}-{TYPE}-{id})
+        def extract_event_type(lid):
+            parts = lid.split('-')
+            if len(parts) >= 2:
+                type_code = parts[-2] if len(parts) >= 3 else parts[0]
+                type_map = {
+                    'EQ': 'earthquake',
+                    'TSUN': 'tsunami',
+                    'VOLC': 'volcano',
+                    'HRCN': 'hurricane',
+                    'TORN': 'tornado',
+                    'FIRE': 'wildfire',
+                    'FLOOD': 'flood',
+                    'LAND': 'landslide'
+                }
+                return type_map.get(type_code, 'unknown')
+            return 'unknown'
+
+        def extract_event_id(lid):
+            # Last part after final hyphen (handles IDs with hyphens)
+            parts = lid.split('-')
+            if len(parts) >= 3:
+                # Format: REGION-TYPE-ID (ID may contain hyphens)
+                # Find the type code position
+                for i, part in enumerate(parts):
+                    if part in ['EQ', 'TSUN', 'VOLC', 'HRCN', 'TORN', 'FIRE', 'FLOOD', 'LAND']:
+                        return '-'.join(parts[i+1:])
+            return parts[-1] if parts else lid
+
+        # Build related events list
+        related_list = []
+        for _, row in related.iterrows():
+            rel_loc_id = row['related_loc_id']
+            related_list.append({
+                'loc_id': rel_loc_id,
+                'event_id': extract_event_id(rel_loc_id),
+                'event_type': extract_event_type(rel_loc_id),
+                'link_type': row['link_type'],
+                'direction': row['direction'],
+                'source': row['source'],
+                'confidence': row['confidence']
+            })
+
+        # Group by type for summary
+        type_counts = {}
+        for item in related_list:
+            t = item['event_type']
+            type_counts[t] = type_counts.get(t, 0) + 1
+
+        return msgpack_response({
+            "event_id": loc_id,
+            "related": related_list,
+            "count": len(related_list),
+            "by_type": type_counts
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching related events for {loc_id}: {e}")
+        return msgpack_error(str(e), 500)
+
+
 # === Wildfire Data Endpoints ===
 
 @app.get("/api/wildfires/geojson")
 async def get_wildfires_geojson(
     year: int = None,
-    min_year: int = 2010,
+    min_year: int = None,
     max_year: int = None,
     min_area_km2: float = None,
-    include_perimeter: bool = False
+    include_perimeter: bool = False,
+    loc_prefix: str = None,
+    affected_loc_id: str = None
 ):
     """
     Get wildfires as GeoJSON for map display.
-    Uses Global Fire Atlas data with yearly partitions for efficient loading.
+    Default: fires from 2010 to present.
+
+    Data sources (automatically selected based on loc_prefix):
+    - USA fires: countries/USA/wildfires/fires_enriched.parquet (30K fires)
+    - CAN fires: countries/CAN/cnfdb/fires_enriched.parquet (442K fires)
+    - Global fires: global/disasters/wildfires/by_year_enriched/ (20M+ fires, excludes USA/CAN)
 
     No default area filter - frontend controls filtering.
     Set include_perimeter=true to get polygon geometries.
 
+    Location filters:
+    - loc_prefix: Filter by fire location (e.g., "USA", "CAN", "AUS" for country, "USA-CA" for state)
+    - affected_loc_id: Filter to fires that affected this admin region
+
     Memory-efficient: Uses yearly parquet files with pyarrow predicate pushdown.
     """
+    # Get default min_year from metadata if not provided
+    if min_year is None:
+        min_year = get_default_min_year('wildfires', fallback=2010)
+
     import pyarrow.parquet as pq
     import pyarrow as pa
     import pandas as pd
     import json as json_lib
 
     try:
-        # Use enriched files with loc_id columns
-        by_year_path = GLOBAL_DIR / "wildfires/by_year_enriched"
-        # Fallback to raw files if enriched not available
-        if not by_year_path.exists():
-            by_year_path = GLOBAL_DIR / "wildfires/by_year"
+        # Determine data source based on loc_prefix
+        # USA and CAN have dedicated higher-quality data files
+        usa_fires_path = COUNTRIES_DIR / "USA/wildfires/fires_enriched.parquet"
+        can_fires_path = COUNTRIES_DIR / "CAN/cnfdb/fires_enriched.parquet"
+        global_by_year_path = GLOBAL_DIR / "disasters/wildfires/by_year_enriched"
 
-        if not by_year_path.exists():
-            return msgpack_error("Wildfire data not available", 404)
+        # Fallback to raw global files if enriched not available
+        if not global_by_year_path.exists():
+            global_by_year_path = GLOBAL_DIR / "disasters/wildfires/by_year"
 
-        # Determine year range
+        # Columns to read (exclude perimeter for fast initial load)
+        # Include loc_id columns for location filtering
+        base_columns = ['event_id', 'timestamp', 'latitude', 'longitude', 'area_km2',
+                        'burned_acres', 'duration_days', 'source', 'has_progression',
+                        'loc_id', 'parent_loc_id', 'sibling_level', 'iso3', 'loc_confidence']
+
+        # Determine year range for global data
         if year is not None:
             years_to_load = [year]
         else:
             end_year = max_year if max_year else 2024
             years_to_load = list(range(min_year, end_year + 1))
 
-        # Columns to read (exclude perimeter for fast initial load)
-        # Include loc_id columns for location filtering
-        columns = ['event_id', 'timestamp', 'latitude', 'longitude', 'area_km2',
-                   'burned_acres', 'duration_days', 'land_cover', 'source', 'has_progression',
-                   'loc_id', 'parent_loc_id', 'sibling_level', 'iso3', 'loc_confidence']
-        if include_perimeter:
-            columns.append('perimeter')
+        all_dfs = []
+        source_used = []
 
-        # Load from yearly partition files with pyarrow filters
-        all_tables = []
-        for yr in years_to_load:
-            # Use enriched files first, fallback to raw
-            year_file = by_year_path / f"fires_{yr}_enriched.parquet"
-            if not year_file.exists():
-                year_file = by_year_path / f"fires_{yr}.parquet"
-            if not year_file.exists():
-                continue
+        # Load USA data if prefix matches or no prefix (load all)
+        if loc_prefix is None or loc_prefix.startswith("USA"):
+            if usa_fires_path.exists():
+                # USA file columns differ slightly
+                usa_columns = [c for c in base_columns if c not in ['land_cover']]
+                if include_perimeter:
+                    usa_columns.append('perimeter')
 
-            # Pyarrow predicate pushdown - only reads matching row groups
-            filters = [('area_km2', '>=', min_area_km2)] if min_area_km2 is not None else None
-            table = pq.read_table(
-                year_file,
-                columns=columns,
-                filters=filters
-            )
-            if table.num_rows > 0:
-                all_tables.append(table)
+                # Read available columns only
+                usa_df = pd.read_parquet(usa_fires_path)
 
-        if not all_tables:
+                # Filter by year if specified
+                usa_df['timestamp'] = pd.to_datetime(usa_df['timestamp'], errors='coerce')
+                usa_df['year'] = usa_df['timestamp'].dt.year
+                if year is not None:
+                    usa_df = usa_df[usa_df['year'] == year]
+                elif years_to_load:
+                    usa_df = usa_df[usa_df['year'].isin(years_to_load)]
+
+                # Filter by area if specified
+                if min_area_km2 is not None and 'area_km2' in usa_df.columns:
+                    usa_df = usa_df[usa_df['area_km2'] >= min_area_km2]
+                elif min_area_km2 is not None and 'burned_acres' in usa_df.columns:
+                    # Convert acres to km2 for filtering (1 acre = 0.00404686 km2)
+                    usa_df = usa_df[usa_df['burned_acres'] * 0.00404686 >= min_area_km2]
+
+                # Add missing columns with defaults
+                if 'land_cover' not in usa_df.columns:
+                    usa_df['land_cover'] = ''
+                if 'area_km2' not in usa_df.columns and 'burned_acres' in usa_df.columns:
+                    usa_df['area_km2'] = usa_df['burned_acres'] * 0.00404686
+                if 'duration_days' not in usa_df.columns:
+                    usa_df['duration_days'] = None
+                if 'source' not in usa_df.columns:
+                    usa_df['source'] = 'NIFC'
+                if 'has_progression' not in usa_df.columns:
+                    usa_df['has_progression'] = False
+
+                if len(usa_df) > 0:
+                    all_dfs.append(usa_df)
+                    source_used.append('USA')
+
+        # Load CAN data if prefix matches or no prefix
+        if loc_prefix is None or loc_prefix.startswith("CAN"):
+            if can_fires_path.exists():
+                can_df = pd.read_parquet(can_fires_path)
+
+                # Filter by year if specified
+                can_df['timestamp'] = pd.to_datetime(can_df['timestamp'], errors='coerce')
+                can_df['year'] = can_df['timestamp'].dt.year
+                if year is not None:
+                    can_df = can_df[can_df['year'] == year]
+                elif years_to_load:
+                    can_df = can_df[can_df['year'].isin(years_to_load)]
+
+                # Filter by area if specified
+                if min_area_km2 is not None and 'area_km2' in can_df.columns:
+                    can_df = can_df[can_df['area_km2'] >= min_area_km2]
+
+                # Add missing columns with defaults
+                if 'land_cover' not in can_df.columns:
+                    can_df['land_cover'] = ''
+                if 'source' not in can_df.columns:
+                    can_df['source'] = 'CNFDB'
+
+                if len(can_df) > 0:
+                    all_dfs.append(can_df)
+                    source_used.append('CAN')
+
+        # Load global data if prefix is NOT USA or CAN (or no prefix)
+        # Global data excludes USA and CAN, so only load if needed
+        if loc_prefix is None or (not loc_prefix.startswith("USA") and not loc_prefix.startswith("CAN")):
+            if global_by_year_path.exists():
+                columns = base_columns + ['land_cover'] if 'land_cover' not in base_columns else base_columns
+                if include_perimeter:
+                    columns.append('perimeter')
+
+                # Load from yearly partition files with pyarrow filters
+                all_tables = []
+                for yr in years_to_load:
+                    # Use enriched files first, fallback to raw
+                    year_file = global_by_year_path / f"fires_{yr}_enriched.parquet"
+                    if not year_file.exists():
+                        year_file = global_by_year_path / f"fires_{yr}.parquet"
+                    if not year_file.exists():
+                        continue
+
+                    # Pyarrow predicate pushdown - only reads matching row groups
+                    filters = [('area_km2', '>=', min_area_km2)] if min_area_km2 is not None else None
+                    try:
+                        table = pq.read_table(
+                            year_file,
+                            columns=[c for c in columns if c != 'land_cover'],  # land_cover may not exist
+                            filters=filters
+                        )
+                        if table.num_rows > 0:
+                            all_tables.append(table)
+                    except Exception:
+                        # Try without column filtering if columns don't match
+                        table = pq.read_table(year_file, filters=filters)
+                        if table.num_rows > 0:
+                            all_tables.append(table)
+
+                if all_tables:
+                    combined = pa.concat_tables(all_tables)
+                    global_df = combined.to_pandas()
+                    global_df['timestamp'] = pd.to_datetime(global_df['timestamp'], errors='coerce')
+                    global_df['year'] = global_df['timestamp'].dt.year
+
+                    # Add missing columns
+                    if 'land_cover' not in global_df.columns:
+                        global_df['land_cover'] = ''
+                    if 'source' not in global_df.columns:
+                        global_df['source'] = 'global_fire_atlas'
+
+                    # Filter out USA and CAN fires from global data
+                    # These countries have dedicated higher-quality data files
+                    if 'iso3' in global_df.columns:
+                        before_filter = len(global_df)
+                        global_df = global_df[~global_df['iso3'].isin(['USA', 'CAN'])]
+                        filtered_out = before_filter - len(global_df)
+                        if filtered_out > 0:
+                            logger.debug(f"Filtered {filtered_out:,} USA/CAN fires from global data")
+
+                    all_dfs.append(global_df)
+                    source_used.append('global')
+
+        if not all_dfs:
             return msgpack_response({
                 "type": "FeatureCollection",
                 "features": [],
-                "metadata": {"count": 0, "min_area_km2": min_area_km2, "min_year": min_year}
+                "metadata": {"count": 0, "min_area_km2": min_area_km2, "min_year": min_year, "sources": []}
             })
 
-        # Concatenate tables and convert to pandas for GeoJSON building
-        combined = pa.concat_tables(all_tables)
-        df = combined.to_pandas()
+        # Combine all dataframes
+        df = pd.concat(all_dfs, ignore_index=True)
 
         # Extract year from timestamp
         df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
         df['year'] = df['timestamp'].dt.year
 
-        # Build GeoJSON features
-        features = []
-        for _, row in df.iterrows():
-            if pd.isna(row['latitude']) or pd.isna(row['longitude']):
-                continue
+        # Location filters (shared helper)
+        df = apply_location_filters(
+            df, 'wildfires',
+            loc_prefix=loc_prefix,
+            affected_loc_id=affected_loc_id
+        )
 
+        # Build GeoJSON features using to_dict('records') for 10-100x speedup
+        # Filter valid coordinates first using vectorized operation
+        valid_mask = df['latitude'].notna() & df['longitude'].notna()
+        valid_df = df[valid_mask]
+        records = valid_df.to_dict('records')
+
+        features = []
+        for row in records:
             # Use perimeter polygon if requested and available
-            if include_perimeter and 'perimeter' in row and pd.notna(row['perimeter']):
+            if include_perimeter and row.get('perimeter') and pd.notna(row.get('perimeter')):
                 try:
                     geom = json_lib.loads(row['perimeter']) if isinstance(row['perimeter'], str) else row['perimeter']
                 except:
                     geom = {"type": "Point", "coordinates": [float(row['longitude']), float(row['latitude'])]}
             else:
                 geom = {"type": "Point", "coordinates": [float(row['longitude']), float(row['latitude'])]}
+
+            # Handle timestamp - may be Timestamp object or string after to_dict
+            ts = row.get('timestamp')
+            if ts is not None and pd.notna(ts):
+                ts_str = ts.isoformat() if hasattr(ts, 'isoformat') else str(ts)
+            else:
+                ts_str = None
 
             features.append({
                 "type": "Feature",
@@ -1474,7 +1612,7 @@ async def get_wildfires_geojson(
                     "burned_acres": float(row['burned_acres']) if pd.notna(row.get('burned_acres')) else None,
                     "duration_days": int(row['duration_days']) if pd.notna(row.get('duration_days')) else None,
                     "year": int(row['year']) if pd.notna(row.get('year')) else None,
-                    "timestamp": row['timestamp'].isoformat() if pd.notna(row.get('timestamp')) else None,
+                    "timestamp": ts_str,
                     "land_cover": row.get('land_cover', ''),
                     "source": row.get('source', 'global_fire_atlas'),
                     "latitude": float(row['latitude']),
@@ -1498,7 +1636,7 @@ async def get_wildfires_geojson(
                 "min_year": min_year,
                 "max_year": max_year or 2024,
                 "include_perimeter": include_perimeter,
-                "source": "Global Fire Atlas v2024"
+                "sources": source_used
             }
         })
 
@@ -1520,8 +1658,8 @@ async def get_wildfire_perimeter(event_id: str, year: int = None):
     import json as json_lib
 
     try:
-        by_year_path = GLOBAL_DIR / "wildfires/by_year"
-        main_path = GLOBAL_DIR / "wildfires/fires.parquet"
+        by_year_path = GLOBAL_DIR / "disasters/wildfires/by_year"
+        main_path = GLOBAL_DIR / "disasters/wildfires/fires.parquet"
 
         # Try yearly partition first if year provided (much more efficient)
         if year is not None and by_year_path.exists():
@@ -1669,9 +1807,11 @@ async def get_wildfire_progression(event_id: str, year: int = None):
 @app.get("/api/floods/geojson")
 async def get_floods_geojson(
     year: int = None,
-    min_year: int = 1985,
+    min_year: int = None,
     max_year: int = None,
-    include_geometry: bool = False
+    include_geometry: bool = False,
+    loc_prefix: str = None,
+    affected_loc_id: str = None
 ):
     """
     Get global floods as GeoJSON for map display.
@@ -1682,20 +1822,27 @@ async def get_floods_geojson(
 
     Query params:
     - year: Filter to single year
-    - min_year: Start year (default 1985)
+    - min_year: Start year (default from metadata: 1985)
     - max_year: End year (default current)
     - include_geometry: Load flood extent polygons (slower, more data)
+
+    Location filters:
+    - loc_prefix: Filter by flood location (e.g., "USA", "BGD" for country)
+    - affected_loc_id: Filter to floods that affected this admin region
     """
+    # Get default min_year from metadata if not provided
+    if min_year is None:
+        min_year = get_default_min_year('floods', fallback=1985)
+
     import pandas as pd
     import json as json_lib
 
     try:
         # Use enriched file with loc_id columns
-        events_path = GLOBAL_DIR / "floods/events_enriched.parquet"
+        events_path = GLOBAL_DIR / "disasters/floods/events_enriched.parquet"
         # Fallback to raw file if enriched not available
         if not events_path.exists():
-            events_path = GLOBAL_DIR / "floods/events.parquet"
-        geometry_dir = GLOBAL_DIR / "floods/geometries"
+            events_path = GLOBAL_DIR / "disasters/floods/events.parquet"
 
         if not events_path.exists():
             return msgpack_error("Flood data not available", 404)
@@ -1711,18 +1858,26 @@ async def get_floods_geojson(
             if max_year:
                 df = df[df['year'] <= max_year]
 
-        # Build GeoJSON features
-        features = []
-        for _, row in df.iterrows():
-            if pd.isna(row.get('latitude')) or pd.isna(row.get('longitude')):
-                continue
+        # Location filters (shared helper)
+        df = apply_location_filters(
+            df, 'floods',
+            loc_prefix=loc_prefix,
+            affected_loc_id=affected_loc_id
+        )
 
+        # Build GeoJSON features using to_dict('records') for faster iteration
+        # Filter valid coordinates first
+        valid_mask = df['latitude'].notna() & df['longitude'].notna()
+        valid_df = df[valid_mask]
+        records = valid_df.to_dict('records')
+
+        features = []
+        for row in records:
             event_id = row.get('event_id', '')
 
-            # Load geometry from perimeter column (merged from GeoJSON files) if requested
+            # Load geometry from perimeter column if requested
             geom = None
             if include_geometry:
-                # Try perimeter column first (enriched file has merged geometries)
                 perimeter = row.get('perimeter')
                 if pd.notna(perimeter) and perimeter:
                     try:
@@ -1730,28 +1885,22 @@ async def get_floods_geojson(
                     except Exception as e:
                         logger.warning(f"Failed to parse flood perimeter for {event_id}: {e}")
 
-                # Fallback to GeoJSON file if no perimeter column
-                if not geom and event_id:
-                    geom_file = geometry_dir / f"flood_{event_id}.geojson"
-                    if geom_file.exists():
-                        try:
-                            with open(geom_file, 'r') as f:
-                                geom_data = json_lib.load(f)
-                                if geom_data.get('geometry'):
-                                    geom = geom_data['geometry']
-                        except Exception as e:
-                            logger.warning(f"Failed to load flood geometry {geom_file}: {e}")
-
             # Fall back to point if no geometry loaded
             if not geom:
                 geom = {"type": "Point", "coordinates": [float(row['longitude']), float(row['latitude'])]}
+
+            # Handle timestamps - may be Timestamp or datetime after to_dict
+            ts = row.get('timestamp')
+            ts_str = ts.isoformat() if ts is not None and pd.notna(ts) and hasattr(ts, 'isoformat') else (str(ts) if pd.notna(ts) else None)
+            end_ts = row.get('end_timestamp')
+            end_ts_str = end_ts.isoformat() if end_ts is not None and pd.notna(end_ts) and hasattr(end_ts, 'isoformat') else (str(end_ts) if pd.notna(end_ts) else None)
 
             # Build properties
             props = {
                 "event_id": event_id,
                 "year": int(row['year']) if pd.notna(row.get('year')) else None,
-                "timestamp": row['timestamp'].isoformat() if pd.notna(row.get('timestamp')) else None,
-                "end_timestamp": row['end_timestamp'].isoformat() if pd.notna(row.get('end_timestamp')) else None,
+                "timestamp": ts_str,
+                "end_timestamp": end_ts_str,
                 "duration_days": int(row['duration_days']) if pd.notna(row.get('duration_days')) else None,
                 "country": str(row.get('country', '')) if pd.notna(row.get('country')) else None,
                 "area_km2": float(row['area_km2']) if pd.notna(row.get('area_km2')) else None,
@@ -1817,8 +1966,6 @@ async def get_drought_geojson(
     """
     import pandas as pd
     import json as json_lib
-    from shapely import wkt
-    from shapely.geometry import mapping
 
     try:
         # Route to correct country data file
@@ -1858,16 +2005,17 @@ async def get_drought_geojson(
                 return val.item()
             return val
 
-        # Build GeoJSON features
+        # Build GeoJSON features using to_dict('records') for faster iteration
+        records = df.to_dict('records')
+
         features = []
-        for _, row in df.iterrows():
-            # Parse WKT geometry to GeoJSON
+        for row in records:
+            # Parse GeoJSON geometry (stored as JSON string in parquet)
             geom = None
-            if pd.notna(row.get('geometry')):
+            geom_val = row.get('geometry')
+            if pd.notna(geom_val):
                 try:
-                    # Convert WKT to Shapely geometry, then to GeoJSON
-                    shapely_geom = wkt.loads(row['geometry'])
-                    geom = mapping(shapely_geom)
+                    geom = json_lib.loads(geom_val)
                 except Exception as e:
                     logger.warning(f"Failed to parse drought geometry for {row.get('snapshot_id')}: {e}")
                     continue
@@ -1875,11 +2023,17 @@ async def get_drought_geojson(
             if not geom:
                 continue
 
+            # Handle timestamps
+            ts = row.get('timestamp')
+            ts_str = ts.isoformat() if ts is not None and pd.notna(ts) and hasattr(ts, 'isoformat') else None
+            end_ts = row.get('end_timestamp')
+            end_ts_str = end_ts.isoformat() if end_ts is not None and pd.notna(end_ts) and hasattr(end_ts, 'isoformat') else None
+
             # Build properties - convert all numpy types to native Python
             props = {
                 "snapshot_id": str(row.get('snapshot_id', '')),
-                "timestamp": row['timestamp'].isoformat() if pd.notna(row.get('timestamp')) else None,
-                "end_timestamp": row['end_timestamp'].isoformat() if pd.notna(row.get('end_timestamp')) else None,
+                "timestamp": ts_str,
+                "end_timestamp": end_ts_str,
                 "duration_days": to_python(row.get('duration_days')),
                 "year": to_python(row.get('year')),
                 "month": to_python(row.get('month')),
@@ -1929,7 +2083,7 @@ async def get_flood_geometry(event_id: str):
     import json as json_lib
 
     try:
-        geometry_dir = GLOBAL_DIR / "floods/geometries"
+        geometry_dir = GLOBAL_DIR / "disasters/floods/geometries"
         geom_file = geometry_dir / f"flood_{event_id}.geojson"
 
         if not geom_file.exists():
@@ -1948,10 +2102,16 @@ async def get_flood_geometry(event_id: str):
 # === Tornado Data Endpoints ===
 
 @app.get("/api/tornadoes/geojson")
-async def get_tornadoes_geojson(year: int = None, min_year: int = 1990, min_scale: str = None):
+async def get_tornadoes_geojson(
+    year: int = None,
+    min_year: int = None,
+    min_scale: str = None,
+    loc_prefix: str = None,
+    affected_loc_id: str = None
+):
     """
     Get tornadoes as GeoJSON points for map display.
-    Default: tornadoes from 1990-present (most reliable data).
+    Default: tornadoes from Doppler radar era (1990) to present.
     Filter by EF/F scale (e.g., 'EF3' or 'F3').
 
     Only returns "starter" tornadoes for initial display:
@@ -1961,13 +2121,20 @@ async def get_tornadoes_geojson(year: int = None, min_year: int = 1990, min_scal
     Linked tornadoes are fetched on-demand via /api/tornadoes/{id}/sequence
     when user clicks "View tornado sequence".
 
+    Location filters:
+    - loc_prefix: Filter by event location (e.g., "USA-TX" for Texas tornadoes)
+    - affected_loc_id: Filter to events that affected this admin region
+
     Data sources: USA (NOAA 1950+), Canada (CNTD 1980-2009, NTP 2017+)
     """
+    # Get default min_year from metadata if not provided
+    if min_year is None:
+        min_year = get_default_min_year('tornadoes', fallback=1990)
     import pandas as pd
 
     try:
         # Global tornadoes dataset (USA + Canada)
-        events_path = GLOBAL_DIR / "tornadoes/events.parquet"
+        events_path = GLOBAL_DIR / "disasters/tornadoes/events.parquet"
 
         if not events_path.exists():
             return msgpack_error("Tornado data not available", 404)
@@ -1975,15 +2142,9 @@ async def get_tornadoes_geojson(year: int = None, min_year: int = 1990, min_scal
         df = pd.read_parquet(events_path)
 
         # Already filtered to tornadoes only in global dataset
-        df = df.copy()
+        # Year column now pre-computed in parquet (no datetime parsing needed)
 
-        # Extract year from timestamp
-        time_col = 'timestamp' if 'timestamp' in df.columns else 'time'
-        if time_col in df.columns:
-            df[time_col] = pd.to_datetime(df[time_col], errors='coerce')
-            df['year'] = df[time_col].dt.year
-
-        # Apply filters
+        # Apply year filters
         if year is not None and 'year' in df.columns:
             df = df[df['year'] == year]
         elif min_year is not None and 'year' in df.columns:
@@ -2003,6 +2164,13 @@ async def get_tornadoes_geojson(year: int = None, min_year: int = 1990, min_scal
             min_num = parse_scale(min_scale)
             df = df[df['_scale_num'] >= min_num]
 
+        # Location filters (shared helper)
+        df = apply_location_filters(
+            df, 'tornadoes',
+            loc_prefix=loc_prefix,
+            affected_loc_id=affected_loc_id
+        )
+
         # Filter to starter events only:
         # - Standalone tornadoes (sequence_id is null/NA)
         # - First tornado in each sequence (sequence_position == 1)
@@ -2011,12 +2179,13 @@ async def get_tornadoes_geojson(year: int = None, min_year: int = 1990, min_scal
             is_sequence_start = df['sequence_position'] == 1
             df = df[is_standalone | is_sequence_start]
 
-        # Build GeoJSON features
-        features = []
-        for _, row in df.iterrows():
-            if pd.isna(row['latitude']) or pd.isna(row['longitude']):
-                continue
+        # Build GeoJSON features using to_dict('records') for 10-100x speedup
+        valid_mask = df['latitude'].notna() & df['longitude'].notna()
+        valid_df = df[valid_mask]
+        records = valid_df.to_dict('records')
 
+        features = []
+        for row in records:
             time_val = row.get('timestamp') or row.get('time')
 
             # Include sequence info so frontend knows if "View sequence" is available
@@ -2037,7 +2206,7 @@ async def get_tornadoes_geojson(year: int = None, min_year: int = 1990, min_scal
                     "felt_radius_km": float(row['felt_radius_km']) if pd.notna(row.get('felt_radius_km')) else 5,
                     "damage_radius_km": float(row['damage_radius_km']) if pd.notna(row.get('damage_radius_km')) else 0.05,
                     "timestamp": str(time_val) if pd.notna(time_val) else None,
-                    "year": int(row['year']) if 'year' in row and pd.notna(row['year']) else None,
+                    "year": int(row['year']) if 'year' in row and pd.notna(row.get('year')) else None,
                     "deaths_direct": int(row['deaths_direct']) if pd.notna(row.get('deaths_direct')) else 0,
                     "injuries_direct": int(row['injuries_direct']) if pd.notna(row.get('injuries_direct')) else 0,
                     "damage_property": int(row['damage_property']) if pd.notna(row.get('damage_property')) else 0,
@@ -2076,7 +2245,7 @@ async def get_tornado_detail(event_id: str):
 
     try:
         # Global tornadoes dataset (USA + Canada)
-        events_path = GLOBAL_DIR / "tornadoes/events.parquet"
+        events_path = GLOBAL_DIR / "disasters/tornadoes/events.parquet"
 
         if not events_path.exists():
             return msgpack_error("Tornado data not available", 404)
@@ -2177,7 +2346,7 @@ async def get_tornado_sequence(event_id: str):
 
     try:
         # Global tornadoes dataset (USA + Canada)
-        events_path = GLOBAL_DIR / "tornadoes/events.parquet"
+        events_path = GLOBAL_DIR / "disasters/tornadoes/events.parquet"
 
         if not events_path.exists():
             return msgpack_error("Tornado data not available", 404)
@@ -2281,17 +2450,31 @@ async def get_tornado_sequence(event_id: str):
 # === Tropical Storm Data Endpoints ===
 
 @app.get("/api/storms/geojson")
-async def get_storms_geojson(year: int = None, min_year: int = 1950, basin: str = None, min_category: str = None):
+async def get_storms_geojson(
+    year: int = None,
+    min_year: int = None,
+    basin: str = None,
+    min_category: str = None,
+    loc_prefix: str = None,
+    affected_loc_id: str = None
+):
     """
     Get tropical storms as GeoJSON points for map display.
     Each storm is represented by a single point at its maximum intensity location.
-    Default: storms from 1950-present.
+    Default: storms from satellite era (1950) to present.
+
+    Location filters:
+    - loc_prefix: Filter by storm origin (e.g., "ATL" for Atlantic basin storms)
+    - affected_loc_id: Filter by areas the storm affected (e.g., "USA-FL" for storms that hit Florida)
     """
+    # Get default min_year from metadata if not provided
+    if min_year is None:
+        min_year = get_default_min_year('hurricanes', fallback=1950)
     import pandas as pd
 
     try:
-        storms_path = GLOBAL_DIR / "tropical_storms/storms.parquet"
-        positions_path = GLOBAL_DIR / "tropical_storms/positions.parquet"
+        storms_path = GLOBAL_DIR / "disasters/hurricanes/storms.parquet"
+        positions_path = GLOBAL_DIR / "disasters/hurricanes/positions.parquet"
 
         if not storms_path.exists():
             return msgpack_error("Storm data not available", 404)
@@ -2315,6 +2498,15 @@ async def get_storms_geojson(year: int = None, min_year: int = 1950, basin: str 
             min_cat_val = cat_order.get(min_category, 0)
             storms_df = storms_df[storms_df['max_category'].map(lambda x: cat_order.get(x, 0) >= min_cat_val)]
 
+        # Location filters (shared helper)
+        storms_df = apply_location_filters(
+            storms_df, 'hurricanes',
+            loc_prefix=loc_prefix,
+            affected_loc_id=affected_loc_id,
+            event_id_col='loc_id',
+            loc_id_col='loc_id'
+        )
+
         # Get max intensity position for each storm
         storm_ids = storms_df['storm_id'].tolist()
         positions_subset = positions_df[positions_df['storm_id'].isin(storm_ids)]
@@ -2322,39 +2514,41 @@ async def get_storms_geojson(year: int = None, min_year: int = 1950, basin: str 
         # Find position with max wind for each storm
         max_positions = positions_subset.loc[positions_subset.groupby('storm_id')['wind_kt'].idxmax()]
 
-        # Build GeoJSON features
+        # Build GeoJSON features using merge for efficiency
+        # Merge storm data with max positions to avoid nested lookup
+        storms_with_pos = storms_df.merge(
+            max_positions[['storm_id', 'latitude', 'longitude']],
+            on='storm_id',
+            how='inner',
+            suffixes=('', '_pos')
+        )
+
+        # Filter valid coordinates and convert to records
+        valid_mask = storms_with_pos['latitude'].notna() & storms_with_pos['longitude'].notna()
+        records = storms_with_pos[valid_mask].to_dict('records')
+
         features = []
-        for _, storm in storms_df.iterrows():
-            storm_id = storm['storm_id']
-            max_pos = max_positions[max_positions['storm_id'] == storm_id]
-
-            if len(max_pos) == 0:
-                continue
-
-            pos = max_pos.iloc[0]
-            if pd.isna(pos['latitude']) or pd.isna(pos['longitude']):
-                continue
-
+        for storm in records:
             features.append({
                 "type": "Feature",
                 "geometry": {
                     "type": "Point",
-                    "coordinates": [float(pos['longitude']), float(pos['latitude'])]
+                    "coordinates": [float(storm['longitude']), float(storm['latitude'])]
                 },
                 "properties": {
-                    "storm_id": storm_id,
+                    "storm_id": storm['storm_id'],
                     "name": storm.get('name') if pd.notna(storm.get('name')) else None,
                     "year": int(storm['year']),
                     "basin": storm['basin'],
-                    "max_wind_kt": int(storm['max_wind_kt']) if pd.notna(storm['max_wind_kt']) else None,
-                    "min_pressure_mb": int(storm['min_pressure_mb']) if pd.notna(storm['min_pressure_mb']) else None,
+                    "max_wind_kt": int(storm['max_wind_kt']) if pd.notna(storm.get('max_wind_kt')) else None,
+                    "min_pressure_mb": int(storm['min_pressure_mb']) if pd.notna(storm.get('min_pressure_mb')) else None,
                     "max_category": storm['max_category'],
                     "num_positions": int(storm['num_positions']),
                     "start_date": str(storm['start_date']) if pd.notna(storm.get('start_date')) else None,
                     "end_date": str(storm['end_date']) if pd.notna(storm.get('end_date')) else None,
                     "made_landfall": bool(storm.get('made_landfall', False)),
-                    "latitude": float(pos['latitude']),
-                    "longitude": float(pos['longitude'])
+                    "latitude": float(storm['latitude']),
+                    "longitude": float(storm['longitude'])
                 }
             })
 
@@ -2380,8 +2574,8 @@ async def get_storm_track(storm_id: str):
     import pandas as pd
 
     try:
-        positions_path = GLOBAL_DIR / "tropical_storms/positions.parquet"
-        storms_path = GLOBAL_DIR / "tropical_storms/storms.parquet"
+        positions_path = GLOBAL_DIR / "disasters/hurricanes/positions.parquet"
+        storms_path = GLOBAL_DIR / "disasters/hurricanes/storms.parquet"
 
         if not positions_path.exists():
             return msgpack_error("Storm data not available", 404)
@@ -2436,18 +2630,22 @@ async def get_storm_track(storm_id: str):
 
 
 @app.get("/api/storms/tracks/geojson")
-async def get_storm_tracks_geojson(year: int = None, min_year: int = 1950, basin: str = None, min_category: str = None):
+async def get_storm_tracks_geojson(year: int = None, min_year: int = None, basin: str = None, min_category: str = None):
     """
     Get storm tracks as GeoJSON LineStrings for yearly overview display.
     Each storm is a LineString colored by max category.
-    Loads all storms from min_year (default 1950) to present.
+    Loads all storms from satellite era (1950) to present.
     Optional min_category filter: TD, TS, Cat1, Cat2, Cat3, Cat4, Cat5
     """
+    # Get default min_year from metadata if not provided
+    if min_year is None:
+        min_year = get_default_min_year('hurricanes', fallback=1950)
+
     import pandas as pd
 
     try:
-        storms_path = GLOBAL_DIR / "tropical_storms/storms.parquet"
-        positions_path = GLOBAL_DIR / "tropical_storms/positions.parquet"
+        storms_path = GLOBAL_DIR / "disasters/hurricanes/storms.parquet"
+        positions_path = GLOBAL_DIR / "disasters/hurricanes/positions.parquet"
 
         if not storms_path.exists():
             return msgpack_error("Storm data not available", 404)
@@ -2528,7 +2726,7 @@ async def get_storm_tracks_geojson(year: int = None, min_year: int = 1950, basin
 
 
 @app.get("/api/storms/list")
-async def get_storms_list(year: int = None, min_year: int = 1950, basin: str = None, limit: int = 100):
+async def get_storms_list(year: int = None, min_year: int = None, basin: str = None, limit: int = 100):
     """
     Get list of storms with metadata for filtering/selection.
     Returns compact list without track data.
@@ -2536,7 +2734,11 @@ async def get_storms_list(year: int = None, min_year: int = 1950, basin: str = N
     import pandas as pd
 
     try:
-        storms_path = GLOBAL_DIR / "tropical_storms/storms.parquet"
+        # Use metadata-driven default for min_year
+        if min_year is None:
+            min_year = get_default_min_year('hurricanes', fallback=1950)
+
+        storms_path = GLOBAL_DIR / "disasters/hurricanes/storms.parquet"
 
         if not storms_path.exists():
             return msgpack_error("Storm data not available", 404)
@@ -2746,7 +2948,7 @@ def handle_filter_intent(filter_intent: dict, cache_stats: dict, active_overlays
         }
 
     elif intent_type == "change_filters":
-        # User wants to change filters - return filter_update response
+        # User wants to change filters - check if can satisfy from cache
         new_filters = {}
 
         if "minMagnitude" in filter_intent:
@@ -2763,6 +2965,31 @@ def handle_filter_intent(filter_intent: dict, cache_stats: dict, active_overlays
             new_filters["minAreaKm2"] = filter_intent["minAreaKm2"]
         if filter_intent.get("clear"):
             new_filters["clear"] = True
+
+        # Phase 7: Check if request can be satisfied from cache (no API call needed)
+        stats = cache_stats.get(overlay, {}) if cache_stats else {}
+        loaded_filters = stats.get("loadedFilters", {})
+        can_filter_from_cache = False
+
+        if loaded_filters and not new_filters.get("clear"):
+            # Check if new filter is MORE restrictive than what's loaded
+            # More restrictive = higher min values = can be satisfied from cache
+            can_filter_from_cache = True
+
+            if "minMagnitude" in new_filters:
+                loaded_min = loaded_filters.get("minMagnitude")
+                if loaded_min is not None and new_filters["minMagnitude"] < loaded_min:
+                    can_filter_from_cache = False  # Requesting data we don't have
+
+            if "minVei" in new_filters:
+                loaded_min = loaded_filters.get("minVei")
+                if loaded_min is not None and new_filters["minVei"] < loaded_min:
+                    can_filter_from_cache = False
+
+            if "minAreaKm2" in new_filters:
+                loaded_min = loaded_filters.get("minAreaKm2")
+                if loaded_min is not None and new_filters["minAreaKm2"] < loaded_min:
+                    can_filter_from_cache = False
 
         # Build confirmation message
         if new_filters.get("clear"):
@@ -2784,14 +3011,27 @@ def handle_filter_intent(filter_intent: dict, cache_stats: dict, active_overlays
             if "minAreaKm2" in new_filters:
                 filter_parts.append(f"area {new_filters['minAreaKm2']}+ km2")
 
-            message = f"Updating {overlay} to show " + ", ".join(filter_parts) + "."
+            if can_filter_from_cache:
+                message = f"Filtering to show " + ", ".join(filter_parts) + " (from cached data)."
+            else:
+                message = f"Updating {overlay} to show " + ", ".join(filter_parts) + "."
 
-        return {
-            "type": "filter_update",
-            "message": message,
-            "overlay": overlay,
-            "filters": new_filters
-        }
+        # Return appropriate response type based on cache analysis
+        if can_filter_from_cache:
+            return {
+                "type": "filter_existing",
+                "message": message,
+                "overlay": overlay,
+                "filters": new_filters,
+                "from_cache": True
+            }
+        else:
+            return {
+                "type": "filter_update",
+                "message": message,
+                "overlay": overlay,
+                "filters": new_filters
+            }
 
     return None
 
@@ -2815,10 +3055,27 @@ async def chat_endpoint(req: Request):
     try:
         body = await decode_request_body(req)
 
+        # Get or create session cache for this client
+        session_id = body.get("sessionId", "anonymous")
+        cache = session_manager.get_or_create(session_id)
+
         # Check if this is a confirmed order execution
         if body.get("confirmed_order"):
             try:
-                result = execute_order(body["confirmed_order"])
+                confirmed_order = body["confirmed_order"]
+
+                # Generate request key from order for caching
+                order_str = json.dumps(confirmed_order, sort_keys=True)
+                request_key = hashlib.md5(order_str.encode()).hexdigest()[:16]
+
+                # Check if we have this result cached
+                cached_result = cache.get_cached_result(request_key)
+                if cached_result:
+                    logger.debug(f"Serving cached result for session {session_id}, key {request_key}")
+                    return msgpack_response(cached_result)
+
+                # Execute the order
+                result = execute_order(confirmed_order)
                 response = {
                     "type": "data",
                     "geojson": result["geojson"],
@@ -2834,6 +3091,20 @@ async def chat_endpoint(req: Request):
                     response["metric_key"] = result.get("metric_key")
                     response["available_metrics"] = result.get("available_metrics", [])
                     response["metric_year_ranges"] = result.get("metric_year_ranges", {})
+
+                # Extract signature from result for inventory tracking
+                signature = None
+                if response.get("geojson"):
+                    try:
+                        signature = PackageOptimizer.extract_signature_from_geojson(response["geojson"])
+                        logger.debug(f"Extracted signature: {len(signature.loc_ids)} locs, {len(signature.years)} years, {len(signature.metrics)} metrics")
+                    except Exception as sig_err:
+                        logger.warning(f"Could not extract signature: {sig_err}")
+
+                # Store result in session cache with signature
+                cache.store_result(request_key, response, signature)
+                logger.debug(f"Cached result for session {session_id}, key {request_key}")
+
                 return msgpack_response(response)
             except Exception as e:
                 logger.error(f"Order execution error: {e}")
@@ -2849,6 +3120,7 @@ async def chat_endpoint(req: Request):
         resolved_location = body.get("resolved_location")  # From disambiguation selection
         active_overlays = body.get("activeOverlays")  # {type, filters, allActive}
         cache_stats = body.get("cacheStats")  # {overlayId: {count, years, minMag, ...}}
+        saved_order_names = body.get("savedOrderNames", [])  # Phase 7: Saved order names for load/save
 
         if not query:
             return msgpack_error("No query provided", 400)
@@ -2858,7 +3130,7 @@ async def chat_endpoint(req: Request):
             logger.debug(f"Active overlay: {active_overlays.get('type')} with filters: {active_overlays.get('filters')}")
 
         # Run preprocessor to extract hints (Tier 2) with viewport context
-        hints = preprocess_query(query, viewport=viewport, active_overlays=active_overlays, cache_stats=cache_stats)
+        hints = preprocess_query(query, viewport=viewport, active_overlays=active_overlays, cache_stats=cache_stats, saved_order_names=saved_order_names)
         if hints.get("summary"):
             logger.debug(f"Preprocessor hints: {hints['summary']}")
 
@@ -2908,13 +3180,11 @@ async def chat_endpoint(req: Request):
                     "reply": "I don't have a list of locations to display. Please first ask about specific locations (e.g., 'show me washington county') to get a list.",
                 })
 
-        # Check for navigation intent - zoom to locations without data request
+        # Check for drill-down pattern (e.g., "texas counties" -> show counties of Texas)
+        # This is a distinct UI action that doesn't need LLM interpretation
         navigation = hints.get("navigation")
         if navigation and navigation.get("is_navigation"):
             locations = navigation.get("locations", [])
-            loc_ids = [loc.get("loc_id") for loc in locations if loc.get("loc_id")]
-
-            # Check for drill-down pattern (e.g., "texas counties" -> show counties of Texas)
             if len(locations) == 1 and locations[0].get("drill_to_level"):
                 loc = locations[0]
                 loc_id = loc.get("loc_id")
@@ -2923,7 +3193,6 @@ async def chat_endpoint(req: Request):
 
                 logger.debug(f"Drill-down request: {name} -> {drill_level}")
 
-                # Return a drilldown response that tells frontend to drill into this location
                 return msgpack_response({
                     "type": "drilldown",
                     "message": f"Showing {drill_level} of {name}...",
@@ -2933,63 +3202,11 @@ async def chat_endpoint(req: Request):
                     "original_query": query,
                 })
 
-            # Build display names with parent context (e.g., "vancouver (BC)" vs "vancouver (WA)")
-            def get_display_name(loc):
-                name = loc.get("matched_term", loc.get("loc_id", "?"))
-                loc_id = loc.get("loc_id", "")
-                # Parse loc_id format: ISO3-PARENT-NAME or ISO3-STATE
-                parts = loc_id.split("-") if loc_id else []
-                if len(parts) >= 2:
-                    # Use state/province code as context (e.g., "WA", "BC")
-                    parent_code = parts[1]
-                    return f"{name} ({parent_code})"
-                elif loc.get("country_name"):
-                    # Fallback to country name
-                    return f"{name} ({loc.get('country_name')})"
-                return name
-
-            loc_names = [get_display_name(loc) for loc in locations]
-
-            logger.debug(f"Navigation request for {len(locations)} locations: {loc_ids}")
-
-            # Format message based on count
-            if len(locations) == 1:
-                message = f"Showing {loc_names[0]}. What data would you like to see for this location?"
-            else:
-                message = f"Showing {len(locations)} locations: {', '.join(loc_names[:5])}{'...' if len(loc_names) > 5 else ''}. What data would you like to see?"
-
-            return msgpack_response({
-                "type": "navigate",
-                "message": message,
-                "locations": locations,
-                "loc_ids": loc_ids,
-                "original_query": query,
-                "geojson": {"type": "FeatureCollection", "features": []},
-            })
-
-        # Check for disambiguation needed - return early without LLM call
-        disambiguation = hints.get("disambiguation")
-        if disambiguation and disambiguation.get("needed"):
-            options = disambiguation.get("options", [])
-            query_term = disambiguation.get("query_term", "location")
-            logger.debug(f"Disambiguation needed for '{query_term}' with {len(options)} options")
-
-            return msgpack_response({
-                "type": "disambiguate",
-                "message": f"I found {len(options)} locations matching '{query_term}'. Please click on the one you meant:",
-                "query_term": query_term,
-                "original_query": query,
-                "options": options,  # List of {matched_term, iso3, country_name, loc_id, admin_level}
-                "geojson": {"type": "FeatureCollection", "features": []},
-            })
-
-        # Check for filter intent - respond from cache without LLM call
-        filter_intent = hints.get("filter_intent")
-        if filter_intent:
-            filter_response = handle_filter_intent(filter_intent, cache_stats, active_overlays)
-            if filter_response:
-                logger.debug(f"Filter intent handled: {filter_intent.get('type')}")
-                return msgpack_response(filter_response)
+        # =======================================================================
+        # PHASE 2 REFACTOR: No more early returns for navigation/disambiguation
+        # All queries go to LLM which sees candidates and decides interpretation
+        # Navigation, disambiguation, and filter intents are now in hints.candidates
+        # =======================================================================
 
         # Single LLM call to interpret request (with Tier 3/4 context from hints)
         result = interpret_request(query, chat_history, hints=hints)
@@ -3072,6 +3289,22 @@ async def chat_endpoint(req: Request):
                 "message": message,
             })
 
+        elif result["type"] == "overlay_toggle":
+            # LLM decided to toggle an overlay on/off (Phase 4 - post-LLM routing)
+            overlay = result.get("overlay", "")
+            enabled = result.get("enabled", True)
+            action = "Enabling" if enabled else "Disabling"
+            message = result.get("message", f"{action} {overlay} overlay")
+
+            logger.debug(f"LLM overlay toggle: {overlay} -> {enabled}")
+
+            return msgpack_response({
+                "type": "overlay_toggle",
+                "overlay": overlay,
+                "enabled": enabled,
+                "message": message,
+            })
+
         elif result["type"] == "clarify":
             # Need more information from user
             return msgpack_response({
@@ -3099,6 +3332,720 @@ async def chat_endpoint(req: Request):
             "geojson": {"type": "FeatureCollection", "features": []},
             "error": str(e)
         }, status_code=500)
+
+
+# === Chat Streaming Endpoint (Phase 1 - Progress Updates) ===
+
+@app.post("/chat/stream")
+async def chat_stream_endpoint(req: Request):
+    """
+    Streaming chat endpoint - sends progress updates via SSE.
+
+    Sends events:
+    - stage: analyzing (preprocessor running)
+    - stage: thinking (LLM call in progress)
+    - stage: preparing (postprocessor for orders)
+    - stage: complete (final result)
+    """
+    import asyncio
+    import time
+
+    # Parse request body - streaming uses JSON (not msgpack) for browser compatibility
+    t_start = time.time()
+    body_bytes = await req.body()
+    try:
+        body = json.loads(body_bytes.decode('utf-8'))
+    except json.JSONDecodeError:
+        # Fallback to msgpack if JSON fails
+        body = msgpack.unpackb(body_bytes, raw=False)
+    t_parse = time.time()
+    logger.debug(f"[TIMING] Body parse: {(t_parse - t_start)*1000:.0f}ms")
+
+    async def generate_events():
+        try:
+
+            # Check if this is a confirmed order execution (no streaming needed)
+            if body.get("confirmed_order"):
+                yield f"data: {json.dumps({'stage': 'fetching', 'message': 'Fetching data...'})}\n\n"
+                try:
+                    result = execute_order(body["confirmed_order"])
+                    response = {
+                        "type": "data",
+                        "geojson": result["geojson"],
+                        "summary": result["summary"],
+                        "count": result["count"],
+                        "sources": result.get("sources", [])
+                    }
+                    if result.get("multi_year"):
+                        response["multi_year"] = True
+                        response["year_data"] = result["year_data"]
+                        response["year_range"] = result["year_range"]
+                        response["metric_key"] = result.get("metric_key")
+                        response["available_metrics"] = result.get("available_metrics", [])
+                        response["metric_year_ranges"] = result.get("metric_year_ranges", {})
+                    yield f"data: {json.dumps({'stage': 'complete', 'result': response})}\n\n"
+                except Exception as e:
+                    logger.error(f"Order execution error: {e}")
+                    yield f"data: {json.dumps({'stage': 'complete', 'result': {'type': 'error', 'message': str(e)}})}\n\n"
+                return
+
+            # Extract request parameters
+            query = body.get("query", "")
+            chat_history = body.get("chatHistory", [])
+            viewport = body.get("viewport")
+            resolved_location = body.get("resolved_location")
+            active_overlays = body.get("activeOverlays")
+            cache_stats = body.get("cacheStats")
+            saved_order_names = body.get("savedOrderNames", [])  # Phase 7: Saved order names
+
+            if not query:
+                yield f"data: {json.dumps({'stage': 'complete', 'result': {'type': 'error', 'message': 'No query provided'}})}\n\n"
+                return
+
+            # Stage 1: Analyzing (preprocessor)
+            t_preprocess_start = time.time()
+            yield f"data: {json.dumps({'stage': 'analyzing', 'message': 'Analyzing your request...'})}\n\n"
+            await asyncio.sleep(0)  # Allow event to flush
+
+            hints = preprocess_query(query, viewport=viewport, active_overlays=active_overlays, cache_stats=cache_stats, saved_order_names=saved_order_names)
+            t_preprocess_end = time.time()
+            logger.info(f"[TIMING] Preprocessing: {(t_preprocess_end - t_preprocess_start)*1000:.0f}ms")
+
+            # Handle resolved location
+            if resolved_location:
+                hints["location"] = {
+                    "matched_term": resolved_location.get("matched_term"),
+                    "iso3": resolved_location.get("iso3"),
+                    "country_name": resolved_location.get("country_name"),
+                    "loc_id": resolved_location.get("loc_id"),
+                    "is_subregion": resolved_location.get("loc_id") != resolved_location.get("iso3"),
+                    "source": "disambiguation_selection"
+                }
+                hints["disambiguation"] = None
+
+            # Check for show_borders (early return)
+            if hints.get("show_borders"):
+                previous_options = body.get("previous_disambiguation_options", [])
+                if previous_options:
+                    loc_ids_to_show = [opt.get("loc_id") for opt in previous_options if opt.get("loc_id")]
+                    if loc_ids_to_show:
+                        from mapmover.data_loading import fetch_geometries_by_loc_ids
+                        geojson = fetch_geometries_by_loc_ids(loc_ids_to_show)
+                        result = {
+                            "type": "navigate",
+                            "message": f"Showing {len(loc_ids_to_show)} locations on the map.",
+                            "locations": previous_options,
+                            "loc_ids": loc_ids_to_show,
+                            "original_query": query,
+                            "geojson": geojson,
+                        }
+                        yield f"data: {json.dumps({'stage': 'complete', 'result': result})}\n\n"
+                        return
+                result = {"type": "chat", "reply": "I don't have a list of locations to display."}
+                yield f"data: {json.dumps({'stage': 'complete', 'result': result})}\n\n"
+                return
+
+            # Check for drill-down (early return)
+            navigation = hints.get("navigation")
+            if navigation and navigation.get("is_navigation"):
+                locations = navigation.get("locations", [])
+                if len(locations) == 1 and locations[0].get("drill_to_level"):
+                    loc = locations[0]
+                    result = {
+                        "type": "drilldown",
+                        "message": f"Showing {loc.get('drill_to_level')} of {loc.get('matched_term', loc.get('loc_id'))}...",
+                        "loc_id": loc.get("loc_id"),
+                        "name": loc.get("matched_term", loc.get("loc_id")),
+                        "drill_to_level": loc.get("drill_to_level"),
+                        "original_query": query,
+                    }
+                    yield f"data: {json.dumps({'stage': 'complete', 'result': result})}\n\n"
+                    return
+
+            # Stage 2: Thinking (LLM call)
+            t_llm_start = time.time()
+            yield f"data: {json.dumps({'stage': 'thinking', 'message': 'Understanding your intent...'})}\n\n"
+            await asyncio.sleep(0)
+
+            result = interpret_request(query, chat_history, hints=hints)
+            t_llm_end = time.time()
+            logger.info(f"[TIMING] LLM call: {(t_llm_end - t_llm_start)*1000:.0f}ms")
+
+            # Stage 3: Preparing (postprocessor for orders)
+            if result["type"] == "order":
+                t_post_start = time.time()
+                yield f"data: {json.dumps({'stage': 'preparing', 'message': 'Preparing your order...'})}\n\n"
+                await asyncio.sleep(0)
+
+                processed = postprocess_order(result["order"], hints)
+                display_items = get_display_items(
+                    processed.get("items", []),
+                    processed.get("derived_specs", [])
+                )
+                final_result = {
+                    "type": "order",
+                    "order": {
+                        **result["order"],
+                        "items": display_items,
+                        "derived_specs": processed.get("derived_specs", []),
+                    },
+                    "full_order": processed,
+                    "summary": result["summary"],
+                    "validation_summary": processed.get("validation_summary"),
+                    "all_valid": processed.get("all_valid", True)
+                }
+                yield f"data: {json.dumps({'stage': 'complete', 'result': final_result})}\n\n"
+
+            elif result["type"] == "navigate":
+                locations = result.get("locations", [])
+                loc_ids = [loc.get("loc_id") for loc in locations if loc.get("loc_id")]
+                final_result = {
+                    "type": "navigate",
+                    "message": result.get("message", f"Showing {len(locations)} location(s)"),
+                    "locations": locations,
+                    "loc_ids": loc_ids,
+                    "original_query": query,
+                    "geojson": {"type": "FeatureCollection", "features": []},
+                }
+                yield f"data: {json.dumps({'stage': 'complete', 'result': final_result})}\n\n"
+
+            elif result["type"] == "disambiguate":
+                final_result = {
+                    "type": "disambiguate",
+                    "message": result.get("message", "Multiple locations found. Please select one."),
+                    "query_term": result.get("query_term", "location"),
+                    "original_query": query,
+                    "options": result.get("options", []),
+                    "geojson": {"type": "FeatureCollection", "features": []},
+                }
+                yield f"data: {json.dumps({'stage': 'complete', 'result': final_result})}\n\n"
+
+            elif result["type"] == "filter_update":
+                final_result = {
+                    "type": "filter_update",
+                    "overlay": result.get("overlay", ""),
+                    "filters": result.get("filters", {}),
+                    "message": result.get("message", "Updating filters"),
+                }
+                yield f"data: {json.dumps({'stage': 'complete', 'result': final_result})}\n\n"
+
+            elif result["type"] == "overlay_toggle":
+                final_result = {
+                    "type": "overlay_toggle",
+                    "overlay": result.get("overlay", ""),
+                    "enabled": result.get("enabled", True),
+                    "message": result.get("message", "Toggling overlay"),
+                }
+                yield f"data: {json.dumps({'stage': 'complete', 'result': final_result})}\n\n"
+
+            elif result["type"] == "clarify":
+                final_result = {
+                    "type": "clarify",
+                    "message": result["message"],
+                    "geojson": {"type": "FeatureCollection", "features": []},
+                    "needsMoreInfo": True
+                }
+                yield f"data: {json.dumps({'stage': 'complete', 'result': final_result})}\n\n"
+
+            else:
+                final_result = {
+                    "type": "chat",
+                    "message": result.get("message", "I'm not sure how to help with that."),
+                    "geojson": {"type": "FeatureCollection", "features": []},
+                    "needsMoreInfo": False
+                }
+                yield f"data: {json.dumps({'stage': 'complete', 'result': final_result})}\n\n"
+
+        except Exception as e:
+            logger.error(f"Chat stream error: {e}")
+            traceback.print_exc()
+            error_result = {
+                "type": "error",
+                "message": "Sorry, I encountered an error. Please try again.",
+                "geojson": {"type": "FeatureCollection", "features": []},
+                "error": str(e)
+            }
+            yield f"data: {json.dumps({'stage': 'complete', 'result': error_result})}\n\n"
+
+    return StreamingResponse(
+        generate_events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"  # Disable nginx buffering
+        }
+    )
+
+
+# === Order Queue Endpoints ===
+
+@app.post("/api/orders/queue")
+async def queue_order_endpoint(req: Request):
+    """
+    Add an order to the processing queue.
+
+    Request body:
+        items: List of validated order items
+        hints: Preprocessor hints
+        session_id: Optional session identifier
+
+    Returns:
+        queue_id: ID for polling status
+        status: "queued"
+        position: Position in queue
+    """
+    try:
+        body = await decode_request_body(req)
+        items = body.get("items", [])
+        hints = body.get("hints", {})
+        session_id = body.get("session_id", "default")
+
+        if not items:
+            return msgpack_error("No items provided", 400)
+
+        queue_id = order_queue.add(items, hints, session_id)
+        order = order_queue.get(queue_id)
+
+        return msgpack_response({
+            "queue_id": queue_id,
+            "status": "queued",
+            "position": order.position if order else 0,
+            "message": order.message if order else "Queued"
+        })
+
+    except Exception as e:
+        logger.error(f"Error queueing order: {e}")
+        return msgpack_error(str(e), 500)
+
+
+@app.post("/api/orders/status")
+async def get_order_status_endpoint(req: Request):
+    """
+    Get status of one or more queued orders.
+
+    Request body:
+        queue_ids: List of queue IDs to check
+
+    Returns:
+        Dict mapping queue_id -> status info
+    """
+    try:
+        body = await decode_request_body(req)
+        queue_ids = body.get("queue_ids", [])
+
+        if not queue_ids:
+            return msgpack_error("No queue_ids provided", 400)
+
+        statuses = {}
+        for qid in queue_ids:
+            status = order_queue.get_status(qid)
+            if status:
+                statuses[qid] = status
+            else:
+                statuses[qid] = {"error": "Not found", "status": "not_found"}
+
+        return msgpack_response(statuses)
+
+    except Exception as e:
+        logger.error(f"Error getting order status: {e}")
+        return msgpack_error(str(e), 500)
+
+
+@app.get("/api/orders/status/{queue_id}")
+async def get_single_order_status_endpoint(queue_id: str):
+    """
+    Get status of a single queued order.
+
+    Returns status info including result when complete.
+    """
+    try:
+        status = order_queue.get_status(queue_id)
+        if not status:
+            return msgpack_error("Order not found", 404)
+
+        return msgpack_response(status)
+
+    except Exception as e:
+        logger.error(f"Error getting order status: {e}")
+        return msgpack_error(str(e), 500)
+
+
+@app.post("/api/orders/cancel")
+async def cancel_order_endpoint(req: Request):
+    """
+    Cancel a pending order.
+
+    Request body:
+        queue_id: ID of order to cancel
+
+    Returns:
+        cancelled: Boolean success status
+        reason: Error message if failed
+    """
+    try:
+        body = await decode_request_body(req)
+        queue_id = body.get("queue_id")
+
+        if not queue_id:
+            return msgpack_error("No queue_id provided", 400)
+
+        cancelled = order_queue.cancel(queue_id)
+
+        if cancelled:
+            return msgpack_response({"cancelled": True})
+        else:
+            return msgpack_response({
+                "cancelled": False,
+                "reason": "Order not found or already processing"
+            })
+
+    except Exception as e:
+        logger.error(f"Error cancelling order: {e}")
+        return msgpack_error(str(e), 500)
+
+
+@app.get("/api/orders/session/{session_id}")
+async def get_session_orders_endpoint(session_id: str):
+    """
+    Get all orders for a session.
+
+    Returns list of order status objects.
+    """
+    try:
+        orders = order_queue.get_session_orders(session_id)
+        return msgpack_response({"orders": orders})
+
+    except Exception as e:
+        logger.error(f"Error getting session orders: {e}")
+        return msgpack_error(str(e), 500)
+
+
+# === Session Cache Management ===
+
+@app.post("/api/session/clear")
+async def clear_session_endpoint(req: Request):
+    """
+    Clear session cache (for "New Chat" functionality).
+
+    Request body: { sessionId: string }
+    """
+    try:
+        body = await decode_request_body(req)
+        session_id = body.get("sessionId")
+
+        if not session_id:
+            return msgpack_error("sessionId required", 400)
+
+        # Clear session from session manager
+        cleared = session_manager.clear_session(session_id)
+
+        if cleared:
+            logger.info(f"Cleared session cache: {session_id}")
+            return msgpack_response({"status": "cleared", "sessionId": session_id})
+        else:
+            return msgpack_response({"status": "not_found", "sessionId": session_id})
+
+    except Exception as e:
+        logger.error(f"Error clearing session: {e}")
+        return msgpack_error(str(e), 500)
+
+
+@app.get("/api/session/{session_id}/status")
+async def get_session_status_endpoint(session_id: str):
+    """
+    Get session status for recovery prompt.
+
+    Returns whether session has cached data and summary info.
+    """
+    try:
+        cache = session_manager.get(session_id)
+
+        if cache:
+            status = cache.get_status()
+            status["cached_results"] = len(cache._results)
+            status["inventory"] = {
+                "total_locations": status.get("total_locations", 0),
+                "total_metrics": status.get("total_metrics", 0),
+            }
+            return msgpack_response({
+                "exists": True,
+                **status
+            })
+        else:
+            return msgpack_response({
+                "exists": False,
+                "session_id": session_id
+            })
+
+    except Exception as e:
+        logger.error(f"Error getting session status: {e}")
+        return msgpack_error(str(e), 500)
+
+
+@app.get("/api/cache/inventory/{session_id}")
+async def get_cache_inventory_endpoint(session_id: str):
+    """
+    Get detailed cache inventory for a session.
+
+    Returns what data has been loaded (loc_ids, years, metrics).
+    """
+    try:
+        cache = session_manager.get(session_id)
+
+        if not cache:
+            return msgpack_response({
+                "exists": False,
+                "session_id": session_id
+            })
+
+        # Get inventory stats
+        inventory_stats = cache.inventory.stats()
+
+        # Get combined signature for overall view
+        combined = cache.inventory.combined_signature()
+
+        return msgpack_response({
+            "exists": True,
+            "session_id": session_id,
+            "inventory": {
+                "entry_count": inventory_stats["entry_count"],
+                "total_locations": inventory_stats["total_locations"],
+                "total_years": inventory_stats["total_years"],
+                "total_metrics": inventory_stats["total_metrics"],
+                "year_range": inventory_stats["year_range"],
+            },
+            "combined_signature": {
+                "loc_id_count": len(combined.loc_ids),
+                "year_count": len(combined.years),
+                "metric_count": len(combined.metrics),
+                "years": sorted(combined.years) if combined.years else [],
+                "metrics": sorted(combined.metrics) if combined.metrics else [],
+            },
+            "cached_results": len(cache._results),
+        })
+
+    except Exception as e:
+        logger.error(f"Error getting cache inventory: {e}")
+        return msgpack_error(str(e), 500)
+
+
+@app.post("/api/cache/delta")
+async def compute_cache_delta_endpoint(req: Request):
+    """
+    Compute what data needs to be fetched given what's already cached.
+
+    Request body: {
+        sessionId: string,
+        want: {loc_ids: [...], years: [...], metrics: [...]}
+    }
+
+    Returns: {
+        need_fetch: bool,
+        delta: {loc_ids: [...], years: [...], metrics: [...]},
+        have: {loc_ids: [...], years: [...], metrics: [...]}
+    }
+    """
+    try:
+        body = await decode_request_body(req)
+        session_id = body.get("sessionId", "anonymous")
+        want = body.get("want", {})
+
+        if not want:
+            return msgpack_error("'want' field required", 400)
+
+        # Build requested signature
+        from mapmover import CacheSignature
+
+        requested = CacheSignature(
+            loc_ids=frozenset(want.get("loc_ids", [])),
+            years=frozenset(want.get("years", [])),
+            metrics=frozenset(want.get("metrics", []))
+        )
+
+        # Get session cache
+        cache = session_manager.get(session_id)
+
+        if not cache:
+            # No cache - need to fetch everything
+            return msgpack_response({
+                "need_fetch": True,
+                "delta": {
+                    "loc_ids": list(requested.loc_ids),
+                    "years": sorted(requested.years),
+                    "metrics": list(requested.metrics),
+                },
+                "have": {
+                    "loc_ids": [],
+                    "years": [],
+                    "metrics": [],
+                }
+            })
+
+        # Check if cache can serve
+        can_serve = cache.can_serve(requested)
+
+        if can_serve:
+            return msgpack_response({
+                "need_fetch": False,
+                "delta": {
+                    "loc_ids": [],
+                    "years": [],
+                    "metrics": [],
+                },
+                "have": {
+                    "loc_ids": list(requested.loc_ids),
+                    "years": sorted(requested.years),
+                    "metrics": list(requested.metrics),
+                }
+            })
+
+        # Compute what's missing
+        delta = cache.compute_delta(requested)
+        combined = cache.inventory.combined_signature()
+
+        return msgpack_response({
+            "need_fetch": True,
+            "delta": {
+                "loc_ids": list(delta.loc_ids),
+                "years": sorted(delta.years),
+                "metrics": list(delta.metrics),
+            },
+            "have": {
+                "loc_ids": list(combined.loc_ids),
+                "years": sorted(combined.years),
+                "metrics": list(combined.metrics),
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Error computing cache delta: {e}")
+        return msgpack_error(str(e), 500)
+
+
+@app.post("/api/cache/export")
+async def export_cache_endpoint(req: Request):
+    """
+    Export cached data as CSV.
+
+    Request body: {
+        sessionId: string,
+        format: "csv" (default) | "json",
+        filters: {loc_ids: [...], years: [...], metrics: [...]} (optional)
+    }
+
+    Returns: CSV file download or JSON data
+    """
+    import csv
+    import io
+
+    try:
+        body = await decode_request_body(req)
+        session_id = body.get("sessionId", "anonymous")
+        export_format = body.get("format", "csv")
+        filters = body.get("filters", {})
+
+        # Get session cache
+        cache = session_manager.get(session_id)
+
+        if not cache:
+            return msgpack_error("Session not found", 404)
+
+        # Collect all cached results
+        all_rows = []
+        for request_key, result in cache._results.items():
+            geojson = result.get("geojson", {})
+            features = geojson.get("features", [])
+
+            for feature in features:
+                props = feature.get("properties", {})
+
+                # Apply filters if provided
+                if filters.get("loc_ids"):
+                    if props.get("loc_id") not in filters["loc_ids"]:
+                        continue
+
+                if filters.get("years"):
+                    year = props.get("year")
+                    if year is not None and int(year) not in filters["years"]:
+                        continue
+
+                # Flatten properties for CSV
+                row = {}
+                for key, value in props.items():
+                    # Skip geometry-related fields
+                    if key in ["geometry", "type"]:
+                        continue
+
+                    # Filter by metrics if specified
+                    if filters.get("metrics"):
+                        non_metric_keys = {"loc_id", "year", "name", "country", "admin_level", "parent_id", "iso3"}
+                        if key not in non_metric_keys and key not in filters["metrics"]:
+                            continue
+
+                    if isinstance(value, (dict, list)):
+                        row[key] = json.dumps(value)
+                    else:
+                        row[key] = value
+
+                all_rows.append(row)
+
+        if not all_rows:
+            return msgpack_error("No data in cache", 404)
+
+        if export_format == "json":
+            return msgpack_response({
+                "format": "json",
+                "row_count": len(all_rows),
+                "data": all_rows
+            })
+
+        # CSV format
+        # Get all column names from all rows
+        columns = set()
+        for row in all_rows:
+            columns.update(row.keys())
+
+        # Order columns: loc_id, year, name first, then alphabetical
+        priority_cols = ["loc_id", "year", "name", "country", "admin_level"]
+        ordered_cols = [c for c in priority_cols if c in columns]
+        ordered_cols += sorted(c for c in columns if c not in priority_cols)
+
+        # Generate CSV
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=ordered_cols, extrasaction='ignore')
+        writer.writeheader()
+        writer.writerows(all_rows)
+        csv_content = output.getvalue()
+
+        # Return as downloadable file
+        return Response(
+            content=csv_content.encode('utf-8'),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f"attachment; filename=export_{session_id[:8]}.csv"
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"Error exporting cache: {e}")
+        return msgpack_error(str(e), 500)
+
+
+@app.get("/api/orders/stats")
+async def get_queue_stats_endpoint():
+    """
+    Get queue statistics (for monitoring/debugging).
+
+    Returns count by status and pending count.
+    """
+    try:
+        stats = order_queue.stats()
+        return msgpack_response(stats)
+
+    except Exception as e:
+        logger.error(f"Error getting queue stats: {e}")
+        return msgpack_error(str(e), 500)
 
 
 # === Main Entry Point ===

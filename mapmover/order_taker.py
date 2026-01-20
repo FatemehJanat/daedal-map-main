@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 
 from .data_loading import load_catalog, load_source_metadata
 from .preprocessor import build_tier3_context, build_tier4_context
+from .constants import CHAT_HISTORY_LLM_LIMIT
 
 load_dotenv()
 
@@ -248,7 +249,13 @@ RESPONSE TYPES (return JSON with "type" field):
 {{"type": "filter_update", "overlay": "earthquakes", "filters": {{"minMagnitude": 5.0}}, "message": "Filtering to magnitude 5+"}}
 ```
 
-5. CHAT - General response, information, or clarifying question:
+5. OVERLAY TOGGLE - User wants to enable/disable a disaster overlay:
+```json
+{{"type": "overlay_toggle", "overlay": "earthquakes", "enabled": true, "message": "Enabling earthquakes overlay"}}
+```
+Overlays: earthquakes, hurricanes, volcanoes, tsunamis, tornadoes, wildfires, floods
+
+6. CHAT - General response, information, or clarifying question:
 ```json
 {{"type": "chat", "message": "..."}}
 ```
@@ -314,7 +321,7 @@ def interpret_request(user_query: str, chat_history: list = None, hints: dict = 
             })
 
     if chat_history:
-        for msg in chat_history[-4:]:  # Last 4 messages only
+        for msg in chat_history[-CHAT_HISTORY_LLM_LIMIT:]:
             messages.append({
                 "role": msg.get("role", "user"),
                 "content": msg.get("content", "")
@@ -436,40 +443,95 @@ def validate_order(order: dict) -> dict:
 
 
 def parse_llm_response(content: str, hints: dict = None) -> dict:
-    """Parse LLM response into structured result."""
+    """
+    Parse LLM response into structured result.
 
-    # Check for JSON block
+    Handles all response types from LLM:
+    - order: Data request
+    - navigate: Zoom to location(s)
+    - disambiguate: Multiple locations match, need user to pick
+    - filter_update: Change overlay filters
+    - chat: General response
+    - clarify: Need more information
+    """
+    parsed_json = None
+
+    # Try to extract JSON from response
     if "```json" in content:
         try:
             json_str = content.split("```json")[1].split("```")[0].strip()
-            order = json.loads(json_str)
-            # Validate the order
-            order = validate_order(order)
-            return {
-                "type": "order",
-                "order": order,
-                "summary": order.get("summary", "Data request")
-            }
+            parsed_json = json.loads(json_str)
         except (json.JSONDecodeError, IndexError):
             pass
-
-    # Check for bare JSON
-    if content.startswith("{"):
+    elif content.strip().startswith("{"):
         try:
-            order = json.loads(content)
-            # Validate the order
-            order = validate_order(order)
-            return {
-                "type": "order",
-                "order": order,
-                "summary": order.get("summary", "Data request")
-            }
+            parsed_json = json.loads(content.strip())
         except json.JSONDecodeError:
             pass
 
-    # Check if it's a clarifying question
+    # If we got valid JSON, route based on type field
+    if parsed_json and isinstance(parsed_json, dict):
+        response_type = parsed_json.get("type", "order")  # Default to order for backwards compat
+
+        if response_type == "navigate":
+            # Navigation request - zoom to location(s)
+            return {
+                "type": "navigate",
+                "locations": parsed_json.get("locations", []),
+                "message": parsed_json.get("message", "Navigating to location")
+            }
+
+        elif response_type == "disambiguate":
+            # Disambiguation needed - multiple locations match
+            return {
+                "type": "disambiguate",
+                "options": parsed_json.get("options", []),
+                "message": parsed_json.get("message", "Multiple locations found"),
+                "query_term": parsed_json.get("query_term", "location")
+            }
+
+        elif response_type == "filter_update":
+            # Filter update for disaster overlays
+            return {
+                "type": "filter_update",
+                "overlay": parsed_json.get("overlay", ""),
+                "filters": parsed_json.get("filters", {}),
+                "message": parsed_json.get("message", "Updating filters")
+            }
+
+        elif response_type == "overlay_toggle":
+            # Toggle overlay on/off (binary choice, no confidence needed)
+            return {
+                "type": "overlay_toggle",
+                "overlay": parsed_json.get("overlay", ""),
+                "enabled": parsed_json.get("enabled", True),
+                "message": parsed_json.get("message", "")
+            }
+
+        elif response_type == "chat":
+            # General chat response
+            return {
+                "type": "chat",
+                "message": parsed_json.get("message", "")
+            }
+
+        elif response_type == "clarify":
+            # Need more information
+            message = parsed_json.get("message", "Could you provide more details?")
+            message = _improve_clarify_message(message, hints)
+            return {"type": "clarify", "message": message}
+
+        else:
+            # Default: treat as order (type == "order" or legacy format without type)
+            order = validate_order(parsed_json)
+            return {
+                "type": "order",
+                "order": order,
+                "summary": order.get("summary", "Data request")
+            }
+
+    # No valid JSON - check if it's a clarifying question
     if "?" in content and len(content) < 200:
-        # If the message is too generic, try to make it more specific
         message = _improve_clarify_message(content, hints)
         return {"type": "clarify", "message": message}
 
@@ -480,6 +542,11 @@ def parse_llm_response(content: str, hints: dict = None) -> dict:
 def _improve_clarify_message(message: str, hints: dict = None) -> str:
     """
     If the clarify message is too generic, improve it based on what we know is missing.
+
+    Enhanced to be context-aware for disaster queries:
+    - Suggests enabling overlays when disaster keywords detected but no overlay active
+    - Uses viewport context to suggest relevant locations
+    - Explains loc_prefix vs affected_loc_id when relevant
     """
     # Generic phrases that should be improved
     generic_phrases = [
@@ -497,13 +564,45 @@ def _improve_clarify_message(message: str, hints: dict = None) -> str:
     if not is_generic or not hints:
         return message
 
-    # Analyze what's missing based on hints
-    missing = []
+    # Check for disaster overlay intent without active overlay
+    overlay_intent = hints.get("overlay_intent")
+    active_overlays = hints.get("active_overlays", {})
+    overlay_type = active_overlays.get("type")
 
-    # Check if location is missing
+    if overlay_intent and overlay_intent.get("action") == "enable":
+        overlay = overlay_intent.get("overlay", "disaster")
+        return f"Would you like me to turn on the {overlay} overlay to see this data?"
+
+    # Check viewport for location suggestion
+    viewport = hints.get("viewport")
     location = hints.get("location")
     navigation = hints.get("navigation")
     has_location = location or (navigation and navigation.get("locations"))
+
+    # If disaster query but no location specified, suggest based on viewport
+    if overlay_intent and not has_location:
+        overlay = overlay_intent.get("overlay", "disaster")
+        if viewport and viewport.get("bounds"):
+            zoom = viewport.get("zoom", 0)
+            if zoom >= 3:
+                # User is zoomed in - suggest using their view location
+                return f"Which location would you like to see {overlay} for? I can show data for the area you are currently viewing."
+
+        # Ask about location type preference
+        return f"Do you want {overlay} that occurred IN a specific location, or {overlay} that AFFECTED a specific location?"
+
+    # If overlay is active and user seems confused about filters
+    if overlay_type:
+        filters = active_overlays.get("filters", {})
+        if filters:
+            filter_desc = ", ".join(f"{k}={v}" for k, v in filters.items())
+            return f"The {overlay_type} overlay is currently filtered to: {filter_desc}. What would you like to change?"
+        else:
+            return f"What filter would you like to apply to the {overlay_type} overlay? (e.g., magnitude, category, location)"
+
+    # Fallback: analyze what's missing based on hints
+    missing = []
+
     if not has_location:
         missing.append("location/country")
 
@@ -511,12 +610,6 @@ def _improve_clarify_message(message: str, hints: dict = None) -> str:
     topics = hints.get("topics", [])
     if not topics:
         missing.append("metric/data type")
-
-    # Check if time is specified
-    time_info = hints.get("time")
-    if not time_info:
-        # Time is often optional, so only mention if other things are missing
-        pass
 
     # Build improved message
     if missing:

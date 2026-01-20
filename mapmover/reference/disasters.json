@@ -1,0 +1,43 @@
+{
+  "_description": "Disaster overlay keywords for detecting user intent to view disaster data",
+  "_note": "Keywords are matched case-insensitively against user queries to determine overlay activation",
+  "_schema_version": "1.0.0",
+
+  "overlays": {
+    "earthquakes": {
+      "keywords": ["earthquake", "quake", "seismic", "tremor", "richter"],
+      "api_endpoint": "/api/earthquakes/geojson",
+      "severity_field": "magnitude"
+    },
+    "hurricanes": {
+      "keywords": ["hurricane", "storm", "cyclone", "typhoon", "tropical"],
+      "api_endpoint": "/api/hurricanes/geojson",
+      "severity_field": "category"
+    },
+    "volcanoes": {
+      "keywords": ["volcano", "eruption", "volcanic", "lava"],
+      "api_endpoint": "/api/volcanoes/geojson",
+      "severity_field": "vei"
+    },
+    "tsunamis": {
+      "keywords": ["tsunami", "tidal wave"],
+      "api_endpoint": "/api/tsunamis/geojson",
+      "severity_field": "max_water_height"
+    },
+    "tornadoes": {
+      "keywords": ["tornado", "twister", "funnel cloud"],
+      "api_endpoint": "/api/tornadoes/geojson",
+      "severity_field": "scale"
+    },
+    "wildfires": {
+      "keywords": ["wildfire", "fire", "blaze", "burn", "bushfire"],
+      "api_endpoint": "/api/wildfires/geojson",
+      "severity_field": "area_burned"
+    },
+    "floods": {
+      "keywords": ["flood", "flooding", "inundation"],
+      "api_endpoint": "/api/floods/geojson",
+      "severity_field": null
+    }
+  }
+}

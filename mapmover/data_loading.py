@@ -45,6 +45,9 @@ data_catalog = {}
 # Cache for source metadata
 _metadata_cache = {}
 
+# Cache for catalog.json (loaded once)
+_catalog_cache = None
+
 
 def get_data_folder():
     """Get the data folder path from settings backup path."""
@@ -65,10 +68,16 @@ def get_catalog_path():
 def load_catalog():
     """
     Load the unified catalog.json file.
+    Cached after first load for performance.
 
     Returns:
         dict: Catalog with sources, or empty dict if not found
     """
+    global _catalog_cache
+
+    if _catalog_cache is not None:
+        return _catalog_cache
+
     catalog_path = get_catalog_path()
     if not catalog_path or not catalog_path.exists():
         logger.warning(f"Catalog not found at {catalog_path}")
@@ -76,7 +85,9 @@ def load_catalog():
 
     try:
         with open(catalog_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            _catalog_cache = json.load(f)
+            logger.debug(f"Loaded catalog.json with {len(_catalog_cache.get('sources', []))} sources")
+            return _catalog_cache
     except Exception as e:
         logger.error(f"Error loading catalog.json: {e}")
         return {"sources": [], "total_sources": 0}

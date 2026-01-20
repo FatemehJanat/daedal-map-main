@@ -3758,78 +3758,78 @@ export const PointRadiusModel = {
     // NOTE: disaster-sequence-request is now handled by ModelRegistry central dispatcher
     // which routes to this model's handleSequence() method
 
-    // Handle Related button clicks
+    // Handle Related button clicks - uses links.parquet via API
     document.addEventListener('disaster-related-request', async (e) => {
       const { eventId, eventType, props } = e.detail;
 
-      switch (eventType) {
-        case 'earthquake':
-          // Find related volcanoes
-          if (props.latitude && props.longitude) {
-            try {
-              const lat = props.latitude;
-              const lon = props.longitude;
-              const timestamp = props.timestamp;
-              const year = props.year || (timestamp ? new Date(timestamp).getFullYear() : null);
+      // Use unified loc_id directly from props (stored in parquet files)
+      const unifiedLocId = props.loc_id;
 
-              let url = `/api/events/nearby-volcanoes?lat=${lat}&lon=${lon}&radius_km=150`;
-              if (timestamp) {
-                url += `&timestamp=${encodeURIComponent(timestamp)}&days_before=60`;
-              } else if (year) {
-                url += `&year=${year}`;
-              }
+      try {
+        const url = `/api/events/related/${encodeURIComponent(unifiedLocId)}`;
+        const data = await fetchMsgpack(url);
 
-              const data = await fetchMsgpack(url);
-              if (data.count > 0) {
-                model._notifyNearbyVolcanoes(data.features, lat, lon);
-              } else {
-                console.log('No nearby volcanoes found');
-              }
-            } catch (err) {
-              console.error('Error fetching nearby volcanoes:', err);
+        if (data.count > 0) {
+          // Update the popup with related data
+          if (window.DisasterPopup) {
+            window.DisasterPopup.cachedData[`rel_${eventType}_${eventId}`] = {
+              related: data.related
+            };
+            // Re-render the related popup if still in RELATED state
+            if (window.DisasterPopup.state === 'RELATED') {
+              const html = window.DisasterPopup.buildRelatedPopup(
+                window.DisasterPopup.currentEvent,
+                window.DisasterPopup.currentType,
+                { related: data.related }
+              );
+              window.DisasterPopup.updatePopupContent(html);
             }
           }
-          break;
+          console.log(`Found ${data.count} related events:`, data.by_type);
+        } else {
+          console.log('No related events found in links table');
 
-        case 'volcano':
-          // Find related earthquakes
-          if (props.latitude && props.longitude) {
-            try {
-              const lat = props.latitude;
-              const lon = props.longitude;
-              const timestamp = props.timestamp;
-              const year = props.year;
-              const volcanoName = props.volcano_name || 'volcano';
+          // Fallback to proximity search for earthquakes/volcanoes
+          if (eventType === 'earthquake' && props.latitude && props.longitude) {
+            const lat = props.latitude;
+            const lon = props.longitude;
+            const timestamp = props.timestamp;
+            const year = props.year || (timestamp ? new Date(timestamp).getFullYear() : null);
 
-              let url = `/api/events/nearby-earthquakes?lat=${lat}&lon=${lon}&radius_km=150&min_magnitude=3.0`;
-              if (timestamp) {
-                url += `&timestamp=${encodeURIComponent(timestamp)}&days_before=30&days_after=60`;
-              } else if (year) {
-                url += `&year=${year}`;
-              }
+            let fallbackUrl = `/api/events/nearby-volcanoes?lat=${lat}&lon=${lon}&radius_km=150`;
+            if (timestamp) {
+              fallbackUrl += `&timestamp=${encodeURIComponent(timestamp)}&days_before=60`;
+            } else if (year) {
+              fallbackUrl += `&year=${year}`;
+            }
 
-              const data = await fetchMsgpack(url);
-              if (data.count > 0) {
-                const volcanoSeqId = `volcano-${volcanoName}-${year}`;
-                model._notifyVolcanoEarthquakes(data.features, volcanoSeqId, volcanoName, lat, lon);
-              } else {
-                console.log('No nearby earthquakes found');
-              }
-            } catch (err) {
-              console.error('Error fetching nearby earthquakes:', err);
+            const fallbackData = await fetchMsgpack(fallbackUrl);
+            if (fallbackData.count > 0) {
+              model._notifyNearbyVolcanoes(fallbackData.features, lat, lon);
+            }
+          } else if (eventType === 'volcano' && props.latitude && props.longitude) {
+            const lat = props.latitude;
+            const lon = props.longitude;
+            const timestamp = props.timestamp;
+            const year = props.year;
+            const volcanoName = props.volcano_name || 'volcano';
+
+            let fallbackUrl = `/api/events/nearby-earthquakes?lat=${lat}&lon=${lon}&radius_km=150&min_magnitude=3.0`;
+            if (timestamp) {
+              fallbackUrl += `&timestamp=${encodeURIComponent(timestamp)}&days_before=30&days_after=60`;
+            } else if (year) {
+              fallbackUrl += `&year=${year}`;
+            }
+
+            const fallbackData = await fetchMsgpack(fallbackUrl);
+            if (fallbackData.count > 0) {
+              const volcanoSeqId = `volcano-${volcanoName}-${year}`;
+              model._notifyVolcanoEarthquakes(fallbackData.features, volcanoSeqId, volcanoName, lat, lon);
             }
           }
-          break;
-
-        case 'tsunami':
-          // Show triggering earthquake - future cross-type navigation
-          if (props.parent_event_id || props.eq_event_id) {
-            console.log('Show triggering earthquake:', props.parent_event_id || props.eq_event_id);
-          }
-          break;
-
-        default:
-          console.log(`Related not implemented for ${eventType}`);
+        }
+      } catch (err) {
+        console.error('Error fetching related events:', err);
       }
     });
 

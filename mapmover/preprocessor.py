@@ -27,6 +27,44 @@ from .paths import DATA_ROOT, GEOMETRY_DIR as GEOM_DIR, COUNTRIES_DIR
 
 logger = logging.getLogger(__name__)
 
+# =============================================================================
+# CONFIDENCE SCORING CONFIGURATION
+# Adjust these values to tune the LLM candidate selection behavior
+# =============================================================================
+
+# Intent detection - data_request scoring
+SCORE_DATA_KEYWORDS = 0.4       # "data", "statistics", "metrics"
+SCORE_DATA_FROM = 0.2           # "from the", "from", "dataset"
+SCORE_SOURCE_MENTIONED = 0.3    # Source name detected in query
+SCORE_METRIC_KEYWORDS = 0.2     # "population", "gdp", "births", etc.
+
+# Intent detection - navigation scoring
+SCORE_NAV_PATTERN = 0.5         # Matches "show me", "go to", etc.
+SCORE_NAV_PENALTY_DATA = -0.3   # Penalty if "data" keyword or source present
+SCORE_NAV_LOCATION_ONLY = 0.3   # Location mentioned but no nav pattern
+
+# Cross-reference adjustments (adjust_scores_with_context)
+PENALTY_LOCATION_IN_SOURCE = -0.5   # Penalize location if it's part of source name (e.g., "bureau" in "Bureau of Statistics")
+PENALTY_NAV_SOURCE_DETECTED = -0.3  # Reduce navigation confidence when source detected
+
+# Source detection
+SCORE_SOURCE_FULL_MATCH = 1.0   # Full source_name match
+SCORE_SOURCE_ID_MATCH = 0.9     # source_id match
+SCORE_SOURCE_PARTIAL_8 = 0.7    # Partial name match (>8 chars)
+SCORE_SOURCE_PARTIAL_4 = 0.5    # Partial name match (4-8 chars)
+
+# Location detection
+SCORE_LOCATION_EXACT_COUNTRY = 1.0   # Exact country name
+SCORE_LOCATION_CAPITAL = 0.9         # Capital city
+SCORE_LOCATION_ADMIN1 = 0.8          # State/province
+SCORE_LOCATION_ADMIN2_VIEWPORT = 0.5 # County in viewport
+SCORE_LOCATION_PARTIAL = 0.3         # Partial word match
+
+# Overlay intent detection - loaded from reference/disasters.json
+# Use _load_disaster_overlays() to access
+
+# =============================================================================
+
 # Paths
 CONVERSIONS_PATH = Path(__file__).parent / "conversions.json"
 REFERENCE_DIR = Path(__file__).parent / "reference"
@@ -35,27 +73,133 @@ GEOMETRY_DIR = GEOM_DIR
 
 # Parquet cache for location lookups
 _PARQUET_NAMES_CACHE = {}  # iso3 -> {name_lower: loc_id}
+_PARQUET_SORTED_NAMES_CACHE = {}  # iso3 -> sorted list of names (pre-filtered, longest first)
 
-# Common English words that should NOT match location names
-# These are valid location names in some countries but cause false positives
-LOCATION_STOP_WORDS = {
-    # Common verbs/auxiliary verbs
-    "has", "have", "had", "is", "are", "was", "were", "be", "been", "being",
-    "do", "does", "did", "will", "would", "could", "should", "may", "might",
-    "can", "must", "shall", "get", "got", "go", "went", "come", "came",
-    # Common articles/pronouns
-    "the", "a", "an", "this", "that", "these", "those",
-    "i", "me", "my", "we", "us", "our", "you", "your",
-    "he", "him", "his", "she", "her", "it", "its", "they", "them", "their",
-    # Common prepositions/conjunctions
-    "in", "on", "at", "to", "for", "of", "with", "by", "from", "up", "down",
-    "and", "or", "but", "if", "then", "so", "as", "than",
-    # Common adverbs/adjectives
-    "all", "any", "some", "no", "not", "more", "most", "very", "just",
-    "now", "here", "there", "when", "where", "how", "why", "what", "which",
-    # Query-specific words
-    "show", "data", "map", "see", "view", "display", "compare", "over", "years",
-}
+# Reference file cache (loaded once per file)
+_REFERENCE_FILE_CACHE = {}  # filepath_str -> dict
+
+# Global.csv cache for viewport lookups
+_GLOBAL_CSV_CACHE = None  # DataFrame, loaded once
+
+# Conversions.json cache
+_CONVERSIONS_CACHE = None
+
+# Country index.json cache
+_COUNTRY_INDEX_CACHE = {}  # iso3 -> dict
+
+# Caches for new reference files
+_STOPWORDS_CACHE = None
+_TOPICS_CACHE = None
+_DISASTERS_CACHE = None
+
+
+def _load_stopwords() -> set:
+    """
+    Load location stop words from reference file.
+
+    DISABLED: Returns empty set. The stopwords.json file is kept for future use
+    but we're not applying stop word filtering currently to avoid false negatives.
+    Re-enable by uncommenting the loading code below if needed.
+    """
+    global _STOPWORDS_CACHE
+    if _STOPWORDS_CACHE is not None:
+        return _STOPWORDS_CACHE
+
+    # DISABLED - return empty set (file kept at reference/stopwords.json for future use)
+    _STOPWORDS_CACHE = set()
+    return _STOPWORDS_CACHE
+
+    # To re-enable, uncomment below:
+    # ref_path = REFERENCE_DIR / "stopwords.json"
+    # try:
+    #     with open(ref_path, encoding='utf-8') as f:
+    #         data = json.load(f)
+    #         words = set()
+    #         for key, value in data.items():
+    #             if not key.startswith("_") and isinstance(value, list):
+    #                 words.update(value)
+    #         _STOPWORDS_CACHE = words
+    #         logger.debug(f"Loaded {len(words)} stop words from reference file")
+    #         return _STOPWORDS_CACHE
+    # except Exception as e:
+    #     logger.warning(f"Error loading stopwords.json: {e}")
+    #     _STOPWORDS_CACHE = set()
+    #     return _STOPWORDS_CACHE
+
+
+def _load_topics() -> dict:
+    """
+    Load topic keywords by aggregating from catalog.
+
+    Each source in the catalog has:
+    - category: broad topic (economic, health, etc.)
+    - topic_tags: specific topic tags
+    - keywords: search terms
+
+    Returns dict mapping category -> list of all keywords for that category.
+    """
+    global _TOPICS_CACHE
+    if _TOPICS_CACHE is not None:
+        return _TOPICS_CACHE
+
+    try:
+        catalog = load_catalog()
+        sources = catalog.get("sources", [])
+
+        # Aggregate keywords by category
+        topics_dict = {}
+        for source in sources:
+            category = source.get("category", "").lower()
+            if not category:
+                continue
+
+            if category not in topics_dict:
+                topics_dict[category] = set()
+
+            # Add topic_tags as keywords
+            for tag in source.get("topic_tags", []):
+                topics_dict[category].add(tag.lower())
+
+            # Add keywords
+            for kw in source.get("keywords", []):
+                topics_dict[category].add(kw.lower())
+
+        # Convert sets to lists
+        _TOPICS_CACHE = {cat: list(kws) for cat, kws in topics_dict.items()}
+        logger.debug(f"Loaded {len(_TOPICS_CACHE)} topic categories from catalog")
+        return _TOPICS_CACHE
+    except Exception as e:
+        logger.warning(f"Error loading topics from catalog: {e}")
+        _TOPICS_CACHE = {}
+        return _TOPICS_CACHE
+
+
+def _load_disaster_overlays() -> dict:
+    """Load disaster overlay keywords from reference file."""
+    global _DISASTERS_CACHE
+    if _DISASTERS_CACHE is not None:
+        return _DISASTERS_CACHE
+
+    ref_path = REFERENCE_DIR / "disasters.json"
+    try:
+        with open(ref_path, encoding='utf-8') as f:
+            data = json.load(f)
+            overlays = data.get("overlays", {})
+            # Extract just the keywords for each overlay
+            _DISASTERS_CACHE = {
+                overlay: info.get("keywords", [])
+                for overlay, info in overlays.items()
+                if not overlay.startswith("_")
+            }
+            logger.debug(f"Loaded {len(_DISASTERS_CACHE)} disaster overlays from reference file")
+            return _DISASTERS_CACHE
+    except Exception as e:
+        logger.warning(f"Error loading disasters.json: {e}")
+        _DISASTERS_CACHE = {}
+        return _DISASTERS_CACHE
+
+# Location stop words - loaded from reference/stopwords.json
+# Use _load_stopwords() to access
 
 
 def normalize_query_for_location_matching(query: str) -> str:
@@ -79,18 +223,38 @@ def normalize_query_for_location_matching(query: str) -> str:
 
 
 def load_conversions() -> dict:
-    """Load conversions.json for region resolution."""
+    """Load conversions.json for region resolution. Cached after first load."""
+    global _CONVERSIONS_CACHE
+
+    if _CONVERSIONS_CACHE is not None:
+        return _CONVERSIONS_CACHE
+
     if CONVERSIONS_PATH.exists():
         with open(CONVERSIONS_PATH, encoding='utf-8') as f:
-            return json.load(f)
+            _CONVERSIONS_CACHE = json.load(f)
+            logger.debug("Cached conversions.json")
+            return _CONVERSIONS_CACHE
+
+    _CONVERSIONS_CACHE = {}
     return {}
 
 
 def load_reference_file(filepath: Path) -> Optional[dict]:
-    """Load a reference JSON file if it exists."""
+    """Load a reference JSON file if it exists. Cached after first load."""
+    global _REFERENCE_FILE_CACHE
+
+    cache_key = str(filepath)
+    if cache_key in _REFERENCE_FILE_CACHE:
+        return _REFERENCE_FILE_CACHE[cache_key]
+
     if filepath.exists():
         with open(filepath, encoding='utf-8') as f:
-            return json.load(f)
+            data = json.load(f)
+            _REFERENCE_FILE_CACHE[cache_key] = data
+            logger.debug(f"Cached reference file: {filepath.name}")
+            return data
+
+    _REFERENCE_FILE_CACHE[cache_key] = None
     return None
 
 
@@ -102,17 +266,28 @@ def get_countries_in_viewport(bounds: dict) -> list:
     """
     Get list of ISO3 codes for countries visible in viewport.
     Uses global.csv bounding boxes for fast filtering.
+    DataFrame is cached after first load.
     """
+    global _GLOBAL_CSV_CACHE
+
     if not bounds:
         return []
 
-    global_csv = GEOMETRY_DIR / "global.csv"
-    if not global_csv.exists():
-        return []
+    # Load and cache global.csv DataFrame
+    if _GLOBAL_CSV_CACHE is None:
+        global_csv = GEOMETRY_DIR / "global.csv"
+        if not global_csv.exists():
+            return []
+        try:
+            import pandas as pd
+            _GLOBAL_CSV_CACHE = pd.read_csv(global_csv)
+            logger.debug(f"Cached global.csv with {len(_GLOBAL_CSV_CACHE)} countries")
+        except Exception as e:
+            logger.warning(f"Error loading global.csv: {e}")
+            return []
 
     try:
-        import pandas as pd
-        df = pd.read_csv(global_csv)
+        df = _GLOBAL_CSV_CACHE
 
         # Viewport bounds
         v_west = bounds.get("west", -180)
@@ -180,6 +355,38 @@ def load_parquet_names(iso3: str) -> dict:
         logger.warning(f"Error loading parquet names for {iso3}: {e}")
         _PARQUET_NAMES_CACHE[iso3] = {}
         return {}
+
+
+def get_sorted_location_names(iso3: str) -> list:
+    """
+    Get pre-sorted list of location names for a country (cached).
+    Names are sorted by length (longest first) and filtered to remove
+    stop words, numbers, and single characters.
+    """
+    global _PARQUET_SORTED_NAMES_CACHE
+
+    if iso3 in _PARQUET_SORTED_NAMES_CACHE:
+        return _PARQUET_SORTED_NAMES_CACHE[iso3]
+
+    # Get the names dict first (also cached)
+    names = load_parquet_names(iso3)
+    if not names:
+        _PARQUET_SORTED_NAMES_CACHE[iso3] = []
+        return []
+
+    # Build sorted list once and cache it
+    stopwords = _load_stopwords()
+    sorted_names = sorted(
+        [n for n in names.keys()
+         if n not in stopwords
+         and not n.isdigit()
+         and len(n) >= 2],
+        key=len, reverse=True
+    )
+
+    _PARQUET_SORTED_NAMES_CACHE[iso3] = sorted_names
+    logger.debug(f"Cached {len(sorted_names)} sorted location names for {iso3}")
+    return sorted_names
 
 
 def search_locations_globally(name: str, admin_level: int = None, limit_countries: list = None) -> list:
@@ -290,18 +497,8 @@ def lookup_location_in_viewport(query: str, viewport: dict = None) -> dict:
         iso_data = load_reference_file(REFERENCE_DIR / "iso_codes.json")
         country_name = iso_data.get("iso3_to_name", {}).get(iso3, iso3) if iso_data else iso3
 
-        # Sort by length (longest first) to match most specific names
-        # Filter out:
-        # - Stop words that cause false positives (e.g., "Has" in Albania)
-        # - Numeric-only strings (e.g., "3" from "those 3 data points")
-        # - Very short strings (single characters)
-        sorted_names = sorted(
-            [n for n in names.keys()
-             if n not in LOCATION_STOP_WORDS
-             and not n.isdigit()  # Filter out pure numbers
-             and len(n) >= 2],    # Filter out single characters
-            key=len, reverse=True
-        )
+        # Use cached sorted names (filtered and sorted by length, longest first)
+        sorted_names = get_sorted_location_names(iso3)
 
         for name in sorted_names:
             # Use word boundary matching
@@ -399,8 +596,7 @@ def build_subregion_to_iso3() -> dict:
     Build lookup from capitals to parent country ISO3.
 
     Capitals are loaded from reference file.
-    Other cities are resolved dynamically from geometry parquet files
-    using lookup_location_in_viewport() with viewport context.
+    Other locations are recognized by the LLM (no preprocessing lookup needed).
     """
     global _SUBREGION_TO_ISO3_CACHE
     if _SUBREGION_TO_ISO3_CACHE is not None:
@@ -473,15 +669,9 @@ def extract_country_from_query(query: str, viewport: dict = None) -> dict:
             result["source"] = "capital"
             return result
 
-    # Try viewport-based location lookup from geometry parquet files
-    if viewport:
-        viewport_result = lookup_location_in_viewport(query, viewport)
-        if viewport_result.get("match"):
-            result["match"] = viewport_result["match"]
-            result["ambiguous"] = viewport_result.get("ambiguous", False)
-            result["matches"] = viewport_result.get("matches", [])
-            result["source"] = "viewport"
-            return result
+    # Viewport-based lookup DISABLED for performance
+    # Country/capital matching above handles common cases.
+    # The LLM handles location recognition; validation in postprocessor.
 
     return result
 
@@ -493,20 +683,28 @@ def extract_country_from_query(query: str, viewport: dict = None) -> dict:
 def load_country_index(iso3: str) -> Optional[dict]:
     """
     Load a country's index.json file for context injection.
-    Contains llm_summary and dataset categories.
+    Contains llm_summary and dataset categories. Cached per country.
     """
-    # Try country index path
-    paths_to_try = [
-        COUNTRIES_DIR / iso3.upper() / "index.json",
-    ]
+    global _COUNTRY_INDEX_CACHE
 
-    for index_path in paths_to_try:
-        if index_path.exists():
-            try:
-                with open(index_path, encoding='utf-8') as f:
-                    return json.load(f)
-            except Exception:
-                pass
+    iso3_upper = iso3.upper()
+    if iso3_upper in _COUNTRY_INDEX_CACHE:
+        return _COUNTRY_INDEX_CACHE[iso3_upper]
+
+    # Try country index path
+    index_path = COUNTRIES_DIR / iso3_upper / "index.json"
+
+    if index_path.exists():
+        try:
+            with open(index_path, encoding='utf-8') as f:
+                data = json.load(f)
+                _COUNTRY_INDEX_CACHE[iso3_upper] = data
+                logger.debug(f"Cached country index: {iso3_upper}")
+                return data
+        except Exception:
+            pass
+
+    _COUNTRY_INDEX_CACHE[iso3_upper] = None
     return None
 
 
@@ -645,16 +843,8 @@ def get_relevant_sources_with_metrics(topics: list, iso3: str = None) -> dict:
 # Topic Extraction
 # =============================================================================
 
-# Topic keywords mapped to source categories
-TOPIC_KEYWORDS = {
-    "economy": ["gdp", "economic", "economy", "income", "wealth", "poverty", "trade", "export", "import"],
-    "health": ["health", "disease", "mortality", "life expectancy", "hospital", "medical", "hiv", "aids", "obesity", "fertility"],
-    "environment": ["co2", "carbon", "emissions", "climate", "pollution", "renewable", "energy", "electricity"],
-    "education": ["education", "school", "literacy", "student", "university"],
-    "demographics": ["population", "birth", "death", "age", "gender", "migration"],
-    "development": ["sdg", "sustainable", "development goal", "indicator"],
-    "hazard": ["earthquake", "volcano", "hurricane", "cyclone", "tornado", "wildfire", "fire", "flood", "tsunami", "storm", "disaster", "hazard"],
-}
+# Topic keywords - derived from catalog.json (category, topic_tags, keywords)
+# Use _load_topics() to access
 
 
 def extract_topics(query: str) -> list:
@@ -666,7 +856,8 @@ def extract_topics(query: str) -> list:
     query_lower = query.lower()
     matched_topics = []
 
-    for topic, keywords in TOPIC_KEYWORDS.items():
+    topics = _load_topics()
+    for topic, keywords in topics.items():
         if any(kw in query_lower for kw in keywords):
             matched_topics.append(topic)
 
@@ -677,31 +868,60 @@ def extract_topics(query: str) -> list:
 # Region Resolution
 # =============================================================================
 
-# Common region aliases (case-insensitive)
-REGION_ALIASES = {
-    "europe": "WHO_European_Region",
-    "european": "WHO_European_Region",
-    "africa": "WHO_African_Region",
-    "african": "WHO_African_Region",
-    "sub-saharan africa": "Sub_Saharan_Africa",
-    "asia": "WHO_South_East_Asia_Region",  # Could be multiple
-    "middle east": "WHO_Eastern_Mediterranean_Region",
-    "americas": "WHO_Region_of_the_Americas",
-    "latin america": "Latin_America",
-    "south america": "South_America",
-    "north america": "North_America",
-    "g7": "G7",
-    "g20": "G20",
-    "oecd": "OECD",
-    "eu": "European_Union",
-    "european union": "European_Union",
-    "nordic": "Nordic_Countries",
-    "brics": "BRICS",
-    "developed": "High_Income",
-    "developing": "Lower_Middle_Income",
-    "high income": "High_Income",
-    "low income": "Low_Income",
-}
+# Region aliases - loaded from conversions.json
+# Use _get_region_aliases() to access
+
+_REGION_ALIASES_CACHE = None
+
+
+def _get_region_aliases() -> dict:
+    """Load region aliases from conversions.json."""
+    global _REGION_ALIASES_CACHE
+    if _REGION_ALIASES_CACHE is not None:
+        return _REGION_ALIASES_CACHE
+
+    conversions = load_conversions()
+    regions = conversions.get("regions", {})
+
+    # Build alias lookup from region names to their keys
+    aliases = {}
+    for region_key, region_data in regions.items():
+        if isinstance(region_data, dict):
+            # Add the display name as an alias
+            display_name = region_data.get("name", region_key).lower()
+            aliases[display_name] = region_key
+            # Add synonyms if present
+            for synonym in region_data.get("synonyms", []):
+                aliases[synonym.lower()] = region_key
+
+    # Add common shortcuts
+    aliases.update({
+        "europe": "WHO_European_Region",
+        "european": "WHO_European_Region",
+        "africa": "WHO_African_Region",
+        "african": "WHO_African_Region",
+        "sub-saharan africa": "Sub_Saharan_Africa",
+        "asia": "WHO_South_East_Asia_Region",
+        "middle east": "WHO_Eastern_Mediterranean_Region",
+        "americas": "WHO_Region_of_the_Americas",
+        "latin america": "Latin_America",
+        "south america": "South_America",
+        "north america": "North_America",
+        "g7": "G7",
+        "g20": "G20",
+        "oecd": "OECD",
+        "eu": "European_Union",
+        "european union": "European_Union",
+        "nordic": "Nordic_Countries",
+        "brics": "BRICS",
+        "developed": "High_Income",
+        "developing": "Lower_Middle_Income",
+        "high income": "High_Income",
+        "low income": "Low_Income",
+    })
+
+    _REGION_ALIASES_CACHE = aliases
+    return _REGION_ALIASES_CACHE
 
 
 def resolve_regions(query: str) -> list:
@@ -718,7 +938,8 @@ def resolve_regions(query: str) -> list:
     resolved = []
 
     # Check aliases first - use word boundaries to avoid partial matches
-    for alias, grouping_name in REGION_ALIASES.items():
+    region_aliases = _get_region_aliases()
+    for alias, grouping_name in region_aliases.items():
         # Use regex with word boundaries
         pattern = r'\b' + re.escape(alias) + r'\b'
         if re.search(pattern, query_lower):
@@ -1332,6 +1553,78 @@ def detect_filter_intent(query: str, active_overlays: dict) -> Optional[dict]:
     return None
 
 
+def detect_overlay_intent(query: str, active_overlays: dict = None) -> Optional[dict]:
+    """
+    Detect if user is asking about a disaster overlay, even if no overlay is active.
+
+    This allows the chat to recognize queries like "show me earthquakes in California"
+    and enable the appropriate overlay.
+
+    Args:
+        query: User query text
+        active_overlays: Current overlay state (optional)
+
+    Returns:
+        dict with overlay intent info:
+        {
+            "overlay": "earthquakes",
+            "action": "enable" | "filter" | "query",
+            "location": {"loc_prefix": "USA-CA"},  # if location detected
+            "severity": {"minMagnitude": 7.0},     # if severity detected
+        }
+    """
+    query_lower = query.lower()
+
+    # Check if any disaster keywords are mentioned
+    detected_overlay = None
+    disaster_overlays = _load_disaster_overlays()
+    for overlay_id, keywords in disaster_overlays.items():
+        for keyword in keywords:
+            if keyword in query_lower:
+                detected_overlay = overlay_id
+                break
+        if detected_overlay:
+            break
+
+    if not detected_overlay:
+        return None
+
+    # Determine action based on context
+    is_overlay_active = False
+    if active_overlays:
+        active_type = active_overlays.get("type", "")
+        all_active = active_overlays.get("allActive", [])
+        is_overlay_active = (
+            active_type == detected_overlay or
+            detected_overlay in all_active
+        )
+
+    # Extract any severity filters mentioned
+    severity = {}
+    filter_result = detect_filter_intent(query, {"type": detected_overlay})
+    if filter_result and filter_result.get("type") == "change_filters":
+        # Extract severity fields
+        for key in ["minMagnitude", "maxMagnitude", "minCategory", "minVei", "minScale", "minAreaKm2"]:
+            if key in filter_result:
+                severity[key] = filter_result[key]
+
+    # Determine action
+    if is_overlay_active:
+        if severity:
+            action = "filter"  # Modify existing overlay filters
+        else:
+            action = "query"   # Query about existing overlay
+    else:
+        action = "enable"      # Need to turn on the overlay
+
+    return {
+        "overlay": detected_overlay,
+        "action": action,
+        "severity": severity if severity else None,
+        "is_active": is_overlay_active
+    }
+
+
 # =============================================================================
 # Navigation Intent Detection
 # =============================================================================
@@ -1588,35 +1881,11 @@ def detect_location_candidates(query: str, viewport: dict = None) -> dict:
                 "is_subregion": True
             })
 
-    # 3. Check viewport locations (lower priority)
-    if viewport:
-        viewport_result = lookup_location_in_viewport(query, viewport)
-        if viewport_result.get("matches"):
-            for match in viewport_result["matches"]:
-                # Check if this term is a stop word
-                matched_term = match.get("matched_term", "").lower()
-                if matched_term in LOCATION_STOP_WORDS:
-                    confidence = 0.1  # Very low for stop words
-                else:
-                    # Score based on admin level
-                    admin_level = match.get("admin_level", 3)
-                    if admin_level == 1:
-                        confidence = 0.8  # State/province
-                    elif admin_level == 2:
-                        confidence = 0.6  # County
-                    else:
-                        confidence = 0.4  # City/town
-
-                candidates.append({
-                    "matched_term": match.get("matched_term", ""),
-                    "iso3": match.get("iso3", ""),
-                    "loc_id": match.get("loc_id", ""),
-                    "country_name": match.get("country_name", ""),
-                    "confidence": confidence,
-                    "match_type": "viewport",
-                    "is_subregion": True,
-                    "admin_level": admin_level
-                })
+    # 3. Viewport location lookup DISABLED for performance
+    # The LLM is smart enough to recognize locations like "California" or "Texas"
+    # without us searching through 50,000+ parquet names on every query.
+    # Validation/disambiguation happens in postprocessor if needed.
+    # Original code searched all location names which took 8-28 seconds per query.
 
     # Sort by confidence (highest first)
     candidates = sorted(candidates, key=lambda x: -x["confidence"])
@@ -1654,16 +1923,16 @@ def detect_intent_candidates(query: str, source_candidates: dict, location_candi
     query_lower = query.lower().strip()
     candidates = []
 
-    # Check for data request signals
+    # Check for data request signals (uses config from top of file)
     data_score = 0.0
     if any(kw in query_lower for kw in ["data", "statistics", "metrics", "show me data"]):
-        data_score += 0.4
+        data_score += SCORE_DATA_KEYWORDS
     if any(kw in query_lower for kw in ["from the", "from", "dataset"]):
-        data_score += 0.2
+        data_score += SCORE_DATA_FROM
     if source_candidates.get("best"):
-        data_score += 0.3  # Source mentioned = likely data request
+        data_score += SCORE_SOURCE_MENTIONED  # Source mentioned = likely data request
     if any(kw in query_lower for kw in ["population", "gdp", "births", "deaths", "economy"]):
-        data_score += 0.2  # Metric keywords
+        data_score += SCORE_METRIC_KEYWORDS  # Metric keywords
 
     if data_score > 0:
         candidates.append({
@@ -1672,18 +1941,18 @@ def detect_intent_candidates(query: str, source_candidates: dict, location_candi
             "signals": ["source_mentioned"] if source_candidates.get("best") else []
         })
 
-    # Check for navigation signals
+    # Check for navigation signals (uses config from top of file)
     nav_score = 0.0
     nav_result = detect_navigation_intent(query)
     if nav_result.get("is_navigation"):
-        nav_score += 0.5
+        nav_score += SCORE_NAV_PATTERN
         # But reduce if data keywords present
         if "data" in query_lower or source_candidates.get("best"):
-            nav_score -= 0.3
+            nav_score += SCORE_NAV_PENALTY_DATA  # Negative value
 
     if location_candidates.get("best") and nav_score == 0:
         # Location mentioned but no explicit nav pattern - could be either
-        nav_score += 0.3
+        nav_score += SCORE_NAV_LOCATION_ONLY
 
     if nav_score > 0:
         candidates.append({
@@ -1772,8 +2041,8 @@ def adjust_scores_with_context(source_candidates: dict, location_candidates: dic
         term_in_source = any(matched_term in st for st in source_texts)
 
         if term_in_source:
-            # Heavily penalize - this is likely a false positive
-            loc["confidence"] = max(0.0, loc["confidence"] - 0.5)
+            # Heavily penalize - this is likely a false positive (uses config from top of file)
+            loc["confidence"] = max(0.0, loc["confidence"] + PENALTY_LOCATION_IN_SOURCE)
             loc["penalized_reason"] = "term_in_source_name"
 
         adjusted_locations.append(loc)
@@ -1785,13 +2054,13 @@ def adjust_scores_with_context(source_candidates: dict, location_candidates: dic
     location_candidates["candidates"] = adjusted_locations
     location_candidates["best"] = adjusted_locations[0] if adjusted_locations else None
 
-    # Adjust intent scores based on source detection
+    # Adjust intent scores based on source detection (uses config from top of file)
     adjusted_intents = []
     for intent in intent_candidates.get("candidates", []):
         if intent["type"] == "navigation" and source_candidates.get("best"):
             # Source mentioned - reduce navigation confidence
             if source_candidates["best"]["confidence"] > 0.7:
-                intent["confidence"] = max(0.0, intent["confidence"] - 0.3)
+                intent["confidence"] = max(0.0, intent["confidence"] + PENALTY_NAV_SOURCE_DETECTED)
                 intent["adjusted_reason"] = "source_detected"
 
         adjusted_intents.append(intent)
@@ -1914,16 +2183,7 @@ def detect_drilldown_pattern(query: str, viewport: dict = None) -> dict:
                         "child_level_name": level
                     }
 
-                # Also try viewport-based lookup
-                if viewport:
-                    vp_result = lookup_location_in_viewport(location_part, viewport)
-                    if vp_result.get("matches") and len(vp_result["matches"]) == 1:
-                        loc_match = vp_result["matches"][0]
-                        return {
-                            "is_drilldown": True,
-                            "parent_location": loc_match,
-                            "child_level_name": level
-                        }
+                # Viewport lookup DISABLED - LLM handles location recognition
 
     # Pattern 2: "[location] [level]" (e.g., "texas counties")
     for level in level_names:
@@ -1950,16 +2210,7 @@ def detect_drilldown_pattern(query: str, viewport: dict = None) -> dict:
                     "child_level_name": level
                 }
 
-            # Also try viewport-based lookup for state-level
-            if viewport:
-                vp_result = lookup_location_in_viewport(location_part, viewport)
-                if vp_result.get("matches") and len(vp_result["matches"]) == 1:
-                    loc_match = vp_result["matches"][0]
-                    return {
-                        "is_drilldown": True,
-                        "parent_location": loc_match,
-                        "child_level_name": level
-                    }
+            # Viewport lookup DISABLED - LLM handles location recognition
 
     return {"is_drilldown": False}
 
@@ -2039,18 +2290,11 @@ def extract_multiple_locations(query: str, viewport: dict = None) -> dict:
     for part in parts:
         part_matches = []
 
-        if viewport:
-            result = lookup_location_in_viewport(part, viewport)
-            if result.get("matches"):
-                matches = result["matches"]
-                # Filter by admin level if suffix implies a specific level
-                if expected_admin_level is not None:
-                    matches = [m for m in matches if m.get("admin_level") == expected_admin_level]
-                part_matches.extend(matches)
+        # Viewport lookup DISABLED for performance - was scanning all 50,000+ names
+        # Use targeted global search instead (exact name match, much faster)
 
-        # If viewport lookup failed or returned empty, and we have a specific admin level,
-        # do a global search for this name at this admin level
-        if not part_matches and expected_admin_level is not None:
+        # Do a targeted search for this specific name at the expected admin level
+        if expected_admin_level is not None:
             logger.debug(f"Viewport lookup empty for '{part}', doing global search at admin_level={expected_admin_level}")
             global_matches = search_locations_globally(part, admin_level=expected_admin_level)
             if global_matches:
@@ -2088,7 +2332,7 @@ def extract_multiple_locations(query: str, viewport: dict = None) -> dict:
 # Main Preprocessor Function
 # =============================================================================
 
-def preprocess_query(query: str, viewport: dict = None, active_overlays: dict = None, cache_stats: dict = None) -> dict:
+def preprocess_query(query: str, viewport: dict = None, active_overlays: dict = None, cache_stats: dict = None, saved_order_names: list = None) -> dict:
     """
     Main preprocessor function - extracts all hints from query.
 
@@ -2097,6 +2341,7 @@ def preprocess_query(query: str, viewport: dict = None, active_overlays: dict = 
         viewport: Optional viewport dict with {center, zoom, bounds, adminLevel}
         active_overlays: Optional dict with {type, filters, allActive} from frontend
         cache_stats: Optional dict with per-overlay stats {overlayId: {count, years, ...}}
+        saved_order_names: Optional list of saved order names from frontend
 
     Returns a hints dict that can be injected into LLM context.
     """
@@ -2241,6 +2486,9 @@ def preprocess_query(query: str, viewport: dict = None, active_overlays: dict = 
     # Detect filter-related intent (read or change filters)
     filter_intent = detect_filter_intent(query, active_overlays) if active_overlays else None
 
+    # Detect overlay intent (works even when no overlay is active)
+    overlay_intent = detect_overlay_intent(query, active_overlays)
+
     # ==========================================================================
     # CANDIDATE-BASED DETECTION (Phase 1 Refactor)
     # Gather ALL candidates with confidence scores - LLM decides interpretation
@@ -2275,8 +2523,11 @@ def preprocess_query(query: str, viewport: dict = None, active_overlays: dict = 
         "active_overlays": active_overlays,  # Current overlay state from frontend
         "cache_stats": cache_stats,  # What's currently loaded in frontend cache
         "filter_intent": filter_intent,  # User intent to read/change filters
+        "overlay_intent": overlay_intent,  # Disaster overlay detection (works without active overlay)
         # CANDIDATE-BASED (Phase 1 Refactor) - all interpretations with confidence scores
         "candidates": candidates,
+        # Saved orders (Phase 7 - Cache Unification)
+        "saved_order_names": saved_order_names or [],  # Names of saved orders for load/save commands
     }
 
     # Build summary for LLM context injection
@@ -2332,6 +2583,22 @@ def preprocess_query(query: str, viewport: dict = None, active_overlays: dict = 
             summary_parts.append("INTENT: Query about current filters")
         elif filter_intent["type"] == "change_filters":
             summary_parts.append(f"INTENT: Change filters ({filter_intent.get('filter_type', 'unknown')})")
+
+    # Add overlay intent (detects disaster keywords even without active overlay)
+    if overlay_intent:
+        action = overlay_intent.get("action", "unknown")
+        overlay = overlay_intent.get("overlay", "unknown")
+        severity = overlay_intent.get("severity")
+        if action == "enable":
+            summary_parts.append(f"OVERLAY_INTENT: Enable {overlay} overlay")
+        elif action == "filter":
+            summary_parts.append(f"OVERLAY_INTENT: Filter {overlay} ({severity})")
+        elif action == "query":
+            summary_parts.append(f"OVERLAY_INTENT: Query about {overlay}")
+
+    # Add saved orders info if any exist
+    if saved_order_names:
+        summary_parts.append(f"SAVED_ORDERS: {', '.join(saved_order_names)}")
 
     hints["summary"] = "; ".join(summary_parts) if summary_parts else None
 
@@ -2435,6 +2702,26 @@ def build_tier3_context(hints: dict) -> str:
         context_parts.append(f"[ACTIVE OVERLAY: {overlay_type}]")
         if filters:
             context_parts.append(f"[CURRENT FILTERS: {filter_desc}]")
+
+    # Add overlay intent context - detects disaster keywords even without active overlay
+    overlay_intent = hints.get("overlay_intent")
+    if overlay_intent:
+        overlay = overlay_intent.get("overlay", "unknown")
+        action = overlay_intent.get("action", "unknown")
+        is_active = overlay_intent.get("is_active", False)
+        severity = overlay_intent.get("severity")
+
+        if action == "enable" and not is_active:
+            context_parts.append(
+                f"[OVERLAY INTENT: User mentioned '{overlay}' but overlay is NOT active. "
+                f"Consider responding with overlay_toggle to enable {overlay} overlay.]"
+            )
+        elif action == "filter" and severity:
+            severity_str = ", ".join(f"{k}={v}" for k, v in severity.items())
+            context_parts.append(
+                f"[OVERLAY INTENT: User wants to filter {overlay} with: {severity_str}. "
+                f"Respond with filter_update or overlay_toggle with filters.]"
+            )
 
     # Add cache stats context
     cache_stats = hints.get("cache_stats")

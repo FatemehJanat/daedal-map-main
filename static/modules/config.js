@@ -4,6 +4,15 @@
  */
 
 export const CONFIG = {
+  // =========================================================================
+  // CHAT HISTORY CONFIGURATION
+  // =========================================================================
+  // How many messages to keep in browser memory (unlimited session recall)
+  chatHistoryStorageLimit: 100,
+  // How many messages to send to backend (must match backend CHAT_HISTORY_LLM_LIMIT)
+  // Higher = better context but more tokens. 8 = 4 user/assistant exchanges.
+  chatHistorySendLimit: 8,
+
   // Map settings
   defaultCenter: [-78.64, 35.78],  // Centered on Raleigh, NC
   defaultZoom: 2.5,

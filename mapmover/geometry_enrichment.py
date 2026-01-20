@@ -13,11 +13,34 @@ from .geography import get_fallback_coordinates, load_conversions, CONVERSIONS_D
 
 # Base directory for file paths
 BASE_DIR = Path(__file__).resolve().parent.parent
+REFERENCE_DIR = Path(__file__).parent / "reference"
 
 logger = logging.getLogger("mapmover")
 
 # Cache for geometry data to avoid repeated file reads
 _geometry_cache = None
+
+# Cache for country name aliases
+_COUNTRY_ALIASES_CACHE = None
+
+
+def _load_country_aliases() -> dict:
+    """Load country name aliases from reference file."""
+    global _COUNTRY_ALIASES_CACHE
+    if _COUNTRY_ALIASES_CACHE is not None:
+        return _COUNTRY_ALIASES_CACHE
+
+    ref_path = REFERENCE_DIR / "country_aliases.json"
+    try:
+        with open(ref_path, encoding='utf-8') as f:
+            data = json.load(f)
+            _COUNTRY_ALIASES_CACHE = data.get("aliases", {})
+            logger.debug(f"Loaded {len(_COUNTRY_ALIASES_CACHE)} country aliases from reference file")
+            return _COUNTRY_ALIASES_CACHE
+    except Exception as e:
+        logger.warning(f"Error loading country_aliases.json: {e}")
+        _COUNTRY_ALIASES_CACHE = {}
+        return _COUNTRY_ALIASES_CACHE
 
 
 def get_geometry_lookup():
@@ -112,32 +135,8 @@ def get_country_coordinates(country_name, country_code=None):
     return None
 
 
-# Country name aliases: data source name -> Countries.csv name
-COUNTRY_NAME_ALIASES = {
-    'cape verde': 'cabo verde',
-    'central african republic': 'central african rep.',
-    'democratic republic of congo': 'dem. rep. congo',
-    'democratic republic of the congo': 'dem. rep. congo',
-    'dr congo': 'dem. rep. congo',
-    'drc': 'dem. rep. congo',
-    'equatorial guinea': 'eq. guinea',
-    'eswatini': 'eswatini',
-    'south sudan': 's. sudan',
-    'ivory coast': 'cote d\'ivoire',
-    'cote d\'ivoire': 'cote d\'ivoire',
-    'czechia': 'czech rep.',
-    'czech republic': 'czech rep.',
-    'north korea': 'north korea',
-    'south korea': 'korea',
-    'republic of korea': 'korea',
-    'timor-leste': 'timor-leste',
-    'east timor': 'timor-leste',
-    'bosnia and herzegovina': 'bosnia and herz.',
-    'united states': 'united states of america',
-    'usa': 'united states of america',
-    'uk': 'united kingdom',
-    'britain': 'united kingdom',
-}
+# Country name aliases - loaded from reference/country_aliases.json
+# Use _load_country_aliases() to access
 
 
 def enrich_with_geometry(features, name_col='country_name', code_col='country_code'):
@@ -186,7 +185,8 @@ def enrich_with_geometry(features, name_col='country_name', code_col='country_co
         if name:
             name_lower = name.lower().strip()
             # Apply alias if exists
-            lookup_name = COUNTRY_NAME_ALIASES.get(name_lower, name_lower)
+            country_aliases = _load_country_aliases()
+            lookup_name = country_aliases.get(name_lower, name_lower)
 
             # Direct lookup by iterating geometry cache
             found = False

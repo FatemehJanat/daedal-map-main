@@ -1,63 +1,24 @@
 """
 Constants and static data used across the mapmover application.
+
+NOTE: Many constants have been moved to reference files for maintainability:
+- state_abbreviations -> reference/usa/usa_admin.json
+- TOPIC_KEYWORDS -> derived from catalog.json (preprocessor aggregates category/topic_tags/keywords)
+- DISASTER_OVERLAYS -> reference/disasters.json (loaded by preprocessor)
+- LOCATION_STOP_WORDS -> reference/stopwords.json (loaded by preprocessor, currently disabled)
+- unit conversions -> reference/unit_conversions.json (loaded by utils.py)
 """
 
-# State abbreviations mapping
-state_abbreviations = {
-    "AL": "Alabama",
-    "AK": "Alaska",
-    "AZ": "Arizona",
-    "AR": "Arkansas",
-    "CA": "California",
-    "CO": "Colorado",
-    "CT": "Connecticut",
-    "DE": "Delaware",
-    "FL": "Florida",
-    "GA": "Georgia",
-    "HI": "Hawaii",
-    "ID": "Idaho",
-    "IL": "Illinois",
-    "IN": "Indiana",
-    "IA": "Iowa",
-    "KS": "Kansas",
-    "KY": "Kentucky",
-    "LA": "Louisiana",
-    "ME": "Maine",
-    "MD": "Maryland",
-    "MA": "Massachusetts",
-    "MI": "Michigan",
-    "MN": "Minnesota",
-    "MS": "Mississippi",
-    "MO": "Missouri",
-    "MT": "Montana",
-    "NE": "Nebraska",
-    "NV": "Nevada",
-    "NH": "New Hampshire",
-    "NJ": "New Jersey",
-    "NM": "New Mexico",
-    "NY": "New York",
-    "NC": "North Carolina",
-    "ND": "North Dakota",
-    "OH": "Ohio",
-    "OK": "Oklahoma",
-    "OR": "Oregon",
-    "PA": "Pennsylvania",
-    "RI": "Rhode Island",
-    "SC": "South Carolina",
-    "SD": "South Dakota",
-    "TN": "Tennessee",
-    "TX": "Texas",
-    "UT": "Utah",
-    "VT": "Vermont",
-    "VA": "Virginia",
-    "WA": "Washington",
-    "WV": "West Virginia",
-    "WI": "Wisconsin",
-    "WY": "Wyoming",
-    "DC": "District of Columbia"
-}
+# =============================================================================
+# CHAT HISTORY CONFIGURATION
+# =============================================================================
+# How many messages the LLM sees for context continuity.
+# Frontend sends this many, backend uses this many.
+# Higher = better context but more tokens. 8 = 4 user/assistant exchanges.
+CHAT_HISTORY_LLM_LIMIT = 8
 
 # Unit multiplier mappings for filter value conversion
+# Kept here as these are mathematical constants that won't change
 UNIT_MULTIPLIERS = {
     "trillion": 1_000_000_000_000,
     "billion": 1_000_000_000,
@@ -67,14 +28,4 @@ UNIT_MULTIPLIERS = {
     "m": 1_000_000,
     "b": 1_000_000_000,
     "t": 1_000_000_000_000
-}
-
-# Topic keywords for data discovery
-# Used to match user queries to data sources
-TOPIC_KEYWORDS = {
-    'environment': ['co2', 'emissions', 'climate', 'carbon', 'ghg', 'greenhouse'],
-    'economics': ['gdp', 'trade', 'exports', 'imports', 'economy', 'financial'],
-    'health': ['health', 'life_expectancy', 'mortality', 'disease', 'medical'],
-    'demographics': ['population', 'age', 'census', 'demographic'],
-    'energy': ['energy', 'electricity', 'renewables', 'fossil'],
 }

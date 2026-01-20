@@ -32,7 +32,7 @@ const data = await fetchMsgpack('/api/earthquakes');
 const result = await postMsgpack('/api/settings', { theme: 'dark' });
 ```
 
-When in doubt read C:\Users\Bryan\Desktop\county-map\docs\CONTEXT.md to help guide you to the right path to understanding.
+When in doubt read docs/DATA_SCHEMAS.md for schema reference.
 
 No coding with emojis, only characters that dont cause encoding issues.
 

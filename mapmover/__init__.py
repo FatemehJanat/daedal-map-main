@@ -57,9 +57,7 @@ from .paths import (
 
 # Re-export key functions for convenience
 from .constants import (
-    state_abbreviations,
     UNIT_MULTIPLIERS,
-    TOPIC_KEYWORDS,
 )
 
 from .utils import (
@@ -108,7 +106,6 @@ from .geometry_enrichment import (
     enrich_with_geometry,
     detect_missing_geometry,
     get_geometry_source,
-    COUNTRY_NAME_ALIASES,
 )
 
 from .geometry_joining import (
@@ -135,6 +132,36 @@ from .preprocessor import preprocess_query
 
 # Postprocessor for validation and derived fields
 from .postprocessor import postprocess_order, get_display_items
+
+# Cache signature system for unified data identification
+from .cache_signature import (
+    CacheSignature,
+    DataPackage,
+    CacheInventory,
+)
+
+# Session cache management
+from .session_cache import (
+    SessionCache,
+    SessionManager,
+    session_manager,
+)
+
+# Package optimizer for merging data requests
+from .package_optimizer import (
+    PackageOptimizer,
+    merge_results,
+)
+
+# Disaster filters for location-based API queries
+from .disaster_filters import (
+    apply_location_filters,
+    get_affected_event_ids,
+    get_events_for_location,
+    get_disaster_metadata,
+    get_default_min_year,
+    get_all_disaster_metadata,
+)
 
 __version__ = "2.0.0"
 __all__ = [
@@ -168,9 +195,7 @@ __all__ = [
     "ensure_dir",
     "validate_paths",
     # Constants
-    "state_abbreviations",
     "UNIT_MULTIPLIERS",
-    "TOPIC_KEYWORDS",
     # Utils
     "convert_unit",
     "state_from_abbr",
@@ -208,7 +233,6 @@ __all__ = [
     "enrich_with_geometry",
     "detect_missing_geometry",
     "get_geometry_source",
-    "COUNTRY_NAME_ALIASES",
     # Geometry handlers
     "get_countries_geometry",
     "get_location_children",
@@ -225,4 +249,23 @@ __all__ = [
     # Postprocessor
     "postprocess_order",
     "get_display_items",
+    # Cache signature
+    "CacheSignature",
+    "DataPackage",
+    "CacheInventory",
+    # Session cache
+    "SessionCache",
+    "SessionManager",
+    "session_manager",
+    # Package optimizer
+    "PackageOptimizer",
+    "merge_results",
+    # Disaster filters
+    "apply_location_filters",
+    "get_affected_event_ids",
+    "get_events_for_location",
+    # Disaster metadata
+    "get_disaster_metadata",
+    "get_default_min_year",
+    "get_all_disaster_metadata",
 ]
