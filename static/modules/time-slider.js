@@ -208,6 +208,19 @@ export const TimeSlider = {
   metricTabContainer: null, // DOM element for metric tabs
 
   // ============================================================================
+  // LIVE MODE - Real-time data display
+  // ============================================================================
+  isLiveMode: false,        // True when showing live clock (at max time)
+  isLiveLocked: false,      // True when "LIVE" button is active (locked to current time)
+  liveBtn: null,            // DOM element for LIVE button
+  liveBadge: null,          // DOM element for LIVE badge (optional)
+  liveClockInterval: null,  // Interval for updating clock display
+  liveDataPollInterval: null, // Interval for polling new data
+  liveTimezone: 'local',    // 'local', 'UTC', or IANA timezone string
+  LIVE_CLOCK_UPDATE_MS: 1000,      // Update clock every second
+  LIVE_DATA_POLL_MS: 5 * 60 * 1000, // Poll for new data every 5 minutes
+
+  // ============================================================================
   // LISTENER SYSTEM - Decoupled change notifications
   // ============================================================================
 
@@ -285,6 +298,16 @@ export const TimeSlider = {
     this.trimOverlayLeft = document.getElementById('trimOverlayLeft');
     this.trimOverlayRight = document.getElementById('trimOverlayRight');
     this.clearBoundsBtn = document.getElementById('clearBoundsBtn');
+
+    // Cache live mode elements
+    this.liveBtn = document.getElementById('liveBtn');
+    this.liveBadge = document.getElementById('liveBadge');
+
+    // Load timezone setting for live mode
+    this.loadLiveTimezone();
+
+    // Load saved slider settings (trim, speed)
+    this.loadSliderSettings();
 
     if (!this.container || !this.slider) {
       console.warn('TimeSlider: DOM elements not found');
@@ -436,6 +459,25 @@ export const TimeSlider = {
       } else {
         console.log('TimeSlider: Range too large for auto-generation, waiting for available times');
       }
+    }
+
+    // Apply pending trim bounds from session recovery (only once)
+    if (this._pendingBoundMinTime !== undefined || this._pendingBoundMaxTime !== undefined) {
+      // Validate bounds are within the current time range
+      if (this._pendingBoundMinTime !== undefined && this._pendingBoundMinTime >= this.minTime && this._pendingBoundMinTime <= this.maxTime) {
+        this.boundMinTime = this._pendingBoundMinTime;
+      }
+      if (this._pendingBoundMaxTime !== undefined && this._pendingBoundMaxTime >= this.minTime && this._pendingBoundMaxTime <= this.maxTime) {
+        this.boundMaxTime = this._pendingBoundMaxTime;
+      }
+      // Update UI if bounds were applied
+      if (this.boundMinTime !== null || this.boundMaxTime !== null) {
+        this.updateTrimHandlePositions();
+        console.log('[TimeSlider] Applied pending trim bounds');
+      }
+      // Clear pending (only apply once)
+      delete this._pendingBoundMinTime;
+      delete this._pendingBoundMaxTime;
     }
 
     this.show();
@@ -739,6 +781,9 @@ export const TimeSlider = {
       this.speedLabel.textContent = TIME_SYSTEM.getSpeedLabel(this.stepsPerFrame);
     }
 
+    // Save to localStorage
+    this.saveSliderSettings();
+
     console.log(`TimeSlider: Speed set to ${TIME_SYSTEM.getSpeedLabel(this.stepsPerFrame)} (${this.stepsPerFrame.toFixed(2)} steps/frame)`);
   },
 
@@ -990,6 +1035,11 @@ export const TimeSlider = {
     this.titleLabel = document.getElementById('sliderTitle');
     this.tabContainer = document.getElementById('timeSliderTabs');
     this.metricTabContainer = document.getElementById('metricTabs');
+    this.liveBadge = document.getElementById('liveBadge');
+    this.liveBtn = document.getElementById('liveBtn');
+
+    // Load timezone setting for live mode
+    this.loadLiveTimezone();
 
     // Use explicit metrics from order if provided, otherwise detect from data
     if (this.explicitMetrics && this.explicitMetrics.length > 0) {
@@ -1040,6 +1090,7 @@ export const TimeSlider = {
     ChoroplethManager?.update(initialGeojson, this.metricKey);
 
     // Update label with formatted time
+    // Live mode is only activated by clicking the LIVE button
     this.yearLabel.textContent = this.formatTimeLabel(this.currentTime);
 
     // Initialize as primary scale for multi-scale support
@@ -1052,6 +1103,10 @@ export const TimeSlider = {
   setupEventListeners() {
     // Slider input (fires while dragging)
     this.slider.addEventListener('input', (e) => {
+      // Exit live lock if user manually drags slider
+      if (this.isLiveLocked) {
+        this.disengageLiveLock();
+      }
       // Use getTimeFromSlider to handle both indexed and linear modes
       const time = this.getTimeFromSlider();
       this.setTime(time);
@@ -1059,11 +1114,20 @@ export const TimeSlider = {
 
     // Play button
     this.playBtn.addEventListener('click', () => {
+      // Exit live lock if user presses play
+      if (this.isLiveLocked) {
+        this.disengageLiveLock();
+      }
       if (this.isPlaying) {
         this.pause();
       } else {
         this.play();
       }
+    });
+
+    // Live button - toggle live lock mode
+    this.liveBtn?.addEventListener('click', () => {
+      this.toggleLiveLock();
     });
 
     // Step buttons - single step to next/prev available time
@@ -1161,6 +1225,9 @@ export const TimeSlider = {
       const lower = this.boundMinTime !== null ? this.formatTimeLabel(this.boundMinTime) : 'start';
       const upper = this.boundMaxTime !== null ? this.formatTimeLabel(this.boundMaxTime) : 'end';
       console.log(`Trim bounds set: ${lower} to ${upper}`);
+
+      // Save trim bounds to localStorage for session recovery
+      this.saveSliderSettings();
     };
 
     // Mouse events for lower handle
@@ -1338,7 +1405,12 @@ export const TimeSlider = {
    */
   setTime(time, source = 'slider') {
     this.currentTime = time;
-    this.yearLabel.textContent = this.formatTimeLabel(time);
+
+    // Update time label (unless live locked - clock handles that)
+    if (!this.isLiveLocked) {
+      this.yearLabel.textContent = this.formatTimeLabel(time);
+    }
+
     // Use setSliderFromTime to handle both indexed and linear modes
     this.setSliderFromTime(time);
 
@@ -2171,5 +2243,363 @@ export const TimeSlider = {
       this.metricTabContainer.style.display = 'none';
       this.metricTabContainer.innerHTML = '';
     }
+
+    // Clear live mode state
+    this.disengageLiveLock();
+    this.exitLiveMode();
+  },
+
+  // ============================================================================
+  // LIVE MODE - Real-time clock display
+  // ============================================================================
+
+  /**
+   * Check if current time is at or near the maximum (present time).
+   * Returns true if within 1 hour of the data max time.
+   */
+  checkIsLiveMode() {
+    if (!this.maxTime) return false;
+
+    // Get the effective max time (considering bounds)
+    const effectiveMax = this.boundMaxTime !== null ? this.boundMaxTime : this.maxTime;
+
+    // Check if current time is at or very close to max
+    // For hourly data, within 1 hour is "live"
+    const threshold = 60 * 60 * 1000; // 1 hour in ms
+    return this.currentTime >= effectiveMax - threshold;
+  },
+
+  /**
+   * Enter live mode - start clock updates
+   */
+  enterLiveMode() {
+    if (this.isLiveMode) return; // Already in live mode
+
+    this.isLiveMode = true;
+    console.log('TimeSlider: Entering live mode');
+
+    // Add live-mode class to year label for styling
+    if (this.yearLabel) {
+      this.yearLabel.classList.add('live-mode');
+    }
+
+    // Start clock update interval
+    this.liveClockInterval = setInterval(() => {
+      this.updateLiveClock();
+    }, this.LIVE_CLOCK_UPDATE_MS);
+
+    // Immediate update
+    this.updateLiveClock();
+
+    // Start data polling (every 5 minutes)
+    this.liveDataPollInterval = setInterval(() => {
+      this.pollLiveData();
+    }, this.LIVE_DATA_POLL_MS);
+  },
+
+  /**
+   * Exit live mode - stop clock updates
+   */
+  exitLiveMode() {
+    if (!this.isLiveMode) return;
+
+    this.isLiveMode = false;
+    console.log('TimeSlider: Exiting live mode');
+
+    // Remove live-mode class
+    if (this.yearLabel) {
+      this.yearLabel.classList.remove('live-mode');
+    }
+
+    // Stop clock interval
+    if (this.liveClockInterval) {
+      clearInterval(this.liveClockInterval);
+      this.liveClockInterval = null;
+    }
+
+    // Stop data polling
+    if (this.liveDataPollInterval) {
+      clearInterval(this.liveDataPollInterval);
+      this.liveDataPollInterval = null;
+    }
+  },
+
+  /**
+   * Update the clock display with current time
+   */
+  updateLiveClock() {
+    if (!this.yearLabel) return;
+
+    const now = new Date();
+    let timeStr;
+
+    if (this.liveTimezone === 'UTC') {
+      // UTC time
+      timeStr = now.toLocaleString('en-US', {
+        month: 'short', day: 'numeric', year: 'numeric',
+        hour: 'numeric', minute: '2-digit', second: '2-digit',
+        timeZone: 'UTC'
+      }) + ' UTC';
+    } else if (this.liveTimezone === 'local') {
+      // Local browser time
+      timeStr = now.toLocaleString('en-US', {
+        month: 'short', day: 'numeric', year: 'numeric',
+        hour: 'numeric', minute: '2-digit', second: '2-digit'
+      });
+    } else {
+      // Specific timezone (IANA string like 'America/Los_Angeles')
+      try {
+        timeStr = now.toLocaleString('en-US', {
+          month: 'short', day: 'numeric', year: 'numeric',
+          hour: 'numeric', minute: '2-digit', second: '2-digit',
+          timeZone: this.liveTimezone
+        });
+      } catch (e) {
+        // Fallback to local if timezone invalid
+        timeStr = now.toLocaleString('en-US', {
+          month: 'short', day: 'numeric', year: 'numeric',
+          hour: 'numeric', minute: '2-digit', second: '2-digit'
+        });
+      }
+    }
+
+    this.yearLabel.textContent = timeStr;
+  },
+
+  /**
+   * Set the timezone for live clock display
+   * @param {string} tz - 'local', 'UTC', or IANA timezone string
+   */
+  setLiveTimezone(tz) {
+    this.liveTimezone = tz;
+    // Save to localStorage
+    try {
+      localStorage.setItem('liveTimezone', tz);
+    } catch (e) {
+      // localStorage not available
+    }
+    // Update display if in live mode
+    if (this.isLiveMode) {
+      this.updateLiveClock();
+    }
+  },
+
+  /**
+   * Load timezone setting from localStorage
+   */
+  loadLiveTimezone() {
+    try {
+      const saved = localStorage.getItem('liveTimezone');
+      if (saved) {
+        this.liveTimezone = saved;
+      }
+    } catch (e) {
+      // localStorage not available
+    }
+  },
+
+  /**
+   * Save slider settings (trim bounds, speed) to localStorage
+   */
+  saveSliderSettings() {
+    try {
+      const settings = {
+        boundMinTime: this.boundMinTime,
+        boundMaxTime: this.boundMaxTime,
+        speedSliderValue: this.speedSliderValue
+      };
+      localStorage.setItem('countymap_slider_settings', JSON.stringify(settings));
+    } catch (e) {
+      // localStorage not available
+    }
+  },
+
+  /**
+   * Load slider settings from localStorage
+   */
+  loadSliderSettings() {
+    try {
+      const saved = localStorage.getItem('countymap_slider_settings');
+      if (saved) {
+        const settings = JSON.parse(saved);
+
+        // Restore speed
+        if (settings.speedSliderValue !== undefined) {
+          this.setSpeedFromSlider(settings.speedSliderValue);
+          if (this.speedSlider) {
+            this.speedSlider.value = settings.speedSliderValue;
+          }
+        }
+
+        // Restore trim bounds (will be applied after data loads in init())
+        if (settings.boundMinTime !== null && settings.boundMinTime !== undefined) {
+          this._pendingBoundMinTime = settings.boundMinTime;
+        }
+        if (settings.boundMaxTime !== null && settings.boundMaxTime !== undefined) {
+          this._pendingBoundMaxTime = settings.boundMaxTime;
+        }
+
+        console.log('[TimeSlider] Restored settings:', settings);
+      }
+    } catch (e) {
+      // localStorage not available or invalid data
+    }
+  },
+
+  /**
+   * Clear slider settings from localStorage (called by New Chat)
+   */
+  clearSliderSettings() {
+    try {
+      localStorage.removeItem('countymap_slider_settings');
+    } catch (e) {
+      // Ignore
+    }
+  },
+
+  /**
+   * Refresh the display after programmatic changes (e.g., session recovery).
+   * Updates all UI elements to reflect current internal state.
+   */
+  refreshDisplay() {
+    if (!this.sliderInitialized || !this.slider) return;
+
+    // Update slider element
+    this.slider.min = this.minTime;
+    this.slider.max = this.maxTime;
+    this.slider.value = this.currentTime;
+
+    // Update labels
+    if (this.minLabel) this.minLabel.textContent = this.formatTimeLabel(this.minTime);
+    if (this.maxLabel) this.maxLabel.textContent = this.formatTimeLabel(this.maxTime);
+    if (this.yearLabel) this.yearLabel.textContent = this.formatTimeLabel(this.currentTime);
+
+    // Update trim handles
+    this.updateTrimHandlePositions();
+
+    // Apply pending trim bounds if any
+    if (this._pendingBoundMinTime !== undefined || this._pendingBoundMaxTime !== undefined) {
+      if (this._pendingBoundMinTime !== undefined && this._pendingBoundMinTime >= this.minTime && this._pendingBoundMinTime <= this.maxTime) {
+        this.boundMinTime = this._pendingBoundMinTime;
+      }
+      if (this._pendingBoundMaxTime !== undefined && this._pendingBoundMaxTime >= this.minTime && this._pendingBoundMaxTime <= this.maxTime) {
+        this.boundMaxTime = this._pendingBoundMaxTime;
+      }
+      if (this.boundMinTime !== null || this.boundMaxTime !== null) {
+        this.updateTrimHandlePositions();
+      }
+      delete this._pendingBoundMinTime;
+      delete this._pendingBoundMaxTime;
+    }
+
+    console.log('[TimeSlider] Display refreshed');
+  },
+
+  /**
+   * Poll for new live data (called periodically in live mode)
+   */
+  async pollLiveData() {
+    console.log('TimeSlider: Polling for new live data...');
+    // This will be implemented to call the backend for new data
+    // For now, just dispatch an event that other modules can listen to
+    window.dispatchEvent(new CustomEvent('live-data-poll', {
+      detail: { timestamp: Date.now() }
+    }));
+  },
+
+  // ============================================================================
+  // LIVE LOCK - Pin view to current time (LIVE button)
+  // ============================================================================
+
+  /**
+   * Toggle live lock mode on/off
+   */
+  toggleLiveLock() {
+    if (this.isLiveLocked) {
+      this.disengageLiveLock();
+    } else {
+      this.engageLiveLock();
+    }
+  },
+
+  /**
+   * Engage live lock - jump to current time and lock there
+   */
+  engageLiveLock() {
+    if (this.isLiveLocked) return;
+
+    console.log('TimeSlider: Engaging live lock');
+    this.isLiveLocked = true;
+
+    // Stop any playback
+    if (this.isPlaying) {
+      this.pause();
+    }
+
+    // Update button appearance
+    if (this.liveBtn) {
+      this.liveBtn.classList.add('active');
+    }
+
+    // Enter live mode first (so setTime knows we're live locked)
+    this.enterLiveMode();
+
+    // Jump to max time - setTime handles all display updates
+    const effectiveMax = this.boundMaxTime !== null ? this.boundMaxTime : this.maxTime;
+    if (effectiveMax) {
+      this.setTime(effectiveMax, 'live');
+    }
+
+    // Disable slider interaction while locked
+    if (this.slider) {
+      this.slider.disabled = true;
+      this.slider.style.opacity = '0.5';
+    }
+
+    // Dispatch event for other modules (e.g., overlays to refresh)
+    window.dispatchEvent(new CustomEvent('live-lock-engaged', {
+      detail: { timestamp: Date.now() }
+    }));
+  },
+
+  /**
+   * Disengage live lock - allow normal time navigation
+   */
+  disengageLiveLock() {
+    if (!this.isLiveLocked) return;
+
+    console.log('TimeSlider: Disengaging live lock');
+    this.isLiveLocked = false;
+
+    // Update button appearance
+    if (this.liveBtn) {
+      this.liveBtn.classList.remove('active');
+    }
+
+    // Re-enable slider interaction
+    if (this.slider) {
+      this.slider.disabled = false;
+      this.slider.style.opacity = '1';
+    }
+
+    // Exit live mode (stop clock)
+    this.exitLiveMode();
+
+    // Update label with current time value
+    if (this.yearLabel) {
+      this.yearLabel.textContent = this.formatTimeLabel(this.currentTime);
+    }
+
+    // Dispatch event
+    window.dispatchEvent(new CustomEvent('live-lock-disengaged', {
+      detail: { timestamp: Date.now() }
+    }));
+  },
+
+  /**
+   * Check if live lock is currently active
+   */
+  isLocked() {
+    return this.isLiveLocked;
   }
 };

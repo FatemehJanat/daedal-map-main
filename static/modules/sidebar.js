@@ -236,11 +236,13 @@ export const SettingsManager = {
       initFoldersBtn: document.getElementById('initFoldersBtn'),
       status: document.getElementById('settingsStatus'),
       currentConfig: document.getElementById('currentConfig'),
-      sidebarFooter: document.getElementById('sidebarFooter')
+      sidebarFooter: document.getElementById('sidebarFooter'),
+      timezoneSelect: document.getElementById('timezoneSelect')
     };
 
     this.setupEventListeners();
     this.loadSettings();
+    this.loadTimezoneSettings();
   },
 
   /**
@@ -395,5 +397,38 @@ export const SettingsManager = {
     }
 
     currentConfig.innerHTML = html;
+  },
+
+  /**
+   * Load timezone setting from localStorage and set up listener
+   */
+  loadTimezoneSettings() {
+    const { timezoneSelect } = this.elements;
+    if (!timezoneSelect) return;
+
+    // Load saved timezone
+    try {
+      const saved = localStorage.getItem('liveTimezone');
+      if (saved) {
+        timezoneSelect.value = saved;
+      }
+    } catch (e) {
+      // localStorage not available
+    }
+
+    // Listen for changes
+    timezoneSelect.addEventListener('change', (e) => {
+      const tz = e.target.value;
+      try {
+        localStorage.setItem('liveTimezone', tz);
+      } catch (e) {
+        // localStorage not available
+      }
+
+      // Update TimeSlider if available
+      if (window.TimeSlider) {
+        window.TimeSlider.setLiveTimezone(tz);
+      }
+    });
   }
 };

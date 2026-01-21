@@ -6,6 +6,9 @@
 
 import { CONFIG } from './config.js';
 
+// localStorage key for persisting overlay selections
+const STORAGE_KEY = 'countymap_activeOverlays';
+
 // Category configuration with nested overlays
 const CATEGORIES = [
   {
@@ -144,7 +147,7 @@ const CATEGORIES = [
       {
         id: 'humidity',
         label: 'Humidity',
-        description: 'Relative humidity (live data only)',
+        description: 'Relative humidity (1940-present)',
         default: false,
         locked: false,
         model: 'weather-grid',
@@ -155,13 +158,79 @@ const CATEGORIES = [
       {
         id: 'snow-depth',
         label: 'Snow Depth',
-        description: 'Snow depth (live data only)',
+        description: 'Snow depth (1940-present)',
         default: false,
         locked: false,
         model: 'weather-grid',
         icon: '#',
         hasYearFilter: true,
         variable: 'snow_depth_m'
+      },
+      {
+        id: 'precipitation',
+        label: 'Precipitation',
+        description: 'Rainfall (1940-present)',
+        default: false,
+        locked: false,
+        model: 'weather-grid',
+        icon: ',',
+        hasYearFilter: true,
+        variable: 'precipitation_mm'
+      },
+      {
+        id: 'cloud-cover',
+        label: 'Cloud Cover',
+        description: 'Cloud coverage percent (1940-present)',
+        default: false,
+        locked: false,
+        model: 'weather-grid',
+        icon: 'o',
+        hasYearFilter: true,
+        variable: 'cloud_cover_pct'
+      },
+      {
+        id: 'pressure',
+        label: 'Pressure',
+        description: 'Sea level pressure (1940-2025, historical only)',
+        default: false,
+        locked: false,
+        model: 'weather-grid',
+        icon: 'P',
+        hasYearFilter: true,
+        variable: 'pressure_hpa'
+      },
+      {
+        id: 'solar-radiation',
+        label: 'Solar Radiation',
+        description: 'Surface solar radiation (1940-present)',
+        default: false,
+        locked: false,
+        model: 'weather-grid',
+        icon: 'S',
+        hasYearFilter: true,
+        variable: 'solar_radiation'
+      },
+      {
+        id: 'soil-temp',
+        label: 'Soil Temperature',
+        description: 'Surface soil temperature (1940-present)',
+        default: false,
+        locked: false,
+        model: 'weather-grid',
+        icon: 'G',
+        hasYearFilter: true,
+        variable: 'soil_temp_c'
+      },
+      {
+        id: 'soil-moisture',
+        label: 'Soil Moisture',
+        description: 'Surface soil moisture (1940-present)',
+        default: false,
+        locked: false,
+        model: 'weather-grid',
+        icon: 'M',
+        hasYearFilter: true,
+        variable: 'soil_moisture'
       },
       // PLACEHOLDER: Wind and ocean overlays for future deck.gl implementation
       // {
@@ -233,10 +302,13 @@ export const OverlaySelector = {
    * Creates DOM elements and wires up event handlers.
    */
   init() {
-    // Set default overlays
-    for (const overlay of OVERLAYS) {
-      if (overlay.default) {
-        this.activeOverlays.add(overlay.id);
+    // Try to restore from localStorage, fall back to defaults
+    if (!this._restoreState()) {
+      // Set default overlays if no saved state
+      for (const overlay of OVERLAYS) {
+        if (overlay.default) {
+          this.activeOverlays.add(overlay.id);
+        }
       }
     }
 
@@ -451,6 +523,9 @@ export const OverlaySelector = {
 
       // Notify listeners
       this._notifyListeners(overlayId, checkbox.checked);
+
+      // Persist to localStorage
+      this._saveState();
     });
   },
 
@@ -494,6 +569,9 @@ export const OverlaySelector = {
 
     console.log('Category toggled:', categoryId, active);
     console.log('Active overlays:', Array.from(this.activeOverlays));
+
+    // Persist to localStorage
+    this._saveState();
   },
 
   /**
@@ -548,6 +626,9 @@ export const OverlaySelector = {
 
     // Notify listeners
     this._notifyListeners(overlayId, this.activeOverlays.has(overlayId));
+
+    // Persist to localStorage
+    this._saveState();
   },
 
   /**
@@ -651,6 +732,93 @@ export const OverlaySelector = {
 
     // Update category checkbox
     this._updateCategoryCheckbox(overlayId);
+
+    // Persist to localStorage
+    this._saveState();
+  },
+
+  /**
+   * Save active overlays to localStorage.
+   * @private
+   */
+  _saveState() {
+    try {
+      const data = Array.from(this.activeOverlays);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    } catch (e) {
+      // localStorage not available or full
+      console.warn('OverlaySelector: Could not save state to localStorage', e);
+    }
+  },
+
+  /**
+   * Restore active overlays from localStorage.
+   * @private
+   * @returns {boolean} True if state was restored, false otherwise
+   */
+  _restoreState() {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const data = JSON.parse(saved);
+        if (Array.isArray(data)) {
+          // Validate that saved overlay IDs still exist
+          for (const id of data) {
+            if (OVERLAYS.find(o => o.id === id)) {
+              this.activeOverlays.add(id);
+            }
+          }
+          console.log('OverlaySelector: Restored state from localStorage:', data);
+          return true;
+        }
+      }
+    } catch (e) {
+      console.warn('OverlaySelector: Could not restore state from localStorage', e);
+    }
+    return false;
+  },
+
+  /**
+   * Clear saved state and reset to defaults.
+   * Called by New Chat button.
+   */
+  clearState() {
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch (e) {
+      // Ignore
+    }
+
+    // Clear current state
+    const previousOverlays = Array.from(this.activeOverlays);
+    this.activeOverlays.clear();
+
+    // Reset to defaults
+    for (const overlay of OVERLAYS) {
+      if (overlay.default) {
+        this.activeOverlays.add(overlay.id);
+      }
+    }
+
+    // Rebuild UI to reflect reset state
+    if (this.list) {
+      this._buildUI();
+      this._setupEvents();
+    }
+
+    // Notify listeners of changes
+    for (const id of previousOverlays) {
+      if (!this.activeOverlays.has(id)) {
+        this._notifyListeners(id, false);
+      }
+    }
+    for (const id of this.activeOverlays) {
+      if (!previousOverlays.includes(id)) {
+        this._notifyListeners(id, true);
+      }
+    }
+
+    console.log('OverlaySelector: State cleared, reset to defaults');
   }
 };
 

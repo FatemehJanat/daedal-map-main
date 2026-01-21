@@ -3,12 +3,15 @@
  *
  * Supports multiple simultaneous overlays (temperature, humidity, snow-depth).
  * Each overlay gets its own map source/layer and rendering state.
- * Uses a raster image approach for efficient rendering of 16,200 grid cells.
- * Each pixel in the 180x90 image represents a 2-degree grid cell.
+ *
+ * Uses a 1-degree display grid (360x179) that can accept any resolution data:
+ * - 2-degree even (ERA5: 88, 86, 84...)
+ * - 2-degree odd (Open-Meteo: 89, 87, 85...)
+ * - 1-degree, 3-degree, 4-degree, etc.
+ *
+ * Bilinear interpolation fills gaps between data points for smooth gradients.
  * Animation is achieved by swapping image data on each frame.
  */
-
-import { fetchMsgpack } from '../utils/fetch.js';
 
 // Dependencies (set via setDependencies)
 let MapAdapter = null;
@@ -17,9 +20,14 @@ export function setDependencies(deps) {
   MapAdapter = deps.MapAdapter;
 }
 
-// Grid dimensions (must match backend)
-const GRID_ROWS = 90;   // latitude bands
-const GRID_COLS = 180;  // longitude bands
+// 1-degree display grid dimensions
+// Latitude: 89.9 to -89.9 (near poles for globe display, avoids Mercator infinity at exactly 90)
+// Longitude: -180 to 179
+const DISPLAY_ROWS = 180;   // latitude bands (89.9 to -89.9, 1-degree steps)
+const DISPLAY_COLS = 360;   // longitude bands (-180 to 179)
+const DISPLAY_LAT_MAX = 89.9;
+const DISPLAY_LAT_MIN = -89.9;
+const DISPLAY_LON_MIN = -180;
 
 /**
  * Generate unique source/layer IDs for an overlay.
@@ -91,6 +99,94 @@ function buildColorLUT(colorScale) {
   return lut;
 }
 
+/**
+ * Perform bilinear interpolation to fill a 1-degree display grid from source data.
+ *
+ * @param {Array} values - Source data values in row-major order
+ * @param {Object} grid - Grid metadata { lat_start, lon_start, lat_step, lon_step, rows, cols }
+ * @returns {Float32Array} Interpolated values for 1-degree display grid (360 x 180)
+ */
+function bilinearInterpolate(values, grid) {
+  const { lat_start, lon_start, lat_step, lon_step, rows: srcRows, cols: srcCols } = grid;
+
+  // Create output array for 1-degree display grid
+  const output = new Float32Array(DISPLAY_COLS * DISPLAY_ROWS);
+  output.fill(NaN);
+
+  // Calculate display grid step sizes
+  const displayLatStep = (DISPLAY_LAT_MAX - DISPLAY_LAT_MIN) / (DISPLAY_ROWS - 1);
+  const displayLonStep = 1;  // Always 1 degree for longitude
+
+  // Build lookup structure for source data
+  // Source data is in row-major order: [row0col0, row0col1, ..., row1col0, ...]
+  // where row 0 is the highest latitude (lat_start)
+
+  // For each pixel in the 1-degree display grid
+  for (let displayRow = 0; displayRow < DISPLAY_ROWS; displayRow++) {
+    const displayLat = DISPLAY_LAT_MAX - displayRow * displayLatStep;  // 89.9, 88.9, ... -89.9
+
+    for (let displayCol = 0; displayCol < DISPLAY_COLS; displayCol++) {
+      const displayLon = DISPLAY_LON_MIN + displayCol * displayLonStep;  // -180, -179, ... 179
+
+      // Find the position in source grid coordinates
+      // Source grid: lat goes from lat_start down by lat_step
+      // Source grid: lon goes from lon_start up by lon_step
+
+      const srcRowFloat = (lat_start - displayLat) / lat_step;
+      const srcColFloat = (displayLon - lon_start) / lon_step;
+
+      // Handle longitude wrapping (if displayLon < lon_start, wrap around)
+      let srcColFloatWrapped = srcColFloat;
+      if (srcColFloatWrapped < 0) {
+        srcColFloatWrapped += srcCols;
+      } else if (srcColFloatWrapped >= srcCols) {
+        srcColFloatWrapped -= srcCols;
+      }
+
+      // Get the 4 surrounding source grid cells
+      const srcRow0 = Math.floor(srcRowFloat);
+      const srcRow1 = srcRow0 + 1;
+      const srcCol0 = Math.floor(srcColFloatWrapped);
+      const srcCol1 = (srcCol0 + 1) % srcCols;  // Wrap longitude
+
+      // Check bounds for latitude (no wrapping)
+      if (srcRow0 < 0 || srcRow1 >= srcRows) {
+        continue;  // Outside source data latitude range
+      }
+
+      // Get fractional position within the cell (0 to 1)
+      const ty = srcRowFloat - srcRow0;
+      const tx = srcColFloatWrapped - srcCol0;
+
+      // Get the 4 corner values
+      const idx00 = srcRow0 * srcCols + srcCol0;
+      const idx01 = srcRow0 * srcCols + srcCol1;
+      const idx10 = srcRow1 * srcCols + srcCol0;
+      const idx11 = srcRow1 * srcCols + srcCol1;
+
+      const v00 = values[idx00];
+      const v01 = values[idx01];
+      const v10 = values[idx10];
+      const v11 = values[idx11];
+
+      // Skip if any corner is null/undefined
+      if (v00 == null || v01 == null || v10 == null || v11 == null) {
+        continue;
+      }
+
+      // Bilinear interpolation
+      const value = (1 - tx) * (1 - ty) * v00 +
+                    tx * (1 - ty) * v01 +
+                    (1 - tx) * ty * v10 +
+                    tx * ty * v11;
+
+      output[displayRow * DISPLAY_COLS + displayCol] = value;
+    }
+  }
+
+  return output;
+}
+
 // ============================================================================
 // WeatherGridInstance - Individual overlay state and rendering
 // ============================================================================
@@ -109,10 +205,13 @@ class WeatherGridInstance {
     this.currentFrameIndex = 0;
     this.colorLUT = null;
 
-    // Canvas for this overlay
+    // Cached interpolated frames
+    this.interpolatedFrames = null;
+
+    // Canvas for this overlay (1-degree display grid)
     this.imageCanvas = document.createElement('canvas');
-    this.imageCanvas.width = GRID_COLS;
-    this.imageCanvas.height = GRID_ROWS;
+    this.imageCanvas.width = DISPLAY_COLS;
+    this.imageCanvas.height = DISPLAY_ROWS;
     this.imageCtx = this.imageCanvas.getContext('2d');
 
     this.isInitialized = false;
@@ -120,9 +219,10 @@ class WeatherGridInstance {
 
   /**
    * Set up data and color lookup table.
+   * Pre-interpolates all frames for smooth animation.
    * @param {Object} yearData - { timestamps, values }
    * @param {Object} colorScale - { min, max, stops }
-   * @param {Object} grid - Grid metadata
+   * @param {Object} grid - Grid metadata from backend
    */
   setData(yearData, colorScale, grid) {
     this.data = {
@@ -133,6 +233,17 @@ class WeatherGridInstance {
     };
     this.currentFrameIndex = 0;
     this.colorLUT = buildColorLUT(colorScale);
+
+    // Pre-interpolate all frames to 1-degree display grid
+    console.log(`WeatherGridInstance[${this.overlayId}]: Interpolating ${yearData.values.length} frames to 1-degree grid...`);
+    const startTime = performance.now();
+
+    this.interpolatedFrames = yearData.values.map((values) => {
+      return bilinearInterpolate(values, grid);
+    });
+
+    const elapsed = performance.now() - startTime;
+    console.log(`WeatherGridInstance[${this.overlayId}]: Interpolation complete in ${elapsed.toFixed(0)}ms`);
   }
 
   /**
@@ -140,21 +251,21 @@ class WeatherGridInstance {
    * @param {number} frameIndex - Index into data.timestamps array
    */
   renderFrame(frameIndex) {
-    if (!this.data || !this.data.values || frameIndex >= this.data.values.length) {
+    if (!this.interpolatedFrames || frameIndex >= this.interpolatedFrames.length) {
       console.warn(`WeatherGridInstance[${this.overlayId}]: Invalid frame index`, frameIndex);
       return;
     }
 
-    const values = this.data.values[frameIndex];
+    const values = this.interpolatedFrames[frameIndex];
     const { min, max } = this.data.color_scale;
     const range = max - min;
 
     // Create ImageData
-    const imageData = this.imageCtx.createImageData(GRID_COLS, GRID_ROWS);
+    const imageData = this.imageCtx.createImageData(DISPLAY_COLS, DISPLAY_ROWS);
     const pixels = imageData.data;
 
     // Convert values to pixels
-    for (let i = 0; i < values.length && i < GRID_ROWS * GRID_COLS; i++) {
+    for (let i = 0; i < values.length; i++) {
       const value = values[i];
       const pixelIndex = i * 4;
 
@@ -220,12 +331,12 @@ class WeatherGridInstance {
     const map = MapAdapter.map;
     const dataUrl = this.imageCanvas.toDataURL('image/png');
 
-    // World bounds for the image
+    // World bounds for the 1-degree display grid (89 to -89 lat, -180 to 180 lon)
     const coordinates = [
-      [-180, 89],   // top-left
-      [180, 89],    // top-right
-      [180, -89],   // bottom-right
-      [-180, -89]   // bottom-left
+      [-180, DISPLAY_LAT_MAX],   // top-left
+      [180, DISPLAY_LAT_MAX],    // top-right (use 180 for full coverage)
+      [180, DISPLAY_LAT_MIN],    // bottom-right
+      [-180, DISPLAY_LAT_MIN]    // bottom-left
     ];
 
     const source = map.getSource(this.ids.source);
@@ -290,6 +401,7 @@ class WeatherGridInstance {
     }
 
     this.data = null;
+    this.interpolatedFrames = null;
     this.currentFrameIndex = 0;
     this.isInitialized = false;
 
@@ -384,7 +496,7 @@ export const WeatherGridModel = {
    * @param {string} overlayId - Overlay ID
    * @param {Object} yearData - { timestamps: [...], values: [[...], ...] }
    * @param {Object} colorScale - { min, max, stops: [[value, color], ...] }
-   * @param {Object} grid - { lat_min, lat_max, lon_min, lon_max, rows, cols }
+   * @param {Object} grid - Grid metadata { lat_start, lon_start, lat_step, lon_step, rows, cols }
    * @returns {boolean} Success
    */
   displayFromCache(overlayId, yearData, colorScale, grid) {
@@ -396,9 +508,9 @@ export const WeatherGridModel = {
     const instance = this.getInstance(overlayId);
     instance.setData(yearData, colorScale, grid);
 
-    if (instance.data.values && instance.data.values.length > 0) {
+    if (instance.interpolatedFrames && instance.interpolatedFrames.length > 0) {
       instance.renderFrame(0);
-      console.log(`WeatherGridModel[${overlayId}]: Displayed from cache,`, instance.data.values.length, 'frames');
+      console.log(`WeatherGridModel[${overlayId}]: Displayed from cache,`, instance.interpolatedFrames.length, 'frames');
       return true;
     }
 
@@ -531,7 +643,7 @@ export const WeatherGridModel = {
   },
 
   /** @deprecated Use displayFromCache(overlayId, ...) */
-  async show(variable, tier, year = null) {
+  async show() {
     console.warn('WeatherGridModel.show() is deprecated - use displayFromCache(overlayId, ...)');
     return false;
   }

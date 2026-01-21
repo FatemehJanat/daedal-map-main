@@ -2332,7 +2332,7 @@ def extract_multiple_locations(query: str, viewport: dict = None) -> dict:
 # Main Preprocessor Function
 # =============================================================================
 
-def preprocess_query(query: str, viewport: dict = None, active_overlays: dict = None, cache_stats: dict = None, saved_order_names: list = None) -> dict:
+def preprocess_query(query: str, viewport: dict = None, active_overlays: dict = None, cache_stats: dict = None, saved_order_names: list = None, time_state: dict = None) -> dict:
     """
     Main preprocessor function - extracts all hints from query.
 
@@ -2342,6 +2342,7 @@ def preprocess_query(query: str, viewport: dict = None, active_overlays: dict = 
         active_overlays: Optional dict with {type, filters, allActive} from frontend
         cache_stats: Optional dict with per-overlay stats {overlayId: {count, years, ...}}
         saved_order_names: Optional list of saved order names from frontend
+        time_state: Optional dict with time slider state {isLiveLocked, currentTime, etc.}
 
     Returns a hints dict that can be injected into LLM context.
     """
@@ -2528,6 +2529,8 @@ def preprocess_query(query: str, viewport: dict = None, active_overlays: dict = 
         "candidates": candidates,
         # Saved orders (Phase 7 - Cache Unification)
         "saved_order_names": saved_order_names or [],  # Names of saved orders for load/save commands
+        # Time state (live mode)
+        "time_state": time_state,  # {isLiveLocked, currentTime, currentTimeFormatted, granularity, timezone}
     }
 
     # Build summary for LLM context injection
@@ -2595,6 +2598,14 @@ def preprocess_query(query: str, viewport: dict = None, active_overlays: dict = 
             summary_parts.append(f"OVERLAY_INTENT: Filter {overlay} ({severity})")
         elif action == "query":
             summary_parts.append(f"OVERLAY_INTENT: Query about {overlay}")
+
+    # Add time state (live mode) info
+    if time_state and time_state.get("available"):
+        if time_state.get("isLiveLocked"):
+            tz = time_state.get("timezone", "local")
+            summary_parts.append(f"TIME: LIVE MODE (locked to current time, timezone: {tz})")
+        elif time_state.get("currentTimeFormatted"):
+            summary_parts.append(f"TIME: Viewing {time_state['currentTimeFormatted']}")
 
     # Add saved orders info if any exist
     if saved_order_names:

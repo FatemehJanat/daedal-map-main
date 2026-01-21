@@ -134,23 +134,27 @@ const OVERLAY_ENDPOINTS = {
     yearField: 'year'
   },
   // Weather/Climate overlays - grid data format (not GeoJSON)
+  // Data available from 1940, but UI defaults to 2000 (earlier data via chat)
   temperature: {
     baseUrl: '/api/weather/grid',
-    params: { variable: 'temp_c', tier: 'monthly' },
+    params: { variable: 'temp_c', tier: 'weekly' },
     isWeatherGrid: true,
-    minYear: 1940
+    minYear: 1940,
+    defaultMinYear: 2000
   },
   humidity: {
     baseUrl: '/api/weather/grid',
-    params: { variable: 'humidity', tier: 'monthly' },
+    params: { variable: 'humidity', tier: 'weekly' },
     isWeatherGrid: true,
-    minYear: 1940
+    minYear: 1940,
+    defaultMinYear: 2000
   },
   'snow-depth': {
     baseUrl: '/api/weather/grid',
-    params: { variable: 'snow_depth_m', tier: 'monthly' },
+    params: { variable: 'snow_depth_m', tier: 'weekly' },
     isWeatherGrid: true,
-    minYear: 1940
+    minYear: 1940,
+    defaultMinYear: 2000
   }
 };
 
@@ -626,44 +630,144 @@ function buildYearUrl(endpoint, year, overlayId = null) {
  * @param {AbortSignal} signal - Optional abort signal
  * @returns {Promise<boolean>} True if data was loaded
  */
+// All climate variables to fetch together (optimization: one API call for all)
+const CLIMATE_VARIABLES = [
+  'temp_c', 'humidity', 'snow_depth_m',
+  'precipitation_mm', 'cloud_cover_pct', 'pressure_hpa',
+  'solar_radiation', 'soil_temp_c', 'soil_moisture'
+];
+const CLIMATE_OVERLAY_MAP = {
+  'temperature': 'temp_c',
+  'humidity': 'humidity',
+  'snow-depth': 'snow_depth_m',
+  'precipitation': 'precipitation_mm',
+  'cloud-cover': 'cloud_cover_pct',
+  'pressure': 'pressure_hpa',
+  'solar-radiation': 'solar_radiation',
+  'soil-temp': 'soil_temp_c',
+  'soil-moisture': 'soil_moisture'
+};
+const VARIABLE_OVERLAY_MAP = {
+  'temp_c': 'temperature',
+  'humidity': 'humidity',
+  'snow_depth_m': 'snow-depth',
+  'precipitation_mm': 'precipitation',
+  'cloud_cover_pct': 'cloud-cover',
+  'pressure_hpa': 'pressure',
+  'solar_radiation': 'solar-radiation',
+  'soil_temp_c': 'soil-temp',
+  'soil_moisture': 'soil-moisture'
+};
+
 async function loadWeatherYearData(overlayId, year, endpoint, signal = null) {
-  // Build URL for weather API
+  // Check if we already have this year's data cached (from a previous batch request)
+  if (dataCache[overlayId]?.years?.[year]) {
+    console.log(`OverlayController: Using cached data for ${overlayId} year ${year}`);
+    return true;
+  }
+
+  // Smart batching: check which variables are missing from cache for this year
+  const missingVars = CLIMATE_VARIABLES.filter(varName => {
+    const varOverlayId = VARIABLE_OVERLAY_MAP[varName];
+    return !dataCache[varOverlayId]?.years?.[year];
+  });
+
+  // If nothing is missing (shouldn't happen but safety check), we're done
+  if (missingVars.length === 0) {
+    console.log(`OverlayController: All climate variables already cached for year ${year}`);
+    return true;
+  }
+
+  // Build URL for weather API - only fetch missing variables
   const url = new URL(endpoint.baseUrl, window.location.origin);
   url.searchParams.set('tier', endpoint.params.tier || 'monthly');
-  url.searchParams.set('variable', endpoint.params.variable);
+  url.searchParams.set('variables', missingVars.join(','));  // Only missing vars
   url.searchParams.set('year', year);
 
-  console.log(`OverlayController: Fetching weather ${overlayId} for year ${year}`);
+  console.log(`OverlayController: Fetching ${missingVars.length} climate variable(s) for year ${year}: ${missingVars.join(', ')}`);
 
   try {
     const fetchOptions = signal ? { signal } : {};
     const data = await fetchMsgpack(url.toString(), fetchOptions);
 
     if (data.error) {
-      console.error(`OverlayController: Weather API error for ${overlayId}:`, data.error);
+      console.error(`OverlayController: Weather API error:`, data.error);
       loadedYears[overlayId]?.delete(year);
       return false;
     }
 
     // Log if tier cascade occurred (e.g., monthly -> hourly for recent data)
     if (data.tier && data.requested_tier && data.tier !== data.requested_tier) {
-      console.log(`OverlayController: Tier cascade for ${overlayId} ${year}: ${data.requested_tier} -> ${data.tier}`);
+      console.log(`OverlayController: Tier cascade for ${year}: ${data.requested_tier} -> ${data.tier}`);
     }
 
-    // Initialize cache structure for weather data
-    // Format: dataCache[overlayId] = { years: { 2020: {...}, 2021: {...} }, colorScale: {...}, grid: {...} }
+    // Multi-variable response: cache all variables at once
+    if (data.variables && data.color_scales) {
+      for (const variable of data.variables) {
+        const varOverlayId = VARIABLE_OVERLAY_MAP[variable];
+        if (!varOverlayId) continue;
+
+        // Initialize cache structure
+        if (!dataCache[varOverlayId]) {
+          dataCache[varOverlayId] = { years: {}, colorScale: null, grid: null };
+        }
+
+        // Store the year's data for this variable
+        dataCache[varOverlayId].years[year] = {
+          timestamps: data.timestamps,
+          values: data.values[variable],
+          tier: data.tier
+        };
+
+        // Store color scale and grid
+        if (data.color_scales[variable]) {
+          dataCache[varOverlayId].colorScale = data.color_scales[variable];
+        }
+        if (data.grid) {
+          dataCache[varOverlayId].grid = data.grid;
+        }
+
+        // Update year range cache
+        if (!yearRangeCache[varOverlayId]) {
+          yearRangeCache[varOverlayId] = { min: year, max: year, available: [] };
+        }
+        yearRangeCache[varOverlayId].min = Math.min(yearRangeCache[varOverlayId].min, year);
+        yearRangeCache[varOverlayId].max = Math.max(yearRangeCache[varOverlayId].max, year);
+        if (!yearRangeCache[varOverlayId].available.includes(year)) {
+          yearRangeCache[varOverlayId].available.push(year);
+          yearRangeCache[varOverlayId].available.sort((a, b) => a - b);
+        }
+
+        // Mark as loaded
+        if (!loadedYears[varOverlayId]) loadedYears[varOverlayId] = new Set();
+        loadedYears[varOverlayId].add(year);
+      }
+
+      const frameCount = data.timestamps?.length || 0;
+      console.log(`OverlayController: Cached ${data.variables.length} climate variables for year ${year} (${frameCount} frames)`);
+
+      // Dispatch cache update event for all variables
+      for (const variable of data.variables) {
+        const varOverlayId = VARIABLE_OVERLAY_MAP[variable];
+        if (varOverlayId) {
+          window.dispatchEvent(new CustomEvent('overlayCacheUpdated', { detail: { overlayId: varOverlayId, year } }));
+        }
+      }
+
+      return true;
+    }
+
+    // Fallback: single variable response (backwards compatibility)
     if (!dataCache[overlayId]) {
       dataCache[overlayId] = { years: {}, colorScale: null, grid: null };
     }
 
-    // Store the year's data (include actual tier for reference)
     dataCache[overlayId].years[year] = {
       timestamps: data.timestamps,
       values: data.values,
-      tier: data.tier  // Actual tier returned (may differ from requested due to cascade)
+      tier: data.tier
     };
 
-    // Store color scale and grid info (same for all years of same variable)
     if (data.color_scale) {
       dataCache[overlayId].colorScale = data.color_scale;
     }
@@ -674,7 +778,6 @@ async function loadWeatherYearData(overlayId, year, endpoint, signal = null) {
     const frameCount = data.timestamps?.length || 0;
     console.log(`OverlayController: Cached weather ${overlayId} year ${year} (${frameCount} frames)`);
 
-    // Update year range cache
     if (!yearRangeCache[overlayId]) {
       yearRangeCache[overlayId] = { min: year, max: year, available: [] };
     }
@@ -685,12 +788,10 @@ async function loadWeatherYearData(overlayId, year, endpoint, signal = null) {
       yearRangeCache[overlayId].available.sort((a, b) => a - b);
     }
 
-    // Dispatch cache update event
     window.dispatchEvent(new CustomEvent('overlayCacheUpdated', { detail: { overlayId, year } }));
 
     return true;
   } catch (error) {
-    // Remove from loadedYears so it can be retried
     loadedYears[overlayId]?.delete(year);
 
     if (error.name === 'AbortError') {
@@ -3837,9 +3938,9 @@ export const OverlayController = {
         cachedData.grid
       );
 
-      // Set TimeSlider to full historical range (1940-present as timestamps)
+      // Set TimeSlider to default range (2000-present, data exists back to 1940 via chat)
       if (TimeSlider) {
-        const minDate = new Date(Date.UTC(1940, 0, 1));  // Jan 1, 1940
+        const minDate = new Date(Date.UTC(2000, 0, 1));  // Jan 1, 2000 (default view)
         const maxDate = new Date();  // Now
         TimeSlider.setTimeRange({
           min: minDate.getTime(),

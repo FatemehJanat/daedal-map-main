@@ -2789,19 +2789,25 @@ async def get_storms_list(year: int = None, min_year: int = None, basin: str = N
 @app.get("/api/weather/grid")
 async def get_weather_grid(
     tier: str,
-    variable: str = "temp_c",
+    variable: str = None,
+    variables: str = None,
     year: int = None
 ):
     """
     Get weather grid data for animation.
 
     Loads parquet files and pivots to wide format for efficient animation.
-    Returns timestamps array + values array (16,200 values per timestamp).
+    Returns timestamps array + values dict (keyed by variable, 16,020 values per timestamp).
 
     Args:
         tier: 'hourly', 'weekly', or 'monthly'
-        variable: 'temp_c', 'humidity', or 'snow_depth_m'
+        variable: Single variable (legacy, for backwards compatibility)
+        variables: Comma-separated list of variables (e.g., 'temp_c,humidity,snow_depth_m')
         year: For monthly tier, which year to load
+
+    Response format:
+        Single variable: { values: [[...], ...], variable: 'temp_c', ... }
+        Multiple variables: { values: { temp_c: [[...], ...], humidity: [[...], ...] }, variables: [...], ... }
     """
     import pandas as pd
     import numpy as np
@@ -2815,9 +2821,28 @@ async def get_weather_grid(
         if tier not in ('hourly', 'weekly', 'monthly'):
             return msgpack_error(f"Invalid tier: {tier}. Must be hourly, weekly, or monthly", 400)
 
-        # Validate variable
-        if variable not in ('temp_c', 'humidity', 'snow_depth_m'):
-            return msgpack_error(f"Invalid variable: {variable}. Must be temp_c, humidity, or snow_depth_m", 400)
+        # Parse variables - support both single 'variable' and multi 'variables' params
+        valid_vars = {
+            'temp_c', 'humidity', 'snow_depth_m',
+            'precipitation_mm', 'cloud_cover_pct', 'pressure_hpa',
+            'solar_radiation', 'soil_temp_c', 'soil_moisture'
+        }
+        if variables:
+            # Multi-variable request
+            requested_vars = [v.strip() for v in variables.split(',')]
+            invalid = [v for v in requested_vars if v not in valid_vars]
+            if invalid:
+                return msgpack_error(f"Invalid variables: {invalid}. Must be one of: {valid_vars}", 400)
+        elif variable:
+            # Single variable (backwards compatible)
+            if variable not in valid_vars:
+                return msgpack_error(f"Invalid variable: {variable}. Must be one of: {valid_vars}", 400)
+            requested_vars = [variable]
+        else:
+            # Default to temp_c
+            requested_vars = ['temp_c']
+
+        is_multi = len(requested_vars) > 1
 
         # Tier cascade: if requested tier unavailable for year, fall back to finer resolution
         actual_tier = tier
@@ -2852,29 +2877,45 @@ async def get_weather_grid(
         # Try requested tier first
         files = get_files_for_tier(tier, year)
 
-        # Cascade: monthly -> weekly -> hourly
+        # Cascade: try finer resolution first, then coarser
+        # weekly -> hourly (finer) -> monthly (coarser)
+        # monthly -> weekly (finer) -> hourly (finest)
+        if not files and tier == 'weekly':
+            logger.info(f"No weekly data for {year}, trying hourly")
+            files = get_files_for_tier('hourly', year)
+            if files:
+                actual_tier = 'hourly'
+            else:
+                logger.info(f"No hourly data for {year}, trying monthly")
+                files = get_files_for_tier('monthly', year)
+                if files:
+                    actual_tier = 'monthly'
+
         if not files and tier == 'monthly':
             logger.info(f"No monthly data for {year}, trying weekly")
             files = get_files_for_tier('weekly', year)
             if files:
                 actual_tier = 'weekly'
-
-        if not files and tier in ('monthly', 'weekly'):
-            logger.info(f"No weekly data for {year}, trying hourly")
-            files = get_files_for_tier('hourly', year)
-            if files:
-                actual_tier = 'hourly'
+            else:
+                logger.info(f"No weekly data for {year}, trying hourly")
+                files = get_files_for_tier('hourly', year)
+                if files:
+                    actual_tier = 'hourly'
 
         if not files:
             return msgpack_error(f"No {tier} data files found for year {year}", 404)
 
-        # Read and pivot data
+        # Read and pivot data - support multiple variables in one pass
         timestamps = []
-        all_values = []
+        all_values = {var: [] for var in requested_vars}  # Dict of lists per variable
+        grid_info = None  # Will be set from first file
+
+        # Columns to read: lat, lon, plus all requested variables
+        columns_to_read = ['lat', 'lon'] + requested_vars
 
         for filepath in files:
             try:
-                df = pd.read_parquet(filepath, columns=['lat', 'lon', variable])
+                df = pd.read_parquet(filepath, columns=columns_to_read)
 
                 # Parse timestamp from path based on actual tier (not requested tier)
                 path_parts = Path(filepath).parts
@@ -2900,14 +2941,33 @@ async def get_weather_grid(
                 # Sort by lat (desc) then lon (asc) for consistent grid ordering
                 df = df.sort_values(['lat', 'lon'], ascending=[False, True])
 
-                # Extract values (16,200 per file)
-                values = df[variable].values.tolist()
+                # Extract actual grid coordinates from first file
+                if grid_info is None:
+                    unique_lats = sorted(df['lat'].unique(), reverse=True)  # Descending
+                    unique_lons = sorted(df['lon'].unique())  # Ascending
 
-                # Replace NaN with None for JSON compatibility
-                values = [None if (isinstance(v, float) and np.isnan(v)) else v for v in values]
+                    # Calculate step size from actual data
+                    lat_step = abs(unique_lats[1] - unique_lats[0]) if len(unique_lats) > 1 else 2
+                    lon_step = abs(unique_lons[1] - unique_lons[0]) if len(unique_lons) > 1 else 2
 
-                timestamps.append(int(ts.timestamp() * 1000))  # ms since epoch
-                all_values.append(values)
+                    grid_info = {
+                        'lat_start': float(unique_lats[0]),  # First (highest) latitude
+                        'lon_start': float(unique_lons[0]),  # First (lowest) longitude
+                        'lat_step': float(lat_step),
+                        'lon_step': float(lon_step),
+                        'rows': len(unique_lats),
+                        'cols': len(unique_lons)
+                    }
+
+                # Extract values for each requested variable
+                ts_ms = int(ts.timestamp() * 1000)
+                timestamps.append(ts_ms)
+
+                for var in requested_vars:
+                    values = df[var].values.tolist()
+                    # Replace NaN with None for JSON compatibility
+                    values = [None if (isinstance(v, float) and np.isnan(v)) else v for v in values]
+                    all_values[var].append(values)
 
             except Exception as e:
                 logger.warning(f"Could not read {filepath}: {e}")
@@ -2916,10 +2976,11 @@ async def get_weather_grid(
         if not timestamps:
             return msgpack_error("No valid data files could be read", 500)
 
-        # Sort by timestamp
-        sorted_pairs = sorted(zip(timestamps, all_values), key=lambda x: x[0])
-        timestamps = [p[0] for p in sorted_pairs]
-        all_values = [p[1] for p in sorted_pairs]
+        # Sort by timestamp - need to sort all variables together
+        sort_indices = sorted(range(len(timestamps)), key=lambda i: timestamps[i])
+        timestamps = [timestamps[i] for i in sort_indices]
+        for var in requested_vars:
+            all_values[var] = [all_values[var][i] for i in sort_indices]
 
         # Color scale configuration
         color_scales = {
@@ -2944,23 +3005,85 @@ async def get_weather_grid(
                     [0, '#FFFFFF'], [0.1, '#FFFFFF'], [0.5, '#E6E6FA'],
                     [1.0, '#9370DB'], [2.0, '#4B0082']
                 ]
+            },
+            'precipitation_mm': {
+                'min': 0, 'max': 50,
+                'stops': [
+                    [0, '#FFFFFF'], [1, '#E0FFE0'], [5, '#90EE90'],
+                    [15, '#228B22'], [30, '#006400'], [50, '#00008B']
+                ]
+            },
+            'cloud_cover_pct': {
+                'min': 0, 'max': 100,
+                'stops': [
+                    [0, '#87CEEB'], [25, '#B0C4DE'], [50, '#A9A9A9'],
+                    [75, '#696969'], [100, '#404040']
+                ]
+            },
+            'pressure_hpa': {
+                'min': 970, 'max': 1050,
+                'stops': [
+                    [970, '#8B0000'], [990, '#FF6347'], [1010, '#FFFFFF'],
+                    [1030, '#87CEEB'], [1050, '#00008B']
+                ]
+            },
+            'solar_radiation': {
+                'min': 0, 'max': 1000,
+                'stops': [
+                    [0, '#000000'], [100, '#4B0082'], [300, '#FF8C00'],
+                    [600, '#FFD700'], [1000, '#FFFFFF']
+                ]
+            },
+            'soil_temp_c': {
+                'min': -20, 'max': 40,
+                'stops': [
+                    [-20, '#00008B'], [-10, '#0000FF'], [0, '#8B4513'],
+                    [15, '#D2691E'], [30, '#FF4500'], [40, '#8B0000']
+                ]
+            },
+            'soil_moisture': {
+                'min': 0, 'max': 0.5,
+                'stops': [
+                    [0, '#DEB887'], [0.1, '#D2B48C'], [0.2, '#8FBC8F'],
+                    [0.3, '#228B22'], [0.5, '#006400']
+                ]
             }
         }
 
-        return msgpack_response({
-            'tier': actual_tier,  # Actual tier returned (may differ from requested due to cascade)
-            'requested_tier': tier,
-            'variable': variable,
-            'timestamps': timestamps,
-            'values': all_values,
-            'grid': {
-                'lat_min': -89, 'lat_max': 89, 'lat_step': 2,
-                'lon_min': -179, 'lon_max': 179, 'lon_step': 2,
+        # Use actual grid info from data, with fallback defaults
+        if grid_info is None:
+            grid_info = {
+                'lat_start': 89, 'lon_start': -179,
+                'lat_step': 2, 'lon_step': 2,
                 'rows': 90, 'cols': 180
-            },
-            'color_scale': color_scales.get(variable, color_scales['temp_c']),
-            'count': len(timestamps)
-        })
+            }
+
+        # Build response - different format for single vs multi variable
+        if is_multi:
+            # Multi-variable response
+            return msgpack_response({
+                'tier': actual_tier,
+                'requested_tier': tier,
+                'variables': requested_vars,
+                'timestamps': timestamps,
+                'values': all_values,  # Dict: { 'temp_c': [[...], ...], 'humidity': [[...], ...] }
+                'grid': grid_info,
+                'color_scales': {var: color_scales.get(var, color_scales['temp_c']) for var in requested_vars},
+                'count': len(timestamps)
+            })
+        else:
+            # Single variable response (backwards compatible)
+            single_var = requested_vars[0]
+            return msgpack_response({
+                'tier': actual_tier,
+                'requested_tier': tier,
+                'variable': single_var,
+                'timestamps': timestamps,
+                'values': all_values[single_var],  # List: [[...], ...]
+                'grid': grid_info,
+                'color_scale': color_scales.get(single_var, color_scales['temp_c']),
+                'count': len(timestamps)
+            })
 
     except Exception as e:
         logger.error(f"Error fetching weather grid: {e}")
@@ -3378,6 +3501,7 @@ async def chat_endpoint(req: Request):
         resolved_location = body.get("resolved_location")  # From disambiguation selection
         active_overlays = body.get("activeOverlays")  # {type, filters, allActive}
         cache_stats = body.get("cacheStats")  # {overlayId: {count, years, minMag, ...}}
+        time_state = body.get("timeState")  # {isLiveLocked, currentTime, timezone, ...}
         saved_order_names = body.get("savedOrderNames", [])  # Phase 7: Saved order names for load/save
 
         if not query:
@@ -3388,7 +3512,7 @@ async def chat_endpoint(req: Request):
             logger.debug(f"Active overlay: {active_overlays.get('type')} with filters: {active_overlays.get('filters')}")
 
         # Run preprocessor to extract hints (Tier 2) with viewport context
-        hints = preprocess_query(query, viewport=viewport, active_overlays=active_overlays, cache_stats=cache_stats, saved_order_names=saved_order_names)
+        hints = preprocess_query(query, viewport=viewport, active_overlays=active_overlays, cache_stats=cache_stats, saved_order_names=saved_order_names, time_state=time_state)
         if hints.get("summary"):
             logger.debug(f"Preprocessor hints: {hints['summary']}")
 
@@ -3654,6 +3778,7 @@ async def chat_stream_endpoint(req: Request):
             resolved_location = body.get("resolved_location")
             active_overlays = body.get("activeOverlays")
             cache_stats = body.get("cacheStats")
+            time_state = body.get("timeState")  # {isLiveLocked, currentTime, timezone, ...}
             saved_order_names = body.get("savedOrderNames", [])  # Phase 7: Saved order names
 
             if not query:
@@ -3665,7 +3790,7 @@ async def chat_stream_endpoint(req: Request):
             yield f"data: {json.dumps({'stage': 'analyzing', 'message': 'Analyzing your request...'})}\n\n"
             await asyncio.sleep(0)  # Allow event to flush
 
-            hints = preprocess_query(query, viewport=viewport, active_overlays=active_overlays, cache_stats=cache_stats, saved_order_names=saved_order_names)
+            hints = preprocess_query(query, viewport=viewport, active_overlays=active_overlays, cache_stats=cache_stats, saved_order_names=saved_order_names, time_state=time_state)
             t_preprocess_end = time.time()
             logger.info(f"[TIMING] Preprocessing: {(t_preprocess_end - t_preprocess_start)*1000:.0f}ms")
 

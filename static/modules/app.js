@@ -118,8 +118,21 @@ export const App = {
   setupGlobeToggle() {
     const checkbox = document.getElementById('globeCheckbox');
     if (checkbox) {
+      // Restore saved state
+      try {
+        const saved = localStorage.getItem('countymap_globe_enabled');
+        if (saved === 'true') {
+          checkbox.checked = true;
+          MapAdapter.toggleGlobe(true);
+        }
+      } catch (e) {}
+
       checkbox.addEventListener('change', (e) => {
         MapAdapter.toggleGlobe(e.target.checked);
+        // Save state
+        try {
+          localStorage.setItem('countymap_globe_enabled', e.target.checked ? 'true' : 'false');
+        } catch (err) {}
       });
     }
   },
@@ -130,9 +143,43 @@ export const App = {
   setupSatelliteToggle() {
     const checkbox = document.getElementById('satCheckbox');
     if (checkbox) {
+      // Restore saved state
+      try {
+        const saved = localStorage.getItem('countymap_satellite_enabled');
+        if (saved === 'true') {
+          checkbox.checked = true;
+          MapAdapter.toggleSatellite(true);
+        }
+      } catch (e) {}
+
       checkbox.addEventListener('change', (e) => {
         MapAdapter.toggleSatellite(e.target.checked);
+        // Save state
+        try {
+          localStorage.setItem('countymap_satellite_enabled', e.target.checked ? 'true' : 'false');
+        } catch (err) {}
       });
+    }
+  },
+
+  /**
+   * Clear map view settings (called by New Chat)
+   */
+  clearMapViewSettings() {
+    try {
+      localStorage.removeItem('countymap_globe_enabled');
+      localStorage.removeItem('countymap_satellite_enabled');
+    } catch (e) {}
+    // Reset checkboxes
+    const globeCheckbox = document.getElementById('globeCheckbox');
+    const satCheckbox = document.getElementById('satCheckbox');
+    if (globeCheckbox) {
+      globeCheckbox.checked = false;
+      MapAdapter.toggleGlobe(false);
+    }
+    if (satCheckbox) {
+      satCheckbox.checked = false;
+      MapAdapter.toggleSatellite(false);
     }
   },
 
@@ -617,4 +664,5 @@ document.addEventListener('DOMContentLoaded', () => {
 if (typeof window !== 'undefined') {
   window.App = App;
   window.OverlayController = OverlayController;  // For debugging: OverlayController.getCacheStats()
+  window.TimeSlider = TimeSlider;  // For settings to update live timezone
 }

@@ -373,6 +373,33 @@
       text-align: center;
     }
 
+    /* Live mode indicator */
+    .live-badge {
+      display: none;
+      background: #e74c3c;
+      color: white;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 3px;
+      margin-left: 8px;
+      animation: live-pulse 2s infinite;
+    }
+
+    .live-badge.active {
+      display: inline-block;
+    }
+
+    @keyframes live-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+
+    /* When in live mode, year label shows clock */
+    .time-slider-year.live-mode {
+      color: #e74c3c;
+    }
+
     .time-slider-controls {
       display: flex;
       align-items: center;
@@ -761,6 +788,58 @@
     .bounds-clear-btn:hover {
       background: #3d3d5c;
       color: #d0d0d0;
+    }
+
+    /* Live button - jumps to and locks at current time */
+    .live-btn {
+      padding: 2px 8px;
+      font-size: 9px;
+      font-weight: 700;
+      background: #2d2d44;
+      color: #888;
+      border: 1px solid #3d3d5c;
+      border-radius: 3px;
+      cursor: pointer;
+      margin-left: 8px;
+      transition: all 0.2s ease;
+    }
+
+    .live-btn:hover {
+      background: #3d3d5c;
+      color: #d0d0d0;
+    }
+
+    .live-btn.active {
+      background: #c0392b;
+      color: white;
+      border-color: #e74c3c;
+      box-shadow: 0 0 8px rgba(231, 76, 60, 0.5);
+    }
+
+    .live-btn.active:hover {
+      background: #e74c3c;
+    }
+
+    /* Dot indicator for live button */
+    .live-btn::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #666;
+      margin-right: 4px;
+      vertical-align: middle;
+    }
+
+    .live-btn.active::before {
+      background: white;
+      animation: live-dot-pulse 1.5s infinite;
+    }
+
+    @keyframes live-dot-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
     }
 
     /* Choropleth Legend - dark */
@@ -2423,6 +2502,30 @@
         </div>
 
         <div class="settings-section">
+          <h3>Display Settings</h3>
+
+          <label for="timezoneSelect" style="font-size: 12px; font-weight: 500; display: block; margin-bottom: 5px; color: #d0d0d0;">
+            Clock Timezone (for live mode):
+          </label>
+          <select id="timezoneSelect" class="settings-input" style="width: 100%; padding: 8px; background: #2a2a2a; color: #fff; border: 1px solid #444; border-radius: 4px;">
+            <option value="local">Local (auto-detect)</option>
+            <option value="UTC">UTC</option>
+            <option value="America/Los_Angeles">Pacific (PST/PDT)</option>
+            <option value="America/Denver">Mountain (MST/MDT)</option>
+            <option value="America/Chicago">Central (CST/CDT)</option>
+            <option value="America/New_York">Eastern (EST/EDT)</option>
+            <option value="Europe/London">London (GMT/BST)</option>
+            <option value="Europe/Paris">Paris (CET/CEST)</option>
+            <option value="Asia/Tokyo">Tokyo (JST)</option>
+            <option value="Asia/Shanghai">Shanghai (CST)</option>
+            <option value="Australia/Sydney">Sydney (AEST/AEDT)</option>
+          </select>
+          <p style="font-size: 11px; color: #888; margin-top: 5px;">
+            Sets the timezone for the live clock display. Data is stored in UTC.
+          </p>
+        </div>
+
+        <div class="settings-section">
           <h3>Current Configuration</h3>
           <div id="currentConfig" style="font-size: 12px; color: #888;">
             Loading...
@@ -2476,6 +2579,7 @@
     <div class="time-slider-header">
       <span class="time-slider-title" id="sliderTitle">Year</span>
       <span class="time-slider-year" id="currentYearLabel">2020</span>
+      <span class="live-badge" id="liveBadge">LIVE</span>
     </div>
     <div class="time-slider-controls">
       <button id="stepBackBtn" class="time-btn" title="Previous year">&lt;</button>
@@ -2494,8 +2598,12 @@
       </div>
     </div>
     <div class="time-slider-labels">
+      <label class="loop-control" title="Loop animation">
+        <span>Loop</span>
+        <input type="checkbox" id="loopCheckbox">
+      </label>
       <span id="minYearLabel">2000</span>
-      <button id="clearBoundsBtn" class="bounds-clear-btn" title="Reset trim to full range">Reset Trim</button>
+      <button id="liveBtn" class="live-btn" title="Jump to current time and lock">LIVE</button>
       <span id="maxYearLabel">2023</span>
     </div>
     <!-- Speed Control (Phase 7 - Unified Speed Slider) -->
@@ -2506,10 +2614,7 @@
       <button id="speedUp" class="speed-step-btn" title="Increase speed">+</button>
       <span class="speed-label-right">Fast</span>
       <span id="speedLabel" class="speed-value">1yr/sec</span>
-      <label class="loop-control" title="Loop animation">
-        <input type="checkbox" id="loopCheckbox">
-        <span>Loop</span>
-      </label>
+      <button id="clearBoundsBtn" class="bounds-clear-btn" title="Reset trim to full range">Reset Trim</button>
     </div>
   </div>
 

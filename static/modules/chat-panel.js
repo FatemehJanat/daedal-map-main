@@ -4,7 +4,7 @@
  */
 
 import { CONFIG } from './config.js';
-import { fetchMsgpack, postMsgpack } from './utils/fetch.js';
+import { fetchMsgpack, postMsgpack, getApiCallsForRecovery, clearApiCalls } from './utils/fetch.js';
 
 // Dependencies set via setDependencies to avoid circular imports
 let MapAdapter = null;
@@ -50,12 +50,14 @@ export const ChatManager = {
       sendBtn: document.getElementById('sendBtn')
     };
 
-    // Restore chat state from sessionStorage (for page refresh)
-    const restored = this.restoreChatState();
+    // Restore chat state from localStorage (survives browser close)
+    this.restoreChatState();
 
-    // If nothing restored but we have a sessionId, check backend for recoverable session
-    if (!restored && this.sessionId) {
-      this.checkBackendSession();
+    // Check if there are API calls to recover (map data)
+    // Chat/overlays restore from localStorage, but map data needs to be re-fetched
+    const apiCalls = getApiCallsForRecovery();
+    if (apiCalls.length > 0) {
+      this.showRecoveryPrompt(apiCalls.length);
     }
 
     this.setupEventListeners();
@@ -121,6 +123,11 @@ export const ChatManager = {
     // Clear order panel
     OrderManager.clearOrder();
 
+    // Clear overlay selections (reset to defaults)
+    if (window.OverlaySelector?.clearState) {
+      window.OverlaySelector.clearState();
+    }
+
     // Notify backend to clear old session cache (fire and forget)
     if (oldSessionId) {
       try {
@@ -131,15 +138,28 @@ export const ChatManager = {
       }
     }
 
-    // Clear sessionStorage
-    this.clearSessionStorage();
+    // Clear localStorage chat state
+    this.clearChatStorage();
+
+    // Clear API call list for recovery
+    clearApiCalls();
+
+    // Clear slider settings (trim bounds, speed)
+    if (window.TimeSlider?.clearSliderSettings) {
+      window.TimeSlider.clearSliderSettings();
+    }
+
+    // Clear map view settings (globe, satellite)
+    if (window.App?.clearMapViewSettings) {
+      window.App.clearMapViewSettings();
+    }
 
     console.log('[Session] Session cleared, new session:', this.sessionId);
     return this.sessionId;
   },
 
   /**
-   * Save chat state to sessionStorage for fast refresh restore.
+   * Save chat state to localStorage for persistence across browser close.
    * Called after each message is added.
    */
   saveChatState() {
@@ -148,21 +168,21 @@ export const ChatManager = {
 
     try {
       // Save history array (for API context)
-      sessionStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(this.history));
+      localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(this.history));
 
       // Save rendered messages HTML (for quick UI restore)
       if (this.elements.messages) {
-        sessionStorage.setItem(CHAT_MESSAGES_KEY, this.elements.messages.innerHTML);
+        localStorage.setItem(CHAT_MESSAGES_KEY, this.elements.messages.innerHTML);
       }
     } catch (e) {
-      // sessionStorage might be full or disabled
+      // localStorage might be full or disabled
       console.warn('[Session] Could not save chat state:', e.message);
     }
   },
 
   /**
-   * Restore chat state from sessionStorage.
-   * Called on init for fast refresh restore.
+   * Restore chat state from localStorage.
+   * Called on init to restore previous session.
    */
   restoreChatState() {
     const CHAT_HISTORY_KEY = 'countymap_chat_history';
@@ -170,13 +190,13 @@ export const ChatManager = {
 
     try {
       // Restore history array
-      const historyJson = sessionStorage.getItem(CHAT_HISTORY_KEY);
+      const historyJson = localStorage.getItem(CHAT_HISTORY_KEY);
       if (historyJson) {
         this.history = JSON.parse(historyJson);
       }
 
       // Restore rendered messages HTML
-      const messagesHtml = sessionStorage.getItem(CHAT_MESSAGES_KEY);
+      const messagesHtml = localStorage.getItem(CHAT_MESSAGES_KEY);
       if (messagesHtml && this.elements.messages) {
         this.elements.messages.innerHTML = messagesHtml;
         // Scroll to bottom
@@ -191,75 +211,45 @@ export const ChatManager = {
   },
 
   /**
-   * Clear sessionStorage chat state.
+   * Clear localStorage chat state.
    */
-  clearSessionStorage() {
+  clearChatStorage() {
     const CHAT_HISTORY_KEY = 'countymap_chat_history';
     const CHAT_MESSAGES_KEY = 'countymap_chat_messages';
 
-    sessionStorage.removeItem(CHAT_HISTORY_KEY);
-    sessionStorage.removeItem(CHAT_MESSAGES_KEY);
+    localStorage.removeItem(CHAT_HISTORY_KEY);
+    localStorage.removeItem(CHAT_MESSAGES_KEY);
   },
 
   /**
-   * Check if backend has cached data for this session.
-   * Shows recovery prompt if data exists.
+   * Show recovery prompt when there are API calls to replay.
+   * Chat and overlays restore automatically from localStorage.
+   * This prompt is for recovering map data by replaying API calls.
+   * @param {number} callCount - Number of API calls to recover
    */
-  async checkBackendSession() {
-    try {
-      const data = await fetchMsgpack(`/api/session/${this.sessionId}/status`);
-
-      if (data.exists && data.cached_results > 0) {
-        // Backend has cached data - show recovery prompt
-        this.showRecoveryPrompt(data);
-      }
-      // If no cached data, the default welcome message is already shown
-    } catch (e) {
-      console.log('[Session] Could not check backend session:', e.message);
-      // Silently fail - user just sees normal welcome
-    }
-  },
-
-  /**
-   * Show recovery prompt when backend has cached session data.
-   */
-  showRecoveryPrompt(sessionStatus) {
+  showRecoveryPrompt(callCount) {
     const { messages } = this.elements;
     if (!messages) return;
 
-    // Build summary of what can be recovered
-    const cachedCount = sessionStatus.cached_results || 0;
-    const inventory = sessionStatus.inventory || {};
-    const locCount = inventory.total_locations || 0;
-    const metricCount = inventory.total_metrics || 0;
-
-    let summary = `Previous session found with ${cachedCount} cached quer`;
-    summary += cachedCount === 1 ? 'y' : 'ies';
-    if (locCount > 0) {
-      summary += ` (${locCount} locations, ${metricCount} metrics)`;
-    }
+    const dataSummary = `${callCount} data request${callCount === 1 ? '' : 's'}`;
 
     // Create recovery message with action buttons
     const div = document.createElement('div');
     div.className = 'chat-message assistant recovery-prompt';
     div.innerHTML = `
-      <strong>Session Recovery</strong><br><br>
-      ${summary}.<br><br>
-      Would you like to continue where you left off?<br><br>
-      <div class="recovery-buttons">
-        <button class="recovery-btn recover" data-action="recover">Continue Session</button>
-        <button class="recovery-btn fresh" data-action="fresh">Start Fresh</button>
+      <strong>Welcome Back</strong><br><br>
+      Your previous session: <b>${dataSummary}</b><br><br>
+      Type <b>"recover"</b> to reload your map data, or click <b>New Chat</b> above to start fresh.
+      <div class="recovery-buttons" style="margin-top: 12px;">
+        <button class="recovery-btn recover" data-action="recover">Recover Data</button>
       </div>
     `;
 
     messages.appendChild(div);
 
-    // Add event listeners to buttons
+    // Add event listener to button
     div.querySelector('[data-action="recover"]').addEventListener('click', () => {
       this.handleRecoveryChoice('recover');
-    });
-    div.querySelector('[data-action="fresh"]').addEventListener('click', () => {
-      this.handleRecoveryChoice('fresh');
     });
 
     messages.scrollTop = messages.scrollHeight;
@@ -278,13 +268,100 @@ export const ChatManager = {
     }
 
     if (choice === 'recover') {
-      // User wants to continue - add a message indicating session restored
+      // Get the list of API calls to replay
+      const apiCalls = getApiCallsForRecovery();
+
+      if (apiCalls.length === 0) {
+        this.addMessage('No data to recover.', 'assistant');
+        return;
+      }
+
+      // Parse URLs to extract overlay IDs and years
+      // URLs look like: /api/earthquakes/geojson?min_magnitude=5.5&year=2021
+      // Map API paths to overlay IDs (some differ, e.g. /api/storms/ -> hurricanes)
+      const overlayYears = new Map(); // overlayId -> Set of years
+      for (const url of apiCalls) {
+        // Extract year parameter
+        const yearMatch = url.match(/[?&]year=(\d+)/);
+        if (!yearMatch) continue;
+        const year = parseInt(yearMatch[1], 10);
+
+        // Map URL path to overlay ID
+        let overlayId = null;
+        if (url.includes('/api/earthquakes/')) overlayId = 'earthquakes';
+        else if (url.includes('/api/storms/')) overlayId = 'hurricanes';
+        else if (url.includes('/api/volcanoes/')) overlayId = 'volcanoes';
+        else if (url.includes('/api/wildfires/')) overlayId = 'wildfires';
+        else if (url.includes('/api/tornadoes/')) overlayId = 'tornadoes';
+        else if (url.includes('/api/tsunamis/')) overlayId = 'tsunamis';
+        else if (url.includes('/api/floods/')) overlayId = 'floods';
+
+        if (overlayId) {
+          if (!overlayYears.has(overlayId)) {
+            overlayYears.set(overlayId, new Set());
+          }
+          overlayYears.get(overlayId).add(year);
+        }
+      }
+
+      // Count unique overlay-year combinations
+      let totalLoads = 0;
+      for (const years of overlayYears.values()) {
+        totalLoads += years.size;
+      }
+
+      if (totalLoads === 0) {
+        this.addMessage('No recoverable data found.', 'assistant');
+        return;
+      }
+
+      // Show recovering message
       this.addMessage(
-        'Session restored! Your previous queries are cached and ready. ' +
-        'Ask me anything or repeat a previous query for instant results.',
+        `Recovering ${totalLoads} data set${totalLoads === 1 ? '' : 's'}...`,
         'assistant'
       );
-      console.log('[Session] User chose to recover session');
+      // Log overlay -> years mapping
+      const logData = {};
+      for (const [k, v] of overlayYears) logData[k] = Array.from(v);
+      console.log('[Session] Recovering data:', logData);
+
+      // Use OverlayController to properly load the data
+      try {
+        const loadPromises = [];
+        for (const [overlayId, years] of overlayYears) {
+          for (const year of years) {
+            // Call OverlayController's load method through global reference
+            if (OverlayController?.loadYearAndRender) {
+              loadPromises.push(
+                OverlayController.loadYearAndRender(overlayId, year).catch(e => {
+                  console.warn('[Session] Failed to load:', overlayId, year, e.message);
+                  return null;
+                })
+              );
+            }
+          }
+        }
+
+        const results = await Promise.all(loadPromises);
+        const successCount = results.filter(r => r !== null).length;
+
+        // Refresh time slider to show recovered data range
+        if (window.OverlayController?.recalculateTimeRange) {
+          window.OverlayController.recalculateTimeRange();
+        }
+        if (window.TimeSlider?.refreshDisplay) {
+          window.TimeSlider.refreshDisplay();
+        }
+
+        this.addMessage(
+          `Recovered ${successCount} of ${totalLoads} data set${totalLoads === 1 ? '' : 's'}.`,
+          'assistant'
+        );
+        console.log('[Session] Recovery complete:', successCount, 'succeeded');
+      } catch (e) {
+        this.addMessage('Recovery failed: ' + e.message, 'assistant');
+        console.error('[Session] Recovery failed:', e);
+      }
     } else {
       // User wants fresh start - clear the session
       await this.clearSession();
@@ -324,7 +401,7 @@ export const ChatManager = {
           await this.clearSession();
           // Show welcome message
           this.addMessage(
-            'Session cleared. Welcome! I can help you explore geographic data.<br><br>' +
+            'Welcome! I can help you explore geographic data.\n\n' +
             'Try: "What data do you have for Europe?" or "Show me CO2 emissions trends worldwide"',
             'assistant'
           );
@@ -360,6 +437,13 @@ export const ChatManager = {
     const { input, sendBtn } = this.elements;
     const query = input.value.trim();
     if (!query) return;
+
+    // Check for "recover" command (case insensitive)
+    if (query.toLowerCase() === 'recover') {
+      input.value = '';
+      this.handleRecoveryChoice('recover');
+      return;
+    }
 
     // Add user message
     this.addMessage(query, 'user');
@@ -776,6 +860,8 @@ export const ChatManager = {
       activeOverlays: this.getActiveOverlays(),
       // Include cache stats so backend knows what's already loaded
       cacheStats: this.getCacheStats(),
+      // Include time slider state (live mode, current time)
+      timeState: this.getTimeState(),
       // Include saved order names for load/save commands
       savedOrderNames: SavedOrdersManager.getNames()
     });
@@ -825,6 +911,7 @@ export const ChatManager = {
       previous_disambiguation_options: this.lastDisambiguationOptions || [],
       activeOverlays: this.getActiveOverlays(),
       cacheStats: this.getCacheStats(),
+      timeState: this.getTimeState(),
       savedOrderNames: SavedOrdersManager.getNames()
     };
 
@@ -1041,6 +1128,28 @@ export const ChatManager = {
     }
 
     return stats;
+  },
+
+  /**
+   * Get current time slider state for chat context.
+   * Returns live mode status, current time, and time range.
+   * @returns {Object} Time state info
+   */
+  getTimeState() {
+    const TimeSlider = window.TimeSlider;
+    if (!TimeSlider) return { available: false };
+
+    return {
+      available: true,
+      isLiveLocked: TimeSlider.isLiveLocked || false,
+      isLiveMode: TimeSlider.isLiveMode || false,
+      currentTime: TimeSlider.currentTime,
+      currentTimeFormatted: TimeSlider.formatTimeLabel?.(TimeSlider.currentTime) || null,
+      minTime: TimeSlider.minTime,
+      maxTime: TimeSlider.maxTime,
+      granularity: TimeSlider.granularity || 'yearly',
+      timezone: TimeSlider.liveTimezone || 'local'
+    };
   },
 
   /**
