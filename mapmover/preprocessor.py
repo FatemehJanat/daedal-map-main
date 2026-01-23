@@ -149,7 +149,8 @@ def _load_topics() -> dict:
         # Aggregate keywords by category
         topics_dict = {}
         for source in sources:
-            category = source.get("category", "").lower()
+            category = source.get("category") or ""
+            category = category.lower()
             if not category:
                 continue
 
@@ -2824,6 +2825,7 @@ def build_tier3_context(hints: dict) -> str:
             metric_names = list(metrics.keys())[:10]
             temporal = metadata.get("temporal_coverage", {})
             year_range = f"{temporal.get('start', '?')}-{temporal.get('end', '?')}"
+            total_metrics = len(metrics)
             metric_display = []
             for m in metric_names:
                 info = metrics.get(m, {})
@@ -2834,9 +2836,9 @@ def build_tier3_context(hints: dict) -> str:
                 else:
                     metric_display.append(name)
             msg = f"[SOURCE DETECTED: {source_name}]"
-            msg += f" Years: {year_range}."
+            msg += f" Years: {year_range}. Total metrics: {total_metrics}."
             msg += f" Available metrics: {', '.join(metric_display)}."
-            msg += " (User can ask for any of these, or '*' for all)"
+            msg += " (Show only human-readable names to user, never column names. Say 'I can get them all' not '*'.)"
             context_parts.append(msg)
 
     # Add resolved region details
@@ -2911,8 +2913,8 @@ def build_tier3_context(hints: dict) -> str:
             global_sources = [s for s in relevant_sources if not s.get("is_country_source")]
 
             hints_lines = [
-                "[CRITICAL - EXACT METRIC NAMES REQUIRED:]",
-                "You MUST use these EXACT column names. Do NOT use aliases like 'total_population' or 'population' - use the exact names below:"
+                "[CRITICAL - EXACT METRIC NAMES FOR ORDER JSON ONLY:]",
+                "Use these EXACT column names in your JSON orders. But NEVER show column names to the user - only show the human-readable name in parentheses:"
             ]
 
             # Country-specific sources - show ALL metrics with both column AND name

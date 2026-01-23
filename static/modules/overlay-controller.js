@@ -2206,6 +2206,9 @@ export const OverlayController = {
     MapAdapter?.hidePopup?.();
     MapAdapter.popupLocked = false;
 
+    // Hide other wildfire events to focus on this one
+    this._hideWildfireOverlay();
+
     // Zoom to fire
     MapAdapter.map.flyTo({
       center: [longitude, latitude],
@@ -2276,7 +2279,7 @@ export const OverlayController = {
     this._addGenericExitButton('wildfire-exit-btn', 'Exit Fire View', '#ff5722', () => this._exitWildfireImpact());
   },
 
-  _exitWildfireImpact() {
+  _exitWildfireImpact(skipRestore = false) {
     if (this._wildfireImpactState) {
       const { sourceId, fillId, strokeId } = this._wildfireImpactState;
       if (MapAdapter.map.getLayer(fillId)) MapAdapter.map.removeLayer(fillId);
@@ -2285,6 +2288,8 @@ export const OverlayController = {
       this._wildfireImpactState = null;
     }
     document.getElementById('wildfire-exit-btn')?.remove();
+    // Restore wildfire overlay points (unless overlay is being fully disabled)
+    if (!skipRestore) this._restoreWildfireOverlay();
   },
 
   /**
@@ -2375,7 +2380,7 @@ export const OverlayController = {
     this._addGenericExitButton('wildfire-perim-exit-btn', 'Exit Fire View', '#ff5722', () => this._exitWildfirePerimeter());
   },
 
-  _exitWildfirePerimeter() {
+  _exitWildfirePerimeter(skipRestore = false) {
     if (this._wildfirePerimeterState) {
       const { sourceId, fillId, strokeId } = this._wildfirePerimeterState;
       if (MapAdapter.map.getLayer(fillId)) MapAdapter.map.removeLayer(fillId);
@@ -2384,6 +2389,8 @@ export const OverlayController = {
       this._wildfirePerimeterState = null;
     }
     document.getElementById('wildfire-perim-exit-btn')?.remove();
+    // Restore wildfire overlay points (unless overlay is being fully disabled)
+    if (!skipRestore) this._restoreWildfireOverlay();
   },
 
   /**
@@ -2420,6 +2427,9 @@ export const OverlayController = {
     // Hide popup
     MapAdapter?.hidePopup?.();
     MapAdapter.popupLocked = false;
+
+    // Hide other flood events to focus on this one
+    this._hideFloodOverlay();
 
     // Zoom to flood
     MapAdapter.map.flyTo({
@@ -2491,7 +2501,7 @@ export const OverlayController = {
     this._addGenericExitButton('flood-impact-exit-btn', 'Exit Flood View', '#2196f3', () => this._exitFloodImpact());
   },
 
-  _exitFloodImpact() {
+  _exitFloodImpact(skipRestore = false) {
     if (this._floodImpactState) {
       const { sourceId, fillId, strokeId } = this._floodImpactState;
       if (MapAdapter.map.getLayer(fillId)) MapAdapter.map.removeLayer(fillId);
@@ -2500,6 +2510,8 @@ export const OverlayController = {
       this._floodImpactState = null;
     }
     document.getElementById('flood-impact-exit-btn')?.remove();
+    // Restore flood overlay points (unless overlay is being fully disabled)
+    if (!skipRestore) this._restoreFloodOverlay();
   },
 
   /**
@@ -2525,7 +2537,7 @@ export const OverlayController = {
    * Exit flood animation and cleanup.
    * @private
    */
-  _exitFloodAnimation() {
+  _exitFloodAnimation(skipRestore = false) {
     console.log('OverlayController: Exiting flood animation');
 
     // Remove layers
@@ -2557,8 +2569,8 @@ export const OverlayController = {
     const exitBtn = document.getElementById('flood-exit-btn');
     if (exitBtn) exitBtn.remove();
 
-    // Restore flood overlay
-    this._restoreFloodOverlay();
+    // Restore flood overlay (unless overlay is being fully disabled)
+    if (!skipRestore) this._restoreFloodOverlay();
 
     // Recalculate time range
     this.recalculateTimeRange();
@@ -2602,9 +2614,17 @@ export const OverlayController = {
    * @private
    */
   _hideFloodOverlay() {
+    // Clear point-radius model (overview points)
     const model = ModelRegistry?.getModelForType('flood');
-    if (model?.clear) {
+    if (model?.clearType) {
+      model.clearType('flood');
+    } else if (model?.clear) {
       model.clear();
+    }
+    // Also clear polygon model (split-render polygons)
+    const polygonModel = ModelRegistry?.getModel('polygon');
+    if (polygonModel?.isTypeActive?.('flood')) {
+      polygonModel.clearType('flood');
     }
     console.log('OverlayController: Hid flood overlay for animation');
   },
@@ -3069,7 +3089,7 @@ export const OverlayController = {
    * Exit fire animation and cleanup.
    * @private
    */
-  _exitFireAnimation() {
+  _exitFireAnimation(skipRestore = false) {
     console.log('OverlayController: Exiting fire animation');
 
     // Remove layers (both A and B layer sets for cross-fade)
@@ -3115,8 +3135,8 @@ export const OverlayController = {
     // Remove ignition marker
     this._removeIgnitionMarker();
 
-    // Restore wildfire overlay
-    this._restoreWildfireOverlay();
+    // Restore wildfire overlay (unless overlay is being fully disabled)
+    if (!skipRestore) this._restoreWildfireOverlay();
 
     // Recalculate time range
     this.recalculateTimeRange();
@@ -3161,9 +3181,17 @@ export const OverlayController = {
    * @private
    */
   _hideWildfireOverlay() {
+    // Clear point-radius model (overview points)
     const model = ModelRegistry?.getModelForType('wildfire');
-    if (model?.clear) {
+    if (model?.clearType) {
+      model.clearType('wildfire');
+    } else if (model?.clear) {
       model.clear();
+    }
+    // Also clear polygon model (split-render polygons)
+    const polygonModel = ModelRegistry?.getModel('polygon');
+    if (polygonModel?.isTypeActive?.('wildfire')) {
+      polygonModel.clearType('wildfire');
     }
     console.log('OverlayController: Hid wildfire overlay for animation');
   },
@@ -4154,10 +4182,8 @@ export const OverlayController = {
       console.log(`OverlayController: Aborted pending fetch for ${overlayId}`);
     }
 
-    // For hurricanes, also stop any rolling animation in progress
-    if (overlayId === 'hurricanes') {
-      this.stopHurricaneRollingAnimation();
-    }
+    // Stop any active animations/drill-downs for this overlay
+    this._cleanupOverlayAnimations(overlayId);
 
     // Get the model and clear it (use type-specific clear if available)
     const model = ModelRegistry?.getModelForType(endpoint.eventType);
@@ -4168,6 +4194,16 @@ export const OverlayController = {
       } else if (model.clear) {
         // General clear (TrackModel, PolygonModel) - clears all for this model
         model.clear();
+      }
+    }
+
+    // Also clear PolygonModel if it has layers for this type
+    // (wildfire/flood use split render: points via PointRadiusModel + polygons via PolygonModel)
+    const eventType = endpoint.eventType;
+    if (eventType === 'wildfire' || eventType === 'flood') {
+      const polygonModel = ModelRegistry?.getModel('polygon');
+      if (polygonModel?.isTypeActive?.(eventType)) {
+        polygonModel.clearType(eventType);
       }
     }
 
@@ -4186,6 +4222,64 @@ export const OverlayController = {
     this.recalculateTimeRange();
 
     console.log(`OverlayController: Cleared ${overlayId}`);
+  },
+
+  /**
+   * Cleanup any active animations or drill-down layers for a specific overlay.
+   * Called when an overlay is toggled off to prevent orphaned layers on the map.
+   * @private
+   * @param {string} overlayId - Overlay ID being disabled
+   */
+  _cleanupOverlayAnimations(overlayId) {
+    // When called from clearOverlay, skip restore since the overlay is being disabled
+    const skipRestore = true;
+
+    switch (overlayId) {
+      case 'hurricanes':
+        this.stopHurricaneRollingAnimation();
+        break;
+
+      case 'wildfires':
+        // Exit any active wildfire animations (skip restore - overlay is being disabled)
+        if (this._wildfireImpactState) this._exitWildfireImpact(skipRestore);
+        if (this._wildfirePerimeterState) this._exitWildfirePerimeter(skipRestore);
+        if (this._fireAnimState) this._exitFireAnimation(skipRestore);
+        break;
+
+      case 'floods':
+        // Exit any active flood animations (skip restore - overlay is being disabled)
+        if (this._floodAnimState) this._exitFloodAnimation(skipRestore);
+        if (this._floodImpactState) this._exitFloodImpact(skipRestore);
+        break;
+
+      case 'volcanoes':
+        // Exit volcano impact radius animation
+        if (this._volcanoImpactState) this._exitVolcanoImpact();
+        break;
+
+      case 'tornadoes':
+        // Exit tornado point animation
+        if (this._tornadoPointAnimState) this._exitTornadoPointAnimation();
+        // Also stop EventAnimator if running a tornado sequence
+        if (EventAnimator.getIsActive() && EventAnimator.config?.rendererOptions?.eventType === 'tornado') {
+          EventAnimator.stop();
+        }
+        break;
+
+      case 'earthquakes':
+        // Stop EventAnimator if running an aftershock sequence
+        if (EventAnimator.getIsActive() && EventAnimator.config?.rendererOptions?.eventType === 'earthquake') {
+          EventAnimator.stop();
+        }
+        break;
+
+      case 'tsunamis':
+        // Stop EventAnimator if running a tsunami wave animation
+        if (EventAnimator.getIsActive() && EventAnimator.config?.rendererOptions?.eventType === 'tsunami') {
+          EventAnimator.stop();
+        }
+        break;
+    }
   },
 
   /**

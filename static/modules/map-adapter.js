@@ -694,6 +694,8 @@ export const MapAdapter = {
             // Update popup with enriched data
             const popupHtml = PopupBuilder?.build(feature.properties, App?.currentData, locationInfo);
             this.showPopup([e.lngLat.lng, e.lngLat.lat], popupHtml);
+            // Wire up tab click delegation for tabbed popups
+            this.setupPopupTabHandlers();
           }
         }
       }
@@ -800,6 +802,27 @@ export const MapAdapter = {
     setTimeout(() => {
       this.isShowingPopup = false;
     }, 50);
+  },
+
+  /**
+   * Setup click delegation for popup tab switching.
+   */
+  setupPopupTabHandlers() {
+    const el = this.popup.getElement();
+    if (!el) return;
+    el.addEventListener('click', (e) => {
+      if (!e.target.classList.contains('popup-tab')) return;
+      const tabName = e.target.dataset.tab;
+      if (!tabName) return;
+      // Toggle active tab buttons
+      el.querySelectorAll('.popup-tab').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tab === tabName);
+      });
+      // Toggle active content panels
+      el.querySelectorAll('.popup-tab-content').forEach(panel => {
+        panel.classList.toggle('active', panel.dataset.tab === tabName);
+      });
+    });
   },
 
   /**

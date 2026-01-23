@@ -1890,6 +1890,28 @@ export const TimeSlider = {
     this.metricTabContainer.style.display = 'flex';
     this.metricTabContainer.innerHTML = '';
 
+    // Left arrow
+    const leftArrow = document.createElement('button');
+    leftArrow.className = 'metric-tabs-arrow';
+    leftArrow.textContent = '<';
+
+    // Scroll container
+    const scrollContainer = document.createElement('div');
+    scrollContainer.className = 'metric-tabs-scroll';
+
+    // Right arrow
+    const rightArrow = document.createElement('button');
+    rightArrow.className = 'metric-tabs-arrow';
+    rightArrow.textContent = '>';
+
+    leftArrow.addEventListener('click', () => {
+      scrollContainer.scrollLeft -= 120;
+    });
+    rightArrow.addEventListener('click', () => {
+      scrollContainer.scrollLeft += 120;
+    });
+
+    // Add metric buttons to scroll container
     for (const metric of this.availableMetrics) {
       const tab = document.createElement('button');
       tab.className = 'metric-tab' + (metric === this.metricKey ? ' active' : '');
@@ -1903,8 +1925,24 @@ export const TimeSlider = {
         }
       });
 
-      this.metricTabContainer.appendChild(tab);
+      scrollContainer.appendChild(tab);
     }
+
+    // Show/hide arrows based on scroll position
+    const updateArrows = () => {
+      leftArrow.classList.toggle('hidden', scrollContainer.scrollLeft <= 0);
+      rightArrow.classList.toggle('hidden',
+        scrollContainer.scrollLeft >= scrollContainer.scrollWidth - scrollContainer.clientWidth - 1
+      );
+    };
+    scrollContainer.addEventListener('scroll', updateArrows);
+
+    this.metricTabContainer.appendChild(leftArrow);
+    this.metricTabContainer.appendChild(scrollContainer);
+    this.metricTabContainer.appendChild(rightArrow);
+
+    // Initial arrow state (after render)
+    requestAnimationFrame(updateArrows);
   },
 
   /**

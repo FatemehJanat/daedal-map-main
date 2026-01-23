@@ -538,6 +538,10 @@ def postprocess_order(order: dict, hints: dict = None) -> dict:
     # Step 2: Expand wildcard metrics (metric: "*" -> all metrics from source)
     items = expand_wildcard_metrics(items)
 
+    # Step 2b: Check metric count for display warning
+    METRIC_DISPLAY_WARN = 15
+    metric_count = sum(1 for item in items if item.get("type") != "derived_result")
+
     # Step 3: Expand derived fields
     expanded_items = expand_all_derived_fields(items)
 
@@ -571,8 +575,16 @@ def postprocess_order(order: dict, hints: dict = None) -> dict:
     else:
         summary = f"All {total} items validated successfully"
 
+    # Build metric warning if count exceeds threshold
+    metric_warning = None
+    if metric_count > METRIC_DISPLAY_WARN:
+        metric_warning = {
+            "count": metric_count,
+            "message": f"Your request has {metric_count} metrics. More than 15 is hard to display well in popups. Would you like all of them in your order?"
+        }
+
     # Return processed order
-    return {
+    result = {
         "items": validated_items,
         "derived_specs": derived_specs,
         "validation_summary": summary,
@@ -584,6 +596,9 @@ def postprocess_order(order: dict, hints: dict = None) -> dict:
         "year_start": order.get("year_start"),
         "year_end": order.get("year_end"),
     }
+    if metric_warning:
+        result["metric_warning"] = metric_warning
+    return result
 
 
 def get_display_items(items: list, derived_specs: list = None) -> list:

@@ -639,14 +639,49 @@ body {
   color: #666;
 }
 
-/* Metric tabs (above time slider) */
+/* Metric tabs (above time slider) - scrollable row */
 .metric-tabs {
   display: flex;
   gap: 6px;
   margin-bottom: 10px;
   padding-bottom: 8px;
   border-bottom: 1px solid #3d3d5c;
-  flex-wrap: wrap;
+  overflow-x: hidden;
+  position: relative;
+  align-items: center;
+}
+
+.metric-tabs-scroll {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex: 1;
+  scroll-behavior: smooth;
+}
+
+.metric-tabs-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.metric-tabs-arrow {
+  background: #2d2d44;
+  border: 1px solid #3d3d5c;
+  color: #a0a0a0;
+  font-size: 14px;
+  padding: 2px 6px;
+  cursor: pointer;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.metric-tabs-arrow:hover {
+  background: #3d3d5c;
+  color: #d0d0d0;
+}
+
+.metric-tabs-arrow.hidden {
+  visibility: hidden;
 }
 
 .metric-tab {
@@ -1214,6 +1249,69 @@ body {
 
 .tab-content.active {
   display: block;
+}
+
+/* Demographic popup tabs (data mode) */
+.popup-tab {
+  padding: 3px 8px;
+  font-size: 10px;
+  background: none;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+
+.popup-tab.active {
+  color: #5dade2;
+  border-bottom-color: #5dade2;
+}
+
+.popup-tab:hover:not(.active) {
+  color: #bbb;
+}
+
+.popup-tab-content {
+  display: none;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.popup-tab-content.active {
+  display: block;
+}
+
+/* Chat action buttons (metric warning yes/no) */
+.metric-warning-buttons {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.chat-action-btn {
+  padding: 6px 14px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  border: none;
+}
+
+.chat-action-btn.confirm {
+  background: #0f4c75;
+  color: #fff;
+}
+
+.chat-action-btn.confirm:hover {
+  background: #1a6a9e;
+}
+
+.chat-action-btn.cancel {
+  background: #3d3d5c;
+  color: #ccc;
+}
+
+.chat-action-btn.cancel:hover {
+  background: #4d4d6c;
 }
 
 .detail-row {

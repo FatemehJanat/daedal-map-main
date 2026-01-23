@@ -757,6 +757,7 @@ def execute_order(order: dict) -> dict:
     metric_key = None  # Track the primary metric label for frontend
     all_metrics = []  # Track ALL metric labels for multi-metric support
     metric_year_ranges = {}  # Track year range per metric for time slider adjustment
+    metric_source_map = {}  # Track which metric belongs to which source
     requested_year_start = None  # Track requested range for comparison
     requested_year_end = None
 
@@ -854,6 +855,8 @@ def execute_order(order: dict) -> dict:
 
         # Fill data structures
         label = item.get("metric_label", metric_col)
+        if source_id and label not in metric_source_map:
+            metric_source_map[label] = source_id
 
         for _, row in df.iterrows():
             loc_id = row.get("loc_id")
@@ -985,12 +988,13 @@ def execute_order(order: dict) -> dict:
                     "properties": properties
                 })
 
-    # Build source info for response (include URL if available)
+    # Build source info for response (include URL and category)
     source_info = [
         {
             "id": sid,
             "name": meta.get("source_name", sid),
-            "url": meta.get("source_url", "")
+            "url": meta.get("source_url", ""),
+            "category": meta.get("category", "general")
         }
         for sid, meta in sources_used.items()
     ]
@@ -1004,7 +1008,8 @@ def execute_order(order: dict) -> dict:
         },
         "summary": summary or f"Showing {len(features)} locations",
         "count": len(features),
-        "sources": source_info
+        "sources": source_info,
+        "metric_sources": metric_source_map
     }
 
     # Add multi-year data if applicable

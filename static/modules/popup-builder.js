@@ -132,22 +132,42 @@ export const PopupBuilder = {
     if (App?.debugMode && properties.coverage !== undefined) {
       lines.push(this.buildHierarchyInfo(properties));
     } else if (hasQueryData) {
-      // DATA MODE: Show data fields from chat query (takes priority over locationInfo)
-      for (const key of dataFields.slice(0, 10)) {
-        const value = properties[key];
-        if (value == null || value === '') continue;
+      // DATA MODE: Show data fields from chat query
+      const displayYear = properties.data_year || properties.year || '';
+      const yearSuffix = displayYear ? ` (${displayYear})` : '';
 
-        const fieldName = this.cleanFieldName(key);
-        const formattedValue = this.formatValue(key, value);
-        // Prefer data_year (actual year of data) over year (slider position)
-        const displayYear = properties.data_year || properties.year || '';
-        const yearSuffix = displayYear ? ` (${displayYear})` : '';
+      // Determine if we should use tabbed mode (click/locked popup with multiple categories)
+      const useTabbed = locationInfo && sourceData && sourceData.metric_sources
+        && sourceData.sources && sourceData.sources.length > 1 && dataFields.length > 5;
 
-        lines.push(`${fieldName}: ${formattedValue}${yearSuffix}`);
+      if (useTabbed) {
+        // TABBED MODE: Group metrics by source category
+        lines.push(this.buildTabbedContent(dataFields, properties, sourceData, yearSuffix));
+      } else if (!locationInfo && dataFields.length > 3) {
+        // HOVER MODE (condensed): Show top 3 fields only
+        for (const key of dataFields.slice(0, 3)) {
+          const value = properties[key];
+          if (value == null || value === '') continue;
+          const fieldName = this.cleanFieldName(key);
+          const formattedValue = this.formatValue(key, value);
+          lines.push(`${fieldName}: ${formattedValue}${yearSuffix}`);
+        }
+        if (dataFields.length > 3) {
+          lines.push(`<span style="font-size: 10px; color: #999;">+${dataFields.length - 3} more (click to expand)</span>`);
+        }
+      } else {
+        // FLAT MODE: Show all fields (<=5 or single category)
+        for (const key of dataFields.slice(0, 10)) {
+          const value = properties[key];
+          if (value == null || value === '') continue;
+          const fieldName = this.cleanFieldName(key);
+          const formattedValue = this.formatValue(key, value);
+          lines.push(`${fieldName}: ${formattedValue}${yearSuffix}`);
+        }
       }
 
       // Source info (from chat query) - compact with clickable links
-      if (sourceData) {
+      if (sourceData && !useTabbed) {
         if (sourceData.sources && sourceData.sources.length > 0) {
           const sourceLinks = sourceData.sources.slice(0, 2).map(s => {
             if (s.url && s.url !== 'Unknown') {
@@ -195,6 +215,73 @@ export const PopupBuilder = {
     lines.push('<em style="font-size: 10px; color: #999;">Zoom for sub-layers</em>');
 
     return lines.join('<br>');
+  },
+
+  /**
+   * Build tabbed popup content grouping metrics by source category.
+   * @param {Array} dataFields - All data field keys
+   * @param {Object} properties - Feature properties with values
+   * @param {Object} sourceData - Source metadata with metric_sources and sources
+   * @param {string} yearSuffix - Year display suffix
+   * @returns {string} HTML for tabbed content
+   */
+  buildTabbedContent(dataFields, properties, sourceData, yearSuffix) {
+    const metricSources = sourceData.metric_sources || {};
+    const sources = sourceData.sources || [];
+
+    // Build source lookup by id
+    const sourceLookup = {};
+    for (const s of sources) {
+      sourceLookup[s.id] = s;
+    }
+
+    // Group fields by category
+    const groups = {};
+    for (const key of dataFields) {
+      const sourceId = metricSources[key];
+      const source = sourceId ? sourceLookup[sourceId] : null;
+      const category = source ? (source.category || 'general') : 'general';
+      if (!groups[category]) {
+        groups[category] = [];
+      }
+      groups[category].push(key);
+    }
+
+    const categoryNames = Object.keys(groups);
+
+    // Build tab bar
+    let html = '<div class="popup-tabs">';
+    for (let i = 0; i < categoryNames.length; i++) {
+      const cat = categoryNames[i];
+      const label = cat.charAt(0).toUpperCase() + cat.slice(1);
+      html += `<button class="popup-tab${i === 0 ? ' active' : ''}" data-tab="${cat}">${label}</button>`;
+    }
+    html += '</div>';
+
+    // Build tab content panels
+    for (let i = 0; i < categoryNames.length; i++) {
+      const cat = categoryNames[i];
+      const fields = groups[cat];
+      html += `<div class="popup-tab-content${i === 0 ? ' active' : ''}" data-tab="${cat}">`;
+      for (const key of fields) {
+        const value = properties[key];
+        if (value == null || value === '') continue;
+        const fieldName = this.cleanFieldName(key);
+        const formattedValue = this.formatValue(key, value);
+        html += `${fieldName}: ${formattedValue}${yearSuffix}<br>`;
+      }
+      // Source link for this category
+      const catSources = sources.filter(s => (s.category || 'general') === cat);
+      if (catSources.length > 0) {
+        const link = catSources[0].url
+          ? `<a href="${catSources[0].url}" target="_blank" style="color: #5dade2;">${catSources[0].name}</a>`
+          : catSources[0].name;
+        html += `<span style="font-size: 10px; color: #888;">Source: ${link}</span>`;
+      }
+      html += '</div>';
+    }
+
+    return html;
   },
 
   /**

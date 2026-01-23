@@ -221,6 +221,8 @@ export const ChatManager = {
       this.history = state.history;
       if (state.messagesHtml && this.elements.messages) {
         this.elements.messages.innerHTML = state.messagesHtml;
+        // Remove any loading/typing indicators that were saved mid-request
+        this.elements.messages.querySelectorAll('.loading-indicator, .typing-indicator').forEach(el => el.remove());
         this.elements.messages.scrollTop = this.elements.messages.scrollHeight;
       }
     }
@@ -474,6 +476,9 @@ export const ChatManager = {
     input.value = '';
     input.style.height = 'auto';
 
+    // Track last query for potential re-send (metric warning)
+    this.lastQuery = query;
+
     // Disable input
     sendBtn.disabled = true;
     input.disabled = true;
@@ -522,6 +527,33 @@ export const ChatManager = {
         this.addMessage('Added to your order. Click "Display on Map" when ready.', 'assistant');
         orderPanel.setOrder(response.order, response.summary);
         break;
+
+      case 'metric_warning': {
+        const msgEl = this.addMessage(response.message, 'assistant');
+        const btnContainer = document.createElement('div');
+        btnContainer.className = 'metric-warning-buttons';
+
+        const yesBtn = document.createElement('button');
+        yesBtn.textContent = 'Yes, show all';
+        yesBtn.className = 'chat-action-btn confirm';
+        yesBtn.addEventListener('click', () => {
+          btnContainer.remove();
+          this.resendWithForce();
+        });
+
+        const noBtn = document.createElement('button');
+        noBtn.textContent = 'No, let me narrow it';
+        noBtn.className = 'chat-action-btn cancel';
+        noBtn.addEventListener('click', () => {
+          btnContainer.remove();
+          this.addMessage('Sure - what specific metrics would you like?', 'assistant');
+        });
+
+        btnContainer.appendChild(yesBtn);
+        btnContainer.appendChild(noBtn);
+        msgEl.appendChild(btnContainer);
+        break;
+      }
 
       case 'clarify':
         this.addMessage(response.message || 'Could you be more specific?', 'assistant');
@@ -670,6 +702,39 @@ export const ChatManager = {
   },
 
   /**
+   * Re-send the last query with force_metrics flag to bypass metric count warning.
+   */
+  async resendWithForce() {
+    if (!this.lastQuery) return;
+
+    const { sendBtn, input } = this.elements;
+    sendBtn.disabled = true;
+    input.disabled = true;
+
+    const indicator = this.showTypingIndicator(true);
+
+    try {
+      const payload = this.buildPayload(this.lastQuery, null, { force_metrics: true });
+      const response = await sendStreamingRequest(payload, (stage, message) => {
+        indicator.updateStage(stage, message);
+      });
+
+      if (response) {
+        this.history.push({ role: 'assistant', content: response.message || response.summary });
+        this.handleResponse(response);
+      }
+    } catch (error) {
+      console.error('Force metrics re-send error:', error);
+      this.addMessage('Sorry, something went wrong. Please try again.', 'assistant');
+    } finally {
+      indicator.remove();
+      sendBtn.disabled = false;
+      input.disabled = false;
+      input.focus();
+    }
+  },
+
+  /**
    * Handle user selection from disambiguation mode.
    * @param {Object} selected - The selected location
    * @param {string} originalQuery - The original query to retry
@@ -773,7 +838,7 @@ export const ChatManager = {
    * @param {Object} [resolvedLocation] - Resolved location from disambiguation
    * @returns {Object} Full request payload
    */
-  buildPayload(query, resolvedLocation = null) {
+  buildPayload(query, resolvedLocation = null, extraOptions = {}) {
     const view = MapAdapter?.getView() || { center: { lat: 0, lng: 0 }, zoom: 2, bounds: null, adminLevel: 0 };
 
     // Check for navigation location if no explicit resolution
@@ -805,7 +870,8 @@ export const ChatManager = {
       activeOverlays: this.getActiveOverlays(),
       cacheStats: this.getCacheStats(),
       timeState: this.getTimeState(),
-      savedOrderNames: SavedOrders.getNames()
+      savedOrderNames: SavedOrders.getNames(),
+      ...extraOptions
     };
   },
 

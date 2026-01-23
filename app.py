@@ -3603,6 +3603,27 @@ async def chat_endpoint(req: Request):
             processed = postprocess_order(result["order"], hints)
             logger.debug(f"Postprocessor: {processed.get('validation_summary')}")
 
+            # Check for metric count warning (pre-order gate)
+            if processed.get("metric_warning") and not body.get("force_metrics"):
+                # Get display items for the pending order
+                display_items = get_display_items(
+                    processed.get("items", []),
+                    processed.get("derived_specs", [])
+                )
+                full_order = {
+                    **result["order"],
+                    "items": display_items,
+                    "derived_specs": processed.get("derived_specs", []),
+                }
+                return msgpack_response({
+                    "type": "metric_warning",
+                    "message": processed["metric_warning"]["message"],
+                    "metric_count": processed["metric_warning"]["count"],
+                    "pending_order": full_order,
+                    "full_order": processed,
+                    "summary": result.get("summary"),
+                })
+
             # Get display items (filtered for user view - hides for_derivation items, adds derived specs)
             display_items = get_display_items(
                 processed.get("items", []),

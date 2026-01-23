@@ -146,9 +146,9 @@ def build_system_prompt(catalog: dict, conversions: dict) -> str:
         lines = []
 
         # Separate UN SDGs and World Factbook for grouping
-        sdg_sources = [s for s in sources if s['source_id'].startswith('un_sdg_')]
-        factbook_sources = [s for s in sources if 'world_factbook' in s['source_id']]
-        other_sources = [s for s in sources if s not in sdg_sources and s not in factbook_sources]
+        sdg_sources = [s for s in sources if s.get('source_id') and s['source_id'].startswith('un_sdg_')]
+        factbook_sources = [s for s in sources if s.get('source_id') and 'world_factbook' in s['source_id']]
+        other_sources = [s for s in sources if s.get('source_id') and s not in sdg_sources and s not in factbook_sources]
 
         # Add individual sources with human-readable names AND source_id
         for src in other_sources:
@@ -206,10 +206,11 @@ WHEN USER ASKS "what data for [country]" or "what do you have":
 3. Be CONCISE - use human-readable names, group related sources
 
 WHEN USER ASKS about a specific source ("what's in X?" or "show me metrics"):
-- List the available metrics from that source (check the [SOURCE DETECTED] context)
-- Show 5-8 example metrics with their names
+- List the available metrics using ONLY the human-readable names (never show column names like unemployment_rate)
+- If there are 10 or fewer metrics, list them all
+- If there are more than 10, say "There are X metrics available, here are the key ones:" and show 5-8
 - Mention the year range available
-- Offer to show all metrics with "*" or specific ones
+- Say "I can get them all" or "I can show any of these" (never mention "*" or wildcards to the user)
 
 ORDER FORMAT (JSON when user requests data):
 ```json
@@ -222,10 +223,11 @@ RULES:
 - region: lowercase (europe, g7, australia) or null for global
 - year: null = most recent
 
-WILDCARD METRICS:
+WILDCARD METRICS (internal - never mention "*" to users):
 Use "metric": "*" when user asks for "all data", "everything", or "all metrics" from a source.
 Example: {{"source_id": "abs_population", "metric": "*", "region": "australia"}}
 This will be expanded to include ALL metrics from that source.
+In your response, say "I'll get all the metrics" - never show the "*" symbol to users.
 
 RESPONSE TYPES (return JSON with "type" field):
 
@@ -272,7 +274,8 @@ CLARIFYING QUESTIONS - BE SPECIFIC:
 - "Which metric?" if they didn't specify what data
 - "Which location/country?" if no region specified
 - "Which time period/year?" if time is ambiguous
-- Example: "Which metric would you like? Population, GDP, births, or all of them?"
+- Example: "Which metric would you like? Population, GDP, births, or I can get them all?"
+- NEVER show internal column names (like co2_per_capita) - always use human-readable names only
 """
 
 
