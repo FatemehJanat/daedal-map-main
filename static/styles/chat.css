@@ -1,0 +1,990 @@
+/**
+ * Chat Panel Styles
+ * Extracted from index.html for reuse across map app and admin dashboard
+ *
+ * Contents:
+ *   - Sidebar toggle and layout
+ *   - Chat messages and input
+ *   - Order panel and items
+ *   - Saved orders
+ *   - Queue status
+ *   - Settings view
+ *   - Typing/loading indicators
+ */
+
+/* ==========================================================================
+   Sidebar Toggle Button
+   ========================================================================== */
+
+#sidebarToggle {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 1001;
+  width: 44px;
+  height: 44px;
+  background: #1a1a2e;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  transition: all 0.3s;
+  color: #e8e8e8;
+}
+
+#sidebarToggle:hover {
+  background: #2d2d44;
+}
+
+#sidebarToggle.hidden {
+  left: 10px;
+}
+
+/* ==========================================================================
+   Sidebar Layout
+   ========================================================================== */
+
+#sidebar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 400px;
+  height: 100%;
+  background: #1a1a2e;
+  z-index: 1000;
+  box-shadow: 2px 0 10px rgba(0,0,0,0.5);
+  display: flex;
+  flex-direction: column;
+  transform: translateX(0);
+  transition: transform 0.3s ease;
+}
+
+#sidebar.collapsed {
+  transform: translateX(-100%);
+}
+
+/* Sidebar width resize handle */
+#sidebarResizeHandle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 6px;
+  height: 100%;
+  cursor: ew-resize;
+  background: transparent;
+  z-index: 1001;
+  transition: background 0.2s ease;
+}
+
+#sidebarResizeHandle:hover,
+#sidebarResizeHandle.active {
+  background: rgba(0, 123, 255, 0.3);
+}
+
+/* Sidebar header */
+#sidebarHeader {
+  padding: 15px;
+  background: #16213e;
+  color: #e8e8e8;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+#sidebarHeader h2 {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+#sidebarHeaderButtons {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#newChatBtn {
+  background: #2c3e50;
+  border: 1px solid #4a5f72;
+  color: #bdc3c7;
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+#newChatBtn:hover {
+  background: #34495e;
+  color: white;
+}
+
+#closeSidebar {
+  background: none;
+  border: none;
+  color: white;
+  font-size: 24px;
+  cursor: pointer;
+  padding: 0 5px;
+}
+
+/* ==========================================================================
+   Chat Container
+   ========================================================================== */
+
+#chatContainer {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#chatContainer.hidden {
+  display: none;
+}
+
+/* Chat messages area */
+#chatMessages {
+  flex: 1;
+  min-height: 100px;
+  overflow-y: auto;
+  padding: 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ==========================================================================
+   Chat Messages
+   ========================================================================== */
+
+.chat-message {
+  max-width: 90%;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.chat-message.user {
+  align-self: flex-end;
+  background: #0f4c75;
+  color: #e8e8e8;
+  border-bottom-right-radius: 4px;
+}
+
+.chat-message.assistant {
+  align-self: flex-start;
+  background: #2d2d44;
+  color: #d0d0d0;
+  border-bottom-left-radius: 4px;
+}
+
+.chat-message.system {
+  align-self: center;
+  background: #3d3d2e;
+  color: #c9b458;
+  font-size: 12px;
+  padding: 8px 12px;
+}
+
+/* Recovery prompt */
+.chat-message.recovery-prompt {
+  background: #2a3f5f;
+  border: 1px solid #3d5a80;
+}
+
+.recovery-buttons {
+  display: flex;
+  gap: 10px;
+  margin-top: 5px;
+}
+
+.recovery-btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.2s, transform 0.1s;
+}
+
+.recovery-btn:hover {
+  transform: translateY(-1px);
+}
+
+.recovery-btn.recover {
+  background: #2e7d32;
+  color: white;
+}
+
+.recovery-btn.recover:hover {
+  background: #388e3c;
+}
+
+.recovery-btn.fresh {
+  background: #455a64;
+  color: white;
+}
+
+.recovery-btn.fresh:hover {
+  background: #546e7a;
+}
+
+/* Show on map button */
+.show-on-map-btn {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 6px 12px;
+  background: #28a745;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.show-on-map-btn:hover {
+  background: #218838;
+}
+
+/* ==========================================================================
+   Chat Input Area
+   ========================================================================== */
+
+#chatInputArea {
+  padding: 15px;
+  background: #16213e;
+  height: 140px;
+  min-height: 80px;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+#chatForm {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+}
+
+#chatInput {
+  flex: 1;
+  padding: 12px;
+  border: 1px solid #3d3d5c;
+  border-radius: 8px;
+  font-size: 14px;
+  resize: none;
+  min-height: 40px;
+  background: #1a1a2e;
+  color: #e8e8e8;
+}
+
+#chatInput:focus {
+  outline: none;
+  border-color: #0f4c75;
+}
+
+#chatInput::placeholder {
+  color: #666;
+}
+
+#sendBtn {
+  padding: 12px 20px;
+  background: #0f4c75;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.2s;
+}
+
+#sendBtn:hover {
+  background: #1a6a9e;
+}
+
+#sendBtn:disabled {
+  background: #3d3d5c;
+  color: #666;
+  cursor: not-allowed;
+}
+
+/* ==========================================================================
+   Order Panel
+   ========================================================================== */
+
+#orderPanel {
+  padding: 12px 15px;
+  background: #0f0f1a;
+  height: 160px;
+  min-height: 60px;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+#orderPanel h4 {
+  font-size: 13px;
+  font-weight: 600;
+  color: #c0c0c0;
+  margin-bottom: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+#orderPanel h4 span {
+  color: #888;
+  font-weight: normal;
+  font-size: 11px;
+}
+
+.order-items {
+  margin-bottom: 12px;
+}
+
+.order-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  background: #1a1a2e;
+  border: 1px solid #3d3d5c;
+  border-radius: 6px;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.order-item-info {
+  flex: 1;
+}
+
+.order-item-name {
+  font-weight: 500;
+  color: #d0d0d0;
+}
+
+.order-item-details {
+  font-size: 11px;
+  color: #888;
+  margin-top: 2px;
+}
+
+.order-item-remove {
+  background: none;
+  border: none;
+  color: #999;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0 5px;
+  line-height: 1;
+}
+
+.order-item-remove:hover {
+  color: #dc3545;
+}
+
+.order-item-invalid {
+  background: #2a1a1a;
+  border-left: 3px solid #dc3545;
+}
+
+.order-item-invalid .order-item-name {
+  color: #ff6b6b;
+}
+
+.order-item-error {
+  font-size: 10px;
+  color: #dc3545;
+  margin-top: 2px;
+  font-style: italic;
+}
+
+.order-item-location {
+  background: #2a2010;
+  border-left: 3px solid #ffaa00;
+}
+
+.order-item-location .order-item-name {
+  color: #ffcc44;
+}
+
+.order-item-location .order-item-details {
+  color: #aa9955;
+}
+
+/* Order actions */
+.order-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.order-btn {
+  flex: 1;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.order-btn.confirm {
+  background: #28a745;
+  color: white;
+}
+
+.order-btn.confirm:hover {
+  background: #218838;
+}
+
+.order-btn.confirm:disabled {
+  background: #3d3d5c;
+  color: #666;
+  cursor: not-allowed;
+}
+
+.order-btn.cancel {
+  background: #3d3d5c;
+  color: #d0d0d0;
+}
+
+.order-btn.cancel:hover {
+  background: #4d4d6c;
+}
+
+.order-btn.save {
+  background: #2a5a8a;
+  color: #d0d0d0;
+  flex: 0.7;
+}
+
+.order-btn.save:hover {
+  background: #3a6a9a;
+}
+
+.order-btn.save:disabled {
+  background: #3d3d5c;
+  color: #666;
+  cursor: not-allowed;
+}
+
+.order-summary {
+  font-size: 12px;
+  color: #888;
+  margin-bottom: 10px;
+  font-style: italic;
+}
+
+/* ==========================================================================
+   Saved Orders
+   ========================================================================== */
+
+.saved-orders-list {
+  background: #2a2a4a;
+  border: 1px solid #3d3d5c;
+  border-radius: 6px;
+  margin-top: 10px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.saved-orders-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  background: #1e1e3c;
+  border-bottom: 1px solid #3d3d5c;
+  font-size: 12px;
+  font-weight: 600;
+  color: #d0d0d0;
+}
+
+.saved-orders-close {
+  background: none;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+}
+
+.saved-orders-close:hover {
+  color: #fff;
+}
+
+.saved-orders-items {
+  padding: 6px;
+}
+
+.saved-order-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  margin: 4px 0;
+  background: #1e1e3c;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.saved-order-item:hover {
+  background: #2a3a5a;
+}
+
+.saved-order-name {
+  font-size: 12px;
+  color: #d0d0d0;
+  flex: 1;
+}
+
+.saved-order-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.saved-order-btn {
+  background: none;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+.saved-order-btn:hover {
+  background: #3d3d5c;
+  color: #fff;
+}
+
+.saved-order-btn.delete:hover {
+  background: #8b3a3a;
+}
+
+.saved-orders-empty {
+  padding: 12px;
+  text-align: center;
+  color: #666;
+  font-size: 12px;
+  font-style: italic;
+}
+
+/* Saved Orders Indicator */
+.saved-orders-indicator {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  margin-top: 8px;
+  background: #1e1e3c;
+  border-radius: 4px;
+  font-size: 11px;
+  color: #888;
+}
+
+.saved-orders-toggle {
+  background: #2a5a8a;
+  border: none;
+  color: #d0d0d0;
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.saved-orders-toggle:hover {
+  background: #3a6a9a;
+}
+
+/* ==========================================================================
+   Cache Status
+   ========================================================================== */
+
+.cache-status {
+  font-size: 11px;
+  color: #888;
+  padding: 8px 10px;
+  margin-top: 8px;
+  border-top: 1px solid #3d3d5c;
+  text-align: center;
+}
+
+.cache-status.has-data {
+  color: #5dade2;
+}
+
+.cache-status.warning {
+  color: #f39c12;
+}
+
+/* ==========================================================================
+   Order Queue Status (async processing)
+   ========================================================================== */
+
+.order-queue-status {
+  padding: 10px;
+  margin-bottom: 8px;
+  border-radius: 6px;
+  background: #2a2a4a;
+  border-left: 3px solid #5dade2;
+}
+
+.order-queue-status.status-pending {
+  border-left-color: #f39c12;
+}
+
+.order-queue-status.status-executing {
+  border-left-color: #5dade2;
+}
+
+.order-queue-status.status-complete {
+  border-left-color: #27ae60;
+}
+
+.order-queue-status.status-failed {
+  border-left-color: #e74c3c;
+}
+
+.queue-status-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.queue-status-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.queue-status-progress {
+  font-size: 11px;
+  color: #888;
+}
+
+.queue-progress-bar {
+  height: 4px;
+  background: #1a1a2e;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.queue-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #5dade2, #3498db);
+  transition: width 0.3s ease;
+}
+
+.status-executing .queue-progress-fill {
+  animation: pulse-progress 1.5s infinite;
+}
+
+@keyframes pulse-progress {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.queue-status-message {
+  font-size: 11px;
+  color: #888;
+  margin-top: 4px;
+}
+
+/* ==========================================================================
+   Sidebar Footer
+   ========================================================================== */
+
+#sidebarFooter {
+  padding: 10px 15px;
+  border-top: 1px solid #3d3d5c;
+  background: #16213e;
+  text-align: center;
+}
+
+#settingsLink {
+  color: #888;
+  text-decoration: none;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+#settingsLink:hover {
+  color: #5dade2;
+}
+
+/* ==========================================================================
+   Settings View
+   ========================================================================== */
+
+#settingsView {
+  display: none;
+  flex-direction: column;
+  height: 100%;
+  overflow-y: auto;
+}
+
+#settingsView.active {
+  display: flex;
+}
+
+.settings-content {
+  padding: 20px;
+  flex: 1;
+}
+
+.settings-section {
+  margin-bottom: 25px;
+}
+
+.settings-section h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #d0d0d0;
+  margin-bottom: 10px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid #3d3d5c;
+}
+
+.settings-section p {
+  font-size: 12px;
+  color: #888;
+  margin-bottom: 10px;
+}
+
+.settings-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #3d3d5c;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: monospace;
+  background: #1a1a2e;
+  color: #e8e8e8;
+}
+
+.settings-input:focus {
+  outline: none;
+  border-color: #0f4c75;
+}
+
+.settings-btn {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  margin-right: 10px;
+  margin-top: 10px;
+}
+
+.settings-btn.primary {
+  background: #0f4c75;
+  color: white;
+}
+
+.settings-btn.primary:hover {
+  background: #1a6a9e;
+}
+
+.settings-btn.secondary {
+  background: #3d3d5c;
+  color: #d0d0d0;
+}
+
+.settings-btn.secondary:hover {
+  background: #4d4d6c;
+}
+
+.settings-status {
+  margin-top: 10px;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  display: none;
+}
+
+.settings-status.success {
+  display: block;
+  background: #1a3d2e;
+  color: #7dcea0;
+}
+
+.settings-status.error {
+  display: block;
+  background: #3d1a1a;
+  color: #e74c3c;
+}
+
+.folder-structure {
+  font-family: monospace;
+  font-size: 12px;
+  background: #0f0f1a;
+  padding: 12px;
+  border-radius: 6px;
+  color: #888;
+  margin-top: 10px;
+}
+
+.settings-footer {
+  padding: 10px 15px;
+  border-top: 1px solid #3d3d5c;
+  background: #16213e;
+  text-align: center;
+}
+
+.settings-footer a {
+  color: #888;
+  text-decoration: none;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.settings-footer a:hover {
+  color: #5dade2;
+}
+
+/* ==========================================================================
+   Resize Handles
+   ========================================================================== */
+
+.resize-handle {
+  height: 8px;
+  background: #2d2d44;
+  cursor: ns-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+
+.resize-handle:hover,
+.resize-handle.active {
+  background: #0f4c75;
+}
+
+.resize-handle::after {
+  content: '';
+  width: 40px;
+  height: 3px;
+  background: #666;
+  border-radius: 2px;
+}
+
+.resize-handle:hover::after,
+.resize-handle.active::after {
+  background: white;
+}
+
+/* ==========================================================================
+   Typing Indicator
+   ========================================================================== */
+
+.typing-indicator {
+  display: flex;
+  gap: 4px;
+  padding: 10px 14px;
+  background: #2d2d44;
+  border-radius: 12px;
+  align-self: flex-start;
+  border-bottom-left-radius: 4px;
+}
+
+.typing-indicator span {
+  width: 8px;
+  height: 8px;
+  background: #666;
+  border-radius: 50%;
+  animation: typing 1.4s infinite;
+}
+
+.typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+.typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes typing {
+  0%, 60%, 100% { transform: translateY(0); }
+  30% { transform: translateY(-4px); }
+}
+
+/* ==========================================================================
+   Loading Indicator (with stages)
+   ========================================================================== */
+
+.loading-indicator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: #2d2d44;
+  border-radius: 12px;
+  align-self: flex-start;
+  border-bottom-left-radius: 4px;
+  min-width: 140px;
+}
+
+.loading-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #444;
+  border-top-color: #7c8aff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.loading-text {
+  color: #aaa;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+/* Stage-specific colors */
+.loading-indicator[data-stage="analyzing"] .loading-spinner {
+  border-top-color: #64b5f6;
+}
+.loading-indicator[data-stage="analyzing"] .loading-text {
+  color: #64b5f6;
+}
+
+.loading-indicator[data-stage="thinking"] .loading-spinner {
+  border-top-color: #ba68c8;
+}
+.loading-indicator[data-stage="thinking"] .loading-text {
+  color: #ba68c8;
+}
+
+.loading-indicator[data-stage="preparing"] .loading-spinner {
+  border-top-color: #81c784;
+}
+.loading-indicator[data-stage="preparing"] .loading-text {
+  color: #81c784;
+}
+
+.loading-indicator[data-stage="fetching"] .loading-spinner {
+  border-top-color: #ffb74d;
+}
+.loading-indicator[data-stage="fetching"] .loading-text {
+  color: #ffb74d;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ==========================================================================
+   Responsive - Sidebar
+   ========================================================================== */
+
+@media (max-width: 500px) {
+  #sidebar {
+    width: 100%;
+  }
+}
