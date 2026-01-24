@@ -1,0 +1,55 @@
+{
+  "_description": "Data folder routing - which countries have sub-national data folders",
+  "_format": "ISO3 -> {has_folder, path, datasets, admin_levels}",
+  "_schema_version": "1.0.0",
+  "_last_updated": "2026-01",
+  "_global": {
+    "_description": "Datasets available at country level (admin_0) for all countries",
+    "path": "global",
+    "geometry": "geometry/global.csv",
+    "global_entities": "geometry/global_entities.parquet",
+    "datasets": [
+      "global_earthquakes",
+      "global_fire_atlas",
+      "global_floods",
+      "global_tornadoes",
+      "ibtracs_storms",
+      "noaa_global_tsunamis",
+      "smithsonian_volcanoes",
+      "un_sdg_01",
+      "un_sdg_02",
+      "un_sdg_03",
+      "un_sdg_04",
+      "un_sdg_05",
+      "un_sdg_06",
+      "un_sdg_07",
+      "un_sdg_08",
+      "un_sdg_09",
+      "un_sdg_10",
+      "un_sdg_11",
+      "un_sdg_12",
+      "un_sdg_13",
+      "un_sdg_14",
+      "un_sdg_15",
+      "un_sdg_16",
+      "un_sdg_17"
+    ]
+  },
+  "_geometry_bank": {
+    "_description": "GADM sub-national geometry files",
+    "_note": "One parquet per country for admin1/admin2 boundaries",
+    "path": "geometry",
+    "pattern": "geometry/{ISO3}.parquet",
+    "country_count": 0
+  },
+  "_default": {
+    "_description": "Default for countries without dedicated folders",
+    "has_folder": false,
+    "geometry_outline": "geometry/global.csv",
+    "geometry_fallback": null,
+    "admin_levels": [
+      0
+    ],
+    "datasets": []
+  }
+}

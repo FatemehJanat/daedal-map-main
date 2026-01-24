@@ -1,0 +1,794 @@
+{
+  "source_id": "un_sdg_10",
+  "source_name": "UN SDG Goal 10",
+  "source_url": "https://unstats.un.org/sdgs/indicators/database/",
+  "license": "UN Terms",
+  "description": "UN Sustainable Development Goal 10 indicators",
+  "category": "development",
+  "topic_tags": [
+    "sdg",
+    "development",
+    "sustainability"
+  ],
+  "keywords": [
+    "sustainable",
+    "development",
+    "goals",
+    "UN"
+  ],
+  "last_updated": "2026-01-07",
+  "geographic_level": "admin_0",
+  "geographic_coverage": {
+    "type": "global",
+    "admin_levels": [
+      0
+    ],
+    "common_count": 192,
+    "common_missing": [
+      "AFG",
+      "ALB",
+      "CAF",
+      "FSM",
+      "HKG",
+      "MAC",
+      "TWN",
+      "ZAF"
+    ],
+    "uncommonly_included": [
+      "AIA",
+      "BES",
+      "BLM",
+      "BMU",
+      "CUW",
+      "CYM",
+      "FLK",
+      "FRO",
+      "GGY",
+      "GLP",
+      "GRL",
+      "GUM",
+      "IMN",
+      "JEY",
+      "MAF",
+      "MSR",
+      "MTQ",
+      "NCL",
+      "NFK",
+      "PCN",
+      "PRI",
+      "REU",
+      "SHN",
+      "SPM",
+      "SXM",
+      "TCA",
+      "UMI",
+      "VGB",
+      "VIR",
+      "WLF"
+    ]
+  },
+  "temporal_coverage": {
+    "start": 1963,
+    "end": 2024,
+    "frequency": "annual",
+    "granularity": "yearly",
+    "field": "year"
+  },
+  "row_count": 5927,
+  "file_size_mb": 0.28,
+  "data_completeness": 0.31,
+  "update_schedule": "unknown",
+  "expected_next_update": "unknown",
+  "metrics": {
+    "dc_trf_totdl": {
+      "name": "Total assistance for development, by donor countries (millions of current United States dollars)",
+      "unit": "CU_USD_M",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": -15836.45,
+        "max": 238682.43,
+        "median": 1026.18
+      },
+      "density": 0.18,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 50,
+      "by_era": {
+        "2000+": {
+          "density": 0.198,
+          "countries": 50,
+          "stats": {
+            "min": -15836.45,
+            "max": 238682.43,
+            "median": 1026.18
+          }
+        }
+      }
+    },
+    "dc_trf_totl": {
+      "name": "Total assistance for development, by recipient countries (millions of current United States dollars)",
+      "unit": "CU_USD_M",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": -9363.4675,
+        "max": 66638.1998,
+        "median": 499.5773
+      },
+      "density": 0.571,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 150,
+      "by_era": {
+        "2000+": {
+          "density": 0.629,
+          "countries": 150,
+          "stats": {
+            "min": -9363.4675,
+            "max": 66638.1998,
+            "median": 499.5773
+          }
+        }
+      }
+    },
+    "fi_fsi_fsanl": {
+      "name": "Non-performing loans to total gross loans (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.1456,
+        "max": 61.116,
+        "median": 4.0592
+      },
+      "density": 0.339,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 142,
+      "by_era": {
+        "2000+": {
+          "density": 0.374,
+          "countries": 142,
+          "stats": {
+            "min": 0.1456,
+            "max": 61.116,
+            "median": 4.0592
+          }
+        }
+      }
+    },
+    "fi_fsi_fsera": {
+      "name": "Return on assets (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": -20.6925,
+        "max": 12.1587,
+        "median": 1.5022
+      },
+      "density": 0.344,
+      "years": [
+        2001,
+        2024
+      ],
+      "countries": 142,
+      "by_era": {
+        "2000+": {
+          "density": 0.379,
+          "countries": 142,
+          "stats": {
+            "min": -20.6925,
+            "max": 12.1587,
+            "median": 1.5022
+          }
+        }
+      }
+    },
+    "fi_fsi_fska": {
+      "name": "Regulatory capital to assets (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": -6.4025,
+        "max": 266.5536,
+        "median": 8.8933
+      },
+      "density": 0.335,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 141,
+      "by_era": {
+        "2000+": {
+          "density": 0.369,
+          "countries": 141,
+          "stats": {
+            "min": -6.4025,
+            "max": 266.5536,
+            "median": 8.8933
+          }
+        }
+      }
+    },
+    "fi_fsi_fsknl": {
+      "name": "Non-performing loans net of provisions to capital (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": -3238.3945,
+        "max": 10133.9399,
+        "median": 8.5776
+      },
+      "density": 0.33,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 141,
+      "by_era": {
+        "2000+": {
+          "density": 0.364,
+          "countries": 141,
+          "stats": {
+            "min": -3238.3945,
+            "max": 10133.9399,
+            "median": 8.5776
+          }
+        }
+      }
+    },
+    "fi_fsi_fskrtc": {
+      "name": "Regulatory Tier 1 capital to risk-weighted assets (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": -17.5032,
+        "max": 55.7513,
+        "median": 15.1166
+      },
+      "density": 0.347,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 141,
+      "by_era": {
+        "2000+": {
+          "density": 0.383,
+          "countries": 141,
+          "stats": {
+            "min": -17.5032,
+            "max": 55.7513,
+            "median": 15.1166
+          }
+        }
+      }
+    },
+    "fi_fsi_fsls": {
+      "name": "Liquid assets to short term liabilities (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 8.2995,
+        "max": 692.7762,
+        "median": 49.789
+      },
+      "density": 0.321,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 138,
+      "by_era": {
+        "2000+": {
+          "density": 0.354,
+          "countries": 138,
+          "stats": {
+            "min": 8.2995,
+            "max": 692.7762,
+            "median": 49.789
+          }
+        }
+      }
+    },
+    "fi_fsi_fssno": {
+      "name": "Net open position in foreign exchange to capital (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": -371.1783,
+        "max": 645.5013,
+        "median": 3.5708
+      },
+      "density": 0.271,
+      "years": [
+        2002,
+        2024
+      ],
+      "countries": 126,
+      "by_era": {
+        "2000+": {
+          "density": 0.299,
+          "countries": 126,
+          "stats": {
+            "min": -371.1783,
+            "max": 645.5013,
+            "median": 3.5708
+          }
+        }
+      }
+    },
+    "sg_cpa_migrp": {
+      "name": "Proportion of countries with migration policies to facilitate orderly, safe, regular and responsible migration and mo...",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 50.0,
+        "max": 100.0,
+        "median": 75.0
+      },
+      "density": 0.0,
+      "years": [
+        2019,
+        2021
+      ],
+      "countries": 1,
+      "by_era": {
+        "2000+": {
+          "density": 0.0,
+          "countries": 1,
+          "stats": {
+            "min": 50.0,
+            "max": 100.0,
+            "median": 75.0
+          }
+        }
+      }
+    },
+    "sg_cpa_migrs": {
+      "name": "Countries with migration policies to facilitate orderly, safe, regular and responsible migration and mobility of peop...",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 1.0,
+        "max": 4.0,
+        "median": 3.0
+      },
+      "density": 0.033,
+      "years": [
+        2019,
+        2021
+      ],
+      "countries": 134,
+      "by_era": {
+        "2000+": {
+          "density": 0.036,
+          "countries": 134,
+          "stats": {
+            "min": 1.0,
+            "max": 4.0,
+            "median": 3.0
+          }
+        }
+      }
+    },
+    "sg_int_mbrdev": {
+      "name": "Proportion of members of developing countries in international organizations, by organization (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.5181,
+        "max": 6.6667,
+        "median": 0.5435
+      },
+      "density": 0.395,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 190,
+      "by_era": {
+        "2000+": {
+          "density": 0.435,
+          "countries": 190,
+          "stats": {
+            "min": 0.5181,
+            "max": 6.6667,
+            "median": 0.5435
+          }
+        }
+      }
+    },
+    "sg_int_vrtdev": {
+      "name": "Proportion of voting rights of developing countries in international organizations, by organization (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.011,
+        "max": 30.006,
+        "median": 0.478
+      },
+      "density": 0.395,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 190,
+      "by_era": {
+        "2000+": {
+          "density": 0.435,
+          "countries": 190,
+          "stats": {
+            "min": 0.011,
+            "max": 30.006,
+            "median": 0.478
+          }
+        }
+      }
+    },
+    "si_dst_fisp": {
+      "name": "Redistributive impact of fiscal policy, Gini index (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 23.4157,
+        "max": 62.8653,
+        "median": 39.6441
+      },
+      "density": 0.067,
+      "years": [
+        2007,
+        2024
+      ],
+      "countries": 103,
+      "by_era": {
+        "2000+": {
+          "density": 0.074,
+          "countries": 103,
+          "stats": {
+            "min": 23.4157,
+            "max": 62.8653,
+            "median": 39.6441
+          }
+        }
+      }
+    },
+    "si_hei_totl": {
+      "name": "Growth rates of household expenditure or income per capita (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": -7.32,
+        "max": 9.57,
+        "median": 1.59
+      },
+      "density": 0.02,
+      "years": [
+        2010,
+        2024
+      ],
+      "countries": 119,
+      "by_era": {
+        "2000+": {
+          "density": 0.022,
+          "countries": 119,
+          "stats": {
+            "min": -7.32,
+            "max": 9.57,
+            "median": 1.59
+          }
+        }
+      }
+    },
+    "si_pov_50mi": {
+      "name": "Proportion of people living below 50 percent of median income (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 34.6,
+        "median": 12.8
+      },
+      "density": 0.386,
+      "years": [
+        1963,
+        2024
+      ],
+      "countries": 166,
+      "by_era": {
+        "2000+": {
+          "density": 0.324,
+          "countries": 163,
+          "stats": {
+            "min": 0.9,
+            "max": 29.6,
+            "median": 12.6
+          }
+        },
+        "1950-1999": {
+          "density": 1.0,
+          "countries": 115,
+          "stats": {
+            "min": 0.0,
+            "max": 34.6,
+            "median": 13.7
+          }
+        }
+      }
+    },
+    "si_rmt_cost": {
+      "name": "Average remittance costs of sending $200 to a receiving country as a proportion of the amount remitted (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": -0.56,
+        "max": 27.64,
+        "median": 6.87
+      },
+      "density": 0.145,
+      "years": [
+        2011,
+        2023
+      ],
+      "countries": 102,
+      "by_era": {
+        "2000+": {
+          "density": 0.16,
+          "countries": 102,
+          "stats": {
+            "min": -0.56,
+            "max": 27.64,
+            "median": 6.87
+          }
+        }
+      }
+    },
+    "si_rmt_cost_bc": {
+      "name": "Average remittance costs of sending $200 in a corridor as a proportion of the amount remitted (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": -4.04,
+        "max": 59.5,
+        "median": 6.635
+      },
+      "density": 0.062,
+      "years": [
+        2016,
+        2023
+      ],
+      "countries": 47,
+      "by_era": {
+        "2000+": {
+          "density": 0.068,
+          "countries": 47,
+          "stats": {
+            "min": -4.04,
+            "max": 59.5,
+            "median": 6.635
+          }
+        }
+      }
+    },
+    "si_rmt_cost_sc": {
+      "name": "SmaRT average remittance costs of sending $200 in a corridor as a proportion of the amount remitted (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": -1.7933,
+        "max": 20.55,
+        "median": 4.2584
+      },
+      "density": 0.058,
+      "years": [
+        2016,
+        2023
+      ],
+      "countries": 46,
+      "by_era": {
+        "2000+": {
+          "density": 0.064,
+          "countries": 46,
+          "stats": {
+            "min": -1.7933,
+            "max": 20.55,
+            "median": 4.2584
+          }
+        }
+      }
+    },
+    "si_rmt_cost_snd": {
+      "name": "Average remittance costs of sending $200 for a sending country as a proportion of the amount remitted (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": -4.04,
+        "max": 59.5,
+        "median": 6.57
+      },
+      "density": 0.064,
+      "years": [
+        2011,
+        2023
+      ],
+      "countries": 47,
+      "by_era": {
+        "2000+": {
+          "density": 0.071,
+          "countries": 47,
+          "stats": {
+            "min": -4.04,
+            "max": 59.5,
+            "median": 6.57
+          }
+        }
+      }
+    },
+    "sl_emp_gtotl": {
+      "name": "Labour share of GDP (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 9.6,
+        "max": 76.3,
+        "median": 50.4
+      },
+      "density": 0.33,
+      "years": [
+        2004,
+        2024
+      ],
+      "countries": 93,
+      "by_era": {
+        "2000+": {
+          "density": 0.363,
+          "countries": 93,
+          "stats": {
+            "min": 9.6,
+            "max": 76.3,
+            "median": 50.4
+          }
+        }
+      }
+    },
+    "sm_dth_migr": {
+      "name": "Total deaths and disappearances recorded during migration (number)",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 1.0,
+        "max": 3709.0,
+        "median": 15.0
+      },
+      "density": 0.119,
+      "years": [
+        2014,
+        2024
+      ],
+      "countries": 137,
+      "by_era": {
+        "2000+": {
+          "density": 0.131,
+          "countries": 137,
+          "stats": {
+            "min": 1.0,
+            "max": 3709.0,
+            "median": 15.0
+          }
+        }
+      }
+    },
+    "sm_pop_refg_or": {
+      "name": "Number of refugees per 100,000 population, by country of origin (per 100,000 population)",
+      "unit": "count",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 25006.5388,
+        "median": 8.9762
+      },
+      "density": 0.89,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 211,
+      "by_era": {
+        "2000+": {
+          "density": 0.981,
+          "countries": 211,
+          "stats": {
+            "min": 0.0,
+            "max": 25006.5388,
+            "median": 8.9762
+          }
+        }
+      }
+    },
+    "tm_trf_zero": {
+      "name": "Proportion of tariff lines applied to imports with zero-tariff (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 62.8657
+      },
+      "density": 0.385,
+      "years": [
+        2005,
+        2023
+      ],
+      "countries": 209,
+      "by_era": {
+        "2000+": {
+          "density": 0.424,
+          "countries": 209,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 62.8657
+          }
+        }
+      }
+    },
+    "vc_vov_gdsd": {
+      "name": "Proportion of population reporting having felt discriminated against, by grounds of discrimination, sex and disabilit...",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.1,
+        "max": 60.1,
+        "median": 11.75
+      },
+      "density": 0.032,
+      "years": [
+        2014,
+        2024
+      ],
+      "countries": 102,
+      "by_era": {
+        "2000+": {
+          "density": 0.035,
+          "countries": 102,
+          "stats": {
+            "min": 0.1,
+            "max": 60.1,
+            "median": 11.75
+          }
+        }
+      }
+    }
+  },
+  "llm_summary": "1963-2024. Total assistance for development, by donor countries (millions of current United States dollars), Total assistance for development, by recipient countries (millions of current United States dollars), Non-performing loans to total gross loans (%), Return on assets (%), Regulatory capital to assets (%)."
+}

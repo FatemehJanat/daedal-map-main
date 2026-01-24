@@ -1,0 +1,133 @@
+{
+  "source_context": "United Nations Sustainable Development Goals Framework",
+  "goal": {
+    "number": 11,
+    "name": "Sustainable Cities and Communities",
+    "full_title": "Make cities and human settlements inclusive, safe, resilient and sustainable",
+    "description": "Goal 11 aims to make cities and human settlements inclusive, safe, resilient and sustainable. It addresses housing, transport systems, urbanization planning, cultural and natural heritage, disaster impacts, environmental impacts of cities, and access to green and public spaces.",
+    "targets": [
+      {
+        "id": "11.1",
+        "text": "By 2030, ensure access for all to adequate, safe and affordable housing and basic services"
+      },
+      {
+        "id": "11.2",
+        "text": "By 2030, provide access to safe, affordable, accessible and sustainable transport systems for all"
+      },
+      {
+        "id": "11.3",
+        "text": "By 2030, enhance inclusive and sustainable urbanization and capacity for participatory planning"
+      },
+      {
+        "id": "11.4",
+        "text": "Strengthen efforts to protect and safeguard the world's cultural and natural heritage"
+      },
+      {
+        "id": "11.5",
+        "text": "By 2030, significantly reduce the number of deaths and people affected by disasters"
+      },
+      {
+        "id": "11.6",
+        "text": "By 2030, reduce the adverse per capita environmental impact of cities"
+      },
+      {
+        "id": "11.7",
+        "text": "By 2030, provide universal access to safe, inclusive and accessible, green and public spaces"
+      }
+    ],
+    "key_indicators": [
+      "EN_LND_INDQTHSNG - Proportion of urban population living in inadequate housing (%)",
+      "SP_TRN_PUBL - Proportion of population that has convenient access to public transport (%)",
+      "EN_LND_CNSPOP - Ratio of land consumption rate to population growth rate",
+      "SG_URB_CSPART - Proportion of cities with a direct participation structure of civil society i...",
+      "GB_XPD_CULNAT_PB - Total expenditure per capita spent on cultural and natural heritage, public (...",
+      "GB_XPD_CULNAT_PV - Total expenditure per capita spent on cultural and natural heritage, private ...",
+      "GB_XPD_CULNAT_PBPV - Total expenditure per capita spent on cultural and natural heritage, public a...",
+      "GB_XPD_CUL_PBPV - Total expenditure per capita spent on cultural heritage, public and private (...",
+      "GB_XPD_NAT_PBPV - Total expenditure per capita spent on natural heritage, public and private (P...",
+      "VC_DSR_GDPLS - Direct economic loss attributed to disasters (current United States dollars)",
+      "VC_DSR_MISS - Number of missing persons due to disaster (number)",
+      "VC_DSR_AFFCT - Number of people affected by disaster (number)",
+      "VC_DSR_MORT - Number of deaths due to disaster (number)",
+      "VC_DSR_MTMP - Number of deaths and missing persons attributed to disasters per 100,000 popu...",
+      "VC_DSR_MMHN - Number of deaths and missing persons attributed to disasters (number)",
+      "VC_DSR_DAFF - Number of directly affected persons attributed to disasters per 100,000 popul...",
+      "VC_DSR_IJILN - Number of injured or ill people attributed to disasters (number)",
+      "VC_DSR_PDAN - Number of people whose damaged dwellings were attributed to disasters (number)",
+      "VC_DSR_PDYN - Number of people whose destroyed dwellings were attributed to disasters (number)",
+      "VC_DSR_PDLN - Number of people whose livelihoods were disrupted or destroyed, attributed to...",
+      "VC_DSR_LSGP - Direct economic loss attributed to disasters relative to GDP (%)",
+      "VC_DSR_AGLH - Direct agriculture loss attributed to disasters (current United States dollars)",
+      "VC_DSR_HOLH - Direct economic loss in the housing sector attributed to disasters (current U...",
+      "VC_DSR_CILN - Direct economic loss resulting from damaged or destroyed critical infrastruct...",
+      "VC_DSR_CHLN - Direct economic loss to cultural heritage damaged or destroyed attributed to ...",
+      "VC_DSR_CDAN - Number of damaged critical infrastructure attributed to disasters (number)",
+      "VC_DSR_HFDN - Number of destroyed or damaged health facilities attributed to disasters (num...",
+      "VC_DSR_EFDN - Number of destroyed or damaged educational facilities attributed to disasters...",
+      "VC_DSR_CDYN - Number of other destroyed or damaged critical infrastructure units and facili...",
+      "VC_DSR_BSDN - Number of disruptions to basic services attributed to disasters (number)",
+      "VC_DSR_ESDN - Number of disruptions to educational services attributed to disasters (number)",
+      "VC_DSR_HSDN - Number of disruptions to health services attributed to disasters (number)",
+      "VC_DSR_OBDN - Number of disruptions to other basic services attributed to disasters (number)",
+      "VC_DSR_DDPA - Direct economic loss to other damaged or destroyed productive assets attribut...",
+      "EN_ATM_PM25 - Annual mean levels of fine particulate matter (population-weighted), by locat...",
+      "EN_REF_WASCOL - Municipal Solid Waste collection coverage, by cities (%)",
+      "EN_URB_OPENSP - Average share of the built-up area of cities that is open space for public us...",
+      "VC_VOH_SXPH - Proportion of persons victim of non-sexual or sexual harassment, in the previ...",
+      "EN_ACS_URB_OPENSP - Average share of urban population with convenient access to open public space...",
+      "SD_CPA_UPRDP - Countries that have national urban policies or regional development plans tha...",
+      "SG_DSR_LGRGSR - Score of adoption and implementation of national DRR strategies in line with ...",
+      "SG_DSR_SILS - Proportion of local governments that adopt and implement local disaster risk ...",
+      "SG_DSR_SILN - Number of local governments that adopt and implement local DRR strategies in ...",
+      "SG_GOV_LOGV - Number of local governments (number)",
+      "SG_DSR_SFDRR - Number of countries that reported having a National DRR Strategy which is ali..."
+    ]
+  },
+  "metrics": {
+    "en_lnd_indqthsng": "Proportion of urban population living in inadequate housing (%)",
+    "sp_trn_publ": "Proportion of population that has convenient access to public transport (%)",
+    "en_lnd_cnspop": "Ratio of land consumption rate to population growth rate",
+    "sg_urb_cspart": "Proportion of cities with a direct participation structure of civil society in urban planning and management that ope...",
+    "gb_xpd_culnat_pb": "Total expenditure per capita spent on cultural and natural heritage, public (PPP, constant 2017 United States dollars)",
+    "gb_xpd_culnat_pv": "Total expenditure per capita spent on cultural and natural heritage, private (PPP, constant 2017 United States dollars)",
+    "gb_xpd_culnat_pbpv": "Total expenditure per capita spent on cultural and natural heritage, public and private (PPP, constant 2017 United St...",
+    "gb_xpd_cul_pbpv": "Total expenditure per capita spent on cultural heritage, public and private (PPP, constant 2017 United States dollars)",
+    "gb_xpd_nat_pbpv": "Total expenditure per capita spent on natural heritage, public and private (PPP, constant 2017 United States dollars)",
+    "vc_dsr_gdpls": "Direct economic loss attributed to disasters (current United States dollars)",
+    "vc_dsr_miss": "Number of missing persons due to disaster (number)",
+    "vc_dsr_affct": "Number of people affected by disaster (number)",
+    "vc_dsr_mort": "Number of deaths due to disaster (number)",
+    "vc_dsr_mtmp": "Number of deaths and missing persons attributed to disasters per 100,000 population (number)",
+    "vc_dsr_mmhn": "Number of deaths and missing persons attributed to disasters (number)",
+    "vc_dsr_daff": "Number of directly affected persons attributed to disasters per 100,000 population (number)",
+    "vc_dsr_ijiln": "Number of injured or ill people attributed to disasters (number)",
+    "vc_dsr_pdan": "Number of people whose damaged dwellings were attributed to disasters (number)",
+    "vc_dsr_pdyn": "Number of people whose destroyed dwellings were attributed to disasters (number)",
+    "vc_dsr_pdln": "Number of people whose livelihoods were disrupted or destroyed, attributed to disasters (number)",
+    "vc_dsr_lsgp": "Direct economic loss attributed to disasters relative to GDP (%)",
+    "vc_dsr_aglh": "Direct agriculture loss attributed to disasters (current United States dollars)",
+    "vc_dsr_holh": "Direct economic loss in the housing sector attributed to disasters (current United States dollars)",
+    "vc_dsr_ciln": "Direct economic loss resulting from damaged or destroyed critical infrastructure attributed to disasters (current Uni...",
+    "vc_dsr_chln": "Direct economic loss to cultural heritage damaged or destroyed attributed to disasters (millions of current United St...",
+    "vc_dsr_cdan": "Number of damaged critical infrastructure attributed to disasters (number)",
+    "vc_dsr_hfdn": "Number of destroyed or damaged health facilities attributed to disasters (number)",
+    "vc_dsr_efdn": "Number of destroyed or damaged educational facilities attributed to disasters (number)",
+    "vc_dsr_cdyn": "Number of other destroyed or damaged critical infrastructure units and facilities attributed to disasters (number)",
+    "vc_dsr_bsdn": "Number of disruptions to basic services attributed to disasters (number)",
+    "vc_dsr_esdn": "Number of disruptions to educational services attributed to disasters (number)",
+    "vc_dsr_hsdn": "Number of disruptions to health services attributed to disasters (number)",
+    "vc_dsr_obdn": "Number of disruptions to other basic services attributed to disasters (number)",
+    "vc_dsr_ddpa": "Direct economic loss to other damaged or destroyed productive assets attributed to disasters (current United States d...",
+    "en_atm_pm25": "Annual mean levels of fine particulate matter (population-weighted), by location (micrograms per cubic meter)",
+    "en_ref_wascol": "Municipal Solid Waste collection coverage, by cities (%)",
+    "en_urb_opensp": "Average share of the built-up area of cities that is open space for public use for all (%)",
+    "vc_voh_sxph": "Proportion of persons victim of non-sexual or sexual harassment, in the previous 12 months (%)",
+    "en_acs_urb_opensp": "Average share of urban population with convenient access to open public spaces (%)",
+    "sd_cpa_uprdp": "Countries that have national urban policies or regional development plans that respond to population dynamics; ensure...",
+    "sg_dsr_lgrgsr": "Score of adoption and implementation of national DRR strategies in line with the Sendai Framework",
+    "sg_dsr_sils": "Proportion of local governments that adopt and implement local disaster risk reduction strategies in line with nation...",
+    "sg_dsr_siln": "Number of local governments that adopt and implement local DRR strategies in line with national strategies (number)",
+    "sg_gov_logv": "Number of local governments (number)",
+    "sg_dsr_sfdrr": "Number of countries that reported having a National DRR Strategy which is aligned to the Sendai Framework"
+  }
+}

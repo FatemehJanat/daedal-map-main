@@ -1,0 +1,44 @@
+{
+  "source_id": "global_earthquakes",
+  "source_name": "Global Earthquakes (USGS + NOAA Significant)",
+  "source_url": "https://earthquake.usgs.gov/",
+  "license": "Public Domain (U.S. Government)",
+  "description": "Global earthquake events magnitude 5.0+, filtered to 2015-2025. Sourced from USGS real-time catalog and NOAA Significant Earthquakes database.",
+  "category": "hazard",
+  "data_type": "events",
+  "topic_tags": ["earthquake", "seismic", "geology"],
+  "keywords": ["earthquake", "seismic", "magnitude", "fault", "tremor", "aftershock"],
+  "geographic_level": "global",
+  "geographic_coverage": {
+    "type": "global",
+    "description": "Worldwide, all seismically active regions"
+  },
+  "temporal_coverage": {
+    "start": 2015,
+    "end": 2025,
+    "granularity": "timestamp",
+    "field": "timestamp"
+  },
+  "event_stats": {
+    "total_events": 19132
+  },
+  "row_count": 19132,
+  "file_size_mb": 1.2,
+  "metrics": {
+    "magnitude": {
+      "name": "Magnitude",
+      "unit": "magnitude",
+      "stats": {"min": 5.0, "max": 9.1, "median": 5.2, "mean": 5.4}
+    },
+    "depth_km": {
+      "name": "Depth",
+      "unit": "km",
+      "stats": {"min": 0, "max": 700, "median": 20, "mean": 55}
+    },
+    "deaths": {
+      "name": "Deaths",
+      "unit": "count"
+    }
+  },
+  "llm_summary": "19,132 earthquake events magnitude 5.0+ worldwide, 2015-2025. Includes depth, felt radius, and impact data where available."
+}

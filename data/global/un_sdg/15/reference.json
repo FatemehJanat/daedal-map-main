@@ -1,0 +1,117 @@
+{
+  "source_context": "United Nations Sustainable Development Goals Framework",
+  "goal": {
+    "number": 15,
+    "name": "Life on Land",
+    "full_title": "Protect, restore and promote sustainable use of terrestrial ecosystems, sustainably manage forests, combat desertification, and halt and reverse land degradation and halt biodiversity loss",
+    "description": "Goal 15 focuses on protecting, restoring and promoting sustainable use of terrestrial ecosystems, managing forests sustainably, combating desertification, halting and reversing land degradation, and halting biodiversity loss.",
+    "targets": [
+      {
+        "id": "15.1",
+        "text": "By 2020, ensure the conservation, restoration and sustainable use of terrestrial and inland freshwater ecosystems"
+      },
+      {
+        "id": "15.2",
+        "text": "By 2020, promote the implementation of sustainable management of all types of forests"
+      },
+      {
+        "id": "15.3",
+        "text": "By 2030, combat desertification, restore degraded land and soil"
+      },
+      {
+        "id": "15.4",
+        "text": "By 2030, ensure the conservation of mountain ecosystems"
+      },
+      {
+        "id": "15.5",
+        "text": "Take urgent and significant action to reduce the degradation of natural habitats, halt the loss of biodiversity"
+      },
+      {
+        "id": "15.6",
+        "text": "Promote fair and equitable sharing of the benefits arising from the utilization of genetic resources"
+      },
+      {
+        "id": "15.7",
+        "text": "Take urgent action to end poaching and trafficking of protected species of flora and fauna"
+      },
+      {
+        "id": "15.8",
+        "text": "By 2020, introduce measures to prevent the introduction and significantly reduce the impact of invasive alien species"
+      },
+      {
+        "id": "15.9",
+        "text": "By 2020, integrate ecosystem and biodiversity values into national and local planning"
+      }
+    ],
+    "key_indicators": [
+      "AG_LND_TOTL - Land area (thousands of hectares)",
+      "AG_LND_FRSTN - Forest area (thousands of hectares)",
+      "AG_LND_FRST - Forest area as a proportion of total land area (%)",
+      "ER_PTD_FRHWTR - Average proportion of Freshwater Key Biodiversity Areas (KBAs) covered by pro...",
+      "ER_PTD_TERR - Average proportion of Terrestrial Key Biodiversity Areas (KBAs) covered by pr...",
+      "AG_LND_FRSTBIOPHA - Above-ground biomass in forest (tonnes per hectare)",
+      "AG_LND_FRSTCERT - Forest area certified under an independently verified certification scheme (t...",
+      "AG_LND_FRSTCHG - Annual forest area change rate (%)",
+      "AG_LND_FRSTMGT - Proportion of forest area with a long-term management plan (%)",
+      "AG_LND_FRSTPRCT - Proportion of forest area within legally established protected areas (%)",
+      "AG_LND_DGRD - Proportion of land that is degraded over total land area (%)",
+      "ER_MTN_GRNCVI - Mountain Green Cover Index",
+      "ER_MTN_TOTL - Mountain area (square kilometres)",
+      "ER_MTN_GRNCOV - Mountain green cover area (square kilometres)",
+      "ER_PTD_MTN - Average proportion of Mountain Key Biodiversity Areas (KBAs) covered by prote...",
+      "ER_MTN_DGRDP - Proportion of degraded mountain land (%)",
+      "ER_MTN_DGRDA - Area of degraded mountain land (square kilometres)",
+      "ER_RSK_LST - Red List Index",
+      "ER_CBD_SMTA - Total reported number of Standard Material Transfer Agreements (SMTAs) transf...",
+      "ER_CBD_NAGOYA - Countries that are parties to the Nagoya Protocol (1 = YES; 0 = NO)",
+      "ER_CBD_ABSCLRHS - Countries that have legislative, administrative and policy framework or measu...",
+      "ER_CBD_ORSPGRFA - Countries that have legislative, administrative and policy framework or measu...",
+      "ER_CBD_PTYPGRFA - Countries that are contracting Parties to the International Treaty on Plant G...",
+      "ER_WLD_TRPOACH - Proportion of traded wildlife that was poached or illicitly trafficked",
+      "ER_IAS_LEGIS - Legislation, Regulation, Act related to the prevention of introduction and ma...",
+      "ER_IAS_NBSAP - National Biodiversity Strategy and Action Plan (NBSAP) targets alignment to A...",
+      "ER_IAS_NATBUD - Countries with an allocation from the national budget to manage the threat of...",
+      "ER_IAS_GLOFUN - Recipient countries of global funding with access to any funding from global ...",
+      "ER_IAS_NBSAPP - Proportion of countries with National Biodiversity Strategy and Action Plan (...",
+      "ER_BDY_ABT2NP - Countries that established national targets in accordance with Aichi Biodiver...",
+      "ER_BDY_SEEA - Countries with integrated biodiversity values into national accounting and re...",
+      "DC_ODA_BDVDL - Total official development assistance for biodiversity, by donor countries (m...",
+      "DC_ODA_BDVL - Total official development assistance for biodiversity, by recipient countrie..."
+    ]
+  },
+  "metrics": {
+    "ag_lnd_totl": "Land area (thousands of hectares)",
+    "ag_lnd_frstn": "Forest area (thousands of hectares)",
+    "ag_lnd_frst": "Forest area as a proportion of total land area (%)",
+    "er_ptd_frhwtr": "Average proportion of Freshwater Key Biodiversity Areas (KBAs) covered by protected areas (%)",
+    "er_ptd_terr": "Average proportion of Terrestrial Key Biodiversity Areas (KBAs) covered by protected areas (%)",
+    "ag_lnd_frstbiopha": "Above-ground biomass in forest (tonnes per hectare)",
+    "ag_lnd_frstcert": "Forest area certified under an independently verified certification scheme (thousands of hectares)",
+    "ag_lnd_frstchg": "Annual forest area change rate (%)",
+    "ag_lnd_frstmgt": "Proportion of forest area with a long-term management plan (%)",
+    "ag_lnd_frstprct": "Proportion of forest area within legally established protected areas (%)",
+    "ag_lnd_dgrd": "Proportion of land that is degraded over total land area (%)",
+    "er_mtn_grncvi": "Mountain Green Cover Index",
+    "er_mtn_totl": "Mountain area (square kilometres)",
+    "er_mtn_grncov": "Mountain green cover area (square kilometres)",
+    "er_ptd_mtn": "Average proportion of Mountain Key Biodiversity Areas (KBAs) covered by protected areas (%)",
+    "er_mtn_dgrdp": "Proportion of degraded mountain land (%)",
+    "er_mtn_dgrda": "Area of degraded mountain land (square kilometres)",
+    "er_rsk_lst": "Red List Index",
+    "er_cbd_smta": "Total reported number of Standard Material Transfer Agreements (SMTAs) transferring plant genetic resources for food ...",
+    "er_cbd_nagoya": "Countries that are parties to the Nagoya Protocol (1 = YES; 0 = NO)",
+    "er_cbd_absclrhs": "Countries that have legislative, administrative and policy framework or measures reported to the Access and Benefit-S...",
+    "er_cbd_orspgrfa": "Countries that have legislative, administrative and policy framework or measures reported through the Online Reportin...",
+    "er_cbd_ptypgrfa": "Countries that are contracting Parties to the International Treaty on Plant Genetic Resources for Food and Agricultur...",
+    "er_wld_trpoach": "Proportion of traded wildlife that was poached or illicitly trafficked",
+    "er_ias_legis": "Legislation, Regulation, Act related to the prevention of introduction and management of Invasive Alien Species (1 = ...",
+    "er_ias_nbsap": "National Biodiversity Strategy and Action Plan (NBSAP) targets alignment to Aichi Biodiversity target 9 set out in th...",
+    "er_ias_natbud": "Countries with an allocation from the national budget to manage the threat of invasive alien species (1 = YES, 0 = NO)",
+    "er_ias_glofun": "Recipient countries of global funding with access to any funding from global financial mechanisms for projects relate...",
+    "er_ias_nbsapp": "Proportion of countries with National Biodiversity Strategy and Action Plan (NBSAP) targets alignment to Aichi Biodiv...",
+    "er_bdy_abt2np": "Countries that established national targets in accordance with Aichi Biodiversity Target 2 of the Strategic Plan for ...",
+    "er_bdy_seea": "Countries with integrated biodiversity values into national accounting and reporting systems, defined as implementati...",
+    "dc_oda_bdvdl": "Total official development assistance for biodiversity, by donor countries (millions of constant 2023 United States d...",
+    "dc_oda_bdvl": "Total official development assistance for biodiversity, by recipient countries (millions of constant 2023 United Stat..."
+  }
+}

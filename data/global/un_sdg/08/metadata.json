@@ -1,0 +1,503 @@
+{
+  "source_id": "un_sdg_08",
+  "source_name": "UN SDG Goal 8",
+  "source_url": "https://unstats.un.org/sdgs/indicators/database/",
+  "license": "UN Terms",
+  "description": "UN Sustainable Development Goal 8 indicators",
+  "category": "development",
+  "topic_tags": [
+    "sdg",
+    "development",
+    "sustainability"
+  ],
+  "keywords": [
+    "sustainable",
+    "development",
+    "goals",
+    "UN"
+  ],
+  "last_updated": "2026-01-07",
+  "geographic_level": "admin_0",
+  "geographic_coverage": {
+    "type": "global",
+    "admin_levels": [
+      0
+    ],
+    "common_count": 191,
+    "common_missing": [
+      "AFG",
+      "ALB",
+      "CAF",
+      "FSM",
+      "HKG",
+      "MAC",
+      "TWN",
+      "VAT",
+      "ZAF"
+    ],
+    "uncommonly_included": [
+      "AIA",
+      "BES",
+      "BLM",
+      "BMU",
+      "CUW",
+      "CYM",
+      "FLK",
+      "FRO",
+      "GLP",
+      "GRL",
+      "GUM",
+      "IMN",
+      "MAF",
+      "MSR",
+      "MTQ",
+      "NCL",
+      "NFK",
+      "PCN",
+      "PRI",
+      "REU",
+      "SHN",
+      "SPM",
+      "SXM",
+      "TCA",
+      "VGB",
+      "VIR",
+      "WLF"
+    ]
+  },
+  "temporal_coverage": {
+    "start": 2000,
+    "end": 2024,
+    "frequency": "annual",
+    "granularity": "yearly",
+    "field": "year"
+  },
+  "row_count": 5333,
+  "file_size_mb": 0.2,
+  "data_completeness": 0.45,
+  "update_schedule": "unknown",
+  "expected_next_update": "unknown",
+  "metrics": {
+    "dc_tof_trdcmdl": {
+      "name": "Total official flows (commitments) for Aid for Trade, by donor countries (millions of constant 2023 United States dol...",
+      "unit": "CON_USD_M",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 18739.1,
+        "median": 150.9
+      },
+      "density": 0.118,
+      "years": [
+        2006,
+        2023
+      ],
+      "countries": 49,
+      "by_era": {
+        "2000+": {
+          "density": 0.118,
+          "countries": 49,
+          "stats": {
+            "min": 0.0,
+            "max": 18739.1,
+            "median": 150.9
+          }
+        }
+      }
+    },
+    "dc_tof_trdcml": {
+      "name": "Total official flows (commitments) for Aid for Trade, by recipient countries (millions of constant 2023 United States...",
+      "unit": "CON_USD_M",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 8079.13,
+        "median": 93.0131
+      },
+      "density": 0.471,
+      "years": [
+        2006,
+        2023
+      ],
+      "countries": 147,
+      "by_era": {
+        "2000+": {
+          "density": 0.471,
+          "countries": 147,
+          "stats": {
+            "min": 0.0,
+            "max": 8079.13,
+            "median": 93.0131
+          }
+        }
+      }
+    },
+    "dc_tof_trddbmdl": {
+      "name": "Total official flows (disbursement) for Aid for Trade, by donor countries (millions of constant 2023 United States do...",
+      "unit": "CON_USD_M",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 11563.5,
+        "median": 151.656
+      },
+      "density": 0.118,
+      "years": [
+        2006,
+        2023
+      ],
+      "countries": 49,
+      "by_era": {
+        "2000+": {
+          "density": 0.118,
+          "countries": 49,
+          "stats": {
+            "min": 0.0,
+            "max": 11563.5,
+            "median": 151.656
+          }
+        }
+      }
+    },
+    "dc_tof_trddbml": {
+      "name": "Total official flows (disbursement) for Aid for Trade, by recipient countries (millions of constant 2023 United State...",
+      "unit": "CON_USD_M",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 4462.35,
+        "median": 80.7206
+      },
+      "density": 0.471,
+      "years": [
+        2006,
+        2023
+      ],
+      "countries": 147,
+      "by_era": {
+        "2000+": {
+          "density": 0.471,
+          "countries": 147,
+          "stats": {
+            "min": 0.0,
+            "max": 4462.35,
+            "median": 80.7206
+          }
+        }
+      }
+    },
+    "en_mat_domcmpc": {
+      "name": "Domestic material consumption per capita, by type of raw material (tonnes)",
+      "unit": "TONNES",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": -93.5205,
+        "max": 91.6459,
+        "median": 0.3036
+      },
+      "density": 0.966,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 216,
+      "by_era": {
+        "2000+": {
+          "density": 0.966,
+          "countries": 216,
+          "stats": {
+            "min": -93.5205,
+            "max": 91.6459,
+            "median": 0.3036
+          }
+        }
+      }
+    },
+    "en_mat_domcmpg": {
+      "name": "Domestic material consumption per unit of GDP, by type of raw material (kilograms per constant 2015 United States dol...",
+      "unit": "KG_PER_CON_USD",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": -6.1881,
+        "max": 22.7947,
+        "median": 0.0517
+      },
+      "density": 0.893,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 201,
+      "by_era": {
+        "2000+": {
+          "density": 0.893,
+          "countries": 201,
+          "stats": {
+            "min": -6.1881,
+            "max": 22.7947,
+            "median": 0.0517
+          }
+        }
+      }
+    },
+    "en_mat_domcmpt": {
+      "name": "Domestic material consumption, by type of raw material (tonnes)",
+      "unit": "TONNES",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": -8813586.2848,
+        "max": 32359475053.1748,
+        "median": 649487.6634
+      },
+      "density": 0.975,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 218,
+      "by_era": {
+        "2000+": {
+          "density": 0.975,
+          "countries": 218,
+          "stats": {
+            "min": -8813586.2848,
+            "max": 32359475053.1748,
+            "median": 649487.6634
+          }
+        }
+      }
+    },
+    "en_mat_ftprpc": {
+      "name": "Material footprint per capita, by type of raw material (tonnes)",
+      "unit": "TONNES",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 5.2924,
+        "max": 39.4516,
+        "median": 9.2314
+      },
+      "density": 0.005,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 1,
+      "by_era": {
+        "2000+": {
+          "density": 0.005,
+          "countries": 1,
+          "stats": {
+            "min": 5.2924,
+            "max": 39.4516,
+            "median": 9.2314
+          }
+        }
+      }
+    },
+    "en_mat_ftprpg": {
+      "name": "Material footprint per unit of GDP, by type of raw material (kilograms per constant 2015 United States dollar)",
+      "unit": "KG_PER_CON_USD",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.1398,
+        "max": 0.7116,
+        "median": 0.2133
+      },
+      "density": 0.005,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 1,
+      "by_era": {
+        "2000+": {
+          "density": 0.005,
+          "countries": 1,
+          "stats": {
+            "min": 0.1398,
+            "max": 0.7116,
+            "median": 0.2133
+          }
+        }
+      }
+    },
+    "en_mat_ftprtn": {
+      "name": "Material footprint, by type of raw material (tonnes)",
+      "unit": "TONNES",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 154675569.9,
+        "max": 1070699718.0,
+        "median": 306804186.35
+      },
+      "density": 0.005,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 1,
+      "by_era": {
+        "2000+": {
+          "density": 0.005,
+          "countries": 1,
+          "stats": {
+            "min": 154675569.9,
+            "max": 1070699718.0,
+            "median": 306804186.35
+          }
+        }
+      }
+    },
+    "ny_gdp_pcap": {
+      "name": "Annual growth rate of real GDP per capita (%)",
+      "unit": "USD",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": -53.4,
+        "max": 95.8,
+        "median": 2.2
+      },
+      "density": 0.899,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 201,
+      "by_era": {
+        "2000+": {
+          "density": 0.899,
+          "countries": 201,
+          "stats": {
+            "min": -53.4,
+            "max": 95.8,
+            "median": 2.2
+          }
+        }
+      }
+    },
+    "sl_cpa_yemp": {
+      "name": "Existence of a developed and operationalized national strategy for youth employment, as a distinct strategy or as par...",
+      "unit": "SCORE",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 3.0,
+        "median": 2.0
+      },
+      "density": 0.102,
+      "years": [
+        2019,
+        2024
+      ],
+      "countries": 159,
+      "by_era": {
+        "2000+": {
+          "density": 0.102,
+          "countries": 159,
+          "stats": {
+            "min": 0.0,
+            "max": 3.0,
+            "median": 2.0
+          }
+        }
+      }
+    },
+    "sl_lbr_ntlcpl": {
+      "name": "Level of national compliance with labour rights (freedom of association and collective bargaining) based on Internati...",
+      "unit": "SCORE",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 10.0,
+        "median": 1.46
+      },
+      "density": 0.309,
+      "years": [
+        2015,
+        2023
+      ],
+      "countries": 183,
+      "by_era": {
+        "2000+": {
+          "density": 0.309,
+          "countries": 183,
+          "stats": {
+            "min": 0.0,
+            "max": 10.0,
+            "median": 1.46
+          }
+        }
+      }
+    },
+    "st_emp_trsmn": {
+      "name": "Employed persons in the tourism industries (number)",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 351.0,
+        "max": 27472438.0,
+        "median": 285730.0
+      },
+      "density": 0.175,
+      "years": [
+        2008,
+        2023
+      ],
+      "countries": 88,
+      "by_era": {
+        "2000+": {
+          "density": 0.175,
+          "countries": 88,
+          "stats": {
+            "min": 351.0,
+            "max": 27472438.0,
+            "median": 285730.0
+          }
+        }
+      }
+    },
+    "st_gdp_zs": {
+      "name": "Tourism direct GDP as a proportion of total GDP (%)",
+      "unit": "USD",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": -0.1,
+        "max": 63.4,
+        "median": 3.1
+      },
+      "density": 0.218,
+      "years": [
+        2008,
+        2023
+      ],
+      "countries": 118,
+      "by_era": {
+        "2000+": {
+          "density": 0.218,
+          "countries": 118,
+          "stats": {
+            "min": -0.1,
+            "max": 63.4,
+            "median": 3.1
+          }
+        }
+      }
+    }
+  },
+  "llm_summary": "2000-2024. Total official flows (commitments) for Aid for Trade, by donor countries (millions of constant 2023 United States dol..., Total official flows (commitments) for Aid for Trade, by recipient countries (millions of constant 2023 United States..., Total official flows (disbursement) for Aid for Trade, by donor countries (millions of constant 2023 United States do..., Total official flows (disbursement) for Aid for Trade, by recipient countries (millions of constant 2023 United State..., Domestic material consumption per capita, by type of raw material (tonnes)."
+}

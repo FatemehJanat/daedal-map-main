@@ -1,0 +1,251 @@
+{
+  "source_id": "un_sdg_07",
+  "source_name": "UN SDG Goal 7",
+  "source_url": "https://unstats.un.org/sdgs/indicators/database/",
+  "license": "UN Terms",
+  "description": "UN Sustainable Development Goal 7 indicators",
+  "category": "development",
+  "topic_tags": [
+    "sdg",
+    "development",
+    "sustainability"
+  ],
+  "keywords": [
+    "sustainable",
+    "development",
+    "goals",
+    "UN"
+  ],
+  "last_updated": "2026-01-07",
+  "geographic_level": "admin_0",
+  "geographic_coverage": {
+    "type": "global",
+    "admin_levels": [
+      0
+    ],
+    "common_count": 191,
+    "common_missing": [
+      "AFG",
+      "ALB",
+      "CAF",
+      "FSM",
+      "HKG",
+      "MAC",
+      "TWN",
+      "VAT",
+      "ZAF"
+    ],
+    "uncommonly_included": [
+      "AIA",
+      "BES",
+      "BLM",
+      "BMU",
+      "CUW",
+      "CYM",
+      "FLK",
+      "FRO",
+      "GGY",
+      "GLP",
+      "GRL",
+      "GUM",
+      "IMN",
+      "JEY",
+      "MAF",
+      "MSR",
+      "MTQ",
+      "NCL",
+      "PRI",
+      "REU",
+      "SHN",
+      "SPM",
+      "SXM",
+      "TCA",
+      "VGB",
+      "VIR",
+      "WLF"
+    ]
+  },
+  "temporal_coverage": {
+    "start": 2000,
+    "end": 2023,
+    "frequency": "annual",
+    "granularity": "yearly",
+    "field": "year"
+  },
+  "row_count": 5230,
+  "file_size_mb": 0.08,
+  "data_completeness": 0.9,
+  "update_schedule": "unknown",
+  "expected_next_update": "unknown",
+  "metrics": {
+    "eg_acs_elec": {
+      "name": "Proportion of population with access to electricity, by urban/rural (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.8,
+        "max": 100.0,
+        "median": 99.0
+      },
+      "density": 0.941,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 206,
+      "by_era": {
+        "2000+": {
+          "density": 0.941,
+          "countries": 206,
+          "stats": {
+            "min": 0.8,
+            "max": 100.0,
+            "median": 99.0
+          }
+        }
+      }
+    },
+    "eg_egy_clean": {
+      "name": "Proportion of population with primary reliance on clean fuels and technology (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 86.4
+      },
+      "density": 0.854,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 186,
+      "by_era": {
+        "2000+": {
+          "density": 0.854,
+          "countries": 186,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 86.4
+          }
+        }
+      }
+    },
+    "eg_egy_prim": {
+      "name": "Energy intensity level of primary energy (megajoules per constant 2021 purchasing power parity GDP)",
+      "unit": "MJ_PER_GDP_CON_PPP_USD",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 59.41,
+        "median": 3.66
+      },
+      "density": 0.852,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 196,
+      "by_era": {
+        "2000+": {
+          "density": 0.852,
+          "countries": 196,
+          "stats": {
+            "min": 0.0,
+            "max": 59.41,
+            "median": 3.66
+          }
+        }
+      }
+    },
+    "eg_egy_rnew": {
+      "name": "Installed renewable electricity-generating capacity (watts per capita)",
+      "unit": "W_PER_CAPITA",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 8187.8444,
+        "median": 0.0075
+      },
+      "density": 0.959,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 209,
+      "by_era": {
+        "2000+": {
+          "density": 0.959,
+          "countries": 209,
+          "stats": {
+            "min": 0.0,
+            "max": 8187.8444,
+            "median": 0.0075
+          }
+        }
+      }
+    },
+    "eg_fec_rnew": {
+      "name": "Renewable energy share in the total final energy consumption (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 98.34,
+        "median": 17.89
+      },
+      "density": 0.934,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 216,
+      "by_era": {
+        "2000+": {
+          "density": 0.934,
+          "countries": 216,
+          "stats": {
+            "min": 0.0,
+            "max": 98.34,
+            "median": 17.89
+          }
+        }
+      }
+    },
+    "eg_iff_randn": {
+      "name": "International financial flows to developing countries in support of clean energy research and development and renewab...",
+      "unit": "CON_USD_M",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 4751.58,
+        "median": 0.0
+      },
+      "density": 0.656,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 143,
+      "by_era": {
+        "2000+": {
+          "density": 0.656,
+          "countries": 143,
+          "stats": {
+            "min": 0.0,
+            "max": 4751.58,
+            "median": 0.0
+          }
+        }
+      }
+    }
+  },
+  "llm_summary": "2000-2023. Proportion of population with access to electricity, by urban/rural (%), Proportion of population with primary reliance on clean fuels and technology (%), Energy intensity level of primary energy (megajoules per constant 2021 purchasing power parity GDP), Installed renewable electricity-generating capacity (watts per capita), Renewable energy share in the total final energy consumption (%)."
+}

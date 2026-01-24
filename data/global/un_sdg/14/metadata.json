@@ -1,0 +1,743 @@
+{
+  "source_id": "un_sdg_14",
+  "source_name": "UN SDG Goal 14",
+  "source_url": "https://unstats.un.org/sdgs/indicators/database/",
+  "license": "UN Terms",
+  "description": "UN Sustainable Development Goal 14 indicators",
+  "category": "development",
+  "topic_tags": [
+    "sdg",
+    "development",
+    "sustainability"
+  ],
+  "keywords": [
+    "sustainable",
+    "development",
+    "goals",
+    "UN"
+  ],
+  "last_updated": "2026-01-07",
+  "geographic_level": "admin_0",
+  "geographic_coverage": {
+    "type": "global",
+    "admin_levels": [
+      0
+    ],
+    "common_count": 187,
+    "common_missing": [
+      "AFG",
+      "ALB",
+      "AND",
+      "CAF",
+      "FSM",
+      "HKG",
+      "LSO",
+      "MAC",
+      "MDA",
+      "SMR",
+      "TWN",
+      "VAT",
+      "ZAF"
+    ],
+    "uncommonly_included": [
+      "AIA",
+      "BES",
+      "BLM",
+      "BMU",
+      "CUW",
+      "CYM",
+      "FLK",
+      "FRO",
+      "GGY",
+      "GLP",
+      "GRL",
+      "GUM",
+      "IMN",
+      "JEY",
+      "MAF",
+      "MSR",
+      "MTQ",
+      "NCL",
+      "NFK",
+      "PCN",
+      "PRI",
+      "REU",
+      "SHN",
+      "SPM",
+      "SXM",
+      "TCA",
+      "UMI",
+      "VGB",
+      "VIR",
+      "WLF"
+    ]
+  },
+  "temporal_coverage": {
+    "start": 1996,
+    "end": 2025,
+    "frequency": "annual",
+    "granularity": "yearly",
+    "field": "year"
+  },
+  "row_count": 4572,
+  "file_size_mb": 0.11,
+  "data_completeness": 0.22,
+  "update_schedule": "unknown",
+  "expected_next_update": "unknown",
+  "metrics": {
+    "en_mar_bealit_bp": {
+      "name": "Beach litter originating from national land-based sources that ends in the beach (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 11.1862,
+        "max": 100.0,
+        "median": 69.7901
+      },
+      "density": 0.154,
+      "years": [
+        2017,
+        2022
+      ],
+      "countries": 141,
+      "by_era": {
+        "2000+": {
+          "density": 0.155,
+          "countries": 141,
+          "stats": {
+            "min": 11.1862,
+            "max": 100.0,
+            "median": 69.7901
+          }
+        }
+      }
+    },
+    "en_mar_bealit_bv": {
+      "name": "Beach litter originating from national land-based sources that ends in the beach (Tonnes)",
+      "unit": "TONNES",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 2683611.0,
+        "median": 21.5
+      },
+      "density": 0.185,
+      "years": [
+        2017,
+        2022
+      ],
+      "countries": 141,
+      "by_era": {
+        "2000+": {
+          "density": 0.185,
+          "countries": 141,
+          "stats": {
+            "min": 0.0,
+            "max": 2683611.0,
+            "median": 21.5
+          }
+        }
+      }
+    },
+    "en_mar_bealit_exp": {
+      "name": "Exported beach litter originating from national land-based sources (Tonnes)",
+      "unit": "TONNES",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 28.0,
+        "max": 3410109.0,
+        "median": 9192.5
+      },
+      "density": 0.185,
+      "years": [
+        2017,
+        2022
+      ],
+      "countries": 141,
+      "by_era": {
+        "2000+": {
+          "density": 0.185,
+          "countries": 141,
+          "stats": {
+            "min": 28.0,
+            "max": 3410109.0,
+            "median": 9192.5
+          }
+        }
+      }
+    },
+    "en_mar_bealit_op": {
+      "name": "Beach litter originating from national land-based sources that ends in the ocean (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 88.8138,
+        "median": 30.2099
+      },
+      "density": 0.154,
+      "years": [
+        2017,
+        2022
+      ],
+      "countries": 141,
+      "by_era": {
+        "2000+": {
+          "density": 0.155,
+          "countries": 141,
+          "stats": {
+            "min": 0.0,
+            "max": 88.8138,
+            "median": 30.2099
+          }
+        }
+      }
+    },
+    "en_mar_bealit_ov": {
+      "name": "Beach litter originating from national land-based sources that ends in the ocean (Tonnes)",
+      "unit": "TONNES",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 1147105.0,
+        "median": 1089.0
+      },
+      "density": 0.154,
+      "years": [
+        2017,
+        2022
+      ],
+      "countries": 141,
+      "by_era": {
+        "2000+": {
+          "density": 0.155,
+          "countries": 141,
+          "stats": {
+            "min": 0.0,
+            "max": 1147105.0,
+            "median": 1089.0
+          }
+        }
+      }
+    },
+    "en_mar_bealit_pusa": {
+      "name": "Beach litter items per unit of surface area (Number of items per 100 square meters)",
+      "unit": "NUM_ITEMS_PER_100M2",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 9360000.0,
+        "median": 70.0
+      },
+      "density": 0.203,
+      "years": [
+        2015,
+        2024
+      ],
+      "countries": 164,
+      "by_era": {
+        "2000+": {
+          "density": 0.203,
+          "countries": 164,
+          "stats": {
+            "min": 0.0,
+            "max": 9360000.0,
+            "median": 70.0
+          }
+        }
+      }
+    },
+    "en_mar_chlanm": {
+      "name": "Chlorophyll-a anomaly, remote sensing (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 16.0698,
+        "median": 3.3457
+      },
+      "density": 0.194,
+      "years": [
+        2018,
+        2022
+      ],
+      "countries": 179,
+      "by_era": {
+        "2000+": {
+          "density": 0.195,
+          "countries": 179,
+          "stats": {
+            "min": 0.0,
+            "max": 16.0698,
+            "median": 3.3457
+          }
+        }
+      }
+    },
+    "en_mar_chlconc": {
+      "name": "Chlorophyll-a concentration (milligram per liter)",
+      "unit": "MG_PER_LT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0002,
+        "max": 1.869,
+        "median": 0.0026
+      },
+      "density": 0.006,
+      "years": [
+        2015,
+        2022
+      ],
+      "countries": 5,
+      "by_era": {
+        "2000+": {
+          "density": 0.006,
+          "countries": 5,
+          "stats": {
+            "min": 0.0002,
+            "max": 1.869,
+            "median": 0.0026
+          }
+        }
+      }
+    },
+    "en_mar_chldev": {
+      "name": "Chlorophyll-a deviations, remote sensing (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 2.2993
+      },
+      "density": 0.689,
+      "years": [
+        2005,
+        2022
+      ],
+      "countries": 179,
+      "by_era": {
+        "2000+": {
+          "density": 0.69,
+          "countries": 179,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 2.2993
+          }
+        }
+      }
+    },
+    "en_mar_dsi_mml": {
+      "name": "Coastal Eutrophication: Total Dissolved Silica (micromole per liter)",
+      "unit": "MCMOL_PER_LT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0026,
+        "max": 5.627,
+        "median": 3.4333
+      },
+      "density": 0.005,
+      "years": [
+        2015,
+        2022
+      ],
+      "countries": 4,
+      "by_era": {
+        "2000+": {
+          "density": 0.005,
+          "countries": 4,
+          "stats": {
+            "min": 0.0026,
+            "max": 5.627,
+            "median": 3.4333
+          }
+        }
+      }
+    },
+    "en_mar_plasdd": {
+      "name": "Floating plastic debris density (count per km2)",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.05,
+        "max": 5975811.0704,
+        "median": 35.6388
+      },
+      "density": 0.004,
+      "years": [
+        2016,
+        2023
+      ],
+      "countries": 6,
+      "by_era": {
+        "2000+": {
+          "density": 0.004,
+          "countries": 6,
+          "stats": {
+            "min": 0.05,
+            "max": 5975811.0704,
+            "median": 35.6388
+          }
+        }
+      }
+    },
+    "en_mar_tn_mml": {
+      "name": "Coastal Eutrophication: Total Nitrogen (micromole per liter)",
+      "unit": "MCMOL_PER_LT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.069,
+        "max": 34628.602,
+        "median": 51.6643
+      },
+      "density": 0.06,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 18,
+      "by_era": {
+        "2000+": {
+          "density": 0.06,
+          "countries": 18,
+          "stats": {
+            "min": 0.069,
+            "max": 34628.602,
+            "median": 51.6643
+          }
+        }
+      }
+    },
+    "en_mar_tp_mml": {
+      "name": "Coastal Eutrophication: Total Phosphorus (micromole per liter)",
+      "unit": "MCMOL_PER_LT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 756.9973,
+        "median": 1.8452
+      },
+      "density": 0.06,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 19,
+      "by_era": {
+        "2000+": {
+          "density": 0.06,
+          "countries": 19,
+          "stats": {
+            "min": 0.0,
+            "max": 756.9973,
+            "median": 1.8452
+          }
+        }
+      }
+    },
+    "en_scp_ecsyba": {
+      "name": "Number of countries using ecosystem-based approaches to managing marine areas (1 = YES; 0 = NO)",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 1.0,
+        "max": 1.0,
+        "median": 1.0
+      },
+      "density": 0.021,
+      "years": [
+        2006,
+        2025
+      ],
+      "countries": 67,
+      "by_era": {
+        "2000+": {
+          "density": 0.021,
+          "countries": 67,
+          "stats": {
+            "min": 1.0,
+            "max": 1.0,
+            "median": 1.0
+          }
+        }
+      }
+    },
+    "en_scp_fshgdp": {
+      "name": "Sustainable fisheries as a proportion of GDP",
+      "unit": "USD",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 13.6,
+        "median": 0.24
+      },
+      "density": 0.136,
+      "years": [
+        2011,
+        2021
+      ],
+      "countries": 113,
+      "by_era": {
+        "2000+": {
+          "density": 0.136,
+          "countries": 113,
+          "stats": {
+            "min": 0.0,
+            "max": 13.6,
+            "median": 0.24
+          }
+        }
+      }
+    },
+    "er_h2o_fwtl": {
+      "name": "Proportion of fish stocks within biologically sustainable levels (not overexploited) (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 61.54
+      },
+      "density": 0.026,
+      "years": [
+        2016,
+        2021
+      ],
+      "countries": 82,
+      "by_era": {
+        "2000+": {
+          "density": 0.026,
+          "countries": 82,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 61.54
+          }
+        }
+      }
+    },
+    "er_mrn_mpa": {
+      "name": "Average proportion of Marine Key Biodiversity Areas (KBAs) covered by protected areas (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 32.9222
+      },
+      "density": 0.93,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 170,
+      "by_era": {
+        "2000+": {
+          "density": 0.93,
+          "countries": 170,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 32.9222
+          }
+        }
+      }
+    },
+    "er_oaw_mnacd": {
+      "name": "Average marine acidity (pH) measured at agreed suite of representative sampling stations",
+      "unit": "PH",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 7.387,
+        "max": 8.846,
+        "median": 8.055
+      },
+      "density": 0.068,
+      "years": [
+        1996,
+        2024
+      ],
+      "countries": 42,
+      "by_era": {
+        "2000+": {
+          "density": 0.067,
+          "countries": 42,
+          "stats": {
+            "min": 7.387,
+            "max": 8.846,
+            "median": 8.055
+          }
+        },
+        "1950-1999": {
+          "density": 1.0,
+          "countries": 2,
+          "stats": {
+            "min": 7.891,
+            "max": 8.1133,
+            "median": 8.0457
+          }
+        }
+      }
+    },
+    "er_rde_osex": {
+      "name": "National ocean science expenditure as a share of total research and development funding (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.011,
+        "max": 9.5006,
+        "median": 0.3152
+      },
+      "density": 0.033,
+      "years": [
+        2013,
+        2022
+      ],
+      "countries": 38,
+      "by_era": {
+        "2000+": {
+          "density": 0.033,
+          "countries": 38,
+          "stats": {
+            "min": 0.011,
+            "max": 9.5006,
+            "median": 0.3152
+          }
+        }
+      }
+    },
+    "er_reg_ssfrar": {
+      "name": "Degree of application of a legal/regulatory/policy/institutional framework which recognizes and protects access right...",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 1.0,
+        "max": 5.0,
+        "median": 4.0
+      },
+      "density": 0.089,
+      "years": [
+        2018,
+        2024
+      ],
+      "countries": 157,
+      "by_era": {
+        "2000+": {
+          "density": 0.09,
+          "countries": 157,
+          "stats": {
+            "min": 1.0,
+            "max": 5.0,
+            "median": 4.0
+          }
+        }
+      }
+    },
+    "er_reg_unfcim": {
+      "name": "Progress by countries in the degree of implementation of international instruments aiming to combat illegal, unreport...",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 1.0,
+        "max": 5.0,
+        "median": 5.0
+      },
+      "density": 0.08,
+      "years": [
+        2018,
+        2024
+      ],
+      "countries": 142,
+      "by_era": {
+        "2000+": {
+          "density": 0.081,
+          "countries": 142,
+          "stats": {
+            "min": 1.0,
+            "max": 5.0,
+            "median": 5.0
+          }
+        }
+      }
+    },
+    "er_unclos_imple": {
+      "name": "Score for the implementation of UNCLOS and its two implementing agreements (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 90.0
+      },
+      "density": 0.013,
+      "years": [
+        2021,
+        2023
+      ],
+      "countries": 52,
+      "by_era": {
+        "2000+": {
+          "density": 0.013,
+          "countries": 52,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 90.0
+          }
+        }
+      }
+    },
+    "er_unclos_ratacc": {
+      "name": "Score for the ratification of and accession to UNCLOS and its two implementing agreements (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 100.0
+      },
+      "density": 0.014,
+      "years": [
+        2021,
+        2023
+      ],
+      "countries": 55,
+      "by_era": {
+        "2000+": {
+          "density": 0.014,
+          "countries": 55,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 100.0
+          }
+        }
+      }
+    }
+  },
+  "llm_summary": "1996-2025. Beach litter originating from national land-based sources that ends in the beach (%), Beach litter originating from national land-based sources that ends in the beach (Tonnes), Exported beach litter originating from national land-based sources (Tonnes), Beach litter originating from national land-based sources that ends in the ocean (%), Beach litter originating from national land-based sources that ends in the ocean (Tonnes)."
+}

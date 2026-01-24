@@ -1,0 +1,852 @@
+{
+  "source_id": "un_sdg_04",
+  "source_name": "UN SDG Goal 4",
+  "source_url": "https://unstats.un.org/sdgs/indicators/database/",
+  "license": "UN Terms",
+  "description": "UN Sustainable Development Goal 4 indicators",
+  "category": "development",
+  "topic_tags": [
+    "sdg",
+    "development",
+    "sustainability"
+  ],
+  "keywords": [
+    "sustainable",
+    "development",
+    "goals",
+    "UN"
+  ],
+  "last_updated": "2026-01-07",
+  "geographic_level": "admin_0",
+  "geographic_coverage": {
+    "type": "global",
+    "admin_levels": [
+      0
+    ],
+    "common_count": 191,
+    "common_missing": [
+      "AFG",
+      "ALB",
+      "CAF",
+      "FSM",
+      "HKG",
+      "MAC",
+      "TWN",
+      "VAT",
+      "ZAF"
+    ],
+    "uncommonly_included": [
+      "AIA",
+      "BMU",
+      "CUW",
+      "CYM",
+      "MSR",
+      "NCL",
+      "PRI",
+      "SHN",
+      "SXM",
+      "TCA",
+      "VGB",
+      "WLF"
+    ]
+  },
+  "temporal_coverage": {
+    "start": 2000,
+    "end": 2024,
+    "frequency": "annual",
+    "granularity": "yearly",
+    "field": "year"
+  },
+  "row_count": 4304,
+  "file_size_mb": 0.23,
+  "data_completeness": 0.29,
+  "update_schedule": "unknown",
+  "expected_next_update": "unknown",
+  "metrics": {
+    "dc_tof_schipsl": {
+      "name": "Total official flows for scholarships, by recipient countries (millions of constant 2023 United States dollars)",
+      "unit": "CON_USD_M",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0002,
+        "max": 243.0052,
+        "median": 2.4342
+      },
+      "density": 0.569,
+      "years": [
+        2006,
+        2023
+      ],
+      "countries": 146,
+      "by_era": {
+        "2000+": {
+          "density": 0.569,
+          "countries": 146,
+          "stats": {
+            "min": 0.0002,
+            "max": 243.0052,
+            "median": 2.4342
+          }
+        }
+      }
+    },
+    "se_acc_hndwsh": {
+      "name": "Proportion of schools with basic handwashing facilities, by education level (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 100.0
+      },
+      "density": 0.234,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 143,
+      "by_era": {
+        "2000+": {
+          "density": 0.234,
+          "countries": 143,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 100.0
+          }
+        }
+      }
+    },
+    "se_acs_cmptr": {
+      "name": "Proportion of schools with access to computers for pedagogical purposes, by education level (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 99.7452
+      },
+      "density": 0.3,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 175,
+      "by_era": {
+        "2000+": {
+          "density": 0.3,
+          "countries": 175,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 99.7452
+          }
+        }
+      }
+    },
+    "se_acs_elect": {
+      "name": "Proportion of schools with access to electricity, by education level (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 2.8678,
+        "max": 100.0,
+        "median": 100.0
+      },
+      "density": 0.298,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 170,
+      "by_era": {
+        "2000+": {
+          "density": 0.298,
+          "countries": 170,
+          "stats": {
+            "min": 2.8678,
+            "max": 100.0,
+            "median": 100.0
+          }
+        }
+      }
+    },
+    "se_acs_h2o": {
+      "name": "Proportion of schools with access to basic drinking water, by education level (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 100.0
+      },
+      "density": 0.251,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 148,
+      "by_era": {
+        "2000+": {
+          "density": 0.251,
+          "countries": 148,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 100.0
+          }
+        }
+      }
+    },
+    "se_acs_intnt": {
+      "name": "Proportion of schools with access to the internet for pedagogical purposes, by education level (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 99.6004
+      },
+      "density": 0.267,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 164,
+      "by_era": {
+        "2000+": {
+          "density": 0.267,
+          "countries": 164,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 99.6004
+          }
+        }
+      }
+    },
+    "se_acs_sanit": {
+      "name": "Proportion of schools with access to single-sex basic sanitation, by education level (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 100.0
+      },
+      "density": 0.215,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 135,
+      "by_era": {
+        "2000+": {
+          "density": 0.215,
+          "countries": 135,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 100.0
+          }
+        }
+      }
+    },
+    "se_adt_acts": {
+      "name": "Proportion of youth and adults with information and communications technology (ICT) skills, by sex and type of skill (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 25.7
+      },
+      "density": 0.261,
+      "years": [
+        2002,
+        2024
+      ],
+      "countries": 111,
+      "by_era": {
+        "2000+": {
+          "density": 0.261,
+          "countries": 111,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 25.7
+          }
+        }
+      }
+    },
+    "se_agp_cpra": {
+      "name": "Adjusted gender parity index for completion rate, by location, wealth quintile and education level",
+      "unit": "Ratio",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 1.6732,
+        "median": 1.0096
+      },
+      "density": 0.297,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 160,
+      "by_era": {
+        "2000+": {
+          "density": 0.297,
+          "countries": 160,
+          "stats": {
+            "min": 0.0,
+            "max": 1.6732,
+            "median": 1.0096
+          }
+        }
+      }
+    },
+    "se_alp_cplr": {
+      "name": "Adjusted location parity index for completion rate, by sex, wealth quintile and education level",
+      "unit": "Ratio",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 2.0,
+        "median": 0.9194
+      },
+      "density": 0.275,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 151,
+      "by_era": {
+        "2000+": {
+          "density": 0.275,
+          "countries": 151,
+          "stats": {
+            "min": 0.0,
+            "max": 2.0,
+            "median": 0.9194
+          }
+        }
+      }
+    },
+    "se_awp_cpra": {
+      "name": "Adjusted wealth parity index for completion rate, by sex, location and education level",
+      "unit": "Ratio",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 1.1437,
+        "median": 0.5023
+      },
+      "density": 0.171,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 125,
+      "by_era": {
+        "2000+": {
+          "density": 0.171,
+          "countries": 125,
+          "stats": {
+            "min": 0.0,
+            "max": 1.1437,
+            "median": 0.5023
+          }
+        }
+      }
+    },
+    "se_gcedesd_cur": {
+      "name": "Extent to which global citizenship education and education for sustainable development are mainstreamed in curricula",
+      "unit": "INDEX",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.4713,
+        "max": 1.0,
+        "median": 0.8255
+      },
+      "density": 0.013,
+      "years": [
+        2020,
+        2020
+      ],
+      "countries": 58,
+      "by_era": {
+        "2000+": {
+          "density": 0.013,
+          "countries": 58,
+          "stats": {
+            "min": 0.4713,
+            "max": 1.0,
+            "median": 0.8255
+          }
+        }
+      }
+    },
+    "se_gcedesd_nep": {
+      "name": "Extent to which global citizenship education and education for sustainable development are mainstreamed in national e...",
+      "unit": "INDEX",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.35,
+        "max": 1.0,
+        "median": 0.875
+      },
+      "density": 0.015,
+      "years": [
+        2020,
+        2020
+      ],
+      "countries": 63,
+      "by_era": {
+        "2000+": {
+          "density": 0.015,
+          "countries": 63,
+          "stats": {
+            "min": 0.35,
+            "max": 1.0,
+            "median": 0.875
+          }
+        }
+      }
+    },
+    "se_gcedesd_sas": {
+      "name": "Extent to which global citizenship education and education for sustainable development are mainstreamed in student as...",
+      "unit": "INDEX",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.25,
+        "max": 1.0,
+        "median": 0.8333
+      },
+      "density": 0.015,
+      "years": [
+        2020,
+        2020
+      ],
+      "countries": 63,
+      "by_era": {
+        "2000+": {
+          "density": 0.015,
+          "countries": 63,
+          "stats": {
+            "min": 0.25,
+            "max": 1.0,
+            "median": 0.8333
+          }
+        }
+      }
+    },
+    "se_gcedesd_ted": {
+      "name": "Extent to which global citizenship education and education for sustainable development are mainstreamed in teacher ed...",
+      "unit": "INDEX",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.2,
+        "max": 1.0,
+        "median": 0.9
+      },
+      "density": 0.014,
+      "years": [
+        2020,
+        2020
+      ],
+      "countries": 61,
+      "by_era": {
+        "2000+": {
+          "density": 0.014,
+          "countries": 61,
+          "stats": {
+            "min": 0.2,
+            "max": 1.0,
+            "median": 0.9
+          }
+        }
+      }
+    },
+    "se_gpi_icts": {
+      "name": "Gender parity index for youth/adults with information and communications technology (ICT) skills, by type of skill (r...",
+      "unit": "Ratio",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.137,
+        "max": 4.556,
+        "median": 0.906
+      },
+      "density": 0.228,
+      "years": [
+        2002,
+        2024
+      ],
+      "countries": 98,
+      "by_era": {
+        "2000+": {
+          "density": 0.228,
+          "countries": 98,
+          "stats": {
+            "min": 0.137,
+            "max": 4.556,
+            "median": 0.906
+          }
+        }
+      }
+    },
+    "se_gpi_ptnpre": {
+      "name": "Adjusted gender parity index for participation rate in organized learning (one year before the official primary entry...",
+      "unit": "Ratio",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0001,
+        "max": 1.3568,
+        "median": 1.0027
+      },
+      "density": 0.555,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 181,
+      "by_era": {
+        "2000+": {
+          "density": 0.555,
+          "countries": 181,
+          "stats": {
+            "min": 0.0001,
+            "max": 1.3568,
+            "median": 1.0027
+          }
+        }
+      }
+    },
+    "se_gpi_tcaq": {
+      "name": "Adjusted gender parity index for the proportion of teachers with the minimum required qualifications, by education le...",
+      "unit": "Ratio",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.1944,
+        "max": 2.0,
+        "median": 1.0038
+      },
+      "density": 0.404,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 152,
+      "by_era": {
+        "2000+": {
+          "density": 0.404,
+          "countries": 152,
+          "stats": {
+            "min": 0.1944,
+            "max": 2.0,
+            "median": 1.0038
+          }
+        }
+      }
+    },
+    "se_inf_dsbl": {
+      "name": "Proportion of schools with access to adapted infrastructure and materials for students with disabilities, by educatio...",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 70.625
+      },
+      "density": 0.091,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 92,
+      "by_era": {
+        "2000+": {
+          "density": 0.091,
+          "countries": 92,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 70.625
+          }
+        }
+      }
+    },
+    "se_lgp_achi": {
+      "name": "Adjusted language test parity index for achieving a minimum proficiency level in reading and mathematics (ratio)",
+      "unit": "Ratio",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.08,
+        "max": 1.8372,
+        "median": 0.8132
+      },
+      "density": 0.163,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 101,
+      "by_era": {
+        "2000+": {
+          "density": 0.163,
+          "countries": 101,
+          "stats": {
+            "min": 0.08,
+            "max": 1.8372,
+            "median": 0.8132
+          }
+        }
+      }
+    },
+    "se_nap_achi": {
+      "name": "Adjusted immigration status parity index for achieving a minimum proficiency level in reading and mathematics (ratio)",
+      "unit": "Ratio",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.014,
+        "max": 1.8096,
+        "median": 0.8892
+      },
+      "density": 0.137,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 99,
+      "by_era": {
+        "2000+": {
+          "density": 0.137,
+          "countries": 99,
+          "stats": {
+            "min": 0.014,
+            "max": 1.8096,
+            "median": 0.8892
+          }
+        }
+      }
+    },
+    "se_pre_partn": {
+      "name": "Participation rate in organized learning (one year before the official primary entry age), by sex (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 2.2218,
+        "max": 100.0,
+        "median": 85.1305
+      },
+      "density": 0.579,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 184,
+      "by_era": {
+        "2000+": {
+          "density": 0.579,
+          "countries": 184,
+          "stats": {
+            "min": 2.2218,
+            "max": 100.0,
+            "median": 85.1305
+          }
+        }
+      }
+    },
+    "se_tot_cplr": {
+      "name": "Completion rate, by sex, location, wealth quintile and education level (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 81.89
+      },
+      "density": 0.286,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 160,
+      "by_era": {
+        "2000+": {
+          "density": 0.286,
+          "countries": 160,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 81.89
+          }
+        }
+      }
+    },
+    "se_tot_gpi": {
+      "name": "Adjusted gender parity index for achieving a minimum proficiency level in reading and mathematics (ratio)",
+      "unit": "Ratio",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.3185,
+        "max": 1.5417,
+        "median": 1.0525
+      },
+      "density": 0.186,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 129,
+      "by_era": {
+        "2000+": {
+          "density": 0.186,
+          "countries": 129,
+          "stats": {
+            "min": 0.3185,
+            "max": 1.5417,
+            "median": 1.0525
+          }
+        }
+      }
+    },
+    "se_tot_prfl": {
+      "name": "Proportion of children and young people achieving a minimum proficiency level in reading and mathematics (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 1.0,
+        "max": 99.5502,
+        "median": 68.9379
+      },
+      "density": 0.213,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 141,
+      "by_era": {
+        "2000+": {
+          "density": 0.213,
+          "countries": 141,
+          "stats": {
+            "min": 1.0,
+            "max": 99.5502,
+            "median": 68.9379
+          }
+        }
+      }
+    },
+    "se_tot_rupi": {
+      "name": "Adjusted rural to urban parity index for achieving a minimum proficiency level in reading and mathematics (ratio)",
+      "unit": "Ratio",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0582,
+        "max": 1.6652,
+        "median": 0.8687
+      },
+      "density": 0.139,
+      "years": [
+        2000,
+        2021
+      ],
+      "countries": 107,
+      "by_era": {
+        "2000+": {
+          "density": 0.139,
+          "countries": 107,
+          "stats": {
+            "min": 0.0582,
+            "max": 1.6652,
+            "median": 0.8687
+          }
+        }
+      }
+    },
+    "se_tot_sespi": {
+      "name": "Adjusted low to high socio-economic parity index for achieving a minimum proficiency level in reading and mathematics...",
+      "unit": "Ratio",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.019,
+        "max": 1.9879,
+        "median": 0.6691
+      },
+      "density": 0.173,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 121,
+      "by_era": {
+        "2000+": {
+          "density": 0.173,
+          "countries": 121,
+          "stats": {
+            "min": 0.019,
+            "max": 1.9879,
+            "median": 0.6691
+          }
+        }
+      }
+    },
+    "se_tra_grdl": {
+      "name": "Proportion of teachers with the minimum required qualifications, by education level and sex (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 3.2199,
+        "max": 100.0,
+        "median": 87.9733
+      },
+      "density": 0.479,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 158,
+      "by_era": {
+        "2000+": {
+          "density": 0.479,
+          "countries": 158,
+          "stats": {
+            "min": 3.2199,
+            "max": 100.0,
+            "median": 87.9733
+          }
+        }
+      }
+    }
+  },
+  "llm_summary": "2000-2024. Total official flows for scholarships, by recipient countries (millions of constant 2023 United States dollars), Proportion of schools with basic handwashing facilities, by education level (%), Proportion of schools with access to computers for pedagogical purposes, by education level (%), Proportion of schools with access to electricity, by education level (%), Proportion of schools with access to basic drinking water, by education level (%)."
+}

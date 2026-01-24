@@ -37,9 +37,8 @@ node_modules/
 package-lock.json
 
 # -----------------------------------------------------------------------------
-# Data folders (never track in public repo)
+# Data pipeline (processing scripts, not the bundled demo data)
 # -----------------------------------------------------------------------------
-data/
 data_pipeline/
 
 # -----------------------------------------------------------------------------

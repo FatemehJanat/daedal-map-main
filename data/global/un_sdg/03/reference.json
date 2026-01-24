@@ -1,0 +1,103 @@
+{
+  "source_context": "United Nations Sustainable Development Goals Framework",
+  "goal": {
+    "number": 3,
+    "name": "Good Health and Well-being",
+    "full_title": "Ensure healthy lives and promote well-being for all at all ages",
+    "description": "Goal 3 aims to ensure healthy lives and promote well-being for all at all ages. It addresses all major health priorities, including reproductive, maternal and child health; communicable, non-communicable and environmental diseases; universal health coverage; and access to medicines and vaccines.",
+    "targets": [
+      {
+        "id": "3.1",
+        "text": "By 2030, reduce the global maternal mortality ratio to less than 70 per 100,000 live births"
+      },
+      {
+        "id": "3.2",
+        "text": "By 2030, end preventable deaths of newborns and children under 5 years of age"
+      },
+      {
+        "id": "3.3",
+        "text": "By 2030, end the epidemics of AIDS, tuberculosis, malaria and neglected tropical diseases"
+      },
+      {
+        "id": "3.4",
+        "text": "By 2030, reduce by one third premature mortality from non-communicable diseases"
+      },
+      {
+        "id": "3.5",
+        "text": "Strengthen the prevention and treatment of substance abuse"
+      },
+      {
+        "id": "3.6",
+        "text": "By 2020, halve the number of global deaths and injuries from road traffic accidents"
+      },
+      {
+        "id": "3.7",
+        "text": "By 2030, ensure universal access to sexual and reproductive health-care services"
+      },
+      {
+        "id": "3.8",
+        "text": "Achieve universal health coverage, including financial risk protection and access to quality essential health-care services"
+      }
+    ],
+    "key_indicators": [
+      "SH_STA_BRTC - Proportion of births attended by skilled health personnel (%)",
+      "SH_HIV_INCD - Number of new HIV infections per 1,000 uninfected population, by sex and age ...",
+      "SH_STA_MALR - Malaria incidence per 1,000 population at risk (per 1,000 population)",
+      "SH_TRP_INTVN - Number of people requiring interventions against neglected tropical diseases ...",
+      "SH_TBS_INCD - Tuberculosis incidence (per 100,000 population)",
+      "SH_STA_SCIDE - Suicide mortality rate, by sex (deaths per 100,000 population)",
+      "SH_SUD_TREAT - Coverage of treatment interventions (pharmacological, psychosocial and rehabi...",
+      "SH_STA_TRAF - Death rate due to road traffic injuries, by sex (per 100,000 population)",
+      "SH_STA_TRAFN - Number of deaths rate due to road traffic injuries",
+      "SH_XPD_EARN25 - Proportion of population with large household expenditures on health (greater...",
+      "SH_XPD_EARN10 - Proportion of population with large household expenditures on health (greater...",
+      "SH_ACS_UNHC - Universal health coverage (UHC) service coverage index",
+      "SH_HAP_ASMORT - Age-standardized mortality rate attributed to household air pollution (deaths...",
+      "SH_STA_ASAIRP - Age-standardized mortality rate attributed to household and ambient air pollu...",
+      "SH_STA_POISN - Mortality rate attributed to unintentional poisonings, by sex (deaths per 100...",
+      "SH_AAP_ASMORT - Age-standardized mortality rate attributed to ambient air pollution (deaths p...",
+      "SH_STA_WASHARI - Mortality rate attributed to unsafe water, unsafe sanitation and lack of hygi...",
+      "DC_TOF_HLTHNT - Total official development assistance to medical research and basic health se...",
+      "DC_TOF_HLTHL - Total official development assistance to medical research and basic health se...",
+      "SH_ACS_DTP3 - Proportion of the target population who received 3 doses of diphtheria-tetanu...",
+      "SH_ACS_MCV2 - Proportion of the target population who received measles-containing-vaccine s...",
+      "SH_ACS_PCV3 - Proportion of the target population who received a 3rd dose of pneumococcal c...",
+      "SH_ACS_HPV - Proportion of the target population who received the final dose of human papi...",
+      "SH_HLF_EMED - Proportion of health facilities that have a core set of relevant essential me...",
+      "SH_MED_DEN - Health worker density, by type of occupation (per 10,000 population)",
+      "SH_IHR_CAPS - International Health Regulations (IHR) capacity, by type of IHR capacity (%)",
+      "SH_BLD_MRSA - Percentage of bloodstream infection due to methicillin-resistant Staphylococc...",
+      "SH_BLD_ECOLI - Percentage of bloodstream infection due to Escherichia coli resistant to 3rd-..."
+    ]
+  },
+  "metrics": {
+    "sh_sta_brtc": "Proportion of births attended by skilled health personnel (%)",
+    "sh_hiv_incd": "Number of new HIV infections per 1,000 uninfected population, by sex and age (per 1,000 uninfected population)",
+    "sh_sta_malr": "Malaria incidence per 1,000 population at risk (per 1,000 population)",
+    "sh_trp_intvn": "Number of people requiring interventions against neglected tropical diseases (number)",
+    "sh_tbs_incd": "Tuberculosis incidence (per 100,000 population)",
+    "sh_sta_scide": "Suicide mortality rate, by sex (deaths per 100,000 population)",
+    "sh_sud_treat": "Coverage of treatment interventions (pharmacological, psychosocial and rehabilitation and aftercare services) for sub...",
+    "sh_sta_traf": "Death rate due to road traffic injuries, by sex (per 100,000 population)",
+    "sh_sta_trafn": "Number of deaths rate due to road traffic injuries",
+    "sh_xpd_earn25": "Proportion of population with large household expenditures on health (greater than 25%) as a share of total household...",
+    "sh_xpd_earn10": "Proportion of population with large household expenditures on health (greater than 10%) as a share of total household...",
+    "sh_acs_unhc": "Universal health coverage (UHC) service coverage index",
+    "sh_hap_asmort": "Age-standardized mortality rate attributed to household air pollution (deaths per 100,000 population)",
+    "sh_sta_asairp": "Age-standardized mortality rate attributed to household and ambient air pollution (deaths per 100,000 population)",
+    "sh_sta_poisn": "Mortality rate attributed to unintentional poisonings, by sex (deaths per 100,000 population)",
+    "sh_aap_asmort": "Age-standardized mortality rate attributed to ambient air pollution (deaths per 100,000 population)",
+    "sh_sta_washari": "Mortality rate attributed to unsafe water, unsafe sanitation and lack of hygiene from diarrhoea, intestinal nematode ...",
+    "dc_tof_hlthnt": "Total official development assistance to medical research and basic health sectors, net disbursement, by recipient co...",
+    "dc_tof_hlthl": "Total official development assistance to medical research and basic health sectors, gross disbursement, by recipient ...",
+    "sh_acs_dtp3": "Proportion of the target population who received 3 doses of diphtheria-tetanus-pertussis (DTP3) vaccine (%)",
+    "sh_acs_mcv2": "Proportion of the target population who received measles-containing-vaccine second-dose (MCV2) (%)",
+    "sh_acs_pcv3": "Proportion of the target population who received a 3rd dose of pneumococcal conjugate (PCV3) vaccine (%)",
+    "sh_acs_hpv": "Proportion of the target population who received the final dose of human papillomavirus (HPV) vaccine (%)",
+    "sh_hlf_emed": "Proportion of health facilities that have a core set of relevant essential medicines available and affordable on a su...",
+    "sh_med_den": "Health worker density, by type of occupation (per 10,000 population)",
+    "sh_ihr_caps": "International Health Regulations (IHR) capacity, by type of IHR capacity (%)",
+    "sh_bld_mrsa": "Percentage of bloodstream infection due to methicillin-resistant Staphylococcus aureus (MRSA) among patients seeking ...",
+    "sh_bld_ecoli": "Percentage of bloodstream infection due to Escherichia coli resistant to 3rd-generation cephalosporin (e.g., ESBL- E...."
+  }
+}

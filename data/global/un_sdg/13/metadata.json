@@ -1,0 +1,651 @@
+{
+  "source_id": "un_sdg_13",
+  "source_name": "UN SDG Goal 13",
+  "source_url": "https://unstats.un.org/sdgs/indicators/database/",
+  "license": "UN Terms",
+  "description": "UN Sustainable Development Goal 13 indicators",
+  "category": "development",
+  "topic_tags": [
+    "sdg",
+    "development",
+    "sustainability"
+  ],
+  "keywords": [
+    "sustainable",
+    "development",
+    "goals",
+    "UN"
+  ],
+  "last_updated": "2026-01-07",
+  "geographic_level": "admin_0",
+  "geographic_coverage": {
+    "type": "global",
+    "admin_levels": [
+      0
+    ],
+    "common_count": 183,
+    "common_missing": [
+      "AFG",
+      "ALB",
+      "BHS",
+      "CAF",
+      "COG",
+      "ERI",
+      "FSM",
+      "HKG",
+      "LBY",
+      "MAC",
+      "NIU",
+      "PRK",
+      "SUR",
+      "TCD",
+      "TWN",
+      "VAT",
+      "ZAF"
+    ],
+    "uncommonly_included": []
+  },
+  "temporal_coverage": {
+    "start": 2000,
+    "end": 2024,
+    "frequency": "annual",
+    "granularity": "yearly",
+    "field": "year"
+  },
+  "row_count": 3481,
+  "file_size_mb": 0.12,
+  "data_completeness": 0.36,
+  "update_schedule": "unknown",
+  "expected_next_update": "unknown",
+  "metrics": {
+    "en_atm_ghgt_aip": {
+      "name": "Total greenhouse gas emissions without LULUCF for Annex I Parties (Mt CO₂ equivalent)",
+      "unit": "MT_CO2E",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0698,
+        "max": 7511.448,
+        "median": 78.1267
+      },
+      "density": 0.265,
+      "years": [
+        2000,
+        2021
+      ],
+      "countries": 42,
+      "by_era": {
+        "2000+": {
+          "density": 0.265,
+          "countries": 42,
+          "stats": {
+            "min": 0.0698,
+            "max": 7511.448,
+            "median": 78.1267
+          }
+        }
+      }
+    },
+    "en_atm_ghgt_naip": {
+      "name": "Total greenhouse gas emissions without LULUCF for non-Annex I Parties (Mt CO₂ equivalent)",
+      "unit": "MT_CO2E",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0694,
+        "max": 12300.2,
+        "median": 25.6423
+      },
+      "density": 0.44,
+      "years": [
+        2000,
+        2017
+      ],
+      "countries": 85,
+      "by_era": {
+        "2000+": {
+          "density": 0.44,
+          "countries": 85,
+          "stats": {
+            "min": 0.0694,
+            "max": 12300.2,
+            "median": 25.6423
+          }
+        }
+      }
+    },
+    "se_gcedesd_cur": {
+      "name": "Extent to which global citizenship education and education for sustainable development are mainstreamed in curricula",
+      "unit": "INDEX",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.4713,
+        "max": 1.0,
+        "median": 0.8255
+      },
+      "density": 0.017,
+      "years": [
+        2020,
+        2020
+      ],
+      "countries": 58,
+      "by_era": {
+        "2000+": {
+          "density": 0.017,
+          "countries": 58,
+          "stats": {
+            "min": 0.4713,
+            "max": 1.0,
+            "median": 0.8255
+          }
+        }
+      }
+    },
+    "se_gcedesd_nep": {
+      "name": "Extent to which global citizenship education and education for sustainable development are mainstreamed in national e...",
+      "unit": "INDEX",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.35,
+        "max": 1.0,
+        "median": 0.875
+      },
+      "density": 0.018,
+      "years": [
+        2020,
+        2020
+      ],
+      "countries": 63,
+      "by_era": {
+        "2000+": {
+          "density": 0.018,
+          "countries": 63,
+          "stats": {
+            "min": 0.35,
+            "max": 1.0,
+            "median": 0.875
+          }
+        }
+      }
+    },
+    "se_gcedesd_sas": {
+      "name": "Extent to which global citizenship education and education for sustainable development are mainstreamed in student as...",
+      "unit": "INDEX",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.25,
+        "max": 1.0,
+        "median": 0.8333
+      },
+      "density": 0.018,
+      "years": [
+        2020,
+        2020
+      ],
+      "countries": 63,
+      "by_era": {
+        "2000+": {
+          "density": 0.018,
+          "countries": 63,
+          "stats": {
+            "min": 0.25,
+            "max": 1.0,
+            "median": 0.8333
+          }
+        }
+      }
+    },
+    "se_gcedesd_ted": {
+      "name": "Extent to which global citizenship education and education for sustainable development are mainstreamed in teacher ed...",
+      "unit": "INDEX",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.2,
+        "max": 1.0,
+        "median": 0.9
+      },
+      "density": 0.018,
+      "years": [
+        2020,
+        2020
+      ],
+      "countries": 61,
+      "by_era": {
+        "2000+": {
+          "density": 0.018,
+          "countries": 61,
+          "stats": {
+            "min": 0.2,
+            "max": 1.0,
+            "median": 0.9
+          }
+        }
+      }
+    },
+    "sg_dsr_lgrgsr": {
+      "name": "Score of adoption and implementation of national DRR strategies in line with the Sendai Framework",
+      "unit": "INDEX",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 1.0,
+        "median": 0.65
+      },
+      "density": 0.219,
+      "years": [
+        2005,
+        2024
+      ],
+      "countries": 134,
+      "by_era": {
+        "2000+": {
+          "density": 0.219,
+          "countries": 134,
+          "stats": {
+            "min": 0.0,
+            "max": 1.0,
+            "median": 0.65
+          }
+        }
+      }
+    },
+    "sg_dsr_sfdrr": {
+      "name": "Number of countries that reported having a National DRR Strategy which is aligned to the Sendai Framework",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 2.0,
+        "max": 2.0,
+        "median": 2.0
+      },
+      "density": 0.001,
+      "years": [
+        2023,
+        2024
+      ],
+      "countries": 1,
+      "by_era": {
+        "2000+": {
+          "density": 0.001,
+          "countries": 1,
+          "stats": {
+            "min": 2.0,
+            "max": 2.0,
+            "median": 2.0
+          }
+        }
+      }
+    },
+    "sg_dsr_siln": {
+      "name": "Number of local governments that adopt and implement local DRR strategies in line with national strategies (number)",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 22923.0,
+        "median": 15.0
+      },
+      "density": 0.224,
+      "years": [
+        2005,
+        2024
+      ],
+      "countries": 119,
+      "by_era": {
+        "2000+": {
+          "density": 0.224,
+          "countries": 119,
+          "stats": {
+            "min": 0.0,
+            "max": 22923.0,
+            "median": 15.0
+          }
+        }
+      }
+    },
+    "sg_dsr_sils": {
+      "name": "Proportion of local governments that adopt and implement local disaster risk reduction strategies in line with nation...",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 152.6316,
+        "median": 57.8947
+      },
+      "density": 0.222,
+      "years": [
+        2005,
+        2024
+      ],
+      "countries": 119,
+      "by_era": {
+        "2000+": {
+          "density": 0.222,
+          "countries": 119,
+          "stats": {
+            "min": 0.0,
+            "max": 152.6316,
+            "median": 57.8947
+          }
+        }
+      }
+    },
+    "sg_gov_logv": {
+      "name": "Number of local governments (number)",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 22923.0,
+        "median": 68.0
+      },
+      "density": 0.23,
+      "years": [
+        2005,
+        2024
+      ],
+      "countries": 123,
+      "by_era": {
+        "2000+": {
+          "density": 0.23,
+          "countries": 123,
+          "stats": {
+            "min": 0.0,
+            "max": 22923.0,
+            "median": 68.0
+          }
+        }
+      }
+    },
+    "vc_dsr_affct": {
+      "name": "Number of people affected by disaster (number)",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 187873332.0,
+        "median": 7466.5
+      },
+      "density": 0.525,
+      "years": [
+        2005,
+        2024
+      ],
+      "countries": 159,
+      "by_era": {
+        "2000+": {
+          "density": 0.525,
+          "countries": 159,
+          "stats": {
+            "min": 0.0,
+            "max": 187873332.0,
+            "median": 7466.5
+          }
+        }
+      }
+    },
+    "vc_dsr_daff": {
+      "name": "Number of directly affected persons attributed to disasters per 100,000 population (number)",
+      "unit": "PER_100000_POP",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 136197.492,
+        "median": 87.7283
+      },
+      "density": 0.525,
+      "years": [
+        2005,
+        2024
+      ],
+      "countries": 159,
+      "by_era": {
+        "2000+": {
+          "density": 0.525,
+          "countries": 159,
+          "stats": {
+            "min": 0.0,
+            "max": 136197.492,
+            "median": 87.7283
+          }
+        }
+      }
+    },
+    "vc_dsr_ijiln": {
+      "name": "Number of injured or ill people attributed to disasters (number)",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 141607700.0,
+        "median": 90.5
+      },
+      "density": 0.466,
+      "years": [
+        2005,
+        2024
+      ],
+      "countries": 152,
+      "by_era": {
+        "2000+": {
+          "density": 0.466,
+          "countries": 152,
+          "stats": {
+            "min": 0.0,
+            "max": 141607700.0,
+            "median": 90.5
+          }
+        }
+      }
+    },
+    "vc_dsr_miss": {
+      "name": "Number of missing persons due to disaster (number)",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 1906.0,
+        "median": 0.0
+      },
+      "density": 0.363,
+      "years": [
+        2005,
+        2024
+      ],
+      "countries": 144,
+      "by_era": {
+        "2000+": {
+          "density": 0.363,
+          "countries": 144,
+          "stats": {
+            "min": 0.0,
+            "max": 1906.0,
+            "median": 0.0
+          }
+        }
+      }
+    },
+    "vc_dsr_mmhn": {
+      "name": "Number of deaths and missing persons attributed to disasters (number)",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 470644.0,
+        "median": 41.0
+      },
+      "density": 0.558,
+      "years": [
+        2005,
+        2024
+      ],
+      "countries": 166,
+      "by_era": {
+        "2000+": {
+          "density": 0.558,
+          "countries": 166,
+          "stats": {
+            "min": 0.0,
+            "max": 470644.0,
+            "median": 41.0
+          }
+        }
+      }
+    },
+    "vc_dsr_mort": {
+      "name": "Number of deaths due to disaster (number)",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 470644.0,
+        "median": 40.0
+      },
+      "density": 0.55,
+      "years": [
+        2005,
+        2024
+      ],
+      "countries": 164,
+      "by_era": {
+        "2000+": {
+          "density": 0.55,
+          "countries": 164,
+          "stats": {
+            "min": 0.0,
+            "max": 470644.0,
+            "median": 40.0
+          }
+        }
+      }
+    },
+    "vc_dsr_mtmp": {
+      "name": "Number of deaths and missing persons attributed to disasters per 100,000 population (number)",
+      "unit": "PER_100000_POP",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 462.544,
+        "median": 0.321
+      },
+      "density": 0.558,
+      "years": [
+        2005,
+        2024
+      ],
+      "countries": 166,
+      "by_era": {
+        "2000+": {
+          "density": 0.558,
+          "countries": 166,
+          "stats": {
+            "min": 0.0,
+            "max": 462.544,
+            "median": 0.321
+          }
+        }
+      }
+    },
+    "vc_dsr_pdan": {
+      "name": "Number of people whose damaged dwellings were attributed to disasters (number)",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 187873332.0,
+        "median": 2878.5
+      },
+      "density": 0.442,
+      "years": [
+        2005,
+        2024
+      ],
+      "countries": 147,
+      "by_era": {
+        "2000+": {
+          "density": 0.442,
+          "countries": 147,
+          "stats": {
+            "min": 0.0,
+            "max": 187873332.0,
+            "median": 2878.5
+          }
+        }
+      }
+    },
+    "vc_dsr_pdln": {
+      "name": "Number of people whose livelihoods were disrupted or destroyed, attributed to disasters (number)",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 22082241.0,
+        "median": 296.0
+      },
+      "density": 0.248,
+      "years": [
+        2005,
+        2024
+      ],
+      "countries": 109,
+      "by_era": {
+        "2000+": {
+          "density": 0.248,
+          "countries": 109,
+          "stats": {
+            "min": 0.0,
+            "max": 22082241.0,
+            "median": 296.0
+          }
+        }
+      }
+    },
+    "vc_dsr_pdyn": {
+      "name": "Number of people whose destroyed dwellings were attributed to disasters (number)",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 6668491.0,
+        "median": 301.0
+      },
+      "density": 0.396,
+      "years": [
+        2005,
+        2024
+      ],
+      "countries": 143,
+      "by_era": {
+        "2000+": {
+          "density": 0.396,
+          "countries": 143,
+          "stats": {
+            "min": 0.0,
+            "max": 6668491.0,
+            "median": 301.0
+          }
+        }
+      }
+    }
+  },
+  "llm_summary": "2000-2024. Total greenhouse gas emissions without LULUCF for Annex I Parties (Mt CO₂ equivalent), Total greenhouse gas emissions without LULUCF for non-Annex I Parties (Mt CO₂ equivalent), Extent to which global citizenship education and education for sustainable development are mainstreamed in curricula, Extent to which global citizenship education and education for sustainable development are mainstreamed in national e..., Extent to which global citizenship education and education for sustainable development are mainstreamed in student as...."
+}

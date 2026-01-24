@@ -1,0 +1,39 @@
+{
+  "source_context": "United Nations Sustainable Development Goals Framework",
+  "goal": {
+    "number": 7,
+    "name": "Affordable and Clean Energy",
+    "full_title": "Ensure access to affordable, reliable, sustainable and modern energy for all",
+    "description": "Goal 7 aims to ensure access to affordable, reliable, sustainable and modern energy for all. It focuses on universal access to electricity and clean cooking fuels, increasing the share of renewable energy, improving energy efficiency, and enhancing international cooperation on clean energy research.",
+    "targets": [
+      {
+        "id": "7.1",
+        "text": "By 2030, ensure universal access to affordable, reliable and modern energy services"
+      },
+      {
+        "id": "7.2",
+        "text": "By 2030, increase substantially the share of renewable energy in the global energy mix"
+      },
+      {
+        "id": "7.3",
+        "text": "By 2030, double the global rate of improvement in energy efficiency"
+      }
+    ],
+    "key_indicators": [
+      "EG_EGY_CLEAN - Proportion of population with primary reliance on clean fuels and technology (%)",
+      "EG_ACS_ELEC - Proportion of population with access to electricity, by urban/rural (%)",
+      "EG_FEC_RNEW - Renewable energy share in the total final energy consumption (%)",
+      "EG_EGY_PRIM - Energy intensity level of primary energy (megajoules per constant 2021 purcha...",
+      "EG_IFF_RANDN - International financial flows to developing countries in support of clean ene...",
+      "EG_EGY_RNEW - Installed renewable electricity-generating capacity (watts per capita)"
+    ]
+  },
+  "metrics": {
+    "eg_egy_clean": "Proportion of population with primary reliance on clean fuels and technology (%)",
+    "eg_acs_elec": "Proportion of population with access to electricity, by urban/rural (%)",
+    "eg_fec_rnew": "Renewable energy share in the total final energy consumption (%)",
+    "eg_egy_prim": "Energy intensity level of primary energy (megajoules per constant 2021 purchasing power parity GDP)",
+    "eg_iff_randn": "International financial flows to developing countries in support of clean energy research and development and renewab...",
+    "eg_egy_rnew": "Installed renewable electricity-generating capacity (watts per capita)"
+  }
+}

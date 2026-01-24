@@ -1,0 +1,42 @@
+{
+  "source_id": "noaa_global_tsunamis",
+  "source_name": "NOAA NCEI Global Historical Tsunami Database",
+  "source_url": "https://www.ncei.noaa.gov/products/natural-hazards/tsunamis-earthquakes-volcanoes/tsunamis",
+  "license": "Public Domain (U.S. Government)",
+  "description": "Tsunami source events 2015-2025 from NOAA NCEI. Includes earthquake/volcano/landslide triggered tsunamis with water height and runup observations.",
+  "category": "hazard",
+  "data_type": "events",
+  "topic_tags": ["tsunami", "natural_hazard", "ocean"],
+  "keywords": ["tsunami", "tidal wave", "earthquake", "coastal", "wave height"],
+  "geographic_level": "global",
+  "geographic_coverage": {
+    "type": "global",
+    "description": "All coastal regions worldwide"
+  },
+  "temporal_coverage": {
+    "start": 2015,
+    "end": 2025,
+    "granularity": "timestamp",
+    "field": "timestamp"
+  },
+  "event_stats": {
+    "total_events": 193
+  },
+  "row_count": 193,
+  "file_size_mb": 0.02,
+  "metrics": {
+    "eq_magnitude": {
+      "name": "Earthquake Magnitude",
+      "unit": "magnitude"
+    },
+    "max_water_height_m": {
+      "name": "Max Water Height",
+      "unit": "meters"
+    },
+    "intensity": {
+      "name": "Tsunami Intensity",
+      "unit": "scale"
+    }
+  },
+  "llm_summary": "193 tsunami events worldwide, 2015-2025. Includes triggering earthquake magnitude, water height, and intensity data."
+}

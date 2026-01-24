@@ -1,0 +1,95 @@
+{
+  "source_context": "United Nations Sustainable Development Goals Framework",
+  "goal": {
+    "number": 4,
+    "name": "Quality Education",
+    "full_title": "Ensure inclusive and equitable quality education and promote lifelong learning opportunities for all",
+    "description": "Goal 4 aims to ensure inclusive and equitable quality education at all levels. It focuses on access to early childhood development, free primary and secondary education, affordable vocational training, and eliminating gender and wealth disparities.",
+    "targets": [
+      {
+        "id": "4.1",
+        "text": "By 2030, ensure all girls and boys complete free, equitable and quality primary and secondary education"
+      },
+      {
+        "id": "4.2",
+        "text": "By 2030, ensure all girls and boys have access to quality early childhood development"
+      },
+      {
+        "id": "4.3",
+        "text": "By 2030, ensure equal access for all women and men to affordable and quality technical, vocational and tertiary education"
+      },
+      {
+        "id": "4.4",
+        "text": "By 2030, substantially increase the number of youth and adults who have relevant skills for employment"
+      },
+      {
+        "id": "4.5",
+        "text": "By 2030, eliminate gender disparities in education and ensure equal access for the vulnerable"
+      },
+      {
+        "id": "4.6",
+        "text": "By 2030, ensure all youth and a substantial proportion of adults achieve literacy and numeracy"
+      }
+    ],
+    "key_indicators": [
+      "SE_TOT_PRFL - Proportion of children and young people achieving a minimum proficiency level...",
+      "SE_TOT_CPLR - Completion rate, by sex, location, wealth quintile and education level (%)",
+      "SE_PRE_PARTN - Participation rate in organized learning (one year before the official primar...",
+      "SE_ADT_ACTS - Proportion of youth and adults with information and communications technology...",
+      "SE_GPI_PTNPRE - Adjusted gender parity index for participation rate in organized learning (on...",
+      "SE_GPI_TCAQ - Adjusted gender parity index for the proportion of teachers with the minimum ...",
+      "SE_GPI_ICTS - Gender parity index for youth/adults with information and communications tech...",
+      "SE_NAP_ACHI - Adjusted immigration status parity index for achieving a minimum proficiency ...",
+      "SE_LGP_ACHI - Adjusted language test parity index for achieving a minimum proficiency level...",
+      "SE_TOT_GPI - Adjusted gender parity index for achieving a minimum proficiency level in rea...",
+      "SE_TOT_SESPI - Adjusted low to high socio-economic parity index for achieving a minimum prof...",
+      "SE_TOT_RUPI - Adjusted rural to urban parity index for achieving a minimum proficiency leve...",
+      "SE_ALP_CPLR - Adjusted location parity index for completion rate, by sex, wealth quintile a...",
+      "SE_AWP_CPRA - Adjusted wealth parity index for completion rate, by sex, location and educat...",
+      "SE_AGP_CPRA - Adjusted gender parity index for completion rate, by location, wealth quintil...",
+      "SE_GCEDESD_NEP - Extent to which global citizenship education and education for sustainable de...",
+      "SE_GCEDESD_CUR - Extent to which global citizenship education and education for sustainable de...",
+      "SE_GCEDESD_TED - Extent to which global citizenship education and education for sustainable de...",
+      "SE_GCEDESD_SAS - Extent to which global citizenship education and education for sustainable de...",
+      "SE_ACS_CMPTR - Proportion of schools with access to computers for pedagogical purposes, by e...",
+      "SE_ACS_H2O - Proportion of schools with access to basic drinking water, by education level...",
+      "SE_ACS_ELECT - Proportion of schools with access to electricity, by education level (%)",
+      "SE_ACC_HNDWSH - Proportion of schools with basic handwashing facilities, by education level (%)",
+      "SE_ACS_INTNT - Proportion of schools with access to the internet for pedagogical purposes, b...",
+      "SE_ACS_SANIT - Proportion of schools with access to single-sex basic sanitation, by educatio...",
+      "SE_INF_DSBL - Proportion of schools with access to adapted infrastructure and materials for...",
+      "DC_TOF_SCHIPSL - Total official flows for scholarships, by recipient countries (millions of co...",
+      "SE_TRA_GRDL - Proportion of teachers with the minimum required qualifications, by education..."
+    ]
+  },
+  "metrics": {
+    "se_tot_prfl": "Proportion of children and young people achieving a minimum proficiency level in reading and mathematics (%)",
+    "se_tot_cplr": "Completion rate, by sex, location, wealth quintile and education level (%)",
+    "se_pre_partn": "Participation rate in organized learning (one year before the official primary entry age), by sex (%)",
+    "se_adt_acts": "Proportion of youth and adults with information and communications technology (ICT) skills, by sex and type of skill (%)",
+    "se_gpi_ptnpre": "Adjusted gender parity index for participation rate in organized learning (one year before the official primary entry...",
+    "se_gpi_tcaq": "Adjusted gender parity index for the proportion of teachers with the minimum required qualifications, by education le...",
+    "se_gpi_icts": "Gender parity index for youth/adults with information and communications technology (ICT) skills, by type of skill (r...",
+    "se_nap_achi": "Adjusted immigration status parity index for achieving a minimum proficiency level in reading and mathematics (ratio)",
+    "se_lgp_achi": "Adjusted language test parity index for achieving a minimum proficiency level in reading and mathematics (ratio)",
+    "se_tot_gpi": "Adjusted gender parity index for achieving a minimum proficiency level in reading and mathematics (ratio)",
+    "se_tot_sespi": "Adjusted low to high socio-economic parity index for achieving a minimum proficiency level in reading and mathematics...",
+    "se_tot_rupi": "Adjusted rural to urban parity index for achieving a minimum proficiency level in reading and mathematics (ratio)",
+    "se_alp_cplr": "Adjusted location parity index for completion rate, by sex, wealth quintile and education level",
+    "se_awp_cpra": "Adjusted wealth parity index for completion rate, by sex, location and education level",
+    "se_agp_cpra": "Adjusted gender parity index for completion rate, by location, wealth quintile and education level",
+    "se_gcedesd_nep": "Extent to which global citizenship education and education for sustainable development are mainstreamed in national e...",
+    "se_gcedesd_cur": "Extent to which global citizenship education and education for sustainable development are mainstreamed in curricula",
+    "se_gcedesd_ted": "Extent to which global citizenship education and education for sustainable development are mainstreamed in teacher ed...",
+    "se_gcedesd_sas": "Extent to which global citizenship education and education for sustainable development are mainstreamed in student as...",
+    "se_acs_cmptr": "Proportion of schools with access to computers for pedagogical purposes, by education level (%)",
+    "se_acs_h2o": "Proportion of schools with access to basic drinking water, by education level (%)",
+    "se_acs_elect": "Proportion of schools with access to electricity, by education level (%)",
+    "se_acc_hndwsh": "Proportion of schools with basic handwashing facilities, by education level (%)",
+    "se_acs_intnt": "Proportion of schools with access to the internet for pedagogical purposes, by education level (%)",
+    "se_acs_sanit": "Proportion of schools with access to single-sex basic sanitation, by education level (%)",
+    "se_inf_dsbl": "Proportion of schools with access to adapted infrastructure and materials for students with disabilities, by educatio...",
+    "dc_tof_schipsl": "Total official flows for scholarships, by recipient countries (millions of constant 2023 United States dollars)",
+    "se_tra_grdl": "Proportion of teachers with the minimum required qualifications, by education level and sex (%)"
+  }
+}

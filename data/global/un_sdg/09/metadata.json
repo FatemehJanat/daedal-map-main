@@ -1,0 +1,724 @@
+{
+  "source_id": "un_sdg_09",
+  "source_name": "UN SDG Goal 9",
+  "source_url": "https://unstats.un.org/sdgs/indicators/database/",
+  "license": "UN Terms",
+  "description": "UN Sustainable Development Goal 9 indicators",
+  "category": "development",
+  "topic_tags": [
+    "sdg",
+    "development",
+    "sustainability"
+  ],
+  "keywords": [
+    "sustainable",
+    "development",
+    "goals",
+    "UN"
+  ],
+  "last_updated": "2026-01-07",
+  "geographic_level": "admin_0",
+  "geographic_coverage": {
+    "type": "global",
+    "admin_levels": [
+      0
+    ],
+    "common_count": 192,
+    "common_missing": [
+      "AFG",
+      "ALB",
+      "CAF",
+      "FSM",
+      "HKG",
+      "MAC",
+      "TWN",
+      "ZAF"
+    ],
+    "uncommonly_included": [
+      "AIA",
+      "BMU",
+      "CUW",
+      "CYM",
+      "FLK",
+      "FRO",
+      "GGY",
+      "GLP",
+      "GRL",
+      "GUM",
+      "IMN",
+      "JEY",
+      "MSR",
+      "MTQ",
+      "NCL",
+      "NFK",
+      "PRI",
+      "REU",
+      "SHN",
+      "SPM",
+      "SXM",
+      "TCA",
+      "VGB",
+      "VIR",
+      "WLF"
+    ]
+  },
+  "temporal_coverage": {
+    "start": 2000,
+    "end": 2025,
+    "frequency": "annual",
+    "granularity": "yearly",
+    "field": "year"
+  },
+  "row_count": 5217,
+  "file_size_mb": 0.26,
+  "data_completeness": 0.47,
+  "update_schedule": "unknown",
+  "expected_next_update": "unknown",
+  "metrics": {
+    "dc_tof_infral": {
+      "name": "Total official flows for infrastructure, by recipient countries (millions of constant 2023 United States dollars)",
+      "unit": "CON_USD_M",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": -0.2331,
+        "max": 10537.9524,
+        "median": 69.946
+      },
+      "density": 0.64,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 150,
+      "by_era": {
+        "2000+": {
+          "density": 0.64,
+          "countries": 150,
+          "stats": {
+            "min": -0.2331,
+            "max": 10537.9524,
+            "median": 69.946
+          }
+        }
+      }
+    },
+    "en_atm_co2": {
+      "name": "Carbon dioxide emissions from fuel combustion (millions of tonnes)",
+      "unit": "million tonnes",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 10575.17,
+        "median": 8.4
+      },
+      "density": 0.632,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 144,
+      "by_era": {
+        "2000+": {
+          "density": 0.632,
+          "countries": 144,
+          "stats": {
+            "min": 0.0,
+            "max": 10575.17,
+            "median": 8.4
+          }
+        }
+      }
+    },
+    "en_atm_co2gdp": {
+      "name": "Carbon dioxide emissions per unit of GDP PPP (kilogrammes of CO2 per constant 2021 United States dollars)",
+      "unit": "USD",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.016,
+        "max": 2.351,
+        "median": 0.157
+      },
+      "density": 0.632,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 144,
+      "by_era": {
+        "2000+": {
+          "density": 0.632,
+          "countries": 144,
+          "stats": {
+            "min": 0.016,
+            "max": 2.351,
+            "median": 0.157
+          }
+        }
+      }
+    },
+    "en_atm_co2mva": {
+      "name": "Carbon dioxide emissions from manufacturing industries per unit of manufacturing value added (kilogrammes of CO2 per ...",
+      "unit": "million tonnes",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 18.955,
+        "median": 0.331
+      },
+      "density": 0.627,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 144,
+      "by_era": {
+        "2000+": {
+          "density": 0.627,
+          "countries": 144,
+          "stats": {
+            "min": 0.0,
+            "max": 18.955,
+            "median": 0.331
+          }
+        }
+      }
+    },
+    "fc_acc_ssid": {
+      "name": "Proportion of small-scale industries with a loan or line of credit (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 80.94,
+        "median": 30.73
+      },
+      "density": 0.067,
+      "years": [
+        2006,
+        2025
+      ],
+      "countries": 153,
+      "by_era": {
+        "2000+": {
+          "density": 0.067,
+          "countries": 153,
+          "stats": {
+            "min": 0.0,
+            "max": 80.94,
+            "median": 30.73
+          }
+        }
+      }
+    },
+    "gb_pop_scierd": {
+      "name": "Researchers (in full-time equivalent) per million inhabitants (per 1,000,000 population)",
+      "unit": "count",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 5.9374,
+        "max": 20047.0465,
+        "median": 1467.7906
+      },
+      "density": 0.316,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 139,
+      "by_era": {
+        "2000+": {
+          "density": 0.316,
+          "countries": 139,
+          "stats": {
+            "min": 5.9374,
+            "max": 20047.0465,
+            "median": 1467.7906
+          }
+        }
+      }
+    },
+    "gb_xpd_rsdv": {
+      "name": "Research and development expenditure as a proportion of GDP (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0054,
+        "max": 6.0192,
+        "median": 0.566
+      },
+      "density": 0.392,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 147,
+      "by_era": {
+        "2000+": {
+          "density": 0.392,
+          "countries": 147,
+          "stats": {
+            "min": 0.0054,
+            "max": 6.0192,
+            "median": 0.566
+          }
+        }
+      }
+    },
+    "is_rdp_frgvol": {
+      "name": "Freight volume, by mode of transport (tonne kilometres)",
+      "unit": "T_KM",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 191448548303.0,
+        "median": 19116620.0
+      },
+      "density": 0.172,
+      "years": [
+        2015,
+        2022
+      ],
+      "countries": 164,
+      "by_era": {
+        "2000+": {
+          "density": 0.172,
+          "countries": 164,
+          "stats": {
+            "min": 0.0,
+            "max": 191448548303.0,
+            "median": 19116620.0
+          }
+        }
+      }
+    },
+    "is_rdp_lulfrg": {
+      "name": "Freight loaded and unloaded, maritime transport (metric tons)",
+      "unit": "METONS",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 547638310.697,
+        "max": 1642854922.8329,
+        "median": 1051723949.3776
+      },
+      "density": 0.005,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 1,
+      "by_era": {
+        "2000+": {
+          "density": 0.005,
+          "countries": 1,
+          "stats": {
+            "min": 547638310.697,
+            "max": 1642854922.8329,
+            "median": 1051723949.3776
+          }
+        }
+      }
+    },
+    "is_rdp_pfvol": {
+      "name": "Passenger volume (passenger kilometres), by mode of transport",
+      "unit": "P_KM",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 1734753844869.0,
+        "median": 2466768123.5
+      },
+      "density": 0.176,
+      "years": [
+        2015,
+        2022
+      ],
+      "countries": 164,
+      "by_era": {
+        "2000+": {
+          "density": 0.176,
+          "countries": 164,
+          "stats": {
+            "min": 0.0,
+            "max": 1734753844869.0,
+            "median": 2466768123.5
+          }
+        }
+      }
+    },
+    "is_rdp_porfvol": {
+      "name": "Container port traffic, maritime transport (twenty-foot equivalent units - TEUs)",
+      "unit": "TEU",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 6207.0,
+        "max": 279793800.0,
+        "median": 1009755.0
+      },
+      "density": 0.316,
+      "years": [
+        2010,
+        2023
+      ],
+      "countries": 125,
+      "by_era": {
+        "2000+": {
+          "density": 0.316,
+          "countries": 125,
+          "stats": {
+            "min": 6207.0,
+            "max": 279793800.0,
+            "median": 1009755.0
+          }
+        }
+      }
+    },
+    "it_mob_2gntwk": {
+      "name": "Proportion of population covered by at least a 2G mobile network (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 98.97
+      },
+      "density": 0.671,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 211,
+      "by_era": {
+        "2000+": {
+          "density": 0.671,
+          "countries": 211,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 98.97
+          }
+        }
+      }
+    },
+    "it_mob_3gntwk": {
+      "name": "Proportion of population covered by at least a 3G mobile network (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 94.0
+      },
+      "density": 0.485,
+      "years": [
+        2007,
+        2024
+      ],
+      "countries": 210,
+      "by_era": {
+        "2000+": {
+          "density": 0.485,
+          "countries": 210,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 94.0
+          }
+        }
+      }
+    },
+    "it_mob_4gntwk": {
+      "name": "Proportion of population covered by at least a 4G mobile network (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 80.0
+      },
+      "density": 0.379,
+      "years": [
+        2012,
+        2024
+      ],
+      "countries": 206,
+      "by_era": {
+        "2000+": {
+          "density": 0.379,
+          "countries": 206,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 80.0
+          }
+        }
+      }
+    },
+    "it_mob_5gntwk": {
+      "name": "Proportion of population covered by at least a 5G mobile network (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 0.0
+      },
+      "density": 0.1,
+      "years": [
+        2018,
+        2024
+      ],
+      "countries": 205,
+      "by_era": {
+        "2000+": {
+          "density": 0.1,
+          "countries": 205,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 0.0
+          }
+        }
+      }
+    },
+    "nv_ind_manf": {
+      "name": "Manufacturing value added (constant 2015 United States dollars) as a proportion of GDP (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.02,
+        "max": 52.25,
+        "median": 11.06
+      },
+      "density": 0.957,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 201,
+      "by_era": {
+        "2000+": {
+          "density": 0.957,
+          "countries": 201,
+          "stats": {
+            "min": 0.02,
+            "max": 52.25,
+            "median": 11.06
+          }
+        }
+      }
+    },
+    "nv_ind_manfpc": {
+      "name": "Manufacturing value added per capita (constant 2015 United States dollars)",
+      "unit": "CON_USD",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.83,
+        "max": 67725.94,
+        "median": 520.57
+      },
+      "density": 0.957,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 201,
+      "by_era": {
+        "2000+": {
+          "density": 0.957,
+          "countries": 201,
+          "stats": {
+            "min": 0.83,
+            "max": 67725.94,
+            "median": 520.57
+          }
+        }
+      }
+    },
+    "nv_ind_manf_cd": {
+      "name": "Manufacturing value added (current United States dollars) as a proportion of GDP (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.02,
+        "max": 52.25,
+        "median": 11.15
+      },
+      "density": 0.918,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 201,
+      "by_era": {
+        "2000+": {
+          "density": 0.918,
+          "countries": 201,
+          "stats": {
+            "min": 0.02,
+            "max": 52.25,
+            "median": 11.15
+          }
+        }
+      }
+    },
+    "nv_ind_ssis": {
+      "name": "Proportion of small-scale manufacturing industries in total manufacturing value added based on international classifi...",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.12,
+        "max": 97.1,
+        "median": 10.21
+      },
+      "density": 0.184,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 69,
+      "by_era": {
+        "2000+": {
+          "density": 0.184,
+          "countries": 69,
+          "stats": {
+            "min": 0.12,
+            "max": 97.1,
+            "median": 10.21
+          }
+        }
+      }
+    },
+    "nv_ind_ssis_nc": {
+      "name": "Proportion of small-scale industries in total industry value added based on national classification (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.12,
+        "max": 97.1,
+        "median": 10.155
+      },
+      "density": 0.161,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 75,
+      "by_era": {
+        "2000+": {
+          "density": 0.161,
+          "countries": 75,
+          "stats": {
+            "min": 0.12,
+            "max": 97.1,
+            "median": 10.155
+          }
+        }
+      }
+    },
+    "nv_ind_tech": {
+      "name": "Proportion of medium and high-tech manufacturing value added in total value added (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.26,
+        "max": 88.26,
+        "median": 22.84
+      },
+      "density": 0.451,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 134,
+      "by_era": {
+        "2000+": {
+          "density": 0.451,
+          "countries": 134,
+          "stats": {
+            "min": 0.26,
+            "max": 88.26,
+            "median": 22.84
+          }
+        }
+      }
+    },
+    "sl_tlf_manf": {
+      "name": "Manufacturing employment as a proportion of total employment - 13th ICLS (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 38.75,
+        "median": 11.99
+      },
+      "density": 0.488,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 196,
+      "by_era": {
+        "2000+": {
+          "density": 0.488,
+          "countries": 196,
+          "stats": {
+            "min": 0.0,
+            "max": 38.75,
+            "median": 11.99
+          }
+        }
+      }
+    },
+    "sl_tlf_manf_19icls": {
+      "name": "Manufacturing employment as a proportion of total employment - 19th ICLS(%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 27.92,
+        "median": 10.95
+      },
+      "density": 0.118,
+      "years": [
+        2014,
+        2024
+      ],
+      "countries": 109,
+      "by_era": {
+        "2000+": {
+          "density": 0.118,
+          "countries": 109,
+          "stats": {
+            "min": 0.0,
+            "max": 27.92,
+            "median": 10.95
+          }
+        }
+      }
+    }
+  },
+  "llm_summary": "2000-2025. Total official flows for infrastructure, by recipient countries (millions of constant 2023 United States dollars), Carbon dioxide emissions from fuel combustion (millions of tonnes), Carbon dioxide emissions per unit of GDP PPP (kilogrammes of CO2 per constant 2021 United States dollars), Carbon dioxide emissions from manufacturing industries per unit of manufacturing value added (kilogrammes of CO2 per ..., Proportion of small-scale industries with a loan or line of credit (%)."
+}

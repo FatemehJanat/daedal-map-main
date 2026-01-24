@@ -1,0 +1,43 @@
+{
+  "source_id": "smithsonian_volcanoes",
+  "source_name": "Smithsonian Global Volcanism Program + NOAA Significant Eruptions",
+  "source_url": "https://volcano.si.edu/",
+  "license": "Public Domain",
+  "description": "Global volcanic eruptions 2015-2025 from the Smithsonian GVP catalog merged with NOAA Significant Eruptions. Includes VEI ratings, eruption agents, and impact data.",
+  "category": "hazard",
+  "data_type": "events",
+  "topic_tags": ["volcano", "eruption", "geology"],
+  "keywords": ["volcano", "eruption", "VEI", "lava", "ash", "magma"],
+  "geographic_level": "global",
+  "geographic_coverage": {
+    "type": "global",
+    "description": "Worldwide volcanic regions"
+  },
+  "temporal_coverage": {
+    "start": 2015,
+    "end": 2025,
+    "granularity": "yearly",
+    "field": "year"
+  },
+  "event_stats": {
+    "total_events": 383
+  },
+  "row_count": 383,
+  "file_size_mb": 0.01,
+  "metrics": {
+    "max_vei": {
+      "name": "Max VEI",
+      "description": "Volcanic Explosivity Index (0-8)",
+      "unit": "scale"
+    },
+    "eruption_count": {
+      "name": "Eruption Count",
+      "unit": "count"
+    },
+    "deaths": {
+      "name": "Deaths",
+      "unit": "count"
+    }
+  },
+  "llm_summary": "383 volcanic eruption events worldwide, 2015-2025. Includes VEI ratings, eruption agents, and impact data from NOAA significant eruptions."
+}

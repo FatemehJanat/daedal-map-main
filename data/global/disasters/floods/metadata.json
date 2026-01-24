@@ -1,0 +1,51 @@
+{
+  "source_id": "global_floods",
+  "source_name": "Global Flood Database + Dartmouth Flood Observatory",
+  "source_url": "https://global-flood-database.cloudtostreet.ai/",
+  "license": "Academic/Research use",
+  "description": "Global flood events 2015-2019 with satellite-derived flood extents from the Dartmouth Flood Observatory. Includes flood perimeters, duration, severity, and impact data.",
+  "category": "hazard",
+  "data_type": "events",
+  "topic_tags": ["flood", "hydrology", "water"],
+  "keywords": ["flood", "inundation", "river", "rainfall", "overflow", "DFO"],
+  "geographic_level": "global",
+  "geographic_coverage": {
+    "type": "global",
+    "description": "Worldwide flood events"
+  },
+  "temporal_coverage": {
+    "start": 2015,
+    "end": 2019,
+    "granularity": "timestamp",
+    "field": "timestamp"
+  },
+  "event_stats": {
+    "total_events": 610
+  },
+  "row_count": 610,
+  "file_size_mb": 0.3,
+  "metrics": {
+    "area_km2": {
+      "name": "Flood Area",
+      "unit": "km2"
+    },
+    "duration_days": {
+      "name": "Duration",
+      "unit": "days"
+    },
+    "severity": {
+      "name": "Severity",
+      "unit": "scale",
+      "values": [1, 2]
+    },
+    "deaths": {
+      "name": "Deaths",
+      "unit": "count"
+    },
+    "displaced": {
+      "name": "People Displaced",
+      "unit": "count"
+    }
+  },
+  "llm_summary": "610 flood events worldwide, 2015-2019. Includes flood extent, duration, severity, deaths, and displacement data. Source data ends in 2019."
+}

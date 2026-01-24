@@ -1,0 +1,81 @@
+{
+  "source_context": "United Nations Sustainable Development Goals Framework",
+  "goal": {
+    "number": 8,
+    "name": "Decent Work and Economic Growth",
+    "full_title": "Promote sustained, inclusive and sustainable economic growth, full and productive employment and decent work for all",
+    "description": "Goal 8 promotes sustained, inclusive economic growth, full and productive employment and decent work for all. It addresses GDP growth, economic productivity, job creation, entrepreneurship, labor rights, safe working environments, and sustainable tourism.",
+    "targets": [
+      {
+        "id": "8.1",
+        "text": "Sustain per capita economic growth in accordance with national circumstances"
+      },
+      {
+        "id": "8.2",
+        "text": "Achieve higher levels of economic productivity through diversification, technological upgrading and innovation"
+      },
+      {
+        "id": "8.3",
+        "text": "Promote development-oriented policies that support productive activities and decent job creation"
+      },
+      {
+        "id": "8.4",
+        "text": "Improve progressively global resource efficiency in consumption and production"
+      },
+      {
+        "id": "8.5",
+        "text": "By 2030, achieve full and productive employment and decent work for all"
+      },
+      {
+        "id": "8.6",
+        "text": "By 2020, substantially reduce the proportion of youth not in employment, education or training"
+      },
+      {
+        "id": "8.7",
+        "text": "Take immediate and effective measures to eradicate forced labour and end child labour"
+      },
+      {
+        "id": "8.8",
+        "text": "Protect labour rights and promote safe and secure working environments"
+      }
+    ],
+    "key_indicators": [
+      "NY_GDP_PCAP - Annual growth rate of real GDP per capita (%)",
+      "EN_MAT_FTPRPG - Material footprint per unit of GDP, by type of raw material (kilograms per co...",
+      "EN_MAT_DOMCMPT - Domestic material consumption, by type of raw material (tonnes)",
+      "EN_MAT_FTPRPC - Material footprint per capita, by type of raw material (tonnes)",
+      "EN_MAT_DOMCMPG - Domestic material consumption per unit of GDP, by type of raw material (kilog...",
+      "EN_MAT_FTPRTN - Material footprint, by type of raw material (tonnes)",
+      "EN_MAT_DOMCMPC - Domestic material consumption per capita, by type of raw material (tonnes)",
+      "SL_LBR_NTLCPL - Level of national compliance with labour rights (freedom of association and c...",
+      "ST_GDP_ZS - Tourism direct GDP as a proportion of total GDP (%)",
+      "ST_EMP_TRSMN - Employed persons in the tourism industries (number)",
+      "DC_TOF_TRDCMDL - Total official flows (commitments) for Aid for Trade, by donor countries (mil...",
+      "DC_TOF_TRDDBMDL - Total official flows (disbursement) for Aid for Trade, by donor countries (mi...",
+      "DC_TOF_TRDDBML - Total official flows (disbursement) for Aid for Trade, by recipient countries...",
+      "DC_TOF_TRDCML - Total official flows (commitments) for Aid for Trade, by recipient countries ...",
+      "SL_CPA_YEMP - Existence of a developed and operationalized national strategy for youth empl..."
+    ]
+  },
+  "shared_with": [
+    "un_sdg_01",
+    "un_sdg_10"
+  ],
+  "metrics": {
+    "ny_gdp_pcap": "Annual growth rate of real GDP per capita (%)",
+    "en_mat_ftprpg": "Material footprint per unit of GDP, by type of raw material (kilograms per constant 2015 United States dollar)",
+    "en_mat_domcmpt": "Domestic material consumption, by type of raw material (tonnes)",
+    "en_mat_ftprpc": "Material footprint per capita, by type of raw material (tonnes)",
+    "en_mat_domcmpg": "Domestic material consumption per unit of GDP, by type of raw material (kilograms per constant 2015 United States dol...",
+    "en_mat_ftprtn": "Material footprint, by type of raw material (tonnes)",
+    "en_mat_domcmpc": "Domestic material consumption per capita, by type of raw material (tonnes)",
+    "sl_lbr_ntlcpl": "Level of national compliance with labour rights (freedom of association and collective bargaining) based on Internati...",
+    "st_gdp_zs": "Tourism direct GDP as a proportion of total GDP (%)",
+    "st_emp_trsmn": "Employed persons in the tourism industries (number)",
+    "dc_tof_trdcmdl": "Total official flows (commitments) for Aid for Trade, by donor countries (millions of constant 2023 United States dol...",
+    "dc_tof_trddbmdl": "Total official flows (disbursement) for Aid for Trade, by donor countries (millions of constant 2023 United States do...",
+    "dc_tof_trddbml": "Total official flows (disbursement) for Aid for Trade, by recipient countries (millions of constant 2023 United State...",
+    "dc_tof_trdcml": "Total official flows (commitments) for Aid for Trade, by recipient countries (millions of constant 2023 United States...",
+    "sl_cpa_yemp": "Existence of a developed and operationalized national strategy for youth employment, as a distinct strategy or as par..."
+  }
+}

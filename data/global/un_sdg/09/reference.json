@@ -1,0 +1,81 @@
+{
+  "source_context": "United Nations Sustainable Development Goals Framework",
+  "goal": {
+    "number": 9,
+    "name": "Industry, Innovation and Infrastructure",
+    "full_title": "Build resilient infrastructure, promote inclusive and sustainable industrialization and foster innovation",
+    "description": "Goal 9 focuses on building resilient infrastructure, promoting inclusive and sustainable industrialization and fostering innovation. It addresses quality infrastructure, sustainable industrialization, access to financial services for small enterprises, technological capabilities, and research and development.",
+    "targets": [
+      {
+        "id": "9.1",
+        "text": "Develop quality, reliable, sustainable and resilient infrastructure to support economic development"
+      },
+      {
+        "id": "9.2",
+        "text": "Promote inclusive and sustainable industrialization and raise industry's share of employment and GDP"
+      },
+      {
+        "id": "9.3",
+        "text": "Increase the access of small-scale industrial and other enterprises to financial services"
+      },
+      {
+        "id": "9.4",
+        "text": "Upgrade infrastructure and retrofit industries to make them sustainable with increased resource-use efficiency"
+      },
+      {
+        "id": "9.5",
+        "text": "Enhance scientific research, upgrade technological capabilities of industrial sectors"
+      }
+    ],
+    "key_indicators": [
+      "IS_RDP_FRGVOL - Freight volume, by mode of transport (tonne kilometres)",
+      "IS_RDP_PFVOL - Passenger volume (passenger kilometres), by mode of transport",
+      "IS_RDP_PORFVOL - Container port traffic, maritime transport (twenty-foot equivalent units - TEUs)",
+      "IS_RDP_LULFRG - Freight loaded and unloaded, maritime transport (metric tons)",
+      "NV_IND_MANFPC - Manufacturing value added per capita (constant 2015 United States dollars)",
+      "SL_TLF_MANF - Manufacturing employment as a proportion of total employment - 13th ICLS (%)",
+      "NV_IND_MANF - Manufacturing value added (constant 2015 United States dollars) as a proporti...",
+      "NV_IND_MANF_CD - Manufacturing value added (current United States dollars) as a proportion of ...",
+      "SL_TLF_MANF_19ICLS - Manufacturing employment as a proportion of total employment - 19th ICLS(%)",
+      "NV_IND_SSIS - Proportion of small-scale manufacturing industries in total manufacturing val...",
+      "FC_ACC_SSID - Proportion of small-scale industries with a loan or line of credit (%)",
+      "NV_IND_SSIS_NC - Proportion of small-scale industries in total industry value added based on n...",
+      "EN_ATM_CO2 - Carbon dioxide emissions from fuel combustion (millions of tonnes)",
+      "EN_ATM_CO2MVA - Carbon dioxide emissions from manufacturing industries per unit of manufactur...",
+      "EN_ATM_CO2GDP - Carbon dioxide emissions per unit of GDP PPP (kilogrammes of CO2 per constant...",
+      "GB_POP_SCIERD - Researchers (in full-time equivalent) per million inhabitants (per 1,000,000 ...",
+      "GB_XPD_RSDV - Research and development expenditure as a proportion of GDP (%)",
+      "DC_TOF_INFRAL - Total official flows for infrastructure, by recipient countries (millions of ...",
+      "NV_IND_TECH - Proportion of medium and high-tech manufacturing value added in total value a...",
+      "IT_MOB_2GNTWK - Proportion of population covered by at least a 2G mobile network (%)",
+      "IT_MOB_3GNTWK - Proportion of population covered by at least a 3G mobile network (%)",
+      "IT_MOB_4GNTWK - Proportion of population covered by at least a 4G mobile network (%)",
+      "IT_MOB_5GNTWK - Proportion of population covered by at least a 5G mobile network (%)"
+    ]
+  },
+  "metrics": {
+    "is_rdp_frgvol": "Freight volume, by mode of transport (tonne kilometres)",
+    "is_rdp_pfvol": "Passenger volume (passenger kilometres), by mode of transport",
+    "is_rdp_porfvol": "Container port traffic, maritime transport (twenty-foot equivalent units - TEUs)",
+    "is_rdp_lulfrg": "Freight loaded and unloaded, maritime transport (metric tons)",
+    "nv_ind_manfpc": "Manufacturing value added per capita (constant 2015 United States dollars)",
+    "sl_tlf_manf": "Manufacturing employment as a proportion of total employment - 13th ICLS (%)",
+    "nv_ind_manf": "Manufacturing value added (constant 2015 United States dollars) as a proportion of GDP (%)",
+    "nv_ind_manf_cd": "Manufacturing value added (current United States dollars) as a proportion of GDP (%)",
+    "sl_tlf_manf_19icls": "Manufacturing employment as a proportion of total employment - 19th ICLS(%)",
+    "nv_ind_ssis": "Proportion of small-scale manufacturing industries in total manufacturing value added based on international classifi...",
+    "fc_acc_ssid": "Proportion of small-scale industries with a loan or line of credit (%)",
+    "nv_ind_ssis_nc": "Proportion of small-scale industries in total industry value added based on national classification (%)",
+    "en_atm_co2": "Carbon dioxide emissions from fuel combustion (millions of tonnes)",
+    "en_atm_co2mva": "Carbon dioxide emissions from manufacturing industries per unit of manufacturing value added (kilogrammes of CO2 per ...",
+    "en_atm_co2gdp": "Carbon dioxide emissions per unit of GDP PPP (kilogrammes of CO2 per constant 2021 United States dollars)",
+    "gb_pop_scierd": "Researchers (in full-time equivalent) per million inhabitants (per 1,000,000 population)",
+    "gb_xpd_rsdv": "Research and development expenditure as a proportion of GDP (%)",
+    "dc_tof_infral": "Total official flows for infrastructure, by recipient countries (millions of constant 2023 United States dollars)",
+    "nv_ind_tech": "Proportion of medium and high-tech manufacturing value added in total value added (%)",
+    "it_mob_2gntwk": "Proportion of population covered by at least a 2G mobile network (%)",
+    "it_mob_3gntwk": "Proportion of population covered by at least a 3G mobile network (%)",
+    "it_mob_4gntwk": "Proportion of population covered by at least a 4G mobile network (%)",
+    "it_mob_5gntwk": "Proportion of population covered by at least a 5G mobile network (%)"
+  }
+}

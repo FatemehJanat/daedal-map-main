@@ -1,0 +1,48 @@
+{
+  "source_id": "global_tornadoes",
+  "source_name": "Global Tornadoes (NOAA + Canada)",
+  "source_url": "https://www.ncdc.noaa.gov/stormevents/",
+  "license": "Public Domain (U.S. Government)",
+  "description": "Tornado events in USA (NOAA Storm Events) and Canada (CNTD/NTP), filtered to 2015-2025. Includes track paths, width, EF-scale ratings, and damage estimates.",
+  "category": "hazard",
+  "data_type": "events",
+  "topic_tags": ["tornado", "severe_weather", "natural_hazard"],
+  "keywords": ["tornado", "twister", "EF scale", "Fujita", "severe weather", "wind"],
+  "geographic_level": "regional",
+  "geographic_coverage": {
+    "type": "regional",
+    "countries": ["USA", "CAN"],
+    "description": "United States and Canada"
+  },
+  "temporal_coverage": {
+    "start": 2015,
+    "end": 2025,
+    "granularity": "timestamp",
+    "field": "timestamp"
+  },
+  "event_stats": {
+    "total_events": 17338
+  },
+  "row_count": 17338,
+  "file_size_mb": 0.8,
+  "metrics": {
+    "tornado_scale": {
+      "name": "EF/F Rating",
+      "unit": "scale",
+      "values": ["EF0", "EF1", "EF2", "EF3", "EF4", "EF5"]
+    },
+    "tornado_length_mi": {
+      "name": "Track Length",
+      "unit": "miles"
+    },
+    "tornado_width_yd": {
+      "name": "Path Width",
+      "unit": "yards"
+    },
+    "deaths_direct": {
+      "name": "Direct Deaths",
+      "unit": "count"
+    }
+  },
+  "llm_summary": "17,338 tornado events in USA and Canada, 2015-2025. Includes EF-scale ratings, track endpoints, path width, and damage data."
+}

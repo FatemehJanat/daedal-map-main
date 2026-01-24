@@ -1,0 +1,1708 @@
+{
+  "source_id": "un_sdg_12",
+  "source_name": "UN SDG Goal 12",
+  "source_url": "https://unstats.un.org/sdgs/indicators/database/",
+  "license": "UN Terms",
+  "description": "UN Sustainable Development Goal 12 indicators",
+  "category": "development",
+  "topic_tags": [
+    "sdg",
+    "development",
+    "sustainability"
+  ],
+  "keywords": [
+    "sustainable",
+    "development",
+    "goals",
+    "UN"
+  ],
+  "last_updated": "2026-01-07",
+  "geographic_level": "admin_0",
+  "geographic_coverage": {
+    "type": "global",
+    "admin_levels": [
+      0
+    ],
+    "common_count": 192,
+    "common_missing": [
+      "AFG",
+      "ALB",
+      "CAF",
+      "FSM",
+      "HKG",
+      "MAC",
+      "TWN",
+      "ZAF"
+    ],
+    "uncommonly_included": [
+      "AIA",
+      "BES",
+      "BLM",
+      "BMU",
+      "CUW",
+      "CYM",
+      "FLK",
+      "FRO",
+      "GGY",
+      "GLP",
+      "GRL",
+      "GUM",
+      "IMN",
+      "JEY",
+      "MAF",
+      "MSR",
+      "MTQ",
+      "NCL",
+      "NFK",
+      "PCN",
+      "PRI",
+      "REU",
+      "SHN",
+      "SPM",
+      "SXM",
+      "TCA",
+      "VGB",
+      "VIR",
+      "WLF"
+    ]
+  },
+  "temporal_coverage": {
+    "start": 2000,
+    "end": 2025,
+    "frequency": "annual",
+    "granularity": "yearly",
+    "field": "year"
+  },
+  "row_count": 5452,
+  "file_size_mb": 0.38,
+  "data_completeness": 0.22,
+  "update_schedule": "unknown",
+  "expected_next_update": "unknown",
+  "metrics": {
+    "ag_fls_index": {
+      "name": "Global food loss index",
+      "unit": "INDEX",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 99.52,
+        "max": 104.58,
+        "median": 104.45
+      },
+      "density": 0.002,
+      "years": [
+        2015,
+        2023
+      ],
+      "countries": 1,
+      "by_era": {
+        "2000+": {
+          "density": 0.002,
+          "countries": 1,
+          "stats": {
+            "min": 99.52,
+            "max": 104.58,
+            "median": 104.45
+          }
+        }
+      }
+    },
+    "ag_fls_pct": {
+      "name": "Food loss percentage (%)",
+      "unit": "percentage",
+      "aggregation": "avg",
+      "keywords": [],
+      "stats": {
+        "min": 13.2,
+        "max": 13.9,
+        "median": 13.8
+      },
+      "density": 0.002,
+      "years": [
+        2015,
+        2023
+      ],
+      "countries": 1,
+      "by_era": {
+        "2000+": {
+          "density": 0.002,
+          "countries": 1,
+          "stats": {
+            "min": 13.2,
+            "max": 13.9,
+            "median": 13.8
+          }
+        }
+      }
+    },
+    "ag_food_wst": {
+      "name": "Food waste (Tonnes)",
+      "unit": "TONNES",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 179448658.4,
+        "median": 336733.4071
+      },
+      "density": 0.094,
+      "years": [
+        2005,
+        2022
+      ],
+      "countries": 217,
+      "by_era": {
+        "2000+": {
+          "density": 0.094,
+          "countries": 217,
+          "stats": {
+            "min": 0.0,
+            "max": 179448658.4,
+            "median": 336733.4071
+          }
+        }
+      }
+    },
+    "ag_food_wst_pc": {
+      "name": "Food waste per capita (KG)",
+      "unit": "KG",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 285.0,
+        "median": 60.6863
+      },
+      "density": 0.093,
+      "years": [
+        2005,
+        2022
+      ],
+      "countries": 217,
+      "by_era": {
+        "2000+": {
+          "density": 0.093,
+          "countries": 217,
+          "stats": {
+            "min": 0.0,
+            "max": 285.0,
+            "median": 60.6863
+          }
+        }
+      }
+    },
+    "eg_egy_rnew": {
+      "name": "Installed renewable electricity-generating capacity (watts per capita)",
+      "unit": "W_PER_CAPITA",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 7924.9223,
+        "median": 0.0184
+      },
+      "density": 0.92,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 209,
+      "by_era": {
+        "2000+": {
+          "density": 0.92,
+          "countries": 209,
+          "stats": {
+            "min": 0.0,
+            "max": 7924.9223,
+            "median": 0.0184
+          }
+        }
+      }
+    },
+    "en_ewt_collpcap": {
+      "name": "Electronic waste collected, per capita (KG)",
+      "unit": "KG",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 402.1723,
+        "median": 6.96
+      },
+      "density": 0.122,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 59,
+      "by_era": {
+        "2000+": {
+          "density": 0.122,
+          "countries": 59,
+          "stats": {
+            "min": 0.0,
+            "max": 402.1723,
+            "median": 6.96
+          }
+        }
+      }
+    },
+    "en_ewt_collr": {
+      "name": "Proportion of electronic waste collected (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 177.6576,
+        "median": 5.0
+      },
+      "density": 0.085,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 60,
+      "by_era": {
+        "2000+": {
+          "density": 0.085,
+          "countries": 60,
+          "stats": {
+            "min": 0.0,
+            "max": 177.6576,
+            "median": 5.0
+          }
+        }
+      }
+    },
+    "en_ewt_collv": {
+      "name": "Electronic waste collected (Tonnes)",
+      "unit": "TONNES",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 5.0,
+        "max": 3946253.619,
+        "median": 44690.0
+      },
+      "density": 0.117,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 58,
+      "by_era": {
+        "2000+": {
+          "density": 0.117,
+          "countries": 58,
+          "stats": {
+            "min": 5.0,
+            "max": 3946253.619,
+            "median": 44690.0
+          }
+        }
+      }
+    },
+    "en_ewt_genpcap": {
+      "name": "Electronic waste generated, per capita (Kg)",
+      "unit": "KG",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0313,
+        "max": 5892.5562,
+        "median": 14.47
+      },
+      "density": 0.056,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 38,
+      "by_era": {
+        "2000+": {
+          "density": 0.056,
+          "countries": 38,
+          "stats": {
+            "min": 0.0313,
+            "max": 5892.5562,
+            "median": 14.47
+          }
+        }
+      }
+    },
+    "en_ewt_genv": {
+      "name": "Electronic waste generated (Tonnes)",
+      "unit": "TONNES",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 193.0,
+        "max": 35755100.0,
+        "median": 257550.0
+      },
+      "density": 0.056,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 37,
+      "by_era": {
+        "2000+": {
+          "density": 0.056,
+          "countries": 37,
+          "stats": {
+            "min": 193.0,
+            "max": 35755100.0,
+            "median": 257550.0
+          }
+        }
+      }
+    },
+    "en_ewt_rcypcap": {
+      "name": "Electronic waste recycled, per capita (Kg)",
+      "unit": "KG",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 402.1723,
+        "median": 5.79
+      },
+      "density": 0.127,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 59,
+      "by_era": {
+        "2000+": {
+          "density": 0.127,
+          "countries": 59,
+          "stats": {
+            "min": 0.0,
+            "max": 402.1723,
+            "median": 5.79
+          }
+        }
+      }
+    },
+    "en_ewt_rcyr": {
+      "name": "Proportion of electronic waste recycled (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 122.8,
+        "median": 80.9
+      },
+      "density": 0.081,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 38,
+      "by_era": {
+        "2000+": {
+          "density": 0.081,
+          "countries": 38,
+          "stats": {
+            "min": 0.0,
+            "max": 122.8,
+            "median": 80.9
+          }
+        }
+      }
+    },
+    "en_ewt_rcyv": {
+      "name": "Electronic waste recycled (Tonnes)",
+      "unit": "TONNES",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 3946253.619,
+        "median": 43770.5
+      },
+      "density": 0.127,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 59,
+      "by_era": {
+        "2000+": {
+          "density": 0.127,
+          "countries": 59,
+          "stats": {
+            "min": 0.0,
+            "max": 3946253.619,
+            "median": 43770.5
+          }
+        }
+      }
+    },
+    "en_haz_exp": {
+      "name": "Hazardous waste exported, (Tonnes)",
+      "unit": "TONNES",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 2842713.0,
+        "median": 7021.0
+      },
+      "density": 0.166,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 86,
+      "by_era": {
+        "2000+": {
+          "density": 0.166,
+          "countries": 86,
+          "stats": {
+            "min": 0.0,
+            "max": 2842713.0,
+            "median": 7021.0
+          }
+        }
+      }
+    },
+    "en_haz_gengdp": {
+      "name": "Hazardous waste generated, per unit of GDP (kilograms per constant 2015 United States dollars)",
+      "unit": "USD",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 15.7319,
+        "median": 0.0034
+      },
+      "density": 0.18,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 95,
+      "by_era": {
+        "2000+": {
+          "density": 0.18,
+          "countries": 95,
+          "stats": {
+            "min": 0.0,
+            "max": 15.7319,
+            "median": 0.0034
+          }
+        }
+      }
+    },
+    "en_haz_genv": {
+      "name": "Hazardous waste generated (Tonnes)",
+      "unit": "TONNES",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.15,
+        "max": 1684318464.0,
+        "median": 334437.5
+      },
+      "density": 0.189,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 98,
+      "by_era": {
+        "2000+": {
+          "density": 0.189,
+          "countries": 98,
+          "stats": {
+            "min": 0.15,
+            "max": 1684318464.0,
+            "median": 334437.5
+          }
+        }
+      }
+    },
+    "en_haz_imp": {
+      "name": "Hazardous waste imported, (Tonnes)",
+      "unit": "TONNES",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 6304844.0,
+        "median": 2686.0
+      },
+      "density": 0.152,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 77,
+      "by_era": {
+        "2000+": {
+          "density": 0.152,
+          "countries": 77,
+          "stats": {
+            "min": 0.0,
+            "max": 6304844.0,
+            "median": 2686.0
+          }
+        }
+      }
+    },
+    "en_haz_pcap": {
+      "name": "Hazardous waste generated, per capita (Kg)",
+      "unit": "KG",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 107581.233,
+        "median": 44.6657
+      },
+      "density": 0.188,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 98,
+      "by_era": {
+        "2000+": {
+          "density": 0.188,
+          "countries": 98,
+          "stats": {
+            "min": 0.0,
+            "max": 107581.233,
+            "median": 44.6657
+          }
+        }
+      }
+    },
+    "en_haz_treatv": {
+      "name": "Hazardous waste treated, by type of treatment (Tonnes)",
+      "unit": "TONNES",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 220528384.0,
+        "median": 5327.0
+      },
+      "density": 0.174,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 91,
+      "by_era": {
+        "2000+": {
+          "density": 0.174,
+          "countries": 91,
+          "stats": {
+            "min": 0.0,
+            "max": 220528384.0,
+            "median": 5327.0
+          }
+        }
+      }
+    },
+    "en_haz_trtdisr": {
+      "name": "Proportion of hazardous waste treated or disposed (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 683.4725,
+        "median": 83.8789
+      },
+      "density": 0.143,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 82,
+      "by_era": {
+        "2000+": {
+          "density": 0.143,
+          "countries": 82,
+          "stats": {
+            "min": 0.0,
+            "max": 683.4725,
+            "median": 83.8789
+          }
+        }
+      }
+    },
+    "en_haz_trtdisv": {
+      "name": "Hazardous waste treated or disposed (Tonnes)",
+      "unit": "TONNES",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 536541792.0,
+        "median": 272285.0
+      },
+      "density": 0.158,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 86,
+      "by_era": {
+        "2000+": {
+          "density": 0.158,
+          "countries": 86,
+          "stats": {
+            "min": 0.0,
+            "max": 536541792.0,
+            "median": 272285.0
+          }
+        }
+      }
+    },
+    "en_mat_domcmpc": {
+      "name": "Domestic material consumption per capita, by type of raw material (tonnes)",
+      "unit": "TONNES",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": -88.9857,
+        "max": 117.0695,
+        "median": 0.3176
+      },
+      "density": 0.945,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 216,
+      "by_era": {
+        "2000+": {
+          "density": 0.945,
+          "countries": 216,
+          "stats": {
+            "min": -88.9857,
+            "max": 117.0695,
+            "median": 0.3176
+          }
+        }
+      }
+    },
+    "en_mat_domcmpg": {
+      "name": "Domestic material consumption per unit of GDP, by type of raw material (kilograms per constant 2015 United States dol...",
+      "unit": "KG_PER_CON_USD",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": -5.8917,
+        "max": 16.6108,
+        "median": 0.0508
+      },
+      "density": 0.874,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 201,
+      "by_era": {
+        "2000+": {
+          "density": 0.874,
+          "countries": 201,
+          "stats": {
+            "min": -5.8917,
+            "max": 16.6108,
+            "median": 0.0508
+          }
+        }
+      }
+    },
+    "en_mat_domcmpt": {
+      "name": "Domestic material consumption, by type of raw material (tonnes)",
+      "unit": "TONNES",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": -6607264.066,
+        "max": 32857214338.5138,
+        "median": 681556.904
+      },
+      "density": 0.954,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 218,
+      "by_era": {
+        "2000+": {
+          "density": 0.954,
+          "countries": 218,
+          "stats": {
+            "min": -6607264.066,
+            "max": 32857214338.5138,
+            "median": 681556.904
+          }
+        }
+      }
+    },
+    "en_mat_ftprpc": {
+      "name": "Material footprint per capita, by type of raw material (tonnes)",
+      "unit": "TONNES",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 5.2924,
+        "max": 40.087,
+        "median": 9.1313
+      },
+      "density": 0.004,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 1,
+      "by_era": {
+        "2000+": {
+          "density": 0.004,
+          "countries": 1,
+          "stats": {
+            "min": 5.2924,
+            "max": 40.087,
+            "median": 9.1313
+          }
+        }
+      }
+    },
+    "en_mat_ftprpg": {
+      "name": "Material footprint per unit of GDP, by type of raw material (kilograms per constant 2015 United States dollar)",
+      "unit": "KG_PER_CON_USD",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0886,
+        "max": 0.2868,
+        "median": 0.1739
+      },
+      "density": 0.004,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 1,
+      "by_era": {
+        "2000+": {
+          "density": 0.004,
+          "countries": 1,
+          "stats": {
+            "min": 0.0886,
+            "max": 0.2868,
+            "median": 0.1739
+          }
+        }
+      }
+    },
+    "en_mat_ftprtn": {
+      "name": "Material footprint, by type of raw material (tonnes)",
+      "unit": "TONNES",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 140317940.0,
+        "max": 1070699718.0,
+        "median": 306804186.35
+      },
+      "density": 0.004,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 1,
+      "by_era": {
+        "2000+": {
+          "density": 0.004,
+          "countries": 1,
+          "stats": {
+            "min": 140317940.0,
+            "max": 1070699718.0,
+            "median": 306804186.35
+          }
+        }
+      }
+    },
+    "en_mwt_collv": {
+      "name": "Municipal waste collected (Tonnes)",
+      "unit": "TONNES",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 690.0,
+        "max": 589168000.0,
+        "median": 1671000.0
+      },
+      "density": 0.313,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 124,
+      "by_era": {
+        "2000+": {
+          "density": 0.313,
+          "countries": 124,
+          "stats": {
+            "min": 690.0,
+            "max": 589168000.0,
+            "median": 1671000.0
+          }
+        }
+      }
+    },
+    "en_mwt_exp": {
+      "name": "Municipal waste exported (Tonnes)",
+      "unit": "TONNES",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 254000.0,
+        "median": 0.0
+      },
+      "density": 0.06,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 40,
+      "by_era": {
+        "2000+": {
+          "density": 0.06,
+          "countries": 40,
+          "stats": {
+            "min": 0.0,
+            "max": 254000.0,
+            "median": 0.0
+          }
+        }
+      }
+    },
+    "en_mwt_genv": {
+      "name": "Municipal waste generated (Tonnes)",
+      "unit": "TONNES",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 802389500.0,
+        "median": 4042000.0
+      },
+      "density": 0.238,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 81,
+      "by_era": {
+        "2000+": {
+          "density": 0.238,
+          "countries": 81,
+          "stats": {
+            "min": 0.0,
+            "max": 802389500.0,
+            "median": 4042000.0
+          }
+        }
+      }
+    },
+    "en_mwt_imp": {
+      "name": "Municipal waste imported (Tonnes)",
+      "unit": "TONNES",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 915000.0,
+        "median": 0.0
+      },
+      "density": 0.062,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 41,
+      "by_era": {
+        "2000+": {
+          "density": 0.062,
+          "countries": 41,
+          "stats": {
+            "min": 0.0,
+            "max": 915000.0,
+            "median": 0.0
+          }
+        }
+      }
+    },
+    "en_mwt_rcyr": {
+      "name": "Proportion of municipal waste recycled (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 177.6576,
+        "median": 16.8518
+      },
+      "density": 0.23,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 90,
+      "by_era": {
+        "2000+": {
+          "density": 0.23,
+          "countries": 90,
+          "stats": {
+            "min": 0.0,
+            "max": 177.6576,
+            "median": 16.8518
+          }
+        }
+      }
+    },
+    "en_mwt_rcyv": {
+      "name": "Municipal waste recycled (Tonnes)",
+      "unit": "TONNES",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 62677000.0,
+        "median": 456720.1843
+      },
+      "density": 0.256,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 107,
+      "by_era": {
+        "2000+": {
+          "density": 0.256,
+          "countries": 107,
+          "stats": {
+            "min": 0.0,
+            "max": 62677000.0,
+            "median": 456720.1843
+          }
+        }
+      }
+    },
+    "en_mwt_treatr": {
+      "name": "Proportion of municipal waste treated, by type of treatment (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 422.0409,
+        "median": 18.0163
+      },
+      "density": 0.261,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 105,
+      "by_era": {
+        "2000+": {
+          "density": 0.261,
+          "countries": 105,
+          "stats": {
+            "min": 0.0,
+            "max": 422.0409,
+            "median": 18.0163
+          }
+        }
+      }
+    },
+    "en_mwt_treatv": {
+      "name": "Municipal waste treated by type of treatment (Tonnes)",
+      "unit": "TONNES",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 515961000.0,
+        "median": 265500.0
+      },
+      "density": 0.332,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 133,
+      "by_era": {
+        "2000+": {
+          "density": 0.332,
+          "countries": 133,
+          "stats": {
+            "min": 0.0,
+            "max": 515961000.0,
+            "median": 265500.0
+          }
+        }
+      }
+    },
+    "en_scp_frmn": {
+      "name": "Number of companies publishing sustainability reports with disclosure by dimension, by level of requirement (Number)",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 1.0,
+        "max": 487.0,
+        "median": 2.0
+      },
+      "density": 0.118,
+      "years": [
+        2015,
+        2023
+      ],
+      "countries": 85,
+      "by_era": {
+        "2000+": {
+          "density": 0.118,
+          "countries": 85,
+          "stats": {
+            "min": 1.0,
+            "max": 487.0,
+            "median": 2.0
+          }
+        }
+      }
+    },
+    "en_twt_genv": {
+      "name": "Total waste generation, by activity (Tonnes)",
+      "unit": "TONNES",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 9441872000.0,
+        "median": 979795.0
+      },
+      "density": 0.263,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 135,
+      "by_era": {
+        "2000+": {
+          "density": 0.263,
+          "countries": 135,
+          "stats": {
+            "min": 0.0,
+            "max": 9441872000.0,
+            "median": 979795.0
+          }
+        }
+      }
+    },
+    "er_ffs_cmpt_cd": {
+      "name": "Fossil-fuel subsidies (consumption and production) (billions of nominal United States dollars)",
+      "unit": "CU_USD_B",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": -1.5817,
+        "max": 244.8597,
+        "median": 0.5576
+      },
+      "density": 0.319,
+      "years": [
+        2010,
+        2024
+      ],
+      "countries": 162,
+      "by_era": {
+        "2000+": {
+          "density": 0.319,
+          "countries": 162,
+          "stats": {
+            "min": -1.5817,
+            "max": 244.8597,
+            "median": 0.5576
+          }
+        }
+      }
+    },
+    "er_ffs_cmpt_gdp": {
+      "name": "Fossil-fuel subsidies (consumption and production) as a proportion of total GDP (%)",
+      "unit": "USD",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": -0.6963,
+        "max": 38.8387,
+        "median": 0.7638
+      },
+      "density": 0.319,
+      "years": [
+        2010,
+        2024
+      ],
+      "countries": 162,
+      "by_era": {
+        "2000+": {
+          "density": 0.319,
+          "countries": 162,
+          "stats": {
+            "min": -0.6963,
+            "max": 38.8387,
+            "median": 0.7638
+          }
+        }
+      }
+    },
+    "er_ffs_cmpt_pc_cd": {
+      "name": "Fossil-fuel subsidies (consumption and production) per capita (nominal United States dollars)",
+      "unit": "CU_USD",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": -111.2536,
+        "max": 4848.336,
+        "median": 46.2022
+      },
+      "density": 0.319,
+      "years": [
+        2010,
+        2024
+      ],
+      "countries": 162,
+      "by_era": {
+        "2000+": {
+          "density": 0.319,
+          "countries": 162,
+          "stats": {
+            "min": -111.2536,
+            "max": 4848.336,
+            "median": 46.2022
+          }
+        }
+      }
+    },
+    "se_gcedesd_cur": {
+      "name": "Extent to which global citizenship education and education for sustainable development are mainstreamed in curricula",
+      "unit": "INDEX",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.4713,
+        "max": 1.0,
+        "median": 0.8255
+      },
+      "density": 0.011,
+      "years": [
+        2020,
+        2020
+      ],
+      "countries": 58,
+      "by_era": {
+        "2000+": {
+          "density": 0.011,
+          "countries": 58,
+          "stats": {
+            "min": 0.4713,
+            "max": 1.0,
+            "median": 0.8255
+          }
+        }
+      }
+    },
+    "se_gcedesd_nep": {
+      "name": "Extent to which global citizenship education and education for sustainable development are mainstreamed in national e...",
+      "unit": "INDEX",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.35,
+        "max": 1.0,
+        "median": 0.875
+      },
+      "density": 0.012,
+      "years": [
+        2020,
+        2020
+      ],
+      "countries": 63,
+      "by_era": {
+        "2000+": {
+          "density": 0.012,
+          "countries": 63,
+          "stats": {
+            "min": 0.35,
+            "max": 1.0,
+            "median": 0.875
+          }
+        }
+      }
+    },
+    "se_gcedesd_sas": {
+      "name": "Extent to which global citizenship education and education for sustainable development are mainstreamed in student as...",
+      "unit": "INDEX",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.25,
+        "max": 1.0,
+        "median": 0.8333
+      },
+      "density": 0.012,
+      "years": [
+        2020,
+        2020
+      ],
+      "countries": 63,
+      "by_era": {
+        "2000+": {
+          "density": 0.012,
+          "countries": 63,
+          "stats": {
+            "min": 0.25,
+            "max": 1.0,
+            "median": 0.8333
+          }
+        }
+      }
+    },
+    "se_gcedesd_ted": {
+      "name": "Extent to which global citizenship education and education for sustainable development are mainstreamed in teacher ed...",
+      "unit": "INDEX",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.2,
+        "max": 1.0,
+        "median": 0.9
+      },
+      "density": 0.011,
+      "years": [
+        2020,
+        2020
+      ],
+      "countries": 61,
+      "by_era": {
+        "2000+": {
+          "density": 0.011,
+          "countries": 61,
+          "stats": {
+            "min": 0.2,
+            "max": 1.0,
+            "median": 0.9
+          }
+        }
+      }
+    },
+    "sg_haz_cmrbasel": {
+      "name": "Parties meeting their commitments and obligations in transmitting information as required by Basel Convention on haza...",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 67.0
+      },
+      "density": 0.101,
+      "years": [
+        2015,
+        2025
+      ],
+      "countries": 187,
+      "by_era": {
+        "2000+": {
+          "density": 0.101,
+          "countries": 187,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 67.0
+          }
+        }
+      }
+    },
+    "sg_haz_cmrmnmt": {
+      "name": "Parties meeting their commitments and obligations in transmitting information as required by Minamata Convention on h...",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 66.67
+      },
+      "density": 0.045,
+      "years": [
+        2020,
+        2025
+      ],
+      "countries": 144,
+      "by_era": {
+        "2000+": {
+          "density": 0.045,
+          "countries": 144,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 66.67
+          }
+        }
+      }
+    },
+    "sg_haz_cmrmntrl": {
+      "name": "Parties meeting their commitments and obligations in transmitting information as required by Montreal Protocol on haz...",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 78.0,
+        "max": 100.0,
+        "median": 100.0
+      },
+      "density": 0.105,
+      "years": [
+        2015,
+        2025
+      ],
+      "countries": 192,
+      "by_era": {
+        "2000+": {
+          "density": 0.105,
+          "countries": 192,
+          "stats": {
+            "min": 78.0,
+            "max": 100.0,
+            "median": 100.0
+          }
+        }
+      }
+    },
+    "sg_haz_cmrrotdam": {
+      "name": "Parties meeting their commitments and obligations in transmitting information as required by Rotterdam Convention on ...",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 83.0
+      },
+      "density": 0.089,
+      "years": [
+        2015,
+        2025
+      ],
+      "countries": 167,
+      "by_era": {
+        "2000+": {
+          "density": 0.089,
+          "countries": 167,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 83.0
+          }
+        }
+      }
+    },
+    "sg_haz_cmrstholm": {
+      "name": "Parties meeting their commitments and obligations in transmitting information as required by Stockholm Convention on ...",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 50.0
+      },
+      "density": 0.1,
+      "years": [
+        2015,
+        2025
+      ],
+      "countries": 185,
+      "by_era": {
+        "2000+": {
+          "density": 0.1,
+          "countries": 185,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 50.0
+          }
+        }
+      }
+    },
+    "sg_scp_cntry": {
+      "name": "Countries with sustainable consumption and production (SCP) national action plans or SCP mainstreamed as a priority o...",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 1.0,
+        "max": 1.0,
+        "median": 1.0
+      },
+      "density": 0.012,
+      "years": [
+        2019,
+        2024
+      ],
+      "countries": 65,
+      "by_era": {
+        "2000+": {
+          "density": 0.012,
+          "countries": 65,
+          "stats": {
+            "min": 1.0,
+            "max": 1.0,
+            "median": 1.0
+          }
+        }
+      }
+    },
+    "sg_scp_polins": {
+      "name": "Countries with policy instrument for sustainable consumption and production (1 = YES; 0 = NO)",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 1.0,
+        "max": 13.0,
+        "median": 1.0
+      },
+      "density": 0.012,
+      "years": [
+        2019,
+        2024
+      ],
+      "countries": 65,
+      "by_era": {
+        "2000+": {
+          "density": 0.012,
+          "countries": 65,
+          "stats": {
+            "min": 1.0,
+            "max": 13.0,
+            "median": 1.0
+          }
+        }
+      }
+    },
+    "sg_scp_procn": {
+      "name": "Number of countries implementing sustainable public procurement policies and action plans",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 1.0,
+        "max": 1.0,
+        "median": 1.0
+      },
+      "density": 0.015,
+      "years": [
+        2020,
+        2022
+      ],
+      "countries": 53,
+      "by_era": {
+        "2000+": {
+          "density": 0.015,
+          "countries": 53,
+          "stats": {
+            "min": 1.0,
+            "max": 1.0,
+            "median": 1.0
+          }
+        }
+      }
+    },
+    "sg_scp_procn_hs": {
+      "name": "Number of countries implementing sustainable public procurement policies and action plans at higher subnational level...",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 1.0,
+        "max": 1.0,
+        "median": 1.0
+      },
+      "density": 0.001,
+      "years": [
+        2020,
+        2020
+      ],
+      "countries": 5,
+      "by_era": {
+        "2000+": {
+          "density": 0.001,
+          "countries": 5,
+          "stats": {
+            "min": 1.0,
+            "max": 1.0,
+            "median": 1.0
+          }
+        }
+      }
+    },
+    "sg_scp_procn_ls": {
+      "name": "Number of countries implementing sustainable public procurement policies and action plans at lower subnational level ...",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 1.0,
+        "max": 1.0,
+        "median": 1.0
+      },
+      "density": 0.001,
+      "years": [
+        2020,
+        2020
+      ],
+      "countries": 4,
+      "by_era": {
+        "2000+": {
+          "density": 0.001,
+          "countries": 4,
+          "stats": {
+            "min": 1.0,
+            "max": 1.0,
+            "median": 1.0
+          }
+        }
+      }
+    },
+    "sg_scp_totln": {
+      "name": "Number of policies, instruments and mechanism in place for sustainable consumption and production (Number)",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 1.0,
+        "max": 87.0,
+        "median": 3.0
+      },
+      "density": 0.012,
+      "years": [
+        2019,
+        2024
+      ],
+      "countries": 65,
+      "by_era": {
+        "2000+": {
+          "density": 0.012,
+          "countries": 65,
+          "stats": {
+            "min": 1.0,
+            "max": 87.0,
+            "median": 3.0
+          }
+        }
+      }
+    },
+    "st_eev_accseea": {
+      "name": "Implementation of standard accounting tools to monitor the economic and environmental aspects of tourism (SEEA tables)",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 4.0,
+        "median": 0.0
+      },
+      "density": 0.415,
+      "years": [
+        2008,
+        2023
+      ],
+      "countries": 163,
+      "by_era": {
+        "2000+": {
+          "density": 0.415,
+          "countries": 163,
+          "stats": {
+            "min": 0.0,
+            "max": 4.0,
+            "median": 0.0
+          }
+        }
+      }
+    },
+    "st_eev_acctsa": {
+      "name": "Implementation of standard accounting tools to monitor the economic and environmental aspects of tourism (Tourism Sat...",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 7.0,
+        "median": 0.0
+      },
+      "density": 0.428,
+      "years": [
+        2008,
+        2023
+      ],
+      "countries": 167,
+      "by_era": {
+        "2000+": {
+          "density": 0.428,
+          "countries": 167,
+          "stats": {
+            "min": 0.0,
+            "max": 7.0,
+            "median": 0.0
+          }
+        }
+      }
+    },
+    "st_eev_stdacct": {
+      "name": "Implementation of standard accounting tools to monitor the economic and environmental aspects of tourism (number of t...",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 11.0,
+        "median": 1.0
+      },
+      "density": 0.43,
+      "years": [
+        2008,
+        2023
+      ],
+      "countries": 167,
+      "by_era": {
+        "2000+": {
+          "density": 0.43,
+          "countries": 167,
+          "stats": {
+            "min": 0.0,
+            "max": 11.0,
+            "median": 1.0
+          }
+        }
+      }
+    }
+  },
+  "llm_summary": "2000-2025. Global food loss index, Food loss percentage (%), Food waste (Tonnes), Food waste per capita (KG), Installed renewable electricity-generating capacity (watts per capita)."
+}

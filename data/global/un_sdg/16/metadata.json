@@ -1,0 +1,1878 @@
+{
+  "source_id": "un_sdg_16",
+  "source_name": "UN SDG Goal 16",
+  "source_url": "https://unstats.un.org/sdgs/indicators/database/",
+  "license": "UN Terms",
+  "description": "UN Sustainable Development Goal 16 indicators",
+  "category": "development",
+  "topic_tags": [
+    "sdg",
+    "development",
+    "sustainability"
+  ],
+  "keywords": [
+    "sustainable",
+    "development",
+    "goals",
+    "UN"
+  ],
+  "last_updated": "2026-01-07",
+  "geographic_level": "admin_0",
+  "geographic_coverage": {
+    "type": "global",
+    "admin_levels": [
+      0
+    ],
+    "common_count": 192,
+    "common_missing": [
+      "AFG",
+      "ALB",
+      "CAF",
+      "FSM",
+      "HKG",
+      "MAC",
+      "TWN",
+      "ZAF"
+    ],
+    "uncommonly_included": [
+      "AIA",
+      "BMU",
+      "CUW",
+      "CYM",
+      "FRO",
+      "GGY",
+      "GLP",
+      "GRL",
+      "GUM",
+      "IMN",
+      "JEY",
+      "MAF",
+      "MSR",
+      "MTQ",
+      "NCL",
+      "PRI",
+      "REU",
+      "SHN",
+      "SPM",
+      "TCA",
+      "VGB",
+      "VIR"
+    ]
+  },
+  "temporal_coverage": {
+    "start": 1990,
+    "end": 2025,
+    "frequency": "annual",
+    "granularity": "yearly",
+    "field": "year"
+  },
+  "row_count": 5815,
+  "file_size_mb": 0.17,
+  "data_completeness": 0.12,
+  "update_schedule": "unknown",
+  "expected_next_update": "unknown",
+  "metrics": {
+    "di_ill_in": {
+      "name": "Total value of inward illicit financial flows",
+      "unit": "CU_USD_M",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 3.3,
+        "max": 12764.0,
+        "median": 1555.5
+      },
+      "density": 0.001,
+      "years": [
+        2015,
+        2021
+      ],
+      "countries": 3,
+      "by_era": {
+        "2000+": {
+          "density": 0.002,
+          "countries": 3,
+          "stats": {
+            "min": 3.3,
+            "max": 12764.0,
+            "median": 1555.5
+          }
+        }
+      }
+    },
+    "di_ill_out": {
+      "name": "Total value of outward illicit financial flows",
+      "unit": "CU_USD_M",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 3.8,
+        "max": 588.5,
+        "median": 19.0
+      },
+      "density": 0.004,
+      "years": [
+        2015,
+        2021
+      ],
+      "countries": 6,
+      "by_era": {
+        "2000+": {
+          "density": 0.004,
+          "countries": 6,
+          "stats": {
+            "min": 3.8,
+            "max": 588.5,
+            "median": 19.0
+          }
+        }
+      }
+    },
+    "gf_xpd_gbpc": {
+      "name": "Primary government expenditures as a proportion of original approved budget (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 4.682,
+        "max": 255.1704,
+        "median": 98.4339
+      },
+      "density": 0.399,
+      "years": [
+        2004,
+        2024
+      ],
+      "countries": 167,
+      "by_era": {
+        "2000+": {
+          "density": 0.479,
+          "countries": 167,
+          "stats": {
+            "min": 4.682,
+            "max": 255.1704,
+            "median": 98.4339
+          }
+        }
+      }
+    },
+    "ic_frm_brib": {
+      "name": "Bribery incidence (% of firms experiencing at least one bribe payment request)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 70.49,
+        "median": 10.71
+      },
+      "density": 0.061,
+      "years": [
+        2006,
+        2025
+      ],
+      "countries": 153,
+      "by_era": {
+        "2000+": {
+          "density": 0.073,
+          "countries": 153,
+          "stats": {
+            "min": 0.0,
+            "max": 70.49,
+            "median": 10.71
+          }
+        }
+      }
+    },
+    "iu_cor_brib": {
+      "name": "Prevalence rate of bribery, by sex (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.1,
+        "max": 80.0,
+        "median": 14.56
+      },
+      "density": 0.046,
+      "years": [
+        2004,
+        2024
+      ],
+      "countries": 134,
+      "by_era": {
+        "2000+": {
+          "density": 0.056,
+          "countries": 134,
+          "stats": {
+            "min": 0.1,
+            "max": 80.0,
+            "median": 14.56
+          }
+        }
+      }
+    },
+    "iu_dmk_icrs": {
+      "name": "Proportion of population who believe decision-making is inclusive and responsive (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 9.7,
+        "max": 64.4,
+        "median": 29.4
+      },
+      "density": 0.006,
+      "years": [
+        2016,
+        2024
+      ],
+      "countries": 20,
+      "by_era": {
+        "2000+": {
+          "density": 0.007,
+          "countries": 20,
+          "stats": {
+            "min": 9.7,
+            "max": 64.4,
+            "median": 29.4
+          }
+        }
+      }
+    },
+    "iu_dmk_incl": {
+      "name": "Proportion of population who believe decision-making is inclusive (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 10.7,
+        "max": 91.1,
+        "median": 33.0
+      },
+      "density": 0.021,
+      "years": [
+        2015,
+        2024
+      ],
+      "countries": 81,
+      "by_era": {
+        "2000+": {
+          "density": 0.026,
+          "countries": 81,
+          "stats": {
+            "min": 10.7,
+            "max": 91.1,
+            "median": 33.0
+          }
+        }
+      }
+    },
+    "iu_dmk_resp": {
+      "name": "Proportion of population who believe decision-making is responsive (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 11.6,
+        "max": 55.9,
+        "median": 27.3
+      },
+      "density": 0.007,
+      "years": [
+        2016,
+        2024
+      ],
+      "countries": 21,
+      "by_era": {
+        "2000+": {
+          "density": 0.008,
+          "countries": 21,
+          "stats": {
+            "min": 11.6,
+            "max": 55.9,
+            "median": 27.3
+          }
+        }
+      }
+    },
+    "sg_dmk_jdc": {
+      "name": "Proportions of positions in the judiciary compared to national distributions (ratio)",
+      "unit": "Ratio",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0684,
+        "max": 1.209,
+        "median": 1.0848
+      },
+      "density": 0.004,
+      "years": [
+        2019,
+        2024
+      ],
+      "countries": 9,
+      "by_era": {
+        "2000+": {
+          "density": 0.005,
+          "countries": 9,
+          "stats": {
+            "min": 0.0684,
+            "max": 1.209,
+            "median": 1.0848
+          }
+        }
+      }
+    },
+    "sg_dmk_jdc_cns": {
+      "name": "Proportions of positions in the judiciary compared to national distributions, Constitutional Court (ratio)",
+      "unit": "Ratio",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 1.1558,
+        "median": 1.0309
+      },
+      "density": 0.003,
+      "years": [
+        2018,
+        2024
+      ],
+      "countries": 7,
+      "by_era": {
+        "2000+": {
+          "density": 0.004,
+          "countries": 7,
+          "stats": {
+            "min": 0.0,
+            "max": 1.1558,
+            "median": 1.0309
+          }
+        }
+      }
+    },
+    "sg_dmk_jdc_hgr": {
+      "name": "Proportions of positions in the judiciary compared to national distributions, Higher Courts (ratio)",
+      "unit": "Ratio",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 1.1719,
+        "median": 1.086
+      },
+      "density": 0.003,
+      "years": [
+        2019,
+        2024
+      ],
+      "countries": 8,
+      "by_era": {
+        "2000+": {
+          "density": 0.004,
+          "countries": 8,
+          "stats": {
+            "min": 0.0,
+            "max": 1.1719,
+            "median": 1.086
+          }
+        }
+      }
+    },
+    "sg_dmk_jdc_lwr": {
+      "name": "Proportions of positions in the judiciary compared to national distributions, Lower Courts (ratio)",
+      "unit": "Ratio",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0516,
+        "max": 1.1719,
+        "median": 1.0165
+      },
+      "density": 0.003,
+      "years": [
+        2019,
+        2024
+      ],
+      "countries": 8,
+      "by_era": {
+        "2000+": {
+          "density": 0.004,
+          "countries": 8,
+          "stats": {
+            "min": 0.0516,
+            "max": 1.1719,
+            "median": 1.0165
+          }
+        }
+      }
+    },
+    "sg_dmk_parlmp_lc": {
+      "name": "Ratio for female members of parliaments (Ratio of the proportion of women in parliament in the proportion of women in...",
+      "unit": "Ratio",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 1.9073,
+        "median": 0.4949
+      },
+      "density": 0.151,
+      "years": [
+        2021,
+        2025
+      ],
+      "countries": 184,
+      "by_era": {
+        "2000+": {
+          "density": 0.182,
+          "countries": 184,
+          "stats": {
+            "min": 0.0,
+            "max": 1.9073,
+            "median": 0.4949
+          }
+        }
+      }
+    },
+    "sg_dmk_parlmp_uc": {
+      "name": "Ratio for female members of parliaments (Ratio of the proportion of women in parliament in the proportion of women in...",
+      "unit": "Ratio",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 1.113,
+        "median": 0.5055
+      },
+      "density": 0.063,
+      "years": [
+        2021,
+        2025
+      ],
+      "countries": 78,
+      "by_era": {
+        "2000+": {
+          "density": 0.076,
+          "countries": 78,
+          "stats": {
+            "min": 0.0,
+            "max": 1.113,
+            "median": 0.5055
+          }
+        }
+      }
+    },
+    "sg_dmk_psrvc": {
+      "name": "Proportions of positions in the public service compared to national distributions (ratio)",
+      "unit": "Ratio",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 1.71,
+        "median": 0.362
+      },
+      "density": 0.005,
+      "years": [
+        2018,
+        2023
+      ],
+      "countries": 11,
+      "by_era": {
+        "2000+": {
+          "density": 0.006,
+          "countries": 11,
+          "stats": {
+            "min": 0.0,
+            "max": 1.71,
+            "median": 0.362
+          }
+        }
+      }
+    },
+    "sg_inf_accss": {
+      "name": "Countries that adopt and implement constitutional, statutory and/or policy guarantees for public access to information",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 1.0,
+        "max": 1.0,
+        "median": 1.0
+      },
+      "density": 0.023,
+      "years": [
+        2024,
+        2024
+      ],
+      "countries": 136,
+      "by_era": {
+        "2000+": {
+          "density": 0.028,
+          "countries": 136,
+          "stats": {
+            "min": 1.0,
+            "max": 1.0,
+            "median": 1.0
+          }
+        }
+      }
+    },
+    "sg_int_mbrdev": {
+      "name": "Proportion of members of developing countries in international organizations, by organization (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.5181,
+        "max": 6.6667,
+        "median": 0.5435
+      },
+      "density": 0.403,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 190,
+      "by_era": {
+        "2000+": {
+          "density": 0.484,
+          "countries": 190,
+          "stats": {
+            "min": 0.5181,
+            "max": 6.6667,
+            "median": 0.5435
+          }
+        }
+      }
+    },
+    "sg_int_vrtdev": {
+      "name": "Proportion of voting rights of developing countries in international organizations, by organization (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.004,
+        "max": 30.006,
+        "median": 0.5052
+      },
+      "density": 0.402,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 190,
+      "by_era": {
+        "2000+": {
+          "density": 0.484,
+          "countries": 190,
+          "stats": {
+            "min": 0.004,
+            "max": 30.006,
+            "median": 0.5052
+          }
+        }
+      }
+    },
+    "sg_nhr_cmplnc": {
+      "name": "Countries with National Human Rights Institutions in compliance with the Paris Principles (0 = No status; 1 = Status ...",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 2.0,
+        "median": 1.0
+      },
+      "density": 0.423,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 189,
+      "by_era": {
+        "2000+": {
+          "density": 0.508,
+          "countries": 189,
+          "stats": {
+            "min": 0.0,
+            "max": 2.0,
+            "median": 1.0
+          }
+        }
+      }
+    },
+    "sg_nhr_impl": {
+      "name": "Proportion of countries with independent National Human Rights Institutions in compliance with the Paris Principles (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 0.0
+      },
+      "density": 0.423,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 189,
+      "by_era": {
+        "2000+": {
+          "density": 0.508,
+          "countries": 189,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 0.0
+          }
+        }
+      }
+    },
+    "sp_disp_resol": {
+      "name": "Proportion of the population who have experienced a dispute in the past two years who accessed a formal or informal d...",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 46.36,
+        "max": 94.41,
+        "median": 71.0
+      },
+      "density": 0.002,
+      "years": [
+        2020,
+        2023
+      ],
+      "countries": 9,
+      "by_era": {
+        "2000+": {
+          "density": 0.002,
+          "countries": 9,
+          "stats": {
+            "min": 46.36,
+            "max": 94.41,
+            "median": 71.0
+          }
+        }
+      }
+    },
+    "sp_psr_osatis_gov": {
+      "name": "Proportion of population who say that overall they are satisfied with the quality of government services (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 7.1,
+        "max": 98.7,
+        "median": 69.7
+      },
+      "density": 0.011,
+      "years": [
+        2015,
+        2024
+      ],
+      "countries": 43,
+      "by_era": {
+        "2000+": {
+          "density": 0.014,
+          "countries": 43,
+          "stats": {
+            "min": 7.1,
+            "max": 98.7,
+            "median": 69.7
+          }
+        }
+      }
+    },
+    "sp_psr_osatis_hlth": {
+      "name": "Proportion of population who say that overall they are satisfied with the quality of healthcare services (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 9.0,
+        "max": 94.0,
+        "median": 53.0
+      },
+      "density": 0.081,
+      "years": [
+        2015,
+        2024
+      ],
+      "countries": 142,
+      "by_era": {
+        "2000+": {
+          "density": 0.097,
+          "countries": 142,
+          "stats": {
+            "min": 9.0,
+            "max": 94.0,
+            "median": 53.0
+          }
+        }
+      }
+    },
+    "sp_psr_osatis_prm": {
+      "name": "Proportion of population who say that overall they are satisfied with the quality of primary education services (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 51.0,
+        "max": 93.4,
+        "median": 87.8
+      },
+      "density": 0.003,
+      "years": [
+        2015,
+        2024
+      ],
+      "countries": 10,
+      "by_era": {
+        "2000+": {
+          "density": 0.004,
+          "countries": 10,
+          "stats": {
+            "min": 51.0,
+            "max": 93.4,
+            "median": 87.8
+          }
+        }
+      }
+    },
+    "sp_psr_osatis_sec": {
+      "name": "Proportion of population who say that overall they are satisfied with the quality of secondary education services (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 6.2,
+        "max": 91.0,
+        "median": 63.4
+      },
+      "density": 0.011,
+      "years": [
+        2015,
+        2024
+      ],
+      "countries": 42,
+      "by_era": {
+        "2000+": {
+          "density": 0.013,
+          "countries": 42,
+          "stats": {
+            "min": 6.2,
+            "max": 91.0,
+            "median": 63.4
+          }
+        }
+      }
+    },
+    "sp_psr_satis_gov": {
+      "name": "Proportion of population satisfied with their last experience of public services, government services (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 38.0,
+        "max": 97.1,
+        "median": 71.7
+      },
+      "density": 0.007,
+      "years": [
+        2015,
+        2024
+      ],
+      "countries": 35,
+      "by_era": {
+        "2000+": {
+          "density": 0.009,
+          "countries": 35,
+          "stats": {
+            "min": 38.0,
+            "max": 97.1,
+            "median": 71.7
+          }
+        }
+      }
+    },
+    "sp_psr_satis_hlth": {
+      "name": "Proportion of population satisfied with their last experience of public services, healthcare services (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 42.0,
+        "max": 94.0,
+        "median": 77.4
+      },
+      "density": 0.002,
+      "years": [
+        2015,
+        2023
+      ],
+      "countries": 7,
+      "by_era": {
+        "2000+": {
+          "density": 0.002,
+          "countries": 7,
+          "stats": {
+            "min": 42.0,
+            "max": 94.0,
+            "median": 77.4
+          }
+        }
+      }
+    },
+    "sp_psr_satis_prm": {
+      "name": "Proportion of population satisfied with their last experience of public services, primary education services (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 35.0,
+        "max": 90.0,
+        "median": 76.0
+      },
+      "density": 0.001,
+      "years": [
+        2015,
+        2021
+      ],
+      "countries": 5,
+      "by_era": {
+        "2000+": {
+          "density": 0.001,
+          "countries": 5,
+          "stats": {
+            "min": 35.0,
+            "max": 90.0,
+            "median": 76.0
+          }
+        }
+      }
+    },
+    "sp_psr_satis_sec": {
+      "name": "Proportion of population satisfied with their last experience of public services, secondary education services (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 40.0,
+        "max": 93.0,
+        "median": 58.5
+      },
+      "density": 0.002,
+      "years": [
+        2015,
+        2023
+      ],
+      "countries": 6,
+      "by_era": {
+        "2000+": {
+          "density": 0.002,
+          "countries": 6,
+          "stats": {
+            "min": 40.0,
+            "max": 93.0,
+            "median": 58.5
+          }
+        }
+      }
+    },
+    "vc_arm_sztrace": {
+      "name": "Proportion of seized, found or surrendered arms whose illicit origin or context has been traced or established by a c...",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 50.24
+      },
+      "density": 0.015,
+      "years": [
+        2010,
+        2023
+      ],
+      "countries": 40,
+      "by_era": {
+        "2000+": {
+          "density": 0.019,
+          "countries": 40,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 50.24
+          }
+        }
+      }
+    },
+    "vc_dth_tocvn": {
+      "name": "Number of conflict-related deaths (civilians), by sex, age and cause of death (Number)",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 3.0,
+        "max": 17200.0,
+        "median": 660.5
+      },
+      "density": 0.018,
+      "years": [
+        2015,
+        2024
+      ],
+      "countries": 13,
+      "by_era": {
+        "2000+": {
+          "density": 0.022,
+          "countries": 13,
+          "stats": {
+            "min": 3.0,
+            "max": 17200.0,
+            "median": 660.5
+          }
+        }
+      }
+    },
+    "vc_dth_toncvn": {
+      "name": "Number of conflict-related deaths (non-civilians), by sex, age and cause of death (Number)",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 2.0,
+        "max": 26810.0,
+        "median": 23.0
+      },
+      "density": 0.006,
+      "years": [
+        2015,
+        2024
+      ],
+      "countries": 5,
+      "by_era": {
+        "2000+": {
+          "density": 0.007,
+          "countries": 5,
+          "stats": {
+            "min": 2.0,
+            "max": 26810.0,
+            "median": 23.0
+          }
+        }
+      }
+    },
+    "vc_dth_totn": {
+      "name": "Number of total conflict-related deaths, by sex, age and cause of death (Number)",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 23592.0,
+        "median": 65.0
+      },
+      "density": 0.017,
+      "years": [
+        2015,
+        2024
+      ],
+      "countries": 12,
+      "by_era": {
+        "2000+": {
+          "density": 0.02,
+          "countries": 12,
+          "stats": {
+            "min": 0.0,
+            "max": 23592.0,
+            "median": 65.0
+          }
+        }
+      }
+    },
+    "vc_dth_totr": {
+      "name": "Number of total conflict-related deaths per 100,000 population (Per 100,000 population)",
+      "unit": "PER_100000_POP",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0027,
+        "max": 160.1213,
+        "median": 2.2205
+      },
+      "density": 0.017,
+      "years": [
+        2015,
+        2024
+      ],
+      "countries": 12,
+      "by_era": {
+        "2000+": {
+          "density": 0.02,
+          "countries": 12,
+          "stats": {
+            "min": 0.0027,
+            "max": 160.1213,
+            "median": 2.2205
+          }
+        }
+      }
+    },
+    "vc_dth_tounn": {
+      "name": "Number of conflict-related deaths (unknown), by sex, age and cause of death (Number)",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 1.0,
+        "max": 11903.0,
+        "median": 213.0
+      },
+      "density": 0.004,
+      "years": [
+        2015,
+        2024
+      ],
+      "countries": 5,
+      "by_era": {
+        "2000+": {
+          "density": 0.005,
+          "countries": 5,
+          "stats": {
+            "min": 1.0,
+            "max": 11903.0,
+            "median": 213.0
+          }
+        }
+      }
+    },
+    "vc_htf_detv": {
+      "name": "Detected victims of human trafficking, by age and sex (number)",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 5.0,
+        "max": 32022.0,
+        "median": 70.0
+      },
+      "density": 0.255,
+      "years": [
+        2007,
+        2023
+      ],
+      "countries": 158,
+      "by_era": {
+        "2000+": {
+          "density": 0.307,
+          "countries": 158,
+          "stats": {
+            "min": 5.0,
+            "max": 32022.0,
+            "median": 70.0
+          }
+        }
+      }
+    },
+    "vc_htf_detvfl": {
+      "name": "Detected victims of human trafficking for forced labour, servitude and slavery, by age and sex (number)",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 5.0,
+        "max": 5427.0,
+        "median": 36.0
+      },
+      "density": 0.138,
+      "years": [
+        2003,
+        2023
+      ],
+      "countries": 129,
+      "by_era": {
+        "2000+": {
+          "density": 0.166,
+          "countries": 129,
+          "stats": {
+            "min": 5.0,
+            "max": 5427.0,
+            "median": 36.0
+          }
+        }
+      }
+    },
+    "vc_htf_detvflr": {
+      "name": "Detected victims of human trafficking for forced labour, servitude and slavery, by age and sex (per 100,000 population)",
+      "unit": "PER_100000_POP",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 95.43,
+        "median": 0.26
+      },
+      "density": 0.138,
+      "years": [
+        2003,
+        2023
+      ],
+      "countries": 129,
+      "by_era": {
+        "2000+": {
+          "density": 0.166,
+          "countries": 129,
+          "stats": {
+            "min": 0.0,
+            "max": 95.43,
+            "median": 0.26
+          }
+        }
+      }
+    },
+    "vc_htf_detvog": {
+      "name": "Detected victims of human trafficking for removal of organ, by age and sex (number)",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 5.0,
+        "max": 676.0,
+        "median": 8.0
+      },
+      "density": 0.008,
+      "years": [
+        2008,
+        2022
+      ],
+      "countries": 18,
+      "by_era": {
+        "2000+": {
+          "density": 0.01,
+          "countries": 18,
+          "stats": {
+            "min": 5.0,
+            "max": 676.0,
+            "median": 8.0
+          }
+        }
+      }
+    },
+    "vc_htf_detvogr": {
+      "name": "Detected victims of human trafficking for removal of organ, by age and sex (per 100,000 population)",
+      "unit": "PER_100000_POP",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 2.13,
+        "median": 0.075
+      },
+      "density": 0.008,
+      "years": [
+        2008,
+        2022
+      ],
+      "countries": 18,
+      "by_era": {
+        "2000+": {
+          "density": 0.01,
+          "countries": 18,
+          "stats": {
+            "min": 0.0,
+            "max": 2.13,
+            "median": 0.075
+          }
+        }
+      }
+    },
+    "vc_htf_detvop": {
+      "name": "Detected victims of human trafficking for other purposes, by age and sex (number)",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 5.0,
+        "max": 9641.0,
+        "median": 29.0
+      },
+      "density": 0.088,
+      "years": [
+        2003,
+        2023
+      ],
+      "countries": 96,
+      "by_era": {
+        "2000+": {
+          "density": 0.106,
+          "countries": 96,
+          "stats": {
+            "min": 5.0,
+            "max": 9641.0,
+            "median": 29.0
+          }
+        }
+      }
+    },
+    "vc_htf_detvopr": {
+      "name": "Detected victims of human trafficking for other purposes, by age and sex (per 100,000 population)",
+      "unit": "PER_100000_POP",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 13.64,
+        "median": 0.21
+      },
+      "density": 0.088,
+      "years": [
+        2003,
+        2023
+      ],
+      "countries": 96,
+      "by_era": {
+        "2000+": {
+          "density": 0.106,
+          "countries": 96,
+          "stats": {
+            "min": 0.0,
+            "max": 13.64,
+            "median": 0.21
+          }
+        }
+      }
+    },
+    "vc_htf_detvr": {
+      "name": "Detected victims of human trafficking, by age and sex (per 100,000 population)",
+      "unit": "PER_100000_POP",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.01,
+        "max": 294.09,
+        "median": 0.75
+      },
+      "density": 0.255,
+      "years": [
+        2007,
+        2023
+      ],
+      "countries": 158,
+      "by_era": {
+        "2000+": {
+          "density": 0.307,
+          "countries": 158,
+          "stats": {
+            "min": 0.01,
+            "max": 294.09,
+            "median": 0.75
+          }
+        }
+      }
+    },
+    "vc_htf_detvsx": {
+      "name": "Detected victims of human trafficking for sexual exploitation, by age and sex (number)",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 5.0,
+        "max": 22575.0,
+        "median": 44.0
+      },
+      "density": 0.18,
+      "years": [
+        2003,
+        2023
+      ],
+      "countries": 125,
+      "by_era": {
+        "2000+": {
+          "density": 0.217,
+          "countries": 125,
+          "stats": {
+            "min": 5.0,
+            "max": 22575.0,
+            "median": 44.0
+          }
+        }
+      }
+    },
+    "vc_htf_detvsxr": {
+      "name": "Detected victims of human trafficking for sexual exploitation, by age and sex (per 100,000 population)",
+      "unit": "PER_100000_POP",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 31.41,
+        "median": 0.43
+      },
+      "density": 0.18,
+      "years": [
+        2003,
+        2023
+      ],
+      "countries": 125,
+      "by_era": {
+        "2000+": {
+          "density": 0.217,
+          "countries": 125,
+          "stats": {
+            "min": 0.0,
+            "max": 31.41,
+            "median": 0.43
+          }
+        }
+      }
+    },
+    "vc_ihr_psrc": {
+      "name": "Number of victims of intentional homicide per 100,000 population, by sex (victims per 100,000 population)",
+      "unit": "PER_100000_POP",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 107.64,
+        "median": 2.915
+      },
+      "density": 0.52,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 186,
+      "by_era": {
+        "2000+": {
+          "density": 0.625,
+          "countries": 186,
+          "stats": {
+            "min": 0.0,
+            "max": 107.64,
+            "median": 2.915
+          }
+        }
+      }
+    },
+    "vc_ihr_psrcn": {
+      "name": "Number of victims of intentional homicide, by sex (number)",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 63788.0,
+        "median": 202.0
+      },
+      "density": 0.689,
+      "years": [
+        1990,
+        2024
+      ],
+      "countries": 187,
+      "by_era": {
+        "2000+": {
+          "density": 0.627,
+          "countries": 186,
+          "stats": {
+            "min": 0.0,
+            "max": 63788.0,
+            "median": 188.0
+          }
+        },
+        "1950-1999": {
+          "density": 1.0,
+          "countries": 126,
+          "stats": {
+            "min": 0.0,
+            "max": 49688.0,
+            "median": 244.0
+          }
+        }
+      }
+    },
+    "vc_prr_phyv": {
+      "name": "Police reporting rate for physical assault in the previous 12 months, by sex (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 77.0,
+        "median": 38.32
+      },
+      "density": 0.029,
+      "years": [
+        2010,
+        2023
+      ],
+      "countries": 36,
+      "by_era": {
+        "2000+": {
+          "density": 0.034,
+          "countries": 36,
+          "stats": {
+            "min": 0.0,
+            "max": 77.0,
+            "median": 38.32
+          }
+        }
+      }
+    },
+    "vc_prr_phy_vio": {
+      "name": "Police reporting rate for physical violence in the previous 12 months, by sex (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.4,
+        "max": 4410.0,
+        "median": 47.6
+      },
+      "density": 0.014,
+      "years": [
+        2010,
+        2024
+      ],
+      "countries": 24,
+      "by_era": {
+        "2000+": {
+          "density": 0.017,
+          "countries": 24,
+          "stats": {
+            "min": 0.4,
+            "max": 4410.0,
+            "median": 47.6
+          }
+        }
+      }
+    },
+    "vc_prr_psychv": {
+      "name": "Police reporting rate for psychological violence in the previous 12 months, by sex (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 18.49,
+        "max": 18.49,
+        "median": 18.49
+      },
+      "density": 0.0,
+      "years": [
+        2021,
+        2021
+      ],
+      "countries": 1,
+      "by_era": {
+        "2000+": {
+          "density": 0.0,
+          "countries": 1,
+          "stats": {
+            "min": 18.49,
+            "max": 18.49,
+            "median": 18.49
+          }
+        }
+      }
+    },
+    "vc_prr_robb": {
+      "name": "Police reporting rate for robbery in the previous 12 months, by sex (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 1.82,
+        "max": 85.43,
+        "median": 44.0
+      },
+      "density": 0.039,
+      "years": [
+        2004,
+        2023
+      ],
+      "countries": 45,
+      "by_era": {
+        "2000+": {
+          "density": 0.047,
+          "countries": 45,
+          "stats": {
+            "min": 1.82,
+            "max": 85.43,
+            "median": 44.0
+          }
+        }
+      }
+    },
+    "vc_prr_sexv": {
+      "name": "Police reporting rate for sexual assault in the previous 12 months, by sex (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 81.84,
+        "median": 11.0
+      },
+      "density": 0.017,
+      "years": [
+        2004,
+        2023
+      ],
+      "countries": 25,
+      "by_era": {
+        "2000+": {
+          "density": 0.021,
+          "countries": 25,
+          "stats": {
+            "min": 0.0,
+            "max": 81.84,
+            "median": 11.0
+          }
+        }
+      }
+    },
+    "vc_prr_sex_vio": {
+      "name": "Police reporting rate for sexual violence in the previous 12 months, by sex (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 40.4,
+        "median": 13.7
+      },
+      "density": 0.009,
+      "years": [
+        2010,
+        2023
+      ],
+      "countries": 16,
+      "by_era": {
+        "2000+": {
+          "density": 0.011,
+          "countries": 16,
+          "stats": {
+            "min": 0.0,
+            "max": 40.4,
+            "median": 13.7
+          }
+        }
+      }
+    },
+    "vc_prs_unsnt": {
+      "name": "Unsentenced detainees as a proportion of overall prison population (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 93.74,
+        "median": 27.77
+      },
+      "density": 0.395,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 180,
+      "by_era": {
+        "2000+": {
+          "density": 0.475,
+          "countries": 180,
+          "stats": {
+            "min": 0.0,
+            "max": 93.74,
+            "median": 27.77
+          }
+        }
+      }
+    },
+    "vc_sns_waln_drk": {
+      "name": "Proportion of population that feel safe walking alone around the area they live after dark (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 11.1,
+        "max": 95.0,
+        "median": 72.36
+      },
+      "density": 0.037,
+      "years": [
+        2009,
+        2024
+      ],
+      "countries": 52,
+      "by_era": {
+        "2000+": {
+          "density": 0.045,
+          "countries": 52,
+          "stats": {
+            "min": 11.1,
+            "max": 95.0,
+            "median": 72.36
+          }
+        }
+      }
+    },
+    "vc_vaw_mtuhran": {
+      "name": "Countries with at least one verified case of killings of human rights defenders, journalists, and trade unionists (1 ...",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 1.0,
+        "median": 1.0
+      },
+      "density": 0.026,
+      "years": [
+        2023,
+        2024
+      ],
+      "countries": 93,
+      "by_era": {
+        "2000+": {
+          "density": 0.032,
+          "countries": 93,
+          "stats": {
+            "min": 0.0,
+            "max": 1.0,
+            "median": 1.0
+          }
+        }
+      }
+    },
+    "vc_voc_enfdisn": {
+      "name": "Countries with at least one verified case of enforced disappearance of human rights defenders, journalists, and trade...",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 1.0,
+        "median": 1.0
+      },
+      "density": 0.023,
+      "years": [
+        2023,
+        2024
+      ],
+      "countries": 87,
+      "by_era": {
+        "2000+": {
+          "density": 0.028,
+          "countries": 87,
+          "stats": {
+            "min": 0.0,
+            "max": 1.0,
+            "median": 1.0
+          }
+        }
+      }
+    },
+    "vc_vov_gdsd": {
+      "name": "Proportion of population reporting having felt discriminated against, by grounds of discrimination, sex and disabilit...",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.1,
+        "max": 60.1,
+        "median": 12.0
+      },
+      "density": 0.033,
+      "years": [
+        2014,
+        2024
+      ],
+      "countries": 102,
+      "by_era": {
+        "2000+": {
+          "density": 0.039,
+          "countries": 102,
+          "stats": {
+            "min": 0.1,
+            "max": 60.1,
+            "median": 12.0
+          }
+        }
+      }
+    },
+    "vc_vov_phyl": {
+      "name": "Proportion of population subjected to physical violence in the previous 12 months, by sex (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.03,
+        "max": 43.55,
+        "median": 2.67
+      },
+      "density": 0.015,
+      "years": [
+        2010,
+        2024
+      ],
+      "countries": 25,
+      "by_era": {
+        "2000+": {
+          "density": 0.018,
+          "countries": 25,
+          "stats": {
+            "min": 0.03,
+            "max": 43.55,
+            "median": 2.67
+          }
+        }
+      }
+    },
+    "vc_vov_phy_aslt": {
+      "name": "Proportion of population subjected to physical assault in the previous 12 months, by sex (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.02,
+        "max": 36.8,
+        "median": 1.8
+      },
+      "density": 0.044,
+      "years": [
+        2003,
+        2024
+      ],
+      "countries": 46,
+      "by_era": {
+        "2000+": {
+          "density": 0.052,
+          "countries": 46,
+          "stats": {
+            "min": 0.02,
+            "max": 36.8,
+            "median": 1.8
+          }
+        }
+      }
+    },
+    "vc_vov_psychl": {
+      "name": "Proportion of population subjected to psychological violence in the previous 12 months, by sex (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 1.9,
+        "max": 43.65,
+        "median": 8.25
+      },
+      "density": 0.006,
+      "years": [
+        2013,
+        2023
+      ],
+      "countries": 10,
+      "by_era": {
+        "2000+": {
+          "density": 0.007,
+          "countries": 10,
+          "stats": {
+            "min": 1.9,
+            "max": 43.65,
+            "median": 8.25
+          }
+        }
+      }
+    },
+    "vc_vov_robb": {
+      "name": "Proportion of population subjected to robbery in the previous 12 months, by sex (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 23.4,
+        "median": 1.0
+      },
+      "density": 0.05,
+      "years": [
+        2004,
+        2024
+      ],
+      "countries": 52,
+      "by_era": {
+        "2000+": {
+          "density": 0.06,
+          "countries": 52,
+          "stats": {
+            "min": 0.0,
+            "max": 23.4,
+            "median": 1.0
+          }
+        }
+      }
+    },
+    "vc_vov_sexl": {
+      "name": "Proportion of population subjected to sexual violence in the previous 12 months, by sex (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.04,
+        "max": 11.0,
+        "median": 0.5
+      },
+      "density": 0.013,
+      "years": [
+        2010,
+        2023
+      ],
+      "countries": 20,
+      "by_era": {
+        "2000+": {
+          "density": 0.015,
+          "countries": 20,
+          "stats": {
+            "min": 0.04,
+            "max": 11.0,
+            "median": 0.5
+          }
+        }
+      }
+    },
+    "vc_vov_sex_aslt": {
+      "name": "Proportion of population subjected to sexual assault in the previous 12 months, by sex (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.01,
+        "max": 477.0,
+        "median": 1.2
+      },
+      "density": 0.033,
+      "years": [
+        2004,
+        2024
+      ],
+      "countries": 30,
+      "by_era": {
+        "2000+": {
+          "density": 0.04,
+          "countries": 30,
+          "stats": {
+            "min": 0.01,
+            "max": 477.0,
+            "median": 1.2
+          }
+        }
+      }
+    }
+  },
+  "llm_summary": "1990-2025. Total value of inward illicit financial flows, Total value of outward illicit financial flows, Primary government expenditures as a proportion of original approved budget (%), Bribery incidence (% of firms experiencing at least one bribe payment request), Prevalence rate of bribery, by sex (%)."
+}

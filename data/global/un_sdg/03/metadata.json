@@ -1,0 +1,872 @@
+{
+  "source_id": "un_sdg_03",
+  "source_name": "UN SDG Goal 3",
+  "source_url": "https://unstats.un.org/sdgs/indicators/database/",
+  "license": "UN Terms",
+  "description": "UN Sustainable Development Goal 3 indicators",
+  "category": "development",
+  "topic_tags": [
+    "sdg",
+    "development",
+    "sustainability"
+  ],
+  "keywords": [
+    "sustainable",
+    "development",
+    "goals",
+    "UN"
+  ],
+  "last_updated": "2026-01-07",
+  "geographic_level": "admin_0",
+  "geographic_coverage": {
+    "type": "global",
+    "admin_levels": [
+      0
+    ],
+    "common_count": 192,
+    "common_missing": [
+      "AFG",
+      "ALB",
+      "CAF",
+      "FSM",
+      "HKG",
+      "MAC",
+      "TWN",
+      "ZAF"
+    ],
+    "uncommonly_included": [
+      "AIA",
+      "BMU",
+      "CUW",
+      "CYM",
+      "GRL",
+      "GUM",
+      "JEY",
+      "MSR",
+      "NCL",
+      "PRI",
+      "SHN",
+      "SXM",
+      "TCA",
+      "VGB",
+      "WLF"
+    ]
+  },
+  "temporal_coverage": {
+    "start": 1985,
+    "end": 2024,
+    "frequency": "annual",
+    "granularity": "yearly",
+    "field": "year"
+  },
+  "row_count": 5114,
+  "file_size_mb": 0.17,
+  "data_completeness": 0.36,
+  "update_schedule": "unknown",
+  "expected_next_update": "unknown",
+  "metrics": {
+    "dc_tof_hlthl": {
+      "name": "Total official development assistance to medical research and basic health sectors, gross disbursement, by recipient ...",
+      "unit": "CON_USD_M",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0002,
+        "max": 1073.9299,
+        "median": 11.6128
+      },
+      "density": 0.625,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 148,
+      "by_era": {
+        "2000+": {
+          "density": 0.637,
+          "countries": 148,
+          "stats": {
+            "min": 0.0002,
+            "max": 1073.9299,
+            "median": 11.6128
+          }
+        }
+      }
+    },
+    "dc_tof_hlthnt": {
+      "name": "Total official development assistance to medical research and basic health sectors, net disbursement, by recipient co...",
+      "unit": "CON_USD_M",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": -62.9476,
+        "max": 1058.09,
+        "median": 17.6945
+      },
+      "density": 0.372,
+      "years": [
+        2010,
+        2023
+      ],
+      "countries": 143,
+      "by_era": {
+        "2000+": {
+          "density": 0.379,
+          "countries": 143,
+          "stats": {
+            "min": -62.9476,
+            "max": 1058.09,
+            "median": 17.6945
+          }
+        }
+      }
+    },
+    "sh_aap_asmort": {
+      "name": "Age-standardized mortality rate attributed to ambient air pollution (deaths per 100,000 population)",
+      "unit": "PER_100000_POP",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 7.0,
+        "max": 159.0,
+        "median": 49.0
+      },
+      "density": 0.035,
+      "years": [
+        2019,
+        2019
+      ],
+      "countries": 178,
+      "by_era": {
+        "2000+": {
+          "density": 0.035,
+          "countries": 178,
+          "stats": {
+            "min": 7.0,
+            "max": 159.0,
+            "median": 49.0
+          }
+        }
+      }
+    },
+    "sh_acs_dtp3": {
+      "name": "Proportion of the target population who received 3 doses of diphtheria-tetanus-pertussis (DTP3) vaccine (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 99.0,
+        "median": 93.0
+      },
+      "density": 0.888,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 190,
+      "by_era": {
+        "2000+": {
+          "density": 0.905,
+          "countries": 190,
+          "stats": {
+            "min": 0.0,
+            "max": 99.0,
+            "median": 93.0
+          }
+        }
+      }
+    },
+    "sh_acs_hpv": {
+      "name": "Proportion of the target population who received the final dose of human papillomavirus (HPV) vaccine (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 53.0
+      },
+      "density": 0.19,
+      "years": [
+        2010,
+        2023
+      ],
+      "countries": 131,
+      "by_era": {
+        "2000+": {
+          "density": 0.193,
+          "countries": 131,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 53.0
+          }
+        }
+      }
+    },
+    "sh_acs_mcv2": {
+      "name": "Proportion of the target population who received measles-containing-vaccine second-dose (MCV2) (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 99.0,
+        "median": 90.0
+      },
+      "density": 0.616,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 186,
+      "by_era": {
+        "2000+": {
+          "density": 0.628,
+          "countries": 186,
+          "stats": {
+            "min": 0.0,
+            "max": 99.0,
+            "median": 90.0
+          }
+        }
+      }
+    },
+    "sh_acs_pcv3": {
+      "name": "Proportion of the target population who received a 3rd dose of pneumococcal conjugate (PCV3) vaccine (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 99.0,
+        "median": 89.0
+      },
+      "density": 0.322,
+      "years": [
+        2008,
+        2023
+      ],
+      "countries": 153,
+      "by_era": {
+        "2000+": {
+          "density": 0.329,
+          "countries": 153,
+          "stats": {
+            "min": 0.0,
+            "max": 99.0,
+            "median": 89.0
+          }
+        }
+      }
+    },
+    "sh_acs_unhc": {
+      "name": "Universal health coverage (UHC) service coverage index",
+      "unit": "INDEX",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 11.0,
+        "max": 91.0,
+        "median": 63.0
+      },
+      "density": 0.259,
+      "years": [
+        2000,
+        2021
+      ],
+      "countries": 189,
+      "by_era": {
+        "2000+": {
+          "density": 0.264,
+          "countries": 189,
+          "stats": {
+            "min": 11.0,
+            "max": 91.0,
+            "median": 63.0
+          }
+        }
+      }
+    },
+    "sh_bld_ecoli": {
+      "name": "Percentage of bloodstream infection due to Escherichia coli resistant to 3rd-generation cephalosporin (e.g., ESBL- E....",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 38.8426
+      },
+      "density": 0.08,
+      "years": [
+        2016,
+        2022
+      ],
+      "countries": 95,
+      "by_era": {
+        "2000+": {
+          "density": 0.081,
+          "countries": 95,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 38.8426
+          }
+        }
+      }
+    },
+    "sh_bld_mrsa": {
+      "name": "Percentage of bloodstream infection due to methicillin-resistant Staphylococcus aureus (MRSA) among patients seeking ...",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 28.89
+      },
+      "density": 0.078,
+      "years": [
+        2016,
+        2022
+      ],
+      "countries": 96,
+      "by_era": {
+        "2000+": {
+          "density": 0.079,
+          "countries": 96,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 28.89
+          }
+        }
+      }
+    },
+    "sh_hap_asmort": {
+      "name": "Age-standardized mortality rate attributed to household air pollution (deaths per 100,000 population)",
+      "unit": "PER_100000_POP",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 245.0,
+        "median": 21.0
+      },
+      "density": 0.034,
+      "years": [
+        2019,
+        2019
+      ],
+      "countries": 175,
+      "by_era": {
+        "2000+": {
+          "density": 0.035,
+          "countries": 175,
+          "stats": {
+            "min": 0.0,
+            "max": 245.0,
+            "median": 21.0
+          }
+        }
+      }
+    },
+    "sh_hiv_incd": {
+      "name": "Number of new HIV infections per 1,000 uninfected population, by sex and age (per 1,000 uninfected population)",
+      "unit": "PER_1000_UNINFECTED_POP",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0008,
+        "max": 23.9,
+        "median": 0.15
+      },
+      "density": 0.673,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 140,
+      "by_era": {
+        "2000+": {
+          "density": 0.686,
+          "countries": 140,
+          "stats": {
+            "min": 0.0008,
+            "max": 23.9,
+            "median": 0.15
+          }
+        }
+      }
+    },
+    "sh_hlf_emed": {
+      "name": "Proportion of health facilities that have a core set of relevant essential medicines available and affordable on a su...",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 88.764,
+        "median": 15.0
+      },
+      "density": 0.008,
+      "years": [
+        2004,
+        2019
+      ],
+      "countries": 27,
+      "by_era": {
+        "2000+": {
+          "density": 0.008,
+          "countries": 27,
+          "stats": {
+            "min": 0.0,
+            "max": 88.764,
+            "median": 15.0
+          }
+        }
+      }
+    },
+    "sh_ihr_caps": {
+      "name": "International Health Regulations (IHR) capacity, by type of IHR capacity (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 75.0
+      },
+      "density": 0.429,
+      "years": [
+        2010,
+        2023
+      ],
+      "countries": 191,
+      "by_era": {
+        "2000+": {
+          "density": 0.438,
+          "countries": 191,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 75.0
+          }
+        }
+      }
+    },
+    "sh_med_den": {
+      "name": "Health worker density, by type of occupation (per 10,000 population)",
+      "unit": "PER_10000_POP",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 187.29,
+        "median": 8.76
+      },
+      "density": 0.603,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 189,
+      "by_era": {
+        "2000+": {
+          "density": 0.615,
+          "countries": 189,
+          "stats": {
+            "min": 0.0,
+            "max": 187.29,
+            "median": 8.76
+          }
+        }
+      }
+    },
+    "sh_sta_asairp": {
+      "name": "Age-standardized mortality rate attributed to household and ambient air pollution (deaths per 100,000 population)",
+      "unit": "PER_100000_POP",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 7.0,
+        "max": 288.0,
+        "median": 78.5
+      },
+      "density": 0.035,
+      "years": [
+        2019,
+        2019
+      ],
+      "countries": 178,
+      "by_era": {
+        "2000+": {
+          "density": 0.035,
+          "countries": 178,
+          "stats": {
+            "min": 7.0,
+            "max": 288.0,
+            "median": 78.5
+          }
+        }
+      }
+    },
+    "sh_sta_brtc": {
+      "name": "Proportion of births attended by skilled health personnel (%)",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 5.6,
+        "max": 100.0,
+        "median": 98.8
+      },
+      "density": 0.459,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 187,
+      "by_era": {
+        "2000+": {
+          "density": 0.468,
+          "countries": 187,
+          "stats": {
+            "min": 5.6,
+            "max": 100.0,
+            "median": 98.8
+          }
+        }
+      }
+    },
+    "sh_sta_malr": {
+      "name": "Malaria incidence per 1,000 population at risk (per 1,000 population)",
+      "unit": "PER_1000_POP",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 718.9804,
+        "median": 8.0456
+      },
+      "density": 0.493,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 105,
+      "by_era": {
+        "2000+": {
+          "density": 0.502,
+          "countries": 105,
+          "stats": {
+            "min": 0.0,
+            "max": 718.9804,
+            "median": 8.0456
+          }
+        }
+      }
+    },
+    "sh_sta_poisn": {
+      "name": "Mortality rate attributed to unintentional poisonings, by sex (deaths per 100,000 population)",
+      "unit": "PER_100000_POP",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 10.2,
+        "median": 0.5
+      },
+      "density": 0.246,
+      "years": [
+        2000,
+        2021
+      ],
+      "countries": 180,
+      "by_era": {
+        "2000+": {
+          "density": 0.251,
+          "countries": 180,
+          "stats": {
+            "min": 0.0,
+            "max": 10.2,
+            "median": 0.5
+          }
+        }
+      }
+    },
+    "sh_sta_scide": {
+      "name": "Suicide mortality rate, by sex (deaths per 100,000 population)",
+      "unit": "PER_100000_POP",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 53.1,
+        "median": 7.4
+      },
+      "density": 0.246,
+      "years": [
+        2000,
+        2021
+      ],
+      "countries": 180,
+      "by_era": {
+        "2000+": {
+          "density": 0.251,
+          "countries": 180,
+          "stats": {
+            "min": 0.0,
+            "max": 53.1,
+            "median": 7.4
+          }
+        }
+      }
+    },
+    "sh_sta_traf": {
+      "name": "Death rate due to road traffic injuries, by sex (per 100,000 population)",
+      "unit": "PER_100000_POP",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 37.4,
+        "median": 12.2
+      },
+      "density": 0.037,
+      "years": [
+        2021,
+        2021
+      ],
+      "countries": 190,
+      "by_era": {
+        "2000+": {
+          "density": 0.038,
+          "countries": 190,
+          "stats": {
+            "min": 0.0,
+            "max": 37.4,
+            "median": 12.2
+          }
+        }
+      }
+    },
+    "sh_sta_trafn": {
+      "name": "Number of deaths rate due to road traffic injuries",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 248099.0,
+        "median": 727.0
+      },
+      "density": 0.037,
+      "years": [
+        2021,
+        2021
+      ],
+      "countries": 190,
+      "by_era": {
+        "2000+": {
+          "density": 0.038,
+          "countries": 190,
+          "stats": {
+            "min": 0.0,
+            "max": 248099.0,
+            "median": 727.0
+          }
+        }
+      }
+    },
+    "sh_sta_washari": {
+      "name": "Mortality rate attributed to unsafe water, unsafe sanitation and lack of hygiene from diarrhoea, intestinal nematode ...",
+      "unit": "PER_100000_POP",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.4221,
+        "max": 108.0619,
+        "median": 5.969
+      },
+      "density": 0.035,
+      "years": [
+        2019,
+        2019
+      ],
+      "countries": 178,
+      "by_era": {
+        "2000+": {
+          "density": 0.035,
+          "countries": 178,
+          "stats": {
+            "min": 0.4221,
+            "max": 108.0619,
+            "median": 5.969
+          }
+        }
+      }
+    },
+    "sh_sud_treat": {
+      "name": "Coverage of treatment interventions (pharmacological, psychosocial and rehabilitation and aftercare services) for sub...",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 95.7,
+        "median": 9.615
+      },
+      "density": 0.073,
+      "years": [
+        2013,
+        2023
+      ],
+      "countries": 92,
+      "by_era": {
+        "2000+": {
+          "density": 0.075,
+          "countries": 92,
+          "stats": {
+            "min": 0.0,
+            "max": 95.7,
+            "median": 9.615
+          }
+        }
+      }
+    },
+    "sh_tbs_incd": {
+      "name": "Tuberculosis incidence (per 100,000 population)",
+      "unit": "PER_100000_POP",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 1590.0,
+        "median": 45.0
+      },
+      "density": 0.944,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 203,
+      "by_era": {
+        "2000+": {
+          "density": 0.962,
+          "countries": 203,
+          "stats": {
+            "min": 0.0,
+            "max": 1590.0,
+            "median": 45.0
+          }
+        }
+      }
+    },
+    "sh_trp_intvn": {
+      "name": "Number of people requiring interventions against neglected tropical diseases (number)",
+      "unit": "NUMBER",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 846009271.0,
+        "median": 42089.5
+      },
+      "density": 0.517,
+      "years": [
+        2010,
+        2023
+      ],
+      "countries": 189,
+      "by_era": {
+        "2000+": {
+          "density": 0.527,
+          "countries": 189,
+          "stats": {
+            "min": 0.0,
+            "max": 846009271.0,
+            "median": 42089.5
+          }
+        }
+      }
+    },
+    "sh_xpd_earn10": {
+      "name": "Proportion of population with large household expenditures on health (greater than 10%) as a share of total household...",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 44.82,
+        "median": 7.21
+      },
+      "density": 0.19,
+      "years": [
+        1985,
+        2021
+      ],
+      "countries": 167,
+      "by_era": {
+        "2000+": {
+          "density": 0.175,
+          "countries": 162,
+          "stats": {
+            "min": 0.0,
+            "max": 37.09,
+            "median": 7.315
+          }
+        },
+        "1950-1999": {
+          "density": 1.0,
+          "countries": 61,
+          "stats": {
+            "min": 0.52,
+            "max": 44.82,
+            "median": 6.96
+          }
+        }
+      }
+    },
+    "sh_xpd_earn25": {
+      "name": "Proportion of population with large household expenditures on health (greater than 25%) as a share of total household...",
+      "unit": "PERCENT",
+      "aggregation": "sum",
+      "keywords": [],
+      "stats": {
+        "min": 0.0,
+        "max": 15.19,
+        "median": 1.09
+      },
+      "density": 0.19,
+      "years": [
+        1985,
+        2021
+      ],
+      "countries": 167,
+      "by_era": {
+        "2000+": {
+          "density": 0.175,
+          "countries": 162,
+          "stats": {
+            "min": 0.0,
+            "max": 15.19,
+            "median": 1.07
+          }
+        },
+        "1950-1999": {
+          "density": 1.0,
+          "countries": 61,
+          "stats": {
+            "min": 0.0,
+            "max": 9.98,
+            "median": 1.13
+          }
+        }
+      }
+    }
+  },
+  "llm_summary": "1985-2024. Total official development assistance to medical research and basic health sectors, gross disbursement, by recipient ..., Total official development assistance to medical research and basic health sectors, net disbursement, by recipient co..., Age-standardized mortality rate attributed to ambient air pollution (deaths per 100,000 population), Proportion of the target population who received 3 doses of diphtheria-tetanus-pertussis (DTP3) vaccine (%), Proportion of the target population who received the final dose of human papillomavirus (HPV) vaccine (%)."
+}
