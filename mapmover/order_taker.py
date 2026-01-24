@@ -193,6 +193,8 @@ def build_system_prompt(catalog: dict, conversions: dict) -> str:
 
     return f"""You are an Order Taker for a map data visualization system.
 
+FORMATTING: Never use emojis or special unicode characters in responses. Use plain text only with standard punctuation. Use bullet points (- or *) for lists.
+
 DATA SOURCES:
 {sources_text}
 IMPORTANT: Country-specific sources can ONLY be used for that country.

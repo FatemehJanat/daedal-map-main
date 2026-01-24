@@ -6,6 +6,25 @@ An interactive map system that lets you explore global data through natural lang
 
 ---
 
+## This Is a Demo
+
+This repository is a self-contained demo version of the full Geographic Data Explorer. It ships with a curated subset of public-domain data so you can clone it and run it immediately without any external data downloads.
+
+**What the demo includes:**
+- 7 disaster datasets (earthquakes, hurricanes, wildfires, tornadoes, floods, tsunamis, volcanoes) -- mostly 2015-2025
+- All 17 UN Sustainable Development Goal indicator sets (~191 countries)
+- Country-level geometry (admin_0 boundaries for 217 countries)
+
+**What the full version adds:**
+- Sub-national boundaries (states, provinces, counties) for 267 countries
+- Extended disaster history (1M+ earthquake records back to 1521, etc.)
+- Additional indicator sources (OWID, World Bank, national statistics)
+- Higher-resolution geometry and more granular data
+
+The demo is fully functional -- the same app code runs both versions. The only difference is the data available in the `data/` folder. See "Adding Your Own Data" below to extend it.
+
+---
+
 ## Quick Start
 
 ```bash

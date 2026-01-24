@@ -21,27 +21,24 @@
     ]
   },
   "example_queries": {
-    "demographics": [
-      "Show me population of Europe",
-      "GDP per capita for South America 2020",
-      "CO2 emissions trends worldwide"
-    ],
     "disasters": [
-      "Show earthquakes in California",
-      "Hurricane tracks in the Atlantic 2024",
-      "What volcanoes have erupted near Japan?",
-      "Show wildfires in Australia"
+      "Show earthquakes in Japan",
+      "Hurricane tracks in the Atlantic 2020",
+      "What volcanoes have erupted near Indonesia?",
+      "Show wildfires in Australia",
+      "Tornadoes in the US 2023"
+    ],
+    "un_sdg_indicators": [
+      "UN poverty indicators for Africa",
+      "Show SDG 3 health data for Europe",
+      "What SDG data do you have?",
+      "Clean energy access worldwide"
     ],
     "exploration": [
-      "What data do you have for Germany?",
+      "What data do you have?",
       "What disasters have affected Florida?",
       "Zoom to Tokyo",
       "What is SDG 7?"
-    ],
-    "reference": [
-      "What is the capital of Brazil?",
-      "What currency does Japan use?",
-      "Tell me about France"
     ]
   },
   "tips": [
