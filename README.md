@@ -14,9 +14,9 @@ cd county-map
 pip install -r requirements.txt
 ```
 
-Create a `.env` file with your OpenAI API key:
+Create a `.env` file with your Anthropic API key:
 ```
-OPENAI_API_KEY=your_key_here
+ANTHROPIC_API_KEY=your_key_here
 ```
 
 Run:
