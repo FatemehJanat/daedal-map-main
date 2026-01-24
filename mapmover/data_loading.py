@@ -35,7 +35,7 @@ import json
 import logging
 from pathlib import Path
 
-from .settings import get_backup_path
+from .paths import DATA_ROOT, CATALOG_PATH, GEOMETRY_DIR, COUNTRIES_DIR
 
 logger = logging.getLogger("mapmover")
 
@@ -50,19 +50,13 @@ _catalog_cache = None
 
 
 def get_data_folder():
-    """Get the data folder path from settings backup path."""
-    backup_path = get_backup_path()
-    if backup_path:
-        return Path(backup_path) / "data"
-    return None
+    """Get the data folder path (resolved via paths.py)."""
+    return DATA_ROOT
 
 
 def get_catalog_path():
-    """Get the catalog.json path from settings backup path."""
-    backup_path = get_backup_path()
-    if backup_path:
-        return Path(backup_path) / "catalog.json"
-    return None
+    """Get the catalog.json path (resolved via paths.py)."""
+    return CATALOG_PATH
 
 
 def load_catalog():
@@ -103,19 +97,15 @@ def get_source_path(source_id: str):
     Returns:
         Path: Full path to source folder, or None if not found
     """
-    backup_path = get_backup_path()
-    if not backup_path:
-        return None
-
     catalog = load_catalog()
     for source in catalog.get("sources", []):
         if source.get("source_id") == source_id:
             # Use path field if present, otherwise fall back to old structure
-            source_path = source.get("path", f"data/{source_id}")
-            return Path(backup_path) / source_path
+            source_path = source.get("path", f"global/{source_id}")
+            return DATA_ROOT / source_path
 
     # Source not in catalog - try old path as fallback
-    return Path(backup_path) / "data" / source_id
+    return DATA_ROOT / "global" / source_id
 
 
 def load_source_metadata(source_id: str):
@@ -211,19 +201,13 @@ def clear_metadata_cache():
 
 
 def get_geometry_folder():
-    """Get the geometry folder path from settings backup path."""
-    backup_path = get_backup_path()
-    if backup_path:
-        return Path(backup_path) / "geometry"
-    return None
+    """Get the geometry folder path (resolved via paths.py)."""
+    return GEOMETRY_DIR
 
 
 def get_countries_folder():
-    """Get the countries folder path from settings backup path."""
-    backup_path = get_backup_path()
-    if backup_path:
-        return Path(backup_path) / "countries"
-    return None
+    """Get the countries folder path (resolved via paths.py)."""
+    return COUNTRIES_DIR
 
 
 def load_geometry_for_country(iso3: str):

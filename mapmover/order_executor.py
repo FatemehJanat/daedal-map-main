@@ -22,7 +22,7 @@ from .geometry_handlers import (
     df_to_geojson,
 )
 
-from .settings import get_backup_path
+from .paths import DATA_ROOT, CATALOG_PATH
 
 CONVERSIONS_PATH = Path(__file__).parent / "conversions.json"
 REFERENCE_DIR = Path(__file__).parent / "reference"
@@ -38,14 +38,9 @@ def _load_catalog() -> dict:
     """Load catalog.json with caching."""
     global _catalog_cache
     if _catalog_cache is None:
-        backup_path = get_backup_path()
-        if backup_path:
-            catalog_path = Path(backup_path) / "catalog.json"
-            if catalog_path.exists():
-                with open(catalog_path, encoding='utf-8') as f:
-                    _catalog_cache = json.load(f)
-            else:
-                _catalog_cache = {"sources": []}
+        if CATALOG_PATH.exists():
+            with open(CATALOG_PATH, encoding='utf-8') as f:
+                _catalog_cache = json.load(f)
         else:
             _catalog_cache = {"sources": []}
     return _catalog_cache
@@ -53,19 +48,15 @@ def _load_catalog() -> dict:
 
 def _get_source_path(source_id: str) -> Path:
     """Get the full path to a source directory using catalog path field."""
-    backup_path = get_backup_path()
-    if not backup_path:
-        raise ValueError("Backup path not configured")
-
     catalog = _load_catalog()
     for source in catalog.get("sources", []):
         if source.get("source_id") == source_id:
             # Use path field if present, otherwise fall back to old structure
-            source_path = source.get("path", f"data/{source_id}")
-            return Path(backup_path) / source_path
+            source_path = source.get("path", f"global/{source_id}")
+            return DATA_ROOT / source_path
 
     # Source not in catalog - try old path as fallback
-    return Path(backup_path) / "data" / source_id
+    return DATA_ROOT / "global" / source_id
 
 
 def _load_conversions() -> dict:

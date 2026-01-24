@@ -2,9 +2,9 @@
 Geometry endpoint handlers.
 Handles loading geometry files and country hierarchy for drill-down navigation.
 
-Data source:
-  [backup_path]/geometry/global.csv      - All countries (admin_0)
-  [backup_path]/geometry/{ISO3}.parquet  - All admin levels per country
+Data source (resolved via paths.py DATA_ROOT):
+  geometry/global.csv      - All countries (admin_0)
+  geometry/{ISO3}.parquet  - All admin levels per country
 
 Schema (13 columns):
   loc_id, parent_id, admin_level, name, name_local, code, iso_3166_2,
@@ -25,7 +25,7 @@ except ImportError:
     def fast_json_loads(s):
         return json.loads(s)
 
-from .settings import get_backup_path
+from .paths import GEOMETRY_DIR, DATA_ROOT
 
 logger = logging.getLogger("mapmover")
 
@@ -43,11 +43,10 @@ _admin_levels_cache = None
 
 
 def get_geometry_path():
-    """Get the geometry folder path from settings."""
-    backup_path = get_backup_path()
-    if not backup_path:
-        return None
-    return Path(backup_path) / "geometry"
+    """Get the geometry folder path using centralized path resolution."""
+    if GEOMETRY_DIR.exists():
+        return GEOMETRY_DIR
+    return None
 
 
 def load_global_countries():
@@ -102,16 +101,12 @@ def load_country_parquet(iso3: str, admin_level: int = None):
         _country_parquet_cache[cache_key] = filtered
         return filtered
 
-    backup_path = get_backup_path()
-    if not backup_path:
-        return None
-
     # Priority 1: Country-specific geometry (matches data loc_ids like NUTS)
-    country_geom_file = Path(backup_path) / "countries" / iso3 / "geometry.parquet"
+    country_geom_file = DATA_ROOT / "countries" / iso3 / "geometry.parquet"
     # Priority 2: Crosswalk file (for translating loc_ids)
-    crosswalk_file = Path(backup_path) / "countries" / iso3 / "crosswalk.json"
+    crosswalk_file = DATA_ROOT / "countries" / iso3 / "crosswalk.json"
     # Priority 3: Global geometry folder (GADM fallback)
-    global_geom_file = Path(backup_path) / "geometry" / f"{iso3}.parquet"
+    global_geom_file = GEOMETRY_DIR / f"{iso3}.parquet"
 
     # Try country-specific first
     parquet_file = None
@@ -767,11 +762,7 @@ def load_subcounty_geometry(iso3: str, admin_level: int, state_abbrev: str = Non
     Returns:
         DataFrame or None
     """
-    backup_path = get_backup_path()
-    if not backup_path:
-        return None
-
-    countries_dir = Path(backup_path) / "countries" / iso3
+    countries_dir = DATA_ROOT / "countries" / iso3
 
     # Country-specific level mappings
     # Each country can define which files map to which admin levels
