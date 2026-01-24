@@ -40,6 +40,16 @@ export function setDependencies(deps) {
   OverlaySelector = deps.OverlaySelector;
 }
 
+// Welcome message shown on first load and new chat
+const WELCOME_MESSAGE =
+  'Welcome! Ask me anything about global data -- earthquakes, hurricanes, ' +
+  'climate indicators, and more.<br><br>' +
+  'Just type a question like you normally would. For example:<br>' +
+  '- "Show me earthquakes in Japan"<br>' +
+  '- "What data do you have?"<br>' +
+  '- "Hurricane tracks in the Atlantic"<br><br>' +
+  'Type <b>help</b> or <b>how do you work?</b> anytime for a full guide.';
+
 // Map event_type from API responses to overlay IDs
 const EVENT_TYPE_TO_OVERLAY = {
   earthquake: 'earthquakes',
@@ -446,15 +456,7 @@ export const ChatManager = {
       }
     } else {
       await this.clearSession();
-      this.addMessage(
-        'Welcome! I can help you explore geographic data.<br><br>' +
-        'Ask me for details about how I work, or make a request for data.<br><br>' +
-        'To build a map query, I need three things: <b>location</b> (where), ' +
-        '<b>time period</b> (when), and <b>data</b> (what).<br><br>' +
-        'Try: "What data do you have for Europe?" or "Show me CO2 emissions trends worldwide"',
-        'assistant',
-        { html: true }
-      );
+      this.addMessage(WELCOME_MESSAGE, 'assistant', { html: true });
     }
   },
 
@@ -480,12 +482,7 @@ export const ChatManager = {
       newChat.addEventListener('click', async () => {
         if (confirm('Start a new chat? This will clear your current conversation.')) {
           await this.clearSession();
-          this.addMessage(
-            'Welcome! I can help you explore geographic data.\n\n' +
-            'Ask me for details about how I work, or make a request for data.\n\n' +
-            'Try: "What data do you have for Europe?" or "Show me CO2 emissions trends worldwide"',
-            'assistant'
-          );
+          this.addMessage(WELCOME_MESSAGE, 'assistant', { html: true });
         }
       });
     }
