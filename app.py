@@ -56,8 +56,8 @@ from mapmover import (
     get_default_min_year,
     # Session cache
     session_manager,
-    # Package optimizer
-    PackageOptimizer,
+    # Cache signature (used by /api/cache/delta endpoint)
+    CacheSignature,
 )
 
 # Order Taker system (Phase 1B - replaces old multi-LLM chat)
@@ -183,6 +183,62 @@ def filter_by_time_window(df, timestamp: str, days_before: int, days_after: int,
         return df[(df[time_col] >= start_time) & (df[time_col] <= end_time)]
     except Exception as e:
         logger.warning(f"Could not parse timestamp {timestamp}: {e}")
+        return df
+
+
+def filter_by_time_range(df, start: str = None, end: str = None, time_col: str = 'timestamp'):
+    """
+    Filter DataFrame by start/end timestamp range.
+    Accepts ISO format strings or millisecond timestamps.
+    Falls back to year-based filtering if no timestamp column exists.
+
+    Usage:
+        df = filter_by_time_range(df, "2025-12-24T00:00:00Z", "2026-01-23T00:00:00Z")
+        df = filter_by_time_range(df, "1706140800000", "1708819200000")
+    """
+    import pandas as pd
+
+    if start is None and end is None:
+        return df
+
+    try:
+        # Parse start/end (support both ISO strings and millisecond timestamps)
+        def parse_ts(val):
+            if val is None:
+                return None
+            # Try as milliseconds first (all digits)
+            if str(val).isdigit():
+                return pd.Timestamp(int(val), unit='ms')
+            return pd.to_datetime(val)
+
+        start_ts = parse_ts(start)
+        end_ts = parse_ts(end)
+
+        # Strip timezone info for comparison
+        if start_ts and start_ts.tzinfo is not None:
+            start_ts = start_ts.tz_convert('UTC').tz_localize(None)
+        if end_ts and end_ts.tzinfo is not None:
+            end_ts = end_ts.tz_convert('UTC').tz_localize(None)
+
+        # If timestamp column exists, filter precisely
+        if time_col in df.columns:
+            df[time_col] = pd.to_datetime(df[time_col], errors='coerce')
+            if df[time_col].dt.tz is not None:
+                df[time_col] = df[time_col].dt.tz_convert('UTC').dt.tz_localize(None)
+            if start_ts is not None:
+                df = df[df[time_col] >= start_ts]
+            if end_ts is not None:
+                df = df[df[time_col] <= end_ts]
+        elif 'year' in df.columns:
+            # Fallback: derive year range from timestamps
+            if start_ts is not None:
+                df = df[df['year'] >= start_ts.year]
+            if end_ts is not None:
+                df = df[df['year'] <= end_ts.year]
+
+        return df
+    except Exception as e:
+        logger.warning(f"Could not filter by time range ({start} - {end}): {e}")
         return df
 
 
@@ -574,6 +630,8 @@ async def get_selection_geometry_endpoint(req: Request):
 @app.get("/api/earthquakes/geojson")
 async def get_earthquakes_geojson(
     year: int = None,
+    start: str = None,
+    end: str = None,
     min_magnitude: float = None,
     limit: int = None,
     loc_prefix: str = None,
@@ -597,9 +655,11 @@ async def get_earthquakes_geojson(
         df = pd.read_parquet(events_path)
         df = ensure_year_column(df)
 
-        # Apply filters
+        # Apply time filters (start/end takes precedence if year not specified)
         if year is not None and 'year' in df.columns:
             df = df[df['year'] == year]
+        elif start is not None or end is not None:
+            df = filter_by_time_range(df, start, end)
         if min_magnitude is not None:
             df = df[df['magnitude'] >= min_magnitude]
 
@@ -737,6 +797,8 @@ async def get_volcanoes_geojson(active_only: bool = None):
 @app.get("/api/eruptions/geojson")
 async def get_eruptions_geojson(
     year: int = None,
+    start: str = None,
+    end: str = None,
     min_vei: int = None,
     min_year: int = None,
     exclude_ongoing: bool = False,
@@ -761,10 +823,12 @@ async def get_eruptions_geojson(
         df = pd.read_parquet(eruptions_path)
         df = ensure_year_column(df)
 
-        # Apply filters
+        # Apply time filters
         if year is not None and 'year' in df.columns:
             df = df[df['year'] == year]
-        if min_year is not None and 'year' in df.columns:
+        elif start is not None or end is not None:
+            df = filter_by_time_range(df, start, end)
+        elif min_year is not None and 'year' in df.columns:
             df = df[df['year'] >= min_year]
         if min_vei is not None and 'vei' in df.columns:
             df = df[df['vei'] >= min_vei]
@@ -795,6 +859,8 @@ async def get_eruptions_geojson(
 @app.get("/api/tsunamis/geojson")
 async def get_tsunamis_geojson(
     year: int = None,
+    start: str = None,
+    end: str = None,
     min_year: int = None,
     cause: str = None,
     loc_prefix: str = None,
@@ -820,9 +886,11 @@ async def get_tsunamis_geojson(
 
         df = pd.read_parquet(events_path)
 
-        # Apply filters
+        # Apply time filters
         if year is not None:
             df = df[df['year'] == year]
+        elif start is not None or end is not None:
+            df = filter_by_time_range(df, start, end)
         elif min_year is not None:
             df = df[df['year'] >= min_year]
         if cause is not None:
@@ -1039,6 +1107,8 @@ async def get_tsunami_animation_data(event_id: str):
 @app.get("/api/landslides/geojson")
 async def get_landslides_geojson(
     year: int = None,
+    start: str = None,
+    end: str = None,
     min_deaths: int = 1,
     require_coords: bool = True
 ):
@@ -1063,9 +1133,11 @@ async def get_landslides_geojson(
         if require_coords:
             df = df[df['latitude'].notna() & df['longitude'].notna()]
 
-        # Apply year filter
+        # Apply time filter
         if year is not None:
             df = df[df['year'] == year]
+        elif start is not None or end is not None:
+            df = filter_by_time_range(df, start, end)
 
         # Apply deaths filter
         if min_deaths > 0:
@@ -1370,6 +1442,8 @@ async def get_related_events(loc_id: str):
 @app.get("/api/wildfires/geojson")
 async def get_wildfires_geojson(
     year: int = None,
+    start: str = None,
+    end: str = None,
     min_year: int = None,
     max_year: int = None,
     min_area_km2: float = None,
@@ -1422,8 +1496,22 @@ async def get_wildfires_geojson(
                         'loc_id', 'parent_loc_id', 'sibling_level', 'iso3', 'loc_confidence']
 
         # Determine year range for global data
+        # start/end timestamps derive year range for file loading
+        start_ts_parsed = None
+        end_ts_parsed = None
+        if start is not None or end is not None:
+            import pandas as _pd
+            if start:
+                start_ts_parsed = _pd.to_datetime(int(start), unit='ms') if str(start).isdigit() else _pd.to_datetime(start)
+            if end:
+                end_ts_parsed = _pd.to_datetime(int(end), unit='ms') if str(end).isdigit() else _pd.to_datetime(end)
+
         if year is not None:
             years_to_load = [year]
+        elif start_ts_parsed is not None or end_ts_parsed is not None:
+            s_year = start_ts_parsed.year if start_ts_parsed else min_year
+            e_year = end_ts_parsed.year if end_ts_parsed else (max_year or 2026)
+            years_to_load = list(range(s_year, e_year + 1))
         else:
             end_year = max_year if max_year else 2024
             years_to_load = list(range(min_year, end_year + 1))
@@ -1571,6 +1659,17 @@ async def get_wildfires_geojson(
         # Extract year from timestamp
         df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
         df['year'] = df['timestamp'].dt.year
+
+        # Apply precise timestamp filtering if start/end provided
+        if start_ts_parsed is not None or end_ts_parsed is not None:
+            if start_ts_parsed is not None:
+                if start_ts_parsed.tzinfo:
+                    start_ts_parsed = start_ts_parsed.tz_convert('UTC').tz_localize(None)
+                df = df[df['timestamp'] >= start_ts_parsed]
+            if end_ts_parsed is not None:
+                if end_ts_parsed.tzinfo:
+                    end_ts_parsed = end_ts_parsed.tz_convert('UTC').tz_localize(None)
+                df = df[df['timestamp'] <= end_ts_parsed]
 
         # Location filters (shared helper)
         df = apply_location_filters(
@@ -1807,6 +1906,8 @@ async def get_wildfire_progression(event_id: str, year: int = None):
 @app.get("/api/floods/geojson")
 async def get_floods_geojson(
     year: int = None,
+    start: str = None,
+    end: str = None,
     min_year: int = None,
     max_year: int = None,
     include_geometry: bool = False,
@@ -1849,9 +1950,11 @@ async def get_floods_geojson(
 
         df = pd.read_parquet(events_path)
 
-        # Apply year filters
+        # Apply time filters
         if year is not None:
             df = df[df['year'] == year]
+        elif start is not None or end is not None:
+            df = filter_by_time_range(df, start, end)
         else:
             if min_year:
                 df = df[df['year'] >= min_year]
@@ -1945,6 +2048,8 @@ async def get_floods_geojson(
 async def get_drought_geojson(
     country: str = 'CAN',
     year: int = None,
+    start: str = None,
+    end: str = None,
     month: int = None,
     severity: str = None,
     min_year: int = None,
@@ -1979,9 +2084,11 @@ async def get_drought_geojson(
 
         df = pd.read_parquet(data_path)
 
-        # Apply filters
+        # Apply time filters
         if year is not None:
             df = df[df['year'] == year]
+        elif start is not None or end is not None:
+            df = filter_by_time_range(df, start, end)
         else:
             if min_year:
                 df = df[df['year'] >= min_year]
@@ -2104,6 +2211,8 @@ async def get_flood_geometry(event_id: str):
 @app.get("/api/tornadoes/geojson")
 async def get_tornadoes_geojson(
     year: int = None,
+    start: str = None,
+    end: str = None,
     min_year: int = None,
     min_scale: str = None,
     loc_prefix: str = None,
@@ -2144,9 +2253,11 @@ async def get_tornadoes_geojson(
         # Already filtered to tornadoes only in global dataset
         # Year column now pre-computed in parquet (no datetime parsing needed)
 
-        # Apply year filters
+        # Apply time filters
         if year is not None and 'year' in df.columns:
             df = df[df['year'] == year]
+        elif start is not None or end is not None:
+            df = filter_by_time_range(df, start, end)
         elif min_year is not None and 'year' in df.columns:
             df = df[df['year'] >= min_year]
 
@@ -2452,6 +2563,8 @@ async def get_tornado_sequence(event_id: str):
 @app.get("/api/storms/geojson")
 async def get_storms_geojson(
     year: int = None,
+    start: str = None,
+    end: str = None,
     min_year: int = None,
     basin: str = None,
     min_category: str = None,
@@ -2482,9 +2595,11 @@ async def get_storms_geojson(
         storms_df = pd.read_parquet(storms_path)
         positions_df = pd.read_parquet(positions_path)
 
-        # Apply year filter
+        # Apply time filters
         if year is not None:
             storms_df = storms_df[storms_df['year'] == year]
+        elif start is not None or end is not None:
+            storms_df = filter_by_time_range(storms_df, start, end, time_col='start_date')
         elif min_year is not None:
             storms_df = storms_df[storms_df['year'] >= min_year]
 
@@ -2630,7 +2745,7 @@ async def get_storm_track(storm_id: str):
 
 
 @app.get("/api/storms/tracks/geojson")
-async def get_storm_tracks_geojson(year: int = None, min_year: int = None, basin: str = None, min_category: str = None):
+async def get_storm_tracks_geojson(year: int = None, start: str = None, end: str = None, min_year: int = None, basin: str = None, min_category: str = None):
     """
     Get storm tracks as GeoJSON LineStrings for yearly overview display.
     Each storm is a LineString colored by max category.
@@ -2653,9 +2768,11 @@ async def get_storm_tracks_geojson(year: int = None, min_year: int = None, basin
         storms_df = pd.read_parquet(storms_path)
         positions_df = pd.read_parquet(positions_path)
 
-        # Apply year filter - min_year defaults to 1950
+        # Apply time filters - min_year defaults to 1950
         if year is not None:
             storms_df = storms_df[storms_df['year'] == year]
+        elif start is not None or end is not None:
+            storms_df = filter_by_time_range(storms_df, start, end, time_col='start_date')
         elif min_year is not None:
             storms_df = storms_df[storms_df['year'] >= min_year]
 
@@ -3449,42 +3566,104 @@ async def chat_endpoint(req: Request):
                 order_str = json.dumps(confirmed_order, sort_keys=True)
                 request_key = hashlib.md5(order_str.encode()).hexdigest()[:16]
 
-                # Check if we have this result cached
-                cached_result = cache.get_cached_result(request_key)
-                if cached_result:
-                    logger.debug(f"Serving cached result for session {session_id}, key {request_key}")
-                    return msgpack_response(cached_result)
-
-                # Execute the order
+                # Execute the order (DB fetch is cheap - local parquets)
                 result = execute_order(confirmed_order)
+
+                # Post-fetch dedup: filter response by what's already on the frontend
+                # Session cache mirrors frontend exactly
+                is_events = result.get("type") == "events"
+                # source_id must match what frontend sends in clear-source
+                # Events use overlay ID (matches frontend overlay naming)
+                EVENT_TYPE_TO_OVERLAY = {
+                    "earthquake": "earthquakes", "volcano": "volcanoes",
+                    "tsunami": "tsunamis", "hurricane": "hurricanes",
+                    "wildfire": "wildfires", "tornado": "tornadoes",
+                    "flood": "floods", "drought": "drought",
+                    "landslide": "landslides",
+                }
+                event_type = result.get("event_type", "")
+                if is_events:
+                    source_id = EVENT_TYPE_TO_OVERLAY.get(event_type, event_type)
+                else:
+                    source_id = result.get("metric_key", "data")
+                geojson = result["geojson"]
+                features = geojson.get("features", [])
+                original_count = len(features)
+
+                if is_events:
+                    # Event dedup: filter by event_id (all-or-nothing per event)
+                    new_features = cache.filter_events(features)
+                    delta_count = len(new_features)
+                    filtered_geojson = {"type": "FeatureCollection", "features": new_features}
+                    filtered_year_data = None
+
+                elif result.get("multi_year") and result.get("year_data"):
+                    # Multi-year data: filter year_data at cell level (loc_id:year:metric)
+                    year_data = result["year_data"]
+                    filtered_year_data = cache.filter_year_data(year_data)
+
+                    # Features needed only if their loc_id has new data cells
+                    new_loc_ids = set()
+                    for loc_data in filtered_year_data.values():
+                        new_loc_ids.update(loc_data.keys())
+
+                    new_features = [
+                        f for f in features
+                        if (f.get("properties", {}).get("loc_id") or f.get("id")) in new_loc_ids
+                    ]
+                    delta_count = len(new_features)
+                    filtered_geojson = {"type": "FeatureCollection", "features": new_features}
+
+                else:
+                    # Single-year data without year_data: send everything (typically small)
+                    new_features = features
+                    delta_count = original_count
+                    filtered_geojson = geojson
+                    filtered_year_data = None
+
+                # If nothing new after dedup, return already_loaded
+                if delta_count == 0 and original_count > 0:
+                    logger.debug(f"Dedup: all {original_count} features already sent, returning already_loaded")
+                    return msgpack_response({
+                        "type": "already_loaded",
+                        "message": f"This data ({original_count} features) is already loaded on your map.",
+                        "summary": result.get("summary", ""),
+                    })
+
+                # Build response
                 response = {
-                    "type": "data",
-                    "geojson": result["geojson"],
+                    "type": result.get("type", "data"),
+                    "geojson": filtered_geojson,
                     "summary": result["summary"],
-                    "count": result["count"],
+                    "count": delta_count,
                     "sources": result.get("sources", [])
                 }
+
+                # Include event metadata if present
+                if is_events:
+                    response["event_type"] = result.get("event_type")
+                    response["time_range"] = result.get("time_range")
+
                 # Include multi-year data if present (for time slider)
                 if result.get("multi_year"):
                     response["multi_year"] = True
-                    response["year_data"] = result["year_data"]
                     response["year_range"] = result["year_range"]
                     response["metric_key"] = result.get("metric_key")
                     response["available_metrics"] = result.get("available_metrics", [])
                     response["metric_year_ranges"] = result.get("metric_year_ranges", {})
+                    response["year_data"] = filtered_year_data if filtered_year_data else {}
 
-                # Extract signature from result for inventory tracking
-                signature = None
-                if response.get("geojson"):
-                    try:
-                        signature = PackageOptimizer.extract_signature_from_geojson(response["geojson"])
-                        logger.debug(f"Extracted signature: {len(signature.loc_ids)} locs, {len(signature.years)} years, {len(signature.metrics)} metrics")
-                    except Exception as sig_err:
-                        logger.warning(f"Could not extract signature: {sig_err}")
+                # Register what was actually sent (mirrors frontend cache)
+                if is_events and new_features:
+                    cache.register_sent_events(new_features, source_id)
+                elif filtered_year_data:
+                    # Each metric registers as its own source (clearing = deleting a column)
+                    cache.register_sent_year_data(filtered_year_data)
 
-                # Store result in session cache with signature
-                cache.store_result(request_key, response, signature)
-                logger.debug(f"Cached result for session {session_id}, key {request_key}")
+                cache.touch()
+
+                if delta_count < original_count:
+                    logger.info(f"Delta sent: {delta_count}/{original_count} features ({original_count - delta_count} deduped)")
 
                 return msgpack_response(response)
             except Exception as e:
@@ -4152,6 +4331,39 @@ async def clear_session_endpoint(req: Request):
 
     except Exception as e:
         logger.error(f"Error clearing session: {e}")
+        return msgpack_error(str(e), 500)
+
+
+@app.post("/api/session/clear-source")
+async def clear_session_source_endpoint(req: Request):
+    """
+    Clear a specific source from session cache.
+    Called when user clicks X on a source in the Loaded tab.
+
+    Request body: { sessionId: string, sourceId: string }
+    """
+    try:
+        body = await decode_request_body(req)
+        session_id = body.get("sessionId")
+        source_id = body.get("sourceId")
+
+        if not session_id or not source_id:
+            return msgpack_error("sessionId and sourceId required", 400)
+
+        cache = session_manager.get(session_id)
+        if not cache:
+            return msgpack_response({"status": "not_found", "sessionId": session_id})
+
+        removed = cache.clear_source(source_id)
+        logger.info(f"Cleared source '{source_id}' from session {session_id}: {removed} keys removed")
+        return msgpack_response({
+            "status": "cleared",
+            "sourceId": source_id,
+            "keys_removed": removed,
+        })
+
+    except Exception as e:
+        logger.error(f"Error clearing session source: {e}")
         return msgpack_error(str(e), 500)
 
 

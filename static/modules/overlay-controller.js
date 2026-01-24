@@ -204,7 +204,7 @@ const EVENT_LIFECYCLE = {
     getStartMs: (f) => new Date(f.properties.start_date).getTime(),
     getEndMs: (f) => new Date(f.properties.end_date).getTime(),
     defaultDuration: 7 * 24 * 60 * 60 * 1000,  // 7 days if missing
-    fadeDuration: 30 * 24 * 60 * 60 * 1000     // 30 days after dissipation
+    fadeDuration: 7 * 24 * 60 * 60 * 1000      // 7 days after dissipation
   },
 
   tsunami: {
@@ -220,7 +220,7 @@ const EVENT_LIFECYCLE = {
       return start + travelHours * 60 * 60 * 1000;
     },
     defaultDuration: 2 * 60 * 60 * 1000,  // 2 hours default
-    fadeDuration: 30 * 24 * 60 * 60 * 1000, // 30 days
+    fadeDuration: 7 * 24 * 60 * 60 * 1000,  // 7 days
     // Wave speed: ~720 km/h in open ocean
     waveSpeedKmPerMs: 0.0002,  // 720 km/h in km/ms
     // Max radius from data (furthest runup location)
@@ -255,7 +255,7 @@ const EVENT_LIFECYCLE = {
       return start + expansionHours * 60 * 60 * 1000;
     },
     defaultDuration: 24 * 60 * 60 * 1000,  // 24 hours default expansion
-    fadeDuration: 30 * 24 * 60 * 60 * 1000,  // 30 days fade
+    fadeDuration: 7 * 24 * 60 * 60 * 1000,   // 7 days fade
     // Ash cloud expansion speed - VEI-based
     // VEI 2: ~10 km/h, VEI 4: ~26 km/h, VEI 6: ~66 km/h
     getWaveSpeedKmPerMs: (f) => {
@@ -282,7 +282,7 @@ const EVENT_LIFECYCLE = {
       return new Date(f.properties.timestamp).getTime() + lengthMi * 60 * 1000;
     },
     defaultDuration: 30 * 60 * 1000,       // 30 minutes
-    fadeDuration: 14 * 24 * 60 * 60 * 1000 // 14 days
+    fadeDuration: 7 * 24 * 60 * 60 * 1000  // 7 days
   },
 
   wildfire: {
@@ -296,7 +296,7 @@ const EVENT_LIFECYCLE = {
       return new Date(f.properties.timestamp).getTime() + 30 * 24 * 60 * 60 * 1000;
     },
     defaultDuration: 30 * 24 * 60 * 60 * 1000,  // 30 days
-    fadeDuration: 30 * 24 * 60 * 60 * 1000      // 30 days
+    fadeDuration: 7 * 24 * 60 * 60 * 1000       // 7 days
   },
 
   flood: {
@@ -313,7 +313,7 @@ const EVENT_LIFECYCLE = {
       return new Date(f.properties.timestamp).getTime() + 21 * 24 * 60 * 60 * 1000;
     },
     defaultDuration: 21 * 24 * 60 * 60 * 1000,  // 21 days
-    fadeDuration: 30 * 24 * 60 * 60 * 1000      // 30 days
+    fadeDuration: 7 * 24 * 60 * 60 * 1000       // 7 days
   },
 
   drought: {
@@ -345,7 +345,7 @@ const EVENT_LIFECYCLE = {
       return start + durationDays * 24 * 60 * 60 * 1000;
     },
     defaultDuration: 7 * 24 * 60 * 60 * 1000,  // 7 days default
-    fadeDuration: 30 * 24 * 60 * 60 * 1000,    // 30 days fade
+    fadeDuration: 7 * 24 * 60 * 60 * 1000,     // 7 days fade
     // Use felt_radius_km from data for circle sizing
     getMaxWaveRadiusKm: (f) => f.properties.felt_radius_km || 10
   }
@@ -545,8 +545,12 @@ function calculateCacheSize() {
   return { totalFeatures, bytes: totalBytes, sizeMB, perOverlay };
 }
 
-// Track which years have been loaded per overlay (for lazy loading)
-const loadedYears = {};  // overlayId -> Set of years
+// Track which time ranges have been loaded per overlay
+// Each entry is an array of {start, end} (millisecond timestamps)
+const loadedRanges = {};  // overlayId -> [{start, end}, ...]
+
+// Legacy: loadedYears kept as derived view for compatibility with render logic
+const loadedYears = {};  // overlayId -> Set of years (derived from loadedRanges)
 
 // Track current displayed year per overlay
 const displayedYear = {};
@@ -564,13 +568,14 @@ const activeFilters = {};  // overlayId -> {minMagnitude, maxMagnitude, ...}
 const loadedFilters = {};  // overlayId -> {minMagnitude, minVei, ...}
 
 /**
- * Build URL for fetching a specific year's data.
+ * Build URL for fetching data within a time range.
  * @param {Object} endpoint - Endpoint config from OVERLAY_ENDPOINTS
- * @param {number} year - Year to fetch
+ * @param {number} startMs - Start timestamp in milliseconds
+ * @param {number} endMs - End timestamp in milliseconds
  * @param {string} overlayId - Overlay ID for looking up active filters
- * @returns {string} Full URL with year and other params
+ * @returns {string} Full URL with start/end and other params
  */
-function buildYearUrl(endpoint, year, overlayId = null) {
+function buildRangeUrl(endpoint, startMs, endMs, overlayId = null) {
   const url = new URL(endpoint.baseUrl, window.location.origin);
 
   // Start with default params from endpoint config
@@ -615,8 +620,9 @@ function buildYearUrl(endpoint, year, overlayId = null) {
     url.searchParams.set(key, value);
   }
 
-  // Add year filter - use 'year' param which all APIs support for single-year filtering
-  url.searchParams.set('year', year);
+  // Add time range filter
+  url.searchParams.set('start', String(startMs));
+  url.searchParams.set('end', String(endMs));
 
   return url.toString();
 }
@@ -804,51 +810,46 @@ async function loadWeatherYearData(overlayId, year, endpoint, signal = null) {
 }
 
 /**
- * Load data for a specific year and merge into cache.
- * Skips if year already loaded.
+ * Load data for a time range and merge into cache.
+ * Skips if range is already fully covered by loaded ranges.
  * @param {string} overlayId - Overlay ID
- * @param {number} year - Year to load
+ * @param {number} startMs - Start timestamp in milliseconds
+ * @param {number} endMs - End timestamp in milliseconds
  * @param {AbortSignal} signal - Optional abort signal
  * @returns {Promise<boolean>} True if new data was loaded
  */
-async function loadYearData(overlayId, year, signal = null) {
+async function loadRangeData(overlayId, startMs, endMs, signal = null) {
   const endpoint = OVERLAY_ENDPOINTS[overlayId];
   if (!endpoint) return false;
 
-  // Check maxYear constraint (e.g., floods end at 2019)
-  if (endpoint.maxYear && year > endpoint.maxYear) {
-    console.log(`OverlayController: ${overlayId} has no data for ${year} (max: ${endpoint.maxYear})`);
-    return false;
-  }
-
-  // Check minYear constraint (e.g., temperature starts at 1940)
-  if (endpoint.minYear && year < endpoint.minYear) {
-    console.log(`OverlayController: ${overlayId} has no data for ${year} (min: ${endpoint.minYear})`);
-    return false;
-  }
-
-  // Initialize loadedYears set if needed
-  if (!loadedYears[overlayId]) {
-    loadedYears[overlayId] = new Set();
-  }
-
-  // Skip if already loaded or currently loading
-  if (loadedYears[overlayId].has(year)) {
-    console.log(`OverlayController: ${overlayId} year ${year} already cached`);
-    return false;
-  }
-
-  // Mark as loading BEFORE fetch to prevent race condition
-  // Multiple rapid calls would otherwise all pass the check above
-  loadedYears[overlayId].add(year);
-
-  // Weather grid overlays use different URL format and storage
+  // Weather grid overlays still use year-based loading
   if (endpoint.isWeatherGrid) {
+    const year = new Date(endMs).getFullYear();
     return await loadWeatherYearData(overlayId, year, endpoint, signal);
   }
 
-  const url = buildYearUrl(endpoint, year, overlayId);
-  console.log(`OverlayController: Fetching ${overlayId} for year ${year}`);
+  // Initialize loadedRanges if needed
+  if (!loadedRanges[overlayId]) {
+    loadedRanges[overlayId] = [];
+  }
+
+  // Check if this range is already fully covered
+  const isRangeCovered = loadedRanges[overlayId].some(
+    r => r.start <= startMs && r.end >= endMs
+  );
+  if (isRangeCovered) {
+    console.log(`OverlayController: ${overlayId} range already cached`);
+    return false;
+  }
+
+  // Mark range as loading to prevent duplicate requests
+  const rangeEntry = { start: startMs, end: endMs, loading: true };
+  loadedRanges[overlayId].push(rangeEntry);
+
+  const url = buildRangeUrl(endpoint, startMs, endMs, overlayId);
+  const startDate = new Date(startMs).toISOString().split('T')[0];
+  const endDate = new Date(endMs).toISOString().split('T')[0];
+  console.log(`OverlayController: Fetching ${overlayId} for ${startDate} to ${endDate}`);
 
   try {
     const fetchOptions = signal ? { signal } : {};
@@ -874,7 +875,7 @@ async function loadYearData(overlayId, year, signal = null) {
       });
 
       dataCache[overlayId].features.push(...newFeatures);
-      console.log(`OverlayController: Added ${newFeatures.length} ${overlayId} features for ${year} (total: ${dataCache[overlayId].features.length})`);
+      console.log(`OverlayController: Added ${newFeatures.length} ${overlayId} features (total: ${dataCache[overlayId].features.length})`);
 
       // Log total cache size when new data received
       const cacheSize = calculateCacheSize();
@@ -883,24 +884,30 @@ async function loadYearData(overlayId, year, signal = null) {
       // Dispatch event for UI to update cache status display
       window.dispatchEvent(new CustomEvent('overlayCacheUpdated', { detail: cacheSize }));
     } else {
-      console.log(`OverlayController: No ${overlayId} events in ${year}`);
+      console.log(`OverlayController: No ${overlayId} events in range`);
     }
 
-    // Year already marked as loaded before fetch (to prevent race condition)
+    // Mark range as loaded (remove loading flag)
+    rangeEntry.loading = false;
 
-    // Update year range cache
+    // Derive years from range for legacy loadedYears compatibility
+    if (!loadedYears[overlayId]) {
+      loadedYears[overlayId] = new Set();
+    }
+    const startYear = new Date(startMs).getFullYear();
+    const endYear = new Date(endMs).getFullYear();
+    for (let y = startYear; y <= endYear; y++) {
+      loadedYears[overlayId].add(y);
+    }
+
+    // Update year range cache for TimeSlider
     if (!yearRangeCache[overlayId]) {
-      yearRangeCache[overlayId] = { min: year, max: year, available: [] };
+      yearRangeCache[overlayId] = { min: startYear, max: endYear, available: [] };
     }
-    yearRangeCache[overlayId].min = Math.min(yearRangeCache[overlayId].min, year);
-    yearRangeCache[overlayId].max = Math.max(yearRangeCache[overlayId].max, year);
-    if (!yearRangeCache[overlayId].available.includes(year) && featureCount > 0) {
-      yearRangeCache[overlayId].available.push(year);
-      yearRangeCache[overlayId].available.sort((a, b) => a - b);
-    }
+    yearRangeCache[overlayId].min = Math.min(yearRangeCache[overlayId].min, startYear);
+    yearRangeCache[overlayId].max = Math.max(yearRangeCache[overlayId].max, endYear);
 
     // Track filters used at load time (Phase 7 cache awareness)
-    // Record the LEAST restrictive filters used - if we load M5.0+ data, we can filter to M6.0+ from cache
     const defaultParams = endpoint.params || {};
     const overrides = activeFilters[overlayId] || {};
     const effectiveFilters = { ...defaultParams, ...overrides };
@@ -908,8 +915,6 @@ async function loadYearData(overlayId, year, signal = null) {
     if (!loadedFilters[overlayId]) {
       loadedFilters[overlayId] = {};
     }
-    // Keep track of the least restrictive filter values we've loaded
-    // For min filters: keep the smaller value (loaded M5.0, then M4.0 = can filter to anything >= M4.0)
     if (effectiveFilters.min_magnitude !== undefined) {
       const current = loadedFilters[overlayId].minMagnitude;
       loadedFilters[overlayId].minMagnitude = current !== undefined
@@ -937,14 +942,15 @@ async function loadYearData(overlayId, year, signal = null) {
 
     return featureCount > 0;
   } catch (error) {
-    // Remove from loadedYears so it can be retried
-    loadedYears[overlayId]?.delete(year);
+    // Remove failed range entry
+    const idx = loadedRanges[overlayId].indexOf(rangeEntry);
+    if (idx >= 0) loadedRanges[overlayId].splice(idx, 1);
 
     if (error.name === 'AbortError') {
-      console.log(`OverlayController: Year fetch aborted for ${overlayId} ${year}`);
+      console.log(`OverlayController: Range fetch aborted for ${overlayId}`);
       return false;
     }
-    console.error(`OverlayController: Failed to load ${overlayId} for ${year}:`, error);
+    console.error(`OverlayController: Failed to load ${overlayId}:`, error);
     return false;
   }
 }
@@ -997,6 +1003,15 @@ export const OverlayController = {
 
     // Setup track drill-down listener for hurricanes
     this.setupTrackDrillDownListener();
+
+    // Listen for live mode events to refresh overlay data
+    window.addEventListener('live-data-poll', () => {
+      this.refreshLiveOverlays();
+    });
+    window.addEventListener('live-lock-engaged', () => {
+      // Immediate refresh when entering live mode
+      this.refreshLiveOverlays();
+    });
 
     console.log('OverlayController initialized');
   },
@@ -3723,7 +3738,8 @@ export const OverlayController = {
   /**
    * Handle TimeSlider year change - update all active overlays.
    * LEGACY: Year-based filtering (used when useLifecycleFiltering is false)
-   * Loads missing year data on-demand.
+   * Renders from cache only - does NOT auto-fetch missing years.
+   * Additional data must be requested via the chat/order system.
    * @param {number} year - New year
    */
   onTimeChange(year) {
@@ -3732,10 +3748,9 @@ export const OverlayController = {
     for (const overlayId of activeOverlays) {
       if (overlayId === 'demographics') continue;
 
-      // Handle weather grid overlays
+      // Handle weather grid overlays (still auto-fetch for now)
       const overlayConfig = OverlaySelector?.getOverlayConfig(overlayId);
       if (overlayConfig?.model === 'weather-grid') {
-        // Reload weather data for the new year
         this.reloadWeatherGridForYear(overlayId, overlayConfig, year);
         continue;
       }
@@ -3743,11 +3758,8 @@ export const OverlayController = {
       const endpoint = OVERLAY_ENDPOINTS[overlayId];
       if (!endpoint || !endpoint.yearField) continue;
 
-      // Check if this year is loaded, if not load it
-      if (!loadedYears[overlayId]?.has(year)) {
-        this.loadYearAndRender(overlayId, year);
-      } else if (displayedYear[overlayId] !== year) {
-        // Year already loaded, just re-render
+      // Render from cache only - no auto-fetching
+      if (dataCache[overlayId] && displayedYear[overlayId] !== year) {
         this.renderFilteredData(overlayId, year);
       }
     }
@@ -3767,8 +3779,10 @@ export const OverlayController = {
     if (alreadyCached) {
       console.log(`OverlayController: Using cached weather ${overlayId} for year ${year}`);
     } else {
-      // Load via the cache system (will fetch and store in dataCache)
-      await loadYearData(overlayId, year);
+      // Load via the cache system (year boundaries for weather grid)
+      const yearStart = new Date(year, 0, 1).getTime();
+      const yearEnd = new Date(year, 11, 31, 23, 59, 59).getTime();
+      await loadRangeData(overlayId, yearStart, yearEnd);
     }
 
     // Get cached data and pass to display model
@@ -3795,7 +3809,8 @@ export const OverlayController = {
    * Handle TimeSlider timestamp change - update all active overlays with lifecycle filtering.
    * NEW: Timestamp-based filtering (used when useLifecycleFiltering is true)
    * Also handles hurricane rolling animation (progressive track drawing during active period).
-   * Loads missing year data on-demand.
+   * Renders from cache only - does NOT auto-fetch missing data.
+   * Additional data must be requested via the chat/order system.
    * @param {number} timestamp - Current timestamp in milliseconds
    */
   onTimeChangeTimestamp(timestamp) {
@@ -3805,17 +3820,14 @@ export const OverlayController = {
     for (const overlayId of activeOverlays) {
       if (overlayId === 'demographics') continue;
 
-      // Handle weather grid overlays
+      // Handle weather grid overlays (still auto-fetch for now)
       const overlayConfig = OverlaySelector?.getOverlayConfig(overlayId);
       if (overlayConfig?.model === 'weather-grid') {
         if (WeatherGridModel.hasInstance(overlayId)) {
-          // Check if we need to load a different year's data
           const range = WeatherGridModel.getTimestampRange(overlayId);
           if (range && (timestamp < range.min || timestamp > range.max)) {
-            // Timestamp is outside loaded data range - reload for new year
             this.reloadWeatherGridForYear(overlayId, overlayConfig, year);
           } else {
-            // Render frame at current timestamp
             WeatherGridModel.renderAtTimestamp(overlayId, timestamp);
           }
         }
@@ -3825,14 +3837,10 @@ export const OverlayController = {
       const endpoint = OVERLAY_ENDPOINTS[overlayId];
       if (!endpoint) continue;
 
-      // Check if this year is loaded, if not load it
-      if (year && !loadedYears[overlayId]?.has(year)) {
-        this.loadYearAndRender(overlayId, year, timestamp);
-      } else if (dataCache[overlayId]) {
-        // Year already loaded, render with lifecycle filtering
+      // Render from cache only - no auto-fetching
+      if (dataCache[overlayId]) {
         this.renderFilteredData(overlayId, timestamp, { useTimestamp: true });
 
-        // For hurricanes, check if we should start rolling animation
         if (overlayId === 'hurricanes') {
           this.checkHurricaneRollingAnimation(timestamp);
         }
@@ -3851,8 +3859,10 @@ export const OverlayController = {
     const endpoint = OVERLAY_ENDPOINTS[overlayId];
     if (!endpoint) return;
 
-    // Load the year data
-    const loaded = await loadYearData(overlayId, year);
+    // Load the year data (year boundaries)
+    const yearStart = new Date(year, 0, 1).getTime();
+    const yearEnd = new Date(year, 11, 31, 23, 59, 59).getTime();
+    const loaded = await loadRangeData(overlayId, yearStart, yearEnd);
 
     // Check if overlay is still active
     const activeOverlays = OverlaySelector?.getActiveOverlays() || [];
@@ -3933,7 +3943,7 @@ export const OverlayController = {
     if (isActive) {
       await this.loadOverlay(overlayId);
     } else {
-      this.clearOverlay(overlayId);
+      this.hideOverlay(overlayId);
     }
   },
 
@@ -3953,8 +3963,10 @@ export const OverlayController = {
 
     console.log(`OverlayController: Loading weather grid ${overlayId} for year ${year}`);
 
-    // Load data via cache system
-    await loadYearData(overlayId, year);
+    // Load data via cache system (year boundaries for weather grid)
+    const yearStart = new Date(year, 0, 1).getTime();
+    const yearEnd = new Date(year, 11, 31, 23, 59, 59).getTime();
+    await loadRangeData(overlayId, yearStart, yearEnd);
 
     // Get cached data and display (instances are created automatically)
     const cachedData = dataCache[overlayId];
@@ -4031,25 +4043,50 @@ export const OverlayController = {
     this.loading.add(overlayId);
 
     try {
-      // Get current year from TimeSlider or use current calendar year
-      let currentYear = new Date().getFullYear();
-      if (TimeSlider?.currentTime) {
-        // If TimeSlider has a timestamp, extract year from it
-        const sliderYear = new Date(TimeSlider.currentTime).getFullYear();
-        if (sliderYear >= 2000 && sliderYear < 3000) {
-          currentYear = sliderYear;
+      // If range already loaded (cache exists), just re-render without fetching
+      // This handles re-enable after hide (0 features is still "loaded")
+      if (loadedRanges[overlayId]?.length > 0) {
+        console.log(`OverlayController: ${overlayId} already loaded, re-rendering from cache`);
+        this.loading.delete(overlayId);
+        this.renderCurrentData(overlayId);
+
+        // If live mode is active, immediately fetch delta to catch up
+        if (TimeSlider?.isLiveMode) {
+          const FIVE_MIN = 5 * 60 * 1000;
+          const now = Math.floor(Date.now() / FIVE_MIN) * FIVE_MIN;
+          const ranges = loadedRanges[overlayId].filter(r => !r.loading);
+          const lastEnd = Math.max(...ranges.map(r => r.end));
+          if (now > lastEnd) {
+            console.log(`OverlayController: ${overlayId} catching up delta in live mode`);
+            loadRangeData(overlayId, lastEnd, now).then(loaded => {
+              if (loaded) this.renderCurrentData(overlayId);
+            });
+          }
+        }
+        return;
+      }
+
+      // Load past 30 days of data (one-time initial load)
+      // Round to 5-minute intervals to prevent duplicate fetches from ms drift
+      const FIVE_MIN = 5 * 60 * 1000;
+      const now = Math.floor(Date.now() / FIVE_MIN) * FIVE_MIN;
+      const thirtyDaysAgo = now - (30 * 24 * 60 * 60 * 1000);
+
+      // Respect maxYear constraint (e.g., floods end at 2019)
+      let endMs = now;
+      let startMs = thirtyDaysAgo;
+      if (endpoint.maxYear) {
+        const maxEndMs = new Date(endpoint.maxYear, 11, 31).getTime();
+        if (endMs > maxEndMs) {
+          endMs = maxEndMs;
+          startMs = endMs - (30 * 24 * 60 * 60 * 1000);
         }
       }
 
-      // Respect maxYear constraint (e.g., floods end at 2019)
-      if (endpoint.maxYear && currentYear > endpoint.maxYear) {
-        currentYear = endpoint.maxYear;
-      }
+      console.log(`OverlayController: Loading ${overlayId} (past 30 days)`);
 
-      console.log(`OverlayController: Loading ${overlayId} starting with year ${currentYear}`);
-
-      // Load current year's data
-      const loaded = await loadYearData(overlayId, currentYear, abortController.signal);
+      // Load the range data
+      const loaded = await loadRangeData(overlayId, startMs, endMs, abortController.signal);
 
       // Check if overlay was disabled while we were fetching
       const activeOverlays = OverlaySelector?.getActiveOverlays() || [];
@@ -4060,10 +4097,9 @@ export const OverlayController = {
 
       // Initialize TimeSlider for this overlay
       if (endpoint.yearField && TimeSlider) {
-        // Set TimeSlider to current year with wide available range
-        // More years will be added as user navigates
-        const minYear = 2000;  // System limit - more data available via chat in future
-        const maxYear = new Date().getFullYear();
+        const currentYear = new Date().getFullYear();
+        const minYear = 2000;
+        const maxYear = currentYear;
 
         // Initialize year range cache
         if (!yearRangeCache[overlayId]) {
@@ -4078,17 +4114,16 @@ export const OverlayController = {
           min: minYear,
           max: maxYear,
           granularity: 'yearly',
-          available: null  // Don't restrict to specific years - allow free navigation
+          available: null
         });
         TimeSlider.show();
-        console.log(`OverlayController: TimeSlider range ${minYear}-${maxYear}, loaded year ${currentYear}`);
+        console.log(`OverlayController: TimeSlider range ${minYear}-${maxYear}, loaded past 30 days`);
       }
 
       // Render with current time (uses lifecycle filtering if enabled)
       this.renderCurrentData(overlayId);
 
     } catch (error) {
-      // Don't log abort errors - they're expected when user disables overlay
       if (error.name === 'AbortError') {
         console.log(`OverlayController: Fetch aborted for ${overlayId}`);
         return;
@@ -4171,7 +4206,12 @@ export const OverlayController = {
    * Clear an overlay from the map.
    * @param {string} overlayId - Overlay ID
    */
-  clearOverlay(overlayId) {
+  /**
+   * Hide overlay from map without clearing cache.
+   * Called when overlay is toggled off - data stays in cache for re-enable.
+   * @param {string} overlayId - Overlay ID
+   */
+  hideOverlay(overlayId) {
     const endpoint = OVERLAY_ENDPOINTS[overlayId];
     if (!endpoint) return;
 
@@ -4181,24 +4221,22 @@ export const OverlayController = {
       this.abortControllers.delete(overlayId);
       console.log(`OverlayController: Aborted pending fetch for ${overlayId}`);
     }
+    this.loading.delete(overlayId);
 
     // Stop any active animations/drill-downs for this overlay
     this._cleanupOverlayAnimations(overlayId);
 
-    // Get the model and clear it (use type-specific clear if available)
+    // Clear visual layers from map (but keep dataCache intact)
     const model = ModelRegistry?.getModelForType(endpoint.eventType);
     if (model) {
       if (model.clearType) {
-        // Type-specific clear (PointRadiusModel) - only clears this event type
         model.clearType(endpoint.eventType);
       } else if (model.clear) {
-        // General clear (TrackModel, PolygonModel) - clears all for this model
         model.clear();
       }
     }
 
-    // Also clear PolygonModel if it has layers for this type
-    // (wildfire/flood use split render: points via PointRadiusModel + polygons via PolygonModel)
+    // Also clear polygon layers for split-render types
     const eventType = endpoint.eventType;
     if (eventType === 'wildfire' || eventType === 'flood') {
       const polygonModel = ModelRegistry?.getModel('polygon');
@@ -4207,21 +4245,37 @@ export const OverlayController = {
       }
     }
 
-    // Hide popup if it was showing data for this overlay
+    // Hide popup if showing this overlay's data
     if (MapAdapter?.popup?.isOpen?.()) {
       MapAdapter.hidePopup();
       MapAdapter.popupLocked = false;
     }
 
-    // Clear caches
-    delete dataCache[overlayId];
-    delete yearRangeCache[overlayId];
-    delete loadedYears[overlayId];
-
     // Recalculate TimeSlider range from remaining active overlays
     this.recalculateTimeRange();
 
-    console.log(`OverlayController: Cleared ${overlayId}`);
+    console.log(`OverlayController: Hidden ${overlayId} (cache preserved)`);
+  },
+
+  /**
+   * Clear overlay completely - removes from map AND deletes cache.
+   * Called from Loaded tab "Clear" button.
+   * @param {string} overlayId - Overlay ID
+   */
+  clearOverlay(overlayId) {
+    // First hide from map
+    this.hideOverlay(overlayId);
+
+    // Then clear caches
+    delete dataCache[overlayId];
+    delete yearRangeCache[overlayId];
+    delete loadedYears[overlayId];
+    delete loadedRanges[overlayId];
+
+    // Dispatch cache update for Loaded tab
+    window.dispatchEvent(new CustomEvent('overlayCacheUpdated', { detail: calculateCacheSize() }));
+
+    console.log(`OverlayController: Cleared ${overlayId} (cache deleted)`);
   },
 
   /**
@@ -4738,6 +4792,9 @@ export const OverlayController = {
     for (const key in loadedYears) {
       delete loadedYears[key];
     }
+    for (const key in loadedRanges) {
+      delete loadedRanges[key];
+    }
     for (const key in yearRangeCache) {
       delete yearRangeCache[key];
     }
@@ -4788,15 +4845,27 @@ export const OverlayController = {
     for (const overlayId of Object.keys(OVERLAY_ENDPOINTS)) {
       const features = dataCache[overlayId]?.features || [];
       const years = loadedYears[overlayId] ? Array.from(loadedYears[overlayId]).sort((a, b) => a - b) : [];
+      const ranges = (loadedRanges[overlayId] || []).filter(r => !r.loading);
       const overlaySize = sizeInfo.perOverlay[overlayId] || { features: 0, bytes: 0 };
 
       if (features.length > 0 || years.length > 0) {
+        // Compute overall time range from loadedRanges
+        let rangeStart = null;
+        let rangeEnd = null;
+        if (ranges.length > 0) {
+          rangeStart = Math.min(...ranges.map(r => r.start));
+          rangeEnd = Math.max(...ranges.map(r => r.end));
+        }
+
         stats.overlays[overlayId] = {
           features: features.length,
           sizeMB: (overlaySize.bytes / (1024 * 1024)).toFixed(2),
           yearsLoaded: years.length,
           years: years,
-          yearRange: years.length > 0 ? `${years[0]}-${years[years.length - 1]}` : 'none'
+          yearRange: years.length > 0 ? `${years[0]}-${years[years.length - 1]}` : 'none',
+          ranges: ranges,
+          rangeStart: rangeStart,
+          rangeEnd: rangeEnd
         };
 
         stats.totals.features += features.length;
@@ -4892,6 +4961,7 @@ export const OverlayController = {
     // Clear cache for this overlay
     delete dataCache[overlayId];
     delete loadedYears[overlayId];
+    delete loadedRanges[overlayId];
     delete yearRangeCache[overlayId];
 
     // Check if overlay is currently active
@@ -4903,5 +4973,114 @@ export const OverlayController = {
 
     // Reload the overlay
     await this.loadOverlay(overlayId);
+  },
+
+  /**
+   * Refresh all active overlays with new data since last fetch.
+   * Called by live-data-poll (every 5 min) and live-lock-engaged events.
+   * Only fetches the delta (from last loaded end to now), not the full 30 days.
+   */
+  async refreshLiveOverlays() {
+    const activeOverlays = OverlaySelector?.getActiveOverlays() || [];
+    if (activeOverlays.length === 0) return;
+
+    const FIVE_MIN = 5 * 60 * 1000;
+    const now = Math.floor(Date.now() / FIVE_MIN) * FIVE_MIN;
+
+    console.log(`OverlayController: Live refresh for ${activeOverlays.length} overlays`);
+
+    for (const overlayId of activeOverlays) {
+      const endpoint = OVERLAY_ENDPOINTS[overlayId];
+      if (!endpoint || endpoint.isWeatherGrid) continue;
+
+      // Skip if no ranges loaded yet (overlay hasn't done initial load)
+      const ranges = loadedRanges[overlayId];
+      if (!ranges || ranges.length === 0) continue;
+
+      // Find the latest end time across all loaded ranges
+      const lastEnd = Math.max(...ranges.filter(r => !r.loading).map(r => r.end));
+      if (now <= lastEnd) {
+        // Already up to date (within same 5-min window)
+        continue;
+      }
+
+      console.log(`OverlayController: Refreshing ${overlayId} delta (${new Date(lastEnd).toISOString()} to ${new Date(now).toISOString()})`);
+
+      try {
+        const loaded = await loadRangeData(overlayId, lastEnd, now);
+        if (loaded !== false) {
+          this.renderCurrentData(overlayId);
+        }
+      } catch (err) {
+        console.warn(`OverlayController: Live refresh failed for ${overlayId}:`, err.message);
+      }
+    }
+  },
+
+  /**
+   * Ingest order result data into the overlay cache.
+   * Called by the order/chat system when a disaster data order completes.
+   * Merges the GeoJSON features into existing cache and re-renders.
+   * @param {string} overlayId - Overlay ID (e.g., 'earthquakes', 'hurricanes')
+   * @param {Object} geojson - GeoJSON FeatureCollection from the order result
+   * @param {Object} rangeMeta - Optional range metadata {start, end} in ms
+   */
+  ingestOrderResult(overlayId, geojson, rangeMeta = null) {
+    if (!geojson?.features || !OVERLAY_ENDPOINTS[overlayId]) {
+      console.warn(`OverlayController: Cannot ingest - invalid data or unknown overlay: ${overlayId}`);
+      return;
+    }
+
+    // Initialize cache if needed
+    if (!dataCache[overlayId]) {
+      dataCache[overlayId] = { type: 'FeatureCollection', features: [] };
+    }
+
+    // Merge new features (dedup by event_id)
+    const existingIds = new Set(
+      dataCache[overlayId].features
+        .map(f => f.properties?.event_id || f.properties?.storm_id || f.id)
+        .filter(Boolean)
+    );
+
+    const newFeatures = geojson.features.filter(f => {
+      const id = f.properties?.event_id || f.properties?.storm_id || f.id;
+      return !id || !existingIds.has(id);
+    });
+
+    if (newFeatures.length > 0) {
+      dataCache[overlayId].features.push(...newFeatures);
+      console.log(`OverlayController: Ingested ${newFeatures.length} ${overlayId} features from order (total: ${dataCache[overlayId].features.length})`);
+    } else {
+      console.log(`OverlayController: Order result had no new ${overlayId} features (all duplicates)`);
+    }
+
+    // Track the loaded range if metadata provided
+    if (rangeMeta && rangeMeta.start && rangeMeta.end) {
+      if (!loadedRanges[overlayId]) {
+        loadedRanges[overlayId] = [];
+      }
+      loadedRanges[overlayId].push({ start: rangeMeta.start, end: rangeMeta.end, loading: false });
+
+      // Update loadedYears for compatibility
+      if (!loadedYears[overlayId]) {
+        loadedYears[overlayId] = new Set();
+      }
+      const startYear = new Date(rangeMeta.start).getFullYear();
+      const endYear = new Date(rangeMeta.end).getFullYear();
+      for (let y = startYear; y <= endYear; y++) {
+        loadedYears[overlayId].add(y);
+      }
+    }
+
+    // Update cache size
+    const cacheSize = calculateCacheSize();
+    window.dispatchEvent(new CustomEvent('overlayCacheUpdated', { detail: cacheSize }));
+
+    // Re-render if overlay is active
+    const activeOverlays = OverlaySelector?.getActiveOverlays() || [];
+    if (activeOverlays.includes(overlayId)) {
+      this.renderCurrentData(overlayId);
+    }
   }
 };

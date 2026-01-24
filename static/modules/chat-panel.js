@@ -40,6 +40,39 @@ export function setDependencies(deps) {
   OverlaySelector = deps.OverlaySelector;
 }
 
+// Map event_type from API responses to overlay IDs
+const EVENT_TYPE_TO_OVERLAY = {
+  earthquake: 'earthquakes',
+  volcano: 'volcanoes',
+  tsunami: 'tsunamis',
+  hurricane: 'hurricanes',
+  wildfire: 'wildfires',
+  tornado: 'tornadoes',
+  flood: 'floods',
+  drought: 'drought',
+  landslide: 'landslides'
+};
+
+/**
+ * Route event-type order results to OverlayController for cache ingestion.
+ * @param {Object} response - API response with type 'events'
+ */
+function ingestEventsToOverlay(response) {
+  if (!OverlayController?.ingestOrderResult) return;
+  if (!response?.geojson?.features) return;
+
+  const overlayId = EVENT_TYPE_TO_OVERLAY[response.event_type];
+  if (!overlayId) return;
+
+  // Build range metadata from response if available
+  const rangeMeta = (response.year_range && response.year_range.length === 2)
+    ? { start: new Date(response.year_range[0], 0, 1).getTime(),
+        end: new Date(response.year_range[1], 11, 31).getTime() }
+    : null;
+
+  OverlayController.ingestOrderResult(overlayId, response.geojson, rangeMeta);
+}
+
 // Module-level instances (created during init)
 let orderPanel = null;
 let orderTracker = null;
@@ -94,15 +127,13 @@ export const ChatManager = {
         items: document.getElementById('orderItems'),
         confirmBtn: document.getElementById('orderConfirmBtn'),
         cancelBtn: document.getElementById('orderCancelBtn'),
-        saveBtn: document.getElementById('orderSaveBtn'),
-        savedOrdersList: document.getElementById('savedOrdersList'),
-        savedOrdersItems: document.getElementById('savedOrdersItems'),
-        savedOrdersClose: document.getElementById('savedOrdersClose'),
-        savedOrdersIndicator: document.getElementById('savedOrdersIndicator'),
-        savedOrdersCount: document.getElementById('savedOrdersCount'),
-        savedOrdersToggle: document.getElementById('savedOrdersToggle'),
-        cacheStatus: document.getElementById('cacheStatus'),
-        cacheStatusText: document.getElementById('cacheStatusText')
+        orderTabBtn: document.getElementById('orderTabBtn'),
+        loadedTabBtn: document.getElementById('loadedTabBtn'),
+        orderTabContent: document.getElementById('orderTabContent'),
+        loadedTabContent: document.getElementById('loadedTabContent'),
+        loadedItems: document.getElementById('loadedItems'),
+        loadedActions: document.getElementById('loadedActions'),
+        loadedClearAllBtn: document.getElementById('loadedClearAllBtn')
       },
       onConfirm: async (order) => {
         await this.executeOrder(order);
@@ -113,6 +144,20 @@ export const ChatManager = {
       onClear: () => {
         App?.clearNavigationMode();
         App?.loadCountries();
+      },
+      onClearSource: (overlayId) => {
+        if (!OverlayController) return;
+        OverlayController.clearOverlay(overlayId);
+        // Uncheck the overlay if it's active
+        if (OverlaySelector?.isActive(overlayId)) {
+          OverlaySelector.toggle(overlayId);
+        }
+        // Clear backend session cache for this source (keeps caches in sync)
+        const sessionId = getOrCreateSessionId();
+        postMsgpack('/api/session/clear-source', {
+          sessionId,
+          sourceId: overlayId
+        }).catch(err => console.warn('Failed to clear backend source cache:', err.message));
       },
       getCacheStats: () => {
         if (!OverlayController || !OverlayController.getCacheStats) return null;
@@ -128,6 +173,9 @@ export const ChatManager = {
         if (result && (result.type === 'data' || result.type === 'events')) {
           const count = result.count || result.geojson?.features?.length || 0;
           this.addMessage(`Loaded ${count} locations.`, 'assistant');
+          if (result.type === 'events') {
+            ingestEventsToOverlay(result);
+          }
           App?.displayData(result);
         }
       },
@@ -167,16 +215,21 @@ export const ChatManager = {
       feature_count: data.geojson?.features?.length
     });
 
-    if (data.type === 'data' && data.geojson) {
+    if (data.type === 'already_loaded') {
+      this.addMessage(data.message || 'This data is already loaded on your map.', 'assistant');
+      if (orderPanel.switchTab) orderPanel.switchTab('loaded');
+    } else if (data.type === 'data' && data.geojson) {
       const message = data.data_note || `Loaded ${data.count || data.geojson.features?.length || 0} locations`;
       this.addMessage(message, 'assistant');
       App?.displayData(data);
     } else if (data.type === 'events' && data.geojson) {
       const message = data.summary || `Showing ${data.count} ${data.event_type} events`;
       this.addMessage(message, 'assistant');
+      ingestEventsToOverlay(data);
       App?.displayData(data);
     } else if (data.type === 'error') {
       this.addMessage(data.message || 'Failed to load data.', 'assistant');
+      throw new Error(data.message || 'Order execution failed');
     }
   },
 
@@ -528,6 +581,12 @@ export const ChatManager = {
         orderPanel.setOrder(response.order, response.summary);
         break;
 
+      case 'already_loaded':
+        this.addMessage(response.message || 'This data is already loaded on your map.', 'assistant');
+        // Switch to Loaded tab so user can see their data
+        if (orderPanel.switchTab) orderPanel.switchTab('loaded');
+        break;
+
       case 'metric_warning': {
         const msgEl = this.addMessage(response.message, 'assistant');
         const btnContainer = document.createElement('div');
@@ -588,6 +647,7 @@ export const ChatManager = {
 
       case 'events':
         this.addMessage(response.summary || `Showing ${response.count} ${response.event_type} events.`, 'assistant');
+        ingestEventsToOverlay(response);
         App?.displayData(response);
         break;
 
@@ -633,12 +693,11 @@ export const ChatManager = {
           );
           if (saved) {
             this.addMessage(`Order saved as "${saved.name}"`, 'assistant');
-            orderPanel?.updateSavedOrdersIndicator();
           } else {
             this.addMessage('No order to save.', 'assistant');
           }
         } else {
-          orderPanel?.promptSaveOrder();
+          this.addMessage('Please specify a name to save the order (e.g., "save as California Data").', 'assistant');
         }
         break;
 
@@ -649,7 +708,6 @@ export const ChatManager = {
         } else {
           const names = savedOrders.map(o => `- ${o.name}`).join('\n');
           this.addMessage(`Saved orders:\n${names}`, 'assistant');
-          orderPanel?.showSavedOrdersList();
         }
         break;
       }
@@ -657,18 +715,25 @@ export const ChatManager = {
       case 'load_order':
         if (response.name) {
           const order = SavedOrders.load(response.name);
-          if (order) {
+          if (order && orderPanel) {
             orderPanel.currentOrder = {
               items: JSON.parse(JSON.stringify(order.items)),
               summary: order.summary || 'Loaded saved order: ' + order.name
             };
             orderPanel.render(orderPanel.currentOrder.summary);
+            orderPanel.switchTab('order');
             this.addMessage(`Loaded saved order: "${order.name}"`, 'assistant');
-          } else {
+          } else if (!order) {
             this.addMessage(`No saved order found with name "${response.name}".`, 'assistant');
           }
         } else {
-          orderPanel?.showSavedOrdersList();
+          const allOrders = SavedOrders.getAll();
+          if (allOrders.length > 0) {
+            const names = allOrders.map(o => `- ${o.name}`).join('\n');
+            this.addMessage(`Which order? Available:\n${names}`, 'assistant');
+          } else {
+            this.addMessage('No saved orders available.', 'assistant');
+          }
         }
         break;
 
@@ -676,7 +741,6 @@ export const ChatManager = {
         if (response.name) {
           if (SavedOrders.deleteOrder(response.name)) {
             this.addMessage(`Deleted saved order: "${response.name}"`, 'assistant');
-            orderPanel?.updateSavedOrdersIndicator();
           } else {
             this.addMessage(`No saved order found with name "${response.name}".`, 'assistant');
           }
@@ -693,6 +757,9 @@ export const ChatManager = {
       default:
         if (response.geojson && response.geojson.features && response.geojson.features.length > 0) {
           this.addMessage(response.summary || response.message || 'Found data for you.', 'assistant');
+          if (response.event_type) {
+            ingestEventsToOverlay(response);
+          }
           App?.displayData(response);
         } else {
           this.addMessage(response.summary || response.message || 'Could you be more specific?', 'assistant');
@@ -1026,11 +1093,8 @@ export const OrderManager = {
   clearOrder() { orderPanel?.clearOrder(); },
   removeItem(idx) { orderPanel?.removeItem(idx); },
   render(summary) { orderPanel?.render(summary); },
-  updateSavedOrdersIndicator() { orderPanel?.updateSavedOrdersIndicator(); },
-  showSavedOrdersList() { orderPanel?.showSavedOrdersList(); },
-  promptSaveOrder() { orderPanel?.promptSaveOrder(); },
-  updateCacheStatus() { orderPanel?.updateCacheStatus(); },
-  updateSaveButtonState() { orderPanel?.updateSaveButtonState(); }
+  switchTab(tab) { orderPanel?.switchTab(tab); },
+  renderLoadedTab() { orderPanel?.renderLoadedTab(); }
 };
 
 export const OrderTracker = {

@@ -2,27 +2,35 @@
 Session Cache Manager - Per-session data caching and tracking.
 
 This module provides:
-- SessionCache: Per-session inventory tracking what data has been loaded
+- SessionCache: Per-session tracking of what data has been sent to frontend
 - session_manager: Global manager for all active sessions
 
-The cache tracks what data each session has loaded, enabling:
-- Deduplication: Don't fetch data that's already been sent to frontend
-- Recovery: Know what frontend has for session restore
-- Export: Know what data to include in exports
+The cache mirrors the frontend cache exactly, enabling:
+- Deduplication: Don't send data cells/events already on the frontend
+- Source clearing: Remove specific sources when user clicks "Clear" in Loaded tab
+
+Key concept: the backend session cache = the frontend cache.
+When we send data, we register it. When user clears, we remove it.
+
+Dedup keys:
+- Data: (loc_id, year, metric) - three-part key, one cell in the spreadsheet
+- Events: event_id - whole event is all-or-nothing
 
 Usage:
     from mapmover.session_cache import session_manager
 
-    # Get or create session cache
     cache = session_manager.get_or_create(session_id)
 
-    # Check if we can serve from cache
-    requested_sig = CacheSignature.from_order_items(items)
-    if cache.can_serve(requested_sig):
-        return cache.get_cached_result(request_key)
+    # Filter response before sending (post-fetch dedup)
+    filtered_year_data = cache.filter_year_data(year_data)
+    filtered_events = cache.filter_events(features)
 
-    # After execution, store result
-    cache.store_result(request_key, result, signature)
+    # Register what was actually sent
+    cache.register_sent_year_data(filtered_year_data)  # auto-registers per metric
+    cache.register_sent_events(filtered_events, source_id="earthquakes")
+
+    # Clear a source (user clicked X in Loaded tab)
+    cache.clear_source("earthquakes")
 """
 
 import logging
@@ -51,6 +59,12 @@ class SessionCache:
 
         # Cache inventory (tracks signatures of loaded data)
         self.inventory = CacheInventory(name=f"session_{session_id}")
+
+        # Sent data keys - tracks exactly what cells/events were sent to frontend
+        # For data: "{loc_id}:{year}:{metric}" (one cell in the spreadsheet)
+        # For events: "{event_id}" (whole event is all-or-nothing)
+        self._sent_all: set = set()  # flat set for O(1) dedup checks
+        self._sent_by_source: Dict[str, set] = {}  # source_id -> keys (for clearing)
 
         # Cached results (request_key -> result)
         self._results: Dict[str, Dict] = {}
@@ -104,9 +118,93 @@ class SessionCache:
         """Check if result is cached."""
         return request_key in self._results
 
+    def register_sent_events(self, features: list, source_id: str):
+        """
+        Register event features that were sent to the frontend.
+        Tracks by event_id (whole event is all-or-nothing).
+        """
+        source_set = self._sent_by_source.setdefault(source_id, set())
+        for f in features:
+            props = f.get("properties", {})
+            event_id = props.get("event_id") or props.get("loc_id") or f.get("id")
+            if event_id:
+                self._sent_all.add(event_id)
+                source_set.add(event_id)
+
+    def register_sent_year_data(self, year_data: dict):
+        """
+        Register year_data cells that were sent to the frontend.
+        year_data format: {year: {loc_id: {metric: value, ...}, ...}, ...}
+        Keys are three-part: "loc_id:year:metric" (one cell in the spreadsheet).
+        Each metric is registered as its own source (clearing = deleting a column).
+        """
+        for year_str, loc_data in year_data.items():
+            for loc_id, metrics in loc_data.items():
+                for metric in metrics.keys():
+                    key = f"{loc_id}:{year_str}:{metric}"
+                    self._sent_all.add(key)
+                    source_set = self._sent_by_source.setdefault(metric, set())
+                    source_set.add(key)
+
+    def is_event_sent(self, event_id: str) -> bool:
+        """Check if an event was already sent."""
+        return event_id in self._sent_all
+
+    def is_cell_sent(self, loc_id: str, year, metric: str) -> bool:
+        """Check if a specific (loc_id, year, metric) cell was already sent."""
+        return f"{loc_id}:{year}:{metric}" in self._sent_all
+
+    def filter_year_data(self, year_data: dict) -> dict:
+        """
+        Filter year_data to only include cells not yet sent.
+        Returns filtered year_data with only new cells.
+        """
+        filtered = {}
+        for year_str, loc_data in year_data.items():
+            for loc_id, metrics in loc_data.items():
+                new_metrics = {}
+                for metric, value in metrics.items():
+                    if f"{loc_id}:{year_str}:{metric}" not in self._sent_all:
+                        new_metrics[metric] = value
+                if new_metrics:
+                    if year_str not in filtered:
+                        filtered[year_str] = {}
+                    filtered[year_str][loc_id] = new_metrics
+        return filtered
+
+    def filter_events(self, features: list) -> list:
+        """
+        Filter event features to only include events not yet sent.
+        Multi-feature events (storm tracks) are all-or-nothing by event_id.
+        """
+        new_features = []
+        for f in features:
+            props = f.get("properties", {})
+            event_id = props.get("event_id") or props.get("loc_id") or f.get("id")
+            if not event_id or event_id not in self._sent_all:
+                new_features.append(f)
+        return new_features
+
+    def clear_source(self, source_id: str) -> int:
+        """
+        Clear all sent keys for a specific source.
+        Returns number of keys removed.
+        """
+        keys_to_remove = self._sent_by_source.pop(source_id, set())
+        for key in keys_to_remove:
+            self._sent_all.discard(key)
+        return len(keys_to_remove)
+
+    @property
+    def sent_count(self) -> int:
+        """Number of data points tracked as sent."""
+        return len(self._sent_all)
+
     def clear(self):
         """Clear all cached data."""
         self.inventory.clear()
+        self._sent_all.clear()
+        self._sent_by_source.clear()
         self._results.clear()
         self.chat_history.clear()
         self.map_state.clear()
@@ -132,6 +230,8 @@ class SessionCache:
         inv_stats = self.inventory.stats()
         return {
             **inv_stats,
+            "sent_count": len(self._sent_all),
+            "sent_sources": list(self._sent_by_source.keys()),
             "result_count": len(self._results),
             "chat_history_count": len(self.chat_history),
             "age_seconds": (datetime.now() - self.created_at).total_seconds(),

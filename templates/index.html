@@ -59,32 +59,27 @@
 
       <!-- Order Panel -->
       <div id="orderPanel">
-        <h4>Your Order <span id="orderCount"></span></h4>
-        <div class="order-summary" id="orderSummary"></div>
-        <div class="order-items" id="orderItems"></div>
-        <div class="order-actions">
-          <button class="order-btn cancel" id="orderCancelBtn">Clear</button>
-          <button class="order-btn save" id="orderSaveBtn" title="Save this order for later">Save</button>
-          <button class="order-btn confirm" id="orderConfirmBtn">Display on Map</button>
+        <div class="order-tabs-header">
+          <button class="order-tab active" id="orderTabBtn" data-tab="order">Order <span id="orderCount"></span></button>
+          <button class="order-tab" id="loadedTabBtn" data-tab="loaded">Loaded</button>
         </div>
-        <!-- Saved Orders Indicator -->
-        <div id="savedOrdersIndicator" class="saved-orders-indicator" style="display: none;">
-          <span id="savedOrdersCount">0 saved orders</span>
-          <button class="saved-orders-toggle" id="savedOrdersToggle">View</button>
-        </div>
-        <!-- Saved Orders List -->
-        <div id="savedOrdersList" class="saved-orders-list" style="display: none;">
-          <div class="saved-orders-header">
-            <span>Saved Orders</span>
-            <button class="saved-orders-close" id="savedOrdersClose">x</button>
-          </div>
-          <div class="saved-orders-items" id="savedOrdersItems">
-            <!-- Populated dynamically -->
+        <!-- Order Tab Content -->
+        <div class="order-tab-content active" id="orderTabContent" data-tab="order">
+          <div class="order-summary" id="orderSummary"></div>
+          <div class="order-items" id="orderItems"></div>
+          <div class="order-actions">
+            <button class="order-btn cancel" id="orderCancelBtn">Clear</button>
+            <button class="order-btn confirm" id="orderConfirmBtn">Display on Map</button>
           </div>
         </div>
-        <!-- Cache Status -->
-        <div id="cacheStatus" class="cache-status">
-          <span id="cacheStatusText">Cache: empty</span>
+        <!-- Loaded Tab Content -->
+        <div class="order-tab-content" id="loadedTabContent" data-tab="loaded">
+          <div class="loaded-items" id="loadedItems">
+            <div style="color: #999; font-size: 12px; text-align: center; padding: 10px;">No data loaded</div>
+          </div>
+          <div class="loaded-actions" id="loadedActions" style="display: none;">
+            <button class="order-btn cancel" id="loadedClearAllBtn">Clear All</button>
+          </div>
         </div>
       </div>
     </div>

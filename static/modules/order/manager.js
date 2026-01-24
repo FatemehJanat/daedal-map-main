@@ -1,19 +1,18 @@
 /**
  * Order Panel Manager
- * Handles order panel rendering, item management, and saved orders UI.
- * Uses callbacks for app-specific actions (confirm, clear, display).
+ * Handles order panel rendering with Order/Loaded tabs.
+ * Order tab shows pending items, Loaded tab shows cached data per source.
  *
  * Usage:
  *   const panel = new OrderPanel({
- *     elements: { panel, count, summary, items, confirmBtn, cancelBtn, ... },
- *     onConfirm: async (order) => { ... },  // app handles API + display
- *     onClear: () => { ... },               // app handles map reset
- *     getCacheStats: () => ({ features, sizeMB }),
+ *     elements: { panel, orderTab, loadedTab, orderContent, loadedContent, ... },
+ *     onConfirm: async (order) => { ... },
+ *     onClear: () => { ... },
+ *     onClearSource: (overlayId) => { ... },
+ *     getCacheStats: () => ({ overlays, totals }),
  *     addMessage: (text, type) => { ... }
  *   });
  */
-
-import * as SavedOrders from './saved.js';
 
 export class OrderPanel {
   /**
@@ -22,7 +21,8 @@ export class OrderPanel {
    * @param {Function} config.onConfirm - async (order) => void - Handle order confirmation
    * @param {Function} config.onQueue - async (order) => void - Handle order queueing
    * @param {Function} [config.onClear] - () => void - Handle order clear/reset
-   * @param {Function} [config.getCacheStats] - () => { features, sizeMB }
+   * @param {Function} [config.onClearSource] - (overlayId) => void - Clear a single source
+   * @param {Function} [config.getCacheStats] - () => { overlays, totals }
    * @param {Function} [config.addMessage] - (text, type) => void - Display chat message
    */
   constructor(config) {
@@ -30,10 +30,12 @@ export class OrderPanel {
     this.onConfirm = config.onConfirm || (() => {});
     this.onQueue = config.onQueue || (() => {});
     this.onClear = config.onClear || (() => {});
+    this.onClearSource = config.onClearSource || (() => {});
     this.getCacheStats = config.getCacheStats || (() => null);
     this.addMessage = config.addMessage || (() => {});
 
     this.currentOrder = null;
+    this.activeTab = 'order';
   }
 
   /**
@@ -42,21 +44,19 @@ export class OrderPanel {
   init() {
     this.setupEventListeners();
     this.render();
-    this.updateCacheStatus();
-    this.updateSaveButtonState();
-    this.updateSavedOrdersIndicator();
+    this.renderLoadedTab();
 
     // Listen for cache updates
     window.addEventListener('overlayCacheUpdated', () => {
-      this.updateCacheStatus();
+      this.renderLoadedTab();
     });
   }
 
   /**
-   * Setup event listeners for panel buttons.
+   * Setup event listeners for panel buttons and tabs.
    */
   setupEventListeners() {
-    const { confirmBtn, cancelBtn, saveBtn, savedOrdersClose, savedOrdersToggle } = this.elements;
+    const { confirmBtn, cancelBtn, orderTabBtn, loadedTabBtn, loadedClearAllBtn } = this.elements;
 
     if (confirmBtn) {
       confirmBtn.addEventListener('click', () => this.confirmOrder());
@@ -66,16 +66,38 @@ export class OrderPanel {
       cancelBtn.addEventListener('click', () => this.clearOrder());
     }
 
-    if (saveBtn) {
-      saveBtn.addEventListener('click', () => this.promptSaveOrder());
+    if (orderTabBtn) {
+      orderTabBtn.addEventListener('click', () => this.switchTab('order'));
     }
 
-    if (savedOrdersClose) {
-      savedOrdersClose.addEventListener('click', () => this.hideSavedOrdersList());
+    if (loadedTabBtn) {
+      loadedTabBtn.addEventListener('click', () => this.switchTab('loaded'));
     }
 
-    if (savedOrdersToggle) {
-      savedOrdersToggle.addEventListener('click', () => this.toggleSavedOrdersList());
+    if (loadedClearAllBtn) {
+      loadedClearAllBtn.addEventListener('click', () => this.clearAllLoaded());
+    }
+  }
+
+  /**
+   * Switch between Order and Loaded tabs.
+   * @param {string} tab - 'order' or 'loaded'
+   */
+  switchTab(tab) {
+    this.activeTab = tab;
+    const { orderTabBtn, loadedTabBtn, orderTabContent, loadedTabContent } = this.elements;
+
+    if (tab === 'order') {
+      if (orderTabBtn) orderTabBtn.classList.add('active');
+      if (loadedTabBtn) loadedTabBtn.classList.remove('active');
+      if (orderTabContent) orderTabContent.classList.add('active');
+      if (loadedTabContent) loadedTabContent.classList.remove('active');
+    } else {
+      if (orderTabBtn) orderTabBtn.classList.remove('active');
+      if (loadedTabBtn) loadedTabBtn.classList.add('active');
+      if (orderTabContent) orderTabContent.classList.remove('active');
+      if (loadedTabContent) loadedTabContent.classList.add('active');
+      this.renderLoadedTab();
     }
   }
 
@@ -90,7 +112,6 @@ export class OrderPanel {
     }
 
     if (!this.currentOrder || !this.currentOrder.items || this.currentOrder.items.length === 0) {
-      // No existing order - use the new one
       this.currentOrder = order;
       delete this.currentOrder.navigationLocations;
     } else {
@@ -116,8 +137,11 @@ export class OrderPanel {
     // Reset confirm button text
     if (this.elements.confirmBtn) {
       this.elements.confirmBtn.textContent = 'Display on Map';
+      this.elements.confirmBtn.classList.remove('loading');
     }
 
+    // Switch to order tab when new order arrives
+    this.switchTab('order');
     this.render(summary);
   }
 
@@ -134,6 +158,7 @@ export class OrderPanel {
       summary: `${locations.length} location${locations.length > 1 ? 's' : ''} selected`
     };
 
+    this.switchTab('order');
     this.renderNavigationMode();
   }
 
@@ -229,7 +254,7 @@ export class OrderPanel {
   }
 
   /**
-   * Render the order panel.
+   * Render the order tab content.
    * @param {string} [summary] - Optional summary text
    */
   render(summary = '') {
@@ -297,8 +322,92 @@ export class OrderPanel {
         });
       });
     }
+  }
 
-    this.updateSaveButtonState();
+  /**
+   * Render the Loaded tab content from cache stats.
+   */
+  renderLoadedTab() {
+    const { loadedItems, loadedActions } = this.elements;
+    if (!loadedItems) return;
+
+    const stats = this.getCacheStats();
+    if (!stats || !stats.overlays || Object.keys(stats.overlays).length === 0) {
+      loadedItems.innerHTML = '<div style="color: #999; font-size: 12px; text-align: center; padding: 10px;">No data loaded</div>';
+      if (loadedActions) loadedActions.style.display = 'none';
+      return;
+    }
+
+    let html = '';
+    for (const [overlayId, info] of Object.entries(stats.overlays)) {
+      const name = formatOverlayName(overlayId);
+      const featureStr = `${info.features.toLocaleString()} event${info.features !== 1 ? 's' : ''}`;
+
+      // Format time range
+      let rangeStr = '';
+      if (info.rangeStart && info.rangeEnd) {
+        rangeStr = formatDateRange(info.rangeStart, info.rangeEnd);
+      } else if (info.yearRange && info.yearRange !== 'none') {
+        rangeStr = info.yearRange;
+      }
+
+      const sizeStr = parseFloat(info.sizeMB) >= 1
+        ? `${parseFloat(info.sizeMB).toFixed(1)} MB`
+        : `${Math.round(parseFloat(info.sizeMB) * 1024)} KB`;
+
+      const details = [featureStr, rangeStr, sizeStr].filter(Boolean).join(' - ');
+
+      html += `
+        <div class="loaded-item" data-overlay-id="${overlayId}">
+          <div class="loaded-item-info">
+            <div class="loaded-item-name">${escapeHtml(name)}</div>
+            <div class="loaded-item-details">${escapeHtml(details)}</div>
+          </div>
+          <button class="loaded-item-clear" data-clear-overlay="${overlayId}" title="Clear ${name}">Clear</button>
+        </div>
+      `;
+    }
+
+    // Totals
+    const totalFeatures = stats.totals.features || 0;
+    const totalMB = parseFloat(stats.totals.sizeMB || 0);
+    const totalStr = totalMB >= 1
+      ? `${totalMB.toFixed(1)} MB`
+      : `${Math.round(totalMB * 1024)} KB`;
+    html += `<div class="loaded-totals">${totalFeatures.toLocaleString()} features total (${totalStr})</div>`;
+
+    loadedItems.innerHTML = html;
+    if (loadedActions) loadedActions.style.display = 'flex';
+
+    // Bind clear buttons
+    loadedItems.querySelectorAll('.loaded-item-clear').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const overlayId = btn.dataset.clearOverlay;
+        this.clearSource(overlayId);
+      });
+    });
+  }
+
+  /**
+   * Clear a single source from loaded data.
+   * @param {string} overlayId - The overlay to clear
+   */
+  clearSource(overlayId) {
+    this.onClearSource(overlayId);
+    this.renderLoadedTab();
+  }
+
+  /**
+   * Clear all loaded data.
+   */
+  clearAllLoaded() {
+    const stats = this.getCacheStats();
+    if (!stats || !stats.overlays) return;
+
+    for (const overlayId of Object.keys(stats.overlays)) {
+      this.onClearSource(overlayId);
+    }
+    this.renderLoadedTab();
   }
 
   /**
@@ -310,12 +419,17 @@ export class OrderPanel {
     const { confirmBtn } = this.elements;
     if (confirmBtn) {
       confirmBtn.disabled = true;
-      confirmBtn.textContent = 'Loading...';
+      confirmBtn.textContent = 'Sending...';
+      confirmBtn.classList.add('loading');
     }
 
     try {
       await this.onConfirm(this.currentOrder);
-      this.updateCacheStatus();
+      // On success: clear order, switch to loaded tab
+      this.currentOrder = null;
+      this.render();
+      this.renderLoadedTab();
+      this.switchTab('loaded');
     } catch (error) {
       console.error('[OrderPanel] Confirm error:', error);
       this.addMessage('Sorry, something went wrong executing the order.', 'assistant');
@@ -323,6 +437,7 @@ export class OrderPanel {
       if (confirmBtn) {
         confirmBtn.disabled = false;
         confirmBtn.textContent = 'Display on Map';
+        confirmBtn.classList.remove('loading');
       }
     }
   }
@@ -337,202 +452,70 @@ export class OrderPanel {
     if (confirmBtn) {
       confirmBtn.disabled = true;
       confirmBtn.textContent = 'Queueing...';
+      confirmBtn.classList.add('loading');
     }
 
     try {
       await this.onQueue(this.currentOrder);
-      if (confirmBtn) confirmBtn.textContent = 'Queued';
+      if (confirmBtn) {
+        confirmBtn.textContent = 'Queued';
+        confirmBtn.classList.remove('loading');
+      }
     } catch (error) {
       console.error('[OrderPanel] Queue error:', error);
       this.addMessage('Failed to queue order. Try again.', 'assistant');
-      if (confirmBtn) confirmBtn.textContent = 'Display on Map';
+      if (confirmBtn) {
+        confirmBtn.textContent = 'Display on Map';
+        confirmBtn.classList.remove('loading');
+      }
     } finally {
       if (confirmBtn) confirmBtn.disabled = false;
     }
   }
+}
 
-  /**
-   * Prompt user for name and save current order.
-   */
-  promptSaveOrder() {
-    if (!this.currentOrder || !this.currentOrder.items || this.currentOrder.items.length === 0) {
-      this.addMessage('No order to save. Add some data first.', 'assistant');
-      return;
-    }
+/**
+ * Format overlay ID to display name.
+ * @param {string} overlayId
+ * @returns {string}
+ */
+function formatOverlayName(overlayId) {
+  const names = {
+    earthquakes: 'Earthquakes',
+    volcanoes: 'Volcanoes',
+    tsunamis: 'Tsunamis',
+    hurricanes: 'Hurricanes',
+    wildfires: 'Wildfires',
+    tornadoes: 'Tornadoes',
+    floods: 'Floods',
+    drought: 'Drought',
+    landslides: 'Landslides',
+    temperature: 'Temperature',
+    precipitation: 'Precipitation',
+    wind: 'Wind',
+    humidity: 'Humidity'
+  };
+  return names[overlayId] || overlayId.charAt(0).toUpperCase() + overlayId.slice(1);
+}
 
-    const name = prompt('Enter a name for this saved order:');
-    if (!name || !name.trim()) return;
+/**
+ * Format a timestamp range as a readable date range string.
+ * @param {number} startMs - Start timestamp in ms
+ * @param {number} endMs - End timestamp in ms
+ * @returns {string}
+ */
+function formatDateRange(startMs, endMs) {
+  const start = new Date(startMs);
+  const end = new Date(endMs);
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-    const savedOrder = SavedOrders.save(
-      name.trim(),
-      this.currentOrder.items,
-      this.currentOrder.summary
-    );
+  const startYear = start.getFullYear();
+  const endYear = end.getFullYear();
 
-    if (savedOrder) {
-      this.addMessage(`Order saved as "${savedOrder.name}"`, 'assistant');
-      this.updateSavedOrdersIndicator();
-    }
+  if (startYear === endYear) {
+    return `${months[start.getMonth()]} - ${months[end.getMonth()]} ${endYear}`;
   }
-
-  /**
-   * Show the saved orders list.
-   */
-  showSavedOrdersList() {
-    const { savedOrdersList, savedOrdersItems } = this.elements;
-    if (!savedOrdersList || !savedOrdersItems) return;
-
-    const orders = SavedOrders.getAll();
-
-    if (orders.length === 0) {
-      savedOrdersItems.innerHTML = '<div class="saved-orders-empty">No saved orders</div>';
-    } else {
-      savedOrdersItems.innerHTML = orders.map(order => `
-        <div class="saved-order-item" data-order-id="${order.id}">
-          <span class="saved-order-name">${order.name}</span>
-          <div class="saved-order-actions">
-            <button class="saved-order-btn load" data-action="load" data-id="${order.id}" title="Load this order">Load</button>
-            <button class="saved-order-btn delete" data-action="delete" data-id="${order.id}" title="Delete this order">Del</button>
-          </div>
-        </div>
-      `).join('');
-
-      // Bind action buttons
-      savedOrdersItems.querySelectorAll('.saved-order-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const action = btn.dataset.action;
-          const id = btn.dataset.id;
-          if (action === 'load') this.loadSavedOrder(id);
-          else if (action === 'delete') this.deleteSavedOrder(id);
-        });
-      });
-    }
-
-    savedOrdersList.style.display = 'block';
-  }
-
-  /**
-   * Hide the saved orders list.
-   */
-  hideSavedOrdersList() {
-    const { savedOrdersList } = this.elements;
-    if (savedOrdersList) savedOrdersList.style.display = 'none';
-  }
-
-  /**
-   * Toggle saved orders list visibility.
-   */
-  toggleSavedOrdersList() {
-    const { savedOrdersList } = this.elements;
-    if (savedOrdersList && savedOrdersList.style.display === 'block') {
-      this.hideSavedOrdersList();
-    } else {
-      this.showSavedOrdersList();
-    }
-  }
-
-  /**
-   * Load a saved order by ID.
-   * @param {string} orderId - ID of the order to load
-   */
-  loadSavedOrder(orderId) {
-    const order = SavedOrders.load(orderId);
-    if (order) {
-      this.currentOrder = {
-        items: JSON.parse(JSON.stringify(order.items)),
-        summary: order.summary || 'Loaded saved order: ' + order.name
-      };
-      this.render(this.currentOrder.summary);
-      this.hideSavedOrdersList();
-      this.addMessage(`Loaded saved order: "${order.name}"`, 'assistant');
-    }
-  }
-
-  /**
-   * Delete a saved order by ID.
-   * @param {string} orderId - ID of the order to delete
-   */
-  deleteSavedOrder(orderId) {
-    const orders = SavedOrders.getAll();
-    const order = orders.find(o => o.id === orderId);
-    const name = order ? order.name : orderId;
-
-    if (confirm(`Delete saved order "${name}"?`)) {
-      if (SavedOrders.deleteOrder(orderId)) {
-        this.showSavedOrdersList();  // Refresh list
-        this.updateSavedOrdersIndicator();
-        this.addMessage(`Deleted saved order: "${name}"`, 'assistant');
-      }
-    }
-  }
-
-  /**
-   * Update save button enabled state.
-   */
-  updateSaveButtonState() {
-    const { saveBtn } = this.elements;
-    if (!saveBtn) return;
-    const hasOrder = this.currentOrder && this.currentOrder.items && this.currentOrder.items.length > 0;
-    saveBtn.disabled = !hasOrder;
-  }
-
-  /**
-   * Update saved orders indicator (count badge).
-   */
-  updateSavedOrdersIndicator() {
-    const { savedOrdersIndicator, savedOrdersCount } = this.elements;
-    if (!savedOrdersIndicator || !savedOrdersCount) return;
-
-    const orders = SavedOrders.getAll();
-    const count = orders.length;
-
-    if (count === 0) {
-      savedOrdersIndicator.style.display = 'none';
-    } else {
-      savedOrdersIndicator.style.display = 'flex';
-      savedOrdersCount.textContent = `${count} saved order${count !== 1 ? 's' : ''}`;
-    }
-  }
-
-  /**
-   * Update cache status display using getCacheStats callback.
-   */
-  updateCacheStatus() {
-    const { cacheStatus, cacheStatusText } = this.elements;
-    if (!cacheStatus || !cacheStatusText) return;
-
-    try {
-      const stats = this.getCacheStats();
-      if (!stats) {
-        cacheStatusText.textContent = 'Cache: empty';
-        cacheStatus.className = 'cache-status';
-        return;
-      }
-
-      const totalFeatures = stats.totals?.features || 0;
-      const sizeMB = parseFloat(stats.totals?.sizeMB || 0);
-
-      if (totalFeatures === 0) {
-        cacheStatusText.textContent = 'Cache: empty';
-        cacheStatus.className = 'cache-status';
-      } else {
-        let sizeStr;
-        if (sizeMB >= 1) {
-          sizeStr = `${sizeMB.toFixed(1)} MB`;
-        } else {
-          const sizeKB = sizeMB * 1024;
-          sizeStr = `${Math.round(sizeKB)} KB`;
-        }
-
-        cacheStatusText.textContent = `Cache: ${totalFeatures.toLocaleString()} features (${sizeStr})`;
-        cacheStatus.className = sizeMB > 500 ? 'cache-status warning' : 'cache-status has-data';
-      }
-    } catch (error) {
-      console.warn('[OrderPanel] Error updating cache status:', error);
-      cacheStatusText.textContent = 'Cache: error';
-    }
-  }
+  return `${months[start.getMonth()]} ${startYear} - ${months[end.getMonth()]} ${endYear}`;
 }
 
 /**
