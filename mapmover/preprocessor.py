@@ -1188,6 +1188,25 @@ def detect_reference_lookup(query: str) -> Optional[dict]:
     """
     query_lower = query.lower()
 
+    # System help pattern - "how do you work?", "what can you do?", "help", etc.
+    help_keywords = [
+        "how do you work", "how does this work", "what can you do",
+        "what can i do", "what can i ask", "how do i use",
+        "how to use", "what is this", "what are you",
+        "tell me about yourself", "help me", "what do you do",
+        "how do i ask", "what questions can i",
+    ]
+    # Match exact "help" but not "help me find earthquakes" (only short help queries)
+    is_short_help = query_lower.strip() in ["help", "?", "help me", "how"]
+    if is_short_help or any(kw in query_lower for kw in help_keywords):
+        ref_path = REFERENCE_DIR / "system_help.json"
+        if ref_path.exists():
+            return {
+                "type": "system_help",
+                "file": str(ref_path),
+                "content": load_reference_file(ref_path)
+            }
+
     # SDG pattern - "What is SDG 7?" or "goal 7" or "sustainable development goal 7"
     sdg_match = re.search(r'sdg\s*(\d+)|goal\s*(\d+)|sustainable development goal\s*(\d+)', query_lower)
     if sdg_match:
@@ -3003,5 +3022,39 @@ def build_tier4_context(hints: dict) -> str:
     elif ref_type in ["country_info", "economy_info", "government_info", "trade_info"]:
         # These already have country_data with formatted output
         return "[Reference: Detailed country information available from World Factbook.]"
+
+    elif ref_type == "system_help" and content:
+        # Format system help reference
+        about = content.get("about", {})
+        how = content.get("how_it_works", {})
+        capabilities = content.get("capabilities", [])
+        examples = content.get("example_queries", {})
+        tips = content.get("tips", [])
+
+        parts = [
+            f"[SYSTEM HELP REFERENCE]",
+            f"Name: {about.get('name', 'Geographic Data Explorer')}",
+            f"Description: {about.get('description', '')}",
+            "",
+            f"How it works: {how.get('summary', '')}",
+            "",
+            "Capabilities:",
+        ]
+        for cap in capabilities:
+            parts.append(f"  - {cap}")
+
+        parts.append("")
+        parts.append("Example queries the user can try:")
+        for category, queries in examples.items():
+            parts.append(f"  {category}:")
+            for q in queries[:2]:  # Show 2 per category to keep concise
+                parts.append(f"    - \"{q}\"")
+
+        parts.append("")
+        parts.append("Tips:")
+        for tip in tips[:3]:  # Top 3 tips
+            parts.append(f"  - {tip}")
+
+        return "\n".join(parts)
 
     return ""

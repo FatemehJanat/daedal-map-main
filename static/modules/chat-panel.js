@@ -448,6 +448,7 @@ export const ChatManager = {
       await this.clearSession();
       this.addMessage(
         'Welcome! I can help you explore geographic data.<br><br>' +
+        'Ask me for details about how I work, or make a request for data.<br><br>' +
         'To build a map query, I need three things: <b>location</b> (where), ' +
         '<b>time period</b> (when), and <b>data</b> (what).<br><br>' +
         'Try: "What data do you have for Europe?" or "Show me CO2 emissions trends worldwide"',
@@ -481,6 +482,7 @@ export const ChatManager = {
           await this.clearSession();
           this.addMessage(
             'Welcome! I can help you explore geographic data.\n\n' +
+            'Ask me for details about how I work, or make a request for data.\n\n' +
             'Try: "What data do you have for Europe?" or "Show me CO2 emissions trends worldwide"',
             'assistant'
           );

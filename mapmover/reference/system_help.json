@@ -1,0 +1,54 @@
+{
+  "about": {
+    "name": "Geographic Data Explorer",
+    "description": "An interactive map visualization system that lets you explore global data through natural language. Ask questions about any location and see the answers on the map."
+  },
+  "capabilities": [
+    "Show demographic and economic data as colored map regions (choropleth)",
+    "Display disaster events (earthquakes, hurricanes, volcanoes, tsunamis, tornadoes, floods, wildfires, landslides) as map overlays",
+    "Navigate to any location by name (countries, states, cities, counties)",
+    "Filter data by time period and severity",
+    "Answer questions about what data is available for any region",
+    "Provide reference information (capitals, currencies, languages, country backgrounds)"
+  ],
+  "how_it_works": {
+    "summary": "Tell me what you want to see on the map. I need three things: WHERE (location), WHAT (data type), and WHEN (time period). I will build a data request, show you what I understood, and you confirm before it loads.",
+    "steps": [
+      "You ask a question or make a request in plain language",
+      "I figure out the location, data type, and time range",
+      "I show you what I understood and ask you to confirm",
+      "The data loads onto the map as a visualization"
+    ]
+  },
+  "example_queries": {
+    "demographics": [
+      "Show me population of Europe",
+      "GDP per capita for South America 2020",
+      "CO2 emissions trends worldwide"
+    ],
+    "disasters": [
+      "Show earthquakes in California",
+      "Hurricane tracks in the Atlantic 2024",
+      "What volcanoes have erupted near Japan?",
+      "Show wildfires in Australia"
+    ],
+    "exploration": [
+      "What data do you have for Germany?",
+      "What disasters have affected Florida?",
+      "Zoom to Tokyo",
+      "What is SDG 7?"
+    ],
+    "reference": [
+      "What is the capital of Brazil?",
+      "What currency does Japan use?",
+      "Tell me about France"
+    ]
+  },
+  "tips": [
+    "You can ask 'what data do you have for [country]?' to see available datasets",
+    "Use the overlay selector on the left to toggle disaster layers",
+    "Zoom into a region first, then ask questions - I will use your current view as context",
+    "You can ask follow-up questions - I remember the conversation",
+    "Try 'show me [metric] for [region] [year]' for specific data requests"
+  ]
+}

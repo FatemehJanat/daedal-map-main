@@ -4,7 +4,16 @@ Centralized path configuration for the county-map project.
 This module provides all file system paths used across the application.
 Supports both local development and deployed environments via environment variables.
 
-Folder Structure:
+Environment Variables (in priority order):
+    DATA_ROOT        - Direct path to data folder (parquet, geometry, catalog)
+                       e.g. DATA_ROOT=/mnt/data or DATA_ROOT=D:/county-map-data
+    COUNTY_MAP_ROOT  - Path to county-map app folder
+    GLOBAL_MAP_ROOT  - Path to parent folder containing all project folders
+
+For deployment, only DATA_ROOT is needed. The app reads all parquet files
+from DATA_ROOT/global/, DATA_ROOT/countries/, and DATA_ROOT/geometry/.
+
+Folder Structure (local development):
     global map/
         county-map/         - Public app (this repo)
         county-map-private/ - Protected converters and build scripts
@@ -52,6 +61,29 @@ def _get_global_root() -> Path:
     return _get_project_root().parent
 
 
+def _get_data_root() -> Path:
+    """
+    Get the county-map-data folder (parquet files, geometry, catalog).
+
+    Priority:
+    1. DATA_ROOT environment variable (direct path to data folder)
+    2. Derived from GLOBAL_MAP_ROOT / county-map-data (local dev with full data)
+    3. Bundled data/ folder inside the app (demo/deployment fallback)
+    """
+    env_root = os.environ.get("DATA_ROOT")
+    if env_root:
+        return Path(env_root)
+
+    # Check for full data folder as sibling (local development)
+    full_data = _get_global_root() / "county-map-data"
+    if full_data.exists():
+        return full_data
+
+    # Fallback to bundled demo data inside the app
+    bundled = _get_project_root() / "data"
+    return bundled
+
+
 # =============================================================================
 # Core Path Definitions
 # =============================================================================
@@ -65,7 +97,7 @@ GLOBAL_ROOT = _get_global_root()
 # The 4 main folders
 APP_ROOT = PROJECT_ROOT  # county-map (public app)
 PRIVATE_ROOT = GLOBAL_ROOT / "county-map-private"  # Protected converters
-DATA_ROOT = GLOBAL_ROOT / "county-map-data"  # Processed data
+DATA_ROOT = _get_data_root()  # Processed data (configurable independently)
 RAW_ROOT = GLOBAL_ROOT / "county-map-raw"  # Raw downloads
 
 # =============================================================================
@@ -189,5 +221,10 @@ def validate_paths(verbose: bool = False) -> dict:
 if __name__ == "__main__":
     # Quick validation when run directly
     print("Path Configuration:")
+    print("=" * 60)
+    print(f"  DATA_ROOT env:       {os.environ.get('DATA_ROOT', '(not set)')}")
+    print(f"  GLOBAL_MAP_ROOT env: {os.environ.get('GLOBAL_MAP_ROOT', '(not set)')}")
+    print(f"  COUNTY_MAP_ROOT env: {os.environ.get('COUNTY_MAP_ROOT', '(not set)')}")
+    print(f"  Resolved DATA_ROOT:  {DATA_ROOT}")
     print("=" * 60)
     validate_paths(verbose=True)
