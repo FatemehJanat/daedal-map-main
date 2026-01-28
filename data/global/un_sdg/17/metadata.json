@@ -1321,7 +1321,7 @@
       }
     },
     "it_net_bbnd": {
-      "name": "Fixed broadband subscriptions per 100 inhabitants, by speed (per 100 inhabitants)",
+      "name": "Fixed broadband subscriptions per 100\u00c2\u00a0inhabitants, by speed (per 100 inhabitants)",
       "unit": "PER_100_POP",
       "aggregation": "sum",
       "keywords": [],
@@ -2469,7 +2469,7 @@
       }
     },
     "tx_exp_gbmrch": {
-      "name": "Developing countries’ and least developed countries’ share of global merchandise exports (%)",
+      "name": "Developing countries\u00e2\u20ac\u2122 and least developed countries\u00e2\u20ac\u2122 share of global merchandise exports (%)",
       "unit": "PERCENT",
       "aggregation": "sum",
       "keywords": [],
@@ -2497,7 +2497,7 @@
       }
     },
     "tx_exp_gbsvr": {
-      "name": "Developing countries’ and least developed countries’ share of global services exports (%)",
+      "name": "Developing countries\u00e2\u20ac\u2122 and least developed countries\u00e2\u20ac\u2122 share of global services exports (%)",
       "unit": "PERCENT",
       "aggregation": "sum",
       "keywords": [],
@@ -2525,7 +2525,7 @@
       }
     },
     "tx_imp_gbmrch": {
-      "name": "Developing countries’ and least developed countries’ share of global merchandise imports (%)",
+      "name": "Developing countries\u00e2\u20ac\u2122 and least developed countries\u00e2\u20ac\u2122 share of global merchandise imports (%)",
       "unit": "PERCENT",
       "aggregation": "sum",
       "keywords": [],
@@ -2553,7 +2553,7 @@
       }
     },
     "tx_imp_gbsvr": {
-      "name": "Developing countries’ and least developed countries’ share of global services imports (%)",
+      "name": "Developing countries\u00e2\u20ac\u2122 and least developed countries\u00e2\u20ac\u2122 share of global services imports (%)",
       "unit": "PERCENT",
       "aggregation": "sum",
       "keywords": [],
@@ -2581,5 +2581,6 @@
       }
     }
   },
-  "llm_summary": "1990-2025. Current account balance as a proportion of GDP (%), Portfolio investment, net (Balance of Payments, current United States dollars), Foreign direct investment, net inflows, as a proportion of GDP (%), Volume of remittances (in United States dollars) as a proportion of total GDP (%), Amount of tracked exported Environmentally Sound Technologies (current United States dollars)."
+  "llm_summary": "1990-2025. Current account balance as a proportion of GDP (%), Portfolio investment, net (Balance of Payments, current United States dollars), Foreign direct investment, net inflows, as a proportion of GDP (%), Volume of remittances (in United States dollars) as a proportion of total GDP (%), Amount of tracked exported Environmentally Sound Technologies (current United States dollars).",
+  "metric_count": 89
 }

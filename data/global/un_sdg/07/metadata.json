@@ -163,7 +163,7 @@
       }
     },
     "eg_egy_rnew": {
-      "name": "Installed renewable electricity-generating capacity (watts per capita)",
+      "name": "Installed renewable\u00c2\u00a0electricity-generating capacity (watts per capita)",
       "unit": "W_PER_CAPITA",
       "aggregation": "sum",
       "keywords": [],
@@ -247,5 +247,6 @@
       }
     }
   },
-  "llm_summary": "2000-2023. Proportion of population with access to electricity, by urban/rural (%), Proportion of population with primary reliance on clean fuels and technology (%), Energy intensity level of primary energy (megajoules per constant 2021 purchasing power parity GDP), Installed renewable electricity-generating capacity (watts per capita), Renewable energy share in the total final energy consumption (%)."
+  "llm_summary": "2000-2023. Proportion of population with access to electricity, by urban/rural (%), Proportion of population with primary reliance on clean fuels and technology (%), Energy intensity level of primary energy (megajoules per constant 2021 purchasing power parity GDP), Installed renewable\u00c2\u00a0electricity-generating capacity (watts per capita), Renewable energy share in the total final energy consumption (%).",
+  "metric_count": 6
 }

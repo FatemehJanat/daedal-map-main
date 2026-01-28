@@ -6,8 +6,19 @@
   "description": "Global volcanic eruptions 2015-2025 from the Smithsonian GVP catalog merged with NOAA Significant Eruptions. Includes VEI ratings, eruption agents, and impact data.",
   "category": "hazard",
   "data_type": "events",
-  "topic_tags": ["volcano", "eruption", "geology"],
-  "keywords": ["volcano", "eruption", "VEI", "lava", "ash", "magma"],
+  "topic_tags": [
+    "volcano",
+    "eruption",
+    "geology"
+  ],
+  "keywords": [
+    "volcano",
+    "eruption",
+    "VEI",
+    "lava",
+    "ash",
+    "magma"
+  ],
   "geographic_level": "global",
   "geographic_coverage": {
     "type": "global",
@@ -39,5 +50,6 @@
       "unit": "count"
     }
   },
-  "llm_summary": "383 volcanic eruption events worldwide, 2015-2025. Includes VEI ratings, eruption agents, and impact data from NOAA significant eruptions."
+  "llm_summary": "383 volcanic eruption events worldwide, 2015-2025. Includes VEI ratings, eruption agents, and impact data from NOAA significant eruptions.",
+  "metric_count": 3
 }

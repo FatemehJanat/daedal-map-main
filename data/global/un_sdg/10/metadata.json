@@ -790,5 +790,6 @@
       }
     }
   },
-  "llm_summary": "1963-2024. Total assistance for development, by donor countries (millions of current United States dollars), Total assistance for development, by recipient countries (millions of current United States dollars), Non-performing loans to total gross loans (%), Return on assets (%), Regulatory capital to assets (%)."
+  "llm_summary": "1963-2024. Total assistance for development, by donor countries (millions of current United States dollars), Total assistance for development, by recipient countries (millions of current United States dollars), Non-performing loans to total gross loans (%), Return on assets (%), Regulatory capital to assets (%).",
+  "metric_count": 25
 }

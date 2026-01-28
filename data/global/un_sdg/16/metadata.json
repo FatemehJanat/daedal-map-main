@@ -1874,5 +1874,6 @@
       }
     }
   },
-  "llm_summary": "1990-2025. Total value of inward illicit financial flows, Total value of outward illicit financial flows, Primary government expenditures as a proportion of original approved budget (%), Bribery incidence (% of firms experiencing at least one bribe payment request), Prevalence rate of bribery, by sex (%)."
+  "llm_summary": "1990-2025. Total value of inward illicit financial flows, Total value of outward illicit financial flows, Primary government expenditures as a proportion of original approved budget (%), Bribery incidence (% of firms experiencing at least one bribe payment request), Prevalence rate of bribery, by sex (%).",
+  "metric_count": 64
 }

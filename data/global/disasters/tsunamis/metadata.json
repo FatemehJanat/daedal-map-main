@@ -6,8 +6,18 @@
   "description": "Tsunami source events 2015-2025 from NOAA NCEI. Includes earthquake/volcano/landslide triggered tsunamis with water height and runup observations.",
   "category": "hazard",
   "data_type": "events",
-  "topic_tags": ["tsunami", "natural_hazard", "ocean"],
-  "keywords": ["tsunami", "tidal wave", "earthquake", "coastal", "wave height"],
+  "topic_tags": [
+    "tsunami",
+    "natural_hazard",
+    "ocean"
+  ],
+  "keywords": [
+    "tsunami",
+    "tidal wave",
+    "earthquake",
+    "coastal",
+    "wave height"
+  ],
   "geographic_level": "global",
   "geographic_coverage": {
     "type": "global",
@@ -38,5 +48,6 @@
       "unit": "scale"
     }
   },
-  "llm_summary": "193 tsunami events worldwide, 2015-2025. Includes triggering earthquake magnitude, water height, and intensity data."
+  "llm_summary": "193 tsunami events worldwide, 2015-2025. Includes triggering earthquake magnitude, water height, and intensity data.",
+  "metric_count": 3
 }

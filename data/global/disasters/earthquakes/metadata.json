@@ -6,8 +6,19 @@
   "description": "Global earthquake events magnitude 5.0+, filtered to 2015-2025. Sourced from USGS real-time catalog and NOAA Significant Earthquakes database.",
   "category": "hazard",
   "data_type": "events",
-  "topic_tags": ["earthquake", "seismic", "geology"],
-  "keywords": ["earthquake", "seismic", "magnitude", "fault", "tremor", "aftershock"],
+  "topic_tags": [
+    "earthquake",
+    "seismic",
+    "geology"
+  ],
+  "keywords": [
+    "earthquake",
+    "seismic",
+    "magnitude",
+    "fault",
+    "tremor",
+    "aftershock"
+  ],
   "geographic_level": "global",
   "geographic_coverage": {
     "type": "global",
@@ -28,17 +39,28 @@
     "magnitude": {
       "name": "Magnitude",
       "unit": "magnitude",
-      "stats": {"min": 5.0, "max": 9.1, "median": 5.2, "mean": 5.4}
+      "stats": {
+        "min": 5.0,
+        "max": 9.1,
+        "median": 5.2,
+        "mean": 5.4
+      }
     },
     "depth_km": {
       "name": "Depth",
       "unit": "km",
-      "stats": {"min": 0, "max": 700, "median": 20, "mean": 55}
+      "stats": {
+        "min": 0,
+        "max": 700,
+        "median": 20,
+        "mean": 55
+      }
     },
     "deaths": {
       "name": "Deaths",
       "unit": "count"
     }
   },
-  "llm_summary": "19,132 earthquake events magnitude 5.0+ worldwide, 2015-2025. Includes depth, felt radius, and impact data where available."
+  "llm_summary": "19,132 earthquake events magnitude 5.0+ worldwide, 2015-2025. Includes depth, felt radius, and impact data where available.",
+  "metric_count": 3
 }

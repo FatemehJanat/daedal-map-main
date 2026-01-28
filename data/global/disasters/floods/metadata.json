@@ -6,8 +6,19 @@
   "description": "Global flood events 2015-2019 with satellite-derived flood extents from the Dartmouth Flood Observatory. Includes flood perimeters, duration, severity, and impact data.",
   "category": "hazard",
   "data_type": "events",
-  "topic_tags": ["flood", "hydrology", "water"],
-  "keywords": ["flood", "inundation", "river", "rainfall", "overflow", "DFO"],
+  "topic_tags": [
+    "flood",
+    "hydrology",
+    "water"
+  ],
+  "keywords": [
+    "flood",
+    "inundation",
+    "river",
+    "rainfall",
+    "overflow",
+    "DFO"
+  ],
   "geographic_level": "global",
   "geographic_coverage": {
     "type": "global",
@@ -36,7 +47,10 @@
     "severity": {
       "name": "Severity",
       "unit": "scale",
-      "values": [1, 2]
+      "values": [
+        1,
+        2
+      ]
     },
     "deaths": {
       "name": "Deaths",
@@ -47,5 +61,6 @@
       "unit": "count"
     }
   },
-  "llm_summary": "610 flood events worldwide, 2015-2019. Includes flood extent, duration, severity, deaths, and displacement data. Source data ends in 2019."
+  "llm_summary": "610 flood events worldwide, 2015-2019. Includes flood extent, duration, severity, deaths, and displacement data. Source data ends in 2019.",
+  "metric_count": 5
 }

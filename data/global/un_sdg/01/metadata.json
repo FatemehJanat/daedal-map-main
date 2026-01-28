@@ -1525,5 +1525,6 @@
       }
     }
   },
-  "llm_summary": "1963-2024. Official development assistance grants for poverty reduction, by donor countries (percentage of GNI), Official development assistance grants for poverty reduction, by recipient countries (percentage of GNI), Average proportion of deprivations for people multidimensionally poor (%), Average share of weighted deprivations of total households (intensity) (%), Proportion of population living in multidimensional poverty (%)."
+  "llm_summary": "1963-2024. Official development assistance grants for poverty reduction, by donor countries (percentage of GNI), Official development assistance grants for poverty reduction, by recipient countries (percentage of GNI), Average proportion of deprivations for people multidimensionally poor (%), Average share of weighted deprivations of total households (intensity) (%), Proportion of population living in multidimensional poverty (%).",
+  "metric_count": 51
 }

@@ -192,7 +192,7 @@
       }
     },
     "eg_egy_rnew": {
-      "name": "Installed renewable electricity-generating capacity (watts per capita)",
+      "name": "Installed renewable\u00c2\u00a0electricity-generating capacity (watts per capita)",
       "unit": "W_PER_CAPITA",
       "aggregation": "sum",
       "keywords": [],
@@ -1704,5 +1704,6 @@
       }
     }
   },
-  "llm_summary": "2000-2025. Global food loss index, Food loss percentage (%), Food waste (Tonnes), Food waste per capita (KG), Installed renewable electricity-generating capacity (watts per capita)."
+  "llm_summary": "2000-2025. Global food loss index, Food loss percentage (%), Food waste (Tonnes), Food waste per capita (KG), Installed renewable\u00c2\u00a0electricity-generating capacity (watts per capita).",
+  "metric_count": 58
 }

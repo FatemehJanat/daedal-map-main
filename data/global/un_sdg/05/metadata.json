@@ -256,7 +256,7 @@
       }
     },
     "sg_lgl_lndfemod": {
-      "name": "Degree to which the legal framework (including customary law) guarantees women’s equal rights to land ownership and/o...",
+      "name": "Degree to which the legal framework (including customary law) guarantees women\u00e2\u20ac\u2122s equal rights to land ownership and/o...",
       "unit": "SCORE",
       "aggregation": "sum",
       "keywords": [],
@@ -844,5 +844,6 @@
       }
     }
   },
-  "llm_summary": "2009-2025. Proportion of individuals who own a mobile telephone, by sex (%), Countries with systems to track and make public allocations for gender equality and women's empowerment (0 = does not..., Current number of seats in national parliaments (number), Legal frameworks that promote, enforce and monitor gender equality (percentage of achievement, 0 - 100) -- Area 3: em..., Legal frameworks that promote, enforce and monitor gender equality (percentage of achievement, 0 - 100) -- Area 1: ov...."
+  "llm_summary": "2009-2025. Proportion of individuals who own a mobile telephone, by sex (%), Countries with systems to track and make public allocations for gender equality and women's empowerment (0 = does not..., Current number of seats in national parliaments (number), Legal frameworks that promote, enforce and monitor gender equality (percentage of achievement, 0 - 100) -- Area 3: em..., Legal frameworks that promote, enforce and monitor gender equality (percentage of achievement, 0 - 100) -- Area 1: ov....",
+  "metric_count": 28
 }

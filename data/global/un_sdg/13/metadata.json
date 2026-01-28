@@ -59,7 +59,7 @@
   "expected_next_update": "unknown",
   "metrics": {
     "en_atm_ghgt_aip": {
-      "name": "Total greenhouse gas emissions without LULUCF for Annex I Parties (Mt CO₂ equivalent)",
+      "name": "Total greenhouse gas emissions without LULUCF for Annex I Parties (Mt CO\u00e2\u201a\u201a equivalent)",
       "unit": "MT_CO2E",
       "aggregation": "sum",
       "keywords": [],
@@ -87,7 +87,7 @@
       }
     },
     "en_atm_ghgt_naip": {
-      "name": "Total greenhouse gas emissions without LULUCF for non-Annex I Parties (Mt CO₂ equivalent)",
+      "name": "Total greenhouse gas emissions without LULUCF for non-Annex I Parties (Mt CO\u00e2\u201a\u201a equivalent)",
       "unit": "MT_CO2E",
       "aggregation": "sum",
       "keywords": [],
@@ -647,5 +647,6 @@
       }
     }
   },
-  "llm_summary": "2000-2024. Total greenhouse gas emissions without LULUCF for Annex I Parties (Mt CO₂ equivalent), Total greenhouse gas emissions without LULUCF for non-Annex I Parties (Mt CO₂ equivalent), Extent to which global citizenship education and education for sustainable development are mainstreamed in curricula, Extent to which global citizenship education and education for sustainable development are mainstreamed in national e..., Extent to which global citizenship education and education for sustainable development are mainstreamed in student as...."
+  "llm_summary": "2000-2024. Total greenhouse gas emissions without LULUCF for Annex I Parties (Mt CO\u00e2\u201a\u201a equivalent), Total greenhouse gas emissions without LULUCF for non-Annex I Parties (Mt CO\u00e2\u201a\u201a equivalent), Extent to which global citizenship education and education for sustainable development are mainstreamed in curricula, Extent to which global citizenship education and education for sustainable development are mainstreamed in national e..., Extent to which global citizenship education and education for sustainable development are mainstreamed in student as....",
+  "metric_count": 21
 }

@@ -720,5 +720,6 @@
       }
     }
   },
-  "llm_summary": "2000-2025. Total official flows for infrastructure, by recipient countries (millions of constant 2023 United States dollars), Carbon dioxide emissions from fuel combustion (millions of tonnes), Carbon dioxide emissions per unit of GDP PPP (kilogrammes of CO2 per constant 2021 United States dollars), Carbon dioxide emissions from manufacturing industries per unit of manufacturing value added (kilogrammes of CO2 per ..., Proportion of small-scale industries with a loan or line of credit (%)."
+  "llm_summary": "2000-2025. Total official flows for infrastructure, by recipient countries (millions of constant 2023 United States dollars), Carbon dioxide emissions from fuel combustion (millions of tonnes), Carbon dioxide emissions per unit of GDP PPP (kilogrammes of CO2 per constant 2021 United States dollars), Carbon dioxide emissions from manufacturing industries per unit of manufacturing value added (kilogrammes of CO2 per ..., Proportion of small-scale industries with a loan or line of credit (%).",
+  "metric_count": 23
 }

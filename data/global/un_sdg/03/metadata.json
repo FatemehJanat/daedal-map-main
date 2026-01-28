@@ -868,5 +868,6 @@
       }
     }
   },
-  "llm_summary": "1985-2024. Total official development assistance to medical research and basic health sectors, gross disbursement, by recipient ..., Total official development assistance to medical research and basic health sectors, net disbursement, by recipient co..., Age-standardized mortality rate attributed to ambient air pollution (deaths per 100,000 population), Proportion of the target population who received 3 doses of diphtheria-tetanus-pertussis (DTP3) vaccine (%), Proportion of the target population who received the final dose of human papillomavirus (HPV) vaccine (%)."
+  "llm_summary": "1985-2024. Total official development assistance to medical research and basic health sectors, gross disbursement, by recipient ..., Total official development assistance to medical research and basic health sectors, net disbursement, by recipient co..., Age-standardized mortality rate attributed to ambient air pollution (deaths per 100,000 population), Proportion of the target population who received 3 doses of diphtheria-tetanus-pertussis (DTP3) vaccine (%), Proportion of the target population who received the final dose of human papillomavirus (HPV) vaccine (%).",
+  "metric_count": 28
 }

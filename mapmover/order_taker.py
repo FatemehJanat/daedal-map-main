@@ -14,7 +14,7 @@ from pathlib import Path
 from anthropic import Anthropic
 from dotenv import load_dotenv
 
-from .data_loading import load_catalog, load_source_metadata
+from .data_loading import load_catalog, load_source_metadata, get_source_path
 from .preprocessor import build_tier3_context, build_tier4_context
 from .constants import CHAT_HISTORY_LLM_LIMIT
 
@@ -158,12 +158,53 @@ def build_system_prompt(catalog: dict, conversions: dict) -> str:
             # Show both name and source_id so LLM knows exact ID to use
             lines.append(f"- {name} [source_id: {sid}]: {temp.get('start', '?')}-{temp.get('end', '?')}")
 
-        # Group UN SDGs
+        # List UN SDGs individually with human-readable goal titles
         if sdg_sources:
-            years = [s.get("temporal_coverage", {}) for s in sdg_sources]
-            min_year = min(t.get("start", 9999) or 9999 for t in years)
-            max_year = max(t.get("end", 0) or 0 for t in years)
-            lines.append(f"- UN Sustainable Development Goals (un_sdg_01 to un_sdg_17): {min_year}-{max_year} [17 goals]")
+            # Sort by source_id to show in order (un_sdg_01, un_sdg_02, etc.)
+            sdg_sources_sorted = sorted(sdg_sources, key=lambda s: s.get('source_id', ''))
+            for src in sdg_sources_sorted:
+                sid = src.get('source_id', '')
+                temp = src.get("temporal_coverage", {})
+                year_range = f"{temp.get('start', '?')}-{temp.get('end', '?')}"
+
+                # Get goal title - try catalog first, then fall back to file loading
+                goal_title = None
+
+                # Option 1: Check catalog's reference data (if catalog was rebuilt)
+                reference = src.get("reference", {})
+                if reference.get("goal"):
+                    goal_info = reference["goal"]
+                    goal_num = goal_info.get("number", "")
+                    goal_name = goal_info.get("name", "")
+                    if goal_num and goal_name:
+                        goal_title = f"SDG {goal_num}: {goal_name}"
+
+                # Option 2: Load reference.json directly (fallback for older catalogs)
+                if not goal_title:
+                    try:
+                        source_path = get_source_path(sid)
+                        if source_path:
+                            ref_path = source_path / "reference.json"
+                            if ref_path.exists():
+                                with open(ref_path, encoding='utf-8') as f:
+                                    ref_data = json.load(f)
+                                goal_info = ref_data.get("goal", {})
+                                goal_num = goal_info.get("number", "")
+                                goal_name = goal_info.get("name", "")
+                                if goal_num and goal_name:
+                                    goal_title = f"SDG {goal_num}: {goal_name}"
+                    except Exception:
+                        pass
+
+                # Option 3: Fall back to generic name
+                if not goal_title:
+                    try:
+                        goal_num = int(sid.split('_')[-1])
+                        goal_title = f"SDG {goal_num}"
+                    except:
+                        goal_title = src.get("source_name", sid)
+
+                lines.append(f"- {goal_title} [source_id: {sid}]: {year_range}")
 
         # Group World Factbook
         if factbook_sources:

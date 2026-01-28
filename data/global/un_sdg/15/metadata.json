@@ -641,7 +641,7 @@
       }
     },
     "er_ias_natbud": {
-      "name": "Countries with an allocation from the national budget to manage the threat of invasive alien species (1 = YES, 0 = NO)",
+      "name": "Countries with an allocation from the national budget to manage the threat of invasive alien species\u00c2\u00a0(1 = YES, 0 = NO)",
       "unit": "BOOL",
       "aggregation": "sum",
       "keywords": [],
@@ -1014,5 +1014,6 @@
       }
     }
   },
-  "llm_summary": "1993-2024. Proportion of land that is degraded over total land area (%), Forest area as a proportion of total land area (%), Above-ground biomass in forest (tonnes per hectare), Forest area certified under an independently verified certification scheme (thousands of hectares), Annual forest area change rate (%)."
+  "llm_summary": "1993-2024. Proportion of land that is degraded over total land area (%), Forest area as a proportion of total land area (%), Above-ground biomass in forest (tonnes per hectare), Forest area certified under an independently verified certification scheme (thousands of hectares), Annual forest area change rate (%).",
+  "metric_count": 33
 }

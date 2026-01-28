@@ -1266,5 +1266,6 @@
       }
     }
   },
-  "llm_summary": "1995-2025. Indicator of Food Price Anomalies (IFPA), by Consumer Food Price Index, Indicator of Food Price Anomalies (IFPA), by type of product, Proportion of agricultural land area that has achieved an acceptable or desirable level of use of agro-biodiversity s..., Proportion of agricultural land area that has achieved an acceptable or desirable level of wage rate in agriculture (%), Proportion of agricultural land area that has achieved an acceptable or desirable level of management of fertilizers (%)."
+  "llm_summary": "1995-2025. Indicator of Food Price Anomalies (IFPA), by Consumer Food Price Index, Indicator of Food Price Anomalies (IFPA), by type of product, Proportion of agricultural land area that has achieved an acceptable or desirable level of use of agro-biodiversity s..., Proportion of agricultural land area that has achieved an acceptable or desirable level of wage rate in agriculture (%), Proportion of agricultural land area that has achieved an acceptable or desirable level of management of fertilizers (%).",
+  "metric_count": 42
 }

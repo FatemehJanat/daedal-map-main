@@ -6,12 +6,26 @@
   "description": "Tornado events in USA (NOAA Storm Events) and Canada (CNTD/NTP), filtered to 2015-2025. Includes track paths, width, EF-scale ratings, and damage estimates.",
   "category": "hazard",
   "data_type": "events",
-  "topic_tags": ["tornado", "severe_weather", "natural_hazard"],
-  "keywords": ["tornado", "twister", "EF scale", "Fujita", "severe weather", "wind"],
+  "topic_tags": [
+    "tornado",
+    "severe_weather",
+    "natural_hazard"
+  ],
+  "keywords": [
+    "tornado",
+    "twister",
+    "EF scale",
+    "Fujita",
+    "severe weather",
+    "wind"
+  ],
   "geographic_level": "regional",
   "geographic_coverage": {
     "type": "regional",
-    "countries": ["USA", "CAN"],
+    "countries": [
+      "USA",
+      "CAN"
+    ],
     "description": "United States and Canada"
   },
   "temporal_coverage": {
@@ -29,7 +43,14 @@
     "tornado_scale": {
       "name": "EF/F Rating",
       "unit": "scale",
-      "values": ["EF0", "EF1", "EF2", "EF3", "EF4", "EF5"]
+      "values": [
+        "EF0",
+        "EF1",
+        "EF2",
+        "EF3",
+        "EF4",
+        "EF5"
+      ]
     },
     "tornado_length_mi": {
       "name": "Track Length",
@@ -44,5 +65,6 @@
       "unit": "count"
     }
   },
-  "llm_summary": "17,338 tornado events in USA and Canada, 2015-2025. Includes EF-scale ratings, track endpoints, path width, and damage data."
+  "llm_summary": "17,338 tornado events in USA and Canada, 2015-2025. Includes EF-scale ratings, track endpoints, path width, and damage data.",
+  "metric_count": 4
 }

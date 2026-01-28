@@ -739,5 +739,6 @@
       }
     }
   },
-  "llm_summary": "1996-2025. Beach litter originating from national land-based sources that ends in the beach (%), Beach litter originating from national land-based sources that ends in the beach (Tonnes), Exported beach litter originating from national land-based sources (Tonnes), Beach litter originating from national land-based sources that ends in the ocean (%), Beach litter originating from national land-based sources that ends in the ocean (Tonnes)."
+  "llm_summary": "1996-2025. Beach litter originating from national land-based sources that ends in the beach (%), Beach litter originating from national land-based sources that ends in the beach (Tonnes), Exported beach litter originating from national land-based sources (Tonnes), Beach litter originating from national land-based sources that ends in the ocean (%), Beach litter originating from national land-based sources that ends in the ocean (Tonnes).",
+  "metric_count": 23
 }

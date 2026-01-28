@@ -3,18 +3,28 @@
   "source_name": "Global Fire Atlas",
   "source_url": "https://zenodo.org/records/11400062",
   "license": "CC BY 4.0",
-  "description": "Global wildfire events 200+ km2, excluding USA and Canada, from the Global Fire Atlas (MODIS burned area product). Covers 2001-2024.",
+  "description": "Global wildfire events 200+ km2, excluding USA and Canada, from the Global Fire Atlas (MODIS burned area product). Covers 2014-2024.",
   "category": "hazard",
   "data_type": "events",
-  "topic_tags": ["wildfire", "fire", "natural_hazard"],
-  "keywords": ["wildfire", "fire", "burned area", "MODIS", "fire perimeter"],
+  "topic_tags": [
+    "wildfire",
+    "fire",
+    "natural_hazard"
+  ],
+  "keywords": [
+    "wildfire",
+    "fire",
+    "burned area",
+    "MODIS",
+    "fire perimeter"
+  ],
   "geographic_level": "global",
   "geographic_coverage": {
     "type": "global",
     "description": "Worldwide excluding USA and Canada (fires 200+ km2)"
   },
   "temporal_coverage": {
-    "start": 2001,
+    "start": 2014,
     "end": 2024,
     "granularity": "timestamp",
     "field": "timestamp"
@@ -28,12 +38,18 @@
     "area_km2": {
       "name": "Burned Area",
       "unit": "km2",
-      "stats": {"min": 200, "max": 50000, "median": 350, "mean": 600}
+      "stats": {
+        "min": 200,
+        "max": 50000,
+        "median": 350,
+        "mean": 600
+      }
     },
     "duration_days": {
       "name": "Fire Duration",
       "unit": "days"
     }
   },
-  "llm_summary": "11,235 wildfire events 200+ km2 worldwide (excluding USA/Canada), 2001-2024. Derived from MODIS burned area product."
+  "llm_summary": "11,235 wildfire events 200+ km2 worldwide (excluding USA/Canada), 2014-2024. Derived from MODIS burned area product.",
+  "metric_count": 2
 }

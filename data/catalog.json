@@ -1,6 +1,6 @@
 {
   "catalog_version": "1.0",
-  "last_updated": "2026-01-24",
+  "last_updated": "2026-01-27",
   "total_sources": 24,
   "sources": [
     {
@@ -586,7 +586,21 @@
         }
       },
       "llm_summary": "1963-2024. Official development assistance grants for poverty reduction, by donor countries (percentage of GNI), Official development assistance grants for poverty reduction, by recipient countries (percentage of GNI), Average proportion of deprivations for people multidimensionally poor (%), Average share of weighted deprivations of total households (intensity) (%), Proportion of population living in multidimensional poverty (%).",
-      "path": "global/un_sdg/01"
+      "path": "global/un_sdg/01",
+      "reference": {
+        "source_context": "United Nations Sustainable Development Goals Framework",
+        "goal": {
+          "number": 1,
+          "name": "No Poverty",
+          "full_title": "End poverty in all its forms everywhere",
+          "description": "Goal 1 calls for an end to poverty in all its manifestations by 2030. It also aims to ensure social protection for the poor and vulnerable, increase access to basic services and support people harmed by climate-related extreme events and other economic, social and environmental shocks and disasters.",
+          "target_count": 5
+        },
+        "shared_with": [
+          "un_sdg_08",
+          "un_sdg_10"
+        ]
+      }
     },
     {
       "source_id": "un_sdg_02",
@@ -1074,7 +1088,17 @@
         }
       },
       "llm_summary": "1995-2025. Indicator of Food Price Anomalies (IFPA), by Consumer Food Price Index, Indicator of Food Price Anomalies (IFPA), by type of product, Proportion of agricultural land area that has achieved an acceptable or desirable level of use of agro-biodiversity s..., Proportion of agricultural land area that has achieved an acceptable or desirable level of wage rate in agriculture (%), Proportion of agricultural land area that has achieved an acceptable or desirable level of management of fertilizers (%).",
-      "path": "global/un_sdg/02"
+      "path": "global/un_sdg/02",
+      "reference": {
+        "source_context": "United Nations Sustainable Development Goals Framework",
+        "goal": {
+          "number": 2,
+          "name": "Zero Hunger",
+          "full_title": "End hunger, achieve food security and improved nutrition and promote sustainable agriculture",
+          "description": "Goal 2 seeks to end hunger and all forms of malnutrition by 2030. It commits to universal access to safe, nutritious and sufficient food, and to double agricultural productivity and incomes of small-scale food producers.",
+          "target_count": 5
+        }
+      }
     },
     {
       "source_id": "un_sdg_03",
@@ -1416,7 +1440,17 @@
         }
       },
       "llm_summary": "1985-2024. Total official development assistance to medical research and basic health sectors, gross disbursement, by recipient ..., Total official development assistance to medical research and basic health sectors, net disbursement, by recipient co..., Age-standardized mortality rate attributed to ambient air pollution (deaths per 100,000 population), Proportion of the target population who received 3 doses of diphtheria-tetanus-pertussis (DTP3) vaccine (%), Proportion of the target population who received the final dose of human papillomavirus (HPV) vaccine (%).",
-      "path": "global/un_sdg/03"
+      "path": "global/un_sdg/03",
+      "reference": {
+        "source_context": "United Nations Sustainable Development Goals Framework",
+        "goal": {
+          "number": 3,
+          "name": "Good Health and Well-being",
+          "full_title": "Ensure healthy lives and promote well-being for all at all ages",
+          "description": "Goal 3 aims to ensure healthy lives and promote well-being for all at all ages. It addresses all major health priorities, including reproductive, maternal and child health; communicable, non-communicable and environmental diseases; universal health coverage; and access to medicines and vaccines.",
+          "target_count": 8
+        }
+      }
     },
     {
       "source_id": "un_sdg_04",
@@ -1756,7 +1790,17 @@
         }
       },
       "llm_summary": "2000-2024. Total official flows for scholarships, by recipient countries (millions of constant 2023 United States dollars), Proportion of schools with basic handwashing facilities, by education level (%), Proportion of schools with access to\u00a0computers for pedagogical purposes, by education level (%), Proportion of schools with access to\u00a0electricity, by education level (%), Proportion of schools with access to basic drinking water, by education level (%).",
-      "path": "global/un_sdg/04"
+      "path": "global/un_sdg/04",
+      "reference": {
+        "source_context": "United Nations Sustainable Development Goals Framework",
+        "goal": {
+          "number": 4,
+          "name": "Quality Education",
+          "full_title": "Ensure inclusive and equitable quality education and promote lifelong learning opportunities for all",
+          "description": "Goal 4 aims to ensure inclusive and equitable quality education at all levels. It focuses on access to early childhood development, free primary and secondary education, affordable vocational training, and eliminating gender and wealth disparities.",
+          "target_count": 6
+        }
+      }
     },
     {
       "source_id": "un_sdg_05",
@@ -2092,7 +2136,17 @@
         }
       },
       "llm_summary": "2009-2025. Proportion of individuals who own a mobile telephone, by sex (%), Countries with systems to track and make public allocations for gender equality and women's empowerment (0 = does not..., Current number of seats in national parliaments (number), Legal frameworks that promote, enforce and monitor gender equality (percentage of achievement, 0 - 100) -- Area 3: em..., Legal frameworks that promote, enforce and monitor gender equality (percentage of achievement, 0 - 100) -- Area 1: ov....",
-      "path": "global/un_sdg/05"
+      "path": "global/un_sdg/05",
+      "reference": {
+        "source_context": "United Nations Sustainable Development Goals Framework",
+        "goal": {
+          "number": 5,
+          "name": "Gender Equality",
+          "full_title": "Achieve gender equality and empower all women and girls",
+          "description": "Goal 5 aims to achieve gender equality and empower all women and girls. It targets ending all forms of discrimination and violence against women, eliminating harmful practices, ensuring equal participation in leadership, and providing universal access to reproductive rights.",
+          "target_count": 6
+        }
+      }
     },
     {
       "source_id": "un_sdg_06",
@@ -2708,7 +2762,17 @@
         }
       },
       "llm_summary": "2000-2025. Total official development assistance (gross disbursement) for water supply and sanitation, by recipient countries (m..., Proportion of transboundary basins (river and lake basins and aquifers) with an operational arrangement for water coo..., Proportion of transboundary aquifers with an operational arrangement for water cooperation (%), Proportion of transboundary river and lake basins with an operational arrangement for water cooperation (%), Proportion of groundwater bodies with good ambient water quality (%).",
-      "path": "global/un_sdg/06"
+      "path": "global/un_sdg/06",
+      "reference": {
+        "source_context": "United Nations Sustainable Development Goals Framework",
+        "goal": {
+          "number": 6,
+          "name": "Clean Water and Sanitation",
+          "full_title": "Ensure availability and sustainable management of water and sanitation for all",
+          "description": "Goal 6 focuses on ensuring availability and sustainable management of water and sanitation for all. It addresses safe drinking water, sanitation, hygiene, water quality, water-use efficiency, integrated water resources management, and protecting water-related ecosystems.",
+          "target_count": 6
+        }
+      }
     },
     {
       "source_id": "un_sdg_07",
@@ -2843,7 +2907,17 @@
         }
       },
       "llm_summary": "2000-2023. Proportion of population with access to electricity, by urban/rural (%), Proportion of population with primary reliance on clean fuels and technology (%), Energy intensity level of primary energy (megajoules per constant 2021 purchasing power parity GDP), Installed renewable\u00a0electricity-generating capacity (watts per capita), Renewable energy share in the total final energy consumption (%).",
-      "path": "global/un_sdg/07"
+      "path": "global/un_sdg/07",
+      "reference": {
+        "source_context": "United Nations Sustainable Development Goals Framework",
+        "goal": {
+          "number": 7,
+          "name": "Affordable and Clean Energy",
+          "full_title": "Ensure access to affordable, reliable, sustainable and modern energy for all",
+          "description": "Goal 7 aims to ensure access to affordable, reliable, sustainable and modern energy for all. It focuses on universal access to electricity and clean cooking fuels, increasing the share of renewable energy, improving energy efficiency, and enhancing international cooperation on clean energy research.",
+          "target_count": 3
+        }
+      }
     },
     {
       "source_id": "un_sdg_08",
@@ -3068,7 +3142,21 @@
         }
       },
       "llm_summary": "2000-2024. Total official flows (commitments) for Aid for Trade, by donor countries (millions of constant 2023 United States dol..., Total official flows (commitments) for Aid for Trade, by recipient countries (millions of constant 2023 United States..., Total official flows (disbursement) for Aid for Trade, by donor countries (millions of constant 2023 United States do..., Total official flows (disbursement) for Aid for Trade, by recipient countries (millions of constant 2023 United State..., Domestic material consumption per capita, by type of raw material (tonnes).",
-      "path": "global/un_sdg/08"
+      "path": "global/un_sdg/08",
+      "reference": {
+        "source_context": "United Nations Sustainable Development Goals Framework",
+        "goal": {
+          "number": 8,
+          "name": "Decent Work and Economic Growth",
+          "full_title": "Promote sustained, inclusive and sustainable economic growth, full and productive employment and decent work for all",
+          "description": "Goal 8 promotes sustained, inclusive economic growth, full and productive employment and decent work for all. It addresses GDP growth, economic productivity, job creation, entrepreneurship, labor rights, safe working environments, and sustainable tourism.",
+          "target_count": 8
+        },
+        "shared_with": [
+          "un_sdg_01",
+          "un_sdg_10"
+        ]
+      }
     },
     {
       "source_id": "un_sdg_09",
@@ -3370,7 +3458,17 @@
         }
       },
       "llm_summary": "2000-2025. Total official flows for infrastructure, by recipient countries (millions of constant 2023 United States dollars), Carbon dioxide emissions from fuel combustion (millions of tonnes), Carbon dioxide emissions per unit of GDP PPP (kilogrammes of CO2 per constant 2021 United States dollars), Carbon dioxide emissions from manufacturing industries per unit of manufacturing value added (kilogrammes of CO2 per ..., Proportion of small-scale industries with a loan or line of credit (%).",
-      "path": "global/un_sdg/09"
+      "path": "global/un_sdg/09",
+      "reference": {
+        "source_context": "United Nations Sustainable Development Goals Framework",
+        "goal": {
+          "number": 9,
+          "name": "Industry, Innovation and Infrastructure",
+          "full_title": "Build resilient infrastructure, promote inclusive and sustainable industrialization and foster innovation",
+          "description": "Goal 9 focuses on building resilient infrastructure, promoting inclusive and sustainable industrialization and fostering innovation. It addresses quality infrastructure, sustainable industrialization, access to financial services for small enterprises, technological capabilities, and research and development.",
+          "target_count": 5
+        }
+      }
     },
     {
       "source_id": "un_sdg_10",
@@ -3697,7 +3795,21 @@
         }
       },
       "llm_summary": "1963-2024. Total assistance for development, by donor countries (millions of current United States dollars), Total assistance for development, by recipient countries (millions of current United States dollars), Non-performing loans to total gross loans (%), Return on assets (%), Regulatory capital to assets (%).",
-      "path": "global/un_sdg/10"
+      "path": "global/un_sdg/10",
+      "reference": {
+        "source_context": "United Nations Sustainable Development Goals Framework",
+        "goal": {
+          "number": 10,
+          "name": "Reduced Inequalities",
+          "full_title": "Reduce inequality within and among countries",
+          "description": "Goal 10 addresses reducing inequality within and among countries. It focuses on income growth for the bottom 40%, social, economic and political inclusion, equal opportunity, reduced inequalities of outcome, safe migration, and improved representation for developing countries in global institutions.",
+          "target_count": 7
+        },
+        "shared_with": [
+          "un_sdg_01",
+          "un_sdg_08"
+        ]
+      }
     },
     {
       "source_id": "un_sdg_11",
@@ -4224,7 +4336,17 @@
         }
       },
       "llm_summary": "2000-2025. Average share of urban population with convenient access to open public spaces (%), Annual mean levels of fine particulate matter (population-weighted), by location (micrograms per cubic meter), Ratio of land consumption rate to population growth rate, Proportion of urban population living in inadequate housing (%), Municipal Solid Waste collection coverage, by cities (%).",
-      "path": "global/un_sdg/11"
+      "path": "global/un_sdg/11",
+      "reference": {
+        "source_context": "United Nations Sustainable Development Goals Framework",
+        "goal": {
+          "number": 11,
+          "name": "Sustainable Cities and Communities",
+          "full_title": "Make cities and human settlements inclusive, safe, resilient and sustainable",
+          "description": "Goal 11 aims to make cities and human settlements inclusive, safe, resilient and sustainable. It addresses housing, transport systems, urbanization planning, cultural and natural heritage, disaster impacts, environmental impacts of cities, and access to green and public spaces.",
+          "target_count": 7
+        }
+      }
     },
     {
       "source_id": "un_sdg_12",
@@ -4880,7 +5002,17 @@
         }
       },
       "llm_summary": "2000-2025. Global food loss index, Food loss percentage (%), Food waste (Tonnes), Food waste per capita (KG), Installed renewable\u00a0electricity-generating capacity (watts per capita).",
-      "path": "global/un_sdg/12"
+      "path": "global/un_sdg/12",
+      "reference": {
+        "source_context": "United Nations Sustainable Development Goals Framework",
+        "goal": {
+          "number": 12,
+          "name": "Responsible Consumption and Production",
+          "full_title": "Ensure sustainable consumption and production patterns",
+          "description": "Goal 12 focuses on ensuring sustainable consumption and production patterns. It addresses sustainable management of natural resources, food waste reduction, chemicals and waste management, sustainable practices by companies, sustainable public procurement, and sustainable lifestyles.",
+          "target_count": 8
+        }
+      }
     },
     {
       "source_id": "un_sdg_13",
@@ -5145,7 +5277,17 @@
         }
       },
       "llm_summary": "2000-2024. Total greenhouse gas emissions without LULUCF for Annex I Parties (Mt CO\u2082 equivalent), Total greenhouse gas emissions without LULUCF for non-Annex I Parties (Mt CO\u2082 equivalent), Extent to which global citizenship education and education for sustainable development are mainstreamed in curricula, Extent to which global citizenship education and education for sustainable development are mainstreamed in national e..., Extent to which global citizenship education and education for sustainable development are mainstreamed in student as....",
-      "path": "global/un_sdg/13"
+      "path": "global/un_sdg/13",
+      "reference": {
+        "source_context": "United Nations Sustainable Development Goals Framework",
+        "goal": {
+          "number": 13,
+          "name": "Climate Action",
+          "full_title": "Take urgent action to combat climate change and its impacts",
+          "description": "Goal 13 calls for urgent action to combat climate change and its impacts. It focuses on strengthening resilience and adaptive capacity to climate-related hazards, integrating climate change measures into national policies, improving education and awareness on climate change mitigation and adaptation.",
+          "target_count": 3
+        }
+      }
     },
     {
       "source_id": "un_sdg_14",
@@ -5457,7 +5599,17 @@
         }
       },
       "llm_summary": "1996-2025. Beach litter originating from national land-based sources that ends in the beach (%), Beach litter originating from national land-based sources that ends in the beach (Tonnes), Exported beach litter originating from national land-based sources (Tonnes), Beach litter originating from national land-based sources that ends in the ocean (%), Beach litter originating from national land-based sources that ends in the ocean (Tonnes).",
-      "path": "global/un_sdg/14"
+      "path": "global/un_sdg/14",
+      "reference": {
+        "source_context": "United Nations Sustainable Development Goals Framework",
+        "goal": {
+          "number": 14,
+          "name": "Life Below Water",
+          "full_title": "Conserve and sustainably use the oceans, seas and marine resources for sustainable development",
+          "description": "Goal 14 focuses on conserving and sustainably using the oceans, seas and marine resources. It addresses marine pollution, ocean acidification, overfishing, marine protected areas, and the sustainable use of marine resources by small island developing states and least developed countries.",
+          "target_count": 7
+        }
+      }
     },
     {
       "source_id": "un_sdg_15",
@@ -5864,7 +6016,17 @@
         }
       },
       "llm_summary": "1993-2024. Proportion of land that is degraded over total land area (%), Forest area as a proportion of total land area (%), Above-ground biomass in forest (tonnes per hectare), Forest area certified under an independently verified certification scheme (thousands of hectares), Annual forest area change rate (%).",
-      "path": "global/un_sdg/15"
+      "path": "global/un_sdg/15",
+      "reference": {
+        "source_context": "United Nations Sustainable Development Goals Framework",
+        "goal": {
+          "number": 15,
+          "name": "Life on Land",
+          "full_title": "Protect, restore and promote sustainable use of terrestrial ecosystems, sustainably manage forests, combat desertification, and halt and reverse land degradation and halt biodiversity loss",
+          "description": "Goal 15 focuses on protecting, restoring and promoting sustainable use of terrestrial ecosystems, managing forests sustainably, combating desertification, halting and reversing land degradation, and halting biodiversity loss.",
+          "target_count": 9
+        }
+      }
     },
     {
       "source_id": "un_sdg_16",
@@ -6573,7 +6735,17 @@
         }
       },
       "llm_summary": "1990-2025. Total value of inward illicit financial flows, Total value of outward illicit financial flows, Primary government expenditures as a proportion of original approved budget (%), Bribery incidence (% of firms experiencing at least one bribe payment request), Prevalence rate of bribery, by sex (%).",
-      "path": "global/un_sdg/16"
+      "path": "global/un_sdg/16",
+      "reference": {
+        "source_context": "United Nations Sustainable Development Goals Framework",
+        "goal": {
+          "number": 16,
+          "name": "Peace, Justice and Strong Institutions",
+          "full_title": "Promote peaceful and inclusive societies for sustainable development, provide access to justice for all and build effective, accountable and inclusive institutions at all levels",
+          "description": "Goal 16 promotes peaceful and inclusive societies, provides access to justice for all and builds effective, accountable and inclusive institutions. It addresses violence, abuse, trafficking, rule of law, illicit financial flows, corruption, transparent institutions, and inclusive decision-making.",
+          "target_count": 9
+        }
+      }
     },
     {
       "source_id": "un_sdg_17",
@@ -7539,7 +7711,17 @@
         }
       },
       "llm_summary": "1990-2025. Current account balance as a proportion of GDP (%), Portfolio investment, net (Balance of Payments, current United States dollars), Foreign direct investment, net inflows, as a proportion of GDP (%), Volume of remittances (in United States dollars) as a proportion of total GDP (%), Amount of tracked exported Environmentally Sound Technologies (current United States dollars).",
-      "path": "global/un_sdg/17"
+      "path": "global/un_sdg/17",
+      "reference": {
+        "source_context": "United Nations Sustainable Development Goals Framework",
+        "goal": {
+          "number": 17,
+          "name": "Partnerships for the Goals",
+          "full_title": "Strengthen the means of implementation and revitalize the Global Partnership for Sustainable Development",
+          "description": "Goal 17 focuses on strengthening the means of implementation and revitalizing the Global Partnership for Sustainable Development. It addresses finance, technology, capacity-building, trade, policy coherence, partnerships, and data monitoring and accountability.",
+          "target_count": 11
+        }
+      }
     },
     {
       "source_id": "global_earthquakes",
@@ -7568,7 +7750,7 @@
         "uncommonly_included": [],
         "region_coverage": {}
       },
-      "coverage_description": "Global",
+      "coverage_description": "0/200 common (missing 0)",
       "temporal_coverage": {
         "start": 2015,
         "end": 2025,
@@ -7628,7 +7810,7 @@
         "uncommonly_included": [],
         "region_coverage": {}
       },
-      "coverage_description": "Global",
+      "coverage_description": "0/200 common (missing 0)",
       "temporal_coverage": {
         "start": 2015,
         "end": 2019,
@@ -7703,7 +7885,7 @@
         "uncommonly_included": [],
         "region_coverage": {}
       },
-      "coverage_description": "Global",
+      "coverage_description": "0/200 common (missing 0)",
       "temporal_coverage": {
         "start": 2015,
         "end": 2025,
@@ -7825,7 +8007,7 @@
         "uncommonly_included": [],
         "region_coverage": {}
       },
-      "coverage_description": "Global",
+      "coverage_description": "0/200 common (missing 0)",
       "temporal_coverage": {
         "start": 2015,
         "end": 2025,
@@ -7885,7 +8067,7 @@
         "uncommonly_included": [],
         "region_coverage": {}
       },
-      "coverage_description": "Global",
+      "coverage_description": "0/200 common (missing 0)",
       "temporal_coverage": {
         "start": 2015,
         "end": 2025,
@@ -7944,7 +8126,7 @@
         "uncommonly_included": [],
         "region_coverage": {}
       },
-      "coverage_description": "Global",
+      "coverage_description": "0/200 common (missing 0)",
       "temporal_coverage": {
         "start": 2001,
         "end": 2024,

@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Optional
 import logging
 
-from .data_loading import load_catalog, load_source_metadata
+from .data_loading import load_catalog, load_source_metadata, get_source_path
 from .paths import DATA_ROOT, GEOMETRY_DIR as GEOM_DIR, COUNTRIES_DIR
 
 logger = logging.getLogger(__name__)
@@ -1689,11 +1689,27 @@ def detect_source_from_query(query: str) -> Optional[dict]:
     """
     query_lower = query.lower()
     catalog = load_catalog()
-    
+
     if not catalog:
         return None
-    
+
     sources = catalog.get("sources", [])
+
+    # Handle common aliases and patterns BEFORE main loop
+    # SDG patterns: "SDG 8", "sdg8", "SDG-8", "goal 8", "sustainable development goal 8"
+    import re
+    sdg_pattern = re.search(r'\b(?:sdg|sustainable\s+development\s+goal)[\s\-_]*(\d{1,2})\b', query_lower)
+    if sdg_pattern:
+        goal_num = int(sdg_pattern.group(1))
+        if 1 <= goal_num <= 17:
+            sdg_source_id = f"un_sdg_{goal_num:02d}"
+            # Find this source in catalog
+            for source in sources:
+                if source.get("source_id") == sdg_source_id:
+                    return {
+                        "source_id": sdg_source_id,
+                        "source_name": source.get("source_name", f"UN SDG Goal {goal_num}")
+                    }
     source_matches = []
     
     for source in sources:
@@ -2833,7 +2849,8 @@ def build_tier3_context(hints: dict) -> str:
                 f"[LOCATION: {location['country_name']} (loc_id={location['iso3']})]"
             )
 
-    # If user mentioned a specific data source, show its available metrics
+    # If user mentioned a specific data source, inject FULL metadata
+    # LLM needs all metrics with both column names (for JSON orders) and human names (for replies)
     detected_source = hints.get("detected_source")
     if detected_source:
         source_id = detected_source.get("source_id")
@@ -2841,23 +2858,43 @@ def build_tier3_context(hints: dict) -> str:
         metadata = load_source_metadata(source_id)
         if metadata:
             metrics = metadata.get("metrics", {})
-            metric_names = list(metrics.keys())[:10]
             temporal = metadata.get("temporal_coverage", {})
             year_range = f"{temporal.get('start', '?')}-{temporal.get('end', '?')}"
-            total_metrics = len(metrics)
-            metric_display = []
-            for m in metric_names:
-                info = metrics.get(m, {})
-                name = info.get("name", m)
-                unit = info.get("unit", "")
-                if unit and unit != "unknown":
-                    metric_display.append(f"{name} ({unit})")
-                else:
-                    metric_display.append(name)
+
+            # Build full metrics mapping: column_name -> human_name
+            # LLM needs column names for JSON orders, human names for user replies
+            metrics_mapping = {}
+            for col, info in metrics.items():
+                human_name = info.get("name", col)
+                # Truncate very long names but keep them useful
+                if len(human_name) > 80:
+                    human_name = human_name[:77] + "..."
+                metrics_mapping[col] = human_name
+
+            # Try to load reference.json for additional context (goal titles, descriptions)
+            reference_context = ""
+            try:
+                source_path = get_source_path(source_id)
+                ref_path = source_path / "reference.json"
+                if ref_path.exists():
+                    import json as ref_json
+                    with open(ref_path, encoding='utf-8') as f:
+                        ref_data = ref_json.load(f)
+                    # Extract goal info for SDGs
+                    if ref_data.get("goal"):
+                        goal = ref_data["goal"]
+                        reference_context = f"\nGoal: {goal.get('name', '')}\nDescription: {goal.get('description', '')}"
+            except Exception:
+                pass  # Reference file is optional
+
             msg = f"[SOURCE DETECTED: {source_name}]"
-            msg += f" Years: {year_range}. Total metrics: {total_metrics}."
-            msg += f" Available metrics: {', '.join(metric_display)}."
-            msg += " (Show only human-readable names to user, never column names. Say 'I can get them all' not '*'.)"
+            msg += f"\nYears: {year_range}. Total metrics: {len(metrics)}."
+            if reference_context:
+                msg += reference_context
+            msg += f"\n\nALL METRICS (use column name in JSON 'metric' field, human name when talking to user):\n"
+            for col, human in metrics_mapping.items():
+                msg += f'  "{col}": {human}\n'
+            msg += "\n(REPLY RULES: When listing metrics to user, show max 10 and use human names only. Say 'I can get them all' not '*'.)"
             context_parts.append(msg)
 
     # Add resolved region details

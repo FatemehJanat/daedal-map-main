@@ -499,5 +499,6 @@
       }
     }
   },
-  "llm_summary": "2000-2024. Total official flows (commitments) for Aid for Trade, by donor countries (millions of constant 2023 United States dol..., Total official flows (commitments) for Aid for Trade, by recipient countries (millions of constant 2023 United States..., Total official flows (disbursement) for Aid for Trade, by donor countries (millions of constant 2023 United States do..., Total official flows (disbursement) for Aid for Trade, by recipient countries (millions of constant 2023 United State..., Domestic material consumption per capita, by type of raw material (tonnes)."
+  "llm_summary": "2000-2024. Total official flows (commitments) for Aid for Trade, by donor countries (millions of constant 2023 United States dol..., Total official flows (commitments) for Aid for Trade, by recipient countries (millions of constant 2023 United States..., Total official flows (disbursement) for Aid for Trade, by donor countries (millions of constant 2023 United States do..., Total official flows (disbursement) for Aid for Trade, by recipient countries (millions of constant 2023 United State..., Domestic material consumption per capita, by type of raw material (tonnes).",
+  "metric_count": 15
 }

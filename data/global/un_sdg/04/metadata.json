@@ -120,7 +120,7 @@
       }
     },
     "se_acs_cmptr": {
-      "name": "Proportion of schools with access to computers for pedagogical purposes, by education level (%)",
+      "name": "Proportion of schools with access to\u00c2\u00a0computers for pedagogical purposes, by education level (%)",
       "unit": "PERCENT",
       "aggregation": "sum",
       "keywords": [],
@@ -148,7 +148,7 @@
       }
     },
     "se_acs_elect": {
-      "name": "Proportion of schools with access to electricity, by education level (%)",
+      "name": "Proportion of schools with access to\u00c2\u00a0electricity, by education level (%)",
       "unit": "PERCENT",
       "aggregation": "sum",
       "keywords": [],
@@ -848,5 +848,6 @@
       }
     }
   },
-  "llm_summary": "2000-2024. Total official flows for scholarships, by recipient countries (millions of constant 2023 United States dollars), Proportion of schools with basic handwashing facilities, by education level (%), Proportion of schools with access to computers for pedagogical purposes, by education level (%), Proportion of schools with access to electricity, by education level (%), Proportion of schools with access to basic drinking water, by education level (%)."
+  "llm_summary": "2000-2024. Total official flows for scholarships, by recipient countries (millions of constant 2023 United States dollars), Proportion of schools with basic handwashing facilities, by education level (%), Proportion of schools with access to\u00c2\u00a0computers for pedagogical purposes, by education level (%), Proportion of schools with access to\u00c2\u00a0electricity, by education level (%), Proportion of schools with access to basic drinking water, by education level (%).",
+  "metric_count": 28
 }

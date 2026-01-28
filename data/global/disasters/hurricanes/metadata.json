@@ -6,8 +6,20 @@
   "description": "Global tropical cyclone tracks 2015-2025 from IBTrACS, merging data from all regional agencies (NHC, JTWC, JMA, BOM, IMD). Includes position, intensity, wind radii, and pressure.",
   "category": "hazard",
   "data_type": "events",
-  "topic_tags": ["hurricane", "typhoon", "cyclone", "tropical_storm"],
-  "keywords": ["hurricane", "typhoon", "cyclone", "tropical storm", "wind", "storm surge"],
+  "topic_tags": [
+    "hurricane",
+    "typhoon",
+    "cyclone",
+    "tropical_storm"
+  ],
+  "keywords": [
+    "hurricane",
+    "typhoon",
+    "cyclone",
+    "tropical storm",
+    "wind",
+    "storm surge"
+  ],
   "geographic_level": "global",
   "geographic_coverage": {
     "type": "global",
@@ -28,13 +40,24 @@
     "wind_kt": {
       "name": "Wind Speed",
       "unit": "knots",
-      "stats": {"min": 15, "max": 185, "median": 40, "mean": 48}
+      "stats": {
+        "min": 15,
+        "max": 185,
+        "median": 40,
+        "mean": 48
+      }
     },
     "pressure_mb": {
       "name": "Pressure",
       "unit": "millibars",
-      "stats": {"min": 870, "max": 1020, "median": 996, "mean": 990}
+      "stats": {
+        "min": 870,
+        "max": 1020,
+        "median": 996,
+        "mean": 990
+      }
     }
   },
-  "llm_summary": "1,177 tropical storms/hurricanes/typhoons worldwide, 2015-2025. Includes track positions with wind speed, pressure, and wind radii data."
+  "llm_summary": "1,177 tropical storms/hurricanes/typhoons worldwide, 2015-2025. Includes track positions with wind speed, pressure, and wind radii data.",
+  "metric_count": 2
 }

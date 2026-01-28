@@ -1341,5 +1341,6 @@
       }
     }
   },
-  "llm_summary": "2000-2025. Average share of urban population with convenient access to open public spaces (%), Annual mean levels of fine particulate matter (population-weighted), by location (micrograms per cubic meter), Ratio of land consumption rate to population growth rate, Proportion of urban population living in inadequate housing (%), Municipal Solid Waste collection coverage, by cities (%)."
+  "llm_summary": "2000-2025. Average share of urban population with convenient access to open public spaces (%), Annual mean levels of fine particulate matter (population-weighted), by location (micrograms per cubic meter), Ratio of land consumption rate to population growth rate, Proportion of urban population living in inadequate housing (%), Municipal Solid Waste collection coverage, by cities (%).",
+  "metric_count": 45
 }

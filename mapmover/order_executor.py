@@ -23,6 +23,7 @@ from .geometry_handlers import (
 )
 
 from .paths import DATA_ROOT, CATALOG_PATH
+from .data_loading import load_source_metadata
 
 CONVERSIONS_PATH = Path(__file__).parent / "conversions.json"
 REFERENCE_DIR = Path(__file__).parent / "reference"
@@ -705,11 +706,20 @@ def execute_order(order: dict) -> dict:
             "count": 0
         }
 
-    # Check if any item uses event mode
-    event_mode = any(
-        item.get("mode") == "events"
-        for item in items
-    )
+    # Check if any item uses event mode (explicit or auto-detected from metadata)
+    def is_event_source(item):
+        # Explicit mode
+        if item.get("mode") == "events":
+            return True
+        # Auto-detect: check if source has data_type="events" in metadata
+        source_id = item.get("source_id")
+        if source_id:
+            metadata = load_source_metadata(source_id)
+            if metadata and metadata.get("data_type") == "events":
+                return True
+        return False
+
+    event_mode = any(is_event_source(item) for item in items)
     if event_mode:
         return execute_event_order(order)
 

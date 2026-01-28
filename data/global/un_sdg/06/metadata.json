@@ -1592,5 +1592,6 @@
       }
     }
   },
-  "llm_summary": "2000-2025. Total official development assistance (gross disbursement) for water supply and sanitation, by recipient countries (m..., Proportion of transboundary basins (river and lake basins and aquifers) with an operational arrangement for water coo..., Proportion of transboundary aquifers with an operational arrangement for water cooperation (%), Proportion of transboundary river and lake basins with an operational arrangement for water cooperation (%), Proportion of groundwater bodies with good ambient water quality (%)."
+  "llm_summary": "2000-2025. Total official development assistance (gross disbursement) for water supply and sanitation, by recipient countries (m..., Proportion of transboundary basins (river and lake basins and aquifers) with an operational arrangement for water coo..., Proportion of transboundary aquifers with an operational arrangement for water cooperation (%), Proportion of transboundary river and lake basins with an operational arrangement for water cooperation (%), Proportion of groundwater bodies with good ambient water quality (%).",
+  "metric_count": 54
 }
