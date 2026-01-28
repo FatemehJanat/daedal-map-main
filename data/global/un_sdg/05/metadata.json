@@ -1,22 +1,26 @@
 {
-  "source_id": "un_sdg_05",
-  "source_name": "UN SDG Goal 5",
+  "source_id": "05",
+  "source_name": "UN SDG Goal 5: Gender Equality",
   "source_url": "https://unstats.un.org/sdgs/indicators/database/",
-  "license": "UN Terms",
-  "description": "UN Sustainable Development Goal 5 indicators",
+  "license": "Open Data",
+  "description": "Sustainable Development Goal 5 (Gender Equality) indicators from UN Statistics Division.",
   "category": "development",
   "topic_tags": [
     "sdg",
-    "development",
-    "sustainability"
+    "goal5",
+    "gender",
+    "women",
+    "equality",
+    "empowerment"
   ],
   "keywords": [
-    "sustainable",
-    "development",
-    "goals",
-    "UN"
+    "gender equality",
+    "gender",
+    "women",
+    "equality",
+    "empowerment"
   ],
-  "last_updated": "2026-01-07",
+  "last_updated": "2026-01-28",
   "geographic_level": "admin_0",
   "geographic_coverage": {
     "type": "global",
@@ -53,101 +57,14 @@
     "granularity": "yearly",
     "field": "year"
   },
-  "row_count": 1597,
-  "file_size_mb": 0.04,
-  "data_completeness": 0.2,
+  "row_count": 1596,
+  "file_size_mb": 0.01,
+  "data_completeness": 0.42,
   "update_schedule": "unknown",
   "expected_next_update": "unknown",
   "metrics": {
-    "it_mob_own": {
-      "name": "Proportion of individuals who own a mobile telephone, by sex (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 11.4,
-        "max": 100.0,
-        "median": 85.45
-      },
-      "density": 0.656,
-      "years": [
-        2013,
-        2024
-      ],
-      "countries": 182,
-      "by_era": {
-        "2000+": {
-          "density": 0.656,
-          "countries": 182,
-          "stats": {
-            "min": 11.4,
-            "max": 100.0,
-            "median": 85.45
-          }
-        }
-      }
-    },
-    "sg_gen_eqpwnn": {
-      "name": "Countries with systems to track and make public allocations for gender equality and women's empowerment (0 = does not...",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 2.0,
-        "median": 1.0
-      },
-      "density": 0.094,
-      "years": [
-        2018,
-        2024
-      ],
-      "countries": 115,
-      "by_era": {
-        "2000+": {
-          "density": 0.094,
-          "countries": 115,
-          "stats": {
-            "min": 0.0,
-            "max": 2.0,
-            "median": 1.0
-          }
-        }
-      }
-    },
-    "sg_gen_parlnt": {
-      "name": "Current number of seats in national parliaments (number)",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 2977.0,
-        "median": 130.0
-      },
-      "density": 0.573,
-      "years": [
-        2021,
-        2025
-      ],
-      "countries": 186,
-      "by_era": {
-        "2000+": {
-          "density": 0.573,
-          "countries": 186,
-          "stats": {
-            "min": 0.0,
-            "max": 2977.0,
-            "median": 130.0
-          }
-        }
-      }
-    },
-    "sg_lgl_geneqemp": {
-      "name": "Legal frameworks that promote, enforce and monitor gender equality (percentage of achievement, 0 - 100) -- Area 3: em...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
+    "ind_5_1_1": {
+      "name": "Legal frameworks that promote, enforce and monitor gender equality (percentage of achievement, 0 - 100) -- Area 3: emplo",
       "stats": {
         "min": 0.0,
         "max": 100.0,
@@ -171,263 +88,33 @@
         }
       }
     },
-    "sg_lgl_geneqlfp": {
-      "name": "Legal frameworks that promote, enforce and monitor gender equality (percentage of achievement, 0 - 100) -- Area 1: ov...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 9.0909,
-        "max": 100.0,
-        "median": 70.0
-      },
-      "density": 0.247,
-      "years": [
-        2018,
-        2024
-      ],
-      "countries": 129,
-      "by_era": {
-        "2000+": {
-          "density": 0.247,
-          "countries": 129,
-          "stats": {
-            "min": 9.0909,
-            "max": 100.0,
-            "median": 70.0
-          }
-        }
-      }
-    },
-    "sg_lgl_geneqmar": {
-      "name": "Legal frameworks that promote, enforce and monitor gender equality (percentage of achievement, 0 - 100) -- Area 4: ma...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 9.0909,
-        "max": 100.0,
-        "median": 81.8182
-      },
-      "density": 0.247,
-      "years": [
-        2018,
-        2024
-      ],
-      "countries": 129,
-      "by_era": {
-        "2000+": {
-          "density": 0.247,
-          "countries": 129,
-          "stats": {
-            "min": 9.0909,
-            "max": 100.0,
-            "median": 81.8182
-          }
-        }
-      }
-    },
-    "sg_lgl_geneqvaw": {
-      "name": "Legal frameworks that promote, enforce and monitor gender equality (percentage of achievement, 0 - 100) --  Area 2: v...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 33.3333,
-        "max": 100.0,
-        "median": 77.7778
-      },
-      "density": 0.247,
-      "years": [
-        2018,
-        2024
-      ],
-      "countries": 129,
-      "by_era": {
-        "2000+": {
-          "density": 0.247,
-          "countries": 129,
-          "stats": {
-            "min": 33.3333,
-            "max": 100.0,
-            "median": 77.7778
-          }
-        }
-      }
-    },
-    "sg_lgl_lndfemod": {
-      "name": "Degree to which the legal framework (including customary law) guarantees women\u00e2\u20ac\u2122s equal rights to land ownership and/o...",
-      "unit": "SCORE",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 1.0,
-        "max": 6.0,
-        "median": 3.5
-      },
-      "density": 0.053,
-      "years": [
-        2019,
-        2024
-      ],
-      "countries": 82,
-      "by_era": {
-        "2000+": {
-          "density": 0.053,
-          "countries": 82,
-          "stats": {
-            "min": 1.0,
-            "max": 6.0,
-            "median": 3.5
-          }
-        }
-      }
-    },
-    "sh_lgr_acsrhe": {
-      "name": "Extent to which countries have laws and regulations that guarantee full and equal access to women and men aged 15 yea...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 16.0,
-        "max": 100.0,
-        "median": 79.5
-      },
-      "density": 0.07,
-      "years": [
-        2019,
-        2022
-      ],
-      "countries": 112,
-      "by_era": {
-        "2000+": {
-          "density": 0.07,
-          "countries": 112,
-          "stats": {
-            "min": 16.0,
-            "max": 100.0,
-            "median": 79.5
-          }
-        }
-      }
-    },
-    "sh_lgr_acsrhec1": {
-      "name": "(S.1.C.1) Extent to which countries have laws and regulations that guarantee full and equal access to women and men a...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
+    "ind_5_5_1": {
+      "name": "Current number of seats in national parliaments (number)",
       "stats": {
         "min": 0.0,
-        "max": 100.0,
-        "median": 100.0
+        "max": 2977.0,
+        "median": 130.0
       },
-      "density": 0.09,
+      "density": 0.573,
       "years": [
-        2019,
-        2022
+        2021,
+        2025
       ],
-      "countries": 143,
+      "countries": 186,
       "by_era": {
         "2000+": {
-          "density": 0.09,
-          "countries": 143,
+          "density": 0.573,
+          "countries": 186,
           "stats": {
             "min": 0.0,
-            "max": 100.0,
-            "median": 100.0
+            "max": 2977.0,
+            "median": 130.0
           }
         }
       }
     },
-    "sh_lgr_acsrhec10": {
-      "name": "(S.4.C.10) Extent to which countries have laws and regulations that guarantee full and equal access to women and men ...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 100.0
-      },
-      "density": 0.092,
-      "years": [
-        2019,
-        2022
-      ],
-      "countries": 147,
-      "by_era": {
-        "2000+": {
-          "density": 0.092,
-          "countries": 147,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 100.0
-          }
-        }
-      }
-    },
-    "sh_lgr_acsrhec11": {
-      "name": "(S.4.C.11) Extent to which countries have laws and regulations that guarantee full and equal access to women and men ...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 100.0
-      },
-      "density": 0.092,
-      "years": [
-        2019,
-        2022
-      ],
-      "countries": 147,
-      "by_era": {
-        "2000+": {
-          "density": 0.092,
-          "countries": 147,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 100.0
-          }
-        }
-      }
-    },
-    "sh_lgr_acsrhec12": {
-      "name": "(S.4.C.12) Extent to which countries have laws and regulations that guarantee full and equal access to women and men ...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 100.0
-      },
-      "density": 0.092,
-      "years": [
-        2019,
-        2022
-      ],
-      "countries": 147,
-      "by_era": {
-        "2000+": {
-          "density": 0.092,
-          "countries": 147,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 100.0
-          }
-        }
-      }
-    },
-    "sh_lgr_acsrhec13": {
-      "name": "(S.4.C.13) Extent to which countries have laws and regulations that guarantee full and equal access to women and men ...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
+    "ind_5_6_2": {
+      "name": "(S.4.C.13) Extent to which countries have laws and regulations that guarantee full and equal access to women and men age",
       "stats": {
         "min": 0.0,
         "max": 100.0,
@@ -451,375 +138,8 @@
         }
       }
     },
-    "sh_lgr_acsrhec2": {
-      "name": "(S.1.C.2) Extent to which countries have laws and regulations that guarantee full and equal access to women and men a...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 31.0,
-        "max": 100.0,
-        "median": 92.0
-      },
-      "density": 0.09,
-      "years": [
-        2019,
-        2022
-      ],
-      "countries": 143,
-      "by_era": {
-        "2000+": {
-          "density": 0.09,
-          "countries": 143,
-          "stats": {
-            "min": 31.0,
-            "max": 100.0,
-            "median": 92.0
-          }
-        }
-      }
-    },
-    "sh_lgr_acsrhec3": {
-      "name": "(S.1.C.3) Extent to which countries have laws and regulations that guarantee full and equal access to women and men a...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 50.0
-      },
-      "density": 0.08,
-      "years": [
-        2019,
-        2022
-      ],
-      "countries": 127,
-      "by_era": {
-        "2000+": {
-          "density": 0.08,
-          "countries": 127,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 50.0
-          }
-        }
-      }
-    },
-    "sh_lgr_acsrhec4": {
-      "name": "(S.1.C.4) Extent to which countries have laws and regulations that guarantee full and equal access to women and men a...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 100.0
-      },
-      "density": 0.09,
-      "years": [
-        2019,
-        2022
-      ],
-      "countries": 144,
-      "by_era": {
-        "2000+": {
-          "density": 0.09,
-          "countries": 144,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 100.0
-          }
-        }
-      }
-    },
-    "sh_lgr_acsrhec5": {
-      "name": "(S.2.C.5) Extent to which countries have laws and regulations that guarantee full and equal access to women and men a...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 100.0
-      },
-      "density": 0.092,
-      "years": [
-        2019,
-        2022
-      ],
-      "countries": 147,
-      "by_era": {
-        "2000+": {
-          "density": 0.092,
-          "countries": 147,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 100.0
-          }
-        }
-      }
-    },
-    "sh_lgr_acsrhec6": {
-      "name": "(S.2.C.6) Extent to which countries have laws and regulations that guarantee full and equal access to women and men a...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 100.0
-      },
-      "density": 0.092,
-      "years": [
-        2019,
-        2022
-      ],
-      "countries": 147,
-      "by_era": {
-        "2000+": {
-          "density": 0.092,
-          "countries": 147,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 100.0
-          }
-        }
-      }
-    },
-    "sh_lgr_acsrhec7": {
-      "name": "(S.2.C.7) Extent to which countries have laws and regulations that guarantee full and equal access to women and men a...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 75.0
-      },
-      "density": 0.09,
-      "years": [
-        2019,
-        2022
-      ],
-      "countries": 144,
-      "by_era": {
-        "2000+": {
-          "density": 0.09,
-          "countries": 144,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 75.0
-          }
-        }
-      }
-    },
-    "sh_lgr_acsrhec8": {
-      "name": "(S.3.C.8) Extent to which countries have laws and regulations that guarantee full and equal access to women and men a...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 100.0
-      },
-      "density": 0.09,
-      "years": [
-        2019,
-        2022
-      ],
-      "countries": 144,
-      "by_era": {
-        "2000+": {
-          "density": 0.09,
-          "countries": 144,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 100.0
-          }
-        }
-      }
-    },
-    "sh_lgr_acsrhec9": {
-      "name": "(S.3.C.9) Extent to which countries have laws and regulations that guarantee full and equal access to women and men a...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 100.0
-      },
-      "density": 0.086,
-      "years": [
-        2019,
-        2022
-      ],
-      "countries": 137,
-      "by_era": {
-        "2000+": {
-          "density": 0.086,
-          "countries": 137,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 100.0
-          }
-        }
-      }
-    },
-    "sh_lgr_acsrhes1": {
-      "name": "(S.1) Extent to which countries have laws and regulations that guarantee full and equal access to women and men aged ...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 25.0,
-        "max": 100.0,
-        "median": 77.0
-      },
-      "density": 0.073,
-      "years": [
-        2019,
-        2022
-      ],
-      "countries": 117,
-      "by_era": {
-        "2000+": {
-          "density": 0.073,
-          "countries": 117,
-          "stats": {
-            "min": 25.0,
-            "max": 100.0,
-            "median": 77.0
-          }
-        }
-      }
-    },
-    "sh_lgr_acsrhes2": {
-      "name": "(S.2) Extent to which countries have laws and regulations that guarantee full and equal access to women and men aged ...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 89.5
-      },
-      "density": 0.09,
-      "years": [
-        2019,
-        2022
-      ],
-      "countries": 144,
-      "by_era": {
-        "2000+": {
-          "density": 0.09,
-          "countries": 144,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 89.5
-          }
-        }
-      }
-    },
-    "sh_lgr_acsrhes3": {
-      "name": "(S.3) Extent to which countries have laws and regulations that guarantee full and equal access to women and men aged ...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 100.0
-      },
-      "density": 0.085,
-      "years": [
-        2019,
-        2022
-      ],
-      "countries": 136,
-      "by_era": {
-        "2000+": {
-          "density": 0.085,
-          "countries": 136,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 100.0
-          }
-        }
-      }
-    },
-    "sh_lgr_acsrhes4": {
-      "name": "(S.4) Extent to which countries have laws and regulations that guarantee full and equal access to women and men aged ...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 85.0
-      },
-      "density": 0.091,
-      "years": [
-        2019,
-        2022
-      ],
-      "countries": 146,
-      "by_era": {
-        "2000+": {
-          "density": 0.091,
-          "countries": 146,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 85.0
-          }
-        }
-      }
-    },
-    "sp_gnp_wnowns": {
-      "name": "Share of women among owners or rights-bearers of agricultural land, by type of tenure (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 2.16,
-        "max": 57.9,
-        "median": 31.05
-      },
-      "density": 0.046,
-      "years": [
-        2009,
-        2023
-      ],
-      "countries": 48,
-      "by_era": {
-        "2000+": {
-          "density": 0.046,
-          "countries": 48,
-          "stats": {
-            "min": 2.16,
-            "max": 57.9,
-            "median": 31.05
-          }
-        }
-      }
-    },
-    "sp_lgl_lndagsec": {
+    "ind_5_a_1": {
       "name": "Proportion of total agricultural population with ownership or secure rights over agricultural land, by sex (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
       "stats": {
         "min": 7.5,
         "max": 81.91,
@@ -842,8 +162,83 @@
           }
         }
       }
+    },
+    "ind_5_a_2": {
+      "name": "Degree to which the legal framework (including customary law) guarantees women\u2019s equal rights to land ownership and/or c",
+      "stats": {
+        "min": 1.0,
+        "max": 6.0,
+        "median": 3.5
+      },
+      "density": 0.053,
+      "years": [
+        2019,
+        2024
+      ],
+      "countries": 82,
+      "by_era": {
+        "2000+": {
+          "density": 0.053,
+          "countries": 82,
+          "stats": {
+            "min": 1.0,
+            "max": 6.0,
+            "median": 3.5
+          }
+        }
+      }
+    },
+    "ind_5_b_1": {
+      "name": "Proportion of individuals who own a mobile telephone, by sex (%)",
+      "stats": {
+        "min": 11.4,
+        "max": 100.0,
+        "median": 85.45
+      },
+      "density": 0.657,
+      "years": [
+        2013,
+        2024
+      ],
+      "countries": 182,
+      "by_era": {
+        "2000+": {
+          "density": 0.657,
+          "countries": 182,
+          "stats": {
+            "min": 11.4,
+            "max": 100.0,
+            "median": 85.45
+          }
+        }
+      }
+    },
+    "ind_5_c_1": {
+      "name": "Countries with systems to track and make public allocations for gender equality and women's empowerment (0 = does not me",
+      "stats": {
+        "min": 0.0,
+        "max": 2.0,
+        "median": 1.0
+      },
+      "density": 0.094,
+      "years": [
+        2018,
+        2024
+      ],
+      "countries": 115,
+      "by_era": {
+        "2000+": {
+          "density": 0.094,
+          "countries": 115,
+          "stats": {
+            "min": 0.0,
+            "max": 2.0,
+            "median": 1.0
+          }
+        }
+      }
     }
   },
-  "llm_summary": "2009-2025. Proportion of individuals who own a mobile telephone, by sex (%), Countries with systems to track and make public allocations for gender equality and women's empowerment (0 = does not..., Current number of seats in national parliaments (number), Legal frameworks that promote, enforce and monitor gender equality (percentage of achievement, 0 - 100) -- Area 3: em..., Legal frameworks that promote, enforce and monitor gender equality (percentage of achievement, 0 - 100) -- Area 1: ov....",
-  "metric_count": 28
+  "metric_count": 7,
+  "llm_summary": "2009-2025. Legal frameworks that promote, enforce and monitor gender equality (percentage of achievement, 0 - 100) -- Area 3: emplo, Current number of seats in national parliaments (number), (S.4.C.13) Extent to which countries have laws and regulations that guarantee full and equal access to women and men age, Proportion of total agricultural population with ownership or secure rights over agricultural land, by sex (%), Degree to which the legal framework (including customary law) guarantees women\u2019s equal rights to land ownership and/or c."
 }

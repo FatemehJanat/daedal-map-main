@@ -1,4 +1,27 @@
 {
+  "source": {
+    "source_id": "13",
+    "source_name": "UN SDG Goal 13: Climate Action",
+    "source_url": "https://unstats.un.org/sdgs/indicators/database/",
+    "license": "Open Data",
+    "category": "development",
+    "description": "Sustainable Development Goal 13 (Climate Action) indicators from UN Statistics Division.",
+    "topic_tags": [
+      "sdg",
+      "goal13",
+      "climate",
+      "emissions",
+      "disaster",
+      "resilience"
+    ],
+    "keywords": [
+      "climate action",
+      "climate",
+      "emissions",
+      "disaster",
+      "resilience"
+    ]
+  },
   "source_context": "United Nations Sustainable Development Goals Framework",
   "goal": {
     "number": 13,
@@ -20,50 +43,15 @@
       }
     ],
     "key_indicators": [
-      "VC_DSR_MISS - Number of missing persons due to disaster (number)",
-      "VC_DSR_AFFCT - Number of people affected by disaster (number)",
-      "VC_DSR_MORT - Number of deaths due to disaster (number)",
-      "VC_DSR_MTMP - Number of deaths and missing persons attributed to disasters per 100,000 popu...",
-      "VC_DSR_MMHN - Number of deaths and missing persons attributed to disasters (number)",
-      "VC_DSR_DAFF - Number of directly affected persons attributed to disasters per 100,000 popul...",
-      "VC_DSR_IJILN - Number of injured or ill people attributed to disasters (number)",
-      "VC_DSR_PDAN - Number of people whose damaged dwellings were attributed to disasters (number)",
-      "VC_DSR_PDYN - Number of people whose destroyed dwellings were attributed to disasters (number)",
-      "VC_DSR_PDLN - Number of people whose livelihoods were disrupted or destroyed, attributed to...",
-      "SG_DSR_LGRGSR - Score of adoption and implementation of national DRR strategies in line with ...",
-      "SG_DSR_SILS - Proportion of local governments that adopt and implement local disaster risk ...",
-      "SG_DSR_SILN - Number of local governments that adopt and implement local DRR strategies in ...",
-      "SG_GOV_LOGV - Number of local governments (number)",
-      "SG_DSR_SFDRR - Number of countries that reported having a National DRR Strategy which is ali...",
-      "EN_ATM_GHGT_AIP - Total greenhouse gas emissions without LULUCF for Annex I Parties (Mt CO₂ equ...",
-      "EN_ATM_GHGT_NAIP - Total greenhouse gas emissions without LULUCF for non-Annex I Parties (Mt CO₂...",
-      "SE_GCEDESD_NEP - Extent to which global citizenship education and education for sustainable de...",
-      "SE_GCEDESD_CUR - Extent to which global citizenship education and education for sustainable de...",
-      "SE_GCEDESD_TED - Extent to which global citizenship education and education for sustainable de...",
-      "SE_GCEDESD_SAS - Extent to which global citizenship education and education for sustainable de..."
+      "SG_DSR_LGRGSR - National disaster risk reduction strategies",
+      "VC_DSR_GDPLS - Direct economic loss due to disasters"
     ]
   },
   "metrics": {
-    "vc_dsr_miss": "Number of missing persons due to disaster (number)",
-    "vc_dsr_affct": "Number of people affected by disaster (number)",
-    "vc_dsr_mort": "Number of deaths due to disaster (number)",
-    "vc_dsr_mtmp": "Number of deaths and missing persons attributed to disasters per 100,000 population (number)",
-    "vc_dsr_mmhn": "Number of deaths and missing persons attributed to disasters (number)",
-    "vc_dsr_daff": "Number of directly affected persons attributed to disasters per 100,000 population (number)",
-    "vc_dsr_ijiln": "Number of injured or ill people attributed to disasters (number)",
-    "vc_dsr_pdan": "Number of people whose damaged dwellings were attributed to disasters (number)",
-    "vc_dsr_pdyn": "Number of people whose destroyed dwellings were attributed to disasters (number)",
-    "vc_dsr_pdln": "Number of people whose livelihoods were disrupted or destroyed, attributed to disasters (number)",
-    "sg_dsr_lgrgsr": "Score of adoption and implementation of national DRR strategies in line with the Sendai Framework",
-    "sg_dsr_sils": "Proportion of local governments that adopt and implement local disaster risk reduction strategies in line with nation...",
-    "sg_dsr_siln": "Number of local governments that adopt and implement local DRR strategies in line with national strategies (number)",
-    "sg_gov_logv": "Number of local governments (number)",
-    "sg_dsr_sfdrr": "Number of countries that reported having a National DRR Strategy which is aligned to the Sendai Framework",
-    "en_atm_ghgt_aip": "Total greenhouse gas emissions without LULUCF for Annex I Parties (Mt CO₂ equivalent)",
-    "en_atm_ghgt_naip": "Total greenhouse gas emissions without LULUCF for non-Annex I Parties (Mt CO₂ equivalent)",
-    "se_gcedesd_nep": "Extent to which global citizenship education and education for sustainable development are mainstreamed in national e...",
-    "se_gcedesd_cur": "Extent to which global citizenship education and education for sustainable development are mainstreamed in curricula",
-    "se_gcedesd_ted": "Extent to which global citizenship education and education for sustainable development are mainstreamed in teacher ed...",
-    "se_gcedesd_sas": "Extent to which global citizenship education and education for sustainable development are mainstreamed in student as..."
+    "ind_13_1_1": "Number of deaths and missing persons attributed to disasters (number)",
+    "ind_13_1_2": "Score of adoption and implementation of national DRR strategies in line with the Sendai Framework",
+    "ind_13_1_3": "Number of local governments (number)",
+    "ind_13_2_2": "Total greenhouse gas emissions without LULUCF for non-Annex I Parties (Mt CO\u2082 equivalent)",
+    "ind_13_3_1": "Extent to which global citizenship education and education for sustainable development are mainstreamed in national educ"
   }
 }

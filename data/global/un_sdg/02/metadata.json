@@ -1,35 +1,40 @@
 {
-  "source_id": "un_sdg_02",
-  "source_name": "UN SDG Goal 2",
+  "source_id": "02",
+  "source_name": "UN SDG Goal 2: Zero Hunger",
   "source_url": "https://unstats.un.org/sdgs/indicators/database/",
-  "license": "UN Terms",
-  "description": "UN Sustainable Development Goal 2 indicators",
+  "license": "Open Data",
+  "description": "Sustainable Development Goal 2 (Zero Hunger) indicators from UN Statistics Division.",
   "category": "development",
   "topic_tags": [
     "sdg",
-    "development",
-    "sustainability"
+    "goal2",
+    "hunger",
+    "food",
+    "nutrition",
+    "agriculture"
   ],
   "keywords": [
-    "sustainable",
-    "development",
-    "goals",
-    "UN"
+    "zero hunger",
+    "hunger",
+    "food",
+    "nutrition",
+    "agriculture"
   ],
-  "last_updated": "2026-01-07",
+  "last_updated": "2026-01-28",
   "geographic_level": "admin_0",
   "geographic_coverage": {
     "type": "global",
     "admin_levels": [
       0
     ],
-    "common_count": 190,
+    "common_count": 189,
     "common_missing": [
       "AFG",
       "ALB",
       "CAF",
       "FSM",
       "HKG",
+      "LIE",
       "MAC",
       "MCO",
       "TWN",
@@ -65,499 +70,45 @@
     "granularity": "yearly",
     "field": "year"
   },
-  "row_count": 5520,
-  "file_size_mb": 0.16,
-  "data_completeness": 0.32,
+  "row_count": 5390,
+  "file_size_mb": 0.08,
+  "data_completeness": 0.51,
   "update_schedule": "unknown",
   "expected_next_update": "unknown",
   "metrics": {
-    "ag_fpa_cfpi": {
-      "name": "Indicator of Food Price Anomalies (IFPA), by Consumer Food Price Index",
-      "unit": "INDEX",
-      "aggregation": "sum",
-      "keywords": [],
+    "ind_2_1_1": {
+      "name": "Prevalence of undernourishment (%)",
       "stats": {
-        "min": -55.71,
-        "max": 17.84,
-        "median": -0.03
+        "min": 2.5,
+        "max": 72.5,
+        "median": 10.9
       },
-      "density": 0.489,
-      "years": [
-        2010,
-        2023
-      ],
-      "countries": 193,
-      "by_era": {
-        "2000+": {
-          "density": 0.511,
-          "countries": 193,
-          "stats": {
-            "min": -55.71,
-            "max": 17.84,
-            "median": -0.03
-          }
-        }
-      }
-    },
-    "ag_fpa_comm": {
-      "name": "Indicator of Food Price Anomalies (IFPA), by type of product",
-      "unit": "INDEX",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": -29.6,
-        "max": 65.23,
-        "median": 0.1
-      },
-      "density": 0.179,
-      "years": [
-        2015,
-        2024
-      ],
-      "countries": 106,
-      "by_era": {
-        "2000+": {
-          "density": 0.187,
-          "countries": 106,
-          "stats": {
-            "min": -29.6,
-            "max": 65.23,
-            "median": 0.1
-          }
-        }
-      }
-    },
-    "ag_lnd_agrbio": {
-      "name": "Proportion of agricultural land area that has achieved an acceptable or desirable level of use of agro-biodiversity s...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 4.0,
-        "max": 100.0,
-        "median": 100.0
-      },
-      "density": 0.011,
-      "years": [
-        2016,
-        2023
-      ],
-      "countries": 25,
-      "by_era": {
-        "2000+": {
-          "density": 0.011,
-          "countries": 25,
-          "stats": {
-            "min": 4.0,
-            "max": 100.0,
-            "median": 100.0
-          }
-        }
-      }
-    },
-    "ag_lnd_agrwag": {
-      "name": "Proportion of agricultural land area that has achieved an acceptable or desirable level of wage rate in agriculture (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 100.0
-      },
-      "density": 0.013,
-      "years": [
-        2015,
-        2023
-      ],
-      "countries": 30,
-      "by_era": {
-        "2000+": {
-          "density": 0.014,
-          "countries": 30,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 100.0
-          }
-        }
-      }
-    },
-    "ag_lnd_fertmg": {
-      "name": "Proportion of agricultural land area that has achieved an acceptable or desirable level of management of fertilizers (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 100.0
-      },
-      "density": 0.013,
-      "years": [
-        2017,
-        2023
-      ],
-      "countries": 27,
-      "by_era": {
-        "2000+": {
-          "density": 0.013,
-          "countries": 27,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 100.0
-          }
-        }
-      }
-    },
-    "ag_lnd_fies": {
-      "name": "Proportion of agricultural land area that has achieved an acceptable or desirable level of food security (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 41.0,
-        "max": 100.0,
-        "median": 100.0
-      },
-      "density": 0.011,
-      "years": [
-        2010,
-        2023
-      ],
-      "countries": 22,
-      "by_era": {
-        "2000+": {
-          "density": 0.012,
-          "countries": 22,
-          "stats": {
-            "min": 41.0,
-            "max": 100.0,
-            "median": 100.0
-          }
-        }
-      }
-    },
-    "ag_lnd_fovh": {
-      "name": "Proportion of agricultural land area that has achieved an acceptable or desirable level of farm output value per hect...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 1.0,
-        "max": 100.0,
-        "median": 64.5
-      },
-      "density": 0.016,
-      "years": [
-        2015,
-        2023
-      ],
-      "countries": 33,
-      "by_era": {
-        "2000+": {
-          "density": 0.017,
-          "countries": 33,
-          "stats": {
-            "min": 1.0,
-            "max": 100.0,
-            "median": 64.5
-          }
-        }
-      }
-    },
-    "ag_lnd_h2oavail": {
-      "name": "Proportion of agricultural land area that has achieved an acceptable or desirable level of variation in water availab...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 16.0,
-        "max": 100.0,
-        "median": 100.0
-      },
-      "density": 0.01,
-      "years": [
-        2016,
-        2023
-      ],
-      "countries": 24,
-      "by_era": {
-        "2000+": {
-          "density": 0.01,
-          "countries": 24,
-          "stats": {
-            "min": 16.0,
-            "max": 100.0,
-            "median": 100.0
-          }
-        }
-      }
-    },
-    "ag_lnd_lndstr": {
-      "name": "Proportion of agricultural land area that has achieved an acceptable or desirable level of secure tenure rights to ag...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 100.0
-      },
-      "density": 0.018,
-      "years": [
-        2010,
-        2023
-      ],
-      "countries": 41,
-      "by_era": {
-        "2000+": {
-          "density": 0.019,
-          "countries": 41,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 100.0
-          }
-        }
-      }
-    },
-    "ag_lnd_nfi": {
-      "name": "Proportion of agricultural land area that has achieved an acceptable or desirable level of net farm income (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 41.0,
-        "max": 100.0,
-        "median": 98.5
-      },
-      "density": 0.013,
-      "years": [
-        2017,
-        2023
-      ],
-      "countries": 26,
-      "by_era": {
-        "2000+": {
-          "density": 0.014,
-          "countries": 26,
-          "stats": {
-            "min": 41.0,
-            "max": 100.0,
-            "median": 98.5
-          }
-        }
-      }
-    },
-    "ag_lnd_pstcdsmg": {
-      "name": "Proportion of agricultural land area that has achieved an acceptable or desirable level of management of pesticides (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 100.0
-      },
-      "density": 0.011,
-      "years": [
-        2017,
-        2023
-      ],
-      "countries": 24,
-      "by_era": {
-        "2000+": {
-          "density": 0.012,
-          "countries": 24,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 100.0
-          }
-        }
-      }
-    },
-    "ag_lnd_rmm": {
-      "name": "Proportion of agricultural land area that has achieved an acceptable or desirable level of risk mitigation mechanisms...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 100.0
-      },
-      "density": 0.016,
-      "years": [
-        2016,
-        2023
-      ],
-      "countries": 30,
-      "by_era": {
-        "2000+": {
-          "density": 0.016,
-          "countries": 30,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 100.0
-          }
-        }
-      }
-    },
-    "ag_lnd_sdgrd": {
-      "name": "Proportion of agricultural land area that has achieved an acceptable or desirable level of soil degradation (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 76.0,
-        "max": 100.0,
-        "median": 100.0
-      },
-      "density": 0.006,
-      "years": [
-        2018,
-        2023
-      ],
-      "countries": 15,
-      "by_era": {
-        "2000+": {
-          "density": 0.006,
-          "countries": 15,
-          "stats": {
-            "min": 76.0,
-            "max": 100.0,
-            "median": 100.0
-          }
-        }
-      }
-    },
-    "ag_lnd_sust": {
-      "name": "Proportion of agricultural area under productive and sustainable agriculture (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 11.0,
-        "max": 100.0,
-        "median": 66.0
-      },
-      "density": 0.003,
-      "years": [
-        2020,
-        2023
-      ],
-      "countries": 7,
-      "by_era": {
-        "2000+": {
-          "density": 0.003,
-          "countries": 7,
-          "stats": {
-            "min": 11.0,
-            "max": 100.0,
-            "median": 66.0
-          }
-        }
-      }
-    },
-    "ag_lnd_sust_prxcss": {
-      "name": "[PROXY] Progress toward productive and sustainable agriculture, current status score",
-      "unit": "SCORE",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 1.0,
-        "max": 4.83,
-        "median": 3.17
-      },
-      "density": 0.295,
-      "years": [
-        2015,
-        2023
-      ],
-      "countries": 181,
-      "by_era": {
-        "2000+": {
-          "density": 0.309,
-          "countries": 181,
-          "stats": {
-            "min": 1.0,
-            "max": 4.83,
-            "median": 3.17
-          }
-        }
-      }
-    },
-    "ag_lnd_sust_prxts": {
-      "name": "[PROXY] Progress toward productive and sustainable agriculture, trend score",
-      "unit": "SCORE",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 1.29,
-        "max": 5.0,
-        "median": 3.71
-      },
-      "density": 0.295,
-      "years": [
-        2015,
-        2023
-      ],
-      "countries": 181,
-      "by_era": {
-        "2000+": {
-          "density": 0.309,
-          "countries": 181,
-          "stats": {
-            "min": 1.29,
-            "max": 5.0,
-            "median": 3.71
-          }
-        }
-      }
-    },
-    "ag_prd_agvas": {
-      "name": "Agriculture value added share of GDP (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.03,
-        "max": 79.69,
-        "median": 7.0
-      },
-      "density": 0.663,
+      "density": 0.476,
       "years": [
         2001,
         2023
       ],
-      "countries": 185,
+      "countries": 131,
       "by_era": {
         "2000+": {
-          "density": 0.693,
-          "countries": 185,
+          "density": 0.49,
+          "countries": 131,
           "stats": {
-            "min": 0.03,
-            "max": 79.69,
-            "median": 7.0
+            "min": 2.5,
+            "max": 72.5,
+            "median": 10.9
           }
         }
       }
     },
-    "ag_prd_fiesms": {
+    "ind_2_1_2": {
       "name": "Prevalence of moderate or severe food insecurity in the population (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
       "stats": {
         "min": 1.1,
         "max": 89.8,
         "median": 20.6
       },
-      "density": 0.202,
+      "density": 0.207,
       "years": [
         2014,
         2024
@@ -565,7 +116,7 @@
       "countries": 153,
       "by_era": {
         "2000+": {
-          "density": 0.211,
+          "density": 0.213,
           "countries": 153,
           "stats": {
             "min": 1.1,
@@ -575,567 +126,14 @@
         }
       }
     },
-    "ag_prd_fiesmsn": {
-      "name": "Population in moderate or severe food insecurity (thousands of people)",
-      "unit": "NUM_TH",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 104.5,
-        "max": 170415.8,
-        "median": 2871.9
-      },
-      "density": 0.184,
-      "years": [
-        2014,
-        2024
-      ],
-      "countries": 132,
-      "by_era": {
-        "2000+": {
-          "density": 0.193,
-          "countries": 132,
-          "stats": {
-            "min": 104.5,
-            "max": 170415.8,
-            "median": 2871.9
-          }
-        }
-      }
-    },
-    "ag_prd_fiess": {
-      "name": "Prevalence of severe food insecurity in the population (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.5,
-        "max": 65.4,
-        "median": 4.7
-      },
-      "density": 0.19,
-      "years": [
-        2014,
-        2024
-      ],
-      "countries": 149,
-      "by_era": {
-        "2000+": {
-          "density": 0.199,
-          "countries": 149,
-          "stats": {
-            "min": 0.5,
-            "max": 65.4,
-            "median": 4.7
-          }
-        }
-      }
-    },
-    "ag_prd_fiessn": {
-      "name": "Population in severe food insecurity (thousands of people)",
-      "unit": "NUM_TH",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 100.4,
-        "max": 55348.5,
-        "median": 1022.5
-      },
-      "density": 0.144,
-      "years": [
-        2014,
-        2024
-      ],
-      "countries": 112,
-      "by_era": {
-        "2000+": {
-          "density": 0.151,
-          "countries": 112,
-          "stats": {
-            "min": 100.4,
-            "max": 55348.5,
-            "median": 1022.5
-          }
-        }
-      }
-    },
-    "ag_prd_ortind": {
-      "name": "Agriculture orientation index for government expenditures",
-      "unit": "INDEX",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 9.8,
-        "median": 0.31
-      },
-      "density": 0.663,
-      "years": [
-        2001,
-        2023
-      ],
-      "countries": 185,
-      "by_era": {
-        "2000+": {
-          "density": 0.693,
-          "countries": 185,
-          "stats": {
-            "min": 0.0,
-            "max": 9.8,
-            "median": 0.31
-          }
-        }
-      }
-    },
-    "ag_prd_xsubdy": {
-      "name": "Agricultural export subsidies (millions of current United States dollars)",
-      "unit": "CU_USD_M",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 446.6924,
-        "median": 1.141
-      },
-      "density": 0.109,
-      "years": [
-        1995,
-        2023
-      ],
-      "countries": 32,
-      "by_era": {
-        "2000+": {
-          "density": 0.085,
-          "countries": 31,
-          "stats": {
-            "min": 0.0,
-            "max": 338.6,
-            "median": 0.5894
-          }
-        },
-        "1950-1999": {
-          "density": 0.632,
-          "countries": 31,
-          "stats": {
-            "min": 0.0,
-            "max": 446.6924,
-            "median": 2.4108
-          }
-        }
-      }
-    },
-    "ag_xpd_agsgb": {
-      "name": "Agriculture share of Government Expenditure (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 24.71,
-        "median": 2.04
-      },
-      "density": 0.663,
-      "years": [
-        2001,
-        2023
-      ],
-      "countries": 185,
-      "by_era": {
-        "2000+": {
-          "density": 0.693,
-          "countries": 185,
-          "stats": {
-            "min": 0.0,
-            "max": 24.71,
-            "median": 2.04
-          }
-        }
-      }
-    },
-    "dc_tof_agrl": {
-      "name": "Total official flows (disbursements) for agriculture, by recipient countries (millions of constant 2023 United States...",
-      "unit": "CON_USD_M",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": -0.0965,
-        "max": 2187.3481,
-        "median": 20.8116
-      },
-      "density": 0.602,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 149,
-      "by_era": {
-        "2000+": {
-          "density": 0.629,
-          "countries": 149,
-          "stats": {
-            "min": -0.0965,
-            "max": 2187.3481,
-            "median": 20.8116
-          }
-        }
-      }
-    },
-    "er_grf_animkpt": {
-      "name": "Number of local breeds kept in the country",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 1.0,
-        "max": 872.0,
-        "median": 16.0
-      },
-      "density": 0.807,
-      "years": [
-        2000,
-        2025
-      ],
-      "countries": 181,
-      "by_era": {
-        "2000+": {
-          "density": 0.844,
-          "countries": 181,
-          "stats": {
-            "min": 1.0,
-            "max": 872.0,
-            "median": 16.0
-          }
-        }
-      }
-    },
-    "er_grf_animkpt_trb": {
-      "name": "Number of transboundary breeds (including extinct ones)",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 1.0,
-        "max": 280.0,
-        "median": 18.0
-      },
-      "density": 0.843,
-      "years": [
-        2000,
-        2025
-      ],
-      "countries": 188,
-      "by_era": {
-        "2000+": {
-          "density": 0.881,
-          "countries": 188,
-          "stats": {
-            "min": 1.0,
-            "max": 280.0,
-            "median": 18.0
-          }
-        }
-      }
-    },
-    "er_grf_animrcntn": {
-      "name": "Number of local breeds for which sufficient genetic resources are stored for reconstitution",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 96.0,
-        "median": 0.0
-      },
-      "density": 0.179,
-      "years": [
-        2000,
-        2025
-      ],
-      "countries": 114,
-      "by_era": {
-        "2000+": {
-          "density": 0.187,
-          "countries": 114,
-          "stats": {
-            "min": 0.0,
-            "max": 96.0,
-            "median": 0.0
-          }
-        }
-      }
-    },
-    "er_grf_animrcntn_trb": {
-      "name": "Number of transboundary breeds for which sufficient genetic resources are stored for reconstitution",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 82.0,
-        "median": 0.0
-      },
-      "density": 0.162,
-      "years": [
-        2000,
-        2025
-      ],
-      "countries": 113,
-      "by_era": {
-        "2000+": {
-          "density": 0.169,
-          "countries": 113,
-          "stats": {
-            "min": 0.0,
-            "max": 82.0,
-            "median": 0.0
-          }
-        }
-      }
-    },
-    "er_grf_plntstor": {
-      "name": "Plant genetic resources accessions stored ex situ (number)",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 848922.0,
-        "median": 6425.0
-      },
-      "density": 0.312,
-      "years": [
-        1995,
-        2024
-      ],
-      "countries": 115,
-      "by_era": {
-        "2000+": {
-          "density": 0.305,
-          "countries": 115,
-          "stats": {
-            "min": 0.0,
-            "max": 848922.0,
-            "median": 6789.0
-          }
-        },
-        "1950-1999": {
-          "density": 0.475,
-          "countries": 115,
-          "stats": {
-            "min": 0.0,
-            "max": 409471.0,
-            "median": 2420.0
-          }
-        }
-      }
-    },
-    "er_noex_lbredn": {
-      "name": "Number of local breeds (not extinct) (number)",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 1.0,
-        "max": 849.0,
-        "median": 15.0
-      },
-      "density": 0.803,
-      "years": [
-        2000,
-        2025
-      ],
-      "countries": 180,
-      "by_era": {
-        "2000+": {
-          "density": 0.84,
-          "countries": 180,
-          "stats": {
-            "min": 1.0,
-            "max": 849.0,
-            "median": 15.0
-          }
-        }
-      }
-    },
-    "er_noex_trbbredn": {
-      "name": "Number of transboundary breeds (not extinct) (number)",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 1.0,
-        "max": 272.0,
-        "median": 18.0
-      },
-      "density": 0.842,
-      "years": [
-        2000,
-        2025
-      ],
-      "countries": 188,
-      "by_era": {
-        "2000+": {
-          "density": 0.881,
-          "countries": 188,
-          "stats": {
-            "min": 1.0,
-            "max": 272.0,
-            "median": 18.0
-          }
-        }
-      }
-    },
-    "er_rsk_lbreds": {
-      "name": "Proportion of local breeds classified as being at risk of extinction as a share of local breeds with known level of e...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 50.0
-      },
-      "density": 0.468,
-      "years": [
-        2000,
-        2025
-      ],
-      "countries": 151,
-      "by_era": {
-        "2000+": {
-          "density": 0.489,
-          "countries": 151,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 50.0
-          }
-        }
-      }
-    },
-    "er_rsk_trbbreds": {
-      "name": "Proportion of transboundary breeds classified as being at risk of extinction as a share of local breeds with known le...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 8.0
-      },
-      "density": 0.439,
-      "years": [
-        2000,
-        2025
-      ],
-      "countries": 143,
-      "by_era": {
-        "2000+": {
-          "density": 0.459,
-          "countries": 143,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 8.0
-          }
-        }
-      }
-    },
-    "er_unk_lbredn": {
-      "name": "Number of local breeds with unknown risk status (number)",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 689.0,
-        "median": 8.0
-      },
-      "density": 0.803,
-      "years": [
-        2000,
-        2025
-      ],
-      "countries": 180,
-      "by_era": {
-        "2000+": {
-          "density": 0.84,
-          "countries": 180,
-          "stats": {
-            "min": 0.0,
-            "max": 689.0,
-            "median": 8.0
-          }
-        }
-      }
-    },
-    "er_unk_trbbredn": {
-      "name": "Number of transboundary breeds with unknown risk status (number)",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 161.0,
-        "median": 12.0
-      },
-      "density": 0.842,
-      "years": [
-        2000,
-        2025
-      ],
-      "countries": 188,
-      "by_era": {
-        "2000+": {
-          "density": 0.881,
-          "countries": 188,
-          "stats": {
-            "min": 0.0,
-            "max": 161.0,
-            "median": 12.0
-          }
-        }
-      }
-    },
-    "pd_agr_lsfp": {
-      "name": "Productivity of large-scale food producers (agricultural output per labour day, PPP) (constant 2017 international $)",
-      "unit": "CON_PPP_USD",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 2.19,
-        "max": 1688.37,
-        "median": 317.2
-      },
-      "density": 0.028,
-      "years": [
-        2001,
-        2021
-      ],
-      "countries": 48,
-      "by_era": {
-        "2000+": {
-          "density": 0.03,
-          "countries": 48,
-          "stats": {
-            "min": 2.19,
-            "max": 1688.37,
-            "median": 317.2
-          }
-        }
-      }
-    },
-    "pd_agr_ssfp": {
+    "ind_2_3_1": {
       "name": "Productivity of small-scale food producers (agricultural output per labour day, PPP) (constant 2017 international $)",
-      "unit": "CON_PPP_USD",
-      "aggregation": "sum",
-      "keywords": [],
       "stats": {
         "min": 1.9,
         "max": 157.14,
         "median": 44.565
       },
-      "density": 0.03,
+      "density": 0.031,
       "years": [
         2001,
         2022
@@ -1143,7 +141,7 @@
       "countries": 49,
       "by_era": {
         "2000+": {
-          "density": 0.031,
+          "density": 0.032,
           "countries": 49,
           "stats": {
             "min": 1.9,
@@ -1153,45 +151,14 @@
         }
       }
     },
-    "si_agr_lsfp": {
-      "name": "Average income of large-scale food producers, PPP (constant 2017 international $)",
-      "unit": "CON_PPP_USD",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 228.75,
-        "max": 104632.55,
-        "median": 4461.815
-      },
-      "density": 0.019,
-      "years": [
-        2001,
-        2022
-      ],
-      "countries": 47,
-      "by_era": {
-        "2000+": {
-          "density": 0.02,
-          "countries": 47,
-          "stats": {
-            "min": 228.75,
-            "max": 104632.55,
-            "median": 4461.815
-          }
-        }
-      }
-    },
-    "si_agr_ssfp": {
+    "ind_2_3_2": {
       "name": "Average income of small-scale food producers, PPP (constant 2017 international $)",
-      "unit": "CON_PPP_USD",
-      "aggregation": "sum",
-      "keywords": [],
       "stats": {
         "min": -4801.97,
         "max": 6900.81,
         "median": 1500.07
       },
-      "density": 0.02,
+      "density": 0.021,
       "years": [
         2001,
         2022
@@ -1209,63 +176,191 @@
         }
       }
     },
-    "sn_itk_defc": {
-      "name": "Prevalence of undernourishment (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
+    "ind_2_4_1": {
+      "name": "[PROXY] Progress toward productive and sustainable agriculture, current status score",
       "stats": {
-        "min": 2.5,
-        "max": 72.5,
-        "median": 10.9
+        "min": 1.0,
+        "max": 4.83,
+        "median": 3.17
       },
-      "density": 0.465,
+      "density": 0.302,
       "years": [
-        2001,
+        2015,
         2023
       ],
-      "countries": 131,
+      "countries": 181,
       "by_era": {
         "2000+": {
-          "density": 0.486,
-          "countries": 131,
+          "density": 0.311,
+          "countries": 181,
           "stats": {
-            "min": 2.5,
-            "max": 72.5,
-            "median": 10.9
+            "min": 1.0,
+            "max": 4.83,
+            "median": 3.17
           }
         }
       }
     },
-    "sn_itk_defcn": {
-      "name": "Number of undernourished people (millions)",
-      "unit": "NUM_M",
-      "aggregation": "sum",
-      "keywords": [],
+    "ind_2_5_1": {
+      "name": "Number of transboundary breeds (including extinct ones)",
       "stats": {
-        "min": 0.1,
-        "max": 247.0,
-        "median": 1.7
+        "min": 1.0,
+        "max": 280.0,
+        "median": 18.0
       },
-      "density": 0.394,
+      "density": 0.863,
+      "years": [
+        2000,
+        2025
+      ],
+      "countries": 188,
+      "by_era": {
+        "2000+": {
+          "density": 0.888,
+          "countries": 188,
+          "stats": {
+            "min": 1.0,
+            "max": 280.0,
+            "median": 18.0
+          }
+        }
+      }
+    },
+    "ind_2_5_2": {
+      "name": "Number of transboundary breeds (not extinct) (number)",
+      "stats": {
+        "min": 1.0,
+        "max": 272.0,
+        "median": 18.0
+      },
+      "density": 0.862,
+      "years": [
+        2000,
+        2025
+      ],
+      "countries": 188,
+      "by_era": {
+        "2000+": {
+          "density": 0.888,
+          "countries": 188,
+          "stats": {
+            "min": 1.0,
+            "max": 272.0,
+            "median": 18.0
+          }
+        }
+      }
+    },
+    "ind_2_a_1": {
+      "name": "Agriculture value added share of GDP (%)",
+      "stats": {
+        "min": 0.03,
+        "max": 79.69,
+        "median": 7.0
+      },
+      "density": 0.679,
       "years": [
         2001,
         2023
       ],
-      "countries": 114,
+      "countries": 185,
       "by_era": {
         "2000+": {
-          "density": 0.412,
-          "countries": 114,
+          "density": 0.698,
+          "countries": 185,
           "stats": {
-            "min": 0.1,
-            "max": 247.0,
-            "median": 1.7
+            "min": 0.03,
+            "max": 79.69,
+            "median": 7.0
+          }
+        }
+      }
+    },
+    "ind_2_a_2": {
+      "name": "Total official flows (disbursements) for agriculture, by recipient countries (millions of constant 2023 United States do",
+      "stats": {
+        "min": -0.0965,
+        "max": 2187.3481,
+        "median": 20.8116
+      },
+      "density": 0.616,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 149,
+      "by_era": {
+        "2000+": {
+          "density": 0.634,
+          "countries": 149,
+          "stats": {
+            "min": -0.0965,
+            "max": 2187.3481,
+            "median": 20.8116
+          }
+        }
+      }
+    },
+    "ind_2_b_1": {
+      "name": "Agricultural export subsidies (millions of current United States dollars)",
+      "stats": {
+        "min": 0.0,
+        "max": 446.6924,
+        "median": 1.141
+      },
+      "density": 0.112,
+      "years": [
+        1995,
+        2023
+      ],
+      "countries": 32,
+      "by_era": {
+        "2000+": {
+          "density": 0.086,
+          "countries": 31,
+          "stats": {
+            "min": 0.0,
+            "max": 338.6,
+            "median": 0.5894
+          }
+        },
+        "1950-1999": {
+          "density": 1.0,
+          "countries": 31,
+          "stats": {
+            "min": 0.0,
+            "max": 446.6924,
+            "median": 2.4108
+          }
+        }
+      }
+    },
+    "ind_2_c_1": {
+      "name": "Indicator of Food Price Anomalies (IFPA), by Consumer Food Price Index",
+      "stats": {
+        "min": -55.71,
+        "max": 17.84,
+        "median": -0.03
+      },
+      "density": 0.5,
+      "years": [
+        2010,
+        2023
+      ],
+      "countries": 193,
+      "by_era": {
+        "2000+": {
+          "density": 0.515,
+          "countries": 193,
+          "stats": {
+            "min": -55.71,
+            "max": 17.84,
+            "median": -0.03
           }
         }
       }
     }
   },
-  "llm_summary": "1995-2025. Indicator of Food Price Anomalies (IFPA), by Consumer Food Price Index, Indicator of Food Price Anomalies (IFPA), by type of product, Proportion of agricultural land area that has achieved an acceptable or desirable level of use of agro-biodiversity s..., Proportion of agricultural land area that has achieved an acceptable or desirable level of wage rate in agriculture (%), Proportion of agricultural land area that has achieved an acceptable or desirable level of management of fertilizers (%).",
-  "metric_count": 42
+  "metric_count": 11,
+  "llm_summary": "1995-2025. Prevalence of undernourishment (%), Prevalence of moderate or severe food insecurity in the population (%), Productivity of small-scale food producers (agricultural output per labour day, PPP) (constant 2017 international $), Average income of small-scale food producers, PPP (constant 2017 international $), [PROXY] Progress toward productive and sustainable agriculture, current status score."
 }

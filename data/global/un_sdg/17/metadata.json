@@ -1,22 +1,26 @@
 {
-  "source_id": "un_sdg_17",
-  "source_name": "UN SDG Goal 17",
+  "source_id": "17",
+  "source_name": "UN SDG Goal 17: Partnerships for the Goals",
   "source_url": "https://unstats.un.org/sdgs/indicators/database/",
-  "license": "UN Terms",
-  "description": "UN Sustainable Development Goal 17 indicators",
+  "license": "Open Data",
+  "description": "Sustainable Development Goal 17 (Partnerships for the Goals) indicators from UN Statistics Division.",
   "category": "development",
   "topic_tags": [
     "sdg",
-    "development",
-    "sustainability"
+    "goal17",
+    "partnership",
+    "cooperation",
+    "trade",
+    "development aid"
   ],
   "keywords": [
-    "sustainable",
-    "development",
-    "goals",
-    "UN"
+    "partnerships for the goals",
+    "partnership",
+    "cooperation",
+    "trade",
+    "development aid"
   ],
-  "last_updated": "2026-01-07",
+  "last_updated": "2026-01-28",
   "geographic_level": "admin_0",
   "geographic_coverage": {
     "type": "global",
@@ -73,997 +77,39 @@
     "granularity": "yearly",
     "field": "year"
   },
-  "row_count": 7179,
-  "file_size_mb": 1.41,
-  "data_completeness": 0.29,
+  "row_count": 7174,
+  "file_size_mb": 0.42,
+  "data_completeness": 0.39,
   "update_schedule": "unknown",
   "expected_next_update": "unknown",
   "metrics": {
-    "bn_cab_xoka_gd_zs": {
-      "name": "Current account balance as a proportion of GDP (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": -60.8778,
-        "max": 311.7461,
-        "median": -2.6873
-      },
-      "density": 0.565,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 187,
-      "by_era": {
-        "2000+": {
-          "density": 0.745,
-          "countries": 187,
-          "stats": {
-            "min": -60.8778,
-            "max": 311.7461,
-            "median": -2.6873
-          }
-        }
-      }
-    },
-    "bn_klt_ptxl_cd": {
-      "name": "Portfolio investment, net (Balance of Payments, current United States dollars)",
-      "unit": "CU_USD",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": -1149515000000.0,
-        "max": 289053728588.98,
-        "median": 394215.1237
-      },
-      "density": 0.512,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 179,
-      "by_era": {
-        "2000+": {
-          "density": 0.676,
-          "countries": 179,
-          "stats": {
-            "min": -1149515000000.0,
-            "max": 289053728588.98,
-            "median": 394215.1237
-          }
-        }
-      }
-    },
-    "bx_klt_dinv_wd_gd_zs": {
-      "name": "Foreign direct investment, net inflows, as a proportion of GDP (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": -1303.1083,
-        "max": 1709.8272,
-        "median": 2.8483
-      },
-      "density": 0.612,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 189,
-      "by_era": {
-        "2000+": {
-          "density": 0.807,
-          "countries": 189,
-          "stats": {
-            "min": -1303.1083,
-            "max": 1709.8272,
-            "median": 2.8483
-          }
-        }
-      }
-    },
-    "bx_trf_pwkr": {
-      "name": "Volume of remittances (in United States dollars) as a proportion of total GDP (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
+    "ind_17_1_1": {
+      "name": "Total government revenue, in local currency",
       "stats": {
         "min": 0.0,
-        "max": 53.8264,
-        "median": 1.6489
+        "max": 3174953537.6496,
+        "median": 196316.0
       },
-      "density": 0.604,
+      "density": 0.447,
       "years": [
         2000,
         2023
-      ],
-      "countries": 191,
-      "by_era": {
-        "2000+": {
-          "density": 0.798,
-          "countries": 191,
-          "stats": {
-            "min": 0.0,
-            "max": 53.8264,
-            "median": 1.6489
-          }
-        }
-      }
-    },
-    "dc_envtech_exp": {
-      "name": "Amount of tracked exported Environmentally Sound Technologies (current United States dollars)",
-      "unit": "CU_USD",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 11.0,
-        "max": 258656000000.0,
-        "median": 160257516.0
-      },
-      "density": 0.235,
-      "years": [
-        2010,
-        2020
-      ],
-      "countries": 174,
-      "by_era": {
-        "2000+": {
-          "density": 0.31,
-          "countries": 174,
-          "stats": {
-            "min": 11.0,
-            "max": 258656000000.0,
-            "median": 160257516.0
-          }
-        }
-      }
-    },
-    "dc_envtech_imp": {
-      "name": "Amount of tracked imported Environmentally Sound Technologies (current United States dollars)",
-      "unit": "CU_USD",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 1022059.0,
-        "max": 164238000000.0,
-        "median": 815501576.0
-      },
-      "density": 0.237,
-      "years": [
-        2010,
-        2020
       ],
       "countries": 175,
       "by_era": {
         "2000+": {
-          "density": 0.313,
+          "density": 0.59,
           "countries": 175,
           "stats": {
-            "min": 1022059.0,
-            "max": 164238000000.0,
-            "median": 815501576.0
-          }
-        }
-      }
-    },
-    "dc_envtech_inv": {
-      "name": "Total investment in Environment Sound Technologies, by sector (current United States dollars)",
-      "unit": "CU_USD",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 12158.3931,
-        "max": 547150304.0893,
-        "median": 159492066.3607
-      },
-      "density": 0.006,
-      "years": [
-        2000,
-        2021
-      ],
-      "countries": 5,
-      "by_era": {
-        "2000+": {
-          "density": 0.008,
-          "countries": 5,
-          "stats": {
-            "min": 12158.3931,
-            "max": 547150304.0893,
-            "median": 159492066.3607
-          }
-        }
-      }
-    },
-    "dc_envtech_rexp": {
-      "name": "Amount of tracked re-exported Environmentally Sound Technologies (current United States dollars)",
-      "unit": "CU_USD",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 1266.0,
-        "max": 20114846816.0,
-        "median": 6287886.0
-      },
-      "density": 0.074,
-      "years": [
-        2010,
-        2020
-      ],
-      "countries": 82,
-      "by_era": {
-        "2000+": {
-          "density": 0.098,
-          "countries": 82,
-          "stats": {
-            "min": 1266.0,
-            "max": 20114846816.0,
-            "median": 6287886.0
-          }
-        }
-      }
-    },
-    "dc_envtech_rimp": {
-      "name": "Amount of tracked re-imported Environmentally Sound Technologies (current United States dollars)",
-      "unit": "CU_USD",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 4.0,
-        "max": 22151502128.0,
-        "median": 1872118.5
-      },
-      "density": 0.048,
-      "years": [
-        2010,
-        2020
-      ],
-      "countries": 67,
-      "by_era": {
-        "2000+": {
-          "density": 0.063,
-          "countries": 67,
-          "stats": {
-            "min": 4.0,
-            "max": 22151502128.0,
-            "median": 1872118.5
-          }
-        }
-      }
-    },
-    "dc_envtech_tt": {
-      "name": "Total trade of tracked Environmentally Sound Technologies (current United States dollars)",
-      "unit": "CU_USD",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 1800.0,
-        "max": 416060944564.0,
-        "median": 1106899563.0
-      },
-      "density": 0.238,
-      "years": [
-        2010,
-        2020
-      ],
-      "countries": 175,
-      "by_era": {
-        "2000+": {
-          "density": 0.314,
-          "countries": 175,
-          "stats": {
-            "min": 1800.0,
-            "max": 416060944564.0,
-            "median": 1106899563.0
-          }
-        }
-      }
-    },
-    "dc_fta_total": {
-      "name": "Total official development assistance (gross disbursement) for technical cooperation (millions of 2023 United States ...",
-      "unit": "CON_USD_M",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0041,
-        "max": 12377.7392,
-        "median": 60.4471
-      },
-      "density": 0.471,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 150,
-      "by_era": {
-        "2000+": {
-          "density": 0.622,
-          "countries": 150,
-          "stats": {
-            "min": 0.0041,
-            "max": 12377.7392,
-            "median": 60.4471
-          }
-        }
-      }
-    },
-    "dc_oda_ldcg": {
-      "name": "Net official development assistance (ODA) to LDCs as a percentage of OECD-DAC donors' GNI, by donor countries (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": -0.4307,
-        "max": 0.6683,
-        "median": 0.0566
-      },
-      "density": 0.132,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 48,
-      "by_era": {
-        "2000+": {
-          "density": 0.174,
-          "countries": 48,
-          "stats": {
-            "min": -0.4307,
-            "max": 0.6683,
-            "median": 0.0566
-          }
-        }
-      }
-    },
-    "dc_oda_ldcs": {
-      "name": "Net official development assistance (ODA) to LDCs from OECD-DAC countries, by donor countries (millions of constant 2...",
-      "unit": "CON_USD_M",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": -756.419,
-        "max": 17918.1,
-        "median": 155.034
-      },
-      "density": 0.144,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 49,
-      "by_era": {
-        "2000+": {
-          "density": 0.19,
-          "countries": 49,
-          "stats": {
-            "min": -756.419,
-            "max": 17918.1,
-            "median": 155.034
-          }
-        }
-      }
-    },
-    "dc_oda_lldc": {
-      "name": "Net official development assistance (ODA) to landlocked developing countries from OECD-DAC countries, by donor countr...",
-      "unit": "CON_USD_M",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": -2.209,
-        "max": 10260.2696,
-        "median": 105.0953
-      },
-      "density": 0.144,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 49,
-      "by_era": {
-        "2000+": {
-          "density": 0.19,
-          "countries": 49,
-          "stats": {
-            "min": -2.209,
-            "max": 10260.2696,
-            "median": 105.0953
-          }
-        }
-      }
-    },
-    "dc_oda_lldcg": {
-      "name": "Net official development assistance (ODA) to landlocked developing countries as a percentage of OECD-DAC donors' GNI,...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": -0.0012,
-        "max": 0.3595,
-        "median": 0.0312
-      },
-      "density": 0.132,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 48,
-      "by_era": {
-        "2000+": {
-          "density": 0.174,
-          "countries": 48,
-          "stats": {
-            "min": -0.0012,
-            "max": 0.3595,
-            "median": 0.0312
-          }
-        }
-      }
-    },
-    "dc_oda_sids": {
-      "name": "Net official development assistance (ODA) to small island states (SIDS) from OECD-DAC countries, by donor countries (...",
-      "unit": "CON_USD_M",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": -9.0019,
-        "max": 2638.9604,
-        "median": 19.3198
-      },
-      "density": 0.146,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 50,
-      "by_era": {
-        "2000+": {
-          "density": 0.193,
-          "countries": 50,
-          "stats": {
-            "min": -9.0019,
-            "max": 2638.9604,
-            "median": 19.3198
-          }
-        }
-      }
-    },
-    "dc_oda_sidsg": {
-      "name": "Net official development assistance (ODA) to small island states (SIDS) as a percentage of OECD-DAC donors' GNI, by d...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 0.1797,
-        "median": 0.0051
-      },
-      "density": 0.132,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 49,
-      "by_era": {
-        "2000+": {
-          "density": 0.175,
-          "countries": 49,
-          "stats": {
             "min": 0.0,
-            "max": 0.1797,
-            "median": 0.0051
+            "max": 3174953537.6496,
+            "median": 196316.0
           }
         }
       }
     },
-    "dc_oda_totg": {
-      "name": "Net official development assistance (ODA) as a percentage of OECD-DAC donors' GNI, by donor countries (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 1.4045,
-        "median": 0.2325
-      },
-      "density": 0.096,
-      "years": [
-        2000,
-        2017
-      ],
-      "countries": 47,
-      "by_era": {
-        "2000+": {
-          "density": 0.127,
-          "countries": 47,
-          "stats": {
-            "min": 0.0,
-            "max": 1.4045,
-            "median": 0.2325
-          }
-        }
-      }
-    },
-    "dc_oda_totgge": {
-      "name": "Official development assistance (ODA) as a percentage of OECD-DAC donors' GNI on grant equivalent basis, by donor cou...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0125,
-        "max": 1.1419,
-        "median": 0.2765
-      },
-      "density": 0.044,
-      "years": [
-        2018,
-        2024
-      ],
-      "countries": 49,
-      "by_era": {
-        "2000+": {
-          "density": 0.058,
-          "countries": 49,
-          "stats": {
-            "min": 0.0125,
-            "max": 1.1419,
-            "median": 0.2765
-          }
-        }
-      }
-    },
-    "dc_oda_totl": {
-      "name": "Net official development assistance (ODA) from OECD-DAC countries, by donor countries (millions of constant 2023 Unit...",
-      "unit": "CON_USD_M",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 1.7395,
-        "max": 64575.43,
-        "median": 784.8191
-      },
-      "density": 0.149,
-      "years": [
-        2000,
-        2024
-      ],
-      "countries": 50,
-      "by_era": {
-        "2000+": {
-          "density": 0.196,
-          "countries": 50,
-          "stats": {
-            "min": 1.7395,
-            "max": 64575.43,
-            "median": 784.8191
-          }
-        }
-      }
-    },
-    "dc_oda_totlge": {
-      "name": "Official development assistance (ODA) from OECD-DAC countries on grant equivalent basis, by donor countries (millions...",
-      "unit": "CON_USD_M",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 11.7427,
-        "max": 64685.69,
-        "median": 917.6067
-      },
-      "density": 0.046,
-      "years": [
-        2018,
-        2024
-      ],
-      "countries": 49,
-      "by_era": {
-        "2000+": {
-          "density": 0.06,
-          "countries": 49,
-          "stats": {
-            "min": 11.7427,
-            "max": 64685.69,
-            "median": 917.6067
-          }
-        }
-      }
-    },
-    "dc_ossd_grt": {
-      "name": "Gross receipts by developing countries of official sustainable development grants (millions of United States dollars)",
-      "unit": "CU_USD_M",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 18003.8829,
-        "median": 268.9552
-      },
-      "density": 0.097,
-      "years": [
-        2019,
-        2023
-      ],
-      "countries": 140,
-      "by_era": {
-        "2000+": {
-          "density": 0.128,
-          "countries": 140,
-          "stats": {
-            "min": 0.0,
-            "max": 18003.8829,
-            "median": 268.9552
-          }
-        }
-      }
-    },
-    "dc_ossd_mpf": {
-      "name": "Gross receipts by developing countries of mobilised private finance (MPF) - on an experimental basis (millions of Uni...",
-      "unit": "CU_USD_M",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 9780.2082,
-        "median": 31.679
-      },
-      "density": 0.126,
-      "years": [
-        2016,
-        2023
-      ],
-      "countries": 135,
-      "by_era": {
-        "2000+": {
-          "density": 0.167,
-          "countries": 135,
-          "stats": {
-            "min": 0.0,
-            "max": 9780.2082,
-            "median": 31.679
-          }
-        }
-      }
-    },
-    "dc_ossd_offcl": {
-      "name": "Gross receipts by developing countries of official concessional sustainable development loans (millions of United Sta...",
-      "unit": "CU_USD_M",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 19819.1457,
-        "median": 110.6981
-      },
-      "density": 0.092,
-      "years": [
-        2019,
-        2023
-      ],
-      "countries": 134,
-      "by_era": {
-        "2000+": {
-          "density": 0.121,
-          "countries": 134,
-          "stats": {
-            "min": 0.0,
-            "max": 19819.1457,
-            "median": 110.6981
-          }
-        }
-      }
-    },
-    "dc_ossd_offnl": {
-      "name": "Gross receipts by developing countries of official non-concessional sustainable development loans (millions of United...",
-      "unit": "CU_USD_M",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 12086.6063,
-        "median": 126.9304
-      },
-      "density": 0.09,
-      "years": [
-        2019,
-        2023
-      ],
-      "countries": 134,
-      "by_era": {
-        "2000+": {
-          "density": 0.119,
-          "countries": 134,
-          "stats": {
-            "min": 0.0,
-            "max": 12086.6063,
-            "median": 126.9304
-          }
-        }
-      }
-    },
-    "dc_ossd_prvgrt": {
-      "name": "Gross receipts by developing countries of private grants (millions of United States dollars)",
-      "unit": "CU_USD_M",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 510.9118,
-        "median": 2.9469
-      },
-      "density": 0.113,
-      "years": [
-        2016,
-        2022
-      ],
-      "countries": 134,
-      "by_era": {
-        "2000+": {
-          "density": 0.149,
-          "countries": 134,
-          "stats": {
-            "min": 0.0,
-            "max": 510.9118,
-            "median": 2.9469
-          }
-        }
-      }
-    },
-    "dp_dod_dld2_cr_cg_z1": {
-      "name": "Gross public sector debt, Central Government, as a proportion of GDP (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 1.4358,
-        "max": 221.3205,
-        "median": 45.5329
-      },
-      "density": 0.132,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 47,
-      "by_era": {
-        "2000+": {
-          "density": 0.175,
-          "countries": 47,
-          "stats": {
-            "min": 1.4358,
-            "max": 221.3205,
-            "median": 45.5329
-          }
-        }
-      }
-    },
-    "dt_dod_dect_gn_zs": {
-      "name": "External debt stocks as a proportion of GNI (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 1.1542,
-        "max": 610.4519,
-        "median": 43.6448
-      },
-      "density": 0.373,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 115,
-      "by_era": {
-        "2000+": {
-          "density": 0.492,
-          "countries": 115,
-          "stats": {
-            "min": 1.1542,
-            "max": 610.4519,
-            "median": 43.6448
-          }
-        }
-      }
-    },
-    "dt_tds_dect": {
-      "name": "Debt service as a proportion of exports of goods, services and primary income (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 134.722,
-        "median": 6.1022
-      },
-      "density": 0.353,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 114,
-      "by_era": {
-        "2000+": {
-          "density": 0.466,
-          "countries": 114,
-          "stats": {
-            "min": 0.0,
-            "max": 134.722,
-            "median": 6.1022
-          }
-        }
-      }
-    },
-    "fb_bnk_capa_zs": {
-      "name": "Bank capital to assets ratio (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": -1.3225,
-        "max": 179.4312,
-        "median": 8.877
-      },
-      "density": 0.262,
-      "years": [
-        2000,
-        2022
-      ],
-      "countries": 140,
-      "by_era": {
-        "2000+": {
-          "density": 0.346,
-          "countries": 140,
-          "stats": {
-            "min": -1.3225,
-            "max": 179.4312,
-            "median": 8.877
-          }
-        }
-      }
-    },
-    "fi_res_totl_mo": {
-      "name": "Total reserves in months of imports (ratio)",
-      "unit": "Ratio",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.01,
-        "max": 79.2372,
-        "median": 3.8294
-      },
-      "density": 0.504,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 164,
-      "by_era": {
-        "2000+": {
-          "density": 0.665,
-          "countries": 164,
-          "stats": {
-            "min": 0.01,
-            "max": 79.2372,
-            "median": 3.8294
-          }
-        }
-      }
-    },
-    "fm_lbl_bmny_ir_zs": {
-      "name": "Broad money to total reserves ratio",
-      "unit": "Ratio",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0015,
-        "max": 1209.1501,
-        "median": 2.9682
-      },
-      "density": 0.445,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 145,
-      "by_era": {
-        "2000+": {
-          "density": 0.588,
-          "countries": 145,
-          "stats": {
-            "min": 0.0015,
-            "max": 1209.1501,
-            "median": 2.9682
-          }
-        }
-      }
-    },
-    "fm_lbl_bmny_zg": {
-      "name": "Annual broad money growth (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": -99.8882,
-        "max": 708.9286,
-        "median": 11.3551
-      },
-      "density": 0.484,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 156,
-      "by_era": {
-        "2000+": {
-          "density": 0.639,
-          "countries": 156,
-          "stats": {
-            "min": -99.8882,
-            "max": 708.9286,
-            "median": 11.3551
-          }
-        }
-      }
-    },
-    "fp_cpi_totl_zg": {
-      "name": "Annual inflation, consumer prices (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": -16.8597,
-        "max": 557.2018,
-        "median": 3.5652
-      },
-      "density": 0.573,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 183,
-      "by_era": {
-        "2000+": {
-          "density": 0.756,
-          "countries": 183,
-          "stats": {
-            "min": -16.8597,
-            "max": 557.2018,
-            "median": 3.5652
-          }
-        }
-      }
-    },
-    "gc_bal_cash_gd_zs": {
-      "name": "Cash surplus/deficit as a proportion of GDP (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": -52.8496,
-        "max": 238.5487,
-        "median": -2.5202
-      },
-      "density": 0.375,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 149,
-      "by_era": {
-        "2000+": {
-          "density": 0.494,
-          "countries": 149,
-          "stats": {
-            "min": -52.8496,
-            "max": 238.5487,
-            "median": -2.5202
-          }
-        }
-      }
-    },
-    "gc_gob_taxd": {
+    "ind_17_1_2": {
       "name": "Proportion of domestic budget funded by domestic taxes (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
       "stats": {
         "min": 1.7629,
         "max": 164.9525,
@@ -1077,7 +123,7 @@
       "countries": 174,
       "by_era": {
         "2000+": {
-          "density": 0.579,
+          "density": 0.58,
           "countries": 174,
           "stats": {
             "min": 1.7629,
@@ -1087,1336 +133,8 @@
         }
       }
     },
-    "gc_tax_totl_gd_zs": {
-      "name": "Tax revenue as a proportion of GDP (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0001,
-        "max": 147.6402,
-        "median": 16.3983
-      },
-      "density": 0.383,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 151,
-      "by_era": {
-        "2000+": {
-          "density": 0.505,
-          "countries": 151,
-          "stats": {
-            "min": 0.0001,
-            "max": 147.6402,
-            "median": 16.3983
-          }
-        }
-      }
-    },
-    "gf_com_pppi": {
-      "name": "Amount of United States dollars committed to public-private partnerships for infrastructure, million USD nominal",
-      "unit": "CU_USD_M",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 49778.77,
-        "median": 0.0
-      },
-      "density": 0.362,
-      "years": [
-        2000,
-        2020
-      ],
-      "countries": 124,
-      "by_era": {
-        "2000+": {
-          "density": 0.478,
-          "countries": 124,
-          "stats": {
-            "min": 0.0,
-            "max": 49778.77,
-            "median": 0.0
-          }
-        }
-      }
-    },
-    "gf_com_pppi_kd": {
-      "name": "Amount of United States dollars committed to public-private partnerships for infrastructure, million USD real",
-      "unit": "CON_USD_M",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 55425.0304,
-        "median": 0.0
-      },
-      "density": 0.352,
-      "years": [
-        2000,
-        2020
-      ],
-      "countries": 124,
-      "by_era": {
-        "2000+": {
-          "density": 0.464,
-          "countries": 124,
-          "stats": {
-            "min": 0.0,
-            "max": 55425.0304,
-            "median": 0.0
-          }
-        }
-      }
-    },
-    "gf_frn_fdi": {
-      "name": "Foreign direct investment (FDI) inflows (millions of United States dollars)",
-      "unit": "CU_USD_M",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": -359330.6403,
-        "max": 467625.0,
-        "median": 400.7814
-      },
-      "density": 0.876,
-      "years": [
-        1990,
-        2023
-      ],
-      "countries": 197,
-      "by_era": {
-        "2000+": {
-          "density": 0.836,
-          "countries": 196,
-          "stats": {
-            "min": -359330.6403,
-            "max": 467625.0,
-            "median": 663.8029
-          }
-        },
-        "1950-1999": {
-          "density": 1.0,
-          "countries": 185,
-          "stats": {
-            "min": -2089.399,
-            "max": 283376.0,
-            "median": 89.0
-          }
-        }
-      }
-    },
-    "gr_g14_gdp": {
-      "name": "Total government revenue (budgetary central government) as a proportion of GDP (%)",
-      "unit": "USD",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 369.9539,
-        "median": 28.7246
-      },
-      "density": 0.445,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 174,
-      "by_era": {
-        "2000+": {
-          "density": 0.587,
-          "countries": 174,
-          "stats": {
-            "min": 0.0,
-            "max": 369.9539,
-            "median": 28.7246
-          }
-        }
-      }
-    },
-    "gr_g14_xdc": {
-      "name": "Total government revenue, in local currency",
-      "unit": "CUR_LCU_M",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 3174953537.6496,
-        "median": 196316.0
-      },
-      "density": 0.446,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 175,
-      "by_era": {
-        "2000+": {
-          "density": 0.589,
-          "countries": 175,
-          "stats": {
-            "min": 0.0,
-            "max": 3174953537.6496,
-            "median": 196316.0
-          }
-        }
-      }
-    },
-    "iq_spi_pil4": {
-      "name": "Data Sources performance index (Statistical Performance Indicators Pillar 4) (Index)",
-      "unit": "INDEX",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 94.175,
-        "median": 54.2667
-      },
-      "density": 0.194,
-      "years": [
-        2016,
-        2023
-      ],
-      "countries": 182,
-      "by_era": {
-        "2000+": {
-          "density": 0.257,
-          "countries": 182,
-          "stats": {
-            "min": 0.0,
-            "max": 94.175,
-            "median": 54.2667
-          }
-        }
-      }
-    },
-    "iq_spi_pil5": {
-      "name": "Data Infrastructure performance index (Statistical Performance Indicators Pillar 5) (Index)",
-      "unit": "INDEX",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 50.0
-      },
-      "density": 0.205,
-      "years": [
-        2016,
-        2023
-      ],
-      "countries": 185,
-      "by_era": {
-        "2000+": {
-          "density": 0.271,
-          "countries": 185,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 50.0
-          }
-        }
-      }
-    },
-    "it_net_bbnd": {
-      "name": "Fixed broadband subscriptions per 100\u00c2\u00a0inhabitants, by speed (per 100 inhabitants)",
-      "unit": "PER_100_POP",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 75.7497,
-        "median": 1.9278
-      },
-      "density": 0.567,
-      "years": [
-        2000,
-        2024
-      ],
-      "countries": 206,
-      "by_era": {
-        "2000+": {
-          "density": 0.748,
-          "countries": 206,
-          "stats": {
-            "min": 0.0,
-            "max": 75.7497,
-            "median": 1.9278
-          }
-        }
-      }
-    },
-    "it_net_bbndn": {
-      "name": "Number of fixed broadband subscriptions, by speed (number)",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 629963688.0,
-        "median": 41493.0
-      },
-      "density": 0.567,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 206,
-      "by_era": {
-        "2000+": {
-          "density": 0.748,
-          "countries": 206,
-          "stats": {
-            "min": 0.0,
-            "max": 629963688.0,
-            "median": 41493.0
-          }
-        }
-      }
-    },
-    "it_use_ii99": {
-      "name": "Proportion of individuals using the Internet (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 33.0
-      },
-      "density": 0.646,
-      "years": [
-        2000,
-        2024
-      ],
-      "countries": 211,
-      "by_era": {
-        "2000+": {
-          "density": 0.853,
-          "countries": 211,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 33.0
-          }
-        }
-      }
-    },
-    "ne_con_govt_kd_zg": {
-      "name": "Annual growth of the general government final consumption expenditure (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": -75.9852,
-        "max": 250.2334,
-        "median": 2.8546
-      },
-      "density": 0.493,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 164,
-      "by_era": {
-        "2000+": {
-          "density": 0.65,
-          "countries": 164,
-          "stats": {
-            "min": -75.9852,
-            "max": 250.2334,
-            "median": 2.8546
-          }
-        }
-      }
-    },
-    "ne_con_prvt_kd_zg": {
-      "name": "Annual growth of households and NPISHs final consumption expenditure (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": -41.9783,
-        "max": 2297.0309,
-        "median": 3.4941
-      },
-      "density": 0.499,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 166,
-      "by_era": {
-        "2000+": {
-          "density": 0.658,
-          "countries": 166,
-          "stats": {
-            "min": -41.9783,
-            "max": 2297.0309,
-            "median": 3.4941
-          }
-        }
-      }
-    },
-    "ne_exp_gnfs_kd_zg": {
-      "name": "Annual growth of exports of goods and services (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": -96.3644,
-        "max": 1045.4493,
-        "median": 4.5773
-      },
-      "density": 0.507,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 168,
-      "by_era": {
-        "2000+": {
-          "density": 0.669,
-          "countries": 168,
-          "stats": {
-            "min": -96.3644,
-            "max": 1045.4493,
-            "median": 4.5773
-          }
-        }
-      }
-    },
-    "ne_gdi_totl_kd_zg": {
-      "name": "Annual growth of the gross capital formation (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": -938.9957,
-        "max": 466.8886,
-        "median": 4.3822
-      },
-      "density": 0.475,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 161,
-      "by_era": {
-        "2000+": {
-          "density": 0.627,
-          "countries": 161,
-          "stats": {
-            "min": -938.9957,
-            "max": 466.8886,
-            "median": 4.3822
-          }
-        }
-      }
-    },
-    "ne_imp_gnfs_kd_zg": {
-      "name": "Annual growth of imports of goods and services (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": -94.7,
-        "max": 328.6853,
-        "median": 5.1921
-      },
-      "density": 0.507,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 168,
-      "by_era": {
-        "2000+": {
-          "density": 0.669,
-          "countries": 168,
-          "stats": {
-            "min": -94.7,
-            "max": 328.6853,
-            "median": 5.1921
-          }
-        }
-      }
-    },
-    "ny_gdp_mktp_kd_zg": {
-      "name": "Annual GDP growth (%)",
-      "unit": "USD",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": -50.3385,
-        "max": 86.8267,
-        "median": 3.6036
-      },
-      "density": 0.649,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 201,
-      "by_era": {
-        "2000+": {
-          "density": 0.857,
-          "countries": 201,
-          "stats": {
-            "min": -50.3385,
-            "max": 86.8267,
-            "median": 3.6036
-          }
-        }
-      }
-    },
-    "pa_nus_atls": {
-      "name": "DEC alternative conversion factor (in local currency unit per United States dollar)",
-      "unit": "Ratio",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0717,
-        "max": 353510.1276,
-        "median": 6.3268
-      },
-      "density": 0.667,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 201,
-      "by_era": {
-        "2000+": {
-          "density": 0.881,
-          "countries": 201,
-          "stats": {
-            "min": 0.0717,
-            "max": 353510.1276,
-            "median": 6.3268
-          }
-        }
-      }
-    },
-    "sg_cpa_ofdi": {
-      "name": "Number of countries with an outward investment promotion scheme which can benefit developing countries, including LDC...",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 1.0,
-        "median": 0.0
-      },
-      "density": 0.025,
-      "years": [
-        2024,
-        2024
-      ],
-      "countries": 179,
-      "by_era": {
-        "2000+": {
-          "density": 0.033,
-          "countries": 179,
-          "stats": {
-            "min": 0.0,
-            "max": 1.0,
-            "median": 0.0
-          }
-        }
-      }
-    },
-    "sg_cpa_sdevp": {
-      "name": "Mechanisms in place to enhance policy coherence for sustainable development (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 26.25,
-        "max": 100.0,
-        "median": 77.5
-      },
-      "density": 0.007,
-      "years": [
-        2020,
-        2024
-      ],
-      "countries": 38,
-      "by_era": {
-        "2000+": {
-          "density": 0.009,
-          "countries": 38,
-          "stats": {
-            "min": 26.25,
-            "max": 100.0,
-            "median": 77.5
-          }
-        }
-      }
-    },
-    "sg_pln_mstksdg_p": {
-      "name": "Number of countries reporting progress in multi-stakeholder development effectiveness monitoring frameworks that supp...",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 1.0,
-        "max": 1.0,
-        "median": 1.0
-      },
-      "density": 0.006,
-      "years": [
-        2016,
-        2018
-      ],
-      "countries": 32,
-      "by_era": {
-        "2000+": {
-          "density": 0.007,
-          "countries": 32,
-          "stats": {
-            "min": 1.0,
-            "max": 1.0,
-            "median": 1.0
-          }
-        }
-      }
-    },
-    "sg_pln_mstksdg_r": {
-      "name": "Number of countries reporting progress in multi-stakeholder development effectiveness monitoring frameworks that supp...",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 1.0,
-        "median": 0.0
-      },
-      "density": 0.022,
-      "years": [
-        2016,
-        2025
-      ],
-      "countries": 80,
-      "by_era": {
-        "2000+": {
-          "density": 0.029,
-          "countries": 80,
-          "stats": {
-            "min": 0.0,
-            "max": 1.0,
-            "median": 0.0
-          }
-        }
-      }
-    },
-    "sg_pln_prpolres": {
-      "name": "Extent of use of country-owned results frameworks and planning tools by providers of development cooperation - data b...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 59.633
-      },
-      "density": 0.008,
-      "years": [
-        2016,
-        2018
-      ],
-      "countries": 32,
-      "by_era": {
-        "2000+": {
-          "density": 0.011,
-          "countries": 32,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 59.633
-          }
-        }
-      }
-    },
-    "sg_pln_prvndi": {
-      "name": "Proportion of project objectives of new development interventions drawn from country-led result frameworks - data by ...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 83.3
-      },
-      "density": 0.008,
-      "years": [
-        2016,
-        2018
-      ],
-      "countries": 32,
-      "by_era": {
-        "2000+": {
-          "density": 0.011,
-          "countries": 32,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 83.3
-          }
-        }
-      }
-    },
-    "sg_pln_prvrictry": {
-      "name": "Proportion of results indicators drawn from country-led results frameworks - data by provider (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 54.7
-      },
-      "density": 0.008,
-      "years": [
-        2016,
-        2018
-      ],
-      "countries": 32,
-      "by_era": {
-        "2000+": {
-          "density": 0.011,
-          "countries": 32,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 54.7
-          }
-        }
-      }
-    },
-    "sg_pln_prvrimon": {
-      "name": "Proportion of results indicators which will be monitored using government sources and monitoring systems - data by pr...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 43.946
-      },
-      "density": 0.008,
-      "years": [
-        2016,
-        2018
-      ],
-      "countries": 32,
-      "by_era": {
-        "2000+": {
-          "density": 0.011,
-          "countries": 32,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 43.946
-          }
-        }
-      }
-    },
-    "sg_pln_recndi": {
-      "name": "Proportion of project objectives in new development interventions drawn from country-led result frameworks - data by ...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 26.7,
-        "max": 100.0,
-        "median": 89.8276
-      },
-      "density": 0.025,
-      "years": [
-        2016,
-        2025
-      ],
-      "countries": 91,
-      "by_era": {
-        "2000+": {
-          "density": 0.033,
-          "countries": 91,
-          "stats": {
-            "min": 26.7,
-            "max": 100.0,
-            "median": 89.8276
-          }
-        }
-      }
-    },
-    "sg_pln_recrictry": {
-      "name": "Proportion of results indicators drawn from country-led results frameworks - data by recipient (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 58.6626
-      },
-      "density": 0.025,
-      "years": [
-        2016,
-        2025
-      ],
-      "countries": 91,
-      "by_era": {
-        "2000+": {
-          "density": 0.033,
-          "countries": 91,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 58.6626
-          }
-        }
-      }
-    },
-    "sg_pln_recrimon": {
-      "name": "Proportion of results indicators which will be monitored using government sources and monitoring systems - data by re...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 49.9
-      },
-      "density": 0.025,
-      "years": [
-        2016,
-        2025
-      ],
-      "countries": 91,
-      "by_era": {
-        "2000+": {
-          "density": 0.033,
-          "countries": 91,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 49.9
-          }
-        }
-      }
-    },
-    "sg_pln_repolres": {
-      "name": "Extent of use of country-owned results frameworks and planning tools by providers of development cooperation - data b...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 15.7925,
-        "max": 100.0,
-        "median": 65.6542
-      },
-      "density": 0.025,
-      "years": [
-        2016,
-        2025
-      ],
-      "countries": 91,
-      "by_era": {
-        "2000+": {
-          "density": 0.033,
-          "countries": 91,
-          "stats": {
-            "min": 15.7925,
-            "max": 100.0,
-            "median": 65.6542
-          }
-        }
-      }
-    },
-    "sg_reg_brth90": {
-      "name": "Proportion of countries with birth registration data that are at least 90 percent complete (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 50.0,
-        "max": 50.0,
-        "median": 50.0
-      },
-      "density": 0.001,
-      "years": [
-        2015,
-        2020
-      ],
-      "countries": 1,
-      "by_era": {
-        "2000+": {
-          "density": 0.001,
-          "countries": 1,
-          "stats": {
-            "min": 50.0,
-            "max": 50.0,
-            "median": 50.0
-          }
-        }
-      }
-    },
-    "sg_reg_brth90n": {
-      "name": "Countries with birth registration data that are at least 90 percent complete (1 = YES; 0 = NO)",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 1.0,
-        "median": 1.0
-      },
-      "density": 0.171,
-      "years": [
-        2015,
-        2023
-      ],
-      "countries": 184,
-      "by_era": {
-        "2000+": {
-          "density": 0.226,
-          "countries": 184,
-          "stats": {
-            "min": 0.0,
-            "max": 1.0,
-            "median": 1.0
-          }
-        }
-      }
-    },
-    "sg_reg_census": {
-      "name": "Proportion of countries that have conducted at least one population and housing census in the last 10 years (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 100.0,
-        "max": 100.0,
-        "median": 100.0
-      },
-      "density": 0.0,
-      "years": [
-        2019,
-        2019
-      ],
-      "countries": 1,
-      "by_era": {
-        "2000+": {
-          "density": 0.0,
-          "countries": 1,
-          "stats": {
-            "min": 100.0,
-            "max": 100.0,
-            "median": 100.0
-          }
-        }
-      }
-    },
-    "sg_reg_censusn": {
-      "name": "Countries that have conducted at least one population and housing census in the last 10 years (1 = YES; 0 = NO)",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 1.0,
-        "max": 1.0,
-        "median": 1.0
-      },
-      "density": 0.025,
-      "years": [
-        2014,
-        2023
-      ],
-      "countries": 181,
-      "by_era": {
-        "2000+": {
-          "density": 0.033,
-          "countries": 181,
-          "stats": {
-            "min": 1.0,
-            "max": 1.0,
-            "median": 1.0
-          }
-        }
-      }
-    },
-    "sg_reg_deth75": {
-      "name": "Proportion of countries with death registration data that are at least 75 percent complete (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 50.0,
-        "max": 50.0,
-        "median": 50.0
-      },
-      "density": 0.001,
-      "years": [
-        2015,
-        2020
-      ],
-      "countries": 1,
-      "by_era": {
-        "2000+": {
-          "density": 0.001,
-          "countries": 1,
-          "stats": {
-            "min": 50.0,
-            "max": 50.0,
-            "median": 50.0
-          }
-        }
-      }
-    },
-    "sg_reg_deth75n": {
-      "name": "Countries with death registration data that are at least 75 percent complete (1 = YES; 0 = NO)",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 1.0,
-        "median": 1.0
-      },
-      "density": 0.166,
-      "years": [
-        2015,
-        2023
-      ],
-      "countries": 181,
-      "by_era": {
-        "2000+": {
-          "density": 0.219,
-          "countries": 181,
-          "stats": {
-            "min": 0.0,
-            "max": 1.0,
-            "median": 1.0
-          }
-        }
-      }
-    },
-    "sg_stt_capty": {
-      "name": "Dollar value of all resources made available to strengthen statistical capacity in developing countries (current Unit...",
-      "unit": "CU_USD",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": -18743.0,
-        "max": 115888681.0,
-        "median": 1062720.0
-      },
-      "density": 0.238,
-      "years": [
-        2010,
-        2022
-      ],
-      "countries": 143,
-      "by_era": {
-        "2000+": {
-          "density": 0.315,
-          "countries": 143,
-          "stats": {
-            "min": -18743.0,
-            "max": 115888681.0,
-            "median": 1062720.0
-          }
-        }
-      }
-    },
-    "sg_stt_fpos": {
-      "name": "Countries with national statistical legislation exists that complies with the Fundamental Principles of Official Stat...",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 1.0,
-        "median": 1.0
-      },
-      "density": 0.14,
-      "years": [
-        2019,
-        2024
-      ],
-      "countries": 180,
-      "by_era": {
-        "2000+": {
-          "density": 0.184,
-          "countries": 180,
-          "stats": {
-            "min": 0.0,
-            "max": 1.0,
-            "median": 1.0
-          }
-        }
-      }
-    },
-    "sg_stt_nsdsfddnr": {
-      "name": "Countries with national statistical plans with funding from donors (1 = YES; 0 = NO)",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 1.0,
-        "median": 1.0
-      },
-      "density": 0.03,
-      "years": [
-        2019,
-        2024
-      ],
-      "countries": 86,
-      "by_era": {
-        "2000+": {
-          "density": 0.04,
-          "countries": 86,
-          "stats": {
-            "min": 0.0,
-            "max": 1.0,
-            "median": 1.0
-          }
-        }
-      }
-    },
-    "sg_stt_nsdsfdgvt": {
-      "name": "Countries with national statistical plans with funding from Government (1 = YES; 0 = NO)",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 1.0,
-        "median": 1.0
-      },
-      "density": 0.087,
-      "years": [
-        2019,
-        2024
-      ],
-      "countries": 164,
-      "by_era": {
-        "2000+": {
-          "density": 0.115,
-          "countries": 164,
-          "stats": {
-            "min": 0.0,
-            "max": 1.0,
-            "median": 1.0
-          }
-        }
-      }
-    },
-    "sg_stt_nsdsfdothr": {
-      "name": "Countries with national statistical plans with funding from others (1 = YES; 0 = NO)",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 1.0,
-        "median": 1.0
-      },
-      "density": 0.016,
-      "years": [
-        2019,
-        2024
-      ],
-      "countries": 47,
-      "by_era": {
-        "2000+": {
-          "density": 0.021,
-          "countries": 47,
-          "stats": {
-            "min": 0.0,
-            "max": 1.0,
-            "median": 1.0
-          }
-        }
-      }
-    },
-    "sg_stt_nsdsfnd": {
-      "name": "Countries with national statistical plans that are fully funded (1 = YES; 0 = NO)",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 1.0,
-        "median": 1.0
-      },
-      "density": 0.118,
-      "years": [
-        2019,
-        2024
-      ],
-      "countries": 169,
-      "by_era": {
-        "2000+": {
-          "density": 0.155,
-          "countries": 169,
-          "stats": {
-            "min": 0.0,
-            "max": 1.0,
-            "median": 1.0
-          }
-        }
-      }
-    },
-    "sg_stt_nsdsimpl": {
-      "name": "Countries with national statistical plans that are under implementation (1 = YES; 0 = NO)",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 1.0,
-        "median": 1.0
-      },
-      "density": 0.146,
-      "years": [
-        2019,
-        2024
-      ],
-      "countries": 187,
-      "by_era": {
-        "2000+": {
-          "density": 0.192,
-          "countries": 187,
-          "stats": {
-            "min": 0.0,
-            "max": 1.0,
-            "median": 1.0
-          }
-        }
-      }
-    },
-    "sg_stt_odin": {
-      "name": "Open Data Inventory (ODIN) Coverage Index",
-      "unit": "INDEX",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 1.1,
-        "max": 83.1,
-        "median": 50.2
-      },
-      "density": 0.052,
-      "years": [
-        2022,
-        2024
-      ],
-      "countries": 187,
-      "by_era": {
-        "2000+": {
-          "density": 0.068,
-          "countries": 187,
-          "stats": {
-            "min": 1.1,
-            "max": 83.1,
-            "median": 50.2
-          }
-        }
-      }
-    },
-    "tg_val_totl_gd_zs": {
-      "name": "Merchandise trade as a proportion of GDP (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 7.8059,
-        "max": 343.4881,
-        "median": 55.5942
-      },
-      "density": 0.626,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 194,
-      "by_era": {
-        "2000+": {
-          "density": 0.827,
-          "countries": 194,
-          "stats": {
-            "min": 7.8059,
-            "max": 343.4881,
-            "median": 55.5942
-          }
-        }
-      }
-    },
-    "tm_tax_dmfn": {
-      "name": "Average tariff applied by developed countries, most-favored nation status, by type of product (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 49.4656,
-        "median": 5.4016
-      },
-      "density": 0.464,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 208,
-      "by_era": {
-        "2000+": {
-          "density": 0.612,
-          "countries": 208,
-          "stats": {
-            "min": 0.0,
-            "max": 49.4656,
-            "median": 5.4016
-          }
-        }
-      }
-    },
-    "tm_tax_dprf": {
-      "name": "Average tariff applied by developed countries, preferential status, by type of product (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 46.112,
-        "median": 2.4022
-      },
-      "density": 0.464,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 208,
-      "by_era": {
-        "2000+": {
-          "density": 0.612,
-          "countries": 208,
-          "stats": {
-            "min": 0.0,
-            "max": 46.112,
-            "median": 2.4022
-          }
-        }
-      }
-    },
-    "tm_tax_wmfn": {
+    "ind_17_10_1": {
       "name": "Worldwide weighted tariff-average, most-favoured-nation status, by type of product (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
       "stats": {
         "min": 0.0,
         "max": 193.0,
@@ -2440,45 +158,14 @@
         }
       }
     },
-    "tm_tax_wmps": {
-      "name": "Worldwide weighted tariff-average, preferential status, by type of product (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 243.8523,
-        "median": 6.4496
-      },
-      "density": 0.21,
-      "years": [
-        2005,
-        2023
-      ],
-      "countries": 158,
-      "by_era": {
-        "2000+": {
-          "density": 0.277,
-          "countries": 158,
-          "stats": {
-            "min": 0.0,
-            "max": 243.8523,
-            "median": 6.4496
-          }
-        }
-      }
-    },
-    "tx_exp_gbmrch": {
-      "name": "Developing countries\u00e2\u20ac\u2122 and least developed countries\u00e2\u20ac\u2122 share of global merchandise exports (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
+    "ind_17_11_1": {
+      "name": "Developing countries\u2019 and least developed countries\u2019 share of global merchandise exports (%)",
       "stats": {
         "min": 0.0,
         "max": 14.8699,
         "median": 0.0314
       },
-      "density": 0.674,
+      "density": 0.675,
       "years": [
         2000,
         2023
@@ -2486,7 +173,7 @@
       "countries": 204,
       "by_era": {
         "2000+": {
-          "density": 0.89,
+          "density": 0.891,
           "countries": 204,
           "stats": {
             "min": 0.0,
@@ -2496,91 +183,516 @@
         }
       }
     },
-    "tx_exp_gbsvr": {
-      "name": "Developing countries\u00e2\u20ac\u2122 and least developed countries\u00e2\u20ac\u2122 share of global services exports (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
+    "ind_17_12_1": {
+      "name": "Average tariff applied by developed countries, most-favored nation status, by type of product (%)",
       "stats": {
         "min": 0.0,
-        "max": 18.9977,
-        "median": 0.0446
+        "max": 49.4656,
+        "median": 5.4016
       },
-      "density": 0.628,
+      "density": 0.464,
       "years": [
         2000,
         2023
       ],
-      "countries": 195,
+      "countries": 208,
       "by_era": {
         "2000+": {
-          "density": 0.828,
-          "countries": 195,
+          "density": 0.613,
+          "countries": 208,
           "stats": {
             "min": 0.0,
-            "max": 18.9977,
-            "median": 0.0446
+            "max": 49.4656,
+            "median": 5.4016
           }
         }
       }
     },
-    "tx_imp_gbmrch": {
-      "name": "Developing countries\u00e2\u20ac\u2122 and least developed countries\u00e2\u20ac\u2122 share of global merchandise imports (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
+    "ind_17_13_1": {
+      "name": "DEC alternative conversion factor (in local currency unit per United States dollar)",
       "stats": {
-        "min": 0.0,
-        "max": 18.9288,
-        "median": 0.0409
+        "min": 0.0717,
+        "max": 353510.1276,
+        "median": 6.3268
       },
-      "density": 0.674,
+      "density": 0.668,
       "years": [
         2000,
         2023
       ],
-      "countries": 204,
+      "countries": 201,
       "by_era": {
         "2000+": {
-          "density": 0.89,
-          "countries": 204,
+          "density": 0.882,
+          "countries": 201,
           "stats": {
-            "min": 0.0,
-            "max": 18.9288,
-            "median": 0.0409
+            "min": 0.0717,
+            "max": 353510.1276,
+            "median": 6.3268
           }
         }
       }
     },
-    "tx_imp_gbsvr": {
-      "name": "Developing countries\u00e2\u20ac\u2122 and least developed countries\u00e2\u20ac\u2122 share of global services imports (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
+    "ind_17_14_1": {
+      "name": "Mechanisms in place to enhance policy coherence for sustainable development (%)",
       "stats": {
-        "min": 0.0001,
-        "max": 14.4493,
-        "median": 0.0518
+        "min": 26.25,
+        "max": 100.0,
+        "median": 77.5
       },
-      "density": 0.628,
+      "density": 0.007,
+      "years": [
+        2020,
+        2024
+      ],
+      "countries": 38,
+      "by_era": {
+        "2000+": {
+          "density": 0.009,
+          "countries": 38,
+          "stats": {
+            "min": 26.25,
+            "max": 100.0,
+            "median": 77.5
+          }
+        }
+      }
+    },
+    "ind_17_15_1": {
+      "name": "Proportion of project objectives in new development interventions drawn from country-led result frameworks - data by rec",
+      "stats": {
+        "min": 26.7,
+        "max": 100.0,
+        "median": 89.8276
+      },
+      "density": 0.025,
+      "years": [
+        2016,
+        2025
+      ],
+      "countries": 91,
+      "by_era": {
+        "2000+": {
+          "density": 0.033,
+          "countries": 91,
+          "stats": {
+            "min": 26.7,
+            "max": 100.0,
+            "median": 89.8276
+          }
+        }
+      }
+    },
+    "ind_17_16_1": {
+      "name": "Number of countries reporting progress in multi-stakeholder development effectiveness monitoring frameworks that support",
+      "stats": {
+        "min": 0.0,
+        "max": 1.0,
+        "median": 0.0
+      },
+      "density": 0.022,
+      "years": [
+        2016,
+        2025
+      ],
+      "countries": 80,
+      "by_era": {
+        "2000+": {
+          "density": 0.029,
+          "countries": 80,
+          "stats": {
+            "min": 0.0,
+            "max": 1.0,
+            "median": 0.0
+          }
+        }
+      }
+    },
+    "ind_17_17_1": {
+      "name": "Amount of United States dollars committed to public-private partnerships for infrastructure, million USD nominal",
+      "stats": {
+        "min": 0.0,
+        "max": 49778.77,
+        "median": 0.0
+      },
+      "density": 0.362,
+      "years": [
+        2000,
+        2020
+      ],
+      "countries": 124,
+      "by_era": {
+        "2000+": {
+          "density": 0.479,
+          "countries": 124,
+          "stats": {
+            "min": 0.0,
+            "max": 49778.77,
+            "median": 0.0
+          }
+        }
+      }
+    },
+    "ind_17_18_1": {
+      "name": "Data Infrastructure performance index (Statistical Performance Indicators Pillar 5) (Index)",
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 50.0
+      },
+      "density": 0.205,
+      "years": [
+        2016,
+        2023
+      ],
+      "countries": 185,
+      "by_era": {
+        "2000+": {
+          "density": 0.271,
+          "countries": 185,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 50.0
+          }
+        }
+      }
+    },
+    "ind_17_18_2": {
+      "name": "Countries with national statistical legislation exists that complies with the Fundamental Principles of Official Statist",
+      "stats": {
+        "min": 0.0,
+        "max": 1.0,
+        "median": 1.0
+      },
+      "density": 0.14,
+      "years": [
+        2019,
+        2024
+      ],
+      "countries": 180,
+      "by_era": {
+        "2000+": {
+          "density": 0.185,
+          "countries": 180,
+          "stats": {
+            "min": 0.0,
+            "max": 1.0,
+            "median": 1.0
+          }
+        }
+      }
+    },
+    "ind_17_18_3": {
+      "name": "Countries with national statistical plans that are under implementation (1 = YES; 0 = NO)",
+      "stats": {
+        "min": 0.0,
+        "max": 1.0,
+        "median": 1.0
+      },
+      "density": 0.146,
+      "years": [
+        2019,
+        2024
+      ],
+      "countries": 187,
+      "by_era": {
+        "2000+": {
+          "density": 0.193,
+          "countries": 187,
+          "stats": {
+            "min": 0.0,
+            "max": 1.0,
+            "median": 1.0
+          }
+        }
+      }
+    },
+    "ind_17_19_1": {
+      "name": "Dollar value of all resources made available to strengthen statistical capacity in developing countries (current United ",
+      "stats": {
+        "min": -18743.0,
+        "max": 115888681.0,
+        "median": 1062720.0
+      },
+      "density": 0.239,
+      "years": [
+        2010,
+        2022
+      ],
+      "countries": 143,
+      "by_era": {
+        "2000+": {
+          "density": 0.315,
+          "countries": 143,
+          "stats": {
+            "min": -18743.0,
+            "max": 115888681.0,
+            "median": 1062720.0
+          }
+        }
+      }
+    },
+    "ind_17_19_2": {
+      "name": "Countries with birth registration data that are at least 90 percent complete (1 = YES; 0 = NO)",
+      "stats": {
+        "min": 0.0,
+        "max": 1.0,
+        "median": 1.0
+      },
+      "density": 0.171,
+      "years": [
+        2015,
+        2023
+      ],
+      "countries": 184,
+      "by_era": {
+        "2000+": {
+          "density": 0.226,
+          "countries": 184,
+          "stats": {
+            "min": 0.0,
+            "max": 1.0,
+            "median": 1.0
+          }
+        }
+      }
+    },
+    "ind_17_2_1": {
+      "name": "Net official development assistance (ODA) from OECD-DAC countries, by donor countries (millions of constant 2023 United ",
+      "stats": {
+        "min": 1.7395,
+        "max": 64575.43,
+        "median": 784.8191
+      },
+      "density": 0.149,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 50,
+      "by_era": {
+        "2000+": {
+          "density": 0.196,
+          "countries": 50,
+          "stats": {
+            "min": 1.7395,
+            "max": 64575.43,
+            "median": 784.8191
+          }
+        }
+      }
+    },
+    "ind_17_3_1": {
+      "name": "Foreign direct investment (FDI) inflows (millions of United States dollars)",
+      "stats": {
+        "min": -359330.6403,
+        "max": 467625.0,
+        "median": 400.7814
+      },
+      "density": 0.876,
+      "years": [
+        1990,
+        2023
+      ],
+      "countries": 197,
+      "by_era": {
+        "2000+": {
+          "density": 0.837,
+          "countries": 196,
+          "stats": {
+            "min": -359330.6403,
+            "max": 467625.0,
+            "median": 663.8029
+          }
+        },
+        "1950-1999": {
+          "density": 1.0,
+          "countries": 185,
+          "stats": {
+            "min": -2089.399,
+            "max": 283376.0,
+            "median": 89.0
+          }
+        }
+      }
+    },
+    "ind_17_3_2": {
+      "name": "Volume of remittances (in United States dollars) as a proportion of total GDP (%)",
+      "stats": {
+        "min": 0.0,
+        "max": 53.8264,
+        "median": 1.6489
+      },
+      "density": 0.605,
       "years": [
         2000,
         2023
       ],
-      "countries": 195,
+      "countries": 191,
       "by_era": {
         "2000+": {
-          "density": 0.83,
-          "countries": 195,
+          "density": 0.798,
+          "countries": 191,
           "stats": {
-            "min": 0.0001,
-            "max": 14.4493,
-            "median": 0.0518
+            "min": 0.0,
+            "max": 53.8264,
+            "median": 1.6489
+          }
+        }
+      }
+    },
+    "ind_17_4_1": {
+      "name": "Debt service as a proportion of exports of goods, services and primary income (%)",
+      "stats": {
+        "min": 0.0,
+        "max": 134.722,
+        "median": 6.1022
+      },
+      "density": 0.353,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 114,
+      "by_era": {
+        "2000+": {
+          "density": 0.467,
+          "countries": 114,
+          "stats": {
+            "min": 0.0,
+            "max": 134.722,
+            "median": 6.1022
+          }
+        }
+      }
+    },
+    "ind_17_5_1": {
+      "name": "Number of countries with an outward investment promotion scheme which can benefit developing countries, including LDCs (",
+      "stats": {
+        "min": 0.0,
+        "max": 1.0,
+        "median": 0.0
+      },
+      "density": 0.025,
+      "years": [
+        2024,
+        2024
+      ],
+      "countries": 179,
+      "by_era": {
+        "2000+": {
+          "density": 0.033,
+          "countries": 179,
+          "stats": {
+            "min": 0.0,
+            "max": 1.0,
+            "median": 0.0
+          }
+        }
+      }
+    },
+    "ind_17_6_1": {
+      "name": "Fixed broadband subscriptions per 100\u00a0inhabitants, by speed (per 100 inhabitants)",
+      "stats": {
+        "min": 0.0,
+        "max": 75.7497,
+        "median": 1.9278
+      },
+      "density": 0.567,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 206,
+      "by_era": {
+        "2000+": {
+          "density": 0.749,
+          "countries": 206,
+          "stats": {
+            "min": 0.0,
+            "max": 75.7497,
+            "median": 1.9278
+          }
+        }
+      }
+    },
+    "ind_17_7_1": {
+      "name": "Total trade of tracked Environmentally Sound Technologies (current United States dollars)",
+      "stats": {
+        "min": 1800.0,
+        "max": 416060944564.0,
+        "median": 1106899563.0
+      },
+      "density": 0.238,
+      "years": [
+        2010,
+        2020
+      ],
+      "countries": 175,
+      "by_era": {
+        "2000+": {
+          "density": 0.314,
+          "countries": 175,
+          "stats": {
+            "min": 1800.0,
+            "max": 416060944564.0,
+            "median": 1106899563.0
+          }
+        }
+      }
+    },
+    "ind_17_8_1": {
+      "name": "Proportion of individuals using the Internet (%)",
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 33.0
+      },
+      "density": 0.646,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 211,
+      "by_era": {
+        "2000+": {
+          "density": 0.853,
+          "countries": 211,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 33.0
+          }
+        }
+      }
+    },
+    "ind_17_9_1": {
+      "name": "Total official development assistance (gross disbursement) for technical cooperation (millions of 2023 United States dol",
+      "stats": {
+        "min": 0.0041,
+        "max": 12377.7392,
+        "median": 60.4471
+      },
+      "density": 0.471,
+      "years": [
+        2000,
+        2023
+      ],
+      "countries": 150,
+      "by_era": {
+        "2000+": {
+          "density": 0.622,
+          "countries": 150,
+          "stats": {
+            "min": 0.0041,
+            "max": 12377.7392,
+            "median": 60.4471
           }
         }
       }
     }
   },
-  "llm_summary": "1990-2025. Current account balance as a proportion of GDP (%), Portfolio investment, net (Balance of Payments, current United States dollars), Foreign direct investment, net inflows, as a proportion of GDP (%), Volume of remittances (in United States dollars) as a proportion of total GDP (%), Amount of tracked exported Environmentally Sound Technologies (current United States dollars).",
-  "metric_count": 89
+  "metric_count": 24,
+  "llm_summary": "1990-2025. Total government revenue, in local currency, Proportion of domestic budget funded by domestic taxes (%), Worldwide weighted tariff-average, most-favoured-nation status, by type of product (%), Developing countries\u2019 and least developed countries\u2019 share of global merchandise exports (%), Average tariff applied by developed countries, most-favored nation status, by type of product (%)."
 }

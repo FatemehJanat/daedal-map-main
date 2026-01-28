@@ -1,4 +1,29 @@
 {
+  "source": {
+    "source_id": "08",
+    "source_name": "UN SDG Goal 8: Decent Work and Economic Growth",
+    "source_url": "https://unstats.un.org/sdgs/indicators/database/",
+    "license": "Open Data",
+    "category": "development",
+    "description": "Sustainable Development Goal 8 (Decent Work and Economic Growth) indicators from UN Statistics Division.",
+    "topic_tags": [
+      "sdg",
+      "goal8",
+      "employment",
+      "labor",
+      "economic growth",
+      "jobs",
+      "gdp"
+    ],
+    "keywords": [
+      "decent work and economic growth",
+      "employment",
+      "labor",
+      "economic growth",
+      "jobs",
+      "gdp"
+    ]
+  },
   "source_context": "United Nations Sustainable Development Goals Framework",
   "goal": {
     "number": 8,
@@ -40,21 +65,8 @@
       }
     ],
     "key_indicators": [
-      "NY_GDP_PCAP - Annual growth rate of real GDP per capita (%)",
-      "EN_MAT_FTPRPG - Material footprint per unit of GDP, by type of raw material (kilograms per co...",
-      "EN_MAT_DOMCMPT - Domestic material consumption, by type of raw material (tonnes)",
-      "EN_MAT_FTPRPC - Material footprint per capita, by type of raw material (tonnes)",
-      "EN_MAT_DOMCMPG - Domestic material consumption per unit of GDP, by type of raw material (kilog...",
-      "EN_MAT_FTPRTN - Material footprint, by type of raw material (tonnes)",
-      "EN_MAT_DOMCMPC - Domestic material consumption per capita, by type of raw material (tonnes)",
-      "SL_LBR_NTLCPL - Level of national compliance with labour rights (freedom of association and c...",
-      "ST_GDP_ZS - Tourism direct GDP as a proportion of total GDP (%)",
-      "ST_EMP_TRSMN - Employed persons in the tourism industries (number)",
-      "DC_TOF_TRDCMDL - Total official flows (commitments) for Aid for Trade, by donor countries (mil...",
-      "DC_TOF_TRDDBMDL - Total official flows (disbursement) for Aid for Trade, by donor countries (mi...",
-      "DC_TOF_TRDDBML - Total official flows (disbursement) for Aid for Trade, by recipient countries...",
-      "DC_TOF_TRDCML - Total official flows (commitments) for Aid for Trade, by recipient countries ...",
-      "SL_CPA_YEMP - Existence of a developed and operationalized national strategy for youth empl..."
+      "SL_EMP_PCAP - GDP per employed person",
+      "SL_TLF_UEM - Unemployment rate"
     ]
   },
   "shared_with": [
@@ -62,20 +74,13 @@
     "un_sdg_10"
   ],
   "metrics": {
-    "ny_gdp_pcap": "Annual growth rate of real GDP per capita (%)",
-    "en_mat_ftprpg": "Material footprint per unit of GDP, by type of raw material (kilograms per constant 2015 United States dollar)",
-    "en_mat_domcmpt": "Domestic material consumption, by type of raw material (tonnes)",
-    "en_mat_ftprpc": "Material footprint per capita, by type of raw material (tonnes)",
-    "en_mat_domcmpg": "Domestic material consumption per unit of GDP, by type of raw material (kilograms per constant 2015 United States dol...",
-    "en_mat_ftprtn": "Material footprint, by type of raw material (tonnes)",
-    "en_mat_domcmpc": "Domestic material consumption per capita, by type of raw material (tonnes)",
-    "sl_lbr_ntlcpl": "Level of national compliance with labour rights (freedom of association and collective bargaining) based on Internati...",
-    "st_gdp_zs": "Tourism direct GDP as a proportion of total GDP (%)",
-    "st_emp_trsmn": "Employed persons in the tourism industries (number)",
-    "dc_tof_trdcmdl": "Total official flows (commitments) for Aid for Trade, by donor countries (millions of constant 2023 United States dol...",
-    "dc_tof_trddbmdl": "Total official flows (disbursement) for Aid for Trade, by donor countries (millions of constant 2023 United States do...",
-    "dc_tof_trddbml": "Total official flows (disbursement) for Aid for Trade, by recipient countries (millions of constant 2023 United State...",
-    "dc_tof_trdcml": "Total official flows (commitments) for Aid for Trade, by recipient countries (millions of constant 2023 United States...",
-    "sl_cpa_yemp": "Existence of a developed and operationalized national strategy for youth employment, as a distinct strategy or as par..."
+    "ind_8_1_1": "Annual growth rate of real GDP per capita (%)",
+    "ind_8_4_1": "Material footprint per capita, by type of raw material (tonnes)",
+    "ind_8_4_2": "Domestic material consumption, by type of raw material (tonnes)",
+    "ind_8_8_2": "Level of national compliance with labour rights (freedom of association and collective bargaining) based on Internationa",
+    "ind_8_9_1": "Tourism direct GDP as a proportion of total GDP (%)",
+    "ind_8_9_2": "Employed persons in the tourism industries (number)",
+    "ind_8_a_1": "Total official flows (commitments) for Aid for Trade, by recipient countries (millions of constant 2023 United States do",
+    "ind_8_b_1": "Existence of a developed and operationalized national strategy for youth employment, as a distinct strategy or as part o"
   }
 }

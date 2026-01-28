@@ -54,6 +54,7 @@
       "source_name": "Global Tornadoes (NOAA + Canada)",
       "category": "hazard",
       "files": {
+        "aggregates": "tornadoes/aggregates.parquet",
         "events": "tornadoes/events.parquet"
       },
       "geographic_level": "regional",
@@ -70,7 +71,8 @@
       "source_name": "NOAA NCEI Global Historical Tsunami Database",
       "category": "hazard",
       "files": {
-        "events": "tsunamis/events.parquet"
+        "events": "tsunamis/events.parquet",
+        "aggregates": "tsunamis/runups.parquet"
       },
       "geographic_level": "global",
       "has_coordinates": true,
@@ -86,7 +88,8 @@
       "source_name": "Smithsonian Global Volcanism Program + NOAA Significant Eruptions",
       "category": "hazard",
       "files": {
-        "events": "volcanoes/events.parquet"
+        "events": "volcanoes/events.parquet",
+        "aggregates": "volcanoes/GLOBAL.parquet"
       },
       "geographic_level": "global",
       "has_coordinates": true,
@@ -102,12 +105,12 @@
       "source_name": "Global Fire Atlas",
       "category": "hazard",
       "files": {
-        "events": "wildfires/events.parquet"
+        "aggregates": "wildfires/fire_progression_2024.parquet"
       },
       "geographic_level": "global",
       "has_coordinates": true,
       "temporal_coverage": {
-        "start": 2001,
+        "start": 2014,
         "end": 2024
       },
       "record_counts": {
@@ -385,6 +388,278 @@
       "record_counts": {
         "aggregates": 7179
       }
+    },
+    "01": {
+      "source_name": "UN SDG Goal 1: No Poverty",
+      "category": "development",
+      "files": {
+        "aggregates": "01/all_countries.parquet"
+      },
+      "geographic_level": "admin_0",
+      "has_coordinates": false,
+      "temporal_coverage": {
+        "start": 1963,
+        "end": 2024
+      },
+      "record_counts": {
+        "aggregates": 5908
+      }
+    },
+    "02": {
+      "source_name": "UN SDG Goal 2: Zero Hunger",
+      "category": "development",
+      "files": {
+        "aggregates": "02/all_countries.parquet"
+      },
+      "geographic_level": "admin_0",
+      "has_coordinates": false,
+      "temporal_coverage": {
+        "start": 1995,
+        "end": 2025
+      },
+      "record_counts": {
+        "aggregates": 5390
+      }
+    },
+    "03": {
+      "source_name": "UN SDG Goal 3: Good Health and Well-being",
+      "category": "development",
+      "files": {
+        "aggregates": "03/all_countries.parquet"
+      },
+      "geographic_level": "admin_0",
+      "has_coordinates": false,
+      "temporal_coverage": {
+        "start": 1985,
+        "end": 2024
+      },
+      "record_counts": {
+        "aggregates": 5113
+      }
+    },
+    "04": {
+      "source_name": "UN SDG Goal 4: Quality Education",
+      "category": "development",
+      "files": {
+        "aggregates": "04/all_countries.parquet"
+      },
+      "geographic_level": "admin_0",
+      "has_coordinates": false,
+      "temporal_coverage": {
+        "start": 2000,
+        "end": 2024
+      },
+      "record_counts": {
+        "aggregates": 4298
+      }
+    },
+    "05": {
+      "source_name": "UN SDG Goal 5: Gender Equality",
+      "category": "development",
+      "files": {
+        "aggregates": "05/all_countries.parquet"
+      },
+      "geographic_level": "admin_0",
+      "has_coordinates": false,
+      "temporal_coverage": {
+        "start": 2009,
+        "end": 2025
+      },
+      "record_counts": {
+        "aggregates": 1596
+      }
+    },
+    "06": {
+      "source_name": "UN SDG Goal 6: Clean Water and Sanitation",
+      "category": "development",
+      "files": {
+        "aggregates": "06/all_countries.parquet"
+      },
+      "geographic_level": "admin_0",
+      "has_coordinates": false,
+      "temporal_coverage": {
+        "start": 2000,
+        "end": 2025
+      },
+      "record_counts": {
+        "aggregates": 5591
+      }
+    },
+    "07": {
+      "source_name": "UN SDG Goal 7: Affordable and Clean Energy",
+      "category": "development",
+      "files": {
+        "aggregates": "07/all_countries.parquet"
+      },
+      "geographic_level": "admin_0",
+      "has_coordinates": false,
+      "temporal_coverage": {
+        "start": 2000,
+        "end": 2023
+      },
+      "record_counts": {
+        "aggregates": 5230
+      }
+    },
+    "08": {
+      "source_name": "UN SDG Goal 8: Decent Work and Economic Growth",
+      "category": "development",
+      "files": {
+        "aggregates": "08/all_countries.parquet"
+      },
+      "geographic_level": "admin_0",
+      "has_coordinates": false,
+      "temporal_coverage": {
+        "start": 2000,
+        "end": 2024
+      },
+      "record_counts": {
+        "aggregates": 5333
+      }
+    },
+    "09": {
+      "source_name": "UN SDG Goal 9: Industry, Innovation and Infrastructure",
+      "category": "development",
+      "files": {
+        "aggregates": "09/all_countries.parquet"
+      },
+      "geographic_level": "admin_0",
+      "has_coordinates": false,
+      "temporal_coverage": {
+        "start": 2000,
+        "end": 2025
+      },
+      "record_counts": {
+        "aggregates": 5193
+      }
+    },
+    "10": {
+      "source_name": "UN SDG Goal 10: Reduced Inequalities",
+      "category": "development",
+      "files": {
+        "aggregates": "10/all_countries.parquet"
+      },
+      "geographic_level": "admin_0",
+      "has_coordinates": false,
+      "temporal_coverage": {
+        "start": 1963,
+        "end": 2024
+      },
+      "record_counts": {
+        "aggregates": 5927
+      }
+    },
+    "11": {
+      "source_name": "UN SDG Goal 11: Sustainable Cities and Communities",
+      "category": "development",
+      "files": {
+        "aggregates": "11/all_countries.parquet"
+      },
+      "geographic_level": "admin_0",
+      "has_coordinates": false,
+      "temporal_coverage": {
+        "start": 2000,
+        "end": 2025
+      },
+      "record_counts": {
+        "aggregates": 3677
+      }
+    },
+    "12": {
+      "source_name": "UN SDG Goal 12: Responsible Consumption and Production",
+      "category": "development",
+      "files": {
+        "aggregates": "12/all_countries.parquet"
+      },
+      "geographic_level": "admin_0",
+      "has_coordinates": false,
+      "temporal_coverage": {
+        "start": 2000,
+        "end": 2025
+      },
+      "record_counts": {
+        "aggregates": 5452
+      }
+    },
+    "13": {
+      "source_name": "UN SDG Goal 13: Climate Action",
+      "category": "development",
+      "files": {
+        "aggregates": "13/all_countries.parquet"
+      },
+      "geographic_level": "admin_0",
+      "has_coordinates": false,
+      "temporal_coverage": {
+        "start": 2000,
+        "end": 2024
+      },
+      "record_counts": {
+        "aggregates": 2930
+      }
+    },
+    "14": {
+      "source_name": "UN SDG Goal 14: Life Below Water",
+      "category": "development",
+      "files": {
+        "aggregates": "14/all_countries.parquet"
+      },
+      "geographic_level": "admin_0",
+      "has_coordinates": false,
+      "temporal_coverage": {
+        "start": 1996,
+        "end": 2025
+      },
+      "record_counts": {
+        "aggregates": 4394
+      }
+    },
+    "15": {
+      "source_name": "UN SDG Goal 15: Life on Land",
+      "category": "development",
+      "files": {
+        "aggregates": "15/all_countries.parquet"
+      },
+      "geographic_level": "admin_0",
+      "has_coordinates": false,
+      "temporal_coverage": {
+        "start": 1993,
+        "end": 2024
+      },
+      "record_counts": {
+        "aggregates": 7104
+      }
+    },
+    "16": {
+      "source_name": "UN SDG Goal 16: Peace, Justice and Strong Institutions",
+      "category": "development",
+      "files": {
+        "aggregates": "16/all_countries.parquet"
+      },
+      "geographic_level": "admin_0",
+      "has_coordinates": false,
+      "temporal_coverage": {
+        "start": 1990,
+        "end": 2025
+      },
+      "record_counts": {
+        "aggregates": 5807
+      }
+    },
+    "17": {
+      "source_name": "UN SDG Goal 17: Partnerships for the Goals",
+      "category": "development",
+      "files": {
+        "aggregates": "17/all_countries.parquet"
+      },
+      "geographic_level": "admin_0",
+      "has_coordinates": false,
+      "temporal_coverage": {
+        "start": 1990,
+        "end": 2025
+      },
+      "record_counts": {
+        "aggregates": 7174
+      }
     }
   },
   "categories": {
@@ -398,6 +673,23 @@
       "smithsonian_volcanoes"
     ],
     "development": [
+      "01",
+      "02",
+      "03",
+      "04",
+      "05",
+      "06",
+      "07",
+      "08",
+      "09",
+      "10",
+      "11",
+      "12",
+      "13",
+      "14",
+      "15",
+      "16",
+      "17",
       "un_sdg_01",
       "un_sdg_02",
       "un_sdg_03",

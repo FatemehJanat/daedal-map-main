@@ -1,22 +1,26 @@
 {
-  "source_id": "un_sdg_15",
-  "source_name": "UN SDG Goal 15",
+  "source_id": "15",
+  "source_name": "UN SDG Goal 15: Life on Land",
   "source_url": "https://unstats.un.org/sdgs/indicators/database/",
-  "license": "UN Terms",
-  "description": "UN Sustainable Development Goal 15 indicators",
+  "license": "Open Data",
+  "description": "Sustainable Development Goal 15 (Life on Land) indicators from UN Statistics Division.",
   "category": "development",
   "topic_tags": [
     "sdg",
-    "development",
-    "sustainability"
+    "goal15",
+    "land",
+    "forest",
+    "biodiversity",
+    "desertification"
   ],
   "keywords": [
-    "sustainable",
-    "development",
-    "goals",
-    "UN"
+    "life on land",
+    "land",
+    "forest",
+    "biodiversity",
+    "desertification"
   ],
-  "last_updated": "2026-01-07",
+  "last_updated": "2026-01-28",
   "geographic_level": "admin_0",
   "geographic_coverage": {
     "type": "global",
@@ -75,240 +79,13 @@
     "field": "year"
   },
   "row_count": 7104,
-  "file_size_mb": 0.21,
-  "data_completeness": 0.27,
+  "file_size_mb": 0.17,
+  "data_completeness": 0.42,
   "update_schedule": "unknown",
   "expected_next_update": "unknown",
   "metrics": {
-    "ag_lnd_dgrd": {
-      "name": "Proportion of land that is degraded over total land area (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 71.93,
-        "median": 9.935
-      },
-      "density": 0.033,
-      "years": [
-        2015,
-        2019
-      ],
-      "countries": 119,
-      "by_era": {
-        "2000+": {
-          "density": 0.043,
-          "countries": 119,
-          "stats": {
-            "min": 0.0,
-            "max": 71.93,
-            "median": 9.935
-          }
-        }
-      }
-    },
-    "ag_lnd_frst": {
-      "name": "Forest area as a proportion of total land area (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 98.34,
-        "median": 30.31
-      },
-      "density": 0.249,
-      "years": [
-        2000,
-        2020
-      ],
-      "countries": 221,
-      "by_era": {
-        "2000+": {
-          "density": 0.319,
-          "countries": 221,
-          "stats": {
-            "min": 0.0,
-            "max": 98.34,
-            "median": 30.31
-          }
-        }
-      }
-    },
-    "ag_lnd_frstbiopha": {
-      "name": "Above-ground biomass in forest (tonnes per hectare)",
-      "unit": "T_PER_HA",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 498.96,
-        "median": 110.6
-      },
-      "density": 0.22,
-      "years": [
-        2000,
-        2020
-      ],
-      "countries": 195,
-      "by_era": {
-        "2000+": {
-          "density": 0.281,
-          "countries": 195,
-          "stats": {
-            "min": 0.0,
-            "max": 498.96,
-            "median": 110.6
-          }
-        }
-      }
-    },
-    "ag_lnd_frstcert": {
-      "name": "Forest area certified under an independently verified certification scheme (thousands of hectares)",
-      "unit": "HA_TH",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 170985.03,
-        "median": 0.0
-      },
-      "density": 0.406,
-      "years": [
-        2000,
-        2024
-      ],
-      "countries": 222,
-      "by_era": {
-        "2000+": {
-          "density": 0.52,
-          "countries": 222,
-          "stats": {
-            "min": 0.0,
-            "max": 170985.03,
-            "median": 0.0
-          }
-        }
-      }
-    },
-    "ag_lnd_frstchg": {
-      "name": "Annual forest area change rate (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": -3.71,
-        "max": 6.21,
-        "median": 0.0
-      },
-      "density": 0.061,
-      "years": [
-        2010,
-        2020
-      ],
-      "countries": 216,
-      "by_era": {
-        "2000+": {
-          "density": 0.078,
-          "countries": 216,
-          "stats": {
-            "min": -3.71,
-            "max": 6.21,
-            "median": 0.0
-          }
-        }
-      }
-    },
-    "ag_lnd_frstmgt": {
-      "name": "Proportion of forest area with a long-term management plan (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 44.7
-      },
-      "density": 0.132,
-      "years": [
-        2000,
-        2020
-      ],
-      "countries": 131,
-      "by_era": {
-        "2000+": {
-          "density": 0.168,
-          "countries": 131,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 44.7
-          }
-        }
-      }
-    },
-    "ag_lnd_frstn": {
-      "name": "Forest area (thousands of hectares)",
-      "unit": "HA_TH",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 815311.6,
-        "median": 1883.4
-      },
-      "density": 0.249,
-      "years": [
-        2000,
-        2020
-      ],
-      "countries": 221,
-      "by_era": {
-        "2000+": {
-          "density": 0.319,
-          "countries": 221,
-          "stats": {
-            "min": 0.0,
-            "max": 815311.6,
-            "median": 1883.4
-          }
-        }
-      }
-    },
-    "ag_lnd_frstprct": {
-      "name": "Proportion of forest area within legally established protected areas (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 17.72
-      },
-      "density": 0.168,
-      "years": [
-        2000,
-        2020
-      ],
-      "countries": 163,
-      "by_era": {
-        "2000+": {
-          "density": 0.216,
-          "countries": 163,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 17.72
-          }
-        }
-      }
-    },
-    "ag_lnd_totl": {
+    "ind_15_1_1": {
       "name": "Land area (thousands of hectares)",
-      "unit": "HA_TH",
-      "aggregation": "sum",
-      "keywords": [],
       "stats": {
         "min": 0.04,
         "max": 1638134.0,
@@ -332,599 +109,8 @@
         }
       }
     },
-    "dc_oda_bdvdl": {
-      "name": "Total official development assistance for biodiversity, by donor countries (millions of constant 2023 United States d...",
-      "unit": "CON_USD_M",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0022,
-        "max": 3271.2189,
-        "median": 51.7999
-      },
-      "density": 0.08,
-      "years": [
-        2002,
-        2023
-      ],
-      "countries": 32,
-      "by_era": {
-        "2000+": {
-          "density": 0.102,
-          "countries": 32,
-          "stats": {
-            "min": 0.0022,
-            "max": 3271.2189,
-            "median": 51.7999
-          }
-        }
-      }
-    },
-    "dc_oda_bdvl": {
-      "name": "Total official development assistance for biodiversity, by recipient countries (millions of constant 2023 United Stat...",
-      "unit": "CON_USD_M",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 908.827,
-        "median": 6.509
-      },
-      "density": 0.406,
-      "years": [
-        2002,
-        2023
-      ],
-      "countries": 147,
-      "by_era": {
-        "2000+": {
-          "density": 0.519,
-          "countries": 147,
-          "stats": {
-            "min": 0.0,
-            "max": 908.827,
-            "median": 6.509
-          }
-        }
-      }
-    },
-    "er_bdy_abt2np": {
-      "name": "Countries that established national targets in accordance with Aichi Biodiversity Target 2 of the Strategic Plan for ...",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 1.0,
-        "median": 1.0
-      },
-      "density": 0.027,
-      "years": [
-        2022,
-        2022
-      ],
-      "countries": 190,
-      "by_era": {
-        "2000+": {
-          "density": 0.034,
-          "countries": 190,
-          "stats": {
-            "min": 0.0,
-            "max": 1.0,
-            "median": 1.0
-          }
-        }
-      }
-    },
-    "er_bdy_seea": {
-      "name": "Countries with integrated biodiversity values into national accounting and reporting systems, defined as implementati...",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 1.0,
-        "max": 1.0,
-        "median": 1.0
-      },
-      "density": 0.013,
-      "years": [
-        2024,
-        2024
-      ],
-      "countries": 92,
-      "by_era": {
-        "2000+": {
-          "density": 0.017,
-          "countries": 92,
-          "stats": {
-            "min": 1.0,
-            "max": 1.0,
-            "median": 1.0
-          }
-        }
-      }
-    },
-    "er_cbd_absclrhs": {
-      "name": "Countries that have legislative, administrative and policy framework or measures reported to the Access and Benefit-S...",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 1.0,
-        "median": 0.0
-      },
-      "density": 0.118,
-      "years": [
-        2014,
-        2024
-      ],
-      "countries": 192,
-      "by_era": {
-        "2000+": {
-          "density": 0.151,
-          "countries": 192,
-          "stats": {
-            "min": 0.0,
-            "max": 1.0,
-            "median": 0.0
-          }
-        }
-      }
-    },
-    "er_cbd_nagoya": {
-      "name": "Countries that are parties to the Nagoya Protocol (1 = YES; 0 = NO)",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 1.0,
-        "median": 1.0
-      },
-      "density": 0.109,
-      "years": [
-        2015,
-        2024
-      ],
-      "countries": 192,
-      "by_era": {
-        "2000+": {
-          "density": 0.139,
-          "countries": 192,
-          "stats": {
-            "min": 0.0,
-            "max": 1.0,
-            "median": 1.0
-          }
-        }
-      }
-    },
-    "er_cbd_orspgrfa": {
-      "name": "Countries that have legislative, administrative and policy framework or measures reported through the Online Reportin...",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 1.0,
-        "median": 0.0
-      },
-      "density": 0.281,
-      "years": [
-        2016,
-        2024
-      ],
-      "countries": 222,
-      "by_era": {
-        "2000+": {
-          "density": 0.36,
-          "countries": 222,
-          "stats": {
-            "min": 0.0,
-            "max": 1.0,
-            "median": 0.0
-          }
-        }
-      }
-    },
-    "er_cbd_ptypgrfa": {
-      "name": "Countries that are contracting Parties to the International Treaty on Plant Genetic Resources for Food and Agricultur...",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 2.0,
-        "median": 1.0
-      },
-      "density": 0.406,
-      "years": [
-        2012,
-        2024
-      ],
-      "countries": 222,
-      "by_era": {
-        "2000+": {
-          "density": 0.52,
-          "countries": 222,
-          "stats": {
-            "min": 0.0,
-            "max": 2.0,
-            "median": 1.0
-          }
-        }
-      }
-    },
-    "er_cbd_smta": {
-      "name": "Total reported number of Standard Material Transfer Agreements (SMTAs) transferring plant genetic resources for food ...",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 14839.0,
-        "median": 44.0
-      },
-      "density": 0.406,
-      "years": [
-        2012,
-        2024
-      ],
-      "countries": 222,
-      "by_era": {
-        "2000+": {
-          "density": 0.52,
-          "countries": 222,
-          "stats": {
-            "min": 0.0,
-            "max": 14839.0,
-            "median": 44.0
-          }
-        }
-      }
-    },
-    "er_ias_glofun": {
-      "name": "Recipient countries of global funding with access to any funding from global financial mechanisms for projects relate...",
-      "unit": "BOOL",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 1.0,
-        "median": 0.0
-      },
-      "density": 0.041,
-      "years": [
-        2016,
-        2022
-      ],
-      "countries": 155,
-      "by_era": {
-        "2000+": {
-          "density": 0.052,
-          "countries": 155,
-          "stats": {
-            "min": 0.0,
-            "max": 1.0,
-            "median": 0.0
-          }
-        }
-      }
-    },
-    "er_ias_legis": {
-      "name": "Legislation, Regulation, Act related to the prevention of introduction and management of Invasive Alien Species (1 = ...",
-      "unit": "BOOL",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 1.0,
-        "median": 1.0
-      },
-      "density": 0.107,
-      "years": [
-        2010,
-        2022
-      ],
-      "countries": 190,
-      "by_era": {
-        "2000+": {
-          "density": 0.137,
-          "countries": 190,
-          "stats": {
-            "min": 0.0,
-            "max": 1.0,
-            "median": 1.0
-          }
-        }
-      }
-    },
-    "er_ias_natbud": {
-      "name": "Countries with an allocation from the national budget to manage the threat of invasive alien species\u00c2\u00a0(1 = YES, 0 = NO)",
-      "unit": "BOOL",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 1.0,
-        "median": 0.0
-      },
-      "density": 0.042,
-      "years": [
-        2016,
-        2022
-      ],
-      "countries": 157,
-      "by_era": {
-        "2000+": {
-          "density": 0.053,
-          "countries": 157,
-          "stats": {
-            "min": 0.0,
-            "max": 1.0,
-            "median": 0.0
-          }
-        }
-      }
-    },
-    "er_ias_nbsap": {
-      "name": "National Biodiversity Strategy and Action Plan (NBSAP) targets alignment to Aichi Biodiversity target 9 set out in th...",
-      "unit": "BOOL",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 1.0,
-        "median": 1.0
-      },
-      "density": 0.08,
-      "years": [
-        2016,
-        2022
-      ],
-      "countries": 190,
-      "by_era": {
-        "2000+": {
-          "density": 0.103,
-          "countries": 190,
-          "stats": {
-            "min": 0.0,
-            "max": 1.0,
-            "median": 1.0
-          }
-        }
-      }
-    },
-    "er_ias_nbsapp": {
-      "name": "Proportion of countries with National Biodiversity Strategy and Action Plan (NBSAP) targets alignment to Aichi Biodiv...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 100.0,
-        "max": 100.0,
-        "median": 100.0
-      },
-      "density": 0.0,
-      "years": [
-        2016,
-        2022
-      ],
-      "countries": 1,
-      "by_era": {
-        "2000+": {
-          "density": 0.001,
-          "countries": 1,
-          "stats": {
-            "min": 100.0,
-            "max": 100.0,
-            "median": 100.0
-          }
-        }
-      }
-    },
-    "er_mtn_dgrda": {
-      "name": "Area of degraded mountain land (square kilometres)",
-      "unit": "KMSQ",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 108336.7,
-        "median": 218.0
-      },
-      "density": 0.048,
-      "years": [
-        2015,
-        2021
-      ],
-      "countries": 172,
-      "by_era": {
-        "2000+": {
-          "density": 0.062,
-          "countries": 172,
-          "stats": {
-            "min": 0.0,
-            "max": 108336.7,
-            "median": 218.0
-          }
-        }
-      }
-    },
-    "er_mtn_dgrdp": {
-      "name": "Proportion of degraded mountain land (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 28.5,
-        "median": 2.35
-      },
-      "density": 0.048,
-      "years": [
-        2015,
-        2021
-      ],
-      "countries": 172,
-      "by_era": {
-        "2000+": {
-          "density": 0.062,
-          "countries": 172,
-          "stats": {
-            "min": 0.0,
-            "max": 28.5,
-            "median": 2.35
-          }
-        }
-      }
-    },
-    "er_mtn_grncov": {
-      "name": "Mountain green cover area (square kilometres)",
-      "unit": "KMSQ",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 1846611.0,
-        "median": 22.05
-      },
-      "density": 0.145,
-      "years": [
-        2000,
-        2021
-      ],
-      "countries": 172,
-      "by_era": {
-        "2000+": {
-          "density": 0.186,
-          "countries": 172,
-          "stats": {
-            "min": 0.0,
-            "max": 1846611.0,
-            "median": 22.05
-          }
-        }
-      }
-    },
-    "er_mtn_grncvi": {
-      "name": "Mountain Green Cover Index",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 0.51
-      },
-      "density": 0.145,
-      "years": [
-        2000,
-        2021
-      ],
-      "countries": 172,
-      "by_era": {
-        "2000+": {
-          "density": 0.186,
-          "countries": 172,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 0.51
-          }
-        }
-      }
-    },
-    "er_mtn_totl": {
-      "name": "Mountain area (square kilometres)",
-      "unit": "KMSQ",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 1.0,
-        "max": 2466532.0,
-        "median": 8583.0
-      },
-      "density": 0.145,
-      "years": [
-        2000,
-        2021
-      ],
-      "countries": 172,
-      "by_era": {
-        "2000+": {
-          "density": 0.186,
-          "countries": 172,
-          "stats": {
-            "min": 1.0,
-            "max": 2466532.0,
-            "median": 8583.0
-          }
-        }
-      }
-    },
-    "er_ptd_frhwtr": {
-      "name": "Average proportion of Freshwater Key Biodiversity Areas (KBAs) covered by protected areas (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 39.5908
-      },
-      "density": 0.553,
-      "years": [
-        2000,
-        2024
-      ],
-      "countries": 157,
-      "by_era": {
-        "2000+": {
-          "density": 0.707,
-          "countries": 157,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 39.5908
-          }
-        }
-      }
-    },
-    "er_ptd_mtn": {
-      "name": "Average proportion of Mountain Key Biodiversity Areas (KBAs) covered by protected areas (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 37.4789
-      },
-      "density": 0.588,
-      "years": [
-        2000,
-        2024
-      ],
-      "countries": 167,
-      "by_era": {
-        "2000+": {
-          "density": 0.752,
-          "countries": 167,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 37.4789
-          }
-        }
-      }
-    },
-    "er_ptd_terr": {
+    "ind_15_1_2": {
       "name": "Average proportion of Terrestrial Key Biodiversity Areas (KBAs) covered by protected areas (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
       "stats": {
         "min": 0.0,
         "max": 100.0,
@@ -948,11 +134,108 @@
         }
       }
     },
-    "er_rsk_lst": {
+    "ind_15_2_1": {
+      "name": "Forest area certified under an independently verified certification scheme (thousands of hectares)",
+      "stats": {
+        "min": 0.0,
+        "max": 170985.03,
+        "median": 0.0
+      },
+      "density": 0.406,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 222,
+      "by_era": {
+        "2000+": {
+          "density": 0.52,
+          "countries": 222,
+          "stats": {
+            "min": 0.0,
+            "max": 170985.03,
+            "median": 0.0
+          }
+        }
+      }
+    },
+    "ind_15_3_1": {
+      "name": "Proportion of land that is degraded over total land area (%)",
+      "stats": {
+        "min": 0.0,
+        "max": 71.93,
+        "median": 9.935
+      },
+      "density": 0.033,
+      "years": [
+        2015,
+        2019
+      ],
+      "countries": 119,
+      "by_era": {
+        "2000+": {
+          "density": 0.043,
+          "countries": 119,
+          "stats": {
+            "min": 0.0,
+            "max": 71.93,
+            "median": 9.935
+          }
+        }
+      }
+    },
+    "ind_15_4_1": {
+      "name": "Average proportion of Mountain Key Biodiversity Areas (KBAs) covered by protected areas (%)",
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 37.4789
+      },
+      "density": 0.588,
+      "years": [
+        2000,
+        2024
+      ],
+      "countries": 167,
+      "by_era": {
+        "2000+": {
+          "density": 0.752,
+          "countries": 167,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 37.4789
+          }
+        }
+      }
+    },
+    "ind_15_4_2": {
+      "name": "Mountain green cover area (square kilometres)",
+      "stats": {
+        "min": 0.0,
+        "max": 1846611.0,
+        "median": 22.05
+      },
+      "density": 0.145,
+      "years": [
+        2000,
+        2021
+      ],
+      "countries": 172,
+      "by_era": {
+        "2000+": {
+          "density": 0.186,
+          "countries": 172,
+          "stats": {
+            "min": 0.0,
+            "max": 1846611.0,
+            "median": 22.05
+          }
+        }
+      }
+    },
+    "ind_15_5_1": {
       "name": "Red List Index",
-      "unit": "INDEX",
-      "aggregation": "sum",
-      "keywords": [],
       "stats": {
         "min": 0.3585,
         "max": 0.9937,
@@ -985,11 +268,33 @@
         }
       }
     },
-    "er_wld_trpoach": {
+    "ind_15_6_1": {
+      "name": "Countries that are contracting Parties to the International Treaty on Plant Genetic Resources for Food and Agriculture (",
+      "stats": {
+        "min": 0.0,
+        "max": 2.0,
+        "median": 1.0
+      },
+      "density": 0.406,
+      "years": [
+        2012,
+        2024
+      ],
+      "countries": 222,
+      "by_era": {
+        "2000+": {
+          "density": 0.52,
+          "countries": 222,
+          "stats": {
+            "min": 0.0,
+            "max": 2.0,
+            "median": 1.0
+          }
+        }
+      }
+    },
+    "ind_15_7_1": {
       "name": "Proportion of traded wildlife that was poached or illicitly trafficked",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
       "stats": {
         "min": 0.0,
         "max": 100.0,
@@ -1012,8 +317,133 @@
           }
         }
       }
+    },
+    "ind_15_8_1": {
+      "name": "Legislation, Regulation, Act related to the prevention of introduction and management of Invasive Alien Species (1 = YES",
+      "stats": {
+        "min": 0.0,
+        "max": 1.0,
+        "median": 1.0
+      },
+      "density": 0.107,
+      "years": [
+        2010,
+        2022
+      ],
+      "countries": 190,
+      "by_era": {
+        "2000+": {
+          "density": 0.137,
+          "countries": 190,
+          "stats": {
+            "min": 0.0,
+            "max": 1.0,
+            "median": 1.0
+          }
+        }
+      }
+    },
+    "ind_15_9_1": {
+      "name": "Countries that established national targets in accordance with Aichi Biodiversity Target 2 of the Strategic Plan for Bio",
+      "stats": {
+        "min": 0.0,
+        "max": 1.0,
+        "median": 1.0
+      },
+      "density": 0.027,
+      "years": [
+        2022,
+        2022
+      ],
+      "countries": 190,
+      "by_era": {
+        "2000+": {
+          "density": 0.034,
+          "countries": 190,
+          "stats": {
+            "min": 0.0,
+            "max": 1.0,
+            "median": 1.0
+          }
+        }
+      }
+    },
+    "ind_15_a_1": {
+      "name": "Total official development assistance for biodiversity, by recipient countries (millions of constant 2023 United States ",
+      "stats": {
+        "min": 0.0,
+        "max": 908.827,
+        "median": 6.509
+      },
+      "density": 0.406,
+      "years": [
+        2002,
+        2023
+      ],
+      "countries": 147,
+      "by_era": {
+        "2000+": {
+          "density": 0.519,
+          "countries": 147,
+          "stats": {
+            "min": 0.0,
+            "max": 908.827,
+            "median": 6.509
+          }
+        }
+      }
+    },
+    "ind_15_b_1": {
+      "name": "Total official development assistance for biodiversity, by recipient countries (millions of constant 2023 United States ",
+      "stats": {
+        "min": 0.0,
+        "max": 908.827,
+        "median": 6.509
+      },
+      "density": 0.406,
+      "years": [
+        2002,
+        2023
+      ],
+      "countries": 147,
+      "by_era": {
+        "2000+": {
+          "density": 0.519,
+          "countries": 147,
+          "stats": {
+            "min": 0.0,
+            "max": 908.827,
+            "median": 6.509
+          }
+        }
+      }
+    },
+    "ind_15_c_1": {
+      "name": "Proportion of traded wildlife that was poached or illicitly trafficked",
+      "stats": {
+        "min": 0.0,
+        "max": 100.0,
+        "median": 0.39
+      },
+      "density": 0.055,
+      "years": [
+        2016,
+        2021
+      ],
+      "countries": 90,
+      "by_era": {
+        "2000+": {
+          "density": 0.071,
+          "countries": 90,
+          "stats": {
+            "min": 0.0,
+            "max": 100.0,
+            "median": 0.39
+          }
+        }
+      }
     }
   },
-  "llm_summary": "1993-2024. Proportion of land that is degraded over total land area (%), Forest area as a proportion of total land area (%), Above-ground biomass in forest (tonnes per hectare), Forest area certified under an independently verified certification scheme (thousands of hectares), Annual forest area change rate (%).",
-  "metric_count": 33
+  "metric_count": 14,
+  "llm_summary": "1993-2024. Land area (thousands of hectares), Average proportion of Terrestrial Key Biodiversity Areas (KBAs) covered by protected areas (%), Forest area certified under an independently verified certification scheme (thousands of hectares), Proportion of land that is degraded over total land area (%), Average proportion of Mountain Key Biodiversity Areas (KBAs) covered by protected areas (%)."
 }

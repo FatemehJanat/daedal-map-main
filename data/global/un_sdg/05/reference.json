@@ -1,4 +1,27 @@
 {
+  "source": {
+    "source_id": "05",
+    "source_name": "UN SDG Goal 5: Gender Equality",
+    "source_url": "https://unstats.un.org/sdgs/indicators/database/",
+    "license": "Open Data",
+    "category": "development",
+    "description": "Sustainable Development Goal 5 (Gender Equality) indicators from UN Statistics Division.",
+    "topic_tags": [
+      "sdg",
+      "goal5",
+      "gender",
+      "women",
+      "equality",
+      "empowerment"
+    ],
+    "keywords": [
+      "gender equality",
+      "gender",
+      "women",
+      "equality",
+      "empowerment"
+    ]
+  },
   "source_context": "United Nations Sustainable Development Goals Framework",
   "goal": {
     "number": 5,
@@ -32,64 +55,16 @@
       }
     ],
     "key_indicators": [
-      "SG_LGL_GENEQLFP - Legal frameworks that promote, enforce and monitor gender equality (percentag...",
-      "SG_LGL_GENEQVAW - Legal frameworks that promote, enforce and monitor gender equality (percentag...",
-      "SG_LGL_GENEQEMP - Legal frameworks that promote, enforce and monitor gender equality (percentag...",
-      "SG_LGL_GENEQMAR - Legal frameworks that promote, enforce and monitor gender equality (percentag...",
-      "SG_GEN_PARLNT - Current number of seats in national parliaments (number)",
-      "SH_LGR_ACSRHE - Extent to which countries have laws and regulations that guarantee full and e...",
-      "SH_LGR_ACSRHEC1 - (S.1.C.1) Extent to which countries have laws and regulations that guarantee ...",
-      "SH_LGR_ACSRHEC10 - (S.4.C.10) Extent to which countries have laws and regulations that guarantee...",
-      "SH_LGR_ACSRHEC11 - (S.4.C.11) Extent to which countries have laws and regulations that guarantee...",
-      "SH_LGR_ACSRHEC12 - (S.4.C.12) Extent to which countries have laws and regulations that guarantee...",
-      "SH_LGR_ACSRHEC13 - (S.4.C.13) Extent to which countries have laws and regulations that guarantee...",
-      "SH_LGR_ACSRHEC2 - (S.1.C.2) Extent to which countries have laws and regulations that guarantee ...",
-      "SH_LGR_ACSRHEC3 - (S.1.C.3) Extent to which countries have laws and regulations that guarantee ...",
-      "SH_LGR_ACSRHEC4 - (S.1.C.4) Extent to which countries have laws and regulations that guarantee ...",
-      "SH_LGR_ACSRHEC5 - (S.2.C.5) Extent to which countries have laws and regulations that guarantee ...",
-      "SH_LGR_ACSRHEC6 - (S.2.C.6) Extent to which countries have laws and regulations that guarantee ...",
-      "SH_LGR_ACSRHEC7 - (S.2.C.7) Extent to which countries have laws and regulations that guarantee ...",
-      "SH_LGR_ACSRHEC8 - (S.3.C.8) Extent to which countries have laws and regulations that guarantee ...",
-      "SH_LGR_ACSRHEC9 - (S.3.C.9) Extent to which countries have laws and regulations that guarantee ...",
-      "SH_LGR_ACSRHES1 - (S.1) Extent to which countries have laws and regulations that guarantee full...",
-      "SH_LGR_ACSRHES2 - (S.2) Extent to which countries have laws and regulations that guarantee full...",
-      "SH_LGR_ACSRHES3 - (S.3) Extent to which countries have laws and regulations that guarantee full...",
-      "SH_LGR_ACSRHES4 - (S.4) Extent to which countries have laws and regulations that guarantee full...",
-      "SP_LGL_LNDAGSEC - Proportion of total agricultural population with ownership or secure rights o...",
-      "SP_GNP_WNOWNS - Share of women among owners or rights-bearers of agricultural land, by type o...",
-      "SG_LGL_LNDFEMOD - Degree to which the legal framework (including customary law) guarantees wome...",
-      "IT_MOB_OWN - Proportion of individuals who own a mobile telephone, by sex (%)",
-      "SG_GEN_EQPWNN - Countries with systems to track and make public allocations for gender equali..."
+      "SG_GEN_PARL - Proportion of seats held by women in national parliaments"
     ]
   },
   "metrics": {
-    "sg_lgl_geneqlfp": "Legal frameworks that promote, enforce and monitor gender equality (percentage of achievement, 0 - 100) -- Area 1: ov...",
-    "sg_lgl_geneqvaw": "Legal frameworks that promote, enforce and monitor gender equality (percentage of achievement, 0 - 100) --  Area 2: v...",
-    "sg_lgl_geneqemp": "Legal frameworks that promote, enforce and monitor gender equality (percentage of achievement, 0 - 100) -- Area 3: em...",
-    "sg_lgl_geneqmar": "Legal frameworks that promote, enforce and monitor gender equality (percentage of achievement, 0 - 100) -- Area 4: ma...",
-    "sg_gen_parlnt": "Current number of seats in national parliaments (number)",
-    "sh_lgr_acsrhe": "Extent to which countries have laws and regulations that guarantee full and equal access to women and men aged 15 yea...",
-    "sh_lgr_acsrhec1": "(S.1.C.1) Extent to which countries have laws and regulations that guarantee full and equal access to women and men a...",
-    "sh_lgr_acsrhec10": "(S.4.C.10) Extent to which countries have laws and regulations that guarantee full and equal access to women and men ...",
-    "sh_lgr_acsrhec11": "(S.4.C.11) Extent to which countries have laws and regulations that guarantee full and equal access to women and men ...",
-    "sh_lgr_acsrhec12": "(S.4.C.12) Extent to which countries have laws and regulations that guarantee full and equal access to women and men ...",
-    "sh_lgr_acsrhec13": "(S.4.C.13) Extent to which countries have laws and regulations that guarantee full and equal access to women and men ...",
-    "sh_lgr_acsrhec2": "(S.1.C.2) Extent to which countries have laws and regulations that guarantee full and equal access to women and men a...",
-    "sh_lgr_acsrhec3": "(S.1.C.3) Extent to which countries have laws and regulations that guarantee full and equal access to women and men a...",
-    "sh_lgr_acsrhec4": "(S.1.C.4) Extent to which countries have laws and regulations that guarantee full and equal access to women and men a...",
-    "sh_lgr_acsrhec5": "(S.2.C.5) Extent to which countries have laws and regulations that guarantee full and equal access to women and men a...",
-    "sh_lgr_acsrhec6": "(S.2.C.6) Extent to which countries have laws and regulations that guarantee full and equal access to women and men a...",
-    "sh_lgr_acsrhec7": "(S.2.C.7) Extent to which countries have laws and regulations that guarantee full and equal access to women and men a...",
-    "sh_lgr_acsrhec8": "(S.3.C.8) Extent to which countries have laws and regulations that guarantee full and equal access to women and men a...",
-    "sh_lgr_acsrhec9": "(S.3.C.9) Extent to which countries have laws and regulations that guarantee full and equal access to women and men a...",
-    "sh_lgr_acsrhes1": "(S.1) Extent to which countries have laws and regulations that guarantee full and equal access to women and men aged ...",
-    "sh_lgr_acsrhes2": "(S.2) Extent to which countries have laws and regulations that guarantee full and equal access to women and men aged ...",
-    "sh_lgr_acsrhes3": "(S.3) Extent to which countries have laws and regulations that guarantee full and equal access to women and men aged ...",
-    "sh_lgr_acsrhes4": "(S.4) Extent to which countries have laws and regulations that guarantee full and equal access to women and men aged ...",
-    "sp_lgl_lndagsec": "Proportion of total agricultural population with ownership or secure rights over agricultural land, by sex (%)",
-    "sp_gnp_wnowns": "Share of women among owners or rights-bearers of agricultural land, by type of tenure (%)",
-    "sg_lgl_lndfemod": "Degree to which the legal framework (including customary law) guarantees women’s equal rights to land ownership and/o...",
-    "it_mob_own": "Proportion of individuals who own a mobile telephone, by sex (%)",
-    "sg_gen_eqpwnn": "Countries with systems to track and make public allocations for gender equality and women's empowerment (0 = does not..."
+    "ind_5_1_1": "Legal frameworks that promote, enforce and monitor gender equality (percentage of achievement, 0 - 100) -- Area 3: emplo",
+    "ind_5_5_1": "Current number of seats in national parliaments (number)",
+    "ind_5_6_2": "(S.4.C.13) Extent to which countries have laws and regulations that guarantee full and equal access to women and men age",
+    "ind_5_a_1": "Proportion of total agricultural population with ownership or secure rights over agricultural land, by sex (%)",
+    "ind_5_a_2": "Degree to which the legal framework (including customary law) guarantees women\u2019s equal rights to land ownership and/or c",
+    "ind_5_b_1": "Proportion of individuals who own a mobile telephone, by sex (%)",
+    "ind_5_c_1": "Countries with systems to track and make public allocations for gender equality and women's empowerment (0 = does not me"
   }
 }

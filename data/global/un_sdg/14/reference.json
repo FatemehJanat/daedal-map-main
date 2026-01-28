@@ -1,4 +1,29 @@
 {
+  "source": {
+    "source_id": "14",
+    "source_name": "UN SDG Goal 14: Life Below Water",
+    "source_url": "https://unstats.un.org/sdgs/indicators/database/",
+    "license": "Open Data",
+    "category": "development",
+    "description": "Sustainable Development Goal 14 (Life Below Water) indicators from UN Statistics Division.",
+    "topic_tags": [
+      "sdg",
+      "goal14",
+      "ocean",
+      "marine",
+      "sea",
+      "fishing",
+      "coastal"
+    ],
+    "keywords": [
+      "life below water",
+      "ocean",
+      "marine",
+      "sea",
+      "fishing",
+      "coastal"
+    ]
+  },
   "source_context": "United Nations Sustainable Development Goals Framework",
   "goal": {
     "number": 14,
@@ -36,54 +61,20 @@
       }
     ],
     "key_indicators": [
-      "EN_MAR_CHLDEV - Chlorophyll-a deviations, remote sensing (%)",
-      "EN_MAR_CHLANM - Chlorophyll-a anomaly, remote sensing (%)",
-      "EN_MAR_PLASDD - Floating plastic debris density (count per km2)",
-      "EN_MAR_BEALIT_BP - Beach litter originating from national land-based sources that ends in the be...",
-      "EN_MAR_BEALIT_BV - Beach litter originating from national land-based sources that ends in the be...",
-      "EN_MAR_BEALIT_OP - Beach litter originating from national land-based sources that ends in the oc...",
-      "EN_MAR_BEALIT_OV - Beach litter originating from national land-based sources that ends in the oc...",
-      "EN_MAR_BEALIT_EXP - Exported beach litter originating from national land-based sources (Tonnes)",
-      "EN_MAR_DSI_MML - Coastal Eutrophication: Total Dissolved Silica (micromole per liter)",
-      "EN_MAR_TN_MML - Coastal Eutrophication: Total Nitrogen (micromole per liter)",
-      "EN_MAR_TP_MML - Coastal Eutrophication: Total Phosphorus (micromole per liter)",
-      "EN_MAR_CHLCONC - Chlorophyll-a concentration (milligram per liter)",
-      "EN_MAR_BEALIT_PUSA - Beach litter items per unit of surface area (Number of items per 100 square m...",
-      "EN_SCP_ECSYBA - Number of countries using ecosystem-based approaches to managing marine areas...",
-      "ER_OAW_MNACD - Average marine acidity (pH) measured at agreed suite of representative sampli...",
-      "ER_H2O_FWTL - Proportion of fish stocks within biologically sustainable levels (not overexp...",
-      "ER_MRN_MPA - Average proportion of Marine Key Biodiversity Areas (KBAs) covered by protect...",
-      "ER_REG_UNFCIM - Progress by countries in the degree of implementation of international instru...",
-      "EN_SCP_FSHGDP - Sustainable fisheries as a proportion of GDP",
-      "ER_RDE_OSEX - National ocean science expenditure as a share of total research and developme...",
-      "ER_REG_SSFRAR - Degree of application of a legal/regulatory/policy/institutional framework wh...",
-      "ER_UNCLOS_RATACC - Score for the ratification of and accession to UNCLOS and its two implementin...",
-      "ER_UNCLOS_IMPLE - Score for the implementation of UNCLOS and its two implementing agreements (%)"
+      "ER_MRN_MPA - Protected marine areas",
+      "ER_REG_UNFCIM - Implementation of instruments to combat illegal fishing"
     ]
   },
   "metrics": {
-    "en_mar_chldev": "Chlorophyll-a deviations, remote sensing (%)",
-    "en_mar_chlanm": "Chlorophyll-a anomaly, remote sensing (%)",
-    "en_mar_plasdd": "Floating plastic debris density (count per km2)",
-    "en_mar_bealit_bp": "Beach litter originating from national land-based sources that ends in the beach (%)",
-    "en_mar_bealit_bv": "Beach litter originating from national land-based sources that ends in the beach (Tonnes)",
-    "en_mar_bealit_op": "Beach litter originating from national land-based sources that ends in the ocean (%)",
-    "en_mar_bealit_ov": "Beach litter originating from national land-based sources that ends in the ocean (Tonnes)",
-    "en_mar_bealit_exp": "Exported beach litter originating from national land-based sources (Tonnes)",
-    "en_mar_dsi_mml": "Coastal Eutrophication: Total Dissolved Silica (micromole per liter)",
-    "en_mar_tn_mml": "Coastal Eutrophication: Total Nitrogen (micromole per liter)",
-    "en_mar_tp_mml": "Coastal Eutrophication: Total Phosphorus (micromole per liter)",
-    "en_mar_chlconc": "Chlorophyll-a concentration (milligram per liter)",
-    "en_mar_bealit_pusa": "Beach litter items per unit of surface area (Number of items per 100 square meters)",
-    "en_scp_ecsyba": "Number of countries using ecosystem-based approaches to managing marine areas (1 = YES; 0 = NO)",
-    "er_oaw_mnacd": "Average marine acidity (pH) measured at agreed suite of representative sampling stations",
-    "er_h2o_fwtl": "Proportion of fish stocks within biologically sustainable levels (not overexploited) (%)",
-    "er_mrn_mpa": "Average proportion of Marine Key Biodiversity Areas (KBAs) covered by protected areas (%)",
-    "er_reg_unfcim": "Progress by countries in the degree of implementation of international instruments aiming to combat illegal, unreport...",
-    "en_scp_fshgdp": "Sustainable fisheries as a proportion of GDP",
-    "er_rde_osex": "National ocean science expenditure as a share of total research and development funding (%)",
-    "er_reg_ssfrar": "Degree of application of a legal/regulatory/policy/institutional framework which recognizes and protects access right...",
-    "er_unclos_ratacc": "Score for the ratification of and accession to UNCLOS and its two implementing agreements (%)",
-    "er_unclos_imple": "Score for the implementation of UNCLOS and its two implementing agreements (%)"
+    "ind_14_1_1": "Beach litter originating from national land-based sources that ends in the beach (Tonnes)",
+    "ind_14_2_1": "Number of countries using ecosystem-based approaches to managing marine areas (1 = YES; 0 = NO)",
+    "ind_14_3_1": "Average marine acidity (pH) measured at agreed suite of representative sampling stations",
+    "ind_14_4_1": "Proportion of fish stocks within biologically sustainable levels (not overexploited) (%)",
+    "ind_14_5_1": "Average proportion of Marine Key Biodiversity Areas (KBAs) covered by protected areas (%)",
+    "ind_14_6_1": "Progress by countries in the degree of implementation of international instruments aiming to combat illegal, unreported ",
+    "ind_14_7_1": "Sustainable fisheries as a proportion of GDP",
+    "ind_14_a_1": "National ocean science expenditure as a share of total research and development funding (%)",
+    "ind_14_b_1": "Degree of application of a legal/regulatory/policy/institutional framework which recognizes and protects access rights f",
+    "ind_14_c_1": "Score for the ratification of and accession to UNCLOS and its two implementing agreements (%)"
   }
 }

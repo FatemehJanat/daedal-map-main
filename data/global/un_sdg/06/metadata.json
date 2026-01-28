@@ -1,22 +1,26 @@
 {
-  "source_id": "un_sdg_06",
-  "source_name": "UN SDG Goal 6",
+  "source_id": "06",
+  "source_name": "UN SDG Goal 6: Clean Water and Sanitation",
   "source_url": "https://unstats.un.org/sdgs/indicators/database/",
-  "license": "UN Terms",
-  "description": "UN Sustainable Development Goal 6 indicators",
+  "license": "Open Data",
+  "description": "Sustainable Development Goal 6 (Clean Water and Sanitation) indicators from UN Statistics Division.",
   "category": "development",
   "topic_tags": [
     "sdg",
-    "development",
-    "sustainability"
+    "goal6",
+    "water",
+    "sanitation",
+    "hygiene",
+    "drinking water"
   ],
   "keywords": [
-    "sustainable",
-    "development",
-    "goals",
-    "UN"
+    "clean water and sanitation",
+    "water",
+    "sanitation",
+    "hygiene",
+    "drinking water"
   ],
-  "last_updated": "2026-01-07",
+  "last_updated": "2026-01-28",
   "geographic_level": "admin_0",
   "geographic_coverage": {
     "type": "global",
@@ -73,941 +77,64 @@
     "granularity": "yearly",
     "field": "year"
   },
-  "row_count": 5624,
-  "file_size_mb": 0.76,
-  "data_completeness": 0.35,
+  "row_count": 5591,
+  "file_size_mb": 0.18,
+  "data_completeness": 0.52,
   "update_schedule": "unknown",
   "expected_next_update": "unknown",
   "metrics": {
-    "dc_tof_washl": {
-      "name": "Total official development assistance (gross disbursement) for water supply and sanitation, by recipient countries (m...",
-      "unit": "CON_USD_M",
-      "aggregation": "sum",
-      "keywords": [],
+    "ind_6_1_1": {
+      "name": "Proportion of population using safely managed drinking water services, by urban/rural (%)",
       "stats": {
-        "min": -0.0011,
-        "max": 1354.8696,
-        "median": 16.0255
-      },
-      "density": 0.567,
-      "years": [
-        2000,
-        2023
-      ],
-      "countries": 149,
-      "by_era": {
-        "2000+": {
-          "density": 0.567,
-          "countries": 149,
-          "stats": {
-            "min": -0.0011,
-            "max": 1354.8696,
-            "median": 16.0255
-          }
-        }
-      }
-    },
-    "eg_tba_h2co": {
-      "name": "Proportion of transboundary basins (river and lake basins and aquifers) with an operational arrangement for water coo...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
+        "min": 1.284,
         "max": 100.0,
-        "median": 69.59
+        "median": 77.7332
       },
-      "density": 0.05,
-      "years": [
-        2017,
-        2023
-      ],
-      "countries": 122,
-      "by_era": {
-        "2000+": {
-          "density": 0.05,
-          "countries": 122,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 69.59
-          }
-        }
-      }
-    },
-    "eg_tba_h2coaq": {
-      "name": "Proportion of transboundary aquifers with an operational arrangement for water cooperation (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 22.88
-      },
-      "density": 0.047,
-      "years": [
-        2017,
-        2023
-      ],
-      "countries": 117,
-      "by_era": {
-        "2000+": {
-          "density": 0.047,
-          "countries": 117,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 22.88
-          }
-        }
-      }
-    },
-    "eg_tba_h2corl": {
-      "name": "Proportion of transboundary river and lake basins with an operational arrangement for water cooperation (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 90.02
-      },
-      "density": 0.056,
-      "years": [
-        2017,
-        2023
-      ],
-      "countries": 124,
-      "by_era": {
-        "2000+": {
-          "density": 0.056,
-          "countries": 124,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 90.02
-          }
-        }
-      }
-    },
-    "en_h2o_grambq": {
-      "name": "Proportion of groundwater bodies with good ambient water quality (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 80.24
-      },
-      "density": 0.032,
-      "years": [
-        2017,
-        2023
-      ],
-      "countries": 81,
-      "by_era": {
-        "2000+": {
-          "density": 0.032,
-          "countries": 81,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 80.24
-          }
-        }
-      }
-    },
-    "en_h2o_opambq": {
-      "name": "Proportion of open water bodies with good ambient water quality (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 71.0
-      },
-      "density": 0.034,
-      "years": [
-        2017,
-        2023
-      ],
-      "countries": 82,
-      "by_era": {
-        "2000+": {
-          "density": 0.034,
-          "countries": 82,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 71.0
-          }
-        }
-      }
-    },
-    "en_h2o_rvambq": {
-      "name": "Proportion of river water bodies with good ambient water quality (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 69.17
-      },
-      "density": 0.045,
-      "years": [
-        2017,
-        2023
-      ],
-      "countries": 106,
-      "by_era": {
-        "2000+": {
-          "density": 0.045,
-          "countries": 106,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 69.17
-          }
-        }
-      }
-    },
-    "en_h2o_wbambq": {
-      "name": "Proportion of bodies of water with good ambient water quality (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 71.61
-      },
-      "density": 0.051,
-      "years": [
-        2017,
-        2023
-      ],
-      "countries": 123,
-      "by_era": {
-        "2000+": {
-          "density": 0.051,
-          "countries": 123,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 71.61
-          }
-        }
-      }
-    },
-    "en_lkrv_pwac": {
-      "name": "Lakes and rivers permanent water area change (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": -100.0,
-        "max": 1926.2238,
-        "median": 5.6799
-      },
-      "density": 0.682,
-      "years": [
-        2005,
-        2022
-      ],
-      "countries": 213,
-      "by_era": {
-        "2000+": {
-          "density": 0.682,
-          "countries": 213,
-          "stats": {
-            "min": -100.0,
-            "max": 1926.2238,
-            "median": 5.6799
-          }
-        }
-      }
-    },
-    "en_lkrv_pwan": {
-      "name": "Lakes and rivers permanent water area (square kilometres)",
-      "unit": "KMSQ",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 917167.4259,
-        "median": 214.9811
-      },
-      "density": 0.871,
+      "density": 0.662,
       "years": [
         2000,
-        2022
-      ],
-      "countries": 213,
-      "by_era": {
-        "2000+": {
-          "density": 0.871,
-          "countries": 213,
-          "stats": {
-            "min": 0.0,
-            "max": 917167.4259,
-            "median": 214.9811
-          }
-        }
-      }
-    },
-    "en_lkrv_pwap": {
-      "name": "Lakes and rivers permanent water area (% of total land area)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 90.5584,
-        "median": 0.3585
-      },
-      "density": 0.802,
-      "years": [
-        2000,
-        2022
-      ],
-      "countries": 196,
-      "by_era": {
-        "2000+": {
-          "density": 0.802,
-          "countries": 196,
-          "stats": {
-            "min": 0.0,
-            "max": 90.5584,
-            "median": 0.3585
-          }
-        }
-      }
-    },
-    "en_lkrv_swac": {
-      "name": "Lakes and rivers seasonal water area change (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": -100.0,
-        "max": 2636.3436,
-        "median": 9.0766
-      },
-      "density": 0.679,
-      "years": [
-        2005,
-        2022
-      ],
-      "countries": 212,
-      "by_era": {
-        "2000+": {
-          "density": 0.679,
-          "countries": 212,
-          "stats": {
-            "min": -100.0,
-            "max": 2636.3436,
-            "median": 9.0766
-          }
-        }
-      }
-    },
-    "en_lkrv_swan": {
-      "name": "Lakes and rivers seasonal water area (square kilometres)",
-      "unit": "KMSQ",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 178262.1676,
-        "median": 161.2639
-      },
-      "density": 0.871,
-      "years": [
-        2000,
-        2022
-      ],
-      "countries": 213,
-      "by_era": {
-        "2000+": {
-          "density": 0.871,
-          "countries": 213,
-          "stats": {
-            "min": 0.0,
-            "max": 178262.1676,
-            "median": 161.2639
-          }
-        }
-      }
-    },
-    "en_lkrv_swap": {
-      "name": "Lakes and rivers seasonal water area (% of total land area)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 14.7583,
-        "median": 0.2068
-      },
-      "density": 0.802,
-      "years": [
-        2000,
-        2022
-      ],
-      "countries": 196,
-      "by_era": {
-        "2000+": {
-          "density": 0.802,
-          "countries": 196,
-          "stats": {
-            "min": 0.0,
-            "max": 14.7583,
-            "median": 0.2068
-          }
-        }
-      }
-    },
-    "en_lkw_qltrb": {
-      "name": "Lake water quality turbidity (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 99.9894,
-        "median": 14.4833
-      },
-      "density": 0.115,
-      "years": [
-        2017,
-        2021
-      ],
-      "countries": 129,
-      "by_era": {
-        "2000+": {
-          "density": 0.115,
-          "countries": 129,
-          "stats": {
-            "min": 0.0,
-            "max": 99.9894,
-            "median": 14.4833
-          }
-        }
-      }
-    },
-    "en_lkw_qltrst": {
-      "name": "Lake water quality trophic state (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 4.9095
-      },
-      "density": 0.115,
-      "years": [
-        2017,
-        2021
-      ],
-      "countries": 129,
-      "by_era": {
-        "2000+": {
-          "density": 0.115,
-          "countries": 129,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 4.9095
-          }
-        }
-      }
-    },
-    "en_rsrv_mnwac": {
-      "name": "Reservoir minimum water area change (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": -100.0,
-        "max": 1561.0821,
-        "median": 4.1722
-      },
-      "density": 0.564,
-      "years": [
-        2000,
-        2022
-      ],
-      "countries": 138,
-      "by_era": {
-        "2000+": {
-          "density": 0.564,
-          "countries": 138,
-          "stats": {
-            "min": -100.0,
-            "max": 1561.0821,
-            "median": 4.1722
-          }
-        }
-      }
-    },
-    "en_rsrv_mnwan": {
-      "name": "Reservoir minimum water area (square kilometres)",
-      "unit": "KMSQ",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 87014.1502,
-        "median": 17.6935
-      },
-      "density": 0.871,
-      "years": [
-        2000,
-        2022
-      ],
-      "countries": 213,
-      "by_era": {
-        "2000+": {
-          "density": 0.871,
-          "countries": 213,
-          "stats": {
-            "min": 0.0,
-            "max": 87014.1502,
-            "median": 17.6935
-          }
-        }
-      }
-    },
-    "en_rsrv_mnwap": {
-      "name": "Reservoir minimum water area (% of total land area)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 11.7848,
-        "median": 0.0242
-      },
-      "density": 0.806,
-      "years": [
-        2000,
-        2022
-      ],
-      "countries": 197,
-      "by_era": {
-        "2000+": {
-          "density": 0.806,
-          "countries": 197,
-          "stats": {
-            "min": 0.0,
-            "max": 11.7848,
-            "median": 0.0242
-          }
-        }
-      }
-    },
-    "en_rsrv_mxwan": {
-      "name": "Reservoir maximum water area (square kilometres)",
-      "unit": "KMSQ",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 89719.0143,
-        "median": 26.8079
-      },
-      "density": 0.871,
-      "years": [
-        2000,
-        2022
-      ],
-      "countries": 213,
-      "by_era": {
-        "2000+": {
-          "density": 0.871,
-          "countries": 213,
-          "stats": {
-            "min": 0.0,
-            "max": 89719.0143,
-            "median": 26.8079
-          }
-        }
-      }
-    },
-    "en_rsrv_mxwap": {
-      "name": "Reservoir maximum water area (% of total land area)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 11.7967,
-        "median": 0.0331
-      },
-      "density": 0.806,
-      "years": [
-        2000,
-        2022
-      ],
-      "countries": 197,
-      "by_era": {
-        "2000+": {
-          "density": 0.806,
-          "countries": 197,
-          "stats": {
-            "min": 0.0,
-            "max": 11.7967,
-            "median": 0.0331
-          }
-        }
-      }
-    },
-    "en_rvr_mnrvflc": {
-      "name": "Change in minimum river flow (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": -99.1632,
-        "max": 228.3327,
-        "median": -0.1799
-      },
-      "density": 0.704,
-      "years": [
-        2005,
         2024
       ],
-      "countries": 198,
+      "countries": 151,
       "by_era": {
         "2000+": {
-          "density": 0.704,
-          "countries": 198,
+          "density": 0.662,
+          "countries": 151,
           "stats": {
-            "min": -99.1632,
-            "max": 228.3327,
-            "median": -0.1799
+            "min": 1.284,
+            "max": 100.0,
+            "median": 77.7332
           }
         }
       }
     },
-    "en_rvr_mnrvfln": {
-      "name": "River flow minimum (m3/s)",
-      "unit": "M3_PER_SEC",
-      "aggregation": "sum",
-      "keywords": [],
+    "ind_6_2_1": {
+      "name": "Proportion of population practicing open defecation, by urban/rural (%)",
       "stats": {
         "min": 0.0,
-        "max": 9469152.0,
-        "median": 2735.3616
+        "max": 87.515,
+        "median": 0.5697
       },
-      "density": 0.729,
-      "years": [
-        2005,
-        2024
-      ],
-      "countries": 205,
-      "by_era": {
-        "2000+": {
-          "density": 0.729,
-          "countries": 205,
-          "stats": {
-            "min": 0.0,
-            "max": 9469152.0,
-            "median": 2735.3616
-          }
-        }
-      }
-    },
-    "en_rvr_mxrvflc": {
-      "name": "Change in maximum river flow (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": -90.9993,
-        "max": 213.2,
-        "median": 0.2637
-      },
-      "density": 0.704,
-      "years": [
-        2005,
-        2024
-      ],
-      "countries": 198,
-      "by_era": {
-        "2000+": {
-          "density": 0.704,
-          "countries": 198,
-          "stats": {
-            "min": -90.9993,
-            "max": 213.2,
-            "median": 0.2637
-          }
-        }
-      }
-    },
-    "en_rvr_mxrvfln": {
-      "name": "River flow maximum (m3/s)",
-      "unit": "M3_PER_SEC",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 32690220.0,
-        "median": 21747.6094
-      },
-      "density": 0.729,
-      "years": [
-        2005,
-        2024
-      ],
-      "countries": 205,
-      "by_era": {
-        "2000+": {
-          "density": 0.729,
-          "countries": 205,
-          "stats": {
-            "min": 0.0,
-            "max": 32690220.0,
-            "median": 21747.6094
-          }
-        }
-      }
-    },
-    "en_wbe_hmwtl": {
-      "name": "Extent of human made wetlands (square kilometres)",
-      "unit": "KMSQ",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.45,
-        "max": 368079.8,
-        "median": 747.755
-      },
-      "density": 0.008,
-      "years": [
-        2021,
-        2021
-      ],
-      "countries": 46,
-      "by_era": {
-        "2000+": {
-          "density": 0.008,
-          "countries": 46,
-          "stats": {
-            "min": 0.45,
-            "max": 368079.8,
-            "median": 747.755
-          }
-        }
-      }
-    },
-    "en_wbe_inwtl": {
-      "name": "Extent of inland wetlands (square kilometres)",
-      "unit": "KMSQ",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.09,
-        "max": 1290187.0,
-        "median": 5300.0
-      },
-      "density": 0.018,
-      "years": [
-        2021,
-        2021
-      ],
-      "countries": 101,
-      "by_era": {
-        "2000+": {
-          "density": 0.018,
-          "countries": 101,
-          "stats": {
-            "min": 0.09,
-            "max": 1290187.0,
-            "median": 5300.0
-          }
-        }
-      }
-    },
-    "en_wbe_mangc": {
-      "name": "Mangrove total area change (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": -46.9731,
-        "max": 34.8724,
-        "median": -1.0717
-      },
-      "density": 0.196,
-      "years": [
-        2007,
-        2020
-      ],
-      "countries": 110,
-      "by_era": {
-        "2000+": {
-          "density": 0.196,
-          "countries": 110,
-          "stats": {
-            "min": -46.9731,
-            "max": 34.8724,
-            "median": -1.0717
-          }
-        }
-      }
-    },
-    "en_wbe_mangn": {
-      "name": "Mangrove area (square kilometres)",
-      "unit": "KMSQ",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0108,
-        "max": 31273.0226,
-        "median": 143.4699
-      },
-      "density": 0.215,
+      "density": 0.921,
       "years": [
         2000,
-        2020
+        2024
       ],
-      "countries": 110,
+      "countries": 217,
       "by_era": {
         "2000+": {
-          "density": 0.215,
-          "countries": 110,
-          "stats": {
-            "min": 0.0108,
-            "max": 31273.0226,
-            "median": 143.4699
-          }
-        }
-      }
-    },
-    "en_wbe_ndqtgrw": {
-      "name": "Nationally derived quantity of groundwater (millions of cubic metres per annum)",
-      "unit": "M_M3_PER_YR",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.017,
-        "max": 12000000000000.0,
-        "median": 1425.5
-      },
-      "density": 0.001,
-      "years": [
-        2017,
-        2017
-      ],
-      "countries": 8,
-      "by_era": {
-        "2000+": {
-          "density": 0.001,
-          "countries": 8,
-          "stats": {
-            "min": 0.017,
-            "max": 12000000000000.0,
-            "median": 1425.5
-          }
-        }
-      }
-    },
-    "en_wbe_ndqtrvr": {
-      "name": "Nationally derived quantity of rivers (million of cubic metres per annum)",
-      "unit": "M_M3_PER_YR",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 999999999999999.0,
-        "median": 57205.0
-      },
-      "density": 0.003,
-      "years": [
-        2017,
-        2017
-      ],
-      "countries": 18,
-      "by_era": {
-        "2000+": {
-          "density": 0.003,
-          "countries": 18,
+          "density": 0.921,
+          "countries": 217,
           "stats": {
             "min": 0.0,
-            "max": 999999999999999.0,
-            "median": 57205.0
+            "max": 87.515,
+            "median": 0.5697
           }
         }
       }
     },
-    "en_wbe_wtln": {
-      "name": "Wetlands area (square kilometres)",
-      "unit": "KMSQ",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 1330860.582,
-        "median": 630.7934
-      },
-      "density": 0.038,
-      "years": [
-        2017,
-        2017
-      ],
-      "countries": 214,
-      "by_era": {
-        "2000+": {
-          "density": 0.038,
-          "countries": 214,
-          "stats": {
-            "min": 0.0,
-            "max": 1330860.582,
-            "median": 630.7934
-          }
-        }
-      }
-    },
-    "en_wbe_wtlp": {
-      "name": "Wetlands area (% of total land area)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 65.71,
-        "median": 0.92
-      },
-      "density": 0.037,
-      "years": [
-        2017,
-        2017
-      ],
-      "countries": 209,
-      "by_era": {
-        "2000+": {
-          "density": 0.037,
-          "countries": 209,
-          "stats": {
-            "min": 0.0,
-            "max": 65.71,
-            "median": 0.92
-          }
-        }
-      }
-    },
-    "en_wwt_gen": {
+    "ind_6_3_1": {
       "name": "Total wastewater generated (million m3/year)",
-      "unit": "M_M3_PER_YR",
-      "aggregation": "sum",
-      "keywords": [],
       "stats": {
         "min": 0.0,
         "max": 26414.3,
@@ -1031,151 +158,83 @@
         }
       }
     },
-    "en_wwt_treat": {
-      "name": "Total wastewater treated (million m3/year)",
-      "unit": "M_M3_PER_YR",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 86210.0,
-        "median": 238.85
-      },
-      "density": 0.016,
-      "years": [
-        2022,
-        2022
-      ],
-      "countries": 90,
-      "by_era": {
-        "2000+": {
-          "density": 0.016,
-          "countries": 90,
-          "stats": {
-            "min": 0.0,
-            "max": 86210.0,
-            "median": 238.85
-          }
-        }
-      }
-    },
-    "en_wwt_treatr": {
-      "name": "Proportion of wastewater treated, by activity and location (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0177,
-        "max": 1337.6757,
-        "median": 70.6745
-      },
-      "density": 0.012,
-      "years": [
-        2022,
-        2022
-      ],
-      "countries": 69,
-      "by_era": {
-        "2000+": {
-          "density": 0.012,
-          "countries": 69,
-          "stats": {
-            "min": 0.0177,
-            "max": 1337.6757,
-            "median": 70.6745
-          }
-        }
-      }
-    },
-    "en_wwt_treatr_sf": {
-      "name": "Proportion of wastewater safely treated, by activity and location (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.1774,
-        "max": 154.3538,
-        "median": 55.3827
-      },
-      "density": 0.007,
-      "years": [
-        2022,
-        2022
-      ],
-      "countries": 39,
-      "by_era": {
-        "2000+": {
-          "density": 0.007,
-          "countries": 39,
-          "stats": {
-            "min": 0.1774,
-            "max": 154.3538,
-            "median": 55.3827
-          }
-        }
-      }
-    },
-    "en_wwt_treat_sf": {
-      "name": "Total wastewater safely treated (million m3/year)",
-      "unit": "M_M3_PER_YR",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.4,
-        "max": 14431.0,
-        "median": 204.25
-      },
-      "density": 0.009,
-      "years": [
-        2022,
-        2022
-      ],
-      "countries": 52,
-      "by_era": {
-        "2000+": {
-          "density": 0.009,
-          "countries": 52,
-          "stats": {
-            "min": 0.4,
-            "max": 14431.0,
-            "median": 204.25
-          }
-        }
-      }
-    },
-    "en_wwt_wwds": {
-      "name": "Proportion of safely treated domestic wastewater flows (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
+    "ind_6_3_2": {
+      "name": "Proportion of bodies of water with good ambient water quality (%)",
       "stats": {
         "min": 0.0,
         "max": 100.0,
-        "median": 46.0756
+        "median": 71.61
       },
-      "density": 0.069,
+      "density": 0.052,
       "years": [
-        2020,
-        2024
+        2017,
+        2023
       ],
-      "countries": 145,
+      "countries": 123,
       "by_era": {
         "2000+": {
-          "density": 0.069,
-          "countries": 145,
+          "density": 0.052,
+          "countries": 123,
           "stats": {
             "min": 0.0,
             "max": 100.0,
-            "median": 46.0756
+            "median": 71.61
           }
         }
       }
     },
-    "er_h2o_iwrmd": {
+    "ind_6_4_1": {
+      "name": "Water Use Efficiency (United States dollars per cubic meter)",
+      "stats": {
+        "min": 0.0,
+        "max": 47890.7,
+        "median": 25.18
+      },
+      "density": 0.718,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 180,
+      "by_era": {
+        "2000+": {
+          "density": 0.718,
+          "countries": 180,
+          "stats": {
+            "min": 0.0,
+            "max": 47890.7,
+            "median": 25.18
+          }
+        }
+      }
+    },
+    "ind_6_4_2": {
+      "name": "Level of water stress: freshwater withdrawal as a proportion of available freshwater resources (%)",
+      "stats": {
+        "min": 0.0,
+        "max": 3850.5,
+        "median": 3.485
+      },
+      "density": 0.699,
+      "years": [
+        2000,
+        2022
+      ],
+      "countries": 176,
+      "by_era": {
+        "2000+": {
+          "density": 0.699,
+          "countries": 176,
+          "stats": {
+            "min": 0.0,
+            "max": 3850.5,
+            "median": 3.485
+          }
+        }
+      }
+    },
+    "ind_6_5_1": {
       "name": "Degree of integrated water resources management implementation (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
       "stats": {
         "min": 10.0,
         "max": 100.0,
@@ -1199,213 +258,89 @@
         }
       }
     },
-    "er_h2o_iwrmd_ee": {
-      "name": "Degree of integrated water resources management implementation, enabling environment (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 4.0,
-        "max": 100.0,
-        "median": 56.0
-      },
-      "density": 0.094,
-      "years": [
-        2017,
-        2023
-      ],
-      "countries": 186,
-      "by_era": {
-        "2000+": {
-          "density": 0.094,
-          "countries": 186,
-          "stats": {
-            "min": 4.0,
-            "max": 100.0,
-            "median": 56.0
-          }
-        }
-      }
-    },
-    "er_h2o_iwrmd_fi": {
-      "name": "Degree of integrated water resources management implementation, financing (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
+    "ind_6_5_2": {
+      "name": "Proportion of transboundary river and lake basins with an operational arrangement for water cooperation (%)",
       "stats": {
         "min": 0.0,
         "max": 100.0,
-        "median": 42.0
+        "median": 90.02
       },
-      "density": 0.094,
+      "density": 0.056,
       "years": [
         2017,
         2023
       ],
-      "countries": 186,
+      "countries": 124,
       "by_era": {
         "2000+": {
-          "density": 0.094,
-          "countries": 186,
+          "density": 0.056,
+          "countries": 124,
           "stats": {
             "min": 0.0,
             "max": 100.0,
-            "median": 42.0
+            "median": 90.02
           }
         }
       }
     },
-    "er_h2o_iwrmd_ip": {
-      "name": "Degree of integrated water resources management implementation, institutions and participation (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 6.0,
-        "max": 100.0,
-        "median": 57.0
-      },
-      "density": 0.094,
-      "years": [
-        2017,
-        2023
-      ],
-      "countries": 186,
-      "by_era": {
-        "2000+": {
-          "density": 0.094,
-          "countries": 186,
-          "stats": {
-            "min": 6.0,
-            "max": 100.0,
-            "median": 57.0
-          }
-        }
-      }
-    },
-    "er_h2o_iwrmd_mi": {
-      "name": "Degree of integrated water resources management implementation, management instruments (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
+    "ind_6_6_1": {
+      "name": "Lakes and rivers permanent water area (square kilometres)",
       "stats": {
         "min": 0.0,
-        "max": 100.0,
-        "median": 52.0
+        "max": 917167.4259,
+        "median": 214.9811
       },
-      "density": 0.094,
-      "years": [
-        2017,
-        2023
-      ],
-      "countries": 186,
-      "by_era": {
-        "2000+": {
-          "density": 0.094,
-          "countries": 186,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 52.0
-          }
-        }
-      }
-    },
-    "er_h2o_iwrmp": {
-      "name": "Proportion of countries by IWRM implementation category (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 50.0,
-        "median": 50.0
-      },
-      "density": 0.001,
-      "years": [
-        2017,
-        2023
-      ],
-      "countries": 1,
-      "by_era": {
-        "2000+": {
-          "density": 0.001,
-          "countries": 1,
-          "stats": {
-            "min": 0.0,
-            "max": 50.0,
-            "median": 50.0
-          }
-        }
-      }
-    },
-    "er_h2o_stress": {
-      "name": "Level of water stress: freshwater withdrawal as a proportion of available freshwater resources (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 3850.5,
-        "median": 3.485
-      },
-      "density": 0.695,
+      "density": 0.876,
       "years": [
         2000,
         2022
       ],
-      "countries": 176,
+      "countries": 213,
       "by_era": {
         "2000+": {
-          "density": 0.695,
-          "countries": 176,
+          "density": 0.876,
+          "countries": 213,
           "stats": {
             "min": 0.0,
-            "max": 3850.5,
-            "median": 3.485
+            "max": 917167.4259,
+            "median": 214.9811
           }
         }
       }
     },
-    "er_h2o_wueyst": {
-      "name": "Water Use Efficiency (United States dollars per cubic meter)",
-      "unit": "USD/m3",
-      "aggregation": "sum",
-      "keywords": [],
+    "ind_6_a_1": {
+      "name": "Total official development assistance (gross disbursement) for water supply and sanitation, by recipient countries (mill",
       "stats": {
-        "min": 0.0,
-        "max": 47890.7,
-        "median": 25.18
+        "min": -0.0011,
+        "max": 1354.8696,
+        "median": 16.0255
       },
-      "density": 0.714,
+      "density": 0.57,
       "years": [
         2000,
-        2022
+        2023
       ],
-      "countries": 180,
+      "countries": 149,
       "by_era": {
         "2000+": {
-          "density": 0.714,
-          "countries": 180,
+          "density": 0.57,
+          "countries": 149,
           "stats": {
-            "min": 0.0,
-            "max": 47890.7,
-            "median": 25.18
+            "min": -0.0011,
+            "max": 1354.8696,
+            "median": 16.0255
           }
         }
       }
     },
-    "er_wat_part": {
-      "name": "Countries with users/communities participating in planning programs in water resources planning and management, by le...",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
+    "ind_6_b_1": {
+      "name": "Countries with users/communities participating in planning programs in water resources planning and management, by level",
       "stats": {
         "min": 0.0,
         "max": 3.0,
         "median": 2.0
       },
-      "density": 0.073,
+      "density": 0.074,
       "years": [
         2017,
         2025
@@ -1413,7 +348,7 @@
       "countries": 143,
       "by_era": {
         "2000+": {
-          "density": 0.073,
+          "density": 0.074,
           "countries": 143,
           "stats": {
             "min": 0.0,
@@ -1422,176 +357,8 @@
           }
         }
       }
-    },
-    "er_wat_prdu": {
-      "name": "Countries with procedures in law or policy for participation by service users/communities in planning program in wate...",
-      "unit": "NUMBER",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 10.0,
-        "median": 10.0
-      },
-      "density": 0.073,
-      "years": [
-        2017,
-        2025
-      ],
-      "countries": 143,
-      "by_era": {
-        "2000+": {
-          "density": 0.073,
-          "countries": 143,
-          "stats": {
-            "min": 0.0,
-            "max": 10.0,
-            "median": 10.0
-          }
-        }
-      }
-    },
-    "er_wat_proced": {
-      "name": "Proportion of countries with clearly defined procedures in law or policy for participation by service users/communiti...",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 100.0,
-        "max": 100.0,
-        "median": 100.0
-      },
-      "density": 0.0,
-      "years": [
-        2019,
-        2025
-      ],
-      "countries": 1,
-      "by_era": {
-        "2000+": {
-          "density": 0.0,
-          "countries": 1,
-          "stats": {
-            "min": 100.0,
-            "max": 100.0,
-            "median": 100.0
-          }
-        }
-      }
-    },
-    "sh_h2o_safe": {
-      "name": "Proportion of population using safely managed drinking water services, by urban/rural (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 1.284,
-        "max": 100.0,
-        "median": 77.7332
-      },
-      "density": 0.658,
-      "years": [
-        2000,
-        2024
-      ],
-      "countries": 151,
-      "by_era": {
-        "2000+": {
-          "density": 0.658,
-          "countries": 151,
-          "stats": {
-            "min": 1.284,
-            "max": 100.0,
-            "median": 77.7332
-          }
-        }
-      }
-    },
-    "sh_san_defect": {
-      "name": "Proportion of population practicing open defecation, by urban/rural (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 87.515,
-        "median": 0.5697
-      },
-      "density": 0.916,
-      "years": [
-        2000,
-        2024
-      ],
-      "countries": 217,
-      "by_era": {
-        "2000+": {
-          "density": 0.916,
-          "countries": 217,
-          "stats": {
-            "min": 0.0,
-            "max": 87.515,
-            "median": 0.5697
-          }
-        }
-      }
-    },
-    "sh_san_hndwsh": {
-      "name": "Proportion of population with basic handwashing facilities on premises, by urban/rural (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 60.8696
-      },
-      "density": 0.308,
-      "years": [
-        2000,
-        2024
-      ],
-      "countries": 116,
-      "by_era": {
-        "2000+": {
-          "density": 0.308,
-          "countries": 116,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 60.8696
-          }
-        }
-      }
-    },
-    "sh_san_safe": {
-      "name": "Proportion of population using safely managed sanitation services, by urban/rural (%)",
-      "unit": "PERCENT",
-      "aggregation": "sum",
-      "keywords": [],
-      "stats": {
-        "min": 0.0,
-        "max": 100.0,
-        "median": 49.631
-      },
-      "density": 0.617,
-      "years": [
-        2000,
-        2024
-      ],
-      "countries": 142,
-      "by_era": {
-        "2000+": {
-          "density": 0.617,
-          "countries": 142,
-          "stats": {
-            "min": 0.0,
-            "max": 100.0,
-            "median": 49.631
-          }
-        }
-      }
     }
   },
-  "llm_summary": "2000-2025. Total official development assistance (gross disbursement) for water supply and sanitation, by recipient countries (m..., Proportion of transboundary basins (river and lake basins and aquifers) with an operational arrangement for water coo..., Proportion of transboundary aquifers with an operational arrangement for water cooperation (%), Proportion of transboundary river and lake basins with an operational arrangement for water cooperation (%), Proportion of groundwater bodies with good ambient water quality (%).",
-  "metric_count": 54
+  "metric_count": 11,
+  "llm_summary": "2000-2025. Proportion of population using safely managed drinking water services, by urban/rural (%), Proportion of population practicing open defecation, by urban/rural (%), Total wastewater generated (million m3/year), Proportion of bodies of water with good ambient water quality (%), Water Use Efficiency (United States dollars per cubic meter)."
 }

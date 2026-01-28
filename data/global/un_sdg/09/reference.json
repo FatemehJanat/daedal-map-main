@@ -1,4 +1,27 @@
 {
+  "source": {
+    "source_id": "09",
+    "source_name": "UN SDG Goal 9: Industry, Innovation and Infrastructure",
+    "source_url": "https://unstats.un.org/sdgs/indicators/database/",
+    "license": "Open Data",
+    "category": "development",
+    "description": "Sustainable Development Goal 9 (Industry, Innovation and Infrastructure) indicators from UN Statistics Division.",
+    "topic_tags": [
+      "sdg",
+      "goal9",
+      "infrastructure",
+      "industry",
+      "innovation",
+      "technology"
+    ],
+    "keywords": [
+      "industry, innovation and infrastructure",
+      "infrastructure",
+      "industry",
+      "innovation",
+      "technology"
+    ]
+  },
   "source_context": "United Nations Sustainable Development Goals Framework",
   "goal": {
     "number": 9,
@@ -28,54 +51,21 @@
       }
     ],
     "key_indicators": [
-      "IS_RDP_FRGVOL - Freight volume, by mode of transport (tonne kilometres)",
-      "IS_RDP_PFVOL - Passenger volume (passenger kilometres), by mode of transport",
-      "IS_RDP_PORFVOL - Container port traffic, maritime transport (twenty-foot equivalent units - TEUs)",
-      "IS_RDP_LULFRG - Freight loaded and unloaded, maritime transport (metric tons)",
-      "NV_IND_MANFPC - Manufacturing value added per capita (constant 2015 United States dollars)",
-      "SL_TLF_MANF - Manufacturing employment as a proportion of total employment - 13th ICLS (%)",
-      "NV_IND_MANF - Manufacturing value added (constant 2015 United States dollars) as a proporti...",
-      "NV_IND_MANF_CD - Manufacturing value added (current United States dollars) as a proportion of ...",
-      "SL_TLF_MANF_19ICLS - Manufacturing employment as a proportion of total employment - 19th ICLS(%)",
-      "NV_IND_SSIS - Proportion of small-scale manufacturing industries in total manufacturing val...",
-      "FC_ACC_SSID - Proportion of small-scale industries with a loan or line of credit (%)",
-      "NV_IND_SSIS_NC - Proportion of small-scale industries in total industry value added based on n...",
-      "EN_ATM_CO2 - Carbon dioxide emissions from fuel combustion (millions of tonnes)",
-      "EN_ATM_CO2MVA - Carbon dioxide emissions from manufacturing industries per unit of manufactur...",
-      "EN_ATM_CO2GDP - Carbon dioxide emissions per unit of GDP PPP (kilogrammes of CO2 per constant...",
-      "GB_POP_SCIERD - Researchers (in full-time equivalent) per million inhabitants (per 1,000,000 ...",
-      "GB_XPD_RSDV - Research and development expenditure as a proportion of GDP (%)",
-      "DC_TOF_INFRAL - Total official flows for infrastructure, by recipient countries (millions of ...",
-      "NV_IND_TECH - Proportion of medium and high-tech manufacturing value added in total value a...",
-      "IT_MOB_2GNTWK - Proportion of population covered by at least a 2G mobile network (%)",
-      "IT_MOB_3GNTWK - Proportion of population covered by at least a 3G mobile network (%)",
-      "IT_MOB_4GNTWK - Proportion of population covered by at least a 4G mobile network (%)",
-      "IT_MOB_5GNTWK - Proportion of population covered by at least a 5G mobile network (%)"
+      "NV_IND_MANFP - Manufacturing value added as proportion of GDP",
+      "GB_XPD_RSDV - Research and development expenditure"
     ]
   },
   "metrics": {
-    "is_rdp_frgvol": "Freight volume, by mode of transport (tonne kilometres)",
-    "is_rdp_pfvol": "Passenger volume (passenger kilometres), by mode of transport",
-    "is_rdp_porfvol": "Container port traffic, maritime transport (twenty-foot equivalent units - TEUs)",
-    "is_rdp_lulfrg": "Freight loaded and unloaded, maritime transport (metric tons)",
-    "nv_ind_manfpc": "Manufacturing value added per capita (constant 2015 United States dollars)",
-    "sl_tlf_manf": "Manufacturing employment as a proportion of total employment - 13th ICLS (%)",
-    "nv_ind_manf": "Manufacturing value added (constant 2015 United States dollars) as a proportion of GDP (%)",
-    "nv_ind_manf_cd": "Manufacturing value added (current United States dollars) as a proportion of GDP (%)",
-    "sl_tlf_manf_19icls": "Manufacturing employment as a proportion of total employment - 19th ICLS(%)",
-    "nv_ind_ssis": "Proportion of small-scale manufacturing industries in total manufacturing value added based on international classifi...",
-    "fc_acc_ssid": "Proportion of small-scale industries with a loan or line of credit (%)",
-    "nv_ind_ssis_nc": "Proportion of small-scale industries in total industry value added based on national classification (%)",
-    "en_atm_co2": "Carbon dioxide emissions from fuel combustion (millions of tonnes)",
-    "en_atm_co2mva": "Carbon dioxide emissions from manufacturing industries per unit of manufacturing value added (kilogrammes of CO2 per ...",
-    "en_atm_co2gdp": "Carbon dioxide emissions per unit of GDP PPP (kilogrammes of CO2 per constant 2021 United States dollars)",
-    "gb_pop_scierd": "Researchers (in full-time equivalent) per million inhabitants (per 1,000,000 population)",
-    "gb_xpd_rsdv": "Research and development expenditure as a proportion of GDP (%)",
-    "dc_tof_infral": "Total official flows for infrastructure, by recipient countries (millions of constant 2023 United States dollars)",
-    "nv_ind_tech": "Proportion of medium and high-tech manufacturing value added in total value added (%)",
-    "it_mob_2gntwk": "Proportion of population covered by at least a 2G mobile network (%)",
-    "it_mob_3gntwk": "Proportion of population covered by at least a 3G mobile network (%)",
-    "it_mob_4gntwk": "Proportion of population covered by at least a 4G mobile network (%)",
-    "it_mob_5gntwk": "Proportion of population covered by at least a 5G mobile network (%)"
+    "ind_9_1_2": "Container port traffic, maritime transport (twenty-foot equivalent units - TEUs)",
+    "ind_9_2_1": "Manufacturing value added (constant 2015 United States dollars) as a proportion of GDP (%)",
+    "ind_9_2_2": "Manufacturing employment as a proportion of total employment - 13th ICLS (%)",
+    "ind_9_3_1": "Proportion of small-scale manufacturing industries in total manufacturing value added based on international classificat",
+    "ind_9_3_2": "Proportion of small-scale industries with a loan or line of credit (%)",
+    "ind_9_4_1": "Carbon dioxide emissions from fuel combustion (millions of tonnes)",
+    "ind_9_5_1": "Research and development expenditure as a proportion of GDP (%)",
+    "ind_9_5_2": "Researchers (in full-time equivalent) per million inhabitants (per 1,000,000 population)",
+    "ind_9_a_1": "Total official flows for infrastructure, by recipient countries (millions of constant 2023 United States dollars)",
+    "ind_9_b_1": "Proportion of medium and high-tech manufacturing value added in total value added (%)",
+    "ind_9_c_1": "Proportion of population covered by at least a 2G mobile network (%)"
   }
 }
