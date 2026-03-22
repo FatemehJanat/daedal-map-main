@@ -352,7 +352,7 @@ async def get_storm_tracks_geojson(
                     how="inner",
                 )
                 if not joined.empty:
-                    cache_set(preload_ck, joined)
+                    cache_set(preload_ck, joined, permanent=True)
                     positions_subset = joined
 
         positions_subset = positions_subset.dropna(subset=["latitude", "longitude"])

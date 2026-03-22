@@ -35,6 +35,7 @@ logger = logging.getLogger("mapmover")
 _country_parquet_cache = {}
 _country_parquet_cache_lock = threading.Lock()
 _country_parquet_inflight = set()  # keys currently being fetched from R2
+_country_parquet_waiters = {}  # key -> Event for concurrent waiters
 
 # Cache for global countries data
 _global_countries_cache = None
@@ -132,6 +133,8 @@ def load_country_parquet(iso3: str, admin_level: int = None):
     """
     # Check cache - if admin_level specified, cache by (iso3, level)
     cache_key = (iso3, admin_level) if admin_level is not None else iso3
+    wait_event = None
+    owns_fetch = False
 
     with _country_parquet_cache_lock:
         if cache_key in _country_parquet_cache:
@@ -144,10 +147,28 @@ def load_country_parquet(iso3: str, admin_level: int = None):
             _country_parquet_cache[cache_key] = filtered
             return filtered
 
-        # If another thread is already fetching this key, don't double-fetch
+        # If another thread is already fetching this key, wait for it to finish
+        # so repeated hot geometry requests reuse the same cold-load work.
         if cache_key in _country_parquet_inflight:
-            return None  # Caller will retry on next request
-        _country_parquet_inflight.add(cache_key)
+            wait_event = _country_parquet_waiters.get(cache_key)
+        else:
+            _country_parquet_inflight.add(cache_key)
+            wait_event = threading.Event()
+            _country_parquet_waiters[cache_key] = wait_event
+            owns_fetch = True
+
+    if not owns_fetch:
+        if wait_event is not None:
+            wait_event.wait(timeout=15.0)
+        with _country_parquet_cache_lock:
+            if cache_key in _country_parquet_cache:
+                return _country_parquet_cache[cache_key]
+            if admin_level is not None and iso3 in _country_parquet_cache:
+                full_df = _country_parquet_cache[iso3]
+                filtered = full_df[full_df['admin_level'] == admin_level]
+                _country_parquet_cache[cache_key] = filtered
+                return filtered
+        return None
 
     # Priority 1: Country-specific geometry (matches data loc_ids like NUTS)
     country_geom_file = DATA_ROOT / "countries" / iso3 / "geometry.parquet"
@@ -180,6 +201,9 @@ def load_country_parquet(iso3: str, admin_level: int = None):
         logger.debug(f"No geometry file found for {iso3}")
         with _country_parquet_cache_lock:
             _country_parquet_inflight.discard(cache_key)
+            waiter = _country_parquet_waiters.pop(cache_key, None)
+        if waiter is not None:
+            waiter.set()
         return None
 
     try:
@@ -218,18 +242,207 @@ def load_country_parquet(iso3: str, admin_level: int = None):
             logger.warning(f"Empty geometry result for {iso3} (level={admin_level}) in S3 mode - not caching")
             with _country_parquet_cache_lock:
                 _country_parquet_inflight.discard(cache_key)
+                waiter = _country_parquet_waiters.pop(cache_key, None)
+            if waiter is not None:
+                waiter.set()
             return df  # Return empty but do NOT cache, so next request retries
 
         with _country_parquet_cache_lock:
             _country_parquet_cache[cache_key] = df
             _country_parquet_inflight.discard(cache_key)
+            waiter = _country_parquet_waiters.pop(cache_key, None)
+        if waiter is not None:
+            waiter.set()
         logger.debug(f"Loaded {len(df)} features for {iso3} (level={admin_level}) from {parquet_file.name}")
         return df
     except Exception as e:
         logger.error(f"Error loading geometry for {iso3}: {e}")
         with _country_parquet_cache_lock:
             _country_parquet_inflight.discard(cache_key)
+            waiter = _country_parquet_waiters.pop(cache_key, None)
+        if waiter is not None:
+            waiter.set()
         return None
+
+
+def load_country_parquet_viewport(iso3: str, admin_level: int, bbox: tuple):
+    """
+    Load only the geometry rows for one country/admin level that intersect a viewport bbox.
+
+    This is stricter than load_country_parquet(): it pushes bbox filtering into DuckDB so
+    large countries like USA admin_2 do not need to load the whole level slice first.
+    """
+    min_lon, min_lat, max_lon, max_lat = bbox
+
+    country_geom_file = DATA_ROOT / "countries" / iso3 / "geometry.parquet"
+    crosswalk_file = DATA_ROOT / "countries" / iso3 / "crosswalk.json"
+    global_geom_file = GEOMETRY_DIR / f"{iso3}.parquet"
+
+    parquet_file = None
+    crosswalk_data = None
+
+    if _parquet_accessible(country_geom_file):
+        parquet_file = country_geom_file
+    elif crosswalk_file.exists() and _parquet_accessible(global_geom_file):
+        try:
+            with open(crosswalk_file, 'r') as f:
+                crosswalk_data = json.load(f)
+            parquet_file = global_geom_file
+        except Exception as e:
+            logger.warning(f"Error loading crosswalk {crosswalk_file}: {e}")
+            parquet_file = global_geom_file
+    elif _parquet_accessible(global_geom_file):
+        parquet_file = global_geom_file
+    else:
+        return None
+
+    try:
+        available_cols = parquet_columns(parquet_file)
+        has_bbox = all(
+            col in available_cols
+            for col in ("bbox_min_lon", "bbox_max_lon", "bbox_min_lat", "bbox_max_lat")
+        )
+        has_centroid = "centroid_lon" in available_cols and "centroid_lat" in available_cols
+
+        compare_filters = []
+        if has_bbox:
+            compare_filters = [
+                ("bbox_max_lon", ">=", min_lon),
+                ("bbox_min_lon", "<=", max_lon),
+                ("bbox_max_lat", ">=", min_lat),
+                ("bbox_min_lat", "<=", max_lat),
+            ]
+        elif has_centroid:
+            compare_filters = [
+                ("centroid_lon", ">=", min_lon),
+                ("centroid_lon", "<=", max_lon),
+                ("centroid_lat", ">=", min_lat),
+                ("centroid_lat", "<=", max_lat),
+            ]
+
+        df = select_rows(
+            parquet_file,
+            exact_filters={"admin_level": admin_level},
+            compare_filters=compare_filters,
+        )
+
+        if df.empty and not is_cloud_mode():
+            filters = [("admin_level", "==", admin_level)]
+            if has_bbox:
+                filters.extend([
+                    ("bbox_max_lon", ">=", min_lon),
+                    ("bbox_min_lon", "<=", max_lon),
+                    ("bbox_max_lat", ">=", min_lat),
+                    ("bbox_min_lat", "<=", max_lat),
+                ])
+            elif has_centroid:
+                filters.extend([
+                    ("centroid_lon", ">=", min_lon),
+                    ("centroid_lon", "<=", max_lon),
+                    ("centroid_lat", ">=", min_lat),
+                    ("centroid_lat", "<=", max_lat),
+                ])
+            df = pd.read_parquet(parquet_file, filters=filters)
+
+        if crosswalk_data and not df.empty:
+            mappings = crosswalk_data.get('mappings', {})
+            reverse_map = {v: k for k, v in mappings.items()}
+            df['local_loc_id'] = df['loc_id'].map(reverse_map)
+
+        return df
+    except Exception as e:
+        logger.error(f"Error loading viewport geometry for {iso3} level={admin_level}: {e}")
+        return None
+
+
+def _resolve_geometry_source(iso3: str):
+    """Resolve the parquet source and optional crosswalk for a country geometry lookup."""
+    country_geom_file = DATA_ROOT / "countries" / iso3 / "geometry.parquet"
+    crosswalk_file = DATA_ROOT / "countries" / iso3 / "crosswalk.json"
+    global_geom_file = GEOMETRY_DIR / f"{iso3}.parquet"
+
+    if _parquet_accessible(country_geom_file):
+        return country_geom_file, None
+
+    if crosswalk_file.exists() and _parquet_accessible(global_geom_file):
+        try:
+            with open(crosswalk_file, 'r') as f:
+                crosswalk_data = json.load(f)
+            return global_geom_file, crosswalk_data
+        except Exception as e:
+            logger.warning(f"Error loading crosswalk {crosswalk_file}: {e}")
+            if _parquet_accessible(global_geom_file):
+                return global_geom_file, None
+
+    if _parquet_accessible(global_geom_file):
+        return global_geom_file, None
+
+    return None, None
+
+
+def load_geometry_rows_by_loc_ids(iso3: str, loc_ids: list[str]):
+    """
+    Load exact geometry rows for a country by loc_id list.
+
+    This is the robust exact-fetch path used by diff loading:
+    - no full country parquet load
+    - loc_id exact-match pushdown in DuckDB / parquet filters
+    """
+    requested_ids = [loc_id for loc_id in loc_ids if loc_id]
+    if not requested_ids:
+        return pd.DataFrame()
+
+    parquet_file, crosswalk_data = _resolve_geometry_source(iso3)
+    if parquet_file is None:
+        return pd.DataFrame()
+
+    requested_set = set(requested_ids)
+    query_ids = requested_ids
+    reverse_map = None
+
+    if crosswalk_data:
+        mappings = crosswalk_data.get("mappings", {})
+        query_ids = [mappings.get(loc_id, loc_id) for loc_id in requested_ids]
+        reverse_map = {v: k for k, v in mappings.items()}
+
+    try:
+        df = select_rows(
+            parquet_file,
+            in_filters={"loc_id": query_ids},
+        )
+
+        if df.empty and not is_cloud_mode():
+            df = pd.read_parquet(
+                parquet_file,
+                filters=[("loc_id", "in", query_ids)],
+            )
+
+        if df.empty:
+            return df
+
+        if reverse_map:
+            df["source_loc_id"] = df["loc_id"]
+            df["local_loc_id"] = df["loc_id"].map(lambda value: reverse_map.get(value, value))
+
+            # Preserve the caller's id space. If the request asked for local ids,
+            # return local ids; if it asked for source geometry ids, keep those.
+            def resolve_requested_id(source_value):
+                local_value = reverse_map.get(source_value)
+                if local_value in requested_set:
+                    return local_value
+                return source_value
+
+            df["loc_id"] = df["source_loc_id"].map(resolve_requested_id)
+            df = df[
+                df["loc_id"].isin(requested_set) |
+                df["source_loc_id"].isin(requested_set)
+            ]
+        else:
+            df = df[df["loc_id"].isin(requested_set)]
+        return df
+    except Exception as e:
+        logger.error(f"Error loading exact geometry rows for {iso3}: {e}")
+        return pd.DataFrame()
 
 
 def load_country_bounds():
@@ -270,6 +483,93 @@ def load_country_bounds():
         logger.warning("shapely not available for country bounds computation")
 
     return _country_bounds_cache
+
+
+def get_geometry_index(parent_loc_id: str | None = None, admin_level: int | None = None, bbox: tuple | None = None):
+    """
+    Return lightweight geometry index rows without polygon payloads.
+
+    Intended for client-side diff loading. Returns loc_id hierarchy + bbox/centroid
+    metadata so the browser can compute which loc_ids are visible and still missing.
+    """
+    if parent_loc_id:
+        parts = parent_loc_id.split("-")
+        iso3 = parts[0]
+        if parent_loc_id == iso3:
+            target_level = admin_level if admin_level is not None else 1
+        else:
+            target_level = admin_level if admin_level is not None else len(parts)
+
+        df = load_country_parquet(iso3, admin_level=target_level)
+        if df is None or df.empty:
+            return {"rows": [], "count": 0, "parent_loc_id": parent_loc_id, "admin_level": target_level}
+
+        if "parent_id" in df.columns:
+            df = df[df["parent_id"] == parent_loc_id]
+    else:
+        target_level = admin_level if admin_level is not None else 0
+        if target_level == 0:
+            df = load_global_countries()
+        elif bbox is not None:
+            countries = get_countries_in_bbox(*bbox)
+            frames = []
+            for iso3 in countries:
+                viewport_df = load_country_parquet_viewport(iso3, target_level, bbox)
+                if viewport_df is not None and not viewport_df.empty:
+                    frames.append(viewport_df)
+            df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+        else:
+            return {
+                "rows": [],
+                "count": 0,
+                "parent_loc_id": None,
+                "admin_level": target_level,
+                "error": "parent_loc_id required for sub-country index queries",
+            }
+        if df is None or df.empty:
+            return {"rows": [], "count": 0, "parent_loc_id": parent_loc_id, "admin_level": target_level}
+
+    if bbox is not None and df is not None and not df.empty:
+        min_lon, min_lat, max_lon, max_lat = bbox
+        if all(col in df.columns for col in ["bbox_min_lon", "bbox_max_lon", "bbox_min_lat", "bbox_max_lat"]):
+            mask = (
+                (df["bbox_max_lon"] >= min_lon) &
+                (df["bbox_min_lon"] <= max_lon) &
+                (df["bbox_max_lat"] >= min_lat) &
+                (df["bbox_min_lat"] <= max_lat)
+            )
+            df = df[mask]
+        elif "centroid_lon" in df.columns and "centroid_lat" in df.columns:
+            mask = (
+                (df["centroid_lon"] >= min_lon) &
+                (df["centroid_lon"] <= max_lon) &
+                (df["centroid_lat"] >= min_lat) &
+                (df["centroid_lat"] <= max_lat)
+            )
+            df = df[mask]
+
+    index_columns = [
+        "loc_id",
+        "parent_id",
+        "admin_level",
+        "name",
+        "code",
+        "bbox_min_lon",
+        "bbox_min_lat",
+        "bbox_max_lon",
+        "bbox_max_lat",
+        "centroid_lon",
+        "centroid_lat",
+    ]
+    available = [col for col in index_columns if col in df.columns]
+    rows = df[available].to_dict("records") if df is not None and not df.empty else []
+
+    return {
+        "rows": rows,
+        "count": len(rows),
+        "parent_loc_id": parent_loc_id,
+        "admin_level": target_level,
+    }
 
 
 def get_countries_in_bbox(min_lon: float, min_lat: float, max_lon: float, max_lat: float):
@@ -1361,40 +1661,18 @@ def get_viewport_geometry(admin_level: int, bbox: tuple, debug: bool = False):
         countries = [c for c in countries if c not in countries_with_subcounty]
 
     for iso3 in countries:
-        # Load only this level from parquet (predicate pushdown)
-        df = load_country_parquet(iso3, admin_level=admin_level)
+        # Load only the visible slice for this level from parquet (bbox pushdown).
+        df = load_country_parquet_viewport(iso3, admin_level, buffered_bbox)
 
         if df is None or len(df) == 0:
             # Fallback: try one level up if no data at this level
             if admin_level > 0:
-                df = load_country_parquet(iso3, admin_level=admin_level - 1)
+                df = load_country_parquet_viewport(iso3, admin_level - 1, buffered_bbox)
             if df is None or len(df) == 0:
                 continue
 
-        # Filter by bbox intersection using pre-computed bbox columns
-        if 'bbox_min_lon' in df.columns:
-            mask = (
-                (df['bbox_max_lon'] >= buffered_bbox[0]) &
-                (df['bbox_min_lon'] <= buffered_bbox[2]) &
-                (df['bbox_max_lat'] >= buffered_bbox[1]) &
-                (df['bbox_min_lat'] <= buffered_bbox[3])
-            )
-            df_filtered = df[mask]
-        else:
-            # No bbox columns - use centroid as fallback
-            if 'centroid_lon' in df.columns and 'centroid_lat' in df.columns:
-                mask = (
-                    (df['centroid_lon'] >= buffered_bbox[0]) &
-                    (df['centroid_lon'] <= buffered_bbox[2]) &
-                    (df['centroid_lat'] >= buffered_bbox[1]) &
-                    (df['centroid_lat'] <= buffered_bbox[3])
-                )
-                df_filtered = df[mask]
-            else:
-                df_filtered = df
-
         # Convert to features
-        geojson = df_to_geojson(df_filtered, polygon_only=True)
+        geojson = df_to_geojson(df, polygon_only=True)
 
         # Add debug info for sub-country levels (calculate on-the-fly from parquet)
         if debug:
@@ -1467,10 +1745,13 @@ def get_viewport_geometry(admin_level: int, bbox: tuple, debug: bool = False):
 
 def clear_cache():
     """Clear all cached geometry data. Useful when data files are updated."""
-    global _country_parquet_cache, _global_countries_cache, _country_bounds_cache, _subcounty_geometry_cache
+    global _country_parquet_cache, _global_countries_cache, _country_bounds_cache, _subcounty_geometry_cache, _country_parquet_waiters
     with _country_parquet_cache_lock:
         _country_parquet_cache = {}
         _country_parquet_inflight.clear()
+        for waiter in _country_parquet_waiters.values():
+            waiter.set()
+        _country_parquet_waiters = {}
     _global_countries_cache = None
     _country_bounds_cache = None
     _subcounty_geometry_cache = {}
@@ -1544,12 +1825,10 @@ def get_selection_geometries(loc_ids: list):
 
         # Fetch sub-country levels from parquet
         if sub_level_ids:
-            country_df = load_country_parquet(iso3)
-            if country_df is not None:
-                filtered = country_df[country_df["loc_id"].isin(sub_level_ids)]
-                if len(filtered) > 0:
-                    sub_geojson = df_to_geojson(filtered, polygon_only=True)
-                    features.extend(sub_geojson.get("features", []))
+            country_df = load_geometry_rows_by_loc_ids(iso3, sub_level_ids)
+            if country_df is not None and len(country_df) > 0:
+                sub_geojson = df_to_geojson(country_df, polygon_only=True)
+                features.extend(sub_geojson.get("features", []))
 
     logger.debug(f"Loaded {len(features)} geometries for selection from {len(loc_ids)} loc_ids")
 

@@ -108,21 +108,10 @@ export const PopupBuilder = {
   build(properties, sourceData = null, locationInfo = null) {
     const lines = [];
 
-    // Title - add admin level suffix if appropriate (e.g., "Clackamas" -> "Clackamas County")
+    // Title - keep the popup name simple and clean.
     let name = properties.name || properties.country_name ||
                properties.country || properties.Name || 'Unknown';
     const stateAbbr = properties.stusab || properties.abbrev || '';
-
-    // Add admin level suffix if name doesn't already include it
-    const adminLevel = properties.admin_level;
-    const locId = properties.loc_id || '';
-    const iso3 = locId.split('-')[0] || '';
-    if (adminLevel && iso3) {
-      const suffix = this.getAdminSuffix(iso3, adminLevel);
-      if (suffix && !name.toLowerCase().includes(suffix.toLowerCase())) {
-        name = `${name} ${suffix}`;
-      }
-    }
 
     lines.push(`<strong>${name}${stateAbbr ? ', ' + stateAbbr : ''}</strong>`);
 
@@ -229,7 +218,7 @@ export const PopupBuilder = {
     }
 
     // Compact hint for zoom navigation (no leading break)
-    lines.push('<em style="font-size: 10px; color: rgba(230, 243, 255, 0.62);">Zoom for sub-layers</em>');
+    lines.push('<em style="font-size: 10px; color: rgba(230, 243, 255, 0.62);">Zoom in for more</em>');
 
     return lines.join('<br>');
   },

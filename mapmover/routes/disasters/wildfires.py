@@ -353,7 +353,7 @@ async def get_wildfires_geojson(
         df = apply_location_filters(df, "wildfires", loc_prefix=loc_prefix, affected_loc_id=affected_loc_id)
 
         if _cache_key is not None and not df.empty:
-            cache_set(_cache_key, df)
+            cache_set(_cache_key, df, permanent=is_default_preload_range(start, end))
 
         valid_mask = df["latitude"].notna() & df["longitude"].notna()
         records = df[valid_mask].to_dict("records")

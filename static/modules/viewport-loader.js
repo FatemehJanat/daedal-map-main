@@ -6,7 +6,7 @@
 
 import { CONFIG } from './config.js';
 import { GeometryCache } from './cache.js';
-import { fetchMsgpack } from './utils/fetch.js';
+import { fetchMsgpack, postMsgpack } from './utils/fetch.js';
 
 // These will be set by app.js to avoid circular dependencies
 let MapAdapter = null;
@@ -27,9 +27,7 @@ export function setDependencies(deps) {
 
 export const ViewportLoader = {
   loadTimeout: null,
-  spinnerTimeout: null,
   currentAdminLevel: 0,
-  isLoading: false,
   enabled: true,  // Always enabled - viewport is the only navigation mode
   orderMode: false,  // When true, viewport loading is suspended (order data is displayed)
   levelLocked: false,  // When true, admin level doesn't change with zoom
@@ -38,6 +36,26 @@ export const ViewportLoader = {
   requestId: 0,  // Counter to track which request is current
   lastRequestedLevel: null,  // Track the level of the in-flight request
   lastZoom: null,  // Track zoom level to distinguish zoom from pan
+
+  renderViewportFromCache(level = this.currentAdminLevel, bboxOverride = null) {
+    if (!MapAdapter?.map) return 0;
+    const bounds = MapAdapter.map.getBounds();
+    const bboxObject = bboxOverride || {
+      west: Number(bounds.getWest().toFixed(3)),
+      south: Number(bounds.getSouth().toFixed(3)),
+      east: Number(bounds.getEast().toFixed(3)),
+      north: Number(bounds.getNorth().toFixed(3))
+    };
+    const visibleCached = GeometryCache.getForViewport(level, bboxObject);
+    if (visibleCached.length > 0 || GeometryCache.isCovered(level, bboxObject)) {
+      MapAdapter.loadGeoJSONWithFade({
+        type: 'FeatureCollection',
+        features: visibleCached
+      });
+      document.getElementById('totalAreas').textContent = visibleCached.length;
+    }
+    return visibleCached.length;
+  },
 
   // Viewport area thresholds (in square degrees) for admin level selection
   // These are tunable - smaller areas = deeper admin levels
@@ -196,6 +214,8 @@ export const ViewportLoader = {
    */
   async doLoad(adminLevel) {
     if (!MapAdapter?.map) return;
+    let missingLocIds = [];
+    let requestKey = null;
 
     // Only abort if the admin level is CHANGING (not just panning within same level)
     // This prevents cancelling slow-loading levels like blocks when user pans
@@ -213,62 +233,92 @@ export const ViewportLoader = {
     const thisRequestId = ++this.requestId;
 
     const bounds = MapAdapter.map.getBounds();
+    const bboxObject = {
+      west: Number(bounds.getWest().toFixed(3)),
+      south: Number(bounds.getSouth().toFixed(3)),
+      east: Number(bounds.getEast().toFixed(3)),
+      north: Number(bounds.getNorth().toFixed(3))
+    };
     // Round to 3 decimal places (~100m precision) - more than enough for viewport queries
     const bbox = [
-      bounds.getWest().toFixed(3),
-      bounds.getSouth().toFixed(3),
-      bounds.getEast().toFixed(3),
-      bounds.getNorth().toFixed(3)
+      bboxObject.west.toFixed(3),
+      bboxObject.south.toFixed(3),
+      bboxObject.east.toFixed(3),
+      bboxObject.north.toFixed(3)
     ].join(',');
 
-    // Start spinner timer
-    this.isLoading = true;
-    this.spinnerTimeout = setTimeout(() => {
-      if (this.isLoading) {
-        document.getElementById('loadingIndicator')?.classList.add('visible');
-      }
-    }, CONFIG.viewport.spinnerDelayMs);
+    if (GeometryCache.isCovered(adminLevel, bboxObject)) {
+      console.log(`[${thisRequestId}] Level ${adminLevel} viewport already covered, rendering from cache`);
+      this.renderViewportFromCache(adminLevel, bboxObject);
+      return;
+    }
+
+    requestKey = GeometryCache.startInFlight(adminLevel, bboxObject);
+    if (requestKey === null) {
+      console.log(`[${thisRequestId}] Level ${adminLevel} viewport already in flight, rendering cached subset`);
+      this.renderViewportFromCache(adminLevel, bboxObject);
+      return;
+    }
 
     try {
-      // Add debug param if debug mode is on (for coverage info in popups)
-      const debugParam = App?.debugMode ? '&debug=true' : '';
-      const url = `${CONFIG.api.viewport}?level=${adminLevel}&bbox=${bbox}${debugParam}`;
-      console.log(`[${thisRequestId}] Fetching level ${adminLevel}`);
+      const indexUrl = `/geometry/index?admin_level=${adminLevel}&bbox=${bbox}`;
+      console.log(`[${thisRequestId}] Fetching geometry index level ${adminLevel}`);
+      const indexData = await fetchMsgpack(indexUrl, { signal: this.abortController.signal });
+      const requestedLocIds = (indexData.rows || [])
+        .map((row) => row.loc_id)
+        .filter(Boolean);
+      const loadedLocIds = requestedLocIds.filter((locId) => GeometryCache.hasLocId(locId));
+      const inFlightLocIds = requestedLocIds.filter((locId) => GeometryCache.isLocIdInFlight(adminLevel, locId));
+      missingLocIds = requestedLocIds.filter((locId) =>
+        !GeometryCache.hasLocId(locId) && !GeometryCache.isLocIdInFlight(adminLevel, locId)
+      );
 
-      const data = await fetchMsgpack(url, { signal: this.abortController.signal });
+      if (missingLocIds.length === 0) {
+        const visibleCached = GeometryCache.getForViewport(adminLevel, bboxObject);
+        const fullyLoaded = inFlightLocIds.length === 0 && loadedLocIds.length === requestedLocIds.length;
+        console.log(`[${thisRequestId}] Level ${adminLevel} has no newly missing ids (${loadedLocIds.length} loaded, ${inFlightLocIds.length} in flight)`);
+        if (fullyLoaded) {
+          GeometryCache.markCoverage(adminLevel, bboxObject);
+        }
+        if (visibleCached.length > 0 || fullyLoaded || requestedLocIds.length === 0) {
+          this.renderViewportFromCache(adminLevel, bboxObject);
+        }
+        return;
+      }
+
+      GeometryCache.markLocIdsInFlight(adminLevel, missingLocIds);
+      console.log(`[${thisRequestId}] Fetching ${missingLocIds.length} missing geometry ids at level ${adminLevel}`);
+      const data = await postMsgpack(
+        '/geometry/selection',
+        { loc_ids: missingLocIds },
+        { signal: this.abortController.signal }
+      );
+
+      if (data.features?.length) {
+        GeometryCache.add(data.features);
+      }
 
       // Check if this request was superseded by a newer one
       if (thisRequestId !== this.requestId) {
         console.log(`[${thisRequestId}] Discarding stale response (current is ${this.requestId})`);
+        if (adminLevel === this.currentAdminLevel) {
+          this.renderViewportFromCache(adminLevel);
+        }
         return;
       }
 
       // Double-check we're still on the same level (user might have zoomed while parsing)
       if (adminLevel !== this.currentAdminLevel) {
         console.log(`[${thisRequestId}] Level changed during load (was ${adminLevel}, now ${this.currentAdminLevel}), discarding`);
+        this.renderViewportFromCache(this.currentAdminLevel);
         return;
       }
 
       const featureCount = data.features?.length || 0;
       console.log(`[${thisRequestId}] Level ${adminLevel} response: ${featureCount} features`);
 
-      // Always update the map when we get a response (even if empty)
-      // This ensures old geometry is cleared when switching levels
-      if (data.features) {
-        // Add to cache (if any features)
-        if (featureCount > 0) {
-          GeometryCache.add(data.features);
-        }
-
-        // Update map with new data (or empty to clear old geometry)
-        MapAdapter.loadGeoJSONWithFade({
-          type: 'FeatureCollection',
-          features: data.features
-        });
-
-        // Update stats
-        document.getElementById('totalAreas').textContent = featureCount;
-      }
+      GeometryCache.markCoverage(adminLevel, bboxObject);
+      this.renderViewportFromCache(adminLevel, bboxObject);
     } catch (err) {
       // Ignore abort errors - they're expected when we cancel requests
       if (err.name === 'AbortError') {
@@ -277,17 +327,13 @@ export const ViewportLoader = {
       }
       console.error('Viewport load failed:', err);
       // Keep displaying cached data - user sees no change
-      const cached = GeometryCache.getForLevel(adminLevel);
+      const cached = GeometryCache.getForViewport(adminLevel, bboxObject);
       if (cached.length === 0) {
         console.warn('No cached data available');
       }
     } finally {
-      // Only update loading state if this is still the current request
-      if (thisRequestId === this.requestId) {
-        this.isLoading = false;
-        clearTimeout(this.spinnerTimeout);
-        document.getElementById('loadingIndicator')?.classList.remove('visible');
-      }
+      GeometryCache.clearLocIdsInFlight(adminLevel, missingLocIds);
+      GeometryCache.finishInFlight(adminLevel, requestKey);
     }
   },
 

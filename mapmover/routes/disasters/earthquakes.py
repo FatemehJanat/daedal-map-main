@@ -161,6 +161,7 @@ async def get_earthquakes_geojson(
             df = select_filtered_event_rows_cached(
                 events_path,
                 cache_key=ck,
+                permanent=True,
                 start=start,
                 end=end,
                 min_value_filters={"magnitude": min_magnitude} if min_magnitude is not None else None,

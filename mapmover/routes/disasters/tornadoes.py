@@ -65,6 +65,7 @@ async def get_tornadoes_geojson(
                 df = select_filtered_event_rows_cached(
                     events_path,
                     cache_key=make_preload_cache_key("tornadoes"),
+                    permanent=True,
                     start=start,
                     end=end,
                 )

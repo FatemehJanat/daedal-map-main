@@ -370,6 +370,7 @@ def select_rows(
     columns: Iterable[str] | None = None,
     exact_filters: dict | None = None,
     in_filters: dict | None = None,
+    compare_filters: list[tuple[str, str, object]] | None = None,
     order_by: str | None = None,
 ) -> pd.DataFrame:
     if duckdb is None or not parquet_available(parquet_path):
@@ -394,6 +395,14 @@ def select_rows(
             placeholders = ", ".join("?" for _ in values)
             where.append(f"{quote_ident(col)} IN ({placeholders})")
             params.extend(values)
+
+    for col, op, value in (compare_filters or []):
+        if col not in available_cols or value is None:
+            continue
+        if op not in {"=", "!=", ">", ">=", "<", "<="}:
+            continue
+        where.append(f"{quote_ident(col)} {op} ?")
+        params.append(value)
 
     sql = f"SELECT {select_expr} FROM read_parquet(?)"
     if where:
@@ -684,6 +693,7 @@ def select_filtered_event_rows_cached(
     parquet_path: Path,
     cache_key: str,
     ttl: int | None = None,
+    permanent: bool = False,
     **kwargs,
 ) -> pd.DataFrame:
     """Like select_filtered_event_rows but checks/stores results in the TTL cache.
@@ -696,7 +706,7 @@ def select_filtered_event_rows_cached(
         return cached
     df = select_filtered_event_rows(parquet_path, **kwargs)
     if not df.empty:
-        cache_set(cache_key, df, ttl)
+        cache_set(cache_key, df, ttl, permanent=permanent)
     return df
 
 

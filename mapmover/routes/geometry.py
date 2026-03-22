@@ -7,6 +7,7 @@ from mapmover import logger
 from mapmover.geometry_handlers import (
     clear_cache as clear_geometry_cache,
     get_countries_geometry as get_countries_geometry_handler,
+    get_geometry_index as get_geometry_index_handler,
     get_location_children as get_location_children_handler,
     get_location_info,
     get_location_places as get_location_places_handler,
@@ -85,6 +86,24 @@ async def get_viewport_geometry_endpoint(level: int = 0, bbox: str = None, debug
         return msgpack_response(result)
     except Exception as e:
         logger.error(f"Error in /geometry/viewport: {e}")
+        return msgpack_error(str(e), 500)
+
+
+@router.get("/geometry/index")
+async def get_geometry_index_endpoint(parent_loc_id: str = None, admin_level: int = None, bbox: str = None):
+    """Get lightweight geometry index rows for diff-based loading."""
+    try:
+        bbox_tuple = None
+        if bbox:
+            parts = [float(x) for x in bbox.split(",")]
+            if len(parts) != 4:
+                return msgpack_error("bbox must be minLon,minLat,maxLon,maxLat", 400)
+            bbox_tuple = tuple(parts)
+
+        result = get_geometry_index_handler(parent_loc_id=parent_loc_id, admin_level=admin_level, bbox=bbox_tuple)
+        return msgpack_response(result)
+    except Exception as e:
+        logger.error(f"Error in /geometry/index: {e}")
         return msgpack_error(str(e), 500)
 
 

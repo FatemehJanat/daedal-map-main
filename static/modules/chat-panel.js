@@ -787,20 +787,22 @@ export const ChatManager = {
     try {
       const disasterIds = ['earthquakes', 'hurricanes', 'volcanoes', 'wildfires', 'tsunamis', 'tornadoes'];
 
-      // Enable overlays that aren't already active
+      // Move trim handles to 2020-2025 (overall range stays at default 2000-present)
+      window.TimeSlider?.setTrimBounds(2020, 2025);
+
+      // Preload first so enabling overlays reuses the warmed browser cache
+      // instead of triggering an extra "past 30 days" fetch per overlay.
+      const summary = await window.OverlayController?.preloadDisasters2020to2025((done, total, id) => {
+        btn.innerHTML = `<span class="btn-spinner"></span> Loading ${id}... (${done}/${total})`;
+      });
+
+      // Enable overlays after preload so they render from cache.
       for (const id of disasterIds) {
         if (!window.OverlaySelector?.isActive(id)) {
           window.OverlaySelector?.toggle(id);
         }
       }
 
-      // Move trim handles to 2020-2025 (overall range stays at default 2000-present)
-      window.TimeSlider?.setTrimBounds(2020, 2025);
-
-      // Preload sequentially, updating button after each dataset
-      const summary = await window.OverlayController?.preloadDisasters2020to2025((done, total, id) => {
-        btn.innerHTML = `<span class="btn-spinner"></span> Loading ${id}... (${done}/${total})`;
-      });
       const loaded = summary ? Object.values(summary).filter(r => r.loaded).length : 0;
       btn.textContent = `Loaded (${loaded}/6 datasets)`;
     } catch (e) {

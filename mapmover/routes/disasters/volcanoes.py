@@ -114,6 +114,7 @@ async def get_eruptions_geojson(
             df = select_filtered_event_rows_cached(
                 eruptions_path,
                 cache_key=make_preload_cache_key("volcanoes", exclude_ongoing=exclude_ongoing),
+                permanent=True,
                 start=start,
                 end=end,
             )
