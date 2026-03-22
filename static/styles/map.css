@@ -1896,7 +1896,16 @@ body {
 .related-subtitle,
 .related-link-type,
 .popup-footer {
-  color: rgba(230, 243, 255, 0.68);
+  color: var(--map-muted);
+}
+
+.detail-row {
+  color: var(--map-text);
+  border-bottom-color: rgba(123, 231, 255, 0.1);
+}
+
+.detail-label {
+  color: rgba(230, 243, 255, 0.6);
 }
 
 .time-slider-year,
@@ -1949,9 +1958,19 @@ body {
 .geometry-hover {
   background: linear-gradient(180deg, rgba(10, 24, 37, 0.98), rgba(6, 14, 22, 0.96));
   color: var(--map-text);
-  border: 1px solid rgba(123, 231, 255, 0.18);
   border-radius: 16px;
+}
+
+.maplibregl-popup-content,
+.geometry-popup,
+.geometry-hover {
+  border: 1px solid rgba(123, 231, 255, 0.18);
   box-shadow: var(--map-shadow);
+}
+
+.disaster-popup {
+  border: none;
+  box-shadow: none;
 }
 
 .maplibregl-popup-tip {

@@ -9,6 +9,8 @@
   <link rel="home" href="/">
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
 
+  <!-- Vendor styles (load first so our styles can override) -->
+  <link rel="stylesheet" href="/static/vendor/maplibre-gl/maplibre-gl.css">
   <!-- Map styles (controls, overlays, popups, time slider) -->
   <link rel="stylesheet" href="/static/styles/map.css">
   <!-- Chat panel styles (sidebar, messages, orders, settings) -->
@@ -77,13 +79,9 @@
         window.gtag('config', 'G-NLHFVYWW9T');
       }
 
-      // Production currently relies on CDN assets. When we vendor these locally
-      // for self-host/offline packaging, they belong under /static/vendor/... and
-      // will be used as the fallback if the CDN copy is unavailable.
-      await loadStylesheetWithFallback(
-        'https://unpkg.com/maplibre-gl@5.0.0/dist/maplibre-gl.css',
-        window.DAEDALMAP_VENDOR.maplibreCss
-      );
+      // maplibre-gl.css is loaded as a static link in <head> so our map.css
+      // (which follows it) always wins without needing !important overrides.
+      // JS assets still use CDN-with-vendor-fallback for offline/self-host support.
       await loadScriptWithFallback(
         'https://unpkg.com/maplibre-gl@5.0.0/dist/maplibre-gl.js',
         window.DAEDALMAP_VENDOR.maplibreJs
