@@ -86,6 +86,26 @@ export const ViewportLoader = {
     return width * height;
   },
 
+  expandBboxForIndex(bboxObject, adminLevel) {
+    if (!bboxObject) return bboxObject;
+    if (adminLevel !== 1 && adminLevel !== 2) {
+      return bboxObject;
+    }
+
+    const width = Math.max(0.001, bboxObject.east - bboxObject.west);
+    const height = Math.max(0.001, bboxObject.north - bboxObject.south);
+    const haloFactor = adminLevel === 1 ? 0.12 : 0.08;
+    const haloLon = width * haloFactor;
+    const haloLat = height * haloFactor;
+
+    return {
+      west: Number((bboxObject.west - haloLon).toFixed(3)),
+      south: Number((bboxObject.south - haloLat).toFixed(3)),
+      east: Number((bboxObject.east + haloLon).toFixed(3)),
+      north: Number((bboxObject.north + haloLat).toFixed(3))
+    };
+  },
+
   /**
    * Get admin level based on viewport area (smarter than fixed zoom thresholds)
    * Larger viewport = shallower level, smaller viewport = deeper level
@@ -246,6 +266,13 @@ export const ViewportLoader = {
       bboxObject.east.toFixed(3),
       bboxObject.north.toFixed(3)
     ].join(',');
+    const indexBboxObject = this.expandBboxForIndex(bboxObject, adminLevel);
+    const indexBbox = [
+      indexBboxObject.west.toFixed(3),
+      indexBboxObject.south.toFixed(3),
+      indexBboxObject.east.toFixed(3),
+      indexBboxObject.north.toFixed(3)
+    ].join(',');
 
     if (GeometryCache.isCovered(adminLevel, bboxObject)) {
       console.log(`[${thisRequestId}] Level ${adminLevel} viewport already covered, rendering from cache`);
@@ -261,7 +288,7 @@ export const ViewportLoader = {
     }
 
     try {
-      const indexUrl = `/geometry/index?admin_level=${adminLevel}&bbox=${bbox}`;
+      const indexUrl = `/geometry/index?admin_level=${adminLevel}&bbox=${indexBbox}`;
       console.log(`[${thisRequestId}] Fetching geometry index level ${adminLevel}`);
       const indexData = await fetchMsgpack(indexUrl, { signal: this.abortController.signal });
       const requestedLocIds = (indexData.rows || [])

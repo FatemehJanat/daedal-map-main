@@ -862,6 +862,11 @@ export const MapAdapter = {
 
     // Hover handlers - show popup on hover (unless locked)
     this.map.on('mousemove', fillLayer, (e) => {
+      const regionSource = this.map.getSource(CONFIG.layers.source);
+      if (!regionSource) {
+        this.hoveredFeatureId = null;
+        return;
+      }
       if (e.features.length > 0) {
         const feature = e.features[0];
 
@@ -890,6 +895,15 @@ export const MapAdapter = {
     });
 
     this.map.on('mouseleave', fillLayer, () => {
+      const regionSource = this.map.getSource(CONFIG.layers.source);
+      if (!regionSource) {
+        this.hoveredFeatureId = null;
+        this.map.getCanvas().style.cursor = '';
+        if (!this.popupLocked) {
+          this.hidePopup();
+        }
+        return;
+      }
       if (this.hoveredFeatureId !== null) {
         this.map.setFeatureState(
           { source: CONFIG.layers.source, id: this.hoveredFeatureId },
