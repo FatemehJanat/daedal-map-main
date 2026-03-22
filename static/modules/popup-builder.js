@@ -157,7 +157,7 @@ export const PopupBuilder = {
           lines.push(`${fieldName}: ${formattedValue}${yearSuffix}`);
         }
         if (dataFields.length > 3) {
-          lines.push(`<span style="font-size: 10px; color: #999;">+${dataFields.length - 3} more (click to expand)</span>`);
+          lines.push(`<span style="font-size: 10px; color: rgba(230, 243, 255, 0.62);">+${dataFields.length - 3} more (click to expand)</span>`);
         }
       } else {
         // FLAT MODE: Show all fields (<=5 or single category)
@@ -170,7 +170,7 @@ export const PopupBuilder = {
           const isActive = activeMetric && key === activeMetric;
           if (value == null || value === '') {
             // Show N/A for missing metrics
-            const style = isActive ? 'color: #999; font-weight: 600;' : 'color: #999;';
+            const style = isActive ? 'color: rgba(230, 243, 255, 0.68); font-weight: 600;' : 'color: rgba(230, 243, 255, 0.68);';
             lines.push(`<span style="${style}">${fieldName}: N/A</span>`);
           } else {
             const formattedValue = this.formatValue(key, value);
@@ -188,17 +188,17 @@ export const PopupBuilder = {
         if (sourceData.sources && sourceData.sources.length > 0) {
           const sourceLinks = sourceData.sources.slice(0, 2).map(s => {
             if (s.url && s.url !== 'Unknown') {
-              return `<a href="${s.url}" target="_blank" style="color: #5dade2;">${s.name}</a>`;
+              return `<a href="${s.url}" target="_blank" style="color: #7be7ff;">${s.name}</a>`;
             }
             return s.name;
           }).join(', ');
-          lines.push(`<span style="font-size: 10px; color: #888;">Source: ${sourceLinks}</span>`);
+          lines.push(`<span style="font-size: 10px; color: rgba(230, 243, 255, 0.62);">Source: ${sourceLinks}</span>`);
         } else if (sourceData.source_name) {
           const url = sourceData.source_url || sourceData.url;
           if (url && url !== 'Unknown') {
-            lines.push(`<span style="font-size: 10px; color: #888;">Source: <a href="${url}" target="_blank" style="color: #5dade2;">${sourceData.source_name}</a></span>`);
+            lines.push(`<span style="font-size: 10px; color: rgba(230, 243, 255, 0.62);">Source: <a href="${url}" target="_blank" style="color: #7be7ff;">${sourceData.source_name}</a></span>`);
           } else {
-            lines.push(`<span style="font-size: 10px; color: #888;">Source: ${sourceData.source_name}</span>`);
+            lines.push(`<span style="font-size: 10px; color: rgba(230, 243, 255, 0.62);">Source: ${sourceData.source_name}</span>`);
           }
         }
       }
@@ -229,7 +229,7 @@ export const PopupBuilder = {
     }
 
     // Compact hint for zoom navigation (no leading break)
-    lines.push('<em style="font-size: 10px; color: #999;">Zoom for sub-layers</em>');
+    lines.push('<em style="font-size: 10px; color: rgba(230, 243, 255, 0.62);">Zoom for sub-layers</em>');
 
     return lines.join('<br>');
   },
@@ -291,9 +291,9 @@ export const PopupBuilder = {
       const catSources = sources.filter(s => (s.category || 'general') === cat);
       if (catSources.length > 0) {
         const link = catSources[0].url
-          ? `<a href="${catSources[0].url}" target="_blank" style="color: #5dade2;">${catSources[0].name}</a>`
+          ? `<a href="${catSources[0].url}" target="_blank" style="color: #7be7ff;">${catSources[0].name}</a>`
           : catSources[0].name;
-        html += `<span style="font-size: 10px; color: #888;">Source: ${link}</span>`;
+        html += `<span style="font-size: 10px; color: rgba(230, 243, 255, 0.62);">Source: ${link}</span>`;
       }
       html += '</div>';
     }
@@ -313,10 +313,10 @@ export const PopupBuilder = {
     if (info.memberships && info.memberships.length > 0) {
       const first = info.memberships[0];
       if (first.startsWith('Part of:')) {
-        parts.push(`<span style="color: #888; font-size: 11px;">${first}</span>`);
+        parts.push(`<span style="color: rgba(230, 243, 255, 0.66); font-size: 11px;">${first}</span>`);
       } else {
         const memberships = info.memberships.slice(0, 3).join(', ');
-        parts.push(`<span style="color: #888; font-size: 11px;">${memberships}</span>`);
+        parts.push(`<span style="color: rgba(230, 243, 255, 0.66); font-size: 11px;">${memberships}</span>`);
       }
     }
 
@@ -324,18 +324,18 @@ export const PopupBuilder = {
     const datasetCounts = info.dataset_counts || {};
     const countryDatasets = datasetCounts.country || 0;
     if (info.admin_level === 0 && countryDatasets > 0) {
-      parts.push(`<span style="color: #888; font-size: 11px;">${countryDatasets} datasets</span>`);
+      parts.push(`<span style="color: rgba(230, 243, 255, 0.66); font-size: 11px;">${countryDatasets} datasets</span>`);
     }
 
     if (info.admin_level === 0) {
       if (info.capital_name) {
-        parts.push(`<span style="color: #888; font-size: 11px;">Capital: ${info.capital_name}</span>`);
+        parts.push(`<span style="color: rgba(230, 243, 255, 0.66); font-size: 11px;">Capital: ${info.capital_name}</span>`);
       }
       if (typeof info.area_total_sq_km === 'number' && Number.isFinite(info.area_total_sq_km)) {
-        parts.push(`<span style="color: #888; font-size: 11px;">Area: ${this.formatAreaKm2(info.area_total_sq_km)}</span>`);
+        parts.push(`<span style="color: rgba(230, 243, 255, 0.66); font-size: 11px;">Area: ${this.formatAreaKm2(info.area_total_sq_km)}</span>`);
       }
       if (typeof info.coastline_km === 'number' && Number.isFinite(info.coastline_km) && info.coastline_km > 0) {
-        parts.push(`<span style="color: #888; font-size: 11px;">Coastline: ${this.formatDistanceKm(info.coastline_km)}</span>`);
+        parts.push(`<span style="color: rgba(230, 243, 255, 0.66); font-size: 11px;">Coastline: ${this.formatDistanceKm(info.coastline_km)}</span>`);
       }
     }
 
@@ -343,7 +343,7 @@ export const PopupBuilder = {
     if (info.children_count > 0 || info.descendants_count > 0) {
       const subdivisionLines = this.formatSubdivisions(info);
       for (const line of subdivisionLines) {
-        parts.push(`<span style="color: #888; font-size: 11px;">${line}</span>`);
+        parts.push(`<span style="color: rgba(230, 243, 255, 0.66); font-size: 11px;">${line}</span>`);
       }
     }
 

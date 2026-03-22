@@ -1602,13 +1602,13 @@ body {
 
 .geometry-popup-row {
   font-size: 12px;
-  color: #444;
+  color: rgba(230, 243, 255, 0.86);
   padding: 3px 0;
 }
 
 .geometry-label {
   font-weight: 500;
-  color: #666;
+  color: var(--map-muted);
 }
 
 /* Geometry Hover Styles */
@@ -1624,25 +1624,25 @@ body {
 .geometry-hover-title {
   font-weight: 600;
   font-size: 13px;
-  color: #333;
+  color: var(--map-text);
   margin-bottom: 2px;
 }
 
 .geometry-hover-code {
   font-size: 12px;
-  color: #444;
+  color: rgba(230, 243, 255, 0.84);
   font-weight: 500;
 }
 
 .geometry-hover-type {
   font-size: 11px;
-  color: #666;
+  color: var(--map-muted);
   margin-top: 2px;
 }
 
 .geometry-hover-hint {
   font-size: 10px;
-  color: #0f4c75;
+  color: var(--map-cyan);
   margin-top: 6px;
   font-style: italic;
 }
