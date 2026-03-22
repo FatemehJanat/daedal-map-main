@@ -77,21 +77,24 @@
         window.gtag('config', 'G-NLHFVYWW9T');
       }
 
+      // Production currently relies on CDN assets. When we vendor these locally
+      // for self-host/offline packaging, they belong under /static/vendor/... and
+      // will be used as the fallback if the CDN copy is unavailable.
       await loadStylesheetWithFallback(
-        window.DAEDALMAP_VENDOR.maplibreCss,
-        'https://unpkg.com/maplibre-gl@5.0.0/dist/maplibre-gl.css'
+        'https://unpkg.com/maplibre-gl@5.0.0/dist/maplibre-gl.css',
+        window.DAEDALMAP_VENDOR.maplibreCss
       );
       await loadScriptWithFallback(
-        window.DAEDALMAP_VENDOR.maplibreJs,
-        'https://unpkg.com/maplibre-gl@5.0.0/dist/maplibre-gl.js'
+        'https://unpkg.com/maplibre-gl@5.0.0/dist/maplibre-gl.js',
+        window.DAEDALMAP_VENDOR.maplibreJs
       );
       await loadScriptWithFallback(
-        window.DAEDALMAP_VENDOR.msgpackJs,
-        'https://unpkg.com/@msgpack/msgpack@3.0.0-beta2/dist.es5+umd/msgpack.min.js'
+        'https://unpkg.com/@msgpack/msgpack@3.0.0-beta2/dist.es5+umd/msgpack.min.js',
+        window.DAEDALMAP_VENDOR.msgpackJs
       );
       await loadScriptWithFallback(
-        window.DAEDALMAP_VENDOR.supabaseJs,
-        'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2'
+        'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2',
+        window.DAEDALMAP_VENDOR.supabaseJs
       );
     })();
   </script>
