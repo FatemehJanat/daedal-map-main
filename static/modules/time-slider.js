@@ -2194,7 +2194,7 @@ export const TimeSlider = {
     this.fastFwdBtn?.classList.remove('active');
 
     if (this.isPlaying) {
-      this.playBtn.textContent = '||';
+      this.playBtn.textContent = '❚❚';
       this.playBtn.title = 'Pause';
 
       // Highlight fast buttons when in fast mode
@@ -2206,7 +2206,7 @@ export const TimeSlider = {
         }
       }
     } else {
-      this.playBtn.textContent = '|>';
+      this.playBtn.textContent = '▶';
       this.playBtn.title = 'Play';
     }
   },

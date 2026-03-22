@@ -4,10 +4,10 @@ export async function handleSequenceChange(controller, sequenceId, eventId, deps
   const { ModelRegistry, OverlaySelector, OVERLAY_ENDPOINTS, TimeSlider, dataCache, yearRangeCache, gardnerKnopoffTimeWindow, fetchMsgpack } = deps;
   if (EventAnimator.getIsActive()) EventAnimator.stop();
   if (!sequenceId && !eventId) {
-    const currentYear = controller.getCurrentYear();
-    if (dataCache.earthquakes) controller.renderFilteredData('earthquakes', currentYear);
+    controller.restoreViewState?.(controller.captureViewState?.(), ['earthquakes']);
     return;
   }
+  const returnViewState = controller.captureViewState?.();
   const cacheKey = eventId || sequenceId;
   let seqEvents;
   try {
@@ -59,15 +59,7 @@ export async function handleSequenceChange(controller, sequenceId, eventId, deps
     granularity: granularityLabel,
     renderer: 'point-radius',
     onExit: () => {
-      controller.recalculateTimeRange();
-      if (TimeSlider) {
-        if (TimeSlider.scales?.find(s => s.id === 'primary')) TimeSlider.setActiveScale('primary');
-        if (Object.keys(yearRangeCache).length > 0) TimeSlider.show();
-      }
-      const currentYear = controller.getCurrentYear();
-      for (const overlayId of overlaysToRestore) {
-        if (dataCache[overlayId]) controller.renderFilteredData(overlayId, currentYear);
-      }
+      controller.restoreViewState?.(returnViewState, overlaysToRestore);
     }
   });
 }

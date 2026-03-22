@@ -789,6 +789,7 @@ export const OverlayController = {
    */
   handleVolcanoEarthquakes(data) {
     const { features, volcanoName, volcanoLat, volcanoLon } = data;
+    const returnViewState = this.captureViewState();
     console.log(`OverlayController: Displaying ${features.length} earthquakes triggered by ${volcanoName}`);
 
     if (features.length === 0) return;
@@ -884,21 +885,7 @@ export const OverlayController = {
       renderer: 'point-radius',
       onExit: () => {
         console.log('OverlayController: Volcano earthquake sequence exited');
-        // Restore TimeSlider range from cached overlay year ranges
-        this.recalculateTimeRange();
-        if (TimeSlider) {
-          if (TimeSlider.scales?.find(s => s.id === 'primary')) {
-            TimeSlider.setActiveScale('primary');
-          }
-          if (Object.keys(yearRangeCache).length > 0) {
-            TimeSlider.show();
-          }
-        }
-        // Restore normal earthquake display for current year
-        const currentYear = this.getCurrentYear();
-        if (dataCache.earthquakes) {
-          this.renderFilteredData('earthquakes', currentYear);
-        }
+        this.restoreViewState(returnViewState, ['earthquakes']);
       }
     });
 
@@ -1247,6 +1234,38 @@ export const OverlayController = {
    */
   getCurrentTimestamp() {
     return TimeSlider?.currentTime || null;
+  },
+
+  captureViewState() {
+    return {
+      timestamp: this.getCurrentTimestamp(),
+      year: this.getCurrentYear()
+    };
+  },
+
+  restoreViewState(viewState, overlayIds = []) {
+    this.recalculateTimeRange();
+
+    if (TimeSlider) {
+      if (TimeSlider.scales?.find(s => s.id === 'primary')) {
+        TimeSlider.setActiveScale('primary');
+        if (viewState?.timestamp != null && TimeSlider.setTime) {
+          TimeSlider.setTime(viewState.timestamp, 'api');
+        }
+      }
+      if (Object.keys(yearRangeCache).length > 0) {
+        TimeSlider.show();
+      }
+    }
+
+    for (const overlayId of overlayIds) {
+      if (!dataCache[overlayId]) continue;
+      if (viewState?.timestamp != null) {
+        this.renderFilteredData(overlayId, viewState.timestamp, { useTimestamp: true });
+      } else if (viewState?.year != null) {
+        this.renderFilteredData(overlayId, viewState.year);
+      }
+    }
   },
 
   /**

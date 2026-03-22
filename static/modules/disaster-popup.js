@@ -11,7 +11,7 @@
 
 const DisasterPopup = {
   // Current popup state
-  state: 'CLOSED', // CLOSED, BASIC, DETAIL, SEQUENCE, RELATED
+  state: 'CLOSED', // CLOSED, BASIC, DETAIL, SEQUENCE_CONFIRM, RELATED_CONFIRM, RELATED
   currentEvent: null,
   currentType: null,
   cachedData: {}, // Cache for sequence/related data
@@ -645,6 +645,164 @@ const DisasterPopup = {
     }
   },
 
+  buildPopupTutorialHelp(props, eventType) {
+    const seqText = this.getSequenceText(props, eventType);
+    let middleActionHelp = `${seqText} shows the event footprint or progression when available.`;
+    if (seqText.startsWith('Aftershocks')) {
+      middleActionHelp = `${seqText} follows the earthquake sequence tied to this event.`;
+    } else if (seqText.startsWith('Runups')) {
+      middleActionHelp = `${seqText} shows recorded tsunami wave impacts tied to this event.`;
+    } else if (seqText === 'Track' || seqText === 'Path' || seqText === 'Progression' || seqText === 'Extent') {
+      middleActionHelp = `${seqText} steps through how this disaster moved or spread.`;
+    }
+    return `Details shows structured facts for this disaster. ${middleActionHelp} Related shows linked disasters such as earthquake-to-tsunami connections.`;
+  },
+
+  getSequencePreview(props, eventType) {
+    let count = null;
+    let noun = 'events';
+    const actionLabel = this.getSequenceText(props, eventType);
+    let description = `${actionLabel} loads a focused map view for this disaster.`;
+
+    switch (eventType) {
+      case 'earthquake':
+        count = Math.max(1, props.aftershock_count || 0);
+        noun = props.aftershock_count > 0 ? 'aftershocks' : 'impact event';
+        description = props.aftershock_count > 0
+          ? 'This loads the mainshock plus linked aftershocks into a focused animation.'
+          : 'This loads a focused impact animation for the selected earthquake.';
+        break;
+      case 'tsunami':
+        count = Math.max(1, props.runup_count || 0);
+        noun = props.runup_count > 0 ? 'runup observations' : 'impact event';
+        description = props.runup_count > 0
+          ? 'This loads the tsunami source and recorded runup observations.'
+          : 'This loads a focused tsunami impact animation.';
+        break;
+      case 'tornado':
+        count = Math.max(1, props.sequence_count || 0);
+        noun = props.sequence_count > 1 ? 'tornadoes' : 'track view';
+        description = props.sequence_count > 1
+          ? 'This loads the linked tornado sequence for the same storm system.'
+          : 'This loads a focused tornado path or point animation.';
+        break;
+      case 'wildfire':
+        count = props.has_progression ? null : 1;
+        noun = props.has_progression ? 'progression animation' : 'impact view';
+        description = props.has_progression
+          ? 'This loads the wildfire progression animation when daily spread data is available.'
+          : 'This loads a focused wildfire impact view.';
+        break;
+      case 'flood':
+        count = 1;
+        noun = props.has_geometry ? 'extent animation' : 'impact view';
+        description = props.has_geometry
+          ? 'This loads the flood extent animation for the selected event.'
+          : 'This loads a focused flood impact view.';
+        break;
+      case 'volcano':
+      case 'landslide':
+      default:
+        count = 1;
+        noun = 'focused event view';
+        break;
+    }
+
+    const warning = count != null && count >= 5000
+      ? `This is a very large load: ${count.toLocaleString()} ${noun}.`
+      : null;
+
+    return { count, noun, actionLabel, description, warning };
+  },
+
+  buildSequenceConfirmPopup(props, eventType) {
+    const color = this.colors[eventType] || this.colors.generic;
+    const title = this.getTitle(props, eventType);
+    const tutorialHelp = this.buildPopupTutorialHelp(props, eventType);
+    const preview = this.getSequencePreview(props, eventType);
+    const countText = preview.count != null
+      ? `${preview.count.toLocaleString()} ${preview.noun}`
+      : preview.noun;
+
+    return `
+      <div class="disaster-popup popup-sequence" data-type="${eventType}" data-id="${props.event_id || ''}">
+        <div class="popup-header-detail" style="border-left: 4px solid ${color}">
+          <button class="popup-back" data-action="back">&lt; Back</button>
+          <span class="popup-title-detail">${preview.actionLabel}</span>
+          <div class="popup-tutorial-wrap">
+            <button class="popup-tutorial-tip" type="button" aria-label="Disaster popup help">?</button>
+            <div class="popup-tutorial-tooltip">${tutorialHelp}</div>
+          </div>
+        </div>
+
+        <div class="sequence-summary">
+          <strong>${title}</strong>
+          <div class="seq-count">${countText}</div>
+        </div>
+
+        <div class="related-empty popup-load-summary">${preview.description}</div>
+        ${preview.warning ? `<div class="popup-load-warning">${preview.warning}</div>` : ''}
+
+        <div class="popup-actions">
+          <button class="popup-btn btn-sequence" data-action="load-sequence">
+            Load ${preview.actionLabel}
+          </button>
+        </div>
+      </div>
+    `;
+  },
+
+  buildRelatedConfirmPopup(props, eventType, relatedData) {
+    const icon = this.icons[eventType] || this.icons.generic;
+    const color = this.colors[eventType] || this.colors.generic;
+    const title = this.getTitle(props, eventType);
+    const tutorialHelp = this.buildPopupTutorialHelp(props, eventType);
+    const count = relatedData?.related?.length ?? relatedData?.count ?? 0;
+    const message = relatedData?.message || null;
+
+    let statusHtml = '<div class="related-empty popup-load-summary">Checking for linked disasters...</div>';
+    let actionHtml = '';
+
+    if (relatedData) {
+      if (count > 0) {
+        statusHtml = `<div class="related-empty popup-load-summary">${count.toLocaleString()} linked disasters found for this event.</div>`;
+        actionHtml = `
+          <div class="popup-actions">
+            <button class="popup-btn btn-related" data-action="load-related">
+              Load Related Disasters
+            </button>
+          </div>
+        `;
+      } else {
+        statusHtml = `<div class="related-empty popup-load-summary">${message || 'No related disasters found.'}</div>`;
+      }
+    }
+
+    return `
+      <div class="disaster-popup popup-related" data-type="${eventType}" data-id="${props.event_id || ''}">
+        <div class="popup-header-detail" style="border-left: 4px solid ${color}">
+          <button class="popup-back" data-action="back">&lt; Back</button>
+          <span class="popup-title-detail">Related Disasters</span>
+          <div class="popup-tutorial-wrap">
+            <button class="popup-tutorial-tip" type="button" aria-label="Disaster popup help">?</button>
+            <div class="popup-tutorial-tooltip">${tutorialHelp}</div>
+          </div>
+        </div>
+
+        <div class="related-primary">
+          <span class="related-icon" style="background: ${color}">${icon}</span>
+          <div class="related-info">
+            <div class="related-title">${title}</div>
+            <div class="related-subtitle">${this.getSubtitle(props, eventType)}</div>
+          </div>
+        </div>
+
+        ${statusHtml}
+        ${actionHtml}
+      </div>
+    `;
+  },
+
   /**
    * Build the basic popup HTML
    */
@@ -657,6 +815,7 @@ const DisasterPopup = {
     const power = this.formatPower(props, eventType);
     const time = this.formatTime(props, eventType);
     const impact = this.formatImpact(props, eventType);
+    const tutorialHelp = this.buildPopupTutorialHelp(props, eventType);
 
     const hasSeq = this.hasSequence(props, eventType);
     const hasRel = this.hasRelated(props, eventType);
@@ -670,6 +829,10 @@ const DisasterPopup = {
           <div class="popup-title-group">
             <div class="popup-title">${title}</div>
             <div class="popup-subtitle">${subtitle}</div>
+          </div>
+          <div class="popup-tutorial-wrap">
+            <button class="popup-tutorial-tip" type="button" aria-label="Disaster popup help">?</button>
+            <div class="popup-tutorial-tooltip">${tutorialHelp}</div>
           </div>
         </div>
 
@@ -715,6 +878,7 @@ const DisasterPopup = {
     const icon = this.icons[eventType] || this.icons.generic;
     const color = this.colors[eventType] || this.colors.generic;
     const title = this.getTitle(props, eventType);
+    const tutorialHelp = this.buildPopupTutorialHelp(props, eventType);
 
     // Merge props with detail data
     const data = { ...props, ...detailData };
@@ -724,6 +888,10 @@ const DisasterPopup = {
         <div class="popup-header-detail" style="border-left: 4px solid ${color}">
           <button class="popup-back" data-action="back">&lt; Back</button>
           <span class="popup-title-detail">${title}</span>
+          <div class="popup-tutorial-wrap">
+            <button class="popup-tutorial-tip" type="button" aria-label="Disaster popup help">?</button>
+            <div class="popup-tutorial-tooltip">${tutorialHelp}</div>
+          </div>
         </div>
 
         <div class="popup-tabs">
@@ -1450,6 +1618,7 @@ const DisasterPopup = {
     const icon = this.icons[eventType] || this.icons.generic;
     const color = this.colors[eventType] || this.colors.generic;
     const title = this.getTitle(props, eventType);
+    const tutorialHelp = this.buildPopupTutorialHelp(props, eventType);
 
     let sequenceList = '';
     let summary = '';
@@ -1479,6 +1648,10 @@ const DisasterPopup = {
         <div class="popup-header-detail" style="border-left: 4px solid ${color}">
           <button class="popup-back" data-action="back">&lt; Back</button>
           <span class="popup-title-detail">${this.getSequenceText(props, eventType)}</span>
+          <div class="popup-tutorial-wrap">
+            <button class="popup-tutorial-tip" type="button" aria-label="Disaster popup help">?</button>
+            <div class="popup-tutorial-tooltip">${tutorialHelp}</div>
+          </div>
         </div>
 
         <div class="sequence-summary">
@@ -1508,6 +1681,7 @@ const DisasterPopup = {
     const icon = this.icons[eventType] || this.icons.generic;
     const color = this.colors[eventType] || this.colors.generic;
     const title = this.getTitle(props, eventType);
+    const tutorialHelp = this.buildPopupTutorialHelp(props, eventType);
 
     let relatedList = '';
 
@@ -1527,7 +1701,8 @@ const DisasterPopup = {
         </div>`;
       }).join('\n');
     } else {
-      relatedList = '<div class="related-empty">No related disasters found</div>';
+      const emptyMessage = relatedData?.message || 'No related disasters found';
+      relatedList = `<div class="related-empty">${emptyMessage}</div>`;
     }
 
     let html = `
@@ -1535,6 +1710,10 @@ const DisasterPopup = {
         <div class="popup-header-detail" style="border-left: 4px solid ${color}">
           <button class="popup-back" data-action="back">&lt; Back</button>
           <span class="popup-title-detail">Related Disasters</span>
+          <div class="popup-tutorial-wrap">
+            <button class="popup-tutorial-tip" type="button" aria-label="Disaster popup help">?</button>
+            <div class="popup-tutorial-tooltip">${tutorialHelp}</div>
+          </div>
         </div>
 
         <div class="related-primary">
@@ -1693,8 +1872,14 @@ const DisasterPopup = {
       case 'sequence':
         this.showSequence();
         break;
+      case 'load-sequence':
+        this.loadSequence();
+        break;
       case 'related':
         this.showRelated();
+        break;
+      case 'load-related':
+        this.loadRelated();
         break;
     }
   },
@@ -1743,10 +1928,13 @@ const DisasterPopup = {
    * are handled as map animations, not popup lists
    */
   showSequence() {
-    // Trigger the sequence handler FIRST (before hide clears currentEvent)
-    this.triggerSequenceHandler();
+    this.state = 'SEQUENCE_CONFIRM';
+    const html = this.buildSequenceConfirmPopup(this.currentEvent, this.currentType);
+    this.updatePopupContent(html);
+  },
 
-    // Then hide popup - sequence actions trigger map animations
+  loadSequence() {
+    this.triggerSequenceHandler();
     this.hide();
   },
 
@@ -1754,23 +1942,30 @@ const DisasterPopup = {
    * Show related view
    */
   showRelated() {
-    this.state = 'RELATED';
+    this.state = 'RELATED_CONFIRM';
 
     // Check cache first
     const cacheKey = `rel_${this.currentType}_${this.currentEvent.event_id}`;
 
     if (this.cachedData[cacheKey]) {
-      const html = this.buildRelatedPopup(this.currentEvent, this.currentType, this.cachedData[cacheKey]);
+      const html = this.buildRelatedConfirmPopup(this.currentEvent, this.currentType, this.cachedData[cacheKey]);
       this.updatePopupContent(html);
       return;
     }
 
     // Show loading state
-    const html = this.buildRelatedPopup(this.currentEvent, this.currentType, { related: [] });
+    const html = this.buildRelatedConfirmPopup(this.currentEvent, this.currentType, null);
     this.updatePopupContent(html);
 
     // Trigger existing related handlers
     this.triggerRelatedHandler();
+  },
+
+  loadRelated() {
+    this.state = 'RELATED';
+    const cacheKey = `rel_${this.currentType}_${this.currentEvent.event_id}`;
+    const html = this.buildRelatedPopup(this.currentEvent, this.currentType, this.cachedData[cacheKey] || { related: [] });
+    this.updatePopupContent(html);
   },
 
   /**

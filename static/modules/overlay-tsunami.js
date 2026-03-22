@@ -3,6 +3,7 @@ import EventAnimator, { AnimationMode } from './event-animator.js';
 export function handleTsunamiRunups(controller, data, deps) {
   const { MapAdapter, TimeSlider, dataCache, yearRangeCache } = deps;
   const { geojson, eventId, runupCount } = data;
+  const returnViewState = controller.captureViewState?.();
   console.log(`OverlayController: Starting tsunami runups animation for ${eventId} with ${runupCount} runups`);
   if (!geojson?.features || geojson.features.length < 2) return console.warn('OverlayController: Not enough data for tsunami animation');
   const sourceEvent = geojson.features.find(f => f.properties?.is_source === true);
@@ -24,14 +25,10 @@ export function handleTsunamiRunups(controller, data, deps) {
     renderer: 'point-radius',
     rendererOptions: { eventType: 'tsunami' },
     onExit: () => {
-      const currentYear = controller.getCurrentYear();
-      if (dataCache.tsunamis) controller.renderFilteredData('tsunamis', currentYear);
-      controller.recalculateTimeRange();
-      if (TimeSlider && Object.keys(yearRangeCache).length > 0) TimeSlider.show();
+      controller.restoreViewState?.(returnViewState, ['tsunamis']);
     }
   });
   if (!started) {
-    const currentYear = controller.getCurrentYear();
-    if (dataCache.tsunamis) controller.renderFilteredData('tsunamis', currentYear);
+    controller.restoreViewState?.(returnViewState, ['tsunamis']);
   }
 }

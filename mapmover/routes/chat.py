@@ -284,6 +284,7 @@ async def chat_endpoint(req: Request):
         time_state = body.get("timeState")
         saved_order_names = body.get("savedOrderNames", [])
         loaded_data = body.get("loadedData", [])
+        tutorial_mode = body.get("tutorialMode", {})
 
         if not query:
             return msgpack_error("No query provided", 400)
@@ -317,6 +318,24 @@ async def chat_endpoint(req: Request):
                 "source": "disambiguation_selection",
             }
             hints["disambiguation"] = None
+
+        if hints.get("tutorial_mode"):
+            action = hints["tutorial_mode"].get("action", "toggle")
+            current_enabled = bool(tutorial_mode.get("enabled"))
+            enabled = (not current_enabled) if action == "toggle" else (action == "on")
+            message = (
+                "Tutorial mode on. Hover or tap a help marker to see what that part of the app does."
+                if enabled
+                else "Tutorial mode off."
+            )
+            return msgpack_response(
+                {
+                    "type": "tutorial_mode",
+                    "action": action,
+                    "enabled": enabled,
+                    "message": message,
+                }
+            )
 
         if hints.get("show_borders"):
             previous_options = body.get("previous_disambiguation_options", [])

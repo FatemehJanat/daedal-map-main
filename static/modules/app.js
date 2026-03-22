@@ -22,6 +22,7 @@ import { OverlayController, setDependencies as setOverlayControllerDeps } from '
 import { DisasterPopup, setDependencies as setDisasterPopupDeps } from './disaster-popup.js';
 import { GeometryModel, setDependencies as setGeometryDeps } from './models/model-geometry.js';
 import { AuthManager } from './auth.js';
+import { TutorialMode } from './tutorial-mode.js';
 
 // ============================================================================
 // APP - Main application controller
@@ -133,6 +134,7 @@ export const App = {
     OrderManager.init();
     ResizeManager.init();
     SidebarResizer.init();
+    TutorialMode.init();
 
     // Initialize TimeSlider early (UI setup only, no data)
     // This ensures the slider is visible and listener system is ready

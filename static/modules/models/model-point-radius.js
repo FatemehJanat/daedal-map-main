@@ -50,6 +50,27 @@ export const PointRadiusModel = {
     return `${eventType}-${baseId}`;
   },
 
+  _getCircleSortKey(eventType) {
+    switch (eventType) {
+      case 'earthquake':
+        return ['coalesce', ['get', 'magnitude'], 0];
+      case 'volcano':
+        return ['coalesce', ['get', 'VEI'], 0];
+      case 'tsunami':
+        return ['log10', ['max', 1, ['coalesce', ['get', 'runup_count'], 1]]];
+      case 'wildfire':
+        return ['log10', ['max', 1, ['coalesce', ['get', 'area_km2'], 1]]];
+      case 'flood':
+        return ['log10', ['max', 1, ['coalesce', ['get', 'duration_days'], 1]]];
+      case 'tornado':
+        return ['to-number', ['slice', ['coalesce', ['get', 'tornado_scale'], 'EF0'], -1], 0];
+      case 'landslide':
+        return ['coalesce', ['get', 'intensity'], 0];
+      default:
+        return ['coalesce', ['get', 'year'], 0];
+    }
+  },
+
   // Legacy single-type property for backwards compatibility
   get activeType() {
     return this.activeTypes.size > 0 ? [...this.activeTypes][0] : null;
@@ -659,6 +680,7 @@ export const PointRadiusModel = {
     const colors = CONFIG.earthquakeColors;
     const map = MapAdapter.map;
     const sourceId = this._layerId('source', eventType);
+    const sortKey = this._getCircleSortKey(eventType);
 
     // Color expression based on magnitude
     const colorExpr = [
@@ -834,6 +856,9 @@ export const PointRadiusModel = {
       id: this._layerId('circle-glow', eventType),
       type: 'circle',
       source: sourceId,
+      layout: {
+        'circle-sort-key': sortKey
+      },
       paint: {
         'circle-radius': sizeBoostExpr(['+', epicenterSize, 4]),
         'circle-color': colorExpr,
@@ -847,6 +872,9 @@ export const PointRadiusModel = {
       id: this._layerId('circle', eventType),
       type: 'circle',
       source: sourceId,
+      layout: {
+        'circle-sort-key': sortKey
+      },
       paint: {
         'circle-radius': sizeBoostExpr(epicenterSize),
         'circle-color': colorExpr,
@@ -867,6 +895,7 @@ export const PointRadiusModel = {
   _addVolcanoLayer(eventType, options = {}) {
     const map = MapAdapter.map;
     const sourceId = this._layerId('source', eventType);
+    const sortKey = this._getCircleSortKey(eventType);
 
     // Color by VEI (Volcanic Explosivity Index)
     const hasValidVEI = ['all', ['has', 'VEI'], ['!=', ['get', 'VEI'], null]];
@@ -1022,6 +1051,9 @@ export const PointRadiusModel = {
       id: this._layerId('circle-glow', eventType),
       type: 'circle',
       source: sourceId,
+      layout: {
+        'circle-sort-key': sortKey
+      },
       paint: {
         'circle-radius': sizeBoostExpr(['+', epicenterSize, 4]),
         'circle-color': colorExpr,
@@ -1034,6 +1066,9 @@ export const PointRadiusModel = {
       id: this._layerId('circle', eventType),
       type: 'circle',
       source: sourceId,
+      layout: {
+        'circle-sort-key': sortKey
+      },
       paint: {
         'circle-radius': sizeBoostExpr(epicenterSize),
         'circle-color': colorExpr,
@@ -1056,6 +1091,7 @@ export const PointRadiusModel = {
   _addTsunamiLayer(eventType, options = {}) {
     const map = MapAdapter.map;
     const sourceId = this._layerId('source', eventType);
+    const sortKey = this._getCircleSortKey(eventType);
 
     // Recency-based effects for animation
     const recencyExpr = ['coalesce', ['get', '_recency'], 1.0];
@@ -1260,6 +1296,9 @@ export const PointRadiusModel = {
       type: 'circle',
       source: sourceId,
       filter: ['==', ['geometry-type'], 'Point'],
+      layout: {
+        'circle-sort-key': sortKey
+      },
       paint: {
         'circle-radius': sizeBoostExpr(['+', sizeExpr, 4]),
         'circle-color': colorExpr,
@@ -1274,6 +1313,9 @@ export const PointRadiusModel = {
       type: 'circle',
       source: sourceId,
       filter: ['==', ['geometry-type'], 'Point'],
+      layout: {
+        'circle-sort-key': sortKey
+      },
       paint: {
         'circle-radius': sizeBoostExpr(sizeExpr),
         'circle-color': colorExpr,
@@ -1301,6 +1343,7 @@ export const PointRadiusModel = {
   _addWildfireLayer(eventType, options = {}) {
     const map = MapAdapter.map;
     const sourceId = this._layerId('source', eventType);
+    const sortKey = this._getCircleSortKey(eventType);
 
     // Recency-based effects for animation
     const recencyExpr = ['coalesce', ['get', '_recency'], 1.0];
@@ -1372,6 +1415,9 @@ export const PointRadiusModel = {
       type: 'circle',
       source: sourceId,
       filter: pointFilter,
+      layout: {
+        'circle-sort-key': sortKey
+      },
       paint: {
         'circle-radius': sizeBoostExpr(['*', sizeExpr, 2]),
         'circle-color': '#ff6600',
@@ -1386,6 +1432,9 @@ export const PointRadiusModel = {
       type: 'circle',
       source: sourceId,
       filter: pointFilter,
+      layout: {
+        'circle-sort-key': sortKey
+      },
       paint: {
         'circle-radius': sizeBoostExpr(sizeExpr),
         'circle-color': colorExpr,
@@ -1405,6 +1454,7 @@ export const PointRadiusModel = {
   _addFloodLayer(eventType, options = {}) {
     const map = MapAdapter.map;
     const sourceId = this._layerId('source', eventType);
+    const sortKey = this._getCircleSortKey(eventType);
 
     // Recency-based effects for animation
     const recencyExpr = ['coalesce', ['get', '_recency'], 1.0];
@@ -1440,6 +1490,9 @@ export const PointRadiusModel = {
       id: this._layerId('circle-glow', eventType),
       type: 'circle',
       source: sourceId,
+      layout: {
+        'circle-sort-key': sortKey
+      },
       paint: {
         'circle-radius': sizeBoostExpr(['*', sizeExpr, 1.8]),
         'circle-color': colorExpr,
@@ -1453,6 +1506,9 @@ export const PointRadiusModel = {
       id: this._layerId('circle', eventType),
       type: 'circle',
       source: sourceId,
+      layout: {
+        'circle-sort-key': sortKey
+      },
       paint: {
         'circle-radius': sizeBoostExpr(sizeExpr),
         'circle-color': colorExpr,
@@ -1472,6 +1528,7 @@ export const PointRadiusModel = {
   _addTornadoLayer(eventType, options = {}) {
     const map = MapAdapter.map;
     const sourceId = this._layerId('source', eventType);
+    const sortKey = this._getCircleSortKey(eventType);
 
     // Recency-based effects for animation
     const recencyExpr = ['coalesce', ['get', '_recency'], 1.0];
@@ -1579,6 +1636,9 @@ export const PointRadiusModel = {
       id: this._layerId('circle-glow', eventType),
       type: 'circle',
       source: sourceId,
+      layout: {
+        'circle-sort-key': sortKey
+      },
       paint: {
         'circle-radius': sizeBoostExpr(['+', sizeExpr, 4]),
         'circle-color': colorExpr,
@@ -1592,6 +1652,9 @@ export const PointRadiusModel = {
       id: this._layerId('circle', eventType),
       type: 'circle',
       source: sourceId,
+      layout: {
+        'circle-sort-key': sortKey
+      },
       paint: {
         'circle-radius': sizeBoostExpr(sizeExpr),
         'circle-color': colorExpr,
@@ -1609,6 +1672,7 @@ export const PointRadiusModel = {
   _addLandslideLayer(eventType, options = {}) {
     const map = MapAdapter.map;
     const sourceId = this._layerId('source', eventType);
+    const sortKey = this._getCircleSortKey(eventType);
 
     // Recency-based effects for animation
     const recencyExpr = ['coalesce', ['get', '_recency'], 1.0];
@@ -1646,6 +1710,9 @@ export const PointRadiusModel = {
       id: this._layerId('circle-glow', eventType),
       type: 'circle',
       source: sourceId,
+      layout: {
+        'circle-sort-key': sortKey
+      },
       paint: {
         'circle-radius': sizeBoostExpr(['*', sizeExpr, 1.8]),
         'circle-color': colorExpr,
@@ -1659,6 +1726,9 @@ export const PointRadiusModel = {
       id: this._layerId('circle', eventType),
       type: 'circle',
       source: sourceId,
+      layout: {
+        'circle-sort-key': sortKey
+      },
       paint: {
         'circle-radius': sizeBoostExpr(sizeExpr),
         'circle-color': colorExpr,
@@ -1676,6 +1746,7 @@ export const PointRadiusModel = {
   _addGenericEventLayer(eventType, options = {}) {
     const map = MapAdapter.map;
     const sourceId = this._layerId('source', eventType);
+    const sortKey = this._getCircleSortKey(eventType);
 
     // Recency-based effects for animation
     // _recency: 1.5 = brand new (flash), 1.0 = recent, 0.0 = fading out
@@ -1692,6 +1763,9 @@ export const PointRadiusModel = {
       id: this._layerId('circle-glow', eventType),
       type: 'circle',
       source: sourceId,
+      layout: {
+        'circle-sort-key': sortKey
+      },
       paint: {
         'circle-radius': sizeBoostExpr(12),
         'circle-color': '#ffcc00',
@@ -1704,6 +1778,9 @@ export const PointRadiusModel = {
       id: this._layerId('circle', eventType),
       type: 'circle',
       source: sourceId,
+      layout: {
+        'circle-sort-key': sortKey
+      },
       paint: {
         'circle-radius': sizeBoostExpr(6),
         'circle-color': '#ffcc00',
@@ -3764,6 +3841,31 @@ export const PointRadiusModel = {
 
       // Use unified loc_id directly from props (stored in parquet files)
       const unifiedLocId = props.loc_id;
+      if (!unifiedLocId) {
+        console.warn('Related disasters request skipped: missing loc_id', { eventId, eventType, props });
+        if (window.DisasterPopup) {
+          window.DisasterPopup.cachedData[`rel_${eventType}_${eventId}`] = {
+            related: [],
+            count: 0,
+            message: 'Related-disaster links are unavailable for this event because its loc_id is missing.'
+          };
+          if (window.DisasterPopup.state === 'RELATED_CONFIRM' || window.DisasterPopup.state === 'RELATED') {
+            const html = window.DisasterPopup.state === 'RELATED'
+              ? window.DisasterPopup.buildRelatedPopup(
+                window.DisasterPopup.currentEvent,
+                window.DisasterPopup.currentType,
+                window.DisasterPopup.cachedData[`rel_${eventType}_${eventId}`]
+              )
+              : window.DisasterPopup.buildRelatedConfirmPopup(
+                window.DisasterPopup.currentEvent,
+                window.DisasterPopup.currentType,
+                window.DisasterPopup.cachedData[`rel_${eventType}_${eventId}`]
+              );
+            window.DisasterPopup.updatePopupContent(html);
+          }
+        }
+        return;
+      }
 
       try {
         const url = `/api/events/related/${encodeURIComponent(unifiedLocId)}`;
@@ -3773,21 +3875,49 @@ export const PointRadiusModel = {
           // Update the popup with related data
           if (window.DisasterPopup) {
             window.DisasterPopup.cachedData[`rel_${eventType}_${eventId}`] = {
-              related: data.related
+              related: data.related,
+              count: data.count || data.related?.length || 0,
+              message: data.message || null
             };
-            // Re-render the related popup if still in RELATED state
-            if (window.DisasterPopup.state === 'RELATED') {
-              const html = window.DisasterPopup.buildRelatedPopup(
+            if (window.DisasterPopup.state === 'RELATED_CONFIRM' || window.DisasterPopup.state === 'RELATED') {
+              const html = window.DisasterPopup.state === 'RELATED'
+                ? window.DisasterPopup.buildRelatedPopup(
+                  window.DisasterPopup.currentEvent,
+                  window.DisasterPopup.currentType,
+                  window.DisasterPopup.cachedData[`rel_${eventType}_${eventId}`]
+                )
+                : window.DisasterPopup.buildRelatedConfirmPopup(
                 window.DisasterPopup.currentEvent,
                 window.DisasterPopup.currentType,
-                { related: data.related }
-              );
+                window.DisasterPopup.cachedData[`rel_${eventType}_${eventId}`]
+                );
               window.DisasterPopup.updatePopupContent(html);
             }
           }
           console.log(`Found ${data.count} related events:`, data.by_type);
         } else {
-          console.log('No related events found in links table');
+          console.log('No related events found in links table', { eventId, eventType, unifiedLocId, message: data.message });
+          if (window.DisasterPopup) {
+            window.DisasterPopup.cachedData[`rel_${eventType}_${eventId}`] = {
+              related: [],
+              count: 0,
+              message: data.message || null
+            };
+            if (window.DisasterPopup.state === 'RELATED_CONFIRM' || window.DisasterPopup.state === 'RELATED') {
+              const html = window.DisasterPopup.state === 'RELATED'
+                ? window.DisasterPopup.buildRelatedPopup(
+                  window.DisasterPopup.currentEvent,
+                  window.DisasterPopup.currentType,
+                  window.DisasterPopup.cachedData[`rel_${eventType}_${eventId}`]
+                )
+                : window.DisasterPopup.buildRelatedConfirmPopup(
+                window.DisasterPopup.currentEvent,
+                window.DisasterPopup.currentType,
+                window.DisasterPopup.cachedData[`rel_${eventType}_${eventId}`]
+                );
+              window.DisasterPopup.updatePopupContent(html);
+            }
+          }
 
           // Fallback to proximity search for earthquakes/volcanoes
           if (eventType === 'earthquake' && props.latitude && props.longitude) {

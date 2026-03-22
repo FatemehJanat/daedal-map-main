@@ -63,6 +63,10 @@
   transition: transform 0.3s ease;
 }
 
+#chatContainer {
+  position: relative;
+}
+
 #sidebar.collapsed {
   transform: translateX(-100%);
 }
@@ -93,6 +97,45 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+#sidebarHeader > .tutorial-region-tip {
+  right: 50%;
+  transform: translateX(50%);
+}
+
+.tutorial-toggle-btn {
+  width: auto;
+  border: 1px solid rgba(123, 231, 255, 0.3);
+  background: rgba(16, 40, 58, 0.9);
+  color: #d6f6ff;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.tutorial-toggle-btn:hover {
+  background: rgba(20, 54, 76, 0.98);
+  border-color: rgba(123, 231, 255, 0.46);
+}
+
+.tutorial-toggle-btn.active {
+  background: rgba(255, 123, 26, 0.16);
+  border-color: rgba(255, 178, 77, 0.55);
+  box-shadow: 0 0 0 1px rgba(255, 178, 77, 0.18), 0 0 18px rgba(255, 123, 26, 0.12);
+  color: #ffe6c3;
+}
+
+.welcome-action-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 6px;
 }
 
 #sidebarHeader h2 {

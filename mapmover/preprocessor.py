@@ -573,6 +573,36 @@ def detect_show_borders_intent(query: str) -> dict:
     return detect_show_borders_intent_impl(query)
 
 
+def detect_tutorial_mode_intent(query: str) -> Optional[dict]:
+    """Detect tutorial mode on/off/toggle commands before the LLM call."""
+    query_lower = (query or "").strip().lower()
+    if not query_lower:
+        return None
+
+    has_tutorial = "tutorial" in query_lower
+    has_ui_help = "help me understand the ui" in query_lower or "show me what everything does" in query_lower
+    if not has_tutorial and not has_ui_help:
+        return None
+
+    if re.search(r"\b(turn|switch|set|make)\s+(the\s+)?tutorial(\s+mode)?\s+(off|disable|disabled)\b", query_lower):
+        return {"action": "off"}
+    if re.search(r"\b(turn|switch|set|make)\s+(the\s+)?tutorial(\s+mode)?\s+(on|enable|enabled)\b", query_lower):
+        return {"action": "on"}
+    if re.search(r"\b(enable|start|show)\s+(the\s+)?tutorial(\s+mode)?\b", query_lower):
+        return {"action": "on"}
+    if re.search(r"\b(disable|stop|hide)\s+(the\s+)?tutorial(\s+mode)?\b", query_lower):
+        return {"action": "off"}
+    if re.search(r"\btutorial(\s+mode)?\s+on\b", query_lower):
+        return {"action": "on"}
+    if re.search(r"\btutorial(\s+mode)?\s+off\b", query_lower):
+        return {"action": "off"}
+    if re.search(r"\btoggle\s+(the\s+)?tutorial(\s+mode)?\b", query_lower) or re.search(r"\btutorial(\s+mode)?\s+toggle\b", query_lower):
+        return {"action": "toggle"}
+    if has_ui_help or re.search(r"\btutorial(\s+mode)?\b", query_lower):
+        return {"action": "on"}
+    return None
+
+
 def detect_navigation_intent(query: str) -> dict:
     """Detect if query is asking to navigate to or view locations."""
     return detect_navigation_intent_impl(query)
@@ -776,6 +806,7 @@ def preprocess_query(query: str, viewport: dict = None, active_overlays: dict = 
         "time": detect_time_patterns(query),
         "reference_lookup": detect_reference_lookup(query),
         "derived_intent": detect_derived_intent(query),
+        "tutorial_mode": detect_tutorial_mode_intent(query),
         "detected_source": detected_source,
         "active_overlays": active_overlays,
         "cache_stats": cache_stats,
@@ -823,6 +854,9 @@ def preprocess_query(query: str, viewport: dict = None, active_overlays: dict = 
 
     if hints["derived_intent"]:
         summary_parts.append(f"Derived calculation: {hints['derived_intent']['type']}")
+
+    if hints["tutorial_mode"]:
+        summary_parts.append(f"TUTORIAL_MODE: {hints['tutorial_mode']['action']}")
 
     if hints["detected_source"]:
         summary_parts.append(f"Source specified: {hints['detected_source']['source_name']}")

@@ -76,13 +76,13 @@ export function hideHurricaneOverlay(deps) {
   if (model?.clear) model.clear();
 }
 
-export function restoreHurricaneOverlay(controller, deps) {
-  const currentYear = controller.getCurrentYear();
-  if (deps.dataCache?.hurricanes) controller.renderFilteredData('hurricanes', currentYear);
+export function restoreHurricaneOverlay(controller, deps, viewState = null) {
+  controller.restoreViewState?.(viewState, ['hurricanes']);
 }
 
 export async function handleHurricaneDrillDown(controller, stormId, stormName, deps) {
   const { mapAdapter, overlayEndpoints, fetcher, modelRegistry, timeSlider, dataCache } = deps;
+  const returnViewState = controller.captureViewState?.();
   mapAdapter?.hidePopup?.();
   mapAdapter.popupLocked = false;
   const trackUrl = overlayEndpoints.hurricanes.trackEndpoint.replace('{storm_id}', stormId);
@@ -96,8 +96,8 @@ export async function handleHurricaneDrillDown(controller, stormId, stormName, d
   const positions = normalizeStormPositions(data);
   if (!positions.length) return console.warn('OverlayController: Empty track positions for storm', stormId);
   hideHurricaneOverlay({ modelRegistry });
-  TrackAnimator.start(stormId, positions, { stormName, onExit: () => { restoreHurricaneOverlay(controller, { dataCache }); controller.recalculateTimeRange(); } });
-  addGenericExitButton('track-exit-btn', 'Exit Track View', '#9c27b0', () => exitTrackDrillDown(controller, { modelRegistry, timeSlider, dataCache }));
+  TrackAnimator.start(stormId, positions, { stormName, onExit: () => { restoreHurricaneOverlay(controller, { dataCache }, returnViewState); } });
+  addGenericExitButton('track-exit-btn', 'Exit Track View', '#9c27b0', () => exitTrackDrillDown(controller, { modelRegistry, timeSlider, dataCache, returnViewState }));
 }
 
 export function stopHurricaneRollingAnimation() {
@@ -105,13 +105,13 @@ export function stopHurricaneRollingAnimation() {
 }
 
 export function exitTrackDrillDown(controller, deps) {
-  const { modelRegistry, timeSlider, dataCache } = deps;
+  const { modelRegistry, timeSlider, dataCache, returnViewState } = deps;
   if (TrackAnimator.isActive) TrackAnimator.stop();
   const trackModel = modelRegistry?.getModel('track');
   if (trackModel?.clear) trackModel.clear();
   timeSlider?.exitEventAnimation?.();
   document.getElementById('track-exit-btn')?.remove();
-  restoreHurricaneOverlay(controller, { dataCache });
+  restoreHurricaneOverlay(controller, { dataCache }, returnViewState);
   controller.recalculateTimeRange();
 }
 

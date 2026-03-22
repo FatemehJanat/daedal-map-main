@@ -4,6 +4,7 @@ import { addGenericExitButton } from './overlay-disaster-common.js';
 export function handleTornadoPointAnimation(controller, data, deps) {
   const { MapAdapter, TimeSlider } = deps;
   const { eventId, scale, timestamp } = data;
+  const returnViewState = controller.captureViewState?.();
   const latitude = parseFloat(data.latitude);
   const longitude = parseFloat(data.longitude);
   if (isNaN(latitude) || isNaN(longitude)) return console.warn('OverlayController: Invalid coordinates for tornado point animation:', data);
@@ -43,7 +44,7 @@ export function handleTornadoPointAnimation(controller, data, deps) {
         TimeSlider.enterEventAnimation?.(startMs, endMs);
       }
     }
-    controller._tornadoPointAnimState = { sourceId, layerId, startMs, endMs, scaleId };
+    controller._tornadoPointAnimState = { sourceId, layerId, startMs, endMs, scaleId, returnViewState };
     controller._tornadoPointTimeHandler = (time) => {
       if (!controller._tornadoPointAnimState) return;
       const progress = Math.max(0, Math.min(1, (time - startMs) / (endMs - startMs)));
@@ -58,7 +59,7 @@ export function exitTornadoPointAnimation(controller, deps) {
   const { MapAdapter, TimeSlider } = deps;
   const map = MapAdapter.map;
   if (controller._tornadoPointAnimState) {
-    const { sourceId, layerId, scaleId } = controller._tornadoPointAnimState;
+    const { sourceId, layerId, scaleId, returnViewState } = controller._tornadoPointAnimState;
     if (map.getLayer(layerId)) map.removeLayer(layerId);
     if (map.getLayer(layerId + '-outline')) map.removeLayer(layerId + '-outline');
     if (map.getSource(sourceId)) map.removeSource(sourceId);
@@ -67,18 +68,19 @@ export function exitTornadoPointAnimation(controller, deps) {
       TimeSlider.exitEventAnimation?.();
     }
     controller._tornadoPointAnimState = null;
+    controller.restoreViewState?.(returnViewState, ['tornadoes']);
   }
   if (controller._tornadoPointTimeHandler && TimeSlider) {
     TimeSlider.removeChangeListener(controller._tornadoPointTimeHandler);
     controller._tornadoPointTimeHandler = null;
   }
   document.getElementById('tornado-point-exit-btn')?.remove();
-  controller.recalculateTimeRange();
 }
 
 export function handleTornadoSequence(controller, data, deps) {
   const { MapAdapter, TimeSlider, dataCache, yearRangeCache } = deps;
   const { geojson, seedEventId, sequenceCount } = data;
+  const returnViewState = controller.captureViewState?.();
   console.log(`OverlayController: Starting tornado sequence animation for ${seedEventId} with ${sequenceCount} tornadoes`);
   if (!geojson?.features?.length) return console.warn('OverlayController: No data for tornado sequence animation');
   if (geojson.features.length === 1 && !geojson.features[0].properties?.track) {
@@ -110,14 +112,10 @@ export function handleTornadoSequence(controller, data, deps) {
     zoom: 8,
     rendererOptions: { eventType: 'tornado' },
     onExit: () => {
-      const currentYear = controller.getCurrentYear();
-      if (dataCache.tornadoes) controller.renderFilteredData('tornadoes', currentYear);
-      controller.recalculateTimeRange();
-      if (TimeSlider && Object.keys(yearRangeCache).length > 0) TimeSlider.show();
+      controller.restoreViewState?.(returnViewState, ['tornadoes']);
     }
   });
   if (!started) {
-    const currentYear = controller.getCurrentYear();
-    if (dataCache.tornadoes) controller.renderFilteredData('tornadoes', currentYear);
+    controller.restoreViewState?.(returnViewState, ['tornadoes']);
   }
 }

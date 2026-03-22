@@ -25,6 +25,7 @@ import { OrderPanel } from './order/manager.js';
 import { OrderTracker as OrderTrackerClass } from './order/tracker.js';
 import * as SavedOrders from './order/saved.js';
 import { onAuthChanged } from './auth.js';
+import { TutorialMode, parseTutorialCommand } from './tutorial-mode.js';
 
 // Dependencies set via setDependencies to avoid circular imports
 let MapAdapter = null;
@@ -48,7 +49,10 @@ const WELCOME_MESSAGE =
   'the countries, states, and territories.<br><br>' +
   'To explore datasets, type a question in natural language. ' +
   'Type "help" or "how do you work?" anytime for a full guide.<br><br>' +
-  '<button class="chat-action-btn" data-action="preload-disasters-2020">Load disasters 2020-2025</button>';
+  '<div class="welcome-action-row">' +
+  '<button class="chat-action-btn" data-action="preload-disasters-2020">Load disasters 2020-2025</button> ' +
+  '<button id="tutorialToggleBtn" class="chat-action-btn tutorial-toggle-btn" data-action="tutorial-toggle" type="button" aria-pressed="false">Tutorial Off</button>' +
+  '</div>';
 
 // Map event_type from API responses to overlay IDs
 const EVENT_TYPE_TO_OVERLAY = {
@@ -760,12 +764,15 @@ export const ChatManager = {
     });
 
     // Delegated handler for chat action buttons (e.g. preload buttons in welcome message)
-    this.elements.messages.addEventListener('click', async (e) => {
+    this.elements.sidebar.addEventListener('click', async (e) => {
       const btn = e.target.closest('[data-action]');
       if (!btn) return;
       const action = btn.dataset.action;
       if (action === 'preload-disasters-2020') {
         await this.handlePreloadDisasters2020(btn);
+      } else if (action === 'tutorial-toggle') {
+        e.preventDefault();
+        TutorialMode.applyCommand('toggle');
       }
     });
   },
@@ -822,6 +829,15 @@ export const ChatManager = {
     this.addMessage(query, 'user');
     input.value = '';
     input.style.height = 'auto';
+
+    const tutorialCommand = parseTutorialCommand(query);
+    if (tutorialCommand) {
+      this.history.push({ role: 'user', content: query });
+      const result = TutorialMode.applyCommand(tutorialCommand.action);
+      this.history.push({ role: 'assistant', content: result.message });
+      this.addMessage(result.message, 'assistant');
+      return;
+    }
 
     // Track last query for potential re-send (metric warning)
     this.lastQuery = query;
@@ -1003,6 +1019,12 @@ export const ChatManager = {
           }
         }
         break;
+
+      case 'tutorial_mode': {
+        const result = TutorialMode.applyCommand(response.action || (response.enabled ? 'on' : 'off'));
+        this.addMessage(response.message || result.message, 'assistant');
+        break;
+      }
 
       case 'save_order':
         if (response.name) {
@@ -1286,6 +1308,7 @@ export const ChatManager = {
       timeState: this.getTimeState(),
       savedOrderNames: SavedOrders.getNames(),
       loadedData: getLoadedDataList(),  // Track what data is loaded for LLM context
+      tutorialMode: { enabled: TutorialMode.enabled },
       ...extraOptions
     };
   },

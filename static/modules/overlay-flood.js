@@ -15,18 +15,15 @@ function hideFloodOverlay(deps) {
   console.log('OverlayController: Hid flood overlay for animation');
 }
 
-function restoreFloodOverlay(controller, deps) {
-  const { dataCache } = deps;
-  const currentYear = controller.getCurrentYear();
-  if (dataCache.floods) {
-    controller.renderFilteredData('floods', currentYear);
-    console.log('OverlayController: Restored flood overlay');
-  }
+function restoreFloodOverlay(controller, deps, viewState = null) {
+  controller.restoreViewState?.(viewState, ['floods']);
+  console.log('OverlayController: Restored flood overlay');
 }
 
 export function handleFloodAnimation(controller, data, deps) {
   const { MapAdapter, TimeSlider } = deps;
   const { geometry, eventId, durationDays, startTime, endTime, latitude, longitude, eventName } = data;
+  const returnViewState = controller.captureViewState?.();
   console.log(`OverlayController: Starting flood animation for ${eventId} (${durationDays} days)`);
   if (!geometry) return console.warn('OverlayController: No geometry data for flood animation');
   if (geometry.type !== 'FeatureCollection' && geometry.type !== 'Feature' && !geometry.geometry) {
@@ -80,7 +77,7 @@ export function handleFloodAnimation(controller, data, deps) {
     }
   }
 
-  controller._floodAnimState = { sourceId, layerId, strokeId, startMs, endMs, scaleId };
+  controller._floodAnimState = { sourceId, layerId, strokeId, startMs, endMs, scaleId, returnViewState };
   controller._floodTimeHandler = (time) => {
     if (!controller._floodAnimState) return;
     const progress = Math.max(0, Math.min(1, (time - controller._floodAnimState.startMs) / (controller._floodAnimState.endMs - controller._floodAnimState.startMs)));
@@ -93,7 +90,7 @@ export function handleFloodAnimation(controller, data, deps) {
 export function exitFloodAnimation(controller, deps, skipRestore = false) {
   const { MapAdapter, TimeSlider } = deps;
   if (controller._floodAnimState) {
-    const { sourceId, layerId, strokeId, scaleId } = controller._floodAnimState;
+    const { sourceId, layerId, strokeId, scaleId, returnViewState } = controller._floodAnimState;
     if (MapAdapter.map.getLayer(layerId)) MapAdapter.map.removeLayer(layerId);
     if (MapAdapter.map.getLayer(strokeId)) MapAdapter.map.removeLayer(strokeId);
     if (MapAdapter.map.getSource(sourceId)) MapAdapter.map.removeSource(sourceId);
@@ -102,19 +99,19 @@ export function exitFloodAnimation(controller, deps, skipRestore = false) {
       TimeSlider.exitEventAnimation?.();
     }
     controller._floodAnimState = null;
+    if (!skipRestore) restoreFloodOverlay(controller, deps, returnViewState);
   }
   if (controller._floodTimeHandler && TimeSlider) {
     TimeSlider.removeChangeListener(controller._floodTimeHandler);
     controller._floodTimeHandler = null;
   }
   document.getElementById('flood-exit-btn')?.remove();
-  if (!skipRestore) restoreFloodOverlay(controller, deps);
-  controller.recalculateTimeRange();
 }
 
 export function handleFloodImpact(controller, data, deps) {
   const { MapAdapter } = deps;
   const { eventName, latitude, longitude, areaKm2, radiusKm } = data;
+  const returnViewState = controller.captureViewState?.();
   console.log(`OverlayController: Starting flood impact animation for ${eventName} (${areaKm2} km2)`);
   if (!latitude || !longitude) return console.warn('OverlayController: No coordinates for flood impact animation');
   MapAdapter?.hidePopup?.();
@@ -142,19 +139,19 @@ export function handleFloodImpact(controller, data, deps) {
     if (progress < 1) requestAnimationFrame(animate);
   };
   setTimeout(animate, 1600);
-  controller._floodImpactState = { sourceId, fillId, strokeId };
+  controller._floodImpactState = { sourceId, fillId, strokeId, returnViewState };
   addGenericExitButton('flood-impact-exit-btn', 'Exit Flood View', '#2196f3', () => exitFloodImpact(controller, deps));
 }
 
 export function exitFloodImpact(controller, deps, skipRestore = false) {
   const { MapAdapter } = deps;
   if (controller._floodImpactState) {
-    const { sourceId, fillId, strokeId } = controller._floodImpactState;
+    const { sourceId, fillId, strokeId, returnViewState } = controller._floodImpactState;
     if (MapAdapter.map.getLayer(fillId)) MapAdapter.map.removeLayer(fillId);
     if (MapAdapter.map.getLayer(strokeId)) MapAdapter.map.removeLayer(strokeId);
     if (MapAdapter.map.getSource(sourceId)) MapAdapter.map.removeSource(sourceId);
     controller._floodImpactState = null;
+    if (!skipRestore) restoreFloodOverlay(controller, deps, returnViewState);
   }
   document.getElementById('flood-impact-exit-btn')?.remove();
-  if (!skipRestore) restoreFloodOverlay(controller, deps);
 }

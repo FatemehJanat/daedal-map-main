@@ -15,13 +15,9 @@ function hideWildfireOverlay(deps) {
   console.log('OverlayController: Hid wildfire overlay for animation');
 }
 
-function restoreWildfireOverlay(controller, deps) {
-  const { dataCache } = deps;
-  const currentYear = controller.getCurrentYear();
-  if (dataCache.wildfires) {
-    controller.renderFilteredData('wildfires', currentYear);
-    console.log('OverlayController: Restored wildfire overlay');
-  }
+function restoreWildfireOverlay(controller, deps, viewState = null) {
+  controller.restoreViewState?.(viewState, ['wildfires']);
+  console.log('OverlayController: Restored wildfire overlay');
 }
 
 function removeIgnitionMarker(deps) {
@@ -47,6 +43,7 @@ function addIgnitionMarker(lon, lat, deps) {
 export function handleWildfireImpact(controller, data, deps) {
   const { MapAdapter } = deps;
   const { fireName, latitude, longitude, areaKm2, radiusKm } = data;
+  const returnViewState = controller.captureViewState?.();
   console.log(`OverlayController: Starting wildfire impact animation for ${fireName} (${areaKm2} km2)`);
   if (!latitude || !longitude) return console.warn('OverlayController: No coordinates for wildfire impact animation');
   MapAdapter?.hidePopup?.();
@@ -73,26 +70,27 @@ export function handleWildfireImpact(controller, data, deps) {
     if (progress < 1) requestAnimationFrame(animate);
   };
   setTimeout(animate, 1600);
-  controller._wildfireImpactState = { sourceId, fillId, strokeId };
+  controller._wildfireImpactState = { sourceId, fillId, strokeId, returnViewState };
   addGenericExitButton('wildfire-exit-btn', 'Exit Fire View', '#ff5722', () => exitWildfireImpact(controller, deps));
 }
 
 export function exitWildfireImpact(controller, deps, skipRestore = false) {
   const { MapAdapter } = deps;
   if (controller._wildfireImpactState) {
-    const { sourceId, fillId, strokeId } = controller._wildfireImpactState;
+    const { sourceId, fillId, strokeId, returnViewState } = controller._wildfireImpactState;
     if (MapAdapter.map.getLayer(fillId)) MapAdapter.map.removeLayer(fillId);
     if (MapAdapter.map.getLayer(strokeId)) MapAdapter.map.removeLayer(strokeId);
     if (MapAdapter.map.getSource(sourceId)) MapAdapter.map.removeSource(sourceId);
     controller._wildfireImpactState = null;
+    if (!skipRestore) restoreWildfireOverlay(controller, deps, returnViewState);
   }
   document.getElementById('wildfire-exit-btn')?.remove();
-  if (!skipRestore) restoreWildfireOverlay(controller, deps);
 }
 
 export function handleWildfirePerimeter(controller, data, deps) {
   const { MapAdapter } = deps;
   const { fireName, geometry, latitude, longitude } = data;
+  const returnViewState = controller.captureViewState?.();
   console.log(`OverlayController: Starting wildfire perimeter animation for ${fireName}`);
   MapAdapter?.hidePopup?.();
   MapAdapter.popupLocked = false;
@@ -123,26 +121,27 @@ export function handleWildfirePerimeter(controller, data, deps) {
     if (progress < 1) requestAnimationFrame(animate);
   };
   setTimeout(animate, 1600);
-  controller._wildfirePerimeterState = { sourceId, fillId, strokeId };
+  controller._wildfirePerimeterState = { sourceId, fillId, strokeId, returnViewState };
   addGenericExitButton('wildfire-perim-exit-btn', 'Exit Fire View', '#ff5722', () => exitWildfirePerimeter(controller, deps));
 }
 
 export function exitWildfirePerimeter(controller, deps, skipRestore = false) {
   const { MapAdapter } = deps;
   if (controller._wildfirePerimeterState) {
-    const { sourceId, fillId, strokeId } = controller._wildfirePerimeterState;
+    const { sourceId, fillId, strokeId, returnViewState } = controller._wildfirePerimeterState;
     if (MapAdapter.map.getLayer(fillId)) MapAdapter.map.removeLayer(fillId);
     if (MapAdapter.map.getLayer(strokeId)) MapAdapter.map.removeLayer(strokeId);
     if (MapAdapter.map.getSource(sourceId)) MapAdapter.map.removeSource(sourceId);
     controller._wildfirePerimeterState = null;
+    if (!skipRestore) restoreWildfireOverlay(controller, deps, returnViewState);
   }
   document.getElementById('wildfire-perim-exit-btn')?.remove();
-  if (!skipRestore) restoreWildfireOverlay(controller, deps);
 }
 
 export function handleFireAnimation(controller, data, deps) {
   const { MapAdapter, TimeSlider } = deps;
   const { perimeter, eventId, durationDays, startTime, latitude, longitude } = data;
+  const returnViewState = controller.captureViewState?.();
   console.log(`OverlayController: Starting fire animation for ${eventId} (${durationDays} days)`);
   if (!perimeter?.geometry) return console.warn('OverlayController: No perimeter data for fire animation');
   const startMs = new Date(startTime).getTime();
@@ -176,7 +175,7 @@ export function handleFireAnimation(controller, data, deps) {
       TimeSlider.enterEventAnimation?.(startMs, endMs);
     }
   }
-  controller._fireAnimState = { sourceId, layerId, strokeId, startMs, endMs, scaleId };
+  controller._fireAnimState = { sourceId, layerId, strokeId, startMs, endMs, scaleId, returnViewState };
   controller._fireTimeHandler = (time) => {
     if (!controller._fireAnimState) return;
     const progress = Math.max(0, Math.min(1, (time - controller._fireAnimState.startMs) / (controller._fireAnimState.endMs - controller._fireAnimState.startMs)));
@@ -190,6 +189,7 @@ export function handleFireAnimation(controller, data, deps) {
 export function handleFireProgression(controller, data, deps) {
   const { MapAdapter, TimeSlider } = deps;
   const { snapshots, eventId, totalDays, latitude, longitude } = data;
+  const returnViewState = controller.captureViewState?.();
   console.log(`OverlayController: Starting fire progression for ${eventId} (${totalDays} daily snapshots)`);
   if (!snapshots?.length) return console.warn('OverlayController: No snapshots for fire progression');
   const snapshotMap = new Map();
@@ -237,7 +237,7 @@ export function handleFireProgression(controller, data, deps) {
       TimeSlider.enterEventAnimation?.(minTime, maxTime);
     }
   }
-  controller._fireAnimState = { sourceIdA, sourceIdB, layerIdA, layerIdB, strokeIdA, strokeIdB, startMs: minTime, endMs: maxTime, scaleId, snapshotMap, timestamps, currentLayer: 'A', lastSnapshotTime: minTime };
+  controller._fireAnimState = { sourceIdA, sourceIdB, layerIdA, layerIdB, strokeIdA, strokeIdB, startMs: minTime, endMs: maxTime, scaleId, snapshotMap, timestamps, currentLayer: 'A', lastSnapshotTime: minTime, returnViewState };
   controller._fireTimeHandler = (time) => {
     const state = controller._fireAnimState;
     if (!state?.snapshotMap) return;
@@ -271,7 +271,7 @@ export function handleFireProgression(controller, data, deps) {
 export function exitFireAnimation(controller, deps, skipRestore = false) {
   const { MapAdapter, TimeSlider } = deps;
   if (controller._fireAnimState) {
-    const { sourceIdA, sourceIdB, layerIdA, layerIdB, strokeIdA, strokeIdB, scaleId } = controller._fireAnimState;
+    const { sourceIdA, sourceIdB, layerIdA, layerIdB, strokeIdA, strokeIdB, scaleId, returnViewState } = controller._fireAnimState;
     [layerIdA, layerIdB, strokeIdA, strokeIdB].forEach(id => { if (id && MapAdapter.map.getLayer(id)) MapAdapter.map.removeLayer(id); });
     [sourceIdA, sourceIdB].forEach(id => { if (id && MapAdapter.map.getSource(id)) MapAdapter.map.removeSource(id); });
     if (TimeSlider && scaleId) {
@@ -279,6 +279,7 @@ export function exitFireAnimation(controller, deps, skipRestore = false) {
       TimeSlider.exitEventAnimation?.();
     }
     controller._fireAnimState = null;
+    if (!skipRestore) restoreWildfireOverlay(controller, deps, returnViewState);
   }
   if (controller._fireTimeHandler && TimeSlider) {
     TimeSlider.removeChangeListener(controller._fireTimeHandler);
@@ -286,6 +287,4 @@ export function exitFireAnimation(controller, deps, skipRestore = false) {
   }
   document.getElementById('fire-exit-btn')?.remove();
   removeIgnitionMarker(deps);
-  if (!skipRestore) restoreWildfireOverlay(controller, deps);
-  controller.recalculateTimeRange();
 }

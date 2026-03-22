@@ -106,13 +106,19 @@
   <!-- Sidebar -->
   <div id="sidebar">
     <div id="sidebarResizeHandle" title="Drag to resize"></div>
-    <div id="sidebarHeader">
+    <div
+      id="sidebarHeader"
+      class="tutorial-region"
+      data-tutorial-title="Account and Session"
+      data-tutorial-body="Manage account access here, start a clean chat session, or collapse the sidebar to focus on the map."
+    >
       <h2>Map Explorer</h2>
       <div id="sidebarHeaderButtons">
         <button id="authBtn" title="Open account or local setup">Account</button>
         <button id="newChatBtn" title="Start new chat session">New Chat</button>
         <button id="closeSidebar" title="Close">&times;</button>
       </div>
+      <button class="tutorial-region-tip" type="button">?</button>
     </div>
 
     <div id="authStatusBar" class="auth-status-bar">
@@ -123,7 +129,13 @@
       This map works best on desktop. Mobile experiences are currently limited.
     </div>
 
-    <div id="chatContainer">
+    <div
+      id="chatContainer"
+      class="tutorial-region"
+      data-tutorial-title="Ask Questions"
+      data-tutorial-body="Ask questions here. Results can become orders that add data to the map or refine what is already loaded."
+    >
+      <button class="tutorial-region-tip" type="button">?</button>
       <div id="chatMessages"></div>
 
       <!-- Resize handle between messages and input -->
@@ -140,7 +152,13 @@
       <div class="resize-handle" id="resizeOrder" title="Drag to resize"></div>
 
       <!-- Order Panel -->
-      <div id="orderPanel">
+      <div
+        id="orderPanel"
+        class="tutorial-region"
+        data-tutorial-title="Order and Loaded Layers"
+        data-tutorial-body="Review queued requests in Order, then switch to Loaded to manage the data layers already on the map."
+      >
+        <button class="tutorial-region-tip" type="button">?</button>
         <div class="order-tabs-header">
           <button class="order-tab active" id="orderTabBtn" data-tab="order">Order <span id="orderCount"></span></button>
           <button class="order-tab" id="loadedTabBtn" data-tab="loaded">Loaded</button>
@@ -172,21 +190,41 @@
   <div id="mapContainer">
     <div id="map"></div>
     <div id="breadcrumb"></div>
-    <div id="globeToggle">
+    <div
+      id="globeToggle"
+      class="tutorial-region"
+      data-tutorial-title="Map View Controls"
+      data-tutorial-body="Switch between flat or globe view and satellite imagery while you explore the same area."
+    >
       <label><input type="checkbox" id="globeCheckbox"> Globe</label>
       <label><input type="checkbox" id="satCheckbox"> Sat</label>
+      <button class="tutorial-region-tip" type="button">?</button>
     </div>
     <div id="zoomLevel">Zoom: 0.0</div>
-    <div id="levelButtons">
+    <div
+      id="levelButtons"
+      class="tutorial-region"
+      data-tutorial-title="Geography Controls"
+      data-tutorial-body="Change the place resolution here, from a world view down to counties and local areas, and lock the level when you want consistency."
+    >
       <button data-level="0" title="Countries (zoom ~2)">World</button>
       <button data-level="1" title="States/Provinces (zoom ~5)">States</button>
       <button data-level="2" title="Counties/Districts (zoom ~8)">Counties</button>
       <button data-level="3" title="Subdivisions (zoom ~11)">Local</button>
       <button id="levelLockBtn" title="Lock admin level">Lock</button>
+      <button class="tutorial-region-tip" type="button">?</button>
     </div>
 
     <!-- Overlay Selector -->
-    <div id="overlaySelector"></div>
+    <div
+      id="overlaySelectorRegion"
+      class="tutorial-region"
+      data-tutorial-title="Overlays"
+      data-tutorial-body="Turn live hazards and themed layers on or off here. Some overlays add filters or time-aware playback."
+    >
+      <button class="tutorial-region-tip" type="button">?</button>
+      <div id="overlaySelector"></div>
+    </div>
   </div>
 
   <!-- Stats Overlay -->
@@ -195,7 +233,23 @@
   </div>
 
   <!-- Time Slider -->
-  <div id="timeSliderContainer">
+  <div
+    id="tutorialTimelineRegion"
+    class="tutorial-region"
+    data-tutorial-title="Timeline and Animation"
+    data-tutorial-variant="timeline"
+  >
+    <button class="tutorial-region-tip" type="button">?</button>
+    <div id="tutorialTimelinePanel" class="tutorial-timeline-panel">
+      <div class="tutorial-timeline-header">
+        <strong>Timeline and Animation</strong>
+        <button id="tutorialTimelineDismiss" type="button" aria-label="Close timeline tutorial">&times;</button>
+      </div>
+      <p>The date display shows the current window on the map. Use play, loop, and speed to animate through loaded time.</p>
+      <p>Drag the scrubber to jump in time. The orange trim handles narrow the active range, and Reset Trim restores the full window.</p>
+      <p>The speed readout shows how much real-world time passes per second of playback.</p>
+    </div>
+    <div id="timeSliderContainer">
     <!-- Metric tabs (shown when multiple metrics available) -->
     <div id="metricTabs" class="metric-tabs" style="display: none;"></div>
     <!-- Multi-scale tabs (hidden when only one scale) -->
@@ -207,7 +261,7 @@
     </div>
     <div class="time-slider-controls">
       <button id="stepBackBtn" class="time-btn" title="Previous year">&lt;</button>
-      <button id="playBtn" class="time-btn play" title="Play/Pause">|&gt;</button>
+      <button id="playBtn" class="time-btn play" title="Play/Pause">▶</button>
       <button id="stepFwdBtn" class="time-btn" title="Next year">&gt;</button>
       <div class="slider-track-container">
         <div id="trimOverlayLeft" class="trim-overlay"></div>
@@ -248,6 +302,7 @@
         <span id="legendMin">0</span>
         <span id="legendMax">100</span>
       </div>
+    </div>
     </div>
   </div>
   <script type="module">
