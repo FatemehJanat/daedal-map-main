@@ -253,9 +253,17 @@
     </div>
   </div>
   <script type="module">
-    await window.DAEDALMAP_BOOT;
-    await import('/static/modules/app.js');
-    await import('/static/modules/feedback-bubble.js');
+    try {
+      await window.DAEDALMAP_BOOT;
+      await import('/static/modules/app.js');
+      await import('/static/modules/feedback-bubble.js');
+    } catch (error) {
+      console.error('[DaedalMap Boot] Startup failed:', error);
+      const statusEl = document.getElementById('authStatusText');
+      if (statusEl) {
+        statusEl.textContent = `Startup failed: ${error?.message || error}`;
+      }
+    }
   </script>
 </body>
 </html>
