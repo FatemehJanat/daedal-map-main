@@ -36,6 +36,7 @@ export const ViewportLoader = {
   requestId: 0,  // Counter to track which request is current
   lastRequestedLevel: null,  // Track the level of the in-flight request
   lastZoom: null,  // Track zoom level to distinguish zoom from pan
+  lastRenderedLevel: 0,
 
   renderViewportFromCache(level = this.currentAdminLevel, bboxOverride = null) {
     if (!MapAdapter?.map) return 0;
@@ -53,8 +54,32 @@ export const ViewportLoader = {
         features: visibleCached
       });
       document.getElementById('totalAreas').textContent = visibleCached.length;
+      this.lastRenderedLevel = level;
     }
     return visibleCached.length;
+  },
+
+  renderBestAvailableViewport(preferredLevel = this.currentAdminLevel, bboxOverride = null) {
+    const tryLevels = [];
+    for (let level = preferredLevel; level >= 0; level -= 1) {
+      tryLevels.push(level);
+    }
+    if (!tryLevels.includes(this.lastRenderedLevel)) {
+      tryLevels.push(this.lastRenderedLevel);
+    }
+
+    for (const level of tryLevels) {
+      const count = this.renderViewportFromCache(level, bboxOverride);
+      if (count > 0 || GeometryCache.isCovered(level, bboxOverride || {
+        west: Number(MapAdapter.map.getBounds().getWest().toFixed(3)),
+        south: Number(MapAdapter.map.getBounds().getSouth().toFixed(3)),
+        east: Number(MapAdapter.map.getBounds().getEast().toFixed(3)),
+        north: Number(MapAdapter.map.getBounds().getNorth().toFixed(3))
+      })) {
+        return level;
+      }
+    }
+    return null;
   },
 
   // Viewport area thresholds (in square degrees) for admin level selection
@@ -308,7 +333,10 @@ export const ViewportLoader = {
           GeometryCache.markCoverage(adminLevel, bboxObject);
         }
         if (visibleCached.length > 0 || fullyLoaded || requestedLocIds.length === 0) {
-          this.renderViewportFromCache(adminLevel, bboxObject);
+          const renderedLevel = this.renderViewportFromCache(adminLevel, bboxObject);
+          if (renderedLevel === 0 && visibleCached.length === 0) {
+            this.renderBestAvailableViewport(Math.min(adminLevel - 1, this.lastRenderedLevel), bboxObject);
+          }
         }
         return;
       }
@@ -329,7 +357,7 @@ export const ViewportLoader = {
       if (thisRequestId !== this.requestId) {
         console.log(`[${thisRequestId}] Discarding stale response (current is ${this.requestId})`);
         if (adminLevel === this.currentAdminLevel) {
-          this.renderViewportFromCache(adminLevel);
+          this.renderBestAvailableViewport(adminLevel);
         }
         return;
       }
@@ -337,15 +365,19 @@ export const ViewportLoader = {
       // Double-check we're still on the same level (user might have zoomed while parsing)
       if (adminLevel !== this.currentAdminLevel) {
         console.log(`[${thisRequestId}] Level changed during load (was ${adminLevel}, now ${this.currentAdminLevel}), discarding`);
-        this.renderViewportFromCache(this.currentAdminLevel);
+        this.renderBestAvailableViewport(this.currentAdminLevel);
         return;
       }
 
       const featureCount = data.features?.length || 0;
       console.log(`[${thisRequestId}] Level ${adminLevel} response: ${featureCount} features`);
 
-      GeometryCache.markCoverage(adminLevel, bboxObject);
-      this.renderViewportFromCache(adminLevel, bboxObject);
+      if (featureCount > 0) {
+        GeometryCache.markCoverage(adminLevel, bboxObject);
+        this.renderViewportFromCache(adminLevel, bboxObject);
+      } else {
+        this.renderBestAvailableViewport(Math.min(adminLevel - 1, this.lastRenderedLevel), bboxObject);
+      }
     } catch (err) {
       // Ignore abort errors - they're expected when we cancel requests
       if (err.name === 'AbortError') {
@@ -357,6 +389,7 @@ export const ViewportLoader = {
       const cached = GeometryCache.getForViewport(adminLevel, bboxObject);
       if (cached.length === 0) {
         console.warn('No cached data available');
+        this.renderBestAvailableViewport(Math.min(adminLevel - 1, this.lastRenderedLevel), bboxObject);
       }
     } finally {
       GeometryCache.clearLocIdsInFlight(adminLevel, missingLocIds);
