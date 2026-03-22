@@ -927,9 +927,13 @@ export const App = {
 // ============================================================================
 
 // Start the app when DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => {
+    App.init();
+  }, { once: true });
+} else {
   App.init();
-});
+}
 
 // Export for global access if needed
 if (typeof window !== 'undefined') {
