@@ -38,7 +38,6 @@ from .paths import (
     RUNTIME_CONFIG_PATH,
     SETTINGS_PATH,
     PACKS_ROOT,
-    CLOUD_CACHE_ROOT,
     INSTALL_MODE,
     RUNTIME_MODE,
     # Deployment URLs
@@ -207,7 +206,6 @@ __all__ = [
     "RUNTIME_CONFIG_PATH",
     "SETTINGS_PATH",
     "PACKS_ROOT",
-    "CLOUD_CACHE_ROOT",
     "INSTALL_MODE",
     "RUNTIME_MODE",
     "APP_HOST",

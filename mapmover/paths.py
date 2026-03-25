@@ -13,7 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .runtime_config import APP_ROOT, MAP_CONFIG_PATH, STATIC_ROOT, TEMPLATES_ROOT, get_runtime_config
-from .storage_mode import ensure_cloud_data_root, get_cloud_cache_root, get_runtime_mode
+from .storage_mode import get_runtime_mode
 
 
 def _as_path(value: str | Path) -> Path:
@@ -28,7 +28,6 @@ def ensure_dir(path: Path) -> Path:
 _CONFIG = get_runtime_config()
 _PATHS = _CONFIG["paths"]
 _APP = _CONFIG["app"]
-_CLOUD = _CONFIG["cloud"]
 
 INSTALL_MODE = str(_CONFIG.get("install_mode", "local"))
 RUNTIME_MODE = get_runtime_mode(_CONFIG.get("runtime_mode", "local"))
@@ -49,11 +48,7 @@ SETTINGS_PATH = CONFIG_DIR / "settings.json"
 
 # Data root
 LOCAL_DATA_ROOT = _as_path(_PATHS["data_root"])
-CLOUD_CACHE_ROOT = get_cloud_cache_root(_as_path(_CLOUD["cache_root"]))
-if RUNTIME_MODE == "cloud":
-    DATA_ROOT = ensure_cloud_data_root(CLOUD_CACHE_ROOT)
-else:
-    DATA_ROOT = LOCAL_DATA_ROOT
+DATA_ROOT = LOCAL_DATA_ROOT
 
 COUNTRIES_DIR = DATA_ROOT / "countries"
 GLOBAL_DIR = DATA_ROOT / "global"
@@ -121,6 +116,5 @@ if __name__ == "__main__":
     print(f"  DATA_ROOT:           {DATA_ROOT}")
     print(f"  PACKS_ROOT:          {PACKS_ROOT}")
     print(f"  RUNTIME_CONFIG_PATH: {RUNTIME_CONFIG_PATH}")
-    print(f"  CLOUD_CACHE_ROOT:    {CLOUD_CACHE_ROOT}")
     print("=" * 60)
     validate_paths(verbose=True)

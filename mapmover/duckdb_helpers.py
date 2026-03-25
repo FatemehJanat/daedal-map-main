@@ -65,12 +65,8 @@ def _get_s3_endpoint() -> str:
 
 
 def _get_cache_root() -> Path | None:
-    env = os.environ.get("CLOUD_CACHE_ROOT", "").strip()
-    if env:
-        return Path(env)
-    if is_cloud_mode():
-        return Path(get_runtime_config()["cloud"]["cache_root"])
-    return None
+    from .paths import DATA_ROOT
+    return DATA_ROOT
 
 
 def path_to_uri(local_path: Path) -> str:

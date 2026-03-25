@@ -988,7 +988,6 @@ async def admin_catalog_refresh(req: Request):
     Force an immediate catalog.json refresh from R2.
     Restricted to master plan and is_admin users only.
     """
-    from mapmover.data_loading import _refresh_catalog_from_s3, get_catalog_path
     import mapmover.data_loading as _dl
 
     auth_user = get_authenticated_user(req)
@@ -1023,10 +1022,7 @@ async def admin_catalog_refresh(req: Request):
             logger.warning(f"Admin catalog refresh: entitlement check failed: {exc}")
             return msgpack_error("Entitlement check failed", 500)
 
-    catalog_path = get_catalog_path()
-    _refresh_catalog_from_s3(catalog_path)
-
-    # Clear the in-memory cache so the next load_catalog() reads the fresh file
+    # Clear the in-memory cache; next load_catalog() call fetches fresh from S3
     _dl._catalog_cache = None
     _dl._catalog_cache_time = 0.0
 
@@ -1035,7 +1031,7 @@ async def admin_catalog_refresh(req: Request):
     return msgpack_response({
         "ok": True,
         "source_count": len(catalog.get("sources", [])),
-        "message": "Catalog refreshed from R2",
+        "message": "Catalog cache cleared and refreshed",
     })
 
 

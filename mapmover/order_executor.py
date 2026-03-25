@@ -67,7 +67,6 @@ REFERENCE_DIR = Path(__file__).parent / "reference"
 _conversions_cache = None
 _iso_codes_cache = None
 _usa_admin_cache = None
-_catalog_cache = None
 
 
 def _coerce_year(value) -> Optional[int]:
@@ -110,15 +109,9 @@ def _normalize_year_filters(item: dict) -> tuple[Optional[int], Optional[int], O
 
 
 def _load_catalog() -> dict:
-    """Load catalog.json with caching."""
-    global _catalog_cache
-    if _catalog_cache is None:
-        if CATALOG_PATH.exists():
-            with open(CATALOG_PATH, encoding='utf-8') as f:
-                _catalog_cache = json.load(f)
-        else:
-            _catalog_cache = {"sources": []}
-    return _catalog_cache
+    """Load catalog via data_loading (handles both local and cloud mode with TTL caching)."""
+    from .data_loading import load_catalog as _load_catalog_dl
+    return _load_catalog_dl()
 
 
 def _aggregate_metric_frame(df: pd.DataFrame, group_cols: list[str]) -> pd.DataFrame:
@@ -561,10 +554,9 @@ def load_source_data(source_id: str) -> tuple:
     """
     source_dir = _get_source_path(source_id)
 
-    # Load metadata (always available locally - small files are synced on startup)
-    meta_path = source_dir / "metadata.json"
-    with open(meta_path, encoding='utf-8') as f:
-        metadata = json.load(f)
+    metadata = load_source_metadata(source_id)
+    if metadata is None:
+        raise ValueError(f"Could not load metadata for {source_id}")
 
     if is_cloud_mode():
         # In S3 mode, no local parquet files exist - pick preferred filename and let
@@ -618,10 +610,10 @@ def load_event_data(source_id: str, event_file_key: str = "events") -> tuple:
         tuple: (DataFrame, metadata dict)
     """
     source_dir = _get_source_path(source_id)
-    meta_path = source_dir / "metadata.json"
 
-    with open(meta_path, encoding='utf-8') as f:
-        metadata = json.load(f)
+    metadata = load_source_metadata(source_id)
+    if metadata is None:
+        raise ValueError(f"Could not load metadata for {source_id}")
 
     # Get filename from metadata.files
     files_info = metadata.get("files", {})
@@ -661,7 +653,7 @@ def load_event_data(source_id: str, event_file_key: str = "events") -> tuple:
         raise ValueError(f"No filename specified for '{event_file_key}' in {source_id}")
 
     parquet_path = source_dir / filename
-    if not parquet_path.exists():
+    if not is_cloud_mode() and not parquet_path.exists():
         raise ValueError(f"Event file not found: {parquet_path}")
 
     df = select_rows(parquet_path)

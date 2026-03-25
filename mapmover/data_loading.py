@@ -69,31 +69,25 @@ def get_catalog_path():
     return CATALOG_PATH
 
 
-def _refresh_catalog_from_s3(catalog_path: Path) -> None:
-    """Re-download catalog.json from R2 to local disk. Logs and swallows errors."""
-    try:
-        import boto3 as _boto3
-        cloud_cfg = get_runtime_config().get("cloud", {})
-        bucket = os.environ.get("S3_BUCKET", "").strip() or str(cloud_cfg.get("bucket", "")).strip()
-        if not bucket:
-            return
-        prefix = (os.environ.get("S3_PREFIX", "") or str(cloud_cfg.get("prefix", ""))).strip().strip("/")
-        key = f"{prefix}/catalog.json" if prefix else "catalog.json"
-        endpoint_url = os.environ.get("S3_ENDPOINT_URL") or cloud_cfg.get("endpoint_url")
-        region = os.environ.get("AWS_DEFAULT_REGION") or os.environ.get("AWS_REGION") or "auto"
-        client = _boto3.client("s3", endpoint_url=endpoint_url, region_name=region)
-        catalog_path.parent.mkdir(parents=True, exist_ok=True)
-        client.download_file(bucket, key, str(catalog_path))
-        logger.info("catalog.json refreshed from R2")
-    except Exception as exc:
-        logger.warning(f"catalog.json R2 refresh failed, using cached copy: {exc}")
+def _fetch_json_from_s3(relative_path: str) -> dict:
+    """Fetch a JSON file directly from S3 into memory. Cloud mode only."""
+    import boto3 as _boto3
+    cloud_cfg = get_runtime_config().get("cloud", {})
+    bucket = os.environ.get("S3_BUCKET", "").strip() or str(cloud_cfg.get("bucket", "")).strip()
+    prefix = (os.environ.get("S3_PREFIX", "") or str(cloud_cfg.get("prefix", ""))).strip().strip("/")
+    key = f"{prefix}/{relative_path}" if prefix else relative_path
+    endpoint_url = os.environ.get("S3_ENDPOINT_URL") or cloud_cfg.get("endpoint_url")
+    region = os.environ.get("AWS_DEFAULT_REGION") or os.environ.get("AWS_REGION") or "auto"
+    client = _boto3.client("s3", endpoint_url=endpoint_url, region_name=region)
+    obj = client.get_object(Bucket=bucket, Key=key)
+    return json.loads(obj["Body"].read())
 
 
 def load_catalog():
     """
     Load the unified catalog.json file.
-    Cached with a 5-minute TTL. In S3 mode, re-downloads catalog.json from R2
-    on each TTL expiry so catalog updates go live without a Railway restart.
+    Cached with a 5-minute TTL. In cloud mode, fetches directly from S3 into memory
+    on each TTL expiry so catalog updates go live without a restart.
 
     Returns:
         dict: Catalog with sources, or empty dict if not found
@@ -104,15 +98,25 @@ def load_catalog():
     if _catalog_cache is not None and (now - _catalog_cache_time) < _CATALOG_TTL_SECONDS:
         return _catalog_cache
 
-    catalog_path = get_catalog_path()
     runtime_mode = str(get_runtime_config().get("runtime_mode", "local")).strip().lower()
 
-    if runtime_mode == "cloud" and not catalog_path.exists() and (now - _catalog_missing_time) < _CATALOG_MISS_TTL_SECONDS:
-        return {"sources": [], "total_sources": 0}
-
     if runtime_mode == "cloud":
-        _refresh_catalog_from_s3(catalog_path)
+        if (now - _catalog_missing_time) < _CATALOG_MISS_TTL_SECONDS and _catalog_cache is None:
+            return {"sources": [], "total_sources": 0}
+        try:
+            raw_catalog = _fetch_json_from_s3("catalog.json")
+            _catalog_cache = raw_catalog
+            _catalog_cache_time = now
+            active_catalog = build_active_catalog(raw_catalog)
+            logger.debug(f"Loaded catalog.json from S3 with {len(raw_catalog.get('sources', []))} sources")
+            return active_catalog
+        except Exception as e:
+            _catalog_missing_time = now
+            logger.warning(f"catalog.json S3 fetch failed: {e}")
+            return {"sources": [], "total_sources": 0}
 
+    # Local mode: read from disk
+    catalog_path = get_catalog_path()
     if not catalog_path or not catalog_path.exists():
         _catalog_missing_time = now
         logger.warning(f"Catalog not found at {catalog_path}")
@@ -177,6 +181,25 @@ def load_source_metadata(source_id: str):
     if source_id in _metadata_cache:
         return _metadata_cache[source_id]
 
+    runtime_mode = str(get_runtime_config().get("runtime_mode", "local")).strip().lower()
+
+    if runtime_mode == "cloud":
+        catalog = load_catalog()
+        source_rel_path = None
+        for source in catalog.get("sources", []):
+            if source.get("source_id") == source_id:
+                source_rel_path = source.get("path", f"global/{source_id}")
+                break
+        if source_rel_path is None:
+            source_rel_path = f"global/{source_id}"
+        try:
+            metadata = _fetch_json_from_s3(f"{source_rel_path}/metadata.json")
+            _metadata_cache[source_id] = metadata
+            return metadata
+        except Exception as e:
+            logger.error(f"Error loading metadata for {source_id} from S3: {e}")
+            return None
+
     source_folder = get_source_path(source_id)
     if not source_folder or not source_folder.exists():
         return None
@@ -205,6 +228,24 @@ def load_source_reference(source_id: str):
     Returns:
         dict: Source reference data or None if not found
     """
+    runtime_mode = str(get_runtime_config().get("runtime_mode", "local")).strip().lower()
+
+    if runtime_mode == "cloud":
+        catalog = load_catalog()
+        source_rel_path = None
+        for source in catalog.get("sources", []):
+            if source.get("source_id") == source_id:
+                source_rel_path = source.get("path", f"global/{source_id}")
+                break
+        if source_rel_path is None:
+            source_rel_path = f"global/{source_id}"
+        try:
+            data = _fetch_json_from_s3(f"{source_rel_path}/reference.json")
+            return data if isinstance(data, dict) else None
+        except Exception as e:
+            logger.error(f"Error loading reference for {source_id} from S3: {e}")
+            return None
+
     source_folder = get_source_path(source_id)
     if not source_folder or not source_folder.exists():
         return None
@@ -323,11 +364,17 @@ def load_geometry_for_country(iso3: str):
 
     # Tier 2: Load crosswalk if exists (for translating loc_ids)
     crosswalk = None
-    if countries_folder:
+    runtime_mode = str(get_runtime_config().get("runtime_mode", "local")).strip().lower()
+    if runtime_mode == "cloud":
+        try:
+            crosswalk = _fetch_json_from_s3(f"countries/{iso3}/crosswalk.json")
+            logger.debug(f"Loaded crosswalk for {iso3} from S3: {len(crosswalk.get('mappings', {}))} mappings")
+        except Exception:
+            pass  # No crosswalk for this country is normal
+    elif countries_folder:
         crosswalk_path = countries_folder / iso3 / "crosswalk.json"
         if crosswalk_path.exists():
             try:
-                import json
                 with open(crosswalk_path, 'r') as f:
                     crosswalk = json.load(f)
                 logger.debug(f"Loaded crosswalk for {iso3}: {len(crosswalk.get('mappings', {}))} mappings")
@@ -390,7 +437,24 @@ def fetch_geometries_by_loc_ids(loc_ids: list) -> dict:
         parquet_path = None
         crosswalk = None
         uses_crosswalk = False
-        if country_geom_path and country_geom_path.exists():
+        _runtime_mode = str(get_runtime_config().get("runtime_mode", "local")).strip().lower()
+        if _runtime_mode == "cloud":
+            # In cloud mode, assume geometry paths exist; DuckDB will error if missing.
+            # Try country-specific geometry first, then GADM fallback.
+            if country_geom_path:
+                parquet_path = country_geom_path
+            elif fallback_geom_path:
+                parquet_path = fallback_geom_path
+            # Try to load crosswalk from S3
+            try:
+                crosswalk = _fetch_json_from_s3(f"countries/{country}/crosswalk.json")
+                if parquet_path == country_geom_path:
+                    pass  # no crosswalk needed for direct geometry
+                else:
+                    uses_crosswalk = True
+            except Exception:
+                pass
+        elif country_geom_path and country_geom_path.exists():
             parquet_path = country_geom_path
         elif crosswalk_path and crosswalk_path.exists() and fallback_geom_path and fallback_geom_path.exists():
             parquet_path = fallback_geom_path
