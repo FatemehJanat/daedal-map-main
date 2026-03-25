@@ -546,7 +546,7 @@ def interpret_request(user_query: str, chat_history: list = None, hints: dict = 
     max_tool_iterations = 3
     for iteration in range(max_tool_iterations + 1):
         response = client.messages.create(
-            model="claude-haiku-4-5",
+            model="claude-haiku-4-5-20251001",
             system=system_content.strip(),
             messages=chat_messages,
             tools=tools,
