@@ -616,8 +616,11 @@ def load_event_data(source_id: str, event_file_key: str = "events") -> tuple:
         raise ValueError(f"Could not load metadata for {source_id}")
 
     # Get filename from metadata.files
-    files_info = metadata.get("files", {})
+    files_section = metadata.get("files")
+    files_info = files_section if isinstance(files_section, dict) else {}
     file_info = files_info.get(event_file_key)
+    if not isinstance(file_info, dict):
+        file_info = None
 
     if not file_info:
         # Try common event file names as fallback
@@ -663,9 +666,47 @@ def load_event_data(source_id: str, event_file_key: str = "events") -> tuple:
 
 
 def _resolve_event_parquet_path(source_id: str, event_file_key: str = "events") -> tuple[Path, dict]:
-    """Resolve event parquet path from source metadata without loading the full dataframe."""
+    """Resolve event parquet path from source metadata without loading the full dataframe.
+    Uses load_source_metadata so it works in both local and cloud mode."""
     source_dir = _get_source_path(source_id)
-    return resolve_event_parquet_path(source_dir, event_file_key)
+    metadata = load_source_metadata(source_id)
+    if metadata is None:
+        raise ValueError(f"Could not load metadata for {source_id}")
+
+    files_section = metadata.get("files")
+    files_info = files_section if isinstance(files_section, dict) else {}
+    file_info = files_info.get(event_file_key)
+    if not isinstance(file_info, dict):
+        file_info = None
+
+    if not file_info:
+        fallback_names = [
+            f"{event_file_key}.parquet",
+            "events.parquet",
+            "fires.parquet",
+            "positions.parquet",
+            "storms.parquet",
+        ]
+        for name in fallback_names:
+            candidate = source_dir / name
+            if is_cloud_mode() or candidate.exists():
+                return candidate, metadata
+        if not is_cloud_mode():
+            parquet_candidates = sorted(source_dir.glob("*.parquet"))
+            for candidate in parquet_candidates:
+                if candidate.name in ("all_countries.parquet", "all_regions.parquet"):
+                    continue
+                return candidate, metadata
+        raise ValueError(f"No event file '{event_file_key}' found in {source_dir}")
+
+    filename = file_info.get("name") or file_info.get("filename")
+    if not filename:
+        raise ValueError(f"No filename specified for '{event_file_key}' in {source_dir}")
+
+    parquet_path = source_dir / filename
+    if not is_cloud_mode() and not parquet_path.exists():
+        raise ValueError(f"Event file not found: {parquet_path}")
+    return parquet_path, metadata
 
 
 def _duckdb_can_query_events(source_id: str) -> bool:

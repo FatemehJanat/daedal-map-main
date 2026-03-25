@@ -198,8 +198,11 @@ def resolve_event_parquet_path(source_dir: Path, event_file_key: str = "events")
     with open(meta_path, encoding="utf-8") as f:
         metadata = json.load(f)
 
-    files_info = metadata.get("files", {})
+    files_section = metadata.get("files")
+    files_info = files_section if isinstance(files_section, dict) else {}
     file_info = files_info.get(event_file_key)
+    if not isinstance(file_info, dict):
+        file_info = None
 
     if not file_info:
         fallback_names = [
