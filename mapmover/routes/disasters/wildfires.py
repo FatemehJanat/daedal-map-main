@@ -144,12 +144,12 @@ async def get_wildfires_geojson(
                 })
 
         usa_fires_path = _resolve_first_existing(
+            GLOBAL_DIR / "disasters/wildfires/sources/usa/fires_enriched.parquet",
             COUNTRIES_DIR / "USA/disasters/wildfires/fires_enriched.parquet",
-            COUNTRIES_DIR / "USA/wildfires/fires_enriched.parquet",
         )
         can_fires_path = _resolve_first_existing(
+            GLOBAL_DIR / "disasters/wildfires/sources/can/fires_enriched.parquet",
             COUNTRIES_DIR / "CAN/wildfires/fires_enriched.parquet",
-            COUNTRIES_DIR / "CAN/cnfdb/fires_enriched.parquet",
         )
         global_by_year_path = GLOBAL_DIR / "disasters/wildfires/by_year_enriched"
         if not is_cloud_mode() and not global_by_year_path.exists():
