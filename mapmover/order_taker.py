@@ -254,12 +254,20 @@ def build_system_prompt(catalog: dict, conversions: dict) -> str:
         all_ends = [src.get("temporal_coverage", {}).get("end") for src in srcs if src.get("temporal_coverage", {}).get("end")]
         time_range = f"{_year(min(all_starts))}-{_year(max(all_ends))}" if all_starts and all_ends else "?"
 
+        # Admin area coverage (from event_areas join)
+        total_admin2 = sum(
+            src.get("affected_coverage", {}).get("admin2_regions_affected", 0) or 0
+            for src in srcs
+        )
+
         coverage_str = ", ".join(coverage_parts)
         lines = [
             f"- {pack_name} [pack_id: {pid}]",
             f"  Coverage: {coverage_str}",
             f"  Time range: {time_range}",
         ]
+        if total_admin2 > 0:
+            lines.append(f"  Admin regions: {total_admin2:,} counties/districts covered (event_areas join available)")
         return "\n".join(lines)
 
     def format_source_group(sources, scope_label):
@@ -425,9 +433,12 @@ FACTBOOK-SPECIFIC RULES:
 
 DISASTER AGGREGATE RULES:
 - For disaster questions about frequency, exposure, ranking, historical impacts, rolling windows, or trends, prefer type="order" with aggregate choropleth-style items, not overlay_toggle.
+- For "which counties/regions/areas were affected by [disaster]" questions, always prefer type="order" using events mode for that region — do not respond with chat explaining limitations. Show the events on the map and let the user explore which areas are covered.
+- Disaster packs with "Admin regions: X counties/districts covered" in the catalog have county-level data available via event_areas join. The executor handles the join automatically — never tell users that county-level data is unavailable for these packs.
 - Use existing disaster sources only. Never ask the user if they have another dataset/source, and never suggest unpublished or imaginary alternatives.
 - If the user asks about US counties or Texas counties, assume the existing disaster aggregate data can be used when available instead of claiming only country-level support.
 - Multi-hazard risk questions may be answered with a multi-item order using the available aggregate metrics; do not over-clarify unless execution is genuinely impossible.
+
 
 WHEN USER ASKS about a specific source ("what's in X?" or "show me metrics"):
 - Use the list_source_metrics tool to get the actual metrics
