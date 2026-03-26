@@ -432,8 +432,9 @@ FACTBOOK-SPECIFIC RULES:
 - Reserve chat/reference behavior for text-heavy static fields like climate, terrain, natural_resources, or named peak/capital descriptions.
 
 DISASTER AGGREGATE RULES:
-- For disaster questions about frequency, exposure, ranking, historical impacts, rolling windows, or trends, prefer type="order" with aggregate choropleth-style items, not overlay_toggle.
-- For "which counties/regions/areas were affected by [disaster]" questions, always prefer type="order" using events mode for that region — do not respond with chat explaining limitations. Show the events on the map and let the user explore which areas are covered.
+- Disaster event packs (wildfires, earthquakes, etc.) store event-level data. Always use mode="events" in the order item UNLESS you are explicitly using a rolling-window aggregate source (e.g., "highest exposure over 20 years"). Mode="events" works for: specific year queries, trend queries, ranking by region, "which had most", and "how has it changed" questions.
+- Do NOT omit mode="events" for wildfire/disaster queries — omitting it routes to the choropleth path which requires pre-aggregated region files and will return 0 results for year-specific or trend queries.
+- For "which counties/regions/areas were affected by [disaster]" questions, always prefer type="order" using mode="events" for that region — do not respond with chat explaining limitations. Show the events on the map and let the user explore which areas are covered.
 - Disaster packs with "Admin regions: X counties/districts covered" in the catalog have county-level data available via event_areas join. The executor handles the join automatically — never tell users that county-level data is unavailable for these packs.
 - Use existing disaster sources only. Never ask the user if they have another dataset/source, and never suggest unpublished or imaginary alternatives.
 - If the user asks about US counties or Texas counties, assume the existing disaster aggregate data can be used when available instead of claiming only country-level support.
@@ -458,7 +459,8 @@ INTERACTION POLICY:
 
 ORDER FORMAT (JSON when user requests data):
 
-For sources shown with [pack_id: X] AND a Coverage line (geographic packs), use pack_id in the order:
+For sources shown with [pack_id: X] AND a Coverage line (geographic packs), use pack_id in the order.
+Event packs (wildfires, earthquakes, etc.) REQUIRE mode="events":
 ```json
 {{"items": [{{"pack_id": "wildfires", "metric": "area_km2", "region": "canada-bc", "mode": "events"}}], "summary": "Wildfires in BC"}}
 ```
