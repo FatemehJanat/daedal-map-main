@@ -168,6 +168,9 @@ def build_system_prompt(catalog: dict, conversions: dict) -> str:
     Build system prompt with catalog organized by geographic scope.
 
     Groups sources by scope and combines related sources (UN SDGs, World Factbook).
+    Multi-scope packs (sources spanning different geographic scopes within the same pack)
+    are shown as a single consolidated pack entry so the LLM emits pack_id, not source_id.
+    The executor resolves pack_id + region -> correct source_id at runtime.
     """
 
     source_visibility_mode = get_source_visibility_mode()
@@ -175,11 +178,31 @@ def build_system_prompt(catalog: dict, conversions: dict) -> str:
     published_sources = [src for src in all_sources if src.get("pack_id")]
     visible_sources = published_sources if source_visibility_mode == "live" else all_sources
 
-    # Group visible sources by scope for source selection.
+    # Identify multi-scope packs: packs where sources span more than just "global" scope.
+    # These are shown as a single consolidated entry; the LLM emits pack_id + region.
+    # Single-scope packs (all global, like SDGs/Factbook) keep individual source_id entries.
+    pack_sources_map = {}  # pack_id -> list of catalog source entries
+    for src in visible_sources:
+        pid = src.get("pack_id")
+        if pid:
+            pack_sources_map.setdefault(pid, []).append(src)
+
+    multi_scope_pack_ids = set()  # packs that need consolidated display
+    for pid, srcs in pack_sources_map.items():
+        scopes = {s.get("scope", "global") for s in srcs}
+        if scopes - {"global"}:  # has at least one non-global scope
+            multi_scope_pack_ids.add(pid)
+
+    # Sources belonging to multi-scope packs are excluded from individual scope sections
+    multi_scope_excluded = {id(s) for s in visible_sources if s.get("pack_id") in multi_scope_pack_ids}
+
+    # Group remaining sources by scope for individual display
     sources_by_scope = {}
     chat_first_sources = []
     hybrid_sources = []
     for src in visible_sources:
+        if id(src) in multi_scope_excluded:
+            continue
         scope = src.get("scope", "global")
         if scope not in sources_by_scope:
             sources_by_scope[scope] = []
@@ -191,9 +214,53 @@ def build_system_prompt(catalog: dict, conversions: dict) -> str:
         elif interaction_mode == "hybrid":
             hybrid_sources.append(src.get("source_id"))
 
-    # Build sources text with grouping of related sources
-    sources_text = ""
     published_pack_text = ", ".join(sorted({src.get("pack_id") for src in published_sources if src.get("pack_id")})) or "(none)"
+
+    def _year(dt_str):
+        """Extract 4-digit year from an ISO datetime string."""
+        if not dt_str:
+            return "?"
+        return str(dt_str)[:4]
+
+    def format_multi_scope_pack(pid, srcs):
+        """
+        Build a single catalog line for a multi-scope pack.
+        Example:
+          - Wildfires [pack_id: wildfires]: Wildfire events - burned area, date, location
+            Coverage: Global (via Global Fire Atlas), Canada (CNFDB, 1930-2024), USA (NIFC/IRWIN, 1984-2024)
+            Time range: 1930-2024
+        """
+        # Use the global source as the representative name, fall back to first source
+        global_src = next((s for s in srcs if s.get("scope") == "global"), srcs[0])
+        pack_name = global_src.get("source_name", pid)
+
+        # Build per-source coverage labels
+        coverage_parts = []
+        scope_order = {"global": 0, "CAN": 1, "USA": 2}
+        sorted_srcs = sorted(srcs, key=lambda s: scope_order.get(s.get("scope", "global"), 99))
+        for src in sorted_srcs:
+            scope = src.get("scope", "global")
+            sname = src.get("source_name", "")
+            temp = src.get("temporal_coverage", {})
+            yr_s = _year(temp.get("start"))
+            yr_e = _year(temp.get("end"))
+            if scope == "global":
+                coverage_parts.append(f"Global (via {sname})")
+            else:
+                coverage_parts.append(f"{scope} ({sname}, {yr_s}-{yr_e})")
+
+        # Overall time range
+        all_starts = [src.get("temporal_coverage", {}).get("start") for src in srcs if src.get("temporal_coverage", {}).get("start")]
+        all_ends = [src.get("temporal_coverage", {}).get("end") for src in srcs if src.get("temporal_coverage", {}).get("end")]
+        time_range = f"{_year(min(all_starts))}-{_year(max(all_ends))}" if all_starts and all_ends else "?"
+
+        coverage_str = ", ".join(coverage_parts)
+        lines = [
+            f"- {pack_name} [pack_id: {pid}]",
+            f"  Coverage: {coverage_str}",
+            f"  Time range: {time_range}",
+        ]
+        return "\n".join(lines)
 
     def format_source_group(sources, scope_label):
         """Format sources, grouping related ones together."""
@@ -280,21 +347,28 @@ def build_system_prompt(catalog: dict, conversions: dict) -> str:
 
         return "\n".join(lines)
 
-    # Country-specific sources FIRST (more relevant when asking about a country)
+    # Build sources_text
+    sources_text = ""
+
+    # Country-specific individual sources FIRST
     for scope in sorted(sources_by_scope.keys()):
         if scope == "global":
             continue
-
         scope_sources = sources_by_scope[scope]
         geo_level = scope_sources[0].get("geographic_level", "admin_2") if scope_sources else "admin_2"
-
         sources_text += f"\n=== {scope.upper()} ONLY ({geo_level}) ===\n"
         sources_text += format_source_group(scope_sources, scope) + "\n"
 
-    # Global sources SECOND
-    if "global" in sources_by_scope:
+    # Global section: individual global sources + consolidated multi-scope pack entries
+    global_individual = format_source_group(sources_by_scope.get("global", []), "global")
+    multi_scope_entries = "\n".join(
+        format_multi_scope_pack(pid, pack_sources_map[pid])
+        for pid in sorted(multi_scope_pack_ids)
+    )
+    global_section_content = "\n".join(filter(None, [global_individual, multi_scope_entries]))
+    if global_section_content:
         sources_text += "\n=== GLOBAL (available for all countries at admin_0) ===\n"
-        sources_text += format_source_group(sources_by_scope["global"], "global") + "\n"
+        sources_text += global_section_content + "\n"
 
     # Build regions text from conversions
     regions_text = build_regions_text(conversions)
@@ -372,6 +446,14 @@ INTERACTION POLICY:
 - hybrid sources: {hybrid_text}
 
 ORDER FORMAT (JSON when user requests data):
+
+For sources shown with [pack_id: X] AND a Coverage line (geographic packs), use pack_id in the order:
+```json
+{{"items": [{{"pack_id": "wildfires", "metric": "area_km2", "region": "canada-bc", "mode": "events"}}], "summary": "Wildfires in BC"}}
+```
+The system routes to the correct regional source automatically based on region.
+
+For sources shown with [source_id: X] (individual sources, SDGs, Factbook, pre-release), use source_id:
 ```json
 {{"items": [{{"source_id": "owid_co2", "metric": "co2", "region": "europe", "year": 2022}}], "summary": "CO2 for Europe 2022"}}
 ```
@@ -382,9 +464,10 @@ OPTIONAL AGGREGATION FIELDS (only when user explicitly asks):
 - `date_start` / `date_end`: ISO date bounds for time filtering when needed
 
 RULES:
-- source_id: Must EXACTLY match one of the available sources
+- pack_id: Use for geographic packs (shown with Coverage line in catalog). System selects the right regional source.
+- source_id: Use for individual sources (SDGs, Factbook, country-specific sources, pre-release).
 - metric: Must be an EXACT column name from the source, OR use "*" for ALL metrics from that source
-- region: lowercase (europe, g7, australia) or null for global
+- region: lowercase (europe, g7, australia, canada-bc, usa-ca) or null for global
 - year: null = most recent
 - Only include aggregation fields when the user asks for a specific time granularity or averaging behavior
 
@@ -398,7 +481,7 @@ RESPONSE TYPES (return JSON with "type" field):
 
 1. DATA ORDER - User wants to see data on the map:
 ```json
-{{"type": "order", "items": [{{"source_id": "...", "metric": "...", "region": "..."}}], "summary": "..."}}
+{{"type": "order", "items": [{{"pack_id": "wildfires", "metric": "area_km2", "region": "canada-bc"}}], "summary": "..."}}
 ```
 
 2. GEOMETRY ORDER - User wants to see boundary overlays (ZIP codes, tribal areas, watersheds, etc.):

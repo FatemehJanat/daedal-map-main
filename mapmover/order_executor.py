@@ -114,6 +114,73 @@ def _load_catalog() -> dict:
     return _load_catalog_dl()
 
 
+def _scope_matches_region(scope: str, region) -> bool:
+    """Return True if the given catalog scope covers the requested region string."""
+    if not region:
+        return scope == "global"
+    r = str(region).lower()
+    if scope == "CAN":
+        return r.startswith("can") or r.startswith("canada")
+    if scope == "USA":
+        return r.startswith("usa") or r.startswith("us-")
+    if scope == "global":
+        return True  # global is always a valid fallback
+    # For other ISO scopes (e.g. "AUS") match by lowercase prefix
+    return r.startswith(scope.lower())
+
+
+def _resolve_source_for_item(item: dict, catalog: dict) -> str:
+    """
+    Resolve the correct source_id for an order item.
+
+    Resolution order:
+    1. If item already has source_id and no pack_id: use it directly (pre-release / internal).
+    2. If item has pack_id: find all catalog sources with that pack_id, pick the best scope match.
+    3. If no specific match found: fall back to the global-scoped source in the pack.
+    """
+    pack_id = item.get("pack_id")
+    source_id = item.get("source_id")
+
+    if not pack_id:
+        # No pack routing requested - use source_id as-is
+        return source_id
+
+    region = item.get("region")
+    sources = catalog.get("sources", [])
+    pack_sources = [s for s in sources if s.get("pack_id") == pack_id]
+
+    if not pack_sources:
+        # Unknown pack - fall back to source_id if provided, else None
+        return source_id
+
+    # Prefer exact (non-global) scope match, fall back to global
+    exact_matches = [s for s in pack_sources if s.get("scope") != "global" and _scope_matches_region(s.get("scope", "global"), region)]
+    if exact_matches:
+        return exact_matches[0]["source_id"]
+
+    global_matches = [s for s in pack_sources if s.get("scope") == "global"]
+    if global_matches:
+        return global_matches[0]["source_id"]
+
+    # Last resort: first source in pack
+    return pack_sources[0]["source_id"]
+
+
+def _normalize_order_items(items: list, catalog: dict) -> list:
+    """
+    Resolve pack_id -> source_id for all items in an order.
+    Items that already have source_id and no pack_id are passed through unchanged.
+    """
+    resolved = []
+    for item in items:
+        item = dict(item)  # shallow copy so we don't mutate the original
+        if item.get("pack_id"):
+            item["source_id"] = _resolve_source_for_item(item, catalog)
+            logger.debug(f"[routing] pack_id={item['pack_id']} region={item.get('region')} -> source_id={item['source_id']}")
+        resolved.append(item)
+    return resolved
+
+
 def _aggregate_metric_frame(df: pd.DataFrame, group_cols: list[str]) -> pd.DataFrame:
     """Aggregate a disaster metric frame to a coarser spatial level."""
     agg_map = {}
@@ -1815,6 +1882,9 @@ def execute_order(order: dict) -> dict:
             "geojson": {"type": "FeatureCollection", "features": []},
             "count": 0
         }
+
+    # Stage 1: resolve pack_id -> source_id for all items before any processing
+    items = _normalize_order_items(items, _load_catalog())
 
     # Determine data_type for this order from first item's source
     # (for tagging the response so frontend knows which pipeline to use)
