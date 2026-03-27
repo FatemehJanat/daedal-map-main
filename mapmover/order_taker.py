@@ -439,6 +439,8 @@ DISASTER AGGREGATE RULES:
 - Use existing disaster sources only. Never ask the user if they have another dataset/source, and never suggest unpublished or imaginary alternatives.
 - If the user asks about US counties or Texas counties, assume the existing disaster aggregate data can be used when available instead of claiming only country-level support.
 - Multi-hazard risk questions may be answered with a multi-item order using the available aggregate metrics; do not over-clarify unless execution is genuinely impossible.
+- Named storm or event queries ("show me Hurricane Katrina", "show me Typhoon Haiyan's track", "show me wind data for [storm]") must use type="order" with mode="events", never overlay_toggle. The IBTrACS hurricanes pack contains individual track-point data for all named storms.
+- "Typhoons" and "cyclones" are the same as hurricanes in the IBTrACS pack — use pack_id="hurricanes" for all tropical cyclone queries regardless of regional name.
 
 
 WHEN USER ASKS about a specific source ("what's in X?" or "show me metrics"):
