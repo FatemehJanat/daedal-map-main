@@ -370,6 +370,7 @@ def select_rows(
     exact_filters: dict | None = None,
     in_filters: dict | None = None,
     compare_filters: list[tuple[str, str, object]] | None = None,
+    starts_with_filters: dict | None = None,
     order_by: str | None = None,
 ) -> pd.DataFrame:
     if duckdb is None or not parquet_available(parquet_path):
@@ -402,6 +403,11 @@ def select_rows(
             continue
         where.append(f"{quote_ident(col)} {op} ?")
         params.append(value)
+
+    for col, prefix in (starts_with_filters or {}).items():
+        if col in available_cols and prefix is not None:
+            where.append(f"starts_with({quote_ident(col)}, ?)")
+            params.append(prefix)
 
     sql = f"SELECT {select_expr} FROM read_parquet(?)"
     if where:

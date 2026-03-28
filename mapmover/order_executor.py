@@ -13,6 +13,7 @@ Implements the "Empty Box" model from CHAT_REDESIGN.md:
 
 import logging
 import hashlib
+import re
 import pandas as pd
 import json
 import time
@@ -612,9 +613,13 @@ def _load_usa_admin() -> dict:
     return _usa_admin_cache
 
 
-def load_source_data(source_id: str) -> tuple:
+def load_source_data(source_id: str, *, year: int | None = None, loc_id_prefix: str | None = None) -> tuple:
     """
     Load parquet and metadata for a source.
+
+    Args:
+        year: If provided, push year filter into DuckDB query (avoids full scan).
+        loc_id_prefix: If provided, push loc_id prefix filter into DuckDB query (e.g. 'USA-CA').
 
     Returns:
         tuple: (DataFrame, metadata dict)
@@ -624,6 +629,13 @@ def load_source_data(source_id: str) -> tuple:
     metadata = load_source_metadata(source_id)
     if metadata is None:
         raise ValueError(f"Could not load metadata for {source_id}")
+
+    exact_filters = {}
+    starts_with_filters = {}
+    if year is not None:
+        exact_filters["year"] = year
+    if loc_id_prefix:
+        starts_with_filters["loc_id"] = loc_id_prefix
 
     if is_cloud_mode():
         # In S3 mode, no local parquet files exist - pick preferred filename and let
@@ -643,8 +655,8 @@ def load_source_data(source_id: str) -> tuple:
         if parquet_path is None:
             raise ValueError(f"Cannot determine parquet path for {source_id} in S3 mode")
         uri = path_to_uri(parquet_path)
-        logger.info(f"[S3] load_source_data({source_id}): uri={uri}")
-        df = select_rows(parquet_path)
+        logger.info(f"[S3] load_source_data({source_id}): uri={uri} year={year} prefix={loc_id_prefix}")
+        df = select_rows(parquet_path, exact_filters=exact_filters or None, starts_with_filters=starts_with_filters or None)
         logger.info(f"[S3] load_source_data({source_id}): rows={len(df)}")
     else:
         # Local mode: glob for parquet files on disk
@@ -659,8 +671,8 @@ def load_source_data(source_id: str) -> tuple:
                 parquet_path = candidate
                 break
 
-        df = select_rows(parquet_path)
-        if df.empty:
+        df = select_rows(parquet_path, exact_filters=exact_filters or None, starts_with_filters=starts_with_filters or None)
+        if df.empty and not exact_filters and not starts_with_filters:
             df = pd.read_parquet(parquet_path)
 
     return df, metadata
@@ -1988,14 +2000,20 @@ def execute_order(order: dict) -> dict:
         if not source_id:
             continue
 
+        # Derive pushdown hints from the order item so DuckDB only fetches needed row groups.
+        # Only use a single year for exact pushdown; multi-year ranges are filtered in Python after load.
+        _pushdown_year = year if (year and not year_start and not year_end) else None
+        # Use region as loc_id prefix only when it already looks like a loc_id (e.g. "USA-CA", "IND").
+        _pushdown_prefix = region if (region and re.match(r'^[A-Z]{2,3}(-[A-Z0-9]+)?$', region)) else None
+
         t_item_start = time.perf_counter()
         try:
             if item.get("mode") == "aggregate":
                 df, metadata = _load_disaster_aggregate_data(source_id, item)
                 if df is None or metadata is None:
-                    df, metadata = load_source_data(source_id)
+                    df, metadata = load_source_data(source_id, year=_pushdown_year, loc_id_prefix=_pushdown_prefix)
             else:
-                df, metadata = load_source_data(source_id)
+                df, metadata = load_source_data(source_id, year=_pushdown_year, loc_id_prefix=_pushdown_prefix)
         except Exception as e:
             logger.error(f"Error loading {source_id}: {e}", exc_info=True)
             continue
