@@ -287,7 +287,9 @@ def build_system_prompt(catalog: dict, conversions: dict) -> str:
             sid = src["source_id"]
             pid = src.get("pack_id")
             publish_note = f"pack_id: {pid}" if pid else "pre-release: no pack_id yet"
-            lines.append(f"- {name} [{publish_note}; source_id: {sid}]: {temp.get('start', '?')}-{temp.get('end', '?')}")
+            geo_level = src.get("geographic_level", "")
+            geo_note = f"; {geo_level}" if geo_level and geo_level not in ("country", "admin_0") else ""
+            lines.append(f"- {name} [{publish_note}; source_id: {sid}{geo_note}]: {temp.get('start', '?')}-{temp.get('end', '?')}")
 
         # List SDG sources individually with human-readable goal titles
         if sdg_sources:
@@ -375,7 +377,7 @@ def build_system_prompt(catalog: dict, conversions: dict) -> str:
     )
     global_section_content = "\n".join(filter(None, [global_individual, multi_scope_entries]))
     if global_section_content:
-        sources_text += "\n=== GLOBAL (available for all countries at admin_0) ===\n"
+        sources_text += "\n=== GLOBAL (worldwide coverage, geographic level varies by source) ===\n"
         sources_text += global_section_content + "\n"
 
     # Build regions text from conversions

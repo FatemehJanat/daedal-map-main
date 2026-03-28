@@ -629,16 +629,17 @@ def load_source_data(source_id: str) -> tuple:
         # In S3 mode, no local parquet files exist - pick preferred filename and let
         # select_rows() fetch from R2 via DuckDB httpfs (path_to_uri handles the s3:// conversion).
         parquet_path = None
-        for name in ["all_countries.parquet", "USA.parquet"]:
-            parquet_path = source_dir / name
-            break  # use first preferred name; DuckDB will error if missing on R2
+        # Check metadata files section first (allows non-standard filenames like population.parquet)
+        for _key, info in metadata.get("files", {}).items():
+            fname = (info.get("name") or info.get("filename")) if isinstance(info, dict) else None
+            if fname and fname.endswith(".parquet"):
+                parquet_path = source_dir / fname
+                break
+        # Fall back to standard names if no files section
         if parquet_path is None:
-            # Fall back to filename from metadata files section
-            for _key, info in metadata.get("files", {}).items():
-                fname = (info.get("name") or info.get("filename")) if isinstance(info, dict) else None
-                if fname and fname.endswith(".parquet"):
-                    parquet_path = source_dir / fname
-                    break
+            for name in ["all_countries.parquet", "USA.parquet"]:
+                parquet_path = source_dir / name
+                break
         if parquet_path is None:
             raise ValueError(f"Cannot determine parquet path for {source_id} in S3 mode")
         uri = path_to_uri(parquet_path)
