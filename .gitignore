@@ -42,6 +42,7 @@ package-lock.json
 data/
 data_pipeline/
 .data_s3_cache/
+../appdata/
 
 # -----------------------------------------------------------------------------
 # Logs and temp files

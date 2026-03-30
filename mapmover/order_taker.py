@@ -731,13 +731,19 @@ def validate_order_item(item: dict) -> dict:
     year = item.get("year")
 
     if not source_id:
-        # pack_id items have no source_id yet -- executor resolves pack_id -> source_id later
         if item.get("pack_id"):
-            item["_valid"] = True
+            source_id = _resolve_source_for_validation(item)
+            if source_id:
+                item["source_id"] = source_id
+                item["_resolved_from_pack"] = True
+            else:
+                item["_valid"] = False
+                item["_error"] = f"Unable to resolve pack_id '{item.get('pack_id')}' to a source"
+                return item
+        if not source_id:
+            item["_valid"] = False
+            item["_error"] = "Missing source_id"
             return item
-        item["_valid"] = False
-        item["_error"] = "Missing source_id"
-        return item
 
     # Load source metadata
     metadata = load_source_metadata(source_id)
@@ -757,37 +763,13 @@ def validate_order_item(item: dict) -> dict:
         item["_valid"] = True
         return item
     if metric and metric not in metrics:
-        # Try case-insensitive exact match on key first
-        metric_lower = metric.lower()
-        exact_match = None
-        for k in metrics.keys():
-            if k.lower() == metric_lower:
-                exact_match = k
-                break
-
-        # If no key match, try matching by display name (handles LLM outputs like "Proportion of urban population...")
-        if not exact_match:
-            for k, v in metrics.items():
-                if isinstance(v, dict):
-                    name = v.get("name", "")
-                    if name and name.lower() == metric_lower:
-                        exact_match = k
-                        break
-
-        if exact_match:
+        resolved_metric, close_matches = _resolve_metric_for_validation(metric, metrics)
+        if resolved_metric:
             # Auto-correct to the actual metric key
-            item["metric"] = exact_match
-            metric = exact_match
+            item["metric"] = resolved_metric
+            metric = resolved_metric
         else:
             # No exact match - suggest close matches by key or display name
-            close_matches = []
-            for k, v in metrics.items():
-                name = v.get("name", "") if isinstance(v, dict) else ""
-                if metric_lower in k.lower() or k.lower() in metric_lower:
-                    close_matches.append(k)
-                elif name and (metric_lower in name.lower() or name.lower() in metric_lower):
-                    close_matches.append(k)
-            close_matches = list(dict.fromkeys(close_matches))  # Remove duplicates
             if close_matches:
                 item["_valid"] = False
                 item["_error"] = f"Column '{metric}' not found. Did you mean: {', '.join(close_matches[:3])}?"
@@ -826,6 +808,17 @@ def validate_order_item(item: dict) -> dict:
             return item
 
     # Validate optional aggregation fields against canonical policy.
+    temporal = metadata.get("temporal_coverage", {})
+    frequency = str(temporal.get("frequency", "")).lower()
+    requested_granularity = str(item.get("time_granularity") or "").strip().lower()
+    if frequency in {"annual", "yearly"} and requested_granularity in {"daily", "weekly", "monthly", "annual"}:
+        item["_normalized_time_granularity"] = {
+            "from": item.get("time_granularity"),
+            "to": "yearly",
+            "reason": f"source_frequency={frequency}",
+        }
+        item["time_granularity"] = "yearly"
+
     metric_info = metrics.get(metric, {}) if metric else {}
     policy_ok, policy_error, policy_trace = validate_aggregation_policy(
         item,
@@ -850,6 +843,108 @@ def validate_order_item(item: dict) -> dict:
 
     item["_valid"] = True
     return item
+
+
+def _scope_matches_region_for_validation(scope: str, region) -> bool:
+    """Mirror pack routing logic so validation can resolve pack_id -> source_id early."""
+    if not region:
+        return scope == "global"
+    r = str(region).lower()
+    if scope == "CAN":
+        return r.startswith("can") or r.startswith("canada")
+    if scope == "USA":
+        return r.startswith("usa") or r.startswith("us-")
+    if scope == "global":
+        return True
+    return r.startswith(str(scope).lower())
+
+
+def _resolve_source_for_validation(item: dict) -> str | None:
+    """Resolve pack_id to a concrete source_id during validation."""
+    pack_id = item.get("pack_id")
+    if not pack_id:
+        return item.get("source_id")
+
+    catalog = load_catalog() or {}
+    sources = catalog.get("sources", [])
+    pack_sources = [src for src in sources if src.get("pack_id") == pack_id]
+    if not pack_sources:
+        return item.get("source_id")
+
+    region = item.get("region")
+    exact_matches = [
+        src for src in pack_sources
+        if src.get("scope") != "global" and _scope_matches_region_for_validation(src.get("scope", "global"), region)
+    ]
+    if exact_matches:
+        return exact_matches[0].get("source_id")
+
+    global_matches = [src for src in pack_sources if src.get("scope") == "global"]
+    if global_matches:
+        return global_matches[0].get("source_id")
+
+    return pack_sources[0].get("source_id")
+
+
+def _resolve_metric_for_validation(metric: str, metrics: dict) -> tuple[str | None, list[str]]:
+    """Resolve metric keys using source metadata names and keywords before failing validation."""
+    metric_lower = str(metric or "").strip().lower()
+    if not metric_lower or not isinstance(metrics, dict):
+        return None, []
+
+    exact_match = None
+    close_matches = []
+    best_keyword_match = None
+    best_keyword_score = 0
+    metric_words = set(metric_lower.replace("_", " ").replace("-", " ").split())
+
+    for key, value in metrics.items():
+        key_lower = str(key).lower()
+        if key_lower == metric_lower:
+            return key, []
+
+        phrases = [key_lower]
+        if isinstance(value, dict):
+            name = str(value.get("name") or "").strip().lower()
+            if name:
+                phrases.append(name)
+            keywords = value.get("keywords") or []
+            if isinstance(keywords, list):
+                phrases.extend(str(keyword).strip().lower() for keyword in keywords if keyword)
+        elif value:
+            phrases.append(str(value).strip().lower())
+
+        for phrase in phrases:
+            if not phrase:
+                continue
+            if phrase == metric_lower:
+                exact_match = key
+                break
+            if metric_lower in phrase or phrase in metric_lower:
+                close_matches.append(key)
+                phrase_words = set(phrase.replace("_", " ").replace("-", " ").split())
+                score = len(metric_words & phrase_words) + 2
+                if score > best_keyword_score:
+                    best_keyword_match = key
+                    best_keyword_score = score
+            else:
+                phrase_words = set(phrase.replace("_", " ").replace("-", " ").split())
+                score = len(metric_words & phrase_words)
+                if score > best_keyword_score:
+                    best_keyword_match = key
+                    best_keyword_score = score
+
+        if exact_match:
+            break
+
+    if exact_match:
+        return exact_match, []
+
+    deduped = list(dict.fromkeys(close_matches))
+    if best_keyword_match and best_keyword_score > 0:
+        return best_keyword_match, deduped
+
+    return None, deduped
 
 
 def validate_order(order: dict) -> dict:

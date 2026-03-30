@@ -23,15 +23,13 @@ TEMPLATES_ROOT = APP_ROOT / "templates"
 MAP_CONFIG_PATH = APP_ROOT / "config.json"
 
 
+def _default_workspace_app_data_root() -> Path:
+    """Workspace-local writable runtime root for local development."""
+    return APP_ROOT.parent / "appdata" / APP_NAME
+
+
 def _default_local_app_data_root() -> Path:
-    if os.name == "nt":
-        base = os.environ.get("LOCALAPPDATA")
-        if base:
-            return Path(base) / APP_NAME
-    xdg = os.environ.get("XDG_DATA_HOME", "").strip()
-    if xdg:
-        return Path(xdg) / APP_NAME
-    return Path.home() / ".local" / "share" / APP_NAME
+    return _default_workspace_app_data_root()
 
 
 def _default_local_state_root() -> Path:
@@ -44,14 +42,7 @@ def _default_local_state_root() -> Path:
 
 
 def _default_local_cache_root() -> Path:
-    if os.name == "nt":
-        base = os.environ.get("LOCALAPPDATA")
-        if base:
-            return Path(base) / APP_NAME / "cache"
-    xdg = os.environ.get("XDG_CACHE_HOME", "").strip()
-    if xdg:
-        return Path(xdg) / APP_NAME
-    return Path.home() / ".cache" / APP_NAME
+    return _default_workspace_app_data_root() / "cache"
 
 
 def _default_cloud_root() -> Path:
@@ -80,6 +71,7 @@ def _build_defaults() -> dict:
     local_app_data_root = _default_local_app_data_root()
     local_state_root = _default_local_state_root()
     local_cache_root = _default_local_cache_root()
+    local_data_root = APP_ROOT.parent / "county-map-data"
     cloud_root = _default_cloud_root()
     runtime_config_path = local_app_data_root / "config" / "runtime.json"
 
@@ -97,7 +89,7 @@ def _build_defaults() -> dict:
             "state_dir": str(local_state_root / "state"),
             "cache_dir": str(local_cache_root),
             "log_dir": str(local_state_root / "logs"),
-            "data_root": str(local_app_data_root / "data"),
+            "data_root": str(local_data_root),
             "packs_root": str(local_app_data_root / "packs"),
             "runtime_config_path": str(runtime_config_path),
         },
@@ -117,7 +109,7 @@ def _build_defaults() -> dict:
                     "state_dir": str(local_state_root / "state"),
                     "cache_dir": str(local_cache_root),
                     "log_dir": str(local_state_root / "logs"),
-                    "data_root": str(local_app_data_root / "data"),
+                    "data_root": str(local_data_root),
                     "packs_root": str(local_app_data_root / "packs"),
                 },
             },
