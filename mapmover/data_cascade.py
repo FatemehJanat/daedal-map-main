@@ -67,7 +67,7 @@ def get_parent_id(loc_id: str) -> Optional[str]:
     Get parent_id for a location.
 
     Examples:
-        USA-CA-06037 -> USA-CA
+        USA-CA-037 -> USA-CA
         USA-CA -> USA
         USA -> None (countries have no parent)
     """
@@ -98,7 +98,7 @@ def get_ancestors(loc_id: str) -> List[str]:
     Get all ancestors of a location (parent, grandparent, etc).
 
     Example:
-        USA-CA-06037 -> ['USA-CA', 'USA']
+        USA-CA-037 -> ['USA-CA', 'USA']
     """
     ancestors = []
     current = loc_id
@@ -119,7 +119,7 @@ def get_children(loc_id: str) -> List[str]:
 
     Example:
         USA -> ['USA-AL', 'USA-AK', 'USA-AZ', ...]
-        USA-CA -> ['USA-CA-06001', 'USA-CA-06003', ...]
+        USA-CA -> ['USA-CA-001', 'USA-CA-003', ...]
     """
     # Extract country code
     parts = loc_id.split('-')
@@ -330,7 +330,7 @@ class DataCascade:
 
     Usage:
         cascade = DataCascade(indicator_df)
-        result = cascade.get_value('USA-CA-06037', 'gdp', year=2023)
+        result = cascade.get_value('USA-CA-037', 'gdp', year=2023)
         result = cascade.get_aggregate('EU', 'population', agg_func='sum')
     """
 
@@ -451,13 +451,13 @@ if __name__ == "__main__":
 
     # Test parent lookup
     print("Parent lookups:")
-    for loc_id in ['USA-CA-06037', 'USA-CA', 'USA', 'FRA']:
+    for loc_id in ['USA-CA-037', 'USA-CA', 'USA', 'FRA']:
         parent = get_parent_id(loc_id)
         print(f"  {loc_id} -> {parent}")
 
     # Test ancestors
-    print("\nAncestors of USA-CA-06037:")
-    print(f"  {get_ancestors('USA-CA-06037')}")
+    print("\nAncestors of USA-CA-037:")
+    print(f"  {get_ancestors('USA-CA-037')}")
 
     # Test children
     print("\nChildren of USA (first 5):")

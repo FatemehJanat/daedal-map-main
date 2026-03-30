@@ -48,6 +48,7 @@ _admin_levels_cache = None
 
 # Cache for small world factbook static country attributes used in popups
 _world_factbook_static_cache = None
+_crosswalk_cache: dict[str, dict | None] = {}
 
 
 def _parquet_accessible(path: Path) -> bool:
@@ -59,6 +60,79 @@ def _parquet_accessible(path: Path) -> bool:
         return bool(cols)
     except Exception:
         return False
+
+
+def _load_crosswalk(iso3: str) -> dict | None:
+    """Load and cache a country crosswalk."""
+    iso3 = (iso3 or "").upper()
+    if not iso3:
+        return None
+    if iso3 in _crosswalk_cache:
+        return _crosswalk_cache[iso3]
+
+    crosswalk_path = COUNTRIES_DIR / iso3 / "crosswalk.json"
+    if not crosswalk_path.exists():
+        _crosswalk_cache[iso3] = None
+        return None
+
+    try:
+        with open(crosswalk_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        _crosswalk_cache[iso3] = data
+        return data
+    except Exception as e:
+        logger.warning(f"Failed to load crosswalk for {iso3}: {e}")
+        _crosswalk_cache[iso3] = None
+        return None
+
+
+def canonicalize_loc_id(loc_id: str) -> str:
+    """Return runtime loc_ids in canonical form. Legacy formats are not normalized here."""
+    return loc_id
+
+
+def translate_loc_id_to_geometry_id(loc_id: str) -> str:
+    """
+    Translate a dataset loc_id into the geometry join id used by runtime geometry rows.
+
+    - admin_1 local ids can map to geoBoundaries G-IDs via `mappings`
+    - admin_2 USA FIPS bridge ids can map via `admin_2_fips`
+    - admin_3+ local ids stay local after canonicalization
+    """
+    canonical = canonicalize_loc_id(loc_id)
+    if not isinstance(canonical, str) or "-" not in canonical:
+        return canonical
+
+    iso3 = canonical.split("-", 1)[0]
+    crosswalk = _load_crosswalk(iso3)
+    local_to_geo, _ = _build_crosswalk_maps(crosswalk)
+    return local_to_geo.get(canonical, canonical)
+
+
+def _build_crosswalk_maps(crosswalk_data: dict | None) -> tuple[dict, dict]:
+    """
+    Build local->geo and geo->preferred-local maps from crosswalk data.
+
+    Includes:
+    - admin_1 `mappings`
+    - admin_2 FIPS bridge `admin_2_fips`
+    """
+    local_to_geo: dict[str, str] = {}
+    geo_to_local: dict[str, str] = {}
+    if not crosswalk_data:
+        return local_to_geo, geo_to_local
+
+    for local_loc_id, geo_loc_id in (crosswalk_data.get("mappings") or {}).items():
+        local_norm = canonicalize_loc_id(local_loc_id)
+        local_to_geo[local_norm] = geo_loc_id
+        geo_to_local.setdefault(geo_loc_id, local_norm)
+
+    for local_loc_id, geo_loc_id in (crosswalk_data.get("admin_2_fips") or {}).items():
+        local_norm = canonicalize_loc_id(local_loc_id)
+        local_to_geo[local_norm] = geo_loc_id
+        geo_to_local.setdefault(geo_loc_id, local_norm)
+
+    return local_to_geo, geo_to_local
 
 
 def get_geometry_path():
@@ -185,15 +259,9 @@ def load_country_parquet(iso3: str, admin_level: int = None):
         parquet_file = country_geom_file
         logger.debug(f"Using country-specific geometry: {country_geom_file}")
     elif crosswalk_file.exists() and _parquet_accessible(global_geom_file):
-        # Load crosswalk for later translation (crosswalk.json is synced locally in S3 mode)
-        try:
-            with open(crosswalk_file, 'r') as f:
-                crosswalk_data = json.load(f)
-            parquet_file = global_geom_file
-            logger.debug(f"Using crosswalk + geoBoundaries geometry: {crosswalk_file}")
-        except Exception as e:
-            logger.warning(f"Error loading crosswalk {crosswalk_file}: {e}")
-            parquet_file = global_geom_file
+        crosswalk_data = _load_crosswalk(iso3)
+        parquet_file = global_geom_file
+        logger.debug(f"Using crosswalk + geoBoundaries geometry: {crosswalk_file}")
     elif _parquet_accessible(global_geom_file):
         parquet_file = global_geom_file
         logger.debug(f"Using global geometry fallback: {global_geom_file}")
@@ -227,9 +295,7 @@ def load_country_parquet(iso3: str, admin_level: int = None):
         # If crosswalk exists, add reverse mapping for lookup
         # This allows data with local loc_ids to find GADM geometry
         if crosswalk_data:
-            mappings = crosswalk_data.get('mappings', {})
-            # Create reverse lookup: GADM loc_id -> local loc_id
-            reverse_map = {v: k for k, v in mappings.items()}
+            _, reverse_map = _build_crosswalk_maps(crosswalk_data)
             # Add local_loc_id column for joining
             df['local_loc_id'] = df['loc_id'].map(reverse_map)
             logger.debug(f"Applied crosswalk: {len(reverse_map)} mappings")
@@ -284,13 +350,8 @@ def load_country_parquet_viewport(iso3: str, admin_level: int, bbox: tuple):
     if _parquet_accessible(country_geom_file):
         parquet_file = country_geom_file
     elif crosswalk_file.exists() and _parquet_accessible(global_geom_file):
-        try:
-            with open(crosswalk_file, 'r') as f:
-                crosswalk_data = json.load(f)
-            parquet_file = global_geom_file
-        except Exception as e:
-            logger.warning(f"Error loading crosswalk {crosswalk_file}: {e}")
-            parquet_file = global_geom_file
+        crosswalk_data = _load_crosswalk(iso3)
+        parquet_file = global_geom_file
     elif _parquet_accessible(global_geom_file):
         parquet_file = global_geom_file
     else:
@@ -345,8 +406,7 @@ def load_country_parquet_viewport(iso3: str, admin_level: int, bbox: tuple):
             df = pd.read_parquet(parquet_file, filters=filters)
 
         if crosswalk_data and not df.empty:
-            mappings = crosswalk_data.get('mappings', {})
-            reverse_map = {v: k for k, v in mappings.items()}
+            _, reverse_map = _build_crosswalk_maps(crosswalk_data)
             df['local_loc_id'] = df['loc_id'].map(reverse_map)
 
         return df
@@ -365,14 +425,8 @@ def _resolve_geometry_source(iso3: str):
         return country_geom_file, None
 
     if crosswalk_file.exists() and _parquet_accessible(global_geom_file):
-        try:
-            with open(crosswalk_file, 'r') as f:
-                crosswalk_data = json.load(f)
-            return global_geom_file, crosswalk_data
-        except Exception as e:
-            logger.warning(f"Error loading crosswalk {crosswalk_file}: {e}")
-            if _parquet_accessible(global_geom_file):
-                return global_geom_file, None
+        crosswalk_data = _load_crosswalk(iso3)
+        return global_geom_file, crosswalk_data
 
     if _parquet_accessible(global_geom_file):
         return global_geom_file, None
@@ -388,7 +442,7 @@ def load_geometry_rows_by_loc_ids(iso3: str, loc_ids: list[str]):
     - no full country parquet load
     - loc_id exact-match pushdown in DuckDB / parquet filters
     """
-    requested_ids = [loc_id for loc_id in loc_ids if loc_id]
+    requested_ids = [canonicalize_loc_id(loc_id) for loc_id in loc_ids if loc_id]
     if not requested_ids:
         return pd.DataFrame()
 
@@ -401,9 +455,8 @@ def load_geometry_rows_by_loc_ids(iso3: str, loc_ids: list[str]):
     reverse_map = None
 
     if crosswalk_data:
-        mappings = crosswalk_data.get("mappings", {})
-        query_ids = [mappings.get(loc_id, loc_id) for loc_id in requested_ids]
-        reverse_map = {v: k for k, v in mappings.items()}
+        local_to_geo, reverse_map = _build_crosswalk_maps(crosswalk_data)
+        query_ids = [local_to_geo.get(loc_id, loc_id) for loc_id in requested_ids]
 
     try:
         df = select_rows(
@@ -921,7 +974,7 @@ def get_location_info(loc_id: str):
     iso3 = parts[0]
     result = {
         "loc_id": loc_id,
-        "admin_level": len(parts) - 1,  # USA=0, USA-CA=1, USA-CA-6037=2
+        "admin_level": len(parts) - 1,  # USA=0, USA-CA=1, USA-CA-037=2
         "memberships": [],
         "dataset_count": 0
     }
@@ -1150,53 +1203,15 @@ def load_subcounty_geometry(iso3: str, admin_level: int, state_abbrev: str = Non
     """
     countries_dir = DATA_ROOT / "countries" / iso3
 
-    # Country-specific level mappings for sub-county geometry
-    #
-    # Navigation layers (contiguous, smooth zoom):
-    #   0: Countries (global.csv)
-    #   1: States (geometry/{ISO3}.parquet admin_level=1)
-    #   2: Counties (geometry/{ISO3}.parquet admin_level=2)
-    #   3+: Sub-county from countries/{ISO3}/geometry/ files OR GADM admin_level=3+
-    #
-    # GADM level 3+ works smoothly for MOST countries (European communes, Asian
-    # hierarchies, etc.) - they have contiguous administrative coverage at all levels.
-    #
-    # FRAGMENTED EXCEPTIONS (GADM level 3 doesn't cover all land):
-    #   - USA: L3 = "incorporated places" (cities/towns) - much land is unincorporated
-    #          Solution: Use Census tracts/blockgroups/blocks instead
-    #   - CAN: L3 = Census subdivisions - varies by province, northern areas sparse
-    #          Solution: May need StatsCan geometry (TODO)
-    #   - RUS: L3 has only 127 regions vs 2,409 at L2 - selective coverage
-    #          Solution: Stay at L2 or find better source (TODO)
-    #
-    # Overlay geometry (non-contiguous, chat-accessible via data_type="geometry"):
-    #   - Cities/places (GADM level 3 for USA)
-    #   - Tribal lands, ZCTAs, watersheds, parks, etc.
-    #
-    level_file_mapping = {
-        "USA": {
-            # USA is fragmented at GADM L3 - use Census geometry instead
-            # Levels 0-2: geometry/USA.parquet (GADM states + counties)
-            # Levels 3-5: countries/USA/geometry/{tract,blockgroup,block}/
-            3: {"type": "tract", "partitioned": True},
-            4: {"type": "blockgroup", "partitioned": True},
-            5: {"type": "block", "partitioned": True}
-        }
-        # CAN: TODO - needs StatsCan dissemination areas for smooth L3+
-        # RUS: TODO - needs better source or stay at L2
-    }
-
-    # Get file mapping for this country/level
-    country_mapping = level_file_mapping.get(iso3, {})
-    level_config = country_mapping.get(admin_level)
+    crosswalk = _load_crosswalk(iso3)
+    sub_admin_levels = (crosswalk or {}).get("sub_admin_levels", {})
+    level_config = sub_admin_levels.get(f"admin_{admin_level}")
 
     if not level_config:
-        # No sub-county geometry defined for this country/level
-        # Fall back to checking the main geometry.parquet
         return None
 
-    geom_type = level_config["type"]
-    is_partitioned = level_config["partitioned"]
+    geom_type = level_config.get("folder") or level_config.get("name")
+    is_partitioned = bool(state_abbrev or iso3 == "USA")
 
     if not is_partitioned:
         # National file
@@ -1473,14 +1488,12 @@ def _get_crosswalk_reverse(iso3: str) -> dict:
     if iso3 in _crosswalk_reverse_cache:
         return _crosswalk_reverse_cache[iso3]
 
-    crosswalk_path = COUNTRIES_DIR / iso3 / "crosswalk.json"
-    if not crosswalk_path.exists():
+    cw = _load_crosswalk(iso3)
+    if not cw:
         _crosswalk_reverse_cache[iso3] = {}
         return {}
 
     try:
-        with open(crosswalk_path, encoding="utf-8") as f:
-            cw = json.load(f)
         mappings = cw.get("mappings", {})
         # mappings: "USA-NY" -> "USA-G109436"
         # reverse:  "USA-G109436" -> "NY"

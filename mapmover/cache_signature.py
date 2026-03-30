@@ -12,7 +12,7 @@ The loc_id system is the canonical identifier:
 Examples:
     USA         - United States (country)
     USA-CA      - California (admin1)
-    USA-CA-6037 - Los Angeles County (admin2)
+    USA-CA-037  - Los Angeles County (admin2)
 
 Usage:
     # Create signature from data

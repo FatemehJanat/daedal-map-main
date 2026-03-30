@@ -503,7 +503,7 @@ class NameStandardizer:
         Examples:
             get_loc_id_from_name('California', 'USA') -> 'USA-CA'
             get_loc_id_from_name('United States') -> 'USA'
-            get_loc_id_from_name('Los Angeles', 'USA', admin_level=2) -> 'USA-CA-6037'
+            get_loc_id_from_name('Los Angeles', 'USA', admin_level=2) -> 'USA-CA-037'
         """
         self._load_data()
 
@@ -585,8 +585,8 @@ class NameStandardizer:
 
         Examples:
             get_loc_id_from_fips('06') -> 'USA-CA'
-            get_loc_id_from_fips('06', '037') -> 'USA-CA-6037'
-            get_loc_id_from_fips('06', '06037') -> 'USA-CA-6037'
+            get_loc_id_from_fips('06', '037') -> 'USA-CA-037'
+            get_loc_id_from_fips('06', '06037') -> 'USA-CA-037'
         """
         # State FIPS to abbreviation mapping
         state_fips_to_abbrev = {
@@ -617,15 +617,13 @@ class NameStandardizer:
         # Normalize county FIPS (can be 3-digit or 5-digit)
         county_fips = str(county_fips)
         if len(county_fips) == 5:
-            # Full FIPS like '06037' - use as is but remove leading zeros
-            full_fips = int(county_fips)
+            county_code = county_fips[-3:]
         elif len(county_fips) == 3:
-            # County-only like '037' - combine with state
-            full_fips = int(state_fips + county_fips)
+            county_code = county_fips
         else:
-            full_fips = int(county_fips)
+            county_code = county_fips[-3:]
 
-        return f"USA-{abbrev}-{full_fips}"
+        return f"USA-{abbrev}-{county_code.zfill(3)}"
 
     def get_loc_id_from_iso(self, iso_code: str) -> Optional[str]:
         """

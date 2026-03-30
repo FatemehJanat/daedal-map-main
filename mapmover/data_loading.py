@@ -405,7 +405,7 @@ def fetch_geometries_by_loc_ids(loc_ids: list) -> dict:
     Used for "show borders" functionality.
 
     Args:
-        loc_ids: List of location IDs (e.g., ["USA-WA-53073", "USA-OR-41067"])
+        loc_ids: List of location IDs (e.g., ["USA-WA-073", "USA-OR-067"])
 
     Returns:
         GeoJSON FeatureCollection with geometries
@@ -416,9 +416,12 @@ def fetch_geometries_by_loc_ids(loc_ids: list) -> dict:
     if not loc_ids:
         return {"type": "FeatureCollection", "features": []}
 
+    from .geometry_handlers import canonicalize_loc_id, translate_loc_id_to_geometry_id
+
     # Group loc_ids by country (first part before dash, or whole ID for country-level)
     country_loc_ids = {}
     for loc_id in loc_ids:
+        loc_id = canonicalize_loc_id(loc_id)
         parts = loc_id.split("-")
         country = parts[0] if parts else loc_id
         if country not in country_loc_ids:
@@ -474,8 +477,10 @@ def fetch_geometries_by_loc_ids(loc_ids: list) -> dict:
         remaining_lids = set(lids)
         requested_ids = set(remaining_lids)
         if uses_crosswalk and crosswalk:
-            mappings = crosswalk.get("mappings", {})
-            requested_ids.update(mappings.get(loc_id) for loc_id in remaining_lids if mappings.get(loc_id))
+            requested_ids.update(
+                translate_loc_id_to_geometry_id(loc_id)
+                for loc_id in list(remaining_lids)
+            )
 
         gdf = select_rows(
             parquet_path,
@@ -486,8 +491,10 @@ def fetch_geometries_by_loc_ids(loc_ids: list) -> dict:
             # Fall back to the old whole-file load path if the selective read fails.
             gdf, crosswalk = load_geometry_for_country(country)
         elif uses_crosswalk and crosswalk:
-            mappings = crosswalk.get("mappings", {})
-            reverse_map = {v: k for k, v in mappings.items()}
+            reverse_map = {}
+            for source_map in (crosswalk.get("mappings", {}), crosswalk.get("admin_2_fips", {})):
+                for local_loc_id, geo_loc_id in source_map.items():
+                    reverse_map.setdefault(geo_loc_id, canonicalize_loc_id(local_loc_id))
             gdf["local_loc_id"] = gdf["loc_id"].map(reverse_map)
 
         if gdf is None or len(gdf) == 0:

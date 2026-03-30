@@ -25,6 +25,7 @@ import pandas as pd
 from pathlib import Path
 from . import GLOBAL_DIR
 from .duckdb_helpers import parquet_available, select_distinct_event_loc_ids
+from .geometry_handlers import translate_loc_id_to_geometry_id
 
 # Metadata cache
 _DISASTER_METADATA = None
@@ -97,7 +98,7 @@ def apply_location_filters(
                        Used to find the correct event_areas table
         loc_prefix: Filter by event location prefix (e.g., "USA", "USA-CA")
                     Filters events where loc_id starts with this prefix
-        affected_loc_id: Filter by affected area (e.g., "USA-CA-6037")
+        affected_loc_id: Filter by affected area (e.g., "USA-CA-037" or county G-ID)
                          Uses event_areas table to find events that affected this location
         event_id_col: Name of the event ID column in df (default: 'event_id')
         loc_id_col: Name of the location ID column in df (default: 'loc_id')
@@ -117,12 +118,12 @@ def apply_location_filters(
         areas_path = GLOBAL_DIR / "disasters/event_areas" / f"{disaster_type}.parquet"
         if parquet_available(areas_path):
             try:
-                affected_events = select_distinct_event_loc_ids(areas_path, affected_loc_id)
+                affected_loc_id = translate_loc_id_to_geometry_id(affected_loc_id)
+                affected_events = set(select_distinct_event_loc_ids(areas_path, affected_loc_id))
                 if not affected_events and areas_path.exists():
                     areas_df = pd.read_parquet(areas_path)
-                    affected_events = areas_df[
-                        areas_df['affected_loc_id'].str.startswith(affected_loc_id, na=False)
-                    ]['event_loc_id'].unique()
+                    mask = areas_df['affected_loc_id'].str.startswith(affected_loc_id, na=False)
+                    affected_events = set(areas_df[mask]['event_loc_id'].unique())
                 df = df[df[event_id_col].isin(affected_events)]
             except Exception:
                 # If event_areas fails, return unfiltered (graceful degradation)
@@ -150,12 +151,12 @@ def get_affected_event_ids(
         return set()
 
     try:
-        affected = select_distinct_event_loc_ids(areas_path, affected_loc_id)
+        affected_loc_id = translate_loc_id_to_geometry_id(affected_loc_id)
+        affected = set(select_distinct_event_loc_ids(areas_path, affected_loc_id))
         if not affected and areas_path.exists():
             areas_df = pd.read_parquet(areas_path)
-            affected = areas_df[
-                areas_df['affected_loc_id'].str.startswith(affected_loc_id, na=False)
-            ]['event_loc_id'].unique()
+            mask = areas_df['affected_loc_id'].str.startswith(affected_loc_id, na=False)
+            affected = areas_df[mask]['event_loc_id'].unique()
         return set(affected)
     except Exception:
         return set()
@@ -171,7 +172,7 @@ def get_events_for_location(
 
     Args:
         disaster_type: Type of disaster
-        loc_id: Location ID (e.g., "USA-CA" or "USA-CA-6037")
+        loc_id: Location ID (e.g., "USA-CA" or "USA-CA-037")
         include_children: If True, includes events affecting child regions
 
     Returns:
@@ -182,12 +183,13 @@ def get_events_for_location(
         return {"count": 0, "event_ids": []}
 
     try:
-        affected_events = select_distinct_event_loc_ids(
+        loc_id = translate_loc_id_to_geometry_id(loc_id)
+        affected_events = set(select_distinct_event_loc_ids(
             areas_path,
             loc_id,
             exact=not include_children,
             limit=100,
-        )
+        ))
         if not affected_events and areas_path.exists():
             areas_df = pd.read_parquet(areas_path)
             if include_children:

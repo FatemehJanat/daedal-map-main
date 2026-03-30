@@ -47,7 +47,7 @@ Examples:
 |-------|---------|---------|
 | Country | `USA` | United States |
 | State / province | `USA-CA` | California |
-| County / district | `USA-CA-6037` | Los Angeles County |
+| County / district | `USA-CA-037` | Los Angeles County |
 | Canada province | `CAN-BC` | British Columbia |
 | Europe region | `DEU-DE11` | NUTS region |
 
@@ -79,7 +79,7 @@ Typical shape:
 |--------|------|----------|----------|
 | USA | 2020 | ... | ... |
 | USA-CA | 2020 | ... | ... |
-| USA-CA-6037 | 2020 | ... | ... |
+| USA-CA-037 | 2020 | ... | ... |
 
 Required columns:
 - `loc_id`
