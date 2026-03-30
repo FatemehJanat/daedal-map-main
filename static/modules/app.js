@@ -754,14 +754,20 @@ export const App = {
       // Fit map to the data, then apply initial admin level filter
       MapAdapter.fitToBounds(data.geojson);
 
+      const explicitLevelMatch = String(data.geographic_level || '').match(/^admin_(\d+)$/);
+      const loadedAdminLevel = explicitLevelMatch ? parseInt(explicitLevelMatch[1], 10) : null;
+
       // Set initial admin level filter based on viewport after fit completes
       // Use setTimeout to let fitToBounds animation complete
       setTimeout(() => {
         const bounds = MapAdapter.map?.getBounds();
         if (bounds) {
-          const level = ViewportLoader.getAdminLevelForViewport(bounds);
-          ViewportLoader.currentAdminLevel = level;
-          TimeSlider.setAdminLevelFilter(level);
+          const viewportLevel = ViewportLoader.getAdminLevelForViewport(bounds);
+          const displayLevel = loadedAdminLevel !== null && viewportLevel > loadedAdminLevel
+            ? loadedAdminLevel
+            : viewportLevel;
+          ViewportLoader.currentAdminLevel = displayLevel;
+          TimeSlider.setAdminLevelFilter(displayLevel);
         }
       }, 100);
 

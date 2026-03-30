@@ -172,10 +172,56 @@ def _load_pack_source_docs(pack_sources: list[dict]) -> list[dict]:
     return docs
 
 
+def _load_pack_reference(pack_id: str) -> dict:
+    from mapmover.paths import DATA_ROOT
+
+    pack_id = str(pack_id or "").strip()
+    if not pack_id:
+        return {}
+    path = DATA_ROOT / "packs" / pack_id / "reference.json"
+    try:
+        if path.exists():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+    except Exception:
+        pass
+    return {}
+
+
 def _pack_display_meta(primary: dict, primary_doc: dict | None) -> dict:
     """Return display-oriented pack title/description from metadata/reference source files."""
+    pack_id = str(primary.get("pack_id") or primary.get("source_id") or "").strip()
     metadata = (primary_doc or {}).get("metadata", {}) or {}
     ref_source = ((primary_doc or {}).get("reference", {}) or {}).get("source", {}) or {}
+    pack_ref = _load_pack_reference(pack_id)
+    if pack_ref:
+        return {
+            "source_name": _best_source_text(
+                pack_ref.get("source_name"),
+                ref_source.get("source_name"),
+                metadata.get("source_name"),
+                primary.get("source_name"),
+            ),
+            "description": _best_source_text(
+                pack_ref.get("description"),
+                ref_source.get("description"),
+                metadata.get("description"),
+                primary.get("description"),
+            ),
+            "source_url": _best_source_text(
+                pack_ref.get("source_url"),
+                ref_source.get("source_url"),
+                metadata.get("source_url"),
+                primary.get("source_url"),
+            ),
+            "license": _best_source_text(
+                pack_ref.get("license"),
+                ref_source.get("license"),
+                metadata.get("license"),
+                primary.get("license"),
+            ),
+        }
     return {
         "source_name": _best_source_text(
             ref_source.get("source_name"),
