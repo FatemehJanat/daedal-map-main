@@ -174,10 +174,20 @@ def _load_pack_source_docs(pack_sources: list[dict]) -> list[dict]:
 
 def _load_pack_reference(pack_id: str) -> dict:
     from mapmover.paths import DATA_ROOT
+    from mapmover.runtime_config import get_runtime_config
+    from mapmover.data_loading import _fetch_json_from_s3
 
     pack_id = str(pack_id or "").strip()
     if not pack_id:
         return {}
+    runtime_mode = str(get_runtime_config().get("runtime_mode", "local")).strip().lower()
+    if runtime_mode == "cloud":
+        try:
+            data = _fetch_json_from_s3(f"packs/{pack_id}/reference.json")
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
     path = DATA_ROOT / "packs" / pack_id / "reference.json"
     try:
         if path.exists():
