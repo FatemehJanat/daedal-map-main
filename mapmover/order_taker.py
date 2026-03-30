@@ -463,6 +463,9 @@ INTERACTION POLICY:
 - If a source has interaction_mode="chat_first", prefer conversational/reference response unless user explicitly asks to map/query metrics.
 - If a source has interaction_mode="hybrid", use judgment between chat and order.
 - For source-backed analytical questions, prefer returning type="order" over type="chat".
+- For published geographic packs, "show me/map/display [place] [topic]" should default to a real order, not a catalog-status explanation.
+- If the user names a published geographic pack/topic but not an exact metric, choose the best-fit metric from the source's keywords/names and use the latest available year unless the user asked for a specific year or comparison.
+- Do not say you cannot retrieve metrics for a published pack just because the user asked broadly. Either return an order or ask one tight clarification about metric/time if genuinely needed.
 - chat_first sources: {chat_first_text}
 - hybrid sources: {hybrid_text}
 

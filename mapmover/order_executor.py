@@ -712,7 +712,24 @@ def load_source_data(source_id: str, *, year: int | None = None, loc_id_prefix: 
                 break
         # Fall back to standard names if no files section
         if parquet_path is None:
-            for name in ["all_countries.parquet", "USA.parquet"]:
+            fallback_names = []
+            coverage = metadata.get("geographic_coverage", {}) or {}
+            country_code = str(coverage.get("country", "")).strip().upper()
+            if country_code:
+                fallback_names.append(f"{country_code}.parquet")
+            source_parts = source_dir.parts
+            if "countries" in source_parts:
+                try:
+                    countries_idx = source_parts.index("countries")
+                    inferred_country = source_parts[countries_idx + 1].upper()
+                    candidate = f"{inferred_country}.parquet"
+                    if candidate not in fallback_names:
+                        fallback_names.append(candidate)
+                except Exception:
+                    pass
+            fallback_names.extend(["all_countries.parquet", "GLOBAL.parquet"])
+
+            for name in fallback_names:
                 parquet_path = source_dir / name
                 break
         if parquet_path is None:

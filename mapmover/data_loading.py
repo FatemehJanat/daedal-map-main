@@ -157,7 +157,7 @@ def get_source_path(source_id: str):
     Returns:
         Path: Full path to source folder, or None if not found
     """
-    catalog = load_catalog()
+    catalog = load_full_catalog()
     for source in catalog.get("sources", []):
         if source.get("source_id") == source_id:
             # Use path field if present, otherwise fall back to old structure
@@ -184,7 +184,7 @@ def load_source_metadata(source_id: str):
     runtime_mode = str(get_runtime_config().get("runtime_mode", "local")).strip().lower()
 
     if runtime_mode == "cloud":
-        catalog = load_catalog()
+        catalog = load_full_catalog()
         source_rel_path = None
         for source in catalog.get("sources", []):
             if source.get("source_id") == source_id:
@@ -231,7 +231,7 @@ def load_source_reference(source_id: str):
     runtime_mode = str(get_runtime_config().get("runtime_mode", "local")).strip().lower()
 
     if runtime_mode == "cloud":
-        catalog = load_catalog()
+        catalog = load_full_catalog()
         source_rel_path = None
         for source in catalog.get("sources", []):
             if source.get("source_id") == source_id:
