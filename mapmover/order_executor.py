@@ -39,8 +39,11 @@ def _executor_log(trace_id: str, stage: str, started_at: float, extra: str = "")
     return now
 
 from .geometry_handlers import (
+    canonicalize_loc_id,
     load_global_countries,
     load_country_parquet,
+    load_geometry_rows_by_loc_ids,
+    translate_loc_id_to_geometry_id,
     df_to_geojson,
 )
 
@@ -107,6 +110,66 @@ def _normalize_year_filters(item: dict) -> tuple[Optional[int], Optional[int], O
         item["year_end"] = year_end
 
     return year, year_start, year_end
+
+
+def _normalize_sort_spec(sort_spec):
+    """Coerce LLM-generated sort payloads into a consistent dict shape."""
+    if not sort_spec:
+        return None
+    if isinstance(sort_spec, dict):
+        by_value = sort_spec.get("by")
+        if not by_value:
+            return None
+        normalized = dict(sort_spec)
+        normalized["by"] = str(by_value)
+        normalized["order"] = str(sort_spec.get("order", "desc")).lower()
+        return normalized
+    if isinstance(sort_spec, str):
+        return {"by": sort_spec, "order": "desc"}
+    if isinstance(sort_spec, list):
+        for candidate in sort_spec:
+            normalized = _normalize_sort_spec(candidate)
+            if normalized:
+                return normalized
+    return None
+
+
+def _normalize_geo_level(value) -> Optional[str]:
+    """Normalize requested geo_level values from the order."""
+    if not value:
+        return None
+    text = str(value).strip().lower().replace("-", "_").replace(" ", "_")
+    if text in {"country", "admin_0"}:
+        return "admin_0"
+    if text.startswith("admin_") and text[6:].isdigit():
+        return text
+    return None
+
+
+def _derive_eurostat_geo_level(loc_id: str) -> Optional[str]:
+    """
+    Infer NUTS admin level from Eurostat loc_id shape.
+
+    Examples:
+    - FRA -> admin_0
+    - FRA-FR1 -> admin_1
+    - FRA-FR10 -> admin_2
+    - FRA-FR101 -> admin_3
+    """
+    if not loc_id:
+        return None
+    text = str(loc_id).strip()
+    if "-" not in text:
+        return "admin_0" if len(text) == 3 else None
+    suffix = text.split("-", 1)[1]
+    code_len = len(suffix)
+    if code_len == 3:
+        return "admin_1"
+    if code_len == 4:
+        return "admin_2"
+    if code_len == 5:
+        return "admin_3"
+    return None
 
 
 def _load_catalog() -> dict:
@@ -384,7 +447,7 @@ def _load_geometry_from_source(source_info: dict, filter_regions: set = None) ->
             df = pd.read_parquet(parquet_path, columns=columns)
 
         # Filter by parent region if specified (e.g., filter_region = "USA-FL" for Florida ZIPs)
-        # parent_id is at county level (USA-FL-12001), so use prefix matching
+        # parent_id is at county bridge level (USA-FL-001), so use prefix matching
         # Use vectorized str.startswith with tuple for efficiency (same pattern as metrics pipeline)
         if filter_regions and "parent_id" in df.columns:
             # Build prefix tuple with trailing dash for hierarchy matching
@@ -454,13 +517,13 @@ def execute_geometry_overlay(geometry_overlay: dict, filter_loc_ids: list = None
         logger.info(f"Loaded {len(df)} features from {parquet_path}")
 
         # Filter by region if specified
-        # For ZCTA, parent_id contains the county loc_id (e.g., USA-CA-6037)
+        # For ZCTA, parent_id contains the county loc_id (e.g., USA-CA-037)
         # To filter by state, we check if parent_id starts with the state prefix
         if filter_loc_ids and len(filter_loc_ids) > 0 and "parent_id" in df.columns:
             filter_conditions = []
             for loc_id in filter_loc_ids:
                 # Match parent_id that starts with the filter loc_id
-                # e.g., filter_loc_id="USA-CA" matches parent_id="USA-CA-6037"
+                # e.g., filter_loc_id="USA-CA" matches parent_id="USA-CA-037"
                 filter_conditions.append(df["parent_id"].str.startswith(loc_id + "-", na=False))
                 # Also match exact parent_id
                 filter_conditions.append(df["parent_id"] == loc_id)
@@ -536,7 +599,7 @@ def execute_geometry_order(order: dict) -> dict:
             overlay_type = item_overlay_type
 
         # Build filter_loc_ids from region
-        # Region can be "USA-CA" for California or "USA-CA-6037" for a county
+        # Region can be "USA-CA" for California or "USA-CA-037" for a county
         filter_loc_ids = [region] if region else None
 
         logger.info(f"Executing geometry order: source={source_id}, region={region}, overlay_type={item_overlay_type}")
@@ -893,7 +956,7 @@ def expand_region(region: str) -> set:
     if not region or region.lower() in ("global", "all", "world"):
         return set()
 
-    # If it's already a loc_id format (e.g., USA-FL, USA-CA-6037), return as-is
+    # If it's already a loc_id format (e.g., USA-FL, USA-CA-037), return as-is
     if "-" in region and region.split("-")[0].isupper() and len(region.split("-")[0]) == 3:
         return {region}
 
@@ -935,7 +998,7 @@ def expand_region(region: str) -> set:
     return set()
 
 
-def find_metric_column(df: pd.DataFrame, metric: str) -> Optional[str]:
+def find_metric_column(df: pd.DataFrame, metric: str, metadata: Optional[dict] = None) -> Optional[str]:
     """
     Find matching column name for a metric (fuzzy match).
 
@@ -967,6 +1030,46 @@ def find_metric_column(df: pd.DataFrame, metric: str) -> Optional[str]:
                         best_match = col
                         best_score = score
         return best_match
+
+    def _find_metadata_metric_match() -> Optional[str]:
+        metrics_meta = (metadata or {}).get("metrics") or {}
+        if not isinstance(metrics_meta, dict):
+            return None
+
+        best_match = None
+        best_score = 0
+
+        for col, metric_meta in metrics_meta.items():
+            if col not in df.columns:
+                continue
+
+            phrases = [col]
+            if isinstance(metric_meta, dict):
+                metric_name = metric_meta.get("name")
+                if metric_name:
+                    phrases.append(metric_name)
+                metric_keywords = metric_meta.get("keywords") or []
+                if isinstance(metric_keywords, list):
+                    phrases.extend(str(keyword) for keyword in metric_keywords if keyword)
+            elif metric_meta:
+                phrases.append(str(metric_meta))
+
+            for phrase in phrases:
+                phrase_norm = _norm(phrase)
+                if not phrase_norm:
+                    continue
+                if phrase_norm == metric_lower or metric_lower == phrase_norm:
+                    return col
+                if metric_lower in phrase_norm or phrase_norm in metric_lower:
+                    score = len(set(phrase_norm.split()) & metric_words) + 2
+                else:
+                    phrase_words = set(phrase_norm.split())
+                    score = len(metric_words & phrase_words)
+                if score > best_score:
+                    best_match = col
+                    best_score = score
+
+        return best_match if best_score > 0 else None
 
     metric_lower = _norm(metric)
     metric_words = set(metric_lower.split())
@@ -1017,6 +1120,10 @@ def find_metric_column(df: pd.DataFrame, metric: str) -> Optional[str]:
         "coastline length": [{"coastline"}, {"coast", "length"}],
         "coastline": [{"coastline"}],
     }
+
+    metadata_match = _find_metadata_metric_match()
+    if metadata_match:
+        return metadata_match
 
     alias_match = _find_alias_match(alias_candidates.get(metric_lower, []))
     if alias_match:
@@ -1203,33 +1310,40 @@ def apply_derived_fields(boxes: dict, derived_specs: list, year: int = None) -> 
     """
     warnings = []
 
+    def _resolve_metric_value(metrics: dict, candidates) -> tuple[object, str | None]:
+        candidate_list = [c for c in (candidates or []) if c]
+        if not candidate_list:
+            return None, None
+
+        for candidate in candidate_list:
+            if candidate in metrics:
+                return metrics[candidate], candidate
+
+        lowered = {str(key).lower(): key for key in metrics.keys()}
+        for candidate in candidate_list:
+            matched_key = lowered.get(str(candidate).lower())
+            if matched_key is not None:
+                return metrics[matched_key], matched_key
+
+        return None, None
+
     for spec in derived_specs:
         numerator_name = spec.get("numerator")
         denominator_name = spec.get("denominator")
+        numerator_candidates = spec.get("numerator_candidates") or [numerator_name]
+        denominator_candidates = spec.get("denominator_candidates") or [denominator_name]
         label = spec.get("label", f"{numerator_name}/{denominator_name}")
         multiplier = spec.get("multiplier", 1)
 
         for loc_id, metrics in boxes.items():
             # Get numerator value
-            num_val = metrics.get(numerator_name)
-            if num_val is None:
-                # Try with different case/formats
-                for key in metrics.keys():
-                    if key.lower() == numerator_name.lower():
-                        num_val = metrics[key]
-                        break
+            num_val, _ = _resolve_metric_value(metrics, numerator_candidates)
 
             if num_val is None:
                 continue  # Skip silently if numerator not available
 
             # Get denominator value
-            denom_val = metrics.get(denominator_name)
-            if denom_val is None:
-                # Try with different case/formats
-                for key in metrics.keys():
-                    if key.lower() == denominator_name.lower():
-                        denom_val = metrics[key]
-                        break
+            denom_val, resolved_denominator_key = _resolve_metric_value(metrics, denominator_candidates)
 
             # Calculate derived value
             if denom_val is None:
@@ -1237,7 +1351,8 @@ def apply_derived_fields(boxes: dict, derived_specs: list, year: int = None) -> 
                 continue
 
             if denom_val == 0:
-                warnings.append(f"{loc_id}: {denominator_name} is zero")
+                zero_name = resolved_denominator_key or denominator_name
+                warnings.append(f"{loc_id}: {zero_name} is zero")
                 continue
 
             result = (float(num_val) / float(denom_val)) * multiplier
@@ -1965,7 +2080,12 @@ def execute_order(order: dict) -> dict:
                 else:
                     _, metadata = load_source_data(source_id)
                 sources_used[source_id] = metadata
-                geo_levels.add(metadata.get("geographic_level", "country"))
+                gl = metadata.get("geographic_level", "country")
+                if isinstance(gl, list):
+                    for level in gl:
+                        geo_levels.add(level)
+                else:
+                    geo_levels.add(gl)
             except Exception:
                 pass
     _executor_log(trace_id, "source_metadata_collected", t_execute_start, f"sources={len(sources_used)} geo_levels={sorted(geo_levels)}")
@@ -1983,14 +2103,18 @@ def execute_order(order: dict) -> dict:
     requested_year_start = None  # Track requested range for comparison
     requested_year_end = None
     all_region_codes = set()  # Track all requested region codes for GeoJSON
+    requested_geo_levels = set()
 
     # Step 3: Process each order item
     for idx, item in enumerate(items, start=1):
         source_id = item.get("source_id")
         metric = item.get("metric")
         region = item.get("region")
+        requested_geo_level = _normalize_geo_level(item.get("geo_level"))
+        if requested_geo_level:
+            requested_geo_levels.add(requested_geo_level)
         year, year_start, year_end = _normalize_year_filters(item)
-        sort_spec = item.get("sort")
+        sort_spec = _normalize_sort_spec(item.get("sort"))
 
         # Track requested range for comparison with actual data
         if year_start and year_end:
@@ -2019,6 +2143,10 @@ def execute_order(order: dict) -> dict:
             continue
         t_after_load = _executor_log(trace_id, "item_loaded", t_item_start, f"item={idx}/{len(items)} source={source_id} rows={len(df)} cols={len(df.columns)}")
 
+        if source_id == "eurostat" and "geo_level" not in df.columns and "loc_id" in df.columns:
+            df = df.copy()
+            df["geo_level"] = df["loc_id"].map(_derive_eurostat_geo_level)
+
         # Apply shared aggregation contract for FX temporal requests.
         if source_id == "fx_usd_historical":
             fx_df, trace = _load_fx_with_aggregation(source_id, item, metadata)
@@ -2029,7 +2157,7 @@ def execute_order(order: dict) -> dict:
 
         # Find the metric column first (needed for smart year filtering)
         if metric:
-            metric_col = find_metric_column(df, metric)
+            metric_col = find_metric_column(df, metric, metadata=metadata)
         else:
             numeric_cols = df.select_dtypes(include=['float64', 'int64', 'Float64', 'Int64']).columns
             metric_col = numeric_cols[0] if len(numeric_cols) > 0 else None
@@ -2070,26 +2198,30 @@ def execute_order(order: dict) -> dict:
         if region_codes:
             all_region_codes.update(region_codes)  # Track for GeoJSON building
         if region_codes and "loc_id" in df.columns:
+            loc_id_series = df["loc_id"].map(canonicalize_loc_id)
             # Check for US state filtering (loc_ids starting with USA-)
             us_state_prefixes = [c for c in region_codes if c.startswith("USA-")]
             country_codes = [c for c in region_codes if not c.startswith("USA-")]
 
             if us_state_prefixes:
                 # Filter to US locations matching state prefix
-                mask = df["loc_id"].str.startswith(tuple(us_state_prefixes))
+                mask = loc_id_series.str.startswith(tuple(us_state_prefixes), na=False)
                 df = df[mask]
             elif country_codes:
                 # Filter to country-level or sub-national within those countries
-                df["_country_code"] = df["loc_id"].str.split("-").str[0]
+                df["_country_code"] = loc_id_series.str.split("-").str[0]
                 df = df[df["_country_code"].isin(country_codes)]
                 df = df.drop(columns=["_country_code"])
         t_after_region_filter = _executor_log(trace_id, "region_filtered", t_after_time_filter, f"item={idx}/{len(items)} source={source_id} rows={len(df)}")
+
+        if requested_geo_level and "geo_level" in df.columns:
+            df = df[df["geo_level"] == requested_geo_level]
 
         # Apply sort/limit if specified (only for single-year mode)
         if sort_spec and not multi_year_mode:
             sort_col = sort_spec.get("by")
             if sort_col:
-                matched_col = find_metric_column(df, sort_col)
+                matched_col = find_metric_column(df, sort_col, metadata=metadata)
                 if matched_col:
                     ascending = sort_spec.get("order", "desc") == "asc"
                     df = df.sort_values(matched_col, ascending=ascending, na_position='last')
@@ -2107,9 +2239,11 @@ def execute_order(order: dict) -> dict:
             metric_source_map[label] = source_id
 
         for _, row in df.iterrows():
-            loc_id = row.get("loc_id")
+            raw_loc_id = row.get("loc_id")
+            loc_id = canonicalize_loc_id(raw_loc_id)
             if not loc_id:
                 continue
+            geom_loc_id = translate_loc_id_to_geometry_id(loc_id)
 
             val = row.get(metric_col)
             if pd.notna(val):
@@ -2123,16 +2257,21 @@ def execute_order(order: dict) -> dict:
 
                     if row_year not in year_data:
                         year_data[row_year] = {}
-                    if loc_id not in year_data[row_year]:
-                        year_data[row_year][loc_id] = {}
+                    if geom_loc_id not in year_data[row_year]:
+                        year_data[row_year][geom_loc_id] = {}
 
-                    year_data[row_year][loc_id][label] = val
+                    year_data[row_year][geom_loc_id][label] = val
                 else:
                     # Single year: organize by loc_id
-                    if loc_id not in boxes:
-                        boxes[loc_id] = {"year": row.get("year")} if "year" in df.columns else {}
+                    if geom_loc_id not in boxes:
+                        box = {"year": row.get("year")} if "year" in df.columns else {}
+                        if "geo_level" in df.columns:
+                            box["_geo_level"] = row.get("geo_level")
+                        elif requested_geo_level:
+                            box["_geo_level"] = requested_geo_level
+                        boxes[geom_loc_id] = box
 
-                    boxes[loc_id][label] = val
+                    boxes[geom_loc_id][label] = val
         tracked_rows = len(df)
         box_count = len(year_data) if multi_year_mode and year_data is not None else len(boxes or {})
         _executor_log(trace_id, "item_values_applied", t_after_sort, f"item={idx}/{len(items)} source={source_id} metric={label} rows={tracked_rows} box_count={box_count}")
@@ -2155,8 +2294,35 @@ def execute_order(order: dict) -> dict:
 
     # Step 4: Join with geometry
     # Determine geographic level from sources
-    primary_level = "country" if "country" in geo_levels else list(geo_levels)[0] if geo_levels else "country"
+    # If multiple admin_N levels are present (multi-level source), use the lowest (most zoomed out)
+    admin_numbered = sorted(
+        [l for l in geo_levels if isinstance(l, str) and l.startswith("admin_") and l[6:].isdigit()],
+        key=lambda l: int(l[6:])
+    )
+    is_multi_level = any(
+        isinstance(metadata.get("geographic_level"), list)
+        for metadata in sources_used.values()
+    )
+    requested_admin_numbered = sorted(
+        [l for l in requested_geo_levels if isinstance(l, str) and l.startswith("admin_") and l[6:].isdigit()],
+        key=lambda l: int(l[6:])
+    )
+    if requested_admin_numbered:
+        primary_level = requested_admin_numbered[0]
+    elif admin_numbered:
+        primary_level = admin_numbered[0]
+    elif "country" in geo_levels:
+        primary_level = "country"
+    else:
+        primary_level = list(geo_levels)[0] if geo_levels else "country"
     uses_global_country_geometry = primary_level in {"country", "admin_0"}
+
+    # For multi-level sources, filter boxes to only the primary (lowest) level
+    if is_multi_level and boxes:
+        boxes = {
+            loc_id: box for loc_id, box in boxes.items()
+            if box.get("_geo_level") == primary_level or "_geo_level" not in box
+        }
 
     geometry_df = None
 
@@ -2191,20 +2357,46 @@ def execute_order(order: dict) -> dict:
             iso3 = loc_id.split("-")[0] if "-" in loc_id else loc_id
             iso3_codes.add(iso3)
 
-        geometry_rows = []
-        for iso3 in iso3_codes:
-            country_geom = load_country_parquet(iso3)
-            if country_geom is not None:
-                geometry_rows.append(country_geom[["loc_id", "name", "geometry"]])
+        if "eurostat" in sources_used:
+            geometry_df = load_geometry_rows_by_loc_ids("EUR", list(loc_ids_to_check))
+            if geometry_df is not None and not geometry_df.empty:
+                keep_cols = [c for c in ["loc_id", "name", "geometry"] if c in geometry_df.columns]
+                geometry_df = geometry_df[keep_cols]
+        else:
+            geometry_rows = []
+            for iso3 in iso3_codes:
+                country_loc_ids = sorted(
+                    loc_id for loc_id in loc_ids_to_check
+                    if (loc_id.split("-")[0] if "-" in loc_id else loc_id) == iso3
+                )
+                if not country_loc_ids:
+                    continue
 
-        geometry_df = pd.concat(geometry_rows, ignore_index=True) if geometry_rows else None
+                country_geom = load_geometry_rows_by_loc_ids(iso3, country_loc_ids)
+                if country_geom is None or country_geom.empty:
+                    country_geom = load_country_parquet(iso3)
+                    if country_geom is not None and not country_geom.empty:
+                        country_geom = country_geom[country_geom["loc_id"].isin(country_loc_ids)]
+
+                if country_geom is not None and not country_geom.empty:
+                    keep_cols = [c for c in ["loc_id", "name", "geometry"] if c in country_geom.columns]
+                    geometry_rows.append(country_geom[keep_cols])
+
+            geometry_df = pd.concat(geometry_rows, ignore_index=True) if geometry_rows else None
+
+    # For multi-level sources, restrict geometry to only the loc_ids that have data
+    # to avoid sending unrelated country-wide polygons to the frontend
+    if is_multi_level and geometry_df is not None and boxes:
+        relevant_loc_ids = set(boxes.keys())
+        geometry_df = geometry_df[geometry_df["loc_id"].isin(relevant_loc_ids)]
+
     _executor_log(trace_id, "geometry_loaded", t_execute_start, f"level={primary_level} geometry_rows={len(geometry_df) if geometry_df is not None else 0}")
 
     # Step 5: Build GeoJSON features
     # Include ALL locations in geometry (region), with or without data
     features = []
 
-    if geometry_df is not None:
+    if geometry_df is not None and not geometry_df.empty and "loc_id" in geometry_df.columns:
         t_geom_lookup = time.perf_counter()
         geom_lookup = geometry_df.set_index("loc_id")[["name", "geometry"]].to_dict("index")
         t_after_geom_lookup = _executor_log(trace_id, "geometry_lookup_built", t_geom_lookup, f"entries={len(geom_lookup)}")
@@ -2261,6 +2453,8 @@ def execute_order(order: dict) -> dict:
                     "properties": properties
                 })
         _executor_log(trace_id, "features_built", t_after_geom_lookup, f"features={len(features)} multi_year={multi_year_mode}")
+    else:
+        _executor_log(trace_id, "geometry_lookup_skipped", t_execute_start, "no_geometry_rows")
 
     # Build source info for response (include URL and category)
     source_info = [

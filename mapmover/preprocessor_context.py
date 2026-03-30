@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Callable
 
 
@@ -43,6 +45,7 @@ def build_tier3_context(
     get_source_path: Callable[[str], object],
     get_relevant_sources_with_metrics: Callable[[list, str | None], dict],
     logger,
+    countries_dir: Path | None = None,
 ) -> str:
     """Build Tier 3 (Just-in-Time) context string from preprocessor hints."""
     context_parts = []
@@ -193,6 +196,64 @@ def build_tier3_context(
             )
         else:
             context_parts.append(f"[LOCATION: {location['country_name']} (loc_id={location['iso3']})]")
+
+        iso3 = location.get("iso3")
+        if iso3 and countries_dir:
+            crosswalk_path = Path(countries_dir) / iso3 / "crosswalk.json"
+            if crosswalk_path.exists():
+                try:
+                    with open(crosswalk_path, encoding="utf-8") as f:
+                        crosswalk = json.load(f)
+
+                    overlap_blocks = []
+                    for level_key, info in (crosswalk.get("overlap_levels") or {}).items():
+                        aliases = info.get("aliases") or []
+                        if aliases:
+                            overlap_blocks.append(
+                                f"{level_key}: canonical={info.get('canonical_dataset_label', info.get('display_name', 'unknown'))}; "
+                                f"aliases={', '.join(aliases[:8])}; status={info.get('runtime_status', 'unknown')}"
+                            )
+
+                    sub_admin_blocks = []
+                    for level_key, info in (crosswalk.get("sub_admin_levels") or {}).items():
+                        folder = info.get("folder")
+                        geometry_path = None
+                        if folder:
+                            geometry_path = Path(countries_dir) / iso3 / "geometry" / f"{folder}.parquet"
+                        if geometry_path is None or not geometry_path.exists():
+                            continue
+                        aliases = info.get("aliases") or []
+                        if aliases:
+                            sub_admin_blocks.append(
+                                f"{level_key}: canonical={info.get('canonical_dataset_label', info.get('name', 'unknown'))}; "
+                                f"aliases={', '.join(aliases[:10])}"
+                            )
+
+                    regional_blocks = []
+                    for system_name, system_info in (crosswalk.get("regional_overlap_systems") or {}).items():
+                        for level_key, aliases in (system_info.get("aliases") or {}).items():
+                            if aliases:
+                                regional_blocks.append(
+                                    f"{system_name}.{level_key}: {', '.join(aliases[:8])}"
+                                )
+
+                    context_lines = []
+                    if regional_blocks:
+                        context_lines.append("Regional overlap aliases:")
+                        context_lines.extend(f"  - {line}" for line in regional_blocks)
+                    if overlap_blocks:
+                        context_lines.append("Recognized overlap-only local names:")
+                        context_lines.extend(f"  - {line}" for line in overlap_blocks)
+                    if sub_admin_blocks:
+                        context_lines.append("Adopted country-specific deeper aliases:")
+                        context_lines.extend(f"  - {line}" for line in sub_admin_blocks)
+
+                    if context_lines:
+                        context_parts.append(
+                            f"[COUNTRY GEOMETRY ALIASES FOR {iso3}]\n" + "\n".join(context_lines)
+                        )
+                except Exception as e:
+                    logger.debug(f"Could not load crosswalk alias context for {iso3}: {e}")
 
     detected_source = hints.get("detected_source")
     if detected_source:

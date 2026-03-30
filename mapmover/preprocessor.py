@@ -936,6 +936,7 @@ def build_tier3_context(hints: dict) -> str:
         get_source_path=get_source_path,
         get_relevant_sources_with_metrics=get_relevant_sources_with_metrics,
         logger=logger,
+        countries_dir=COUNTRIES_DIR,
     )
 
 

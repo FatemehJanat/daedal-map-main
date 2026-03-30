@@ -11,6 +11,7 @@ This replaces the old multi-LLM chat system with a simpler "Fast Food Kiosk" mod
 
 import json
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from anthropic import Anthropic
@@ -288,7 +289,8 @@ def build_system_prompt(catalog: dict, conversions: dict) -> str:
             pid = src.get("pack_id")
             publish_note = f"pack_id: {pid}" if pid else "pre-release: no pack_id yet"
             geo_level = src.get("geographic_level", "")
-            geo_note = f"; {geo_level}" if geo_level and geo_level not in ("country", "admin_0") else ""
+            geo_level_str = "/".join(geo_level) if isinstance(geo_level, list) else geo_level
+            geo_note = f"; {geo_level_str}" if geo_level_str and geo_level_str not in ("country", "admin_0") else ""
             lines.append(f"- {name} [{publish_note}; source_id: {sid}{geo_note}]: {temp.get('start', '?')}-{temp.get('end', '?')}")
 
         # List SDG sources individually with human-readable goal titles
@@ -365,7 +367,8 @@ def build_system_prompt(catalog: dict, conversions: dict) -> str:
         if scope == "global":
             continue
         scope_sources = sources_by_scope[scope]
-        geo_level = scope_sources[0].get("geographic_level", "admin_2") if scope_sources else "admin_2"
+        geo_level_raw = scope_sources[0].get("geographic_level", "admin_2") if scope_sources else "admin_2"
+        geo_level = "/".join(geo_level_raw) if isinstance(geo_level_raw, list) else geo_level_raw
         sources_text += f"\n=== {scope.upper()} ONLY ({geo_level}) ===\n"
         sources_text += format_source_group(scope_sources, scope) + "\n"
 
@@ -479,6 +482,7 @@ OPTIONAL AGGREGATION FIELDS (only when user explicitly asks):
 - `time_granularity`: `daily | weekly | monthly | yearly`
 - `aggregation`: `period_end | period_avg` (FX default is period_end if omitted)
 - `date_start` / `date_end`: ISO date bounds for time filtering when needed
+- `geo_level`: `admin_0 | admin_1 | admin_2 | admin_3 | admin_4 | admin_5` when the user explicitly asks for a geographic granularity such as `NUTS3`, `department`, `arrondissement`, `commune`, `county`, `tract`, etc.
 
 RULES:
 - pack_id: Use for geographic packs (shown with Coverage line in catalog). System selects the right regional source.
@@ -486,7 +490,13 @@ RULES:
 - metric: Must be an EXACT column name from the source, OR use "*" for ALL metrics from that source
 - region: lowercase (europe, g7, australia, canada-bc, usa-ca) or null for global
 - year: null = most recent
+- geo_level: include only when the user explicitly asks for a geography level or named layer; map local names to the canonical runtime level when possible
 - Only include aggregation fields when the user asks for a specific time granularity or averaging behavior
+
+Examples:
+- "France population by NUTS3 region" -> use `source_id: "eurostat"` and `geo_level: "admin_3"`
+- "France population by department" -> use `source_id: "eurostat"` and `geo_level: "admin_3"`
+- "France population by commune" -> if a served France-specific deep layer exists, use its canonical `geo_level`; otherwise clarify instead of inventing a fake mapping
 
 WILDCARD METRICS (internal - never mention "*" to users):
 Use "metric": "*" when user asks for "all data", "everything", or "all metrics" from a source.
@@ -721,6 +731,10 @@ def validate_order_item(item: dict) -> dict:
     year = item.get("year")
 
     if not source_id:
+        # pack_id items have no source_id yet -- executor resolves pack_id -> source_id later
+        if item.get("pack_id"):
+            item["_valid"] = True
+            return item
         item["_valid"] = False
         item["_error"] = "Missing source_id"
         return item
@@ -1068,13 +1082,280 @@ def _build_sdg_fallback_order(hints: dict | None) -> dict | None:
             "SDG poverty and disaster exposure comparison",
         )
 
-    if "sustainable cities" in query_lower and "worst performing" in query_lower:
-        return make_order(
-            [make_item("11", "air quality", "Air quality", sort={"by": "air quality", "order": "desc", "limit": 10})],
-            "SDG 11 worst-performing countries",
-        )
+    return None
+
+
+def _build_sdg_clarify_response(hints: dict | None) -> dict | None:
+    """Return grounded clarifications for SDG prompts that need a specific indicator."""
+    if not hints:
+        return None
+
+    query = str(hints.get("original_query") or "").strip().lower()
+    if not query:
+        return None
+
+    if "sdg 11" in query and "worst performing" in query:
+        return {
+            "type": "clarify",
+            "message": (
+                "For SDG 11, which metric would you prefer to rank? "
+                "I can use a specific metric such as housing, disaster losses, waste, air quality, or public transport."
+            ),
+        }
+
+    if "sustainable cities" in query and "worst performing" in query:
+        return {
+            "type": "clarify",
+            "message": (
+                "For SDG 11 sustainable cities, which specific metric would you like to rank? "
+                "I can use housing, disaster losses, waste, air quality, or public transport."
+            ),
+        }
 
     return None
+
+
+def _build_france_deep_geometry_clarify_response(hints: dict | None, order: dict | None = None) -> dict | None:
+    """Clarify when a France deep-geometry request exceeds source coverage."""
+    query = str((hints or {}).get("original_query") or "").strip().lower()
+    if not query:
+        return None
+
+    mentions_france = "france" in query or "french" in query
+    mentions_arrondissement = "arrondissement" in query or "arrondissements" in query
+    mentions_commune = "commune" in query or "communes" in query
+    if not mentions_france or not (mentions_arrondissement or mentions_commune):
+        return None
+
+    if "population" not in query:
+        return None
+
+    if order:
+        items = order.get("items") or []
+        for item in items:
+            if item.get("source_id") != "eurostat":
+                continue
+            if str(item.get("geo_level") or "") not in {"admin_4", "admin_5"}:
+                continue
+            level_name = "arrondissement" if item.get("geo_level") == "admin_4" else "commune"
+            return {
+                "type": "clarify",
+                "message": (
+                    f"I can map France at the {level_name} level now, but the current France population source "
+                    "(`eurostat`) only serves the shared Europe base through departments/NUTS3. "
+                    "Would you like France population by department instead, or do you want to switch to a source "
+                    "that actually provides arrondissement/commune-level population?"
+                ),
+            }
+
+    return {
+        "type": "clarify",
+        "message": (
+            "I can map France at arrondissement and commune level now, but the current France population source "
+            "only serves departments/NUTS3. Would you like France population by department instead, or do you want "
+            "a source that actually provides arrondissement/commune-level population?"
+        ),
+    }
+
+
+def _build_austria_deep_geometry_clarify_response(hints: dict | None, order: dict | None = None) -> dict | None:
+    """Clarify when an Austria deep-geometry request exceeds source coverage."""
+    query = str((hints or {}).get("original_query") or "").strip().lower()
+    if not query:
+        return None
+
+    mentions_austria = "austria" in query or "austrian" in query
+    mentions_district = "district" in query or "districts" in query or "bezirk" in query or "bezirke" in query
+    mentions_municipality = (
+        "municipality" in query
+        or "municipalities" in query
+        or "gemeinde" in query
+        or "gemeinden" in query
+    )
+    if not mentions_austria or not (mentions_district or mentions_municipality):
+        return None
+
+    if "population" not in query:
+        return None
+
+    if order:
+        items = order.get("items") or []
+        for item in items:
+            if item.get("source_id") != "eurostat":
+                continue
+            if str(item.get("geo_level") or "") not in {"admin_4", "admin_5"}:
+                continue
+            level_name = "district" if item.get("geo_level") == "admin_4" else "municipality"
+            fallback_name = "state or NUTS3 region"
+            return {
+                "type": "clarify",
+                "message": (
+                    f"I can map Austria at the {level_name} level now, but the current Austria population source "
+                    "(`eurostat`) only serves the shared Europe base through states/NUTS3. "
+                    f"Would you like Austria population by {fallback_name} instead, or do you want to switch to a "
+                    "source that actually provides district/municipality-level population?"
+                ),
+            }
+
+    return {
+        "type": "clarify",
+        "message": (
+            "I can map Austria at district and municipality level now, but the current Austria population source "
+            "only serves the shared Europe base through states/NUTS3. Would you like Austria population by state or "
+            "NUTS3 region instead, or do you want a source that actually provides district/municipality-level "
+            "population?"
+        ),
+    }
+
+
+def _build_belgium_deep_geometry_clarify_response(hints: dict | None, order: dict | None = None) -> dict | None:
+    """Clarify when a Belgium deep-geometry request exceeds source coverage."""
+    query = str((hints or {}).get("original_query") or "").strip().lower()
+    if not query:
+        return None
+
+    mentions_belgium = "belgium" in query or "belgian" in query
+    mentions_municipality = (
+        "municipality" in query
+        or "municipalities" in query
+        or "commune" in query
+        or "communes" in query
+        or "gemeente" in query
+        or "gemeenten" in query
+    )
+    if not mentions_belgium or not mentions_municipality:
+        return None
+
+    if "population" not in query:
+        return None
+
+    if order:
+        items = order.get("items") or []
+        for item in items:
+            if item.get("source_id") != "eurostat":
+                continue
+            if str(item.get("geo_level") or "") != "admin_4":
+                continue
+            return {
+                "type": "clarify",
+                "message": (
+                    "I can map Belgium at municipality level now, but the current Belgium population source "
+                    "(`eurostat`) only serves the shared Europe base through provinces/arrondissements. "
+                    "Would you like Belgium population by province or arrondissement instead, or do you want to "
+                    "switch to a source that actually provides municipality-level population?"
+                ),
+            }
+
+    return {
+        "type": "clarify",
+        "message": (
+            "I can map Belgium at municipality level now, but the current Belgium population source only serves the "
+            "shared Europe base through provinces/arrondissements. Would you like Belgium population by province or "
+            "arrondissement instead, or do you want a source that actually provides municipality-level population?"
+        ),
+    }
+
+
+def _build_czechia_deep_geometry_clarify_response(hints: dict | None, order: dict | None = None) -> dict | None:
+    """Clarify when a Czechia deep-geometry request exceeds source coverage."""
+    query = str((hints or {}).get("original_query") or "").strip().lower()
+    if not query:
+        return None
+
+    mentions_czechia = "czechia" in query or "czech republic" in query or "czech" in query
+    mentions_district = "district" in query or "districts" in query or "okres" in query or "okresy" in query
+    mentions_municipality = (
+        "municipality" in query
+        or "municipalities" in query
+        or "obec" in query
+        or "obce" in query
+        or "town" in query
+        or "city" in query
+        or "village" in query
+    )
+    if not mentions_czechia or not (mentions_district or mentions_municipality):
+        return None
+
+    if "population" not in query:
+        return None
+
+    if order:
+        items = order.get("items") or []
+        for item in items:
+            if item.get("source_id") != "eurostat":
+                continue
+            if str(item.get("geo_level") or "") not in {"admin_4", "admin_5"}:
+                continue
+            level_name = "district" if item.get("geo_level") == "admin_4" else "municipality"
+            return {
+                "type": "clarify",
+                "message": (
+                    f"I can map Czechia at the {level_name} level now, but the current Czechia population source "
+                    "(`eurostat`) only serves the shared Europe base through regions/NUTS3. "
+                    "Would you like Czechia population by region instead, or do you want to switch to a source "
+                    "that actually provides district/municipality-level population?"
+                ),
+            }
+
+    return {
+        "type": "clarify",
+        "message": (
+            "I can map Czechia at district and municipality level now, but the current Czechia population source "
+            "only serves the shared Europe base through regions/NUTS3. Would you like Czechia population by region "
+            "instead, or do you want a source that actually provides district/municipality-level population?"
+        ),
+    }
+
+
+def _build_slovakia_deep_geometry_clarify_response(hints: dict | None, order: dict | None = None) -> dict | None:
+    """Clarify when a Slovakia deep-geometry request exceeds source coverage."""
+    query = str((hints or {}).get("original_query") or "").strip().lower()
+    if not query:
+        return None
+
+    mentions_slovakia = "slovakia" in query or "slovak" in query
+    mentions_district = "district" in query or "districts" in query or "okres" in query or "okresy" in query
+    mentions_municipality = (
+        "municipality" in query
+        or "municipalities" in query
+        or "obec" in query
+        or "obce" in query
+        or "town" in query
+        or "city" in query
+        or "village" in query
+    )
+    if not mentions_slovakia or not (mentions_district or mentions_municipality):
+        return None
+
+    if "population" not in query:
+        return None
+
+    if order:
+        items = order.get("items") or []
+        for item in items:
+            if item.get("source_id") != "eurostat":
+                continue
+            if str(item.get("geo_level") or "") not in {"admin_4", "admin_5"}:
+                continue
+            level_name = "district" if item.get("geo_level") == "admin_4" else "municipality"
+            return {
+                "type": "clarify",
+                "message": (
+                    f"I can map Slovakia at the {level_name} level now, but the current Slovakia population source "
+                    "(`eurostat`) only serves the shared Europe base through regions/NUTS3. "
+                    "Would you like Slovakia population by region instead, or do you want to switch to a source "
+                    "that actually provides district/municipality-level population?"
+                ),
+            }
+
+    return {
+        "type": "clarify",
+        "message": (
+            "I can map Slovakia at district and municipality level now, but the current Slovakia population source "
+            "only serves the shared Europe base through regions/NUTS3. Would you like Slovakia population by region "
+            "instead, or do you want a source that actually provides district/municipality-level population?"
+        ),
+    }
 
 
 def _build_disaster_aggregate_fallback_order(hints: dict | None, llm_type: str | None = None) -> dict | None:
@@ -1162,6 +1443,116 @@ def _build_disaster_aggregate_clarify_response(hints: dict | None) -> dict | Non
         }
 
     return None
+
+
+def _compress_unavailable_metric_chat(message: str, hints: dict | None = None) -> str:
+    """
+    Turn verbose "this source doesn't have X" chat responses into the standard
+    "we don't have X, but we do have Y" form using source metadata.
+    """
+    if not message:
+        return message
+
+    message_lower = message.lower()
+    if "not ndvi" not in message_lower and "do not have" not in message_lower and "doesn't have" not in message_lower and "does not have" not in message_lower:
+        return message
+
+    requested_metric = None
+    metric_patterns = [
+        r"\bnot\s+([A-Z0-9][A-Za-z0-9 _()/%-]+?)(?:[.,;\n]|$)",
+        r"\bdo not have\s+([A-Z0-9][A-Za-z0-9 _()/%-]+?)(?:[.,;\n]|$)",
+        r"\bdoes not have\s+([A-Z0-9][A-Za-z0-9 _()/%-]+?)(?:[.,;\n]|$)",
+        r"\bdoesn't have\s+([A-Z0-9][A-Za-z0-9 _()/%-]+?)(?:[.,;\n]|$)",
+    ]
+    for pattern in metric_patterns:
+        match = re.search(pattern, message, flags=re.IGNORECASE)
+        if match:
+            requested_metric = match.group(1).strip()
+            requested_metric = requested_metric.split("(")[0].strip()
+            break
+
+    query = str((hints or {}).get("original_query") or "").strip().lower()
+    catalog = load_catalog()
+    matched_source = None
+    best_score = 0
+
+    for source in catalog.get("sources", []):
+        source_id = str(source.get("source_id") or "").strip()
+        source_name = str(source.get("source_name") or "").strip()
+        if not source_id:
+            continue
+
+        metadata = load_source_metadata(source_id) or {}
+        phrases = [
+            source_id,
+            source.get("pack_id"),
+            source_name,
+        ]
+        phrases.extend(metadata.get("keywords") or [])
+        phrases.extend(metadata.get("topic_tags") or [])
+
+        score = 0
+        for phrase in phrases:
+            if not phrase:
+                continue
+            phrase_lower = str(phrase).strip().lower()
+            if not phrase_lower:
+                continue
+            if phrase_lower in message_lower:
+                score += 3
+            if phrase_lower in query:
+                score += 2
+
+        if score > best_score:
+            best_score = score
+            matched_source = (source_id, metadata)
+
+    if not matched_source:
+        return message
+
+    source_id, metadata = matched_source
+    metrics = metadata.get("metrics") or {}
+    if not isinstance(metrics, dict) or not metrics:
+        return message
+
+    source_name = str(metadata.get("source_name") or source_id).strip()
+    temporal = metadata.get("temporal_coverage") or {}
+    start_year = temporal.get("start")
+    end_year = temporal.get("end")
+    years_text = f" for {start_year}-{end_year}" if start_year and end_year else ""
+
+    level_names = {
+        "admin_0": "country",
+        "admin_1": "state/province",
+        "admin_2": "county/district",
+        "admin_3": "tract/region",
+        "admin_4": "block group/local area",
+        "admin_5": "block/neighborhood",
+    }
+    geo_levels = metadata.get("geographic_level") or []
+    if isinstance(geo_levels, str):
+        geo_levels = [geo_levels]
+    available_levels = [level_names.get(level, level) for level in geo_levels[:4]]
+    levels_text = ", ".join(available_levels) if available_levels else "the available geographic levels"
+
+    metric_names = []
+    for metric_meta in metrics.values():
+        if isinstance(metric_meta, dict):
+            metric_name = metric_meta.get("name")
+            if metric_name:
+                metric_names.append(str(metric_name))
+        elif metric_meta:
+            metric_names.append(str(metric_meta))
+    metric_names = metric_names[:3]
+    metrics_text = ", ".join(metric_names) if metric_names else "the available metrics"
+
+    if not requested_metric:
+        requested_metric = "that metric"
+
+    return (
+        f"We don't have {requested_metric} in {source_name}{years_text}, "
+        f"but we do have {metrics_text} across {levels_text}."
+    )
 
 
 def _apply_disaster_aggregate_overrides(result: dict, hints: dict | None) -> dict:
@@ -1297,6 +1688,9 @@ def parse_llm_response(content: str, hints: dict = None) -> dict:
             disaster_clarify = _build_disaster_aggregate_clarify_response(hints)
             if disaster_clarify:
                 return disaster_clarify
+            sdg_clarify = _build_sdg_clarify_response(hints)
+            if sdg_clarify:
+                return sdg_clarify
             disaster_fallback_order = _build_disaster_aggregate_fallback_order(hints, llm_type="chat")
             if disaster_fallback_order:
                 return {
@@ -1318,9 +1712,10 @@ def parse_llm_response(content: str, hints: dict = None) -> dict:
                     "order": fallback_order,
                     "summary": fallback_order.get("summary", "FX trend analysis request"),
                 }
+            message = _compress_unavailable_metric_chat(parsed_json.get("message", ""), hints)
             return {
                 "type": "chat",
-                "message": parsed_json.get("message", "")
+                "message": message
             }
 
         elif response_type == "clarify":
@@ -1332,6 +1727,25 @@ def parse_llm_response(content: str, hints: dict = None) -> dict:
         else:
             # Default: treat as order (type == "order" or legacy format without type)
             order = validate_order(parsed_json)
+            france_deep_clarify = _build_france_deep_geometry_clarify_response(hints, order)
+            if france_deep_clarify:
+                return france_deep_clarify
+            austria_deep_clarify = _build_austria_deep_geometry_clarify_response(hints, order)
+            if austria_deep_clarify:
+                return austria_deep_clarify
+            belgium_deep_clarify = _build_belgium_deep_geometry_clarify_response(hints, order)
+            if belgium_deep_clarify:
+                return belgium_deep_clarify
+            czechia_deep_clarify = _build_czechia_deep_geometry_clarify_response(hints, order)
+            if czechia_deep_clarify:
+                return czechia_deep_clarify
+            slovakia_deep_clarify = _build_slovakia_deep_geometry_clarify_response(hints, order)
+            if slovakia_deep_clarify:
+                return slovakia_deep_clarify
+            if not order.get("_all_valid", True):
+                sdg_clarify = _build_sdg_clarify_response(hints)
+                if sdg_clarify:
+                    return sdg_clarify
             return {
                 "type": "order",
                 "order": order,
@@ -1347,6 +1761,24 @@ def parse_llm_response(content: str, hints: dict = None) -> dict:
     disaster_clarify = _build_disaster_aggregate_clarify_response(hints)
     if disaster_clarify:
         return disaster_clarify
+    france_deep_clarify = _build_france_deep_geometry_clarify_response(hints)
+    if france_deep_clarify:
+        return france_deep_clarify
+    austria_deep_clarify = _build_austria_deep_geometry_clarify_response(hints)
+    if austria_deep_clarify:
+        return austria_deep_clarify
+    belgium_deep_clarify = _build_belgium_deep_geometry_clarify_response(hints)
+    if belgium_deep_clarify:
+        return belgium_deep_clarify
+    czechia_deep_clarify = _build_czechia_deep_geometry_clarify_response(hints)
+    if czechia_deep_clarify:
+        return czechia_deep_clarify
+    slovakia_deep_clarify = _build_slovakia_deep_geometry_clarify_response(hints)
+    if slovakia_deep_clarify:
+        return slovakia_deep_clarify
+    sdg_clarify = _build_sdg_clarify_response(hints)
+    if sdg_clarify:
+        return sdg_clarify
     disaster_fallback_order = _build_disaster_aggregate_fallback_order(hints, llm_type="chat")
     if disaster_fallback_order:
         return {
@@ -1368,7 +1800,8 @@ def parse_llm_response(content: str, hints: dict = None) -> dict:
             "order": fallback_order,
             "summary": fallback_order.get("summary", "FX trend analysis request"),
         }
-    return {"type": "chat", "message": content}
+    message = _compress_unavailable_metric_chat(content, hints)
+    return {"type": "chat", "message": message}
 
 
 def _improve_clarify_message(message: str, hints: dict = None) -> str:

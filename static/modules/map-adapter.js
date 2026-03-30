@@ -1117,7 +1117,7 @@ export const MapAdapter = {
 
   /**
    * Load city markers for a location (state or county)
-   * @param {string} locId - Location loc_id (e.g., "USA-CA" for state, "USA-CA-06037" for county)
+   * @param {string} locId - Location loc_id (e.g., "USA-CA" for state, "USA-CA-037" for county bridge)
    */
   async loadCityOverlay(locId) {
     // Only load if we're in a US location and haven't already loaded for this location
