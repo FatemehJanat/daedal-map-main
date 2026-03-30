@@ -1022,17 +1022,21 @@ async def admin_catalog_refresh(req: Request):
             logger.warning(f"Admin catalog refresh: entitlement check failed: {exc}")
             return msgpack_error("Entitlement check failed", 500)
 
+    wants_json = "application/json" in (req.headers.get("accept", "") or "").lower()
+
     # Clear the in-memory cache; next load_catalog() call fetches fresh from S3
     _dl._catalog_cache = None
     _dl._catalog_cache_time = 0.0
 
     from mapmover.data_loading import load_catalog
-    catalog = load_catalog()
-    return msgpack_response({
+    payload = {
         "ok": True,
-        "source_count": len(catalog.get("sources", [])),
+        "source_count": len(load_catalog().get("sources", [])),
         "message": "Catalog cache cleared and refreshed",
-    })
+    }
+    if wants_json:
+        return JSONResponse(payload)
+    return msgpack_response(payload)
 
 
 @router.get("/", response_class=HTMLResponse)
