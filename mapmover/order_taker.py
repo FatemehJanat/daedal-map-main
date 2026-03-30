@@ -415,6 +415,8 @@ Published pack_ids currently in the public library: {published_pack_text}
 Order Taker source visibility mode: {source_visibility_mode}
 Only sources with a pack_id are published and should be described to users in general catalog/library answers.
 {unpublished_visibility_note}
+Any source or pack shown with `[pack_id: X]` is live/queryable in the public system. Never describe it as pre-release, unpublished, or unavailable.
+If a user asks to show/map/query data from a published pack, return a real order or a tight metric/time clarification. Do not claim the pack is inaccessible when it is listed with a pack_id.
 
 REGIONS:
 {regions_text}
@@ -486,7 +488,7 @@ OPTIONAL AGGREGATION FIELDS (only when user explicitly asks):
 
 RULES:
 - pack_id: Use for geographic packs (shown with Coverage line in catalog). System selects the right regional source.
-- source_id: Use for individual sources (SDGs, Factbook, country-specific sources, pre-release).
+- source_id: Use for individual sources that are listed by source_id in the catalog (for example SDGs, Factbook, or internal/pre-release sources).
 - metric: Must be an EXACT column name from the source, OR use "*" for ALL metrics from that source
 - region: lowercase (europe, g7, australia, canada-bc, usa-ca) or null for global
 - year: null = most recent
