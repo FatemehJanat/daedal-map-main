@@ -411,13 +411,13 @@ export const ChatManager = {
       // Handle removal orders (no geojson, just identifiers)
       const message = data.summary || `Removed ${data.count || 0} ${data.data_type || 'items'}`;
       this.addMessage(message, 'assistant');
-      App?.displayData(data);
+      App?.displayData(data, { order });
       unregisterLoadedData(order);  // Track removal for LLM context
       if (orderPanel.switchTab) orderPanel.switchTab('loaded');
     } else if (data.type === 'mixed_order' && data.results) {
       // Handle mixed add/remove orders - process each result
       for (const result of data.results) {
-        App?.displayData(result);
+        App?.displayData(result, { order });
       }
       // Track both adds and removes for LLM context
       registerLoadedData(order, data);
@@ -455,7 +455,7 @@ export const ChatManager = {
       // Track loaded data for LLM context
       registerLoadedData(order, data);
 
-      App?.displayData(data);
+      App?.displayData(data, { order });
     }
   },
 

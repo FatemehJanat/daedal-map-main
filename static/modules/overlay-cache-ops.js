@@ -170,12 +170,59 @@ export function ingestMetricData(sourceId, geojson, yearData = null, yearRange =
     return;
   }
 
-  metricCache[sourceId] = {
-    geojson,
-    year_data: yearData || {},
-    year_range: yearRange,
-    loadedAt: Date.now()
-  };
+  const existing = metricCache[sourceId];
+  if (existing) {
+    const existingFeatures = existing.geojson?.features || [];
+    const existingLocIds = new Set(
+      existingFeatures.map((feature) => feature?.properties?.loc_id || feature?.id).filter(Boolean)
+    );
+    const newFeatures = (geojson.features || []).filter((feature) => {
+      const locId = feature?.properties?.loc_id || feature?.id;
+      return !locId || !existingLocIds.has(locId);
+    });
+
+    const mergedYearData = { ...(existing.year_data || {}) };
+    for (const [yearKey, locData] of Object.entries(yearData || {})) {
+      if (!mergedYearData[yearKey]) {
+        mergedYearData[yearKey] = {};
+      }
+      for (const [locId, metrics] of Object.entries(locData || {})) {
+        if (!mergedYearData[yearKey][locId]) {
+          mergedYearData[yearKey][locId] = {};
+        }
+        Object.assign(mergedYearData[yearKey][locId], metrics || {});
+      }
+    }
+
+    let mergedYearRange = existing.year_range || null;
+    if (yearRange) {
+      const existingYears = existing.year_range?.available_years || [];
+      const incomingYears = yearRange.available_years || [];
+      mergedYearRange = {
+        min: Math.min(existing.year_range?.min ?? yearRange.min, yearRange.min),
+        max: Math.max(existing.year_range?.max ?? yearRange.max, yearRange.max),
+        available_years: [...new Set([...existingYears, ...incomingYears])].sort((a, b) => a - b)
+      };
+    }
+
+    metricCache[sourceId] = {
+      ...existing,
+      geojson: {
+        type: 'FeatureCollection',
+        features: existingFeatures.concat(newFeatures)
+      },
+      year_data: mergedYearData,
+      year_range: mergedYearRange,
+      loadedAt: Date.now()
+    };
+  } else {
+    metricCache[sourceId] = {
+      geojson,
+      year_data: yearData || {},
+      year_range: yearRange,
+      loadedAt: Date.now()
+    };
+  }
 
   console.log(`OverlayController: Ingested ${geojson.features.length} ${sourceId} features into metrics cache`);
   const cacheSize = calculateCacheSize();

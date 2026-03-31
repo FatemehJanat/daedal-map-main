@@ -813,17 +813,18 @@ export const MapAdapter = {
 
       if (e.features.length > 0) {
         const feature = e.features[0];
+        const popupProperties = App?.getPopupProperties ? App.getPopupProperties(feature) : feature.properties;
         this.popupLocked = true;
-        this.setPopupFocusOverride(feature.properties);
+        this.setPopupFocusOverride(popupProperties);
         // Show basic popup immediately
         App?.handleFeatureHover(feature, e.lngLat);
         // Fetch enriched data and update popup
-        const locId = feature.properties.loc_id;
+        const locId = popupProperties?.loc_id;
         if (locId) {
           const locationInfo = await LocationInfoCache.fetch(locId);
           if (locationInfo && this.popupLocked) {
             // Update popup with enriched data
-            const popupHtml = PopupBuilder?.build(feature.properties, App?.currentData, locationInfo);
+            const popupHtml = PopupBuilder?.build(popupProperties, App?.currentData, locationInfo);
             this.showPopup([e.lngLat.lng, e.lngLat.lat], popupHtml);
             // Wire up tab click delegation for tabbed popups
             this.setupPopupTabHandlers();

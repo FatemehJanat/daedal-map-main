@@ -236,6 +236,7 @@ async def chat_endpoint(req: Request):
                     "type": result.get("type", "data"),
                     "data_type": result.get("data_type"),
                     "source_id": result.get("source_id"),
+                    "available_geo_levels": result.get("available_geo_levels", []),
                     "geojson": filtered_geojson,
                     "summary": result.get("summary", ""),
                     "count": result.get("count", delta_count),
@@ -560,7 +561,10 @@ async def chat_stream_endpoint(req: Request):
                 try:
                     result = execute_order(body["confirmed_order"])
                     response = {
-                        "type": "data",
+                        "type": result.get("type", "data"),
+                        "data_type": result.get("data_type"),
+                        "source_id": result.get("source_id"),
+                        "available_geo_levels": result.get("available_geo_levels", []),
                         "geojson": result["geojson"],
                         "summary": result["summary"],
                         "count": result["count"],

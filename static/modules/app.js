@@ -5,7 +5,7 @@
 
 import { CONFIG } from './config.js';
 import { GeometryCache } from './cache.js';
-import { fetchMsgpack } from './utils/fetch.js';
+import { fetchMsgpack, postMsgpack } from './utils/fetch.js';
 import { ViewportLoader, setDependencies as setViewportDeps } from './viewport-loader.js';
 import { MapAdapter, setDependencies as setMapDeps } from './map-adapter.js';
 import { NavigationManager, setDependencies as setNavDeps } from './navigation.js';
@@ -33,6 +33,34 @@ export const App = {
   debugMode: false,  // Toggle with 'D' key - shows hierarchy depth colors
   geometryOverlayActive: false,  // True when geometry overlay (ZCTA, tribal, etc.) is displayed
   mobileNoticeMql: null,
+  activeMetricOrderContext: null,
+  metricPrefetchHandle: null,
+
+  getNumericAdminLevel(level) {
+    if (typeof level === 'number' && !Number.isNaN(level)) return level;
+    const match = String(level || '').match(/^admin_(\d+)$/);
+    return match ? parseInt(match[1], 10) : null;
+  },
+
+  decorateMetricGeojsonWithAdminLevel(data) {
+    if (!data?.geojson?.features?.length) return data;
+    const adminLevel = this.getNumericAdminLevel(data.geographic_level);
+    if (adminLevel == null) return data;
+
+    return {
+      ...data,
+      geojson: {
+        ...data.geojson,
+        features: data.geojson.features.map((feature) => ({
+          ...feature,
+          properties: {
+            ...(feature.properties || {}),
+            admin_level_num: feature?.properties?.admin_level_num ?? adminLevel
+          }
+        }))
+      }
+    };
+  },
 
   /**
    * Merge new multi-year data into existing data (same source).
@@ -102,6 +130,338 @@ export const App = {
       metric_year_ranges: mergedMetricYearRanges,
       count: mergedFeatures.length
     };
+  },
+
+  mergeMetricData(existing, incoming) {
+    if (!existing || !incoming) return incoming;
+
+    const existingLocIds = new Set(
+      existing.geojson?.features?.map(f => f.properties?.loc_id || f.id) || []
+    );
+    const newFeatures = incoming.geojson?.features?.filter(
+      f => !existingLocIds.has(f.properties?.loc_id || f.id)
+    ) || [];
+    const mergedFeatures = [
+      ...(existing.geojson?.features || []),
+      ...newFeatures
+    ];
+
+    const mergedYearData = { ...(existing.year_data || {}) };
+    for (const [year, locData] of Object.entries(incoming.year_data || {})) {
+      if (!mergedYearData[year]) {
+        mergedYearData[year] = {};
+      }
+      for (const [locId, metrics] of Object.entries(locData || {})) {
+        if (!mergedYearData[year][locId]) {
+          mergedYearData[year][locId] = {};
+        }
+        Object.assign(mergedYearData[year][locId], metrics || {});
+      }
+    }
+
+    const mergedYearRange = (existing.year_range || incoming.year_range)
+      ? {
+          min: Math.min(existing.year_range?.min ?? incoming.year_range?.min ?? Infinity, incoming.year_range?.min ?? Infinity),
+          max: Math.max(existing.year_range?.max ?? incoming.year_range?.max ?? -Infinity, incoming.year_range?.max ?? -Infinity),
+          available_years: [
+            ...new Set([
+              ...(existing.year_range?.available_years || []),
+              ...(incoming.year_range?.available_years || [])
+            ])
+          ].sort((a, b) => a - b)
+        }
+      : null;
+
+    const mergedMetrics = [
+      ...new Set([
+        ...(existing.available_metrics || []),
+        ...(incoming.available_metrics || [])
+      ])
+    ];
+
+    const mergedMetricYearRanges = {
+      ...(existing.metric_year_ranges || {}),
+      ...(incoming.metric_year_ranges || {})
+    };
+
+    const mergedLevels = [
+      ...new Set([
+        ...(existing.available_geo_levels || []),
+        ...(incoming.available_geo_levels || [])
+      ])
+    ].sort((a, b) => {
+      const aNum = parseInt(String(a).replace('admin_', ''), 10);
+      const bNum = parseInt(String(b).replace('admin_', ''), 10);
+      if (!Number.isNaN(aNum) && !Number.isNaN(bNum)) return aNum - bNum;
+      return String(a).localeCompare(String(b));
+    });
+
+    return {
+      ...existing,
+      ...incoming,
+      geojson: { type: 'FeatureCollection', features: mergedFeatures },
+      year_data: mergedYearData,
+      year_range: mergedYearRange,
+      available_metrics: mergedMetrics,
+      metric_year_ranges: mergedMetricYearRanges,
+      available_geo_levels: mergedLevels,
+      count: mergedFeatures.length
+    };
+  },
+
+  getAdminLevelFromLocId(locId) {
+    if (!locId) return 0;
+    return (locId.match(/-/g) || []).length;
+  },
+
+  getFeatureAdminLevel(feature) {
+    const explicitLevel = feature?.properties?.admin_level_num;
+    if (explicitLevel != null && !Number.isNaN(Number(explicitLevel))) {
+      return Number(explicitLevel);
+    }
+    const locId = feature?.properties?.loc_id || feature?.id;
+    return this.getAdminLevelFromLocId(locId);
+  },
+
+  filterGeojsonByAdminLevel(geojson, level) {
+    if (!geojson?.features || level == null) return geojson;
+    return {
+      type: 'FeatureCollection',
+      features: geojson.features.filter((feature) => {
+        return this.getFeatureAdminLevel(feature) === level;
+      })
+    };
+  },
+
+  setMetricOrderContext(order, data, options = {}) {
+    const items = order?.items || [];
+    const sourceIds = [...new Set(items.map((item) => item?.source_id).filter(Boolean))];
+    if (items.length === 0 || sourceIds.length !== 1 || data?.data_type !== 'metrics') {
+      this.activeMetricOrderContext = null;
+      this.clearMetricPrefetch();
+      return;
+    }
+
+    const sourceId = data?.source_id || sourceIds[0];
+    const availableGeoLevels = (data?.available_geo_levels || [])
+      .map((level) => {
+        const match = String(level).match(/^admin_(\d+)$/);
+        return match ? parseInt(match[1], 10) : null;
+      })
+      .filter((level) => level != null)
+      .sort((a, b) => a - b);
+
+    const currentLevelMatch = String(data?.geographic_level || '').match(/^admin_(\d+)$/);
+    let currentLevel = currentLevelMatch ? parseInt(currentLevelMatch[1], 10) : null;
+    if (currentLevel == null && data?.geojson?.features?.length) {
+      const discoveredLevels = [
+        ...new Set(
+          data.geojson.features
+            .map((feature) => this.getFeatureAdminLevel(feature))
+            .filter((level) => level != null && !Number.isNaN(level))
+        )
+      ].sort((a, b) => a - b);
+      if (discoveredLevels.length === 1) {
+        currentLevel = discoveredLevels[0];
+      } else if (discoveredLevels.length > 1) {
+        currentLevel = discoveredLevels[discoveredLevels.length - 1];
+      }
+    }
+
+    if (!sourceId || availableGeoLevels.length === 0) {
+      this.activeMetricOrderContext = null;
+      this.clearMetricPrefetch();
+      return;
+    }
+
+    const existingLoadedLevels = (
+      this.activeMetricOrderContext &&
+      this.activeMetricOrderContext.sourceId === sourceId
+    )
+      ? Array.from(this.activeMetricOrderContext.loadedLevels || [])
+      : [];
+
+    const loadedLevels = new Set(existingLoadedLevels);
+    if (currentLevel != null) {
+      loadedLevels.add(currentLevel);
+    }
+
+    this.activeMetricOrderContext = {
+      order: JSON.parse(JSON.stringify(order)),
+      sourceId,
+      availableGeoLevels,
+      loadedLevels,
+      loadingLevels: new Set(),
+      loadingPromises: new Map()
+    };
+
+    if (options.schedulePrefetch !== false) {
+      const highestLoadedLevel = loadedLevels.size > 0 ? Math.max(...loadedLevels) : null;
+      this.scheduleNextMetricLevelPrefetch(highestLoadedLevel);
+    }
+  },
+
+  hasLazyMetricOrder() {
+    return !!this.activeMetricOrderContext;
+  },
+
+  clearMetricPrefetch() {
+    if (this.metricPrefetchHandle == null) return;
+
+    if (typeof window !== 'undefined' && typeof window.cancelIdleCallback === 'function') {
+      window.cancelIdleCallback(this.metricPrefetchHandle);
+    } else {
+      clearTimeout(this.metricPrefetchHandle);
+    }
+    this.metricPrefetchHandle = null;
+  },
+
+  scheduleNextMetricLevelPrefetch(fromLevel = null) {
+    const context = this.activeMetricOrderContext;
+    if (!context || context.availableGeoLevels.length === 0) return;
+
+    const currentLevel = fromLevel != null
+      ? fromLevel
+      : (ViewportLoader?.currentAdminLevel ?? null);
+    if (currentLevel == null) return;
+
+    const nextLevel = context.availableGeoLevels.find((level) =>
+      level > currentLevel &&
+      !context.loadedLevels.has(level) &&
+      !context.loadingLevels.has(level)
+    );
+    if (nextLevel == null) return;
+
+    this.clearMetricPrefetch();
+
+    const runPrefetch = () => {
+      this.metricPrefetchHandle = null;
+
+      if (!this.activeMetricOrderContext || this.activeMetricOrderContext.sourceId !== context.sourceId) {
+        return;
+      }
+
+      this.ensureMetricLevelLoaded(nextLevel, { prefetch: true }).catch((error) => {
+        console.warn(`Metric prefetch failed for admin_${nextLevel}:`, error.message);
+      });
+    };
+
+    if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+      this.metricPrefetchHandle = window.requestIdleCallback(runPrefetch, { timeout: 1200 });
+    } else {
+      this.metricPrefetchHandle = window.setTimeout(runPrefetch, 350);
+    }
+  },
+
+  applyOrderModeLevelFilter(level) {
+    if (!this.currentData || this.currentData.data_type !== 'metrics') return;
+
+    if (this.currentData.multi_year && TimeSlider?.baseGeojson) {
+      TimeSlider.setAdminLevelFilter(level);
+      return;
+    }
+
+    if (this.currentData.geojson?.features) {
+      const filtered = this.filterGeojsonByAdminLevel(this.currentData.geojson, level);
+      MapAdapter?.updateSourceData(filtered);
+      const countEl = document.getElementById('totalAreas');
+      if (countEl) {
+        countEl.textContent = filtered.features.length;
+      }
+    }
+  },
+
+  async ensureMetricLevelLoaded(level, options = {}) {
+    const context = this.activeMetricOrderContext;
+    if (!context) return false;
+    if (context.loadedLevels.has(level)) return true;
+    if (context.loadingLevels.has(level)) {
+      const existingPromise = context.loadingPromises?.get(level);
+      return existingPromise ? existingPromise : false;
+    }
+    if (!context.availableGeoLevels.includes(level)) return false;
+
+    const geoLevel = `admin_${level}`;
+    const nextOrder = JSON.parse(JSON.stringify(context.order));
+    nextOrder.items = (nextOrder.items || []).map((item) => ({
+      ...item,
+      geo_level: geoLevel
+    }));
+
+    const apiUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL)
+      ? `${API_BASE_URL}/chat`
+      : '/chat';
+
+    context.loadingLevels.add(level);
+
+    const loadPromise = (async () => {
+      try {
+        const response = await postMsgpack(apiUrl, {
+          confirmed_order: nextOrder,
+          sessionId: ChatManager.sessionId
+        });
+
+        console.log(`Lazy metric response for ${geoLevel}:`, {
+          type: response?.type,
+          geographicLevel: response?.geographic_level,
+          featureCount: response?.geojson?.features?.length ?? 0
+        });
+
+        if (response?.type === 'already_loaded') {
+          context.loadedLevels.add(level);
+          if (!options.prefetch) {
+            this.scheduleNextMetricLevelPrefetch(level);
+          }
+          return true;
+        }
+
+        if (response?.type === 'error') {
+          console.warn(`Lazy metric load failed for ${geoLevel}:`, response.message);
+          return false;
+        }
+
+        if (response?.geojson?.features) {
+          console.log(`Lazy metric load applied for ${geoLevel}: ${response.geojson.features.length} features`);
+          this.ingestLazyMetricData(response, nextOrder, {
+            schedulePrefetch: !options.prefetch
+          });
+          context.loadedLevels.add(level);
+          if (ViewportLoader?.currentAdminLevel === level) {
+            this.applyOrderModeLevelFilter(level);
+          }
+          if (!options.prefetch) {
+            this.scheduleNextMetricLevelPrefetch(level);
+          }
+          return true;
+        }
+
+        console.warn(`Lazy metric response missing geojson features for ${geoLevel}`, response);
+      } catch (error) {
+        console.warn(`Lazy metric fetch error for ${geoLevel}:`, error.message);
+      } finally {
+        context.loadingLevels.delete(level);
+        context.loadingPromises?.delete(level);
+      }
+
+      return false;
+    })();
+
+    context.loadingPromises.set(level, loadPromise);
+    return loadPromise;
+  },
+
+  ingestLazyMetricData(data, order, options = {}) {
+    if (data?.source_id) {
+      OverlayController?.ingestMetricData(
+        data.source_id,
+        data.geojson,
+        data.year_data,
+        data.year_range
+      );
+    }
+
+    this.displayData(data, { order, lazyLoad: true });
+    this.setMetricOrderContext(order, this.currentData, options);
   },
 
   /**
@@ -389,9 +749,31 @@ export const App = {
    * Handle hover over a feature - show popup
    */
   handleFeatureHover(feature, lngLat) {
-    const properties = feature.properties;
+    const properties = this.getPopupProperties(feature);
     const popupHtml = PopupBuilder.build(properties, this.currentData);
     MapAdapter.showPopup([lngLat.lng, lngLat.lat], popupHtml);
+  },
+
+  getPopupProperties(feature) {
+    const featureProps = feature?.properties || {};
+    const locId = featureProps.loc_id;
+    if (!locId || !this.currentData?.geojson?.features) {
+      return featureProps;
+    }
+
+    const sourceFeature = this.currentData.geojson.features.find((candidate) => {
+      const candidateLocId = candidate?.properties?.loc_id || candidate?.id;
+      return candidateLocId === locId;
+    });
+
+    if (!sourceFeature?.properties) {
+      return featureProps;
+    }
+
+    return {
+      ...sourceFeature.properties,
+      ...featureProps
+    };
   },
 
   /**
@@ -526,16 +908,18 @@ export const App = {
   /**
    * Display data from chat query
    */
-  displayData(data) {
+  displayData(data, options = {}) {
+    data = this.decorateMetricGeojsonWithAdminLevel(data);
+
     // Check if we should merge with existing data (same source, multi-year)
     const shouldMerge = this.currentData &&
-      this.currentData.multi_year &&
-      data.multi_year &&
+      this.currentData.data_type === 'metrics' &&
+      data.data_type === 'metrics' &&
       this.currentData.source_id === data.source_id;
 
     if (shouldMerge) {
       console.log(`Merging data: existing ${this.currentData.count} + new ${data.count} features`);
-      data = this.mergeMultiYearData(this.currentData, data);
+      data = this.mergeMetricData(this.currentData, data);
       console.log(`After merge: ${data.count} total features`);
     }
 
@@ -605,6 +989,11 @@ export const App = {
         summaryEl.textContent = data.summary || `Removed ${result.removed} items (${result.remaining} remaining)`;
       }
       return;
+    }
+
+    if (data.data_type !== 'metrics') {
+      this.activeMetricOrderContext = null;
+      this.clearMetricPrefetch();
     }
 
     // Check if this is geometry overlay data (ZCTA, tribal, watersheds, etc.)
@@ -738,21 +1127,31 @@ export const App = {
       }
 
       // Hide any existing slider/legend first
-      TimeSlider.reset();
-      ChoroplethManager.reset();
+      if (!options.lazyLoad) {
+        TimeSlider.reset();
+        ChoroplethManager.reset();
 
-      // Initialize time slider with the data
-      TimeSlider.init(
-        data.year_range,
-        data.year_data,
-        data.geojson,
-        data.metric_key,
-        data.available_metrics,  // Explicit list of metrics from order
-        data.metric_year_ranges  // Per-metric year ranges for slider adjustment
-      );
+        // Initialize time slider with the data
+        TimeSlider.init(
+          data.year_range,
+          data.year_data,
+          data.geojson,
+          data.metric_key,
+          data.available_metrics,  // Explicit list of metrics from order
+          data.metric_year_ranges  // Per-metric year ranges for slider adjustment
+        );
 
-      // Fit map to the data, then apply initial admin level filter
-      MapAdapter.fitToBounds(data.geojson);
+        // Fit map to the data, then apply initial admin level filter
+        MapAdapter.fitToBounds(data.geojson);
+      } else {
+        TimeSlider.updateData(
+          data.year_range,
+          data.year_data,
+          data.geojson,
+          data.available_metrics,
+          data.metric_year_ranges
+        );
+      }
 
       const explicitLevelMatch = String(data.geographic_level || '').match(/^admin_(\d+)$/);
       const loadedAdminLevel = explicitLevelMatch ? parseInt(explicitLevelMatch[1], 10) : null;
@@ -766,7 +1165,7 @@ export const App = {
           const displayLevel = loadedAdminLevel !== null && viewportLevel > loadedAdminLevel
             ? loadedAdminLevel
             : viewportLevel;
-          ViewportLoader.currentAdminLevel = displayLevel;
+          ViewportLoader.holdOrderModeLevel?.(displayLevel, 1400);
           TimeSlider.setAdminLevelFilter(displayLevel);
         }
       }, 100);
@@ -777,9 +1176,26 @@ export const App = {
       ChoroplethManager.reset();
 
       if (data.geojson && data.geojson.type === 'FeatureCollection') {
-        MapAdapter.loadGeoJSON(data.geojson);
-        MapAdapter.fitToBounds(data.geojson);
+        const filteredGeojson = this.filterGeojsonByAdminLevel(data.geojson, ViewportLoader.currentAdminLevel);
+        if (options.lazyLoad) {
+          MapAdapter.updateSourceData(filteredGeojson);
+        } else {
+          MapAdapter.loadGeoJSON(filteredGeojson);
+          MapAdapter.fitToBounds(data.geojson);
+          const explicitLevelMatch = String(data.geographic_level || '').match(/^admin_(\d+)$/);
+          const loadedAdminLevel = explicitLevelMatch ? parseInt(explicitLevelMatch[1], 10) : ViewportLoader.currentAdminLevel;
+          ViewportLoader.holdOrderModeLevel?.(loadedAdminLevel, 1400);
+        }
+
+        if (data.data_type === 'metrics' && OverlaySelector && !OverlaySelector.isActive('demographics')) {
+          console.log('Auto-enabling demographics overlay for chat order data');
+          OverlaySelector.setActive('demographics', true);
+        }
       }
+    }
+
+    if (data.data_type === 'metrics' && options.order) {
+      this.setMetricOrderContext(options.order, data);
     }
 
     // Collapse sidebar on mobile
@@ -912,6 +1328,8 @@ export const App = {
   clearNavigationMode() {
     MapAdapter.clearNavigationLayer();
     this.navigationLocations = null;
+    this.activeMetricOrderContext = null;
+    this.clearMetricPrefetch();
 
     if (this._navigationClickHandler && MapAdapter?.map) {
       MapAdapter.map.off('click', CONFIG.layers.selectionFill, this._navigationClickHandler);

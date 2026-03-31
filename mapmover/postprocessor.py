@@ -52,6 +52,44 @@ def _metric_display_name(source_id: str, metric_key: str) -> str:
     return metric_info.get("name", metric_key) if isinstance(metric_info, dict) else metric_key
 
 
+def _normalize_source_declared_scope(item: dict) -> dict:
+    """
+    Apply source-contained scope normalization when metadata declares it.
+
+    This keeps runtime generic: source-specific canonical regions and accepted
+    aliases live in metadata/reference, not in hardcoded runtime branches.
+    """
+    source_id = item.get("source_id")
+    if not source_id:
+        return item
+
+    metadata = load_source_metadata(source_id) or {}
+    coverage = metadata.get("geographic_coverage", {}) or {}
+    canonical_region = str(
+        coverage.get("canonical_region")
+        or metadata.get("canonical_region")
+        or ""
+    ).strip().lower()
+    if not canonical_region:
+        return item
+
+    aliases_raw = (
+        coverage.get("region_aliases")
+        or metadata.get("region_aliases")
+        or []
+    )
+    aliases = {
+        str(alias).strip().lower()
+        for alias in aliases_raw
+        if str(alias).strip()
+    }
+
+    region = str(item.get("region") or "").strip().lower()
+    if not region or region == canonical_region or region in aliases:
+        item["region"] = canonical_region
+    return item
+
+
 def _get_source_admin_levels(metadata: dict | None) -> list[int]:
     if not metadata:
         return []
@@ -796,6 +834,7 @@ def postprocess_order(order: dict, hints: dict = None) -> dict:
     valid_count = 0
 
     for item in regular_items:
+        item = _normalize_source_declared_scope(item)
         validated = validate_item(item, catalog)
         validated_items.append(validated)
         if validated.get("_valid"):

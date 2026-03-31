@@ -37,6 +37,12 @@ export const ViewportLoader = {
   lastRequestedLevel: null,  // Track the level of the in-flight request
   lastZoom: null,  // Track zoom level to distinguish zoom from pan
   lastRenderedLevel: 0,
+  orderModeLevelHoldUntil: 0,
+
+  holdOrderModeLevel(level = this.currentAdminLevel, durationMs = 1200) {
+    this.currentAdminLevel = level;
+    this.orderModeLevelHoldUntil = Date.now() + durationMs;
+  },
 
   renderViewportFromCache(level = this.currentAdminLevel, bboxOverride = null) {
     if (!MapAdapter?.map) return 0;
@@ -412,12 +418,27 @@ export const ViewportLoader = {
 
     // In order mode, filter displayed data by admin level instead of loading new data
     if (this.orderMode) {
+      if (Date.now() < this.orderModeLevelHoldUntil && newLevel > this.currentAdminLevel) {
+        return;
+      }
       if (newLevel !== this.currentAdminLevel) {
         const lockInfo = this.levelLocked ? ' [LOCKED]' : '';
         console.log(`Order mode: Viewport area ${area.toFixed(0)} sq deg -> Admin level ${newLevel}${lockInfo}`);
         this.currentAdminLevel = newLevel;
-        // Tell TimeSlider to filter to this admin level
-        TimeSlider?.setAdminLevelFilter(newLevel);
+        if (App?.hasLazyMetricOrder?.()) {
+          App.ensureMetricLevelLoaded(newLevel).then((loaded) => {
+            if (this.currentAdminLevel !== newLevel) return;
+            if (loaded) {
+              App.applyOrderModeLevelFilter?.(newLevel);
+            }
+          }).catch((error) => {
+            console.warn(`Lazy metric level load failed for admin_${newLevel}:`, error.message);
+          });
+        } else if (App?.applyOrderModeLevelFilter) {
+          App.applyOrderModeLevelFilter(newLevel);
+        } else {
+          TimeSlider?.setAdminLevelFilter(newLevel);
+        }
       }
       return;
     }

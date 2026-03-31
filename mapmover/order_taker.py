@@ -665,7 +665,7 @@ def interpret_request(user_query: str, chat_history: list = None, hints: dict = 
             system=system_content.strip(),
             messages=chat_messages,
             tools=tools,
-            temperature=0.3,
+            temperature=0.0,
             max_tokens=500
         )
 

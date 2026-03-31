@@ -43,6 +43,7 @@ from .geometry_handlers import (
     load_global_countries,
     load_country_parquet,
     load_geometry_rows_by_loc_ids,
+    load_subcounty_geometry,
     translate_loc_id_to_geometry_id,
     df_to_geojson,
 )
@@ -2117,6 +2118,7 @@ def execute_order(order: dict) -> dict:
     metric_year_ranges = {}  # Track year range per metric for time slider adjustment
     metric_source_map = {}  # Track which metric belongs to which source
     aggregation_trace = []  # Track applied aggregation contract per item
+    loc_level_map = {}  # Track loc_id -> geo_level for multi-level multi-year filtering
     requested_year_start = None  # Track requested range for comparison
     requested_year_end = None
     all_region_codes = set()  # Track all requested region codes for GeoJSON
@@ -2271,6 +2273,9 @@ def execute_order(order: dict) -> dict:
                     # Multi-year: organize by year -> loc_id
                     row_year = int(row.get("year")) if "year" in df.columns else 0
                     all_years.add(row_year)
+                    row_geo_level = row.get("geo_level") if "geo_level" in df.columns else requested_geo_level
+                    if row_geo_level:
+                        loc_level_map[geom_loc_id] = row_geo_level
 
                     if row_year not in year_data:
                         year_data[row_year] = {}
@@ -2333,6 +2338,9 @@ def execute_order(order: dict) -> dict:
     else:
         primary_level = list(geo_levels)[0] if geo_levels else "country"
     uses_global_country_geometry = primary_level in {"country", "admin_0"}
+    primary_admin_num = None
+    if isinstance(primary_level, str) and primary_level.startswith("admin_") and primary_level[6:].isdigit():
+        primary_admin_num = int(primary_level[6:])
 
     # For multi-level sources, filter boxes to only the primary (lowest) level
     if is_multi_level and boxes:
@@ -2340,6 +2348,22 @@ def execute_order(order: dict) -> dict:
             loc_id: box for loc_id, box in boxes.items()
             if box.get("_geo_level") == primary_level or "_geo_level" not in box
         }
+    if is_multi_level and year_data:
+        filtered_year_data = {}
+        for year, loc_map in year_data.items():
+            kept_loc_map = {
+                loc_id: metrics
+                for loc_id, metrics in loc_map.items()
+                if loc_level_map.get(loc_id) == primary_level
+            }
+            if kept_loc_map:
+                filtered_year_data[year] = kept_loc_map
+        year_data = filtered_year_data
+
+    loc_ids_to_check = set(boxes.keys()) if boxes else set()
+    if year_data:
+        for year_locs in year_data.values():
+            loc_ids_to_check = loc_ids_to_check | set(year_locs.keys())
 
     geometry_df = None
 
@@ -2362,13 +2386,35 @@ def execute_order(order: dict) -> dict:
         if all_region_codes and geometry_df is not None and "loc_id" in geometry_df.columns:
             geometry_df = geometry_df[geometry_df["loc_id"].isin(all_region_codes)]
             logger.info(f"[DEBUG] After region filter: {len(geometry_df)} rows")
+    elif primary_admin_num is not None and primary_admin_num >= 3:
+        geometry_rows = []
+        loc_ids_by_state: dict[tuple[str, str], list[str]] = {}
+
+        for loc_id in loc_ids_to_check:
+            parts = loc_id.split("-")
+            if len(parts) < 2:
+                continue
+            iso3 = parts[0]
+            state_abbrev = parts[1]
+            loc_ids_by_state.setdefault((iso3, state_abbrev), []).append(loc_id)
+
+        for (iso3, state_abbrev), state_loc_ids in loc_ids_by_state.items():
+            state_geom = load_subcounty_geometry(iso3, admin_level=primary_admin_num, state_abbrev=state_abbrev)
+            if state_geom is None or state_geom.empty:
+                continue
+
+            filtered_geom = state_geom[state_geom["loc_id"].isin(state_loc_ids)]
+            if filtered_geom is None or filtered_geom.empty:
+                continue
+
+            keep_cols = [c for c in ["loc_id", "name", "geometry"] if c in filtered_geom.columns]
+            geometry_rows.append(filtered_geom[keep_cols])
+
+        geometry_df = pd.concat(geometry_rows, ignore_index=True) if geometry_rows else None
+
     else:
         # Standard admin levels (admin_1, admin_2) - load from country parquet files
         iso3_codes = set()
-        loc_ids_to_check = boxes.keys() if boxes else set()
-        if year_data:
-            for year_locs in year_data.values():
-                loc_ids_to_check = loc_ids_to_check | set(year_locs.keys())
 
         for loc_id in loc_ids_to_check:
             iso3 = loc_id.split("-")[0] if "-" in loc_id else loc_id
@@ -2403,8 +2449,8 @@ def execute_order(order: dict) -> dict:
 
     # For multi-level sources, restrict geometry to only the loc_ids that have data
     # to avoid sending unrelated country-wide polygons to the frontend
-    if is_multi_level and geometry_df is not None and boxes:
-        relevant_loc_ids = set(boxes.keys())
+    if is_multi_level and geometry_df is not None and loc_ids_to_check:
+        relevant_loc_ids = set(loc_ids_to_check)
         geometry_df = geometry_df[geometry_df["loc_id"].isin(relevant_loc_ids)]
 
     _executor_log(trace_id, "geometry_loaded", t_execute_start, f"level={primary_level} geometry_rows={len(geometry_df) if geometry_df is not None else 0}")
@@ -2498,6 +2544,7 @@ def execute_order(order: dict) -> dict:
         "type": "data",
         "data_type": response_data_type,
         "geographic_level": primary_level,
+        "available_geo_levels": admin_numbered if admin_numbered else sorted([str(l) for l in geo_levels if l]),
         "source_id": primary_source,
         "geojson": {
             "type": "FeatureCollection",

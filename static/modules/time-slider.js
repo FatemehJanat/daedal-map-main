@@ -1098,6 +1098,73 @@ export const TimeSlider = {
   },
 
   /**
+   * Merge refreshed or lazily-loaded data into the active slider state without a full reset.
+   * @param {Object} timeRange - {min, max, available_years|available, granularity?, useTimestamps?}
+   * @param {Object} timeData - {time: {loc_id: {metric: value}}}
+   * @param {Object} baseGeojson - Base geometry
+   * @param {string[]} availableMetrics - Explicit list of metrics from order (optional)
+   * @param {Object} metricYearRanges - Per-metric year ranges
+   */
+  updateData(timeRange, timeData, baseGeojson, availableMetrics = null, metricYearRanges = null) {
+    this.timeData = timeData || {};
+    this.baseGeojson = baseGeojson || { type: 'FeatureCollection', features: [] };
+    this.explicitMetrics = availableMetrics || this.explicitMetrics || null;
+    this.metricYearRanges = metricYearRanges || this.metricYearRanges || {};
+
+    const currentTime = this.currentTime;
+    const currentMetric = this.metricKey;
+
+    this.granularity = timeRange.granularity || this.granularity || 'yearly';
+    this.useTimestamps = timeRange.useTimestamps ||
+      ['6h', 'daily', 'weekly', 'monthly'].includes(this.granularity);
+    this.stepMs = this.calculateStepMs(this.granularity);
+
+    this.minTime = this.normalizeToTimestamp(timeRange.min);
+    this.maxTime = this.normalizeToTimestamp(timeRange.max);
+    this.originalMinTime = this.minTime;
+    this.originalMaxTime = this.maxTime;
+
+    const rawTimes = timeRange.available || timeRange.available_years || [];
+    this.availableTimes = rawTimes.map(t => this.normalizeToTimestamp(t));
+    this.sortedTimes = [...this.availableTimes].sort((a, b) => a - b);
+
+    if (this.explicitMetrics && this.explicitMetrics.length > 0) {
+      this.availableMetrics = this.explicitMetrics;
+    } else {
+      this.availableMetrics = this.detectAvailableMetrics();
+    }
+
+    if (currentMetric && this.availableMetrics.includes(currentMetric)) {
+      this.metricKey = currentMetric;
+    } else if (this.availableMetrics.length > 0) {
+      this.metricKey = this.availableMetrics[0];
+    }
+
+    this.currentTime = currentTime != null ? currentTime : this.maxTime;
+    if (this.currentTime < this.minTime) {
+      this.currentTime = this.minTime;
+    } else if (this.currentTime > this.maxTime) {
+      this.currentTime = this.maxTime;
+    }
+
+    this.timeDataFilled = this.buildFilledTimeData();
+    this.renderMetricTabs();
+    this.configureSliderScale();
+
+    if (this.titleLabel) {
+      this.titleLabel.textContent = this.metricKey || 'Time';
+    }
+    if (this.yearLabel) {
+      this.yearLabel.textContent = this.formatTimeLabel(this.currentTime);
+    }
+
+    ChoroplethManager?.init(this.metricKey, this.timeData, this.availableTimes);
+    const geojson = this.buildTimeGeojson(this.currentTime);
+    MapAdapter?.loadGeoJSON(geojson);
+    ChoroplethManager?.update(geojson, this.metricKey);
+  },
+
+  /**
    * Setup event listeners (called once)
    */
   setupEventListeners() {
@@ -1522,6 +1589,14 @@ export const TimeSlider = {
     return dashCount;
   },
 
+  getFeatureAdminLevel(feature) {
+    const explicitLevel = feature?.properties?.admin_level_num;
+    if (explicitLevel != null && !isNaN(Number(explicitLevel))) {
+      return Number(explicitLevel);
+    }
+    return this.getAdminLevelFromLocId(feature?.properties?.loc_id);
+  },
+
   /**
    * Set admin level filter and re-render the current time.
    * Called by ViewportLoader when viewport changes in order mode.
@@ -1536,7 +1611,7 @@ export const TimeSlider = {
     // Re-render current time with new filter
     if (this.currentTime != null && this.baseGeojson) {
       const geojson = this.buildTimeGeojson(this.currentTime);
-      MapAdapter?.updateSourceData(geojson);
+      MapAdapter?.loadGeoJSON(geojson);
 
       // Update feature count display
       const countEl = document.getElementById('totalAreas');
@@ -1549,6 +1624,7 @@ export const TimeSlider = {
         const values = geojson.features
           .map(f => f.properties[this.metricKey])
           .filter(v => v != null && !isNaN(v));
+        ChoroplethManager.update(geojson, this.metricKey);
         ChoroplethManager.updateScaleForValues(values, this.metricKey);
       }
     }
@@ -1569,7 +1645,7 @@ export const TimeSlider = {
     let features = this.baseGeojson.features;
     if (this.currentAdminLevel != null) {
       features = features.filter(f => {
-        const level = this.getAdminLevelFromLocId(f.properties.loc_id);
+        const level = this.getFeatureAdminLevel(f);
         return level === this.currentAdminLevel;
       });
     }
