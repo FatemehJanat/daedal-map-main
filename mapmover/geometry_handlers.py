@@ -72,6 +72,14 @@ def _load_crosswalk(iso3: str) -> dict | None:
 
     crosswalk_path = COUNTRIES_DIR / iso3 / "crosswalk.json"
     if not crosswalk_path.exists():
+        if is_cloud_mode():
+            try:
+                from .data_loading import _fetch_json_from_s3
+                data = _fetch_json_from_s3(f"countries/{iso3}/crosswalk.json")
+                _crosswalk_cache[iso3] = data
+                return data
+            except Exception as e:
+                logger.warning(f"Failed to load crosswalk for {iso3} from cloud storage: {e}")
         _crosswalk_cache[iso3] = None
         return None
 
@@ -1302,7 +1310,7 @@ def load_subcounty_geometry(iso3: str, admin_level: int, state_abbrev: str = Non
             return _subcounty_geometry_cache[cache_key]
 
         file_path = countries_dir / "geometry" / f"{geom_type}.parquet"
-        if not file_path.exists():
+        if not is_cloud_mode() and not file_path.exists():
             logger.debug(f"Sub-county geometry not found: {file_path}")
             return None
 
@@ -1330,7 +1338,7 @@ def load_subcounty_geometry(iso3: str, admin_level: int, state_abbrev: str = Non
             return _subcounty_geometry_cache[cache_key]
 
         file_path = countries_dir / "geometry" / subdir / f"{iso3}-{state_abbrev}.parquet"
-        if not file_path.exists():
+        if not is_cloud_mode() and not file_path.exists():
             logger.debug(f"Sub-county geometry not found: {file_path}")
             return None
 
