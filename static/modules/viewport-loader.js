@@ -95,9 +95,12 @@ export const ViewportLoader = {
   // Navigation layers (contiguous, smooth zoom):
   //   0: Countries, 1: States, 2: Counties, 3: Tracts, 4: Block Groups, 5: Blocks
   //
-  // Note: admin_level=3+ is USA-only via Census geometry (tracts, blockgroups, blocks).
-  // Other countries fall back gracefully to their deepest available geoBoundaries level.
-  // Census tracts provide smooth contiguous coverage at the sub-county level.
+  // This is the canonical admin path. Parallel geometry tracks such as ZCTA,
+  // tribal, watersheds, and parks are handled separately through overlays /
+  // special geometry sources, not by reinterpreting admin levels.
+  //
+  // Deep admin navigation is currently strongest in USA Census geometry; other
+  // countries fall back gracefully to their deepest available canonical admin layer.
   areaThresholds: {
     level0: 3000,   // > 3000 sq deg = countries (world/continent view, zoom ~2-4)
     level1: 300,    // > 300 sq deg = states (large country view, zoom ~4-6)
@@ -149,8 +152,8 @@ export const ViewportLoader = {
    *   4 = Block Groups
    *   5 = Blocks
    *
-   * Note: GADM admin_level=3 (cities/places) is skipped - it's fragmented.
-   * Use overlay system for cities, tribal lands, ZCTAs, watersheds, etc.
+   * These are canonical admin levels only. Cities/places, tribal lands,
+   * ZCTAs, watersheds, and similar geometries live on separate overlay tracks.
    */
   getAdminLevelForViewport(bounds) {
     const area = this.getViewportArea(bounds);

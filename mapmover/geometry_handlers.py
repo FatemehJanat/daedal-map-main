@@ -498,6 +498,49 @@ def load_geometry_rows_by_loc_ids(iso3: str, loc_ids: list[str]):
         return pd.DataFrame()
 
 
+def _load_deep_geometry_index_rows(
+    iso3: str,
+    admin_level: int,
+    parent_loc_id: str | None = None,
+    bbox: tuple | None = None,
+):
+    """
+    Load lightweight index rows for canonical deep admin levels.
+
+    This keeps admin_3/admin_4/admin_5 on the same path as the working
+    subcounty geometry loaders instead of falling back to country parquet files
+    that stop at admin_2 for countries like USA.
+    """
+    frames = []
+
+    if parent_loc_id:
+        parts = parent_loc_id.split("-")
+        state_abbrev = parts[1] if len(parts) >= 2 else None
+        df = load_subcounty_geometry(iso3, admin_level=admin_level, state_abbrev=state_abbrev)
+        if df is None or df.empty:
+            return pd.DataFrame()
+        if "parent_id" in df.columns:
+            df = df[df["parent_id"] == parent_loc_id]
+        return df
+
+    if bbox is None:
+        return pd.DataFrame()
+
+    regions = get_regions_in_bbox(iso3, *bbox)
+    for region_code in regions:
+        df = load_subcounty_geometry(iso3, admin_level=admin_level, state_abbrev=region_code)
+        if df is None or df.empty:
+            continue
+        df = _filter_df_by_bbox(df, bbox)
+        if df is not None and not df.empty:
+            frames.append(df)
+
+    if not frames:
+        return pd.DataFrame()
+
+    return pd.concat(frames, ignore_index=True)
+
+
 def load_country_bounds():
     """
     Load country bounding boxes from global.csv for fast viewport filtering.
@@ -553,16 +596,35 @@ def get_geometry_index(parent_loc_id: str | None = None, admin_level: int | None
         else:
             target_level = admin_level if admin_level is not None else len(parts)
 
-        df = load_country_parquet(iso3, admin_level=target_level)
+        if target_level >= 3:
+            df = _load_deep_geometry_index_rows(
+                iso3,
+                admin_level=target_level,
+                parent_loc_id=parent_loc_id,
+            )
+        else:
+            df = load_country_parquet(iso3, admin_level=target_level)
         if df is None or df.empty:
             return {"rows": [], "count": 0, "parent_loc_id": parent_loc_id, "admin_level": target_level}
 
-        if "parent_id" in df.columns:
+        if target_level < 3 and "parent_id" in df.columns:
             df = df[df["parent_id"] == parent_loc_id]
     else:
         target_level = admin_level if admin_level is not None else 0
         if target_level == 0:
             df = load_global_countries()
+        elif target_level >= 3 and bbox is not None:
+            countries = get_countries_in_bbox(*bbox)
+            frames = []
+            for iso3 in countries:
+                deep_df = _load_deep_geometry_index_rows(
+                    iso3,
+                    admin_level=target_level,
+                    bbox=bbox,
+                )
+                if deep_df is not None and not deep_df.empty:
+                    frames.append(deep_df)
+            df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
         elif bbox is not None:
             countries = get_countries_in_bbox(*bbox)
             frames = []
@@ -1171,31 +1233,32 @@ DEFAULT_LEVEL_NAMES = {
     6: "blocks"
 }
 
-# Cache for sub-county geometry files (ZCTAs, tracts, block groups, blocks)
+# Cache for canonical deep admin geometry files (admin_3+ such as tracts,
+# block groups, and blocks). Parallel geometry tracks like ZCTA or tribal
+# should not be routed through this admin hierarchy.
 _subcounty_geometry_cache = {}
 
 
 def load_subcounty_geometry(iso3: str, admin_level: int, state_abbrev: str = None):
     """
-    Load sub-county geometry for deep admin levels (3+).
+    Load canonical deep-admin geometry for admin_3+.
 
     Supports tiered geometry files stored in:
-    - geometry_{type}.parquet (national files, e.g., geometry_zcta.parquet)
+    - geometry_{type}.parquet (national files when a country stores deep
+      admin geometry in one file)
     - geometry_{type}/{ISO3}-{region}.parquet (regional files)
 
     For USA, the structure is:
-    - Level 3 (postal/ZCTA): geometry_zcta.parquet (national)
-    - Level 4 (tract): geometry_tract/USA-{state}.parquet
-    - Level 5 (block group): geometry_blockgroup/USA-{state}.parquet
-    - Level 6 (block): geometry_block/USA-{state}.parquet
+    - Level 3 (admin_3): tract
+    - Level 4 (admin_4): block group
+    - Level 5 (admin_5): block
 
-    Other countries can use similar patterns:
-    - geometry_postal.parquet for postal codes
-    - geometry_district/{ISO3}-{region}.parquet for sub-county divisions
+    Parallel geometry tracks such as ZCTA, tribal, watersheds, or parks are
+    handled elsewhere and are not part of the admin_0..admin_5 path.
 
     Args:
         iso3: Country code
-        admin_level: Admin level (3+)
+        admin_level: Canonical admin level (3+)
         state_abbrev: Region/state code (required for state-partitioned levels)
 
     Returns:

@@ -457,6 +457,7 @@ WHEN USER ASKS about a specific source ("what's in X?" or "show me metrics"):
 - If there are more than 10, say "There are X metrics available, here are the key ones:" and show 5-8
 - Mention the year range available
 - Say "I can get them all" or "I can show any of these" (never mention "*" or wildcards to the user)
+- If the user then replies with "all", "all of them", or equivalent for that detected source, return type="order" using that source with `metric: "*"` instead of another chat/clarify reply.
 
 INTERACTION POLICY:
 - Default for all sources: order_first.
@@ -465,6 +466,7 @@ INTERACTION POLICY:
 - For source-backed analytical questions, prefer returning type="order" over type="chat".
 - For published geographic packs, "show me/map/display [place] [topic]" should default to a real order, not a catalog-status explanation.
 - If the user names a published geographic pack/topic but not an exact metric, choose the best-fit metric from the source's keywords/names and use the latest available year unless the user asked for a specific year or comparison.
+- If the user asks broadly for a published source's "data" and then says "all", prefer a real order for all metrics rather than re-describing availability or publication state.
 - Do not say you cannot retrieve metrics for a published pack just because the user asked broadly. Either return an order or ask one tight clarification about metric/time if genuinely needed.
 - When source metadata or reference material provides routing guidance, follow it. In particular:
   - prefer an order for single-metric analytical sources when metadata marks them as order-first analytics

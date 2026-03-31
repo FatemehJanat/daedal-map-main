@@ -488,13 +488,21 @@ def validate_item(item: dict, catalog: dict) -> dict:
         return item
 
     catalog_source = _get_catalog_source(catalog, source_id)
-    if _source_requires_metric(item, catalog_source) and not metric:
-        item["_valid"] = False
-        item["_error"] = f"Source '{source_id}' requires a concrete metric before execution"
-        return item
 
-    # Load full metadata for metric validation
+    # Load full metadata for metric validation and metadata-backed defaults
     metadata = load_source_metadata(source_id)
+    routing_hints = metadata.get("routing_hints", {}) if metadata else {}
+
+    if _source_requires_metric(item, catalog_source) and not metric:
+        default_metric = routing_hints.get("single_metric_default")
+        if default_metric:
+            item["metric"] = default_metric
+            metric = default_metric
+        else:
+            item["_valid"] = False
+            item["_error"] = f"Source '{source_id}' requires a concrete metric before execution"
+            return item
+
     if not metadata:
         # Source in catalog but no metadata file - still valid
         item["_valid"] = True
@@ -592,6 +600,7 @@ def expand_wildcard_metrics(items: list) -> list:
     to know every metric name, keeping the prompt small while enabling full access.
     """
     expanded = []
+    catalog = load_catalog()
 
     for item in items:
         # Skip event mode items - they don't use metrics, "*" means "all events"
@@ -604,6 +613,12 @@ def expand_wildcard_metrics(items: list) -> list:
         # Check for wildcard
         if metric in ("*", "all", "all_metrics"):
             source_id = item.get("source_id")
+            if not source_id and item.get("pack_id"):
+                resolved_source = _resolve_pack_source(catalog, item.get("pack_id"), item.get("region"))
+                if resolved_source:
+                    item["source_id"] = resolved_source
+                    item["_resolved_from_pack"] = True
+                    source_id = resolved_source
             if not source_id:
                 # Can't expand without knowing the source
                 expanded.append(item)

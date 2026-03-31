@@ -688,10 +688,17 @@ export const MapAdapter = {
     // Skip if in debug mode (debug mode has its own coloring via getDebugFillColorExpression)
     if (App?.debugMode) return;
 
-    const fillColor = this.getFocalFillColorExpression();
+    const hasMetricChoropleth = App?.currentData?.data_type === 'metrics';
+
     const strokeColor = this.getFocalStrokeColorExpression();
 
-    this.map.setPaintProperty(CONFIG.layers.fill, 'fill-color', fillColor);
+    // Preserve active choropleth colors when metric data is displayed.
+    // Popup focus should not replace the data-driven palette with the
+    // fallback focal hierarchy colors.
+    if (!hasMetricChoropleth) {
+      const fillColor = this.getFocalFillColorExpression();
+      this.map.setPaintProperty(CONFIG.layers.fill, 'fill-color', fillColor);
+    }
     this.map.setPaintProperty(CONFIG.layers.fill, 'fill-opacity', [
       'case',
       ['boolean', ['feature-state', 'hover'], false],
