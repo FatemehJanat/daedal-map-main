@@ -83,11 +83,13 @@ async def get_fairfax_raster(period: str):
       period  - scene period string (e.g. "2024-06-14_06-18")
       year    - int year
     """
+    import io
     import numpy as np
-    import rasterio
-    from rasterio.io import MemoryFile
+    import tifffile
 
-    # Validate period against manifest to prevent path traversal
+    # Validate period against manifest to prevent path traversal.
+    # Manifest also carries pre-extracted bounds and dimensions so we never
+    # need rasterio (or any native C library) at runtime.
     manifest = _load_manifest()
     if manifest is None:
         return msgpack_error("Fairfax raster manifest not found", 404)
@@ -96,33 +98,32 @@ async def get_fairfax_raster(period: str):
     if scene is None:
         return msgpack_error(f"Unknown period: {period}", 404)
 
+    b = scene.get("bounds")
+    if not b:
+        return msgpack_error(f"No bounds in manifest for period: {period}", 500)
+
     try:
         if is_cloud_mode():
             raw_tif = _cloud_object_bytes(f"{RASTER_RELATIVE_DIR}/{scene['file']}")
             if raw_tif is None:
                 return msgpack_error(f"Raster file not found for period: {period}", 404)
-            with MemoryFile(raw_tif) as memfile:
-                with memfile.open() as src:
-                    data = src.read(1)
-                    bounds = src.bounds
+            data = tifffile.imread(io.BytesIO(raw_tif))
         else:
             tif_path = RASTER_DIR / scene["file"]
             if not tif_path.exists():
                 logger.warning(f"Fairfax raster file missing: {tif_path}")
                 return msgpack_error(f"Raster file not found for period: {period}", 404)
-            with rasterio.open(tif_path) as src:
-                data = src.read(1)
-                bounds = src.bounds
+            data = tifffile.imread(str(tif_path))
 
         return msgpack_response({
             "pixels": data.astype(np.float32).tobytes(),
-            "width":  int(data.shape[1]),
-            "height": int(data.shape[0]),
+            "width":  int(scene["width"]),
+            "height": int(scene["height"]),
             "bounds": {
-                "west":  float(bounds.left),
-                "south": float(bounds.bottom),
-                "east":  float(bounds.right),
-                "north": float(bounds.top),
+                "west":  float(b["west"]),
+                "south": float(b["south"]),
+                "east":  float(b["east"]),
+                "north": float(b["north"]),
             },
             "nodata": 0.0,
             "period": period,
