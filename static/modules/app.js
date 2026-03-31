@@ -23,6 +23,8 @@ import { DisasterPopup, setDependencies as setDisasterPopupDeps } from './disast
 import { GeometryModel, setDependencies as setGeometryDeps } from './models/model-geometry.js';
 import { AuthManager } from './auth.js';
 import { TutorialMode } from './tutorial-mode.js';
+import { FairfaxRasterPanel } from './fairfax-raster-panel.js';
+import { LstRasterModel, setDependencies as setLstRasterDeps } from './model-lst-raster.js';
 
 // ============================================================================
 // APP - Main application controller
@@ -485,6 +487,7 @@ export const App = {
     setOverlayControllerDeps({ MapAdapter, ModelRegistry, OverlaySelector, TimeSlider });
     setDisasterPopupDeps({ MapAdapter });
     setGeometryDeps({ MapAdapter });
+    setLstRasterDeps({ MapAdapter });
 
     await AuthManager.init();
     this.setupMobileExperienceNotice();
@@ -1196,6 +1199,11 @@ export const App = {
 
     if (data.data_type === 'metrics' && options.order) {
       this.setMetricOrderContext(options.order, data);
+    }
+
+    // Show the LST raster panel when any Fairfax climate source is loaded
+    if (data.data_type === 'metrics' && String(data.source_id || '').startsWith('fairfax_lst')) {
+      FairfaxRasterPanel.init();
     }
 
     // Collapse sidebar on mobile
