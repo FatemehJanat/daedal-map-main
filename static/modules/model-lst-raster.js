@@ -127,8 +127,12 @@ export const LstRasterModel = {
       return false;
     }
 
+    // msgpack bytes field arrives as Uint8Array - reinterpret as Float32Array.
+    // slice() creates an aligned copy so the Float32Array constructor does not
+    // throw a RangeError when the Uint8Array view has a non-4-byte byteOffset.
     const raw = data.pixels;
-    this.pixels = new Float32Array(raw.buffer);
+    const aligned = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength);
+    this.pixels = new Float32Array(aligned);
     this.width  = data.width;
     this.height = data.height;
     this.bounds = data.bounds;

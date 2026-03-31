@@ -6,6 +6,7 @@
  */
 
 import { LstRasterModel } from './model-lst-raster.js';
+import { MapAdapter } from './map-adapter.js';
 import { fetchMsgpack } from './utils/fetch.js';
 
 const PANEL_ID = 'fairfax-raster-panel';
@@ -39,12 +40,14 @@ export const FairfaxRasterPanel = {
 
     // Auto-load the first scene
     await _loadScene(_scenes[0].period);
+    _hideFillOpacity();
   },
 
   hide() {
     const panel = document.getElementById(PANEL_ID);
     if (panel) panel.style.display = 'none';
     LstRasterModel.hide();
+    _restoreFillOpacity();
   },
 
   show() {
@@ -66,8 +69,87 @@ export const FairfaxRasterPanel = {
 };
 
 // -------------------------------------------------------------------------
+// Choropleth fill control - zero fill when heat map is visible
+//
+// We patch map.setPaintProperty so that ANY caller (ChoroplethManager,
+// updateFocalColors, zoom handlers, etc.) that tries to set fill-opacity
+// on 'regions-fill' while the heat map is on gets forced to 0.
+// Unpatch on hide to restore normal choropleth behaviour.
+// -------------------------------------------------------------------------
+
+let _origSetPaintProperty = null;
+
+function _hideFillOpacity() {
+  const map = MapAdapter?.map;
+  if (!map) return;
+
+  if (!_origSetPaintProperty) {
+    _origSetPaintProperty = map.setPaintProperty.bind(map);
+    map.setPaintProperty = function(layerId, property, value, ...rest) {
+      if (layerId === 'regions-fill' && property === 'fill-opacity') {
+        return _origSetPaintProperty('regions-fill', 'fill-opacity', 0);
+      }
+      return _origSetPaintProperty(layerId, property, value, ...rest);
+    };
+  }
+
+  if (map.getLayer('regions-fill')) {
+    map.setPaintProperty('regions-fill', 'fill-opacity', 0);
+  }
+}
+
+function _restoreFillOpacity() {
+  const map = MapAdapter?.map;
+  if (!map) return;
+
+  if (_origSetPaintProperty) {
+    map.setPaintProperty = _origSetPaintProperty;
+    _origSetPaintProperty = null;
+  }
+
+  MapAdapter?.updateFocalColors?.();
+}
+
+// -------------------------------------------------------------------------
 // Build panel DOM
 // -------------------------------------------------------------------------
+
+function _makeDraggable(panel, handle) {
+  let dragging = false;
+  let detached = false;
+  let offsetX = 0, offsetY = 0;
+
+  handle.addEventListener('mousedown', (e) => {
+    if (e.target.tagName === 'BUTTON') return;
+    dragging = true;
+
+    const rect = panel.getBoundingClientRect();
+
+    if (!detached) {
+      // Move to body with position:fixed so coords are always viewport-relative.
+      // Do this before updating style so the rect is still valid.
+      detached = true;
+      document.body.appendChild(panel);
+      panel.style.position = 'fixed';
+      panel.style.bottom   = 'auto';
+      panel.style.right    = 'auto';
+      panel.style.top      = rect.top  + 'px';
+      panel.style.left     = rect.left + 'px';
+    }
+
+    offsetX = e.clientX - rect.left;
+    offsetY = e.clientY - rect.top;
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    panel.style.left = (e.clientX - offsetX) + 'px';
+    panel.style.top  = (e.clientY - offsetY) + 'px';
+  });
+
+  document.addEventListener('mouseup', () => { dragging = false; });
+}
 
 function _buildPanel(panel) {
   panel.innerHTML = '';
@@ -90,10 +172,12 @@ function _buildPanel(panel) {
       LstRasterModel.hide();
       toggleBtn.textContent = 'Off';
       toggleBtn.classList.remove('active');
+      _restoreFillOpacity();
     } else {
       LstRasterModel.show();
       toggleBtn.textContent = 'On';
       toggleBtn.classList.add('active');
+      _hideFillOpacity();
     }
   });
 
@@ -107,6 +191,8 @@ function _buildPanel(panel) {
   btnGroup.appendChild(closeBtn);
   header.appendChild(btnGroup);
   panel.appendChild(header);
+
+  _makeDraggable(panel, header);
 
   // Scene buttons
   const sceneRow = document.createElement('div');
