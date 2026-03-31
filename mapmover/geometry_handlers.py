@@ -109,6 +109,25 @@ def translate_loc_id_to_geometry_id(loc_id: str) -> str:
     return local_to_geo.get(canonical, canonical)
 
 
+def translate_geometry_id_to_local_id(loc_id: str) -> str:
+    """
+    Translate a geometry-side loc_id back to its preferred local/canonical id.
+
+    This is the reverse of translate_loc_id_to_geometry_id() and is especially
+    important for multi-level USA flows where an admin_2 geometry id (GeoBoundaries
+    county id) needs to scope deeper admin_3+ rows that are stored under the
+    canonical local county bridge id.
+    """
+    canonical = canonicalize_loc_id(loc_id)
+    if not isinstance(canonical, str) or "-" not in canonical:
+        return canonical
+
+    iso3 = canonical.split("-", 1)[0]
+    crosswalk = _load_crosswalk(iso3)
+    _, geo_to_local = _build_crosswalk_maps(crosswalk)
+    return geo_to_local.get(canonical, canonical)
+
+
 def _build_crosswalk_maps(crosswalk_data: dict | None) -> tuple[dict, dict]:
     """
     Build local->geo and geo->preferred-local maps from crosswalk data.

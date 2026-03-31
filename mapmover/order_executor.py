@@ -44,6 +44,7 @@ from .geometry_handlers import (
     load_country_parquet,
     load_geometry_rows_by_loc_ids,
     load_subcounty_geometry,
+    translate_geometry_id_to_local_id,
     translate_loc_id_to_geometry_id,
     df_to_geojson,
 )
@@ -2268,9 +2269,13 @@ def execute_order(order: dict) -> dict:
             all_region_codes.update(region_codes)  # Track for GeoJSON building
         if region_codes and "loc_id" in df.columns:
             loc_id_series = df["loc_id"].map(canonicalize_loc_id)
+            normalized_region_codes = set()
+            for code in region_codes:
+                normalized_region_codes.add(code)
+                normalized_region_codes.add(translate_geometry_id_to_local_id(code))
             # Check for US state filtering (loc_ids starting with USA-)
-            us_state_prefixes = [c for c in region_codes if c.startswith("USA-")]
-            country_codes = [c for c in region_codes if not c.startswith("USA-")]
+            us_state_prefixes = [c for c in normalized_region_codes if isinstance(c, str) and c.startswith("USA-")]
+            country_codes = [c for c in normalized_region_codes if not (isinstance(c, str) and c.startswith("USA-"))]
 
             if us_state_prefixes:
                 # Filter to US locations matching state prefix
