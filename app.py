@@ -20,6 +20,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -38,6 +39,7 @@ from mapmover.routes.disasters.tornadoes import router as tornadoes_router
 from mapmover.routes.disasters.tsunamis import router as tsunamis_router
 from mapmover.routes.disasters.volcanoes import router as volcanoes_router
 from mapmover.routes.disasters.wildfires import router as wildfires_router
+from mapmover.routes.fairfax import router as fairfax_router
 from mapmover.routes.geometry import router as geometry_router
 from mapmover.routes.system import router as system_router
 from mapmover.routes.weather import router as weather_router
@@ -115,6 +117,7 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "Referer", "X-Requested-With"],
 )
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
 @app.middleware("http")
@@ -194,6 +197,7 @@ async def well_known_security_txt():
 
 app.include_router(system_router)
 app.include_router(geometry_router)
+app.include_router(fairfax_router)
 app.include_router(earthquakes_router)
 app.include_router(related_events_router)
 app.include_router(volcanoes_router)
