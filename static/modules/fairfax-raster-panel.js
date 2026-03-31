@@ -13,6 +13,9 @@ const PANEL_ID = 'fairfax-raster-panel';
 
 let _scenes    = [];
 let _activePeriod = null;
+let _initPromise = null;
+let _manifestUnavailable = false;
+let _panelBuilt = false;
 
 // -------------------------------------------------------------------------
 // Public API
@@ -21,6 +24,10 @@ let _activePeriod = null;
 export const FairfaxRasterPanel = {
 
   async init() {
+    if (_manifestUnavailable) return;
+    if (_initPromise) return _initPromise;
+
+    _initPromise = (async () => {
     const panel = document.getElementById(PANEL_ID);
     if (!panel) return;
 
@@ -29,18 +36,37 @@ export const FairfaxRasterPanel = {
       manifest = await fetchMsgpack('/api/fairfax/raster/manifest');
     } catch (err) {
       console.error('FairfaxRasterPanel: failed to load manifest', err);
+      _manifestUnavailable = true;
       return;
     }
 
     _scenes = manifest?.scenes || [];
-    if (_scenes.length === 0) return;
+    if (_scenes.length === 0) {
+      _manifestUnavailable = true;
+      return;
+    }
 
-    _buildPanel(panel);
+    if (!_panelBuilt) {
+      _buildPanel(panel);
+      _panelBuilt = true;
+    }
     panel.style.display = 'block';
 
     // Auto-load the first scene
-    await _loadScene(_scenes[0].period);
+    if (!_activePeriod) {
+      await _loadScene(_scenes[0].period);
+    } else {
+      _updateActiveButton(_activePeriod);
+      LstRasterModel.show();
+    }
     _hideFillOpacity();
+    })();
+
+    try {
+      await _initPromise;
+    } finally {
+      _initPromise = null;
+    }
   },
 
   hide() {
@@ -65,6 +91,9 @@ export const FairfaxRasterPanel = {
     LstRasterModel.cleanup();
     _scenes = [];
     _activePeriod = null;
+    _initPromise = null;
+    _manifestUnavailable = false;
+    _panelBuilt = false;
   },
 };
 
