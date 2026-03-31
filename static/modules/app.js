@@ -411,6 +411,9 @@ export const App = {
 
         if (response?.type === 'already_loaded') {
           context.loadedLevels.add(level);
+          if (this.activeMetricOrderContext?.sourceId === context.sourceId) {
+            this.activeMetricOrderContext.loadedLevels.add(level);
+          }
           if (!options.prefetch) {
             this.scheduleNextMetricLevelPrefetch(level);
           }
@@ -424,10 +427,16 @@ export const App = {
 
         if (response?.geojson?.features) {
           console.log(`Lazy metric load applied for ${geoLevel}: ${response.geojson.features.length} features`);
+          // Mark the level as loaded before ingest/display rebuilds the order
+          // context, otherwise empty/partial lazy responses can keep scheduling
+          // the same admin level again.
+          context.loadedLevels.add(level);
+          if (this.activeMetricOrderContext?.sourceId === context.sourceId) {
+            this.activeMetricOrderContext.loadedLevels.add(level);
+          }
           this.ingestLazyMetricData(response, nextOrder, {
             schedulePrefetch: !options.prefetch
           });
-          context.loadedLevels.add(level);
           if (ViewportLoader?.currentAdminLevel === level) {
             this.applyOrderModeLevelFilter(level);
           }
