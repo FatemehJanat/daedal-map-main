@@ -264,6 +264,7 @@ def build_tier3_context(
             metrics = metadata.get("metrics", {})
             temporal = metadata.get("temporal_coverage", {})
             year_range = f"{temporal.get('start', '?')}-{temporal.get('end', '?')}"
+            routing_hints = metadata.get("routing_hints", {}) or {}
             metrics_mapping = {}
             for col, info in metrics.items():
                 human_name = info.get("name", col)
@@ -293,6 +294,32 @@ def build_tier3_context(
             msg += "\n\nALL METRICS (use column name in JSON 'metric' field, human name when talking to user):\n"
             for col, human in metrics_mapping.items():
                 msg += f'  "{col}": {human}\n'
+            routing_lines = []
+            if routing_hints.get("prefer_order_for_analytics") and routing_hints.get("single_metric_default"):
+                routing_lines.append(
+                    f'For broad analytical queries that clearly match this source, prefer type="order" with metric="{routing_hints["single_metric_default"]}" unless the user asks for a different metric.'
+                )
+            if routing_hints.get("clarify_on_missing_metric"):
+                routing_lines.append(
+                    "For broad topic/goal queries without a specific metric, respond with type=\"clarify\" and ask the user which metric they want using human-readable metric names."
+                )
+            unsupported_aliases = routing_hints.get("unsupported_metric_aliases") or []
+            if unsupported_aliases:
+                examples = ", ".join(str(v) for v in unsupported_aliases[:4])
+                geo_summary = routing_hints.get("supported_geography_summary")
+                if not geo_summary:
+                    geo_levels = metadata.get("geographic_level") or []
+                    if isinstance(geo_levels, list):
+                        geo_summary = ", ".join(str(level) for level in geo_levels)
+                    elif geo_levels:
+                        geo_summary = str(geo_levels)
+                routing_lines.append(
+                    f"If the user asks for an unsupported metric such as {examples}, clarify honestly using the supported metrics above and accurately mention the supported geography ({geo_summary or 'see metadata'})."
+                )
+            if routing_lines:
+                msg += "\n\nROUTING GUIDANCE:\n"
+                for line in routing_lines:
+                    msg += f"- {line}\n"
             msg += "\n(REPLY RULES: When listing metrics to user, show max 10 and use human names only. Say 'I can get them all' not '*'.)"
             context_parts.append(msg)
 

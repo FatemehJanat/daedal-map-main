@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Optional
 
 from .data_loading import load_catalog, load_source_metadata
+from .duckdb_helpers import parquet_columns
+from .paths import DATA_ROOT
 
 
 # =============================================================================
@@ -45,11 +47,145 @@ DERIVED_EXPANSIONS = {
 POPULATION_FAMILY = "population"
 _POPULATION_RESOLUTION_CACHE = {}
 
+EVENT_DISPLAY_PATTERNS = [
+    "show me", "show the", "display", "map of", "map the",
+    "where are", "where were", "where did", "where have",
+    "which", "what", "list", "find",
+    "struck", "hit", "affected", "impacted",
+    "occurred", "happened",
+    "magnitude", "category", "m4", "m5", "m6", "m7",
+    "cat 1", "cat 2", "cat 3", "cat 4", "cat 5",
+    "individual", "events", "event", "tracks", "track", "points",
+]
+
+AGGREGATE_PATTERNS = [
+    "how many", "how much", "count", "total", "number of",
+    "statistics", "stats", "average", "sum",
+    "per year", "annually", "yearly", "annual", "over time",
+    "trend", "compare", "frequency", "exposure",
+    "per capita", "historically", "highest", "most",
+    "last 10 years", "last 20 years", "last 30 years",
+    "past 10 years", "past 20 years", "past 30 years",
+    "rolling", "between the 1990s", "between the 2010s",
+    "aggregate", "aggregated",
+]
+
+EXPLICIT_EVENT_VIEW_PATTERNS = [
+    "individual", "individual events", "events", "event",
+    "tracks", "track", "track points", "points",
+    "occurred", "happened", "struck", "hit",
+    "magnitude", "category", "m4", "m5", "m6", "m7",
+    "cat 1", "cat 2", "cat 3", "cat 4", "cat 5",
+]
+
+EXPLICIT_AGGREGATE_VIEW_PATTERNS = [
+    "aggregate", "aggregated", "annual", "annually", "yearly", "per year",
+    "count", "counts", "frequency", "trend", "compare", "rolling",
+    "last 10 years", "last 20 years", "last 30 years",
+    "past 10 years", "past 20 years", "past 30 years",
+]
+
 
 def _metric_display_name(source_id: str, metric_key: str) -> str:
     metadata = load_source_metadata(source_id) or {}
     metric_info = (metadata.get("metrics") or {}).get(metric_key, {})
     return metric_info.get("name", metric_key) if isinstance(metric_info, dict) else metric_key
+
+
+def _catalog_sources(catalog: dict) -> list[dict]:
+    sources = catalog.get("sources", [])
+    return sources if isinstance(sources, list) else []
+
+
+def _get_catalog_source(catalog: dict, source_id: str | None) -> dict | None:
+    if not source_id:
+        return None
+    for source in _catalog_sources(catalog):
+        if source.get("source_id") == source_id:
+            return source
+    return None
+
+
+def _scope_matches_region(scope: str, region: str | None) -> bool:
+    if not region:
+        return scope == "global"
+    value = str(region).lower()
+    if scope == "CAN":
+        return value.startswith("can") or value.startswith("canada")
+    if scope == "USA":
+        return value.startswith("usa") or value.startswith("us-")
+    if scope == "global":
+        return True
+    return value.startswith(scope.lower())
+
+
+def _resolve_pack_source(catalog: dict, pack_id: str | None, region: str | None) -> str | None:
+    if not pack_id:
+        return None
+
+    pack_sources = [s for s in _catalog_sources(catalog) if s.get("pack_id") == pack_id]
+    if not pack_sources:
+        return None
+
+    exact_matches = [
+        s for s in pack_sources
+        if s.get("scope") != "global" and _scope_matches_region(s.get("scope", "global"), region)
+    ]
+    if len(exact_matches) == 1:
+        return exact_matches[0].get("source_id")
+    if len(exact_matches) > 1:
+        return None
+
+    global_matches = [s for s in pack_sources if s.get("scope") == "global"]
+    if len(global_matches) == 1:
+        return global_matches[0].get("source_id")
+    if len(pack_sources) == 1:
+        return pack_sources[0].get("source_id")
+    return None
+
+
+def _source_requires_metric(item: dict, catalog_source: dict | None) -> bool:
+    if item.get("type") in {"derived", "derived_result"}:
+        return False
+    if item.get("mode") == "events":
+        return False
+
+    data_type = (catalog_source or {}).get("data_type", "metrics")
+    if isinstance(data_type, list):
+        if "events" in data_type and item.get("mode") != "aggregate":
+            return False
+        return "metrics" in data_type
+    return data_type == "metrics"
+
+
+def _format_metric_label(metric_key: str) -> str:
+    return str(metric_key or "").replace("_", " ").strip().title()
+
+
+def _get_disaster_aggregate_metric_columns(catalog_source: dict | None) -> set[str]:
+    source_path = str((catalog_source or {}).get("path") or "").strip()
+    if not source_path:
+        return set()
+
+    aggregate_dir = DATA_ROOT / source_path / "aggregates" / "admin2"
+    candidates = [
+        aggregate_dir / "yearly.parquet",
+        aggregate_dir / "rolling_10y.parquet",
+        aggregate_dir / "rolling_20y.parquet",
+    ]
+    excluded = {"loc_id", "year", "window_end_year", "window_start_year", "window_years", "source"}
+    metric_cols: set[str] = set()
+
+    for candidate in candidates:
+        try:
+            if not candidate.exists():
+                continue
+            cols = parquet_columns(candidate)
+            metric_cols.update(str(col) for col in cols if str(col) not in excluded)
+        except Exception:
+            continue
+
+    return metric_cols
 
 
 def _normalize_source_declared_scope(item: dict) -> dict:
@@ -88,6 +224,82 @@ def _normalize_source_declared_scope(item: dict) -> dict:
     if not region or region == canonical_region or region in aliases:
         item["region"] = canonical_region
     return item
+
+
+def _get_item_source_metadata(item: dict, catalog: dict) -> dict:
+    """Load source metadata for an item, resolving pack_id when needed."""
+    source_id = item.get("source_id")
+    if not source_id and item.get("pack_id"):
+        source_id = _resolve_pack_source(catalog, item.get("pack_id"), item.get("region"))
+    if not source_id:
+        return {}
+    return load_source_metadata(source_id) or {}
+
+
+def _query_signals_event_vs_aggregate(query: str) -> tuple[bool, bool]:
+    """Return coarse event-vs-aggregate intent signals from the raw query."""
+    query_lower = str(query or "").strip().lower()
+    if not query_lower:
+        return False, False
+    wants_events = any(pattern in query_lower for pattern in EVENT_DISPLAY_PATTERNS)
+    wants_aggregate = any(pattern in query_lower for pattern in AGGREGATE_PATTERNS)
+    return wants_events, wants_aggregate
+
+
+def _query_explicit_view_mode(query: str) -> tuple[bool, bool]:
+    """Return whether the query explicitly asks for event-view or aggregate-view semantics."""
+    query_lower = str(query or "").strip().lower()
+    if not query_lower:
+        return False, False
+    explicit_events = any(pattern in query_lower for pattern in EXPLICIT_EVENT_VIEW_PATTERNS)
+    explicit_aggregate = any(pattern in query_lower for pattern in EXPLICIT_AGGREGATE_VIEW_PATTERNS)
+    return explicit_events, explicit_aggregate
+
+
+def _build_multiple_paths_clarify(item: dict, metadata: dict) -> str:
+    """Build a grounded clarify message for metadata-declared multi-path ambiguity."""
+    routing_hints = metadata.get("routing_hints") or {}
+    summary = str(routing_hints.get("clarify_multiple_paths_summary") or "").strip()
+    dimensions = routing_hints.get("clarify_path_dimensions") or []
+    options = []
+
+    if "view_mode" in dimensions:
+        options = [str(v).strip() for v in (routing_hints.get("view_mode_options") or []) if str(v).strip()]
+
+    source_name = metadata.get("source_name") or item.get("source_id") or item.get("pack_id") or "this source"
+    if not summary:
+        if options:
+            summary = f"{source_name} supports multiple valid views for this request."
+        else:
+            summary = f"{source_name} supports multiple valid paths for this request."
+
+    if options:
+        options_text = " or ".join(options)
+        return f"{summary} Would you like {options_text}?"
+    return f"{summary} Which path would you like?"
+
+
+def detect_multiple_path_clarify(items: list, catalog: dict, hints: dict | None = None) -> str | None:
+    """Return a clarify message when metadata declares an ambiguous multi-path request."""
+    query = (hints or {}).get("original_query", "")
+    explicit_events, explicit_aggregate = _query_explicit_view_mode(query)
+
+    for item in items:
+        metadata = _get_item_source_metadata(item, catalog)
+        routing_hints = metadata.get("routing_hints") or {}
+        if not routing_hints.get("clarify_on_multiple_paths"):
+            continue
+
+        dimensions = routing_hints.get("clarify_path_dimensions") or []
+        if "view_mode" not in dimensions:
+            continue
+
+        # Clarify when the query explicitly points both ways, or when it
+        # leaves the path ambiguous and metadata says both are valid.
+        if explicit_events == explicit_aggregate:
+            return _build_multiple_paths_clarify(item, metadata)
+
+    return None
 
 
 def _get_source_admin_levels(metadata: dict | None) -> list[int]:
@@ -251,21 +463,34 @@ def validate_item(item: dict, catalog: dict) -> dict:
         item["_valid"] = True
         return item
 
-    if not source_id:
-        # pack_id items have no source_id yet -- executor resolves pack_id -> source_id later
-        if item.get("pack_id"):
-            item["_valid"] = True
+    if not source_id and item.get("pack_id"):
+        resolved_source = _resolve_pack_source(catalog, item.get("pack_id"), item.get("region"))
+        if resolved_source:
+            item["source_id"] = resolved_source
+            item["_resolved_from_pack"] = True
+            source_id = resolved_source
+        else:
+            item["_valid"] = False
+            item["_error"] = f"Unable to resolve pack_id '{item.get('pack_id')}' to a concrete source"
             return item
+
+    if not source_id:
         item["_valid"] = False
         item["_error"] = "Missing source_id"
         return item
 
     # Check source exists in catalog (sources is a list)
-    sources = catalog.get("sources", [])
+    sources = _catalog_sources(catalog)
     source_ids = [s.get("source_id") for s in sources] if isinstance(sources, list) else list(sources.keys())
     if source_id not in source_ids:
         item["_valid"] = False
         item["_error"] = f"Unknown source: {source_id}"
+        return item
+
+    catalog_source = _get_catalog_source(catalog, source_id)
+    if _source_requires_metric(item, catalog_source) and not metric:
+        item["_valid"] = False
+        item["_error"] = f"Source '{source_id}' requires a concrete metric before execution"
         return item
 
     # Load full metadata for metric validation
@@ -277,6 +502,15 @@ def validate_item(item: dict, catalog: dict) -> dict:
 
     # Check metric exists (case-insensitive matching with auto-correction)
     metrics = metadata.get("metrics", {})
+    aggregate_metric_cols = set()
+    if item.get("mode") == "aggregate":
+        aggregate_metric_cols = _get_disaster_aggregate_metric_columns(catalog_source)
+
+    if metric and metric not in metrics and metric in aggregate_metric_cols:
+        item["metric_label"] = _format_metric_label(metric)
+        item["_valid"] = True
+        return item
+
     if metric and metric not in metrics:
         # Try case-insensitive exact match on key first
         metric_lower = metric.lower()
@@ -300,6 +534,14 @@ def validate_item(item: dict, catalog: dict) -> dict:
             item["metric"] = exact_match
             metric = exact_match
         else:
+            if item.get("mode") == "aggregate" and aggregate_metric_cols:
+                aggregate_exact_match = next((col for col in aggregate_metric_cols if col.lower() == metric_lower), None)
+                if aggregate_exact_match:
+                    item["metric"] = aggregate_exact_match
+                    item["metric_label"] = _format_metric_label(aggregate_exact_match)
+                    item["_valid"] = True
+                    return item
+
             # No exact match, suggest close matches (by key or name)
             close_matches = []
             for k, v in metrics.items():
@@ -308,6 +550,10 @@ def validate_item(item: dict, catalog: dict) -> dict:
                     close_matches.append(k)
                 elif name and (metric_lower in name.lower() or name.lower() in metric_lower):
                     close_matches.append(k)
+            if item.get("mode") == "aggregate":
+                for col in aggregate_metric_cols:
+                    if metric_lower in col.lower() or col.lower() in metric_lower:
+                        close_matches.append(col)
             close_matches = list(dict.fromkeys(close_matches))  # Remove duplicates
             if close_matches:
                 item["_valid"] = False
@@ -649,37 +895,13 @@ def detect_event_mode(items: list, hints: dict = None) -> list:
     if hints:
         query = hints.get("original_query", "").lower()
 
-    # Patterns that suggest user wants to SEE individual events
-    event_display_patterns = [
-        "show me", "show the", "display", "map of", "map the",
-        "where are", "where were", "where did", "where have",
-        "which", "what", "list", "find",
-        "struck", "hit", "affected", "impacted",
-        "occurred", "happened",
-        "magnitude", "category", "m4", "m5", "m6", "m7",  # Specific magnitude
-        "cat 1", "cat 2", "cat 3", "cat 4", "cat 5",      # Hurricane categories
-    ]
-
-    # Patterns that suggest user wants AGGREGATE counts/statistics
-    aggregate_patterns = [
-        "how many", "how much", "count", "total", "number of",
-        "statistics", "stats", "average", "sum",
-        "per year", "annually", "yearly", "over time",
-        "trend", "compare", "frequency", "exposure",
-        "per capita", "historically", "highest", "most",
-        "last 10 years", "last 20 years", "last 30 years",
-        "past 10 years", "past 20 years", "past 30 years",
-        "rolling", "between the 1990s", "between the 2010s"
-    ]
-
     geography_aggregate_terms = [
         "counties", "county", "countries", "country",
         "regions", "region", "areas"
     ]
 
     # Determine intent from query
-    wants_events = any(p in query for p in event_display_patterns)
-    wants_aggregate = any(p in query for p in aggregate_patterns)
+    wants_events, wants_aggregate = _query_signals_event_vs_aggregate(query)
 
     # If both or neither detected, use heuristics
     if wants_events == wants_aggregate:
@@ -722,17 +944,6 @@ def detect_event_mode(items: list, hints: dict = None) -> list:
         elif event_file_key and wants_aggregate:
             item["mode"] = "aggregate"
             item.pop("event_file", None)
-
-            metric = item.get("metric", "")
-            metric_lower = str(metric).lower() if metric is not None else ""
-
-            # Default aggregate metric for broad hazard-frequency requests.
-            if metric_lower in ("", "*", "all", "all_metrics"):
-                item["metric"] = "event_count"
-            elif metric_lower in {"tornado_count", "earthquake_count", "hurricane_count", "wildfire_count", "tsunami_count", "volcano_count", "flood_count"}:
-                item["metric"] = "event_count"
-            elif "frequency" in query and metric_lower not in {"event_count", "deaths", "injuries"}:
-                item["metric"] = "event_count"
 
             # Annotate rolling-window intent so executor can choose aggregate files directly.
             if item.get("aggregate_use_rolling") is None and ("rolling" in query or "last 10 years" in query or "past 10 years" in query):
@@ -804,6 +1015,22 @@ def postprocess_order(order: dict, hints: dict = None) -> dict:
                         if temp.get("start") and temp.get("end"):
                             item["year_start"] = temp["start"]
                             item["year_end"] = temp["end"]
+
+    clarify_message = detect_multiple_path_clarify(items, catalog, hints)
+    if clarify_message:
+        return {
+            "items": items,
+            "derived_specs": [],
+            "validation_summary": clarify_message,
+            "all_valid": False,
+            "needs_clarify": True,
+            "clarify_message": clarify_message,
+            "summary": order.get("summary"),
+            "region": order.get("region"),
+            "year": order.get("year"),
+            "year_start": order.get("year_start"),
+            "year_end": order.get("year_end"),
+        }
 
     # Step 1: Detect event mode for disaster/event sources
     items = detect_event_mode(items, hints)

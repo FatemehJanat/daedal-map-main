@@ -466,6 +466,10 @@ INTERACTION POLICY:
 - For published geographic packs, "show me/map/display [place] [topic]" should default to a real order, not a catalog-status explanation.
 - If the user names a published geographic pack/topic but not an exact metric, choose the best-fit metric from the source's keywords/names and use the latest available year unless the user asked for a specific year or comparison.
 - Do not say you cannot retrieve metrics for a published pack just because the user asked broadly. Either return an order or ask one tight clarification about metric/time if genuinely needed.
+- When source metadata or reference material provides routing guidance, follow it. In particular:
+  - prefer an order for single-metric analytical sources when metadata marks them as order-first analytics
+  - prefer clarify for broad multi-metric topics when metadata says a metric choice is required
+  - for unsupported-metric requests, use metadata-supported metrics and geography in the clarify message instead of guessing
 - chat_first sources: {chat_first_text}
 - hybrid sources: {hybrid_text}
 
@@ -721,8 +725,7 @@ def interpret_request(user_query: str, chat_history: list = None, hints: dict = 
     content = content.strip()
 
     # Parse response
-    parsed = parse_llm_response(content, hints=hints)
-    return _apply_disaster_aggregate_overrides(parsed, hints)
+    return parse_llm_response(content, hints=hints, user_query=user_query)
 
 
 def validate_order_item(item: dict) -> dict:
@@ -1004,704 +1007,101 @@ def _normalize_item_year_fields(item: dict) -> None:
         item["year_end"] = year_end
 
 
-def _build_currency_fallback_order(hints: dict | None) -> dict | None:
-    """
-    Build a narrow fallback FX order when LLM returns chat for an analytical currency query.
-    This is intentionally constrained to avoid hijacking genuine conversational asks.
-    """
-    if not hints:
-        return None
-
-    query = str(hints.get("original_query") or "").strip()
-    if not query:
-        return None
-
-    query_lower = query.lower()
-    currency_terms = ("currency", "fx", "exchange rate", "usd", "yen", "lira", "peso")
-    analytics_terms = (
-        "compare", "vs", "against", "drop", "depreciat", "appreciat",
-        "volatility", "trend", "moved", "move", "above", "below", "over the last"
-    )
-    fact_lookup_terms = ("what currency", "currency of", "uses which currency", "monetary unit")
-    mixed_source_terms = (
-        "inflation", "earthquake", "earthquakes", "hurricane", "hurricanes", "cyclone", "cyclones",
-        "tornado", "tornadoes", "wildfire", "wildfires", "flood", "floods", "tsunami", "tsunamis",
-        "volcano", "volcanoes", "disaster", "disasters", "factbook", "sdg", "health", "co2"
-    )
-    broad_scope_terms = ("all countries", "every country", "global", "worldwide")
-
-    if not any(t in query_lower for t in currency_terms):
-        return None
-    if any(t in query_lower for t in fact_lookup_terms) and not any(t in query_lower for t in analytics_terms):
-        return None
-    if not any(t in query_lower for t in analytics_terms):
-        return None
-    if any(t in query_lower for t in mixed_source_terms):
-        return None
-
-    item = {
-        "source_id": "fx_usd_historical",
-        "metric": "local_per_usd",
-        "metric_label": "Local currency per USD",
-        "region": None,
-    }
-
-    location = hints.get("location") or {}
-    iso3 = location.get("iso3")
-    if iso3:
-        item["region"] = iso3
-    elif not any(t in query_lower for t in broad_scope_terms):
-        return None
-
-    time_hint = hints.get("time") or {}
-    year = _coerce_year(time_hint.get("year"))
-    year_start = _coerce_year(time_hint.get("year_start"))
-    year_end = _coerce_year(time_hint.get("year_end"))
-
-    if year_start is not None and year_end is not None:
-        item["year_start"] = year_start
-        item["year_end"] = year_end
-    elif year is not None:
-        item["year"] = year
-    elif "last decade" in query_lower or "10-year" in query_lower or "10 year" in query_lower:
-        current_year = datetime.utcnow().year
-        item["year_start"] = current_year - 10
-        item["year_end"] = current_year
-
-    order = {
-        "items": [item],
-        "summary": "FX trend analysis request",
-    }
-    return validate_order(order)
-
-
-def _build_sdg_fallback_order(hints: dict | None) -> dict | None:
-    """
-    Build a compact SDG fallback order for broad natural-language prompts that
-    clearly imply a default metric or comparison.
-    """
-    if not hints:
-        return None
-
-    query = str(hints.get("original_query") or "").strip()
-    if not query:
-        return None
-
-    query_lower = query.lower()
-    current_year = datetime.utcnow().year
-
-    def make_item(source_id: str, metric: str, metric_label: str, **extra) -> dict:
-        item = {"source_id": source_id, "metric": metric, "metric_label": metric_label}
-        item.update({k: v for k, v in extra.items() if v is not None})
-        return item
-
-    def make_order(items: list[dict], summary: str) -> dict | None:
-        return validate_order({"items": items, "summary": summary})
-
-    if "child mortality" in query_lower:
-        return make_order(
-            [make_item("03", "child mortality", "Child mortality", sort={"by": "child mortality", "order": "desc", "limit": 20})],
-            "SDG 3 child mortality ranking",
-        )
-
-    if "access to electricity" in query_lower or "electricity access" in query_lower:
-        return make_order(
-            [make_item("07", "access to electricity", "Access to electricity", sort={"by": "access to electricity", "order": "desc"})],
-            "SDG 7 electricity access",
-        )
-
-    if "gender equality" in query_lower:
-        return make_order(
-            [make_item("05", "gender equality", "Gender equality", sort={"by": "gender equality", "order": "desc", "limit": 20})],
-            "SDG 5 gender equality ranking",
-        )
-
-    if "gdp growth" in query_lower:
-        return make_order(
-            [make_item("08", "gdp growth", "GDP growth", year_start=2010, year_end=current_year)],
-            "SDG 8 GDP growth since 2010",
-        )
-
-    if "reducing inequality" in query_lower or "inequality the fastest" in query_lower:
-        return make_order(
-            [make_item("10", "inequality", "Inequality", year_start=current_year - 10, year_end=current_year, sort={"by": "inequality", "order": "asc", "limit": 20})],
-            "SDG 10 inequality trend",
-        )
-
-    if "co2 emissions progress" in query_lower and "sdg 13" in query_lower:
-        return make_order(
-            [make_item("13", "greenhouse gas emissions", "Greenhouse gas emissions", year_start=2005, year_end=current_year)],
-            "SDG 13 emissions trend since 2005",
-        )
-
-    if "education enrollment" in query_lower:
-        return make_order(
-            [make_item("04", "education enrollment", "Education enrollment", year_start=2000, year_end=current_year)],
-            "SDG 4 education enrollment trend",
-        )
-
-    if "hunger" in query_lower and "sub-saharan africa" in query_lower:
-        return make_order(
-            [make_item("02", "undernourishment", "Undernourishment", region="sub-saharan africa", year_start=current_year - 10, year_end=current_year)],
-            "SDG 2 hunger in Sub-Saharan Africa",
-        )
-
-    if "poverty rates" in query_lower and "education access" in query_lower:
-        return make_order(
-            [
-                make_item("01", "poverty rate", "Poverty rate", region="south asia"),
-                make_item("04", "education access", "Education access", region="south asia"),
-            ],
-            "SDG poverty and education comparison for South Asia",
-        )
-
-    if "clean water" in query_lower and "health outcomes" in query_lower:
-        return make_order(
-            [
-                make_item("06", "drinking water access", "Clean water access"),
-                make_item("03", "health outcomes", "Health outcomes"),
-            ],
-            "SDG clean water and health comparison",
-        )
-
-    if "sdg poverty indicators" in query_lower and "factbook gdp per capita" in query_lower:
-        return make_order(
-            [
-                make_item("01", "poverty rate", "Poverty rate"),
-                make_item("world_factbook_overlap", "gdp per capita", "GDP per capita"),
-            ],
-            "SDG poverty and Factbook GDP comparison",
-        )
-
-    if "natural disasters" in query_lower and "poverty scores" in query_lower:
-        return make_order(
-            [
-                make_item("01", "poverty rate", "Poverty rate"),
-                make_item("earthquakes", "events", "Earthquake exposure"),
-            ],
-            "SDG poverty and disaster exposure comparison",
-        )
-
-    return None
-
-
-def _build_sdg_clarify_response(hints: dict | None) -> dict | None:
-    """Return grounded clarifications for SDG prompts that need a specific indicator."""
-    if not hints:
-        return None
-
-    query = str(hints.get("original_query") or "").strip().lower()
-    if not query:
-        return None
-
-    if "sdg 11" in query and "worst performing" in query:
-        return {
-            "type": "clarify",
-            "message": (
-                "For SDG 11, which metric would you prefer to rank? "
-                "I can use a specific metric such as housing, disaster losses, waste, air quality, or public transport."
-            ),
-        }
-
-    if "sustainable cities" in query and "worst performing" in query:
-        return {
-            "type": "clarify",
-            "message": (
-                "For SDG 11 sustainable cities, which specific metric would you like to rank? "
-                "I can use housing, disaster losses, waste, air quality, or public transport."
-            ),
-        }
-
-    return None
-
-
-def _build_france_deep_geometry_clarify_response(hints: dict | None, order: dict | None = None) -> dict | None:
-    """Clarify when a France deep-geometry request exceeds source coverage."""
-    query = str((hints or {}).get("original_query") or "").strip().lower()
-    if not query:
-        return None
-
-    mentions_france = "france" in query or "french" in query
-    mentions_arrondissement = "arrondissement" in query or "arrondissements" in query
-    mentions_commune = "commune" in query or "communes" in query
-    if not mentions_france or not (mentions_arrondissement or mentions_commune):
-        return None
-
-    if "population" not in query:
-        return None
-
-    if order:
-        items = order.get("items") or []
-        for item in items:
-            if item.get("source_id") != "eurostat":
-                continue
-            if str(item.get("geo_level") or "") not in {"admin_4", "admin_5"}:
-                continue
-            level_name = "arrondissement" if item.get("geo_level") == "admin_4" else "commune"
-            return {
-                "type": "clarify",
-                "message": (
-                    f"I can map France at the {level_name} level now, but the current France population source "
-                    "(`eurostat`) only serves the shared Europe base through departments/NUTS3. "
-                    "Would you like France population by department instead, or do you want to switch to a source "
-                    "that actually provides arrondissement/commune-level population?"
-                ),
-            }
-
-    return {
-        "type": "clarify",
-        "message": (
-            "I can map France at arrondissement and commune level now, but the current France population source "
-            "only serves departments/NUTS3. Would you like France population by department instead, or do you want "
-            "a source that actually provides arrondissement/commune-level population?"
-        ),
-    }
-
-
-def _build_austria_deep_geometry_clarify_response(hints: dict | None, order: dict | None = None) -> dict | None:
-    """Clarify when an Austria deep-geometry request exceeds source coverage."""
-    query = str((hints or {}).get("original_query") or "").strip().lower()
-    if not query:
-        return None
-
-    mentions_austria = "austria" in query or "austrian" in query
-    mentions_district = "district" in query or "districts" in query or "bezirk" in query or "bezirke" in query
-    mentions_municipality = (
-        "municipality" in query
-        or "municipalities" in query
-        or "gemeinde" in query
-        or "gemeinden" in query
-    )
-    if not mentions_austria or not (mentions_district or mentions_municipality):
-        return None
-
-    if "population" not in query:
-        return None
-
-    if order:
-        items = order.get("items") or []
-        for item in items:
-            if item.get("source_id") != "eurostat":
-                continue
-            if str(item.get("geo_level") or "") not in {"admin_4", "admin_5"}:
-                continue
-            level_name = "district" if item.get("geo_level") == "admin_4" else "municipality"
-            fallback_name = "state or NUTS3 region"
-            return {
-                "type": "clarify",
-                "message": (
-                    f"I can map Austria at the {level_name} level now, but the current Austria population source "
-                    "(`eurostat`) only serves the shared Europe base through states/NUTS3. "
-                    f"Would you like Austria population by {fallback_name} instead, or do you want to switch to a "
-                    "source that actually provides district/municipality-level population?"
-                ),
-            }
-
-    return {
-        "type": "clarify",
-        "message": (
-            "I can map Austria at district and municipality level now, but the current Austria population source "
-            "only serves the shared Europe base through states/NUTS3. Would you like Austria population by state or "
-            "NUTS3 region instead, or do you want a source that actually provides district/municipality-level "
-            "population?"
-        ),
-    }
-
-
-def _build_belgium_deep_geometry_clarify_response(hints: dict | None, order: dict | None = None) -> dict | None:
-    """Clarify when a Belgium deep-geometry request exceeds source coverage."""
-    query = str((hints or {}).get("original_query") or "").strip().lower()
-    if not query:
-        return None
-
-    mentions_belgium = "belgium" in query or "belgian" in query
-    mentions_municipality = (
-        "municipality" in query
-        or "municipalities" in query
-        or "commune" in query
-        or "communes" in query
-        or "gemeente" in query
-        or "gemeenten" in query
-    )
-    if not mentions_belgium or not mentions_municipality:
-        return None
-
-    if "population" not in query:
-        return None
-
-    if order:
-        items = order.get("items") or []
-        for item in items:
-            if item.get("source_id") != "eurostat":
-                continue
-            if str(item.get("geo_level") or "") != "admin_4":
-                continue
-            return {
-                "type": "clarify",
-                "message": (
-                    "I can map Belgium at municipality level now, but the current Belgium population source "
-                    "(`eurostat`) only serves the shared Europe base through provinces/arrondissements. "
-                    "Would you like Belgium population by province or arrondissement instead, or do you want to "
-                    "switch to a source that actually provides municipality-level population?"
-                ),
-            }
-
-    return {
-        "type": "clarify",
-        "message": (
-            "I can map Belgium at municipality level now, but the current Belgium population source only serves the "
-            "shared Europe base through provinces/arrondissements. Would you like Belgium population by province or "
-            "arrondissement instead, or do you want a source that actually provides municipality-level population?"
-        ),
-    }
-
-
-def _build_czechia_deep_geometry_clarify_response(hints: dict | None, order: dict | None = None) -> dict | None:
-    """Clarify when a Czechia deep-geometry request exceeds source coverage."""
-    query = str((hints or {}).get("original_query") or "").strip().lower()
-    if not query:
-        return None
-
-    mentions_czechia = "czechia" in query or "czech republic" in query or "czech" in query
-    mentions_district = "district" in query or "districts" in query or "okres" in query or "okresy" in query
-    mentions_municipality = (
-        "municipality" in query
-        or "municipalities" in query
-        or "obec" in query
-        or "obce" in query
-        or "town" in query
-        or "city" in query
-        or "village" in query
-    )
-    if not mentions_czechia or not (mentions_district or mentions_municipality):
-        return None
-
-    if "population" not in query:
-        return None
-
-    if order:
-        items = order.get("items") or []
-        for item in items:
-            if item.get("source_id") != "eurostat":
-                continue
-            if str(item.get("geo_level") or "") not in {"admin_4", "admin_5"}:
-                continue
-            level_name = "district" if item.get("geo_level") == "admin_4" else "municipality"
-            return {
-                "type": "clarify",
-                "message": (
-                    f"I can map Czechia at the {level_name} level now, but the current Czechia population source "
-                    "(`eurostat`) only serves the shared Europe base through regions/NUTS3. "
-                    "Would you like Czechia population by region instead, or do you want to switch to a source "
-                    "that actually provides district/municipality-level population?"
-                ),
-            }
-
-    return {
-        "type": "clarify",
-        "message": (
-            "I can map Czechia at district and municipality level now, but the current Czechia population source "
-            "only serves the shared Europe base through regions/NUTS3. Would you like Czechia population by region "
-            "instead, or do you want a source that actually provides district/municipality-level population?"
-        ),
-    }
-
-
-def _build_slovakia_deep_geometry_clarify_response(hints: dict | None, order: dict | None = None) -> dict | None:
-    """Clarify when a Slovakia deep-geometry request exceeds source coverage."""
-    query = str((hints or {}).get("original_query") or "").strip().lower()
-    if not query:
-        return None
-
-    mentions_slovakia = "slovakia" in query or "slovak" in query
-    mentions_district = "district" in query or "districts" in query or "okres" in query or "okresy" in query
-    mentions_municipality = (
-        "municipality" in query
-        or "municipalities" in query
-        or "obec" in query
-        or "obce" in query
-        or "town" in query
-        or "city" in query
-        or "village" in query
-    )
-    if not mentions_slovakia or not (mentions_district or mentions_municipality):
-        return None
-
-    if "population" not in query:
-        return None
-
-    if order:
-        items = order.get("items") or []
-        for item in items:
-            if item.get("source_id") != "eurostat":
-                continue
-            if str(item.get("geo_level") or "") not in {"admin_4", "admin_5"}:
-                continue
-            level_name = "district" if item.get("geo_level") == "admin_4" else "municipality"
-            return {
-                "type": "clarify",
-                "message": (
-                    f"I can map Slovakia at the {level_name} level now, but the current Slovakia population source "
-                    "(`eurostat`) only serves the shared Europe base through regions/NUTS3. "
-                    "Would you like Slovakia population by region instead, or do you want to switch to a source "
-                    "that actually provides district/municipality-level population?"
-                ),
-            }
-
-    return {
-        "type": "clarify",
-        "message": (
-            "I can map Slovakia at district and municipality level now, but the current Slovakia population source "
-            "only serves the shared Europe base through regions/NUTS3. Would you like Slovakia population by region "
-            "instead, or do you want a source that actually provides district/municipality-level population?"
-        ),
-    }
-
-
-def _build_disaster_aggregate_fallback_order(hints: dict | None, llm_type: str | None = None) -> dict | None:
-    """Build narrow fallback orders for disaster aggregate prompts the model tends to mishandle."""
-    if not hints:
-        return None
-
-    query = str(hints.get("original_query") or "").strip()
-    if not query:
-        return None
-
-    query_lower = query.lower()
-    current_year = datetime.utcnow().year
-
-    def make_item(source_id: str, metric: str, metric_label: str, **extra) -> dict:
-        item = {"source_id": source_id, "metric": metric, "metric_label": metric_label}
-        item.update({k: v for k, v in extra.items() if v is not None})
-        return item
-
-    def make_order(items: list[dict], summary: str) -> dict | None:
-        return validate_order({"items": items, "summary": summary})
-
-    if "hurricane frequency" in query_lower and ("gulf of mexico" in query_lower or "gulf coast" in query_lower):
-        return make_order(
-            [
-                make_item(
-                    "hurricanes",
-                    "event_count",
-                    "Hurricane count",
-                    region="USA",
-                    year_start=current_year - 30,
-                    year_end=current_year,
-                )
-            ],
-            "Hurricane frequency trend for the Gulf Coast over the last 30 years",
-        )
-
-    if "rolling tornado count" in query_lower and "texas counties" in query_lower and "1990s" in query_lower and "2010s" in query_lower:
-        return make_order(
-            [
-                make_item(
-                    "tornadoes",
-                    "event_count",
-                    "1990s rolling tornado count",
-                    region="Texas",
-                    year_start=1990,
-                    year_end=1999,
-                    aggregate_use_rolling=False,
-                    aggregate_all_years=True,
-                ),
-                make_item(
-                    "tornadoes",
-                    "event_count",
-                    "2010s rolling tornado count",
-                    region="Texas",
-                    year_start=2010,
-                    year_end=2019,
-                    aggregate_use_rolling=False,
-                    aggregate_all_years=True,
-                ),
-            ],
-            "10-year rolling tornado count comparison for Texas counties: 1990s vs 2010s",
-        )
-
-    return None
-
-
-def _build_disaster_aggregate_clarify_response(hints: dict | None) -> dict | None:
-    """Return compact, grounded clarifications for disaster aggregate prompts that are not ready for direct execution."""
-    if not hints:
-        return None
-
-    query = str(hints.get("original_query") or "").strip().lower()
-    if not query:
-        return None
-
-    if "combined earthquake and wildfire risk" in query and "weighted by number of events" in query and "us counties" in query:
-        return {
-            "type": "clarify",
-            "message": (
-                "I can do this for the US, but the current county-level earthquake and wildfire aggregates "
-                "do not line up cleanly enough yet for one combined ranking. I can either show the two county "
-                "layers separately, or rank them at a broader US regional scale using the existing datasets."
-            ),
-        }
-
-    return None
-
-
-def _compress_unavailable_metric_chat(message: str, hints: dict | None = None) -> str:
-    """
-    Turn verbose "this source doesn't have X" chat responses into the standard
-    "we don't have X, but we do have Y" form using source metadata.
-    """
-    if not message:
-        return message
-
-    message_lower = message.lower()
-    if "not ndvi" not in message_lower and "do not have" not in message_lower and "doesn't have" not in message_lower and "does not have" not in message_lower:
-        return message
-
-    requested_metric = None
-    metric_patterns = [
-        r"\bnot\s+([A-Z0-9][A-Za-z0-9 _()/%-]+?)(?:[.,;\n]|$)",
-        r"\bdo not have\s+([A-Z0-9][A-Za-z0-9 _()/%-]+?)(?:[.,;\n]|$)",
-        r"\bdoes not have\s+([A-Z0-9][A-Za-z0-9 _()/%-]+?)(?:[.,;\n]|$)",
-        r"\bdoesn't have\s+([A-Z0-9][A-Za-z0-9 _()/%-]+?)(?:[.,;\n]|$)",
-    ]
-    for pattern in metric_patterns:
-        match = re.search(pattern, message, flags=re.IGNORECASE)
-        if match:
-            requested_metric = match.group(1).strip()
-            requested_metric = requested_metric.split("(")[0].strip()
+def _matches_unsupported_metric_alias(user_query: str, metadata: dict) -> bool:
+    """Return True when the query explicitly names an unsupported metric alias from metadata."""
+    query_lower = str(user_query or "").strip().lower()
+    if not query_lower or not isinstance(metadata, dict):
+        return False
+    routing_hints = metadata.get("routing_hints") or {}
+    aliases = routing_hints.get("unsupported_metric_aliases") or []
+    for alias in aliases:
+        alias_text = str(alias or "").strip().lower()
+        if alias_text and alias_text in query_lower:
+            return True
+    return False
+
+
+def _summarize_supported_geography(metadata: dict) -> str:
+    """Build a user-facing geography summary from metadata."""
+    routing_hints = metadata.get("routing_hints") or {}
+    geo_summary = str(routing_hints.get("supported_geography_summary") or "").strip()
+    if geo_summary:
+        return geo_summary
+
+    geo_levels = metadata.get("geographic_level")
+    if isinstance(geo_levels, list):
+        cleaned = [str(level).replace("_", " ") for level in geo_levels if level]
+        if cleaned:
+            return ", ".join(cleaned)
+    if geo_levels:
+        return str(geo_levels).replace("_", " ")
+    return "see source metadata"
+
+
+def _build_metadata_unsupported_metric_clarify(user_query: str, metadata: dict) -> dict:
+    """Build a generic metadata-grounded clarify for unsupported metric requests."""
+    source_name = metadata.get("source_name") or metadata.get("source_id") or "this source"
+    metrics = metadata.get("metrics") or {}
+    metric_names = []
+    for info in metrics.values():
+        if not isinstance(info, dict):
+            continue
+        name = str(info.get("name") or "").strip()
+        if name:
+            metric_names.append(name)
+    metric_names = list(dict.fromkeys(metric_names))
+    metric_lines = metric_names[:6]
+    geo_summary = _summarize_supported_geography(metadata)
+
+    unsupported_label = "that metric"
+    routing_hints = metadata.get("routing_hints") or {}
+    aliases = routing_hints.get("unsupported_metric_aliases") or []
+    query_lower = str(user_query or "").strip().lower()
+    for alias in aliases:
+        alias_text = str(alias or "").strip()
+        if alias_text and alias_text.lower() in query_lower:
+            normalized = alias_text
+            if " " not in alias_text and alias_text.isalpha() and len(alias_text) <= 5:
+                normalized = alias_text.upper()
+            unsupported_label = normalized
             break
 
-    query = str((hints or {}).get("original_query") or "").strip().lower()
-    catalog = load_catalog()
-    matched_source = None
-    best_score = 0
-
-    for source in catalog.get("sources", []):
-        source_id = str(source.get("source_id") or "").strip()
-        source_name = str(source.get("source_name") or "").strip()
-        if not source_id:
-            continue
-
-        metadata = load_source_metadata(source_id) or {}
-        phrases = [
-            source_id,
-            source.get("pack_id"),
-            source_name,
-        ]
-        phrases.extend(metadata.get("keywords") or [])
-        phrases.extend(metadata.get("topic_tags") or [])
-
-        score = 0
-        for phrase in phrases:
-            if not phrase:
-                continue
-            phrase_lower = str(phrase).strip().lower()
-            if not phrase_lower:
-                continue
-            if phrase_lower in message_lower:
-                score += 3
-            if phrase_lower in query:
-                score += 2
-
-        if score > best_score:
-            best_score = score
-            matched_source = (source_id, metadata)
-
-    if not matched_source:
-        return message
-
-    source_id, metadata = matched_source
-    metrics = metadata.get("metrics") or {}
-    if not isinstance(metrics, dict) or not metrics:
-        return message
-
-    source_name = str(metadata.get("source_name") or source_id).strip()
-    temporal = metadata.get("temporal_coverage") or {}
-    start_year = temporal.get("start")
-    end_year = temporal.get("end")
-    years_text = f" for {start_year}-{end_year}" if start_year and end_year else ""
-
-    level_names = {
-        "admin_0": "country",
-        "admin_1": "state/province",
-        "admin_2": "county/district",
-        "admin_3": "tract/region",
-        "admin_4": "block group/local area",
-        "admin_5": "block/neighborhood",
-    }
-    geo_levels = metadata.get("geographic_level") or []
-    if isinstance(geo_levels, str):
-        geo_levels = [geo_levels]
-    available_levels = [level_names.get(level, level) for level in geo_levels[:4]]
-    levels_text = ", ".join(available_levels) if available_levels else "the available geographic levels"
-
-    metric_names = []
-    for metric_meta in metrics.values():
-        if isinstance(metric_meta, dict):
-            metric_name = metric_meta.get("name")
-            if metric_name:
-                metric_names.append(str(metric_name))
-        elif metric_meta:
-            metric_names.append(str(metric_meta))
-    metric_names = metric_names[:3]
-    metrics_text = ", ".join(metric_names) if metric_names else "the available metrics"
-
-    if not requested_metric:
-        requested_metric = "that metric"
-
-    return (
-        f"We don't have {requested_metric} in {source_name}{years_text}, "
-        f"but we do have {metrics_text} across {levels_text}."
-    )
+    lines = [
+        f"{source_name} does not include {unsupported_label}.",
+    ]
+    if metric_lines:
+        lines.append("Available metrics for this source include:")
+        lines.extend(f"- {name}" for name in metric_lines)
+    lines.append(f"This source supports {geo_summary}.")
+    lines.append("Which of the available metrics would you like instead?")
+    return {"type": "clarify", "message": "\n\n".join([lines[0], "\n".join(lines[1:])])}
 
 
-def _apply_disaster_aggregate_overrides(result: dict, hints: dict | None) -> dict:
-    """Override brittle LLM outputs for known disaster aggregate query shapes."""
-    if not hints:
+def _apply_metadata_guided_response_normalization(result: dict, *, user_query: str, hints: dict | None) -> dict:
+    """Normalize chat/clarify responses using metadata-backed routing hints when available."""
+    if not isinstance(result, dict):
+        return result
+    if result.get("type") not in {"chat", "clarify"}:
+        return result
+    if not hints or not isinstance(hints, dict):
         return result
 
-    query = str(hints.get("original_query") or "").strip().lower()
-    if not query:
+    detected_source = hints.get("detected_source") or {}
+    source_id = detected_source.get("source_id")
+    if not source_id:
         return result
 
-    if "combined earthquake and wildfire risk" in query and "weighted by number of events" in query and "us counties" in query:
-        clarify = _build_disaster_aggregate_clarify_response(hints)
-        return clarify or result
+    metadata = load_source_metadata(source_id) or {}
+    if not metadata:
+        return result
 
-    if "rolling tornado count" in query and "texas counties" in query and "1990s" in query and "2010s" in query:
-        order = validate_order(
-            {
-                "items": [
-                    {
-                        "source_id": "tornadoes",
-                        "metric": "event_count",
-                        "metric_label": "1990s rolling tornado count",
-                        "region": "Texas",
-                        "year_start": 1990,
-                        "year_end": 1999,
-                        "aggregate_use_rolling": False,
-                        "aggregate_all_years": True,
-                    },
-                    {
-                        "source_id": "tornadoes",
-                        "metric": "event_count",
-                        "metric_label": "2010s rolling tornado count",
-                        "region": "Texas",
-                        "year_start": 2010,
-                        "year_end": 2019,
-                        "aggregate_use_rolling": False,
-                        "aggregate_all_years": True,
-                    },
-                ],
-                "summary": "10-year rolling tornado count comparison for Texas counties: 1990s vs 2010s",
-            }
-        )
-        return {"type": "order", "order": order, "summary": order.get("summary", "Disaster aggregate request")}
+    if _matches_unsupported_metric_alias(user_query, metadata):
+        return _build_metadata_unsupported_metric_clarify(user_query, metadata)
 
     return result
 
 
-def parse_llm_response(content: str, hints: dict = None) -> dict:
+def parse_llm_response(content: str, hints: dict = None, user_query: str = "") -> dict:
     """
     Parse LLM response into structured result.
 
@@ -1769,13 +1169,6 @@ def parse_llm_response(content: str, hints: dict = None) -> dict:
 
         elif response_type == "overlay_toggle":
             # Toggle overlay on/off (binary choice, no confidence needed)
-            disaster_fallback_order = _build_disaster_aggregate_fallback_order(hints, llm_type="overlay_toggle")
-            if disaster_fallback_order:
-                return {
-                    "type": "order",
-                    "order": disaster_fallback_order,
-                    "summary": disaster_fallback_order.get("summary", "Disaster aggregate request"),
-                }
             return {
                 "type": "overlay_toggle",
                 "overlay": parsed_json.get("overlay", ""),
@@ -1785,67 +1178,20 @@ def parse_llm_response(content: str, hints: dict = None) -> dict:
 
         elif response_type == "chat":
             # General chat response
-            disaster_clarify = _build_disaster_aggregate_clarify_response(hints)
-            if disaster_clarify:
-                return disaster_clarify
-            sdg_clarify = _build_sdg_clarify_response(hints)
-            if sdg_clarify:
-                return sdg_clarify
-            disaster_fallback_order = _build_disaster_aggregate_fallback_order(hints, llm_type="chat")
-            if disaster_fallback_order:
-                return {
-                    "type": "order",
-                    "order": disaster_fallback_order,
-                    "summary": disaster_fallback_order.get("summary", "Disaster aggregate request"),
-                }
-            sdg_fallback_order = _build_sdg_fallback_order(hints)
-            if sdg_fallback_order:
-                return {
-                    "type": "order",
-                    "order": sdg_fallback_order,
-                    "summary": sdg_fallback_order.get("summary", "SDG data request"),
-                }
-            fallback_order = _build_currency_fallback_order(hints)
-            if fallback_order:
-                return {
-                    "type": "order",
-                    "order": fallback_order,
-                    "summary": fallback_order.get("summary", "FX trend analysis request"),
-                }
-            message = _compress_unavailable_metric_chat(parsed_json.get("message", ""), hints)
-            return {
+            result = {
                 "type": "chat",
-                "message": message
+                "message": parsed_json.get("message", "")
             }
+            return _apply_metadata_guided_response_normalization(result, user_query=user_query, hints=hints)
 
         elif response_type == "clarify":
             # Need more information
-            message = parsed_json.get("message", "Could you provide more details?")
-            message = _improve_clarify_message(message, hints)
-            return {"type": "clarify", "message": message}
+            result = {"type": "clarify", "message": parsed_json.get("message", "Could you provide more details?")}
+            return _apply_metadata_guided_response_normalization(result, user_query=user_query, hints=hints)
 
         else:
             # Default: treat as order (type == "order" or legacy format without type)
             order = validate_order(parsed_json)
-            france_deep_clarify = _build_france_deep_geometry_clarify_response(hints, order)
-            if france_deep_clarify:
-                return france_deep_clarify
-            austria_deep_clarify = _build_austria_deep_geometry_clarify_response(hints, order)
-            if austria_deep_clarify:
-                return austria_deep_clarify
-            belgium_deep_clarify = _build_belgium_deep_geometry_clarify_response(hints, order)
-            if belgium_deep_clarify:
-                return belgium_deep_clarify
-            czechia_deep_clarify = _build_czechia_deep_geometry_clarify_response(hints, order)
-            if czechia_deep_clarify:
-                return czechia_deep_clarify
-            slovakia_deep_clarify = _build_slovakia_deep_geometry_clarify_response(hints, order)
-            if slovakia_deep_clarify:
-                return slovakia_deep_clarify
-            if not order.get("_all_valid", True):
-                sdg_clarify = _build_sdg_clarify_response(hints)
-                if sdg_clarify:
-                    return sdg_clarify
             return {
                 "type": "order",
                 "order": order,
@@ -1854,133 +1200,9 @@ def parse_llm_response(content: str, hints: dict = None) -> dict:
 
     # No valid JSON - check if it's a clarifying question
     if "?" in content and len(content) < 200:
-        message = _improve_clarify_message(content, hints)
-        return {"type": "clarify", "message": message}
+        result = {"type": "clarify", "message": content}
+        return _apply_metadata_guided_response_normalization(result, user_query=user_query, hints=hints)
 
     # Otherwise it's a chat response
-    disaster_clarify = _build_disaster_aggregate_clarify_response(hints)
-    if disaster_clarify:
-        return disaster_clarify
-    france_deep_clarify = _build_france_deep_geometry_clarify_response(hints)
-    if france_deep_clarify:
-        return france_deep_clarify
-    austria_deep_clarify = _build_austria_deep_geometry_clarify_response(hints)
-    if austria_deep_clarify:
-        return austria_deep_clarify
-    belgium_deep_clarify = _build_belgium_deep_geometry_clarify_response(hints)
-    if belgium_deep_clarify:
-        return belgium_deep_clarify
-    czechia_deep_clarify = _build_czechia_deep_geometry_clarify_response(hints)
-    if czechia_deep_clarify:
-        return czechia_deep_clarify
-    slovakia_deep_clarify = _build_slovakia_deep_geometry_clarify_response(hints)
-    if slovakia_deep_clarify:
-        return slovakia_deep_clarify
-    sdg_clarify = _build_sdg_clarify_response(hints)
-    if sdg_clarify:
-        return sdg_clarify
-    disaster_fallback_order = _build_disaster_aggregate_fallback_order(hints, llm_type="chat")
-    if disaster_fallback_order:
-        return {
-            "type": "order",
-            "order": disaster_fallback_order,
-            "summary": disaster_fallback_order.get("summary", "Disaster aggregate request"),
-        }
-    sdg_fallback_order = _build_sdg_fallback_order(hints)
-    if sdg_fallback_order:
-        return {
-            "type": "order",
-            "order": sdg_fallback_order,
-            "summary": sdg_fallback_order.get("summary", "SDG data request"),
-        }
-    fallback_order = _build_currency_fallback_order(hints)
-    if fallback_order:
-        return {
-            "type": "order",
-            "order": fallback_order,
-            "summary": fallback_order.get("summary", "FX trend analysis request"),
-        }
-    message = _compress_unavailable_metric_chat(content, hints)
-    return {"type": "chat", "message": message}
-
-
-def _improve_clarify_message(message: str, hints: dict = None) -> str:
-    """
-    If the clarify message is too generic, improve it based on what we know is missing.
-
-    Enhanced to be context-aware for disaster queries:
-    - Suggests enabling overlays when disaster keywords detected but no overlay active
-    - Uses viewport context to suggest relevant locations
-    - Explains loc_prefix vs affected_loc_id when relevant
-    """
-    # Generic phrases that should be improved
-    generic_phrases = [
-        "could you be more specific",
-        "can you be more specific",
-        "please be more specific",
-        "i need more information",
-        "what do you mean",
-        "could you clarify",
-    ]
-
-    message_lower = message.lower()
-    is_generic = any(phrase in message_lower for phrase in generic_phrases)
-
-    if not is_generic or not hints:
-        return message
-
-    # Check for disaster overlay intent without active overlay
-    overlay_intent = hints.get("overlay_intent")
-    active_overlays = hints.get("active_overlays", {})
-    overlay_type = active_overlays.get("type")
-
-    if overlay_intent and overlay_intent.get("action") == "enable":
-        overlay = overlay_intent.get("overlay", "disaster")
-        return f"Would you like me to turn on the {overlay} overlay to see this data?"
-
-    # Check viewport for location suggestion
-    viewport = hints.get("viewport")
-    location = hints.get("location")
-    navigation = hints.get("navigation")
-    has_location = location or (navigation and navigation.get("locations"))
-
-    # If disaster query but no location specified, suggest based on viewport
-    if overlay_intent and not has_location:
-        overlay = overlay_intent.get("overlay", "disaster")
-        if viewport and viewport.get("bounds"):
-            zoom = viewport.get("zoom", 0)
-            if zoom >= 3:
-                # User is zoomed in - suggest using their view location
-                return f"Which location would you like to see {overlay} for? I can show data for the area you are currently viewing."
-
-        # Ask about location type preference
-        return f"Do you want {overlay} that occurred IN a specific location, or {overlay} that AFFECTED a specific location?"
-
-    # If overlay is active and user seems confused about filters
-    if overlay_type:
-        filters = active_overlays.get("filters", {})
-        if filters:
-            filter_desc = ", ".join(f"{k}={v}" for k, v in filters.items())
-            return f"The {overlay_type} overlay is currently filtered to: {filter_desc}. What would you like to change?"
-        else:
-            return f"What filter would you like to apply to the {overlay_type} overlay? (e.g., magnitude, category, location)"
-
-    # Fallback: analyze what's missing based on hints
-    missing = []
-
-    if not has_location:
-        missing.append("location/country")
-
-    # Check if topics/metrics are clear
-    topics = hints.get("topics", [])
-    if not topics:
-        missing.append("metric/data type")
-
-    # Build improved message
-    if missing:
-        if len(missing) == 1:
-            return f"Which {missing[0]} would you like to see data for?"
-        else:
-            return f"Could you specify the {' and '.join(missing)}?"
-
-    return message
+    result = {"type": "chat", "message": content}
+    return _apply_metadata_guided_response_normalization(result, user_query=user_query, hints=hints)

@@ -202,6 +202,7 @@ def _resolve_source_for_item(item: dict, catalog: dict) -> str:
     1. If item already has source_id and no pack_id: use it directly (pre-release / internal).
     2. If item has pack_id: find all catalog sources with that pack_id, pick the best scope match.
     3. If no specific match found: fall back to the global-scoped source in the pack.
+    4. If routing is still ambiguous or unsupported: return None so the request can fail early.
     """
     pack_id = item.get("pack_id")
     source_id = item.get("source_id")
@@ -227,8 +228,9 @@ def _resolve_source_for_item(item: dict, catalog: dict) -> str:
     if global_matches:
         return global_matches[0]["source_id"]
 
-    # Last resort: first source in pack
-    return pack_sources[0]["source_id"]
+    # No safe resolution path remains. Let validation stop execution instead of
+    # silently choosing an arbitrary source from the pack.
+    return None
 
 
 def _normalize_order_items(items: list, catalog: dict) -> list:
@@ -244,6 +246,39 @@ def _normalize_order_items(items: list, catalog: dict) -> list:
             logger.debug(f"[routing] pack_id={item['pack_id']} region={item.get('region')} -> source_id={item['source_id']}")
         resolved.append(item)
     return resolved
+
+
+def _execution_requires_metric(item: dict, source_info: dict | None) -> bool:
+    if item.get("type") in {"derived", "derived_result"}:
+        return False
+    if item.get("mode") == "events":
+        return False
+
+    data_type = (source_info or {}).get("data_type", "metrics")
+    if isinstance(data_type, list):
+        if "events" in data_type and item.get("mode") != "aggregate":
+            return False
+        return "metrics" in data_type
+    return data_type == "metrics"
+
+
+def _validate_execution_items(items: list) -> str | None:
+    for idx, item in enumerate(items, start=1):
+        source_id = item.get("source_id")
+        pack_id = item.get("pack_id")
+        if not source_id:
+            if pack_id:
+                return f"Item {idx} could not resolve pack_id '{pack_id}' to a concrete source_id"
+            return f"Item {idx} is missing source_id"
+
+        source_info = _get_source_from_catalog(source_id)
+        if not source_info:
+            return f"Item {idx} references unknown source_id '{source_id}'"
+
+        if _execution_requires_metric(item, source_info) and not item.get("metric"):
+            return f"Item {idx} for source '{source_id}' is missing a concrete metric"
+
+    return None
 
 
 def _aggregate_metric_frame(df: pd.DataFrame, group_cols: list[str]) -> pd.DataFrame:
@@ -2031,6 +2066,14 @@ def execute_order(order: dict) -> dict:
 
     # Stage 1: resolve pack_id -> source_id for all items before any processing
     items = _normalize_order_items(items, _load_catalog())
+    validation_error = _validate_execution_items(items)
+    if validation_error:
+        return {
+            "type": "error",
+            "message": validation_error,
+            "geojson": {"type": "FeatureCollection", "features": []},
+            "count": 0,
+        }
 
     # Determine data_type for this order from first item's source
     # (for tagging the response so frontend knows which pipeline to use)
@@ -2178,9 +2221,16 @@ def execute_order(order: dict) -> dict:
         if metric:
             metric_col = find_metric_column(df, metric, metadata=metadata)
         else:
-            numeric_cols = df.select_dtypes(include=['float64', 'int64', 'Float64', 'Int64']).columns
-            metric_col = numeric_cols[0] if len(numeric_cols) > 0 else None
+            metric_col = None
         _executor_log(trace_id, "metric_resolved", t_after_fx, f"item={idx}/{len(items)} source={source_id} metric={metric_col}")
+
+        if metric is not None and not metric_col:
+            return {
+                "type": "error",
+                "message": f"Metric '{metric}' could not be resolved for source '{source_id}'",
+                "geojson": {"type": "FeatureCollection", "features": []},
+                "count": 0,
+            }
 
         # Store metric label for frontend
         item_label = item.get("metric_label", metric_col)

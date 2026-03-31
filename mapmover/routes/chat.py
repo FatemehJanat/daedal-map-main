@@ -418,6 +418,26 @@ async def chat_endpoint(req: Request):
                 t_postprocess_start,
                 f"items={len(processed.get('items', []) or [])} derived={len(processed.get('derived_specs', []) or [])}",
             )
+            if processed.get("needs_clarify"):
+                _chat_log_timing(trace_id, "responding", t_request_start, "type=clarify_multiple_paths")
+                return msgpack_response(
+                    {
+                        "type": "clarify",
+                        "message": processed.get("clarify_message") or processed.get("validation_summary") or "I need a more specific path before I can run that.",
+                        "summary": result_summary,
+                        "full_order": processed,
+                    }
+                )
+            if not processed.get("all_valid", True):
+                _chat_log_timing(trace_id, "responding", t_request_start, "type=clarify_invalid_order")
+                return msgpack_response(
+                    {
+                        "type": "clarify",
+                        "message": processed.get("validation_summary") or "I need a more specific executable request before I can run that.",
+                        "summary": result_summary,
+                        "full_order": processed,
+                    }
+                )
             if processed.get("metric_warning") and not body.get("force_metrics"):
                 display_items = get_display_items(processed.get("items", []), processed.get("derived_specs", []))
                 full_order = {**result["order"], "items": display_items, "derived_specs": processed.get("derived_specs", [])}
@@ -675,6 +695,24 @@ async def chat_stream_endpoint(req: Request):
                 await asyncio.sleep(0)
                 result_summary = result.get("summary") or result.get("order", {}).get("summary") or "Data request"
                 processed = postprocess_order(result["order"], hints)
+                if processed.get("needs_clarify"):
+                    final_result = {
+                        "type": "clarify",
+                        "message": processed.get("clarify_message") or processed.get("validation_summary") or "I need a more specific path before I can run that.",
+                        "summary": result_summary,
+                        "full_order": processed,
+                    }
+                    yield f"data: {json.dumps({'stage': 'complete', 'result': final_result})}\n\n"
+                    return
+                if not processed.get("all_valid", True):
+                    final_result = {
+                        "type": "clarify",
+                        "message": processed.get("validation_summary") or "I need a more specific executable request before I can run that.",
+                        "summary": result_summary,
+                        "full_order": processed,
+                    }
+                    yield f"data: {json.dumps({'stage': 'complete', 'result': final_result})}\n\n"
+                    return
                 display_items = get_display_items(processed.get("items", []), processed.get("derived_specs", []))
                 final_result = {
                     "type": "order",

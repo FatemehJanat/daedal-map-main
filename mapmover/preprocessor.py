@@ -517,6 +517,7 @@ def detect_source_candidates(query: str) -> dict:
     return detect_source_candidates_impl(
         query,
         load_catalog=load_catalog,
+        load_source_metadata=load_source_metadata,
         score_source_full_match=SCORE_SOURCE_FULL_MATCH,
         score_source_id_match=SCORE_SOURCE_ID_MATCH,
         score_source_partial_8=SCORE_SOURCE_PARTIAL_8,

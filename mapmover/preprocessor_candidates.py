@@ -10,6 +10,7 @@ def detect_source_candidates(
     query: str,
     *,
     load_catalog: Callable[[], dict | None],
+    load_source_metadata: Callable[[str], dict | None],
     score_source_full_match: float,
     score_source_id_match: float,
     score_source_partial_8: float,
@@ -51,13 +52,18 @@ def detect_source_candidates(
                 if goal_tag in topic_tags or f"goal {goal_num}:" in source_name_lower or f"goal {goal_num} " in source_name_lower:
                     add_candidate(source_id, source_name, 1.0, "sdg_alias", sdg_pattern.group(0))
 
+    coarse_candidate_ids = set()
+
     for source in sources:
         source_id = source.get("source_id", "")
         source_name = source.get("source_name", "")
         source_name_lower = source_name.lower() if source_name else ""
+        source_keywords = [str(v).strip().lower() for v in (source.get("keywords") or []) if v]
+        source_topic_tags = [str(v).strip().lower() for v in (source.get("topic_tags") or []) if v]
 
         if source_name and source_name_lower in query_lower:
             add_candidate(source_id, source_name, score_source_full_match + data_boost, "full_name", source_name)
+            coarse_candidate_ids.add(source_id)
         elif source_name:
             name_parts = [p.strip() for p in source_name.replace(" - ", "|").replace(": ", "|").split("|")]
             for part in name_parts:
@@ -65,10 +71,57 @@ def detect_source_candidates(
                 if len(part) >= 4 and part_lower in query_lower:
                     base_score = score_source_partial_8 if len(part) >= 8 else score_source_partial_4
                     add_candidate(source_id, source_name, base_score + data_boost, "partial_name", part)
+                    coarse_candidate_ids.add(source_id)
                     break
 
         if source_id and source_id.lower() in query_lower:
             add_candidate(source_id, source_name, score_source_id_match + data_boost, "source_id", source_id)
+            coarse_candidate_ids.add(source_id)
+
+        for phrase in source_keywords + source_topic_tags:
+            if len(phrase) < 4:
+                continue
+            if phrase in query_lower:
+                base_score = score_source_partial_8 if len(phrase) >= 8 else score_source_partial_4
+                add_candidate(source_id, source_name, base_score + data_boost, "catalog_keyword", phrase)
+                coarse_candidate_ids.add(source_id)
+                break
+
+    # Metadata-backed second stage:
+    # keep catalog lightweight, then use source metadata to refine or recover candidates.
+    metadata_scan_sources = sources
+    if coarse_candidate_ids:
+        metadata_scan_sources = [src for src in sources if src.get("source_id") in coarse_candidate_ids]
+
+    for source in metadata_scan_sources:
+        source_id = source.get("source_id", "")
+        if not source_id:
+            continue
+        source_name = source.get("source_name", "")
+        metadata = load_source_metadata(source_id) or {}
+        routing_hints = metadata.get("routing_hints") or {}
+        aliases = []
+        for field_name in ("query_aliases", "broad_topic_aliases"):
+            field_values = routing_hints.get(field_name) or []
+            if isinstance(field_values, list):
+                aliases.extend(str(v).strip().lower() for v in field_values if v)
+        if not aliases:
+            continue
+        priority_bonus = float(routing_hints.get("query_priority") or 0.0)
+        priority_bonus = max(0.0, min(0.25, priority_bonus))
+        for alias in aliases:
+            if len(alias) < 3:
+                continue
+            if alias in query_lower:
+                base_score = score_source_partial_8 if len(alias) >= 8 else score_source_partial_4
+                add_candidate(
+                    source_id,
+                    source_name,
+                    base_score + data_boost + priority_bonus,
+                    "metadata_alias",
+                    alias,
+                )
+                break
 
     candidates = sorted(candidates, key=lambda x: -x["confidence"])
     seen = set()
