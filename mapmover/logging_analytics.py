@@ -4,8 +4,11 @@ Logging and analytics functions for query tracking and error monitoring.
 
 import json
 import logging
+import os
+import hashlib
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Optional
 
 from .paths import LOGS_DIR, ensure_dir
 
@@ -48,9 +51,150 @@ analytics_dir = logs_dir / "analytics"
 if _local_logs_enabled:
     analytics_dir.mkdir(exist_ok=True)
 analytics_log_path = analytics_dir / "query_analytics.jsonl"
+api_query_analytics_log_path = analytics_dir / "api_query_analytics.jsonl"
+route_analytics_log_path = analytics_dir / "route_analytics.jsonl"
 
 # Initialize Supabase client (lazy loaded to avoid import issues)
 _supabase_client = None
+
+
+def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
+    if not _local_logs_enabled:
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+            f.write("\n")
+    except Exception as e:
+        logger.error(f"Failed to append analytics event locally: {e}")
+
+
+def hash_ip_for_analytics(ip_address: Optional[str]) -> Optional[str]:
+    raw_ip = (ip_address or "").strip()
+    if not raw_ip:
+        return None
+    salt = os.getenv("API_ANALYTICS_IP_SALT", "").strip()
+    digest = hashlib.sha256(f"{salt}:{raw_ip}".encode("utf-8")).hexdigest()
+    return digest
+
+
+def log_api_query_event(
+    *,
+    request_id: str,
+    capability_id: str,
+    pack_id: str,
+    source_id: str,
+    decision: str,
+    payment_rail: str | None = None,
+    auth_user_id: str | None = None,
+    ip_hash: str | None = None,
+    user_agent: str | None = None,
+    execution_latency_ms: int | None = None,
+    row_count: int | None = None,
+    response_size_bytes: int | None = None,
+    status_code: int | None = None,
+    warnings_count: int | None = None,
+    error_code: str | None = None,
+) -> None:
+    event = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "request_id": request_id,
+        "capability_id": capability_id,
+        "pack_id": pack_id,
+        "source_id": source_id,
+        "decision": decision,
+        "payment_rail": payment_rail,
+        "caller": {
+            "auth_user_id": auth_user_id,
+            "ip_hash": ip_hash,
+            "user_agent": user_agent[:300] if user_agent else None,
+        },
+        "usage": {
+            "execution_latency_ms": execution_latency_ms,
+            "rows_returned": row_count,
+            "response_size_bytes": response_size_bytes,
+            "warnings_count": warnings_count,
+        },
+        "status_code": status_code,
+        "error_code": error_code,
+    }
+
+    _append_jsonl(api_query_analytics_log_path, event)
+
+    logger.info(
+        "api_query_event request_id=%s pack_id=%s source_id=%s decision=%s status=%s rows=%s latency_ms=%s user_id=%s",
+        request_id,
+        pack_id,
+        source_id,
+        decision,
+        status_code,
+        row_count,
+        execution_latency_ms,
+        auth_user_id or "anonymous",
+    )
+
+    supabase_client = get_supabase()
+    if supabase_client:
+        try:
+            supabase_client.log_query(
+                query=capability_id,
+                dataset_selected=pack_id,
+                interest=source_id,
+                results_count=row_count or 0,
+                response_time_ms=execution_latency_ms,
+                error=error_code,
+                metadata=event,
+            )
+        except Exception as e:
+            logger.error(f"Failed to log API query event to Supabase: {e}")
+
+
+def log_route_request_event(
+    *,
+    method: str,
+    path: str,
+    status_code: int,
+    execution_latency_ms: int | None = None,
+    auth_user_id: str | None = None,
+    ip_hash: str | None = None,
+    user_agent: str | None = None,
+    request_id: str | None = None,
+    pack_id: str | None = None,
+    source_id: str | None = None,
+    response_size_bytes: int | None = None,
+) -> None:
+    event = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "request_id": request_id,
+        "method": method,
+        "path": path,
+        "status_code": status_code,
+        "pack_id": pack_id,
+        "source_id": source_id,
+        "caller": {
+            "auth_user_id": auth_user_id,
+            "ip_hash": ip_hash,
+            "user_agent": user_agent[:300] if user_agent else None,
+        },
+        "usage": {
+            "execution_latency_ms": execution_latency_ms,
+            "response_size_bytes": response_size_bytes,
+        },
+    }
+
+    _append_jsonl(route_analytics_log_path, event)
+
+    logger.info(
+        "route_event method=%s path=%s status=%s latency_ms=%s user_id=%s pack_id=%s source_id=%s",
+        method,
+        path,
+        status_code,
+        execution_latency_ms,
+        auth_user_id or "anonymous",
+        pack_id or "-",
+        source_id or "-",
+    )
 
 
 def get_supabase():

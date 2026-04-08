@@ -11,6 +11,7 @@ This file is intentionally thin:
 import io
 import os
 import sys
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -25,6 +26,8 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from mapmover import initialize_catalog, load_conversions, logger
+from mapmover.auth_context import get_authenticated_user
+from mapmover.logging_analytics import hash_ip_for_analytics, log_route_request_event
 from mapmover.security import get_allowed_origins, is_https_request
 from mapmover.order_executor import execute_order
 from mapmover.order_queue import processor as order_processor
@@ -53,6 +56,18 @@ if sys.stderr.encoding != "utf-8":
 
 BASE_DIR = Path(__file__).resolve().parent
 SECURITY_TXT_PATH = BASE_DIR / "static" / "security.txt"
+
+
+def _get_request_ip(request: Request) -> str | None:
+    forwarded_for = request.headers.get("x-forwarded-for", "").strip()
+    if forwarded_for:
+        first_hop = forwarded_for.split(",")[0].strip()
+        if first_hop:
+            return first_hop
+    real_ip = request.headers.get("x-real-ip", "").strip()
+    if real_ip:
+        return real_ip
+    return request.client.host if request.client else None
 
 
 @asynccontextmanager
@@ -124,6 +139,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1024)
 @app.middleware("http")
 async def static_no_cache(request: Request, call_next):
     """Force revalidation on static JS and CSS so deploys are immediately visible."""
+    started_at = time.perf_counter()
     max_body_bytes = int(os.getenv("MAX_REQUEST_BODY_BYTES", "1048576"))
     content_length = request.headers.get("content-length")
     if content_length:
@@ -144,6 +160,28 @@ async def static_no_cache(request: Request, call_next):
     response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
     if is_https_request(request):
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+    auth_user = get_authenticated_user(request)
+    auth_user_id = str((auth_user or {}).get("id") or "").strip() or None
+    ip_hash = hash_ip_for_analytics(_get_request_ip(request))
+    user_agent = request.headers.get("user-agent", "").strip() or None
+    request_id = getattr(request.state, "analytics_request_id", None)
+    pack_id = getattr(request.state, "analytics_pack_id", None)
+    source_id = getattr(request.state, "analytics_source_id", None)
+    response_size_bytes = len(getattr(response, "body", b"") or b"")
+    log_route_request_event(
+        method=request.method,
+        path=path,
+        status_code=response.status_code,
+        execution_latency_ms=int((time.perf_counter() - started_at) * 1000),
+        auth_user_id=auth_user_id,
+        ip_hash=ip_hash,
+        user_agent=user_agent,
+        request_id=request_id,
+        pack_id=pack_id,
+        source_id=source_id,
+        response_size_bytes=response_size_bytes,
+    )
     return response
 
 

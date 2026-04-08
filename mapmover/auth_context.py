@@ -61,16 +61,23 @@ def get_authenticated_user(request: Request) -> Optional[Dict[str, Any]]:
     Return verified Supabase user info if a bearer token is present and valid.
     Returns None for anonymous requests or verification failures.
     """
+    cached_request_user = getattr(request.state, "authenticated_user_context", None)
+    if cached_request_user is not None:
+        return cached_request_user
+
     token = _get_bearer_token(request)
     if not token:
+        request.state.authenticated_user_context = None
         return None
 
     cached = _get_cached_user(token)
     if cached is not None:
+        request.state.authenticated_user_context = cached
         return cached
 
     config = _get_supabase_auth_config()
     if not config:
+        request.state.authenticated_user_context = None
         return None
 
     try:
@@ -84,13 +91,16 @@ def get_authenticated_user(request: Request) -> Optional[Dict[str, Any]]:
         )
         if response.status_code != 200:
             _cache_user(token, None)
+            request.state.authenticated_user_context = None
             return None
 
         user = response.json()
         _cache_user(token, user)
+        request.state.authenticated_user_context = user
         return user
     except Exception as exc:
         logger.warning(f"Supabase user verification failed: {exc}")
+        request.state.authenticated_user_context = None
         return None
 
 
