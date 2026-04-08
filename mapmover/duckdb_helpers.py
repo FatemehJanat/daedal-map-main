@@ -103,8 +103,20 @@ def parquet_available(path: Path) -> bool:
 
 def _configure_httpfs(con) -> None:
     """Configure a DuckDB connection for object-storage access via httpfs."""
-    con.execute("INSTALL httpfs")
-    con.execute("LOAD httpfs")
+    # Some local/dev environments cannot write to the default DuckDB home under
+    # the user profile. Point extension storage at our writable runtime cache so
+    # cloud-mode queries behave the same way in hosted and local QA.
+    from .paths import CACHE_DIR
+
+    extension_dir = CACHE_DIR / "duckdb_extensions"
+    extension_dir.mkdir(parents=True, exist_ok=True)
+    extension_dir_sql = str(extension_dir).replace("'", "''")
+    con.execute(f"SET extension_directory='{extension_dir_sql}'")
+    try:
+        con.execute("LOAD httpfs")
+    except Exception:
+        con.execute("INSTALL httpfs")
+        con.execute("LOAD httpfs")
     endpoint = _get_s3_endpoint()
     if endpoint:
         con.execute(f"SET s3_endpoint='{endpoint}'")
