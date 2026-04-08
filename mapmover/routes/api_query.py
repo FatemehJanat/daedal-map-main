@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import math
 import json
+import os
 import time
 from datetime import date, datetime
 from typing import Any
+from urllib.parse import urljoin
 
+import requests
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from mapmover.auth_context import get_authenticated_user
 from mapmover.api_query_limits import QueryConcurrencyLimitError, acquire_query_slot
@@ -25,9 +29,24 @@ from mapmover.api_query_runtime import (
 )
 from mapmover.geography import get_country_names_from_codes
 from mapmover.logging_analytics import hash_ip_for_analytics, log_api_query_event
+from mapmover.paths import SITE_URL
 
 
 router = APIRouter()
+
+COMMERCIAL_ACCESS_CHECK_PATH = "/internal/commercial-access/check"
+COMMERCIAL_ACCESS_SETTLE_PATH = "/internal/commercial-access/settle"
+COMMERCIAL_ACCESS_TIMEOUT_SECONDS = 10.0
+COMMERCIAL_ACCESS_FORWARDED_HEADERS = {
+    "accept",
+    "authorization",
+    "payment-required",
+    "payment-response",
+    "payment-signature",
+    "user-agent",
+    "x-payment",
+    "x-payment-response",
+}
 
 
 def _get_request_ip(request: Request) -> str | None:
@@ -96,6 +115,109 @@ def _parse_temporal_filter_value(raw_value: Any) -> str:
     if not normalized:
         raise ValueError("blank")
     return normalized
+
+
+def _commercial_access_enabled() -> bool:
+    return str(os.getenv("COMMERCIAL_ACCESS_ENABLED", "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _commercial_access_timeout_seconds() -> float:
+    raw_value = str(os.getenv("COMMERCIAL_ACCESS_TIMEOUT_SECONDS", "")).strip()
+    if not raw_value:
+        return COMMERCIAL_ACCESS_TIMEOUT_SECONDS
+    try:
+        return max(1.0, float(raw_value))
+    except ValueError:
+        return COMMERCIAL_ACCESS_TIMEOUT_SECONDS
+
+
+def _commercial_access_base_url() -> str:
+    configured = str(os.getenv("COMMERCIAL_ACCESS_VERIFIER_BASE_URL", "")).strip().rstrip("/")
+    return configured or SITE_URL.rstrip("/")
+
+
+def _commercial_access_internal_token() -> str:
+    return str(os.getenv("CLOUD_INTERNAL_API_TOKEN", "")).strip()
+
+
+def _forwarded_commercial_headers(request: Request) -> dict[str, str]:
+    forwarded: dict[str, str] = {}
+    for header_name in COMMERCIAL_ACCESS_FORWARDED_HEADERS:
+        raw_value = request.headers.get(header_name)
+        if raw_value is not None and str(raw_value).strip():
+            forwarded[header_name] = str(raw_value).strip()
+    return forwarded
+
+
+def _post_commercial_access(path: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any] | None]:
+    url = urljoin(f"{_commercial_access_base_url()}/", path.lstrip("/"))
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    token = _commercial_access_internal_token()
+    if token:
+        headers["x-internal-api-key"] = token
+    response = requests.post(
+        url,
+        json=payload,
+        headers=headers,
+        timeout=_commercial_access_timeout_seconds(),
+    )
+    try:
+        body = response.json()
+    except Exception:
+        body = None
+    return response.status_code, body
+
+
+def _commercial_access_response(
+    request_id: str | None,
+    verifier_payload: dict[str, Any] | None,
+) -> Response:
+    payload = verifier_payload or {}
+    challenge = payload.get("challenge") if isinstance(payload, dict) else None
+    headers = {}
+    body = None
+    if isinstance(challenge, dict):
+        raw_headers = challenge.get("headers") or {}
+        if isinstance(raw_headers, dict):
+            headers = {
+                str(key): str(value)
+                for key, value in raw_headers.items()
+                if str(key).strip() and value is not None
+            }
+        body = challenge.get("body")
+
+    status_code = int(payload.get("http_status") or 402)
+    if isinstance(body, (dict, list)):
+        response = JSONResponse(body, status_code=status_code)
+    elif isinstance(body, str) and body.strip():
+        response = Response(content=body, status_code=status_code, media_type="application/json")
+    else:
+        response = _error_response(
+            request_id,
+            str(payload.get("code") or "commercial_access_required"),
+            str(payload.get("message") or "Commercial access is required for this capability."),
+            status_code,
+        )
+    for key, value in headers.items():
+        response.headers[key] = value
+    return response
+
+
+def _settle_commercial_access(request_id: str, settlement_id: str, *, success: bool) -> tuple[bool, dict[str, Any] | None]:
+    _status_code, payload = _post_commercial_access(
+        COMMERCIAL_ACCESS_SETTLE_PATH,
+        {
+            "request_id": request_id,
+            "settlement_id": settlement_id,
+            "outcome": {"status": "success" if success else "failed"},
+        },
+    )
+    if isinstance(payload, dict) and str(payload.get("status") or "").strip().lower() == "allow":
+        return True, payload
+    return False, payload
 
 
 def _parse_time_filter(
@@ -208,6 +330,7 @@ async def query_dataset(req: Request):
     ip_hash = hash_ip_for_analytics(_get_request_ip(req))
     caller_key = auth_user_id or ip_hash or "anonymous"
     user_agent = req.headers.get("user-agent", "").strip() or None
+    payment_rail: str | None = None
 
     def error_response(
         request_id: str | None,
@@ -787,6 +910,83 @@ async def query_dataset(req: Request):
         )
     include_provenance = bool(output.get("include_provenance", False))
 
+    settlement_id: str | None = None
+    if _commercial_access_enabled():
+        if not _commercial_access_internal_token():
+            return error_response(
+                request_id,
+                "commercial_access_unavailable",
+                "Commercial access verifier is not configured for this runtime.",
+                503,
+                retry_hint="Retry on the hosted runtime after verifier configuration is complete.",
+                pack_id=spec.pack_id,
+                source_id=source_id,
+            )
+        try:
+            verifier_status, verifier_payload = await asyncio.to_thread(
+                _post_commercial_access,
+                COMMERCIAL_ACCESS_CHECK_PATH,
+                {
+                    "request_id": request_id,
+                    "capability_id": "dataset_query",
+                    "resource": {
+                        "method": "POST",
+                        "path": "/api/v1/query/dataset",
+                    },
+                    "forwarded_headers": _forwarded_commercial_headers(req),
+                    "caller": {
+                        "auth_user_id": auth_user_id,
+                        "ip_hash": ip_hash,
+                    },
+                },
+            )
+        except Exception as exc:
+            return error_response(
+                request_id,
+                "commercial_access_unavailable",
+                f"Commercial access verifier failed: {exc}",
+                503,
+                retry_hint="Retry after the hosted verifier is available.",
+                pack_id=spec.pack_id,
+                source_id=source_id,
+            )
+
+        verifier_status_name = str((verifier_payload or {}).get("status") or "").strip().lower()
+        payment_rail = str((verifier_payload or {}).get("rail") or "").strip() or None
+        if verifier_status_name == "challenge":
+            response = _commercial_access_response(request_id, verifier_payload)
+            payload_size_bytes = len(getattr(response, "body", b"") or b"")
+            log_api_query_event(
+                request_id=request_id,
+                capability_id="dataset_query",
+                pack_id=spec.pack_id,
+                source_id=spec.source_id,
+                decision="challenge",
+                payment_rail=payment_rail,
+                auth_user_id=auth_user_id,
+                ip_hash=ip_hash,
+                user_agent=user_agent,
+                execution_latency_ms=int((time.perf_counter() - started_at) * 1000),
+                row_count=0,
+                response_size_bytes=payload_size_bytes,
+                status_code=response.status_code,
+                warnings_count=0,
+                error_code=str((verifier_payload or {}).get("code") or "commercial_access_required"),
+            )
+            return response
+        if verifier_status_name != "allow":
+            return error_response(
+                request_id,
+                str((verifier_payload or {}).get("code") or "commercial_access_denied"),
+                str((verifier_payload or {}).get("message") or "Commercial access denied."),
+                int((verifier_payload or {}).get("http_status") or verifier_status or 403),
+                retry_hint="Retry after satisfying the requested commercial-access challenge.",
+                pack_id=spec.pack_id,
+                source_id=source_id,
+            )
+        settlement = (verifier_payload or {}).get("settlement") or {}
+        settlement_id = str(settlement.get("settlement_id") or "").strip() or None
+
     select_columns = [spec.location_field] + metric_columns
     if spec.time_field:
         select_columns.insert(1, spec.time_field)
@@ -877,6 +1077,35 @@ async def query_dataset(req: Request):
             "source_ids": [spec.source_id],
         }
 
+    if settlement_id:
+        try:
+            settled, settlement_payload = await asyncio.to_thread(
+                _settle_commercial_access,
+                request_id,
+                settlement_id,
+                success=True,
+            )
+        except Exception as exc:
+            return error_response(
+                request_id,
+                "commercial_access_verifier_error",
+                f"Commercial settlement failed: {exc}",
+                502,
+                retry_hint="Retry the paid request after verifier settlement is healthy.",
+                pack_id=spec.pack_id,
+                source_id=source_id,
+            )
+        if not settled:
+            return error_response(
+                request_id,
+                str((settlement_payload or {}).get("code") or "commercial_access_verifier_error"),
+                str((settlement_payload or {}).get("message") or "Commercial settlement failed."),
+                int((settlement_payload or {}).get("http_status") or 502),
+                retry_hint="Retry the paid request after verifier settlement is healthy.",
+                pack_id=spec.pack_id,
+                source_id=source_id,
+            )
+
     response = JSONResponse(payload_out)
     response_size_bytes = len(json.dumps(payload_out, ensure_ascii=False).encode("utf-8"))
     log_api_query_event(
@@ -885,7 +1114,7 @@ async def query_dataset(req: Request):
         pack_id=spec.pack_id,
         source_id=spec.source_id,
         decision="allow",
-        payment_rail=None,
+        payment_rail=payment_rail,
         auth_user_id=auth_user_id,
         ip_hash=ip_hash,
         user_agent=user_agent,
