@@ -29,6 +29,7 @@ from mapmover.security import get_allowed_origins, is_https_request
 from mapmover.order_executor import execute_order
 from mapmover.order_queue import processor as order_processor
 from mapmover.routes.chat import router as chat_router
+from mapmover.routes.api_query import router as api_query_router
 from mapmover.routes.disasters.drought import router as drought_router
 from mapmover.routes.disasters.earthquakes import router as earthquakes_router
 from mapmover.routes.disasters.floods import router as floods_router
@@ -196,6 +197,7 @@ async def well_known_security_txt():
     return FileResponse(SECURITY_TXT_PATH, media_type="text/plain; charset=utf-8")
 
 app.include_router(system_router)
+app.include_router(api_query_router)
 app.include_router(geometry_router)
 app.include_router(fairfax_router)
 app.include_router(earthquakes_router)

@@ -1,0 +1,461 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from .data_loading import get_source_path, load_full_catalog, load_source_metadata
+from .duckdb_helpers import parquet_available, parquet_columns, path_to_uri, quote_ident, run_df
+from .paths import DATA_ROOT
+
+
+DEFAULT_LIMIT = 100
+MAX_LIMIT = 1000
+
+
+@dataclass(frozen=True)
+class ApiMetricSpec:
+    metric_id: str
+    column: str
+    description: str
+
+
+@dataclass(frozen=True)
+class ApiSourceSpec:
+    source_id: str
+    pack_id: str
+    parquet_name: str
+    query_mode: str
+    location_field: str
+    time_field: str | None
+    metrics: dict[str, ApiMetricSpec]
+    filterable_fields: set[str]
+    sortable_fields: set[str]
+    location_filter_mode: str = "hierarchical_loc_id"
+    location_lookup_field: str | None = None
+    default_limit: int = DEFAULT_LIMIT
+    max_limit: int = MAX_LIMIT
+    metadata_source_id: str | None = None
+
+
+CURRENCY_SOURCE_SPEC = ApiSourceSpec(
+    source_id="fx_usd_historical",
+    pack_id="currency",
+    parquet_name="all_countries.parquet",
+    query_mode="single_source",
+    location_field="loc_id",
+    time_field="year",
+    metrics={
+        "local_per_usd": ApiMetricSpec(
+            metric_id="local_per_usd",
+            column="local_per_usd",
+            description="Local currency units per one USD",
+        ),
+    },
+    filterable_fields={"loc_id", "year"},
+    sortable_fields={"loc_id", "year", "local_per_usd"},
+    location_filter_mode="hierarchical_loc_id",
+)
+
+
+SUPPORTED_DYNAMIC_SOURCES: dict[str, dict[str, Any]] = {
+    "fx_usd_historical": {
+        "pack_id": "currency",
+        "parquet_name": "all_countries.parquet",
+        "query_mode": "single_source",
+        "location_field": "loc_id",
+        "time_field": "year",
+        "default_limit": DEFAULT_LIMIT,
+        "max_limit": MAX_LIMIT,
+    },
+    "world_factbook": {
+        "pack_id": "world_factbook",
+        "parquet_name": "all_countries.parquet",
+        "query_mode": "single_source",
+        "location_field": "loc_id",
+        "time_field": "year",
+        "default_limit": DEFAULT_LIMIT,
+        "max_limit": MAX_LIMIT,
+    },
+    "world_factbook_overlap": {
+        "pack_id": "world_factbook",
+        "parquet_name": "all_countries.parquet",
+        "query_mode": "single_source",
+        "location_field": "loc_id",
+        "time_field": "year",
+        "default_limit": DEFAULT_LIMIT,
+        "max_limit": MAX_LIMIT,
+    },
+    "world_factbook_static": {
+        "pack_id": "world_factbook",
+        "parquet_name": "all_countries.parquet",
+        "query_mode": "single_source_static",
+        "location_field": "loc_id",
+        "time_field": None,
+        "default_limit": DEFAULT_LIMIT,
+        "max_limit": MAX_LIMIT,
+    },
+    "earthquakes_events": {
+        "pack_id": "earthquakes",
+        "parquet_name": "events.parquet",
+        "query_mode": "single_source_events",
+        "location_field": "loc_id",
+        "time_field": "year",
+        "default_limit": 100,
+        "max_limit": 500,
+    },
+    "volcanoes_events": {
+        "pack_id": "volcanoes",
+        "parquet_name": "events.parquet",
+        "query_mode": "single_source_events",
+        "location_field": "loc_id",
+        "time_field": "year",
+        "default_limit": 100,
+        "max_limit": 500,
+    },
+    "tsunamis_events": {
+        "pack_id": "tsunamis",
+        "parquet_name": "events.parquet",
+        "query_mode": "single_source_events",
+        "location_field": "loc_id",
+        "time_field": "year",
+        "default_limit": 100,
+        "max_limit": 500,
+    },
+}
+
+
+API_SOURCE_SPECS: dict[str, ApiSourceSpec] = {
+    CURRENCY_SOURCE_SPEC.source_id: CURRENCY_SOURCE_SPEC,
+}
+
+
+def _build_metric_specs_from_metadata(metadata: dict[str, Any] | None) -> dict[str, ApiMetricSpec]:
+    metrics = metadata.get("metrics") if isinstance(metadata, dict) else {}
+    if not isinstance(metrics, dict):
+        return {}
+
+    built: dict[str, ApiMetricSpec] = {}
+    for metric_id, metric_info in metrics.items():
+        metric_key = str(metric_id).strip()
+        if not metric_key:
+            continue
+        description = ""
+        if isinstance(metric_info, dict):
+            description = (
+                str(metric_info.get("description") or "").strip()
+                or str(metric_info.get("name") or "").strip()
+                or str(metric_info.get("unit") or "").strip()
+            )
+        else:
+            description = str(metric_info).strip()
+        built[metric_key] = ApiMetricSpec(
+            metric_id=metric_key,
+            column=metric_key,
+            description=description,
+        )
+    return built
+
+
+def _build_dynamic_source_spec(source_id: str) -> ApiSourceSpec | None:
+    source_defaults = SUPPORTED_DYNAMIC_SOURCES.get(source_id)
+    if source_defaults is None:
+        return None
+
+    metadata_source_id = str(source_defaults.get("metadata_source_id") or source_id)
+    metadata = load_source_metadata(metadata_source_id) or {}
+    metrics = _build_metric_specs_from_metadata(metadata)
+    location_field = str(source_defaults["location_field"])
+    time_field = source_defaults.get("time_field")
+    location_filter_mode = str(
+        metadata.get("location_filter_mode")
+        or source_defaults.get("location_filter_mode")
+        or "hierarchical_loc_id"
+    ).strip()
+    location_lookup_field_raw = metadata.get("location_lookup_field") or source_defaults.get("location_lookup_field")
+    location_lookup_field = str(location_lookup_field_raw).strip() if location_lookup_field_raw else None
+
+    filterable_fields = {location_field}
+    sortable_fields = {location_field}
+    if time_field:
+        filterable_fields.add(str(time_field))
+        sortable_fields.add(str(time_field))
+    metadata_filterable = metadata.get("filterable_fields") if isinstance(metadata.get("filterable_fields"), list) else []
+    for field in metadata_filterable:
+        field_name = str(field).strip()
+        if field_name:
+            filterable_fields.add(field_name)
+    metadata_sortable = metadata.get("sortable_fields") if isinstance(metadata.get("sortable_fields"), list) else []
+    for field in metadata_sortable:
+        field_name = str(field).strip()
+        if field_name:
+            sortable_fields.add(field_name)
+    sortable_fields.update(metrics.keys())
+
+    return ApiSourceSpec(
+        source_id=source_id,
+        pack_id=str(metadata.get("pack_id") or source_defaults["pack_id"]),
+        parquet_name=str(source_defaults["parquet_name"]),
+        query_mode=str(source_defaults["query_mode"]),
+        location_field=location_field,
+        time_field=str(time_field) if time_field else None,
+        metrics=metrics,
+        filterable_fields=filterable_fields,
+        sortable_fields=sortable_fields,
+        location_filter_mode=location_filter_mode,
+        location_lookup_field=location_lookup_field,
+        default_limit=int(metadata.get("default_limit") or source_defaults["default_limit"]),
+        max_limit=int(metadata.get("max_limit") or source_defaults["max_limit"]),
+        metadata_source_id=metadata_source_id,
+    )
+
+
+def get_api_source_spec(source_id: str) -> ApiSourceSpec | None:
+    normalized_source_id = str(source_id or "").strip()
+    cached = API_SOURCE_SPECS.get(normalized_source_id)
+    if cached is not None:
+        return cached
+    built = _build_dynamic_source_spec(normalized_source_id)
+    if built is not None:
+        API_SOURCE_SPECS[normalized_source_id] = built
+    return built
+
+
+def get_pack_source_ids(pack_id: str) -> list[str]:
+    normalized_pack_id = str(pack_id or "").strip()
+    if not normalized_pack_id:
+        return []
+    catalog = load_full_catalog()
+    source_ids = []
+    for source in catalog.get("sources", []):
+        if str(source.get("pack_id") or "").strip() == normalized_pack_id:
+            source_id = str(source.get("source_id") or "").strip()
+            if source_id:
+                source_ids.append(source_id)
+    return sorted(set(source_ids))
+
+
+def resolve_pack_sources_for_metrics(pack_id: str, metrics: list[str]) -> dict[str, Any]:
+    normalized_pack_id = str(pack_id or "").strip()
+    normalized_metrics = [str(metric).strip() for metric in (metrics or []) if str(metric).strip()]
+    if not normalized_pack_id or not normalized_metrics:
+        return {
+            "pack_id": normalized_pack_id,
+            "requested_metrics": normalized_metrics,
+            "resolution": "invalid_request",
+            "selected_source_id": None,
+            "required_sources": [],
+            "metrics_by_source": {},
+            "unknown_metrics": normalized_metrics,
+        }
+
+    candidate_sources = get_pack_source_ids(normalized_pack_id)
+    per_source_metadata: dict[str, dict[str, Any]] = {}
+    metric_to_sources: dict[str, list[str]] = {}
+    for source_id in candidate_sources:
+        metadata = load_source_metadata(source_id) or {}
+        per_source_metadata[source_id] = metadata
+        metrics_map = metadata.get("metrics") if isinstance(metadata.get("metrics"), dict) else {}
+        for metric_id in metrics_map.keys():
+            metric_key = str(metric_id).strip()
+            if not metric_key:
+                continue
+            metric_to_sources.setdefault(metric_key, []).append(source_id)
+
+    unknown_metrics = [metric for metric in normalized_metrics if metric not in metric_to_sources]
+    if unknown_metrics:
+        return {
+            "pack_id": normalized_pack_id,
+            "requested_metrics": normalized_metrics,
+            "resolution": "unknown_metrics",
+            "selected_source_id": None,
+            "required_sources": [],
+            "metrics_by_source": {},
+            "unknown_metrics": unknown_metrics,
+        }
+
+    source_scores: list[tuple[float, str]] = []
+    for source_id in candidate_sources:
+        metadata = per_source_metadata.get(source_id) or {}
+        metrics_map = metadata.get("metrics") if isinstance(metadata.get("metrics"), dict) else {}
+        if any(metric not in metrics_map for metric in normalized_metrics):
+            continue
+        score = 0.0
+        for metric in normalized_metrics:
+            metric_info = metrics_map.get(metric)
+            if isinstance(metric_info, dict):
+                density = metric_info.get("density")
+                if isinstance(density, (int, float)):
+                    score += float(density)
+        source_scores.append((score, source_id))
+
+    if source_scores:
+        source_scores.sort(key=lambda item: (-item[0], item[1]))
+        return {
+            "pack_id": normalized_pack_id,
+            "requested_metrics": normalized_metrics,
+            "resolution": "single_source",
+            "selected_source_id": source_scores[0][1],
+            "required_sources": [source_scores[0][1]],
+            "metrics_by_source": {source_scores[0][1]: normalized_metrics},
+            "unknown_metrics": [],
+        }
+
+    metrics_by_source: dict[str, list[str]] = {}
+    for metric in normalized_metrics:
+        candidate_metric_sources = metric_to_sources.get(metric, [])
+        ranked_sources: list[tuple[float, str]] = []
+        for source_id in candidate_metric_sources:
+            metadata = per_source_metadata.get(source_id) or {}
+            metric_info = (metadata.get("metrics") or {}).get(metric)
+            density = None
+            if isinstance(metric_info, dict):
+                density = metric_info.get("density")
+            ranked_sources.append((float(density) if isinstance(density, (int, float)) else -1.0, source_id))
+        ranked_sources.sort(key=lambda item: (-item[0], item[1]))
+        chosen_source = ranked_sources[0][1]
+        metrics_by_source.setdefault(chosen_source, []).append(metric)
+
+    required_sources = sorted(metrics_by_source.keys())
+    return {
+        "pack_id": normalized_pack_id,
+        "requested_metrics": normalized_metrics,
+        "resolution": "multi_source_required",
+        "selected_source_id": None,
+        "required_sources": required_sources,
+        "metrics_by_source": metrics_by_source,
+        "unknown_metrics": [],
+    }
+
+
+def get_source_parquet_path(spec: ApiSourceSpec) -> Path:
+    source_dir = Path(get_source_path(spec.source_id))
+    primary_path = source_dir / spec.parquet_name
+    if primary_path.exists():
+        return primary_path
+
+    if spec.metadata_source_id and spec.metadata_source_id != spec.source_id:
+        metadata_source_dir = Path(get_source_path(spec.metadata_source_id))
+        metadata_primary_path = metadata_source_dir / spec.parquet_name
+        if metadata_primary_path.exists():
+            return metadata_primary_path
+
+    # API sources may execute from a pack-shaped folder before local catalog.json
+    # is present. Prefer a direct pack fallback over assuming source_id == folder.
+    pack_path = DATA_ROOT / "global" / spec.pack_id / spec.parquet_name
+    if pack_path.exists():
+        return pack_path
+
+    return primary_path
+
+
+def get_api_source_columns(spec: ApiSourceSpec) -> set[str]:
+    parquet_path = get_source_parquet_path(spec)
+    return parquet_columns(parquet_path)
+
+
+def get_api_source_time_bounds(spec: ApiSourceSpec) -> tuple[int | None, int | None]:
+    if not spec.time_field:
+        return None, None
+    parquet_path = get_source_parquet_path(spec)
+    available_cols = parquet_columns(parquet_path)
+    if spec.time_field not in available_cols:
+        return None, None
+
+    time_col = quote_ident(spec.time_field)
+    df = run_df(
+        f"SELECT MIN({time_col}) AS min_year, MAX({time_col}) AS max_year FROM read_parquet(?)",
+        [path_to_uri(parquet_path)],
+    )
+    if df.empty:
+        return None, None
+
+    row = df.iloc[0]
+    min_year = row.get("min_year")
+    max_year = row.get("max_year")
+    return (
+        int(min_year) if min_year is not None else None,
+        int(max_year) if max_year is not None else None,
+    )
+
+
+def api_source_ready(spec: ApiSourceSpec) -> bool:
+    parquet_path = get_source_parquet_path(spec)
+    return parquet_available(parquet_path)
+
+
+def execute_dataset_query(
+    spec: ApiSourceSpec,
+    *,
+    select_columns: list[str],
+    exact_filters: dict[str, Any] | None = None,
+    in_filters: dict[str, list[Any]] | None = None,
+    hierarchical_prefix_filters: dict[str, list[str]] | None = None,
+    compare_filters: list[tuple[str, str, Any]] | None = None,
+    sort_items: list[tuple[str, str]] | None = None,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    parquet_path = get_source_parquet_path(spec)
+    available_cols = parquet_columns(parquet_path)
+    selected = [col for col in select_columns if col in available_cols]
+    if not selected:
+        return []
+
+    select_expr = ", ".join(quote_ident(col) for col in selected)
+    where_parts: list[str] = []
+    params: list[Any] = [path_to_uri(parquet_path)]
+
+    for col, value in (exact_filters or {}).items():
+        if col in available_cols and value is not None:
+            where_parts.append(f"{quote_ident(col)} = ?")
+            params.append(value)
+
+    for col, values in (in_filters or {}).items():
+        normalized_values = [value for value in (values or []) if value is not None]
+        if col in available_cols and normalized_values:
+            normalized_upper_values = [str(value).upper() for value in normalized_values]
+            placeholders = ", ".join("?" for _ in normalized_upper_values)
+            where_parts.append(f"upper({quote_ident(col)}) IN ({placeholders})")
+            params.extend(normalized_upper_values)
+
+    for col, prefixes in (hierarchical_prefix_filters or {}).items():
+        normalized_prefixes = [str(value).strip() for value in (prefixes or []) if str(value).strip()]
+        if col not in available_cols or not normalized_prefixes:
+            continue
+        exact_or_descendant_parts: list[str] = []
+        for prefix in normalized_prefixes:
+            prefix_upper = prefix.upper()
+            exact_or_descendant_parts.append(f"upper({quote_ident(col)}) = ?")
+            params.append(prefix_upper)
+            exact_or_descendant_parts.append(f"starts_with(upper({quote_ident(col)}), ?)")
+            params.append(f"{prefix_upper}-")
+        where_parts.append("(" + " OR ".join(exact_or_descendant_parts) + ")")
+
+    for col, op, value in (compare_filters or []):
+        if col not in available_cols or value is None:
+            continue
+        if op not in {"=", "!=", ">", ">=", "<", "<="}:
+            continue
+        where_parts.append(f"{quote_ident(col)} {op} ?")
+        params.append(value)
+
+    sql = f"SELECT {select_expr} FROM read_parquet(?)"
+    if where_parts:
+        sql += " WHERE " + " AND ".join(where_parts)
+
+    order_parts: list[str] = []
+    for sort_field, sort_direction in (sort_items or []):
+        if sort_field and sort_field in available_cols:
+            direction = "DESC" if str(sort_direction).lower() == "desc" else "ASC"
+            order_parts.append(f"{quote_ident(sort_field)} {direction} NULLS LAST")
+    if order_parts:
+        sql += " ORDER BY " + ", ".join(order_parts)
+
+    if limit is not None and limit > 0:
+        sql += " LIMIT ?"
+        params.append(limit)
+
+    df = run_df(sql, params)
+    if df.empty:
+        return []
+    return df.to_dict("records")
