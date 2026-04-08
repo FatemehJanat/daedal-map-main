@@ -97,7 +97,8 @@ def build_aggregation_spec(order_item: Dict[str, Any], source_metadata: Optional
     source_id = str(source_id).strip().lower()
 
     requested_granularity = order_item.get("time_granularity")
-    granularity = normalize_granularity(requested_granularity, default="yearly")
+    default_granularity = "monthly" if source_id == "fx_usd_historical" else "yearly"
+    granularity = normalize_granularity(requested_granularity, default=default_granularity)
 
     # FX defaults to point-in-time convention when not explicitly requested.
     default_method = "last" if source_id == "fx_usd_historical" else "mean"

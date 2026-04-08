@@ -1271,24 +1271,48 @@ def _load_fx_with_aggregation(source_id: str, item: dict, metadata: dict) -> tup
     spec = build_aggregation_spec(item, metadata)
     trace["spec"] = spec.to_dict()
 
-    # Runtime metrics contract is yearly; use default runtime parquet when no override is requested.
-    has_temporal_override = bool(item.get("time_granularity") or item.get("aggregation") or item.get("date_start") or item.get("date_end"))
+    # Currency now defaults to the published monthly lane for the human app unless
+    # the order explicitly requests a different temporal shape.
+    has_temporal_override = bool(
+        item.get("time_granularity")
+        or item.get("aggregation")
+        or item.get("date_start")
+        or item.get("date_end")
+        or source_id == "fx_usd_historical"
+    )
     if not has_temporal_override:
         trace["applied"] = {"path": "all_countries.parquet", "mode": "native_yearly"}
         return None, trace
 
-    source_dir = _get_source_path(source_id)
-    daily_path = source_dir / "fx_staging_daily.parquet"
-    if not daily_path.exists():
-        trace["applied"] = {"path": "all_countries.parquet", "mode": "fallback_no_daily_staging"}
+    requested_granularity = str(spec.time_granularity or "").strip().lower()
+    runtime_source_id = source_id
+    parquet_name = "data.parquet"
+    if requested_granularity == "weekly":
+        runtime_source_id = "fx_usd_historical_weekly"
+    elif requested_granularity == "monthly":
+        runtime_source_id = "fx_usd_historical_monthly"
+
+    source_dir = _get_source_path(runtime_source_id)
+    published_path = source_dir / parquet_name
+    if not published_path.exists():
+        trace["applied"] = {
+            "path": "all_countries.parquet",
+            "mode": "fallback_no_published_temporal_source",
+            "resolved_source_id": runtime_source_id,
+        }
         return None, trace
 
     try:
-        fx = select_columns_from_parquet(daily_path, ["date", "loc_id", "local_per_usd"])
+        fx = select_columns_from_parquet(published_path, ["date", "loc_id", "local_per_usd"])
         if fx.empty:
-            fx = pd.read_parquet(daily_path, columns=["date", "loc_id", "local_per_usd"])
+            fx = pd.read_parquet(published_path, columns=["date", "loc_id", "local_per_usd"])
     except Exception as e:
-        trace["applied"] = {"path": "all_countries.parquet", "mode": "fallback_read_error", "error": str(e)}
+        trace["applied"] = {
+            "path": "all_countries.parquet",
+            "mode": "fallback_read_error",
+            "resolved_source_id": runtime_source_id,
+            "error": str(e),
+        }
         return None, trace
 
     start_ts, end_ts = _extract_date_window(item)
@@ -1298,7 +1322,11 @@ def _load_fx_with_aggregation(source_id: str, item: dict, metadata: dict) -> tup
         fx = fx[pd.to_datetime(fx["date"], errors="coerce") <= end_ts]
 
     if fx.empty:
-        trace["applied"] = {"path": str(daily_path), "mode": "empty_after_filter"}
+        trace["applied"] = {
+            "path": str(published_path),
+            "mode": "empty_after_filter",
+            "resolved_source_id": runtime_source_id,
+        }
         return pd.DataFrame(columns=["loc_id", "year", "source", "local_per_usd"]), trace
 
     aggregated = apply_temporal_aggregation(
@@ -1310,7 +1338,11 @@ def _load_fx_with_aggregation(source_id: str, item: dict, metadata: dict) -> tup
     )
 
     if aggregated.empty:
-        trace["applied"] = {"path": str(daily_path), "mode": "empty_after_aggregation"}
+        trace["applied"] = {
+            "path": str(published_path),
+            "mode": "empty_after_aggregation",
+            "resolved_source_id": runtime_source_id,
+        }
         return pd.DataFrame(columns=["loc_id", "year", "source", "local_per_usd"]), trace
 
     aggregated["year"] = pd.to_datetime(aggregated["date"], errors="coerce").dt.year
@@ -1334,8 +1366,9 @@ def _load_fx_with_aggregation(source_id: str, item: dict, metadata: dict) -> tup
 
     yearly["source"] = source_id
     trace["applied"] = {
-        "path": str(daily_path),
-        "mode": "daily_staging_temporal_aggregation",
+        "path": str(published_path),
+        "mode": "published_temporal_aggregation",
+        "resolved_source_id": runtime_source_id,
         "requested_granularity": spec.time_granularity,
         "requested_method": spec.method,
         "coerced_output": "yearly_for_runtime",

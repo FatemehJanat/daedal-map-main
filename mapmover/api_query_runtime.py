@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,7 @@ class ApiSourceSpec:
     query_mode: str
     location_field: str
     time_field: str | None
+    time_granularity: str | None
     metrics: dict[str, ApiMetricSpec]
     filterable_fields: set[str]
     sortable_fields: set[str]
@@ -41,10 +43,11 @@ class ApiSourceSpec:
 CURRENCY_SOURCE_SPEC = ApiSourceSpec(
     source_id="fx_usd_historical",
     pack_id="currency",
-    parquet_name="all_countries.parquet",
+    parquet_name="data.parquet",
     query_mode="single_source",
     location_field="loc_id",
-    time_field="year",
+    time_field="date",
+    time_granularity="date",
     metrics={
         "local_per_usd": ApiMetricSpec(
             metric_id="local_per_usd",
@@ -52,8 +55,8 @@ CURRENCY_SOURCE_SPEC = ApiSourceSpec(
             description="Local currency units per one USD",
         ),
     },
-    filterable_fields={"loc_id", "year"},
-    sortable_fields={"loc_id", "year", "local_per_usd"},
+    filterable_fields={"loc_id", "date"},
+    sortable_fields={"loc_id", "date", "local_per_usd"},
     location_filter_mode="hierarchical_loc_id",
 )
 
@@ -61,10 +64,31 @@ CURRENCY_SOURCE_SPEC = ApiSourceSpec(
 SUPPORTED_DYNAMIC_SOURCES: dict[str, dict[str, Any]] = {
     "fx_usd_historical": {
         "pack_id": "currency",
-        "parquet_name": "all_countries.parquet",
+        "parquet_name": "data.parquet",
         "query_mode": "single_source",
         "location_field": "loc_id",
-        "time_field": "year",
+        "time_field": "date",
+        "time_granularity": "date",
+        "default_limit": DEFAULT_LIMIT,
+        "max_limit": MAX_LIMIT,
+    },
+    "fx_usd_historical_weekly": {
+        "pack_id": "currency",
+        "parquet_name": "data.parquet",
+        "query_mode": "single_source",
+        "location_field": "loc_id",
+        "time_field": "date",
+        "time_granularity": "weekly",
+        "default_limit": DEFAULT_LIMIT,
+        "max_limit": MAX_LIMIT,
+    },
+    "fx_usd_historical_monthly": {
+        "pack_id": "currency",
+        "parquet_name": "data.parquet",
+        "query_mode": "single_source",
+        "location_field": "loc_id",
+        "time_field": "date",
+        "time_granularity": "monthly",
         "default_limit": DEFAULT_LIMIT,
         "max_limit": MAX_LIMIT,
     },
@@ -74,6 +98,7 @@ SUPPORTED_DYNAMIC_SOURCES: dict[str, dict[str, Any]] = {
         "query_mode": "single_source",
         "location_field": "loc_id",
         "time_field": "year",
+        "time_granularity": "yearly",
         "default_limit": DEFAULT_LIMIT,
         "max_limit": MAX_LIMIT,
     },
@@ -83,6 +108,7 @@ SUPPORTED_DYNAMIC_SOURCES: dict[str, dict[str, Any]] = {
         "query_mode": "single_source",
         "location_field": "loc_id",
         "time_field": "year",
+        "time_granularity": "yearly",
         "default_limit": DEFAULT_LIMIT,
         "max_limit": MAX_LIMIT,
     },
@@ -92,6 +118,7 @@ SUPPORTED_DYNAMIC_SOURCES: dict[str, dict[str, Any]] = {
         "query_mode": "single_source_static",
         "location_field": "loc_id",
         "time_field": None,
+        "time_granularity": None,
         "default_limit": DEFAULT_LIMIT,
         "max_limit": MAX_LIMIT,
     },
@@ -101,6 +128,7 @@ SUPPORTED_DYNAMIC_SOURCES: dict[str, dict[str, Any]] = {
         "query_mode": "single_source_events",
         "location_field": "loc_id",
         "time_field": "year",
+        "time_granularity": "yearly",
         "default_limit": 100,
         "max_limit": 500,
     },
@@ -110,6 +138,7 @@ SUPPORTED_DYNAMIC_SOURCES: dict[str, dict[str, Any]] = {
         "query_mode": "single_source_events",
         "location_field": "loc_id",
         "time_field": "year",
+        "time_granularity": "yearly",
         "default_limit": 100,
         "max_limit": 500,
     },
@@ -119,6 +148,7 @@ SUPPORTED_DYNAMIC_SOURCES: dict[str, dict[str, Any]] = {
         "query_mode": "single_source_events",
         "location_field": "loc_id",
         "time_field": "year",
+        "time_granularity": "yearly",
         "default_limit": 100,
         "max_limit": 500,
     },
@@ -166,7 +196,9 @@ def _build_dynamic_source_spec(source_id: str) -> ApiSourceSpec | None:
     metadata = load_source_metadata(metadata_source_id) or {}
     metrics = _build_metric_specs_from_metadata(metadata)
     location_field = str(source_defaults["location_field"])
-    time_field = source_defaults.get("time_field")
+    temporal_coverage = metadata.get("temporal_coverage") if isinstance(metadata.get("temporal_coverage"), dict) else {}
+    time_field = temporal_coverage.get("field") or source_defaults.get("time_field")
+    time_granularity = temporal_coverage.get("granularity") or source_defaults.get("time_granularity")
     location_filter_mode = str(
         metadata.get("location_filter_mode")
         or source_defaults.get("location_filter_mode")
@@ -199,6 +231,7 @@ def _build_dynamic_source_spec(source_id: str) -> ApiSourceSpec | None:
         query_mode=str(source_defaults["query_mode"]),
         location_field=location_field,
         time_field=str(time_field) if time_field else None,
+        time_granularity=str(time_granularity) if time_granularity else None,
         metrics=metrics,
         filterable_fields=filterable_fields,
         sortable_fields=sortable_fields,
@@ -208,6 +241,25 @@ def _build_dynamic_source_spec(source_id: str) -> ApiSourceSpec | None:
         max_limit=int(metadata.get("max_limit") or source_defaults["max_limit"]),
         metadata_source_id=metadata_source_id,
     )
+
+
+def is_temporal_time_field(spec: ApiSourceSpec) -> bool:
+    return str(spec.time_granularity or "").strip().lower() in {
+        "date",
+        "daily",
+        "weekly",
+        "monthly",
+        "timestamp",
+        "datetime",
+    }
+
+
+def normalize_time_value_for_response(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    return value
 
 
 def get_api_source_spec(source_id: str) -> ApiSourceSpec | None:
@@ -233,6 +285,26 @@ def get_pack_source_ids(pack_id: str) -> list[str]:
             if source_id:
                 source_ids.append(source_id)
     return sorted(set(source_ids))
+
+
+def normalize_time_granularity(value: str | None) -> str | None:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return None
+    alias_map = {
+        "day": "daily",
+        "daily": "daily",
+        "date": "daily",
+        "week": "weekly",
+        "weekly": "weekly",
+        "month": "monthly",
+        "monthly": "monthly",
+        "year": "yearly",
+        "yearly": "yearly",
+        "timestamp": "timestamp",
+        "datetime": "timestamp",
+    }
+    return alias_map.get(normalized, normalized)
 
 
 def resolve_pack_sources_for_metrics(pack_id: str, metrics: list[str]) -> dict[str, Any]:
@@ -328,6 +400,53 @@ def resolve_pack_sources_for_metrics(pack_id: str, metrics: list[str]) -> dict[s
     }
 
 
+def resolve_pack_source_for_query(
+    pack_id: str,
+    metrics: list[str],
+    *,
+    requested_granularity: str | None = None,
+) -> dict[str, Any]:
+    base = resolve_pack_sources_for_metrics(pack_id, metrics)
+    if base.get("resolution") != "single_source":
+        base["requested_granularity"] = normalize_time_granularity(requested_granularity)
+        return base
+
+    normalized_pack_id = str(pack_id or "").strip()
+    normalized_granularity = normalize_time_granularity(requested_granularity)
+    base["requested_granularity"] = normalized_granularity
+    if normalized_pack_id != "currency" or not normalized_granularity:
+        return base
+
+    granularity_to_source = {
+        "daily": "fx_usd_historical",
+        "weekly": "fx_usd_historical_weekly",
+        "monthly": "fx_usd_historical_monthly",
+    }
+    selected_source_id = granularity_to_source.get(normalized_granularity)
+    if not selected_source_id:
+        base["resolution"] = "unsupported_granularity"
+        base["selected_source_id"] = None
+        base["required_sources"] = []
+        base["metrics_by_source"] = {}
+        base["supported_granularities"] = sorted(granularity_to_source.keys())
+        return base
+
+    spec = get_api_source_spec(selected_source_id)
+    if spec is None:
+        base["resolution"] = "unsupported_granularity"
+        base["selected_source_id"] = None
+        base["required_sources"] = []
+        base["metrics_by_source"] = {}
+        base["supported_granularities"] = sorted(granularity_to_source.keys())
+        return base
+
+    base["selected_source_id"] = selected_source_id
+    base["required_sources"] = [selected_source_id]
+    base["metrics_by_source"] = {selected_source_id: [str(metric).strip() for metric in (metrics or []) if str(metric).strip()]}
+    base["supported_granularities"] = sorted(granularity_to_source.keys())
+    return base
+
+
 def get_source_parquet_path(spec: ApiSourceSpec) -> Path:
     source_dir = Path(get_source_path(spec.source_id))
     primary_path = source_dir / spec.parquet_name
@@ -354,7 +473,7 @@ def get_api_source_columns(spec: ApiSourceSpec) -> set[str]:
     return parquet_columns(parquet_path)
 
 
-def get_api_source_time_bounds(spec: ApiSourceSpec) -> tuple[int | None, int | None]:
+def get_api_source_time_bounds(spec: ApiSourceSpec) -> tuple[Any | None, Any | None]:
     if not spec.time_field:
         return None, None
     parquet_path = get_source_parquet_path(spec)
@@ -364,18 +483,23 @@ def get_api_source_time_bounds(spec: ApiSourceSpec) -> tuple[int | None, int | N
 
     time_col = quote_ident(spec.time_field)
     df = run_df(
-        f"SELECT MIN({time_col}) AS min_year, MAX({time_col}) AS max_year FROM read_parquet(?)",
+        f"SELECT MIN({time_col}) AS min_value, MAX({time_col}) AS max_value FROM read_parquet(?)",
         [path_to_uri(parquet_path)],
     )
     if df.empty:
         return None, None
 
     row = df.iloc[0]
-    min_year = row.get("min_year")
-    max_year = row.get("max_year")
+    min_value = row.get("min_value")
+    max_value = row.get("max_value")
+    if is_temporal_time_field(spec):
+        return (
+            normalize_time_value_for_response(min_value),
+            normalize_time_value_for_response(max_value),
+        )
     return (
-        int(min_year) if min_year is not None else None,
-        int(max_year) if max_year is not None else None,
+        int(min_value) if min_value is not None else None,
+        int(max_value) if max_value is not None else None,
     )
 
 
@@ -395,6 +519,8 @@ def execute_dataset_query(
     sort_items: list[tuple[str, str]] | None = None,
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
+    from .duckdb_helpers import _normalize_ts_for_duckdb
+
     parquet_path = get_source_parquet_path(spec)
     available_cols = parquet_columns(parquet_path)
     selected = [col for col in select_columns if col in available_cols]
@@ -407,8 +533,12 @@ def execute_dataset_query(
 
     for col, value in (exact_filters or {}).items():
         if col in available_cols and value is not None:
-            where_parts.append(f"{quote_ident(col)} = ?")
-            params.append(value)
+            if col == spec.time_field and is_temporal_time_field(spec):
+                where_parts.append(f"CAST({quote_ident(col)} AS TIMESTAMP) = CAST(? AS TIMESTAMP)")
+                params.append(_normalize_ts_for_duckdb(str(value)))
+            else:
+                where_parts.append(f"{quote_ident(col)} = ?")
+                params.append(value)
 
     for col, values in (in_filters or {}).items():
         normalized_values = [value for value in (values or []) if value is not None]
@@ -436,8 +566,12 @@ def execute_dataset_query(
             continue
         if op not in {"=", "!=", ">", ">=", "<", "<="}:
             continue
-        where_parts.append(f"{quote_ident(col)} {op} ?")
-        params.append(value)
+        if col == spec.time_field and is_temporal_time_field(spec):
+            where_parts.append(f"CAST({quote_ident(col)} AS TIMESTAMP) {op} CAST(? AS TIMESTAMP)")
+            params.append(_normalize_ts_for_duckdb(str(value)))
+        else:
+            where_parts.append(f"{quote_ident(col)} {op} ?")
+            params.append(value)
 
     sql = f"SELECT {select_expr} FROM read_parquet(?)"
     if where_parts:

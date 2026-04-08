@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import json
 import time
+from datetime import date, datetime
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -18,6 +19,9 @@ from mapmover.api_query_runtime import (
     get_api_source_columns,
     get_api_source_spec,
     get_api_source_time_bounds,
+    is_temporal_time_field,
+    normalize_time_granularity,
+    resolve_pack_source_for_query,
 )
 from mapmover.geography import get_country_names_from_codes
 from mapmover.logging_analytics import hash_ip_for_analytics, log_api_query_event
@@ -73,6 +77,89 @@ def _normalize_request_id(payload: dict[str, Any]) -> str | None:
         return None
     request_id = str(request_id).strip()
     return request_id or None
+
+
+def _format_time_value(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    return value
+
+
+def _parse_temporal_filter_value(raw_value: Any) -> str:
+    if isinstance(raw_value, (datetime, date)):
+        return raw_value.isoformat()
+    if raw_value is None:
+        raise ValueError("missing")
+    normalized = str(raw_value).strip()
+    if not normalized:
+        raise ValueError("blank")
+    return normalized
+
+
+def _parse_time_filter(
+    spec,
+    time_filter: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], list[tuple[str, str, Any]]]:
+    normalized_time: dict[str, Any] = {}
+    exact_filters: dict[str, Any] = {}
+    compare_filters: list[tuple[str, str, Any]] = []
+
+    if spec.time_field is None:
+        return normalized_time, exact_filters, compare_filters
+
+    exact_value = time_filter.get("value")
+    start_value = time_filter.get("start")
+    end_value = time_filter.get("end")
+
+    if exact_value is None and "year" in time_filter:
+        exact_value = time_filter.get("year")
+    if start_value is None and "year_start" in time_filter:
+        start_value = time_filter.get("year_start")
+    if end_value is None and "year_end" in time_filter:
+        end_value = time_filter.get("year_end")
+
+    if is_temporal_time_field(spec):
+        if exact_value is not None:
+            coerced_value = _parse_temporal_filter_value(exact_value)
+            exact_filters[spec.time_field] = coerced_value
+            normalized_time["value"] = coerced_value
+            return normalized_time, exact_filters, compare_filters
+
+        coerced_start = None
+        coerced_end = None
+        if start_value is not None:
+            coerced_start = _parse_temporal_filter_value(start_value)
+            normalized_time["start"] = coerced_start
+            compare_filters.append((spec.time_field, ">=", coerced_start))
+        if end_value is not None:
+            coerced_end = _parse_temporal_filter_value(end_value)
+            normalized_time["end"] = coerced_end
+            compare_filters.append((spec.time_field, "<=", coerced_end))
+        if coerced_start is not None and coerced_end is not None and coerced_start > coerced_end:
+            raise ValueError("start_after_end")
+        return normalized_time, exact_filters, compare_filters
+
+    if exact_value is not None:
+        coerced_value = int(exact_value)
+        exact_filters[spec.time_field] = coerced_value
+        normalized_time["value"] = coerced_value
+        return normalized_time, exact_filters, compare_filters
+
+    coerced_start = None
+    coerced_end = None
+    if start_value is not None:
+        coerced_start = int(start_value)
+        normalized_time["start"] = coerced_start
+        compare_filters.append((spec.time_field, ">=", coerced_start))
+    if end_value is not None:
+        coerced_end = int(end_value)
+        normalized_time["end"] = coerced_end
+        compare_filters.append((spec.time_field, "<=", coerced_end))
+    if coerced_start is not None and coerced_end is not None and coerced_start > coerced_end:
+        raise ValueError("start_after_end")
+    return normalized_time, exact_filters, compare_filters
 
 
 def _validate_metrics(
@@ -185,26 +272,109 @@ async def query_dataset(req: Request):
     req.state.analytics_request_id = request_id
 
     source_id = str(payload.get("source_id") or "").strip()
+    pack_id = str(payload.get("pack_id") or "").strip()
     req.state.analytics_source_id = source_id or None
-    if not source_id:
+    req.state.analytics_pack_id = pack_id or None
+
+    if source_id and pack_id:
+        return error_response(
+            request_id,
+            "invalid_request",
+            "Provide either source_id or pack_id, not both.",
+            400,
+            retry_hint="Choose a direct source_id or a pack_id-based query, but not both.",
+            pack_id=pack_id,
+            source_id=source_id,
+        )
+
+    if not source_id and not pack_id:
         return error_response(
             request_id,
             "unknown_source",
-            "source_id is required.",
+            "source_id or pack_id is required.",
             404,
-            retry_hint="Choose a published source_id from the catalog.",
+            retry_hint="Choose a published source_id from the catalog, or a pack_id with supported metrics.",
             source_id="unknown",
         )
 
+    requested_metrics_raw = payload.get("metrics")
+    requested_metrics = [str(metric).strip() for metric in (requested_metrics_raw or []) if str(metric).strip()]
+    time_filter = payload.get("filters", {}).get("time") if isinstance(payload.get("filters"), dict) else None
+    requested_granularity = None
+    if isinstance(time_filter, dict):
+        requested_granularity = time_filter.get("granularity")
+    normalized_requested_granularity = normalize_time_granularity(requested_granularity)
+
+    resolved_from_pack = False
+    if not source_id and pack_id:
+        pack_resolution = resolve_pack_source_for_query(
+            pack_id,
+            requested_metrics,
+            requested_granularity=requested_granularity,
+        )
+        resolution = str(pack_resolution.get("resolution") or "")
+        if resolution == "unknown_metrics":
+            return error_response(
+                request_id,
+                "metric_not_available",
+                "One or more metrics are not available in this pack.",
+                400,
+                details={"unknown_metrics": pack_resolution.get("unknown_metrics") or []},
+                retry_hint="Choose metrics listed for this pack in the catalog.",
+                pack_id=pack_id,
+                source_id="unknown",
+            )
+        if resolution == "multi_source_required":
+            return error_response(
+                request_id,
+                "multi_source_not_supported",
+                "This pack requires multiple sources for the requested metrics.",
+                400,
+                details={"required_sources": pack_resolution.get("required_sources") or []},
+                retry_hint="Choose metrics that can be satisfied by one source, or query a specific source_id.",
+                pack_id=pack_id,
+                source_id="unknown",
+            )
+        if resolution == "unsupported_granularity":
+            return error_response(
+                request_id,
+                "invalid_time_range",
+                f"Requested granularity '{requested_granularity}' is not supported for pack '{pack_id}'.",
+                400,
+                details={"supported_granularities": pack_resolution.get("supported_granularities") or []},
+                retry_hint="Choose one of the supported granularities for this pack.",
+                pack_id=pack_id,
+                source_id="unknown",
+            )
+        source_id = str(pack_resolution.get("selected_source_id") or "").strip()
+        if not source_id:
+            return error_response(
+                request_id,
+                "unknown_source",
+                f"Pack '{pack_id}' could not be resolved to a published source.",
+                404,
+                retry_hint="Choose a published source_id from the catalog, or retry with a more specific pack request.",
+                pack_id=pack_id,
+                source_id="unknown",
+            )
+        req.state.analytics_source_id = source_id
+        resolved_from_pack = True
+
     spec = get_api_source_spec(source_id)
     if spec is None:
+        retry_hint = (
+            "Choose a published source_id from the catalog."
+            if not pack_id
+            else "Choose a published source within this pack from the catalog."
+        )
         return error_response(
             request_id,
             "unknown_source",
             f"Source '{source_id}' is not available on the API lane.",
             404,
-            retry_hint="Choose a published source_id from the catalog.",
-            source_id=source_id,
+            retry_hint=retry_hint,
+            pack_id=pack_id or None,
+            source_id=source_id or "unknown",
         )
 
     if not api_source_ready(spec):
@@ -218,6 +388,25 @@ async def query_dataset(req: Request):
             source_id=source_id,
         )
     req.state.analytics_pack_id = spec.pack_id
+    if resolved_from_pack:
+        req.state.analytics_pack_id = pack_id or spec.pack_id
+
+    if normalized_requested_granularity:
+        source_granularity = normalize_time_granularity(spec.time_granularity)
+        if source_granularity and normalized_requested_granularity != source_granularity:
+            return error_response(
+                request_id,
+                "invalid_time_range",
+                f"Requested granularity '{requested_granularity}' does not match source '{spec.source_id}'.",
+                400,
+                details={
+                    "requested_granularity": normalized_requested_granularity,
+                    "source_granularity": source_granularity,
+                },
+                retry_hint="Choose a source or pack query that matches the requested granularity.",
+                pack_id=pack_id or spec.pack_id,
+                source_id=source_id,
+            )
 
     metrics, metrics_error = _validate_metrics(spec, payload.get("metrics"), request_id=request_id)
     if metrics_error:
@@ -279,7 +468,7 @@ async def query_dataset(req: Request):
             "invalid_time_range",
             "time must be an object.",
             400,
-            retry_hint="Pass time as {year} or {year_start, year_end}.",
+            retry_hint="Pass time as {value} or {start, end}.",
             pack_id=spec.pack_id,
             source_id=source_id,
         )
@@ -299,7 +488,7 @@ async def query_dataset(req: Request):
             "invalid_time_range",
             "time is required for this source.",
             400,
-            retry_hint="Pass time as {year} or {year_start, year_end}.",
+            retry_hint="Pass time as {value} or {start, end}.",
             pack_id=spec.pack_id,
             source_id=source_id,
         )
@@ -308,7 +497,7 @@ async def query_dataset(req: Request):
     in_filters: dict[str, list[Any]] = {}
     hierarchical_prefix_filters: dict[str, list[str]] = {}
     compare_filters: list[tuple[str, str, Any]] = []
-    normalized_time: dict[str, int] = {}
+    normalized_time: dict[str, Any] = {}
 
     if normalized_region_ids:
         if spec.location_filter_mode == "country_name_or_hierarchical_loc_id":
@@ -325,68 +514,41 @@ async def query_dataset(req: Request):
         else:
             hierarchical_prefix_filters[spec.location_field] = normalized_region_ids
 
-    year = time_filter.get("year")
-    year_start = time_filter.get("year_start")
-    year_end = time_filter.get("year_end")
-    if spec.time_field is not None and year is not None:
-        try:
-            coerced_year = int(year)
-            exact_filters[spec.time_field] = coerced_year
-            normalized_time["year_start"] = coerced_year
-            normalized_time["year_end"] = coerced_year
-        except (TypeError, ValueError):
+    try:
+        parsed_time, parsed_exact_filters, parsed_compare_filters = _parse_time_filter(spec, time_filter)
+        normalized_time.update(parsed_time)
+        requested_granularity = time_filter.get("granularity") if isinstance(time_filter, dict) else None
+        normalized_granularity = normalize_time_granularity(requested_granularity)
+        if normalized_granularity:
+            normalized_time["granularity"] = normalized_granularity
+        exact_filters.update(parsed_exact_filters)
+        compare_filters.extend(parsed_compare_filters)
+    except ValueError as exc:
+        message = str(exc)
+        if message == "start_after_end":
             return error_response(
                 request_id,
                 "invalid_time_range",
-                "time.year must be an integer.",
+                "time.start cannot be greater than time.end.",
                 400,
-                retry_hint="Use an integer year value.",
+                retry_hint="Use a time range where start is less than or equal to end.",
                 pack_id=spec.pack_id,
                 source_id=source_id,
             )
-    elif spec.time_field is not None:
-        coerced_year_start = None
-        coerced_year_end = None
-        if year_start is not None:
-            try:
-                coerced_year_start = int(year_start)
-                normalized_time["year_start"] = coerced_year_start
-                compare_filters.append((spec.time_field, ">=", coerced_year_start))
-            except (TypeError, ValueError):
-                return error_response(
-                    request_id,
-                    "invalid_time_range",
-                    "time.year_start must be an integer.",
-                    400,
-                    retry_hint="Use an integer year_start value.",
-                    pack_id=spec.pack_id,
-                    source_id=source_id,
-                )
-        if year_end is not None:
-            try:
-                coerced_year_end = int(year_end)
-                normalized_time["year_end"] = coerced_year_end
-                compare_filters.append((spec.time_field, "<=", coerced_year_end))
-            except (TypeError, ValueError):
-                return error_response(
-                    request_id,
-                    "invalid_time_range",
-                    "time.year_end must be an integer.",
-                    400,
-                    retry_hint="Use an integer year_end value.",
-                    pack_id=spec.pack_id,
-                    source_id=source_id,
-                )
-        if coerced_year_start is not None and coerced_year_end is not None and coerced_year_start > coerced_year_end:
-            return error_response(
-                request_id,
-                "invalid_time_range",
-                "year_start cannot be greater than year_end.",
-                400,
-                retry_hint="Use a time range where year_start is less than or equal to year_end.",
-                pack_id=spec.pack_id,
-                source_id=source_id,
-            )
+        retry_hint = (
+            "Use ISO 8601 values for this source's time field."
+            if is_temporal_time_field(spec)
+            else "Use integer values for this source's time field."
+        )
+        return error_response(
+            request_id,
+            "invalid_time_range",
+            "time filters are invalid for this source.",
+            400,
+            retry_hint=retry_hint,
+            pack_id=spec.pack_id,
+            source_id=source_id,
+        )
 
     equals_filters = filters.get("equals") or {}
     if equals_filters:
@@ -566,37 +728,37 @@ async def query_dataset(req: Request):
     if spec.time_field in available_columns:
         available_start, available_end = get_api_source_time_bounds(spec)
         if available_start is not None and available_end is not None:
-            requested_year_start = normalized_time.get("year", normalized_time.get("year_start"))
-            requested_year_end = normalized_time.get("year", normalized_time.get("year_end"))
-            if requested_year_start is not None and requested_year_start < available_start:
+            requested_start = normalized_time.get("value", normalized_time.get("start"))
+            requested_end = normalized_time.get("value", normalized_time.get("end"))
+            if requested_start is not None and requested_start < available_start:
                 return error_response(
                     request_id,
                     "time_range_out_of_bounds",
-                    f"This source does not contain data for {requested_year_start}.",
+                    f"This source does not contain data for {requested_start}.",
                     400,
                     details={
                         "available_start": available_start,
                         "available_end": available_end,
-                        "requested_year_start": requested_year_start,
-                        "requested_year_end": requested_year_end,
+                        "requested_start": requested_start,
+                        "requested_end": requested_end,
                     },
-                    retry_hint="Request a year range within the published coverage for this source.",
+                    retry_hint="Request a time range within the published coverage for this source.",
                     pack_id=spec.pack_id,
                     source_id=source_id,
                 )
-            if requested_year_end is not None and requested_year_end > available_end:
+            if requested_end is not None and requested_end > available_end:
                 return error_response(
                     request_id,
                     "time_range_out_of_bounds",
-                    f"This source does not contain data for {requested_year_end}.",
+                    f"This source does not contain data for {requested_end}.",
                     400,
                     details={
                         "available_start": available_start,
                         "available_end": available_end,
-                        "requested_year_start": requested_year_start,
-                        "requested_year_end": requested_year_end,
+                        "requested_start": requested_start,
+                        "requested_end": requested_end,
                     },
-                    retry_hint="Request a year range within the published coverage for this source.",
+                    retry_hint="Request a time range within the published coverage for this source.",
                     pack_id=spec.pack_id,
                     source_id=source_id,
                 )
@@ -663,7 +825,7 @@ async def query_dataset(req: Request):
             "loc_id": _json_safe_value(row.get(spec.location_field)),
         }
         if spec.time_field:
-            shaped["year"] = _json_safe_value(row.get(spec.time_field))
+            shaped[spec.time_field] = _json_safe_value(_format_time_value(row.get(spec.time_field)))
         non_null_metric_count = 0
         for metric in metrics:
             metric_column = spec.metrics[metric].column
