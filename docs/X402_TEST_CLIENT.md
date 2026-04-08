@@ -1,0 +1,88 @@
+# x402 Test Client
+
+This note explains how to act like a new developer testing the paid API lane.
+
+Current target:
+
+- endpoint: `POST /api/v1/query/dataset`
+- hosted base URL: `https://app.daedalmap.com`
+- network: Base Sepolia
+- payment rail: x402 wallet-pay
+
+## MetaMask setup
+
+Use a dedicated test account if possible.
+Do not use your main wallet private key for casual local testing.
+
+### 1. Add Base Sepolia
+
+In MetaMask, add or switch to the Base Sepolia network.
+
+Working values:
+
+- Network name: `Base Sepolia`
+- RPC URL: `https://sepolia.base.org`
+- Chain ID: `84532`
+- Currency symbol: `ETH`
+- Block explorer URL: `https://sepolia.basescan.org`
+
+### 2. Fund the wallet
+
+The buyer wallet needs:
+
+- Base Sepolia ETH for gas
+- Base Sepolia USDC for the payment itself
+
+### 3. Export the private key for the test account
+
+The local test client uses:
+
+- `EVM_PRIVATE_KEY`
+
+Use a test-only account for this.
+
+## Local test client
+
+Script:
+
+- `examples/x402_query_dataset_test.mjs`
+
+Install dependencies:
+
+```powershell
+npm install
+```
+
+Challenge-only probe:
+
+```powershell
+$env:DAEDALMAP_API_BASE_URL = "https://app.daedalmap.com"
+npm run x402:test:dataset -- --challenge-only
+```
+
+Paid retry:
+
+```powershell
+$env:DAEDALMAP_API_BASE_URL = "https://app.daedalmap.com"
+$env:EVM_PRIVATE_KEY = "0xYOUR_TEST_ACCOUNT_PRIVATE_KEY"
+npm run x402:test:dataset
+```
+
+What the script does:
+
+1. sends an unpaid request and logs the `402` challenge
+2. decodes the `payment-required` header
+3. if `EVM_PRIVATE_KEY` is present, creates an x402 buyer client
+4. pays and retries the same request automatically
+5. logs the final API response plus settlement metadata
+
+## Current live expectation
+
+For a healthy x402 lane:
+
+- unpaid request returns `402`
+- paid retry returns `200`
+- response body includes dataset rows
+
+If unpaid requests return `200`, commercial gating is not active.
+If unpaid requests return `502`, the verifier is active but unhealthy.
