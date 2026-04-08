@@ -9,6 +9,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from mapmover.auth_context import get_authenticated_user
+from mapmover.api_query_limits import QueryConcurrencyLimitError, acquire_query_slot
 from mapmover.api_query_runtime import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
@@ -118,6 +119,7 @@ async def query_dataset(req: Request):
     auth_user = get_authenticated_user(req)
     auth_user_id = str((auth_user or {}).get("id") or "").strip() or None
     ip_hash = hash_ip_for_analytics(_get_request_ip(req))
+    caller_key = auth_user_id or ip_hash or "anonymous"
     user_agent = req.headers.get("user-agent", "").strip() or None
 
     def error_response(
@@ -630,16 +632,29 @@ async def query_dataset(req: Request):
         if sort_field not in select_columns:
             select_columns.append(sort_field)
 
-    rows = execute_dataset_query(
-        spec,
-        select_columns=select_columns,
-        exact_filters=exact_filters or None,
-        in_filters=in_filters or None,
-        hierarchical_prefix_filters=hierarchical_prefix_filters or None,
-        compare_filters=compare_filters or None,
-        sort_items=sort_items,
-        limit=limit,
-    )
+    try:
+        async with acquire_query_slot(caller_key):
+            rows = execute_dataset_query(
+                spec,
+                select_columns=select_columns,
+                exact_filters=exact_filters or None,
+                in_filters=in_filters or None,
+                hierarchical_prefix_filters=hierarchical_prefix_filters or None,
+                compare_filters=compare_filters or None,
+                sort_items=sort_items,
+                limit=limit,
+            )
+    except QueryConcurrencyLimitError as exc:
+        return error_response(
+            request_id,
+            exc.code,
+            exc.message,
+            429,
+            details=exc.details,
+            retry_hint="Retry after in-flight requests complete or reduce caller concurrency.",
+            pack_id=spec.pack_id,
+            source_id=source_id,
+        )
 
     response_rows: list[dict[str, Any]] = []
     null_only_rows_omitted = 0
