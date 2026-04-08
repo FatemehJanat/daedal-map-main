@@ -393,11 +393,14 @@ def _sample_questions_for_pack(pack_id: str, data_type: str, title: str) -> list
     return [f"Show {title} values for one or more regions over time"]
 
 
-def _build_public_pack_list() -> list[dict]:
+def _build_public_pack_list(api_ready_only: bool = False) -> list[dict]:
     from mapmover.data_loading import load_full_catalog
 
     all_sources = load_full_catalog().get("sources", [])
-    published = [s for s in all_sources if s.get("pack_id")]
+    published = [
+        s for s in all_sources
+        if s.get("pack_id") and (not api_ready_only or bool(s.get("api_ready", False)))
+    ]
 
     pack_map = {}
     pack_counts = {}
@@ -433,11 +436,14 @@ def _build_public_pack_list() -> list[dict]:
     return packs
 
 
-def _build_public_pack_detail(pack_id: str) -> dict | None:
+def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dict | None:
     from mapmover.data_loading import load_full_catalog
 
     all_sources = load_full_catalog().get("sources", [])
-    pack_sources = [s for s in all_sources if s.get("pack_id") == pack_id]
+    pack_sources = [
+        s for s in all_sources
+        if s.get("pack_id") == pack_id and (not api_ready_only or bool(s.get("api_ready", False)))
+    ]
     if not pack_sources:
         return None
 
@@ -556,8 +562,8 @@ def _build_v1_guide_payload() -> dict:
 
 def _build_v1_catalog_payload() -> dict:
     catalog_packs = []
-    for pack in _build_public_pack_list():
-        detail = _build_public_pack_detail(pack.get("pack_id", "")) or {}
+    for pack in _build_public_pack_list(api_ready_only=True):
+        detail = _build_public_pack_detail(pack.get("pack_id", ""), api_ready_only=True) or {}
         temporal = {
             "start": (detail.get("temporal_coverage") or {}).get("start", pack.get("temporal_start")),
             "end": (detail.get("temporal_coverage") or {}).get("end", pack.get("temporal_end")),
@@ -597,7 +603,7 @@ def _build_v1_catalog_payload() -> dict:
 
 
 def _build_v1_pack_payload(pack_id: str) -> dict | None:
-    pack = _build_public_pack_detail(pack_id)
+    pack = _build_public_pack_detail(pack_id, api_ready_only=True)
     if not pack:
         return None
 
@@ -917,9 +923,9 @@ async def get_catalog_sources(req: Request):
 @router.get("/api/catalog/packs")
 async def get_catalog_packs_list(req: Request):
     """
-    Return the public pack library: all sources with a pack_id assigned.
-    No auth required - pack_id assignment is the publish gate.
-    Supports ?format=json for the .com packs browsing page.
+    Return the human/app pack catalog: all published app-visible packs.
+    No auth required - pack_id assignment is the publish gate for this surface.
+    Supports ?format=json for the .com packs browsing page and app-side catalog use.
     """
     from fastapi.responses import JSONResponse
 
@@ -934,10 +940,9 @@ async def get_catalog_packs_list(req: Request):
 @router.get("/api/catalog/packs/{pack_id}")
 async def get_catalog_pack(pack_id: str, req: Request):
     """
-    Return full metadata for a single pack by pack_id.
-    Merges all sources sharing that pack_id into one pack profile.
-    Published packs (those with a pack_id) are publicly readable without auth.
-    Unpublished sources require master/bypass.
+    Return full metadata for one human/app pack profile by pack_id.
+    Merges all app-visible sources sharing that pack_id into one pack profile.
+    Published packs are publicly readable without auth.
     Supports ?format=json for the .com public pack profile pages.
     """
     from fastapi.responses import JSONResponse
@@ -954,16 +959,19 @@ async def get_catalog_pack(pack_id: str, req: Request):
 
 @router.get("/api/v1/guide")
 async def get_v1_guide():
+    """Return the agent/API usage guide for the current v1 discovery surface."""
     return JSONResponse(_build_v1_guide_payload())
 
 
 @router.get("/api/v1/catalog")
 async def get_v1_catalog():
+    """Return the agent/API catalog filtered to sources marked api_ready."""
     return JSONResponse(_build_v1_catalog_payload())
 
 
 @router.get("/api/v1/packs/{pack_id}")
 async def get_v1_pack(pack_id: str):
+    """Return the agent/API pack detail filtered to api_ready sources only."""
     payload = _build_v1_pack_payload(pack_id)
     if not payload:
         return JSONResponse({"error": "Pack not found"}, status_code=404)
