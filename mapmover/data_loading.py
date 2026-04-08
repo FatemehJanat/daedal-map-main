@@ -58,6 +58,16 @@ _CATALOG_TTL_SECONDS = 300  # 5 minutes
 _catalog_missing_time = 0.0
 _CATALOG_MISS_TTL_SECONDS = 15
 
+_api_catalog_cache = None
+_api_catalog_cache_time = 0.0
+_api_catalog_missing_time = 0.0
+_api_guide_cache = None
+_api_guide_cache_time = 0.0
+_api_guide_missing_time = 0.0
+_api_pack_cache: dict[str, dict] = {}
+_api_pack_cache_time: dict[str, float] = {}
+_api_pack_missing_time: dict[str, float] = {}
+
 
 def get_data_folder():
     """Get the data folder path (resolved via paths.py)."""
@@ -81,6 +91,30 @@ def _fetch_json_from_s3(relative_path: str) -> dict:
     client = _boto3.client("s3", endpoint_url=endpoint_url, region_name=region)
     obj = client.get_object(Bucket=bucket, Key=key)
     return json.loads(obj["Body"].read())
+
+
+def _api_catalog_output_root() -> Path:
+    return Path(__file__).resolve().parents[2] / "county-map-private" / "build" / "api_catalog" / "output"
+
+
+def _load_json_from_runtime_or_s3(relative_path: str, *, use_api_prefix: bool = False) -> dict | None:
+    runtime_mode = str(get_runtime_config().get("runtime_mode", "local")).strip().lower()
+    if runtime_mode == "cloud":
+        s3_path = f"api_catalog/{relative_path}" if use_api_prefix else relative_path
+        try:
+            data = _fetch_json_from_s3(s3_path)
+            return data if isinstance(data, dict) else None
+        except Exception as e:
+            logger.warning(f"Failed to load {s3_path} from S3: {e}")
+            return None
+
+    local_path = _api_catalog_output_root() / relative_path
+    try:
+        if local_path.exists():
+            return json.loads(local_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.warning(f"Failed to load local API discovery artifact {local_path}: {e}")
+    return None
 
 
 def load_catalog():
@@ -133,6 +167,69 @@ def load_catalog():
     except Exception as e:
         logger.error(f"Error loading catalog.json: {e}")
         return {"sources": [], "total_sources": 0}
+
+
+def load_api_catalog() -> dict:
+    global _api_catalog_cache, _api_catalog_cache_time, _api_catalog_missing_time
+
+    now = time.time()
+    if _api_catalog_cache is not None and (now - _api_catalog_cache_time) < _CATALOG_TTL_SECONDS:
+        return _api_catalog_cache
+    if _api_catalog_cache is None and (now - _api_catalog_missing_time) < _CATALOG_MISS_TTL_SECONDS:
+        return {"catalog_version": "1.0", "generated_at": None, "source_mode": "api_catalog", "pack_count": 0, "packs": []}
+
+    payload = _load_json_from_runtime_or_s3("api_catalog.json", use_api_prefix=True)
+    if payload is None:
+        _api_catalog_missing_time = now
+        return {"catalog_version": "1.0", "generated_at": None, "source_mode": "api_catalog", "pack_count": 0, "packs": []}
+
+    _api_catalog_cache = payload
+    _api_catalog_cache_time = now
+    return payload
+
+
+def load_api_guide() -> dict:
+    global _api_guide_cache, _api_guide_cache_time, _api_guide_missing_time
+
+    now = time.time()
+    if _api_guide_cache is not None and (now - _api_guide_cache_time) < _CATALOG_TTL_SECONDS:
+        return _api_guide_cache
+    if _api_guide_cache is None and (now - _api_guide_missing_time) < _CATALOG_MISS_TTL_SECONDS:
+        return {}
+
+    payload = _load_json_from_runtime_or_s3("guide.json", use_api_prefix=True)
+    if payload is None:
+        _api_guide_missing_time = now
+        return {}
+
+    _api_guide_cache = payload
+    _api_guide_cache_time = now
+    return payload
+
+
+def load_api_pack_detail(pack_id: str) -> dict | None:
+    global _api_pack_cache, _api_pack_cache_time, _api_pack_missing_time
+
+    pack_id = str(pack_id or "").strip()
+    if not pack_id:
+        return None
+
+    now = time.time()
+    cached = _api_pack_cache.get(pack_id)
+    cached_time = _api_pack_cache_time.get(pack_id, 0.0)
+    if cached is not None and (now - cached_time) < _CATALOG_TTL_SECONDS:
+        return cached
+    if cached is None and (now - _api_pack_missing_time.get(pack_id, 0.0)) < _CATALOG_MISS_TTL_SECONDS:
+        return None
+
+    payload = _load_json_from_runtime_or_s3(f"packs/{pack_id}.json", use_api_prefix=True)
+    if payload is None:
+        _api_pack_missing_time[pack_id] = now
+        return None
+
+    _api_pack_cache[pack_id] = payload
+    _api_pack_cache_time[pack_id] = now
+    return payload
 
 
 def load_full_catalog():
@@ -322,6 +419,24 @@ def clear_metadata_cache():
     global _metadata_cache
     _metadata_cache = {}
     logger.info("Metadata cache cleared")
+
+
+def clear_api_discovery_cache():
+    """Clear the cached agent/API discovery artifacts."""
+    global _api_catalog_cache, _api_catalog_cache_time, _api_catalog_missing_time
+    global _api_guide_cache, _api_guide_cache_time, _api_guide_missing_time
+    global _api_pack_cache, _api_pack_cache_time, _api_pack_missing_time
+
+    _api_catalog_cache = None
+    _api_catalog_cache_time = 0.0
+    _api_catalog_missing_time = 0.0
+    _api_guide_cache = None
+    _api_guide_cache_time = 0.0
+    _api_guide_missing_time = 0.0
+    _api_pack_cache = {}
+    _api_pack_cache_time = {}
+    _api_pack_missing_time = {}
+    logger.info("API discovery cache cleared")
 
 
 def get_geometry_folder():

@@ -960,19 +960,27 @@ async def get_catalog_pack(pack_id: str, req: Request):
 @router.get("/api/v1/guide")
 async def get_v1_guide():
     """Return the agent/API usage guide for the current v1 discovery surface."""
-    return JSONResponse(_build_v1_guide_payload())
+    from mapmover.data_loading import load_api_guide
+
+    payload = load_api_guide() or _build_v1_guide_payload()
+    return JSONResponse(payload)
 
 
 @router.get("/api/v1/catalog")
 async def get_v1_catalog():
     """Return the agent/API catalog filtered to sources marked api_ready."""
-    return JSONResponse(_build_v1_catalog_payload())
+    from mapmover.data_loading import load_api_catalog
+
+    payload = load_api_catalog()
+    return JSONResponse(payload)
 
 
 @router.get("/api/v1/packs/{pack_id}")
 async def get_v1_pack(pack_id: str):
     """Return the agent/API pack detail filtered to api_ready sources only."""
-    payload = _build_v1_pack_payload(pack_id)
+    from mapmover.data_loading import load_api_pack_detail
+
+    payload = load_api_pack_detail(pack_id)
     if not payload:
         return JSONResponse({"error": "Pack not found"}, status_code=404)
     return JSONResponse(payload)
@@ -1299,7 +1307,7 @@ async def install_runtime_pack_ref(req: Request):
 @router.post("/api/admin/catalog/refresh")
 async def admin_catalog_refresh(req: Request):
     """
-    Force an immediate catalog.json refresh from R2.
+    Force an immediate refresh from R2 for runtime catalog, agent catalog, or both.
     Restricted to master plan and is_admin users only.
     """
     import mapmover.data_loading as _dl
@@ -1337,16 +1345,35 @@ async def admin_catalog_refresh(req: Request):
             return msgpack_error("Entitlement check failed", 500)
 
     wants_json = "application/json" in (req.headers.get("accept", "") or "").lower()
+    surface = str(req.query_params.get("surface", "all") or "all").strip().lower()
+    if surface not in {"all", "runtime", "agent"}:
+        return msgpack_error("surface must be one of: all, runtime, agent", 400)
 
-    # Clear the in-memory cache; next load_catalog() call fetches fresh from S3
-    _dl._catalog_cache = None
-    _dl._catalog_cache_time = 0.0
+    refreshed: list[str] = []
+    source_count = None
+    api_pack_count = None
 
-    from mapmover.data_loading import load_catalog
+    if surface in {"all", "runtime"}:
+        _dl._catalog_cache = None
+        _dl._catalog_cache_time = 0.0
+        _dl._catalog_missing_time = 0.0
+        clear_metadata_cache()
+        initialize_catalog()
+        source_count = len((_dl.load_catalog() or {}).get("sources", []))
+        refreshed.append("runtime")
+
+    if surface in {"all", "agent"}:
+        _dl.clear_api_discovery_cache()
+        api_pack_count = len((_dl.load_api_catalog() or {}).get("packs", []))
+        refreshed.append("agent")
+
     payload = {
         "ok": True,
-        "source_count": len(load_catalog().get("sources", [])),
-        "message": "Catalog cache cleared and refreshed",
+        "surface": surface,
+        "refreshed": refreshed,
+        "source_count": source_count,
+        "api_pack_count": api_pack_count,
+        "message": "Requested catalog caches cleared and refreshed",
     }
     if wants_json:
         return JSONResponse(payload)
