@@ -6,6 +6,7 @@ import ipaddress
 import json
 import os
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -25,6 +26,10 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 _release_marker_cache = None
 _release_marker_cache_time = 0.0
 _RELEASE_MARKER_TTL_SECONDS = 60
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _is_loopback_host(value: str) -> bool:
@@ -298,6 +303,362 @@ def _resolve_pack_temporal(pack_id: str, pack_sources: list[dict], primary: dict
     }
 
 
+def _infer_supported_query_shapes(data_type: str, temporal: dict) -> list[str]:
+    shapes = ["single_year_multi_location"]
+    start = temporal.get("start")
+    end = temporal.get("end")
+    if start not in (None, "") and end not in (None, "") and start != end:
+        shapes.extend(["multi_year_single_location", "multi_year_multi_location"])
+    if str(data_type or "").strip().lower() == "events":
+        shapes.append("filtered_event_query")
+    return shapes
+
+
+def _normalize_geographic_levels(*values) -> list[int]:
+    levels = set()
+    for value in values:
+        if value in (None, "", []):
+            continue
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, int):
+                    levels.add(item)
+                elif str(item).strip().isdigit():
+                    levels.add(int(str(item).strip()))
+            continue
+        if isinstance(value, int):
+            levels.add(value)
+            continue
+        text = str(value).strip()
+        if text.isdigit():
+            levels.add(int(text))
+    return sorted(levels)
+
+
+def _sample_questions_for_pack(pack_id: str, data_type: str, title: str) -> list[str]:
+    samples = {
+        "worldpop": [
+            "Show me population of Canada from 2000 to 2020",
+            "Show me population of European countries in 2000",
+        ],
+        "un_sdg": [
+            "Show me poverty in African countries in 2012",
+            "Show SDG 3 progress in Asian countries from 2000 to 2010",
+        ],
+        "currency": [
+            "Show FX rates for Argentina from 2010 to 2024",
+            "Compare FX rates for Argentina, Brazil, and Chile in 2020",
+        ],
+        "earthquakes": [
+            "Show earthquake counts for Japan from 2000 to 2020",
+            "Compare earthquake counts for Japan, Chile, and Indonesia in 2011",
+        ],
+        "floods": [
+            "Show flood impacts for Bangladesh from 2000 to 2019",
+            "Show flood impacts across South Asian countries in 2015",
+        ],
+        "hurricanes": [
+            "Show hurricane frequency for Mexico from 1995 to 2024",
+            "Show hurricane frequency across Gulf Coast countries from 1995 to 2024",
+        ],
+        "tsunamis": [
+            "Show tsunami impacts across Pacific coastal countries in 2011",
+            "Show tsunami impacts across Pacific countries from 2000 to 2020",
+        ],
+        "tornadoes": [
+            "Show tornado counts for Texas from 1990 to 2020",
+            "Compare the 10-year rolling tornado count for Texas counties between the 1990s and 2010s",
+        ],
+        "volcanoes": [
+            "Compare volcano exposure for Indonesia, Japan, and the Philippines in 2020",
+            "Show volcano exposure across Indonesia, Japan, and the Philippines from 2000 to 2020",
+        ],
+        "wildfires": [
+            "Show wildfire exposure for California from 2004 to 2024",
+            "Show me the areas with the highest wildfire exposure over the past 20 years",
+        ],
+        "fairfax_climate": [
+            "Show Fairfax land surface temperature from 2024 to 2025",
+            "Compare Fairfax heat by geography in 2025",
+        ],
+        "world_factbook": [
+            "Show infrastructure indicators for Canada in the latest year",
+            "Compare economic profile fields for Canada, USA, and Mexico",
+        ],
+    }
+    if pack_id in samples:
+        return samples[pack_id]
+    if str(data_type or "").strip().lower() == "events":
+        return [f"Show {title} events for one region in a time range"]
+    return [f"Show {title} values for one or more regions over time"]
+
+
+def _build_public_pack_list() -> list[dict]:
+    from mapmover.data_loading import load_full_catalog
+
+    all_sources = load_full_catalog().get("sources", [])
+    published = [s for s in all_sources if s.get("pack_id")]
+
+    pack_map = {}
+    pack_counts = {}
+    pack_sources_map = {}
+    for s in published:
+        pid = s["pack_id"]
+        pack_counts[pid] = pack_counts.get(pid, 0) + 1
+        pack_sources_map.setdefault(pid, []).append(s)
+        if pid not in pack_map or s.get("source_id") == pid:
+            pack_map[pid] = s
+
+    packs = []
+    for pid, s in pack_map.items():
+        pack_sources = pack_sources_map.get(pid, [s])
+        pack_docs = _load_pack_source_docs(pack_sources)
+        primary_doc = next((doc for doc in pack_docs if doc.get("source_id") == s.get("source_id")), pack_docs[0] if pack_docs else None)
+        display = _pack_display_meta(s, primary_doc)
+        tc = _resolve_pack_temporal(pid, pack_sources, s)
+        packs.append({
+            "pack_id": pid,
+            "source_name": display.get("source_name") or s.get("source_name", ""),
+            "description": display.get("description", ""),
+            "category": s.get("category", "other"),
+            "data_type": s.get("data_type", ""),
+            "scope": s.get("scope", ""),
+            "topic_tags": s.get("topic_tags") or [],
+            "source_count": pack_counts[pid],
+            "temporal_start": tc.get("start"),
+            "temporal_end": tc.get("end"),
+        })
+
+    packs.sort(key=lambda p: (p["category"], p["source_name"].lower()))
+    return packs
+
+
+def _build_public_pack_detail(pack_id: str) -> dict | None:
+    from mapmover.data_loading import load_full_catalog
+
+    all_sources = load_full_catalog().get("sources", [])
+    pack_sources = [s for s in all_sources if s.get("pack_id") == pack_id]
+    if not pack_sources:
+        return None
+
+    primary = next((s for s in pack_sources if s.get("source_id") == pack_id), pack_sources[0])
+    pack_docs = _load_pack_source_docs(pack_sources)
+    primary_doc = next((doc for doc in pack_docs if doc.get("source_id") == primary.get("source_id")), pack_docs[0] if pack_docs else None)
+    primary_meta = ((primary_doc or {}).get("metadata", {}) or {})
+    display = _pack_display_meta(primary, primary_doc)
+
+    all_metrics = {}
+    for doc in pack_docs:
+        ref_metrics = ((doc.get("reference", {}) or {}).get("metrics", {}) or {})
+        meta_metrics = (doc.get("metadata", {}) or {}).get("metrics", {}) or {}
+        for key, value in ref_metrics.items():
+            all_metrics[key] = value
+        for key, value in meta_metrics.items():
+            if key in all_metrics:
+                continue
+            if isinstance(value, dict):
+                all_metrics[key] = value.get("description") or value.get("name") or ""
+            else:
+                all_metrics[key] = value
+
+    subsources = []
+    docs_by_source = {doc.get("source_id"): doc for doc in pack_docs}
+    for s in pack_sources:
+        doc = docs_by_source.get(s.get("source_id")) or {}
+        sref = (doc.get("reference", {}) or {})
+        smeta = (doc.get("metadata", {}) or {})
+        sref_source = sref.get("source", {}) or {}
+        smetrics = sref.get("metrics", {}) or {}
+        if not smetrics:
+            for key, value in (smeta.get("metrics", {}) or {}).items():
+                if isinstance(value, dict):
+                    smetrics[key] = value.get("description") or value.get("name") or ""
+                else:
+                    smetrics[key] = value
+        stc = s.get("temporal_coverage", {}) or {}
+        subsources.append({
+            "source_id": s.get("source_id"),
+            "source_name": _best_source_text(
+                sref_source.get("source_name"),
+                smeta.get("source_name"),
+                s.get("source_name", ""),
+            ),
+            "description": _best_source_text(
+                sref_source.get("description"),
+                smeta.get("description"),
+                s.get("description", ""),
+            ),
+            "path": s.get("path", ""),
+            "metric_count": len(smetrics),
+            "metrics": smetrics,
+            "temporal_coverage": {
+                "start": stc.get("start"),
+                "end": stc.get("end"),
+                "granularity": stc.get("granularity"),
+            },
+            "coverage_description": s.get("coverage_description", ""),
+            "geographic_level": s.get("geographic_level"),
+            "interaction_mode": s.get("interaction_mode"),
+        })
+
+    temporal = _resolve_pack_temporal(pack_id, pack_sources, primary)
+
+    return {
+        "pack_id": pack_id,
+        "source_name": display.get("source_name") or primary.get("source_name", ""),
+        "description": display.get("description", ""),
+        "source_url": display.get("source_url", ""),
+        "license": display.get("license", ""),
+        "category": _best_source_text(primary_meta.get("category"), primary.get("category", "")),
+        "data_type": _best_source_text(primary_meta.get("data_type"), primary.get("data_type", "")),
+        "scope": _best_source_text(primary_meta.get("scope"), primary.get("scope", "")),
+        "topic_tags": primary_meta.get("topic_tags") or primary.get("topic_tags") or [],
+        "keywords": primary_meta.get("keywords") or primary.get("keywords") or [],
+        "geographic_level": primary_meta.get("geographic_level") or primary.get("geographic_level"),
+        "coverage_description": _best_source_text(primary_meta.get("coverage_description"), primary.get("coverage_description", "")),
+        "temporal_coverage": temporal,
+        "metrics": all_metrics,
+        "llm_summary": _best_source_text(primary_meta.get("llm_summary"), primary.get("llm_summary", "")),
+        "source_count": len(pack_sources),
+        "source_ids": [s["source_id"] for s in pack_sources],
+        "subsources": subsources,
+    }
+
+
+def _build_v1_guide_payload() -> dict:
+    return {
+        "guide_version": "1.0",
+        "generated_at": _utc_now_iso(),
+        "title": "DaedalMap API Guide",
+        "principles": [
+            "If a request can be answered as one query from one source, it belongs in the easy deterministic lane.",
+            "Free discovery should be separate from paid data retrieval.",
+            "The first-wave query model is built around source, metric, location, and time.",
+        ],
+        "free_calls": [
+            {"id": "guide", "path": "/api/v1/guide", "purpose": "How the API works"},
+            {"id": "catalog", "path": "/api/v1/catalog", "purpose": "What exists overall"},
+            {"id": "pack_detail", "path": "/api/v1/packs/{pack_id}", "purpose": "What exists inside one pack"},
+        ],
+        "query_dimensions": ["source", "metric", "location", "time"],
+        "query_shapes": [
+            "single_year_multi_location",
+            "multi_year_single_location",
+            "multi_year_multi_location",
+        ],
+        "commercial_access": {
+            "required_for_data_calls": True,
+            "first_paid_candidate": "/api/v1/query/dataset",
+            "modes": ["wallet_pay", "account_credit"],
+        },
+    }
+
+
+def _build_v1_catalog_payload() -> dict:
+    catalog_packs = []
+    for pack in _build_public_pack_list():
+        detail = _build_public_pack_detail(pack.get("pack_id", "")) or {}
+        temporal = {
+            "start": (detail.get("temporal_coverage") or {}).get("start", pack.get("temporal_start")),
+            "end": (detail.get("temporal_coverage") or {}).get("end", pack.get("temporal_end")),
+        }
+        data_type = detail.get("data_type") or pack.get("data_type", "")
+        title = pack.get("source_name") or pack.get("pack_id")
+        geographic_levels = _normalize_geographic_levels(
+            detail.get("geographic_level"),
+            [source.get("geographic_level") for source in detail.get("subsources") or []],
+        )
+        catalog_packs.append({
+            "pack_id": pack.get("pack_id"),
+            "title": title,
+            "short_description": pack.get("description", ""),
+            "category": pack.get("category", "other"),
+            "data_types": [data_type] if data_type else [],
+            "scopes": [pack.get("scope")] if pack.get("scope") else [],
+            "geographic_levels": geographic_levels,
+            "temporal_start": temporal.get("start"),
+            "temporal_end": temporal.get("end"),
+            "metric_count": len(detail.get("metrics") or {}),
+            "source_count": pack.get("source_count", 0),
+            "supported_query_shapes": _infer_supported_query_shapes(data_type, temporal),
+            "sample_questions": _sample_questions_for_pack(pack.get("pack_id", ""), data_type, title)[:1],
+            "free_detail": True,
+            "paid_data_calls": True,
+            "query_target_type": "source",
+        })
+
+    return {
+        "catalog_version": "1.0",
+        "generated_at": _utc_now_iso(),
+        "source_mode": "public_runtime",
+        "pack_count": len(catalog_packs),
+        "packs": catalog_packs,
+    }
+
+
+def _build_v1_pack_payload(pack_id: str) -> dict | None:
+    pack = _build_public_pack_detail(pack_id)
+    if not pack:
+        return None
+
+    temporal = pack.get("temporal_coverage") or {}
+    data_type = pack.get("data_type", "")
+    title = pack.get("source_name") or pack_id
+    pack_sources = []
+    for source in pack.get("subsources") or []:
+        source_temporal = source.get("temporal_coverage") or {}
+        source_metrics = source.get("metrics") or {}
+        pack_sources.append({
+            "source_id": source.get("source_id"),
+            "source_name": source.get("source_name"),
+            "path": source.get("path"),
+            "data_type": data_type,
+            "short_description": source.get("description", ""),
+            "metric_count": len(source_metrics),
+            "metric_ids": sorted(source_metrics.keys()),
+            "temporal_coverage": source_temporal,
+            "time_field": "year" if source_temporal.get("granularity") == "yearly" else "time",
+            "location_field": "loc_id",
+            "supported_query_shapes": _infer_supported_query_shapes(data_type, source_temporal or temporal),
+            "queryable": True,
+        })
+
+    return {
+        "pack_version": "1.0",
+        "generated_at": _utc_now_iso(),
+        "pack": {
+            "pack_id": pack_id,
+            "title": title,
+            "description": pack.get("description", ""),
+            "source_count": pack.get("source_count", 0),
+            "source_ids": pack.get("source_ids", []),
+            "data_types": [data_type] if data_type else [],
+            "category": pack.get("category", "other"),
+            "location": {
+                "scopes": [pack.get("scope")] if pack.get("scope") else [],
+                "geographic_levels": [],
+                "coverage_description": pack.get("coverage_description", ""),
+            },
+            "topic_tags": pack.get("topic_tags") or [],
+            "temporal_coverage": temporal,
+            "metric_count": len(pack.get("metrics") or {}),
+            "metrics": pack.get("metrics") or {},
+            "supported_query_shapes": _infer_supported_query_shapes(data_type, temporal),
+            "sample_questions": _sample_questions_for_pack(pack_id, data_type, title),
+            "query_dimensions": {
+                "source": "single_required_for_execution",
+                "data": "single_or_variable_within_source",
+                "location": "single_or_variable",
+                "time": "single_or_variable",
+            },
+            "query_rule": "easy_if_one_query_one_source",
+            "free_detail": True,
+            "paid_data_calls": True,
+            "sources": pack_sources,
+        },
+    }
+
+
 async def decode_request_body(request: Request) -> dict:
     """Decode MessagePack request body."""
     body_bytes = await request.body()
@@ -560,43 +921,9 @@ async def get_catalog_packs_list(req: Request):
     No auth required - pack_id assignment is the publish gate.
     Supports ?format=json for the .com packs browsing page.
     """
-    from mapmover.data_loading import load_full_catalog
     from fastapi.responses import JSONResponse
 
-    all_sources = load_full_catalog().get("sources", [])
-    published = [s for s in all_sources if s.get("pack_id")]
-
-    pack_map = {}
-    pack_counts = {}
-    pack_sources_map = {}
-    for s in published:
-        pid = s["pack_id"]
-        pack_counts[pid] = pack_counts.get(pid, 0) + 1
-        pack_sources_map.setdefault(pid, []).append(s)
-        if pid not in pack_map or s.get("source_id") == pid:
-            pack_map[pid] = s
-
-    packs = []
-    for pid, s in pack_map.items():
-        pack_sources = pack_sources_map.get(pid, [s])
-        pack_docs = _load_pack_source_docs(pack_sources)
-        primary_doc = next((doc for doc in pack_docs if doc.get("source_id") == s.get("source_id")), pack_docs[0] if pack_docs else None)
-        display = _pack_display_meta(s, primary_doc)
-        tc = _resolve_pack_temporal(pid, pack_sources, s)
-        packs.append({
-            "pack_id":        pid,
-            "source_name":    display.get("source_name") or s.get("source_name", ""),
-            "description":    display.get("description", ""),
-            "category":       s.get("category", "other"),
-            "data_type":      s.get("data_type", ""),
-            "scope":          s.get("scope", ""),
-            "topic_tags":     s.get("topic_tags") or [],
-            "source_count":   pack_counts[pid],
-            "temporal_start": tc.get("start"),
-            "temporal_end":   tc.get("end"),
-        })
-
-    packs.sort(key=lambda p: (p["category"], p["source_name"].lower()))
+    packs = _build_public_pack_list()
 
     fmt = req.query_params.get("format", "")
     if fmt == "json":
@@ -613,111 +940,34 @@ async def get_catalog_pack(pack_id: str, req: Request):
     Unpublished sources require master/bypass.
     Supports ?format=json for the .com public pack profile pages.
     """
-    from mapmover.data_loading import load_full_catalog
     from fastapi.responses import JSONResponse
 
-    entitled = _get_entitled_packs(req)
-    all_sources = load_full_catalog().get("sources", [])
-
-    pack_sources = [s for s in all_sources if s.get("pack_id") == pack_id]
-    if not pack_sources:
+    pack = _build_public_pack_detail(pack_id)
+    if not pack:
         return msgpack_error("Pack not found", 404)
-
-    # Published packs are publicly readable. Unpublished (no pack_id) require bypass.
-    # Since we already filtered to pack_id sources, access is always allowed here.
-    # (Entitlement gate is enforced at the catalog/sources level, not individual pack pages.)
-
-    # Use the source whose source_id matches pack_id as primary, else first
-    primary = next((s for s in pack_sources if s.get("source_id") == pack_id), pack_sources[0])
-    pack_docs = _load_pack_source_docs(pack_sources)
-    primary_doc = next((doc for doc in pack_docs if doc.get("source_id") == primary.get("source_id")), pack_docs[0] if pack_docs else None)
-    primary_ref = ((primary_doc or {}).get("reference", {}) or {})
-    primary_ref_source = primary_ref.get("source", {}) or {}
-    primary_meta = ((primary_doc or {}).get("metadata", {}) or {})
-    display = _pack_display_meta(primary, primary_doc)
-
-    # Aggregate metrics across all sources in the pack
-    all_metrics = {}
-    for doc in pack_docs:
-        ref_metrics = ((doc.get("reference", {}) or {}).get("metrics", {}) or {})
-        meta_metrics = (doc.get("metadata", {}) or {}).get("metrics", {}) or {}
-        for key, value in ref_metrics.items():
-            all_metrics[key] = value
-        for key, value in meta_metrics.items():
-            if key in all_metrics:
-                continue
-            if isinstance(value, dict):
-                all_metrics[key] = value.get("description") or value.get("name") or ""
-            else:
-                all_metrics[key] = value
-
-    subsources = []
-    docs_by_source = {doc.get("source_id"): doc for doc in pack_docs}
-    for s in pack_sources:
-        doc = docs_by_source.get(s.get("source_id")) or {}
-        sref = (doc.get("reference", {}) or {})
-        smeta = (doc.get("metadata", {}) or {})
-        sref_source = sref.get("source", {}) or {}
-        smetrics = sref.get("metrics", {}) or {}
-        if not smetrics:
-            for key, value in (smeta.get("metrics", {}) or {}).items():
-                if isinstance(value, dict):
-                    smetrics[key] = value.get("description") or value.get("name") or ""
-                else:
-                    smetrics[key] = value
-        stc = s.get("temporal_coverage", {}) or {}
-        subsources.append({
-            "source_id": s.get("source_id"),
-            "source_name": _best_source_text(
-                sref_source.get("source_name"),
-                smeta.get("source_name"),
-                s.get("source_name", ""),
-            ),
-            "description": _best_source_text(
-                sref_source.get("description"),
-                smeta.get("description"),
-                s.get("description", ""),
-            ),
-            "path": s.get("path", ""),
-            "metric_count": len(smetrics),
-            "metrics": smetrics,
-            "temporal_coverage": {
-                "start": stc.get("start"),
-                "end": stc.get("end"),
-                "granularity": stc.get("granularity"),
-            },
-            "coverage_description": s.get("coverage_description", ""),
-            "geographic_level": s.get("geographic_level"),
-            "interaction_mode": s.get("interaction_mode"),
-        })
-
-    temporal = _resolve_pack_temporal(pack_id, pack_sources, primary)
-
-    pack = {
-        "pack_id":            pack_id,
-        "source_name":        display.get("source_name") or primary.get("source_name", ""),
-        "description":        display.get("description", ""),
-        "source_url":         display.get("source_url", ""),
-        "license":            display.get("license", ""),
-        "category":           _best_source_text(primary_meta.get("category"), primary.get("category", "")),
-        "data_type":          _best_source_text(primary_meta.get("data_type"), primary.get("data_type", "")),
-        "scope":              _best_source_text(primary_meta.get("scope"), primary.get("scope", "")),
-        "topic_tags":         primary_meta.get("topic_tags") or primary.get("topic_tags") or [],
-        "keywords":           primary_meta.get("keywords") or primary.get("keywords") or [],
-        "geographic_level":   primary_meta.get("geographic_level") or primary.get("geographic_level"),
-        "coverage_description": _best_source_text(primary_meta.get("coverage_description"), primary.get("coverage_description", "")),
-        "temporal_coverage":  temporal,
-        "metrics":            all_metrics,
-        "llm_summary":        _best_source_text(primary_meta.get("llm_summary"), primary.get("llm_summary", "")),
-        "source_count":       len(pack_sources),
-        "source_ids":         [s["source_id"] for s in pack_sources],
-        "subsources":         subsources,
-    }
 
     fmt = req.query_params.get("format", "")
     if fmt == "json":
         return JSONResponse({"pack": pack})
     return msgpack_response({"pack": pack})
+
+
+@router.get("/api/v1/guide")
+async def get_v1_guide():
+    return JSONResponse(_build_v1_guide_payload())
+
+
+@router.get("/api/v1/catalog")
+async def get_v1_catalog():
+    return JSONResponse(_build_v1_catalog_payload())
+
+
+@router.get("/api/v1/packs/{pack_id}")
+async def get_v1_pack(pack_id: str):
+    payload = _build_v1_pack_payload(pack_id)
+    if not payload:
+        return JSONResponse({"error": "Pack not found"}, status_code=404)
+    return JSONResponse(payload)
 
 
 @router.get("/api/catalog/overlays")
