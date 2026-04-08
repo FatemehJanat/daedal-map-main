@@ -155,6 +155,7 @@ def log_route_request_event(
     method: str,
     path: str,
     status_code: int,
+    surface: str | None = None,
     execution_latency_ms: int | None = None,
     auth_user_id: str | None = None,
     ip_hash: str | None = None,
@@ -169,6 +170,7 @@ def log_route_request_event(
         "request_id": request_id,
         "method": method,
         "path": path,
+        "surface": surface,
         "status_code": status_code,
         "pack_id": pack_id,
         "source_id": source_id,
@@ -186,9 +188,10 @@ def log_route_request_event(
     _append_jsonl(route_analytics_log_path, event)
 
     logger.info(
-        "route_event method=%s path=%s status=%s latency_ms=%s user_id=%s pack_id=%s source_id=%s",
+        "route_event method=%s path=%s surface=%s status=%s latency_ms=%s user_id=%s pack_id=%s source_id=%s",
         method,
         path,
+        surface or "-",
         status_code,
         execution_latency_ms,
         auth_user_id or "anonymous",

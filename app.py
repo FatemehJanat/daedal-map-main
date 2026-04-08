@@ -28,7 +28,7 @@ from fastapi.staticfiles import StaticFiles
 from mapmover import initialize_catalog, load_conversions, logger
 from mapmover.auth_context import get_authenticated_user
 from mapmover.logging_analytics import hash_ip_for_analytics, log_route_request_event
-from mapmover.security import get_allowed_origins, is_https_request
+from mapmover.security import get_allowed_origins, get_client_ip, is_https_request, rate_limiter
 from mapmover.order_executor import execute_order
 from mapmover.order_queue import processor as order_processor
 from mapmover.routes.chat import router as chat_router
@@ -68,6 +68,88 @@ def _get_request_ip(request: Request) -> str | None:
     if real_ip:
         return real_ip
     return request.client.host if request.client else None
+
+
+def _parse_env_int(name: str, default: int) -> int:
+    raw = str(os.getenv(name, "")).strip()
+    if not raw:
+        return default
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return default
+
+
+def _classify_route_surface(path: str) -> str:
+    path = str(path or "").strip()
+    if path == "/api/v1/query/dataset":
+        return "agent_api_paid"
+    if path == "/api/v1/guide" or path == "/api/v1/catalog" or path.startswith("/api/v1/packs/"):
+        return "agent_api_discovery"
+    if path.startswith("/api/catalog/packs"):
+        return "human_app_catalog"
+    return "shared_runtime"
+
+
+def _rate_limit_config_for_surface(surface: str) -> tuple[int, int] | None:
+    if surface == "agent_api_discovery":
+        return (
+            _parse_env_int("AGENT_API_DISCOVERY_RATE_LIMIT", 25),
+            _parse_env_int("AGENT_API_DISCOVERY_RATE_WINDOW_SECONDS", 10),
+        )
+    if surface == "human_app_catalog":
+        return (
+            _parse_env_int("APP_CATALOG_RATE_LIMIT", 60),
+            _parse_env_int("APP_CATALOG_RATE_WINDOW_SECONDS", 10),
+        )
+    if surface == "agent_api_paid":
+        return (
+            _parse_env_int("AGENT_API_PAID_RATE_LIMIT", 12),
+            _parse_env_int("AGENT_API_PAID_RATE_WINDOW_SECONDS", 60),
+        )
+    return None
+
+
+def _rate_limit_response(surface: str, retry_after: int):
+    messages = {
+        "agent_api_discovery": "Too many agent API discovery requests. Please slow down and try again shortly.",
+        "human_app_catalog": "Too many catalog requests. Please slow down and try again shortly.",
+        "agent_api_paid": "Too many paid API requests. Please wait a moment and try again.",
+    }
+    response = JSONResponse(
+        {
+            "error": messages.get(surface, "Too many requests."),
+            "retry_after": retry_after,
+            "surface": surface,
+        },
+        status_code=429,
+    )
+    response.headers["Retry-After"] = str(retry_after)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Daedal-Surface"] = surface
+    return response
+
+
+def _apply_surface_headers(response, request: Request, surface: str) -> None:
+    response.headers["X-Daedal-Surface"] = surface
+    if surface == "agent_api_discovery":
+        response.headers["Cache-Control"] = "public, max-age=300, s-maxage=300"
+        response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+        response.headers["Vary"] = "Accept, Accept-Encoding, Origin"
+        return
+    if surface == "human_app_catalog":
+        response.headers["Cache-Control"] = "public, max-age=120, s-maxage=120"
+        response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+        response.headers["Vary"] = "Accept, Accept-Encoding, Origin"
+        return
+    if surface == "agent_api_paid":
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+        response.headers["Vary"] = "Accept, Accept-Encoding, Authorization, Origin"
+        return
+    if str(request.url.path or "").startswith("/api/"):
+        response.headers.setdefault("Cache-Control", "no-store")
+        response.headers.setdefault("X-Robots-Tag", "noindex, nofollow")
 
 
 @asynccontextmanager
@@ -140,6 +222,9 @@ app.add_middleware(GZipMiddleware, minimum_size=1024)
 async def static_no_cache(request: Request, call_next):
     """Force revalidation on static JS and CSS so deploys are immediately visible."""
     started_at = time.perf_counter()
+    path = request.url.path
+    surface = _classify_route_surface(path)
+    request.state.analytics_surface = surface
     max_body_bytes = int(os.getenv("MAX_REQUEST_BODY_BYTES", "1048576"))
     content_length = request.headers.get("content-length")
     if content_length:
@@ -149,8 +234,40 @@ async def static_no_cache(request: Request, call_next):
         except ValueError:
             pass
 
+    auth_user = get_authenticated_user(request)
+    auth_user_id = str((auth_user or {}).get("id") or "").strip() or None
+    client_ip = get_client_ip(request)
+    rate_limit_config = _rate_limit_config_for_surface(surface)
+    if rate_limit_config is not None and request.method != "OPTIONS":
+        limit, window_seconds = rate_limit_config
+        limiter_key = auth_user_id or client_ip or "unknown"
+        allowed, retry_after = rate_limiter.check(
+            f"surface:{surface}:{limiter_key}",
+            limit=limit,
+            window_seconds=window_seconds,
+        )
+        if not allowed:
+            response = _rate_limit_response(surface, retry_after)
+            response_size_bytes = len(getattr(response, "body", b"") or b"")
+            ip_hash = hash_ip_for_analytics(_get_request_ip(request))
+            user_agent = request.headers.get("user-agent", "").strip() or None
+            log_route_request_event(
+                method=request.method,
+                path=path,
+                surface=surface,
+                status_code=response.status_code,
+                execution_latency_ms=int((time.perf_counter() - started_at) * 1000),
+                auth_user_id=auth_user_id,
+                ip_hash=ip_hash,
+                user_agent=user_agent,
+                request_id=getattr(request.state, "analytics_request_id", None),
+                pack_id=getattr(request.state, "analytics_pack_id", None),
+                source_id=getattr(request.state, "analytics_source_id", None),
+                response_size_bytes=response_size_bytes,
+            )
+            return response
+
     response = await call_next(request)
-    path = request.url.path
     if path.startswith("/static/") and (path.endswith(".js") or path.endswith(".css")):
         response.headers["Cache-Control"] = "no-cache, must-revalidate"
 
@@ -160,9 +277,8 @@ async def static_no_cache(request: Request, call_next):
     response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
     if is_https_request(request):
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    _apply_surface_headers(response, request, surface)
 
-    auth_user = get_authenticated_user(request)
-    auth_user_id = str((auth_user or {}).get("id") or "").strip() or None
     ip_hash = hash_ip_for_analytics(_get_request_ip(request))
     user_agent = request.headers.get("user-agent", "").strip() or None
     request_id = getattr(request.state, "analytics_request_id", None)
@@ -172,6 +288,7 @@ async def static_no_cache(request: Request, call_next):
     log_route_request_event(
         method=request.method,
         path=path,
+        surface=surface,
         status_code=response.status_code,
         execution_latency_ms=int((time.perf_counter() - started_at) * 1000),
         auth_user_id=auth_user_id,
