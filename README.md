@@ -171,6 +171,32 @@ python app.py
 Open:
 - `http://localhost:7000`
 
+## API First Steps
+
+If you are approaching this repo like a new developer, the current API entry path is:
+
+1. read the free guide at `GET /api/v1/guide`
+2. list packs at `GET /api/v1/catalog`
+3. inspect one pack at `GET /api/v1/packs/{pack_id}`
+4. make a paid data call with `POST /api/v1/query/dataset`
+
+The free exploration surface is:
+
+- `GET /api/v1/guide`
+- `GET /api/v1/catalog`
+- `GET /api/v1/packs/{pack_id}`
+
+The first paid execution surface is:
+
+- `POST /api/v1/query/dataset`
+
+Important current behavior:
+
+- the free discovery endpoints are readable without payment
+- `POST /api/v1/query/dataset` is a paid lane
+- local or self-host runs return `commercial_access_unavailable` for that paid lane unless a commercial verifier is explicitly enabled
+- the hosted x402 test client lives at [docs/X402_TEST_CLIENT.md](docs/X402_TEST_CLIENT.md)
+
 ## Data Resolution
 
 The runtime resolves behavior from two explicit modes:

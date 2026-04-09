@@ -2,12 +2,23 @@
 
 This note explains how to act like a new developer testing the paid API lane.
 
+Before attempting a paid call, use the free discovery endpoints first:
+
+- `GET /api/v1/guide`
+- `GET /api/v1/catalog`
+- `GET /api/v1/packs/{pack_id}`
+
 Current target:
 
 - endpoint: `POST /api/v1/query/dataset`
 - hosted base URL: `https://app.daedalmap.com`
 - network: Base Sepolia
 - payment rail: x402 wallet-pay
+
+Important runtime note:
+
+- local/self-host runtimes return `commercial_access_unavailable` on `POST /api/v1/query/dataset` unless a commercial verifier is explicitly enabled
+- the hosted paid test target is `https://app.daedalmap.com`
 
 ## MetaMask setup
 
