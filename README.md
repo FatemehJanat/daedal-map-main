@@ -194,8 +194,23 @@ Important current behavior:
 
 - the free discovery endpoints are readable without payment
 - `POST /api/v1/query/dataset` is a paid lane
+- the current live agent/API discovery rollout includes only the `currency` pack
 - local or self-host runs return `commercial_access_unavailable` for that paid lane unless a commercial verifier is explicitly enabled
 - the hosted x402 test client lives at [docs/X402_TEST_CLIENT.md](docs/X402_TEST_CLIENT.md)
+
+Quick live exploration examples:
+
+```powershell
+Invoke-WebRequest -UseBasicParsing 'https://app.daedalmap.com/api/v1/guide'
+Invoke-WebRequest -UseBasicParsing 'https://app.daedalmap.com/api/v1/catalog'
+Invoke-WebRequest -UseBasicParsing 'https://app.daedalmap.com/api/v1/packs/currency'
+```
+
+Current live expectation:
+
+- `GET /api/v1/catalog` returns one pack: `currency`
+- `GET /api/v1/packs/currency` returns `200`
+- `GET /api/v1/packs/earthquakes` returns `404` until that pack is promoted into the agent/API surface
 
 ## Data Resolution
 

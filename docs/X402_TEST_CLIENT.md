@@ -14,11 +14,13 @@ Current target:
 - hosted base URL: `https://app.daedalmap.com`
 - network: Base Sepolia
 - payment rail: x402 wallet-pay
+- current live agent/API pack in free discovery: `currency`
 
 Important runtime note:
 
 - local/self-host runtimes return `commercial_access_unavailable` on `POST /api/v1/query/dataset` unless a commercial verifier is explicitly enabled
 - the hosted paid test target is `https://app.daedalmap.com`
+- Stripe/account-credit mode is planned for later and is not part of the current live paid lane
 
 ## MetaMask setup
 

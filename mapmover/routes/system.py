@@ -555,7 +555,11 @@ def _build_v1_guide_payload() -> dict:
         "commercial_access": {
             "required_for_data_calls": True,
             "first_paid_candidate": "/api/v1/query/dataset",
-            "modes": ["wallet_pay", "account_credit"],
+            "modes": ["wallet_pay"],
+        },
+        "current_live_scope": {
+            "agent_ready_packs": ["currency"],
+            "future_payment_modes": ["account_credit"],
         },
     }
 
