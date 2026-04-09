@@ -10,21 +10,28 @@ const scenarioIndex = argv.indexOf("--scenario");
 const scenario = String(
   scenarioIndex >= 0 && argv[scenarioIndex + 1] ? argv[scenarioIndex + 1] : "earthquakes",
 ).trim().toLowerCase();
+const limitIndex = argv.indexOf("--limit");
+const limitOverrideRaw = limitIndex >= 0 && argv[limitIndex + 1] ? argv[limitIndex + 1] : "";
+const limitOverride = limitOverrideRaw ? Number.parseInt(String(limitOverrideRaw), 10) : null;
 const baseUrl = (process.env.DAEDALMAP_API_BASE_URL || "https://app.daedalmap.com").replace(/\/$/, "");
 const endpoint = `${baseUrl}/api/v1/query/dataset`;
+
+if (limitOverrideRaw && (!Number.isFinite(limitOverride) || limitOverride <= 0)) {
+  throw new Error(`Invalid --limit value '${limitOverrideRaw}'. Use a positive integer.`);
+}
 
 function buildPayload(name) {
   const requestId = `buyer-test-${name}-${Date.now()}`;
   if (name === "currency") {
-    return {
+    const payload = {
       request_id: requestId,
       pack_id: "currency",
       metrics: ["local_per_usd"],
       filters: {
         region_ids: ["CAN", "USA", "MEX"],
         time: {
-          start: 2015,
-          end: 2024,
+          start: "2015-01-01",
+          end: "2024-12-31",
           granularity: "monthly",
         },
       },
@@ -37,16 +44,21 @@ function buildPayload(name) {
         format: "rows",
       },
     };
+    if (limitOverride !== null) {
+      payload.limit = limitOverride;
+    }
+    return payload;
   }
   if (name === "earthquakes") {
-    return {
+    const payload = {
       request_id: requestId,
       source_id: "earthquakes_events",
       metrics: ["event_count"],
       filters: {
         region_ids: ["JPN", "CHL", "IDN"],
         time: {
-          value: 2011,
+          start: "2011-01-01",
+          end: "2011-12-31",
         },
       },
       sort: {
@@ -58,9 +70,13 @@ function buildPayload(name) {
         format: "rows",
       },
     };
+    if (limitOverride !== null) {
+      payload.limit = limitOverride;
+    }
+    return payload;
   }
   if (name === "volcanoes") {
-    return {
+    const payload = {
       request_id: requestId,
       source_id: "volcanoes_events",
       metrics: ["event_count"],
@@ -80,9 +96,13 @@ function buildPayload(name) {
         format: "rows",
       },
     };
+    if (limitOverride !== null) {
+      payload.limit = limitOverride;
+    }
+    return payload;
   }
   if (name === "tsunamis") {
-    return {
+    const payload = {
       request_id: requestId,
       source_id: "tsunamis_events",
       metrics: ["event_count"],
@@ -102,6 +122,10 @@ function buildPayload(name) {
         format: "rows",
       },
     };
+    if (limitOverride !== null) {
+      payload.limit = limitOverride;
+    }
+    return payload;
   }
   throw new Error(
     `Unknown scenario '${name}'. Use --scenario currency, --scenario earthquakes, --scenario volcanoes, or --scenario tsunamis.`,
@@ -109,6 +133,15 @@ function buildPayload(name) {
 }
 
 const payload = buildPayload(scenario);
+
+function expectedPriceBaseUnits(limit) {
+  const normalizedLimit = Number.parseInt(String(limit), 10);
+  const baseUsdc = 10000;
+  const freeRows = 100;
+  const perRow = 100;
+  const capUsdc = 500000;
+  return Math.min(baseUsdc + Math.max(0, normalizedLimit - freeRows) * perRow, capUsdc);
+}
 
 function decodePaymentRequired(headerValue) {
   if (!headerValue) {
@@ -154,6 +187,8 @@ async function runChallengeProbe() {
   console.log("Challenge probe:");
   console.log(JSON.stringify({
     request_id: payload.request_id,
+    limit: payload.limit,
+    expected_amount_usdc_base_units: expectedPriceBaseUnits(payload.limit),
     status: response.status,
     payment_required_present: Boolean(paymentRequired),
     payment_requirements: decodedRequirements,
@@ -199,6 +234,8 @@ async function runPaidRequest() {
   console.log("Paid request:");
   console.log(JSON.stringify({
     request_id: payload.request_id,
+    limit: payload.limit,
+    expected_amount_usdc_base_units: expectedPriceBaseUnits(payload.limit),
     status: response.status,
     settle_response_error: settleResponseError,
     settle_response: settleResponse,
