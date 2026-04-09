@@ -622,6 +622,10 @@ def _docs_url(path: str) -> str:
     return f"{_public_site_url()}{path}"
 
 
+def _pack_is_paid(pack_id: str | None) -> bool:
+    return str(pack_id or "").strip() in {"earthquakes", "tsunamis"}
+
+
 def _build_mcp_server_card_payload() -> dict:
     from mapmover.routes.mcp import SERVER_INFO
 
@@ -634,7 +638,7 @@ def _build_mcp_server_card_payload() -> dict:
             "description": (
                 "Agent-ready geographic data intelligence. Curated historical datasets for "
                 "earthquakes, volcanic activity, tsunamis, and FX rates. Structured deterministic "
-                "queries with per-call x402 payments on Base USDC. Free catalog discovery."
+                "queries with mixed free and x402-paid access on Base USDC. Free catalog discovery."
             ),
         },
         "websiteUrl": _public_site_url(),
@@ -643,8 +647,8 @@ def _build_mcp_server_card_payload() -> dict:
         "authentication": {
             "type": "none",
             "notes": (
-                "No API key required for the wallet-pay lane. Payment is handled via x402 on Base "
-                "mainnet with USDC. Free discovery endpoints require no payment."
+                "No API key required. Currency and volcanoes are free lanes. Earthquakes and "
+                "tsunamis use x402 on Base mainnet with USDC. Free discovery endpoints require no payment."
             ),
         },
         "pricing": {
@@ -678,7 +682,7 @@ def _build_mcp_server_card_payload() -> dict:
             {
                 "name": "get_volcanic_activity",
                 "description": "Query structured volcanic eruption records.",
-                "paid": True,
+                "paid": False,
                 "source_id": "volcanoes_events",
             },
             {
@@ -690,13 +694,13 @@ def _build_mcp_server_card_payload() -> dict:
             {
                 "name": "get_fx_rates",
                 "description": "Query structured historical FX rate data.",
-                "paid": True,
+                "paid": False,
                 "source_id": "fx_usd_historical",
             },
             {
                 "name": "query_dataset",
-                "description": "Generic structured query tool for direct source or pack access.",
-                "paid": True,
+                "description": "Generic structured query tool for direct source or pack access. Currency and volcanoes are free; earthquakes and tsunamis use x402 on Base USDC.",
+                "paid": False,
                 "source_id": "any",
             },
         ],
@@ -727,8 +731,8 @@ def _build_apis_json_payload() -> dict:
         "name": "DaedalMap API",
         "description": (
             "Agent-ready geographic data intelligence API. Historical datasets for earthquakes, "
-            "volcanic activity, tsunamis, and foreign exchange rates. Per-call payments via x402 "
-            "on Base USDC with free discovery."
+            "volcanic activity, tsunamis, and foreign exchange rates. Mixed free and x402-paid "
+            "structured access with free discovery."
         ),
         "url": app_url,
         "version": "1.0",
@@ -737,7 +741,7 @@ def _build_apis_json_payload() -> dict:
         "apis": [
             {
                 "name": "DaedalMap Agent API",
-                "description": "Deterministic structured data query API for agents. Paid per call via x402 on Base USDC.",
+                "description": "Deterministic structured data query API for agents. Currency and volcanoes are free; earthquakes and tsunamis use x402 on Base USDC.",
                 "humanUrl": docs_url,
                 "baseUrl": f"{app_url}/api/v1",
                 "version": "v1",
@@ -777,7 +781,7 @@ def _build_mcp_server_json_payload() -> dict:
         "description": (
             "Agent-ready geographic data intelligence. Curated historical datasets for earthquakes, "
             "volcanic activity, tsunamis, and FX rates across 190+ countries. Structured deterministic "
-            "queries with per-call x402 payments on Base USDC."
+            "queries with mixed free and x402-paid access on Base USDC."
         ),
         "version": "1.0.0",
         "repository": {
@@ -809,7 +813,7 @@ def _build_mcp_server_json_payload() -> dict:
                     "Volcanic eruption and VEI records",
                     "Tsunami events with wave height metrics",
                     "Historical FX rates for country-level analysis",
-                    "Free discovery plus paid structured retrieval",
+                    "Free discovery plus mixed free and paid structured retrieval",
                 ],
             }
         },
@@ -845,7 +849,7 @@ def _build_v1_catalog_payload() -> dict:
             "supported_query_shapes": _infer_supported_query_shapes(data_type, temporal),
             "sample_questions": _sample_questions_for_pack(pack.get("pack_id", ""), data_type, title)[:1],
             "free_detail": True,
-            "paid_data_calls": True,
+            "paid_data_calls": _pack_is_paid(pack.get("pack_id")),
             "query_target_type": "source",
         })
 
@@ -915,7 +919,7 @@ def _build_v1_pack_payload(pack_id: str) -> dict | None:
             },
             "query_rule": "easy_if_one_query_one_source",
             "free_detail": True,
-            "paid_data_calls": True,
+            "paid_data_calls": _pack_is_paid(pack_id),
             "sources": pack_sources,
         },
     }

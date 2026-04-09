@@ -49,6 +49,7 @@ COMMERCIAL_ACCESS_FORWARDED_HEADERS = {
     "x-payment",
     "x-payment-response",
 }
+FREE_QUERY_PACK_IDS = {"currency", "volcanoes"}
 
 
 def _get_request_ip(request: Request) -> str | None:
@@ -190,6 +191,11 @@ def _parse_temporal_filter_value(raw_value: Any) -> str:
 
 def _commercial_access_enabled() -> bool:
     return str(os.getenv("COMMERCIAL_ACCESS_ENABLED", "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _pack_requires_commercial_access(pack_id: str | None) -> bool:
+    normalized = str(pack_id or "").strip().lower()
+    return bool(normalized) and normalized not in FREE_QUERY_PACK_IDS
 
 
 def _commercial_access_timeout_seconds() -> float:
@@ -1040,114 +1046,118 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
     caller_binding = auth_user_id or ip_hash or "anonymous"
 
     settlement_id: str | None = None
-    if not _commercial_access_enabled():
-        return error_response(
-            request_id,
-            "commercial_access_unavailable",
-            "This paid endpoint requires a hosted commercial-access verifier.",
-            503,
-            retry_hint="Use the free discovery endpoints or retry against a runtime with commercial access enabled.",
-            pack_id=spec.pack_id,
-            source_id=source_id,
-        )
-    if not _commercial_access_internal_token():
-        return error_response(
-            request_id,
-            "commercial_access_unavailable",
-            "Commercial access verifier is not configured for this runtime.",
-            503,
-            retry_hint="Retry on the hosted runtime after verifier configuration is complete.",
-            pack_id=spec.pack_id,
-            source_id=source_id,
-        )
-    try:
-        verifier_status, verifier_payload = await asyncio.to_thread(
-            _post_commercial_access,
-            COMMERCIAL_ACCESS_CHECK_PATH,
-            {
-                "request_id": request_id,
-                "capability_id": "dataset_query",
-                "resource": {
-                    "method": "POST",
-                    "path": "/api/v1/query/dataset",
+    verifier_payload: dict[str, Any] | None = None
+    payment_rail: str | None = None
+    amount_charged_usdc_base_units: int | None = None
+    if _pack_requires_commercial_access(spec.pack_id):
+        if not _commercial_access_enabled():
+            return error_response(
+                request_id,
+                "commercial_access_unavailable",
+                "This paid endpoint requires a hosted commercial-access verifier.",
+                503,
+                retry_hint="Use the free discovery endpoints or retry against a runtime with commercial access enabled.",
+                pack_id=spec.pack_id,
+                source_id=source_id,
+            )
+        if not _commercial_access_internal_token():
+            return error_response(
+                request_id,
+                "commercial_access_unavailable",
+                "Commercial access verifier is not configured for this runtime.",
+                503,
+                retry_hint="Retry on the hosted runtime after verifier configuration is complete.",
+                pack_id=spec.pack_id,
+                source_id=source_id,
+            )
+        try:
+            verifier_status, verifier_payload = await asyncio.to_thread(
+                _post_commercial_access,
+                COMMERCIAL_ACCESS_CHECK_PATH,
+                {
+                    "request_id": request_id,
+                    "capability_id": "dataset_query",
+                    "resource": {
+                        "method": "POST",
+                        "path": "/api/v1/query/dataset",
+                    },
+                    "forwarded_headers": _forwarded_commercial_headers(req),
+                    "subject": {
+                        "auth_present": bool(auth_user_id),
+                        "user_id": auth_user_id,
+                    },
+                    "request_context": {
+                        "pack_id": spec.pack_id,
+                        "source_id": spec.source_id,
+                        "request_fingerprint": request_fingerprint,
+                        "limit": limit,
+                        "query_mode": spec.query_mode,
+                        "output_format": output_format,
+                        "time_granularity": str(normalized_time.get("granularity") or "") or None,
+                    },
+                    "caller": {
+                        "auth_user_id": auth_user_id,
+                        "ip_hash": ip_hash,
+                        "caller_binding": caller_binding,
+                    },
                 },
-                "forwarded_headers": _forwarded_commercial_headers(req),
-                "subject": {
-                    "auth_present": bool(auth_user_id),
-                    "user_id": auth_user_id,
-                },
-                "request_context": {
-                    "pack_id": spec.pack_id,
-                    "source_id": spec.source_id,
-                    "request_fingerprint": request_fingerprint,
-                    "limit": limit,
-                    "query_mode": spec.query_mode,
-                    "output_format": output_format,
-                    "time_granularity": str(normalized_time.get("granularity") or "") or None,
-                },
-                "caller": {
-                    "auth_user_id": auth_user_id,
-                    "ip_hash": ip_hash,
-                    "caller_binding": caller_binding,
-                },
-            },
-        )
-    except Exception as exc:
-        return error_response(
-            request_id,
-            "commercial_access_unavailable",
-            f"Commercial access verifier failed: {exc}",
-            503,
-            retry_hint="Retry after the hosted verifier is available.",
-            pack_id=spec.pack_id,
-            source_id=source_id,
-        )
+            )
+        except Exception as exc:
+            return error_response(
+                request_id,
+                "commercial_access_unavailable",
+                f"Commercial access verifier failed: {exc}",
+                503,
+                retry_hint="Retry after the hosted verifier is available.",
+                pack_id=spec.pack_id,
+                source_id=source_id,
+            )
 
-    verifier_status_name = str((verifier_payload or {}).get("status") or "").strip().lower()
-    payment_rail = str((verifier_payload or {}).get("rail") or "").strip() or None
-    amount_charged_usdc_base_units = _pricing_amount_usdc_base_units(verifier_payload)
-    if verifier_status_name == "challenge":
-        response = _commercial_access_response(request_id, verifier_payload)
-        req.state.analytics_error_code = str((verifier_payload or {}).get("code") or "commercial_access_required")
-        payload_size_bytes = len(getattr(response, "body", b"") or b"")
-        log_api_query_event(
-            request_id=request_id,
-            capability_id="dataset_query",
-            pack_id=spec.pack_id,
-            source_id=spec.source_id,
-            decision="challenge",
-            payment_rail=payment_rail,
-            auth_user_id=auth_user_id,
-            ip_hash=ip_hash,
-            user_agent=user_agent,
-            execution_latency_ms=int((time.perf_counter() - started_at) * 1000),
-            row_count=0,
-            response_size_bytes=payload_size_bytes,
-            status_code=response.status_code,
-            warnings_count=0,
-            error_code=str((verifier_payload or {}).get("code") or "commercial_access_required"),
-            query_granularity=str(normalized_time.get("granularity") or "") or None,
-            amount_charged_usdc_base_units=amount_charged_usdc_base_units,
-            revenue_attributed_usdc_base_units=None,
-            metadata={"surface": "agent_api_paid", "request_fingerprint": request_fingerprint},
-        )
-        return response
-    if verifier_status_name != "allow":
-        verifier_context = (verifier_payload or {}).get("context") or {}
-        verifier_details = verifier_context if isinstance(verifier_context, dict) and verifier_context else None
-        verifier_retry_hint = str((verifier_payload or {}).get("retry_hint") or "").strip() or None
-        return error_response(
-            request_id,
-            str((verifier_payload or {}).get("code") or "commercial_access_denied"),
-            str((verifier_payload or {}).get("message") or "Commercial access denied."),
-            int((verifier_payload or {}).get("http_status") or verifier_status or 403),
-            details=verifier_details,
-            retry_hint=verifier_retry_hint or "Retry after satisfying the requested commercial-access challenge.",
-            pack_id=spec.pack_id,
-            source_id=source_id,
-        )
-    settlement = (verifier_payload or {}).get("settlement") or {}
-    settlement_id = str(settlement.get("settlement_id") or "").strip() or None
+        verifier_status_name = str((verifier_payload or {}).get("status") or "").strip().lower()
+        payment_rail = str((verifier_payload or {}).get("rail") or "").strip() or None
+        amount_charged_usdc_base_units = _pricing_amount_usdc_base_units(verifier_payload)
+        if verifier_status_name == "challenge":
+            response = _commercial_access_response(request_id, verifier_payload)
+            req.state.analytics_error_code = str((verifier_payload or {}).get("code") or "commercial_access_required")
+            payload_size_bytes = len(getattr(response, "body", b"") or b"")
+            log_api_query_event(
+                request_id=request_id,
+                capability_id="dataset_query",
+                pack_id=spec.pack_id,
+                source_id=spec.source_id,
+                decision="challenge",
+                payment_rail=payment_rail,
+                auth_user_id=auth_user_id,
+                ip_hash=ip_hash,
+                user_agent=user_agent,
+                execution_latency_ms=int((time.perf_counter() - started_at) * 1000),
+                row_count=0,
+                response_size_bytes=payload_size_bytes,
+                status_code=response.status_code,
+                warnings_count=0,
+                error_code=str((verifier_payload or {}).get("code") or "commercial_access_required"),
+                query_granularity=str(normalized_time.get("granularity") or "") or None,
+                amount_charged_usdc_base_units=amount_charged_usdc_base_units,
+                revenue_attributed_usdc_base_units=None,
+                metadata={"surface": "agent_api_paid", "request_fingerprint": request_fingerprint},
+            )
+            return response
+        if verifier_status_name != "allow":
+            verifier_context = (verifier_payload or {}).get("context") or {}
+            verifier_details = verifier_context if isinstance(verifier_context, dict) and verifier_context else None
+            verifier_retry_hint = str((verifier_payload or {}).get("retry_hint") or "").strip() or None
+            return error_response(
+                request_id,
+                str((verifier_payload or {}).get("code") or "commercial_access_denied"),
+                str((verifier_payload or {}).get("message") or "Commercial access denied."),
+                int((verifier_payload or {}).get("http_status") or verifier_status or 403),
+                details=verifier_details,
+                retry_hint=verifier_retry_hint or "Retry after satisfying the requested commercial-access challenge.",
+                pack_id=spec.pack_id,
+                source_id=source_id,
+            )
+        settlement = (verifier_payload or {}).get("settlement") or {}
+        settlement_id = str(settlement.get("settlement_id") or "").strip() or None
 
     select_columns = [spec.location_field] + metric_columns
     if spec.time_field:
