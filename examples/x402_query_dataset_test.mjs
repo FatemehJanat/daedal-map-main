@@ -2,6 +2,8 @@ import { wrapFetchWithPayment } from "@x402/fetch";
 import { x402Client, x402HTTPClient } from "@x402/core/client";
 import { registerExactEvmScheme } from "@x402/evm/exact/client";
 import { privateKeyToAccount } from "viem/accounts";
+import { createPublicClient, formatEther, formatUnits, http } from "viem";
+import { base, baseSepolia } from "viem/chains";
 
 const argv = process.argv.slice(2);
 const args = new Set(argv);
@@ -220,6 +222,80 @@ function settlementTransactionSummary(settleResponse) {
   };
 }
 
+function getChainConfig(network) {
+  if (network === "eip155:8453") {
+    return {
+      chain: base,
+      rpcUrl: "https://mainnet.base.org",
+      label: "Base mainnet",
+    };
+  }
+  if (network === "eip155:84532") {
+    return {
+      chain: baseSepolia,
+      rpcUrl: "https://sepolia.base.org",
+      label: "Base Sepolia",
+    };
+  }
+  return null;
+}
+
+async function inspectBuyerBalances(paymentRequirements, payerAddress) {
+  const accepted =
+    paymentRequirements && Array.isArray(paymentRequirements.accepts)
+      ? paymentRequirements.accepts[0]
+      : paymentRequirements;
+  if (!accepted || !accepted.network || !accepted.asset || !accepted.amount) {
+    return null;
+  }
+
+  const chainConfig = getChainConfig(String(accepted.network));
+  if (!chainConfig) {
+    return {
+      skipped: true,
+      reason: `Unsupported network for preflight balance check: ${accepted.network}`,
+    };
+  }
+
+  const client = createPublicClient({
+    chain: chainConfig.chain,
+    transport: http(chainConfig.rpcUrl),
+  });
+  const erc20Abi = [
+    {
+      type: "function",
+      name: "balanceOf",
+      stateMutability: "view",
+      inputs: [{ name: "account", type: "address" }],
+      outputs: [{ type: "uint256" }],
+    },
+  ];
+
+  const [nativeBalance, assetBalance] = await Promise.all([
+    client.getBalance({ address: payerAddress }),
+    client.readContract({
+      address: accepted.asset,
+      abi: erc20Abi,
+      functionName: "balanceOf",
+      args: [payerAddress],
+    }),
+  ]);
+
+  return {
+    skipped: false,
+    network: accepted.network,
+    network_label: chainConfig.label,
+    payer: payerAddress,
+    asset: accepted.asset,
+    required_amount_base_units: accepted.amount,
+    asset_balance_base_units: assetBalance.toString(),
+    asset_balance_display: formatUnits(assetBalance, 6),
+    native_balance_wei: nativeBalance.toString(),
+    native_balance_display: formatEther(nativeBalance),
+    sufficient_asset_balance: assetBalance >= BigInt(accepted.amount),
+  };
+}
+
 async function readBody(response) {
   const text = await response.text();
   if (!text) {
@@ -269,7 +345,7 @@ async function runChallengeProbe() {
   return response;
 }
 
-async function runPaidRequest() {
+async function runPaidRequest(paymentRequirements) {
   const rawPrivateKey = (process.env.EVM_PRIVATE_KEY || "").trim();
   const privateKey = rawPrivateKey.startsWith("0x") ? rawPrivateKey : `0x${rawPrivateKey}`;
   if (!privateKey) {
@@ -277,6 +353,16 @@ async function runPaidRequest() {
   }
 
   const signer = privateKeyToAccount(privateKey);
+  const buyerPreflight = await inspectBuyerBalances(paymentRequirements, signer.address);
+  console.log("Buyer preflight:");
+  console.log(JSON.stringify(buyerPreflight, null, 2));
+  if (buyerPreflight && buyerPreflight.skipped !== true && buyerPreflight.sufficient_asset_balance !== true) {
+    throw new Error(
+      `Buyer wallet ${signer.address} has insufficient token balance for the challenged payment. ` +
+        `Required ${buyerPreflight.required_amount_base_units} base units, found ${buyerPreflight.asset_balance_base_units}.`,
+    );
+  }
+
   const client = new x402Client();
   registerExactEvmScheme(client, { signer });
   const fetchWithPayment = wrapFetchWithPayment(fetch, client);
@@ -333,13 +419,14 @@ async function main() {
     console.log(`Expected network: ${expectedNetwork}`);
   }
   console.log(JSON.stringify({ request_preview: payload }, null, 2));
-  await runChallengeProbe();
+  const challengeResponse = await runChallengeProbe();
 
   if (challengeOnly) {
     return;
   }
 
-  await runPaidRequest();
+  const challengeRequirements = decodePaymentRequired(challengeResponse.headers.get("payment-required"));
+  await runPaidRequest(challengeRequirements);
 }
 
 main().catch((error) => {

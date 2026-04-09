@@ -86,8 +86,13 @@ For mainnet canaries, switch to Base mainnet instead:
 
 The buyer wallet needs:
 
-- ETH for gas on the target Base network
 - USDC for the payment itself on the same network
+
+For the current hosted USDC exact-payment flow:
+
+- the test client now checks the buyer wallet's challenged token balance before it attempts the paid retry
+- insufficient USDC will fail fast locally before the facilitator sees a doomed verify request
+- buyer ETH is not required for the normal gasless EIP-3009 retry path, though keeping a little ETH available can still help with manual wallet troubleshooting
 
 ### 3. Export the private key for the test account
 
@@ -178,6 +183,7 @@ What the script does:
 7. accepts `--limit` so you can verify dynamic pricing at different request sizes
 8. accepts `--expect-network` so the canary fails fast if the hosted lane is on the wrong chain
 9. accepts `--require-settlement-success` so the paid run fails unless the settlement metadata reports success
+10. checks the buyer wallet's onchain balance for the challenged token and amount before attempting the paid retry
 
 Explorer verification tip:
 
@@ -240,3 +246,29 @@ For a mainnet canary:
 - record the settlement transaction hash
 - verify the transaction on `https://basescan.org`
 - confirm the receiving wallet and Supabase settlement record match the run
+
+## Current proven mainnet examples
+
+As of 2026-04-09, these live Base mainnet canaries have been verified against
+`https://app.daedalmap.com`:
+
+- `currency`, `limit = 3`:
+  - challenge amount: `10000`
+  - settlement tx:
+    `0x7536b3ed08fb6f74f3289d7601b6e6ce1d2f18a902b30602b04e266a885ceb56`
+- `earthquakes`, `limit = 250`:
+  - challenge amount: `25000`
+  - settlement tx:
+    `0x3b0b84c8e46a4057273bd0032f31344b5a664949e24f36534fa9eb46c95de3b8`
+- `volcanoes`, `limit = 500`:
+  - challenge amount: `50000`
+  - settlement tx:
+    `0xc6b727a2956a260438f59b4b4b8459be20fed23caf8d3ecbed591bb9c8abf538`
+
+Current above-max proof:
+
+- `tsunamis`, `limit = 501`:
+  - status: `400`
+  - code: `result_too_large`
+  - no `payment-required` header
+  - no payment attempt should be made
