@@ -15,11 +15,14 @@ Current target:
 - network: Base Sepolia
 - payment rail: x402 wallet-pay
 - current live agent/API packs in free discovery: `currency`, `earthquakes`
+  `volcanoes`, `tsunamis`
 
 Useful live pair probes:
 
 - `currency`: pack-routed FX request using `pack_id = "currency"` and `filters.time.granularity = "monthly"`
 - `earthquakes`: event-count request using `source_id = "earthquakes_events"` and `metrics = ["event_count"]`
+- `volcanoes`: event-count request using `source_id = "volcanoes_events"` and `metrics = ["event_count"]`
+- `tsunamis`: event-count request using `source_id = "tsunamis_events"` and `metrics = ["event_count"]`
 
 Important runtime note:
 
@@ -114,6 +117,20 @@ $env:DAEDALMAP_API_BASE_URL = "https://app.daedalmap.com"
 npm run x402:test:dataset -- --scenario currency --challenge-only
 ```
 
+Volcanoes example:
+
+```powershell
+$env:DAEDALMAP_API_BASE_URL = "https://app.daedalmap.com"
+npm run x402:test:dataset -- --scenario volcanoes --challenge-only
+```
+
+Tsunamis example:
+
+```powershell
+$env:DAEDALMAP_API_BASE_URL = "https://app.daedalmap.com"
+npm run x402:test:dataset -- --scenario tsunamis --challenge-only
+```
+
 What the script does:
 
 1. sends an unpaid request and logs the `402` challenge
@@ -121,6 +138,7 @@ What the script does:
 3. if `EVM_PRIVATE_KEY` is present, creates an x402 buyer client
 4. pays and retries the same request automatically
 5. logs the final API response plus settlement metadata
+6. prints the `request_id` so the verifier row can be found in Supabase
 
 Pricing tip:
 
@@ -130,6 +148,8 @@ Supported scenarios:
 
 - `--scenario earthquakes`: `source_id = "earthquakes_events"` with `metrics = ["event_count"]`
 - `--scenario currency`: `pack_id = "currency"` with monthly FX routing through `time.granularity`
+- `--scenario volcanoes`: `source_id = "volcanoes_events"` with `metrics = ["event_count"]`
+- `--scenario tsunamis`: `source_id = "tsunamis_events"` with `metrics = ["event_count"]`
 
 ## Current live expectation
 

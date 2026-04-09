@@ -59,7 +59,53 @@ function buildPayload(name) {
       },
     };
   }
-  throw new Error(`Unknown scenario '${name}'. Use --scenario currency or --scenario earthquakes.`);
+  if (name === "volcanoes") {
+    return {
+      request_id: requestId,
+      source_id: "volcanoes_events",
+      metrics: ["event_count"],
+      filters: {
+        region_ids: ["IDN", "JPN", "PHL"],
+        time: {
+          start: 2015,
+          end: 2024,
+        },
+      },
+      sort: {
+        field: "value",
+        direction: "desc",
+      },
+      limit: 3,
+      output: {
+        format: "rows",
+      },
+    };
+  }
+  if (name === "tsunamis") {
+    return {
+      request_id: requestId,
+      source_id: "tsunamis_events",
+      metrics: ["event_count"],
+      filters: {
+        region_ids: ["JPN", "IDN", "XOO"],
+        time: {
+          start: 2000,
+          end: 2024,
+        },
+      },
+      sort: {
+        field: "value",
+        direction: "desc",
+      },
+      limit: 3,
+      output: {
+        format: "rows",
+      },
+    };
+  }
+  throw new Error(
+    `Unknown scenario '${name}'. Use --scenario currency, --scenario earthquakes, --scenario volcanoes, or --scenario tsunamis.`,
+  );
 }
 
 const payload = buildPayload(scenario);
@@ -107,6 +153,7 @@ async function runChallengeProbe() {
 
   console.log("Challenge probe:");
   console.log(JSON.stringify({
+    request_id: payload.request_id,
     status: response.status,
     payment_required_present: Boolean(paymentRequired),
     payment_requirements: decodedRequirements,
@@ -151,6 +198,7 @@ async function runPaidRequest() {
 
   console.log("Paid request:");
   console.log(JSON.stringify({
+    request_id: payload.request_id,
     status: response.status,
     settle_response_error: settleResponseError,
     settle_response: settleResponse,
