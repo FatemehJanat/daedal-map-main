@@ -331,6 +331,15 @@ def _validate_metrics(
                 retry_hint="Choose a metric listed for this source in the catalog.",
             )
 
+    if "event_count" in normalized_metrics and len(normalized_metrics) > 1:
+        return None, _error_response(
+            request_id,
+            "metric_not_available",
+            "event_count must be requested on its own.",
+            400,
+            retry_hint="Request event_count alone, or request raw event metrics without event_count.",
+        )
+
     return normalized_metrics, None
 
 
@@ -796,7 +805,11 @@ async def query_dataset(req: Request):
             source_id=source_id,
         )
 
-    sort = payload.get("sort") or []
+    raw_sort = payload.get("sort") or []
+    if raw_sort and isinstance(raw_sort, dict):
+        sort = [raw_sort]
+    else:
+        sort = raw_sort
     if sort and not isinstance(sort, list):
         return error_response(
             request_id,
@@ -846,7 +859,8 @@ async def query_dataset(req: Request):
                 pack_id=spec.pack_id,
                 source_id=source_id,
             )
-        if sort_field not in spec.sortable_fields:
+        actual_sort_field = metric_columns[0] if sort_field == "value" and len(metric_columns) == 1 else sort_field
+        if actual_sort_field not in spec.sortable_fields:
             return error_response(
                 request_id,
                 "invalid_sort_field",
@@ -857,7 +871,7 @@ async def query_dataset(req: Request):
                 source_id=source_id,
             )
         normalized_sort.append({"field": sort_field, "direction": sort_direction})
-        sort_items.append((sort_field, sort_direction))
+        sort_items.append((actual_sort_field, sort_direction))
 
     available_columns = get_api_source_columns(spec)
     if spec.time_field in available_columns:

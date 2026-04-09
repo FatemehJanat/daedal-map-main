@@ -558,7 +558,7 @@ def _build_v1_guide_payload() -> dict:
             "modes": ["wallet_pay"],
         },
         "current_live_scope": {
-            "agent_ready_packs": ["currency"],
+            "agent_ready_packs": ["currency", "earthquakes"],
             "future_payment_modes": ["account_credit"],
         },
     }

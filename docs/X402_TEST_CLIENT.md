@@ -14,7 +14,7 @@ Current target:
 - hosted base URL: `https://app.daedalmap.com`
 - network: Base Sepolia
 - payment rail: x402 wallet-pay
-- current live agent/API pack in free discovery: `currency`
+- current live agent/API packs in free discovery: `currency`, `earthquakes`
 
 Important runtime note:
 

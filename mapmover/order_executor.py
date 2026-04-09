@@ -406,6 +406,26 @@ def _get_source_path(source_id: str) -> Optional[str]:
     return None
 
 
+def _resolve_event_source_id(source_id: str) -> str:
+    """Resolve a human-facing event pack alias to its canonical event source id."""
+    normalized = str(source_id or "").strip()
+    if not normalized:
+        return normalized
+    if load_source_metadata(normalized) is not None:
+        return normalized
+
+    catalog = _load_catalog()
+    event_sources = [
+        str(src.get("source_id") or "").strip()
+        for src in catalog.get("sources", [])
+        if str(src.get("pack_id") or "").strip() == normalized and str(src.get("data_type") or "").strip() == "events"
+    ]
+    event_sources = [source for source in event_sources if source]
+    if len(event_sources) == 1:
+        return event_sources[0]
+    return normalized
+
+
 # Special geographic levels that need geometry from dual sources (not standard admin hierarchy)
 SPECIAL_GEOMETRY_LEVELS = {"zcta", "tribal"}
 
@@ -1471,7 +1491,10 @@ def _get_source_from_catalog(source_id: str) -> dict:
 def _detect_event_type(source_id: str) -> str:
     """Detect event type from catalog metadata."""
     source = _get_source_from_catalog(source_id)
-    return source.get("event_type", "unknown")
+    if source.get("event_type"):
+        return source.get("event_type")
+    metadata = load_source_metadata(_resolve_event_source_id(source_id)) or {}
+    return metadata.get("event_type", "unknown")
 
 
 def _get_significance_column(source_id: str) -> str:
@@ -1577,6 +1600,7 @@ def execute_event_order(order: dict) -> dict:
     # Event mode typically uses single source
     item = items[0]
     source_id = item.get("source_id")
+    resolved_source_id = _resolve_event_source_id(source_id)
     event_file_key = item.get("event_file", "events")
     region = item.get("region")
     year, year_start, year_end = _normalize_year_filters(item)
@@ -1586,9 +1610,9 @@ def execute_event_order(order: dict) -> dict:
     # Load event data
     try:
         if _duckdb_can_query_events(source_id):
-            df, metadata = _load_event_data_duckdb(source_id, item, event_file_key)
+            df, metadata = _load_event_data_duckdb(resolved_source_id, item, event_file_key)
         else:
-            df, metadata = load_event_data(source_id, event_file_key)
+            df, metadata = load_event_data(resolved_source_id, event_file_key)
     except Exception as e:
         return {
             "type": "error",
@@ -1598,7 +1622,7 @@ def execute_event_order(order: dict) -> dict:
         }
 
     event_type = _detect_event_type(source_id)
-    print(f"Event mode: {source_id} -> {event_type}, {len(df)} raw events")
+    print(f"Event mode: {resolved_source_id} -> {event_type}, {len(df)} raw events")
 
     if (
         source_id == "hurricanes"

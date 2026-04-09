@@ -195,6 +195,15 @@ def _build_dynamic_source_spec(source_id: str) -> ApiSourceSpec | None:
     metadata_source_id = str(source_defaults.get("metadata_source_id") or source_id)
     metadata = load_source_metadata(metadata_source_id) or {}
     metrics = _build_metric_specs_from_metadata(metadata)
+    if str(source_defaults.get("query_mode") or "").strip() == "single_source_events":
+        metrics.setdefault(
+            "event_count",
+            ApiMetricSpec(
+                metric_id="event_count",
+                column="event_count",
+                description="Count of events matching the applied filters",
+            ),
+        )
     location_field = str(source_defaults["location_field"])
     temporal_coverage = metadata.get("temporal_coverage") if isinstance(metadata.get("temporal_coverage"), dict) else {}
     time_field = temporal_coverage.get("field") or source_defaults.get("time_field")
@@ -523,13 +532,21 @@ def execute_dataset_query(
 
     parquet_path = get_source_parquet_path(spec)
     available_cols = parquet_columns(parquet_path)
+    synthetic_event_count = "event_count" in {spec.metrics[column].column for column in spec.metrics if column == "event_count"}
+    requested_event_count_only = (
+        synthetic_event_count
+        and len(select_columns) >= 1
+        and "event_count" in [col for col in select_columns if col == "event_count"]
+    )
     selected = [col for col in select_columns if col in available_cols]
-    if not selected:
+    if not selected and not requested_event_count_only:
         return []
 
-    select_expr = ", ".join(quote_ident(col) for col in selected)
+    groupable_selected = [col for col in selected if col in available_cols]
     where_parts: list[str] = []
     params: list[Any] = [path_to_uri(parquet_path)]
+    having_parts: list[str] = []
+    having_params: list[Any] = []
 
     for col, value in (exact_filters or {}).items():
         if col in available_cols and value is not None:
@@ -562,26 +579,76 @@ def execute_dataset_query(
         where_parts.append("(" + " OR ".join(exact_or_descendant_parts) + ")")
 
     for col, op, value in (compare_filters or []):
-        if col not in available_cols or value is None:
+        if value is None:
             continue
         if op not in {"=", "!=", ">", ">=", "<", "<="}:
             continue
-        if col == spec.time_field and is_temporal_time_field(spec):
+        if col == "event_count":
+            having_parts.append(f"COUNT(*) {op} ?")
+            having_params.append(value)
+        elif col == spec.time_field and col in available_cols and is_temporal_time_field(spec):
             where_parts.append(f"CAST({quote_ident(col)} AS TIMESTAMP) {op} CAST(? AS TIMESTAMP)")
             params.append(_normalize_ts_for_duckdb(str(value)))
-        else:
+        elif col in available_cols:
             where_parts.append(f"{quote_ident(col)} {op} ?")
             params.append(value)
 
+    order_parts: list[str] = []
+    for sort_field, sort_direction in (sort_items or []):
+        direction = "DESC" if str(sort_direction).lower() == "desc" else "ASC"
+        if sort_field == "event_count":
+            order_parts.append(f"event_count {direction} NULLS LAST")
+        elif sort_field and sort_field in available_cols:
+            order_parts.append(f"{quote_ident(sort_field)} {direction} NULLS LAST")
+
+    if requested_event_count_only:
+        parquet_uri = params[0]
+        where_params = params[1:]
+        group_by_columns = [col for col in groupable_selected if col != "event_count"]
+        select_parts: list[str] = []
+        group_by_ordinals: list[str] = []
+        event_count_params: list[Any] = []
+        group_index = 1
+        for col in group_by_columns:
+            if col == spec.location_field and (hierarchical_prefix_filters or {}).get(col):
+                prefixes = [str(value).strip().upper() for value in (hierarchical_prefix_filters or {}).get(col, []) if str(value).strip()]
+                if prefixes:
+                    case_parts = ["CASE"]
+                    for prefix in prefixes:
+                        case_parts.append(f"WHEN upper({quote_ident(col)}) = ? OR starts_with(upper({quote_ident(col)}), ?) THEN ?")
+                        event_count_params.extend([prefix, f"{prefix}-", prefix])
+                    case_parts.append(f"ELSE upper({quote_ident(col)}) END AS {quote_ident(col)}")
+                    select_parts.append(" ".join(case_parts))
+                    group_by_ordinals.append(str(group_index))
+                    group_index += 1
+                    continue
+            select_parts.append(quote_ident(col))
+            group_by_ordinals.append(str(group_index))
+            group_index += 1
+        select_parts.append("COUNT(*) AS event_count")
+        sql = f"SELECT {', '.join(select_parts)} FROM read_parquet(?)"
+        aggregate_params: list[Any] = [*event_count_params, parquet_uri, *where_params]
+        if where_parts:
+            sql += " WHERE " + " AND ".join(where_parts)
+        if group_by_columns:
+            sql += " GROUP BY " + ", ".join(group_by_ordinals)
+        if having_parts:
+            sql += " HAVING " + " AND ".join(having_parts)
+            aggregate_params.extend(having_params)
+        if order_parts:
+            sql += " ORDER BY " + ", ".join(order_parts)
+        if limit is not None and limit > 0:
+            sql += " LIMIT ?"
+            aggregate_params.append(limit)
+        df = run_df(sql, aggregate_params)
+        if df.empty:
+            return []
+        return df.to_dict("records")
+
+    select_expr = ", ".join(quote_ident(col) for col in selected)
     sql = f"SELECT {select_expr} FROM read_parquet(?)"
     if where_parts:
         sql += " WHERE " + " AND ".join(where_parts)
-
-    order_parts: list[str] = []
-    for sort_field, sort_direction in (sort_items or []):
-        if sort_field and sort_field in available_cols:
-            direction = "DESC" if str(sort_direction).lower() == "desc" else "ASC"
-            order_parts.append(f"{quote_ident(sort_field)} {direction} NULLS LAST")
     if order_parts:
         sql += " ORDER BY " + ", ".join(order_parts)
 
