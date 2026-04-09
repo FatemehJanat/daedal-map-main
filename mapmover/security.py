@@ -89,12 +89,16 @@ def is_https_request(request: Request) -> bool:
 
 def get_client_ip(request: Request) -> str:
     """
-    Best-effort client IP for app-side throttling.
+    Best-effort client IP for app-side throttling and security telemetry.
 
-    This prefers proxy-forwarded headers because Railway / Cloudflare deployments
-    sit behind one or more reverse proxies in production.
+    Important rule:
+    - do not trust x-forwarded-for from arbitrary public callers
+    - prefer proxy-controlled single-value headers
+
+    This keeps anonymous limiter identity from being steered by a caller that
+    simply rotates a self-supplied forwarding chain.
     """
-    for header in ("cf-connecting-ip", "x-forwarded-for", "x-real-ip"):
+    for header in ("cf-connecting-ip", "true-client-ip", "x-real-ip"):
         raw = (request.headers.get(header) or "").strip()
         if raw:
             return raw.split(",", 1)[0].strip()

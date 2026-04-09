@@ -30,6 +30,7 @@ from mapmover.api_query_runtime import (
 from mapmover.geography import get_country_names_from_codes
 from mapmover.logging_analytics import hash_ip_for_analytics, log_api_query_event
 from mapmover.paths import SITE_URL
+from mapmover.security import get_client_ip
 
 
 router = APIRouter()
@@ -50,15 +51,7 @@ COMMERCIAL_ACCESS_FORWARDED_HEADERS = {
 
 
 def _get_request_ip(request: Request) -> str | None:
-    forwarded_for = request.headers.get("x-forwarded-for", "").strip()
-    if forwarded_for:
-        first_hop = forwarded_for.split(",")[0].strip()
-        if first_hop:
-            return first_hop
-    real_ip = request.headers.get("x-real-ip", "").strip()
-    if real_ip:
-        return real_ip
-    return request.client.host if request.client else None
+    return get_client_ip(request)
 
 
 def _json_safe_value(value: Any) -> Any:

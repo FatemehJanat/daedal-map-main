@@ -59,15 +59,7 @@ SECURITY_TXT_PATH = BASE_DIR / "static" / "security.txt"
 
 
 def _get_request_ip(request: Request) -> str | None:
-    forwarded_for = request.headers.get("x-forwarded-for", "").strip()
-    if forwarded_for:
-        first_hop = forwarded_for.split(",")[0].strip()
-        if first_hop:
-            return first_hop
-    real_ip = request.headers.get("x-real-ip", "").strip()
-    if real_ip:
-        return real_ip
-    return request.client.host if request.client else None
+    return get_client_ip(request)
 
 
 def _parse_env_int(name: str, default: int) -> int:
