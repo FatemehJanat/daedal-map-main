@@ -558,8 +558,227 @@ def _build_v1_guide_payload() -> dict:
             "modes": ["wallet_pay"],
         },
         "current_live_scope": {
-            "agent_ready_packs": ["currency", "earthquakes"],
+            "agent_ready_packs": _current_agent_pack_ids(),
             "future_payment_modes": ["account_credit"],
+        },
+    }
+
+
+def _current_agent_pack_ids() -> list[str]:
+    pack_ids = {
+        str(pack.get("pack_id") or "").strip()
+        for pack in _build_public_pack_list(api_ready_only=True)
+        if str(pack.get("pack_id") or "").strip()
+    }
+    return sorted(pack_ids)
+
+
+def _public_app_url() -> str:
+    from mapmover.paths import APP_URL
+
+    return str(APP_URL or "").rstrip("/")
+
+
+def _public_site_url() -> str:
+    from mapmover.paths import SITE_URL
+
+    return str(SITE_URL or "").rstrip("/")
+
+
+def _docs_url(path: str) -> str:
+    return f"{_public_site_url()}{path}"
+
+
+def _build_mcp_server_card_payload() -> dict:
+    from mapmover.routes.mcp import SERVER_INFO
+
+    app_url = _public_app_url()
+    pack_ids = _current_agent_pack_ids()
+
+    return {
+        "serverInfo": {
+            **SERVER_INFO,
+            "description": (
+                "Agent-ready geographic data intelligence. Curated historical datasets for "
+                "earthquakes, volcanic activity, tsunamis, and FX rates. Structured deterministic "
+                "queries with per-call x402 payments on Base USDC. Free catalog discovery."
+            ),
+        },
+        "websiteUrl": _public_site_url(),
+        "documentationUrl": _docs_url("/docs/for-agents"),
+        "transport": "streamable-http",
+        "authentication": {
+            "type": "none",
+            "notes": (
+                "No API key required for the wallet-pay lane. Payment is handled via x402 on Base "
+                "mainnet with USDC. Free discovery endpoints require no payment."
+            ),
+        },
+        "pricing": {
+            "model": "per_row",
+            "base_price_usd": 0.01,
+            "base_rows_included": 100,
+            "per_row_usd": 0.0001,
+            "max_price_usd": 0.50,
+            "currency": "USDC",
+            "network": "Base",
+            "payment_protocol": "x402",
+            "notes": "The 402 challenge returns the exact price before payment.",
+        },
+        "tools": [
+            {
+                "name": "get_catalog",
+                "description": "List the current agent-ready packs. Free discovery.",
+                "paid": False,
+            },
+            {
+                "name": "get_pack",
+                "description": "Get detailed metadata and first-query guidance for one pack. Free discovery.",
+                "paid": False,
+            },
+            {
+                "name": "get_earthquake_events",
+                "description": "Query structured earthquake event data.",
+                "paid": True,
+                "source_id": "earthquakes_events",
+            },
+            {
+                "name": "get_volcanic_activity",
+                "description": "Query structured volcanic eruption records.",
+                "paid": True,
+                "source_id": "volcanoes_events",
+            },
+            {
+                "name": "get_tsunami_events",
+                "description": "Query structured tsunami event records.",
+                "paid": True,
+                "source_id": "tsunamis_events",
+            },
+            {
+                "name": "get_fx_rates",
+                "description": "Query structured historical FX rate data.",
+                "paid": True,
+                "source_id": "fx_usd_historical",
+            },
+            {
+                "name": "query_dataset",
+                "description": "Generic structured query tool for direct source or pack access.",
+                "paid": True,
+                "source_id": "any",
+            },
+        ],
+        "resources": [
+            {
+                "name": "agent_catalog",
+                "description": "Machine-readable catalog of all live agent-ready data packs",
+                "uri": f"{app_url}/api/v1/catalog",
+            },
+            {
+                "name": "pack_details",
+                "description": "Detailed pack metadata and quick-start guidance",
+                "uri": f"{app_url}/api/v1/packs/{{pack_id}}",
+            },
+        ],
+        "metadata": {
+            "live_pack_ids": pack_ids,
+            "loc_id_guide_url": _docs_url("/docs/loc-id"),
+            "examples_url": _docs_url("/docs/agent-examples"),
+        },
+    }
+
+
+def _build_apis_json_payload() -> dict:
+    app_url = _public_app_url()
+    docs_url = _docs_url("/docs/for-agents")
+    return {
+        "name": "DaedalMap API",
+        "description": (
+            "Agent-ready geographic data intelligence API. Historical datasets for earthquakes, "
+            "volcanic activity, tsunamis, and foreign exchange rates. Per-call payments via x402 "
+            "on Base USDC with free discovery."
+        ),
+        "url": app_url,
+        "version": "1.0",
+        "contact": {"url": docs_url},
+        "tags": ["geospatial", "hazard", "earthquakes", "volcanoes", "tsunamis", "fx", "x402", "mcp"],
+        "apis": [
+            {
+                "name": "DaedalMap Agent API",
+                "description": "Deterministic structured data query API for agents. Paid per call via x402 on Base USDC.",
+                "humanUrl": docs_url,
+                "baseUrl": f"{app_url}/api/v1",
+                "version": "v1",
+                "tags": ["geospatial", "hazard", "economics", "x402", "agent"],
+                "contact": {"url": docs_url},
+                "properties": [
+                    {"type": "x-discovery", "url": f"{app_url}/api/v1/guide"},
+                    {"type": "x-catalog", "url": f"{app_url}/api/v1/catalog"},
+                    {"type": "x-pack-docs", "url": f"{app_url}/api/v1/packs/{{pack_id}}"},
+                    {"type": "x-mcp-server-card", "url": f"{app_url}/.well-known/mcp/server-card.json"},
+                    {"type": "x-payment-protocol", "value": "x402", "network": "Base", "currency": "USDC"},
+                ],
+            },
+            {
+                "name": "DaedalMap MCP Server",
+                "description": "Streamable HTTP MCP server for the DaedalMap agent lane.",
+                "humanUrl": docs_url,
+                "baseUrl": f"{app_url}/mcp",
+                "version": "1.0",
+                "tags": ["mcp", "geospatial", "hazard", "x402"],
+                "properties": [
+                    {"type": "x-mcp-transport", "value": "streamable-http"},
+                    {"type": "x-mcp-registry", "value": "com.daedalmap/county-map"},
+                    {"type": "x-loc-id-guide", "url": _docs_url("/docs/loc-id")},
+                ],
+            },
+        ],
+    }
+
+
+def _build_mcp_server_json_payload() -> dict:
+    app_url = _public_app_url()
+    return {
+        "$schema": "https://static.modelcontextprotocol.io/schemas/2025-10-17/server.schema.json",
+        "name": "com.daedalmap/county-map",
+        "title": "DaedalMap Geographic Data Intelligence",
+        "description": (
+            "Agent-ready geographic data intelligence. Curated historical datasets for earthquakes, "
+            "volcanic activity, tsunamis, and FX rates across 190+ countries. Structured deterministic "
+            "queries with per-call x402 payments on Base USDC."
+        ),
+        "version": "1.0.0",
+        "repository": {
+            "url": "https://github.com/xyver/county-map",
+            "source": "github",
+        },
+        "websiteUrl": _public_site_url(),
+        "remotes": [
+            {
+                "transportType": "streamable-http",
+                "url": f"{app_url}/mcp",
+            }
+        ],
+        "_meta": {
+            "io.modelcontextprotocol.registry/publisher-provided": {
+                "pricing": {
+                    "model": "per_row",
+                    "base_price_usd": 0.01,
+                    "base_rows_included": 100,
+                    "per_row_usd": 0.0001,
+                    "max_price_usd": 0.50,
+                    "currency": "USDC",
+                    "network": "Base",
+                    "payment_protocol": "x402",
+                },
+                "categories": ["geospatial", "hazard", "economics", "data"],
+                "highlights": [
+                    "Historical earthquake event data",
+                    "Volcanic eruption and VEI records",
+                    "Tsunami events with wave height metrics",
+                    "Historical FX rates for country-level analysis",
+                    "Free discovery plus paid structured retrieval",
+                ],
+            }
         },
     }
 
@@ -977,6 +1196,27 @@ async def get_v1_catalog():
 
     payload = load_api_catalog()
     return JSONResponse(payload)
+
+
+@router.get("/.well-known/mcp/server-card.json")
+async def get_mcp_server_card():
+    response = JSONResponse(_build_mcp_server_card_payload())
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@router.get("/apis.json")
+async def get_apis_json():
+    response = JSONResponse(_build_apis_json_payload())
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@router.get("/mcp/server.json")
+async def get_mcp_server_json():
+    response = JSONResponse(_build_mcp_server_json_payload())
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @router.get("/api/v1/packs/{pack_id}")
