@@ -102,6 +102,11 @@ def _rate_limit_config_for_surface(surface: str) -> tuple[int, int] | None:
             _parse_env_int("AGENT_API_PAID_RATE_LIMIT", 12),
             _parse_env_int("AGENT_API_PAID_RATE_WINDOW_SECONDS", 60),
         )
+    if surface == "agent_api_mcp":
+        return (
+            _parse_env_int("AGENT_API_MCP_RATE_LIMIT", 12),
+            _parse_env_int("AGENT_API_MCP_RATE_WINDOW_SECONDS", 60),
+        )
     return None
 
 
@@ -110,6 +115,7 @@ def _rate_limit_response(surface: str, retry_after: int):
         "agent_api_discovery": "Too many agent API discovery requests. Please slow down and try again shortly.",
         "human_app_catalog": "Too many catalog requests. Please slow down and try again shortly.",
         "agent_api_paid": "Too many paid API requests. Please wait a moment and try again.",
+        "agent_api_mcp": "Too many MCP requests. Please wait a moment and try again.",
     }
     response = JSONResponse(
         {

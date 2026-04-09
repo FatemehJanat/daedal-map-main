@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import math
 import json
 import os
@@ -89,6 +90,83 @@ def _normalize_request_id(payload: dict[str, Any]) -> str | None:
         return None
     request_id = str(request_id).strip()
     return request_id or None
+
+
+def _canonical_request_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): _canonical_request_value(value[key])
+            for key in sorted(value.keys(), key=lambda item: str(item))
+        }
+    if isinstance(value, list):
+        return [_canonical_request_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [_canonical_request_value(item) for item in value]
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    return value
+
+
+def _canonical_compare_filters(compare_filters: list[tuple[str, str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for field_name, op, value in compare_filters:
+        normalized.append(
+            {
+                "field": str(field_name),
+                "op": str(op),
+                "value": _canonical_request_value(value),
+            }
+        )
+    normalized.sort(
+        key=lambda item: (
+            item["field"],
+            item["op"],
+            json.dumps(item["value"], ensure_ascii=True, sort_keys=True, separators=(",", ":")),
+        )
+    )
+    return normalized
+
+
+def _build_request_fingerprint_payload(
+    *,
+    source_id: str,
+    pack_id: str,
+    query_mode: str,
+    metrics: list[str],
+    normalized_region_ids: list[str],
+    normalized_time: dict[str, Any],
+    equals_filters: dict[str, Any],
+    compare_filters: list[tuple[str, str, Any]],
+    normalized_sort: list[dict[str, str]],
+    limit: int,
+    output_format: str,
+) -> dict[str, Any]:
+    return {
+        "capability_id": "dataset_query",
+        "source_id": source_id,
+        "pack_id": pack_id,
+        "query_mode": query_mode,
+        "metrics": sorted(str(metric) for metric in metrics),
+        "filters": {
+            "region_ids": sorted(str(region_id) for region_id in normalized_region_ids),
+            "time": _canonical_request_value(normalized_time),
+            "equals": _canonical_request_value(equals_filters),
+            "compare": _canonical_compare_filters(compare_filters),
+        },
+        "sort": _canonical_request_value(normalized_sort),
+        "limit": int(limit),
+        "output_format": str(output_format),
+    }
+
+
+def _request_fingerprint(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(
+        _canonical_request_value(payload),
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _format_time_value(value: Any) -> Any:
@@ -199,13 +277,22 @@ def _commercial_access_response(
     return response
 
 
-def _settle_commercial_access(request_id: str, settlement_id: str, *, success: bool) -> tuple[bool, dict[str, Any] | None]:
+def _settle_commercial_access(
+    request_id: str,
+    settlement_id: str,
+    *,
+    success: bool,
+    request_fingerprint: str | None = None,
+    caller_binding: str | None = None,
+) -> tuple[bool, dict[str, Any] | None]:
     _status_code, payload = _post_commercial_access(
         COMMERCIAL_ACCESS_SETTLE_PATH,
         {
             "request_id": request_id,
             "settlement_id": settlement_id,
             "outcome": {"status": "success" if success else "failed"},
+            "request_context": {"request_fingerprint": request_fingerprint} if request_fingerprint else {},
+            "caller": {"caller_binding": caller_binding} if caller_binding else {},
         },
     )
     if isinstance(payload, dict) and str(payload.get("status") or "").strip().lower() == "allow":
@@ -360,6 +447,7 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
     caller_key = auth_user_id or ip_hash or "anonymous"
     user_agent = req.headers.get("user-agent", "").strip() or None
     payment_rail: str | None = None
+    request_fingerprint: str | None = None
 
     def error_response(
         request_id: str | None,
@@ -400,7 +488,7 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
                 status_code=status_code,
                 warnings_count=0,
                 error_code=code,
-                metadata={"surface": "agent_api_paid"},
+                metadata={"surface": "agent_api_paid", "request_fingerprint": request_fingerprint},
             )
         return response
 
@@ -935,6 +1023,21 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
             source_id=source_id,
         )
     include_provenance = bool(output.get("include_provenance", False))
+    request_fingerprint_payload = _build_request_fingerprint_payload(
+        source_id=spec.source_id,
+        pack_id=spec.pack_id,
+        query_mode=spec.query_mode,
+        metrics=metrics,
+        normalized_region_ids=normalized_region_ids,
+        normalized_time=normalized_time,
+        equals_filters=equals_filters,
+        compare_filters=compare_filters,
+        normalized_sort=normalized_sort,
+        limit=limit,
+        output_format=output_format,
+    )
+    request_fingerprint = _request_fingerprint(request_fingerprint_payload)
+    caller_binding = auth_user_id or ip_hash or "anonymous"
 
     settlement_id: str | None = None
     if not _commercial_access_enabled():
@@ -976,6 +1079,7 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
                 "request_context": {
                     "pack_id": spec.pack_id,
                     "source_id": spec.source_id,
+                    "request_fingerprint": request_fingerprint,
                     "limit": limit,
                     "query_mode": spec.query_mode,
                     "output_format": output_format,
@@ -984,6 +1088,7 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
                 "caller": {
                     "auth_user_id": auth_user_id,
                     "ip_hash": ip_hash,
+                    "caller_binding": caller_binding,
                 },
             },
         )
@@ -1024,7 +1129,7 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
             query_granularity=str(normalized_time.get("granularity") or "") or None,
             amount_charged_usdc_base_units=amount_charged_usdc_base_units,
             revenue_attributed_usdc_base_units=None,
-            metadata={"surface": "agent_api_paid"},
+            metadata={"surface": "agent_api_paid", "request_fingerprint": request_fingerprint},
         )
         return response
     if verifier_status_name != "allow":
@@ -1137,6 +1242,8 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
                 request_id,
                 settlement_id,
                 success=True,
+                request_fingerprint=request_fingerprint,
+                caller_binding=caller_binding,
             )
         except Exception as exc:
             req.state.analytics_settlement_failed = True
@@ -1186,7 +1293,7 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
         settlement_id=settlement_id,
         amount_charged_usdc_base_units=amount_charged_usdc_base_units,
         revenue_attributed_usdc_base_units=amount_charged_usdc_base_units,
-        metadata={"surface": "agent_api_paid"},
+        metadata={"surface": "agent_api_paid", "request_fingerprint": request_fingerprint},
     )
     return response
 
