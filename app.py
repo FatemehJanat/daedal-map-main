@@ -264,6 +264,9 @@ async def static_no_cache(request: Request, call_next):
                 pack_id=getattr(request.state, "analytics_pack_id", None),
                 source_id=getattr(request.state, "analytics_source_id", None),
                 response_size_bytes=response_size_bytes,
+                rate_limited=True,
+                retry_after_seconds=retry_after,
+                error_code="rate_limited",
             )
             return response
 
@@ -298,6 +301,10 @@ async def static_no_cache(request: Request, call_next):
         pack_id=pack_id,
         source_id=source_id,
         response_size_bytes=response_size_bytes,
+        challenge_issued=bool(response.status_code == 402 and response.headers.get("payment-required")),
+        settlement_failed=bool(getattr(request.state, "analytics_settlement_failed", False)),
+        concurrency_rejected=bool(getattr(request.state, "analytics_concurrency_rejected", False)),
+        error_code=getattr(request.state, "analytics_error_code", None),
     )
     return response
 

@@ -96,6 +96,11 @@ def log_api_query_event(
     status_code: int | None = None,
     warnings_count: int | None = None,
     error_code: str | None = None,
+    query_granularity: str | None = None,
+    settlement_id: str | None = None,
+    amount_charged_usd_cents: int | None = None,
+    revenue_attributed_usd_cents: int | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     event = {
         "timestamp": datetime.utcnow().isoformat(),
@@ -118,6 +123,11 @@ def log_api_query_event(
         },
         "status_code": status_code,
         "error_code": error_code,
+        "query_granularity": query_granularity,
+        "settlement_id": settlement_id,
+        "amount_charged_usd_cents": amount_charged_usd_cents,
+        "revenue_attributed_usd_cents": revenue_attributed_usd_cents,
+        "metadata": metadata or {},
     }
 
     _append_jsonl(api_query_analytics_log_path, event)
@@ -137,13 +147,26 @@ def log_api_query_event(
     supabase_client = get_supabase()
     if supabase_client:
         try:
-            supabase_client.log_query(
-                query=capability_id,
-                dataset_selected=pack_id,
-                interest=source_id,
-                results_count=row_count or 0,
-                response_time_ms=execution_latency_ms,
-                error=error_code,
+            supabase_client.log_api_usage_event(
+                event_kind=decision or "request_completed",
+                request_id=request_id,
+                capability_id=capability_id,
+                pack_id=pack_id,
+                source_id=source_id,
+                query_granularity=query_granularity,
+                decision=decision,
+                payment_rail=payment_rail,
+                auth_user_id=auth_user_id,
+                ip_hash=ip_hash,
+                status_code=status_code,
+                row_count=row_count or 0,
+                response_size_bytes=response_size_bytes or 0,
+                execution_latency_ms=execution_latency_ms,
+                warnings_count=warnings_count or 0,
+                error_code=error_code,
+                settlement_id=settlement_id,
+                amount_charged_usd_cents=amount_charged_usd_cents,
+                revenue_attributed_usd_cents=revenue_attributed_usd_cents,
                 metadata=event,
             )
         except Exception as e:
@@ -164,6 +187,13 @@ def log_route_request_event(
     pack_id: str | None = None,
     source_id: str | None = None,
     response_size_bytes: int | None = None,
+    rate_limited: bool = False,
+    retry_after_seconds: int | None = None,
+    challenge_issued: bool = False,
+    settlement_failed: bool = False,
+    concurrency_rejected: bool = False,
+    error_code: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     event = {
         "timestamp": datetime.utcnow().isoformat(),
@@ -183,6 +213,15 @@ def log_route_request_event(
             "execution_latency_ms": execution_latency_ms,
             "response_size_bytes": response_size_bytes,
         },
+        "security": {
+            "rate_limited": rate_limited,
+            "retry_after_seconds": retry_after_seconds,
+            "challenge_issued": challenge_issued,
+            "settlement_failed": settlement_failed,
+            "concurrency_rejected": concurrency_rejected,
+            "error_code": error_code,
+        },
+        "metadata": metadata or {},
     }
 
     _append_jsonl(route_analytics_log_path, event)
@@ -198,6 +237,33 @@ def log_route_request_event(
         pack_id or "-",
         source_id or "-",
     )
+
+    supabase_client = get_supabase()
+    if supabase_client:
+        try:
+            supabase_client.log_security_event(
+                method=method,
+                path=path,
+                surface=surface,
+                request_id=request_id,
+                pack_id=pack_id,
+                source_id=source_id,
+                auth_user_id=auth_user_id,
+                ip_hash=ip_hash,
+                user_agent=user_agent[:300] if user_agent else None,
+                status_code=status_code,
+                execution_latency_ms=execution_latency_ms,
+                response_size_bytes=response_size_bytes or 0,
+                rate_limited=rate_limited,
+                retry_after_seconds=retry_after_seconds,
+                challenge_issued=challenge_issued,
+                settlement_failed=settlement_failed,
+                concurrency_rejected=concurrency_rejected,
+                error_code=error_code,
+                metadata=event,
+            )
+        except Exception as e:
+            logger.error(f"Failed to log route security event to Supabase: {e}")
 
 
 def get_supabase():

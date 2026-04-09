@@ -304,6 +304,116 @@ class SupabaseClient:
                 "top_interests": []
             }
 
+    # --- API Analytics ---
+
+    def log_api_usage_event(
+        self,
+        *,
+        event_kind: str = "request_completed",
+        request_id: str,
+        capability_id: str,
+        pack_id: Optional[str] = None,
+        source_id: Optional[str] = None,
+        query_granularity: Optional[str] = None,
+        decision: Optional[str] = None,
+        payment_rail: Optional[str] = None,
+        auth_user_id: Optional[str] = None,
+        ip_hash: Optional[str] = None,
+        status_code: Optional[int] = None,
+        row_count: int = 0,
+        response_size_bytes: int = 0,
+        execution_latency_ms: Optional[int] = None,
+        warnings_count: int = 0,
+        error_code: Optional[str] = None,
+        settlement_id: Optional[str] = None,
+        amount_charged_usd_cents: Optional[int] = None,
+        revenue_attributed_usd_cents: Optional[int] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict]:
+        """Log a durable API usage event for pack/source analytics."""
+        try:
+            data = {
+                "event_kind": event_kind,
+                "request_id": request_id,
+                "capability_id": capability_id,
+                "pack_id": pack_id,
+                "source_id": source_id,
+                "query_granularity": query_granularity,
+                "decision": decision,
+                "payment_rail": payment_rail,
+                "auth_user_id": auth_user_id,
+                "ip_hash": ip_hash,
+                "status_code": status_code,
+                "row_count": row_count,
+                "response_size_bytes": response_size_bytes,
+                "execution_latency_ms": execution_latency_ms,
+                "warnings_count": warnings_count,
+                "error_code": error_code,
+                "settlement_id": settlement_id,
+                "amount_charged_usd_cents": amount_charged_usd_cents,
+                "revenue_attributed_usd_cents": revenue_attributed_usd_cents,
+                "metadata": metadata,
+                "created_at": datetime.utcnow().isoformat(),
+            }
+            result = self.client.table("api_usage_events").insert(data).execute()
+            return result.data[0] if result.data else None
+        except Exception as e:
+            print(f"Failed to log API usage event to Supabase: {e}")
+            return None
+
+    def log_security_event(
+        self,
+        *,
+        path: str,
+        method: Optional[str] = None,
+        surface: Optional[str] = None,
+        request_id: Optional[str] = None,
+        pack_id: Optional[str] = None,
+        source_id: Optional[str] = None,
+        auth_user_id: Optional[str] = None,
+        ip_hash: Optional[str] = None,
+        user_agent: Optional[str] = None,
+        status_code: Optional[int] = None,
+        execution_latency_ms: Optional[int] = None,
+        response_size_bytes: int = 0,
+        rate_limited: bool = False,
+        retry_after_seconds: Optional[int] = None,
+        challenge_issued: bool = False,
+        settlement_failed: bool = False,
+        concurrency_rejected: bool = False,
+        error_code: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict]:
+        """Log short-retention operational telemetry for abuse and rate control."""
+        try:
+            data = {
+                "request_id": request_id,
+                "method": method,
+                "path": path,
+                "surface": surface,
+                "pack_id": pack_id,
+                "source_id": source_id,
+                "auth_user_id": auth_user_id,
+                "ip_hash": ip_hash,
+                "user_agent": user_agent,
+                "status_code": status_code,
+                "execution_latency_ms": execution_latency_ms,
+                "response_size_bytes": response_size_bytes,
+                "rate_limited": rate_limited,
+                "retry_after_seconds": retry_after_seconds,
+                "challenge_issued": challenge_issued,
+                "settlement_failed": settlement_failed,
+                "concurrency_rejected": concurrency_rejected,
+                "error_code": error_code,
+                "metadata": metadata,
+                "created_at": datetime.utcnow().isoformat(),
+            }
+            result = self.client.table("security_events").insert(data).execute()
+            return result.data[0] if result.data else None
+        except Exception as e:
+            print(f"Failed to log security event to Supabase: {e}")
+            return None
+
     # --- Error Logs ---
 
     def log_error(
@@ -697,6 +807,7 @@ class SupabaseClient:
             for table in [
             "conversation_sessions", "error_logs", "dataset_metadata", "data_quality_issues",
             "plans", "orgs", "profiles", "memberships", "pack_entitlements",
+            "api_usage_events", "security_events", "pack_daily_rollups",
         ]:
                 try:
                     result = self.client.table(table).select("id", count="exact").limit(1).execute()
@@ -740,6 +851,8 @@ def get_supabase_client() -> Optional[SupabaseClient]:
 # SQL to create tables (run once in Supabase SQL Editor)
 # Full schema including control-plane tables is in:
 #   county-map-private/build/supabase/control_plane_schema.sql
+# Analytics schema is in:
+#   county-map-private/build/supabase/analytics_schema.sql
 CREATE_TABLES_SQL = """
 -- Conversation sessions table (primary logging - one row per user session)
 CREATE TABLE IF NOT EXISTS conversation_sessions (

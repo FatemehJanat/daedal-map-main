@@ -364,6 +364,8 @@ async def query_dataset(req: Request):
         pack_id: str | None = None,
         source_id: str | None = None,
     ) -> JSONResponse:
+        req.state.analytics_error_code = code
+        req.state.analytics_concurrency_rejected = code == "rate_limited"
         response = _error_response(
             request_id,
             code,
@@ -390,6 +392,7 @@ async def query_dataset(req: Request):
                 status_code=status_code,
                 warnings_count=0,
                 error_code=code,
+                metadata={"surface": "agent_api_paid"},
             )
         return response
 
@@ -990,6 +993,7 @@ async def query_dataset(req: Request):
     payment_rail = str((verifier_payload or {}).get("rail") or "").strip() or None
     if verifier_status_name == "challenge":
         response = _commercial_access_response(request_id, verifier_payload)
+        req.state.analytics_error_code = str((verifier_payload or {}).get("code") or "commercial_access_required")
         payload_size_bytes = len(getattr(response, "body", b"") or b"")
         log_api_query_event(
             request_id=request_id,
@@ -1007,6 +1011,8 @@ async def query_dataset(req: Request):
             status_code=response.status_code,
             warnings_count=0,
             error_code=str((verifier_payload or {}).get("code") or "commercial_access_required"),
+            query_granularity=str(normalized_time.get("granularity") or "") or None,
+            metadata={"surface": "agent_api_paid"},
         )
         return response
     if verifier_status_name != "allow":
@@ -1121,6 +1127,7 @@ async def query_dataset(req: Request):
                 success=True,
             )
         except Exception as exc:
+            req.state.analytics_settlement_failed = True
             return error_response(
                 request_id,
                 "commercial_access_verifier_error",
@@ -1131,6 +1138,7 @@ async def query_dataset(req: Request):
                 source_id=source_id,
             )
         if not settled:
+            req.state.analytics_settlement_failed = True
             return error_response(
                 request_id,
                 str((settlement_payload or {}).get("code") or "commercial_access_verifier_error"),
@@ -1162,5 +1170,8 @@ async def query_dataset(req: Request):
         status_code=200,
         warnings_count=len(warnings),
         error_code=None,
+        query_granularity=str(normalized_time.get("granularity") or "") or None,
+        settlement_id=settlement_id,
+        metadata={"surface": "agent_api_paid"},
     )
     return response
