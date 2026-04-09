@@ -988,6 +988,18 @@ async def query_dataset(req: Request):
                     "path": "/api/v1/query/dataset",
                 },
                 "forwarded_headers": _forwarded_commercial_headers(req),
+                "subject": {
+                    "auth_present": bool(auth_user_id),
+                    "user_id": auth_user_id,
+                },
+                "request_context": {
+                    "pack_id": spec.pack_id,
+                    "source_id": spec.source_id,
+                    "limit": limit,
+                    "query_mode": spec.query_mode,
+                    "output_format": output_format,
+                    "time_granularity": str(normalized_time.get("granularity") or "") or None,
+                },
                 "caller": {
                     "auth_user_id": auth_user_id,
                     "ip_hash": ip_hash,

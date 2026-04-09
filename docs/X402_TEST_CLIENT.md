@@ -27,6 +27,27 @@ Important runtime note:
 - the hosted paid test target is `https://app.daedalmap.com`
 - Stripe/account-credit mode is planned for later and is not part of the current live paid lane
 
+Current pricing model:
+
+- base price: `$0.01`
+- rows included in the base price: `100`
+- per-row fee after 100 rows: `$0.0001`
+- max single-call price: `$0.50`
+
+What a new developer should expect:
+
+- free discovery stays free
+- the paid lane prices from the request `limit`
+- the unpaid `402` challenge tells you the actual amount before you pay
+- small starter probes such as `limit = 3` stay at the `$0.01` base
+
+Worked examples:
+
+- `limit = 30` -> `$0.01`
+- `limit = 100` -> `$0.01`
+- `limit = 365` -> `$0.0365`
+- `limit = 500` -> `$0.05`
+
 ## MetaMask setup
 
 Use a dedicated test account if possible.
@@ -100,6 +121,10 @@ What the script does:
 3. if `EVM_PRIVATE_KEY` is present, creates an x402 buyer client
 4. pays and retries the same request automatically
 5. logs the final API response plus settlement metadata
+
+Pricing tip:
+
+- rerun the same scenario with a larger `limit` if you want to verify that the x402 challenge amount scales with the request size
 
 Supported scenarios:
 

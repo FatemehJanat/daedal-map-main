@@ -198,6 +198,27 @@ Important current behavior:
 - local or self-host runs return `commercial_access_unavailable` for that paid lane unless a commercial verifier is explicitly enabled
 - the hosted x402 test client lives at [docs/X402_TEST_CLIENT.md](docs/X402_TEST_CLIENT.md)
 
+Current live pricing model for `POST /api/v1/query/dataset`:
+
+- base price: `$0.01`
+- rows included in base price: `100`
+- per-row fee above 100 rows: `$0.0001`
+- max single-call price: `$0.50`
+
+How to think about it:
+
+- the free discovery endpoints stay free
+- the first paid lane computes price from the requested `limit`
+- the x402 `payment-required` challenge confirms the computed amount before you pay
+- use a small `limit` for the first paid test so you can confirm the flow cheaply
+
+Worked examples:
+
+- `limit = 30` -> `$0.01`
+- `limit = 100` -> `$0.01`
+- `limit = 365` -> `$0.0365`
+- `limit = 500` -> `$0.05`
+
 Quick live exploration examples:
 
 ```powershell
