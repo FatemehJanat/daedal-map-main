@@ -98,8 +98,8 @@ def log_api_query_event(
     error_code: str | None = None,
     query_granularity: str | None = None,
     settlement_id: str | None = None,
-    amount_charged_usd_cents: int | None = None,
-    revenue_attributed_usd_cents: int | None = None,
+    amount_charged_usdc_base_units: int | None = None,
+    revenue_attributed_usdc_base_units: int | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> None:
     event = {
@@ -125,8 +125,8 @@ def log_api_query_event(
         "error_code": error_code,
         "query_granularity": query_granularity,
         "settlement_id": settlement_id,
-        "amount_charged_usd_cents": amount_charged_usd_cents,
-        "revenue_attributed_usd_cents": revenue_attributed_usd_cents,
+        "amount_charged_usdc_base_units": amount_charged_usdc_base_units,
+        "revenue_attributed_usdc_base_units": revenue_attributed_usdc_base_units,
         "metadata": metadata or {},
     }
 
@@ -165,8 +165,8 @@ def log_api_query_event(
                 warnings_count=warnings_count or 0,
                 error_code=error_code,
                 settlement_id=settlement_id,
-                amount_charged_usd_cents=amount_charged_usd_cents,
-                revenue_attributed_usd_cents=revenue_attributed_usd_cents,
+                amount_charged_usdc_base_units=amount_charged_usdc_base_units,
+                revenue_attributed_usdc_base_units=revenue_attributed_usdc_base_units,
                 metadata=event,
             )
         except Exception as e:

@@ -232,14 +232,14 @@ def _settlement_headers(payload: dict[str, Any] | None) -> dict[str, str]:
     }
 
 
-def _pricing_amount_usd_cents(payload: dict[str, Any] | None) -> int | None:
+def _pricing_amount_usdc_base_units(payload: dict[str, Any] | None) -> int | None:
     context = (payload or {}).get("context") or {}
     if not isinstance(context, dict):
         return None
     pricing = context.get("pricing") or {}
     if not isinstance(pricing, dict):
         return None
-    raw_value = pricing.get("amount_usd_cents")
+    raw_value = pricing.get("amount_usdc_base_units")
     if raw_value is None:
         return None
     try:
@@ -1019,7 +1019,7 @@ async def query_dataset(req: Request):
 
     verifier_status_name = str((verifier_payload or {}).get("status") or "").strip().lower()
     payment_rail = str((verifier_payload or {}).get("rail") or "").strip() or None
-    amount_charged_usd_cents = _pricing_amount_usd_cents(verifier_payload)
+    amount_charged_usdc_base_units = _pricing_amount_usdc_base_units(verifier_payload)
     if verifier_status_name == "challenge":
         response = _commercial_access_response(request_id, verifier_payload)
         req.state.analytics_error_code = str((verifier_payload or {}).get("code") or "commercial_access_required")
@@ -1041,8 +1041,8 @@ async def query_dataset(req: Request):
             warnings_count=0,
             error_code=str((verifier_payload or {}).get("code") or "commercial_access_required"),
             query_granularity=str(normalized_time.get("granularity") or "") or None,
-            amount_charged_usd_cents=amount_charged_usd_cents,
-            revenue_attributed_usd_cents=None,
+            amount_charged_usdc_base_units=amount_charged_usdc_base_units,
+            revenue_attributed_usdc_base_units=None,
             metadata={"surface": "agent_api_paid"},
         )
         return response
@@ -1203,8 +1203,8 @@ async def query_dataset(req: Request):
         error_code=None,
         query_granularity=str(normalized_time.get("granularity") or "") or None,
         settlement_id=settlement_id,
-        amount_charged_usd_cents=amount_charged_usd_cents,
-        revenue_attributed_usd_cents=amount_charged_usd_cents,
+        amount_charged_usdc_base_units=amount_charged_usdc_base_units,
+        revenue_attributed_usdc_base_units=amount_charged_usdc_base_units,
         metadata={"surface": "agent_api_paid"},
     )
     return response
