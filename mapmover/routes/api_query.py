@@ -352,8 +352,7 @@ def _validate_metrics(
     return normalized_metrics, None
 
 
-@router.post("/api/v1/query/dataset")
-async def query_dataset(req: Request):
+async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -> Response:
     started_at = time.perf_counter()
     auth_user = get_authenticated_user(req)
     auth_user_id = str((auth_user or {}).get("id") or "").strip() or None
@@ -404,17 +403,6 @@ async def query_dataset(req: Request):
                 metadata={"surface": "agent_api_paid"},
             )
         return response
-
-    try:
-        payload = await req.json()
-    except Exception:
-        return _error_response(
-            None,
-            "invalid_request",
-            "Request body must be valid JSON.",
-            400,
-            retry_hint="Send a JSON body matching the query_dataset contract.",
-        )
 
     request_id = _normalize_request_id(payload)
     if not request_id:
@@ -1201,3 +1189,26 @@ async def query_dataset(req: Request):
         metadata={"surface": "agent_api_paid"},
     )
     return response
+
+
+@router.post("/api/v1/query/dataset")
+async def query_dataset(req: Request):
+    try:
+        payload = await req.json()
+    except Exception:
+        return _error_response(
+            None,
+            "invalid_request",
+            "Request body must be valid JSON.",
+            400,
+            retry_hint="Send a JSON body matching the query_dataset contract.",
+        )
+    if not isinstance(payload, dict):
+        return _error_response(
+            None,
+            "invalid_request",
+            "Request body must be a JSON object.",
+            400,
+            retry_hint="Send a JSON object matching the query_dataset contract.",
+        )
+    return await execute_query_dataset_payload(req, payload)

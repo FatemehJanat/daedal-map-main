@@ -45,6 +45,7 @@ from mapmover.routes.disasters.volcanoes import router as volcanoes_router
 from mapmover.routes.disasters.wildfires import router as wildfires_router
 from mapmover.routes.fairfax import router as fairfax_router
 from mapmover.routes.geometry import router as geometry_router
+from mapmover.routes.mcp import router as mcp_router
 from mapmover.routes.system import router as system_router
 from mapmover.routes.weather import router as weather_router
 
@@ -76,6 +77,8 @@ def _classify_route_surface(path: str) -> str:
     path = str(path or "").strip()
     if path == "/api/v1/query/dataset":
         return "agent_api_paid"
+    if path == "/mcp":
+        return "agent_api_mcp"
     if path == "/api/v1/guide" or path == "/api/v1/catalog" or path.startswith("/api/v1/packs/"):
         return "agent_api_discovery"
     if path.startswith("/api/catalog/packs"):
@@ -138,6 +141,11 @@ def _apply_surface_headers(response, request: Request, surface: str) -> None:
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
         response.headers["Vary"] = "Accept, Accept-Encoding, Authorization, Origin"
+        return
+    if surface == "agent_api_mcp":
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+        response.headers["Vary"] = "Accept, Accept-Encoding, Authorization, Origin, MCP-Protocol-Version"
         return
     if str(request.url.path or "").startswith("/api/"):
         response.headers.setdefault("Cache-Control", "no-store")
@@ -351,6 +359,7 @@ async def well_known_security_txt():
     return FileResponse(SECURITY_TXT_PATH, media_type="text/plain; charset=utf-8")
 
 app.include_router(system_router)
+app.include_router(mcp_router)
 app.include_router(api_query_router)
 app.include_router(geometry_router)
 app.include_router(fairfax_router)
