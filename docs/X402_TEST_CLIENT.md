@@ -14,8 +14,7 @@ Current target:
 - hosted base URL: `https://app.daedalmap.com`
 - network: Base Sepolia
 - payment rail: x402 wallet-pay
-- current live agent/API packs in free discovery: `currency`, `earthquakes`
-  `volcanoes`, `tsunamis`
+- current live agent/API packs in free discovery: `currency`, `earthquakes`, `volcanoes`, `tsunamis`
 
 Useful live pair probes:
 
@@ -43,6 +42,9 @@ What a new developer should expect:
 - the paid lane prices from the request `limit`
 - the unpaid `402` challenge tells you the actual amount before you pay
 - small starter probes such as `limit = 3` stay at the `$0.01` base
+- do not assume every source uses the same time filter shape
+- use Base Sepolia explorer as the source of truth for receipt verification if a
+  wallet UI looks stale or inconsistent
 
 Worked examples:
 
@@ -131,6 +133,13 @@ $env:DAEDALMAP_API_BASE_URL = "https://app.daedalmap.com"
 npm run x402:test:dataset -- --scenario tsunamis --challenge-only
 ```
 
+Larger pricing probe:
+
+```powershell
+$env:DAEDALMAP_API_BASE_URL = "https://app.daedalmap.com"
+npm run x402:test:dataset -- --scenario earthquakes --challenge-only --limit 250
+```
+
 What the script does:
 
 1. sends an unpaid request and logs the `402` challenge
@@ -139,17 +148,40 @@ What the script does:
 4. pays and retries the same request automatically
 5. logs the final API response plus settlement metadata
 6. prints the `request_id` so the verifier row can be found in Supabase
+7. accepts `--limit` so you can verify dynamic pricing at different request sizes
+
+Explorer verification tip:
+
+- challenge `payTo` tells you which receiving wallet should see the transfer
+- `settle_response.transaction` may be the fastest receipt clue to inspect
+- verify on `https://sepolia.basescan.org`
+- if a wallet UI and the explorer disagree, trust the explorer
 
 Pricing tip:
 
 - rerun the same scenario with a larger `limit` if you want to verify that the x402 challenge amount scales with the request size
+- current live pricing proofs now include:
+  - `limit = 3` -> `10000`
+  - `limit = 250` -> `25000`
+  - `limit = 500` -> `50000`
+- above-max requests should reject cleanly without false revenue attribution
+- event-source public max is currently `500`, so the current live public proof is
+  dynamic growth plus max-edge rejection, not yet a direct proof of the
+  `$0.50` cap itself
 
 Supported scenarios:
 
-- `--scenario earthquakes`: `source_id = "earthquakes_events"` with `metrics = ["event_count"]`
+- `--scenario earthquakes`: `source_id = "earthquakes_events"` with `metrics = ["event_count"]` and a 2011 ISO date range
 - `--scenario currency`: `pack_id = "currency"` with monthly FX routing through `time.granularity`
 - `--scenario volcanoes`: `source_id = "volcanoes_events"` with `metrics = ["event_count"]`
 - `--scenario tsunamis`: `source_id = "tsunamis_events"` with `metrics = ["event_count"]`
+
+Time-shape reminder:
+
+- `earthquakes_events` is timestamp-based, so use ISO date ranges such as `2011-01-01` to `2011-12-31`
+- `currency` is also date-based, so use ISO date ranges such as `2015-01-01` to `2024-12-31`
+- `volcanoes_events` and `tsunamis_events` examples here use year-style ranges
+- always inspect `GET /api/v1/packs/{pack_id}` before inventing a new request shape
 
 ## Current live expectation
 
@@ -158,6 +190,9 @@ For a healthy x402 lane:
 - unpaid request returns `402`
 - paid retry returns `200`
 - response body includes dataset rows
+- explorer-visible receipt appears for the configured `payTo` wallet
+- Supabase settlement and analytics rows agree on the successful paid run when
+  you inspect the hosted backend
 
 If unpaid requests return `200`, commercial gating is not active.
 If unpaid requests return `502`, the verifier is active but unhealthy.
