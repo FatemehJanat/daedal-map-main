@@ -225,6 +225,8 @@ async def _execute_paid_tool(request: Request, tool_name: str, arguments: dict[s
 
     response = await execute_query_dataset_payload(request, payload)
     if response.status_code == 402 and response.headers.get("payment-required"):
+        response.headers["MCP-Protocol-Version"] = MCP_PROTOCOL_VERSION
+        response.headers["Cache-Control"] = "no-store"
         return response
 
     raw_body = getattr(response, "body", b"") or b""
