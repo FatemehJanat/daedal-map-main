@@ -204,6 +204,7 @@ Quick live exploration examples:
 Invoke-WebRequest -UseBasicParsing 'https://app.daedalmap.com/api/v1/guide'
 Invoke-WebRequest -UseBasicParsing 'https://app.daedalmap.com/api/v1/catalog'
 Invoke-WebRequest -UseBasicParsing 'https://app.daedalmap.com/api/v1/packs/currency'
+Invoke-WebRequest -UseBasicParsing 'https://app.daedalmap.com/api/v1/packs/earthquakes'
 ```
 
 Current live expectation:
@@ -211,6 +212,11 @@ Current live expectation:
 - `GET /api/v1/catalog` returns two packs: `currency` and `earthquakes`
 - `GET /api/v1/packs/currency` returns `200`
 - `GET /api/v1/packs/earthquakes` returns `200`
+
+Current live pair:
+
+- `currency`: normalized FX metrics with pack-level routing by `time.granularity`
+- `earthquakes`: event-source pack with hierarchy-aware `region_ids` and backend-aggregated `event_count`
 
 ## Data Resolution
 

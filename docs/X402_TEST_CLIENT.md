@@ -16,6 +16,11 @@ Current target:
 - payment rail: x402 wallet-pay
 - current live agent/API packs in free discovery: `currency`, `earthquakes`
 
+Useful live pair probes:
+
+- `currency`: pack-routed FX request using `pack_id = "currency"` and `filters.time.granularity = "monthly"`
+- `earthquakes`: event-count request using `source_id = "earthquakes_events"` and `metrics = ["event_count"]`
+
 Important runtime note:
 
 - local/self-host runtimes return `commercial_access_unavailable` on `POST /api/v1/query/dataset` unless a commercial verifier is explicitly enabled
