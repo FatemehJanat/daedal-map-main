@@ -1,6 +1,6 @@
 # x402 Test Client
 
-This note explains how to act like a new developer testing the paid API lane.
+This note explains how to test the paid API lane with the public x402 client.
 
 Before attempting a paid call, use the free discovery endpoints first:
 
@@ -42,6 +42,10 @@ What a new developer should expect:
 - the paid lane prices from the request `limit`
 - the unpaid `402` challenge tells you the actual amount before you pay
 - small starter probes such as `limit = 3` stay at the `$0.01` base
+- the paid lane supports a few efficient requests per second
+- active concurrency matters more than blasting many wide requests at once
+- if you already have several paid requests in flight, wait for the first
+  results before sending many more
 - do not assume every source uses the same time filter shape
 - use Base Sepolia explorer as the source of truth for receipt verification if a
   wallet UI looks stale or inconsistent
