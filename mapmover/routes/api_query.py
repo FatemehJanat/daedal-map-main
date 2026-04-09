@@ -1133,11 +1133,14 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
         )
         return response
     if verifier_status_name != "allow":
+        verifier_context = (verifier_payload or {}).get("context") or {}
+        verifier_details = verifier_context if isinstance(verifier_context, dict) and verifier_context else None
         return error_response(
             request_id,
             str((verifier_payload or {}).get("code") or "commercial_access_denied"),
             str((verifier_payload or {}).get("message") or "Commercial access denied."),
             int((verifier_payload or {}).get("http_status") or verifier_status or 403),
+            details=verifier_details,
             retry_hint="Retry after satisfying the requested commercial-access challenge.",
             pack_id=spec.pack_id,
             source_id=source_id,
