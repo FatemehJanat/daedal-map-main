@@ -75,7 +75,7 @@ Challenge-only probe:
 
 ```powershell
 $env:DAEDALMAP_API_BASE_URL = "https://app.daedalmap.com"
-npm run x402:test:dataset -- --challenge-only
+npm run x402:test:dataset -- --scenario earthquakes --challenge-only
 ```
 
 Paid retry:
@@ -83,7 +83,14 @@ Paid retry:
 ```powershell
 $env:DAEDALMAP_API_BASE_URL = "https://app.daedalmap.com"
 $env:EVM_PRIVATE_KEY = "0xYOUR_TEST_ACCOUNT_PRIVATE_KEY"
-npm run x402:test:dataset
+npm run x402:test:dataset -- --scenario earthquakes
+```
+
+Currency example:
+
+```powershell
+$env:DAEDALMAP_API_BASE_URL = "https://app.daedalmap.com"
+npm run x402:test:dataset -- --scenario currency --challenge-only
 ```
 
 What the script does:
@@ -93,6 +100,11 @@ What the script does:
 3. if `EVM_PRIVATE_KEY` is present, creates an x402 buyer client
 4. pays and retries the same request automatically
 5. logs the final API response plus settlement metadata
+
+Supported scenarios:
+
+- `--scenario earthquakes`: `source_id = "earthquakes_events"` with `metrics = ["event_count"]`
+- `--scenario currency`: `pack_id = "currency"` with monthly FX routing through `time.granularity`
 
 ## Current live expectation
 

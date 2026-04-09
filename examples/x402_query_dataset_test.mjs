@@ -3,27 +3,66 @@ import { x402Client, x402HTTPClient } from "@x402/core/client";
 import { registerExactEvmScheme } from "@x402/evm/exact/client";
 import { privateKeyToAccount } from "viem/accounts";
 
-const args = new Set(process.argv.slice(2));
+const argv = process.argv.slice(2);
+const args = new Set(argv);
 const challengeOnly = args.has("--challenge-only");
+const scenarioIndex = argv.indexOf("--scenario");
+const scenario = String(
+  scenarioIndex >= 0 && argv[scenarioIndex + 1] ? argv[scenarioIndex + 1] : "earthquakes",
+).trim().toLowerCase();
 const baseUrl = (process.env.DAEDALMAP_API_BASE_URL || "https://app.daedalmap.com").replace(/\/$/, "");
 const endpoint = `${baseUrl}/api/v1/query/dataset`;
 
-const payload = {
-  request_id: `buyer-test-${Date.now()}`,
-  source_id: "earthquakes_events",
-  metrics: ["magnitude"],
-  filters: {
-    time: {
-      start: "2024-01-01",
-      end: "2024-12-31",
-    },
-    region_ids: ["usa"],
-  },
-  limit: 5,
-  output: {
-    format: "rows",
-  },
-};
+function buildPayload(name) {
+  const requestId = `buyer-test-${name}-${Date.now()}`;
+  if (name === "currency") {
+    return {
+      request_id: requestId,
+      pack_id: "currency",
+      metrics: ["local_per_usd"],
+      filters: {
+        region_ids: ["CAN", "USA", "MEX"],
+        time: {
+          start: 2015,
+          end: 2024,
+          granularity: "monthly",
+        },
+      },
+      sort: {
+        field: "date",
+        direction: "asc",
+      },
+      limit: 3,
+      output: {
+        format: "rows",
+      },
+    };
+  }
+  if (name === "earthquakes") {
+    return {
+      request_id: requestId,
+      source_id: "earthquakes_events",
+      metrics: ["event_count"],
+      filters: {
+        region_ids: ["JPN", "CHL", "IDN"],
+        time: {
+          value: 2011,
+        },
+      },
+      sort: {
+        field: "value",
+        direction: "desc",
+      },
+      limit: 3,
+      output: {
+        format: "rows",
+      },
+    };
+  }
+  throw new Error(`Unknown scenario '${name}'. Use --scenario currency or --scenario earthquakes.`);
+}
+
+const payload = buildPayload(scenario);
 
 function decodePaymentRequired(headerValue) {
   if (!headerValue) {
@@ -121,7 +160,9 @@ async function runPaidRequest() {
 
 async function main() {
   console.log(`Testing x402 endpoint: ${endpoint}`);
+  console.log(`Scenario: ${scenario}`);
   console.log(`Mode: ${challengeOnly ? "challenge-only" : "challenge + paid retry"}`);
+  console.log(JSON.stringify({ request_preview: payload }, null, 2));
   await runChallengeProbe();
 
   if (challengeOnly) {
