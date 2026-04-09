@@ -13,6 +13,11 @@ const scenario = String(
 const limitIndex = argv.indexOf("--limit");
 const limitOverrideRaw = limitIndex >= 0 && argv[limitIndex + 1] ? argv[limitIndex + 1] : "";
 const limitOverride = limitOverrideRaw ? Number.parseInt(String(limitOverrideRaw), 10) : null;
+const expectNetworkIndex = argv.indexOf("--expect-network");
+const expectedNetwork = String(
+  expectNetworkIndex >= 0 && argv[expectNetworkIndex + 1] ? argv[expectNetworkIndex + 1] : "",
+).trim();
+const requireSettlementSuccess = args.has("--require-settlement-success");
 const baseUrl = (process.env.DAEDALMAP_API_BASE_URL || "https://app.daedalmap.com").replace(/\/$/, "");
 const endpoint = `${baseUrl}/api/v1/query/dataset`;
 
@@ -158,6 +163,63 @@ function decodePaymentRequired(headerValue) {
   }
 }
 
+function collectNetworks(value, acc = new Set()) {
+  if (!value) {
+    return acc;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.startsWith("eip155:")) {
+      acc.add(trimmed);
+    }
+    return acc;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectNetworks(item, acc);
+    }
+    return acc;
+  }
+  if (typeof value === "object") {
+    for (const [key, nested] of Object.entries(value)) {
+      if (key.toLowerCase().includes("network") || key.toLowerCase().includes("chain")) {
+        collectNetworks(nested, acc);
+      } else {
+        collectNetworks(nested, acc);
+      }
+    }
+  }
+  return acc;
+}
+
+function extractChallengeNetworks(decodedRequirements) {
+  return Array.from(collectNetworks(decodedRequirements));
+}
+
+function settlementTransactionSummary(settleResponse) {
+  if (!settleResponse || typeof settleResponse !== "object") {
+    return null;
+  }
+  const transaction =
+    settleResponse.transactionHash ||
+    settleResponse.transaction_hash ||
+    settleResponse.txHash ||
+    settleResponse.tx_hash ||
+    settleResponse.transaction ||
+    settleResponse.tx ||
+    null;
+  const success =
+    typeof settleResponse.success === "boolean"
+      ? settleResponse.success
+      : typeof settleResponse.settled === "boolean"
+        ? settleResponse.settled
+        : null;
+  return {
+    success,
+    transaction,
+  };
+}
+
 async function readBody(response) {
   const text = await response.text();
   if (!text) {
@@ -182,15 +244,24 @@ async function runChallengeProbe() {
 
   const paymentRequired = response.headers.get("payment-required");
   const decodedRequirements = decodePaymentRequired(paymentRequired);
+  const challengeNetworks = extractChallengeNetworks(decodedRequirements);
   const body = await readBody(response);
+
+  if (expectedNetwork && !challengeNetworks.includes(expectedNetwork)) {
+    throw new Error(
+      `Challenge network mismatch. Expected '${expectedNetwork}', got ${JSON.stringify(challengeNetworks) || "[]"}.`,
+    );
+  }
 
   console.log("Challenge probe:");
   console.log(JSON.stringify({
     request_id: payload.request_id,
     limit: payload.limit,
     expected_amount_usdc_base_units: expectedPriceBaseUnits(payload.limit),
+    expected_network: expectedNetwork || null,
     status: response.status,
     payment_required_present: Boolean(paymentRequired),
+    challenge_networks: challengeNetworks,
     payment_requirements: decodedRequirements,
     body,
   }, null, 2));
@@ -230,14 +301,25 @@ async function runPaidRequest() {
   } catch (error) {
     settleResponseError = String(error);
   }
+  const settlementSummary = settlementTransactionSummary(settleResponse);
+
+  if (requireSettlementSuccess) {
+    if (!settlementSummary || settlementSummary.success !== true) {
+      throw new Error(
+        `Expected settlement success, got ${JSON.stringify(settlementSummary)} with error ${settleResponseError || "none"}.`,
+      );
+    }
+  }
 
   console.log("Paid request:");
   console.log(JSON.stringify({
     request_id: payload.request_id,
     limit: payload.limit,
     expected_amount_usdc_base_units: expectedPriceBaseUnits(payload.limit),
+    require_settlement_success: requireSettlementSuccess,
     status: response.status,
     settle_response_error: settleResponseError,
+    settlement_summary: settlementSummary,
     settle_response: settleResponse,
     body,
   }, null, 2));
@@ -247,6 +329,9 @@ async function main() {
   console.log(`Testing x402 endpoint: ${endpoint}`);
   console.log(`Scenario: ${scenario}`);
   console.log(`Mode: ${challengeOnly ? "challenge-only" : "challenge + paid retry"}`);
+  if (expectedNetwork) {
+    console.log(`Expected network: ${expectedNetwork}`);
+  }
   console.log(JSON.stringify({ request_preview: payload }, null, 2));
   await runChallengeProbe();
 
