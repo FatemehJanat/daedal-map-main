@@ -110,6 +110,16 @@ def _rate_limit_config_for_surface(surface: str) -> tuple[int, int] | None:
     return None
 
 
+def _shared_runtime_rate_limit_for_path(path: str) -> tuple[int, int] | None:
+    path = str(path or "").strip()
+    if path.startswith("/api/") or path.startswith("/geometry/"):
+        return (
+            _parse_env_int("SHARED_RUNTIME_ANON_RATE_LIMIT", 120),
+            _parse_env_int("SHARED_RUNTIME_ANON_RATE_WINDOW_SECONDS", 60),
+        )
+    return None
+
+
 def _rate_limit_response(surface: str, retry_after: int):
     messages = {
         "agent_api_discovery": "Too many agent API discovery requests. Please slow down and try again shortly.",
@@ -244,6 +254,8 @@ async def static_no_cache(request: Request, call_next):
     auth_user_id = str((auth_user or {}).get("id") or "").strip() or None
     client_ip = get_client_ip(request)
     rate_limit_config = _rate_limit_config_for_surface(surface)
+    if rate_limit_config is None and not auth_user_id and surface == "shared_runtime":
+        rate_limit_config = _shared_runtime_rate_limit_for_path(path)
     if rate_limit_config is not None and request.method != "OPTIONS":
         limit, window_seconds = rate_limit_config
         limiter_key = auth_user_id or client_ip or "unknown"
@@ -273,6 +285,7 @@ async def static_no_cache(request: Request, call_next):
                 rate_limited=True,
                 retry_after_seconds=retry_after,
                 error_code="rate_limited",
+                metadata=getattr(request.state, "analytics_metadata", None),
             )
             return response
 
@@ -311,6 +324,7 @@ async def static_no_cache(request: Request, call_next):
         settlement_failed=bool(getattr(request.state, "analytics_settlement_failed", False)),
         concurrency_rejected=bool(getattr(request.state, "analytics_concurrency_rejected", False)),
         error_code=getattr(request.state, "analytics_error_code", None),
+        metadata=getattr(request.state, "analytics_metadata", None),
     )
     return response
 

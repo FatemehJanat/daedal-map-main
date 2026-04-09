@@ -330,6 +330,7 @@ export const ChatManager = {
 
     orderTracker = new OrderTrackerClass({
       container: document.getElementById('orderItems'),
+      getSessionId: () => this.sessionId,
       onReady: (queueId, result) => {
         if (result && (result.type === 'data' || result.type === 'events')) {
           const count = result.count || result.geojson?.features?.length || 0;

@@ -69,6 +69,26 @@ def _require_hosted_https_ref(ref_value: str | None, field_name: str) -> Respons
     return None
 
 
+def _require_hosted_allowed_ref_host(ref_value: str | None, field_name: str) -> Response | None:
+    if not _hosted_pack_surface_locked() or not ref_value:
+        return None
+    allowed_hosts = {
+        host.strip().lower()
+        for host in os.getenv("HOSTED_PACK_REF_ALLOWED_HOSTS", "").split(",")
+        if host.strip()
+    }
+    if not allowed_hosts:
+        return None
+    parsed = urlparse(str(ref_value).strip())
+    host = (parsed.hostname or "").strip().lower()
+    if host and host in allowed_hosts:
+        return None
+    return _pack_install_error(
+        f"{field_name} host is not allowed in hosted mode",
+        403,
+    )
+
+
 def _configured_host(url: str) -> str:
     parsed = urlparse((url or "").strip())
     return (parsed.netloc or parsed.path or "").split("/", 1)[0].lower()
@@ -89,6 +109,19 @@ def _require_local_or_admin(req: Request):
     if _is_loopback_host(client_host):
         return None, None
     return _require_admin(req)
+
+
+def _order_rate_limited_response(message: str, retry_after: int):
+    response = msgpack_response({"error": message, "retry_after": retry_after}, 429)
+    response.headers["Retry-After"] = str(retry_after)
+    return response
+
+
+def _resolve_order_session_key(req: Request, session_id: str | None):
+    frontend_session_id = str(session_id or "").strip() or "anonymous"
+    auth_user = get_authenticated_user(req)
+    scoped_session_id = build_session_cache_key(frontend_session_id, auth_user)
+    return frontend_session_id, scoped_session_id, auth_user
 
 
 def _admin_error(req: Request, message: str, status_code: int):
@@ -905,6 +938,8 @@ async def submit_feedback(request: Request):
     """Accept anonymous feedback and write it to the Supabase feedback table.
     Accepts both msgpack (map app) and JSON (the .com site).
     """
+    from mapmover.paths import APP_URL
+
     client_ip = get_client_ip(request)
     allowed, retry_after = rate_limiter.check(f"feedback:ip:{client_ip}", limit=8, window_seconds=600)
     if not allowed:
@@ -928,7 +963,17 @@ async def submit_feedback(request: Request):
     if len(message) > 2000:
         return msgpack_error("Message too long (max 2000 chars)", 400)
 
-    user_id = body.get("user_id") or None
+    auth_user = get_authenticated_user(request)
+    verified_user_id = (auth_user or {}).get("id")
+    requested_user_id = body.get("user_id") or None
+    user_id = verified_user_id if verified_user_id else None
+    if requested_user_id and requested_user_id != verified_user_id:
+        logger.warning(
+            "Ignoring spoofed feedback user_id: requested=%s verified=%s ip=%s",
+            requested_user_id,
+            verified_user_id,
+            client_ip,
+        )
 
     # Derive source from configured app/site URLs rather than hardcoded domains.
     origin = request.headers.get("origin", "") or request.headers.get("referer", "")
@@ -1524,9 +1569,15 @@ async def install_runtime_pack_ref(req: Request):
         manifest_ref_error = _require_hosted_https_ref(manifest_ref, "manifest_ref")
         if manifest_ref_error:
             return manifest_ref_error
+        manifest_host_error = _require_hosted_allowed_ref_host(manifest_ref, "manifest_ref")
+        if manifest_host_error:
+            return manifest_host_error
         artifact_ref_error = _require_hosted_https_ref(artifact_base_ref, "artifact_base_ref")
         if artifact_ref_error:
             return artifact_ref_error
+        artifact_host_error = _require_hosted_allowed_ref_host(artifact_base_ref, "artifact_base_ref")
+        if artifact_host_error:
+            return artifact_host_error
 
         result = install_pack_from_manifest_ref(
             manifest_ref,
@@ -1647,9 +1698,13 @@ async def serve_index():
 async def serve_settings_page(request: Request):
     """Serve local runtime setup guidance, or redirect to hosted account settings."""
     from mapmover.paths import CONFIG_DIR, DATA_ROOT, PACKS_ROOT, SETTINGS_PATH, SITE_URL
+    from mapmover.runtime_config import get_runtime_config
 
     if _hosted_auth_enabled() and not _is_localish_url(SITE_URL):
         return RedirectResponse(url=f"{SITE_URL}/account", status_code=302)
+    runtime_mode = str(get_runtime_config().get("mode", "") or os.getenv("RUNTIME_MODE", "")).strip().lower()
+    if runtime_mode and runtime_mode != "local":
+        return HTMLResponse("<h1>Not Found</h1>", status_code=404)
 
     llm_ready = bool(os.getenv("ANTHROPIC_API_KEY", "").strip() or os.getenv("OPENAI_API_KEY", "").strip())
     llm_status = "Configured" if llm_ready else "Missing"
@@ -1850,7 +1905,11 @@ async def queue_order_endpoint(req: Request):
         body = await decode_request_body(req)
         items = body.get("items", [])
         hints = body.get("hints", {})
-        session_id = body.get("session_id", "default")
+        frontend_session_id, session_id, auth_user = _resolve_order_session_key(req, body.get("session_id"))
+        limiter_identity = (auth_user or {}).get("id") or get_client_ip(req) or "unknown"
+        allowed, retry_after = rate_limiter.check(f"orders:queue:{limiter_identity}", limit=20, window_seconds=60)
+        if not allowed:
+            return _order_rate_limited_response("Too many queued orders. Please slow down and try again shortly.", retry_after)
         if not items:
             return msgpack_error("No items provided", 400)
 
@@ -1862,6 +1921,7 @@ async def queue_order_endpoint(req: Request):
                 "status": "queued",
                 "position": order.position if order else 0,
                 "message": order.message if order else "Queued",
+                "session_id": frontend_session_id,
             }
         )
     except Exception as e:
@@ -1875,11 +1935,15 @@ async def get_order_status_endpoint(req: Request):
     try:
         body = await decode_request_body(req)
         queue_ids = body.get("queue_ids", [])
+        _frontend_session_id, session_id, _auth_user = _resolve_order_session_key(req, body.get("session_id"))
         if not queue_ids:
             return msgpack_error("No queue_ids provided", 400)
 
         statuses = {}
         for qid in queue_ids:
+            if not order_queue.belongs_to_session(qid, session_id):
+                statuses[qid] = {"error": "Not found", "status": "not_found"}
+                continue
             status = order_queue.get_status(qid)
             statuses[qid] = status if status else {"error": "Not found", "status": "not_found"}
         return msgpack_response(statuses)
@@ -1889,9 +1953,12 @@ async def get_order_status_endpoint(req: Request):
 
 
 @router.get("/api/orders/status/{queue_id}")
-async def get_single_order_status_endpoint(queue_id: str):
+async def get_single_order_status_endpoint(queue_id: str, req: Request):
     """Get status of a single queued order."""
     try:
+        _frontend_session_id, session_id, _auth_user = _resolve_order_session_key(req, req.query_params.get("session_id"))
+        if not order_queue.belongs_to_session(queue_id, session_id):
+            return msgpack_error("Order not found", 404)
         status = order_queue.get_status(queue_id)
         if not status:
             return msgpack_error("Order not found", 404)
@@ -1907,8 +1974,11 @@ async def cancel_order_endpoint(req: Request):
     try:
         body = await decode_request_body(req)
         queue_id = body.get("queue_id")
+        _frontend_session_id, session_id, _auth_user = _resolve_order_session_key(req, body.get("session_id"))
         if not queue_id:
             return msgpack_error("No queue_id provided", 400)
+        if not order_queue.belongs_to_session(queue_id, session_id):
+            return msgpack_response({"cancelled": False, "reason": "Order not found or not owned by this session"})
 
         cancelled = order_queue.cancel(queue_id)
         if cancelled:
@@ -1920,10 +1990,11 @@ async def cancel_order_endpoint(req: Request):
 
 
 @router.get("/api/orders/session/{session_id}")
-async def get_session_orders_endpoint(session_id: str):
+async def get_session_orders_endpoint(session_id: str, req: Request):
     """Get all queued orders for a session."""
     try:
-        return msgpack_response({"orders": order_queue.get_session_orders(session_id)})
+        _frontend_session_id, scoped_session_id, _auth_user = _resolve_order_session_key(req, session_id)
+        return msgpack_response({"orders": order_queue.get_session_orders(scoped_session_id)})
     except Exception as e:
         logger.error(f"Error getting session orders: {e}")
         return msgpack_error(str(e), 500)

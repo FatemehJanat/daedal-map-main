@@ -19,6 +19,7 @@ export class OrderTracker {
     this.onReady = config.onReady || (() => {});
     this.onFailed = config.onFailed || (() => {});
     this.pollIntervalMs = config.pollIntervalMs || 500;
+    this.getSessionId = config.getSessionId || (() => null);
 
     this.pendingOrders = new Map();  // queue_id -> order info
     this.pollInterval = null;
@@ -71,9 +72,10 @@ export class OrderTracker {
     }
 
     const queueIds = Array.from(this.pendingOrders.keys());
+    const sessionId = this.getSessionId();
 
     try {
-      const statuses = await checkOrderStatus(queueIds);
+      const statuses = await checkOrderStatus(queueIds, sessionId);
 
       for (const [queueId, status] of Object.entries(statuses)) {
         const order = this.pendingOrders.get(queueId);
@@ -135,7 +137,7 @@ export class OrderTracker {
    */
   async cancel(queueId) {
     try {
-      await cancelOrder(queueId);
+      await cancelOrder(queueId, this.getSessionId());
       this.pendingOrders.delete(queueId);
       this.removeStatusElement(queueId);
     } catch (error) {

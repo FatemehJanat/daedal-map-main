@@ -72,6 +72,7 @@ class QueuedOrder:
     def _compute_signature(self) -> str:
         """Create hash signature for deduplication."""
         normalized = {
+            "session_id": self.session_id,
             "items": sorted([
                 {
                     "source_id": item.get("source_id"),
@@ -186,6 +187,13 @@ class OrderQueue:
         if order:
             return order.to_status_dict()
         return None
+
+    def belongs_to_session(self, queue_id: str, session_id: str) -> bool:
+        """Check whether a queue entry belongs to the caller session."""
+        order = self.orders.get(queue_id)
+        if not order:
+            return False
+        return order.session_id == session_id
 
     def get_pending(self) -> List[QueuedOrder]:
         """Get all pending orders in queue order."""

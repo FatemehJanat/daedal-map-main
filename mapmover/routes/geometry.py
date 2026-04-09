@@ -4,6 +4,7 @@ import msgpack
 from fastapi import APIRouter, Request
 
 from mapmover import logger
+from mapmover.routes.system import _require_local_or_admin
 from mapmover.geometry_handlers import (
     clear_cache as clear_geometry_cache,
     get_countries_geometry as get_countries_geometry_handler,
@@ -108,8 +109,11 @@ async def get_geometry_index_endpoint(parent_loc_id: str = None, admin_level: in
 
 
 @router.post("/geometry/cache/clear")
-async def clear_geometry_cache_endpoint():
+async def clear_geometry_cache_endpoint(req: Request):
     """Clear the geometry cache after data updates."""
+    _context, error = _require_local_or_admin(req)
+    if error:
+        return error
     try:
         clear_geometry_cache()
         return msgpack_response({"message": "Geometry cache cleared"})

@@ -110,9 +110,12 @@ export async function queueOrder(items, hints, sessionId) {
  * @param {Array<string>} queueIds - Queue IDs to check
  * @returns {Promise<Object>} Map of queue_id -> status
  */
-export async function checkOrderStatus(queueIds) {
+export async function checkOrderStatus(queueIds, sessionId) {
   const url = getApiUrl('/api/orders/status');
-  return await postMsgpack(url, { queue_ids: queueIds });
+  return await postMsgpack(url, {
+    queue_ids: queueIds,
+    session_id: sessionId
+  });
 }
 
 /**
@@ -120,9 +123,12 @@ export async function checkOrderStatus(queueIds) {
  * @param {string} queueId - Queue ID to cancel
  * @returns {Promise<Object>} Response
  */
-export async function cancelOrder(queueId) {
+export async function cancelOrder(queueId, sessionId) {
   const url = getApiUrl('/api/orders/cancel');
-  return await postMsgpack(url, { queue_id: queueId });
+  return await postMsgpack(url, {
+    queue_id: queueId,
+    session_id: sessionId
+  });
 }
 
 /**

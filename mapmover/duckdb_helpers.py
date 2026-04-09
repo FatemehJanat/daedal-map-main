@@ -255,13 +255,24 @@ def select_distinct_event_loc_ids(areas_path: Path, affected_loc_id: str, exact:
         return []
     uri = path_to_uri(areas_path)
     comparator = "=" if exact else "LIKE"
-    value = affected_loc_id if exact else f"{affected_loc_id}%"
+    if exact:
+        value = affected_loc_id
+    else:
+        escaped = (
+            str(affected_loc_id)
+            .replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
+        value = f"{escaped}%"
     sql = (
         "SELECT DISTINCT event_loc_id "
         "FROM read_parquet(?) "
         f"WHERE affected_loc_id {comparator} ? "
         "ORDER BY event_loc_id"
     )
+    if not exact:
+        sql = sql.replace("ORDER BY", "ESCAPE '\\' ORDER BY", 1)
     params: list = [uri, value]
     if limit is not None:
         sql += " LIMIT ?"

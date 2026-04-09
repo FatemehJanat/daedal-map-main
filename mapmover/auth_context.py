@@ -20,6 +20,7 @@ from . import logger
 
 
 AUTH_CACHE_TTL_SECONDS = 300
+AUTH_CACHE_MAXSIZE = 1024
 _auth_cache: Dict[str, Dict[str, Any]] = {}
 
 
@@ -50,6 +51,9 @@ def _get_cached_user(token: str) -> Optional[Dict[str, Any]]:
 
 
 def _cache_user(token: str, user: Optional[Dict[str, Any]]) -> None:
+    if len(_auth_cache) >= AUTH_CACHE_MAXSIZE:
+        oldest_token = min(_auth_cache.items(), key=lambda item: item[1].get("cached_at", 0))[0]
+        _auth_cache.pop(oldest_token, None)
     _auth_cache[token] = {
         "cached_at": time.time(),
         "user": user,

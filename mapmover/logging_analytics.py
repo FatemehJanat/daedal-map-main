@@ -53,6 +53,7 @@ if _local_logs_enabled:
 analytics_log_path = analytics_dir / "query_analytics.jsonl"
 api_query_analytics_log_path = analytics_dir / "api_query_analytics.jsonl"
 route_analytics_log_path = analytics_dir / "route_analytics.jsonl"
+billing_analytics_log_path = analytics_dir / "billing_events.jsonl"
 
 # Initialize Supabase client (lazy loaded to avoid import issues)
 _supabase_client = None
@@ -77,6 +78,15 @@ def hash_ip_for_analytics(ip_address: Optional[str]) -> Optional[str]:
     salt = os.getenv("API_ANALYTICS_IP_SALT", "").strip()
     digest = hashlib.sha256(f"{salt}:{raw_ip}".encode("utf-8")).hexdigest()
     return digest
+
+
+def _should_mirror_route_event_to_supabase(path: str | None) -> bool:
+    path = str(path or "").strip()
+    if path.startswith("/api/"):
+        return True
+    if path in {"/chat", "/chat/stream"}:
+        return True
+    return False
 
 
 def log_api_query_event(
@@ -239,7 +249,7 @@ def log_route_request_event(
     )
 
     supabase_client = get_supabase()
-    if supabase_client and str(path or "").startswith("/api/"):
+    if supabase_client and _should_mirror_route_event_to_supabase(path):
         try:
             supabase_client.log_security_event(
                 method=method,
@@ -264,6 +274,34 @@ def log_route_request_event(
             )
         except Exception as e:
             logger.error(f"Failed to log route security event to Supabase: {e}")
+
+
+def log_billing_fail_open_event(
+    *,
+    event_kind: str,
+    user_id: str | None = None,
+    operation: str | None = None,
+    reason: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    event = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "event_kind": event_kind,
+        "user_id": user_id,
+        "operation": operation,
+        "reason": reason,
+        "metadata": metadata or {},
+    }
+
+    _append_jsonl(billing_analytics_log_path, event)
+
+    logger.warning(
+        "billing_fail_open event=%s user_id=%s operation=%s reason=%s",
+        event_kind,
+        user_id or "anonymous",
+        operation or "-",
+        reason or "-",
+    )
 
 
 def get_supabase():

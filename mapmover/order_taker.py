@@ -159,9 +159,17 @@ def get_source_visibility_mode() -> str:
     """
     configured = os.getenv("ORDER_TAKER_SOURCE_MODE", "").strip().lower()
     if configured in {"live", "test"}:
-        return configured
-    deployment = os.getenv("DEPLOYMENT", "railway").strip().lower()
-    return "test" if deployment == "local" else "live"
+        selected = configured
+    else:
+        deployment = os.getenv("DEPLOYMENT", "railway").strip().lower()
+        selected = "test" if deployment == "local" else "live"
+    runtime_mode = os.getenv("RUNTIME_MODE", "").strip().lower()
+    install_mode = os.getenv("INSTALL_MODE", "").strip().lower()
+    if selected == "test" and (runtime_mode == "cloud" or install_mode == "cloud"):
+        logger.warning(
+            "ORDER_TAKER_SOURCE_MODE=test is active in cloud/hosted runtime; pre-release sources may be visible to the LLM prompt"
+        )
+    return selected
 
 
 def build_system_prompt(catalog: dict, conversions: dict) -> str:
