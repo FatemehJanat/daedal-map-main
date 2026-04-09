@@ -78,7 +78,8 @@ async function runChallengeProbe() {
 }
 
 async function runPaidRequest() {
-  const privateKey = (process.env.EVM_PRIVATE_KEY || "").trim();
+  const rawPrivateKey = (process.env.EVM_PRIVATE_KEY || "").trim();
+  const privateKey = rawPrivateKey.startsWith("0x") ? rawPrivateKey : `0x${rawPrivateKey}`;
   if (!privateKey) {
     throw new Error("EVM_PRIVATE_KEY is required for paid x402 retries.");
   }
@@ -99,13 +100,20 @@ async function runPaidRequest() {
 
   const body = await readBody(response);
   const httpClient = new x402HTTPClient(client);
-  const settleResponse = httpClient.getPaymentSettleResponse(
-    (name) => response.headers.get(name),
-  );
+  let settleResponse = null;
+  let settleResponseError = null;
+  try {
+    settleResponse = httpClient.getPaymentSettleResponse(
+      (name) => response.headers.get(name),
+    );
+  } catch (error) {
+    settleResponseError = String(error);
+  }
 
   console.log("Paid request:");
   console.log(JSON.stringify({
     status: response.status,
+    settle_response_error: settleResponseError,
     settle_response: settleResponse,
     body,
   }, null, 2));

@@ -220,6 +220,18 @@ def _settle_commercial_access(request_id: str, settlement_id: str, *, success: b
     return False, payload
 
 
+def _settlement_headers(payload: dict[str, Any] | None) -> dict[str, str]:
+    settlement = (payload or {}).get("settlement") or {}
+    raw_headers = settlement.get("headers") or {}
+    if not isinstance(raw_headers, dict):
+        return {}
+    return {
+        str(key): str(value)
+        for key, value in raw_headers.items()
+        if str(key).strip() and value is not None
+    }
+
+
 def _parse_time_filter(
     spec,
     time_filter: dict[str, Any],
@@ -1107,6 +1119,9 @@ async def query_dataset(req: Request):
             )
 
     response = JSONResponse(payload_out)
+    if settlement_id:
+        for key, value in _settlement_headers(settlement_payload).items():
+            response.headers[key] = value
     response_size_bytes = len(json.dumps(payload_out, ensure_ascii=False).encode("utf-8"))
     log_api_query_event(
         request_id=request_id,
