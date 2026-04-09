@@ -99,13 +99,13 @@ def _rate_limit_config_for_surface(surface: str) -> tuple[int, int] | None:
         )
     if surface == "agent_api_paid":
         return (
-            _parse_env_int("AGENT_API_PAID_RATE_LIMIT", 12),
-            _parse_env_int("AGENT_API_PAID_RATE_WINDOW_SECONDS", 60),
+            _parse_env_int("AGENT_API_PAID_RATE_LIMIT", 60),
+            _parse_env_int("AGENT_API_PAID_RATE_WINDOW_SECONDS", 10),
         )
     if surface == "agent_api_mcp":
         return (
-            _parse_env_int("AGENT_API_MCP_RATE_LIMIT", 12),
-            _parse_env_int("AGENT_API_MCP_RATE_WINDOW_SECONDS", 60),
+            _parse_env_int("AGENT_API_MCP_RATE_LIMIT", 60),
+            _parse_env_int("AGENT_API_MCP_RATE_WINDOW_SECONDS", 10),
         )
     return None
 
