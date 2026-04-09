@@ -239,7 +239,7 @@ def log_route_request_event(
     )
 
     supabase_client = get_supabase()
-    if supabase_client:
+    if supabase_client and str(path or "").startswith("/api/"):
         try:
             supabase_client.log_security_event(
                 method=method,

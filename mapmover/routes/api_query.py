@@ -232,6 +232,22 @@ def _settlement_headers(payload: dict[str, Any] | None) -> dict[str, str]:
     }
 
 
+def _pricing_amount_usd_cents(payload: dict[str, Any] | None) -> int | None:
+    context = (payload or {}).get("context") or {}
+    if not isinstance(context, dict):
+        return None
+    pricing = context.get("pricing") or {}
+    if not isinstance(pricing, dict):
+        return None
+    raw_value = pricing.get("amount_usd_cents")
+    if raw_value is None:
+        return None
+    try:
+        return int(raw_value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _parse_time_filter(
     spec,
     time_filter: dict[str, Any],
@@ -991,6 +1007,7 @@ async def query_dataset(req: Request):
 
     verifier_status_name = str((verifier_payload or {}).get("status") or "").strip().lower()
     payment_rail = str((verifier_payload or {}).get("rail") or "").strip() or None
+    amount_charged_usd_cents = _pricing_amount_usd_cents(verifier_payload)
     if verifier_status_name == "challenge":
         response = _commercial_access_response(request_id, verifier_payload)
         req.state.analytics_error_code = str((verifier_payload or {}).get("code") or "commercial_access_required")
@@ -1012,6 +1029,8 @@ async def query_dataset(req: Request):
             warnings_count=0,
             error_code=str((verifier_payload or {}).get("code") or "commercial_access_required"),
             query_granularity=str(normalized_time.get("granularity") or "") or None,
+            amount_charged_usd_cents=amount_charged_usd_cents,
+            revenue_attributed_usd_cents=None,
             metadata={"surface": "agent_api_paid"},
         )
         return response
@@ -1172,6 +1191,8 @@ async def query_dataset(req: Request):
         error_code=None,
         query_granularity=str(normalized_time.get("granularity") or "") or None,
         settlement_id=settlement_id,
+        amount_charged_usd_cents=amount_charged_usd_cents,
+        revenue_attributed_usd_cents=amount_charged_usd_cents,
         metadata={"surface": "agent_api_paid"},
     )
     return response
