@@ -777,12 +777,12 @@ def _build_mcp_server_json_payload() -> dict:
     return {
         "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
         "name": "com.daedalmap/county-map",
-        "title": "DaedalMap Geographic Data Intelligence",
+        "title": "DaedalMap Disaster and Geospatial Data",
         "description": (
-            "Hosted geographic data MCP server for disasters and FX with mixed free and "
-            "x402-paid access."
+            "Geospatial MCP server for earthquake, tsunami, volcano, disaster, and FX "
+            "data queries."
         ),
-        "version": "1.0.0",
+        "version": "1.0.1",
         "repository": {
             "url": "https://github.com/xyver/daedal-map",
             "source": "github",
