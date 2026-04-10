@@ -18,8 +18,8 @@ MCP_PROTOCOL_VERSION = "2025-06-18"
 SUPPORTED_PROTOCOL_VERSIONS = {MCP_PROTOCOL_VERSION, "2024-11-05"}
 SERVER_INFO = {
     "name": "com.daedalmap/county-map",
-    "title": "DaedalMap Geographic Data Intelligence",
-    "version": "1.0.0",
+    "title": "DaedalMap Disaster and Geospatial Data",
+    "version": "1.0.1",
 }
 
 
@@ -144,12 +144,13 @@ def _tool_definitions() -> list[dict[str, Any]]:
                     "metrics": {"type": "array", "items": {"type": "string"}, "description": "Metric ids to return, such as 'event_count' or event attributes like 'magnitude'."},
                     "filters": {"type": "object", "description": "Structured filters including time ranges, region_ids, and compare clauses."},
                     "sort": {"anyOf": [{"type": "array"}, {"type": "object"}], "description": "Optional sort instructions for row-returning queries."},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 500},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 500, "description": "Maximum number of rows to return. Use small limits for top-N queries such as largest event in a range."},
                     "output": {"type": "object", "description": "Optional output controls such as response format hints."},
                 },
                 "required": ["metrics", "filters"],
                 "additionalProperties": False,
             },
+            "annotations": {"readOnlyHint": True},
         },
         {
             "name": "get_volcanic_activity",
@@ -162,12 +163,13 @@ def _tool_definitions() -> list[dict[str, Any]]:
                     "metrics": {"type": "array", "items": {"type": "string"}, "description": "Metric ids to return, such as 'event_count', 'VEI', or eruption attributes."},
                     "filters": {"type": "object", "description": "Structured filters including time ranges, region_ids, and compare clauses."},
                     "sort": {"anyOf": [{"type": "array"}, {"type": "object"}], "description": "Optional sort instructions for row-returning queries."},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 500},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 500, "description": "Maximum number of rows to return. Use small limits for top-N eruption lookups."},
                     "output": {"type": "object", "description": "Optional output controls such as response format hints."},
                 },
                 "required": ["metrics", "filters"],
                 "additionalProperties": False,
             },
+            "annotations": {"readOnlyHint": True},
         },
         {
             "name": "get_tsunami_events",
@@ -180,12 +182,13 @@ def _tool_definitions() -> list[dict[str, Any]]:
                     "metrics": {"type": "array", "items": {"type": "string"}, "description": "Metric ids to return, such as 'event_count', 'max_water_height_m', or event attributes."},
                     "filters": {"type": "object", "description": "Structured filters including time ranges, region_ids, and compare clauses."},
                     "sort": {"anyOf": [{"type": "array"}, {"type": "object"}], "description": "Optional sort instructions for row-returning queries."},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 500},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 500, "description": "Maximum number of rows to return. Use small limits for largest-wave or latest-event queries."},
                     "output": {"type": "object", "description": "Optional output controls such as response format hints."},
                 },
                 "required": ["metrics", "filters"],
                 "additionalProperties": False,
             },
+            "annotations": {"readOnlyHint": True},
         },
         {
             "name": "get_fx_rates",
@@ -198,12 +201,13 @@ def _tool_definitions() -> list[dict[str, Any]]:
                     "metrics": {"type": "array", "items": {"type": "string"}, "description": "Optional metric ids. Defaults to 'local_per_usd' for FX rate queries."},
                     "filters": {"type": "object", "description": "Structured filters including currencies, time range, and granularity."},
                     "sort": {"anyOf": [{"type": "array"}, {"type": "object"}], "description": "Optional sort instructions for row-returning queries."},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 1000},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "description": "Maximum number of rows to return for the requested granularity and time span."},
                     "output": {"type": "object", "description": "Optional output controls such as response format hints."},
                 },
                 "required": ["filters"],
                 "additionalProperties": False,
             },
+            "annotations": {"readOnlyHint": True},
         },
         {
             "name": "query_dataset",
@@ -218,13 +222,146 @@ def _tool_definitions() -> list[dict[str, Any]]:
                     "metrics": {"type": "array", "items": {"type": "string"}, "description": "Metric ids to return. Use event_count for aggregate counts when supported."},
                     "filters": {"type": "object", "description": "Structured filters including time, region_ids, and compare clauses."},
                     "sort": {"anyOf": [{"type": "array"}, {"type": "object"}], "description": "Optional sort instructions for row-returning queries."},
-                    "limit": {"type": "integer", "minimum": 1},
+                    "limit": {"type": "integer", "minimum": 1, "description": "Maximum number of rows to return for the requested source or pack."},
                     "output": {"type": "object", "description": "Optional output controls such as response format hints."},
                 },
                 "additionalProperties": False,
             },
+            "annotations": {"readOnlyHint": True},
         },
     ]
+
+
+def _prompt_definitions() -> list[dict[str, Any]]:
+    return [
+        {
+            "name": "largest_earthquake_in_range",
+            "title": "Largest Earthquake In Range",
+            "description": "Starter prompt for finding the largest earthquake in a time range, optionally scoped to a loc_id region.",
+            "arguments": [
+                {"name": "start_date", "description": "Inclusive start date in YYYY-MM-DD format.", "required": True},
+                {"name": "end_date", "description": "Inclusive end date in YYYY-MM-DD format.", "required": True},
+                {"name": "region_id", "description": "Optional loc_id region such as USA or JPN to scope the query.", "required": False},
+            ],
+        },
+        {
+            "name": "count_disaster_events",
+            "title": "Count Disaster Events",
+            "description": "Starter prompt for counting earthquakes, volcanoes, or tsunamis in a time range with optional threshold and loc_id filtering.",
+            "arguments": [
+                {"name": "pack_id", "description": "One of earthquakes, volcanoes, or tsunamis.", "required": True},
+                {"name": "start", "description": "Inclusive start date or year for the chosen pack.", "required": True},
+                {"name": "end", "description": "Inclusive end date or year for the chosen pack.", "required": True},
+                {"name": "region_id", "description": "Optional loc_id region to filter by.", "required": False},
+                {"name": "threshold_field", "description": "Optional metric field such as magnitude, VEI, or max_water_height_m.", "required": False},
+                {"name": "threshold_value", "description": "Optional numeric threshold value.", "required": False},
+            ],
+        },
+        {
+            "name": "fx_history_for_country",
+            "title": "FX History For Country",
+            "description": "Starter prompt for fetching USD-normalized FX history for one or more countries at daily, weekly, or monthly granularity.",
+            "arguments": [
+                {"name": "country_ids", "description": "Comma-separated loc_id country codes such as JPN,CAN,DEU.", "required": True},
+                {"name": "granularity", "description": "One of daily, weekly, or monthly.", "required": True},
+                {"name": "start", "description": "Inclusive start date in YYYY-MM-DD format.", "required": True},
+                {"name": "end", "description": "Inclusive end date in YYYY-MM-DD format.", "required": True},
+            ],
+        },
+    ]
+
+
+def _render_prompt(name: str, arguments: dict[str, Any]) -> dict[str, Any] | None:
+    if name == "largest_earthquake_in_range":
+        start_date = str(arguments.get("start_date") or "2024-01-01").strip()
+        end_date = str(arguments.get("end_date") or "2024-12-31").strip()
+        region_id = str(arguments.get("region_id") or "").strip()
+        region_line = f'      "region_ids": ["{region_id}"],\n' if region_id else ""
+        text = (
+            "Use `get_earthquake_events` to return the largest earthquake in the requested range.\n\n"
+            "Suggested tool call:\n"
+            "```json\n"
+            "{\n"
+            '  "name": "get_earthquake_events",\n'
+            '  "arguments": {\n'
+            '    "metrics": ["magnitude", "timestamp", "place", "depth_km"],\n'
+            '    "filters": {\n'
+            f'      "time": {{"start": "{start_date}", "end": "{end_date}"}}'
+            + (",\n" + region_line.rstrip("\n") if region_line else "")
+            + "\n"
+            "    },\n"
+            '    "sort": [{"field": "magnitude", "direction": "desc"}],\n'
+            '    "limit": 1\n'
+            "  }\n"
+            "}\n"
+            "```\n"
+        )
+        return {"description": "Find the largest earthquake in a range.", "messages": [{"role": "user", "content": {"type": "text", "text": text}}]}
+
+    if name == "count_disaster_events":
+        pack_id = str(arguments.get("pack_id") or "earthquakes").strip() or "earthquakes"
+        start = str(arguments.get("start") or "2020-01-01").strip()
+        end = str(arguments.get("end") or "2020-12-31").strip()
+        region_id = str(arguments.get("region_id") or "").strip()
+        threshold_field = str(arguments.get("threshold_field") or "").strip()
+        threshold_value = str(arguments.get("threshold_value") or "").strip()
+        tool_name = {
+            "earthquakes": "get_earthquake_events",
+            "volcanoes": "get_volcanic_activity",
+            "tsunamis": "get_tsunami_events",
+        }.get(pack_id, "query_dataset")
+        metric_compare = ""
+        if threshold_field and threshold_value:
+            metric_compare = (
+                ',\n      "compare": [\n'
+                f'        {{"field": "{threshold_field}", "op": ">=", "value": {threshold_value}}}\n'
+                "      ]"
+            )
+        region_line = f',\n      "region_ids": ["{region_id}"]' if region_id else ""
+        text = (
+            f"Use `{tool_name}` to count {pack_id} events in the requested range.\n\n"
+            "Suggested tool call:\n"
+            "```json\n"
+            "{\n"
+            f'  "name": "{tool_name}",\n'
+            '  "arguments": {\n'
+            '    "metrics": ["event_count"],\n'
+            '    "filters": {\n'
+            f'      "time": {{"start": "{start}", "end": "{end}"}}{region_line}{metric_compare}\n'
+            "    }\n"
+            "  }\n"
+            "}\n"
+            "```\n"
+        )
+        return {"description": "Count disaster events with optional threshold filtering.", "messages": [{"role": "user", "content": {"type": "text", "text": text}}]}
+
+    if name == "fx_history_for_country":
+        country_ids = str(arguments.get("country_ids") or "JPN").strip()
+        granularity = str(arguments.get("granularity") or "monthly").strip()
+        start = str(arguments.get("start") or "2024-01-01").strip()
+        end = str(arguments.get("end") or "2024-12-31").strip()
+        ids = [item.strip() for item in country_ids.split(",") if item.strip()]
+        ids_json = ", ".join(f'"{item}"' for item in ids) or '"JPN"'
+        text = (
+            "Use `get_fx_rates` to fetch USD-normalized FX history for the requested countries.\n\n"
+            "Suggested tool call:\n"
+            "```json\n"
+            "{\n"
+            '  "name": "get_fx_rates",\n'
+            '  "arguments": {\n'
+            '    "filters": {\n'
+            f'      "region_ids": [{ids_json}],\n'
+            f'      "time": {{"start": "{start}", "end": "{end}", "granularity": "{granularity}"}}\n'
+            "    },\n"
+            '    "metrics": ["local_per_usd"]\n'
+            "  }\n"
+            "}\n"
+            "```\n\n"
+            "If you need a cross-rate like EUR/CAD, request both countries for the same dates and derive the ratio client-side."
+        )
+        return {"description": "Fetch FX history for one or more countries.", "messages": [{"role": "user", "content": {"type": "text", "text": text}}]}
+
+    return None
 
 
 def _resource_definitions() -> list[dict[str, Any]]:
@@ -515,10 +652,11 @@ async def mcp_endpoint(request: Request):
                 "capabilities": {
                     "tools": {"listChanged": False},
                     "resources": {"listChanged": False},
+                    "prompts": {"listChanged": False},
                 },
                 "serverInfo": SERVER_INFO,
                 "instructions": (
-                    "Use tools/list to discover available tools. Free discovery tools require no payment. "
+                    "Use tools/list, resources/list, and prompts/list to discover available capabilities. Free discovery tools require no payment. "
                     "Paid tools can return HTTP 402 with x402 challenge headers when payment is required."
                 ),
             },
@@ -549,6 +687,21 @@ async def mcp_endpoint(request: Request):
         payload = _read_resource(uri)
         if not payload:
             return _jsonrpc_error(request_id, -32602, f"Resource '{uri}' not found")
+        return _jsonrpc_response(payload, request_id)
+
+    if method == "prompts/list":
+        return _jsonrpc_response({"prompts": _prompt_definitions()}, request_id)
+
+    if method == "prompts/get":
+        prompt_name = str(params.get("name") or "").strip()
+        arguments = params.get("arguments") or {}
+        if not prompt_name:
+            return _jsonrpc_error(request_id, -32602, "Prompt name is required")
+        if arguments and not isinstance(arguments, dict):
+            return _jsonrpc_error(request_id, -32602, "Prompt arguments must be an object")
+        payload = _render_prompt(prompt_name, arguments)
+        if not payload:
+            return _jsonrpc_error(request_id, -32602, f"Prompt '{prompt_name}' not found")
         return _jsonrpc_response(payload, request_id)
 
     if method != "tools/call":
