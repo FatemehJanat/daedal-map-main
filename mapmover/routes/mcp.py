@@ -23,6 +23,22 @@ SERVER_INFO = {
 }
 
 
+def _public_app_url() -> str:
+    from mapmover.paths import APP_URL
+
+    return str(APP_URL or "").rstrip("/")
+
+
+def _public_site_url() -> str:
+    from mapmover.paths import SITE_URL
+
+    return str(SITE_URL or "").rstrip("/")
+
+
+def _docs_url(path: str) -> str:
+    return f"{_public_site_url()}{path}"
+
+
 def _mcp_origin_allowed(request: Request) -> bool:
     origin = str(request.headers.get("origin") or "").strip()
     if not origin:
@@ -71,6 +87,18 @@ def _tool_result(payload: Any, *, is_error: bool = False) -> dict[str, Any]:
     return result
 
 
+def _resource_text_result(uri: str, text: str, *, mime_type: str = "text/markdown") -> dict[str, Any]:
+    return {
+        "contents": [
+            {
+                "uri": uri,
+                "mimeType": mime_type,
+                "text": text,
+            }
+        ]
+    }
+
+
 def _ensure_request_id(arguments: dict[str, Any], tool_name: str) -> dict[str, Any]:
     normalized = dict(arguments)
     request_id = str(normalized.get("request_id") or "").strip()
@@ -112,12 +140,12 @@ def _tool_definitions() -> list[dict[str, Any]]:
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "request_id": {"type": "string"},
-                    "metrics": {"type": "array", "items": {"type": "string"}},
-                    "filters": {"type": "object"},
-                    "sort": {"anyOf": [{"type": "array"}, {"type": "object"}]},
+                    "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing and idempotency."},
+                    "metrics": {"type": "array", "items": {"type": "string"}, "description": "Metric ids to return, such as 'event_count' or event attributes like 'magnitude'."},
+                    "filters": {"type": "object", "description": "Structured filters including time ranges, region_ids, and compare clauses."},
+                    "sort": {"anyOf": [{"type": "array"}, {"type": "object"}], "description": "Optional sort instructions for row-returning queries."},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 500},
-                    "output": {"type": "object"},
+                    "output": {"type": "object", "description": "Optional output controls such as response format hints."},
                 },
                 "required": ["metrics", "filters"],
                 "additionalProperties": False,
@@ -126,16 +154,16 @@ def _tool_definitions() -> list[dict[str, Any]]:
         {
             "name": "get_volcanic_activity",
             "title": "Get Volcanic Activity",
-            "description": "Paid x402 tool. Queries volcanoes_events for eruption records and volcanic activity metrics.",
+            "description": "Free tool. Queries volcanoes_events for eruption records and volcanic activity metrics.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "request_id": {"type": "string"},
-                    "metrics": {"type": "array", "items": {"type": "string"}},
-                    "filters": {"type": "object"},
-                    "sort": {"anyOf": [{"type": "array"}, {"type": "object"}]},
+                    "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing and idempotency."},
+                    "metrics": {"type": "array", "items": {"type": "string"}, "description": "Metric ids to return, such as 'event_count', 'VEI', or eruption attributes."},
+                    "filters": {"type": "object", "description": "Structured filters including time ranges, region_ids, and compare clauses."},
+                    "sort": {"anyOf": [{"type": "array"}, {"type": "object"}], "description": "Optional sort instructions for row-returning queries."},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 500},
-                    "output": {"type": "object"},
+                    "output": {"type": "object", "description": "Optional output controls such as response format hints."},
                 },
                 "required": ["metrics", "filters"],
                 "additionalProperties": False,
@@ -148,12 +176,12 @@ def _tool_definitions() -> list[dict[str, Any]]:
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "request_id": {"type": "string"},
-                    "metrics": {"type": "array", "items": {"type": "string"}},
-                    "filters": {"type": "object"},
-                    "sort": {"anyOf": [{"type": "array"}, {"type": "object"}]},
+                    "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing and idempotency."},
+                    "metrics": {"type": "array", "items": {"type": "string"}, "description": "Metric ids to return, such as 'event_count', 'max_water_height_m', or event attributes."},
+                    "filters": {"type": "object", "description": "Structured filters including time ranges, region_ids, and compare clauses."},
+                    "sort": {"anyOf": [{"type": "array"}, {"type": "object"}], "description": "Optional sort instructions for row-returning queries."},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 500},
-                    "output": {"type": "object"},
+                    "output": {"type": "object", "description": "Optional output controls such as response format hints."},
                 },
                 "required": ["metrics", "filters"],
                 "additionalProperties": False,
@@ -162,16 +190,16 @@ def _tool_definitions() -> list[dict[str, Any]]:
         {
             "name": "get_fx_rates",
             "title": "Get FX Rates",
-            "description": "Paid x402 tool. Queries the currency pack and routes by filters.time.granularity to daily, weekly, or monthly FX data.",
+            "description": "Free tool. Queries the currency pack and routes by filters.time.granularity to daily, weekly, or monthly FX data.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "request_id": {"type": "string"},
-                    "metrics": {"type": "array", "items": {"type": "string"}},
-                    "filters": {"type": "object"},
-                    "sort": {"anyOf": [{"type": "array"}, {"type": "object"}]},
+                    "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing and idempotency."},
+                    "metrics": {"type": "array", "items": {"type": "string"}, "description": "Optional metric ids. Defaults to 'local_per_usd' for FX rate queries."},
+                    "filters": {"type": "object", "description": "Structured filters including currencies, time range, and granularity."},
+                    "sort": {"anyOf": [{"type": "array"}, {"type": "object"}], "description": "Optional sort instructions for row-returning queries."},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 1000},
-                    "output": {"type": "object"},
+                    "output": {"type": "object", "description": "Optional output controls such as response format hints."},
                 },
                 "required": ["filters"],
                 "additionalProperties": False,
@@ -180,23 +208,215 @@ def _tool_definitions() -> list[dict[str, Any]]:
         {
             "name": "query_dataset",
             "title": "Query Dataset",
-            "description": "Paid x402 tool. Generic structured query for direct source_id or pack_id access using the same contract as POST /api/v1/query/dataset.",
+            "description": "Generic structured query for direct source_id or pack_id access using the same contract as POST /api/v1/query/dataset. Currency and volcanoes are free; earthquakes and tsunamis are paid via x402.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "request_id": {"type": "string"},
-                    "source_id": {"type": "string"},
-                    "pack_id": {"type": "string"},
-                    "metrics": {"type": "array", "items": {"type": "string"}},
-                    "filters": {"type": "object"},
-                    "sort": {"anyOf": [{"type": "array"}, {"type": "object"}]},
+                    "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing and idempotency."},
+                    "source_id": {"type": "string", "description": "Concrete source id such as 'earthquakes_events' or 'volcanoes_events'."},
+                    "pack_id": {"type": "string", "description": "Pack id such as 'currency', 'earthquakes', 'volcanoes', or 'tsunamis'."},
+                    "metrics": {"type": "array", "items": {"type": "string"}, "description": "Metric ids to return. Use event_count for aggregate counts when supported."},
+                    "filters": {"type": "object", "description": "Structured filters including time, region_ids, and compare clauses."},
+                    "sort": {"anyOf": [{"type": "array"}, {"type": "object"}], "description": "Optional sort instructions for row-returning queries."},
                     "limit": {"type": "integer", "minimum": 1},
-                    "output": {"type": "object"},
+                    "output": {"type": "object", "description": "Optional output controls such as response format hints."},
                 },
                 "additionalProperties": False,
             },
         },
     ]
+
+
+def _resource_definitions() -> list[dict[str, Any]]:
+    app_url = _public_app_url()
+    return [
+        {
+            "uri": "daedalmap://guide",
+            "name": "Guide",
+            "title": "DaedalMap Agent Guide",
+            "description": "High-level guide to the hosted agent API surface and discovery flow.",
+            "mimeType": "application/json",
+        },
+        {
+            "uri": "daedalmap://catalog",
+            "name": "Catalog",
+            "title": "Live Pack Catalog",
+            "description": "Machine-readable list of live agent-ready packs.",
+            "mimeType": "application/json",
+        },
+        {
+            "uri": "daedalmap://docs/for-agents",
+            "name": "For Agents",
+            "title": "For Agents",
+            "description": "Bot-facing quickstart for the DaedalMap hosted API and MCP lane.",
+            "mimeType": "text/markdown",
+        },
+        {
+            "uri": "daedalmap://docs/agent-examples",
+            "name": "Agent Examples",
+            "title": "Agent Examples",
+            "description": "Worked examples for free and paid query flows across the live packs.",
+            "mimeType": "text/markdown",
+        },
+        {
+            "uri": "daedalmap://docs/loc-id",
+            "name": "loc_id Guide",
+            "title": "loc_id Guide",
+            "description": "Guide to the shared location identifier system used across packs.",
+            "mimeType": "text/markdown",
+        },
+        {
+            "uri": "daedalmap://access",
+            "name": "Access Model",
+            "title": "Access Model",
+            "description": "Current free-versus-paid split for the live hosted packs.",
+            "mimeType": "text/markdown",
+        },
+        {
+            "uri": "daedalmap://pack/currency",
+            "name": "Currency Pack",
+            "title": "Currency Pack Detail",
+            "description": "Pack detail and quick-start metadata for the currency lane.",
+            "mimeType": "application/json",
+        },
+        {
+            "uri": "daedalmap://pack/earthquakes",
+            "name": "Earthquakes Pack",
+            "title": "Earthquakes Pack Detail",
+            "description": "Pack detail and quick-start metadata for the earthquakes lane.",
+            "mimeType": "application/json",
+        },
+        {
+            "uri": "daedalmap://pack/volcanoes",
+            "name": "Volcanoes Pack",
+            "title": "Volcanoes Pack Detail",
+            "description": "Pack detail and quick-start metadata for the volcanoes lane.",
+            "mimeType": "application/json",
+        },
+        {
+            "uri": "daedalmap://pack/tsunamis",
+            "name": "Tsunamis Pack",
+            "title": "Tsunamis Pack Detail",
+            "description": "Pack detail and quick-start metadata for the tsunamis lane.",
+            "mimeType": "application/json",
+        },
+        {
+            "uri": "daedalmap://links",
+            "name": "Public Links",
+            "title": "Canonical Public Links",
+            "description": "Canonical public URLs for docs, MCP, and hosted API endpoints.",
+            "mimeType": "text/markdown",
+            "annotations": {"readOnlyHint": True},
+        },
+    ]
+
+
+def _read_resource(uri: str) -> dict[str, Any] | None:
+    app_url = _public_app_url()
+    site_url = _public_site_url()
+    if uri == "daedalmap://guide":
+        return _resource_text_result(
+            uri,
+            json.dumps(
+                {
+                    "guide_url": f"{app_url}/api/v1/guide",
+                    "catalog_url": f"{app_url}/api/v1/catalog",
+                    "packs_url_template": f"{app_url}/api/v1/packs/{{pack_id}}",
+                    "query_url": f"{app_url}/api/v1/query/dataset",
+                    "mcp_url": f"{app_url}/mcp",
+                    "docs_url": f"{site_url}/docs/for-agents",
+                    "current_access_model": {
+                        "currency": "free",
+                        "volcanoes": "free",
+                        "earthquakes": "paid_x402_base_usdc",
+                        "tsunamis": "paid_x402_base_usdc",
+                    },
+                },
+                indent=2,
+            ),
+            mime_type="application/json",
+        )
+    if uri == "daedalmap://catalog":
+        payload = load_api_catalog() or {"packs": []}
+        return _resource_text_result(uri, json.dumps(payload, ensure_ascii=False, indent=2), mime_type="application/json")
+    if uri.startswith("daedalmap://pack/"):
+        pack_id = uri.rsplit("/", 1)[-1].strip()
+        payload = load_api_pack_detail(pack_id)
+        if not payload:
+            payload = {"error": "Pack not found", "pack_id": pack_id}
+        return _resource_text_result(uri, json.dumps(payload, ensure_ascii=False, indent=2), mime_type="application/json")
+    if uri == "daedalmap://docs/for-agents":
+        return _resource_text_result(
+            uri,
+            (
+                "# For Agents\n\n"
+                "Use the hosted discovery lane first.\n\n"
+                f"- Catalog: {app_url}/api/v1/catalog\n"
+                f"- Pack detail: {app_url}/api/v1/packs/{{pack_id}}\n"
+                f"- MCP: {app_url}/mcp\n"
+                f"- Full docs: {site_url}/docs/for-agents\n\n"
+                "Current live hosted packs:\n"
+                "- currency: free\n"
+                "- volcanoes: free\n"
+                "- earthquakes: paid via x402 on Base USDC\n"
+                "- tsunamis: paid via x402 on Base USDC\n"
+            ),
+        )
+    if uri == "daedalmap://docs/agent-examples":
+        return _resource_text_result(
+            uri,
+            (
+                "# Agent Examples\n\n"
+                f"Canonical examples live at {site_url}/docs/agent-examples.\n\n"
+                "Question shapes supported today include:\n"
+                "- largest earthquake in a time range\n"
+                "- count of earthquakes above a threshold in a location and time range\n"
+                "- largest volcanic event in a time range\n"
+                "- count of tsunamis above a water-height threshold in a location and time range\n"
+                "- historical FX rates for one or more countries at daily, weekly, or monthly granularity\n"
+            ),
+        )
+    if uri == "daedalmap://docs/loc-id":
+        return _resource_text_result(
+            uri,
+            (
+                "# loc_id Guide\n\n"
+                f"Read the full guide at {site_url}/docs/loc-id.\n\n"
+                "loc_id is the shared geographic key used across packs. Country and hierarchical regional ids are common, "
+                "but tsunami examples can also use ocean-region ids such as XOO."
+            ),
+        )
+    if uri == "daedalmap://access":
+        return _resource_text_result(
+            uri,
+            (
+                "# Access Model\n\n"
+                "Live hosted pack access split:\n"
+                "- currency: free\n"
+                "- volcanoes: free\n"
+                "- earthquakes: paid via x402 on Base mainnet USDC\n"
+                "- tsunamis: paid via x402 on Base mainnet USDC\n\n"
+                "Discovery endpoints are always free:\n"
+                f"- {app_url}/api/v1/guide\n"
+                f"- {app_url}/api/v1/catalog\n"
+                f"- {app_url}/api/v1/packs/{{pack_id}}\n"
+            ),
+        )
+    if uri == "daedalmap://links":
+        return _resource_text_result(
+            uri,
+            (
+                "# Canonical Public Links\n\n"
+                f"- Site docs index: {site_url}/docs\n"
+                f"- For Agents: {site_url}/docs/for-agents\n"
+                f"- Agent Examples: {site_url}/docs/agent-examples\n"
+                f"- loc_id Guide: {site_url}/docs/loc-id\n"
+                f"- MCP endpoint: {app_url}/mcp\n"
+                f"- Guide endpoint: {app_url}/api/v1/guide\n"
+                f"- Catalog endpoint: {app_url}/api/v1/catalog\n"
+            ),
+        )
+    return None
 
 
 def _build_named_dataset_payload(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -294,6 +514,7 @@ async def mcp_endpoint(request: Request):
                 "protocolVersion": negotiated,
                 "capabilities": {
                     "tools": {"listChanged": False},
+                    "resources": {"listChanged": False},
                 },
                 "serverInfo": SERVER_INFO,
                 "instructions": (
@@ -317,6 +538,18 @@ async def mcp_endpoint(request: Request):
 
     if method == "tools/list":
         return _jsonrpc_response({"tools": _tool_definitions()}, request_id)
+
+    if method == "resources/list":
+        return _jsonrpc_response({"resources": _resource_definitions()}, request_id)
+
+    if method == "resources/read":
+        uri = str(params.get("uri") or "").strip()
+        if not uri:
+            return _jsonrpc_error(request_id, -32602, "Resource uri is required")
+        payload = _read_resource(uri)
+        if not payload:
+            return _jsonrpc_error(request_id, -32602, f"Resource '{uri}' not found")
+        return _jsonrpc_response(payload, request_id)
 
     if method != "tools/call":
         return _jsonrpc_error(request_id, -32601, f"Method '{method}' not found")

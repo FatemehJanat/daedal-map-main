@@ -791,7 +791,7 @@ def _build_mcp_server_json_payload() -> dict:
         "websiteUrl": _public_site_url(),
         "remotes": [
             {
-                "transportType": "streamable-http",
+                "type": "streamable-http",
                 "url": f"{app_url}/mcp",
             }
         ],
