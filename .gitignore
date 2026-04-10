@@ -83,3 +83,8 @@ Thumbs.db
 # -----------------------------------------------------------------------------
 .claude/settings.local.json
 CLAUDE.md
+mcp-registry-ed25519.pem
+mcp-registry-ed25519.der
+mcp-registry-ed25519-public.der
+mcp-publisher.exe
+mcp-publisher.tar.gz

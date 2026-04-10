@@ -775,17 +775,16 @@ def _build_apis_json_payload() -> dict:
 def _build_mcp_server_json_payload() -> dict:
     app_url = _public_app_url()
     return {
-        "$schema": "https://static.modelcontextprotocol.io/schemas/2025-10-17/server.schema.json",
+        "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
         "name": "com.daedalmap/county-map",
         "title": "DaedalMap Geographic Data Intelligence",
         "description": (
-            "Agent-ready geographic data intelligence. Curated historical datasets for earthquakes, "
-            "volcanic activity, tsunamis, and FX rates across 190+ countries. Structured deterministic "
-            "queries with mixed free and x402-paid access on Base USDC."
+            "Hosted geographic data MCP server for disasters and FX with mixed free and "
+            "x402-paid access."
         ),
         "version": "1.0.0",
         "repository": {
-            "url": "https://github.com/xyver/county-map",
+            "url": "https://github.com/xyver/daedal-map",
             "source": "github",
         },
         "websiteUrl": _public_site_url(),
