@@ -77,8 +77,10 @@ def _classify_route_surface(path: str) -> str:
     path = str(path or "").strip()
     if path == "/api/v1/query/dataset":
         return "agent_api_paid"
-    if path == "/mcp":
+    if path == "/mcp" or path.startswith("/mcp/"):
         return "agent_api_mcp"
+    if path == "/apis.json" or path.startswith("/.well-known/mcp/"):
+        return "agent_api_discovery"
     if path == "/api/v1/guide" or path == "/api/v1/catalog" or path.startswith("/api/v1/packs/"):
         return "agent_api_discovery"
     if path.startswith("/api/catalog/packs"):

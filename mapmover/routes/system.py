@@ -626,20 +626,28 @@ def _pack_is_paid(pack_id: str | None) -> bool:
     return str(pack_id or "").strip() in {"earthquakes", "tsunamis"}
 
 
-def _build_mcp_server_card_payload() -> dict:
-    from mapmover.routes.mcp import SERVER_INFO
+def _normalize_mcp_facade_pack_id(pack_id: str | None) -> str | None:
+    from mapmover.routes.mcp import _normalize_pack_id
+
+    return _normalize_pack_id(pack_id)
+
+
+def _mcp_remote_path(pack_id: str | None = None) -> str:
+    normalized = _normalize_mcp_facade_pack_id(pack_id)
+    return f"/mcp/{normalized}" if normalized else "/mcp"
+
+
+def _build_mcp_server_card_payload(pack_id: str | None = None) -> dict:
+    from mapmover.routes.mcp import get_server_description, get_server_info
 
     app_url = _public_app_url()
     pack_ids = _current_agent_pack_ids()
+    normalized = _normalize_mcp_facade_pack_id(pack_id)
 
     return {
         "serverInfo": {
-            **SERVER_INFO,
-            "description": (
-                "Agent-ready geographic data intelligence. Curated historical datasets for "
-                "earthquakes, volcanic activity, tsunamis, and FX rates. Structured deterministic "
-                "queries with mixed free and x402-paid access on Base USDC. Free catalog discovery."
-            ),
+            **get_server_info(normalized),
+            "description": get_server_description(normalized),
         },
         "websiteUrl": _public_site_url(),
         "documentationUrl": _docs_url("/docs/for-agents"),
@@ -772,17 +780,18 @@ def _build_apis_json_payload() -> dict:
     }
 
 
-def _build_mcp_server_json_payload() -> dict:
+def _build_mcp_server_json_payload(pack_id: str | None = None) -> dict:
+    from mapmover.routes.mcp import get_server_description, get_server_info
+
     app_url = _public_app_url()
+    normalized = _normalize_mcp_facade_pack_id(pack_id)
+    server_info = get_server_info(normalized)
     return {
         "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-        "name": "com.daedalmap/county-map",
-        "title": "DaedalMap Disaster and Geospatial Data",
-        "description": (
-            "Geospatial MCP server for earthquake, tsunami, volcano, disaster, and FX "
-            "data queries."
-        ),
-        "version": "1.0.1",
+        "name": server_info["name"],
+        "title": server_info["title"],
+        "description": get_server_description(normalized),
+        "version": server_info["version"],
         "repository": {
             "url": "https://github.com/xyver/daedal-map",
             "source": "github",
@@ -791,7 +800,7 @@ def _build_mcp_server_json_payload() -> dict:
         "remotes": [
             {
                 "type": "streamable-http",
-                "url": f"{app_url}/mcp",
+                "url": f"{app_url}{_mcp_remote_path(normalized)}",
             }
         ],
         "_meta": {
@@ -1253,6 +1262,16 @@ async def get_mcp_server_card():
     return response
 
 
+@router.get("/.well-known/mcp/{pack_id}/server-card.json")
+async def get_pack_mcp_server_card(pack_id: str):
+    normalized = _normalize_mcp_facade_pack_id(pack_id)
+    if not normalized:
+        return JSONResponse({"error": "Pack MCP facade not found"}, status_code=404)
+    response = JSONResponse(_build_mcp_server_card_payload(normalized))
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @router.get("/apis.json")
 async def get_apis_json():
     response = JSONResponse(_build_apis_json_payload())
@@ -1263,6 +1282,16 @@ async def get_apis_json():
 @router.get("/mcp/server.json")
 async def get_mcp_server_json():
     response = JSONResponse(_build_mcp_server_json_payload())
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@router.get("/mcp/{pack_id}/server.json")
+async def get_pack_mcp_server_json(pack_id: str):
+    normalized = _normalize_mcp_facade_pack_id(pack_id)
+    if not normalized:
+        return JSONResponse({"error": "Pack MCP facade not found"}, status_code=404)
+    response = JSONResponse(_build_mcp_server_json_payload(normalized))
     response.headers["Cache-Control"] = "no-store"
     return response
 

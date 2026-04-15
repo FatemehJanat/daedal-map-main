@@ -21,6 +21,52 @@ SERVER_INFO = {
     "title": "DaedalMap Disaster and Geospatial Data",
     "version": "1.0.1",
 }
+PACK_SERVER_PROFILES = {
+    "currency": {
+        "name": "com.daedalmap/currency",
+        "title": "DaedalMap Historical FX Rates",
+        "description": "Historical foreign exchange rates and currency comparisons from the DaedalMap MCP lane.",
+    },
+    "earthquakes": {
+        "name": "com.daedalmap/earthquakes",
+        "title": "DaedalMap Earthquake Data",
+        "description": "Historical earthquake event data and structured earthquake queries from the DaedalMap MCP lane.",
+    },
+    "tsunamis": {
+        "name": "com.daedalmap/tsunamis",
+        "title": "DaedalMap Tsunami Data",
+        "description": "Historical tsunami event data and structured tsunami queries from the DaedalMap MCP lane.",
+    },
+    "volcanoes": {
+        "name": "com.daedalmap/volcanoes",
+        "title": "DaedalMap Volcanic Activity",
+        "description": "Historical volcanic eruption records and volcanic activity queries from the DaedalMap MCP lane.",
+    },
+}
+
+
+def _normalize_pack_id(pack_id: str | None) -> str | None:
+    normalized = str(pack_id or "").strip().lower()
+    return normalized if normalized in PACK_SERVER_PROFILES else None
+
+
+def get_server_info(pack_id: str | None = None) -> dict[str, Any]:
+    normalized = _normalize_pack_id(pack_id)
+    if not normalized:
+        return dict(SERVER_INFO)
+    profile = PACK_SERVER_PROFILES[normalized]
+    return {
+        "name": profile["name"],
+        "title": profile["title"],
+        "version": SERVER_INFO["version"],
+    }
+
+
+def get_server_description(pack_id: str | None = None) -> str:
+    normalized = _normalize_pack_id(pack_id)
+    if not normalized:
+        return "Geospatial MCP server for earthquake, tsunami, volcano, disaster, and FX data queries."
+    return PACK_SERVER_PROFILES[normalized]["description"]
 
 
 def _public_app_url() -> str:
@@ -600,10 +646,14 @@ async def _execute_paid_tool(request: Request, tool_name: str, arguments: dict[s
 
 
 @router.get("/mcp")
-async def mcp_endpoint_info():
+@router.get("/mcp/{pack_id}")
+async def mcp_endpoint_info(pack_id: str | None = None):
+    normalized_pack_id = _normalize_pack_id(pack_id)
+    if pack_id and not normalized_pack_id:
+        return JSONResponse({"error": "Pack MCP facade not found"}, status_code=404)
     response = JSONResponse(
         {
-            "serverInfo": SERVER_INFO,
+            "serverInfo": get_server_info(normalized_pack_id),
             "protocolVersion": MCP_PROTOCOL_VERSION,
             "transport": "streamable-http",
             "tools": [tool["name"] for tool in _tool_definitions()],
@@ -615,7 +665,11 @@ async def mcp_endpoint_info():
 
 
 @router.post("/mcp")
-async def mcp_endpoint(request: Request):
+@router.post("/mcp/{pack_id}")
+async def mcp_endpoint(request: Request, pack_id: str | None = None):
+    normalized_pack_id = _normalize_pack_id(pack_id)
+    if pack_id and not normalized_pack_id:
+        return JSONResponse({"error": "Pack MCP facade not found"}, status_code=404)
     if not _mcp_origin_allowed(request):
         return JSONResponse({"error": "Origin not allowed"}, status_code=403)
 
@@ -654,7 +708,7 @@ async def mcp_endpoint(request: Request):
                     "resources": {"listChanged": False},
                     "prompts": {"listChanged": False},
                 },
-                "serverInfo": SERVER_INFO,
+                "serverInfo": get_server_info(normalized_pack_id),
                 "instructions": (
                     "Use tools/list, resources/list, and prompts/list to discover available capabilities. Free discovery tools require no payment. "
                     "Paid tools can return HTTP 402 with x402 challenge headers when payment is required."
