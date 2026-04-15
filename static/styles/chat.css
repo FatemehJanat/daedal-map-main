@@ -318,6 +318,85 @@ body.mobile-limited #mobileMapNotice {
   display: flex;
 }
 
+.address-prompt-card {
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(123, 231, 255, 0.22);
+  background: rgba(10, 27, 42, 0.88);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.address-prompt-label {
+  display: block;
+  margin-bottom: 8px;
+  color: #d8f5ff;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.address-prompt-input {
+  width: 100%;
+  padding: 11px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(123, 231, 255, 0.2);
+  background: rgba(5, 15, 24, 0.92);
+  color: #eef7fb;
+  font: inherit;
+}
+
+.address-prompt-input:focus {
+  outline: none;
+  border-color: rgba(123, 231, 255, 0.52);
+  box-shadow: 0 0 0 3px rgba(123, 231, 255, 0.12);
+}
+
+.address-prompt-status {
+  margin-top: 8px;
+  color: #a8c8d8;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.address-prompt-details {
+  margin-top: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.address-prompt-detail-row {
+  color: #e5f1f7;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.address-prompt-detail-row--match {
+  color: #ffd89d;
+  font-weight: 600;
+}
+
+.address-map-marker {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 0 0 8px rgba(255, 157, 66, 0.15);
+}
+
+.address-map-marker__dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: #ff9d42;
+  border: 2px solid #fff3de;
+  box-shadow: 0 0 18px rgba(255, 157, 66, 0.55);
+}
+
 /* ==========================================================================
    HUD Sidebar Overrides
    Keep the map field visible through the sidebar chrome so it feels like one

@@ -240,6 +240,9 @@ export const ChatManager = {
   sessionId: null,
   elements: {},
   lastDisambiguationOptions: null,
+  addressContext: null,
+  addressMarker: null,
+  googleMapsLoader: null,
 
   /**
    * Initialize chat manager
@@ -1029,6 +1032,10 @@ export const ChatManager = {
         break;
       }
 
+      case 'address_prompt':
+        this.showAddressPrompt(response);
+        break;
+
       case 'save_order':
         if (response.name) {
           const saved = SavedOrders.save(
@@ -1111,6 +1118,264 @@ export const ChatManager = {
         }
         break;
     }
+  },
+
+  async showAddressPrompt(response) {
+    const message = response.message || 'Start typing an address and choose a suggestion.';
+    const msgEl = this.addMessage(message, 'assistant');
+    const card = document.createElement('div');
+    card.className = 'address-prompt-card';
+
+    const label = document.createElement('label');
+    label.className = 'address-prompt-label';
+    label.textContent = 'Address search';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'address-prompt-input';
+    input.placeholder = response.placeholder || 'Search for an address...';
+    input.autocomplete = 'street-address';
+
+    const status = document.createElement('div');
+    status.className = 'address-prompt-status';
+    status.textContent = 'Loading address search...';
+
+    const details = document.createElement('div');
+    details.className = 'address-prompt-details';
+    details.hidden = true;
+
+    card.appendChild(label);
+    card.appendChild(input);
+    card.appendChild(status);
+    card.appendChild(details);
+    msgEl.appendChild(card);
+
+    try {
+      await this.ensureGoogleMapsPlaces();
+      this.attachAddressAutocomplete(input, status, details);
+      status.textContent = 'Start typing and choose a suggested address.';
+      input.focus();
+    } catch (error) {
+      console.warn('Address autocomplete unavailable:', error);
+      status.textContent = 'Address autocomplete is not configured yet. Add a Google Maps API key to enable it.';
+    }
+  },
+
+  async ensureGoogleMapsPlaces() {
+    if (window.google?.maps?.places?.Autocomplete) {
+      return window.google;
+    }
+    if (this.googleMapsLoader) {
+      return this.googleMapsLoader;
+    }
+
+    this.googleMapsLoader = (async () => {
+      const response = await fetch('/api/config/maps-key', {
+        headers: { Accept: 'application/json' }
+      });
+      if (!response.ok) {
+        throw new Error(`maps_key_request_failed_${response.status}`);
+      }
+      const { key } = await response.json();
+      const trimmedKey = (key || '').trim();
+      if (!trimmedKey || trimmedKey.includes('your_google_maps_api_key_here')) {
+        throw new Error('maps_key_missing');
+      }
+
+      await new Promise((resolve, reject) => {
+        const existing = document.querySelector('script[data-google-maps-places="true"]');
+        if (existing) {
+          existing.addEventListener('load', () => resolve(), { once: true });
+          existing.addEventListener('error', () => reject(new Error('maps_script_failed')), { once: true });
+          return;
+        }
+
+        const script = document.createElement('script');
+        script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(trimmedKey)}&libraries=places`;
+        script.async = true;
+        script.defer = true;
+        script.dataset.googleMapsPlaces = 'true';
+        script.onload = () => resolve();
+        script.onerror = () => reject(new Error('maps_script_failed'));
+        document.head.appendChild(script);
+      });
+
+      if (!window.google?.maps?.places?.Autocomplete) {
+        throw new Error('maps_places_unavailable');
+      }
+
+      return window.google;
+    })();
+
+    try {
+      return await this.googleMapsLoader;
+    } catch (error) {
+      this.googleMapsLoader = null;
+      throw error;
+    }
+  },
+
+  attachAddressAutocomplete(input, status, details) {
+    const autocomplete = new window.google.maps.places.Autocomplete(input, {
+      types: ['address'],
+      fields: ['address_components', 'formatted_address', 'geometry', 'place_id']
+    });
+
+    autocomplete.addListener('place_changed', async () => {
+      const place = autocomplete.getPlace();
+      const geometry = place?.geometry?.location;
+      if (!geometry) {
+        status.textContent = 'That suggestion did not include coordinates. Please choose another result.';
+        details.hidden = true;
+        return;
+      }
+
+      const parsed = this.parseGoogleAddress(place);
+      this.addressContext = parsed;
+      status.textContent = 'Address captured. Resolving the containing map region...';
+      details.hidden = false;
+      details.innerHTML = '';
+
+      const lines = [
+        parsed.formatted_address,
+        `Lat/Lng: ${parsed.lat.toFixed(6)}, ${parsed.lng.toFixed(6)}`,
+        parsed.county ? `County: ${parsed.county}` : null,
+        parsed.locality ? `City: ${parsed.locality}` : null,
+        parsed.admin_area_1 ? `State/Province: ${parsed.admin_area_1}` : null,
+        parsed.postal_code ? `Postal code: ${parsed.postal_code}` : null,
+        parsed.country ? `Country: ${parsed.country}` : null,
+      ].filter(Boolean);
+
+      for (const line of lines) {
+        const row = document.createElement('div');
+        row.className = 'address-prompt-detail-row';
+        row.textContent = line;
+        details.appendChild(row);
+      }
+
+      await this.resolveAddressSelection(parsed, status, details);
+    });
+  },
+
+  async resolveAddressSelection(parsed, status, details) {
+    try {
+      const resolution = await postMsgpack('/geometry/resolve-point', {
+        lon: parsed.lng,
+        lat: parsed.lat
+      });
+      this.addressContext = {
+        ...parsed,
+        resolved_loc_id: resolution?.matched?.loc_id || null,
+        resolved_name: resolution?.matched?.name || null,
+        resolved_admin_level: resolution?.matched?.admin_level ?? null,
+        resolution_stack: resolution?.stack || []
+      };
+
+      if (!resolution?.matched?.loc_id || !resolution?.geojson?.features?.length) {
+        status.textContent = 'Address captured, but I could not match a containing loc_id shape yet.';
+        return;
+      }
+
+      this.showResolvedAddressOnMap(parsed, resolution);
+      status.textContent = `Address matched to ${resolution.matched.name} (${resolution.matched.loc_id}).`;
+
+      const matchLines = [
+        `Matched loc_id: ${resolution.matched.loc_id}`,
+        `Matched level: admin_${resolution.matched.admin_level}`,
+      ];
+      for (const line of matchLines) {
+        const row = document.createElement('div');
+        row.className = 'address-prompt-detail-row address-prompt-detail-row--match';
+        row.textContent = line;
+        details.appendChild(row);
+      }
+    } catch (error) {
+      console.error('Address resolution failed:', error);
+      status.textContent = 'Address captured, but the loc_id highlight lookup failed.';
+    }
+  },
+
+  showResolvedAddressOnMap(parsed, resolution) {
+    if (!MapAdapter?.map) return;
+
+    const matched = resolution.matched || {};
+    const location = {
+      loc_id: matched.loc_id,
+      matched_term: matched.name || matched.loc_id,
+      country_name: matched.country_name || matched.iso3 || '',
+      iso3: matched.iso3 || '',
+      admin_level: matched.admin_level
+    };
+
+    App?.displayNavigationLocations(resolution.geojson, [location]);
+    this.placeAddressMarker(parsed.lng, parsed.lat);
+
+    const feature = resolution.geojson?.features?.[0];
+    const props = feature?.properties || {};
+    if (
+      props.bbox_min_lon !== undefined &&
+      props.bbox_max_lon !== undefined &&
+      props.bbox_min_lat !== undefined &&
+      props.bbox_max_lat !== undefined
+    ) {
+      MapAdapter.map.fitBounds(
+        [
+          [props.bbox_min_lon, props.bbox_min_lat],
+          [props.bbox_max_lon, props.bbox_max_lat]
+        ],
+        { padding: 60, duration: 1200, maxZoom: 16 }
+      );
+    } else {
+      MapAdapter.map.flyTo({
+        center: [parsed.lng, parsed.lat],
+        zoom: Math.max(MapAdapter.map.getZoom(), 15),
+        duration: 1200
+      });
+    }
+  },
+
+  placeAddressMarker(lng, lat) {
+    if (!MapAdapter?.map || typeof maplibregl === 'undefined') return;
+    if (this.addressMarker) {
+      this.addressMarker.remove();
+      this.addressMarker = null;
+    }
+
+    const el = document.createElement('div');
+    el.className = 'address-map-marker';
+    el.innerHTML = '<span class="address-map-marker__dot"></span>';
+
+    this.addressMarker = new maplibregl.Marker({ element: el, anchor: 'center' })
+      .setLngLat([lng, lat])
+      .addTo(MapAdapter.map);
+  },
+
+  parseGoogleAddress(place) {
+    const components = place.address_components || [];
+    const byType = (type) => {
+      const component = components.find(entry => entry.types?.includes(type));
+      return component?.long_name || '';
+    };
+    const byTypeShort = (type) => {
+      const component = components.find(entry => entry.types?.includes(type));
+      return component?.short_name || '';
+    };
+
+    return {
+      formatted_address: place.formatted_address || '',
+      place_id: place.place_id || '',
+      lat: place.geometry.location.lat(),
+      lng: place.geometry.location.lng(),
+      street_number: byType('street_number'),
+      route: byType('route'),
+      locality: byType('locality') || byType('postal_town') || byType('sublocality'),
+      county: byType('administrative_area_level_2'),
+      admin_area_1: byType('administrative_area_level_1'),
+      admin_area_1_code: byTypeShort('administrative_area_level_1'),
+      postal_code: byType('postal_code'),
+      country: byType('country'),
+      country_code: byTypeShort('country')
+    };
   },
 
   /**
@@ -1311,6 +1576,7 @@ export const ChatManager = {
       timeState: this.getTimeState(),
       savedOrderNames: SavedOrders.getNames(),
       loadedData: getLoadedDataList(),  // Track what data is loaded for LLM context
+      selectedAddress: this.addressContext,
       tutorialMode: { enabled: TutorialMode.enabled },
       ...extraOptions
     };
