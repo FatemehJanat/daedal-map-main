@@ -239,13 +239,13 @@ def _tool_definitions() -> list[dict[str, Any]]:
         {
             "name": "get_fx_rates",
             "title": "Get FX Rates",
-            "description": "Free tool. Queries the currency pack and routes by filters.time.granularity to daily, weekly, or monthly FX data.",
+            "description": "Free tool. Queries the currency pack using filters.region_ids plus filters.time.granularity to return daily, weekly, or monthly FX data.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing and idempotency."},
                     "metrics": {"type": "array", "items": {"type": "string"}, "description": "Optional metric ids. Defaults to 'local_per_usd' for FX rate queries."},
-                    "filters": {"type": "object", "description": "Structured filters including currencies, time range, and granularity."},
+                    "filters": {"type": "object", "description": "Structured filters including region_ids with loc_id country codes, time range, and granularity."},
                     "sort": {"anyOf": [{"type": "array"}, {"type": "object"}], "description": "Optional sort instructions for row-returning queries."},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "description": "Maximum number of rows to return for the requested granularity and time span."},
                     "output": {"type": "object", "description": "Optional output controls such as response format hints."},
