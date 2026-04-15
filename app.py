@@ -351,22 +351,47 @@ async def robots_txt():
 async def llms_txt():
     content = (
         "# DaedalMap App\n\n"
-        "DaedalMap is an open geographic query engine. This is the hosted app at app.daedalmap.com.\n\n"
-        "## What it does\n"
-        "- Accepts plain language questions about places, regions, and geographic events\n"
-        "- Returns answers as interactive maps without requiring GIS expertise\n"
-        "- Covers disasters, demographics, economics, climate, and risk data in one interface\n"
-        "- Supports guest use without login and logged-in workspace persistence\n\n"
-        "## Key links\n"
-        "- App: https://app.daedalmap.com\n"
+        "This host is the human-facing app at app.daedalmap.com.\n"
+        "If you are an agent, crawler, or developer bot, use the MCP server or agent docs instead of the app UI.\n\n"
+        "## MCP first\n"
+        "- Remote MCP server: https://app.daedalmap.com/mcp\n"
+        "- MCP server metadata: https://app.daedalmap.com/mcp/server.json\n"
+        "- Registry identity: com.daedalmap/county-map\n"
+        "- Current transport: streamable HTTP\n"
+        "- MCP wraps the same discovery and execution lane as the hosted API\n\n"
+        "## Agent lane\n"
+        "- Start here for docs: https://daedalmap.com/docs/for-agents\n"
+        "- Agent examples: https://daedalmap.com/docs/agent-examples\n"
+        "- loc_id guide: https://daedalmap.com/docs/loc-id\n"
+        "- Full machine-readable guide: https://daedalmap.com/llms-full.txt\n\n"
+        "## Live machine-facing endpoints\n"
+        "- GET https://app.daedalmap.com/mcp/server.json\n"
+        "- GET https://app.daedalmap.com/mcp\n"
+        "- POST https://app.daedalmap.com/mcp\n"
+        "- GET https://app.daedalmap.com/api/v1/guide\n"
+        "- GET https://app.daedalmap.com/api/v1/catalog\n"
+        "- GET https://app.daedalmap.com/api/v1/packs/{pack_id}\n"
+        "- POST https://app.daedalmap.com/api/v1/query/dataset\n\n"
+        "## Current hosted packs\n"
+        "- currency\n"
+        "- earthquakes\n"
+        "- volcanoes\n"
+        "- tsunamis\n\n"
+        "## App UI\n"
+        "- Human-facing app: https://app.daedalmap.com\n"
         "- Website and docs: https://daedalmap.com\n"
         "- Source coverage: https://daedalmap.com/docs/source-map\n"
         "- Data packs: https://daedalmap.com/packs\n"
         "- GitHub (open runtime): https://github.com/xyver/daedal-map\n\n"
         "## Crawlers and bots\n"
-        "This site explicitly welcomes all crawlers, AI training scrapers, and indexing bots.\n"
+        "This site explicitly welcomes crawlers and indexing bots, but the machine-facing path is the MCP server and agent API lane above.\n"
     )
     return PlainTextResponse(content)
+
+
+@app.get("/api/config/maps-key", include_in_schema=False)
+async def maps_key_config():
+    return JSONResponse({"key": os.getenv("GOOGLE_MAPS_API_KEY", "").strip()})
 
 
 @app.get("/security.txt", include_in_schema=False)
