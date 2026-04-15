@@ -730,6 +730,181 @@ def get_countries_in_bbox(min_lon: float, min_lat: float, max_lon: float, max_la
     return result
 
 
+def _filter_df_for_point(df, lon: float, lat: float):
+    """Filter candidate rows that could contain a point using bbox columns."""
+    if df is None or len(df) == 0:
+        return pd.DataFrame()
+
+    result = df
+    if all(col in result.columns for col in ("bbox_min_lon", "bbox_max_lon", "bbox_min_lat", "bbox_max_lat")):
+        result = result[
+            (result["bbox_max_lon"] >= lon) &
+            (result["bbox_min_lon"] <= lon) &
+            (result["bbox_max_lat"] >= lat) &
+            (result["bbox_min_lat"] <= lat)
+        ]
+    return result
+
+
+def _find_containing_row(df, lon: float, lat: float):
+    """Return the first candidate row whose polygon covers the point."""
+    if df is None or len(df) == 0:
+        return None
+
+    try:
+        from shapely.geometry import Point, shape
+    except Exception:
+        logger.warning("shapely not available for point resolution")
+        return None
+
+    point = Point(float(lon), float(lat))
+    candidates = _filter_df_for_point(df, lon, lat)
+    if candidates.empty:
+        return None
+
+    if "admin_level" in candidates.columns:
+        candidates = candidates.sort_values(["admin_level"], ascending=[False])
+
+    for _, row in candidates.iterrows():
+        geom_value = row.get("geometry")
+        if not geom_value:
+            continue
+        try:
+            geometry = fast_json_loads(geom_value) if isinstance(geom_value, str) else geom_value
+            if not geometry or geometry.get("type") == "Point":
+                continue
+            if shape(geometry).covers(point):
+                return row
+        except Exception:
+            continue
+    return None
+
+
+def _resolve_deepest_point_match(iso3: str, lon: float, lat: float, admin1_row=None, admin2_row=None):
+    """Attempt admin_3+ point resolution where country-specific deep geometry exists."""
+    crosswalk = _load_crosswalk(iso3) or {}
+    sub_admin_levels = crosswalk.get("sub_admin_levels", {})
+    if not sub_admin_levels:
+        return None
+
+    deep_levels = []
+    for key in sub_admin_levels.keys():
+        if not key.startswith("admin_"):
+            continue
+        try:
+            level_value = int(key.split("_", 1)[1])
+        except ValueError:
+            continue
+        if level_value >= 3:
+            deep_levels.append(level_value)
+    deep_levels.sort()
+    if not deep_levels:
+        return None
+
+    admin1_local = translate_geometry_id_to_local_id(admin1_row.get("loc_id")) if admin1_row is not None else None
+    admin2_local = translate_geometry_id_to_local_id(admin2_row.get("loc_id")) if admin2_row is not None else None
+
+    state_abbrev = None
+    if isinstance(admin1_local, str):
+        parts = admin1_local.split("-")
+        if len(parts) >= 2:
+            state_abbrev = parts[1]
+
+    deepest_match = None
+    parent_scope = admin2_local or admin1_local
+
+    for admin_level in deep_levels:
+        df = load_subcounty_geometry(iso3, admin_level=admin_level, state_abbrev=state_abbrev)
+        if df is None or df.empty:
+            continue
+
+        candidates = _filter_df_for_point(df, lon, lat)
+        if candidates.empty:
+            continue
+
+        if parent_scope and "parent_id" in candidates.columns:
+            parent_mask = (
+                (candidates["parent_id"] == parent_scope) |
+                candidates["parent_id"].astype(str).str.startswith(parent_scope + "-", na=False)
+            )
+            scoped = candidates[parent_mask]
+            if not scoped.empty:
+                candidates = scoped
+
+        match_row = _find_containing_row(candidates, lon, lat)
+        if match_row is not None:
+            deepest_match = match_row
+            parent_scope = canonicalize_loc_id(match_row.get("loc_id"))
+
+    return deepest_match
+
+
+def resolve_point_to_location(lon: float, lat: float):
+    """Resolve a point to the deepest available location and return highlight geometry."""
+    lon = float(lon)
+    lat = float(lat)
+
+    country_df = load_global_countries()
+    if country_df is None or country_df.empty:
+        return {"error": "No global geometry available"}
+
+    country_match = _find_containing_row(country_df, lon, lat)
+    if country_match is None:
+        return {"error": "No containing country found", "point": {"lon": lon, "lat": lat}}
+
+    iso3 = country_match.get("loc_id")
+    country_name = country_match.get("name") or iso3
+
+    admin1_df = load_country_parquet_viewport(iso3, 1, (lon, lat, lon, lat))
+    if admin1_df is None or admin1_df.empty:
+        admin1_df = load_country_parquet(iso3, admin_level=1)
+    admin1_match = _find_containing_row(admin1_df, lon, lat)
+
+    admin2_df = load_country_parquet_viewport(iso3, 2, (lon, lat, lon, lat))
+    if admin2_df is None or admin2_df.empty:
+        admin2_df = load_country_parquet(iso3, admin_level=2)
+    admin2_match = _find_containing_row(admin2_df, lon, lat)
+
+    deepest_row = admin2_match or admin1_match or country_match
+    deep_match = _resolve_deepest_point_match(iso3, lon, lat, admin1_row=admin1_match, admin2_row=admin2_match)
+    if deep_match is not None:
+        deepest_row = deep_match
+
+    deepest_loc_id = deepest_row.get("loc_id") if deepest_row is not None else iso3
+    deepest_name = deepest_row.get("name") if deepest_row is not None else country_name
+    deepest_level = int(deepest_row.get("admin_level", 0)) if deepest_row is not None else 0
+
+    stack = []
+    for row in (country_match, admin1_match, admin2_match):
+        if row is None:
+            continue
+        stack.append({
+            "loc_id": row.get("loc_id"),
+            "name": row.get("name"),
+            "admin_level": int(row.get("admin_level", 0)),
+        })
+    if deepest_level >= 3 and deepest_row is not None:
+        stack.append({
+            "loc_id": deepest_loc_id,
+            "name": deepest_name,
+            "admin_level": deepest_level,
+        })
+
+    return {
+        "point": {"lon": lon, "lat": lat},
+        "country": {"loc_id": iso3, "name": country_name},
+        "matched": {
+            "loc_id": deepest_loc_id,
+            "name": deepest_name,
+            "admin_level": deepest_level,
+            "country_name": country_name,
+            "iso3": iso3,
+        },
+        "stack": stack,
+        "geojson": get_selection_geometries([deepest_loc_id]),
+    }
+
+
 def calculate_coverage_from_parquet(iso3: str, from_level: int = 1):
     """
     Calculate coverage stats on-the-fly from actual parquet data.

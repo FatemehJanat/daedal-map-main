@@ -12,6 +12,7 @@ from mapmover.geometry_handlers import (
     get_location_children as get_location_children_handler,
     get_location_info,
     get_location_places as get_location_places_handler,
+    resolve_point_to_location as resolve_point_to_location_handler,
     get_selection_geometries as get_selection_geometries_handler,
     get_viewport_geometry as get_viewport_geometry_handler,
 )
@@ -135,4 +136,23 @@ async def get_selection_geometry_endpoint(req: Request):
         return msgpack_response(result)
     except Exception as e:
         logger.error(f"Error in /geometry/selection: {e}")
+        return msgpack_error(str(e), 500)
+
+
+@router.post("/geometry/resolve-point")
+async def resolve_point_endpoint(req: Request):
+    """Resolve a lon/lat point to the deepest available containing loc_id."""
+    try:
+        body = await decode_request_body(req)
+        lon = body.get("lon")
+        lat = body.get("lat")
+        if lon is None or lat is None:
+            return msgpack_error("lon and lat are required", 400)
+
+        result = resolve_point_to_location_handler(lon, lat)
+        if result.get("error"):
+            return msgpack_response(result, status_code=404)
+        return msgpack_response(result)
+    except Exception as e:
+        logger.error(f"Error in /geometry/resolve-point: {e}")
         return msgpack_error(str(e), 500)

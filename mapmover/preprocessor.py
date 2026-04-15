@@ -604,6 +604,27 @@ def detect_tutorial_mode_intent(query: str) -> Optional[dict]:
     return None
 
 
+def detect_address_prompt_intent(query: str) -> Optional[dict]:
+    """Detect explicit requests to open the address entry UI."""
+    query_lower = (query or "").strip().lower()
+    if not query_lower:
+        return None
+
+    trigger_patterns = [
+        r"\b(add|enter|use|check|view|show|open|start)\s+(an?\s+)?address\b",
+        r"\baddress\s+(lookup|input|entry|search|mode|finder)\b",
+        r"\b(type|search)\s+(for\s+)?an?\s+address\b",
+        r"\bfind\s+an?\s+address\b",
+    ]
+    if any(re.search(pattern, query_lower) for pattern in trigger_patterns):
+        return {
+            "action": "open",
+            "message": "Start typing an address and pick the best match from autocomplete.",
+            "placeholder": "Search for an address...",
+        }
+    return None
+
+
 def detect_navigation_intent(query: str) -> dict:
     """Detect if query is asking to navigate to or view locations."""
     return detect_navigation_intent_impl(query)
@@ -800,6 +821,7 @@ def preprocess_query(query: str, viewport: dict = None, active_overlays: dict = 
         "viewport": viewport,
         "show_borders": show_borders if show_borders.get("is_show_borders") else None,
         "navigation": navigation,
+        "address_prompt": detect_address_prompt_intent(query),
         "topics": extract_topics(query),
         "regions": resolve_regions(query),
         "location": location,
@@ -858,6 +880,9 @@ def preprocess_query(query: str, viewport: dict = None, active_overlays: dict = 
 
     if hints["tutorial_mode"]:
         summary_parts.append(f"TUTORIAL_MODE: {hints['tutorial_mode']['action']}")
+
+    if hints["address_prompt"]:
+        summary_parts.append("ADDRESS_PROMPT: open address entry UI")
 
     if hints["detected_source"]:
         summary_parts.append(f"Source specified: {hints['detected_source']['source_name']}")

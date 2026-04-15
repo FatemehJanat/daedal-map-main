@@ -172,6 +172,15 @@ def _confirmed_order_user_error() -> dict:
     }
 
 
+def _address_prompt_response(prompt: dict | None) -> dict:
+    prompt = prompt or {}
+    return {
+        "type": "address_prompt",
+        "message": prompt.get("message") or "Start typing an address and choose a suggestion.",
+        "placeholder": prompt.get("placeholder") or "Search for an address...",
+    }
+
+
 def _execute_confirmed_order_with_session_cache(cache, confirmed_order: dict, *, force_refetch: bool = False):
     order_str = json.dumps(confirmed_order, sort_keys=True)
     request_key = hashlib.md5(order_str.encode()).hexdigest()[:16]
@@ -474,6 +483,9 @@ async def chat_endpoint(req: Request):
                     "message": message,
                 }
             )
+
+        if hints.get("address_prompt"):
+            return msgpack_response(_address_prompt_response(hints.get("address_prompt")))
 
         if hints.get("show_borders"):
             previous_options = body.get("previous_disambiguation_options", [])
@@ -825,6 +837,10 @@ async def chat_stream_endpoint(req: Request):
                         return
                 result = {"type": "chat", "reply": "I don't have a list of locations to display."}
                 yield f"data: {json.dumps({'stage': 'complete', 'result': result})}\n\n"
+                return
+
+            if hints.get("address_prompt"):
+                yield f"data: {json.dumps({'stage': 'complete', 'result': _address_prompt_response(hints.get('address_prompt'))})}\n\n"
                 return
 
             navigation = hints.get("navigation")
