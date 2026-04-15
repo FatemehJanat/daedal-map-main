@@ -84,6 +84,8 @@ def _should_mirror_route_event_to_supabase(path: str | None) -> bool:
     path = str(path or "").strip()
     if path.startswith("/api/"):
         return True
+    if path == "/mcp" or path.startswith("/mcp/"):
+        return True
     if path in {"/chat", "/chat/stream"}:
         return True
     return False
