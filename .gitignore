@@ -86,5 +86,8 @@ CLAUDE.md
 mcp-registry-ed25519.pem
 mcp-registry-ed25519.der
 mcp-registry-ed25519-public.der
+*.pem
+pub.der
+mcp-registry-auth
 mcp-publisher.exe
 mcp-publisher.tar.gz
