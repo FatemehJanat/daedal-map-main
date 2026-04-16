@@ -637,6 +637,26 @@ def _mcp_remote_path(pack_id: str | None = None) -> str:
     return f"/mcp/{normalized}" if normalized else "/mcp"
 
 
+def _mcp_pricing_payload(pack_id: str | None = None) -> dict:
+    normalized = _normalize_mcp_facade_pack_id(pack_id)
+    if normalized in {"currency", "volcanoes"}:
+        return {
+            "model": "free",
+            "notes": "No payment required for this MCP facade.",
+        }
+    return {
+        "model": "per_row",
+        "base_price_usd": 0.01,
+        "base_rows_included": 100,
+        "per_row_usd": 0.0001,
+        "max_price_usd": 0.50,
+        "currency": "USDC",
+        "network": "Base",
+        "payment_protocol": "x402",
+        "notes": "The 402 challenge returns the exact price before payment.",
+    }
+
+
 def _build_mcp_server_card_payload(pack_id: str | None = None) -> dict:
     from mapmover.routes.mcp import get_server_description, get_server_info
 
@@ -659,17 +679,7 @@ def _build_mcp_server_card_payload(pack_id: str | None = None) -> dict:
                 "tsunamis use x402 on Base mainnet with USDC. Free discovery endpoints require no payment."
             ),
         },
-        "pricing": {
-            "model": "per_row",
-            "base_price_usd": 0.01,
-            "base_rows_included": 100,
-            "per_row_usd": 0.0001,
-            "max_price_usd": 0.50,
-            "currency": "USDC",
-            "network": "Base",
-            "payment_protocol": "x402",
-            "notes": "The 402 challenge returns the exact price before payment.",
-        },
+        "pricing": _mcp_pricing_payload(normalized),
         "tools": [
             {
                 "name": "get_catalog",
@@ -787,17 +797,7 @@ def _build_mcp_server_json_payload(pack_id: str | None = None) -> dict:
     normalized = _normalize_mcp_facade_pack_id(pack_id)
     server_info = get_server_info(normalized)
     publisher_meta = get_server_registry_meta(normalized)
-    if normalized != "currency":
-        publisher_meta["pricing"] = {
-            "model": "per_row",
-            "base_price_usd": 0.01,
-            "base_rows_included": 100,
-            "per_row_usd": 0.0001,
-            "max_price_usd": 0.50,
-            "currency": "USDC",
-            "network": "Base",
-            "payment_protocol": "x402",
-        }
+    publisher_meta["pricing"] = _mcp_pricing_payload(normalized)
     return {
         "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
         "name": server_info["name"],
