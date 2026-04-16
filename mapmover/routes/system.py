@@ -781,31 +781,13 @@ def _build_apis_json_payload() -> dict:
 
 
 def _build_mcp_server_json_payload(pack_id: str | None = None) -> dict:
-    from mapmover.routes.mcp import get_server_description, get_server_info
+    from mapmover.routes.mcp import get_server_description, get_server_info, get_server_registry_meta
 
     app_url = _public_app_url()
     normalized = _normalize_mcp_facade_pack_id(pack_id)
     server_info = get_server_info(normalized)
-    publisher_meta: dict[str, Any] = {
-        "categories": ["geospatial", "hazard", "economics", "data"],
-        "highlights": [
-            "Historical earthquake event data",
-            "Volcanic eruption and VEI records",
-            "Tsunami events with wave height metrics",
-            "Historical FX rates for country-level analysis",
-            "Free discovery plus mixed free and paid structured retrieval",
-        ],
-    }
-    if normalized == "currency":
-        publisher_meta = {
-            "categories": ["economics", "data", "geospatial"],
-            "highlights": [
-                "Historical foreign exchange rate comparisons",
-                "Country-level FX lookups tied to DaedalMap loc_id geography",
-                "Free structured MCP access for historical currency data",
-            ],
-        }
-    else:
+    publisher_meta = get_server_registry_meta(normalized)
+    if normalized != "currency":
         publisher_meta["pricing"] = {
             "model": "per_row",
             "base_price_usd": 0.01,

@@ -26,21 +26,53 @@ PACK_SERVER_PROFILES = {
         "name": "com.daedalmap/currency",
         "title": "DaedalMap Historical FX Rates",
         "description": "Historical foreign exchange rates and currency comparisons from the DaedalMap MCP lane.",
+        "registry_meta": {
+            "categories": ["economics", "data", "geospatial"],
+            "highlights": [
+                "Historical foreign exchange rate comparisons",
+                "Country-level FX lookups tied to DaedalMap loc_id geography",
+                "Free structured MCP access for historical currency data",
+            ],
+        },
     },
     "earthquakes": {
         "name": "com.daedalmap/earthquakes",
         "title": "DaedalMap Earthquake Data",
         "description": "Historical earthquake event data and structured earthquake queries from the DaedalMap MCP lane.",
+        "registry_meta": {
+            "categories": ["hazard", "geospatial", "data"],
+            "highlights": [
+                "Historical earthquake event data with structured filters",
+                "Paid MCP access for earthquake counts and event rows",
+                "Country and region lookups tied to DaedalMap loc_id geography",
+            ],
+        },
     },
     "tsunamis": {
         "name": "com.daedalmap/tsunamis",
         "title": "DaedalMap Tsunami Data",
         "description": "Historical tsunami event data and structured tsunami queries from the DaedalMap MCP lane.",
+        "registry_meta": {
+            "categories": ["hazard", "geospatial", "data"],
+            "highlights": [
+                "Historical tsunami event data and wave-height metrics",
+                "Paid MCP access for tsunami counts and event rows",
+                "Country and coastal-region lookups tied to DaedalMap geography",
+            ],
+        },
     },
     "volcanoes": {
         "name": "com.daedalmap/volcanoes",
         "title": "DaedalMap Volcanic Activity",
         "description": "Historical volcanic eruption records and volcanic activity queries from the DaedalMap MCP lane.",
+        "registry_meta": {
+            "categories": ["hazard", "geospatial", "data"],
+            "highlights": [
+                "Historical volcanic eruption records and VEI data",
+                "Free MCP access for volcanic activity queries",
+                "Country and region lookups tied to DaedalMap loc_id geography",
+            ],
+        },
     },
 }
 
@@ -67,6 +99,23 @@ def get_server_description(pack_id: str | None = None) -> str:
     if not normalized:
         return "Geospatial MCP server for earthquake, tsunami, volcano, disaster, and FX data queries."
     return PACK_SERVER_PROFILES[normalized]["description"]
+
+
+def get_server_registry_meta(pack_id: str | None = None) -> dict[str, Any]:
+    normalized = _normalize_pack_id(pack_id)
+    if not normalized:
+        return {
+            "categories": ["geospatial", "hazard", "economics", "data"],
+            "highlights": [
+                "Historical earthquake event data",
+                "Volcanic eruption and VEI records",
+                "Tsunami events with wave height metrics",
+                "Historical FX rates for country-level analysis",
+                "Free discovery plus mixed free and paid structured retrieval",
+            ],
+        }
+    profile = PACK_SERVER_PROFILES[normalized]
+    return dict(profile.get("registry_meta") or {})
 
 
 def _public_app_url() -> str:
