@@ -786,6 +786,36 @@ def _build_mcp_server_json_payload(pack_id: str | None = None) -> dict:
     app_url = _public_app_url()
     normalized = _normalize_mcp_facade_pack_id(pack_id)
     server_info = get_server_info(normalized)
+    publisher_meta: dict[str, Any] = {
+        "categories": ["geospatial", "hazard", "economics", "data"],
+        "highlights": [
+            "Historical earthquake event data",
+            "Volcanic eruption and VEI records",
+            "Tsunami events with wave height metrics",
+            "Historical FX rates for country-level analysis",
+            "Free discovery plus mixed free and paid structured retrieval",
+        ],
+    }
+    if normalized == "currency":
+        publisher_meta = {
+            "categories": ["economics", "data", "geospatial"],
+            "highlights": [
+                "Historical foreign exchange rate comparisons",
+                "Country-level FX lookups tied to DaedalMap loc_id geography",
+                "Free structured MCP access for historical currency data",
+            ],
+        }
+    else:
+        publisher_meta["pricing"] = {
+            "model": "per_row",
+            "base_price_usd": 0.01,
+            "base_rows_included": 100,
+            "per_row_usd": 0.0001,
+            "max_price_usd": 0.50,
+            "currency": "USDC",
+            "network": "Base",
+            "payment_protocol": "x402",
+        }
     return {
         "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
         "name": server_info["name"],
@@ -804,26 +834,7 @@ def _build_mcp_server_json_payload(pack_id: str | None = None) -> dict:
             }
         ],
         "_meta": {
-            "io.modelcontextprotocol.registry/publisher-provided": {
-                "pricing": {
-                    "model": "per_row",
-                    "base_price_usd": 0.01,
-                    "base_rows_included": 100,
-                    "per_row_usd": 0.0001,
-                    "max_price_usd": 0.50,
-                    "currency": "USDC",
-                    "network": "Base",
-                    "payment_protocol": "x402",
-                },
-                "categories": ["geospatial", "hazard", "economics", "data"],
-                "highlights": [
-                    "Historical earthquake event data",
-                    "Volcanic eruption and VEI records",
-                    "Tsunami events with wave height metrics",
-                    "Historical FX rates for country-level analysis",
-                    "Free discovery plus mixed free and paid structured retrieval",
-                ],
-            }
+            "io.modelcontextprotocol.registry/publisher-provided": publisher_meta
         },
     }
 
