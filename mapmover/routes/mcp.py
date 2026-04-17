@@ -25,7 +25,7 @@ PACK_SERVER_PROFILES = {
     "currency": {
         "name": "com.daedalmap/currency",
         "title": "DaedalMap Historical FX Rates",
-        "description": "Historical foreign exchange rates and currency comparisons from the DaedalMap MCP lane.",
+        "description": "Historical daily FX rates for 100+ currencies normalized to USD, from 1940 to present. Free - no payment required. Supports daily, weekly, and monthly granularity.",
         "registry_meta": {
             "categories": ["economics", "data", "geospatial"],
             "highlights": [
@@ -38,7 +38,7 @@ PACK_SERVER_PROFILES = {
     "earthquakes": {
         "name": "com.daedalmap/earthquakes",
         "title": "DaedalMap Earthquake Data",
-        "description": "Historical earthquake event data and structured earthquake queries from the DaedalMap MCP lane.",
+        "description": "Historical earthquake events from 2150 BC to present. Paid via x402 on Base mainnet USDC ($0.01 base / 100 rows, $0.0001 per additional row, $0.50 max). Call unpaid first to see the exact price before committing.",
         "registry_meta": {
             "categories": ["hazard", "geospatial", "data"],
             "highlights": [
@@ -51,7 +51,7 @@ PACK_SERVER_PROFILES = {
     "tsunamis": {
         "name": "com.daedalmap/tsunamis",
         "title": "DaedalMap Tsunami Data",
-        "description": "Historical tsunami event data and structured tsunami queries from the DaedalMap MCP lane.",
+        "description": "Historical tsunami events from 2000 BC to present. Paid via x402 on Base mainnet USDC ($0.01 base / 100 rows, $0.0001 per additional row, $0.50 max). Call unpaid first to see the exact price before committing.",
         "registry_meta": {
             "categories": ["hazard", "geospatial", "data"],
             "highlights": [
@@ -64,7 +64,7 @@ PACK_SERVER_PROFILES = {
     "volcanoes": {
         "name": "com.daedalmap/volcanoes",
         "title": "DaedalMap Volcanic Activity",
-        "description": "Historical volcanic eruption records and volcanic activity queries from the DaedalMap MCP lane.",
+        "description": "Historical volcanic eruption records from Holocene to present, including VEI and location data. Free - no payment required.",
         "registry_meta": {
             "categories": ["hazard", "geospatial", "data"],
             "highlights": [
@@ -97,7 +97,13 @@ def get_server_info(pack_id: str | None = None) -> dict[str, Any]:
 def get_server_description(pack_id: str | None = None) -> str:
     normalized = _normalize_pack_id(pack_id)
     if not normalized:
-        return "Geospatial MCP server for earthquake, tsunami, volcano, disaster, and FX data queries."
+        return (
+            "Geospatial data MCP server with earthquake, tsunami, volcano, and FX packs. "
+            "Start with get_catalog (free) to see what is available, then get_pack for details on any pack. "
+            "get_volcanic_activity and get_fx_rates return real data immediately with no payment. "
+            "get_earthquake_events and get_tsunami_events require x402 on Base mainnet USDC. "
+            "Call prompts/list for ready-to-use example tool calls."
+        )
     return PACK_SERVER_PROFILES[normalized]["description"]
 
 
@@ -231,7 +237,7 @@ def _tool_definitions() -> list[dict[str, Any]]:
         {
             "name": "get_earthquake_events",
             "title": "Get Earthquake Events",
-            "description": "Paid x402 tool. Queries earthquakes_events. Use event_count for aggregate counts or event metrics for raw event rows.",
+            "description": "Paid x402 tool. Queries earthquakes_events. Call without payment first - the server returns HTTP 402 with the exact USDC price before any charge. Use event_count for aggregate counts or event attributes like magnitude for raw event rows.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -269,7 +275,7 @@ def _tool_definitions() -> list[dict[str, Any]]:
         {
             "name": "get_tsunami_events",
             "title": "Get Tsunami Events",
-            "description": "Paid x402 tool. Queries tsunamis_events for tsunami source events and related metrics.",
+            "description": "Paid x402 tool. Queries tsunamis_events. Call without payment first - the server returns HTTP 402 with the exact USDC price before any charge. Use event_count for aggregate counts or event attributes like max_water_height_m for raw event rows.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -581,17 +587,27 @@ def _read_resource(uri: str) -> dict[str, Any] | None:
         return _resource_text_result(
             uri,
             (
-                "# For Agents\n\n"
-                "Use the hosted discovery lane first.\n\n"
-                f"- Catalog: {app_url}/api/v1/catalog\n"
-                f"- Pack detail: {app_url}/api/v1/packs/{{pack_id}}\n"
-                f"- MCP: {app_url}/mcp\n"
-                f"- Full docs: {site_url}/docs/for-agents\n\n"
-                "Current live hosted packs:\n"
-                "- currency: free\n"
-                "- volcanoes: free\n"
-                "- earthquakes: paid via x402 on Base USDC\n"
-                "- tsunamis: paid via x402 on Base USDC\n"
+                "# For Agents - DaedalMap Quickstart\n\n"
+                "## Step 1: Discover what is available (free)\n\n"
+                "Call get_catalog to see all live packs and their free/paid status.\n"
+                "Call get_pack with a pack_id to get coverage dates, available metrics, and a first-query example.\n\n"
+                "## Step 2: Get free data immediately\n\n"
+                "Both of these return real data with no payment or setup:\n\n"
+                "get_volcanic_activity - eruption records from Holocene to present\n"
+                'Minimal call: {"metrics": ["event_count"], "filters": {"time": {"start": "2000-01-01", "end": "2024-12-31"}}}\n\n'
+                "get_fx_rates - daily FX rates from 1940 to present\n"
+                'Minimal call: {"filters": {"region_ids": ["JPN"], "time": {"start": "2024-01-01", "end": "2024-12-31", "granularity": "monthly"}}}\n\n'
+                "## Step 3: Understand the paid tools\n\n"
+                "get_earthquake_events and get_tsunami_events require x402 payment on Base mainnet USDC.\n"
+                "Call them without payment first - the server returns HTTP 402 with the exact price before any charge.\n"
+                "Pricing: $0.01 base covers 100 rows, $0.0001 per additional row, $0.50 maximum per call.\n\n"
+                "## Step 4: Use prompts for ready-to-use examples\n\n"
+                "Call prompts/list to get complete example tool calls for every supported query shape.\n\n"
+                "## Reference\n\n"
+                "Free packs: currency, volcanoes\n"
+                "Paid packs: earthquakes, tsunamis (x402 Base mainnet USDC)\n"
+                f"Full docs: {site_url}/docs/for-agents\n"
+                f"Catalog endpoint: {app_url}/api/v1/catalog\n"
             ),
         )
     if uri == "daedalmap://docs/agent-examples":
@@ -599,13 +615,24 @@ def _read_resource(uri: str) -> dict[str, Any] | None:
             uri,
             (
                 "# Agent Examples\n\n"
-                f"Canonical examples live at {site_url}/docs/agent-examples.\n\n"
-                "Question shapes supported today include:\n"
-                "- largest earthquake in a time range\n"
-                "- count of earthquakes above a threshold in a location and time range\n"
-                "- largest volcanic event in a time range\n"
-                "- count of tsunamis above a water-height threshold in a location and time range\n"
-                "- historical FX rates for one or more countries at daily, weekly, or monthly granularity\n"
+                "## Free: count volcanic eruptions in Japan since 2000\n\n"
+                "Tool: get_volcanic_activity\n"
+                '{"metrics": ["event_count"], "filters": {"time": {"start": "2000-01-01", "end": "2024-12-31"}, "region_ids": ["JPN"]}}\n\n'
+                "## Free: monthly USD/JPY rate for 2024\n\n"
+                "Tool: get_fx_rates\n"
+                '{"filters": {"region_ids": ["JPN"], "time": {"start": "2024-01-01", "end": "2024-12-31", "granularity": "monthly"}}, "metrics": ["local_per_usd"]}\n\n'
+                "## Paid: largest earthquake in Turkey in 2023 (x402 Base USDC)\n\n"
+                "Tool: get_earthquake_events\n"
+                '{"metrics": ["magnitude", "timestamp", "place", "depth_km"], "filters": {"time": {"start": "2023-01-01", "end": "2023-12-31"}, "region_ids": ["TUR"]}, "sort": [{"field": "magnitude", "direction": "desc"}], "limit": 1}\n\n'
+                "## Paid: count tsunamis above 5m wave height since 1950 (x402 Base USDC)\n\n"
+                "Tool: get_tsunami_events\n"
+                '{"metrics": ["event_count"], "filters": {"time": {"start": "1950-01-01", "end": "2024-12-31"}, "compare": [{"field": "max_water_height_m", "op": ">=", "value": 5}]}}\n\n'
+                "## Filter reference\n\n"
+                "time: {start, end} required for event packs. Add granularity for FX (daily/weekly/monthly).\n"
+                "region_ids: list of loc_id codes - country level (JPN, USA, TUR) or ocean region (XOO for Pacific).\n"
+                "compare: [{field, op, value}] for threshold filtering. Ops: >=, <=, >, <, ==.\n\n"
+                "Call prompts/list for parameterized versions of these examples.\n"
+                f"Full docs: {site_url}/docs/agent-examples\n"
             ),
         )
     if uri == "daedalmap://docs/loc-id":
@@ -759,8 +786,11 @@ async def mcp_endpoint(request: Request, pack_id: str | None = None):
                 },
                 "serverInfo": get_server_info(normalized_pack_id),
                 "instructions": (
-                    "Use tools/list, resources/list, and prompts/list to discover available capabilities. Free discovery tools require no payment. "
-                    "Paid tools can return HTTP 402 with x402 challenge headers when payment is required."
+                    "Step 1: call get_catalog to see all live packs and which are free vs paid. "
+                    "Step 2: call get_pack with a pack_id for coverage dates, available metrics, and a first-query example. "
+                    "Step 3: call get_volcanic_activity or get_fx_rates to get real data immediately - both are free, no setup needed. "
+                    "Step 4: call prompts/list to get ready-to-use example calls for every supported query shape. "
+                    "Paid packs (earthquakes, tsunamis): call the tool without payment first - the server returns HTTP 402 with the exact price and payment address before any charge occurs."
                 ),
             },
             request_id,
