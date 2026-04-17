@@ -339,16 +339,24 @@ def build_system_prompt(catalog: dict, conversions: dict) -> str:
         # Group World Factbook
         if factbook_sources:
             by_id = {s["source_id"]: s for s in factbook_sources}
+            merged = by_id.get("factbook_merged")
             unique = by_id.get("world_factbook")
             overlap = by_id.get("world_factbook_overlap")
             static = by_id.get("world_factbook_static")
 
+            if merged:
+                pid = merged.get("pack_id")
+                publish_note = f"pack_id: {pid}" if pid else "pre-release: no pack_id yet"
+                lines.append(
+                    f"- CIA World Factbook Merged Temporal [{publish_note}; source_id: factbook_merged]: "
+                    f"yearly country metrics such as internet users, military expenditure (% of GDP), railways (km), airports, electricity consumption, life expectancy, GDP purchasing power parity, GDP per capita PPP, birth rate, death rate, and population"
+                )
             if unique:
                 pid = unique.get("pack_id")
                 publish_note = f"pack_id: {pid}" if pid else "pre-release: no pack_id yet"
                 lines.append(
                     f"- CIA World Factbook [{publish_note}; source_id: world_factbook]: "
-                    f"yearly country metrics such as internet users, military expenditure (% of GDP), railways (km), airports, telephones"
+                    f"yearly country metrics such as internet users, military expenditure (% of GDP), railways (km), airports, electricity consumption, life expectancy, GDP purchasing power parity, GDP per capita PPP, birth rate, death rate, and population"
                 )
             if overlap:
                 pid = overlap.get("pack_id")
@@ -440,10 +448,9 @@ WHEN USER ASKS "what data for [country]" or "what do you have":
 FACTBOOK-SPECIFIC RULES:
 - The World Factbook sources are all country-level (admin_0), similar to SDG country choropleths.
 - If the user explicitly asks to show/map/rank a numeric Factbook metric, prefer type="order", even if the source is pre-release.
+- Use world_factbook for World Factbook temporal requests. It combines the old world_factbook and world_factbook_overlap temporal metrics, including internet users, military expenditure, railways, airports, electricity consumption, life expectancy, GDP purchasing power parity, GDP per capita, birth rate, death rate, and population.
 - For world_factbook_static numeric fields (highest_point_m, mean_elevation_m, coastline_km, area_total_sq_km, border_countries_count), prefer a map order rather than a chat explanation.
-- Use world_factbook_overlap for explicit overlap requests and metrics like life expectancy, GDP per capita, birth rate, death rate, and population.
 - Use world_factbook_static for static geography metrics like highest peaks, coastline length, mean elevation, and total area.
-- Use world_factbook for unique infrastructure/security metrics like internet users, military expenditure, railways, airports, and telephones.
 - Reserve chat/reference behavior for text-heavy static fields like climate, terrain, natural_resources, or named peak/capital descriptions.
 
 DISASTER AGGREGATE RULES:
