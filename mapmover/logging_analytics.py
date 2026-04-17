@@ -53,7 +53,6 @@ if _local_logs_enabled:
 analytics_log_path = analytics_dir / "query_analytics.jsonl"
 api_query_analytics_log_path = analytics_dir / "api_query_analytics.jsonl"
 route_analytics_log_path = analytics_dir / "route_analytics.jsonl"
-billing_analytics_log_path = analytics_dir / "billing_events.jsonl"
 
 # Initialize Supabase client (lazy loaded to avoid import issues)
 _supabase_client = None
@@ -276,34 +275,6 @@ def log_route_request_event(
             )
         except Exception as e:
             logger.error(f"Failed to log route security event to Supabase: {e}")
-
-
-def log_billing_fail_open_event(
-    *,
-    event_kind: str,
-    user_id: str | None = None,
-    operation: str | None = None,
-    reason: str | None = None,
-    metadata: dict[str, Any] | None = None,
-) -> None:
-    event = {
-        "timestamp": datetime.utcnow().isoformat(),
-        "event_kind": event_kind,
-        "user_id": user_id,
-        "operation": operation,
-        "reason": reason,
-        "metadata": metadata or {},
-    }
-
-    _append_jsonl(billing_analytics_log_path, event)
-
-    logger.warning(
-        "billing_fail_open event=%s user_id=%s operation=%s reason=%s",
-        event_kind,
-        user_id or "anonymous",
-        operation or "-",
-        reason or "-",
-    )
 
 
 def get_supabase():

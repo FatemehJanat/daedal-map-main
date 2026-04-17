@@ -1906,7 +1906,6 @@ async def get_auth_me(req: Request):
                     "org_id": context.get("org_id"),
                     "user_packs": context.get("user_packs", []),
                     "org_packs": context.get("org_packs", []),
-                    "credits_balance": context.get("credits_balance", 0),
                     "account_url": ACCOUNT_URL,
                 })
         except Exception as exc:
