@@ -405,6 +405,58 @@ async def security_txt():
 async def well_known_security_txt():
     return FileResponse(SECURITY_TXT_PATH, media_type="text/plain; charset=utf-8")
 
+
+def _site_url() -> str:
+    return os.getenv("SITE_URL", "https://daedalmap.com").rstrip("/")
+
+
+@app.get("/docs", include_in_schema=False)
+async def redirect_docs():
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(f"{_site_url()}/docs", status_code=302)
+
+
+@app.get("/docs/{path:path}", include_in_schema=False)
+async def redirect_docs_path(path: str):
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(f"{_site_url()}/docs/{path}", status_code=302)
+
+
+@app.get("/about", include_in_schema=False)
+async def redirect_about():
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(f"{_site_url()}/about", status_code=302)
+
+
+@app.get("/pricing", include_in_schema=False)
+async def redirect_pricing():
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(f"{_site_url()}/pricing", status_code=302)
+
+
+@app.get("/packs", include_in_schema=False)
+async def redirect_packs():
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(f"{_site_url()}/packs", status_code=302)
+
+
+@app.get("/packs/{path:path}", include_in_schema=False)
+async def redirect_packs_path(path: str):
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(f"{_site_url()}/packs/{path}", status_code=302)
+
+
+@app.get("/roadmap", include_in_schema=False)
+async def redirect_roadmap():
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(f"{_site_url()}/roadmap", status_code=302)
+
+
+@app.get("/login", include_in_schema=False)
+async def redirect_login():
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(f"{_site_url()}/login", status_code=302)
+
 app.include_router(system_router)
 app.include_router(mcp_router)
 app.include_router(api_query_router)

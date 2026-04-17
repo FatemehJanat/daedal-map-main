@@ -26,6 +26,51 @@ Typical use cases:
 - compare population, economic, and disaster context in the same workflow
 - move between hosted demo use, account-linked runtime access, and local/self-hosted operation without changing the basic mental model
 
+## Data Coverage
+
+The hosted runtime ships with 40+ curated sources across disasters, demographics, economics, and climate. Coverage below reflects the current maintained pack inventory.
+
+### Global Disasters
+
+| Source | Scale | Time Range |
+|--------|-------|------------|
+| USGS Earthquakes | 1M+ events | 2150 BC - present |
+| IBTrACS Hurricanes/Cyclones | 13K storms | 1842 - present |
+| NOAA Tsunamis | 2.6K events | 2000 BC - present |
+| Smithsonian Volcanoes | 11K eruptions | Holocene |
+| Global Wildfires | 940K events/year | 2002 - 2024 |
+| USA/CAN Tornadoes | 81K events | 1950 - present |
+| Global Floods | 4.8K events | 1985 - 2019 |
+| Global Landslides | 45K events | 1760 - present |
+
+Disaster events include 22M+ geographic location relationships and 566K cross-disaster links (aftershocks, triggered events).
+
+### Global Indicators
+
+| Source | Countries | Years | Category |
+|--------|-----------|-------|----------|
+| Our World in Data CO2 | 217 | 1750 - 2024 | Environment |
+| WHO Health Statistics | 198 | 2015 - 2024 | Health |
+| IMF Balance of Payments | 195 | 2005 - 2022 | Economy |
+| UN Sustainable Development Goals | 200+ | 2000 - 2023 | SDGs 1-17 |
+| Eurostat Demographics | 37 European countries | 2000 - 2024 | Demographics |
+
+### Country-Specific Sources
+
+| Country | Source Count | Examples |
+|---------|-------------|---------|
+| USA | 15+ | Census, FEMA National Risk Index, NOAA storms |
+| Canada | 3 | Statistics Canada, NRCan earthquakes, drought |
+| Australia | 2 | ABS population, BOM cyclones |
+
+### Disaster Display
+
+Disasters are displayed with animated, type-specific rendering:
+- Point + radius: earthquakes, volcanoes, tornadoes
+- Track/trail: hurricanes and cyclones
+- Radial wave: tsunamis
+- Polygon fill: wildfires, floods
+
 ## Current Runtime Shape
 
 DaedalMap now treats runtime behavior as a 2-axis matrix:
@@ -176,6 +221,19 @@ python app.py
 
 Open:
 - `http://localhost:7000`
+
+## Agent and MCP Integration
+
+DaedalMap exposes a discovery and query API intended for agent and LLM use. The same endpoints are accessible via MCP for direct integration with Claude and other MCP-compatible clients.
+
+Discovery endpoints are free. Data query endpoints use per-call micropayment via x402.
+
+The MCP surface exposes:
+- catalog discovery (list available packs)
+- pack inspection (schema, coverage, metrics for a given pack)
+- dataset query (paid, returns structured data for an agent to reason over)
+
+For MCP setup details, see [docs/LOCAL_AND_HOSTED.md](docs/LOCAL_AND_HOSTED.md).
 
 ## API First Steps
 
@@ -358,3 +416,7 @@ Questions, feedback, or self-host issues: support@daedalmap.com
 ## License
 
 MIT
+
+---
+
+Agent/API access: https://daedalmap.com/llms.txt
