@@ -98,7 +98,6 @@ def _build_defaults() -> dict:
             "bucket": "",
             "prefix": "published",
             "endpoint_url": "",
-            "cache_root": str(cloud_root / "cache" / "cloud-data"),
         },
         "install_defaults": {
             "local": {
@@ -193,7 +192,6 @@ def get_runtime_config() -> dict:
         ("S3_BUCKET", "bucket"),
         ("S3_PREFIX", "prefix"),
         ("S3_ENDPOINT_URL", "endpoint_url"),
-        ("CLOUD_CACHE_ROOT", "cache_root"),
     ]:
         env_value = os.environ.get(env_name, "").strip()
         if env_value:

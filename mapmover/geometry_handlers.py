@@ -839,8 +839,8 @@ def _resolve_deepest_point_match(iso3: str, lon: float, lat: float, admin1_row=N
     return deepest_match
 
 
-def resolve_point_to_location(lon: float, lat: float):
-    """Resolve a point to the deepest available location and return highlight geometry."""
+def resolve_point_to_location(lon: float, lat: float, include_geometry: bool = True):
+    """Resolve a point to the deepest available location."""
     lon = float(lon)
     lat = float(lat)
 
@@ -890,7 +890,7 @@ def resolve_point_to_location(lon: float, lat: float):
             "admin_level": deepest_level,
         })
 
-    return {
+    result = {
         "point": {"lon": lon, "lat": lat},
         "country": {"loc_id": iso3, "name": country_name},
         "matched": {
@@ -901,8 +901,10 @@ def resolve_point_to_location(lon: float, lat: float):
             "iso3": iso3,
         },
         "stack": stack,
-        "geojson": get_selection_geometries([deepest_loc_id]),
     }
+    if include_geometry:
+        result["geojson"] = get_selection_geometries([deepest_loc_id])
+    return result
 
 
 def calculate_coverage_from_parquet(iso3: str, from_level: int = 1):

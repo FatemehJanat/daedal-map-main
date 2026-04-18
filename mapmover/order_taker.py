@@ -166,8 +166,8 @@ def get_source_visibility_mode() -> str:
     runtime_mode = os.getenv("RUNTIME_MODE", "").strip().lower()
     install_mode = os.getenv("INSTALL_MODE", "").strip().lower()
     if selected == "test" and (runtime_mode == "cloud" or install_mode == "cloud"):
-        logger.warning(
-            "ORDER_TAKER_SOURCE_MODE=test is active in cloud/hosted runtime; pre-release sources may be visible to the LLM prompt"
+        raise RuntimeError(
+            "ORDER_TAKER_SOURCE_MODE=test is not allowed in cloud/hosted runtime"
         )
     return selected
 

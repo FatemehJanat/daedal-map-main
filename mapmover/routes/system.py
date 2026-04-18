@@ -78,7 +78,10 @@ def _require_hosted_allowed_ref_host(ref_value: str | None, field_name: str) -> 
         if host.strip()
     }
     if not allowed_hosts:
-        return None
+        return _pack_install_error(
+            "Hosted pack ref installs require HOSTED_PACK_REF_ALLOWED_HOSTS to be configured",
+            503,
+        )
     parsed = urlparse(str(ref_value).strip())
     host = (parsed.hostname or "").strip().lower()
     if host and host in allowed_hosts:
@@ -122,6 +125,18 @@ def _resolve_order_session_key(req: Request, session_id: str | None):
     auth_user = get_authenticated_user(req)
     scoped_session_id = build_session_cache_key(frontend_session_id, auth_user)
     return frontend_session_id, scoped_session_id, auth_user
+
+
+def _order_status_rate_limit(req: Request, auth_user: dict | None) -> Response | None:
+    limiter_identity = (auth_user or {}).get("id") or get_client_ip(req) or "unknown"
+    allowed, retry_after = rate_limiter.check(
+        f"orders:status:{limiter_identity}",
+        limit=int(os.getenv("ORDER_STATUS_RATE_LIMIT", "120")),
+        window_seconds=int(os.getenv("ORDER_STATUS_RATE_WINDOW_SECONDS", "60")),
+    )
+    if not allowed:
+        return _order_rate_limited_response("Too many order status requests. Please slow down and try again shortly.", retry_after)
+    return None
 
 
 def _admin_error(req: Request, message: str, status_code: int):
@@ -1011,20 +1026,20 @@ async def submit_feedback(request: Request):
 
 @router.get("/debug/cache")
 async def debug_cache(req: Request):
-    """List files in the S3 local cache directory (S3 mode only)."""
+    """List files in the runtime data root."""
     _context, error = _require_local_or_admin(req)
     if error:
         return error
 
     from mapmover.duckdb_helpers import is_cloud_mode
     from mapmover.paths import DATA_ROOT
-    cache_dir = DATA_ROOT
-    if not cache_dir.exists():
-        return {"error": f"cache dir does not exist: {cache_dir}"}
-    files = sorted(str(p.relative_to(cache_dir)) for p in cache_dir.rglob("*") if p.is_file())
+    data_dir = DATA_ROOT
+    if not data_dir.exists():
+        return {"error": f"data root does not exist: {data_dir}"}
+    files = sorted(str(p.relative_to(data_dir)) for p in data_dir.rglob("*") if p.is_file())
     return {
         "cloud_mode": is_cloud_mode(),
-        "cache_dir": str(cache_dir),
+        "data_root": str(data_dir),
         "file_count": len(files),
         "files": files,
     }
@@ -1959,7 +1974,10 @@ async def get_order_status_endpoint(req: Request):
     try:
         body = await decode_request_body(req)
         queue_ids = body.get("queue_ids", [])
-        _frontend_session_id, session_id, _auth_user = _resolve_order_session_key(req, body.get("session_id"))
+        _frontend_session_id, session_id, auth_user = _resolve_order_session_key(req, body.get("session_id"))
+        rate_limit = _order_status_rate_limit(req, auth_user)
+        if rate_limit:
+            return rate_limit
         if not queue_ids:
             return msgpack_error("No queue_ids provided", 400)
 
@@ -1980,7 +1998,10 @@ async def get_order_status_endpoint(req: Request):
 async def get_single_order_status_endpoint(queue_id: str, req: Request):
     """Get status of a single queued order."""
     try:
-        _frontend_session_id, session_id, _auth_user = _resolve_order_session_key(req, req.query_params.get("session_id"))
+        _frontend_session_id, session_id, auth_user = _resolve_order_session_key(req, req.query_params.get("session_id"))
+        rate_limit = _order_status_rate_limit(req, auth_user)
+        if rate_limit:
+            return rate_limit
         if not order_queue.belongs_to_session(queue_id, session_id):
             return msgpack_error("Order not found", 404)
         status = order_queue.get_status(queue_id)
@@ -1998,7 +2019,10 @@ async def cancel_order_endpoint(req: Request):
     try:
         body = await decode_request_body(req)
         queue_id = body.get("queue_id")
-        _frontend_session_id, session_id, _auth_user = _resolve_order_session_key(req, body.get("session_id"))
+        _frontend_session_id, session_id, auth_user = _resolve_order_session_key(req, body.get("session_id"))
+        rate_limit = _order_status_rate_limit(req, auth_user)
+        if rate_limit:
+            return rate_limit
         if not queue_id:
             return msgpack_error("No queue_id provided", 400)
         if not order_queue.belongs_to_session(queue_id, session_id):
@@ -2017,7 +2041,10 @@ async def cancel_order_endpoint(req: Request):
 async def get_session_orders_endpoint(session_id: str, req: Request):
     """Get all queued orders for a session."""
     try:
-        _frontend_session_id, scoped_session_id, _auth_user = _resolve_order_session_key(req, session_id)
+        _frontend_session_id, scoped_session_id, auth_user = _resolve_order_session_key(req, session_id)
+        rate_limit = _order_status_rate_limit(req, auth_user)
+        if rate_limit:
+            return rate_limit
         return msgpack_response({"orders": order_queue.get_session_orders(scoped_session_id)})
     except Exception as e:
         logger.error(f"Error getting session orders: {e}")

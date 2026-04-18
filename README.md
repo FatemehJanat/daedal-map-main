@@ -184,7 +184,6 @@ Most local users should leave these blank unless they intentionally want overrid
 DATA_ROOT=
 APP_URL=
 SITE_URL=
-CLOUD_CACHE_ROOT=
 ```
 
 What they mean:
@@ -194,8 +193,6 @@ What they mean:
   optional advertised app URL; leave blank for normal local runs
 - `SITE_URL`
   optional website/docs/account URL override; leave blank for normal local runs
-- `CLOUD_CACHE_ROOT`
-  optional local cache folder for cloud metadata/support files; leave blank unless you want a custom cache location
 
 If you are configuring a hosted deployment, set:
 

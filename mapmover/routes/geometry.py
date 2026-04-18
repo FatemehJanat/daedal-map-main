@@ -2,6 +2,7 @@
 
 import msgpack
 from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
 
 from mapmover import logger
 from mapmover.routes.system import _require_local_or_admin
@@ -149,10 +150,34 @@ async def resolve_point_endpoint(req: Request):
         if lon is None or lat is None:
             return msgpack_error("lon and lat are required", 400)
 
-        result = resolve_point_to_location_handler(lon, lat)
+        result = resolve_point_to_location_handler(lon, lat, include_geometry=True)
         if result.get("error"):
             return msgpack_response(result, status_code=404)
         return msgpack_response(result)
     except Exception as e:
         logger.error(f"Error in /geometry/resolve-point: {e}")
         return msgpack_error(str(e), 500)
+
+
+@router.post("/api/v1/resolve/point")
+async def resolve_point_json_endpoint(req: Request):
+    """Resolve a lon/lat point to the deepest available containing loc_id as JSON."""
+    try:
+        body = await req.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON request body"}, status_code=400)
+
+    lon = body.get("lon")
+    lat = body.get("lat")
+    if lon is None or lat is None:
+        return JSONResponse({"error": "lon and lat are required"}, status_code=400)
+
+    include_geometry = bool(body.get("include_geometry", False))
+    try:
+        result = resolve_point_to_location_handler(lon, lat, include_geometry=include_geometry)
+        if result.get("error"):
+            return JSONResponse(result, status_code=404)
+        return JSONResponse(result)
+    except Exception as e:
+        logger.error(f"Error in /api/v1/resolve/point: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)

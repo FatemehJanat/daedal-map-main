@@ -64,13 +64,13 @@ def _get_s3_endpoint() -> str:
     return url.rstrip("/")
 
 
-def _get_cache_root() -> Path | None:
+def _get_data_root() -> Path:
     from .paths import DATA_ROOT
     return DATA_ROOT
 
 
 def path_to_uri(local_path: Path) -> str:
-    """Convert a local cache path to an s3:// URI in cloud mode, or a local path string in local mode."""
+    """Convert a local data path to an s3:// URI in cloud mode, or a local path string in local mode."""
     if not is_cloud_mode():
         return str(local_path)
 
@@ -78,14 +78,13 @@ def path_to_uri(local_path: Path) -> str:
     bucket = os.environ.get("S3_BUCKET", "").strip() or str(cloud_cfg.get("bucket", "")).strip()
     prefix = (os.environ.get("S3_PREFIX", "").strip() or str(cloud_cfg.get("prefix", "")).strip()).strip("/")
     prefix = f"{prefix}/" if prefix else ""
-    cache_root = _get_cache_root()
+    data_root = _get_data_root()
 
-    if cache_root:
-        try:
-            rel = local_path.relative_to(cache_root)
-            return f"s3://{bucket}/{prefix}{rel.as_posix()}"
-        except ValueError:
-            pass
+    try:
+        rel = local_path.relative_to(data_root)
+        return f"s3://{bucket}/{prefix}{rel.as_posix()}"
+    except ValueError:
+        pass
 
     # Fallback: use the path as-is (shouldn't normally happen)
     return str(local_path)

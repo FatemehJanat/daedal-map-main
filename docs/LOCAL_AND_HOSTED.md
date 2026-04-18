@@ -55,7 +55,7 @@ That means the practical public-GitHub setup is:
 
 Uses:
 - object storage for parquet-backed runtime data
-- local cache only for metadata and selected support files
+- local data-root paths are mapped to object-storage keys for DuckDB queries
 
 Best for:
 - reproducing hosted behavior locally
@@ -66,7 +66,6 @@ Notes:
 - metadata files are cached locally
 - parquet is queried remotely through DuckDB `httpfs`
 - startup is faster because the full parquet tree is not mirrored locally
-- for normal local testing, leave `CLOUD_CACHE_ROOT` blank unless you need a custom cache folder
 - use `S3_PREFIX=staging` for review-lane QA
 - use `S3_PREFIX=published` for release-lane/runtime QA
 
@@ -106,7 +105,6 @@ Usually leave these blank:
 - `DATA_ROOT`
 - `APP_URL`
 - `SITE_URL`
-- `CLOUD_CACHE_ROOT`
 
 Why:
 
@@ -116,8 +114,6 @@ Why:
   only needed if you want the app to advertise a specific external URL
 - `SITE_URL`
   only needed if you want links to point at a non-default website/docs host
-- `CLOUD_CACHE_ROOT`
-  only needed if you want the cloud metadata/support cache stored somewhere custom
 
 Usually set these for a usable local app:
 
