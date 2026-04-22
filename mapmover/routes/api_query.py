@@ -15,6 +15,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
 from mapmover.auth_context import get_authenticated_user
+from mapmover.pack_pricing import FREE_PACK_IDS as _FREE_PACK_IDS
 from mapmover.api_query_limits import QueryConcurrencyLimitError, acquire_query_slot
 from mapmover.api_query_runtime import (
     DEFAULT_LIMIT,
@@ -49,7 +50,7 @@ COMMERCIAL_ACCESS_FORWARDED_HEADERS = {
     "x-payment",
     "x-payment-response",
 }
-FREE_QUERY_PACK_IDS = {"currency", "volcanoes"}
+FREE_QUERY_PACK_IDS = _FREE_PACK_IDS
 
 
 def _get_request_ip(request: Request) -> str | None:
