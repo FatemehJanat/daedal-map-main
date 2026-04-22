@@ -8,6 +8,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
 from mapmover.data_loading import load_api_catalog, load_api_pack_detail
+from mapmover.live_earthquake_usgs import fetch_live_earthquakes
 from mapmover.routes.api_query import execute_query_dataset_payload
 from mapmover.security import get_allowed_origins
 
@@ -249,6 +250,29 @@ def _tool_definitions() -> list[dict[str, Any]]:
                     "output": {"type": "object", "description": "Optional output controls such as response format hints."},
                 },
                 "required": ["metrics", "filters"],
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": True},
+        },
+        {
+            "name": "get_live_earthquake_events",
+            "title": "Get Live Earthquake Events",
+            "description": "Free live wrapper. Calls the USGS FDSN API for recent preliminary earthquake events normalized to DaedalMap event fields. This is not the enriched canonical history lane.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing."},
+                    "hours": {"type": "integer", "minimum": 1, "maximum": 168, "description": "Recent lookback window in hours. Ignored when start_time is provided."},
+                    "start_time": {"type": "string", "description": "Optional inclusive ISO-8601 start datetime."},
+                    "end_time": {"type": "string", "description": "Optional exclusive-ish ISO-8601 end datetime. Defaults to now."},
+                    "min_magnitude": {"type": "number", "description": "Minimum earthquake magnitude. Defaults to 2.5."},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 500, "description": "Maximum live rows to return."},
+                    "orderby": {"type": "string", "enum": ["time", "time-asc", "magnitude", "magnitude-asc"], "description": "USGS result ordering."},
+                    "min_latitude": {"type": "number", "description": "Optional bounding box minimum latitude."},
+                    "max_latitude": {"type": "number", "description": "Optional bounding box maximum latitude."},
+                    "min_longitude": {"type": "number", "description": "Optional bounding box minimum longitude."},
+                    "max_longitude": {"type": "number", "description": "Optional bounding box maximum longitude."},
+                },
                 "additionalProperties": False,
             },
             "annotations": {"readOnlyHint": True},
@@ -721,6 +745,53 @@ async def _execute_paid_tool(request: Request, tool_name: str, arguments: dict[s
     return _jsonrpc_response(_tool_result(parsed_body, is_error=True), rpc_request_id)
 
 
+async def _execute_live_earthquake_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
+    payload = _ensure_request_id(arguments, "get_live_earthquake_events")
+    try:
+        result = fetch_live_earthquakes(
+            request_id=str(payload.get("request_id") or ""),
+            hours=payload.get("hours"),
+            start_time=payload.get("start_time"),
+            end_time=payload.get("end_time"),
+            min_magnitude=payload.get("min_magnitude"),
+            limit=payload.get("limit"),
+            orderby=payload.get("orderby"),
+            min_latitude=payload.get("min_latitude"),
+            max_latitude=payload.get("max_latitude"),
+            min_longitude=payload.get("min_longitude"),
+            max_longitude=payload.get("max_longitude"),
+        )
+    except ValueError as exc:
+        return _jsonrpc_response(
+            _tool_result(
+                {
+                    "request_id": payload.get("request_id"),
+                    "error": {
+                        "code": "invalid_live_earthquake_request",
+                        "message": str(exc),
+                    },
+                },
+                is_error=True,
+            ),
+            rpc_request_id,
+        )
+    except Exception as exc:
+        return _jsonrpc_response(
+            _tool_result(
+                {
+                    "request_id": payload.get("request_id"),
+                    "error": {
+                        "code": "live_earthquake_upstream_error",
+                        "message": f"USGS live earthquake request failed: {exc}",
+                    },
+                },
+                is_error=True,
+            ),
+            rpc_request_id,
+        )
+    return _jsonrpc_response(_tool_result(result), rpc_request_id)
+
+
 @router.get("/mcp")
 @router.get("/mcp/{pack_id}")
 async def mcp_endpoint_info(pack_id: str | None = None):
@@ -860,8 +931,12 @@ async def mcp_endpoint(request: Request, pack_id: str | None = None):
             return _jsonrpc_response(_tool_result({"error": "Pack not found", "pack_id": pack_id}, is_error=True), request_id)
         return _jsonrpc_response(_tool_result(payload), request_id)
 
+    if tool_name == "get_live_earthquake_events":
+        return await _execute_live_earthquake_tool(arguments, request_id)
+
     if tool_name not in {
         "get_earthquake_events",
+        "get_live_earthquake_events",
         "get_volcanic_activity",
         "get_tsunami_events",
         "get_fx_rates",
