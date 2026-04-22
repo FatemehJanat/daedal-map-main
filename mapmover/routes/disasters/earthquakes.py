@@ -1,6 +1,7 @@
 """Earthquake disaster endpoints."""
 
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 import pandas as pd
 
 from mapmover.disaster_filters import apply_location_filters, get_affected_event_ids
@@ -19,6 +20,7 @@ from mapmover.duckdb_helpers import (
     select_filtered_event_rows_cached,
     select_linked_loc_ids,
 )
+from mapmover.live_earthquake_usgs import fetch_live_earthquakes
 from mapmover.logging_analytics import logger
 from mapmover.paths import GLOBAL_DIR
 
@@ -35,6 +37,56 @@ from .helpers import (
 
 
 router = APIRouter()
+
+
+@router.get("/api/earthquakes/live")
+async def get_live_earthquakes(
+    hours: int = 24,
+    start_time: str = None,
+    end_time: str = None,
+    min_magnitude: float = 2.5,
+    limit: int = 100,
+    orderby: str = "time",
+    min_latitude: float = None,
+    max_latitude: float = None,
+    min_longitude: float = None,
+    max_longitude: float = None,
+):
+    """Fetch preliminary live earthquake events directly from USGS."""
+    try:
+        return fetch_live_earthquakes(
+            hours=hours,
+            start_time=start_time,
+            end_time=end_time,
+            min_magnitude=min_magnitude,
+            limit=limit,
+            orderby=orderby,
+            min_latitude=min_latitude,
+            max_latitude=max_latitude,
+            min_longitude=min_longitude,
+            max_longitude=max_longitude,
+        )
+    except ValueError as exc:
+        return JSONResponse(
+            {
+                "error": {
+                    "code": "invalid_live_earthquake_request",
+                    "message": str(exc),
+                }
+            },
+            status_code=400,
+        )
+    except Exception as exc:
+        logger.error(f"Error fetching live earthquakes: {exc}")
+        return JSONResponse(
+            {
+                "error": {
+                    "code": "live_earthquake_upstream_error",
+                    "message": "USGS live earthquake request failed.",
+                }
+            },
+            status_code=502,
+        )
 
 
 def get_earthquake_property_builders():

@@ -638,7 +638,9 @@ def _docs_url(path: str) -> str:
 
 
 def _pack_is_paid(pack_id: str | None) -> bool:
-    return str(pack_id or "").strip() in {"earthquakes", "tsunamis"}
+    from mapmover.routes.mcp import _paid_pack_ids
+
+    return str(pack_id or "").strip() in _paid_pack_ids()
 
 
 def _normalize_mcp_facade_pack_id(pack_id: str | None) -> str | None:
@@ -653,8 +655,10 @@ def _mcp_remote_path(pack_id: str | None = None) -> str:
 
 
 def _mcp_pricing_payload(pack_id: str | None = None) -> dict:
+    from mapmover.routes.mcp import _free_pack_ids
+
     normalized = _normalize_mcp_facade_pack_id(pack_id)
-    if normalized in {"currency", "volcanoes"}:
+    if normalized in _free_pack_ids():
         return {
             "model": "free",
             "notes": "No payment required for this MCP facade.",
@@ -670,6 +674,17 @@ def _mcp_pricing_payload(pack_id: str | None = None) -> dict:
         "payment_protocol": "x402",
         "notes": "The 402 challenge returns the exact price before payment.",
     }
+
+
+def _mcp_auth_notes() -> str:
+    from mapmover.routes.mcp import _free_pack_ids, _paid_pack_ids
+
+    free = ", ".join(sorted(_free_pack_ids()))
+    paid = ", ".join(sorted(_paid_pack_ids()))
+    return (
+        f"No API key required. {free} are free lanes. "
+        f"{paid} use x402 on Base mainnet with USDC. Free discovery endpoints require no payment."
+    )
 
 
 def _build_mcp_server_card_payload(pack_id: str | None = None) -> dict:
@@ -690,8 +705,7 @@ def _build_mcp_server_card_payload(pack_id: str | None = None) -> dict:
         "authentication": {
             "type": "none",
             "notes": (
-                "No API key required. Currency and volcanoes are free lanes. Earthquakes and "
-                "tsunamis use x402 on Base mainnet with USDC. Free discovery endpoints require no payment."
+                _mcp_auth_notes()
             ),
         },
         "pricing": _mcp_pricing_payload(normalized),
@@ -732,7 +746,7 @@ def _build_mcp_server_card_payload(pack_id: str | None = None) -> dict:
             },
             {
                 "name": "query_dataset",
-                "description": "Generic structured query tool for direct source or pack access. Currency and volcanoes are free; earthquakes and tsunamis use x402 on Base USDC.",
+                "description": _mcp_auth_notes(),
                 "paid": False,
                 "source_id": "any",
             },
@@ -774,7 +788,7 @@ def _build_apis_json_payload() -> dict:
         "apis": [
             {
                 "name": "DaedalMap Agent API",
-                "description": "Deterministic structured data query API for agents. Currency and volcanoes are free; earthquakes and tsunamis use x402 on Base USDC.",
+                "description": _mcp_auth_notes(),
                 "humanUrl": docs_url,
                 "baseUrl": f"{app_url}/api/v1",
                 "version": "v1",

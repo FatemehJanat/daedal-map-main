@@ -152,7 +152,31 @@ SUPPORTED_DYNAMIC_SOURCES: dict[str, dict[str, Any]] = {
         "default_limit": 100,
         "max_limit": 500,
     },
+    "hurricanes": {
+        "pack_id": "hurricanes",
+        "parquet_name": "events.parquet",
+        "query_mode": "single_source_events",
+        "location_field": "loc_id",
+        "time_field": "timestamp",
+        "time_granularity": "timestamp",
+        "default_limit": 100,
+        "max_limit": 1000,
+    },
 }
+
+# UN SDG sources 01-17 share the same parquet shape; entries are generated to avoid repetition
+for _sdg_i in range(1, 18):
+    SUPPORTED_DYNAMIC_SOURCES[f"{_sdg_i:02d}"] = {
+        "pack_id": "un_sdg",
+        "parquet_name": "all_countries.parquet",
+        "query_mode": "single_source",
+        "location_field": "loc_id",
+        "time_field": "year",
+        "time_granularity": "yearly",
+        "default_limit": DEFAULT_LIMIT,
+        "max_limit": MAX_LIMIT,
+    }
+del _sdg_i
 
 
 API_SOURCE_SPECS: dict[str, ApiSourceSpec] = {

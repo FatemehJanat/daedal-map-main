@@ -8,6 +8,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
 from mapmover.data_loading import load_api_catalog, load_api_pack_detail
+from mapmover.live_earthquake_usgs import fetch_live_earthquakes
 from mapmover.routes.api_query import execute_query_dataset_payload
 from mapmover.security import get_allowed_origins
 
@@ -26,6 +27,7 @@ PACK_SERVER_PROFILES = {
         "name": "com.daedalmap/currency",
         "title": "DaedalMap Historical FX Rates",
         "description": "Historical daily FX rates for 100+ currencies normalized to USD, from 1940 to present. Free - no payment required. Supports daily, weekly, and monthly granularity.",
+        "pricing": "free",
         "registry_meta": {
             "categories": ["economics", "data", "geospatial"],
             "highlights": [
@@ -39,6 +41,7 @@ PACK_SERVER_PROFILES = {
         "name": "com.daedalmap/earthquakes",
         "title": "DaedalMap Earthquake Data",
         "description": "Historical earthquake events from 2150 BC to present. Paid via x402 on Base mainnet USDC ($0.01 base / 100 rows, $0.0001 per additional row, $0.50 max). Call unpaid first to see the exact price before committing.",
+        "pricing": "paid_x402_base_usdc",
         "registry_meta": {
             "categories": ["hazard", "geospatial", "data"],
             "highlights": [
@@ -52,6 +55,7 @@ PACK_SERVER_PROFILES = {
         "name": "com.daedalmap/tsunamis",
         "title": "DaedalMap Tsunami Data",
         "description": "Historical tsunami events from 2000 BC to present. Paid via x402 on Base mainnet USDC ($0.01 base / 100 rows, $0.0001 per additional row, $0.50 max). Call unpaid first to see the exact price before committing.",
+        "pricing": "paid_x402_base_usdc",
         "registry_meta": {
             "categories": ["hazard", "geospatial", "data"],
             "highlights": [
@@ -65,6 +69,7 @@ PACK_SERVER_PROFILES = {
         "name": "com.daedalmap/volcanoes",
         "title": "DaedalMap Volcanic Activity",
         "description": "Historical volcanic eruption records from Holocene to present, including VEI and location data. Free - no payment required.",
+        "pricing": "free",
         "registry_meta": {
             "categories": ["hazard", "geospatial", "data"],
             "highlights": [
@@ -74,7 +79,61 @@ PACK_SERVER_PROFILES = {
             ],
         },
     },
+    "hurricanes": {
+        "name": "com.daedalmap/hurricanes",
+        "title": "DaedalMap Hurricane and Tropical Cyclone Data",
+        "description": "Global tropical cyclone track data from IBTrACS covering 1842 to present. Over 722,000 storm observations with wind speed, pressure, and track geometry. Free - no payment required.",
+        "pricing": "free",
+        "registry_meta": {
+            "categories": ["hazard", "geospatial", "data"],
+            "highlights": [
+                "Global tropical cyclone and hurricane track records",
+                "Free MCP access for hurricane and cyclone event queries",
+                "Country and basin lookups tied to DaedalMap loc_id geography",
+            ],
+        },
+    },
+    "un_sdg": {
+        "name": "com.daedalmap/un_sdg",
+        "title": "DaedalMap UN Sustainable Development Goals",
+        "description": "210 UN SDG metrics across 17 goals from 1963 to 2025. Covers poverty, health, education, climate, and equality indicators for countries worldwide. Free - no payment required.",
+        "pricing": "free",
+        "registry_meta": {
+            "categories": ["development", "data", "geospatial"],
+            "highlights": [
+                "210 UN SDG indicators across all 17 goals",
+                "Free MCP access for development and social metrics",
+                "Country-level lookups tied to DaedalMap loc_id geography",
+            ],
+        },
+    },
+    "world_factbook": {
+        "name": "com.daedalmap/world_factbook",
+        "title": "DaedalMap CIA World Factbook",
+        "description": "111 country-level indicators from CIA World Factbook editions 2002-2026 covering infrastructure, energy, demographics, military, and economy. Observation years 1990-2025. Free - no payment required.",
+        "pricing": "free",
+        "registry_meta": {
+            "categories": ["economic", "data", "geospatial"],
+            "highlights": [
+                "111 CIA World Factbook indicators from 2002-2026 editions",
+                "Free MCP access for country infrastructure and economy metrics",
+                "Country-level lookups tied to DaedalMap loc_id geography",
+            ],
+        },
+    },
 }
+
+
+def _free_pack_ids() -> frozenset[str]:
+    from mapmover.pack_pricing import FREE_PACK_IDS
+
+    return FREE_PACK_IDS
+
+
+def _paid_pack_ids() -> frozenset[str]:
+    from mapmover.pack_pricing import PAID_PACK_IDS
+
+    return PAID_PACK_IDS
 
 
 def _normalize_pack_id(pack_id: str | None) -> str | None:
@@ -97,11 +156,11 @@ def get_server_info(pack_id: str | None = None) -> dict[str, Any]:
 def get_server_description(pack_id: str | None = None) -> str:
     normalized = _normalize_pack_id(pack_id)
     if not normalized:
+        free = ", ".join(sorted(_free_pack_ids()))
+        paid = ", ".join(sorted(_paid_pack_ids()))
         return (
-            "Geospatial data MCP server with earthquake, tsunami, volcano, and FX packs. "
-            "Start with get_catalog (free) to see what is available, then get_pack for details on any pack. "
-            "get_volcanic_activity and get_fx_rates return real data immediately with no payment. "
-            "get_earthquake_events and get_tsunami_events require x402 on Base mainnet USDC. "
+            f"Geospatial data MCP server. Free packs: {free}. Paid packs: {paid} (x402 Base USDC). "
+            "Start with get_catalog to see what is available, then get_pack for details. "
             "Call prompts/list for ready-to-use example tool calls."
         )
     return PACK_SERVER_PROFILES[normalized]["description"]
@@ -226,7 +285,7 @@ def _tool_definitions() -> list[dict[str, Any]]:
                 "properties": {
                     "pack_id": {
                         "type": "string",
-                        "description": "Pack identifier such as 'currency', 'earthquakes', 'volcanoes', or 'tsunamis'.",
+                        "description": "Pack identifier such as 'currency', 'earthquakes', 'volcanoes', 'tsunamis', 'hurricanes', 'un_sdg', or 'world_factbook'.",
                     }
                 },
                 "required": ["pack_id"],
@@ -249,6 +308,29 @@ def _tool_definitions() -> list[dict[str, Any]]:
                     "output": {"type": "object", "description": "Optional output controls such as response format hints."},
                 },
                 "required": ["metrics", "filters"],
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": True},
+        },
+        {
+            "name": "get_live_earthquake_events",
+            "title": "Get Live Earthquake Events",
+            "description": "Free live wrapper. Calls the USGS FDSN API for recent preliminary earthquake events normalized to DaedalMap event fields. This is not the enriched canonical history lane.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing."},
+                    "hours": {"type": "integer", "minimum": 1, "maximum": 168, "description": "Recent lookback window in hours. Ignored when start_time is provided."},
+                    "start_time": {"type": "string", "description": "Optional inclusive ISO-8601 start datetime."},
+                    "end_time": {"type": "string", "description": "Optional exclusive-ish ISO-8601 end datetime. Defaults to now."},
+                    "min_magnitude": {"type": "number", "description": "Minimum earthquake magnitude. Defaults to 2.5."},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 500, "description": "Maximum live rows to return."},
+                    "orderby": {"type": "string", "enum": ["time", "time-asc", "magnitude", "magnitude-asc"], "description": "USGS result ordering."},
+                    "min_latitude": {"type": "number", "description": "Optional bounding box minimum latitude."},
+                    "max_latitude": {"type": "number", "description": "Optional bounding box maximum latitude."},
+                    "min_longitude": {"type": "number", "description": "Optional bounding box minimum longitude."},
+                    "max_longitude": {"type": "number", "description": "Optional bounding box maximum longitude."},
+                },
                 "additionalProperties": False,
             },
             "annotations": {"readOnlyHint": True},
@@ -313,13 +395,17 @@ def _tool_definitions() -> list[dict[str, Any]]:
         {
             "name": "query_dataset",
             "title": "Query Dataset",
-            "description": "Generic structured query for direct source_id or pack_id access using the same contract as POST /api/v1/query/dataset. Currency and volcanoes are free; earthquakes and tsunamis are paid via x402.",
+            "description": "Generic structured query for direct source_id or pack_id access using the same contract as POST /api/v1/query/dataset. Free packs: "
+            + ", ".join(sorted(_free_pack_ids()))
+            + ". Paid packs: "
+            + ", ".join(sorted(_paid_pack_ids()))
+            + " (x402 Base USDC).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing and idempotency."},
-                    "source_id": {"type": "string", "description": "Concrete source id such as 'earthquakes_events' or 'volcanoes_events'."},
-                    "pack_id": {"type": "string", "description": "Pack id such as 'currency', 'earthquakes', 'volcanoes', or 'tsunamis'."},
+                    "source_id": {"type": "string", "description": "Concrete source id such as 'earthquakes_events', 'volcanoes_events', 'hurricanes_events', or 'un_sdg/01'."},
+                    "pack_id": {"type": "string", "description": "Pack id such as 'currency', 'earthquakes', 'volcanoes', 'tsunamis', 'hurricanes', 'un_sdg', or 'world_factbook'."},
                     "metrics": {"type": "array", "items": {"type": "string"}, "description": "Metric ids to return. Use event_count for aggregate counts when supported."},
                     "filters": {"type": "object", "description": "Structured filters including time, region_ids, and compare clauses."},
                     "sort": {"anyOf": [{"type": "array"}, {"type": "object"}], "description": "Optional sort instructions for row-returning queries."},
@@ -348,9 +434,9 @@ def _prompt_definitions() -> list[dict[str, Any]]:
         {
             "name": "count_disaster_events",
             "title": "Count Disaster Events",
-            "description": "Starter prompt for counting earthquakes, volcanoes, or tsunamis in a time range with optional threshold and loc_id filtering.",
+            "description": "Starter prompt for counting earthquakes, volcanoes, tsunamis, or hurricanes in a time range with optional threshold and loc_id filtering.",
             "arguments": [
-                {"name": "pack_id", "description": "One of earthquakes, volcanoes, or tsunamis.", "required": True},
+                {"name": "pack_id", "description": "One of earthquakes, volcanoes, tsunamis, or hurricanes.", "required": True},
                 {"name": "start", "description": "Inclusive start date or year for the chosen pack.", "required": True},
                 {"name": "end", "description": "Inclusive end date or year for the chosen pack.", "required": True},
                 {"name": "region_id", "description": "Optional loc_id region to filter by.", "required": False},
@@ -466,8 +552,7 @@ def _render_prompt(name: str, arguments: dict[str, Any]) -> dict[str, Any] | Non
 
 
 def _resource_definitions() -> list[dict[str, Any]]:
-    app_url = _public_app_url()
-    return [
+    static = [
         {
             "uri": "daedalmap://guide",
             "name": "Guide",
@@ -510,34 +595,18 @@ def _resource_definitions() -> list[dict[str, Any]]:
             "description": "Current free-versus-paid split for the live hosted packs.",
             "mimeType": "text/markdown",
         },
+    ]
+    pack_resources = [
         {
-            "uri": "daedalmap://pack/currency",
-            "name": "Currency Pack",
-            "title": "Currency Pack Detail",
-            "description": "Pack detail and quick-start metadata for the currency lane.",
+            "uri": f"daedalmap://pack/{pid}",
+            "name": f"{profile['title']} Pack",
+            "title": f"{profile['title']} Pack Detail",
+            "description": f"Pack detail and quick-start metadata for the {pid} lane.",
             "mimeType": "application/json",
-        },
-        {
-            "uri": "daedalmap://pack/earthquakes",
-            "name": "Earthquakes Pack",
-            "title": "Earthquakes Pack Detail",
-            "description": "Pack detail and quick-start metadata for the earthquakes lane.",
-            "mimeType": "application/json",
-        },
-        {
-            "uri": "daedalmap://pack/volcanoes",
-            "name": "Volcanoes Pack",
-            "title": "Volcanoes Pack Detail",
-            "description": "Pack detail and quick-start metadata for the volcanoes lane.",
-            "mimeType": "application/json",
-        },
-        {
-            "uri": "daedalmap://pack/tsunamis",
-            "name": "Tsunamis Pack",
-            "title": "Tsunamis Pack Detail",
-            "description": "Pack detail and quick-start metadata for the tsunamis lane.",
-            "mimeType": "application/json",
-        },
+        }
+        for pid, profile in PACK_SERVER_PROFILES.items()
+    ]
+    links = [
         {
             "uri": "daedalmap://links",
             "name": "Public Links",
@@ -547,6 +616,7 @@ def _resource_definitions() -> list[dict[str, Any]]:
             "annotations": {"readOnlyHint": True},
         },
     ]
+    return static + pack_resources + links
 
 
 def _read_resource(uri: str) -> dict[str, Any] | None:
@@ -563,12 +633,7 @@ def _read_resource(uri: str) -> dict[str, Any] | None:
                     "query_url": f"{app_url}/api/v1/query/dataset",
                     "mcp_url": f"{app_url}/mcp",
                     "docs_url": f"{site_url}/docs/for-agents",
-                    "current_access_model": {
-                        "currency": "free",
-                        "volcanoes": "free",
-                        "earthquakes": "paid_x402_base_usdc",
-                        "tsunamis": "paid_x402_base_usdc",
-                    },
+                    "current_access_model": {pid: p["pricing"] for pid, p in PACK_SERVER_PROFILES.items()},
                 },
                 indent=2,
             ),
@@ -604,8 +669,8 @@ def _read_resource(uri: str) -> dict[str, Any] | None:
                 "## Step 4: Use prompts for ready-to-use examples\n\n"
                 "Call prompts/list to get complete example tool calls for every supported query shape.\n\n"
                 "## Reference\n\n"
-                "Free packs: currency, volcanoes\n"
-                "Paid packs: earthquakes, tsunamis (x402 Base mainnet USDC)\n"
+                f"Free packs: {', '.join(sorted(_free_pack_ids()))}\n"
+                f"Paid packs: {', '.join(sorted(_paid_pack_ids()))} (x402 Base mainnet USDC)\n"
                 f"Full docs: {site_url}/docs/for-agents\n"
                 f"Catalog endpoint: {app_url}/api/v1/catalog\n"
             ),
@@ -651,11 +716,11 @@ def _read_resource(uri: str) -> dict[str, Any] | None:
             (
                 "# Access Model\n\n"
                 "Live hosted pack access split:\n"
-                "- currency: free\n"
-                "- volcanoes: free\n"
-                "- earthquakes: paid via x402 on Base mainnet USDC\n"
-                "- tsunamis: paid via x402 on Base mainnet USDC\n\n"
-                "Discovery endpoints are always free:\n"
+                + "".join(
+                    f"- {pid}: {'free' if p['pricing'] == 'free' else 'paid via x402 on Base mainnet USDC'}\n"
+                    for pid, p in PACK_SERVER_PROFILES.items()
+                )
+                + "\nDiscovery endpoints are always free:\n"
                 f"- {app_url}/api/v1/guide\n"
                 f"- {app_url}/api/v1/catalog\n"
                 f"- {app_url}/api/v1/packs/{{pack_id}}\n"
@@ -719,6 +784,53 @@ async def _execute_paid_tool(request: Request, tool_name: str, arguments: dict[s
         return _jsonrpc_response(_tool_result(parsed_body), rpc_request_id)
 
     return _jsonrpc_response(_tool_result(parsed_body, is_error=True), rpc_request_id)
+
+
+async def _execute_live_earthquake_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
+    payload = _ensure_request_id(arguments, "get_live_earthquake_events")
+    try:
+        result = fetch_live_earthquakes(
+            request_id=str(payload.get("request_id") or ""),
+            hours=payload.get("hours"),
+            start_time=payload.get("start_time"),
+            end_time=payload.get("end_time"),
+            min_magnitude=payload.get("min_magnitude"),
+            limit=payload.get("limit"),
+            orderby=payload.get("orderby"),
+            min_latitude=payload.get("min_latitude"),
+            max_latitude=payload.get("max_latitude"),
+            min_longitude=payload.get("min_longitude"),
+            max_longitude=payload.get("max_longitude"),
+        )
+    except ValueError as exc:
+        return _jsonrpc_response(
+            _tool_result(
+                {
+                    "request_id": payload.get("request_id"),
+                    "error": {
+                        "code": "invalid_live_earthquake_request",
+                        "message": str(exc),
+                    },
+                },
+                is_error=True,
+            ),
+            rpc_request_id,
+        )
+    except Exception as exc:
+        return _jsonrpc_response(
+            _tool_result(
+                {
+                    "request_id": payload.get("request_id"),
+                    "error": {
+                        "code": "live_earthquake_upstream_error",
+                        "message": f"USGS live earthquake request failed: {exc}",
+                    },
+                },
+                is_error=True,
+            ),
+            rpc_request_id,
+        )
+    return _jsonrpc_response(_tool_result(result), rpc_request_id)
 
 
 @router.get("/mcp")
@@ -790,7 +902,9 @@ async def mcp_endpoint(request: Request, pack_id: str | None = None):
                     "Step 2: call get_pack with a pack_id for coverage dates, available metrics, and a first-query example. "
                     "Step 3: call get_volcanic_activity or get_fx_rates to get real data immediately - both are free, no setup needed. "
                     "Step 4: call prompts/list to get ready-to-use example calls for every supported query shape. "
-                    "Paid packs (earthquakes, tsunamis): call the tool without payment first - the server returns HTTP 402 with the exact price and payment address before any charge occurs."
+                    "Paid packs ("
+                    + ", ".join(sorted(_paid_pack_ids()))
+                    + "): call the tool without payment first - the server returns HTTP 402 with the exact price and payment address before any charge occurs."
                 ),
             },
             request_id,
@@ -860,8 +974,12 @@ async def mcp_endpoint(request: Request, pack_id: str | None = None):
             return _jsonrpc_response(_tool_result({"error": "Pack not found", "pack_id": pack_id}, is_error=True), request_id)
         return _jsonrpc_response(_tool_result(payload), request_id)
 
+    if tool_name == "get_live_earthquake_events":
+        return await _execute_live_earthquake_tool(arguments, request_id)
+
     if tool_name not in {
         "get_earthquake_events",
+        "get_live_earthquake_events",
         "get_volcanic_activity",
         "get_tsunami_events",
         "get_fx_rates",
