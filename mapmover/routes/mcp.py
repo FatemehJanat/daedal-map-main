@@ -82,7 +82,7 @@ PACK_SERVER_PROFILES = {
     "hurricanes": {
         "name": "com.daedalmap/hurricanes",
         "title": "DaedalMap Hurricane and Tropical Cyclone Data",
-        "description": "Global tropical cyclone track data from IBTrACS covering 1842 to present. Over 722,000 storm observations with wind speed, pressure, and track geometry. Free - no payment required.",
+        "description": "Global tropical cyclone tracks from IBTrACS, 1842-present. Wind, pressure, and paths. Free.",
         "pricing": "free",
         "registry_meta": {
             "categories": ["hazard", "geospatial", "data"],
@@ -96,7 +96,7 @@ PACK_SERVER_PROFILES = {
     "un_sdg": {
         "name": "com.daedalmap/un_sdg",
         "title": "DaedalMap UN Sustainable Development Goals",
-        "description": "210 UN SDG metrics across 17 goals from 1963 to 2025. Covers poverty, health, education, climate, and equality indicators for countries worldwide. Free - no payment required.",
+        "description": "UN SDG country indicators across all 17 goals: poverty, health, education, climate. Free.",
         "pricing": "free",
         "registry_meta": {
             "categories": ["development", "data", "geospatial"],
@@ -110,7 +110,7 @@ PACK_SERVER_PROFILES = {
     "world_factbook": {
         "name": "com.daedalmap/world_factbook",
         "title": "DaedalMap CIA World Factbook",
-        "description": "111 country-level indicators from CIA World Factbook editions 2002-2026 covering infrastructure, energy, demographics, military, and economy. Observation years 1990-2025. Free - no payment required.",
+        "description": "CIA World Factbook country indicators for infrastructure, energy, demographics, and economy. Free.",
         "pricing": "free",
         "registry_meta": {
             "categories": ["economic", "data", "geospatial"],
