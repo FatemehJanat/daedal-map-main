@@ -68,7 +68,11 @@ def _parse_datetime(value: Any, field_name: str) -> datetime:
 def _format_output_time(value: datetime | None) -> str | None:
     if value is None:
         return None
-    return value.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    utc_value = value.astimezone(timezone.utc)
+    return (
+        f"{utc_value.year:04d}-{utc_value.month:02d}-{utc_value.day:02d} "
+        f"{utc_value.hour:02d}:{utc_value.minute:02d}:{utc_value.second:02d}"
+    )
 
 
 def _coerce_int(value: Any) -> int | None:
