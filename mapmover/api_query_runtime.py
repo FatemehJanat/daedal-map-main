@@ -160,7 +160,7 @@ SUPPORTED_DYNAMIC_SOURCES: dict[str, dict[str, Any]] = {
         "time_field": "timestamp",
         "time_granularity": "timestamp",
         "default_limit": 100,
-        "max_limit": 500,
+        "max_limit": 1000,
     },
 }
 
