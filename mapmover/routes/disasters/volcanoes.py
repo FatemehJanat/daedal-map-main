@@ -1,6 +1,7 @@
 """Volcano and eruption disaster endpoints."""
 
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 import pandas as pd
 
 from mapmover.disaster_filters import apply_location_filters
@@ -9,6 +10,7 @@ from mapmover.duckdb_helpers import (
     is_default_preload_range, make_preload_cache_key,
     select_filtered_event_rows, select_filtered_event_rows_cached, select_rows,
 )
+from mapmover.live_volcano_smithsonian import fetch_live_volcanoes
 from mapmover.logging_analytics import logger
 from mapmover.paths import GLOBAL_DIR
 
@@ -28,6 +30,50 @@ from .helpers import (
 
 
 router = APIRouter()
+
+
+@router.get("/api/volcanoes/live")
+async def get_live_volcanoes(
+    days: int = 365,
+    start_time: str = None,
+    end_time: str = None,
+    min_vei: float = None,
+    ongoing_only: bool = False,
+    limit: int = 100,
+    orderby: str = "time",
+):
+    """Fetch preliminary recent volcanic eruption updates directly from Smithsonian/GVP."""
+    try:
+        return fetch_live_volcanoes(
+            days=days,
+            start_time=start_time,
+            end_time=end_time,
+            min_vei=min_vei,
+            ongoing_only=ongoing_only,
+            limit=limit,
+            orderby=orderby,
+        )
+    except ValueError as exc:
+        return JSONResponse(
+            {
+                "error": {
+                    "code": "invalid_live_volcano_request",
+                    "message": str(exc),
+                }
+            },
+            status_code=400,
+        )
+    except Exception as exc:
+        logger.error(f"Error fetching live volcanoes: {exc}")
+        return JSONResponse(
+            {
+                "error": {
+                    "code": "live_volcano_upstream_error",
+                    "message": "Smithsonian/GVP live volcano request failed.",
+                }
+            },
+            status_code=502,
+        )
 
 
 def get_eruption_property_builders():

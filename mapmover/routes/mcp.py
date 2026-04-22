@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse, Response
 
 from mapmover.data_loading import load_api_catalog, load_api_pack_detail
 from mapmover.live_earthquake_usgs import fetch_live_earthquakes
+from mapmover.live_volcano_smithsonian import fetch_live_volcanoes
 from mapmover.routes.api_query import execute_query_dataset_payload
 from mapmover.security import get_allowed_origins
 
@@ -350,6 +351,26 @@ def _tool_definitions() -> list[dict[str, Any]]:
                     "output": {"type": "object", "description": "Optional output controls such as response format hints."},
                 },
                 "required": ["metrics", "filters"],
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": True},
+        },
+        {
+            "name": "get_live_volcano_events",
+            "title": "Get Live Volcano Events",
+            "description": "Free live wrapper. Calls the Smithsonian/GVP WFS for recent preliminary volcanic eruption updates normalized to DaedalMap event fields. This is not the enriched canonical history lane.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing."},
+                    "days": {"type": "integer", "minimum": 1, "maximum": 730, "description": "Recent lookback window in days. Ignored when start_time is provided."},
+                    "start_time": {"type": "string", "description": "Optional inclusive ISO-8601 start datetime or date."},
+                    "end_time": {"type": "string", "description": "Optional inclusive ISO-8601 end datetime or date. Defaults to now."},
+                    "min_vei": {"type": "number", "description": "Optional minimum Volcanic Explosivity Index."},
+                    "ongoing_only": {"type": "boolean", "description": "When true, only return eruptions marked continuing by GVP."},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 500, "description": "Maximum live rows to return."},
+                    "orderby": {"type": "string", "enum": ["time", "time-asc", "vei", "vei-asc"], "description": "Result ordering."},
+                },
                 "additionalProperties": False,
             },
             "annotations": {"readOnlyHint": True},
@@ -833,6 +854,50 @@ async def _execute_live_earthquake_tool(arguments: dict[str, Any], rpc_request_i
     return _jsonrpc_response(_tool_result(result), rpc_request_id)
 
 
+async def _execute_live_volcano_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
+    payload = _ensure_request_id(arguments, "get_live_volcano_events")
+    try:
+        result = fetch_live_volcanoes(
+            request_id=str(payload.get("request_id") or ""),
+            days=payload.get("days"),
+            start_time=payload.get("start_time"),
+            end_time=payload.get("end_time"),
+            min_vei=payload.get("min_vei"),
+            ongoing_only=bool(payload.get("ongoing_only", False)),
+            limit=payload.get("limit"),
+            orderby=payload.get("orderby"),
+        )
+    except ValueError as exc:
+        return _jsonrpc_response(
+            _tool_result(
+                {
+                    "request_id": payload.get("request_id"),
+                    "error": {
+                        "code": "invalid_live_volcano_request",
+                        "message": str(exc),
+                    },
+                },
+                is_error=True,
+            ),
+            rpc_request_id,
+        )
+    except Exception as exc:
+        return _jsonrpc_response(
+            _tool_result(
+                {
+                    "request_id": payload.get("request_id"),
+                    "error": {
+                        "code": "live_volcano_upstream_error",
+                        "message": f"Smithsonian/GVP live volcano request failed: {exc}",
+                    },
+                },
+                is_error=True,
+            ),
+            rpc_request_id,
+        )
+    return _jsonrpc_response(_tool_result(result), rpc_request_id)
+
+
 @router.get("/mcp")
 @router.get("/mcp/{pack_id}")
 async def mcp_endpoint_info(pack_id: str | None = None):
@@ -977,10 +1042,14 @@ async def mcp_endpoint(request: Request, pack_id: str | None = None):
     if tool_name == "get_live_earthquake_events":
         return await _execute_live_earthquake_tool(arguments, request_id)
 
+    if tool_name == "get_live_volcano_events":
+        return await _execute_live_volcano_tool(arguments, request_id)
+
     if tool_name not in {
         "get_earthquake_events",
         "get_live_earthquake_events",
         "get_volcanic_activity",
+        "get_live_volcano_events",
         "get_tsunami_events",
         "get_fx_rates",
         "query_dataset",
