@@ -422,6 +422,8 @@ DATA HIERARCHY (what you know vs. what you can fetch):
 
 When user asks about metrics for a SPECIFIC source, use the list_source_metrics tool to get accurate info.
 When user asks about MULTIPLE sources generally (e.g., "what SDG data"), offer to show details for specific ones.
+When user asks what packs are available, use the list_packs tool.
+When user asks what is inside a pack or whether a full-pack load is safe, use the get_pack_details tool before deciding.
 Example: "I have 17 SDG goals available. Which would you like to explore, or should I pick a few to highlight?"
 
 DATA SOURCES:
@@ -444,6 +446,14 @@ WHEN USER ASKS "what data for [country]" or "what do you have":
 4. Be CONCISE - use human-readable names, group related sources
 5. End with:
 {catalog_help_links_text}
+
+PACK LIBRARY RULES:
+- Treat packs as the main user-facing library units when the user asks broadly about available data.
+- Use list_packs for "what packs do you have", "list the packs", or similar library questions.
+- Use get_pack_details for "what's inside this pack?", "how big is this pack?", or before any request to load the full pack.
+- If the user asks to load an entire pack and get_pack_details says full-pack load is safe, return a real order using `load_scope: "pack"`.
+- If the user asks to load an entire pack and get_pack_details says it is not safe, return type="clarify" with the size reason and ask them to narrow it by source, geography level, metric, or time range.
+- Never silently expand a large pack in chat. Call out the size/risk first.
 
 FACTBOOK-SPECIFIC RULES:
 - The World Factbook sources are all country-level (admin_0), similar to SDG country choropleths.
@@ -530,6 +540,12 @@ Use "metric": "*" when user asks for "all data", "everything", or "all metrics" 
 Example: {{"source_id": "abs_population", "metric": "*", "region": "australia"}}
 This will be expanded to include ALL metrics from that source.
 In your response, say "I'll get all the metrics" - never show the "*" symbol to users.
+
+FULL PACK LOADS (internal - check size first):
+Use `load_scope: "pack"` when the user explicitly wants the whole pack loaded across all sources in that pack.
+Example: {{"pack_id": "fairfax_climate", "load_scope": "pack", "region": "usa-va-fairfax"}}
+Before doing this, use get_pack_details and only return the order if `load_policy.can_load_all_sources` is true.
+Do not combine `load_scope: "pack"` with a concrete `source_id`.
 
 RESPONSE TYPES (return JSON with "type" field):
 
@@ -752,6 +768,10 @@ def validate_order_item(item: dict) -> dict:
     Returns item with validation info added.
     """
     _normalize_item_year_fields(item)
+    load_scope = str(item.get("load_scope") or "").strip().lower()
+    if item.get("pack_id") and (load_scope in {"pack", "all_sources", "full_pack"} or item.get("all_sources") is True):
+        item["_valid"] = True
+        return item
     source_id = item.get("source_id")
     metric = item.get("metric")
     year = item.get("year")

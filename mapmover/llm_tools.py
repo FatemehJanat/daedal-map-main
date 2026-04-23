@@ -23,7 +23,13 @@ import json
 from typing import Optional
 from pathlib import Path
 
-from .data_loading import load_source_metadata, load_catalog, get_source_path
+from .data_loading import (
+    load_source_metadata,
+    load_catalog,
+    get_source_path,
+    get_catalog_packs,
+    get_pack_metadata,
+)
 
 
 # =============================================================================
@@ -74,6 +80,22 @@ TOOLS = [
                 "required": True
             }
         }
+    },
+    {
+        "name": "list_packs",
+        "description": "List published packs with size, source count, and load safety hints. Use when the user asks what packs are available or wants a high-level pack library view.",
+        "parameters": {}
+    },
+    {
+        "name": "get_pack_details",
+        "description": "Get the sources, coverage, and full-pack load policy for one pack. Use before loading an entire pack or when the user asks what is inside a pack.",
+        "parameters": {
+            "pack_id": {
+                "type": "string",
+                "description": "The pack_id from the catalog (for example 'wildfires' or 'currency')",
+                "required": True
+            }
+        }
     }
 ]
 
@@ -98,6 +120,8 @@ def execute_tool(name: str, params: dict) -> dict:
         "get_source_reference": _exec_get_source_reference,
         "list_source_metrics": _exec_list_source_metrics,
         "list_multiple_sources_metrics": _exec_list_multiple_sources_metrics,
+        "list_packs": _exec_list_packs,
+        "get_pack_details": _exec_get_pack_details,
     }
 
     executor = executors.get(name)
@@ -285,6 +309,74 @@ def _exec_list_multiple_sources_metrics(params: dict) -> dict:
     }
 
 
+def _exec_list_packs(params: dict) -> dict:
+    """List visible pack summaries."""
+    catalog = load_catalog() or {}
+    packs = get_catalog_packs(catalog)
+    results = []
+    for pack in packs:
+        load_policy = pack.get("load_policy") or {}
+        results.append({
+            "pack_id": pack.get("pack_id"),
+            "pack_name": pack.get("pack_name", pack.get("pack_id")),
+            "source_count": pack.get("source_count", 0),
+            "scopes": pack.get("scopes", []),
+            "size_bucket": load_policy.get("size_bucket"),
+            "can_load_all_sources": bool(load_policy.get("can_load_all_sources")),
+            "reason": load_policy.get("reason"),
+        })
+    return {
+        "packs": results,
+        "total_packs": len(results),
+    }
+
+
+def _exec_get_pack_details(params: dict) -> dict:
+    """Get a pack summary with concrete source previews."""
+    pack_id = params.get("pack_id")
+    if not pack_id:
+        raise ValueError("pack_id is required")
+
+    catalog = load_catalog() or {}
+    pack = get_pack_metadata(pack_id, catalog)
+    if not pack:
+        raise ValueError(f"Pack not found: {pack_id}")
+
+    source_lookup = {
+        src.get("source_id"): src
+        for src in (catalog.get("sources") or [])
+        if src.get("source_id")
+    }
+    sources = []
+    for source_id in pack.get("source_ids", []):
+        source = source_lookup.get(source_id) or {}
+        sources.append({
+            "source_id": source_id,
+            "source_name": source.get("source_name", source_id),
+            "scope": source.get("scope"),
+            "data_type": source.get("data_type"),
+            "geographic_level": source.get("geographic_level"),
+            "row_count": source.get("row_count"),
+            "file_size_mb": source.get("file_size_mb"),
+        })
+
+    return {
+        "pack_id": pack.get("pack_id"),
+        "pack_name": pack.get("pack_name", pack.get("pack_id")),
+        "description": pack.get("description", ""),
+        "source_count": pack.get("source_count", 0),
+        "source_ids": pack.get("source_ids", []),
+        "scopes": pack.get("scopes", []),
+        "data_types": pack.get("data_types", []),
+        "geographic_levels": pack.get("geographic_levels", []),
+        "temporal_coverage": pack.get("temporal_coverage", {}),
+        "row_count_total": pack.get("row_count_total", 0),
+        "file_size_mb_total": pack.get("file_size_mb_total", 0),
+        "load_policy": pack.get("load_policy", {}),
+        "sources": sources,
+    }
+
+
 # =============================================================================
 # PROVIDER FORMATTERS
 # =============================================================================
@@ -461,6 +553,40 @@ def format_tool_result_for_llm(result: dict) -> str:
         return f"[{data['error']}]\nSuggestion: {data['suggestion']}"
 
     # Format based on content
+    if "packs" in data:
+        lines = [f"[Pack Library ({data.get('total_packs', len(data['packs']))} packs)]"]
+        for pack in data["packs"][:20]:
+            load_hint = "safe to load all" if pack.get("can_load_all_sources") else "load selectively"
+            scope_text = ", ".join(pack.get("scopes") or []) or "unknown scope"
+            lines.append(
+                f"- {pack.get('pack_name', pack.get('pack_id'))} [{pack.get('pack_id')}]: "
+                f"{pack.get('source_count', 0)} sources, {scope_text}, {load_hint}"
+            )
+        if len(data["packs"]) > 20:
+            lines.append(f"  ... and {len(data['packs']) - 20} more")
+        return "\n".join(lines)
+
+    if "sources" in data and data.get("pack_id"):
+        lines = [f"[Pack: {data.get('pack_name', data.get('pack_id'))}]"]
+        load_policy = data.get("load_policy") or {}
+        lines.append(
+            f"Full-pack load: {'allowed' if load_policy.get('can_load_all_sources') else 'not allowed'} "
+            f"({load_policy.get('reason', 'no reason provided')})"
+        )
+        lines.append(
+            f"Sources: {data.get('source_count', 0)} | "
+            f"Size: {data.get('file_size_mb_total', 0)} MB | "
+            f"Rows: {data.get('row_count_total', 0):,}"
+        )
+        for source in data["sources"][:20]:
+            lines.append(
+                f"- {source.get('source_name', source.get('source_id'))} "
+                f"[{source.get('source_id')} | {source.get('scope') or 'unknown scope'}]"
+            )
+        if len(data["sources"]) > 20:
+            lines.append(f"  ... and {len(data['sources']) - 20} more")
+        return "\n".join(lines)
+
     if "sources" in data:
         # Batch metrics result
         lines = [f"[Multiple Sources Summary ({data.get('total_sources', len(data['sources']))} sources)]"]

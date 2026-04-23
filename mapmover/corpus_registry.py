@@ -108,6 +108,7 @@ class CorpusRegistry:
 
     def __init__(self):
         self._sessions: dict[str, dict[str, dict]] = {}
+        self._saved_corpora: dict[str, dict] = {}
 
     def register_order_result(
         self,
@@ -175,6 +176,7 @@ class CorpusRegistry:
             "mode": "research",
             "artifact_count": len(artifacts),
             "artifacts": [self._public_artifact(a) for a in artifacts],
+            "saved_corpus": deepcopy(self._saved_corpora.get(session_id)),
             "focus": {
                 "active_geographies": [],
                 "active_question": None,
@@ -190,6 +192,7 @@ class CorpusRegistry:
 
     def clear_session(self, session_id: str) -> None:
         self._sessions.pop(session_id, None)
+        self._saved_corpora.pop(session_id, None)
 
     def remove_source(self, session_id: str, source_id: str) -> int:
         artifacts = self._sessions.get(session_id)
@@ -203,6 +206,18 @@ class CorpusRegistry:
         for artifact_id in to_remove:
             artifacts.pop(artifact_id, None)
         return len(to_remove)
+
+    def set_saved_corpus(self, session_id: str, saved_corpus: dict | None) -> None:
+        if not session_id:
+            return
+        if not saved_corpus:
+            self._saved_corpora.pop(session_id, None)
+            return
+        self._saved_corpora[session_id] = deepcopy(saved_corpus)
+
+    def get_saved_corpus(self, session_id: str) -> dict | None:
+        value = self._saved_corpora.get(session_id)
+        return deepcopy(value) if value else None
 
     @staticmethod
     def _public_artifact(artifact: dict) -> dict:

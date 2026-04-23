@@ -36,6 +36,7 @@ import logging
 import os
 import time
 from pathlib import Path
+from copy import deepcopy
 
 from .pack_state import build_active_catalog
 from .paths import CATALOG_PATH, COUNTRIES_DIR, DATA_ROOT, GEOMETRY_DIR
@@ -67,6 +68,10 @@ _api_guide_missing_time = 0.0
 _api_pack_cache: dict[str, dict] = {}
 _api_pack_cache_time: dict[str, float] = {}
 _api_pack_missing_time: dict[str, float] = {}
+
+PACK_LOAD_MAX_SOURCES = 8
+PACK_LOAD_MAX_FILE_SIZE_MB = 200.0
+PACK_LOAD_MAX_ROW_COUNT = 2_000_000
 
 
 def get_data_folder():
@@ -242,6 +247,156 @@ def load_full_catalog():
 
     _ = load_catalog()
     return _catalog_cache or {"sources": [], "total_sources": 0}
+
+
+def _coerce_int(value) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _coerce_float(value) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _describe_pack_size(source_count: int, file_size_mb_total: float, row_count_total: int) -> str:
+    if (
+        source_count <= 3
+        and file_size_mb_total <= 50
+        and row_count_total <= 250_000
+    ):
+        return "small"
+    if (
+        source_count <= PACK_LOAD_MAX_SOURCES
+        and file_size_mb_total <= PACK_LOAD_MAX_FILE_SIZE_MB
+        and row_count_total <= PACK_LOAD_MAX_ROW_COUNT
+    ):
+        return "medium"
+    return "large"
+
+
+def _humanize_pack_id(pack_id: str) -> str:
+    acronyms = {"sdg", "un", "fx", "usa", "can", "cia"}
+    parts = [part for part in str(pack_id or "").split("_") if part]
+    words = [part.upper() if part.lower() in acronyms else part.title() for part in parts]
+    return " ".join(words) or str(pack_id or "")
+
+
+def _build_pack_load_policy(source_count: int, file_size_mb_total: float, row_count_total: int) -> dict:
+    reasons = []
+    if source_count > PACK_LOAD_MAX_SOURCES:
+        reasons.append(f"{source_count} sources exceeds the {PACK_LOAD_MAX_SOURCES}-source load limit")
+    if file_size_mb_total > PACK_LOAD_MAX_FILE_SIZE_MB:
+        reasons.append(
+            f"{file_size_mb_total:.1f} MB exceeds the {PACK_LOAD_MAX_FILE_SIZE_MB:.0f} MB safety limit"
+        )
+    if row_count_total > PACK_LOAD_MAX_ROW_COUNT:
+        reasons.append(
+            f"{row_count_total:,} rows exceeds the {PACK_LOAD_MAX_ROW_COUNT:,}-row safety limit"
+        )
+
+    allowed = not reasons
+    return {
+        "can_load_all_sources": allowed,
+        "size_bucket": _describe_pack_size(source_count, file_size_mb_total, row_count_total),
+        "reason": "Safe to load the full pack at once." if allowed else "; ".join(reasons),
+        "max_sources": PACK_LOAD_MAX_SOURCES,
+        "max_file_size_mb": PACK_LOAD_MAX_FILE_SIZE_MB,
+        "max_row_count": PACK_LOAD_MAX_ROW_COUNT,
+    }
+
+
+def _build_catalog_packs_from_sources(catalog: dict) -> list[dict]:
+    sources = catalog.get("sources", [])
+    grouped: dict[str, list[dict]] = {}
+    for source in sources:
+        pack_id = str(source.get("pack_id") or "").strip()
+        if not pack_id:
+            continue
+        grouped.setdefault(pack_id, []).append(source)
+
+    packs = []
+    for pack_id, pack_sources in grouped.items():
+        representative = next((src for src in pack_sources if src.get("scope") == "global"), pack_sources[0])
+        scopes = sorted({str(src.get("scope") or "global") for src in pack_sources})
+        categories = sorted({str(src.get("category") or "") for src in pack_sources if src.get("category")})
+        data_types = sorted({
+            value
+            for src in pack_sources
+            for value in (
+                src.get("data_type") if isinstance(src.get("data_type"), list) else [src.get("data_type")]
+            )
+            if value
+        })
+        geographic_levels = sorted({
+            str(level)
+            for src in pack_sources
+            for level in (
+                src.get("geographic_levels")
+                if isinstance(src.get("geographic_levels"), list)
+                else ([src.get("geographic_level")] if src.get("geographic_level") else [])
+            )
+            if level
+        })
+        row_count_total = sum(_coerce_int(src.get("row_count")) for src in pack_sources)
+        file_size_mb_total = round(sum(_coerce_float(src.get("file_size_mb")) for src in pack_sources), 2)
+        source_ids = [src.get("source_id") for src in pack_sources if src.get("source_id")]
+        temporal_starts = [
+            str(src.get("temporal_coverage", {}).get("start"))
+            for src in pack_sources
+            if src.get("temporal_coverage", {}).get("start")
+        ]
+        temporal_ends = [
+            str(src.get("temporal_coverage", {}).get("end"))
+            for src in pack_sources
+            if src.get("temporal_coverage", {}).get("end")
+        ]
+        default_pack_name = _humanize_pack_id(pack_id)
+        pack_name = representative.get("source_name") if len(source_ids) == 1 else default_pack_name
+        pack_name = pack_name or default_pack_name
+        load_policy = _build_pack_load_policy(len(source_ids), file_size_mb_total, row_count_total)
+        packs.append({
+            "pack_id": pack_id,
+            "pack_name": pack_name,
+            "description": representative.get("llm_summary") or representative.get("coverage_description") or "",
+            "source_count": len(source_ids),
+            "source_ids": source_ids,
+            "scopes": scopes,
+            "categories": categories,
+            "data_types": data_types,
+            "geographic_levels": geographic_levels,
+            "row_count_total": row_count_total,
+            "file_size_mb_total": file_size_mb_total,
+            "temporal_coverage": {
+                "start": min(temporal_starts) if temporal_starts else None,
+                "end": max(temporal_ends) if temporal_ends else None,
+            },
+            "load_policy": load_policy,
+        })
+
+    return sorted(packs, key=lambda pack: pack.get("pack_id", ""))
+
+
+def get_catalog_packs(catalog: dict | None = None) -> list[dict]:
+    payload = catalog or load_catalog() or {}
+    packs = payload.get("packs")
+    if isinstance(packs, list) and packs:
+        return deepcopy(packs)
+    return _build_catalog_packs_from_sources(payload)
+
+
+def get_pack_metadata(pack_id: str, catalog: dict | None = None) -> dict | None:
+    pack_id = str(pack_id or "").strip()
+    if not pack_id:
+        return None
+    for pack in get_catalog_packs(catalog):
+        if pack.get("pack_id") == pack_id:
+            return pack
+    return None
 
 
 def get_source_path(source_id: str):

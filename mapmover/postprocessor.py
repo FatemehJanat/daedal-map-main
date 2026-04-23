@@ -17,7 +17,7 @@ import json
 from pathlib import Path
 from typing import Optional
 
-from .data_loading import load_catalog, load_source_metadata
+from .data_loading import load_catalog, load_source_metadata, get_pack_metadata
 from .duckdb_helpers import parquet_columns
 from .paths import DATA_ROOT
 
@@ -106,6 +106,12 @@ def _get_catalog_source(catalog: dict, source_id: str | None) -> dict | None:
     return None
 
 
+def _get_catalog_pack(catalog: dict, pack_id: str | None) -> dict | None:
+    if not pack_id:
+        return None
+    return get_pack_metadata(pack_id, catalog)
+
+
 def _scope_matches_region(scope: str, region: str | None) -> bool:
     if not region:
         return scope == "global"
@@ -142,6 +148,80 @@ def _resolve_pack_source(catalog: dict, pack_id: str | None, region: str | None)
     if len(pack_sources) == 1:
         return pack_sources[0].get("source_id")
     return None
+
+
+def _is_full_pack_load(item: dict) -> bool:
+    load_scope = str(item.get("load_scope") or "").strip().lower()
+    return bool(item.get("pack_id")) and (
+        load_scope in {"pack", "all_sources", "full_pack"}
+        or item.get("all_sources") is True
+    )
+
+
+def _source_supports_events(source: dict | None) -> bool:
+    data_type = (source or {}).get("data_type")
+    if isinstance(data_type, list):
+        return "events" in data_type
+    return data_type == "events"
+
+
+def _build_pack_load_clarify(item: dict, pack: dict) -> str:
+    load_policy = pack.get("load_policy") or {}
+    pack_name = pack.get("pack_name") or pack.get("pack_id") or "this pack"
+    source_count = pack.get("source_count", 0)
+    size_mb = pack.get("file_size_mb_total", 0)
+    row_count = pack.get("row_count_total", 0)
+    reason = load_policy.get("reason") or "it is too large to load safely in one step"
+    return (
+        f"{pack_name} is too large to load all at once right now. "
+        f"It has {source_count} sources, about {size_mb} MB, and {row_count:,} rows. "
+        f"{reason}. Please narrow it to a source, geography level, metric, or time range."
+    )
+
+
+def detect_full_pack_load_clarify(items: list, catalog: dict) -> str | None:
+    for item in items:
+        if not _is_full_pack_load(item):
+            continue
+        pack = _get_catalog_pack(catalog, item.get("pack_id"))
+        if not pack:
+            return f"Pack '{item.get('pack_id')}' was not found."
+        if not (pack.get("load_policy") or {}).get("can_load_all_sources"):
+            return _build_pack_load_clarify(item, pack)
+    return None
+
+
+def expand_full_pack_loads(items: list, catalog: dict) -> list:
+    expanded = []
+    source_lookup = {
+        src.get("source_id"): src
+        for src in _catalog_sources(catalog)
+        if src.get("source_id")
+    }
+
+    for item in items:
+        if not _is_full_pack_load(item):
+            expanded.append(item)
+            continue
+
+        pack = _get_catalog_pack(catalog, item.get("pack_id"))
+        if not pack:
+            expanded.append(item)
+            continue
+
+        for source_id in pack.get("source_ids", []):
+            source = source_lookup.get(source_id) or {}
+            new_item = {k: v for k, v in item.items() if k not in {"load_scope", "all_sources"}}
+            new_item["source_id"] = source_id
+            new_item["_expanded_from_pack"] = item.get("pack_id")
+            if _source_supports_events(source):
+                new_item.setdefault("mode", "events")
+                new_item.pop("metric", None)
+            elif not new_item.get("metric"):
+                new_item["metric"] = "*"
+            expanded.append(new_item)
+
+    return expanded
 
 
 def _source_requires_metric(item: dict, catalog_source: dict | None) -> bool:
@@ -1047,8 +1127,27 @@ def postprocess_order(order: dict, hints: dict = None) -> dict:
             "year_end": order.get("year_end"),
         }
 
+    full_pack_clarify = detect_full_pack_load_clarify(items, catalog)
+    if full_pack_clarify:
+        return {
+            "items": items,
+            "derived_specs": [],
+            "validation_summary": full_pack_clarify,
+            "all_valid": False,
+            "needs_clarify": True,
+            "clarify_message": full_pack_clarify,
+            "summary": order.get("summary"),
+            "region": order.get("region"),
+            "year": order.get("year"),
+            "year_start": order.get("year_start"),
+            "year_end": order.get("year_end"),
+        }
+
     # Step 1: Detect event mode for disaster/event sources
     items = detect_event_mode(items, hints)
+
+    # Step 1b: Expand explicit full-pack load requests into one item per source.
+    items = expand_full_pack_loads(items, catalog)
 
     # Step 2: Expand wildcard metrics (metric: "*" -> all metrics from source)
     items = expand_wildcard_metrics(items)

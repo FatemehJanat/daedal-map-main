@@ -337,3 +337,7 @@ export function getSessionMaxAgeMs() {
 export function getCurrentProfile() {
   return currentProfile;
 }
+
+export function getSupabaseClient() {
+  return authClient;
+}

@@ -303,6 +303,7 @@ def get_effective_active_pack_ids(full_catalog: dict, state: dict | None = None)
 def build_active_catalog(full_catalog: dict, state: dict | None = None) -> dict:
     state = state or load_pack_state()
     sources = full_catalog.get("sources", [])
+    packs = full_catalog.get("packs", [])
     overlay_tree = full_catalog.get("overlay_tree", {})
 
     if state.get("catalog_mode") == "unmanaged_data_root":
@@ -338,6 +339,14 @@ def build_active_catalog(full_catalog: dict, state: dict | None = None) -> dict:
     active_catalog = dict(full_catalog)
     active_catalog["sources"] = active_sources
     active_catalog["total_sources"] = len(active_sources)
+    active_source_ids = {src.get("source_id") for src in active_sources if src.get("source_id")}
+    active_catalog["packs"] = [
+        dict(pack) for pack in packs
+        if not pack.get("pack_id")
+        or pack.get("pack_id") in active_pack_ids
+        or any(source_id in active_source_ids for source_id in (pack.get("source_ids") or []))
+    ]
+    active_catalog["total_packs"] = len(active_catalog["packs"])
     active_catalog["overlay_tree"] = overlay_tree
     active_catalog["runtime_pack_state"] = {
         "catalog_mode": state.get("catalog_mode", "unmanaged_data_root"),

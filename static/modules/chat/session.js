@@ -60,14 +60,42 @@ export function resetSessionId() {
 
 /**
  * Save chat state to localStorage for persistence across browser close.
- * @param {Array} history - Chat history array (role/content pairs)
- * @param {string} messagesHtml - Rendered messages HTML string
+ * Accepts either the legacy `(history, messagesHtml)` shape or a richer state object.
  */
-export function saveChatState(history, messagesHtml) {
+export function saveChatState(historyOrState, messagesHtml) {
   try {
-    localStorage.setItem(namespacedKey(CHAT_HISTORY_KEY), JSON.stringify(history));
-    if (messagesHtml) {
-      localStorage.setItem(namespacedKey(CHAT_MESSAGES_KEY), messagesHtml);
+    const legacyPayload = Array.isArray(historyOrState);
+    const payload = legacyPayload
+      ? {
+          version: 2,
+          activeMode: 'explore',
+          modeHistories: {
+            explore: historyOrState,
+            research: []
+          },
+          modeMessagesHtml: {
+            explore: messagesHtml || '',
+            research: ''
+          },
+          researchMemory: null,
+          selectedResearchCorpusId: null
+        }
+      : {
+          version: 2,
+          activeMode: historyOrState?.activeMode || 'explore',
+          modeHistories: historyOrState?.modeHistories || { explore: [], research: [] },
+          modeMessagesHtml: historyOrState?.modeMessagesHtml || { explore: '', research: '' },
+          researchMemory: historyOrState?.researchMemory || null,
+          selectedResearchCorpusId: historyOrState?.selectedResearchCorpusId || null
+        };
+
+    localStorage.setItem(namespacedKey(CHAT_HISTORY_KEY), JSON.stringify(payload));
+
+    const exploreHtml = payload.modeMessagesHtml?.explore || '';
+    if (exploreHtml) {
+      localStorage.setItem(namespacedKey(CHAT_MESSAGES_KEY), exploreHtml);
+    } else {
+      localStorage.removeItem(namespacedKey(CHAT_MESSAGES_KEY));
     }
   } catch (e) {
     console.warn('[Session] Could not save chat state:', e.message);
@@ -84,9 +112,30 @@ export function restoreChatState() {
     const messagesHtml = localStorage.getItem(namespacedKey(CHAT_MESSAGES_KEY));
 
     if (historyJson || messagesHtml) {
-      const history = historyJson ? JSON.parse(historyJson) : [];
-      console.log('[Session] Restored chat history:', history.length, 'messages');
-      return { history, messagesHtml: messagesHtml || '' };
+      const parsed = historyJson ? JSON.parse(historyJson) : [];
+      if (Array.isArray(parsed)) {
+        console.log('[Session] Restored chat history:', parsed.length, 'messages');
+        return { history: parsed, messagesHtml: messagesHtml || '' };
+      }
+
+      const activeMode = parsed?.activeMode || 'explore';
+      const modeHistories = parsed?.modeHistories || { explore: [], research: [] };
+      const modeMessagesHtml = {
+        explore: parsed?.modeMessagesHtml?.explore || messagesHtml || '',
+        research: parsed?.modeMessagesHtml?.research || ''
+      };
+      const activeHistory = modeHistories[activeMode] || [];
+
+      console.log('[Session] Restored chat history:', activeHistory.length, 'messages', `(${activeMode})`);
+      return {
+        activeMode,
+        modeHistories,
+        modeMessagesHtml,
+        researchMemory: parsed?.researchMemory || null,
+        selectedResearchCorpusId: parsed?.selectedResearchCorpusId || null,
+        history: activeHistory,
+        messagesHtml: modeMessagesHtml[activeMode] || ''
+      };
     }
   } catch (e) {
     console.warn('[Session] Could not restore chat state:', e.message);

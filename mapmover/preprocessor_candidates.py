@@ -57,8 +57,11 @@ def detect_source_candidates(
     for source in sources:
         source_id = source.get("source_id", "")
         source_name = source.get("source_name", "")
+        pack_id = str(source.get("pack_id") or "").strip().lower()
         source_name_lower = source_name.lower() if source_name else ""
         source_keywords = [str(v).strip().lower() for v in (source.get("keywords") or []) if v]
+        if pack_id:
+            source_keywords.append(pack_id)
         source_topic_tags = [str(v).strip().lower() for v in (source.get("topic_tags") or []) if v]
 
         if source_name and source_name_lower in query_lower:

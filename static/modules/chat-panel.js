@@ -25,7 +25,7 @@ import { sendStreamingRequest, sendChatRequest } from './chat/api.js';
 import { OrderPanel } from './order/manager.js';
 import { OrderTracker as OrderTrackerClass } from './order/tracker.js';
 import * as SavedOrders from './order/saved.js';
-import { onAuthChanged } from './auth.js';
+import { getCurrentUser, getSupabaseClient, isAuthenticated, onAuthChanged } from './auth.js';
 import { TutorialMode, parseTutorialCommand } from './tutorial-mode.js';
 import { ResearchModeToggle } from './research/mode.js';
 
@@ -68,6 +68,86 @@ const EVENT_TYPE_TO_OVERLAY = {
   drought: 'drought',
   landslide: 'landslides'
 };
+
+function normalizeResearchHistory(history) {
+  return (history || [])
+    .map(msg => ({
+      role: msg?.role === 'assistant' ? 'assistant' : 'user',
+      content: String(msg?.content || '').replace(/\s+/g, ' ').trim()
+    }))
+    .filter(msg => msg.content);
+}
+
+function clipResearchMemoryText(text, maxLen = 220) {
+  const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return '';
+  if (normalized.length <= maxLen) return normalized;
+  return normalized.slice(0, maxLen - 3).trimEnd() + '...';
+}
+
+function uniqueResearchLines(values, maxItems) {
+  const lines = [];
+  for (const value of values || []) {
+    const clipped = clipResearchMemoryText(value);
+    if (!clipped || lines.includes(clipped)) continue;
+    lines.push(clipped);
+    if (lines.length >= maxItems) break;
+  }
+  return lines;
+}
+
+function buildResearchMemoryFromHistory(history) {
+  const normalized = normalizeResearchHistory(history);
+  const recentLimit = CONFIG.research?.recentHistorySendLimit || CONFIG.chatHistorySendLimit;
+  const trigger = CONFIG.research?.compactionTriggerMessages || recentLimit;
+  const recentHistory = normalized.slice(-recentLimit);
+  const olderHistory = normalized.slice(0, Math.max(0, normalized.length - recentLimit));
+  const originalGoal = normalized.find(msg => msg.role === 'user')?.content || '';
+
+  if (olderHistory.length < trigger) {
+    return {
+      chatHistory: recentHistory,
+      researchMemory: originalGoal
+        ? {
+            originalGoal,
+            summary: '',
+            compactedMessageCount: 0,
+            totalMessageCount: normalized.length
+          }
+        : null
+    };
+  }
+
+  const maxBullets = CONFIG.research?.maxSummaryBullets || 4;
+  const olderUserTurns = olderHistory.filter(msg => msg.role === 'user').map(msg => msg.content);
+  const olderAssistantTurns = olderHistory.filter(msg => msg.role === 'assistant').map(msg => msg.content);
+  const recentQuestions = uniqueResearchLines(olderUserTurns.slice(-maxBullets), maxBullets);
+  const recentFindings = uniqueResearchLines(olderAssistantTurns.slice(-maxBullets), maxBullets);
+
+  const summaryParts = [];
+  if (recentQuestions.length) {
+    summaryParts.push(`Earlier questions:\n- ${recentQuestions.join('\n- ')}`);
+  }
+  if (recentFindings.length) {
+    summaryParts.push(`Earlier findings and replies:\n- ${recentFindings.join('\n- ')}`);
+  }
+
+  let summary = summaryParts.join('\n\n').trim();
+  const maxSummaryChars = CONFIG.research?.maxSummaryChars || 1800;
+  if (summary.length > maxSummaryChars) {
+    summary = summary.slice(0, maxSummaryChars - 3).trimEnd() + '...';
+  }
+
+  return {
+    chatHistory: recentHistory,
+    researchMemory: {
+      originalGoal,
+      summary,
+      compactedMessageCount: olderHistory.length,
+      totalMessageCount: normalized.length
+    }
+  };
+}
 
 // =============================================================================
 // Loaded Data Tracker - tracks what data has been loaded for LLM context
@@ -243,6 +323,10 @@ export const ChatManager = {
   mode: 'explore',
   modeHistories: { explore: [], research: [] },
   modeMessagesHtml: { explore: '', research: '' },
+  researchMemory: null,
+  selectedResearchCorpusId: '',
+  researchCorpusOptions: [],
+  latestResearchManifest: null,
   pendingMetricOrder: null,
   sessionId: null,
   elements: {},
@@ -271,8 +355,12 @@ export const ChatManager = {
 
     // Restore chat state from localStorage
     this.restoreState();
-    this.modeHistories.explore = this.history;
-    this.modeMessagesHtml.explore = this.elements.messages?.innerHTML || '';
+    if (!this.modeHistories.explore?.length && this.history.length && this.mode === 'explore') {
+      this.modeHistories.explore = this.history;
+    }
+    if (!this.modeMessagesHtml[this.mode] && this.elements.messages?.innerHTML) {
+      this.modeMessagesHtml[this.mode] = this.elements.messages.innerHTML;
+    }
 
     this.initModeToggle();
 
@@ -296,9 +384,21 @@ export const ChatManager = {
       getSessionId: () => this.sessionId,
       onModeChange: async (mode) => {
         await this.switchChatMode(mode);
+      },
+      onLoadCorpus: async (corpusId) => {
+        await this.loadSelectedResearchCorpus(corpusId);
+      },
+      onSelectCorpus: async (corpusId) => {
+        this.selectedResearchCorpusId = corpusId || '';
+        this.updateResearchCorpusStatus();
+        this.saveState();
       }
     });
+    researchModeToggle.mode = this.mode;
     researchModeToggle.init();
+    researchModeToggle.setSelectedCorpusId(this.selectedResearchCorpusId);
+    researchModeToggle.setCorpusOptions(this.researchCorpusOptions, this.selectedResearchCorpusId);
+    this.updateResearchCorpusStatus();
   },
 
   async switchChatMode(mode) {
@@ -312,18 +412,28 @@ export const ChatManager = {
 
     this.mode = mode;
     this.history = this.modeHistories[mode] || [];
+    if (mode !== 'research') {
+      this.researchMemory = this.researchMemory || null;
+    }
 
     if (this.elements.messages) {
       this.elements.messages.innerHTML = this.modeMessagesHtml[mode] || '';
     }
 
+    if (mode === 'research') {
+      await this.refreshResearchCorpusOptions();
+    }
+
     if (mode === 'research' && this.history.length === 0 && !this.modeMessagesHtml.research) {
       try {
-        const manifest = await researchModeToggle.snapshotCorpus();
-        if ((manifest.artifact_count || 0) > 0) {
+        const manifest = await this.refreshResearchManifest();
+        if ((manifest?.artifact_count || 0) > 0) {
           this.addMessage(`Research mode ready. Active corpus: ${manifest.artifact_count} loaded artifact${manifest.artifact_count === 1 ? '' : 's'}.`, 'assistant');
+        } else if (manifest?.saved_corpus) {
+          const saved = manifest.saved_corpus;
+          this.addMessage(`Research workspace ready. "${saved.name}" is selected. Click Load Data to activate it for this session.`, 'assistant');
         } else {
-          this.addMessage('No data is loaded into the research corpus yet. Load data in Explore first, then switch back to Research.', 'assistant');
+          this.addMessage(this.getResearchEmptyStateMessage(), 'assistant');
         }
       } catch (error) {
         console.warn('Research corpus snapshot failed:', error);
@@ -331,7 +441,166 @@ export const ChatManager = {
       }
     }
 
+    this.updateResearchCorpusStatus();
     this.saveState();
+  },
+
+  async refreshResearchCorpusOptions() {
+    if (!researchModeToggle) return [];
+
+    if (!isAuthenticated()) {
+      this.researchCorpusOptions = [];
+      researchModeToggle.setCorpusOptions([], '');
+      researchModeToggle.setCorpusStatus('Sign in to use saved corpora in Research.');
+      return [];
+    }
+
+    const sb = getSupabaseClient();
+    const user = getCurrentUser();
+    if (!sb || !user?.id) {
+      this.researchCorpusOptions = [];
+      researchModeToggle.setCorpusOptions([], '');
+      researchModeToggle.setCorpusStatus('Saved corpora are not available right now.');
+      return [];
+    }
+
+    try {
+      const { data, error } = await sb
+        .from('research_corpora')
+        .select('id, name, updated_at, research_corpus_items(item_type, item_id)')
+        .eq('user_id', user.id)
+        .order('updated_at', { ascending: false });
+
+      if (error) throw error;
+
+      this.researchCorpusOptions = (data || []).map(corpus => {
+        const items = Array.isArray(corpus.research_corpus_items) ? corpus.research_corpus_items : [];
+        const packCount = items.filter(item => item.item_type === 'pack').length;
+        const sourceCount = items.filter(item => item.item_type === 'source').length;
+        return {
+          id: corpus.id,
+          name: corpus.name || 'Untitled corpus',
+          label: `${corpus.name || 'Untitled corpus'}${packCount ? ` (${packCount} pack${packCount === 1 ? '' : 's'})` : ''}${sourceCount ? ` + ${sourceCount} source${sourceCount === 1 ? '' : 's'}` : ''}`,
+          packCount,
+          sourceCount,
+          updatedAt: corpus.updated_at || null
+        };
+      });
+
+      if (!this.researchCorpusOptions.some(option => option.id === this.selectedResearchCorpusId)) {
+        this.selectedResearchCorpusId = '';
+      }
+
+      researchModeToggle.setCorpusOptions(this.researchCorpusOptions, this.selectedResearchCorpusId);
+      this.updateResearchCorpusStatus();
+      this.saveState();
+      return this.researchCorpusOptions;
+    } catch (error) {
+      console.warn('Could not load saved corpora for Research:', error);
+      this.researchCorpusOptions = [];
+      researchModeToggle.setCorpusOptions([], '');
+      researchModeToggle.setCorpusStatus('Could not load saved corpora right now.');
+      return [];
+    }
+  },
+
+  async refreshResearchManifest() {
+    if (!researchModeToggle) return null;
+    const manifest = await researchModeToggle.snapshotCorpus();
+    this.latestResearchManifest = manifest || null;
+    this.updateResearchCorpusStatus();
+    return manifest;
+  },
+
+  getSelectedResearchCorpusOption() {
+    return this.researchCorpusOptions.find(option => option.id === this.selectedResearchCorpusId) || null;
+  },
+
+  getResearchEmptyStateMessage() {
+    if (isAuthenticated()) {
+      if (this.researchCorpusOptions.length > 0) {
+        return 'No corpus is loaded yet. Select a saved corpus above and click Load Data, or load data in Explore first.';
+      }
+      return 'No corpus is loaded yet. Create a saved corpus from your account page, then return here and click Load Data.';
+    }
+    return 'No corpus is loaded yet. Load data in Explore first, or sign in to use saved corpora in Research.';
+  },
+
+  updateResearchCorpusStatus() {
+    if (!researchModeToggle) return;
+    const selected = this.getSelectedResearchCorpusOption();
+    const manifest = this.latestResearchManifest;
+    const saved = manifest?.saved_corpus || null;
+    const artifactCount = Number(manifest?.artifact_count || 0);
+
+    if (!isAuthenticated()) {
+      if (artifactCount > 0) {
+        researchModeToggle.setCorpusStatus(`Research can analyze ${artifactCount} loaded artifact${artifactCount === 1 ? '' : 's'} from Explore. Sign in to use saved corpora.`);
+        return;
+      }
+      researchModeToggle.setCorpusStatus('Sign in to select saved corpora.');
+      return;
+    }
+    if (saved && selected && saved.id === selected.id) {
+      const sizeText = saved.estimated_file_size_mb_total
+        ? ` Estimated size ${saved.estimated_file_size_mb_total.toFixed(1)} MB.`
+        : '';
+      researchModeToggle.setCorpusStatus(`Loaded "${saved.name}" into this Research workspace.${sizeText}`);
+      return;
+    }
+    if (selected) {
+      researchModeToggle.setCorpusStatus(`Selected "${selected.name}". Click Load Data to attach it to this Research workspace.`);
+      return;
+    }
+    if (this.researchCorpusOptions.length > 0) {
+      researchModeToggle.setCorpusStatus('Select a saved corpus, then click Load Data.');
+      return;
+    }
+    if (artifactCount > 0) {
+      researchModeToggle.setCorpusStatus(`Research can analyze ${artifactCount} loaded artifact${artifactCount === 1 ? '' : 's'} from Explore.`);
+      return;
+    }
+    researchModeToggle.setCorpusStatus('No saved corpora found yet.');
+  },
+
+  async loadSelectedResearchCorpus(corpusId) {
+    const selectedId = corpusId || this.selectedResearchCorpusId;
+    if (!selectedId) return;
+
+    this.selectedResearchCorpusId = selectedId;
+    this.updateResearchCorpusStatus();
+    this.saveState();
+
+    const indicator = this.showTypingIndicator(true);
+    indicator.updateStage?.('thinking', 'Loading saved corpus into Research...');
+    researchModeToggle?.setCorpusLoading(true);
+
+    try {
+      const response = await postMsgpack('/api/research/load-saved-corpus', {
+        sessionId: this.sessionId,
+        corpusId: selectedId
+      });
+      this.latestResearchManifest = response?.corpus || null;
+      const saved = response?.corpus?.saved_corpus || null;
+      const packCount = Number(saved?.pack_count || 0);
+      const sourceCount = Number(saved?.source_count || 0);
+      const extraSourcesText = sourceCount ? ` and ${sourceCount} direct source${sourceCount === 1 ? '' : 's'}` : '';
+      this.addMessage(
+        saved
+          ? `Loaded "${saved.name}" into Research. This workspace includes ${packCount} pack${packCount === 1 ? '' : 's'}${extraSourcesText}.`
+          : (response?.message || 'Loaded the saved corpus into Research.'),
+        'assistant'
+      );
+      this.updateResearchCorpusStatus();
+    } catch (error) {
+      console.error('Saved corpus load error:', error);
+      this.addMessage(error.message || 'Could not load that saved corpus into Research.', 'assistant');
+    } finally {
+      indicator.remove();
+      researchModeToggle?.setCorpusLoading(false);
+      this.updateResearchCorpusStatus();
+      this.saveState();
+    }
   },
 
   /**
@@ -558,12 +827,37 @@ export const ChatManager = {
    */
   restoreState() {
     const state = restoreChatState();
-    const hadChatSession = state?.history?.some(m => m.role === 'user');
+    const hasModeState = !!state?.modeHistories;
+    const hadChatSession = hasModeState
+      ? Object.values(state.modeHistories || {}).some(history => (history || []).some(m => m.role === 'user'))
+      : state?.history?.some(m => m.role === 'user');
 
     if (hadChatSession) {
-      this.history = state.history;
-      if (state.messagesHtml && this.elements.messages) {
-        this.elements.messages.innerHTML = state.messagesHtml;
+      if (hasModeState) {
+        this.mode = state.activeMode === 'research' ? 'research' : 'explore';
+        this.modeHistories = {
+          explore: state.modeHistories?.explore || [],
+          research: state.modeHistories?.research || []
+        };
+        this.modeMessagesHtml = {
+          explore: state.modeMessagesHtml?.explore || '',
+          research: state.modeMessagesHtml?.research || ''
+        };
+        this.researchMemory = state.researchMemory || null;
+        this.selectedResearchCorpusId = state.selectedResearchCorpusId || '';
+        this.history = this.modeHistories[this.mode] || [];
+      } else {
+        this.history = state.history;
+        this.mode = 'explore';
+        this.modeHistories = { explore: state.history || [], research: [] };
+        this.modeMessagesHtml = { explore: state.messagesHtml || '', research: '' };
+        this.researchMemory = null;
+        this.selectedResearchCorpusId = '';
+      }
+
+      const activeHtml = this.modeMessagesHtml[this.mode] || state.messagesHtml || '';
+      if (activeHtml && this.elements.messages) {
+        this.elements.messages.innerHTML = activeHtml;
         // Remove any loading/typing indicators that were saved mid-request
         this.elements.messages.querySelectorAll('.loading-indicator, .typing-indicator').forEach(el => el.remove());
         this.elements.messages.scrollTop = this.elements.messages.scrollHeight;
@@ -587,9 +881,17 @@ export const ChatManager = {
     const html = this.elements.messages ? this.elements.messages.innerHTML : '';
     this.modeHistories[this.mode] = this.history;
     this.modeMessagesHtml[this.mode] = html;
-    if (this.mode === 'explore') {
-      saveChatState(this.history, html);
+    if (this.mode === 'research') {
+      const memoryState = buildResearchMemoryFromHistory(this.history);
+      this.researchMemory = memoryState.researchMemory;
     }
+    saveChatState({
+      activeMode: this.mode,
+      modeHistories: this.modeHistories,
+      modeMessagesHtml: this.modeMessagesHtml,
+      researchMemory: this.researchMemory,
+      selectedResearchCorpusId: this.selectedResearchCorpusId
+    });
   },
 
   /**
@@ -603,8 +905,14 @@ export const ChatManager = {
     this.mode = 'explore';
     this.modeHistories = { explore: [], research: [] };
     this.modeMessagesHtml = { explore: '', research: '' };
+    this.researchMemory = null;
+    this.selectedResearchCorpusId = '';
+    this.researchCorpusOptions = [];
+    this.latestResearchManifest = null;
     if (researchModeToggle) {
       researchModeToggle.mode = 'explore';
+      researchModeToggle.setCorpusOptions([], '');
+      researchModeToggle.setCorpusStatus('Select a saved corpus to begin.');
       researchModeToggle.updateActive();
     }
     this.lastDisambiguationOptions = null;
@@ -892,6 +1200,18 @@ export const ChatManager = {
     const { input, sendBtn } = this.elements;
     const query = input.value.trim();
     if (!query) return;
+
+    if (this.mode === 'research') {
+      try {
+        const manifest = await this.refreshResearchManifest();
+        if ((manifest?.artifact_count || 0) === 0 && !manifest?.saved_corpus) {
+          this.addMessage(this.getResearchEmptyStateMessage(), 'assistant');
+          return;
+        }
+      } catch (error) {
+        console.warn('Research manifest refresh failed before submit:', error);
+      }
+    }
 
     // Check for "recover" command
     if (query.toLowerCase() === 'recover') {
@@ -1689,6 +2009,13 @@ export const ChatManager = {
       }
     }
 
+    const researchHistoryState = this.mode === 'research'
+      ? buildResearchMemoryFromHistory(this.history.slice(0, -1))
+      : null;
+    if (this.mode === 'research') {
+      this.researchMemory = researchHistoryState?.researchMemory || this.researchMemory;
+    }
+
     return {
       query,
       viewport: {
@@ -1697,7 +2024,12 @@ export const ChatManager = {
         bounds: view.bounds,
         adminLevel: view.adminLevel
       },
-      chatHistory: this.history.slice(-CONFIG.chatHistorySendLimit),
+      chatHistory: this.mode === 'research'
+        ? (researchHistoryState?.chatHistory || [])
+        : this.history.slice(-CONFIG.chatHistorySendLimit),
+      researchMemory: this.mode === 'research'
+        ? (researchHistoryState?.researchMemory || null)
+        : null,
       sessionId: this.sessionId,
       resolved_location: resolvedLocation,
       previous_disambiguation_options: this.lastDisambiguationOptions || [],

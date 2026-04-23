@@ -12,6 +12,12 @@ export const CONFIG = {
   // How many messages to send to backend (must match backend CHAT_HISTORY_LLM_LIMIT)
   // Higher = better context but more tokens. 8 = 4 user/assistant exchanges.
   chatHistorySendLimit: 8,
+  research: {
+    recentHistorySendLimit: 6,
+    compactionTriggerMessages: 10,
+    maxSummaryChars: 1800,
+    maxSummaryBullets: 4
+  },
 
   // Map settings
   defaultCenter: [-78.64, 35.78],  // Centered on Raleigh, NC
