@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import ipaddress
 import threading
 import time
 from collections import defaultdict, deque
@@ -87,21 +88,60 @@ def is_https_request(request: Request) -> bool:
     return request.url.scheme == "https"
 
 
+def _env_truthy(name: str) -> bool:
+    return str(os.getenv(name, "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _trusted_proxy_cidrs():
+    networks = []
+    for raw_value in os.getenv("TRUSTED_PROXY_CIDRS", "").split(","):
+        value = raw_value.strip()
+        if not value:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(value, strict=False))
+        except ValueError:
+            continue
+    return networks
+
+
+def _request_from_trusted_proxy(request: Request) -> bool:
+    if not _env_truthy("TRUST_PROXY_HEADERS"):
+        return False
+    networks = _trusted_proxy_cidrs()
+    if not networks:
+        return True
+    peer = request.client.host if request.client else ""
+    try:
+        peer_ip = ipaddress.ip_address(peer)
+    except ValueError:
+        return False
+    return any(peer_ip in network for network in networks)
+
+
+def _trusted_proxy_ip_headers() -> list[str]:
+    configured = os.getenv("TRUSTED_PROXY_IP_HEADERS", "").strip()
+    if configured:
+        return [item.strip().lower() for item in configured.split(",") if item.strip()]
+    return ["cf-connecting-ip", "true-client-ip", "x-real-ip"]
+
+
 def get_client_ip(request: Request) -> str:
     """
     Best-effort client IP for app-side throttling and security telemetry.
 
     Important rule:
-    - do not trust x-forwarded-for from arbitrary public callers
-    - prefer proxy-controlled single-value headers
+    - do not trust forwarding headers from arbitrary public callers
+    - trust proxy-controlled identity headers only when explicitly enabled
 
     This keeps anonymous limiter identity from being steered by a caller that
     simply rotates a self-supplied forwarding chain.
     """
-    for header in ("cf-connecting-ip", "true-client-ip", "x-real-ip"):
-        raw = (request.headers.get(header) or "").strip()
-        if raw:
-            return raw.split(",", 1)[0].strip()
+    if _request_from_trusted_proxy(request):
+        for header in _trusted_proxy_ip_headers():
+            raw = (request.headers.get(header) or "").strip()
+            if raw:
+                return raw.split(",", 1)[0].strip()
     return request.client.host if request.client else "unknown"
 
 

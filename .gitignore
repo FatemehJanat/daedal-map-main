@@ -58,6 +58,7 @@ nul
 .env
 .env.*
 !.env.example
+!.env.hosted.example
 config.local.json
 settings.json
 *.local.json
@@ -87,6 +88,7 @@ mcp-registry-ed25519.pem
 mcp-registry-ed25519.der
 mcp-registry-ed25519-public.der
 *.pem
+*.der
 pub.der
 mcp-registry-auth
 mcp-publisher.exe

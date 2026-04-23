@@ -2,7 +2,7 @@
 
 Attribution and links for all data sources used in the mapping system.
 
-**Technical schemas**: See [DISASTER_DISPLAY.md](DISASTER_DISPLAY.md) | **Import guide**: See [data_import.md](data_import.md)
+For public schema conventions, see [DATA_SCHEMAS.md](DATA_SCHEMAS.md).
 
 ---
 

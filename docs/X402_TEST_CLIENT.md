@@ -34,13 +34,18 @@ Current pricing model:
 - base price: `$0.01`
 - rows included in the base price: `100`
 - per-row fee after 100 rows: `$0.0001`
-- max single-call price: `$0.50`
+- scope-aware surcharge for broad scans
+- soft ordinary target: most live paid calls should stay around `$1.00` or less
+- no universal hard price cap; live API work still has a hard scope ceiling
 
 What a new developer should expect:
 
 - free discovery stays free
-- the paid lane prices from the request `limit`
+- small queries stay cheap; very broad scans cost more or need narrower filters
+- the paid lane prices from requested rows and query scope
+- query scope includes time range, geography, sorting, aggregation, and source shape
 - the unpaid `402` challenge tells you the actual amount before you pay
+- overly broad live requests return narrowing suggestions instead of a payment challenge
 - small starter probes such as `limit = 3` stay at the `$0.01` base
 - the paid lane supports a few efficient requests per second
 - active concurrency matters more than blasting many wide requests at once
@@ -56,6 +61,10 @@ Worked examples:
 - `limit = 100` -> `$0.01`
 - `limit = 365` -> `$0.0365`
 - `limit = 500` -> `$0.05`
+
+Broad historical scans may cost more than the row-only examples above. To keep
+requests cheap and reliable, add a time range, add `region_ids`, avoid sorting
+across an entire source, or request `event_count` when an aggregate is enough.
 
 ## Wallet setup
 
@@ -180,7 +189,7 @@ What the script does:
 4. pays and retries the same request automatically
 5. logs the final API response plus settlement metadata
 6. prints the `request_id` so the verifier row can be found in Supabase
-7. accepts `--limit` so you can verify dynamic pricing at different request sizes
+7. accepts `--limit` so you can compare challenge prices at different request sizes
 8. accepts `--expect-network` so the canary fails fast if the hosted lane is on the wrong chain
 9. accepts `--require-settlement-success` so the paid run fails unless the settlement metadata reports success
 10. checks the buyer wallet's onchain balance for the challenged token and amount before attempting the paid retry
@@ -194,15 +203,11 @@ Explorer verification tip:
 
 Pricing tip:
 
-- rerun the same scenario with a larger `limit` if you want to verify that the x402 challenge amount scales with the request size
-- current live pricing proofs now include:
-  - `limit = 3` -> `10000`
-  - `limit = 250` -> `25000`
-  - `limit = 500` -> `50000`
+- the challenge amount is the source of truth
+- pricing considers both requested rows and query scope
+- `limit` is only one pricing input
 - above-max requests should reject cleanly without false revenue attribution
-- event-source public max is currently `500`, so the current live public proof is
-  dynamic growth plus max-edge rejection, not yet a direct proof of the
-  `$0.50` cap itself
+- too-broad requests should return narrowing guidance instead of a payment challenge
 
 Supported scenarios:
 
@@ -247,23 +252,11 @@ For a mainnet canary:
 - verify the transaction on `https://basescan.org`
 - confirm the receiving wallet and Supabase settlement record match the run
 
-## Current proven mainnet examples
+## Mainnet proof log
 
-As of 2026-04-09, these live Base mainnet canaries have been verified against
-`https://app.daedalmap.com`:
-
-- `currency`, `limit = 3`:
-  - challenge amount: `10000`
-  - settlement tx:
-    `0x7536b3ed08fb6f74f3289d7601b6e6ce1d2f18a902b30602b04e266a885ceb56`
-- `earthquakes`, `limit = 250`:
-  - challenge amount: `25000`
-  - settlement tx:
-    `0x3b0b84c8e46a4057273bd0032f31344b5a664949e24f36534fa9eb46c95de3b8`
-- `volcanoes`, `limit = 500`:
-  - challenge amount: `50000`
-  - settlement tx:
-    `0xc6b727a2956a260438f59b4b4b8459be20fed23caf8d3ecbed591bb9c8abf538`
+Keep current hosted transaction hashes and settlement cross-checks in the
+private operations log. Public examples should show the test command and the
+expected response class, not a durable list of production receipt artifacts.
 
 Current above-max proof:
 

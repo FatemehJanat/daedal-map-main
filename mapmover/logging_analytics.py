@@ -56,6 +56,7 @@ route_analytics_log_path = analytics_dir / "route_analytics.jsonl"
 
 # Initialize Supabase client (lazy loaded to avoid import issues)
 _supabase_client = None
+_missing_ip_salt_warned = False
 
 
 def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
@@ -71,10 +72,14 @@ def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
 
 
 def hash_ip_for_analytics(ip_address: Optional[str]) -> Optional[str]:
+    global _missing_ip_salt_warned
     raw_ip = (ip_address or "").strip()
     if not raw_ip:
         return None
     salt = os.getenv("API_ANALYTICS_IP_SALT", "").strip()
+    if not salt and not _missing_ip_salt_warned:
+        logger.warning("API_ANALYTICS_IP_SALT is not set; IP analytics hashes are stable but unsalted.")
+        _missing_ip_salt_warned = True
     digest = hashlib.sha256(f"{salt}:{raw_ip}".encode("utf-8")).hexdigest()
     return digest
 
@@ -82,6 +87,12 @@ def hash_ip_for_analytics(ip_address: Optional[str]) -> Optional[str]:
 def _should_mirror_route_event_to_supabase(path: str | None) -> bool:
     path = str(path or "").strip()
     if path.startswith("/api/"):
+        return True
+    if path.startswith("/geometry/"):
+        return True
+    if path.startswith("/reference/"):
+        return True
+    if path.startswith("/debug/"):
         return True
     if path == "/mcp" or path.startswith("/mcp/"):
         return True

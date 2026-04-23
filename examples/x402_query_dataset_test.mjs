@@ -141,15 +141,6 @@ function buildPayload(name) {
 
 const payload = buildPayload(scenario);
 
-function expectedPriceBaseUnits(limit) {
-  const normalizedLimit = Number.parseInt(String(limit), 10);
-  const baseUsdc = 10000;
-  const freeRows = 100;
-  const perRow = 100;
-  const capUsdc = 500000;
-  return Math.min(baseUsdc + Math.max(0, normalizedLimit - freeRows) * perRow, capUsdc);
-}
-
 function decodePaymentRequired(headerValue) {
   if (!headerValue) {
     return null;
@@ -196,6 +187,23 @@ function collectNetworks(value, acc = new Set()) {
 
 function extractChallengeNetworks(decodedRequirements) {
   return Array.from(collectNetworks(decodedRequirements));
+}
+
+function extractChallengeAmount(decodedRequirements) {
+  const requirement =
+    decodedRequirements && Array.isArray(decodedRequirements.accepts)
+      ? decodedRequirements.accepts[0]
+      : decodedRequirements;
+  const rawAmount =
+    requirement?.maxAmountRequired ??
+    requirement?.max_amount_required ??
+    requirement?.amount ??
+    null;
+  if (rawAmount === null || rawAmount === undefined) {
+    return null;
+  }
+  const amount = String(rawAmount).trim();
+  return amount || null;
 }
 
 function settlementTransactionSummary(settleResponse) {
@@ -321,6 +329,7 @@ async function runChallengeProbe() {
   const paymentRequired = response.headers.get("payment-required");
   const decodedRequirements = decodePaymentRequired(paymentRequired);
   const challengeNetworks = extractChallengeNetworks(decodedRequirements);
+  const challengeAmount = extractChallengeAmount(decodedRequirements);
   const body = await readBody(response);
 
   if (expectedNetwork && !challengeNetworks.includes(expectedNetwork)) {
@@ -333,7 +342,7 @@ async function runChallengeProbe() {
   console.log(JSON.stringify({
     request_id: payload.request_id,
     limit: payload.limit,
-    expected_amount_usdc_base_units: expectedPriceBaseUnits(payload.limit),
+    challenged_amount_usdc_base_units: challengeAmount,
     expected_network: expectedNetwork || null,
     status: response.status,
     payment_required_present: Boolean(paymentRequired),
@@ -401,7 +410,7 @@ async function runPaidRequest(paymentRequirements) {
   console.log(JSON.stringify({
     request_id: payload.request_id,
     limit: payload.limit,
-    expected_amount_usdc_base_units: expectedPriceBaseUnits(payload.limit),
+    challenged_amount_usdc_base_units: extractChallengeAmount(paymentRequirements),
     require_settlement_success: requireSettlementSuccess,
     status: response.status,
     settle_response_error: settleResponseError,

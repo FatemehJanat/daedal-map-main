@@ -57,6 +57,26 @@ def _get_request_ip(request: Request) -> str | None:
     return get_client_ip(request)
 
 
+def _api_analytics_metadata(
+    req: Request,
+    *,
+    request_fingerprint: str | None = None,
+    query_scope: dict[str, Any] | None = None,
+    access_lane: str | None = None,
+) -> dict[str, Any]:
+    existing = getattr(req.state, "analytics_metadata", None)
+    metadata = dict(existing) if isinstance(existing, dict) else {}
+    metadata.setdefault("surface", getattr(req.state, "analytics_surface", None) or "agent_api")
+    if access_lane:
+        metadata["access_lane"] = access_lane
+    if request_fingerprint:
+        metadata["request_fingerprint"] = request_fingerprint
+    if query_scope:
+        metadata["query_scope"] = query_scope
+    req.state.analytics_metadata = metadata
+    return metadata
+
+
 def _json_safe_value(value: Any) -> Any:
     if isinstance(value, float) and math.isnan(value):
         return None
@@ -268,7 +288,23 @@ def _commercial_access_response(
         body = challenge.get("body")
 
     status_code = int(payload.get("http_status") or 402)
-    if isinstance(body, (dict, list)):
+    if isinstance(body, dict):
+        response_body = dict(body)
+        context = payload.get("context") if isinstance(payload, dict) else None
+        pricing = context.get("pricing") if isinstance(context, dict) else None
+        if isinstance(pricing, dict):
+            response_body.setdefault(
+                "daedalmap_pricing",
+                {
+                    "message": "Small queries stay cheap; very broad scans cost more or need narrower filters.",
+                    "scope_class": pricing.get("scope_class"),
+                    "price_display": pricing.get("price_display"),
+                    "soft_cap_usd": pricing.get("soft_cap_usd"),
+                    "suggestions": pricing.get("suggestions") or [],
+                },
+            )
+        response = JSONResponse(response_body, status_code=status_code)
+    elif isinstance(body, list):
         response = JSONResponse(body, status_code=status_code)
     elif isinstance(body, str) and body.strip():
         response = Response(content=body, status_code=status_code, media_type="application/json")
@@ -333,6 +369,220 @@ def _pricing_amount_usdc_base_units(payload: dict[str, Any] | None) -> int | Non
         return int(raw_value)
     except (TypeError, ValueError):
         return None
+
+
+def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
+    raw = str(os.getenv(name, "")).strip()
+    if not raw:
+        return default
+    try:
+        return max(minimum, int(raw))
+    except ValueError:
+        return default
+
+
+def _coerce_scope_year(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.year
+    if isinstance(value, date):
+        return value.year
+    if isinstance(value, int):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return int(text[:4])
+    except ValueError:
+        return None
+
+
+def _scope_time_span_years(
+    normalized_time: dict[str, Any],
+    *,
+    available_start: Any = None,
+    available_end: Any = None,
+) -> tuple[int | None, Any, Any, bool]:
+    if "value" in normalized_time:
+        value = normalized_time.get("value")
+        return 1, value, value, False
+
+    start = normalized_time.get("start")
+    end = normalized_time.get("end")
+    estimated = False
+    if start is None:
+        start = available_start
+        estimated = True
+    if end is None:
+        end = available_end
+        estimated = True
+
+    start_year = _coerce_scope_year(start)
+    end_year = _coerce_scope_year(end)
+    if start_year is None or end_year is None:
+        return None, start, end, estimated
+    return max(1, end_year - start_year + 1), start, end, estimated
+
+
+def _query_scope_suggestions(scope: dict[str, Any]) -> list[str]:
+    suggestions = [
+        "Small queries stay cheap; very broad scans cost more or need narrower filters.",
+    ]
+    if not scope.get("has_time_filter"):
+        suggestions.append("Add a time range, such as year_start/year_end or start/end.")
+    elif scope.get("time_span_years") and int(scope.get("time_span_years") or 0) > 5:
+        suggestions.append("Use a narrower time window when you only need a sample or top-N result.")
+    if not scope.get("has_region_filter"):
+        suggestions.append("Add region_ids to limit the geographic scope.")
+    if not scope.get("is_event_count"):
+        suggestions.append("Use event_count when you only need an aggregate count.")
+    if scope.get("user_sort_count") and not scope.get("has_region_filter"):
+        suggestions.append("Avoid sorting across a full dataset unless you also filter by time or geography.")
+    return suggestions
+
+
+def _build_query_scope(
+    spec,
+    *,
+    normalized_region_ids: list[str],
+    normalized_time: dict[str, Any],
+    raw_compare_filters: Any,
+    normalized_sort: list[dict[str, str]],
+    requested_sort_count: int,
+    metrics: list[str],
+    limit: int,
+    output_format: str,
+    available_start: Any = None,
+    available_end: Any = None,
+) -> dict[str, Any]:
+    time_span_years, time_start, time_end, time_span_estimated = _scope_time_span_years(
+        normalized_time,
+        available_start=available_start,
+        available_end=available_end,
+    )
+    compare_filter_count = len(raw_compare_filters) if isinstance(raw_compare_filters, list) else 0
+    is_event_count = metrics == ["event_count"]
+    has_region_filter = bool(normalized_region_ids)
+    has_time_filter = bool(normalized_time)
+
+    work_score = 0
+    if not has_time_filter and spec.time_field:
+        work_score += 40
+    elif time_span_years is not None:
+        if time_span_years > 50:
+            work_score += 30
+        elif time_span_years > 25:
+            work_score += 20
+        elif time_span_years > 5:
+            work_score += 10
+
+    region_count = len(normalized_region_ids)
+    if not has_region_filter:
+        work_score += 20
+    elif region_count > 25:
+        work_score += 20
+    elif region_count > 10:
+        work_score += 10
+
+    if not is_event_count:
+        work_score += 15
+    if requested_sort_count:
+        work_score += 20 if not has_region_filter and (time_span_years is None or time_span_years > 5) else 10
+    if compare_filter_count:
+        work_score = max(0, work_score - min(15, compare_filter_count * 5))
+    if limit > 500:
+        work_score += 10
+
+    if work_score >= 75:
+        scope_class = "too_broad"
+    elif work_score >= 45:
+        scope_class = "broad"
+    elif work_score >= 20:
+        scope_class = "standard"
+    else:
+        scope_class = "small"
+
+    return {
+        "pack_id": spec.pack_id,
+        "source_id": spec.source_id,
+        "query_mode": spec.query_mode,
+        "output_format": output_format,
+        "limit": int(limit),
+        "source_max_limit": int(spec.max_limit),
+        "time_field": spec.time_field,
+        "time_start": _format_time_value(time_start),
+        "time_end": _format_time_value(time_end),
+        "time_span_years": time_span_years,
+        "time_span_estimated": bool(time_span_estimated),
+        "has_time_filter": has_time_filter,
+        "region_count": region_count,
+        "has_region_filter": has_region_filter,
+        "compare_filter_count": compare_filter_count,
+        "sort_count": len(normalized_sort),
+        "user_sort_count": requested_sort_count,
+        "sort_fields": [str(item.get("field") or "") for item in normalized_sort if item.get("field")],
+        "metric_count": len(metrics),
+        "is_event_count": is_event_count,
+        "scope_class": scope_class,
+        "estimated_work_score": work_score,
+        "pricing_guidance": _query_scope_suggestions(
+            {
+                "has_time_filter": has_time_filter,
+                "time_span_years": time_span_years,
+                "has_region_filter": has_region_filter,
+                "is_event_count": is_event_count,
+                "user_sort_count": requested_sort_count,
+            }
+        ),
+    }
+
+
+def _query_scope_rejection(scope: dict[str, Any]) -> dict[str, Any] | None:
+    if str(scope.get("query_mode") or "") != "single_source_events":
+        return None
+
+    no_time = not scope.get("has_time_filter")
+    no_region = not scope.get("has_region_filter")
+    is_event_count = bool(scope.get("is_event_count"))
+    time_span_years = scope.get("time_span_years")
+    try:
+        span = int(time_span_years) if time_span_years is not None else None
+    except (TypeError, ValueError):
+        span = None
+
+    max_unscoped_years = _env_int("QUERY_MAX_UNSCOPED_YEARS", 5, minimum=1)
+    max_region_years = _env_int("QUERY_MAX_REGION_YEARS", 50, minimum=1)
+    max_aggregate_unscoped_years = _env_int("QUERY_MAX_AGGREGATE_UNSCOPED_YEARS", 50, minimum=1)
+    max_region_ids = _env_int("QUERY_MAX_REGION_IDS", 25, minimum=1)
+    reject_score = _env_int("QUERY_REJECT_WORK_SCORE", 75, minimum=1)
+
+    if int(scope.get("region_count") or 0) > max_region_ids:
+        reason = f"region_ids is limited to {max_region_ids} entries for live dataset queries."
+    elif no_time and no_region and not is_event_count:
+        reason = "Event row queries must include a time filter or region_ids."
+    elif no_time and no_region and bool(scope.get("user_sort_count")):
+        reason = "Sorting a full event dataset without time or geography filters is too broad for live API access."
+    elif no_region and span is not None and span > (max_aggregate_unscoped_years if is_event_count else max_unscoped_years):
+        reason = "This time window is too broad without region_ids for live API access."
+    elif scope.get("has_region_filter") and span is not None and span > max_region_years and not is_event_count:
+        reason = "This time window is too broad for row-level live API access."
+    elif int(scope.get("estimated_work_score") or 0) >= reject_score:
+        reason = "This request is too broad for live API access."
+    else:
+        return None
+
+    return {
+        "code": "query_too_broad",
+        "message": reason,
+        "details": {
+            "scope_class": scope.get("scope_class"),
+            "estimated_work_score": scope.get("estimated_work_score"),
+            "suggestions": scope.get("pricing_guidance") or _query_scope_suggestions(scope),
+        },
+        "retry_hint": "Narrow the request by time, geography, or aggregation before retrying.",
+    }
 
 
 def _parse_time_filter(
@@ -455,6 +705,7 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
     user_agent = req.headers.get("user-agent", "").strip() or None
     payment_rail: str | None = None
     request_fingerprint: str | None = None
+    query_scope: dict[str, Any] | None = None
 
     def error_response(
         request_id: str | None,
@@ -495,7 +746,12 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
                 status_code=status_code,
                 warnings_count=0,
                 error_code=code,
-                metadata={"surface": "agent_api_paid", "request_fingerprint": request_fingerprint},
+                metadata=_api_analytics_metadata(
+                    req,
+                    request_fingerprint=request_fingerprint,
+                    query_scope=query_scope,
+                    access_lane="paid" if payment_rail else "free",
+                ),
             )
         return response
 
@@ -666,6 +922,12 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
             status_code=metrics_error.status_code,
             warnings_count=0,
             error_code="metric_not_available",
+            metadata=_api_analytics_metadata(
+                req,
+                request_fingerprint=request_fingerprint,
+                query_scope=query_scope,
+                access_lane="paid" if _pack_requires_commercial_access(spec.pack_id) else "free",
+            ),
         )
         return metrics_error
 
@@ -916,6 +1178,7 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
             source_id=source_id,
         )
 
+    requested_sort_count = len(sort) if isinstance(sort, list) else 0
     metric_columns = [spec.metrics[metric].column for metric in metrics]
     default_sort_field = metric_columns[0] if metric_columns else spec.time_field
     sort_entries = sort or [{"field": default_sort_field, "direction": "asc"}]
@@ -968,6 +1231,8 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
         normalized_sort.append({"field": sort_field, "direction": sort_direction})
         sort_items.append((actual_sort_field, sort_direction))
 
+    available_start = None
+    available_end = None
     available_columns = get_api_source_columns(spec)
     if spec.time_field in available_columns:
         available_start, available_end = get_api_source_time_bounds(spec)
@@ -1030,6 +1295,37 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
             source_id=source_id,
         )
     include_provenance = bool(output.get("include_provenance", False))
+    query_scope = _build_query_scope(
+        spec,
+        normalized_region_ids=normalized_region_ids,
+        normalized_time=normalized_time,
+        raw_compare_filters=raw_compare_filters,
+        normalized_sort=normalized_sort,
+        requested_sort_count=requested_sort_count,
+        metrics=metrics,
+        limit=limit,
+        output_format=output_format,
+        available_start=available_start,
+        available_end=available_end,
+    )
+    _api_analytics_metadata(
+        req,
+        query_scope=query_scope,
+        access_lane="paid" if _pack_requires_commercial_access(spec.pack_id) else "free",
+    )
+    scope_rejection = _query_scope_rejection(query_scope)
+    if scope_rejection:
+        return error_response(
+            request_id,
+            str(scope_rejection["code"]),
+            str(scope_rejection["message"]),
+            400,
+            details=scope_rejection.get("details") if isinstance(scope_rejection.get("details"), dict) else None,
+            retry_hint=str(scope_rejection.get("retry_hint") or ""),
+            pack_id=spec.pack_id,
+            source_id=source_id,
+        )
+
     request_fingerprint_payload = _build_request_fingerprint_payload(
         source_id=spec.source_id,
         pack_id=spec.pack_id,
@@ -1095,6 +1391,7 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
                         "query_mode": spec.query_mode,
                         "output_format": output_format,
                         "time_granularity": str(normalized_time.get("granularity") or "") or None,
+                        "scope": query_scope,
                     },
                     "caller": {
                         "auth_user_id": auth_user_id,
@@ -1140,7 +1437,12 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
                 query_granularity=str(normalized_time.get("granularity") or "") or None,
                 amount_charged_usdc_base_units=amount_charged_usdc_base_units,
                 revenue_attributed_usdc_base_units=None,
-                metadata={"surface": "agent_api_paid", "request_fingerprint": request_fingerprint},
+                metadata=_api_analytics_metadata(
+                    req,
+                    request_fingerprint=request_fingerprint,
+                    query_scope=query_scope,
+                    access_lane="paid",
+                ),
             )
             return response
         if verifier_status_name != "allow":
@@ -1308,7 +1610,12 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
         settlement_id=settlement_id,
         amount_charged_usdc_base_units=amount_charged_usdc_base_units,
         revenue_attributed_usdc_base_units=amount_charged_usdc_base_units,
-        metadata={"surface": "agent_api_paid", "request_fingerprint": request_fingerprint},
+        metadata=_api_analytics_metadata(
+            req,
+            request_fingerprint=request_fingerprint,
+            query_scope=query_scope,
+            access_lane="paid" if settlement_id or payment_rail else "free",
+        ),
     )
     return response
 

@@ -91,19 +91,17 @@ Not supported as a first-class runtime shape:
 - `cloud install + local data`
 
 The current hosted/runtime direction is:
-- `Railway` for the public app runtime
-- `Cloudflare R2` for canonical runtime data storage
-- `Supabase` for auth and the future entitlement/control plane
+- a hosted app runtime
+- object storage for runtime data
+- optional auth and account services
 
 In `RUNTIME_MODE=cloud`, the runtime:
 - eagerly syncs only small metadata files to local cache
 - queries parquet directly from object storage via DuckDB `httpfs`
 - does not sync the full parquet tree at startup
-- should point at the released `published/` namespace, not the mutable review lane
 
-Admin/review surfaces may also read release markers from a separate `control/`
-prefix so admin accounts can still see staging/review pack status even when the
-runtime catalog in `published/` is empty.
+Hosted deployment topology, release lanes, and operator control-plane details
+belong in private deployment notes.
 
 That means the same codebase can be used in:
 - full local-data mode
@@ -144,39 +142,10 @@ DATA_ROOT=C:/path/to/your/local/data
 You can use `OPENAI_API_KEY` instead of `ANTHROPIC_API_KEY` if that is your preferred provider.
 If you leave `DATA_ROOT` blank, DaedalMap uses the default local app-data path and expects your data to live there.
 
-If you want to test the hosted-style setup locally, also configure:
-
-```env
-INSTALL_MODE=local
-RUNTIME_MODE=cloud
-S3_BUCKET=global-map-data
-S3_PREFIX=published
-S3_CONTROL_PREFIX=control
-S3_ENDPOINT_URL=https://<account>.r2.cloudflarestorage.com
-API_ANALYTICS_IP_SALT=<stable-random-secret>
-ORDER_TAKER_SOURCE_MODE=live
-HOSTED_PACK_REF_ALLOWED_HOSTS=<exact-download-hosts>
-AWS_ACCESS_KEY_ID=...
-AWS_SECRET_ACCESS_KEY=...
-AWS_DEFAULT_REGION=auto
-```
-
-For local testing against the review lane before publish, use:
-
-```env
-INSTALL_MODE=local
-RUNTIME_MODE=cloud
-S3_BUCKET=global-map-data
-S3_PREFIX=staging
-S3_CONTROL_PREFIX=control
-S3_ENDPOINT_URL=https://<account>.r2.cloudflarestorage.com
-API_ANALYTICS_IP_SALT=<stable-random-secret>
-ORDER_TAKER_SOURCE_MODE=live
-HOSTED_PACK_REF_ALLOWED_HOSTS=<exact-download-hosts>
-AWS_ACCESS_KEY_ID=...
-AWS_SECRET_ACCESS_KEY=...
-AWS_DEFAULT_REGION=auto
-```
+Hosted-style object-storage configuration is intentionally deployment-specific.
+For public self-hosting, start with local data. Operators who run a cloud-backed
+deployment should provide their own object-storage bucket, endpoint, and
+credentials through environment variables.
 
 Most local users should leave these blank unless they intentionally want overrides:
 
@@ -194,7 +163,7 @@ What they mean:
 - `SITE_URL`
   optional website/docs/account URL override; leave blank for normal local runs
 
-If you are configuring a hosted deployment, set:
+If you are configuring your own hosted deployment, set:
 
 ```env
 INSTALL_MODE=cloud
@@ -202,13 +171,15 @@ RUNTIME_MODE=cloud
 PORT=7000
 ```
 
-If you want optional hosted-style auth locally:
+If you want optional Supabase-backed auth locally:
 
 ```env
 SUPABASE_URL=...
 SUPABASE_ANON_KEY=...
-SUPABASE_SERVICE_KEY=...
 ```
+
+Keep service-role keys server-side only. They are not needed for ordinary local
+evaluation.
 
 ### 3. Run the app
 
@@ -264,14 +235,19 @@ Current live pricing model for `POST /api/v1/query/dataset`:
 - base price: `$0.01`
 - rows included in base price: `100`
 - per-row fee above 100 rows: `$0.0001`
-- max single-call price: `$0.50`
+- scope-aware surcharge for broad scans
+- soft ordinary target: most live paid calls should stay around `$1.00` or less
+- no universal hard price cap; live API work still has a hard scope ceiling
 
 How to think about it:
 
 - the free discovery endpoints stay free
-- the first paid lane computes price from the requested `limit`
+- small queries stay cheap; very broad scans cost more or need narrower filters
+- the paid lane computes price from both requested rows and query scope
+- query scope includes time range, geography, sorting, aggregation, and source shape
 - the x402 `payment-required` challenge confirms the computed amount before you pay
-- use a small `limit` for the first paid test so you can confirm the flow cheaply
+- requests that are too broad for live API access return narrowing suggestions instead of a payment challenge
+- use a small `limit`, time range, and region filter for the first paid test so you can confirm the flow cheaply
 
 Worked examples:
 
@@ -279,6 +255,7 @@ Worked examples:
 - `limit = 100` -> `$0.01`
 - `limit = 365` -> `$0.0365`
 - `limit = 500` -> `$0.05`
+- a broad historical scan may cost more than the row-only examples above
 
 Quick live exploration examples:
 

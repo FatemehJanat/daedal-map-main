@@ -102,13 +102,13 @@ def _rate_limit_config_for_surface(surface: str) -> tuple[int, int] | None:
         )
     if surface == "agent_api_paid":
         return (
-            _parse_env_int("AGENT_API_PAID_RATE_LIMIT", 60),
-            _parse_env_int("AGENT_API_PAID_RATE_WINDOW_SECONDS", 10),
+            _parse_env_int("AGENT_API_PAID_RATE_LIMIT", 12),
+            _parse_env_int("AGENT_API_PAID_RATE_WINDOW_SECONDS", 60),
         )
     if surface == "agent_api_mcp":
         return (
-            _parse_env_int("AGENT_API_MCP_RATE_LIMIT", 60),
-            _parse_env_int("AGENT_API_MCP_RATE_WINDOW_SECONDS", 10),
+            _parse_env_int("AGENT_API_MCP_RATE_LIMIT", 30),
+            _parse_env_int("AGENT_API_MCP_RATE_WINDOW_SECONDS", 60),
         )
     return None
 
@@ -387,7 +387,7 @@ async def llms_txt():
         "- Data packs: https://daedalmap.com/packs\n"
         "- GitHub (open runtime): https://github.com/xyver/daedal-map\n\n"
         "## Crawlers and bots\n"
-        "This site explicitly welcomes crawlers and indexing bots, but the machine-facing path is the MCP server and agent API lane above.\n"
+        "Use the MCP server and agent API lane above. Keep requests narrow and respect rate limits; broad live scans may be rejected with guidance.\n"
     )
     return PlainTextResponse(content)
 

@@ -66,8 +66,7 @@ Notes:
 - metadata files are cached locally
 - parquet is queried remotely through DuckDB `httpfs`
 - startup is faster because the full parquet tree is not mirrored locally
-- use `S3_PREFIX=staging` for review-lane QA
-- use `S3_PREFIX=published` for release-lane/runtime QA
+- choose an object-storage prefix that matches your own deployment layout
 
 ## 3. Cloud Install + Cloud Data
 
@@ -124,9 +123,11 @@ Usually leave these unset unless you explicitly want hosted/account features:
 
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
-- `SUPABASE_SERVICE_KEY`
 
-Without Supabase config, the app stays in local/self-host mode and `/settings` becomes a local setup page instead of a hosted account redirect.
+Without Supabase config, the app stays in local/self-host mode and `/settings`
+becomes a local setup page instead of a hosted account redirect. Keep
+service-role keys server-side only; they are not needed for ordinary local
+evaluation.
 
 ## Related Docs
 
