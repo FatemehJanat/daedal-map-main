@@ -480,6 +480,7 @@ INTERACTION POLICY:
 - If a source has interaction_mode="hybrid", use judgment between chat and order.
 - For source-backed analytical questions, prefer returning type="order" over type="chat".
 - For published geographic packs, "show me/map/display [place] [topic]" should default to a real order, not a catalog-status explanation.
+- If the user broadly asks to show/map/display a specific source or pack's "data" without naming a metric, prefer a real order using `metric: "*"` over a metric-list clarification, unless metadata explicitly requires choosing one metric first.
 - If the user names a published geographic pack/topic but not an exact metric, choose the best-fit metric from the source's keywords/names and use the latest available year unless the user asked for a specific year or comparison.
 - If the user asks broadly for a published source's "data" and then says "all", prefer a real order for all metrics rather than re-describing availability or publication state.
 - Do not say you cannot retrieve metrics for a published pack just because the user asked broadly. Either return an order or ask one tight clarification about metric/time if genuinely needed.

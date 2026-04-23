@@ -243,6 +243,7 @@ export const ChatManager = {
   mode: 'explore',
   modeHistories: { explore: [], research: [] },
   modeMessagesHtml: { explore: '', research: '' },
+  pendingMetricOrder: null,
   sessionId: null,
   elements: {},
   lastDisambiguationOptions: null,
@@ -899,6 +900,23 @@ export const ChatManager = {
       return;
     }
 
+    if (this.mode === 'explore' && this.isAllMetricsConfirmation(query) && this.pendingMetricOrder) {
+      this.addMessage(query, 'user');
+      input.value = '';
+      input.style.height = 'auto';
+      this.history.push({ role: 'user', content: query });
+      this.addMessage('Added all available metrics to your order. Click "Display on Map" when ready.', 'assistant');
+      this.history.push({ role: 'assistant', content: 'Added all available metrics to your order.' });
+      orderPanel.setOrder(
+        this.pendingMetricOrder.order,
+        this.pendingMetricOrder.summary,
+        this.pendingMetricOrder.full_order
+      );
+      this.pendingMetricOrder = null;
+      this.saveState();
+      return;
+    }
+
     // Add user message
     this.addMessage(query, 'user');
     input.value = '';
@@ -982,6 +1000,7 @@ export const ChatManager = {
   handleResponse(response) {
     switch (response.type) {
       case 'order':
+        this.pendingMetricOrder = null;
         this.addMessage('Added to your order. Click "Display on Map" when ready.', 'assistant');
         orderPanel.setOrder(response.order, response.summary, response.full_order || response.order);
         break;
@@ -993,6 +1012,11 @@ export const ChatManager = {
         break;
 
       case 'metric_warning': {
+        this.pendingMetricOrder = {
+          order: response.pending_order,
+          full_order: response.full_order,
+          summary: response.summary
+        };
         const msgEl = this.addMessage(response.message, 'assistant');
         const btnContainer = document.createElement('div');
         btnContainer.className = 'metric-warning-buttons';
@@ -1020,6 +1044,7 @@ export const ChatManager = {
       }
 
       case 'clarify':
+        this.pendingMetricOrder = null;
         this.addMessage(response.message || 'Could you be more specific?', 'assistant');
         break;
 
@@ -1196,6 +1221,7 @@ export const ChatManager = {
 
       case 'chat':
       default:
+        this.pendingMetricOrder = null;
         if (response.geojson && response.geojson.features && response.geojson.features.length > 0) {
           this.addMessage(response.summary || response.message || 'Found data for you.', 'assistant');
           if (response.event_type) {
@@ -1207,6 +1233,21 @@ export const ChatManager = {
         }
         break;
     }
+  },
+
+  isAllMetricsConfirmation(query) {
+    const normalized = String(query || '').trim().toLowerCase();
+    return [
+      'all',
+      'all of them',
+      'all metrics',
+      'show all',
+      'yes',
+      'y',
+      'yeah',
+      'yep',
+      'sure'
+    ].includes(normalized);
   },
 
   async showAddressPrompt(response) {
