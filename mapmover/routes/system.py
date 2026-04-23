@@ -15,6 +15,7 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from mapmover.auth_context import build_session_cache_key, get_authenticated_user
+from mapmover.corpus_registry import corpus_registry
 from mapmover import ACCOUNT_URL, CacheSignature, clear_metadata_cache, initialize_catalog, logger, session_manager
 from mapmover.order_queue import order_queue
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
@@ -2077,6 +2078,7 @@ async def clear_session_endpoint(req: Request):
         session_id = build_session_cache_key(frontend_session_id, auth_user)
 
         cleared = session_manager.clear_session(session_id)
+        corpus_registry.clear_session(session_id)
         if cleared:
             logger.info(f"Cleared session cache: {session_id}")
             return msgpack_response({"status": "cleared", "sessionId": frontend_session_id})
@@ -2103,8 +2105,9 @@ async def clear_session_source_endpoint(req: Request):
             return msgpack_response({"status": "not_found", "sessionId": frontend_session_id})
 
         removed = cache.clear_source(source_id)
+        artifacts_removed = corpus_registry.remove_source(session_id, source_id)
         logger.info(f"Cleared source '{source_id}' from session {session_id}: {removed} keys removed")
-        return msgpack_response({"status": "cleared", "sourceId": source_id, "keys_removed": removed})
+        return msgpack_response({"status": "cleared", "sourceId": source_id, "keys_removed": removed, "artifacts_removed": artifacts_removed})
     except Exception as e:
         logger.error(f"Error clearing session source: {e}")
         return msgpack_error(str(e), 500)

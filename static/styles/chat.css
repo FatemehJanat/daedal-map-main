@@ -566,6 +566,32 @@ body.mobile-limited #mobileMapNotice {
   display: none;
 }
 
+.chat-mode-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 10px 12px 0;
+}
+
+.chat-mode-toggle__btn {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  border-radius: 6px;
+  min-height: 32px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.chat-mode-toggle__btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.chat-mode-toggle__btn.active {
+  border-color: rgba(255, 255, 255, 0.42);
+  background: rgba(255, 255, 255, 0.2);
+}
+
 /* Chat messages area */
 #chatMessages {
   flex: 1;

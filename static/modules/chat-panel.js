@@ -17,6 +17,7 @@ import {
 
 import {
   addMessage as renderMessage,
+  formatMessage,
   showTypingIndicator as renderTypingIndicator
 } from './chat/message-renderer.js';
 
@@ -26,6 +27,7 @@ import { OrderTracker as OrderTrackerClass } from './order/tracker.js';
 import * as SavedOrders from './order/saved.js';
 import { onAuthChanged } from './auth.js';
 import { TutorialMode, parseTutorialCommand } from './tutorial-mode.js';
+import { ResearchModeToggle } from './research/mode.js';
 
 // Dependencies set via setDependencies to avoid circular imports
 let MapAdapter = null;
@@ -230,6 +232,7 @@ function renderGeometryOrder(response) {
 // Module-level instances (created during init)
 let orderPanel = null;
 let orderTracker = null;
+let researchModeToggle = null;
 
 // ============================================================================
 // CHAT MANAGER - Sidebar chat functionality (map-specific orchestrator)
@@ -237,6 +240,9 @@ let orderTracker = null;
 
 export const ChatManager = {
   history: [],
+  mode: 'explore',
+  modeHistories: { explore: [], research: [] },
+  modeMessagesHtml: { explore: '', research: '' },
   sessionId: null,
   elements: {},
   lastDisambiguationOptions: null,
@@ -264,6 +270,10 @@ export const ChatManager = {
 
     // Restore chat state from localStorage
     this.restoreState();
+    this.modeHistories.explore = this.history;
+    this.modeMessagesHtml.explore = this.elements.messages?.innerHTML || '';
+
+    this.initModeToggle();
 
     // Setup UI event listeners
     this.setupEventListeners();
@@ -274,6 +284,53 @@ export const ChatManager = {
     onAuthChanged(() => {
       window.location.reload();
     });
+  },
+
+  /**
+   * Initialize Explore/Research chat mode toggle.
+   */
+  initModeToggle() {
+    researchModeToggle = new ResearchModeToggle({
+      container: document.getElementById('chatContainer'),
+      getSessionId: () => this.sessionId,
+      onModeChange: async (mode) => {
+        await this.switchChatMode(mode);
+      }
+    });
+    researchModeToggle.init();
+  },
+
+  async switchChatMode(mode) {
+    if (mode !== 'explore' && mode !== 'research') return;
+    if (mode === this.mode) return;
+
+    if (this.elements.messages) {
+      this.modeMessagesHtml[this.mode] = this.elements.messages.innerHTML;
+    }
+    this.modeHistories[this.mode] = this.history;
+
+    this.mode = mode;
+    this.history = this.modeHistories[mode] || [];
+
+    if (this.elements.messages) {
+      this.elements.messages.innerHTML = this.modeMessagesHtml[mode] || '';
+    }
+
+    if (mode === 'research' && this.history.length === 0 && !this.modeMessagesHtml.research) {
+      try {
+        const manifest = await researchModeToggle.snapshotCorpus();
+        if ((manifest.artifact_count || 0) > 0) {
+          this.addMessage(`Research mode ready. Active corpus: ${manifest.artifact_count} loaded artifact${manifest.artifact_count === 1 ? '' : 's'}.`, 'assistant');
+        } else {
+          this.addMessage('No data is loaded into the research corpus yet. Load data in Explore first, then switch back to Research.', 'assistant');
+        }
+      } catch (error) {
+        console.warn('Research corpus snapshot failed:', error);
+        this.addMessage('Research mode is available, but I could not read the active corpus yet.', 'assistant');
+      }
+    }
+
+    this.saveState();
   },
 
   /**
@@ -527,7 +584,11 @@ export const ChatManager = {
    */
   saveState() {
     const html = this.elements.messages ? this.elements.messages.innerHTML : '';
-    saveChatState(this.history, html);
+    this.modeHistories[this.mode] = this.history;
+    this.modeMessagesHtml[this.mode] = html;
+    if (this.mode === 'explore') {
+      saveChatState(this.history, html);
+    }
   },
 
   /**
@@ -538,6 +599,13 @@ export const ChatManager = {
 
     // Clear state
     this.history = [];
+    this.mode = 'explore';
+    this.modeHistories = { explore: [], research: [] };
+    this.modeMessagesHtml = { explore: '', research: '' };
+    if (researchModeToggle) {
+      researchModeToggle.mode = 'explore';
+      researchModeToggle.updateActive();
+    }
     this.lastDisambiguationOptions = null;
     if (this.elements.messages) {
       this.elements.messages.innerHTML = '';
@@ -854,6 +922,8 @@ export const ChatManager = {
 
     // Show staged loading indicator
     const indicator = this.showTypingIndicator(true);
+    let streamedAssistantEl = null;
+    let removedIndicatorForStream = false;
 
     try {
       // Build payload with map-specific context
@@ -861,9 +931,22 @@ export const ChatManager = {
       const payload = this.buildPayload(query);
 
       // Send via streaming API
-      const response = await sendStreamingRequest(payload, (stage, message) => {
+      const endpoint = this.mode === 'research' ? '/chat/research/stream' : '/chat/stream';
+      const response = await sendStreamingRequest(payload, (stage, message, deltaText) => {
+        if (stage === 'answer_start' || stage === 'delta') {
+          if (!removedIndicatorForStream) {
+            indicator.remove();
+            removedIndicatorForStream = true;
+          }
+          if (!streamedAssistantEl) {
+            streamedAssistantEl = this.addMessage('', 'assistant');
+          }
+          streamedAssistantEl.innerHTML = formatMessage(deltaText || '');
+          this.elements.messages.scrollTop = this.elements.messages.scrollHeight;
+          return;
+        }
         indicator.updateStage(stage, message);
-      });
+      }, endpoint);
 
       if (!response) {
         throw new Error('No response received from server');
@@ -873,13 +956,19 @@ export const ChatManager = {
       this.history.push({ role: 'assistant', content: response.message || response.summary });
 
       // Handle response based on type
-      this.handleResponse(response);
+      if (response._streamed && response.type === 'chat') {
+        this.saveState();
+      } else {
+        this.handleResponse(response);
+      }
 
     } catch (error) {
       console.error('Chat error:', error);
       this.addMessage('Sorry, something went wrong. Please try again.', 'assistant');
     } finally {
-      indicator.remove();
+      if (!removedIndicatorForStream) {
+        indicator.remove();
+      }
       sendBtn.disabled = false;
       input.disabled = false;
       input.focus();

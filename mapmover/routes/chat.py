@@ -11,6 +11,7 @@ from fastapi.responses import Response, StreamingResponse
 
 from mapmover.auth_context import build_session_cache_key, get_authenticated_user
 from mapmover import logger, session_manager
+from mapmover.corpus_registry import corpus_registry
 from mapmover.order_executor import execute_order
 from mapmover.order_taker import interpret_request
 from mapmover.postprocessor import get_display_items, postprocess_order
@@ -313,6 +314,13 @@ async def chat_endpoint(req: Request):
                     cache.register_sent_geometry(new_features, geo_source_id)
                 elif filtered_year_data:
                     cache.register_sent_year_data(filtered_year_data)
+
+                corpus_registry.register_order_result(
+                    session_id=session_id,
+                    request_key=request_key,
+                    order=confirmed_order,
+                    response=response,
+                )
 
                 cache.touch()
                 if delta_count < original_count:
@@ -654,6 +662,12 @@ async def chat_stream_endpoint(req: Request):
                         response["metric_key"] = result.get("metric_key")
                         response["available_metrics"] = result.get("available_metrics", [])
                         response["metric_year_ranges"] = result.get("metric_year_ranges", {})
+                    corpus_registry.register_order_result(
+                        session_id=session_id,
+                        request_key=request_key,
+                        order=body["confirmed_order"],
+                        response=response,
+                    )
                     yield f"data: {json.dumps({'stage': 'complete', 'result': response})}\n\n"
                 except Exception as e:
                     logger.exception("Streaming order execution error")

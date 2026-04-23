@@ -25,8 +25,8 @@ export function getApiUrl(path) {
  * @param {Object} payload - Full request payload (query, viewport, history, etc.)
  * @returns {Promise<Object>} Parsed response
  */
-export async function sendChatRequest(payload) {
-  const url = getApiUrl('/chat');
+export async function sendChatRequest(payload, path = '/chat') {
+  const url = getApiUrl(path);
   return await postMsgpack(url, payload);
 }
 
@@ -37,8 +37,8 @@ export async function sendChatRequest(payload) {
  * @param {Function} onProgress - Callback: (stage, message) => void
  * @returns {Promise<Object|null>} Final result object, or null if no result
  */
-export async function sendStreamingRequest(payload, onProgress) {
-  const url = getApiUrl('/chat/stream');
+export async function sendStreamingRequest(payload, onProgress, path = '/chat/stream') {
+  const url = getApiUrl(path);
   const token = getAccessToken();
 
   const response = await fetch(url, {
@@ -58,6 +58,7 @@ export async function sendStreamingRequest(payload, onProgress) {
   const decoder = new TextDecoder();
   let result = null;
   let buffer = '';
+  let deltaText = '';
 
   while (true) {
     const { done, value } = await reader.read();
@@ -76,8 +77,22 @@ export async function sendStreamingRequest(payload, onProgress) {
 
           if (data.stage === 'complete') {
             result = data.result;
+            if (deltaText && result && result.type === 'chat') {
+              result.message = deltaText;
+              result._streamed = true;
+            }
+          } else if (data.stage === 'delta') {
+            const text = data.text || data.message || '';
+            deltaText += text;
+            if (onProgress) {
+              onProgress(data.stage, text, deltaText);
+            }
+          } else if (data.stage === 'answer_start') {
+            if (onProgress) {
+              onProgress(data.stage, data.message || '', deltaText);
+            }
           } else if (onProgress) {
-            onProgress(data.stage, data.message);
+            onProgress(data.stage, data.message, deltaText);
           }
         } catch (e) {
           console.warn('Failed to parse SSE data:', line);
