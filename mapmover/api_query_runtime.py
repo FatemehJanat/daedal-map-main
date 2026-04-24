@@ -102,16 +102,6 @@ SUPPORTED_DYNAMIC_SOURCES: dict[str, dict[str, Any]] = {
         "default_limit": DEFAULT_LIMIT,
         "max_limit": MAX_LIMIT,
     },
-    "world_factbook_overlap": {
-        "pack_id": "world_factbook",
-        "parquet_name": "all_countries.parquet",
-        "query_mode": "single_source",
-        "location_field": "loc_id",
-        "time_field": "year",
-        "time_granularity": "yearly",
-        "default_limit": DEFAULT_LIMIT,
-        "max_limit": MAX_LIMIT,
-    },
     "world_factbook_static": {
         "pack_id": "world_factbook",
         "parquet_name": "all_countries.parquet",
@@ -315,7 +305,7 @@ def get_pack_source_ids(pack_id: str) -> list[str]:
     for source in catalog.get("sources", []):
         if str(source.get("pack_id") or "").strip() == normalized_pack_id:
             source_id = str(source.get("source_id") or "").strip()
-            if source_id:
+            if source_id and source_id != "world_factbook_overlap":
                 source_ids.append(source_id)
     return sorted(set(source_ids))
 

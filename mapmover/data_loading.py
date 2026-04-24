@@ -72,6 +72,9 @@ _api_pack_missing_time: dict[str, float] = {}
 PACK_LOAD_MAX_SOURCES = 8
 PACK_LOAD_MAX_FILE_SIZE_MB = 200.0
 PACK_LOAD_MAX_ROW_COUNT = 2_000_000
+RETIRED_PACK_SOURCE_IDS = {
+    "world_factbook_overlap",
+}
 
 
 def get_data_folder():
@@ -311,7 +314,11 @@ def _build_pack_load_policy(source_count: int, file_size_mb_total: float, row_co
 
 
 def _build_catalog_packs_from_sources(catalog: dict) -> list[dict]:
-    sources = catalog.get("sources", [])
+    sources = [
+        source
+        for source in (catalog.get("sources", []) or [])
+        if str(source.get("source_id") or "").strip() not in RETIRED_PACK_SOURCE_IDS
+    ]
     grouped: dict[str, list[dict]] = {}
     for source in sources:
         pack_id = str(source.get("pack_id") or "").strip()

@@ -341,7 +341,6 @@ def build_system_prompt(catalog: dict, conversions: dict) -> str:
             by_id = {s["source_id"]: s for s in factbook_sources}
             merged = by_id.get("factbook_merged")
             unique = by_id.get("world_factbook")
-            overlap = by_id.get("world_factbook_overlap")
             static = by_id.get("world_factbook_static")
 
             if merged:
@@ -357,13 +356,6 @@ def build_system_prompt(catalog: dict, conversions: dict) -> str:
                 lines.append(
                     f"- CIA World Factbook [{publish_note}; source_id: world_factbook]: "
                     f"yearly country metrics such as internet users, military expenditure (% of GDP), railways (km), airports, electricity consumption, life expectancy, GDP purchasing power parity, GDP per capita PPP, birth rate, death rate, and population"
-                )
-            if overlap:
-                pid = overlap.get("pack_id")
-                publish_note = f"pack_id: {pid}" if pid else "pre-release: no pack_id yet"
-                lines.append(
-                    f"- CIA World Factbook Overlap [{publish_note}; source_id: world_factbook_overlap]: "
-                    f"yearly country metrics such as life expectancy, GDP per capita PPP, birth rate, death rate, population"
                 )
             if static:
                 pid = static.get("pack_id")
