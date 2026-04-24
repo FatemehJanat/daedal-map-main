@@ -27,7 +27,7 @@ from fastapi.staticfiles import StaticFiles
 
 from mapmover import initialize_catalog, load_conversions, logger
 from mapmover.auth_context import get_authenticated_user
-from mapmover.logging_analytics import hash_ip_for_analytics, log_route_request_event
+from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log_route_request_event
 from mapmover.security import get_allowed_origins, get_client_ip, is_https_request, rate_limiter
 from mapmover.order_executor import execute_order
 from mapmover.order_queue import processor as order_processor
@@ -243,6 +243,21 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "Referer", "X-Requested-With"],
 )
 app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    import traceback
+    path = str(request.url.path)
+    surface = "agent_api" if (path.startswith("/api/") or path.startswith("/mcp")) else "human_app"
+    log_app_error(
+        type(exc).__name__,
+        str(exc),
+        surface=surface,
+        path=path,
+        traceback=traceback.format_exc(),
+    )
+    return JSONResponse({"error": "Internal server error"}, status_code=500)
 
 
 @app.middleware("http")

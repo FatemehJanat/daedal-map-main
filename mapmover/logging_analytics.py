@@ -84,8 +84,42 @@ def hash_ip_for_analytics(ip_address: Optional[str]) -> Optional[str]:
     return digest
 
 
-def _should_mirror_route_event_to_supabase(path: str | None) -> bool:
+_MCP_SCANNER_METHODS = frozenset({
+    "initialize",
+    "notifications/initialized",
+    "notifications/cancelled",
+    "tools/list",
+    "resources/list",
+    "prompts/list",
+    "ping",
+})
+
+
+def _should_mirror_route_event_to_supabase(
+    path: str | None,
+    method: str | None = None,
+    status_code: int | None = None,
+    metadata: dict | None = None,
+    rate_limited: bool = False,
+    error_code: str | None = None,
+) -> bool:
     path = str(path or "").strip()
+    http_method = str(method or "").upper()
+
+    # MCP: skip scanner handshake noise (health checkers run these constantly).
+    # Only log tool calls, errors, rate limits, and payment challenges.
+    if path == "/mcp" or path.startswith("/mcp/"):
+        if http_method in {"GET", "HEAD"}:
+            return False
+        mcp_method = (metadata or {}).get("mcp_method") or ""
+        if mcp_method in _MCP_SCANNER_METHODS:
+            return False
+        # Always log errors, rate limits, and 402 payment challenges
+        if rate_limited or error_code or (status_code and status_code >= 400):
+            return True
+        # Log actual tool calls and anything else not filtered above
+        return True
+
     if path.startswith("/api/"):
         return True
     if path.startswith("/geometry/"):
@@ -93,8 +127,6 @@ def _should_mirror_route_event_to_supabase(path: str | None) -> bool:
     if path.startswith("/reference/"):
         return True
     if path.startswith("/debug/"):
-        return True
-    if path == "/mcp" or path.startswith("/mcp/"):
         return True
     if path in {"/chat", "/chat/stream"}:
         return True
@@ -261,7 +293,14 @@ def log_route_request_event(
     )
 
     supabase_client = get_supabase()
-    if supabase_client and _should_mirror_route_event_to_supabase(path):
+    if supabase_client and _should_mirror_route_event_to_supabase(
+        path,
+        method=method,
+        status_code=status_code,
+        metadata=metadata,
+        rate_limited=rate_limited,
+        error_code=error_code,
+    ):
         try:
             supabase_client.log_security_event(
                 method=method,
@@ -305,45 +344,38 @@ def get_supabase():
     return _supabase_client if _supabase_client else None
 
 
-def log_conversation(session_id, query, response_text, intent=None,
-                     dataset_selected=None, results_count=0, endpoint=None):
-    """
-    Log a conversation message to session-based storage.
-
-    Each session (browser tab) gets one row in Supabase with all messages.
-    Also logs locally to JSONL for backup.
-
-    Args:
-        session_id: Unique session identifier from frontend
-        query: The user's query string
-        response_text: The assistant's response
-        intent: The query intent ('chat', 'clarify', 'fetch_data', 'modify_data', 'meta')
-        dataset_selected: Which dataset was used (None for chat-only queries)
-        results_count: Number of results returned (0 for chat-only queries)
-        endpoint: Which endpoint the request came from ('chat', 'location', etc.)
-    """
-    # Build analytics data for local logging
+def log_conversation(
+    session_id: str,
+    query: str,
+    response_text: str,
+    *,
+    surface: str = "chat",
+    intent: str | None = None,
+    dataset_selected: str | None = None,
+    results_count: int = 0,
+    ip_hash: str | None = None,
+    user_agent: str | None = None,
+) -> None:
+    """Log a human-side chat or map interaction to conversation_sessions."""
     analytics_data = {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.utcnow().isoformat(),
         "session_id": session_id,
+        "surface": surface,
         "query": query,
-        "response": response_text[:500] if response_text else None,  # Truncate for local log
+        "response": response_text[:500] if response_text else None,
         "intent": intent,
         "dataset_selected": dataset_selected,
         "results_count": results_count,
-        "endpoint": endpoint
     }
 
-    # Always log locally first
     if _local_logs_enabled:
         try:
-            with open(analytics_log_path, 'a', encoding='utf-8') as f:
+            with open(analytics_log_path, "a", encoding="utf-8") as f:
                 json.dump(analytics_data, f, ensure_ascii=False)
-                f.write('\n')
+                f.write("\n")
         except Exception as e:
-            logger.error(f"Failed to log analytics locally: {e}")
+            logger.error(f"Failed to log conversation locally: {e}")
 
-    # Log to Supabase session if configured
     supabase_client = get_supabase()
     if supabase_client and session_id:
         try:
@@ -351,12 +383,68 @@ def log_conversation(session_id, query, response_text, intent=None,
                 session_id=session_id,
                 user_query=query,
                 assistant_response=response_text or "",
+                surface=surface,
                 intent=intent,
                 dataset_selected=dataset_selected,
-                results_count=results_count
+                results_count=results_count,
+                ip_hash=ip_hash,
+                user_agent=user_agent,
             )
         except Exception as e:
             logger.error(f"Failed to log session to Supabase: {e}")
+
+
+def log_app_error(
+    error_type: str,
+    error_message: str,
+    *,
+    surface: str | None = None,
+    path: str | None = None,
+    request_id: str | None = None,
+    pack_id: str | None = None,
+    query: str | None = None,
+    traceback: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    """Log an application exception to error_logs. surface=human_app or agent_api."""
+    event = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "surface": surface,
+        "path": path,
+        "request_id": request_id,
+        "pack_id": pack_id,
+        "error_type": error_type,
+        "error_message": error_message[:500] if error_message else None,
+        "metadata": metadata or {},
+    }
+    _append_jsonl(route_analytics_log_path, event)
+
+    logger.error(
+        "app_error surface=%s path=%s type=%s message=%s",
+        surface or "-",
+        path or "-",
+        error_type,
+        error_message[:200] if error_message else "",
+    )
+
+    supabase_client = get_supabase()
+    if supabase_client:
+        try:
+            supabase_client.log_error(
+                error_type=error_type,
+                error_message=error_message,
+                query=query,
+                traceback=traceback,
+                metadata={
+                    "surface": surface,
+                    "path": path,
+                    "request_id": request_id,
+                    "pack_id": pack_id,
+                    **(metadata or {}),
+                },
+            )
+        except Exception as e:
+            logger.error(f"Failed to log error to Supabase: {e}")
 
 
 def log_missing_geometry(country_names, query=None, dataset=None, region=None):

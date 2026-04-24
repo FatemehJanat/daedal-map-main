@@ -350,7 +350,9 @@ export const ChatManager = {
       messages: document.getElementById('chatMessages'),
       form: document.getElementById('chatForm'),
       input: document.getElementById('chatInput'),
-      sendBtn: document.getElementById('sendBtn')
+      sendBtn: document.getElementById('sendBtn'),
+      resizeOrder: document.getElementById('resizeOrder'),
+      orderPanel: document.getElementById('orderPanel')
     };
 
     // Restore chat state from localStorage
@@ -363,6 +365,8 @@ export const ChatManager = {
     }
 
     this.initModeToggle();
+    this.syncSidebarToggleVisibility();
+    this.updateSidebarModeLayout();
 
     // Setup UI event listeners
     this.setupEventListeners();
@@ -442,7 +446,27 @@ export const ChatManager = {
     }
 
     this.updateResearchCorpusStatus();
+    this.updateSidebarModeLayout();
     this.saveState();
+  },
+
+  syncSidebarToggleVisibility() {
+    const { sidebar, toggle } = this.elements;
+    if (!sidebar || !toggle) return;
+    toggle.style.display = sidebar.classList.contains('collapsed') ? 'flex' : 'none';
+  },
+
+  updateSidebarModeLayout() {
+    const { orderPanel, resizeOrder } = this.elements;
+    const hideOrderTaker = this.mode === 'research';
+    if (orderPanel) {
+      orderPanel.hidden = hideOrderTaker;
+      orderPanel.setAttribute('aria-hidden', hideOrderTaker ? 'true' : 'false');
+    }
+    if (resizeOrder) {
+      resizeOrder.hidden = hideOrderTaker;
+      resizeOrder.setAttribute('aria-hidden', hideOrderTaker ? 'true' : 'false');
+    }
   },
 
   async refreshResearchCorpusOptions() {
@@ -1107,12 +1131,12 @@ export const ChatManager = {
     // Sidebar toggle
     toggle.addEventListener('click', () => {
       sidebar.classList.remove('collapsed');
-      toggle.style.display = 'none';
+      this.syncSidebarToggleVisibility();
     });
 
     close.addEventListener('click', () => {
       sidebar.classList.add('collapsed');
-      toggle.style.display = 'flex';
+      this.syncSidebarToggleVisibility();
     });
 
     // New Chat button

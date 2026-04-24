@@ -1218,7 +1218,7 @@ export const App = {
     // Collapse sidebar on mobile
     if (window.innerWidth < 500) {
       ChatManager.elements.sidebar.classList.add('collapsed');
-      ChatManager.elements.toggle.style.display = 'flex';
+      ChatManager.syncSidebarToggleVisibility?.();
     }
   },
 

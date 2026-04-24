@@ -17,6 +17,7 @@ from mapmover.order_taker import interpret_request
 from mapmover.postprocessor import get_display_items, postprocess_order
 from mapmover.preprocessor import preprocess_query
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
+from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log_conversation
 from mapmover.security import get_client_ip, rate_limiter
 
 
@@ -327,6 +328,16 @@ async def chat_endpoint(req: Request):
                     logger.info(f"Delta sent: {delta_count}/{original_count} features ({original_count - delta_count} deduped)")
 
                 _chat_log_timing(trace_id, "responding", t_request_start, f"type={response.get('type')} count={response.get('count')}")
+                log_conversation(
+                    frontend_session_id,
+                    confirmed_order.get("summary", "confirmed_order"),
+                    response.get("summary", ""),
+                    surface="map",
+                    dataset_selected=response.get("source_id"),
+                    results_count=response.get("count", 0),
+                    ip_hash=hash_ip_for_analytics(client_ip),
+                    user_agent=(req.headers.get("user-agent") or "")[:300] or None,
+                )
                 return msgpack_response(response)
             except Exception as e:
                 logger.exception(f"[chat:{trace_id}] Order execution error")
@@ -335,6 +346,12 @@ async def chat_endpoint(req: Request):
                     lane="confirmed_order",
                     confirmed_order=True,
                     error_code="confirmed_order_exception",
+                )
+                log_app_error(
+                    type(e).__name__,
+                    str(e),
+                    surface="human_app",
+                    path="/chat",
                 )
                 return msgpack_response(_confirmed_order_user_error(), status_code=400)
 
@@ -579,10 +596,20 @@ async def chat_endpoint(req: Request):
             )
 
         _chat_log_timing(trace_id, "responding", t_request_start, "type=chat")
+        chat_result = result.get("message", "I'm not sure how to help with that.")
+        log_conversation(
+            frontend_session_id,
+            query,
+            chat_result,
+            surface="chat",
+            intent=result.get("type"),
+            ip_hash=hash_ip_for_analytics(client_ip),
+            user_agent=(req.headers.get("user-agent") or "")[:300] or None,
+        )
         return msgpack_response(
             {
                 "type": "chat",
-                "message": result.get("message", "I'm not sure how to help with that."),
+                "message": chat_result,
                 "geojson": {"type": "FeatureCollection", "features": []},
                 "auth_user": {"id": auth_user.get("id"), "email": auth_user.get("email")} if auth_user else None,
                 "needsMoreInfo": False,
@@ -590,6 +617,12 @@ async def chat_endpoint(req: Request):
         )
     except Exception as e:
         logger.exception(f"[chat:{trace_id}] Chat error")
+        log_app_error(
+            type(e).__name__,
+            str(e),
+            surface="human_app",
+            path="/chat",
+        )
         return msgpack_response(
             {
                 "type": "error",

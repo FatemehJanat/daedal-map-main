@@ -58,9 +58,12 @@ class SupabaseClient:
         session_id: str,
         user_query: str,
         assistant_response: str,
+        surface: str = "chat",
         intent: Optional[str] = None,
         dataset_selected: Optional[str] = None,
         results_count: int = 0,
+        ip_hash: Optional[str] = None,
+        user_agent: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None
     ) -> Optional[Dict]:
         """
@@ -124,11 +127,14 @@ class SupabaseClient:
                 # Create new session
                 data = {
                     "session_id": session_id,
+                    "surface": surface,
                     "messages": [message_entry],
                     "message_count": 1,
                     "datasets_used": [dataset_selected] if dataset_selected else [],
                     "intents_seen": [intent] if intent else [],
                     "total_results": results_count,
+                    "ip_hash": ip_hash,
+                    "user_agent": (user_agent or "")[:300] or None,
                     "created_at": datetime.utcnow().isoformat(),
                     "updated_at": datetime.utcnow().isoformat()
                 }
@@ -805,9 +811,11 @@ class SupabaseClient:
             tables = {}
 
             for table in [
-            "conversation_sessions", "error_logs", "dataset_metadata", "data_quality_issues",
+            "conversation_sessions", "error_logs",
             "plans", "orgs", "profiles", "memberships", "pack_entitlements",
-            "api_usage_events", "security_events", "pack_daily_rollups",
+            "api_usage_events", "security_events", "security_event_daily_rollups",
+            "commercial_access_pending_settlements", "credit_transactions",
+            "feedback", "waitlist",
         ]:
                 try:
                     result = self.client.table(table).select("id", count="exact").limit(1).execute()

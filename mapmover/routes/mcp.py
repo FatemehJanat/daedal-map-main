@@ -1189,6 +1189,13 @@ async def mcp_endpoint(request: Request, pack_id: str | None = None):
     if method == "initialize":
         requested_version = str(params.get("protocolVersion") or "").strip()
         negotiated = requested_version if requested_version in SUPPORTED_PROTOCOL_VERSIONS else MCP_PROTOCOL_VERSION
+        client_info = params.get("clientInfo")
+        if isinstance(client_info, dict):
+            request.state.analytics_metadata = {
+                **getattr(request.state, "analytics_metadata", {}),
+                "mcp_client_name": str(client_info.get("name") or "")[:100] or None,
+                "mcp_client_version": str(client_info.get("version") or "")[:50] or None,
+            }
         response = _jsonrpc_response(
             {
                 "protocolVersion": negotiated,
