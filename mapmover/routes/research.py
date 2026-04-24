@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import asyncio
+from types import SimpleNamespace
 
 import msgpack
 from anthropic import Anthropic
@@ -17,8 +18,9 @@ from mapmover.auth_context import build_session_cache_key, get_authenticated_use
 from mapmover.corpus_registry import corpus_registry
 from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log_conversation
 from mapmover.security import get_client_ip
-from mapmover.data_loading import get_pack_metadata, load_source_metadata
+from mapmover.data_loading import get_pack_metadata, get_source_path, load_source_metadata
 from mapmover.api_query_runtime import execute_dataset_query, get_api_source_columns, get_api_source_spec
+from mapmover.duckdb_helpers import parquet_columns, select_columns_from_parquet
 from mapmover.research_postprocessor import normalize_research_result
 from mapmover.research_preprocessor import build_research_hint_context, preprocess_research_query
 from mapmover.research_prompt import build_research_system_prompt
@@ -186,12 +188,168 @@ def _rows_to_static_result(rows: list[dict], source_id: str, metadata: dict, spe
     }
 
 
+def _is_runtime_research_source(metadata: dict) -> bool:
+    if not isinstance(metadata, dict):
+        return False
+    release_state = str(metadata.get("release_state") or "").strip().lower()
+    return release_state == "published" or bool(metadata.get("pack_id"))
+
+
+def _find_primary_parquet(source_id: str, metadata: dict):
+    source_dir = get_source_path(source_id)
+    if source_dir is None:
+        return None
+    for rel_path in metadata.get("primary_files") or []:
+        candidate = source_dir / str(rel_path)
+        if candidate.suffix.lower() == ".parquet" and candidate.exists():
+            return candidate
+    for candidate in sorted(source_dir.glob("*.parquet")):
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _load_runtime_rows(parquet_path, columns: list[str]) -> list[dict]:
+    df = select_columns_from_parquet(parquet_path, columns)
+    if df.empty:
+        return []
+    return df.to_dict(orient="records")
+
+
+def _hydrate_runtime_metrics_source(source_id: str, metadata: dict) -> dict:
+    parquet_path = _find_primary_parquet(source_id, metadata)
+    if parquet_path is None:
+        return {"source_id": source_id, "status": "skipped", "reason": "missing_parquet"}
+
+    available_columns = parquet_columns(parquet_path)
+    if "loc_id" not in available_columns:
+        return {"source_id": source_id, "status": "skipped", "reason": "missing_location_field"}
+
+    time_field = str(((metadata.get("temporal_coverage") or {}).get("field")) or "").strip() or None
+    if time_field and time_field not in available_columns:
+        time_field = None
+
+    name_field = "name" if "name" in available_columns else ("NAME" if "NAME" in available_columns else None)
+    metric_ids = [metric_id for metric_id in (metadata.get("metrics") or {}).keys() if metric_id in available_columns]
+
+    select_columns = ["loc_id"]
+    if time_field:
+        select_columns.append(time_field)
+    if name_field:
+        select_columns.append(name_field)
+    for metric_id in metric_ids:
+        if metric_id not in select_columns:
+            select_columns.append(metric_id)
+
+    rows = _load_runtime_rows(parquet_path, select_columns)
+    if not rows:
+        return {"source_id": source_id, "status": "skipped", "reason": "no_rows"}
+
+    normalized_rows = []
+    for row in rows:
+        normalized = dict(row)
+        if name_field and name_field != "name" and name_field in normalized:
+            normalized["name"] = normalized.get(name_field)
+        normalized_rows.append(normalized)
+
+    pseudo_spec = SimpleNamespace(
+        location_field="loc_id",
+        time_field=time_field,
+        metrics={metric_id: None for metric_id in metric_ids},
+    )
+    result = _rows_to_temporal_result(normalized_rows, source_id, metadata, pseudo_spec) if time_field else _rows_to_static_result(normalized_rows, source_id, metadata, pseudo_spec)
+    return {"source_id": source_id, "status": "loaded", "row_count": len(normalized_rows), "result": result}
+
+
+def _hydrate_runtime_geometry_source(source_id: str, metadata: dict) -> dict:
+    parquet_path = _find_primary_parquet(source_id, metadata)
+    if parquet_path is None:
+        return {"source_id": source_id, "status": "skipped", "reason": "missing_parquet"}
+
+    available_columns = parquet_columns(parquet_path)
+    if "geometry" not in available_columns:
+        return {"source_id": source_id, "status": "skipped", "reason": "missing_geometry"}
+
+    preferred_columns = [
+        "loc_id", "parent_id", "name", "NAME", "feature_id", "building_id", "BLDGIDENT",
+        "TYPE", "BLDG_CM_TYPE", "BLDG_CM_LABEL", "BLDG_HEIGHT", "SOURCE", "geometry",
+    ]
+    select_columns = [column for column in preferred_columns if column in available_columns]
+    rows = _load_runtime_rows(parquet_path, select_columns)
+    if not rows:
+        return {"source_id": source_id, "status": "skipped", "reason": "no_rows"}
+
+    features = []
+    for row in rows:
+        geometry_value = row.get("geometry")
+        if not geometry_value:
+            continue
+        try:
+            geometry = json.loads(geometry_value) if isinstance(geometry_value, str) else geometry_value
+        except Exception:
+            continue
+        props = {k: v for k, v in row.items() if k != "geometry"}
+        if "name" not in props and props.get("NAME"):
+            props["name"] = props.get("NAME")
+        if "name" not in props:
+            props["name"] = props.get("feature_id") or props.get("building_id") or props.get("BLDGIDENT") or props.get("loc_id")
+        features.append({"type": "Feature", "geometry": geometry, "properties": props})
+
+    if not features:
+        return {"source_id": source_id, "status": "skipped", "reason": "no_features"}
+
+    result = {
+        "type": "data",
+        "data_type": "geometry",
+        "source_id": source_id,
+        "overlay_type": metadata.get("overlay_type"),
+        "geojson": {"type": "FeatureCollection", "features": features},
+        "available_metrics": [],
+        "summary": _source_summary_text(source_id, metadata, len(features)),
+        "count": len(features),
+        "sources": [{"id": source_id, "name": str(metadata.get("source_name") or source_id)}],
+    }
+    return {"source_id": source_id, "status": "loaded", "row_count": len(features), "result": result}
+
+
+def _hydrate_runtime_source(source_id: str, metadata: dict) -> dict:
+    data_type = metadata.get("data_type")
+    kinds = data_type if isinstance(data_type, list) else [data_type]
+    normalized_kinds = {str(kind or "").strip().lower() for kind in kinds if kind}
+    if "geometry" in normalized_kinds:
+        return _hydrate_runtime_geometry_source(source_id, metadata)
+    return _hydrate_runtime_metrics_source(source_id, metadata)
+
+
 def _hydrate_saved_source_into_research(*, session_id: str, corpus_id: str, source_id: str) -> dict:
+    metadata = load_source_metadata(source_id) or {}
+    if not _is_runtime_research_source(metadata):
+        return {"source_id": source_id, "status": "skipped", "reason": "source_not_runtime_ready"}
+
     spec = get_api_source_spec(source_id)
     if spec is None:
-        return {"source_id": source_id, "status": "skipped", "reason": "source_not_queryable"}
+        fallback = _hydrate_runtime_source(source_id, metadata)
+        result = fallback.get("result")
+        if fallback.get("status") != "loaded" or not result:
+            return fallback
+        request_key = _saved_corpus_request_key(corpus_id, source_id)
+        session_manager.get_or_create(session_id).store_result(request_key, result)
+        order = {
+            "items": [{"source_id": source_id, "region": "global", "metric": None}],
+            "summary": result.get("summary") or f"Loaded {source_id} into Research.",
+        }
+        corpus_registry.register_order_result(
+            session_id=session_id,
+            request_key=request_key,
+            order=order,
+            response=result,
+        )
+        return {
+            "source_id": source_id,
+            "status": "loaded",
+            "row_count": int(fallback.get("row_count") or 0),
+        }
 
-    metadata = load_source_metadata(source_id) or {}
     try:
         available_columns = get_api_source_columns(spec)
     except Exception as exc:

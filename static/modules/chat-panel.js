@@ -431,16 +431,16 @@ export const ChatManager = {
       try {
         const manifest = await this.refreshResearchManifest();
         if ((manifest?.artifact_count || 0) > 0) {
-          this.addMessage(`Research mode ready. Active corpus: ${manifest.artifact_count} loaded artifact${manifest.artifact_count === 1 ? '' : 's'}.`, 'assistant');
+          this.addMessage(`Research mode ready. Active corpus: ${manifest.artifact_count} loaded artifact${manifest.artifact_count === 1 ? '' : 's'}.`, 'assistant', { mode: 'research' });
         } else if (manifest?.saved_corpus) {
           const saved = manifest.saved_corpus;
-          this.addMessage(`Research workspace ready. "${saved.name}" is selected. Click Load Data to activate it for this session.`, 'assistant');
+          this.addMessage(`Research workspace ready. "${saved.name}" is selected. Click Load Data to activate it for this session.`, 'assistant', { mode: 'research' });
         } else {
-          this.addMessage(this.getResearchEmptyStateMessage(), 'assistant');
+          this.addMessage(this.getResearchEmptyStateMessage(), 'assistant', { mode: 'research' });
         }
       } catch (error) {
         console.warn('Research corpus snapshot failed:', error);
-        this.addMessage('Research mode is available, but I could not read the active corpus yet.', 'assistant');
+        this.addMessage('Research mode is available, but I could not read the active corpus yet.', 'assistant', { mode: 'research' });
       }
     }
 
@@ -669,12 +669,13 @@ export const ChatManager = {
         saved
           ? `Loaded "${saved.name}" into Research. This workspace includes ${packCount} pack${packCount === 1 ? '' : 's'}${extraSourcesText} and ${artifactCount} hydrated artifact${artifactCount === 1 ? '' : 's'}.`
           : (response?.message || 'Loaded the saved corpus into Research.'),
-        'assistant'
+        'assistant',
+        { mode: 'research' }
       );
       this.updateResearchCorpusStatus();
     } catch (error) {
       console.error('Saved corpus load error:', error);
-      this.addMessage(error.message || 'Could not load that saved corpus into Research.', 'assistant');
+      this.addMessage(error.message || 'Could not load that saved corpus into Research.', 'assistant', { mode: 'research' });
     } finally {
       indicator.remove();
       researchModeToggle?.setCorpusLoading(false);
@@ -945,7 +946,9 @@ export const ChatManager = {
       }
     } else {
       // No real chat session saved - always show fresh welcome message
-      this.addMessage(WELCOME_MESSAGE, 'assistant', { html: true });
+      this.mode = 'explore';
+      this.setActiveMessagePane('explore');
+      this.addMessage(WELCOME_MESSAGE, 'assistant', { html: true, mode: 'explore' });
     }
   },
 
@@ -1170,7 +1173,7 @@ export const ChatManager = {
       }
     } else {
       await this.clearSession();
-      this.addMessage(WELCOME_MESSAGE, 'assistant', { html: true });
+      this.addMessage(WELCOME_MESSAGE, 'assistant', { html: true, mode: 'explore' });
     }
   },
 
@@ -1196,7 +1199,7 @@ export const ChatManager = {
       newChat.addEventListener('click', async () => {
         if (confirm('Start a new chat? This will clear your current conversation.')) {
           await this.clearSession();
-          this.addMessage(WELCOME_MESSAGE, 'assistant', { html: true });
+          this.addMessage(WELCOME_MESSAGE, 'assistant', { html: true, mode: 'explore' });
         }
       });
     }
@@ -1284,7 +1287,7 @@ export const ChatManager = {
       try {
         const manifest = await this.refreshResearchManifest();
         if ((manifest?.artifact_count || 0) === 0 && !manifest?.saved_corpus) {
-          this.addMessage(this.getResearchEmptyStateMessage(), 'assistant');
+          this.addMessage(this.getResearchEmptyStateMessage(), 'assistant', { mode: requestMode });
           return;
         }
       } catch (error) {
@@ -1317,7 +1320,7 @@ export const ChatManager = {
     }
 
     // Add user message
-    this.addMessage(query, 'user');
+    this.addMessage(query, 'user', { mode: requestMode });
     input.value = '';
     input.style.height = 'auto';
 
@@ -1326,7 +1329,7 @@ export const ChatManager = {
       this.history.push({ role: 'user', content: query });
       const result = TutorialMode.applyCommand(tutorialCommand.action);
       this.history.push({ role: 'assistant', content: result.message });
-      this.addMessage(result.message, 'assistant');
+      this.addMessage(result.message, 'assistant', { mode: requestMode });
       return;
     }
 
@@ -1386,12 +1389,12 @@ export const ChatManager = {
         this.applySupplementalChatActions(response);
         this.saveState();
       } else {
-        this.handleResponse(response);
+        this.handleResponse({ ...response, _requestMode: requestMode });
       }
 
     } catch (error) {
       console.error('Chat error:', error);
-      this.addMessage('Sorry, something went wrong. Please try again.', 'assistant');
+      this.addMessage('Sorry, something went wrong. Please try again.', 'assistant', { mode: requestMode });
     } finally {
       if (!removedIndicatorForStream) {
         indicator.remove();
@@ -1407,15 +1410,17 @@ export const ChatManager = {
    * @param {Object} response - The API response
    */
   handleResponse(response) {
+    const targetMode = response?._requestMode || this.mode;
+    const add = (text, type = 'assistant', options = {}) => this.addMessage(text, type, { ...options, mode: targetMode });
     switch (response.type) {
       case 'order':
         this.pendingMetricOrder = null;
-        this.addMessage('Added to your order. Click "Display on Map" when ready.', 'assistant');
+        add('Added to your order. Click "Display on Map" when ready.', 'assistant');
         orderPanel.setOrder(response.order, response.summary, response.full_order || response.order);
         break;
 
       case 'already_loaded':
-        this.addMessage(response.message || 'This data is already loaded on your map.', 'assistant');
+        add(response.message || 'This data is already loaded on your map.', 'assistant');
         // Switch to Loaded tab so user can see their data
         if (orderPanel.switchTab) orderPanel.switchTab('loaded');
         break;
@@ -1426,7 +1431,7 @@ export const ChatManager = {
           full_order: response.full_order,
           summary: response.summary
         };
-        const msgEl = this.addMessage(response.message, 'assistant');
+        const msgEl = add(response.message, 'assistant');
         const btnContainer = document.createElement('div');
         btnContainer.className = 'metric-warning-buttons';
 
@@ -1443,7 +1448,7 @@ export const ChatManager = {
         noBtn.className = 'chat-action-btn cancel';
         noBtn.addEventListener('click', () => {
           btnContainer.remove();
-          this.addMessage('Sure - what specific metrics would you like?', 'assistant');
+          add('Sure - what specific metrics would you like?', 'assistant');
         });
 
         btnContainer.appendChild(yesBtn);
@@ -1454,11 +1459,11 @@ export const ChatManager = {
 
       case 'clarify':
         this.pendingMetricOrder = null;
-        this.addMessage(response.message || 'Could you be more specific?', 'assistant');
+        add(response.message || 'Could you be more specific?', 'assistant');
         break;
 
       case 'disambiguate':
-        this.addMessage(response.message || 'Please select a location:', 'assistant');
+        add(response.message || 'Please select a location:', 'assistant');
         this.lastDisambiguationOptions = response.options || [];
         if (SelectionManager) {
           SelectionManager.enter(response, (selected, originalQuery) => {
@@ -1468,38 +1473,38 @@ export const ChatManager = {
         break;
 
       case 'navigate':
-        this.addMessage(response.message || 'Showing locations.', 'assistant');
+        add(response.message || 'Showing locations.', 'assistant');
         this.handleNavigation(response);
         break;
 
       case 'drilldown':
-        this.addMessage(response.message || 'Loading...', 'assistant');
+        add(response.message || 'Loading...', 'assistant');
         if (App && response.loc_id) {
           App.drillDown(response.loc_id, response.name || response.loc_id);
         }
         break;
 
       case 'data':
-        this.addMessage(response.summary || 'Here is your data.', 'assistant');
+        add(response.summary || 'Here is your data.', 'assistant');
         App?.displayData(response);
         break;
 
       case 'events':
-        this.addMessage(response.summary || `Showing ${response.count} ${response.event_type} events.`, 'assistant');
+        add(response.summary || `Showing ${response.count} ${response.event_type} events.`, 'assistant');
         ingestEventsToOverlay(response);
         App?.displayData(response);
         break;
 
       case 'cache_answer':
-        this.addMessage(response.message || 'Here is the current state.', 'assistant');
+        add(response.message || 'Here is the current state.', 'assistant');
         break;
 
       case 'order_response':
         // Handle order execution responses (including removals)
         if (response.action === 'remove') {
-          this.addMessage(response.summary || `Removed ${response.count || 0} ${response.data_type || 'items'}.`, 'assistant');
+          add(response.summary || `Removed ${response.count || 0} ${response.data_type || 'items'}.`, 'assistant');
         } else {
-          this.addMessage(response.summary || 'Order complete.', 'assistant');
+          add(response.summary || 'Order complete.', 'assistant');
         }
         App?.displayData(response);
         break;
@@ -1511,22 +1516,22 @@ export const ChatManager = {
             App?.displayData(result);
           }
         }
-        this.addMessage(response.summary || `Updated: added ${response.add_count || 0}, removed ${response.remove_count || 0}`, 'assistant');
+        add(response.summary || `Updated: added ${response.add_count || 0}, removed ${response.remove_count || 0}`, 'assistant');
         break;
 
       case 'geometry_remove':
         // Legacy: Remove geometry regions from display (now handled by order_response)
-        this.addMessage(response.message || 'Removing geometry.', 'assistant');
+        add(response.message || 'Removing geometry.', 'assistant');
         App?.displayData({ ...response, action: 'remove', data_type: 'geometry' });
         break;
 
       case 'filter_update':
-        this.addMessage(response.message || 'Updating filters.', 'assistant');
+        add(response.message || 'Updating filters.', 'assistant');
         this.applyFilterUpdate(response);
         break;
 
       case 'filter_existing':
-        this.addMessage(response.message || 'Filtering cached data.', 'assistant');
+        add(response.message || 'Filtering cached data.', 'assistant');
         if (response.overlay && response.filters && OverlayController) {
           OverlayController.updateFilters(response.overlay, response.filters);
           OverlayController.rerenderFromCache?.();
@@ -1534,7 +1539,7 @@ export const ChatManager = {
         break;
 
       case 'overlay_toggle':
-        this.addMessage(response.message || (response.enabled ? 'Enabling overlay.' : 'Disabling overlay.'), 'assistant');
+        add(response.message || (response.enabled ? 'Enabling overlay.' : 'Disabling overlay.'), 'assistant');
         if (response.overlay && OverlaySelector) {
           const isCurrentlyActive = OverlaySelector.isActive(response.overlay);
           if (response.enabled && !isCurrentlyActive) {
@@ -1551,7 +1556,7 @@ export const ChatManager = {
 
       case 'tutorial_mode': {
         const result = TutorialMode.applyCommand(response.action || (response.enabled ? 'on' : 'off'));
-        this.addMessage(response.message || result.message, 'assistant');
+        add(response.message || result.message, 'assistant');
         break;
       }
 
@@ -1567,22 +1572,22 @@ export const ChatManager = {
             orderPanel?.currentOrder?.summary || ''
           );
           if (saved) {
-            this.addMessage(`Order saved as "${saved.name}"`, 'assistant');
+            add(`Order saved as "${saved.name}"`, 'assistant');
           } else {
-            this.addMessage('No order to save.', 'assistant');
+            add('No order to save.', 'assistant');
           }
         } else {
-          this.addMessage('Please specify a name to save the order (e.g., "save as California Data").', 'assistant');
+          add('Please specify a name to save the order (e.g., "save as California Data").', 'assistant');
         }
         break;
 
       case 'list_orders': {
         const savedOrders = SavedOrders.getAll();
         if (savedOrders.length === 0) {
-          this.addMessage('No saved orders. Save an order first with "save as [name]".', 'assistant');
+          add('No saved orders. Save an order first with "save as [name]".', 'assistant');
         } else {
           const names = savedOrders.map(o => `- ${o.name}`).join('\n');
-          this.addMessage(`Saved orders:\n${names}`, 'assistant');
+          add(`Saved orders:\n${names}`, 'assistant');
         }
         break;
       }
@@ -1597,17 +1602,17 @@ export const ChatManager = {
             };
             orderPanel.render(orderPanel.currentOrder.summary);
             orderPanel.switchTab('order');
-            this.addMessage(`Loaded saved order: "${order.name}"`, 'assistant');
+            add(`Loaded saved order: "${order.name}"`, 'assistant');
           } else if (!order) {
-            this.addMessage(`No saved order found with name "${response.name}".`, 'assistant');
+            add(`No saved order found with name "${response.name}".`, 'assistant');
           }
         } else {
           const allOrders = SavedOrders.getAll();
           if (allOrders.length > 0) {
             const names = allOrders.map(o => `- ${o.name}`).join('\n');
-            this.addMessage(`Which order? Available:\n${names}`, 'assistant');
+            add(`Which order? Available:\n${names}`, 'assistant');
           } else {
-            this.addMessage('No saved orders available.', 'assistant');
+            add('No saved orders available.', 'assistant');
           }
         }
         break;
@@ -1615,17 +1620,17 @@ export const ChatManager = {
       case 'delete_order':
         if (response.name) {
           if (SavedOrders.deleteOrder(response.name)) {
-            this.addMessage(`Deleted saved order: "${response.name}"`, 'assistant');
+            add(`Deleted saved order: "${response.name}"`, 'assistant');
           } else {
-            this.addMessage(`No saved order found with name "${response.name}".`, 'assistant');
+            add(`No saved order found with name "${response.name}".`, 'assistant');
           }
         } else {
-          this.addMessage('Please specify which order to delete (e.g., "delete order California Analysis").', 'assistant');
+          add('Please specify which order to delete (e.g., "delete order California Analysis").', 'assistant');
         }
         break;
 
       case 'error':
-        this.addMessage(response.message || 'An error occurred. Please try again.', 'assistant');
+        add(response.message || 'An error occurred. Please try again.', 'assistant');
         break;
 
       case 'chat':
@@ -1633,13 +1638,13 @@ export const ChatManager = {
         this.pendingMetricOrder = null;
         this.applySupplementalChatActions(response);
         if (response.geojson && response.geojson.features && response.geojson.features.length > 0) {
-          this.addMessage(response.summary || response.message || 'Found data for you.', 'assistant');
+          add(response.summary || response.message || 'Found data for you.', 'assistant');
           if (response.event_type) {
             ingestEventsToOverlay(response);
           }
           App?.displayData(response);
         } else {
-          this.addMessage(response.summary || response.message || 'Could you be more specific?', 'assistant');
+          add(response.summary || response.message || 'Could you be more specific?', 'assistant');
         }
         break;
     }
