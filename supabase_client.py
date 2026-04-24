@@ -334,6 +334,8 @@ class SupabaseClient:
         settlement_id: Optional[str] = None,
         amount_charged_usdc_base_units: Optional[int] = None,
         revenue_attributed_usdc_base_units: Optional[int] = None,
+        mcp_client_name: Optional[str] = None,
+        mcp_client_version: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict]:
         """Log a durable API usage event for pack/source analytics."""
@@ -358,6 +360,8 @@ class SupabaseClient:
                 "settlement_id": settlement_id,
                 "amount_charged_usdc_base_units": amount_charged_usdc_base_units,
                 "revenue_attributed_usdc_base_units": revenue_attributed_usdc_base_units,
+                "mcp_client_name": mcp_client_name,
+                "mcp_client_version": mcp_client_version,
                 "metadata": metadata,
                 "created_at": datetime.utcnow().isoformat(),
             }

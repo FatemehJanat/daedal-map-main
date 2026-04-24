@@ -201,6 +201,7 @@ def log_api_query_event(
     supabase_client = get_supabase()
     if supabase_client:
         try:
+            _meta = metadata or {}
             supabase_client.log_api_usage_event(
                 event_kind=decision or "request_completed",
                 request_id=request_id,
@@ -221,6 +222,8 @@ def log_api_query_event(
                 settlement_id=settlement_id,
                 amount_charged_usdc_base_units=amount_charged_usdc_base_units,
                 revenue_attributed_usdc_base_units=revenue_attributed_usdc_base_units,
+                mcp_client_name=str(_meta.get("mcp_client_name") or "")[:100] or None,
+                mcp_client_version=str(_meta.get("mcp_client_version") or "")[:50] or None,
                 metadata=event,
             )
         except Exception as e:
