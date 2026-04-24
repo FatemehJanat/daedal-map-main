@@ -323,12 +323,14 @@ export const ChatManager = {
   mode: 'explore',
   modeHistories: { explore: [], research: [] },
   modeMessagesHtml: { explore: '', research: '' },
+  modeRequestInFlight: { explore: false, research: false },
   researchMemory: null,
   selectedResearchCorpusId: '',
   researchCorpusOptions: [],
   latestResearchManifest: null,
   pendingMetricOrder: null,
   sessionId: null,
+  messagePanes: {},
   elements: {},
   lastDisambiguationOptions: null,
   addressContext: null,
@@ -347,26 +349,28 @@ export const ChatManager = {
       toggle: document.getElementById('sidebarToggle'),
       close: document.getElementById('closeSidebar'),
       newChat: document.getElementById('newChatBtn'),
-      messages: document.getElementById('chatMessages'),
+      messagesHost: document.getElementById('chatMessages'),
+      messages: null,
       form: document.getElementById('chatForm'),
       input: document.getElementById('chatInput'),
       sendBtn: document.getElementById('sendBtn'),
       resizeOrder: document.getElementById('resizeOrder'),
       orderPanel: document.getElementById('orderPanel')
     };
+    this.initMessagePanes();
 
     // Restore chat state from localStorage
     this.restoreState();
     if (!this.modeHistories.explore?.length && this.history.length && this.mode === 'explore') {
       this.modeHistories.explore = this.history;
     }
-    if (!this.modeMessagesHtml[this.mode] && this.elements.messages?.innerHTML) {
-      this.modeMessagesHtml[this.mode] = this.elements.messages.innerHTML;
-    }
+    this.syncAllMessagePanes();
+    this.setActiveMessagePane(this.mode);
 
     this.initModeToggle();
     this.syncSidebarToggleVisibility();
     this.updateSidebarModeLayout();
+    this.updateComposerState();
 
     // Setup UI event listeners
     this.setupEventListeners();
@@ -385,7 +389,7 @@ export const ChatManager = {
   initModeToggle() {
     researchModeToggle = new ResearchModeToggle({
       container: document.getElementById('chatContainer'),
-      getSessionId: () => this.sessionId,
+      getSessionId: () => this.getSessionIdForMode('research'),
       onModeChange: async (mode) => {
         await this.switchChatMode(mode);
       },
@@ -409,19 +413,14 @@ export const ChatManager = {
     if (mode !== 'explore' && mode !== 'research') return;
     if (mode === this.mode) return;
 
-    if (this.elements.messages) {
-      this.modeMessagesHtml[this.mode] = this.elements.messages.innerHTML;
-    }
+    this.syncModeMessagesHtml(this.mode);
     this.modeHistories[this.mode] = this.history;
 
     this.mode = mode;
     this.history = this.modeHistories[mode] || [];
+    this.setActiveMessagePane(mode);
     if (mode !== 'research') {
       this.researchMemory = this.researchMemory || null;
-    }
-
-    if (this.elements.messages) {
-      this.elements.messages.innerHTML = this.modeMessagesHtml[mode] || '';
     }
 
     if (mode === 'research') {
@@ -447,7 +446,63 @@ export const ChatManager = {
 
     this.updateResearchCorpusStatus();
     this.updateSidebarModeLayout();
+    this.updateComposerState();
     this.saveState();
+  },
+
+  initMessagePanes() {
+    const host = this.elements.messagesHost;
+    if (!host) return;
+    host.innerHTML = '';
+    this.messagePanes = {};
+    for (const mode of ['explore', 'research']) {
+      const pane = document.createElement('div');
+      pane.className = 'chat-messages-pane';
+      pane.dataset.chatMode = mode;
+      pane.hidden = mode !== this.mode;
+      host.appendChild(pane);
+      this.messagePanes[mode] = pane;
+    }
+    this.elements.messages = this.messagePanes[this.mode] || null;
+  },
+
+  setActiveMessagePane(mode) {
+    for (const [paneMode, pane] of Object.entries(this.messagePanes || {})) {
+      pane.hidden = paneMode !== mode;
+    }
+    this.elements.messages = this.messagePanes?.[mode] || null;
+    if (this.elements.messagesHost) {
+      this.elements.messagesHost.scrollTop = this.elements.messagesHost.scrollHeight;
+    }
+  },
+
+  syncModeMessagesHtml(mode) {
+    const pane = this.messagePanes?.[mode];
+    if (!pane) return;
+    this.modeMessagesHtml[mode] = pane.innerHTML;
+  },
+
+  syncAllMessagePanes() {
+    for (const mode of ['explore', 'research']) {
+      const pane = this.messagePanes?.[mode];
+      if (!pane) continue;
+      pane.innerHTML = this.modeMessagesHtml[mode] || '';
+      pane.querySelectorAll('.loading-indicator, .typing-indicator').forEach(el => el.remove());
+      this.modeMessagesHtml[mode] = pane.innerHTML;
+    }
+  },
+
+  getSessionIdForMode(mode = this.mode) {
+    const base = String(this.sessionId || '').trim();
+    if (!base) return getOrCreateSessionId();
+    return `${base}:${mode}`;
+  },
+
+  updateComposerState() {
+    const { input, sendBtn } = this.elements;
+    const disabled = !!this.modeRequestInFlight?.[this.mode];
+    if (sendBtn) sendBtn.disabled = disabled;
+    if (input) input.disabled = disabled;
   },
 
   syncSidebarToggleVisibility() {
@@ -827,7 +882,7 @@ export const ChatManager = {
     const data = await postMsgpack(apiUrl, {
       items: order.items,
       hints: { summary: order.summary },
-      session_id: this.sessionId
+      session_id: this.getSessionIdForMode(this.mode)
     });
 
     if (data.queue_id) {
@@ -880,13 +935,8 @@ export const ChatManager = {
         this.selectedResearchCorpusId = '';
       }
 
-      const activeHtml = this.modeMessagesHtml[this.mode] || state.messagesHtml || '';
-      if (activeHtml && this.elements.messages) {
-        this.elements.messages.innerHTML = activeHtml;
-        // Remove any loading/typing indicators that were saved mid-request
-        this.elements.messages.querySelectorAll('.loading-indicator, .typing-indicator').forEach(el => el.remove());
-        this.elements.messages.scrollTop = this.elements.messages.scrollHeight;
-      }
+      this.syncAllMessagePanes();
+      this.setActiveMessagePane(this.mode);
 
       const apiCalls = getApiCallsForRecovery();
       const executedOrders = getExecutedOrdersForRecovery();
@@ -903,9 +953,8 @@ export const ChatManager = {
    * Save current chat state to localStorage.
    */
   saveState() {
-    const html = this.elements.messages ? this.elements.messages.innerHTML : '';
     this.modeHistories[this.mode] = this.history;
-    this.modeMessagesHtml[this.mode] = html;
+    this.syncAllMessagePanes();
     if (this.mode === 'research') {
       const memoryState = buildResearchMemoryFromHistory(this.history);
       this.researchMemory = memoryState.researchMemory;
@@ -923,13 +972,14 @@ export const ChatManager = {
    * Clear current session and start fresh.
    */
   async clearSession() {
-    const oldSessionId = this.sessionId;
+    const oldSessionIds = ['explore', 'research'].map(mode => this.getSessionIdForMode(mode));
 
     // Clear state
     this.history = [];
     this.mode = 'explore';
     this.modeHistories = { explore: [], research: [] };
     this.modeMessagesHtml = { explore: '', research: '' };
+    this.modeRequestInFlight = { explore: false, research: false };
     this.researchMemory = null;
     this.selectedResearchCorpusId = '';
     this.researchCorpusOptions = [];
@@ -942,7 +992,8 @@ export const ChatManager = {
     }
     this.lastDisambiguationOptions = null;
     if (this.elements.messages) {
-      this.elements.messages.innerHTML = '';
+      this.syncAllMessagePanes();
+      this.setActiveMessagePane('explore');
     }
 
     // Clear order panel
@@ -961,7 +1012,8 @@ export const ChatManager = {
     clearChatStorage();
 
     // Notify backend (fire and forget)
-    if (oldSessionId) {
+    for (const oldSessionId of oldSessionIds) {
+      if (!oldSessionId) continue;
       try {
         await postMsgpack('/api/session/clear', { sessionId: oldSessionId });
       } catch (e) {
@@ -1223,10 +1275,12 @@ export const ChatManager = {
    */
   async handleSubmit() {
     const { input, sendBtn } = this.elements;
+    const requestMode = this.mode;
     const query = input.value.trim();
     if (!query) return;
+    if (this.modeRequestInFlight[requestMode]) return;
 
-    if (this.mode === 'research') {
+    if (requestMode === 'research') {
       try {
         const manifest = await this.refreshResearchManifest();
         if ((manifest?.artifact_count || 0) === 0 && !manifest?.saved_corpus) {
@@ -1245,7 +1299,7 @@ export const ChatManager = {
       return;
     }
 
-    if (this.mode === 'explore' && this.isAllMetricsConfirmation(query) && this.pendingMetricOrder) {
+    if (requestMode === 'explore' && this.isAllMetricsConfirmation(query) && this.pendingMetricOrder) {
       this.addMessage(query, 'user');
       input.value = '';
       input.style.height = 'auto';
@@ -1279,22 +1333,23 @@ export const ChatManager = {
     // Track last query for potential re-send (metric warning)
     this.lastQuery = query;
 
-    // Disable input
-    sendBtn.disabled = true;
-    input.disabled = true;
+    this.modeRequestInFlight[requestMode] = true;
+    this.updateComposerState();
 
     // Show staged loading indicator
-    const indicator = this.showTypingIndicator(true);
+    const requestMessages = this.messagePanes?.[requestMode] || this.elements.messages;
+    const indicator = this.showTypingIndicator(true, requestMode);
     let streamedAssistantEl = null;
     let removedIndicatorForStream = false;
 
     try {
       // Build payload with map-specific context
       this.history.push({ role: 'user', content: query });
-      const payload = this.buildPayload(query);
+      this.modeHistories[requestMode] = this.history;
+      const payload = this.buildPayload(query, null, {}, requestMode);
 
       // Send via streaming API
-      const endpoint = this.mode === 'research' ? '/chat/research/stream' : '/chat/stream';
+      const endpoint = requestMode === 'research' ? '/chat/research/stream' : '/chat/stream';
       const response = await sendStreamingRequest(payload, (stage, message, deltaText) => {
         if (stage === 'answer_start' || stage === 'delta') {
           if (!removedIndicatorForStream) {
@@ -1302,10 +1357,13 @@ export const ChatManager = {
             removedIndicatorForStream = true;
           }
           if (!streamedAssistantEl) {
-            streamedAssistantEl = this.addMessage('', 'assistant');
+            streamedAssistantEl = this.addMessage('', 'assistant', { mode: requestMode });
           }
           streamedAssistantEl.innerHTML = formatMessage(deltaText || '');
-          this.elements.messages.scrollTop = this.elements.messages.scrollHeight;
+          if (requestMessages && this.mode === requestMode && this.elements.messagesHost) {
+            this.elements.messagesHost.scrollTop = this.elements.messagesHost.scrollHeight;
+          }
+          this.syncModeMessagesHtml(requestMode);
           return;
         }
         indicator.updateStage(stage, message);
@@ -1316,7 +1374,12 @@ export const ChatManager = {
       }
 
       // Track in history
-      this.history.push({ role: 'assistant', content: response.message || response.summary });
+      const responseHistory = this.modeHistories[requestMode] || [];
+      responseHistory.push({ role: 'assistant', content: response.message || response.summary });
+      this.modeHistories[requestMode] = responseHistory;
+      if (this.mode === requestMode) {
+        this.history = responseHistory;
+      }
 
       // Handle response based on type
       if (response._streamed && response.type === 'chat') {
@@ -1332,8 +1395,8 @@ export const ChatManager = {
       if (!removedIndicatorForStream) {
         indicator.remove();
       }
-      sendBtn.disabled = false;
-      input.disabled = false;
+      this.modeRequestInFlight[requestMode] = false;
+      this.updateComposerState();
       input.focus();
     }
   },
@@ -1859,9 +1922,10 @@ export const ChatManager = {
   async resendWithForce() {
     if (!this.lastQuery) return;
 
-    const { sendBtn, input } = this.elements;
-    sendBtn.disabled = true;
-    input.disabled = true;
+    const requestMode = this.mode;
+    if (this.modeRequestInFlight[requestMode]) return;
+    this.modeRequestInFlight[requestMode] = true;
+    this.updateComposerState();
 
     const indicator = this.showTypingIndicator(true);
 
@@ -1880,9 +1944,9 @@ export const ChatManager = {
       this.addMessage('Sorry, something went wrong. Please try again.', 'assistant');
     } finally {
       indicator.remove();
-      sendBtn.disabled = false;
-      input.disabled = false;
-      input.focus();
+      this.modeRequestInFlight[requestMode] = false;
+      this.updateComposerState();
+      this.elements.input?.focus();
     }
   },
 
@@ -1892,14 +1956,15 @@ export const ChatManager = {
    * @param {string} originalQuery - The original query to retry
    */
   async handleDisambiguationSelection(selected, originalQuery) {
+    const requestMode = this.mode;
     const locationName = selected.matched_term || selected.loc_id;
     const countryName = selected.country_name || selected.iso3;
 
     this.addMessage(`Selected: ${locationName} in ${countryName}`, 'user');
 
-    const { sendBtn, input } = this.elements;
-    sendBtn.disabled = true;
-    input.disabled = true;
+    if (this.modeRequestInFlight[requestMode]) return;
+    this.modeRequestInFlight[requestMode] = true;
+    this.updateComposerState();
 
     const indicator = this.showTypingIndicator();
 
@@ -1923,9 +1988,9 @@ export const ChatManager = {
       this.addMessage('Sorry, something went wrong. Please try again.', 'assistant');
     } finally {
       indicator.remove();
-      sendBtn.disabled = false;
-      input.disabled = false;
-      input.focus();
+      this.modeRequestInFlight[requestMode] = false;
+      this.updateComposerState();
+      this.elements.input?.focus();
     }
   },
 
@@ -2017,7 +2082,7 @@ export const ChatManager = {
    * @param {Object} [resolvedLocation] - Resolved location from disambiguation
    * @returns {Object} Full request payload
    */
-  buildPayload(query, resolvedLocation = null, extraOptions = {}) {
+  buildPayload(query, resolvedLocation = null, extraOptions = {}, modeOverride = this.mode) {
     const view = MapAdapter?.getView() || { center: { lat: 0, lng: 0 }, zoom: 2, bounds: null, adminLevel: 0 };
 
     // Check for navigation location if no explicit resolution
@@ -2034,10 +2099,24 @@ export const ChatManager = {
       }
     }
 
-    const researchHistoryState = this.mode === 'research'
-      ? buildResearchMemoryFromHistory(this.history.slice(0, -1))
+    const normalizedQuery = String(query || '').trim();
+    const sourceHistory = Array.isArray(this.modeHistories?.[modeOverride])
+      ? this.modeHistories[modeOverride]
+      : (modeOverride === this.mode ? this.history : []);
+    const historyForPayload = Array.isArray(sourceHistory) ? [...sourceHistory] : [];
+    const lastHistoryMessage = historyForPayload[historyForPayload.length - 1];
+    if (
+      normalizedQuery &&
+      lastHistoryMessage?.role === 'user' &&
+      String(lastHistoryMessage.content || '').trim() === normalizedQuery
+    ) {
+      historyForPayload.pop();
+    }
+
+    const researchHistoryState = modeOverride === 'research'
+      ? buildResearchMemoryFromHistory(historyForPayload)
       : null;
-    if (this.mode === 'research') {
+    if (modeOverride === 'research') {
       this.researchMemory = researchHistoryState?.researchMemory || this.researchMemory;
     }
 
@@ -2049,13 +2128,13 @@ export const ChatManager = {
         bounds: view.bounds,
         adminLevel: view.adminLevel
       },
-      chatHistory: this.mode === 'research'
+      chatHistory: modeOverride === 'research'
         ? (researchHistoryState?.chatHistory || [])
-        : this.history.slice(-CONFIG.chatHistorySendLimit),
-      researchMemory: this.mode === 'research'
+        : historyForPayload.slice(-CONFIG.chatHistorySendLimit),
+      researchMemory: modeOverride === 'research'
         ? (researchHistoryState?.researchMemory || null)
         : null,
-      sessionId: this.sessionId,
+      sessionId: this.getSessionIdForMode(modeOverride),
       resolved_location: resolvedLocation,
       previous_disambiguation_options: this.lastDisambiguationOptions || [],
       activeOverlays: this.getActiveOverlays(),
@@ -2077,7 +2156,15 @@ export const ChatManager = {
    * @returns {HTMLElement} The message element
    */
   addMessage(text, type, options = {}) {
-    const div = renderMessage(this.elements.messages, text, type, options);
+    const targetMode = options.mode || this.mode;
+    const renderOptions = { ...options };
+    delete renderOptions.mode;
+    const targetMessages = this.messagePanes?.[targetMode] || this.elements.messages;
+    const div = renderMessage(targetMessages, text, type, renderOptions);
+    if (this.elements.messagesHost && targetMode === this.mode) {
+      this.elements.messagesHost.scrollTop = this.elements.messagesHost.scrollHeight;
+    }
+    this.syncModeMessagesHtml(targetMode);
     this.saveState();
     return div;
   },
@@ -2087,8 +2174,21 @@ export const ChatManager = {
    * @param {boolean} [staged=false] - Show staged indicator
    * @returns {HTMLElement} Indicator with updateStage method
    */
-  showTypingIndicator(staged = false) {
-    return renderTypingIndicator(this.elements.messages, staged);
+  showTypingIndicator(staged = false, mode = this.mode) {
+    const targetMessages = this.messagePanes?.[mode] || this.elements.messages;
+    const indicator = renderTypingIndicator(targetMessages, staged);
+    if (this.elements.messagesHost && mode === this.mode) {
+      this.elements.messagesHost.scrollTop = this.elements.messagesHost.scrollHeight;
+    }
+    const originalRemove = indicator.remove.bind(indicator);
+    indicator.remove = () => {
+      originalRemove();
+      this.syncModeMessagesHtml(mode);
+      if (this.elements.messagesHost && mode === this.mode) {
+        this.elements.messagesHost.scrollTop = this.elements.messagesHost.scrollHeight;
+      }
+    };
+    return indicator;
   },
 
   /**

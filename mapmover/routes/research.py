@@ -15,6 +15,8 @@ from fastapi.responses import StreamingResponse
 from mapmover import logger
 from mapmover.auth_context import build_session_cache_key, get_authenticated_user
 from mapmover.corpus_registry import corpus_registry
+from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log_conversation
+from mapmover.security import get_client_ip
 from mapmover.data_loading import get_pack_metadata, load_source_metadata
 from mapmover.api_query_runtime import execute_dataset_query, get_api_source_columns, get_api_source_spec
 from mapmover.research_prompt import build_research_system_prompt
@@ -514,6 +516,7 @@ async def research_load_saved_corpus_endpoint(req: Request):
 @router.post("/chat/research")
 async def research_chat_endpoint(req: Request):
     """Blocking Research chat endpoint."""
+    client_ip = get_client_ip(req)
     try:
         body = await _decode_msgpack_request(req)
         query = body.get("query", "")
@@ -528,9 +531,19 @@ async def research_chat_endpoint(req: Request):
             chat_history=body.get("chatHistory", []),
             research_memory=body.get("researchMemory"),
         )
+        log_conversation(
+            frontend_session_id,
+            query,
+            result.get("message", ""),
+            surface="research",
+            intent=result.get("type"),
+            ip_hash=hash_ip_for_analytics(client_ip),
+            user_agent=(req.headers.get("user-agent") or "")[:300] or None,
+        )
         return msgpack_response(result)
     except Exception as e:
         logger.exception("Research chat error")
+        log_app_error(type(e).__name__, str(e), surface="human_app", path="/chat/research")
         return msgpack_response({"type": "error", "message": "Research mode encountered an error. Please try again."}, status_code=500)
 
 
@@ -538,6 +551,7 @@ async def research_chat_endpoint(req: Request):
 async def research_chat_stream_endpoint(req: Request):
     """Streaming Research chat endpoint using existing SSE stage shape."""
     body = await _decode_json_or_msgpack_request(req)
+    client_ip = get_client_ip(req)
 
     async def generate_events():
         try:
@@ -575,6 +589,15 @@ async def research_chat_stream_endpoint(req: Request):
                 yield f"data: {json.dumps({'stage': 'thinking', 'message': message})}\n\n"
 
             result = await task
+            log_conversation(
+                frontend_session_id,
+                query,
+                result.get("message", ""),
+                surface="research",
+                intent=result.get("type"),
+                ip_hash=hash_ip_for_analytics(client_ip),
+                user_agent=(req.headers.get("user-agent") or "")[:300] or None,
+            )
             yield f"data: {json.dumps({'stage': 'writing', 'message': 'Writing research answer...'})}\n\n"
             if result.get("type") == "chat" and result.get("message"):
                 yield f"data: {json.dumps({'stage': 'answer_start', 'message': ''})}\n\n"
@@ -582,8 +605,9 @@ async def research_chat_stream_endpoint(req: Request):
                     yield f"data: {json.dumps({'stage': 'delta', 'text': chunk})}\n\n"
                     await asyncio.sleep(0.035)
             yield f"data: {json.dumps({'stage': 'complete', 'result': result})}\n\n"
-        except Exception:
+        except Exception as e:
             logger.exception("Research chat stream error")
+            log_app_error(type(e).__name__, str(e), surface="human_app", path="/chat/research/stream")
             error_result = {"type": "error", "message": "Research mode encountered an error. Please try again."}
             yield f"data: {json.dumps({'stage': 'complete', 'result': error_result})}\n\n"
 
