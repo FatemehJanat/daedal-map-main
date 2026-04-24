@@ -98,7 +98,10 @@ export class ResearchModeToggle {
       btn.setAttribute('aria-pressed', active ? 'true' : 'false');
     }
     if (this.controls.wrap) {
-      this.controls.wrap.classList.toggle('hidden', this.mode !== 'research');
+      const hideCorpusControls = this.mode !== 'research';
+      this.controls.wrap.classList.toggle('hidden', hideCorpusControls);
+      this.controls.wrap.hidden = hideCorpusControls;
+      this.controls.wrap.setAttribute('aria-hidden', hideCorpusControls ? 'true' : 'false');
     }
     if (this.controls.loadBtn) {
       this.controls.loadBtn.disabled = !canLoad || this.controls.loadBtn.dataset.loading === 'true';

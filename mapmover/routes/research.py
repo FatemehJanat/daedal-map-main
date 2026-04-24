@@ -188,7 +188,16 @@ def _hydrate_saved_source_into_research(*, session_id: str, corpus_id: str, sour
         return {"source_id": source_id, "status": "skipped", "reason": "source_not_queryable"}
 
     metadata = load_source_metadata(source_id) or {}
-    available_columns = get_api_source_columns(spec)
+    try:
+        available_columns = get_api_source_columns(spec)
+    except Exception as exc:
+        logger.warning("Research hydration skipped source %s while reading columns: %s", source_id, exc)
+        return {
+            "source_id": source_id,
+            "status": "skipped",
+            "reason": "source_unavailable",
+            "detail": str(exc),
+        }
     if spec.location_field not in available_columns:
         return {"source_id": source_id, "status": "skipped", "reason": "missing_location_field"}
 
@@ -208,11 +217,20 @@ def _hydrate_saved_source_into_research(*, session_id: str, corpus_id: str, sour
             if column_name not in select_columns:
                 select_columns.append(column_name)
 
-    rows = execute_dataset_query(
-        spec,
-        select_columns=select_columns,
-        limit=None,
-    )
+    try:
+        rows = execute_dataset_query(
+            spec,
+            select_columns=select_columns,
+            limit=None,
+        )
+    except Exception as exc:
+        logger.warning("Research hydration skipped source %s while loading rows: %s", source_id, exc)
+        return {
+            "source_id": source_id,
+            "status": "skipped",
+            "reason": "source_unavailable",
+            "detail": str(exc),
+        }
     if not rows:
         return {"source_id": source_id, "status": "skipped", "reason": "no_rows"}
 
