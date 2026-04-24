@@ -656,7 +656,7 @@ export const ChatManager = {
 
     try {
       const response = await postMsgpack('/api/research/load-saved-corpus', {
-        sessionId: this.sessionId,
+        sessionId: this.getSessionIdForMode('research'),
         corpusId: selectedId
       });
       this.latestResearchManifest = response?.corpus || null;
@@ -738,6 +738,7 @@ export const ChatManager = {
       addMessage: (text, type) => this.addMessage(text, type)
     });
     orderPanel.init();
+    this.updateSidebarModeLayout();
 
     orderTracker = new OrderTrackerClass({
       container: document.getElementById('orderItems'),
