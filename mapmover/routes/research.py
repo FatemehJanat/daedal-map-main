@@ -19,6 +19,8 @@ from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log
 from mapmover.security import get_client_ip
 from mapmover.data_loading import get_pack_metadata, load_source_metadata
 from mapmover.api_query_runtime import execute_dataset_query, get_api_source_columns, get_api_source_spec
+from mapmover.research_postprocessor import normalize_research_result
+from mapmover.research_preprocessor import build_research_hint_context, preprocess_research_query
 from mapmover.research_prompt import build_research_system_prompt
 from mapmover.research_tools import RESEARCH_TOOL_DEFINITIONS, execute_research_tool
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
@@ -412,11 +414,20 @@ def run_research_chat(*, session_id: str, query: str, chat_history: list | None 
 
     model, temperature = _research_settings()
     system_prompt = build_research_system_prompt(manifest)
+    research_hints = preprocess_research_query(query, manifest)
+    hint_context = build_research_hint_context(research_hints)
     messages = [
         {
             "role": "user",
             "content": "Active corpus manifest:\n```json\n" + json.dumps(manifest, indent=2, default=str) + "\n```",
         },
+        *(
+            [{
+                "role": "user",
+                "content": "Research preprocessor hints:\n" + hint_context,
+            }]
+            if hint_context else []
+        ),
         *_research_memory_messages(research_memory),
         *_history_messages(chat_history or []),
         {"role": "user", "content": query},
@@ -425,6 +436,7 @@ def run_research_chat(*, session_id: str, query: str, chat_history: list | None 
     client = Anthropic()
     max_tool_iterations = 4
     response = None
+    final_display = None
     for _iteration in range(max_tool_iterations + 1):
         response = client.messages.create(
             model=model,
@@ -443,6 +455,8 @@ def run_research_chat(*, session_id: str, query: str, chat_history: list | None 
         for block in response.content:
             if getattr(block, "type", None) == "tool_use":
                 tool_result = execute_research_tool(session_id, block.name, block.input)
+                if isinstance(tool_result, dict) and isinstance(tool_result.get("display"), dict):
+                    final_display = dict(tool_result["display"])
                 assistant_content.append(block)
                 tool_results.append(
                     {
@@ -458,11 +472,14 @@ def run_research_chat(*, session_id: str, query: str, chat_history: list | None 
         messages.append({"role": "user", "content": tool_results})
 
     text = _extract_text(response.content if response else [])
-    return {
+    result = {
         "type": "chat",
         "message": text or "I could not produce a research answer from the active corpus.",
         "corpus": manifest,
+        "display": final_display,
+        "research_hints": research_hints,
     }
+    return normalize_research_result(result, lane="research")
 
 
 @router.post("/api/research/corpus")

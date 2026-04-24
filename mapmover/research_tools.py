@@ -64,6 +64,33 @@ RESEARCH_TOOL_DEFINITIONS = [
             "required": ["artifact_id"],
         },
     },
+    {
+        "name": "build_artifact_display_subset",
+        "description": "Build a bounded feature subset from one loaded artifact for map display or highlighting.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "artifact_id": {"type": "string"},
+                "fields": {"type": "array", "items": {"type": "string"}},
+                "metrics": {"type": "array", "items": {"type": "string"}},
+                "filters": {"type": "object"},
+                "order_by": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "field": {"type": "string"},
+                            "direction": {"type": "string", "enum": ["asc", "desc"]},
+                        },
+                    },
+                },
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                "fit": {"type": "boolean"},
+                "context_visibility": {"type": "string", "enum": ["keep", "replace"]},
+            },
+            "required": ["artifact_id"],
+        },
+    },
 ]
 
 
@@ -110,6 +137,16 @@ def _rows_from_result(result: dict) -> list[dict]:
             row.update(metrics or {})
             rows.append(_jsonable(row))
     return rows
+
+
+def _feature_lookup_from_result(result: dict) -> dict[str, dict]:
+    lookup = {}
+    for feature in (result.get("geojson") or {}).get("features") or []:
+        props = dict(feature.get("properties") or {})
+        loc_id = props.get("loc_id") or feature.get("id")
+        if loc_id:
+            lookup[str(loc_id)] = _jsonable(feature)
+    return lookup
 
 
 def _normalize_limit(value) -> int:
@@ -272,6 +309,51 @@ def _query_rows_duckdb(rows: list[dict], tool_input: dict) -> dict:
         con.close()
 
 
+def _build_display_subset(result: dict, artifact: dict, tool_input: dict) -> dict:
+    rows = _rows_from_result(result)
+    query_result = _query_rows_duckdb(rows, tool_input)
+    matched_rows = query_result.get("rows") or []
+    feature_lookup = _feature_lookup_from_result(result)
+
+    loc_ids = []
+    rows_by_loc: dict[str, dict] = {}
+    for row in matched_rows:
+        loc_id = row.get("loc_id")
+        if loc_id is None:
+            continue
+        loc_text = str(loc_id)
+        if loc_text not in loc_ids:
+            loc_ids.append(loc_text)
+        rows_by_loc.setdefault(loc_text, row)
+
+    features = []
+    for loc_id in loc_ids:
+        feature = feature_lookup.get(loc_id)
+        if not feature:
+            continue
+        props = dict(feature.get("properties") or {})
+        props.update(rows_by_loc.get(loc_id) or {})
+        feature["properties"] = _jsonable(props)
+        features.append(feature)
+
+    display = {
+        "action": "highlight_features",
+        "artifact_id": artifact.get("artifact_id"),
+        "source_id": artifact.get("source_id"),
+        "geojson": {"type": "FeatureCollection", "features": features},
+        "loc_ids": loc_ids,
+        "fit": bool(tool_input.get("fit", True)),
+        "context_visibility": str(tool_input.get("context_visibility") or "keep"),
+    }
+    return {
+        "artifact_id": artifact.get("artifact_id"),
+        "rows": matched_rows,
+        "row_count": query_result.get("row_count", 0),
+        "truncated": bool(query_result.get("truncated")),
+        "display": display,
+    }
+
+
 def execute_research_tool(session_id: str, tool_name: str, tool_input: dict) -> dict:
     tool_input = tool_input or {}
     if tool_name == "list_artifacts":
@@ -297,5 +379,11 @@ def execute_research_tool(session_id: str, tool_name: str, tool_input: dict) -> 
             "fields": artifact.get("fields", []),
             **query_result,
         }
+
+    if tool_name == "build_artifact_display_subset":
+        result = _get_cached_result(session_id, artifact.get("request_key"))
+        if not result:
+            return {"error": "artifact_data_unavailable", "artifact_id": artifact_id}
+        return _build_display_subset(result, artifact, tool_input)
 
     return {"error": "unknown_tool", "tool_name": tool_name}

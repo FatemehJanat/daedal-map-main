@@ -10,6 +10,11 @@ import {
 } from './overlay-cache.js';
 import { GeometryModel } from './models/model-geometry.js';
 
+function getGeometryFeatureKey(feature) {
+  const props = feature?.properties || {};
+  return props.feature_id || props.building_id || props.BLDGIDENT || props.loc_id || feature?.id || null;
+}
+
 export function getCachedData(overlayId) {
   return dataCache[overlayId] || null;
 }
@@ -250,10 +255,14 @@ export function renderGeometryData(sourceId, geojson, geometryType = 'zcta', opt
 
   const existing = metricCache[sourceId];
   if (existing?.geojson?.features) {
-    const existingLocIds = new Set(existing.geojson.features.map(f => f.properties?.loc_id));
-    const newFeatures = geojson.features.filter(f => !existingLocIds.has(f.properties?.loc_id));
+    const existingKeys = new Set(existing.geojson.features.map(getGeometryFeatureKey).filter(Boolean));
+    const newFeatures = geojson.features.filter((feature) => {
+      const key = getGeometryFeatureKey(feature);
+      return !key || !existingKeys.has(key);
+    });
     existing.geojson.features = existing.geojson.features.concat(newFeatures);
     existing.loadedAt = Date.now();
+    existing.geometryType = geometryType;
     console.log(`OverlayController: Accumulated ${newFeatures.length} new ${geometryType} features (total: ${existing.geojson.features.length})`);
   } else {
     metricCache[sourceId] = {
@@ -261,6 +270,7 @@ export function renderGeometryData(sourceId, geojson, geometryType = 'zcta', opt
       year_data: {},
       year_range: null,
       dataType: 'geometry',
+      geometryType,
       loadedAt: Date.now()
     };
   }
@@ -271,21 +281,13 @@ export function renderGeometryData(sourceId, geojson, geometryType = 'zcta', opt
 }
 
 export function refreshGeometryFromCache() {
-  const sourceIdToType = {
-    'geometry_zcta': 'zcta',
-    'geometry_tribal': 'tribal',
-    'geometry_watershed': 'watershed',
-    'geometry_park': 'park'
-  };
-
   let totalFeatures = 0;
-  for (const [sourceId, typeId] of Object.entries(sourceIdToType)) {
-    const cached = metricCache[sourceId];
-    if (cached?.geojson?.features?.length > 0) {
-      GeometryModel.render(cached.geojson, typeId, { showLabels: false });
-      totalFeatures += cached.geojson.features.length;
-      console.log(`OverlayController: Rendered ${cached.geojson.features.length} ${typeId} features from cache`);
-    }
+  for (const [sourceId, cached] of Object.entries(metricCache)) {
+    if (cached?.dataType !== 'geometry' || !cached?.geojson?.features?.length) continue;
+    const geometryType = cached.geometryType || 'geometry';
+    GeometryModel.render(cached.geojson, geometryType, { showLabels: false });
+    totalFeatures += cached.geojson.features.length;
+    console.log(`OverlayController: Rendered ${cached.geojson.features.length} ${geometryType} features from cache (${sourceId})`);
   }
 
   if (totalFeatures > 0) {

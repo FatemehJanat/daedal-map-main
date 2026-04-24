@@ -567,7 +567,7 @@ def execute_geometry_overlay(geometry_overlay: dict, filter_loc_ids: list = None
     logger.info(f"Loading geometry overlay from {parquet_path}")
 
     try:
-        columns = ["loc_id", "name", "geometry", "parent_id"]
+        columns = parquet_columns(parquet_path) or ["loc_id", "name", "geometry", "parent_id"]
         df = select_columns_from_parquet(parquet_path, columns)
         if df.empty:
             df = pd.read_parquet(parquet_path, columns=columns)
@@ -647,6 +647,12 @@ def execute_geometry_order(order: dict) -> dict:
         source_id = item.get("source_id")
         region = item.get("region")
         item_overlay_type = item.get("overlay_type")
+        if not item_overlay_type and source_id:
+            try:
+                source_meta = load_source_metadata(source_id) or {}
+                item_overlay_type = source_meta.get("overlay_type") or item_overlay_type
+            except Exception:
+                item_overlay_type = item_overlay_type
 
         if not source_id:
             continue

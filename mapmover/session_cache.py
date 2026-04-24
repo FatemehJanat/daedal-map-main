@@ -199,10 +199,21 @@ class SessionCache:
     # Geometry tracking (dedup by loc_id, no year/metric dimension)
     # -------------------------------------------------------------------------
 
+    @staticmethod
+    def _geometry_feature_key(feature: dict) -> str | None:
+        props = feature.get("properties", {}) if isinstance(feature, dict) else {}
+        return (
+            props.get("feature_id")
+            or props.get("building_id")
+            or props.get("BLDGIDENT")
+            or props.get("loc_id")
+            or feature.get("id")
+        )
+
     def register_sent_geometry(self, features: list, source_id: str):
         """
         Register geometry features that were sent to the frontend.
-        Tracks by loc_id (geometry features are all-or-nothing per loc_id).
+        Tracks by feature key when available, falling back to loc_id.
 
         Args:
             features: List of GeoJSON features with loc_id in properties
@@ -213,11 +224,9 @@ class SessionCache:
         source_set = self._sent_by_source.setdefault(geo_source_key, set())
 
         for f in features:
-            props = f.get("properties", {})
-            loc_id = props.get("loc_id")
-            if loc_id:
-                # Key format: "geom:{loc_id}" to distinguish from event/metric keys
-                key = f"geom:{loc_id}"
+            feature_key = self._geometry_feature_key(f)
+            if feature_key:
+                key = f"geom:{feature_key}"
                 self._sent_all.add(key)
                 source_set.add(key)
 
@@ -234,9 +243,8 @@ class SessionCache:
         """
         new_features = []
         for f in features:
-            props = f.get("properties", {})
-            loc_id = props.get("loc_id")
-            if not loc_id or f"geom:{loc_id}" not in self._sent_all:
+            feature_key = self._geometry_feature_key(f)
+            if not feature_key or f"geom:{feature_key}" not in self._sent_all:
                 new_features.append(f)
         return new_features
 

@@ -1383,6 +1383,7 @@ export const ChatManager = {
 
       // Handle response based on type
       if (response._streamed && response.type === 'chat') {
+        this.applySupplementalChatActions(response);
         this.saveState();
       } else {
         this.handleResponse(response);
@@ -1630,6 +1631,7 @@ export const ChatManager = {
       case 'chat':
       default:
         this.pendingMetricOrder = null;
+        this.applySupplementalChatActions(response);
         if (response.geojson && response.geojson.features && response.geojson.features.length > 0) {
           this.addMessage(response.summary || response.message || 'Found data for you.', 'assistant');
           if (response.event_type) {
@@ -1640,6 +1642,15 @@ export const ChatManager = {
           this.addMessage(response.summary || response.message || 'Could you be more specific?', 'assistant');
         }
         break;
+    }
+  },
+
+  applySupplementalChatActions(response) {
+    const display = response?.display;
+    if (!display || !App) return;
+
+    if (display.action === 'highlight_features' && display.geojson?.features?.length) {
+      App.applyResearchDisplay?.(display);
     }
   },
 

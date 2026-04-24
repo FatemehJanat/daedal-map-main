@@ -1263,6 +1263,38 @@ export const App = {
   },
 
   /**
+   * Display a Research-generated result subset as a highlight overlay.
+   * This is display-only over the active corpus, not a new data load.
+   * @param {Object} display - Structured display payload from Research
+   */
+  applyResearchDisplay(display) {
+    const geojson = display?.geojson;
+    if (!geojson?.features || geojson.features.length === 0) {
+      console.warn('Research display payload missing features');
+      return;
+    }
+
+    console.log(`Applying Research display for ${geojson.features.length} feature(s)`);
+
+    if (this._navigationClickHandler && MapAdapter?.map) {
+      MapAdapter.map.off('click', CONFIG.layers.selectionFill, this._navigationClickHandler);
+      this._navigationClickHandler = null;
+    }
+    this.navigationLocations = null;
+
+    MapAdapter.loadNavigationLayer(geojson);
+
+    if (display?.fit !== false) {
+      MapAdapter.fitToBounds(geojson);
+    }
+
+    const raster = display?.raster;
+    if (raster?.provider === 'fairfax_lst') {
+      FairfaxRasterPanel.showScene?.(raster);
+    }
+  },
+
+  /**
    * Set up click handler for navigation layer
    * Allows user to select one location from multiple candidates
    */

@@ -82,6 +82,35 @@ export const FairfaxRasterPanel = {
     LstRasterModel.show();
   },
 
+  async showScene(target = {}) {
+    await this.init();
+
+    if (_scenes.length === 0) return false;
+
+    const requestedPeriod = String(target?.period || '').trim();
+    if (requestedPeriod && _scenes.some(scene => scene.period === requestedPeriod)) {
+      await _loadScene(requestedPeriod);
+      const panel = document.getElementById(PANEL_ID);
+      if (panel) panel.style.display = 'block';
+      LstRasterModel.show();
+      return true;
+    }
+
+    const requestedYear = Number(target?.year);
+    if (Number.isFinite(requestedYear)) {
+      const yearScene = _scenes.find(scene => Number(scene.year) === requestedYear);
+      if (yearScene) {
+        await _loadScene(yearScene.period);
+        const panel = document.getElementById(PANEL_ID);
+        if (panel) panel.style.display = 'block';
+        LstRasterModel.show();
+        return true;
+      }
+    }
+
+    return false;
+  },
+
   cleanup() {
     const panel = document.getElementById(PANEL_ID);
     if (panel) {

@@ -46,6 +46,12 @@ const COLORS = {
     stroke: '#32cd32',
     strokeWidth: 1.5
   },
+  building: {
+    fill: '#c96f29',
+    fillOpacity: 0.3,
+    stroke: '#8d4b1f',
+    strokeWidth: 1
+  },
   default: {
     fill: '#2d8659',        // Default teal green
     fillOpacity: 0.25,
@@ -59,7 +65,8 @@ const TYPE_NAMES = {
   zcta: 'ZIP Code Area',
   tribal: 'Tribal Land',
   watershed: 'Watershed',
-  park: 'Park'
+  park: 'Park',
+  building: 'Building Footprint'
 };
 
 export const GeometryModel = {
@@ -125,11 +132,14 @@ export const GeometryModel = {
     const typeName = TYPE_NAMES[geometryType] || 'Area';
     const colors = this._getColors(geometryType);
 
-    const name = props.name || props.name_local || 'Unknown';
+    const name = props.name || props.NAME || props.name_local || props.feature_id || props.BLDGIDENT || 'Unknown';
     const code = props.code || null;
     const landArea = this._formatArea(props.land_area);
     const waterArea = this._formatArea(props.water_area);
     const parentId = props.parent_id || null;
+    const buildingId = props.feature_id || props.BLDGIDENT || null;
+    const buildingType = props.TYPE || props.BLDG_CM_TYPE || null;
+    const buildingHeight = props.BLDG_HEIGHT || null;
 
     let html = `
       <div class="geometry-popup" style="border-left: 4px solid ${colors.stroke}">
@@ -142,6 +152,18 @@ export const GeometryModel = {
 
     if (code) {
       html += `<div class="geometry-popup-row"><span class="geometry-label">Code:</span> ${code}</div>`;
+    }
+
+    if (buildingId) {
+      html += `<div class="geometry-popup-row"><span class="geometry-label">Feature ID:</span> ${buildingId}</div>`;
+    }
+
+    if (buildingType) {
+      html += `<div class="geometry-popup-row"><span class="geometry-label">Type:</span> ${buildingType}</div>`;
+    }
+
+    if (buildingHeight) {
+      html += `<div class="geometry-popup-row"><span class="geometry-label">Height:</span> ${buildingHeight}</div>`;
     }
 
     if (landArea) {
@@ -174,7 +196,7 @@ export const GeometryModel = {
     const typeName = TYPE_NAMES[geometryType] || 'Area';
     const colors = this._getColors(geometryType);
 
-    const name = props.name || props.name_local || 'Unknown';
+    const name = props.name || props.NAME || props.name_local || props.feature_id || props.BLDGIDENT || 'Unknown';
     const code = props.code || null;
 
     return `
