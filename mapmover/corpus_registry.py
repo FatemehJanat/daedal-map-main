@@ -194,6 +194,11 @@ class CorpusRegistry:
         self._sessions.pop(session_id, None)
         self._saved_corpora.pop(session_id, None)
 
+    def clear_artifacts(self, session_id: str) -> None:
+        if not session_id:
+            return
+        self._sessions.pop(session_id, None)
+
     def remove_source(self, session_id: str, source_id: str) -> int:
         artifacts = self._sessions.get(session_id)
         if not artifacts:

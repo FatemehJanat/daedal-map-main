@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import asyncio
@@ -14,10 +15,12 @@ from fastapi.responses import StreamingResponse
 from mapmover import logger
 from mapmover.auth_context import build_session_cache_key, get_authenticated_user
 from mapmover.corpus_registry import corpus_registry
-from mapmover.data_loading import get_pack_metadata
+from mapmover.data_loading import get_pack_metadata, load_source_metadata
+from mapmover.api_query_runtime import execute_dataset_query, get_api_source_columns, get_api_source_spec
 from mapmover.research_prompt import build_research_system_prompt
 from mapmover.research_tools import RESEARCH_TOOL_DEFINITIONS, execute_research_tool
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
+from mapmover.session_cache import session_manager
 from supabase_client import SupabaseClient
 
 
@@ -80,6 +83,203 @@ def _load_saved_corpus_for_user(user_id: str, corpus_id: str) -> dict | None:
     )
     rows = result.data or []
     return _build_saved_corpus_summary(rows[0]) if rows else None
+
+
+def _saved_corpus_request_key(corpus_id: str, source_id: str) -> str:
+    seed = f"saved-corpus:{corpus_id}:{source_id}"
+    return f"saved_{hashlib.md5(seed.encode('utf-8')).hexdigest()[:16]}"
+
+
+def _source_summary_text(source_id: str, metadata: dict, row_count: int) -> str:
+    source_name = str(metadata.get("source_name") or source_id).strip() or source_id
+    coverage = str(metadata.get("coverage_description") or "").strip()
+    if coverage and coverage.lower() != "unknown coverage":
+        return f"{source_name}: {coverage} ({row_count:,} rows loaded for Research)."
+    return f"{source_name}: {row_count:,} rows loaded for Research."
+
+
+def _rows_to_temporal_result(rows: list[dict], source_id: str, metadata: dict, spec) -> dict:
+    features_by_loc: dict[str, dict] = {}
+    year_data: dict[str, dict] = {}
+    metric_ids = list((metadata.get("metrics") or {}).keys())
+    if not metric_ids:
+        metric_ids = [metric_id for metric_id in spec.metrics.keys() if metric_id != "event_count"]
+
+    for row in rows:
+        loc_id = row.get(spec.location_field)
+        if loc_id is None:
+            continue
+        loc_id = str(loc_id)
+        name = row.get("name") or loc_id
+        features_by_loc.setdefault(
+            loc_id,
+            {
+                "type": "Feature",
+                "properties": {
+                    "loc_id": loc_id,
+                    "name": name,
+                },
+            },
+        )
+        time_value = row.get(spec.time_field) if spec.time_field else None
+        if time_value is None:
+            continue
+        time_key = str(time_value)
+        metric_values = {
+            metric_id: row.get(metric_id)
+            for metric_id in metric_ids
+            if metric_id in row
+        }
+        if not metric_values:
+            continue
+        year_data.setdefault(time_key, {})[loc_id] = metric_values
+
+    return {
+        "type": "data",
+        "data_type": "metrics",
+        "source_id": source_id,
+        "geojson": {
+            "type": "FeatureCollection",
+            "features": list(features_by_loc.values()),
+        },
+        "year_data": year_data,
+        "multi_year": True,
+        "year_range": sorted(year_data.keys()),
+        "available_metrics": metric_ids,
+        "metric_year_ranges": {},
+        "summary": _source_summary_text(source_id, metadata, len(rows)),
+        "count": len(rows),
+        "sources": [{"id": source_id, "name": str(metadata.get("source_name") or source_id)}],
+    }
+
+
+def _rows_to_static_result(rows: list[dict], source_id: str, metadata: dict, spec) -> dict:
+    features = []
+    metric_ids = list((metadata.get("metrics") or {}).keys())
+    if not metric_ids:
+        metric_ids = [metric_id for metric_id in spec.metrics.keys() if metric_id != "event_count"]
+    for row in rows:
+        props = dict(row)
+        loc_id = props.get(spec.location_field)
+        if loc_id is not None:
+            props["loc_id"] = str(loc_id)
+        if "name" not in props and props.get("loc_id"):
+            props["name"] = props["loc_id"]
+        features.append({"type": "Feature", "properties": props})
+
+    return {
+        "type": "data",
+        "data_type": "metrics",
+        "source_id": source_id,
+        "geojson": {
+            "type": "FeatureCollection",
+            "features": features,
+        },
+        "available_metrics": metric_ids,
+        "summary": _source_summary_text(source_id, metadata, len(rows)),
+        "count": len(rows),
+        "sources": [{"id": source_id, "name": str(metadata.get("source_name") or source_id)}],
+    }
+
+
+def _hydrate_saved_source_into_research(*, session_id: str, corpus_id: str, source_id: str) -> dict:
+    spec = get_api_source_spec(source_id)
+    if spec is None:
+        return {"source_id": source_id, "status": "skipped", "reason": "source_not_queryable"}
+
+    metadata = load_source_metadata(source_id) or {}
+    available_columns = get_api_source_columns(spec)
+    if spec.location_field not in available_columns:
+        return {"source_id": source_id, "status": "skipped", "reason": "missing_location_field"}
+
+    select_columns = [spec.location_field]
+    if spec.time_field and spec.time_field in available_columns:
+        select_columns.append(spec.time_field)
+    if "name" in available_columns:
+        select_columns.append("name")
+
+    metric_ids = []
+    for metric_id, metric_spec in spec.metrics.items():
+        column_name = metric_spec.column
+        if metric_id == "event_count":
+            continue
+        if column_name in available_columns and metric_id not in metric_ids:
+            metric_ids.append(metric_id)
+            if column_name not in select_columns:
+                select_columns.append(column_name)
+
+    rows = execute_dataset_query(
+        spec,
+        select_columns=select_columns,
+        limit=None,
+    )
+    if not rows:
+        return {"source_id": source_id, "status": "skipped", "reason": "no_rows"}
+
+    if spec.time_field:
+        result = _rows_to_temporal_result(rows, source_id, metadata, spec)
+    else:
+        result = _rows_to_static_result(rows, source_id, metadata, spec)
+
+    request_key = _saved_corpus_request_key(corpus_id, source_id)
+    session_manager.get_or_create(session_id).store_result(request_key, result)
+
+    order = {
+        "items": [
+            {
+                "source_id": source_id,
+                "region": "global",
+                "metric": metric_ids[0] if metric_ids else None,
+            }
+        ],
+        "summary": result.get("summary") or f"Loaded {source_id} into Research.",
+    }
+    corpus_registry.register_order_result(
+        session_id=session_id,
+        request_key=request_key,
+        order=order,
+        response=result,
+    )
+    return {
+        "source_id": source_id,
+        "status": "loaded",
+        "row_count": len(rows),
+    }
+
+
+def _hydrate_saved_corpus(session_id: str, saved_corpus: dict) -> dict:
+    corpus_registry.clear_artifacts(session_id)
+    source_ids: list[str] = []
+    seen = set()
+
+    for pack in saved_corpus.get("packs") or []:
+        for source_id in pack.get("source_ids") or []:
+            normalized = str(source_id or "").strip()
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                source_ids.append(normalized)
+
+    for source_id in saved_corpus.get("source_ids") or []:
+        normalized = str(source_id or "").strip()
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            source_ids.append(normalized)
+
+    hydration = {
+        "loaded_sources": [],
+        "skipped_sources": [],
+    }
+    for source_id in source_ids:
+        outcome = _hydrate_saved_source_into_research(
+            session_id=session_id,
+            corpus_id=str(saved_corpus.get("id") or "saved"),
+            source_id=source_id,
+        )
+        if outcome.get("status") == "loaded":
+            hydration["loaded_sources"].append(outcome)
+        else:
+            hydration["skipped_sources"].append(outcome)
+    return hydration
 
 
 async def _decode_msgpack_request(req: Request) -> dict:
@@ -280,11 +480,13 @@ async def research_load_saved_corpus_endpoint(req: Request):
             return msgpack_error("Saved corpus not found", 404)
 
         corpus_registry.set_saved_corpus(session_id, saved_corpus)
+        hydration = _hydrate_saved_corpus(session_id, saved_corpus)
         manifest = corpus_registry.manifest(session_id)
         return msgpack_response({
             "type": "saved_corpus_loaded",
             "message": f'Loaded "{saved_corpus.get("name")}" into the Research workspace.',
             "corpus": manifest,
+            "hydration": hydration,
         })
     except Exception as e:
         logger.exception("Research saved corpus load error")

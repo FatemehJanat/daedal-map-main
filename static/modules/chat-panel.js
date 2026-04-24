@@ -584,10 +584,11 @@ export const ChatManager = {
       const saved = response?.corpus?.saved_corpus || null;
       const packCount = Number(saved?.pack_count || 0);
       const sourceCount = Number(saved?.source_count || 0);
+      const artifactCount = Number(response?.corpus?.artifact_count || 0);
       const extraSourcesText = sourceCount ? ` and ${sourceCount} direct source${sourceCount === 1 ? '' : 's'}` : '';
       this.addMessage(
         saved
-          ? `Loaded "${saved.name}" into Research. This workspace includes ${packCount} pack${packCount === 1 ? '' : 's'}${extraSourcesText}.`
+          ? `Loaded "${saved.name}" into Research. This workspace includes ${packCount} pack${packCount === 1 ? '' : 's'}${extraSourcesText} and ${artifactCount} hydrated artifact${artifactCount === 1 ? '' : 's'}.`
           : (response?.message || 'Loaded the saved corpus into Research.'),
         'assistant'
       );
