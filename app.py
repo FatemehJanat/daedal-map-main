@@ -47,7 +47,7 @@ from mapmover.routes.fairfax import router as fairfax_router
 from mapmover.routes.geometry import router as geometry_router
 from mapmover.routes.mcp import router as mcp_router
 from mapmover.routes.research import router as research_router
-from mapmover.routes.system import router as system_router
+from mapmover.routes.system import prewarm_public_pack_catalog, router as system_router
 from mapmover.routes.weather import router as weather_router
 
 
@@ -198,6 +198,12 @@ async def lifespan(app: FastAPI):
         from mapmover.duckdb_helpers import is_cloud_mode, prewarm_disaster_sources
         from mapmover.geometry_handlers import prewarm_geometry
         from mapmover.paths import GLOBAL_DIR
+        t_public_catalog = threading.Thread(
+            target=prewarm_public_pack_catalog,
+            daemon=True,
+            name="prewarm-public-pack-catalog",
+        )
+        t_public_catalog.start()
         if is_cloud_mode():
             t_disaster = threading.Thread(
                 target=prewarm_disaster_sources,
@@ -214,7 +220,9 @@ async def lifespan(app: FastAPI):
             )
             t_geom.start()
 
-            logger.info("Pre-warmers started: disasters + geometry")
+            logger.info("Pre-warmers started: public-pack-catalog + disasters + geometry")
+        else:
+            logger.info("Pre-warmers started: public-pack-catalog")
     except Exception as exc:
         logger.warning("Pre-warmer failed to start: %s", exc)
 

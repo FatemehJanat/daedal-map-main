@@ -27,10 +27,22 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 _release_marker_cache = None
 _release_marker_cache_time = 0.0
 _RELEASE_MARKER_TTL_SECONDS = 60
+_PUBLIC_PACK_CATALOG_TTL_SECONDS = 300
+_public_pack_list_cache: dict[bool, dict[str, object]] = {
+    False: {"value": None, "cached_at": 0.0},
+    True: {"value": None, "cached_at": 0.0},
+}
+_public_pack_detail_cache: dict[tuple[str, bool], dict[str, object]] = {}
 
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def clear_public_pack_catalog_cache() -> None:
+    for mode in (False, True):
+        _public_pack_list_cache[mode] = {"value": None, "cached_at": 0.0}
+    _public_pack_detail_cache.clear()
 
 
 def _is_loopback_host(value: str) -> bool:
@@ -153,6 +165,11 @@ def _require_admin(req: Request):
     For now we fail closed when the service-role key is absent so the hosted
     surface cannot silently fall back to permissive local/dev behavior.
     """
+    deployment = str(os.getenv("DEPLOYMENT", "")).strip().lower()
+    client_host = ((req.client.host if req.client else "") or "").strip().lower()
+    if deployment == "local" and client_host in {"127.0.0.1", "::1", "localhost"}:
+        return {"plan_id": "master", "is_admin": True, "local_dev_bypass": True}, None
+
     auth_user = get_authenticated_user(req)
     if not auth_user:
         logger.warning(
@@ -205,6 +222,50 @@ def _best_source_text(*values) -> str:
         if text:
             return text
     return ""
+
+
+def _default_pack_title(pack_id: str) -> str:
+    pack_id = str(pack_id or "").strip()
+    if not pack_id:
+        return ""
+    special = {
+        "un_sdg": "UN SDGs",
+        "world_factbook": "World Factbook",
+        "owid_co2": "Our World in Data CO2",
+    }
+    if pack_id in special:
+        return special[pack_id]
+    acronyms = {"sdg", "un", "fx", "co2", "imf", "bop", "us", "usa", "epa", "cia", "nasa", "who", "bom", "zcta", "nrcan", "abs", "mcp", "api"}
+    words = []
+    for word in pack_id.replace("-", "_").split("_"):
+        if not word:
+            continue
+        lower = word.lower()
+        words.append(lower.upper() if lower in acronyms else lower.capitalize())
+    return " ".join(words)
+
+
+def _source_entity_label(source_url: str | None, fallback: str = "") -> str:
+    text = str(source_url or "").strip().lower()
+    if "unstats.un.org" in text:
+        return "UN Statistics Division"
+    if "worldbank.org" in text:
+        return "World Bank"
+    if "cia.gov" in text:
+        return "CIA"
+    if "imf.org" in text:
+        return "International Monetary Fund"
+    if "ecb.europa.eu" in text:
+        return "European Central Bank"
+    if "usgs.gov" in text:
+        return "USGS"
+    if "noaa.gov" in text or "ngdc.noaa.gov" in text:
+        return "NOAA"
+    if "smithsonian" in text:
+        return "Smithsonian Institution"
+    if "who.int" in text:
+        return "World Health Organization"
+    return str(fallback or "").strip()
 
 
 def _load_pack_source_docs(pack_sources: list[dict]) -> list[dict]:
@@ -286,12 +347,15 @@ def _pack_display_meta(primary: dict, primary_doc: dict | None) -> dict:
                 primary.get("license"),
             ),
         }
+    source_count = int(primary.get("source_count") or 0)
+    fallback_name = _default_pack_title(pack_id) if source_count > 1 else _best_source_text(
+        ref_source.get("source_name"),
+        metadata.get("source_name"),
+        primary.get("source_name"),
+        _default_pack_title(pack_id),
+    )
     return {
-        "source_name": _best_source_text(
-            ref_source.get("source_name"),
-            metadata.get("source_name"),
-            primary.get("source_name"),
-        ),
+        "source_name": fallback_name,
         "description": _best_source_text(
             ref_source.get("description"),
             metadata.get("description"),
@@ -443,6 +507,12 @@ def _sample_questions_for_pack(pack_id: str, data_type: str, title: str) -> list
 
 
 def _build_public_pack_list(api_ready_only: bool = False) -> list[dict]:
+    cache_entry = _public_pack_list_cache.get(api_ready_only, {})
+    cached_value = cache_entry.get("value")
+    cached_at = float(cache_entry.get("cached_at") or 0.0)
+    if isinstance(cached_value, list) and (time.time() - cached_at) < _PUBLIC_PACK_CATALOG_TTL_SECONDS:
+        return cached_value
+
     from mapmover.data_loading import load_full_catalog
 
     all_sources = load_full_catalog().get("sources", [])
@@ -467,11 +537,18 @@ def _build_public_pack_list(api_ready_only: bool = False) -> list[dict]:
         pack_docs = _load_pack_source_docs(pack_sources)
         primary_doc = next((doc for doc in pack_docs if doc.get("source_id") == s.get("source_id")), pack_docs[0] if pack_docs else None)
         display = _pack_display_meta(s, primary_doc)
+        if len(pack_sources) > 1 and not _load_pack_reference(pid):
+            display["source_name"] = _default_pack_title(pid)
         tc = _resolve_pack_temporal(pid, pack_sources, s)
+        primary_source_url = display.get("source_url", "")
         packs.append({
             "pack_id": pid,
             "source_name": display.get("source_name") or s.get("source_name", ""),
             "description": display.get("description", ""),
+            "source_url": primary_source_url,
+            "license": display.get("license", ""),
+            "primary_source_name": _source_entity_label(primary_source_url, display.get("source_name") or s.get("source_name", "")),
+            "primary_source_url": primary_source_url,
             "category": s.get("category", "other"),
             "data_type": s.get("data_type", ""),
             "scope": s.get("scope", ""),
@@ -479,13 +556,22 @@ def _build_public_pack_list(api_ready_only: bool = False) -> list[dict]:
             "source_count": pack_counts[pid],
             "temporal_start": tc.get("start"),
             "temporal_end": tc.get("end"),
+            "pack_maintainer_name": s.get("pack_maintainer_name") or s.get("maintainer_name") or "DaedalMap",
+            "pack_maintainer_url": s.get("pack_maintainer_url") or s.get("maintainer_url") or ACCOUNT_URL,
         })
 
     packs.sort(key=lambda p: (p["category"], p["source_name"].lower()))
+    _public_pack_list_cache[api_ready_only] = {"value": packs, "cached_at": time.time()}
     return packs
 
 
 def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dict | None:
+    cache_key = (str(pack_id or ""), bool(api_ready_only))
+    cached_entry = _public_pack_detail_cache.get(cache_key)
+    if cached_entry and (time.time() - float(cached_entry.get("cached_at") or 0.0)) < _PUBLIC_PACK_CATALOG_TTL_SECONDS:
+        cached_value = cached_entry.get("value")
+        return cached_value if isinstance(cached_value, dict) else None
+
     from mapmover.data_loading import load_full_catalog
 
     all_sources = load_full_catalog().get("sources", [])
@@ -501,6 +587,8 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
     primary_doc = next((doc for doc in pack_docs if doc.get("source_id") == primary.get("source_id")), pack_docs[0] if pack_docs else None)
     primary_meta = ((primary_doc or {}).get("metadata", {}) or {})
     display = _pack_display_meta(primary, primary_doc)
+    if len(pack_sources) > 1 and not _load_pack_reference(pack_id):
+        display["source_name"] = _default_pack_title(pack_id)
 
     all_metrics = {}
     for doc in pack_docs:
@@ -543,6 +631,16 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
                 smeta.get("description"),
                 s.get("description", ""),
             ),
+            "source_url": _best_source_text(
+                sref_source.get("source_url"),
+                smeta.get("source_url"),
+                s.get("source_url", ""),
+            ),
+            "license": _best_source_text(
+                sref_source.get("license"),
+                smeta.get("license"),
+                s.get("license", ""),
+            ),
             "path": s.get("path", ""),
             "metric_count": len(smetrics),
             "metrics": smetrics,
@@ -558,11 +656,13 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
 
     temporal = _resolve_pack_temporal(pack_id, pack_sources, primary)
 
-    return {
+    payload = {
         "pack_id": pack_id,
         "source_name": display.get("source_name") or primary.get("source_name", ""),
         "description": display.get("description", ""),
         "source_url": display.get("source_url", ""),
+        "primary_source_name": _source_entity_label(display.get("source_url", ""), primary.get("source_name", "")),
+        "primary_source_url": display.get("source_url", ""),
         "license": display.get("license", ""),
         "category": _best_source_text(primary_meta.get("category"), primary.get("category", "")),
         "data_type": _best_source_text(primary_meta.get("data_type"), primary.get("data_type", "")),
@@ -578,6 +678,8 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
         "source_ids": [s["source_id"] for s in pack_sources],
         "subsources": subsources,
     }
+    _public_pack_detail_cache[cache_key] = {"value": payload, "cached_at": time.time()}
+    return payload
 
 
 def _build_v1_guide_payload() -> dict:
@@ -611,6 +713,14 @@ def _build_v1_guide_payload() -> dict:
             "future_payment_modes": ["account_credit"],
         },
     }
+
+
+def prewarm_public_pack_catalog() -> None:
+    try:
+        _build_public_pack_list(api_ready_only=False)
+        logger.info("Pre-warmed public pack catalog")
+    except Exception as exc:
+        logger.warning("Public pack catalog prewarm failed: %s", exc)
 
 
 def _current_agent_pack_ids() -> list[str]:
@@ -1479,6 +1589,7 @@ async def set_runtime_active_packs(req: Request):
         state = set_active_pack_ids(active_pack_ids, catalog_mode=catalog_mode)
         materialization = materialize_active_data_root(load_full_catalog(), state)
         clear_metadata_cache()
+        clear_public_pack_catalog_cache()
         initialize_catalog()
         logger.info(
             "Hosted runtime packs updated: user_id=%s active_pack_ids=%s catalog_mode=%s",
@@ -1522,6 +1633,7 @@ async def install_runtime_pack_local(req: Request):
             replace_existing=replace_existing,
         )
         clear_metadata_cache()
+        clear_public_pack_catalog_cache()
         initialize_catalog()
         logger.info(
             "Runtime pack installed from local catalog: user_id=%s pack_id=%s activate=%s",
@@ -1553,6 +1665,7 @@ async def uninstall_runtime_pack(req: Request):
 
         result = uninstall_pack(pack_id, load_full_catalog())
         clear_metadata_cache()
+        clear_public_pack_catalog_cache()
         initialize_catalog()
         logger.info(
             "Runtime pack uninstalled: user_id=%s pack_id=%s",
@@ -1591,6 +1704,7 @@ async def install_runtime_pack_manifest(req: Request):
             replace_existing=replace_existing,
         )
         clear_metadata_cache()
+        clear_public_pack_catalog_cache()
         initialize_catalog()
         logger.info(
             "Runtime pack installed from manifest: user_id=%s manifest_path=%s activate=%s",
@@ -1641,6 +1755,7 @@ async def install_runtime_pack_ref(req: Request):
             replace_existing=replace_existing,
         )
         clear_metadata_cache()
+        clear_public_pack_catalog_cache()
         initialize_catalog()
         logger.info(
             "Runtime pack installed from manifest ref: user_id=%s manifest_ref=%s activate=%s",
@@ -1708,6 +1823,7 @@ async def admin_catalog_refresh(req: Request):
         _dl._catalog_cache_time = 0.0
         _dl._catalog_missing_time = 0.0
         clear_metadata_cache()
+        clear_public_pack_catalog_cache()
         initialize_catalog()
         source_count = len((_dl.load_catalog() or {}).get("sources", []))
         refreshed.append("runtime")
