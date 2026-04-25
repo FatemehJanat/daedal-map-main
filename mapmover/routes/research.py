@@ -20,7 +20,7 @@ from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log
 from mapmover.security import get_client_ip
 from mapmover.data_loading import get_pack_metadata, get_source_path, load_source_metadata
 from mapmover.api_query_runtime import execute_dataset_query, get_api_source_columns, get_api_source_spec
-from mapmover.duckdb_helpers import parquet_columns, select_columns_from_parquet
+from mapmover.duckdb_helpers import parquet_available, parquet_columns, select_columns_from_parquet
 from mapmover.research_postprocessor import normalize_research_result
 from mapmover.research_preprocessor import build_research_hint_context, preprocess_research_query
 from mapmover.research_prompt import build_research_system_prompt
@@ -199,12 +199,26 @@ def _find_primary_parquet(source_id: str, metadata: dict):
     source_dir = get_source_path(source_id)
     if source_dir is None:
         return None
+    candidate_names: list[str] = []
     for rel_path in metadata.get("primary_files") or []:
         candidate = source_dir / str(rel_path)
-        if candidate.suffix.lower() == ".parquet" and candidate.exists():
+        if candidate.suffix.lower() == ".parquet" and parquet_available(candidate):
             return candidate
-    for candidate in sorted(source_dir.glob("*.parquet")):
-        if candidate.exists():
+        if candidate.suffix.lower() == ".parquet":
+            candidate_names.append(str(rel_path))
+
+    for fallback_name in (
+        "USA.parquet",
+        "all_countries.parquet",
+        "all_regions.parquet",
+        "data.parquet",
+        "events.parquet",
+        "full_range.parquet",
+    ):
+        if fallback_name in candidate_names:
+            continue
+        candidate = source_dir / fallback_name
+        if parquet_available(candidate):
             return candidate
     return None
 
@@ -326,12 +340,9 @@ def _hydrate_saved_source_into_research(*, session_id: str, corpus_id: str, sour
     if not _is_runtime_research_source(metadata):
         return {"source_id": source_id, "status": "skipped", "reason": "source_not_runtime_ready"}
 
-    spec = get_api_source_spec(source_id)
-    if spec is None:
-        fallback = _hydrate_runtime_source(source_id, metadata)
-        result = fallback.get("result")
-        if fallback.get("status") != "loaded" or not result:
-            return fallback
+    runtime_outcome = _hydrate_runtime_source(source_id, metadata)
+    result = runtime_outcome.get("result")
+    if runtime_outcome.get("status") == "loaded" and result:
         request_key = _saved_corpus_request_key(corpus_id, source_id)
         session_manager.get_or_create(session_id).store_result(request_key, result)
         order = {
@@ -347,8 +358,12 @@ def _hydrate_saved_source_into_research(*, session_id: str, corpus_id: str, sour
         return {
             "source_id": source_id,
             "status": "loaded",
-            "row_count": int(fallback.get("row_count") or 0),
+            "row_count": int(runtime_outcome.get("row_count") or 0),
         }
+
+    spec = get_api_source_spec(source_id)
+    if spec is None:
+        return runtime_outcome
 
     try:
         available_columns = get_api_source_columns(spec)
@@ -456,8 +471,15 @@ def _hydrate_saved_corpus(session_id: str, saved_corpus: dict) -> dict:
             source_id=source_id,
         )
         if outcome.get("status") == "loaded":
+            logger.info("Research saved corpus hydrated source %s rows=%s", source_id, outcome.get("row_count"))
             hydration["loaded_sources"].append(outcome)
         else:
+            logger.info(
+                "Research saved corpus skipped source %s reason=%s detail=%s",
+                source_id,
+                outcome.get("reason"),
+                outcome.get("detail"),
+            )
             hydration["skipped_sources"].append(outcome)
     return hydration
 
