@@ -704,7 +704,7 @@ def run_research_chat(*, session_id: str, query: str, chat_history: list | None 
     if manifest.get("artifact_count", 0) == 0 and not manifest.get("saved_corpus"):
         return {
             "type": "chat",
-            "message": "No data is loaded into the research corpus yet. Load data in Explore first, then switch back to Research.",
+            "message": "No data is loaded into the Research workspace yet. Select a saved corpus and load it into Research first.",
             "corpus": manifest,
         }
     if manifest.get("artifact_count", 0) == 0 and manifest.get("saved_corpus"):
@@ -721,8 +721,8 @@ def run_research_chat(*, session_id: str, query: str, chat_history: list | None 
                     if source_count
                     else ""
                 )
-                + ". I can use that workspace definition to stay oriented, but I do not have loaded research artifacts to analyze yet. "
-                  "Load the relevant data in Explore, or expand the Research loader later so this corpus hydrates concrete artifacts."
+                + ". I can use that workspace definition to stay oriented, but I do not have loaded Research artifacts to analyze yet. "
+                  "Load that corpus into Research first, or expand the Research loader later so this corpus hydrates concrete artifacts."
             ),
             "corpus": manifest,
         }
@@ -930,8 +930,8 @@ async def research_chat_stream_endpoint(req: Request):
             auth_user = get_authenticated_user(req)
             session_id = build_session_cache_key(frontend_session_id, auth_user)
 
-            yield f"data: {json.dumps({'stage': 'corpus', 'message': 'Reading active corpus...'})}\n\n"
-            yield f"data: {json.dumps({'stage': 'thinking', 'message': 'Researching loaded data...'})}\n\n"
+            yield f"data: {json.dumps({'stage': 'corpus', 'message': 'Reading Research workspace...'})}\n\n"
+            yield f"data: {json.dumps({'stage': 'thinking', 'message': 'Researching loaded workspace data...'})}\n\n"
 
             task = asyncio.create_task(asyncio.to_thread(
                 run_research_chat,

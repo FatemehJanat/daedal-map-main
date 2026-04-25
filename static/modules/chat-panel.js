@@ -532,6 +532,25 @@ export const ChatManager = {
     if (form) {
       form.setAttribute('data-chat-mode', this.mode);
     }
+    this.enforceResearchUiBoundaries();
+  },
+
+  enforceResearchUiBoundaries() {
+    const hideOrderTaker = this.mode === 'research';
+    const { orderPanel, resizeOrder } = this.elements;
+    const container = document.getElementById('chatContainer');
+    if (container) {
+      container.classList.toggle('chat-container--research', hideOrderTaker);
+      container.classList.toggle('chat-container--explore', !hideOrderTaker);
+    }
+    for (const element of [orderPanel, resizeOrder]) {
+      if (!element) continue;
+      element.hidden = hideOrderTaker;
+      element.setAttribute('aria-hidden', hideOrderTaker ? 'true' : 'false');
+      element.style.display = hideOrderTaker ? 'none' : '';
+      element.style.visibility = hideOrderTaker ? 'hidden' : '';
+      element.style.pointerEvents = hideOrderTaker ? 'none' : '';
+    }
   },
 
   async refreshResearchCorpusOptions() {
@@ -608,11 +627,11 @@ export const ChatManager = {
   getResearchEmptyStateMessage() {
     if (isAuthenticated()) {
       if (this.researchCorpusOptions.length > 0) {
-        return 'No corpus is loaded yet. Select a saved corpus above and click Load Data, or load data in Explore first.';
+        return 'No Research corpus is loaded yet. Select a saved corpus above and click Load Data.';
       }
-      return 'No corpus is loaded yet. Create a saved corpus from your account page, then return here and click Load Data.';
+      return 'No Research corpus is loaded yet. Create a saved corpus from your account page, then return here and click Load Data.';
     }
-    return 'No corpus is loaded yet. Load data in Explore first, or sign in to use saved corpora in Research.';
+    return 'No Research corpus is loaded yet. Sign in to use saved corpora in Research.';
   },
 
   updateResearchCorpusStatus() {
@@ -624,7 +643,7 @@ export const ChatManager = {
 
     if (!isAuthenticated()) {
       if (artifactCount > 0) {
-        researchModeToggle.setCorpusStatus(`Research can analyze ${artifactCount} loaded artifact${artifactCount === 1 ? '' : 's'} from Explore. Sign in to use saved corpora.`);
+        researchModeToggle.setCorpusStatus(`Research has ${artifactCount} loaded artifact${artifactCount === 1 ? '' : 's'} in this workspace. Sign in to use saved corpora.`);
         return;
       }
       researchModeToggle.setCorpusStatus('Sign in to select saved corpora.');
@@ -646,7 +665,7 @@ export const ChatManager = {
       return;
     }
     if (artifactCount > 0) {
-      researchModeToggle.setCorpusStatus(`Research can analyze ${artifactCount} loaded artifact${artifactCount === 1 ? '' : 's'} from Explore.`);
+      researchModeToggle.setCorpusStatus(`Research has ${artifactCount} loaded artifact${artifactCount === 1 ? '' : 's'} in this workspace.`);
       return;
     }
     researchModeToggle.setCorpusStatus('No saved corpora found yet.');
@@ -735,7 +754,7 @@ export const ChatManager = {
           OverlaySelector.toggle(overlayId);
         }
         // Clear backend session cache for this source (keeps caches in sync)
-        const sessionId = getOrCreateSessionId();
+        const sessionId = this.getSessionIdForMode('explore');
         postMsgpack('/api/session/clear-source', {
           sessionId,
           sourceId: overlayId
@@ -749,10 +768,11 @@ export const ChatManager = {
     });
     orderPanel.init();
     this.updateSidebarModeLayout();
+    this.enforceResearchUiBoundaries();
 
     orderTracker = new OrderTrackerClass({
       container: document.getElementById('orderItems'),
-      getSessionId: () => this.sessionId,
+      getSessionId: () => this.getSessionIdForMode('explore'),
       onReady: (queueId, result) => {
         if (result && (result.type === 'data' || result.type === 'events')) {
           const count = result.count || result.geojson?.features?.length || 0;
@@ -812,7 +832,7 @@ export const ChatManager = {
 
     const data = await postMsgpack(apiUrl, {
       confirmed_order: order,
-      sessionId: this.sessionId,
+      sessionId: this.getSessionIdForMode('explore'),
       force: options.force || false  // Bypass dedup for recovery
     });
 
@@ -894,7 +914,7 @@ export const ChatManager = {
     const data = await postMsgpack(apiUrl, {
       items: order.items,
       hints: { summary: order.summary },
-      session_id: this.getSessionIdForMode(this.mode)
+      session_id: this.getSessionIdForMode('explore')
     });
 
     if (data.queue_id) {
@@ -1370,11 +1390,12 @@ export const ChatManager = {
             indicator.remove();
             removedIndicatorForStream = true;
           }
-          if (stage === 'delta' && !streamedAssistantEl) {
+          if (!streamedAssistantEl && (stage === 'answer_start' || stage === 'delta')) {
             streamedAssistantEl = this.addMessage('', 'assistant', { mode: requestMode });
           }
           if (streamedAssistantEl) {
-            streamedAssistantEl.innerHTML = formatMessage(deltaText || '');
+            const nextText = deltaText || '';
+            streamedAssistantEl.innerHTML = formatMessage(nextText || ' ');
           }
           if (requestMessages && this.mode === requestMode && this.elements.messagesHost) {
             this.elements.messagesHost.scrollTop = this.elements.messagesHost.scrollHeight;
@@ -1404,8 +1425,12 @@ export const ChatManager = {
 
       // Handle response based on type
       if (response._streamed && response.type === 'chat') {
-        if (!streamedAssistantEl && (response.message || response.summary)) {
-          this.addMessage(response.message || response.summary, 'assistant', { mode: requestMode });
+        const finalText = response.message || response.summary || '';
+        if (!streamedAssistantEl && finalText) {
+          this.addMessage(finalText, 'assistant', { mode: requestMode });
+        } else if (streamedAssistantEl && finalText) {
+          streamedAssistantEl.innerHTML = formatMessage(finalText);
+          this.syncModeMessagesHtml(requestMode);
         }
         this.applySupplementalChatActions(response);
         this.saveState();
@@ -1432,6 +1457,9 @@ export const ChatManager = {
    */
   handleResponse(response) {
     const targetMode = response?._requestMode || this.mode;
+    if (targetMode === 'research' || this.mode === 'research') {
+      this.enforceResearchUiBoundaries();
+    }
     const add = (text, type = 'assistant', options = {}) => this.addMessage(text, type, { ...options, mode: targetMode });
     switch (response.type) {
       case 'order':
@@ -1673,6 +1701,7 @@ export const ChatManager = {
 
   applySupplementalChatActions(response) {
     const display = response?.display;
+    this.enforceResearchUiBoundaries();
     if (!display || !App) return;
 
     if (display.action === 'highlight_features' && display.geojson?.features?.length) {
