@@ -512,15 +512,25 @@ export const ChatManager = {
   },
 
   updateSidebarModeLayout() {
-    const { orderPanel, resizeOrder } = this.elements;
+    const { orderPanel, resizeOrder, form } = this.elements;
     const hideOrderTaker = this.mode === 'research';
+    const container = document.getElementById('chatContainer');
+    if (container) {
+      container.classList.toggle('chat-container--research', hideOrderTaker);
+      container.classList.toggle('chat-container--explore', !hideOrderTaker);
+    }
     if (orderPanel) {
       orderPanel.hidden = hideOrderTaker;
       orderPanel.setAttribute('aria-hidden', hideOrderTaker ? 'true' : 'false');
+      orderPanel.style.display = hideOrderTaker ? 'none' : '';
     }
     if (resizeOrder) {
       resizeOrder.hidden = hideOrderTaker;
       resizeOrder.setAttribute('aria-hidden', hideOrderTaker ? 'true' : 'false');
+      resizeOrder.style.display = hideOrderTaker ? 'none' : '';
+    }
+    if (form) {
+      form.setAttribute('data-chat-mode', this.mode);
     }
   },
 
@@ -1379,6 +1389,11 @@ export const ChatManager = {
         throw new Error('No response received from server');
       }
 
+      const fallbackText = this.getResearchDisplayFallbackMessage(response);
+      if (response.type === 'chat' && !(response.message || response.summary) && fallbackText) {
+        response.message = fallbackText;
+      }
+
       // Track in history
       const responseHistory = this.modeHistories[requestMode] || [];
       responseHistory.push({ role: 'assistant', content: response.message || response.summary });
@@ -1663,6 +1678,21 @@ export const ChatManager = {
     if (display.action === 'highlight_features' && display.geojson?.features?.length) {
       App.applyResearchDisplay?.(display);
     }
+  },
+
+  getResearchDisplayFallbackMessage(response) {
+    const display = response?.display;
+    if (!display || display.action !== 'highlight_features') return '';
+    const featureCount = display?.geojson?.features?.length || 0;
+    if (!featureCount) return '';
+    const sourceId = String(display?.source_id || '').trim();
+    if (sourceId === 'fairfax_buildings') {
+      return `Highlighted ${featureCount} building footprint${featureCount === 1 ? '' : 's'} on the map.`;
+    }
+    if (sourceId === 'fairfax_lst') {
+      return `Highlighted ${featureCount} hot area${featureCount === 1 ? '' : 's'} on the map.`;
+    }
+    return `Highlighted ${featureCount} matching feature${featureCount === 1 ? '' : 's'} on the map.`;
   },
 
   isAllMetricsConfirmation(query) {

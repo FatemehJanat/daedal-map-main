@@ -825,6 +825,11 @@ body.mobile-limited #mobileMapNotice {
   flex-direction: column;
 }
 
+#chatContainer.chat-container--research #resizeOrder,
+#chatContainer.chat-container--research #orderPanel {
+  display: none !important;
+}
+
 .order-tabs-header {
   display: flex;
   gap: 0;
