@@ -59,14 +59,14 @@ RESEARCH_TOOL_DEFINITIONS = [
                         },
                     },
                 },
-                "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                "limit": {"type": "integer", "minimum": 1},
             },
             "required": ["artifact_id"],
         },
     },
     {
         "name": "build_artifact_display_subset",
-        "description": "Build a bounded feature subset from one loaded artifact for map display or highlighting.",
+        "description": "Build a feature subset from one loaded artifact for map display or highlighting. If limit is omitted, return all matched features.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -84,7 +84,7 @@ RESEARCH_TOOL_DEFINITIONS = [
                         },
                     },
                 },
-                "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                "limit": {"type": "integer", "minimum": 1},
                 "fit": {"type": "boolean"},
                 "context_visibility": {"type": "string", "enum": ["keep", "replace"]},
             },
@@ -151,9 +151,21 @@ def _feature_lookup_from_result(result: dict) -> dict[str, dict]:
 
 def _normalize_limit(value) -> int:
     try:
-        return max(1, min(int(value), 100))
+        return max(1, min(int(value), 1000))
     except Exception:
         return 25
+
+
+def _normalize_optional_limit(value, *, maximum: int | None = None) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        parsed = max(1, int(value))
+    except Exception:
+        return None
+    if maximum is not None:
+        parsed = min(parsed, maximum)
+    return parsed
 
 
 def _filter_rows_python(rows: list[dict], filters: dict | None) -> list[dict]:
@@ -182,7 +194,13 @@ def _filter_rows_python(rows: list[dict], filters: dict | None) -> list[dict]:
     return [row for row in rows if matches(row)]
 
 
-def _query_rows_python(rows: list[dict], tool_input: dict) -> dict:
+def _query_rows_python(
+    rows: list[dict],
+    tool_input: dict,
+    *,
+    default_limit: int | None = 25,
+    maximum_limit: int | None = 1000,
+) -> dict:
     rows = _filter_rows_python(rows, tool_input.get("filters"))
     fields = tool_input.get("fields") or []
     metrics = tool_input.get("metrics") or []
@@ -219,7 +237,11 @@ def _query_rows_python(rows: list[dict], tool_input: dict) -> dict:
         if field:
             rows.sort(key=lambda row: (row.get(field) is None, row.get(field)), reverse=reverse)
 
-    limit = _normalize_limit(tool_input.get("limit"))
+    limit = _normalize_optional_limit(tool_input.get("limit"), maximum=maximum_limit)
+    if limit is None:
+        limit = default_limit
+    if limit is None:
+        return {"rows": rows, "row_count": len(rows), "truncated": False}
     return {"rows": rows[:limit], "row_count": len(rows), "truncated": len(rows) > limit}
 
 
@@ -227,13 +249,19 @@ def _quote_identifier(identifier: str) -> str:
     return '"' + str(identifier).replace('"', '""') + '"'
 
 
-def _query_rows_duckdb(rows: list[dict], tool_input: dict) -> dict:
+def _query_rows_duckdb(
+    rows: list[dict],
+    tool_input: dict,
+    *,
+    default_limit: int | None = 25,
+    maximum_limit: int | None = 1000,
+) -> dict:
     if duckdb is None:
-        return _query_rows_python(rows, tool_input)
+        return _query_rows_python(rows, tool_input, default_limit=default_limit, maximum_limit=maximum_limit)
     try:
         import pandas as pd
     except Exception:
-        return _query_rows_python(rows, tool_input)
+        return _query_rows_python(rows, tool_input, default_limit=default_limit, maximum_limit=maximum_limit)
 
     if not rows:
         return {"rows": [], "row_count": 0, "truncated": False}
@@ -299,19 +327,26 @@ def _query_rows_duckdb(rows: list[dict], tool_input: dict) -> dict:
         if order_parts:
             sql += " ORDER BY " + ", ".join(order_parts)
 
-        limit = _normalize_limit(tool_input.get("limit"))
+        limit = _normalize_optional_limit(tool_input.get("limit"), maximum=maximum_limit)
+        if limit is None:
+            limit = default_limit
         count_sql = f"SELECT count(*) AS row_count FROM ({sql}) q"
         row_count = con.execute(count_sql, params).fetchone()[0]
-        sql += f" LIMIT {limit}"
+        if limit is not None:
+            sql += f" LIMIT {limit}"
         output = con.execute(sql, params).fetchdf().to_dict("records")
-        return {"rows": _jsonable(output), "row_count": row_count, "truncated": row_count > limit}
+        return {
+            "rows": _jsonable(output),
+            "row_count": row_count,
+            "truncated": bool(limit is not None and row_count > limit),
+        }
     finally:
         con.close()
 
 
 def _build_display_subset(result: dict, artifact: dict, tool_input: dict) -> dict:
     rows = _rows_from_result(result)
-    query_result = _query_rows_duckdb(rows, tool_input)
+    query_result = _query_rows_duckdb(rows, tool_input, default_limit=None, maximum_limit=None)
     matched_rows = query_result.get("rows") or []
     feature_lookup = _feature_lookup_from_result(result)
 
@@ -373,7 +408,7 @@ def execute_research_tool(session_id: str, tool_name: str, tool_input: dict) -> 
         if not result:
             return {"error": "artifact_data_unavailable", "artifact_id": artifact_id}
         rows = _rows_from_result(result)
-        query_result = _query_rows_duckdb(rows, tool_input)
+        query_result = _query_rows_duckdb(rows, tool_input, default_limit=25, maximum_limit=1000)
         return {
             "artifact_id": artifact_id,
             "fields": artifact.get("fields", []),

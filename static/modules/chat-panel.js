@@ -1360,10 +1360,12 @@ export const ChatManager = {
             indicator.remove();
             removedIndicatorForStream = true;
           }
-          if (!streamedAssistantEl) {
+          if (stage === 'delta' && !streamedAssistantEl) {
             streamedAssistantEl = this.addMessage('', 'assistant', { mode: requestMode });
           }
-          streamedAssistantEl.innerHTML = formatMessage(deltaText || '');
+          if (streamedAssistantEl) {
+            streamedAssistantEl.innerHTML = formatMessage(deltaText || '');
+          }
           if (requestMessages && this.mode === requestMode && this.elements.messagesHost) {
             this.elements.messagesHost.scrollTop = this.elements.messagesHost.scrollHeight;
           }
@@ -1387,6 +1389,9 @@ export const ChatManager = {
 
       // Handle response based on type
       if (response._streamed && response.type === 'chat') {
+        if (!streamedAssistantEl && (response.message || response.summary)) {
+          this.addMessage(response.message || response.summary, 'assistant', { mode: requestMode });
+        }
         this.applySupplementalChatActions(response);
         this.saveState();
       } else {

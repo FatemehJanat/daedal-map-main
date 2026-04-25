@@ -524,6 +524,25 @@ def _word_chunks(text: str, words_per_chunk: int = 4):
         yield chunk
 
 
+def _fallback_display_message(display: dict | None) -> str | None:
+    if not isinstance(display, dict):
+        return None
+    if str(display.get("action") or "").strip() != "highlight_features":
+        return None
+    feature_count = len(((display.get("geojson") or {}).get("features") or []))
+    if feature_count <= 0:
+        return None
+    source_id = str(display.get("source_id") or "").strip()
+    if source_id == "fairfax_buildings":
+        noun = "building footprint"
+    elif source_id == "fairfax_lst":
+        noun = "hot area"
+    else:
+        noun = "matching feature"
+    suffix = "" if feature_count == 1 else "s"
+    return f"Highlighted {feature_count} {noun}{suffix} on the map."
+
+
 def _history_messages(history: list, max_messages: int = 12) -> list[dict]:
     messages = []
     for msg in (history or [])[-max_messages:]:
@@ -652,9 +671,11 @@ def run_research_chat(*, session_id: str, query: str, chat_history: list | None 
         messages.append({"role": "user", "content": tool_results})
 
     text = _extract_text(response.content if response else [])
+    if not text:
+        text = _fallback_display_message(final_display) or "I could not produce a research answer from the active corpus."
     result = {
         "type": "chat",
-        "message": text or "I could not produce a research answer from the active corpus.",
+        "message": text,
         "corpus": manifest,
         "display": final_display,
         "research_hints": research_hints,
