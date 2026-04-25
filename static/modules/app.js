@@ -1274,7 +1274,31 @@ export const App = {
       return;
     }
 
-    console.log(`Applying Research display for ${geojson.features.length} feature(s)`);
+    const features = geojson.features || [];
+    const uniqueLocIds = new Set(
+      features
+        .map((feature) => feature?.properties?.loc_id)
+        .filter((value) => value !== undefined && value !== null && value !== '')
+    );
+    const uniqueFeatureIds = new Set(
+      features
+        .map((feature) =>
+          feature?.properties?.feature_id
+          ?? feature?.properties?.building_id
+          ?? feature?.properties?.BLDGIDENT
+          ?? feature?.properties?.OBJECTID
+          ?? feature?.id
+        )
+        .filter((value) => value !== undefined && value !== null && value !== '')
+    );
+    console.log('Applying Research display', {
+      action: display?.action || null,
+      source_id: display?.source_id || null,
+      feature_count: features.length,
+      unique_loc_ids: uniqueLocIds.size,
+      unique_feature_ids: uniqueFeatureIds.size,
+      fit: display?.fit !== false,
+    });
 
     if (this._navigationClickHandler && MapAdapter?.map) {
       MapAdapter.map.off('click', CONFIG.layers.selectionFill, this._navigationClickHandler);

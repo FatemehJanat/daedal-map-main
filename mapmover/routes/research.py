@@ -680,6 +680,25 @@ def run_research_chat(*, session_id: str, query: str, chat_history: list | None 
         "display": final_display,
         "research_hints": research_hints,
     }
+    if final_display:
+        display_geojson = final_display.get("geojson") or {}
+        display_features = display_geojson.get("features") or []
+        logger.info(
+            "Research final response session=%s query=%r message_len=%s display_action=%s display_source=%s display_features=%s",
+            session_id,
+            query[:120],
+            len(text or ""),
+            final_display.get("action"),
+            final_display.get("source_id"),
+            len(display_features),
+        )
+    else:
+        logger.info(
+            "Research final response session=%s query=%r message_len=%s display_action=none",
+            session_id,
+            query[:120],
+            len(text or ""),
+        )
     return normalize_research_result(result, lane="research")
 
 

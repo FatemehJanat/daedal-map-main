@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from mapmover import logger
 from mapmover.corpus_registry import corpus_registry
 from mapmover.session_cache import session_manager
 
@@ -139,13 +140,23 @@ def _rows_from_result(result: dict) -> list[dict]:
     return rows
 
 
+def _feature_identity_from_props(props: dict, feature_id=None):
+    for key in ("feature_id", "building_id", "BLDGIDENT", "OBJECTID", "GlobalID", "loc_id"):
+        value = props.get(key)
+        if value is not None and value != "":
+            return str(value)
+    if feature_id is not None and feature_id != "":
+        return str(feature_id)
+    return None
+
+
 def _feature_lookup_from_result(result: dict) -> dict[str, dict]:
     lookup = {}
     for feature in (result.get("geojson") or {}).get("features") or []:
         props = dict(feature.get("properties") or {})
-        loc_id = props.get("loc_id") or feature.get("id")
-        if loc_id:
-            lookup[str(loc_id)] = _jsonable(feature)
+        identity = _feature_identity_from_props(props, feature.get("id"))
+        if identity:
+            lookup[identity] = _jsonable(feature)
     return lookup
 
 
@@ -351,23 +362,24 @@ def _build_display_subset(result: dict, artifact: dict, tool_input: dict) -> dic
     feature_lookup = _feature_lookup_from_result(result)
 
     loc_ids = []
-    rows_by_loc: dict[str, dict] = {}
+    rows_by_identity: dict[str, dict] = {}
     for row in matched_rows:
         loc_id = row.get("loc_id")
-        if loc_id is None:
-            continue
-        loc_text = str(loc_id)
-        if loc_text not in loc_ids:
-            loc_ids.append(loc_text)
-        rows_by_loc.setdefault(loc_text, row)
+        if loc_id is not None:
+            loc_text = str(loc_id)
+            if loc_text not in loc_ids:
+                loc_ids.append(loc_text)
+        identity = _feature_identity_from_props(row)
+        if identity:
+            rows_by_identity.setdefault(identity, row)
 
     features = []
-    for loc_id in loc_ids:
-        feature = feature_lookup.get(loc_id)
+    for identity, row in rows_by_identity.items():
+        feature = feature_lookup.get(identity)
         if not feature:
             continue
         props = dict(feature.get("properties") or {})
-        props.update(rows_by_loc.get(loc_id) or {})
+        props.update(row or {})
         feature["properties"] = _jsonable(props)
         features.append(feature)
 
@@ -380,6 +392,16 @@ def _build_display_subset(result: dict, artifact: dict, tool_input: dict) -> dic
         "fit": bool(tool_input.get("fit", True)),
         "context_visibility": str(tool_input.get("context_visibility") or "keep"),
     }
+    logger.info(
+        "Research display subset source=%s artifact=%s matched_rows=%s rendered_features=%s unique_loc_ids=%s truncated=%s requested_limit=%s",
+        artifact.get("source_id"),
+        artifact.get("artifact_id"),
+        len(matched_rows),
+        len(features),
+        len(loc_ids),
+        bool(query_result.get("truncated")),
+        tool_input.get("limit"),
+    )
     return {
         "artifact_id": artifact.get("artifact_id"),
         "rows": matched_rows,
