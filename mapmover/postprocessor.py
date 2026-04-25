@@ -217,17 +217,36 @@ def expand_full_pack_loads(items: list, catalog: dict) -> list:
             if _source_supports_events(source):
                 new_item.setdefault("mode", "events")
                 new_item.pop("metric", None)
-            elif not new_item.get("metric"):
+            elif not new_item.get("metric") and _source_has_metrics(source):
                 new_item["metric"] = "*"
+            elif not _source_has_metrics(source):
+                new_item.pop("metric", None)
             expanded.append(new_item)
 
     return expanded
+
+
+def _source_has_metrics(catalog_source: dict | None) -> bool:
+    metrics = (catalog_source or {}).get("metrics") or {}
+    if isinstance(metrics, dict) and metrics:
+        return True
+    if isinstance(metrics, list) and metrics:
+        return True
+    metric_count = (catalog_source or {}).get("metric_count")
+    try:
+        if int(metric_count or 0) > 0:
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def _source_requires_metric(item: dict, catalog_source: dict | None) -> bool:
     if item.get("type") in {"derived", "derived_result"}:
         return False
     if item.get("mode") == "events":
+        return False
+    if not _source_has_metrics(catalog_source):
         return False
 
     data_type = (catalog_source or {}).get("data_type", "metrics")

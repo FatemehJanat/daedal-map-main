@@ -640,6 +640,7 @@ async def chat_stream_endpoint(req: Request):
     import time
 
     t_start = time.time()
+    client_ip = get_client_ip(req)
     body_bytes = await req.body()
     try:
         body = json.loads(body_bytes.decode("utf-8"))
@@ -701,9 +702,20 @@ async def chat_stream_endpoint(req: Request):
                         order=body["confirmed_order"],
                         response=response,
                     )
+                    log_conversation(
+                        frontend_session_id,
+                        body["confirmed_order"].get("summary", "confirmed_order"),
+                        response.get("summary", ""),
+                        surface="explorer_map",
+                        dataset_selected=response.get("source_id"),
+                        results_count=response.get("count", 0),
+                        ip_hash=hash_ip_for_analytics(client_ip),
+                        user_agent=(req.headers.get("user-agent") or "")[:300] or None,
+                    )
                     yield f"data: {json.dumps({'stage': 'complete', 'result': response})}\n\n"
                 except Exception as e:
                     logger.exception("Streaming order execution error")
+                    log_app_error(type(e).__name__, str(e), surface="human_app", path="/chat/stream")
                     yield f"data: {json.dumps({'stage': 'complete', 'result': _confirmed_order_user_error()})}\n\n"
                 return
 
@@ -881,15 +893,26 @@ async def chat_stream_endpoint(req: Request):
                 final_result = {"type": "clarify", "message": result["message"], "geojson": {"type": "FeatureCollection", "features": []}, "needsMoreInfo": True}
                 yield f"data: {json.dumps({'stage': 'complete', 'result': final_result})}\n\n"
             else:
+                chat_msg = result.get("message", "I'm not sure how to help with that.")
                 final_result = {
                     "type": "chat",
-                    "message": result.get("message", "I'm not sure how to help with that."),
+                    "message": chat_msg,
                     "geojson": {"type": "FeatureCollection", "features": []},
                     "needsMoreInfo": False,
                 }
+                log_conversation(
+                    frontend_session_id,
+                    query,
+                    chat_msg,
+                    surface="explorer",
+                    intent=result.get("type"),
+                    ip_hash=hash_ip_for_analytics(client_ip),
+                    user_agent=(req.headers.get("user-agent") or "")[:300] or None,
+                )
                 yield f"data: {json.dumps({'stage': 'complete', 'result': final_result})}\n\n"
         except Exception as e:
             logger.exception("Chat stream error")
+            log_app_error(type(e).__name__, str(e), surface="human_app", path="/chat/stream")
             error_result = {
                 "type": "error",
                 "message": "Sorry, I encountered an error. Please try again.",
