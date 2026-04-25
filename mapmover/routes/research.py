@@ -583,6 +583,122 @@ def _research_memory_messages(research_memory: dict | None) -> list[dict]:
     return messages
 
 
+def _compact_manifest_for_prompt(manifest: dict) -> dict:
+    saved_corpus = manifest.get("saved_corpus") or {}
+    compact_saved = None
+    if saved_corpus:
+        compact_saved = {
+            "id": saved_corpus.get("id"),
+            "name": saved_corpus.get("name"),
+            "pack_count": saved_corpus.get("pack_count"),
+            "source_count": saved_corpus.get("source_count"),
+            "estimated_row_count_total": saved_corpus.get("estimated_row_count_total"),
+            "estimated_file_size_mb_total": saved_corpus.get("estimated_file_size_mb_total"),
+            "pack_ids": saved_corpus.get("pack_ids") or [],
+            "source_ids": saved_corpus.get("source_ids") or [],
+            "packs": [
+                {
+                    "pack_id": pack.get("pack_id"),
+                    "pack_name": pack.get("pack_name"),
+                    "source_ids": pack.get("source_ids") or [],
+                    "source_count": pack.get("source_count"),
+                    "file_size_mb_total": pack.get("file_size_mb_total"),
+                    "row_count_total": pack.get("row_count_total"),
+                    "time_coverage_start": pack.get("time_coverage_start"),
+                    "time_coverage_end": pack.get("time_coverage_end"),
+                }
+                for pack in (saved_corpus.get("packs") or [])[:8]
+            ],
+        }
+
+    artifacts = []
+    for artifact in (manifest.get("artifacts") or [])[:12]:
+        artifacts.append(
+            {
+                "artifact_id": artifact.get("artifact_id"),
+                "source_id": artifact.get("source_id"),
+                "source_name": artifact.get("source_name"),
+                "data_type": artifact.get("data_type"),
+                "geographic_level": artifact.get("geographic_level"),
+                "metrics": (artifact.get("metrics") or [])[:12],
+                "fields": (artifact.get("fields") or [])[:20],
+                "year_range": artifact.get("year_range"),
+                "feature_count": artifact.get("feature_count"),
+                "row_count": artifact.get("row_count"),
+                "summary": artifact.get("summary"),
+            }
+        )
+
+    return {
+        "session_id": manifest.get("session_id"),
+        "mode": manifest.get("mode"),
+        "artifact_count": manifest.get("artifact_count"),
+        "artifacts": artifacts,
+        "saved_corpus": compact_saved,
+    }
+
+
+def _compact_tool_result_for_prompt(tool_name: str, tool_result: dict) -> dict:
+    if not isinstance(tool_result, dict):
+        return {"type": "unsupported_tool_result"}
+
+    compact = {}
+    for key in ("error", "artifact_id", "row_count", "truncated"):
+        if key in tool_result:
+            compact[key] = tool_result.get(key)
+
+    if tool_name == "list_artifacts":
+        artifacts = tool_result.get("artifacts") or []
+        compact["artifacts"] = [
+            {
+                "artifact_id": artifact.get("artifact_id"),
+                "source_id": artifact.get("source_id"),
+                "source_name": artifact.get("source_name"),
+                "data_type": artifact.get("data_type"),
+                "geographic_level": artifact.get("geographic_level"),
+                "metrics": (artifact.get("metrics") or [])[:8],
+            }
+            for artifact in artifacts[:12]
+        ]
+        compact["artifact_count"] = len(artifacts)
+        return compact
+
+    if tool_name == "describe_artifact":
+        artifact = tool_result.get("artifact") or {}
+        compact["artifact"] = {
+            "artifact_id": artifact.get("artifact_id"),
+            "source_id": artifact.get("source_id"),
+            "source_name": artifact.get("source_name"),
+            "data_type": artifact.get("data_type"),
+            "geographic_level": artifact.get("geographic_level"),
+            "metrics": (artifact.get("metrics") or [])[:12],
+            "fields": (artifact.get("fields") or [])[:20],
+            "year_range": artifact.get("year_range"),
+            "feature_count": artifact.get("feature_count"),
+            "row_count": artifact.get("row_count"),
+            "summary": artifact.get("summary"),
+        }
+        return compact
+
+    if tool_name in {"query_artifact_slice", "build_artifact_display_subset"}:
+        rows = tool_result.get("rows") or []
+        compact["rows_preview"] = rows[:15]
+        compact["preview_count"] = min(len(rows), 15)
+        if tool_name == "build_artifact_display_subset":
+            display = tool_result.get("display") or {}
+            compact["display"] = {
+                "action": display.get("action"),
+                "source_id": display.get("source_id"),
+                "fit": display.get("fit"),
+                "context_visibility": display.get("context_visibility"),
+                "feature_count": len(((display.get("geojson") or {}).get("features") or [])),
+                "loc_id_count": len(display.get("loc_ids") or []),
+            }
+        return compact
+
+    return tool_result
+
+
 def run_research_chat(*, session_id: str, query: str, chat_history: list | None = None, research_memory: dict | None = None) -> dict:
     manifest = corpus_registry.manifest(session_id)
     if manifest.get("artifact_count", 0) == 0 and not manifest.get("saved_corpus"):
@@ -615,10 +731,11 @@ def run_research_chat(*, session_id: str, query: str, chat_history: list | None 
     system_prompt = build_research_system_prompt(manifest)
     research_hints = preprocess_research_query(query, manifest)
     hint_context = build_research_hint_context(research_hints)
+    prompt_manifest = _compact_manifest_for_prompt(manifest)
     messages = [
         {
             "role": "user",
-            "content": "Active corpus manifest:\n```json\n" + json.dumps(manifest, indent=2, default=str) + "\n```",
+            "content": "Active corpus manifest:\n```json\n" + json.dumps(prompt_manifest, indent=2, default=str) + "\n```",
         },
         *(
             [{
@@ -637,14 +754,26 @@ def run_research_chat(*, session_id: str, query: str, chat_history: list | None 
     response = None
     final_display = None
     for _iteration in range(max_tool_iterations + 1):
-        response = client.messages.create(
-            model=model,
-            system=system_prompt,
-            messages=messages,
-            tools=RESEARCH_TOOL_DEFINITIONS,
-            temperature=temperature,
-            max_tokens=1400,
-        )
+        try:
+            response = client.messages.create(
+                model=model,
+                system=system_prompt,
+                messages=messages,
+                tools=RESEARCH_TOOL_DEFINITIONS,
+                temperature=temperature,
+                max_tokens=1400,
+            )
+        except Exception as exc:
+            approx_message_chars = sum(len(json.dumps(message, default=str)) for message in messages)
+            logger.exception(
+                "Research Anthropic call failed iteration=%s session=%s query=%r approx_message_chars=%s artifact_count=%s",
+                _iteration,
+                session_id,
+                query[:120],
+                approx_message_chars,
+                manifest.get("artifact_count"),
+            )
+            raise
 
         if response.stop_reason != "tool_use":
             break
@@ -656,12 +785,13 @@ def run_research_chat(*, session_id: str, query: str, chat_history: list | None 
                 tool_result = execute_research_tool(session_id, block.name, block.input)
                 if isinstance(tool_result, dict) and isinstance(tool_result.get("display"), dict):
                     final_display = dict(tool_result["display"])
+                compact_tool_result = _compact_tool_result_for_prompt(block.name, tool_result)
                 assistant_content.append(block)
                 tool_results.append(
                     {
                         "type": "tool_result",
                         "tool_use_id": block.id,
-                        "content": json.dumps(tool_result, default=str),
+                        "content": json.dumps(compact_tool_result, default=str),
                     }
                 )
             else:
