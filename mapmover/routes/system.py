@@ -312,6 +312,46 @@ def _normalized_upstream_sources(*values) -> list[dict]:
     return normalized
 
 
+def _collect_source_agencies(*values) -> list[str]:
+    agencies: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if isinstance(value, list):
+            for entry in value:
+                if isinstance(entry, dict):
+                    agency = str(entry.get("agency") or entry.get("agency_short") or "").strip()
+                else:
+                    agency = str(entry or "").strip()
+                if not agency:
+                    continue
+                key = agency.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                agencies.append(agency)
+            continue
+        text = str(value or "").strip()
+        if not text:
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        agencies.append(text)
+    return agencies
+
+
+def _source_agency_summary(agencies: list[str], max_names: int = 2) -> str:
+    values = [str(value).strip() for value in agencies if str(value).strip()]
+    if not values:
+        return ""
+    if len(values) <= max_names:
+        return "; ".join(values)
+    shown = "; ".join(values[:max_names])
+    remaining = len(values) - max_names
+    return f"{shown} + {remaining} more"
+
+
 def _load_pack_source_docs(pack_sources: list[dict]) -> list[dict]:
     from mapmover.data_loading import load_source_metadata, load_source_reference
 
@@ -640,6 +680,18 @@ def _build_public_pack_list(api_ready_only: bool = False) -> list[dict]:
             pack_summary.get("primary_source_url"),
             display.get("source_url"),
         )
+        source_agencies = _collect_source_agencies(
+            [src.get("primary_source_name") for src in pack_sources],
+            pack_summary.get("upstream_sources"),
+            display.get("upstream_sources"),
+        )
+        primary_source_name = _best_source_text(
+            pack_summary.get("primary_source_name"),
+            display.get("primary_source_name"),
+            _source_entity_label(primary_source_url, display_name),
+        )
+        if len(source_agencies) > 1:
+            primary_source_name = _source_agency_summary(source_agencies)
         packs.append({
             "pack_id": pid,
             "pack_name": display_name,
@@ -654,13 +706,10 @@ def _build_public_pack_list(api_ready_only: bool = False) -> list[dict]:
                 pack_summary.get("primary_source_license"),
                 display.get("license", ""),
             ),
-            "primary_source_name": _best_source_text(
-                pack_summary.get("primary_source_name"),
-                display.get("primary_source_name"),
-                _source_entity_label(primary_source_url, display_name),
-            ),
+            "primary_source_name": primary_source_name,
             "primary_source_url": primary_source_url,
             "upstream_sources": pack_summary.get("upstream_sources") or display.get("upstream_sources") or [],
+            "source_agencies": source_agencies,
             "category": s.get("category", "other"),
             "data_type": s.get("data_type", ""),
             "scope": s.get("scope", ""),
@@ -739,7 +788,11 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
         sref = (doc.get("reference", {}) or {})
         smeta = (doc.get("metadata", {}) or {})
         sref_source = sref.get("source", {}) or {}
-        supstream = _normalized_upstream_sources(smeta.get("upstream_sources"), sref.get("upstream_sources"))
+        supstream = _normalized_upstream_sources(
+            s.get("upstream_sources"),
+            smeta.get("upstream_sources"),
+            sref.get("upstream_sources"),
+        )
         primary_upstream = supstream[0] if supstream else {}
         smetrics = sref.get("metrics", {}) or {}
         if not smetrics:
@@ -775,10 +828,12 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
                 s.get("license", ""),
             ),
             "primary_source_name": _best_source_text(
+                s.get("primary_source_name"),
                 smeta.get("primary_source_name"),
                 primary_upstream.get("agency"),
             ),
             "primary_source_url": _best_source_text(
+                s.get("primary_source_url"),
                 smeta.get("primary_source_url"),
                 primary_upstream.get("agency_upstream_url"),
                 primary_upstream.get("source_url"),
@@ -787,6 +842,7 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
                 s.get("source_url", ""),
             ),
             "primary_source_license": _best_source_text(
+                s.get("primary_source_license"),
                 smeta.get("primary_source_license"),
                 primary_upstream.get("license"),
                 sref_source.get("license"),
@@ -813,6 +869,18 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
         pack_summary.get("primary_source_url"),
         display.get("source_url", ""),
     )
+    source_agencies = _collect_source_agencies(
+        [src.get("primary_source_name") for src in subsources],
+        pack_summary.get("upstream_sources"),
+        display.get("upstream_sources"),
+    )
+    primary_source_name = _best_source_text(
+        pack_summary.get("primary_source_name"),
+        display.get("primary_source_name"),
+        _source_entity_label(primary_source_url, display_name),
+    )
+    if len(source_agencies) > 1:
+        primary_source_name = _source_agency_summary(source_agencies)
 
     payload = {
         "pack_id": pack_id,
@@ -824,13 +892,10 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
             display.get("description", ""),
         ),
         "source_url": primary_source_url,
-        "primary_source_name": _best_source_text(
-            pack_summary.get("primary_source_name"),
-            display.get("primary_source_name"),
-            _source_entity_label(primary_source_url, display_name),
-        ),
+        "primary_source_name": primary_source_name,
         "primary_source_url": primary_source_url,
         "upstream_sources": pack_summary.get("upstream_sources") or display.get("upstream_sources") or [],
+        "source_agencies": source_agencies,
         "license": _best_source_text(
             pack_summary.get("primary_source_license"),
             display.get("license", ""),
