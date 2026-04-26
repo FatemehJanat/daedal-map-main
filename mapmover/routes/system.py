@@ -595,7 +595,13 @@ def _build_public_pack_list(api_ready_only: bool = False) -> list[dict]:
 
     from mapmover.data_loading import load_catalog
 
-    all_sources = load_catalog().get("sources", [])
+    catalog = load_catalog()
+    all_sources = catalog.get("sources", [])
+    pack_summaries = {
+        str(pack.get("pack_id") or "").strip(): pack
+        for pack in catalog.get("packs", [])
+        if isinstance(pack, dict) and str(pack.get("pack_id") or "").strip()
+    }
     published = [
         s for s in all_sources
         if s.get("pack_id") and (not api_ready_only or bool(s.get("api_ready", False)))
@@ -613,23 +619,48 @@ def _build_public_pack_list(api_ready_only: bool = False) -> list[dict]:
 
     packs = []
     for pid, s in pack_map.items():
+        pack_summary = pack_summaries.get(pid, {})
         pack_sources = pack_sources_map.get(pid, [s])
         pack_docs = _load_pack_source_docs(pack_sources)
         primary_doc = next((doc for doc in pack_docs if doc.get("source_id") == s.get("source_id")), pack_docs[0] if pack_docs else None)
         display = _pack_display_meta(s, primary_doc)
+        display_name = _best_source_text(
+            pack_summary.get("pack_name"),
+            display.get("source_name"),
+            _default_pack_title(pid),
+        )
         if len(pack_sources) > 1 and not _load_pack_reference(pid):
-            display["source_name"] = _default_pack_title(pid)
+            display_name = _best_source_text(
+                pack_summary.get("pack_name"),
+                _default_pack_title(pid),
+                display_name,
+            )
         tc = _resolve_pack_temporal(pid, pack_sources, s)
-        primary_source_url = display.get("source_url", "")
+        primary_source_url = _best_source_text(
+            pack_summary.get("primary_source_url"),
+            display.get("source_url"),
+        )
         packs.append({
             "pack_id": pid,
-            "source_name": display.get("source_name") or s.get("source_name", ""),
-            "description": display.get("description", ""),
+            "pack_name": display_name,
+            "title": display_name,
+            "source_name": display_name,
+            "description": _best_source_text(
+                pack_summary.get("description"),
+                display.get("description"),
+            ),
             "source_url": primary_source_url,
-            "license": display.get("license", ""),
-            "primary_source_name": display.get("primary_source_name") or _source_entity_label(primary_source_url, display.get("source_name") or s.get("source_name", "")),
+            "license": _best_source_text(
+                pack_summary.get("primary_source_license"),
+                display.get("license", ""),
+            ),
+            "primary_source_name": _best_source_text(
+                pack_summary.get("primary_source_name"),
+                display.get("primary_source_name"),
+                _source_entity_label(primary_source_url, display_name),
+            ),
             "primary_source_url": primary_source_url,
-            "upstream_sources": display.get("upstream_sources") or [],
+            "upstream_sources": pack_summary.get("upstream_sources") or display.get("upstream_sources") or [],
             "category": s.get("category", "other"),
             "data_type": s.get("data_type", ""),
             "scope": s.get("scope", ""),
@@ -641,7 +672,7 @@ def _build_public_pack_list(api_ready_only: bool = False) -> list[dict]:
             "pack_maintainer_url": s.get("pack_maintainer_url") or s.get("maintainer_url") or ACCOUNT_URL,
         })
 
-    packs.sort(key=lambda p: (p["category"], p["source_name"].lower()))
+    packs.sort(key=lambda p: (p["category"], p["title"].lower()))
     _public_pack_list_cache[api_ready_only] = {"value": packs, "cached_at": time.time()}
     return packs
 
@@ -655,7 +686,13 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
 
     from mapmover.data_loading import load_catalog
 
-    all_sources = load_catalog().get("sources", [])
+    catalog = load_catalog()
+    all_sources = catalog.get("sources", [])
+    pack_summaries = {
+        str(pack.get("pack_id") or "").strip(): pack
+        for pack in catalog.get("packs", [])
+        if isinstance(pack, dict) and str(pack.get("pack_id") or "").strip()
+    }
     pack_sources = [
         s for s in all_sources
         if s.get("pack_id") == pack_id and (not api_ready_only or bool(s.get("api_ready", False)))
@@ -664,12 +701,22 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
         return None
 
     primary = next((s for s in pack_sources if s.get("source_id") == pack_id), pack_sources[0])
+    pack_summary = pack_summaries.get(pack_id, {})
     pack_docs = _load_pack_source_docs(pack_sources)
     primary_doc = next((doc for doc in pack_docs if doc.get("source_id") == primary.get("source_id")), pack_docs[0] if pack_docs else None)
     primary_meta = ((primary_doc or {}).get("metadata", {}) or {})
     display = _pack_display_meta(primary, primary_doc)
+    display_name = _best_source_text(
+        pack_summary.get("pack_name"),
+        display.get("source_name"),
+        _default_pack_title(pack_id),
+    )
     if len(pack_sources) > 1 and not _load_pack_reference(pack_id):
-        display["source_name"] = _default_pack_title(pack_id)
+        display_name = _best_source_text(
+            pack_summary.get("pack_name"),
+            _default_pack_title(pack_id),
+            display_name,
+        )
 
     all_metrics = {}
     for doc in pack_docs:
@@ -762,15 +809,32 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
 
     temporal = _resolve_pack_temporal(pack_id, pack_sources, primary)
 
+    primary_source_url = _best_source_text(
+        pack_summary.get("primary_source_url"),
+        display.get("source_url", ""),
+    )
+
     payload = {
         "pack_id": pack_id,
-        "source_name": display.get("source_name") or primary.get("source_name", ""),
-        "description": display.get("description", ""),
-        "source_url": display.get("source_url", ""),
-        "primary_source_name": display.get("primary_source_name") or _source_entity_label(display.get("source_url", ""), primary.get("source_name", "")),
-        "primary_source_url": display.get("source_url", ""),
-        "upstream_sources": display.get("upstream_sources") or [],
-        "license": display.get("license", ""),
+        "pack_name": display_name,
+        "title": display_name,
+        "source_name": display_name,
+        "description": _best_source_text(
+            pack_summary.get("description"),
+            display.get("description", ""),
+        ),
+        "source_url": primary_source_url,
+        "primary_source_name": _best_source_text(
+            pack_summary.get("primary_source_name"),
+            display.get("primary_source_name"),
+            _source_entity_label(primary_source_url, display_name),
+        ),
+        "primary_source_url": primary_source_url,
+        "upstream_sources": pack_summary.get("upstream_sources") or display.get("upstream_sources") or [],
+        "license": _best_source_text(
+            pack_summary.get("primary_source_license"),
+            display.get("license", ""),
+        ),
         "category": _best_source_text(primary_meta.get("category"), primary.get("category", "")),
         "data_type": _best_source_text(primary_meta.get("data_type"), primary.get("data_type", "")),
         "scope": _best_source_text(primary_meta.get("scope"), primary.get("scope", "")),
