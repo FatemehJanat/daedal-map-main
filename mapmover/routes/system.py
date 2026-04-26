@@ -1141,13 +1141,21 @@ def _build_v1_catalog_payload() -> dict:
             "end": (detail.get("temporal_coverage") or {}).get("end", pack.get("temporal_end")),
         }
         data_type = detail.get("data_type") or pack.get("data_type", "")
-        title = pack.get("source_name") or pack.get("pack_id")
+        title = (
+            pack.get("pack_name")
+            or pack.get("title")
+            or detail.get("pack_name")
+            or detail.get("title")
+            or pack.get("source_name")
+            or pack.get("pack_id")
+        )
         geographic_levels = _normalize_geographic_levels(
             detail.get("geographic_level"),
             [source.get("geographic_level") for source in detail.get("subsources") or []],
         )
         catalog_packs.append({
             "pack_id": pack.get("pack_id"),
+            "pack_name": title,
             "title": title,
             "short_description": pack.get("description", ""),
             "category": pack.get("category", "other"),
@@ -1158,6 +1166,7 @@ def _build_v1_catalog_payload() -> dict:
             "temporal_end": temporal.get("end"),
             "metric_count": len(detail.get("metrics") or {}),
             "source_count": pack.get("source_count", 0),
+            "primary_source_name": pack.get("primary_source_name") or detail.get("primary_source_name") or "",
             "supported_query_shapes": _infer_supported_query_shapes(data_type, temporal),
             "sample_questions": _sample_questions_for_pack(pack.get("pack_id", ""), data_type, title)[:1],
             "free_detail": True,
@@ -1181,7 +1190,12 @@ def _build_v1_pack_payload(pack_id: str) -> dict | None:
 
     temporal = pack.get("temporal_coverage") or {}
     data_type = pack.get("data_type", "")
-    title = pack.get("source_name") or pack_id
+    title = (
+        pack.get("pack_name")
+        or pack.get("title")
+        or pack.get("source_name")
+        or pack_id
+    )
     pack_sources = []
     for source in pack.get("subsources") or []:
         source_temporal = source.get("temporal_coverage") or {}
@@ -1206,10 +1220,13 @@ def _build_v1_pack_payload(pack_id: str) -> dict | None:
         "generated_at": _utc_now_iso(),
         "pack": {
             "pack_id": pack_id,
+            "pack_name": title,
             "title": title,
             "description": pack.get("description", ""),
             "source_count": pack.get("source_count", 0),
             "source_ids": pack.get("source_ids", []),
+            "primary_source_name": pack.get("primary_source_name", ""),
+            "primary_source_url": pack.get("primary_source_url", ""),
             "data_types": [data_type] if data_type else [],
             "category": pack.get("category", "other"),
             "location": {
