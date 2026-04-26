@@ -5,6 +5,9 @@ Read order:
 - then [LOCAL_AND_HOSTED.md](LOCAL_AND_HOSTED.md) for runtime mode selection
 - use this doc for the higher-level app/runtime model
 
+This is the public high-level overview for self-host and runtime readers. It is
+not the private hosted product or deployment-planning doc.
+
 DaedalMap is a map-first geographic query engine.
 
 The current app combines:

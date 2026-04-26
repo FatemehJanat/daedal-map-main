@@ -396,6 +396,6 @@ That is the foundation the rest of the app builds on.
 
 ## Related Docs
 
+- [README.md](README.md)
 - [APP_OVERVIEW.md](APP_OVERVIEW.md)
 - [LOCAL_AND_HOSTED.md](LOCAL_AND_HOSTED.md)
-- [public reference.md](public%20reference.md)

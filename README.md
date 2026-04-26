@@ -201,7 +201,7 @@ The MCP surface exposes:
 - pack inspection (schema, coverage, metrics for a given pack)
 - dataset query (paid, returns structured data for an agent to reason over)
 
-For MCP setup details, see [docs/LOCAL_AND_HOSTED.md](docs/LOCAL_AND_HOSTED.md).
+For public runtime and self-host docs, start at [docs/README.md](docs/README.md).
 
 ## API First Steps
 
@@ -226,9 +226,10 @@ Important current behavior:
 
 - the free discovery endpoints are readable without payment
 - `POST /api/v1/query/dataset` is a paid lane
-- the current live agent/API discovery rollout includes `currency` and `earthquakes`
+- the current live agent/API discovery rollout includes `currency`,
+  `earthquakes`, `volcanoes`, `tsunamis`, `hurricanes`, `un_sdg`, and
+  `world_factbook`
 - local or self-host runs return `commercial_access_unavailable` for that paid lane unless a commercial verifier is explicitly enabled
-- the hosted x402 test client lives at [docs/X402_TEST_CLIENT.md](docs/X402_TEST_CLIENT.md)
 
 Current live pricing model for `POST /api/v1/query/dataset`:
 
@@ -268,7 +269,7 @@ Invoke-WebRequest -UseBasicParsing 'https://app.daedalmap.com/api/v1/packs/earth
 
 Current live expectation:
 
-- `GET /api/v1/catalog` returns two packs: `currency` and `earthquakes`
+- `GET /api/v1/catalog` returns the current published agent-facing pack list
 - `GET /api/v1/packs/currency` returns `200`
 - `GET /api/v1/packs/earthquakes` returns `200`
 
@@ -354,17 +355,12 @@ Important files and folders:
 
 ## Documentation In This Repo
 
-Current docs in `docs/`:
-- [docs/LOCAL_AND_HOSTED.md](docs/LOCAL_AND_HOSTED.md) - start here for runtime mode selection and self-host basics
-- [docs/APP_OVERVIEW.md](docs/APP_OVERVIEW.md) - current runtime/app overview
-- [docs/DATA_SCHEMAS.md](docs/DATA_SCHEMAS.md) - schema and `loc_id` conventions
-- [docs/public reference.md](docs/public%20reference.md) - source/licensing reference notes
+Public runtime docs live in [docs/README.md](docs/README.md).
 
-Suggested reading order:
-1. `README.md`
-2. `docs/LOCAL_AND_HOSTED.md`
-3. `docs/APP_OVERVIEW.md`
-4. `docs/DATA_SCHEMAS.md`
+Recommended starting points:
+- [docs/LOCAL_AND_HOSTED.md](docs/LOCAL_AND_HOSTED.md) - runtime mode selection and self-host basics
+- [docs/DATA_SCHEMAS.md](docs/DATA_SCHEMAS.md) - schema and `loc_id` conventions
+- [docs/APP_OVERVIEW.md](docs/APP_OVERVIEW.md) - higher-level runtime/app overview
 
 ## Local Development Modes
 
