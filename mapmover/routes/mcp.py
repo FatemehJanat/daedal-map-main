@@ -641,7 +641,7 @@ def _tool_definitions() -> list[dict[str, Any]]:
                     "metrics": {"type": "array", "items": {"type": "string"}, "description": "Metric ids to return. Use event_count for aggregate counts when supported."},
                     "filters": {"type": "object", "description": "Structured filters including time, region_ids, and compare clauses."},
                     "sort": {"anyOf": [{"type": "array"}, {"type": "object"}], "description": "Optional sort instructions for row-returning queries."},
-                    "limit": {"type": "integer", "minimum": 1, "description": "Maximum number of rows to return for the requested source or pack."},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 500, "description": "Maximum number of rows to return for the requested source or pack."},
                     "output": {"type": "object", "description": "Optional output controls such as response format hints."},
                 },
                 "additionalProperties": False,
@@ -1017,10 +1017,6 @@ async def _execute_paid_tool(request: Request, tool_name: str, arguments: dict[s
         payload = _build_named_dataset_payload(tool_name, arguments)
 
     response = await execute_query_dataset_payload(request, payload)
-    if response.status_code == 402 and response.headers.get("payment-required"):
-        response.headers["MCP-Protocol-Version"] = MCP_PROTOCOL_VERSION
-        response.headers["Cache-Control"] = "no-store"
-        return response
 
     raw_body = getattr(response, "body", b"") or b""
     parsed_body: Any
@@ -1028,6 +1024,13 @@ async def _execute_paid_tool(request: Request, tool_name: str, arguments: dict[s
         parsed_body = json.loads(raw_body.decode("utf-8"))
     except Exception:
         parsed_body = {"status_code": response.status_code, "body": raw_body.decode("utf-8", errors="replace")}
+
+    if response.status_code == 402:
+        # Return pricing challenge as a structured tool error so MCP clients can
+        # present the price to the user and handle the payment flow. Returning
+        # the raw HTTP 402 causes MCP clients to see an opaque connection error
+        # rather than actionable pricing information.
+        return _jsonrpc_response(_tool_result(parsed_body, is_error=True), rpc_request_id)
 
     if response.status_code == 200:
         return _jsonrpc_response(_tool_result(parsed_body), rpc_request_id)

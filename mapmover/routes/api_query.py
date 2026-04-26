@@ -5,10 +5,13 @@ import hashlib
 import math
 import json
 import os
+import re
 import time
 from datetime import date, datetime
 from typing import Any
 from urllib.parse import urljoin
+
+_REGION_ID_RE = re.compile(r"^[A-Z0-9][A-Z0-9_]{0,29}$")
 
 import requests
 from fastapi import APIRouter, Request
@@ -958,7 +961,19 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
     seen_region_ids: set[str] = set()
     for value in region_ids:
         normalized_value = str(value).strip().upper()
-        if normalized_value and normalized_value not in seen_region_ids:
+        if not normalized_value:
+            continue
+        if not _REGION_ID_RE.match(normalized_value):
+            return error_response(
+                request_id,
+                "invalid_region_id",
+                f"region_id '{value}' contains invalid characters.",
+                400,
+                retry_hint="Use valid loc_ids from the catalog such as G_JPN or C_US_06_001.",
+                pack_id=spec.pack_id,
+                source_id=source_id,
+            )
+        if normalized_value not in seen_region_ids:
             seen_region_ids.add(normalized_value)
             normalized_region_ids.append(normalized_value)
 
