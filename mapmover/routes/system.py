@@ -663,6 +663,8 @@ def _build_public_pack_list(api_ready_only: bool = False) -> list[dict]:
         pack_sources = pack_sources_map.get(pid, [s])
         pack_docs = _load_pack_source_docs(pack_sources)
         primary_doc = next((doc for doc in pack_docs if doc.get("source_id") == s.get("source_id")), pack_docs[0] if pack_docs else None)
+        primary_doc_source = (((primary_doc or {}).get("reference", {}) or {}).get("source", {}) or {})
+        primary_doc_meta = ((primary_doc or {}).get("metadata", {}) or {})
         display = _pack_display_meta(s, primary_doc)
         display_name = _best_source_text(
             pack_summary.get("pack_name"),
@@ -682,12 +684,13 @@ def _build_public_pack_list(api_ready_only: bool = False) -> list[dict]:
         )
         source_agencies = _collect_source_agencies(
             [src.get("primary_source_name") for src in pack_sources],
-            pack_summary.get("upstream_sources"),
-            display.get("upstream_sources"),
         )
         primary_source_name = _best_source_text(
             pack_summary.get("primary_source_name"),
+            primary_doc_source.get("source_name"),
+            primary_doc_meta.get("source_name"),
             display.get("primary_source_name"),
+            display.get("source_name"),
             _source_entity_label(primary_source_url, display_name),
         )
         if len(source_agencies) > 1:
@@ -754,6 +757,7 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
     pack_docs = _load_pack_source_docs(pack_sources)
     primary_doc = next((doc for doc in pack_docs if doc.get("source_id") == primary.get("source_id")), pack_docs[0] if pack_docs else None)
     primary_meta = ((primary_doc or {}).get("metadata", {}) or {})
+    primary_doc_source = (((primary_doc or {}).get("reference", {}) or {}).get("source", {}) or {})
     display = _pack_display_meta(primary, primary_doc)
     display_name = _best_source_text(
         pack_summary.get("pack_name"),
@@ -871,12 +875,13 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
     )
     source_agencies = _collect_source_agencies(
         [src.get("primary_source_name") for src in subsources],
-        pack_summary.get("upstream_sources"),
-        display.get("upstream_sources"),
     )
     primary_source_name = _best_source_text(
         pack_summary.get("primary_source_name"),
+        primary_doc_source.get("source_name"),
+        primary_meta.get("source_name"),
         display.get("primary_source_name"),
+        display.get("source_name"),
         _source_entity_label(primary_source_url, display_name),
     )
     if len(source_agencies) > 1:
