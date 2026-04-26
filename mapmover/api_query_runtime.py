@@ -5,7 +5,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-from .data_loading import get_source_path, load_full_catalog, load_source_metadata
+from .data_loading import get_source_path, load_catalog, load_source_metadata
 from .duckdb_helpers import parquet_available, parquet_columns, path_to_uri, quote_ident, run_df
 from .paths import DATA_ROOT
 
@@ -300,7 +300,7 @@ def get_pack_source_ids(pack_id: str) -> list[str]:
     normalized_pack_id = str(pack_id or "").strip()
     if not normalized_pack_id:
         return []
-    catalog = load_full_catalog()
+    catalog = load_catalog()
     source_ids = []
     for source in catalog.get("sources", []):
         if str(source.get("pack_id") or "").strip() == normalized_pack_id:

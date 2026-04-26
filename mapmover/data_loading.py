@@ -39,7 +39,7 @@ from pathlib import Path
 from copy import deepcopy
 
 from .pack_state import build_active_catalog
-from .paths import CATALOG_PATH, COUNTRIES_DIR, DATA_ROOT, GEOMETRY_DIR
+from .paths import CATALOG_PATH, COUNTRIES_DIR, DATA_ROOT, GEOMETRY_DIR, WIP_CATALOG_PATH
 from .duckdb_helpers import select_rows
 from .runtime_config import get_runtime_config
 
@@ -58,6 +58,9 @@ _catalog_cache_time = 0.0
 _CATALOG_TTL_SECONDS = 300  # 5 minutes
 _catalog_missing_time = 0.0
 _CATALOG_MISS_TTL_SECONDS = 15
+_full_catalog_cache = None
+_full_catalog_cache_time = 0.0
+_full_catalog_missing_time = 0.0
 
 _api_catalog_cache = None
 _api_catalog_cache_time = 0.0
@@ -85,6 +88,11 @@ def get_data_folder():
 def get_catalog_path():
     """Get the catalog.json path (resolved via paths.py)."""
     return CATALOG_PATH
+
+
+def get_wip_catalog_path():
+    """Get the wip_catalog.json path (resolved via paths.py)."""
+    return WIP_CATALOG_PATH
 
 
 def _fetch_json_from_s3(relative_path: str) -> dict:
@@ -241,15 +249,46 @@ def load_api_pack_detail(pack_id: str) -> dict | None:
 
 
 def load_full_catalog():
-    """Load the full catalog without active-pack filtering."""
-    global _catalog_cache, _catalog_cache_time
+    """Load the WIP/full catalog without active-pack filtering."""
+    global _full_catalog_cache, _full_catalog_cache_time, _full_catalog_missing_time
 
     now = time.time()
-    if _catalog_cache is not None and (now - _catalog_cache_time) < _CATALOG_TTL_SECONDS:
-        return _catalog_cache
+    if _full_catalog_cache is not None and (now - _full_catalog_cache_time) < _CATALOG_TTL_SECONDS:
+        return _full_catalog_cache
 
-    _ = load_catalog()
-    return _catalog_cache or {"sources": [], "total_sources": 0}
+    runtime_mode = str(get_runtime_config().get("runtime_mode", "local")).strip().lower()
+
+    if runtime_mode == "cloud":
+        if (now - _full_catalog_missing_time) < _CATALOG_MISS_TTL_SECONDS and _full_catalog_cache is None:
+            fallback = load_catalog()
+            return fallback or {"sources": [], "total_sources": 0}
+        try:
+            raw_catalog = _fetch_json_from_s3("wip_catalog.json")
+            _full_catalog_cache = raw_catalog
+            _full_catalog_cache_time = now
+            logger.debug(f"Loaded wip_catalog.json from S3 with {len(raw_catalog.get('sources', []))} sources")
+            return raw_catalog
+        except Exception as e:
+            _full_catalog_missing_time = now
+            logger.warning(f"wip_catalog.json S3 fetch failed, falling back to catalog.json: {e}")
+            fallback = load_catalog()
+            return fallback or {"sources": [], "total_sources": 0}
+
+    catalog_path = get_wip_catalog_path()
+    if catalog_path and catalog_path.exists():
+        try:
+            with open(catalog_path, "r", encoding="utf-8") as f:
+                raw_catalog = json.load(f)
+            _full_catalog_cache = raw_catalog
+            _full_catalog_cache_time = now
+            logger.debug(f"Loaded wip_catalog.json with {len(raw_catalog.get('sources', []))} sources")
+            return raw_catalog
+        except Exception as e:
+            logger.error(f"Error loading wip_catalog.json: {e}")
+
+    _full_catalog_missing_time = now
+    fallback = load_catalog()
+    return fallback or {"sources": [], "total_sources": 0}
 
 
 def _coerce_int(value) -> int:
@@ -599,6 +638,20 @@ def clear_api_discovery_cache():
     _api_pack_cache_time = {}
     _api_pack_missing_time = {}
     logger.info("API discovery cache cleared")
+
+
+def clear_catalog_cache():
+    """Clear the cached published and WIP catalog payloads."""
+    global _catalog_cache, _catalog_cache_time, _catalog_missing_time
+    global _full_catalog_cache, _full_catalog_cache_time, _full_catalog_missing_time
+
+    _catalog_cache = None
+    _catalog_cache_time = 0.0
+    _catalog_missing_time = 0.0
+    _full_catalog_cache = None
+    _full_catalog_cache_time = 0.0
+    _full_catalog_missing_time = 0.0
+    logger.info("Catalog caches cleared")
 
 
 def get_geometry_folder():

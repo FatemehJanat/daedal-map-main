@@ -268,6 +268,50 @@ def _source_entity_label(source_url: str | None, fallback: str = "") -> str:
     return str(fallback or "").strip()
 
 
+def _normalized_upstream_sources(*values) -> list[dict]:
+    normalized: list[dict] = []
+    seen: set[str] = set()
+    for value in values:
+        if not isinstance(value, list):
+            continue
+        for entry in value:
+            if not isinstance(entry, dict):
+                continue
+            agency = str(entry.get("agency") or "").strip()
+            source_url = str(entry.get("source_url") or "").strip()
+            agency_upstream_url = str(entry.get("agency_upstream_url") or "").strip()
+            license_text = str(entry.get("license") or "").strip()
+            notes = str(entry.get("notes") or "").strip()
+            source_id = str(entry.get("source_id") or "").strip()
+            if not any([agency, source_url, agency_upstream_url, license_text, notes, source_id]):
+                continue
+            key = json.dumps(
+                {
+                    "agency": agency,
+                    "source_url": source_url,
+                    "agency_upstream_url": agency_upstream_url,
+                    "license": license_text,
+                    "notes": notes,
+                    "source_id": source_id,
+                },
+                sort_keys=True,
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append({
+                "source_id": source_id,
+                "agency": agency,
+                "agency_short": str(entry.get("agency_short") or "").strip(),
+                "source_url": source_url,
+                "agency_upstream_url": agency_upstream_url,
+                "license": license_text,
+                "rows_contributed": entry.get("rows_contributed"),
+                "notes": notes,
+            })
+    return normalized
+
+
 def _load_pack_source_docs(pack_sources: list[dict]) -> list[dict]:
     from mapmover.data_loading import load_source_metadata, load_source_reference
 
@@ -319,6 +363,10 @@ def _pack_display_meta(primary: dict, primary_doc: dict | None) -> dict:
     pack_id = str(primary.get("pack_id") or primary.get("source_id") or "").strip()
     metadata = (primary_doc or {}).get("metadata", {}) or {}
     ref_source = ((primary_doc or {}).get("reference", {}) or {}).get("source", {}) or {}
+    ref_upstream = _normalized_upstream_sources(((primary_doc or {}).get("reference", {}) or {}).get("upstream_sources"))
+    meta_upstream = _normalized_upstream_sources(metadata.get("upstream_sources"))
+    upstream_sources = ref_upstream or meta_upstream
+    primary_upstream = upstream_sources[0] if upstream_sources else {}
     pack_ref = _load_pack_reference(pack_id)
     if pack_ref:
         return {
@@ -335,10 +383,26 @@ def _pack_display_meta(primary: dict, primary_doc: dict | None) -> dict:
                 primary.get("description"),
             ),
             "source_url": _best_source_text(
+                pack_ref.get("primary_source_url"),
                 pack_ref.get("source_url"),
+                metadata.get("primary_source_url"),
+                primary_upstream.get("agency_upstream_url"),
+                primary_upstream.get("source_url"),
                 ref_source.get("source_url"),
                 metadata.get("source_url"),
                 primary.get("source_url"),
+            ),
+            "primary_source_name": _best_source_text(
+                pack_ref.get("primary_source_name"),
+                metadata.get("primary_source_name"),
+                primary_upstream.get("agency"),
+            ),
+            "primary_source_license": _best_source_text(
+                metadata.get("primary_source_license"),
+                primary_upstream.get("license"),
+                ref_source.get("license"),
+                metadata.get("license"),
+                primary.get("license"),
             ),
             "license": _best_source_text(
                 pack_ref.get("license"),
@@ -346,6 +410,7 @@ def _pack_display_meta(primary: dict, primary_doc: dict | None) -> dict:
                 metadata.get("license"),
                 primary.get("license"),
             ),
+            "upstream_sources": upstream_sources,
         }
     source_count = int(primary.get("source_count") or 0)
     fallback_name = _default_pack_title(pack_id) if source_count > 1 else _best_source_text(
@@ -362,15 +427,30 @@ def _pack_display_meta(primary: dict, primary_doc: dict | None) -> dict:
             primary.get("description"),
         ),
         "source_url": _best_source_text(
+            metadata.get("primary_source_url"),
+            primary_upstream.get("agency_upstream_url"),
+            primary_upstream.get("source_url"),
             ref_source.get("source_url"),
             metadata.get("source_url"),
             primary.get("source_url"),
+        ),
+        "primary_source_name": _best_source_text(
+            metadata.get("primary_source_name"),
+            primary_upstream.get("agency"),
+        ),
+        "primary_source_license": _best_source_text(
+            metadata.get("primary_source_license"),
+            primary_upstream.get("license"),
+            ref_source.get("license"),
+            metadata.get("license"),
+            primary.get("license"),
         ),
         "license": _best_source_text(
             ref_source.get("license"),
             metadata.get("license"),
             primary.get("license"),
         ),
+        "upstream_sources": upstream_sources,
     }
 
 
@@ -513,9 +593,9 @@ def _build_public_pack_list(api_ready_only: bool = False) -> list[dict]:
     if isinstance(cached_value, list) and (time.time() - cached_at) < _PUBLIC_PACK_CATALOG_TTL_SECONDS:
         return cached_value
 
-    from mapmover.data_loading import load_full_catalog
+    from mapmover.data_loading import load_catalog
 
-    all_sources = load_full_catalog().get("sources", [])
+    all_sources = load_catalog().get("sources", [])
     published = [
         s for s in all_sources
         if s.get("pack_id") and (not api_ready_only or bool(s.get("api_ready", False)))
@@ -547,8 +627,9 @@ def _build_public_pack_list(api_ready_only: bool = False) -> list[dict]:
             "description": display.get("description", ""),
             "source_url": primary_source_url,
             "license": display.get("license", ""),
-            "primary_source_name": _source_entity_label(primary_source_url, display.get("source_name") or s.get("source_name", "")),
+            "primary_source_name": display.get("primary_source_name") or _source_entity_label(primary_source_url, display.get("source_name") or s.get("source_name", "")),
             "primary_source_url": primary_source_url,
+            "upstream_sources": display.get("upstream_sources") or [],
             "category": s.get("category", "other"),
             "data_type": s.get("data_type", ""),
             "scope": s.get("scope", ""),
@@ -572,9 +653,9 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
         cached_value = cached_entry.get("value")
         return cached_value if isinstance(cached_value, dict) else None
 
-    from mapmover.data_loading import load_full_catalog
+    from mapmover.data_loading import load_catalog
 
-    all_sources = load_full_catalog().get("sources", [])
+    all_sources = load_catalog().get("sources", [])
     pack_sources = [
         s for s in all_sources
         if s.get("pack_id") == pack_id and (not api_ready_only or bool(s.get("api_ready", False)))
@@ -611,6 +692,8 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
         sref = (doc.get("reference", {}) or {})
         smeta = (doc.get("metadata", {}) or {})
         sref_source = sref.get("source", {}) or {}
+        supstream = _normalized_upstream_sources(smeta.get("upstream_sources"), sref.get("upstream_sources"))
+        primary_upstream = supstream[0] if supstream else {}
         smetrics = sref.get("metrics", {}) or {}
         if not smetrics:
             for key, value in (smeta.get("metrics", {}) or {}).items():
@@ -632,6 +715,9 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
                 s.get("description", ""),
             ),
             "source_url": _best_source_text(
+                smeta.get("primary_source_url"),
+                primary_upstream.get("agency_upstream_url"),
+                primary_upstream.get("source_url"),
                 sref_source.get("source_url"),
                 smeta.get("source_url"),
                 s.get("source_url", ""),
@@ -641,6 +727,26 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
                 smeta.get("license"),
                 s.get("license", ""),
             ),
+            "primary_source_name": _best_source_text(
+                smeta.get("primary_source_name"),
+                primary_upstream.get("agency"),
+            ),
+            "primary_source_url": _best_source_text(
+                smeta.get("primary_source_url"),
+                primary_upstream.get("agency_upstream_url"),
+                primary_upstream.get("source_url"),
+                sref_source.get("source_url"),
+                smeta.get("source_url"),
+                s.get("source_url", ""),
+            ),
+            "primary_source_license": _best_source_text(
+                smeta.get("primary_source_license"),
+                primary_upstream.get("license"),
+                sref_source.get("license"),
+                smeta.get("license"),
+                s.get("license", ""),
+            ),
+            "upstream_sources": supstream,
             "path": s.get("path", ""),
             "metric_count": len(smetrics),
             "metrics": smetrics,
@@ -661,8 +767,9 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
         "source_name": display.get("source_name") or primary.get("source_name", ""),
         "description": display.get("description", ""),
         "source_url": display.get("source_url", ""),
-        "primary_source_name": _source_entity_label(display.get("source_url", ""), primary.get("source_name", "")),
+        "primary_source_name": display.get("primary_source_name") or _source_entity_label(display.get("source_url", ""), primary.get("source_name", "")),
         "primary_source_url": display.get("source_url", ""),
+        "upstream_sources": display.get("upstream_sources") or [],
         "license": display.get("license", ""),
         "category": _best_source_text(primary_meta.get("category"), primary.get("category", "")),
         "data_type": _best_source_text(primary_meta.get("data_type"), primary.get("data_type", "")),
@@ -1310,10 +1417,10 @@ async def get_catalog_sources(req: Request):
     data_type, scope, topic_tags.  Full catalog metadata is not included to
     keep the response small.
     """
-    from mapmover.data_loading import load_full_catalog
+    from mapmover.data_loading import load_catalog
 
     entitled = _get_entitled_packs(req)
-    all_sources = load_full_catalog().get("sources", [])
+    all_sources = load_catalog().get("sources", [])
 
     SUMMARY_KEYS = {"source_id", "pack_id", "source_name", "category", "data_type", "scope", "topic_tags"}
 

@@ -54,6 +54,7 @@ COUNTRIES_DIR = DATA_ROOT / "countries"
 GLOBAL_DIR = DATA_ROOT / "global"
 GEOMETRY_DIR = DATA_ROOT / "geometry"
 CATALOG_PATH = DATA_ROOT / "catalog.json"
+WIP_CATALOG_PATH = DATA_ROOT / "wip_catalog.json"
 INDEX_PATH = DATA_ROOT / "index.json"
 
 # App/network configuration
@@ -92,6 +93,7 @@ def validate_paths(verbose: bool = False) -> dict:
         "PACKS_ROOT": PACKS_ROOT,
         "DATA_ROOT": DATA_ROOT,
         "CATALOG_PATH": CATALOG_PATH,
+        "WIP_CATALOG_PATH": WIP_CATALOG_PATH,
         "INDEX_PATH": INDEX_PATH,
         "GEOMETRY_DIR": GEOMETRY_DIR,
     }
