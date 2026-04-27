@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import math
 import json
@@ -275,11 +276,96 @@ def _post_commercial_access(path: str, payload: dict[str, Any]) -> tuple[int, di
 def _commercial_access_response(
     request_id: str | None,
     verifier_payload: dict[str, Any] | None,
+    *,
+    pack_id: str | None = None,
+    source_id: str | None = None,
 ) -> Response:
+    def _discovery_payload(pricing: dict[str, Any] | None = None) -> dict[str, Any]:
+        site_url = str(SITE_URL or "https://daedalmap.com").rstrip("/")
+        payload: dict[str, Any] = {
+            "docs_url": f"{site_url}/docs/for-agents",
+            "examples_url": f"{site_url}/docs/agent-examples",
+            "catalog_url": "https://app.daedalmap.com/api/v1/catalog",
+            "guide_url": "https://app.daedalmap.com/api/v1/guide",
+            "first_steps": [
+                "GET /api/v1/catalog",
+                f"GET /api/v1/packs/{pack_id or 'earthquakes'}",
+                "Retry this same paid call only after inspecting the free pack detail.",
+            ],
+        }
+        if pack_id:
+            payload["pack_id"] = pack_id
+            payload["pack_url"] = f"https://app.daedalmap.com/api/v1/packs/{pack_id}"
+            payload["public_pack_url"] = f"{site_url}/packs/{pack_id}"
+        if source_id:
+            payload["source_id"] = source_id
+        if isinstance(pricing, dict):
+            suggestions = pricing.get("suggestions") or []
+            if isinstance(suggestions, list) and suggestions:
+                payload["narrowing_suggestions"] = [str(item) for item in suggestions[:5] if str(item).strip()]
+        return payload
+
+    def _pricing_payload(pricing: dict[str, Any] | None = None) -> dict[str, Any]:
+        pricing = pricing if isinstance(pricing, dict) else {}
+        return {
+            "message": "Small queries stay cheap; broad scans cost more or need narrower filters.",
+            "price_display": pricing.get("price_display"),
+            "scope_class": pricing.get("scope_class"),
+            "soft_cap_usd": pricing.get("soft_cap_usd"),
+            "suggestions": pricing.get("suggestions") or [],
+        }
+
+    def _augment_payment_required_header(
+        header_value: str,
+        *,
+        pricing: dict[str, Any] | None = None,
+    ) -> str:
+        raw = str(header_value or "").strip()
+        if not raw:
+            return raw
+        try:
+            decoded = base64.b64decode(raw).decode("utf-8")
+            challenge_payload = json.loads(decoded)
+        except Exception:
+            return raw
+        if not isinstance(challenge_payload, dict):
+            return raw
+
+        resource = challenge_payload.get("resource")
+        if isinstance(resource, dict):
+            if pack_id and source_id:
+                resource["description"] = (
+                    f"DaedalMap paid dataset query for pack '{pack_id}' and source '{source_id}'. "
+                    "Use the free catalog and pack detail endpoints first, then retry this call with payment."
+                )
+            elif pack_id:
+                resource["description"] = (
+                    f"DaedalMap paid dataset query for pack '{pack_id}'. "
+                    "Use the free catalog and pack detail endpoints first, then retry this call with payment."
+                )
+
+        extensions = challenge_payload.get("extensions")
+        if not isinstance(extensions, dict):
+            extensions = {}
+            challenge_payload["extensions"] = extensions
+        extensions["daedalmap"] = {
+            "discovery": _discovery_payload(pricing),
+            "pricing": _pricing_payload(pricing),
+        }
+        try:
+            encoded = base64.b64encode(
+                json.dumps(challenge_payload, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+            ).decode("ascii")
+            return encoded
+        except Exception:
+            return raw
+
     payload = verifier_payload or {}
     challenge = payload.get("challenge") if isinstance(payload, dict) else None
     headers = {}
     body = None
+    context = payload.get("context") if isinstance(payload, dict) else None
+    pricing = context.get("pricing") if isinstance(context, dict) else None
     if isinstance(challenge, dict):
         raw_headers = challenge.get("headers") or {}
         if isinstance(raw_headers, dict):
@@ -289,35 +375,40 @@ def _commercial_access_response(
                 if str(key).strip() and value is not None
             }
         body = challenge.get("body")
+    payment_required_header = headers.get("payment-required") or headers.get("Payment-Required")
+    if payment_required_header:
+        enriched = _augment_payment_required_header(payment_required_header, pricing=pricing)
+        headers["payment-required"] = enriched
+        if "Payment-Required" in headers:
+            headers["Payment-Required"] = enriched
 
     status_code = int(payload.get("http_status") or 402)
     if isinstance(body, dict):
         response_body = dict(body)
-        context = payload.get("context") if isinstance(payload, dict) else None
-        pricing = context.get("pricing") if isinstance(context, dict) else None
         if isinstance(pricing, dict):
             response_body.setdefault(
                 "daedalmap_pricing",
-                {
-                    "message": "Small queries stay cheap; very broad scans cost more or need narrower filters.",
-                    "scope_class": pricing.get("scope_class"),
-                    "price_display": pricing.get("price_display"),
-                    "soft_cap_usd": pricing.get("soft_cap_usd"),
-                    "suggestions": pricing.get("suggestions") or [],
-                },
+                _pricing_payload(pricing),
             )
+        response_body.setdefault("daedalmap_discovery", _discovery_payload(pricing))
         response = JSONResponse(response_body, status_code=status_code)
     elif isinstance(body, list):
         response = JSONResponse(body, status_code=status_code)
     elif isinstance(body, str) and body.strip():
         response = Response(content=body, status_code=status_code, media_type="application/json")
     else:
-        response = _error_response(
-            request_id,
-            str(payload.get("code") or "commercial_access_required"),
-            str(payload.get("message") or "Commercial access is required for this capability."),
-            status_code,
-        )
+        fallback_body = {
+            "request_id": request_id,
+            "payment_required": True,
+            "error": {
+                "code": str(payload.get("code") or "commercial_access_required"),
+                "message": str(payload.get("message") or "Commercial access is required for this capability."),
+                "retry_hint": "Use the free catalog and pack detail endpoints first, then retry this exact paid call with payment.",
+            },
+            "daedalmap_discovery": _discovery_payload(pricing),
+            "daedalmap_pricing": _pricing_payload(pricing),
+        }
+        response = JSONResponse(fallback_body, status_code=status_code)
     for key, value in headers.items():
         response.headers[key] = value
     return response
