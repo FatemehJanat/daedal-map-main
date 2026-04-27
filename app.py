@@ -74,6 +74,10 @@ def _parse_env_int(name: str, default: int) -> int:
         return default
 
 
+def _get_402index_verify_token() -> str:
+    return str(os.getenv("INDEX402_VERIFY_TOKEN", "")).strip()
+
+
 def _classify_route_surface(path: str) -> str:
     path = str(path or "").strip()
     if path == "/api/v1/query/dataset":
@@ -428,6 +432,14 @@ async def security_txt():
 @app.get("/.well-known/security.txt", include_in_schema=False)
 async def well_known_security_txt():
     return FileResponse(SECURITY_TXT_PATH, media_type="text/plain; charset=utf-8")
+
+
+@app.get("/.well-known/402index-verify.txt", include_in_schema=False)
+async def well_known_402index_verify():
+    token = _get_402index_verify_token()
+    if not token:
+        return PlainTextResponse("Not found", status_code=404)
+    return PlainTextResponse(token, media_type="text/plain; charset=utf-8")
 
 
 def _site_url() -> str:
