@@ -303,7 +303,7 @@ function renderGeometryOrder(response) {
   if (!response?.geojson?.features) return;
 
   const sourceId = response.source_id || 'geometry_zcta';
-  const geometryType = response.geographic_level || response.overlay_type || 'zcta';
+  const geometryType = response.overlay_type || response.geographic_level || 'zcta';
 
   // Render geometry (backend handles dedup via SessionCache)
   OverlayController.renderGeometryData(sourceId, response.geojson, geometryType, {});

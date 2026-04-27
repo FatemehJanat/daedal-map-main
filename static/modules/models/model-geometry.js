@@ -199,10 +199,19 @@ export const GeometryModel = {
     const name = props.name || props.NAME || props.name_local || props.feature_id || props.BLDGIDENT || 'Unknown';
     const code = props.code || null;
 
+    let extraRows = '';
+    if (geometryType === 'building') {
+      const buildingType = props.TYPE || props.BLDG_CM_TYPE || null;
+      const height = props.BLDG_HEIGHT || null;
+      if (buildingType) extraRows += `<div class="geometry-hover-code">${buildingType}</div>`;
+      if (height) extraRows += `<div class="geometry-hover-code">${height} ft</div>`;
+    }
+
     return `
       <div class="geometry-hover" style="border-left: 3px solid ${colors.stroke}">
         <div class="geometry-hover-title">${name}</div>
         ${code ? `<div class="geometry-hover-code">${code}</div>` : ''}
+        ${extraRows}
         <div class="geometry-hover-type">${typeName}</div>
         <div class="geometry-hover-hint">Click for details</div>
       </div>
