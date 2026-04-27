@@ -1521,7 +1521,12 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
         payment_rail = str((verifier_payload or {}).get("rail") or "").strip() or None
         amount_charged_usdc_base_units = _pricing_amount_usdc_base_units(verifier_payload)
         if verifier_status_name == "challenge":
-            response = _commercial_access_response(request_id, verifier_payload)
+            response = _commercial_access_response(
+                request_id,
+                verifier_payload,
+                pack_id=spec.pack_id,
+                source_id=source_id,
+            )
             req.state.analytics_error_code = str((verifier_payload or {}).get("code") or "commercial_access_required")
             payload_size_bytes = len(getattr(response, "body", b"") or b"")
             log_api_query_event(
