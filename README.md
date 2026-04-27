@@ -1,30 +1,34 @@
 # DaedalMap
 
-DaedalMap is a map-first geographic query engine. It lets people ask place-based questions in natural language and get usable map results across disasters, demographics, economics, climate, and related public data.
+DaedalMap is a map-first geographic query engine. This repository is the open app/runtime for developers who want to run it locally, self-host it, point it at their own data, or extend it with compatible geographic datasets.
 
 Public surfaces:
 - App: `https://app.daedalmap.com`
 - Website/docs: `https://daedalmap.com`
 
-This repository is the open app/runtime. It is intended to be understandable and usable on its own: you can run it locally, point it at local or hosted data, and extend it with compatible datasets and pack-style workflows.
-
-If you are using the public GitHub repo as a self-host/local runtime, the practical setup contract right now is:
+If you are using this public GitHub repo as a self-host/local runtime, the practical setup contract right now is:
 - a local data location (`DATA_ROOT`, unless you use the default app-data path)
 - an LLM API key (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`)
 
 Supabase and hosted account wiring are optional for self-host use.
 
-## What It Does
+## What This Repo Is For
 
-DaedalMap is built around three ideas:
-- ask in plain language instead of assembling GIS workflows first
-- keep the map as the primary interface, not an afterthought
-- separate runtime delivery from maintained data-pack delivery
+Use this repo if you want to:
+- run the DaedalMap runtime on your own machine or server
+- point the runtime at local data or a cloud-backed data plane you control
+- inspect or extend the open runtime behavior
+- build compatible geographic datasets and pack-style workflows around the engine
 
 Typical use cases:
 - show earthquakes, floods, wildfires, storms, volcanoes, or tsunamis for a place and time window
 - compare population, economic, and disaster context in the same workflow
-- move between hosted demo use, account-linked runtime access, and local/self-hosted operation without changing the basic mental model
+- move between local development, self-hosted runtime operation, and hosted-style runtime behavior without changing the basic mental model
+
+DaedalMap itself is built around three ideas:
+- ask in plain language instead of assembling GIS workflows first
+- keep the map as the primary interface, not an afterthought
+- separate runtime delivery from maintained data-pack delivery
 
 ## Data Coverage
 
@@ -190,93 +194,23 @@ python app.py
 Open:
 - `http://localhost:7000`
 
-## Agent and MCP Integration
+## API Discovery
 
-DaedalMap exposes a discovery and query API intended for agent and LLM use. The same endpoints are accessible via MCP for direct integration with Claude and other MCP-compatible clients.
+The runtime exposes discovery and query endpoints on your local instance.
 
-Discovery endpoints are free. Data query endpoints use per-call micropayment via x402.
-
-The MCP surface exposes:
-- catalog discovery (list available packs)
-- pack inspection (schema, coverage, metrics for a given pack)
-- dataset query (paid, returns structured data for an agent to reason over)
-
-For public runtime and self-host docs, start at [docs/README.md](docs/README.md).
-
-## API First Steps
-
-If you are approaching this repo like a new developer, the current API entry path is:
-
-1. read the free guide at `GET /api/v1/guide`
-2. list packs at `GET /api/v1/catalog`
-3. inspect one pack at `GET /api/v1/packs/{pack_id}`
-4. make a paid data call with `POST /api/v1/query/dataset`
-
-The free exploration surface is:
+Discovery (no auth, no payment):
 
 - `GET /api/v1/guide`
 - `GET /api/v1/catalog`
 - `GET /api/v1/packs/{pack_id}`
 
-The first paid execution surface is:
+Execution:
 
 - `POST /api/v1/query/dataset`
 
-Important current behavior:
+Self-host instances return `commercial_access_unavailable` for the paid execution lane unless a commercial verifier is configured. Discovery endpoints work without additional setup.
 
-- the free discovery endpoints are readable without payment
-- `POST /api/v1/query/dataset` is a paid lane
-- the current live agent/API discovery rollout includes `currency`,
-  `earthquakes`, `volcanoes`, `tsunamis`, `hurricanes`, `un_sdg`, and
-  `world_factbook`
-- local or self-host runs return `commercial_access_unavailable` for that paid lane unless a commercial verifier is explicitly enabled
-
-Current live pricing model for `POST /api/v1/query/dataset`:
-
-- base price: `$0.01`
-- rows included in base price: `100`
-- per-row fee above 100 rows: `$0.0001`
-- scope-aware surcharge for broad scans
-- soft ordinary target: most live paid calls should stay around `$1.00` or less
-- no universal hard price cap; live API work still has a hard scope ceiling
-
-How to think about it:
-
-- the free discovery endpoints stay free
-- small queries stay cheap; very broad scans cost more or need narrower filters
-- the paid lane computes price from both requested rows and query scope
-- query scope includes time range, geography, sorting, aggregation, and source shape
-- the x402 `payment-required` challenge confirms the computed amount before you pay
-- requests that are too broad for live API access return narrowing suggestions instead of a payment challenge
-- use a small `limit`, time range, and region filter for the first paid test so you can confirm the flow cheaply
-
-Worked examples:
-
-- `limit = 30` -> `$0.01`
-- `limit = 100` -> `$0.01`
-- `limit = 365` -> `$0.0365`
-- `limit = 500` -> `$0.05`
-- a broad historical scan may cost more than the row-only examples above
-
-Quick live exploration examples:
-
-```powershell
-Invoke-WebRequest -UseBasicParsing 'https://app.daedalmap.com/api/v1/guide'
-Invoke-WebRequest -UseBasicParsing 'https://app.daedalmap.com/api/v1/catalog'
-Invoke-WebRequest -UseBasicParsing 'https://app.daedalmap.com/api/v1/packs/currency'
-Invoke-WebRequest -UseBasicParsing 'https://app.daedalmap.com/api/v1/packs/earthquakes'
-```
-
-Current live expectation:
-
-- `GET /api/v1/catalog` returns the current published agent-facing pack list
-- `GET /api/v1/packs/currency` returns `200`
-- `GET /api/v1/packs/earthquakes` returns `200`
-
-Current live pair:
-
-- `currency`: normalized FX metrics with pack-level routing by `time.granularity`
-- `earthquakes`: event-source pack with hierarchy-aware `region_ids` and backend-aggregated `event_count`
+For managed data access via the hosted API or MCP, see [daedalmap.com/docs/for-agents](https://daedalmap.com/docs/for-agents).
 
 ## Data Resolution
 
@@ -389,4 +323,6 @@ MIT
 
 ---
 
-Agent/API access: https://daedalmap.com/llms.txt
+If an agent or tool was pointed at this README for programmable access, use:
+- Agent docs: https://daedalmap.com/docs/for-agents
+- Machine-readable entry: https://daedalmap.com/llms.txt
