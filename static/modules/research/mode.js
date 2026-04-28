@@ -22,6 +22,7 @@ export class ResearchModeToggle {
     this.controls = {};
     this.loadedCorpusId = '';
     this.hasActiveArtifacts = false;
+    this.hasStaleArtifacts = false;
   }
 
   init() {
@@ -107,6 +108,7 @@ export class ResearchModeToggle {
       && this.loadedCorpusId
       && selectedValue === this.loadedCorpusId
       && this.hasActiveArtifacts
+      && !this.hasStaleArtifacts
     );
     this.selectedCorpusId = selectedValue;
     const title = document.getElementById('sidebarModeTitle');
@@ -178,9 +180,10 @@ export class ResearchModeToggle {
     }
   }
 
-  setActiveCorpusState({ loadedCorpusId = '', hasActiveArtifacts = false } = {}) {
+  setActiveCorpusState({ loadedCorpusId = '', hasActiveArtifacts = false, hasStaleArtifacts = false } = {}) {
     this.loadedCorpusId = loadedCorpusId || '';
     this.hasActiveArtifacts = Boolean(hasActiveArtifacts);
+    this.hasStaleArtifacts = Boolean(hasStaleArtifacts);
     this.updateActive();
   }
 

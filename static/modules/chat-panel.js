@@ -490,13 +490,16 @@ export const ChatManager = {
       try {
         await this.refreshResearchCorpusOptions();
         const manifest = await this.refreshResearchManifest();
-        if ((manifest?.artifact_count || 0) > 0) {
+        if ((manifest?.artifact_count || 0) > 0 && !manifest?.stale_artifacts) {
           this.addMessage(`Research mode ready. Active corpus: ${manifest.artifact_count} loaded artifact${manifest.artifact_count === 1 ? '' : 's'}.`, 'assistant', { mode: 'research' });
           return;
         }
         if (manifest?.saved_corpus) {
           const saved = manifest.saved_corpus;
-          this.addMessage(`Research workspace ready. "${saved.name}" is selected. Click Load Data to activate it for this session.`, 'assistant', { mode: 'research' });
+          const message = manifest?.stale_artifacts
+            ? `Research workspace found an out-of-date local session for "${saved.name}". Click Load Data to refresh it.`
+            : `Research workspace ready. "${saved.name}" is selected. Click Load Data to activate it for this session.`;
+          this.addMessage(message, 'assistant', { mode: 'research' });
           return;
         }
         this.addMessage(this.getResearchEmptyStateMessage(), 'assistant', { mode: 'research' });
@@ -749,7 +752,7 @@ export const ChatManager = {
     const manifest = this.latestResearchManifest;
     const saved = manifest?.saved_corpus || null;
     const artifactCount = Number(manifest?.artifact_count || 0);
-    return Boolean(selectedId && saved?.id && saved.id === selectedId && artifactCount > 0);
+    return Boolean(selectedId && saved?.id && saved.id === selectedId && artifactCount > 0 && !manifest?.stale_artifacts);
   },
 
   getResearchEmptyStateMessage() {
@@ -770,7 +773,8 @@ export const ChatManager = {
     const artifactCount = Number(manifest?.artifact_count || 0);
     researchModeToggle.setActiveCorpusState({
       loadedCorpusId: saved?.id || '',
-      hasActiveArtifacts: artifactCount > 0
+      hasActiveArtifacts: artifactCount > 0,
+      hasStaleArtifacts: Boolean(manifest?.stale_artifacts)
     });
     const browserStatus = selected?.browserStatus || 'missing';
     const browserSummary = selected?.browserSummary || null;
@@ -788,6 +792,10 @@ export const ChatManager = {
       const sizeText = saved.estimated_file_size_mb_total
         ? ` Estimated size ${saved.estimated_file_size_mb_total.toFixed(1)} MB.`
         : '';
+      if (manifest?.stale_artifacts) {
+        researchModeToggle.setCorpusStatus(`"${saved.name}" is selected, but the current Research session is out of date. Click Load Data to refresh it.${sizeText}`);
+        return;
+      }
       const browserText = browserStatus === 'stale'
         ? ' Browser copy on this device is out of date. Refresh it from the account page if needed.'
         : (browserStatus === 'complete' ? browserSizeText : '');
@@ -839,7 +847,7 @@ export const ChatManager = {
       const manifest = this.latestResearchManifest || await this.refreshResearchManifest();
       const saved = manifest?.saved_corpus || null;
       const artifactCount = Number(manifest?.artifact_count || 0);
-      if (saved?.id === selectedId && artifactCount > 0) {
+      if (saved?.id === selectedId && artifactCount > 0 && !manifest?.stale_artifacts) {
         const selected = this.getSelectedResearchCorpusOption();
         this.addMessage(
           `Research already has "${selected?.name || saved?.name || 'this corpus'}" loaded with ${artifactCount} artifact${artifactCount === 1 ? '' : 's'}.`,

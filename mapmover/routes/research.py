@@ -90,6 +90,8 @@ def _build_saved_corpus_summary(corpus_row: dict | None) -> dict | None:
     packs = []
     source_ids = []
     pack_ids = []
+    resolved_source_ids: list[str] = []
+    resolved_seen = set()
     pack_row_count_total = 0
     pack_file_size_mb_total = 0.0
 
@@ -103,12 +105,20 @@ def _build_saved_corpus_summary(corpus_row: dict | None) -> dict | None:
             if pack_meta:
                 packs.append(pack_meta)
                 pack_ids.append(item_id)
+                for pack_source_id in pack_meta.get("source_ids") or []:
+                    pack_source_text = str(pack_source_id or "").strip()
+                    if pack_source_text and pack_source_text not in resolved_seen:
+                        resolved_seen.add(pack_source_text)
+                        resolved_source_ids.append(pack_source_text)
                 pack_row_count_total += int(pack_meta.get("row_count_total") or 0)
                 pack_file_size_mb_total += float(pack_meta.get("file_size_mb_total") or 0.0)
             else:
                 pack_ids.append(item_id)
         elif item_type == "source":
             source_ids.append(item_id)
+            if item_id not in resolved_seen:
+                resolved_seen.add(item_id)
+                resolved_source_ids.append(item_id)
 
     return {
         "id": corpus_row.get("id"),
@@ -119,9 +129,11 @@ def _build_saved_corpus_summary(corpus_row: dict | None) -> dict | None:
         "source_ids": source_ids,
         "pack_count": len(pack_ids),
         "source_count": len(source_ids),
+        "resolved_source_count": len(resolved_source_ids),
         "estimated_row_count_total": pack_row_count_total,
         "estimated_file_size_mb_total": round(pack_file_size_mb_total, 2),
         "packs": packs,
+        "resolved_source_ids": resolved_source_ids,
     }
 
 
@@ -143,6 +155,60 @@ def _load_saved_corpus_for_user(user_id: str, corpus_id: str) -> dict | None:
 def _saved_corpus_request_key(corpus_id: str, source_id: str) -> str:
     seed = f"saved-corpus:{corpus_id}:{source_id}"
     return f"saved_{hashlib.md5(seed.encode('utf-8')).hexdigest()[:16]}"
+
+
+def _expected_saved_corpus_source_ids(saved_corpus: dict | None) -> list[str]:
+    if not isinstance(saved_corpus, dict):
+        return []
+    resolved = []
+    seen = set()
+    for pack in saved_corpus.get("packs") or []:
+        for source_id in pack.get("source_ids") or []:
+            text = str(source_id or "").strip()
+            if text and text not in seen:
+                seen.add(text)
+                resolved.append(text)
+    for source_id in saved_corpus.get("source_ids") or []:
+        text = str(source_id or "").strip()
+        if text and text not in seen:
+            seen.add(text)
+            resolved.append(text)
+    return resolved
+
+
+def _artifact_source_ids(artifacts: list[dict] | None) -> list[str]:
+    resolved = []
+    seen = set()
+    for artifact in artifacts or []:
+        text = str((artifact or {}).get("source_id") or "").strip()
+        if text and text not in seen:
+            seen.add(text)
+            resolved.append(text)
+    return resolved
+
+
+def _artifacts_match_saved_corpus(artifacts: list[dict] | None, saved_corpus: dict | None) -> bool:
+    expected = set(_expected_saved_corpus_source_ids(saved_corpus))
+    if not expected:
+        return True
+    actual = set(_artifact_source_ids(artifacts))
+    return actual == expected
+
+
+def _annotate_manifest_saved_corpus_state(manifest: dict) -> dict:
+    if not isinstance(manifest, dict):
+        return manifest
+    saved_corpus = manifest.get("saved_corpus")
+    artifacts = manifest.get("artifacts") or []
+    expected_source_ids = _expected_saved_corpus_source_ids(saved_corpus)
+    if not expected_source_ids:
+        manifest["stale_artifacts"] = False
+        return manifest
+    actual_source_ids = _artifact_source_ids(artifacts)
+    manifest["expected_source_ids"] = expected_source_ids
+    manifest["actual_source_ids"] = actual_source_ids
+    manifest["stale_artifacts"] = set(actual_source_ids) != set(expected_source_ids)
+    return manifest
 
 
 def _source_summary_text(source_id: str, metadata: dict, row_count: int) -> str:
@@ -529,21 +595,7 @@ def _hydrate_saved_source_into_research(*, session_id: str, corpus_id: str, sour
 
 def _hydrate_saved_corpus(session_id: str, saved_corpus: dict) -> dict:
     corpus_registry.clear_artifacts(session_id)
-    source_ids: list[str] = []
-    seen = set()
-
-    for pack in saved_corpus.get("packs") or []:
-        for source_id in pack.get("source_ids") or []:
-            normalized = str(source_id or "").strip()
-            if normalized and normalized not in seen:
-                seen.add(normalized)
-                source_ids.append(normalized)
-
-    for source_id in saved_corpus.get("source_ids") or []:
-        normalized = str(source_id or "").strip()
-        if normalized and normalized not in seen:
-            seen.add(normalized)
-            source_ids.append(normalized)
+    source_ids = _expected_saved_corpus_source_ids(saved_corpus)
 
     hydration = {
         "loaded_sources": [],
@@ -592,13 +644,29 @@ def _build_browser_corpus_snapshot(session_id: str, saved_corpus: dict) -> dict:
     return snapshot
 
 
-def _restore_browser_corpus_snapshot(session_id: str, snapshot: dict) -> dict:
+def _restore_browser_corpus_snapshot(
+    session_id: str,
+    snapshot: dict,
+    *,
+    expected_saved_corpus: dict | None = None,
+) -> dict:
     saved_corpus = snapshot.get("saved_corpus")
     artifacts = snapshot.get("artifacts") or []
     results = snapshot.get("results") or {}
+    expected_corpus = expected_saved_corpus or saved_corpus
+
+    if not _artifacts_match_saved_corpus(artifacts, expected_corpus):
+        expected_sources = _expected_saved_corpus_source_ids(expected_corpus)
+        actual_sources = _artifact_source_ids(artifacts)
+        raise ValueError(
+            "Browser-saved corpus is out of date for this saved corpus definition "
+            f"(expected sources: {expected_sources}, found: {actual_sources})"
+        )
 
     corpus_registry.clear_artifacts(session_id)
-    if saved_corpus:
+    if expected_corpus:
+        corpus_registry.set_saved_corpus(session_id, expected_corpus)
+    elif saved_corpus:
         corpus_registry.set_saved_corpus(session_id, saved_corpus)
     cache = session_manager.get_or_create(session_id)
     cache.import_results(results)
@@ -1128,7 +1196,7 @@ async def research_corpus_endpoint(req: Request):
         frontend_session_id = body.get("sessionId", "anonymous")
         auth_user = await get_authenticated_user_async(req)
         session_id = build_session_cache_key(frontend_session_id, auth_user)
-        return msgpack_response(corpus_registry.manifest(session_id))
+        return msgpack_response(_annotate_manifest_saved_corpus_state(corpus_registry.manifest(session_id)))
     except Exception as e:
         logger.exception("Research corpus snapshot error")
         return msgpack_error(str(e), 500)
@@ -1156,7 +1224,7 @@ async def research_load_saved_corpus_endpoint(req: Request):
 
         corpus_registry.set_saved_corpus(session_id, saved_corpus)
         hydration = _hydrate_saved_corpus(session_id, saved_corpus)
-        manifest = corpus_registry.manifest(session_id)
+        manifest = _annotate_manifest_saved_corpus_state(corpus_registry.manifest(session_id))
         focus_geojson = _build_research_focus_geojson(session_id)
         return msgpack_response({
             "type": "saved_corpus_loaded",
@@ -1192,11 +1260,16 @@ async def research_build_browser_save_endpoint(req: Request):
 
         current_saved = corpus_registry.get_saved_corpus(session_id)
         current_corpus_id = str((current_saved or {}).get("id") or "").strip()
-        if current_corpus_id != corpus_id or not corpus_registry.list_artifacts(session_id):
+        current_artifacts = corpus_registry.list_artifacts(session_id)
+        if (
+            current_corpus_id != corpus_id
+            or not current_artifacts
+            or not _artifacts_match_saved_corpus(current_artifacts, saved_corpus)
+        ):
             corpus_registry.set_saved_corpus(session_id, saved_corpus)
             _hydrate_saved_corpus(session_id, saved_corpus)
 
-        manifest = corpus_registry.manifest(session_id)
+        manifest = _annotate_manifest_saved_corpus_state(corpus_registry.manifest(session_id))
         snapshot = _build_browser_corpus_snapshot(session_id, saved_corpus)
         return JSONResponse({
             "ok": True,
@@ -1219,8 +1292,18 @@ async def research_load_browser_save_endpoint(req: Request):
 
         frontend_session_id = str(body.get("sessionId") or "anonymous").strip() or "anonymous"
         auth_user = await get_authenticated_user_async(req)
+        user_id = (auth_user or {}).get("id")
+        if not user_id:
+            return JSONResponse({"ok": False, "error": "Authentication required"}, status_code=401)
         session_id = build_session_cache_key(frontend_session_id, auth_user)
-        manifest = _restore_browser_corpus_snapshot(session_id, snapshot)
+        snapshot_saved = snapshot.get("saved_corpus") or {}
+        corpus_id = str(snapshot_saved.get("id") or "").strip()
+        expected_saved_corpus = _load_saved_corpus_for_user(user_id, corpus_id) if corpus_id else None
+        manifest = _annotate_manifest_saved_corpus_state(_restore_browser_corpus_snapshot(
+            session_id,
+            snapshot,
+            expected_saved_corpus=expected_saved_corpus,
+        ))
         saved_name = ((manifest.get("saved_corpus") or {}).get("name") or "Saved corpus")
         focus_geojson = _build_research_focus_geojson(session_id)
         return JSONResponse({
@@ -1231,7 +1314,8 @@ async def research_load_browser_save_endpoint(req: Request):
         })
     except Exception as exc:
         logger.exception("Research browser-save load error")
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+        status_code = 409 if "out of date" in str(exc).lower() else 500
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=status_code)
 
 
 @router.post("/chat/research")
