@@ -530,6 +530,7 @@ async def chat_endpoint(req: Request):
                         "type": "metric_warning",
                         "message": processed["metric_warning"]["message"],
                         "metric_count": processed["metric_warning"]["count"],
+                        "gate": processed["metric_warning"].get("gate"),
                         "pending_order": full_order,
                         "full_order": processed,
                         "summary": result_summary,

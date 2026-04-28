@@ -1292,13 +1292,19 @@ export const MapAdapter = {
    * Set the parent outline layer (shows the region you drilled into)
    * @param {Object} geojson - GeoJSON FeatureCollection of the parent region
    */
-  setParentOutline(geojson) {
+  setParentOutline(geojson, options = {}) {
     // Clear existing parent outline
     this.clearParentOutline();
 
     if (!geojson || !geojson.features || geojson.features.length === 0) {
       return;
     }
+
+    const fillColor = options.fillColor || '#ff7800';
+    const fillOpacity = Number.isFinite(options.fillOpacity) ? options.fillOpacity : 0.08;
+    const strokeColor = options.strokeColor || '#cc4400';
+    const strokeWidth = Number.isFinite(options.strokeWidth) ? options.strokeWidth : 4;
+    const strokeOpacity = Number.isFinite(options.strokeOpacity) ? options.strokeOpacity : 0.9;
 
     // Add parent source
     this.map.addSource(CONFIG.layers.parentSource, {
@@ -1312,8 +1318,8 @@ export const MapAdapter = {
       type: 'fill',
       source: CONFIG.layers.parentSource,
       paint: {
-        'fill-color': '#ff7800',
-        'fill-opacity': 0.08
+        'fill-color': fillColor,
+        'fill-opacity': fillOpacity
       }
     }, CONFIG.layers.fill);  // Insert below the main fill layer
 
@@ -1323,9 +1329,9 @@ export const MapAdapter = {
       type: 'line',
       source: CONFIG.layers.parentSource,
       paint: {
-        'line-color': '#cc4400',
-        'line-width': 4,
-        'line-opacity': 0.9
+        'line-color': strokeColor,
+        'line-width': strokeWidth,
+        'line-opacity': strokeOpacity
       }
     });  // No 'before' parameter = add on top
 
@@ -1352,7 +1358,7 @@ export const MapAdapter = {
    * Used for "show me X" navigation without data request
    * @param {Object} geojson - GeoJSON FeatureCollection of locations to highlight
    */
-  loadNavigationLayer(geojson) {
+  loadNavigationLayer(geojson, options = {}) {
     if (!geojson || !geojson.features || geojson.features.length === 0) {
       return;
     }
@@ -1372,24 +1378,34 @@ export const MapAdapter = {
       generateId: true
     });
 
+    const fillColor = options.fillColorExpression || options.fillColor || [
+      'case',
+      ['boolean', ['feature-state', 'hover'], false],
+      CONFIG.selectionColors.hoverFill,
+      CONFIG.selectionColors.fill
+    ];
+    const fillOpacity = options.fillOpacityExpression || options.fillOpacity || [
+      'case',
+      ['boolean', ['feature-state', 'hover'], false],
+      CONFIG.selectionColors.hoverOpacity,
+      CONFIG.selectionColors.fillOpacity
+    ];
+    const strokeColor = options.strokeColorExpression || options.strokeColor || CONFIG.selectionColors.stroke;
+    const strokeWidth = options.strokeWidthExpression || options.strokeWidth || [
+      'case',
+      ['boolean', ['feature-state', 'hover'], false],
+      CONFIG.selectionColors.hoverStrokeWidth,
+      CONFIG.selectionColors.strokeWidth
+    ];
+
     // Add fill layer with selection colors (orange/amber)
     this.map.addLayer({
       id: CONFIG.layers.selectionFill,
       type: 'fill',
       source: CONFIG.layers.selectionSource,
       paint: {
-        'fill-color': [
-          'case',
-          ['boolean', ['feature-state', 'hover'], false],
-          CONFIG.selectionColors.hoverFill,
-          CONFIG.selectionColors.fill
-        ],
-        'fill-opacity': [
-          'case',
-          ['boolean', ['feature-state', 'hover'], false],
-          CONFIG.selectionColors.hoverOpacity,
-          CONFIG.selectionColors.fillOpacity
-        ]
+        'fill-color': fillColor,
+        'fill-opacity': fillOpacity
       }
     });
 
@@ -1399,13 +1415,8 @@ export const MapAdapter = {
       type: 'line',
       source: CONFIG.layers.selectionSource,
       paint: {
-        'line-color': CONFIG.selectionColors.stroke,
-        'line-width': [
-          'case',
-          ['boolean', ['feature-state', 'hover'], false],
-          CONFIG.selectionColors.hoverStrokeWidth,
-          CONFIG.selectionColors.strokeWidth
-        ]
+        'line-color': strokeColor,
+        'line-width': strokeWidth
       }
     });
 

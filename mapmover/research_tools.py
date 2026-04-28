@@ -12,6 +12,7 @@ from typing import Any
 from mapmover import logger
 from mapmover.corpus_registry import corpus_registry
 from mapmover.geometry_handlers import get_selection_geometries
+from mapmover.request_risk_gate import block_gate, warn_gate
 from mapmover.session_cache import session_manager
 
 try:
@@ -94,6 +95,10 @@ RESEARCH_TOOL_DEFINITIONS = [
         },
     },
 ]
+
+
+RESEARCH_DISPLAY_SOFT_CAP = 5000
+RESEARCH_DISPLAY_HARD_CAP = 25000
 
 
 def _normalize_tool_input(tool_name: str, tool_input: Any) -> dict:
@@ -244,6 +249,15 @@ def _filter_rows_python(rows: list[dict], filters: dict | None) -> list[dict]:
                     return False
                 if "in" in expected and actual not in expected["in"]:
                     return False
+                if "starts_with" in expected:
+                    prefix = str(expected["starts_with"] or "")
+                    if not prefix or actual is None or not str(actual).startswith(prefix):
+                        return False
+                if "starts_with_any" in expected:
+                    prefixes = [str(prefix or "") for prefix in (expected["starts_with_any"] or []) if str(prefix or "")]
+                    if prefixes:
+                        if actual is None or not any(str(actual).startswith(prefix) for prefix in prefixes):
+                            return False
             elif isinstance(expected, list):
                 if actual not in expected:
                     return False
@@ -352,6 +366,21 @@ def _query_rows_duckdb(
                     placeholders = ", ".join("?" for _ in expected["in"])
                     where_parts.append(f"{ident} IN ({placeholders})")
                     params.extend(expected["in"])
+                if "starts_with" in expected:
+                    prefix = str(expected["starts_with"] or "").strip()
+                    if prefix:
+                        where_parts.append(f"{ident} LIKE ?")
+                        params.append(prefix + "%")
+                if "starts_with_any" in expected and expected["starts_with_any"]:
+                    prefix_parts = []
+                    for prefix in expected["starts_with_any"]:
+                        text = str(prefix or "").strip()
+                        if not text:
+                            continue
+                        prefix_parts.append(f"{ident} LIKE ?")
+                        params.append(text + "%")
+                    if prefix_parts:
+                        where_parts.append("(" + " OR ".join(prefix_parts) + ")")
             elif isinstance(expected, list) and expected:
                 placeholders = ", ".join("?" for _ in expected)
                 where_parts.append(f"{ident} IN ({placeholders})")
@@ -408,9 +437,141 @@ def _query_rows_duckdb(
         con.close()
 
 
+def _loc_id_depth(loc_id: Any) -> int | None:
+    text = str(loc_id or "").strip()
+    if not text:
+        return None
+    return text.count("-")
+
+
+def _rewrite_building_loc_id_filters(artifact: dict, tool_input: dict) -> dict:
+    if not isinstance(tool_input, dict):
+        return {}
+    if str((artifact or {}).get("source_id") or "").strip() != "fairfax_buildings":
+        return tool_input
+
+    filters = tool_input.get("filters")
+    if not isinstance(filters, dict) or "loc_id" not in filters:
+        return tool_input
+
+    expected = filters.get("loc_id")
+    exact_values: list[str] = []
+    descendant_prefixes: list[str] = []
+
+    def add_loc_id(value: Any):
+        text = str(value or "").strip()
+        if not text:
+            return
+        depth = _loc_id_depth(text)
+        if depth is not None and depth < 5:
+            prefix = text + "-"
+            if prefix not in descendant_prefixes:
+                descendant_prefixes.append(prefix)
+        elif text not in exact_values:
+            exact_values.append(text)
+
+    if isinstance(expected, dict):
+        if "eq" in expected:
+            add_loc_id(expected.get("eq"))
+        for value in expected.get("in") or []:
+            add_loc_id(value)
+        if "starts_with" in expected:
+            prefix = str(expected.get("starts_with") or "").strip()
+            if prefix and prefix not in descendant_prefixes:
+                descendant_prefixes.append(prefix)
+        for prefix in expected.get("starts_with_any") or []:
+            text = str(prefix or "").strip()
+            if text and text not in descendant_prefixes:
+                descendant_prefixes.append(text)
+    elif isinstance(expected, list):
+        for value in expected:
+            add_loc_id(value)
+    else:
+        add_loc_id(expected)
+
+    if not descendant_prefixes:
+        return tool_input
+
+    rewritten = {
+        key: value
+        for key, value in filters.items()
+        if key != "loc_id"
+    }
+    loc_id_filter: dict[str, Any] = {}
+    if exact_values:
+        loc_id_filter["in"] = exact_values
+    if descendant_prefixes:
+        loc_id_filter["starts_with_any"] = descendant_prefixes
+    rewritten["loc_id"] = loc_id_filter
+    patched = dict(tool_input)
+    patched["filters"] = rewritten
+    return patched
+
+
 def _build_display_subset(result: dict, artifact: dict, tool_input: dict) -> dict:
     rows = _rows_from_result(result)
-    query_result = _query_rows_duckdb(rows, tool_input, default_limit=None, maximum_limit=None)
+    explicit_limit = _normalize_optional_limit(tool_input.get("limit"), maximum=None)
+    force_large_display = bool(tool_input.get("_force_large_display"))
+    query_default_limit = None if explicit_limit is not None else (RESEARCH_DISPLAY_HARD_CAP + 1)
+    query_result = _query_rows_duckdb(rows, tool_input, default_limit=query_default_limit, maximum_limit=None)
+    row_count = int(query_result.get("row_count", 0) or 0)
+    if explicit_limit is None and row_count > RESEARCH_DISPLAY_HARD_CAP:
+        gate = block_gate(
+            lane="human_web_research_display",
+            reason=(
+                f"This would draw about {row_count:,} features, which exceeds the safe display cap of "
+                f"{RESEARCH_DISPLAY_HARD_CAP:,}. Narrow the request or ask for a smaller subset first."
+            ),
+            soft_cap=RESEARCH_DISPLAY_SOFT_CAP,
+            hard_cap=RESEARCH_DISPLAY_HARD_CAP,
+            estimated_count=row_count,
+            measure="display_features",
+            fallback_strategy="narrow_subset",
+            suggested_narrowing=["top 100", "one tract", "one building type"],
+        )
+        return {
+            "artifact_id": artifact.get("artifact_id"),
+            "rows": [],
+            "row_count": row_count,
+            "truncated": True,
+            "display_warning": {
+                "level": "hard_cap",
+                "row_count": row_count,
+                "soft_cap": RESEARCH_DISPLAY_SOFT_CAP,
+                "hard_cap": RESEARCH_DISPLAY_HARD_CAP,
+                "message": gate.get("reason"),
+                "gate": gate,
+            },
+        }
+    if explicit_limit is None and row_count > RESEARCH_DISPLAY_SOFT_CAP and not force_large_display:
+        gate = warn_gate(
+            lane="human_web_research_display",
+            reason=(
+                f"This request matches about {row_count:,} features. Displaying that many at once may hurt map "
+                f"performance. Narrow it first, or ask for a bounded subset like the top 100 or one tract."
+            ),
+            soft_cap=RESEARCH_DISPLAY_SOFT_CAP,
+            hard_cap=RESEARCH_DISPLAY_HARD_CAP,
+            estimated_count=row_count,
+            override_allowed=True,
+            measure="display_features",
+            fallback_strategy="warn_then_override",
+            suggested_narrowing=["top 100", "one tract", "one year", "one building type"],
+        )
+        return {
+            "artifact_id": artifact.get("artifact_id"),
+            "rows": [],
+            "row_count": row_count,
+            "truncated": True,
+            "display_warning": {
+                "level": "soft_cap",
+                "row_count": row_count,
+                "soft_cap": RESEARCH_DISPLAY_SOFT_CAP,
+                "hard_cap": RESEARCH_DISPLAY_HARD_CAP,
+                "message": gate.get("reason"),
+                "gate": gate,
+            },
+        }
     matched_rows = query_result.get("rows") or []
     feature_lookup = _feature_lookup_from_result(result)
 
@@ -487,13 +648,19 @@ def _build_display_subset(result: dict, artifact: dict, tool_input: dict) -> dic
     return {
         "artifact_id": artifact.get("artifact_id"),
         "rows": matched_rows,
-        "row_count": query_result.get("row_count", 0),
+        "row_count": row_count,
         "truncated": bool(query_result.get("truncated")),
         "display": display,
     }
 
 
-def execute_research_tool(session_id: str, tool_name: str, tool_input: dict) -> dict:
+def execute_research_tool(
+    session_id: str,
+    tool_name: str,
+    tool_input: dict,
+    *,
+    force_large_display: bool = False,
+) -> dict:
     try:
         tool_input = _normalize_tool_input(tool_name, tool_input)
         if tool_name == "list_artifacts":
@@ -503,6 +670,8 @@ def execute_research_tool(session_id: str, tool_name: str, tool_input: dict) -> 
         artifact = corpus_registry.get_artifact(session_id, artifact_id) if artifact_id else None
         if not artifact:
             return {"error": "artifact_not_found", "artifact_id": artifact_id}
+
+        tool_input = _rewrite_building_loc_id_filters(artifact, tool_input)
 
         if tool_name == "describe_artifact":
             artifact.pop("order", None)
@@ -524,6 +693,9 @@ def execute_research_tool(session_id: str, tool_name: str, tool_input: dict) -> 
             result = _get_cached_result(session_id, artifact.get("request_key"))
             if not result:
                 return {"error": "artifact_data_unavailable", "artifact_id": artifact_id}
+            if force_large_display:
+                tool_input = dict(tool_input or {})
+                tool_input["_force_large_display"] = True
             return _build_display_subset(result, artifact, tool_input)
 
         return {"error": "unknown_tool", "tool_name": tool_name}

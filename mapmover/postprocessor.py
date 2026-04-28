@@ -20,6 +20,7 @@ from typing import Optional
 from .data_loading import load_catalog, load_source_metadata, get_pack_metadata
 from .duckdb_helpers import parquet_columns
 from .paths import DATA_ROOT
+from .request_risk_gate import warn_gate
 
 
 # =============================================================================
@@ -1212,9 +1213,23 @@ def postprocess_order(order: dict, hints: dict = None) -> dict:
     # Build metric warning if count exceeds threshold
     metric_warning = None
     if metric_count > METRIC_DISPLAY_WARN:
+        gate = warn_gate(
+            lane="human_web_explore_metrics",
+            reason=(
+                f"Your request has {metric_count} metrics. More than 15 is hard to display well in popups. "
+                "Would you like all of them in your order?"
+            ),
+            soft_cap=METRIC_DISPLAY_WARN,
+            estimated_count=metric_count,
+            override_allowed=True,
+            measure="metric_count",
+            fallback_strategy="warn_then_override",
+            suggested_narrowing=["choose a few metrics", "split by topic", "display one metric at a time"],
+        )
         metric_warning = {
             "count": metric_count,
-            "message": f"Your request has {metric_count} metrics. More than 15 is hard to display well in popups. Would you like all of them in your order?"
+            "message": gate.get("reason"),
+            "gate": gate,
         }
 
     # Return processed order

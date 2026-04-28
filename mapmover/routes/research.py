@@ -684,6 +684,7 @@ def _research_memory_messages(research_memory: dict | None) -> list[dict]:
     original_goal = str(research_memory.get("originalGoal") or "").strip()
     summary = str(research_memory.get("summary") or "").strip()
     compacted_count = research_memory.get("compactedMessageCount")
+    active_display_state = research_memory.get("activeDisplayState")
 
     if original_goal:
         messages.append(
@@ -700,6 +701,13 @@ def _research_memory_messages(research_memory: dict | None) -> list[dict]:
             {
                 "role": "assistant",
                 "content": f"{label}:\n{summary}",
+            }
+        )
+    if isinstance(active_display_state, dict) and active_display_state:
+        messages.append(
+            {
+                "role": "assistant",
+                "content": "Current active Research display state:\n```json\n" + json.dumps(active_display_state, indent=2, default=str) + "\n```",
             }
         )
     return messages
@@ -866,6 +874,8 @@ def _compact_tool_result_for_prompt(tool_name: str, tool_result: dict) -> dict:
         rows = tool_result.get("rows") or []
         compact["rows_preview"] = rows[:15]
         compact["preview_count"] = min(len(rows), 15)
+        if isinstance(tool_result.get("display_warning"), dict):
+            compact["display_warning"] = tool_result.get("display_warning")
         if tool_name == "build_artifact_display_subset":
             display = tool_result.get("display") or {}
             compact["display"] = {
@@ -881,6 +891,39 @@ def _compact_tool_result_for_prompt(tool_name: str, tool_result: dict) -> dict:
     return tool_result
 
 
+def _build_display_warning_result(manifest: dict, warning: dict, query: str) -> dict:
+    warning = warning or {}
+    level = str(warning.get("level") or "soft_cap")
+    row_count = int(warning.get("row_count") or 0)
+    soft_cap = int(warning.get("soft_cap") or 0)
+    hard_cap = int(warning.get("hard_cap") or 0)
+    message = str(warning.get("message") or "").strip()
+    gate = warning.get("gate") if isinstance(warning.get("gate"), dict) else None
+    if not message:
+        if level == "hard_cap":
+            message = (
+                f"This request would draw about {row_count:,} features, which exceeds the safe display cap of "
+                f"{hard_cap:,}. Narrow it first."
+            )
+        else:
+            message = (
+                f"This request matches about {row_count:,} features, which may slow the map down. "
+                "Narrow it first, or confirm that you want to load it anyway."
+            )
+    return {
+        "type": "display_warning",
+        "message": message,
+        "corpus": manifest,
+        "query": query,
+        "warning_level": level,
+        "row_count": row_count,
+        "soft_cap": soft_cap,
+        "hard_cap": hard_cap,
+        "override_allowed": level == "soft_cap",
+        "gate": gate,
+    }
+
+
 def run_research_chat(
     *,
     session_id: str,
@@ -888,6 +931,7 @@ def run_research_chat(
     chat_history: list | None = None,
     research_memory: dict | None = None,
     progress=None,
+    force_large_display: bool = False,
 ) -> dict:
     """Synchronous research pipeline.
 
@@ -950,6 +994,7 @@ def run_research_chat(
     max_tool_iterations = 4
     response = None
     final_display = None
+    display_warning = None
     for _iteration in range(max_tool_iterations + 1):
         try:
             response = client.messages.create(
@@ -989,7 +1034,14 @@ def run_research_chat(
                         message=friendly,
                         extra={"tool": block.name, "iteration": _iteration},
                     ))
-                tool_result = execute_research_tool(session_id, block.name, block.input)
+                tool_result = execute_research_tool(
+                    session_id,
+                    block.name,
+                    block.input,
+                    force_large_display=force_large_display,
+                )
+                if isinstance(tool_result, dict) and isinstance(tool_result.get("display_warning"), dict):
+                    display_warning = tool_result.get("display_warning")
                 if isinstance(tool_result, dict) and isinstance(tool_result.get("display"), dict):
                     final_display = dict(tool_result["display"])
                     if progress is not None:
@@ -1010,8 +1062,24 @@ def run_research_chat(
             else:
                 assistant_content.append(block)
 
+        if display_warning:
+            break
+
         messages.append({"role": "assistant", "content": assistant_content})
         messages.append({"role": "user", "content": tool_results})
+
+    if display_warning:
+        logger.info(
+            "Research display warning session=%s query=%r level=%s row_count=%s soft_cap=%s hard_cap=%s force=%s",
+            session_id,
+            query[:120],
+            display_warning.get("level"),
+            display_warning.get("row_count"),
+            display_warning.get("soft_cap"),
+            display_warning.get("hard_cap"),
+            force_large_display,
+        )
+        return _build_display_warning_result(manifest, display_warning, query)
 
     if progress is not None:
         progress(ProgressEvent(
@@ -1186,6 +1254,7 @@ async def research_chat_endpoint(req: Request):
             query=query,
             chat_history=body.get("chatHistory", []),
             research_memory=body.get("researchMemory"),
+            force_large_display=bool(body.get("force_research_display")),
         )
         log_conversation(
             frontend_session_id,
@@ -1234,6 +1303,7 @@ async def research_chat_stream_endpoint(req: Request):
                 chat_history=body.get("chatHistory", []),
                 research_memory=body.get("researchMemory"),
                 progress=bus.thread_emitter(),
+                force_large_display=bool(body.get("force_research_display")),
             ))
             async for event in bus.drain_until(
                 task,

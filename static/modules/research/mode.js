@@ -20,6 +20,8 @@ export class ResearchModeToggle {
     this.corpusOptions = [];
     this.selectedCorpusId = '';
     this.controls = {};
+    this.loadedCorpusId = '';
+    this.hasActiveArtifacts = false;
   }
 
   init() {
@@ -100,6 +102,12 @@ export class ResearchModeToggle {
   updateActive() {
     const selectedValue = this.controls.select?.value || this.selectedCorpusId || '';
     const canLoad = Boolean(selectedValue);
+    const alreadyLoaded = Boolean(
+      selectedValue
+      && this.loadedCorpusId
+      && selectedValue === this.loadedCorpusId
+      && this.hasActiveArtifacts
+    );
     this.selectedCorpusId = selectedValue;
     const title = document.getElementById('sidebarModeTitle');
     if (title) {
@@ -120,7 +128,10 @@ export class ResearchModeToggle {
       this.controls.wrap.setAttribute('aria-hidden', hideCorpusControls ? 'true' : 'false');
     }
     if (this.controls.loadBtn) {
-      this.controls.loadBtn.disabled = !canLoad || this.controls.loadBtn.dataset.loading === 'true';
+      this.controls.loadBtn.disabled = !canLoad || this.controls.loadBtn.dataset.loading === 'true' || alreadyLoaded;
+      this.controls.loadBtn.textContent = this.controls.loadBtn.dataset.loading === 'true'
+        ? 'Loading...'
+        : (alreadyLoaded ? 'Loaded' : 'Load Data');
     }
   }
 
@@ -162,6 +173,15 @@ export class ResearchModeToggle {
     if (this.controls.select) {
       this.controls.select.disabled = isLoading || this.corpusOptions.length === 0;
     }
+    if (!isLoading) {
+      this.updateActive();
+    }
+  }
+
+  setActiveCorpusState({ loadedCorpusId = '', hasActiveArtifacts = false } = {}) {
+    this.loadedCorpusId = loadedCorpusId || '';
+    this.hasActiveArtifacts = Boolean(hasActiveArtifacts);
+    this.updateActive();
   }
 
   renderCorpusOptions() {

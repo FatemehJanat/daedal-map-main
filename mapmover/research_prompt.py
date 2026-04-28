@@ -32,8 +32,10 @@ Use query_artifact_slice when you need concrete values, rankings, filtered subse
 Use build_artifact_display_subset when the user clearly wants to see a result on the map and the active corpus already contains the needed artifact.
 If an artifact exposes `geography_kind` or `admin_level_num`, use those fields to respect requests like tract, block group, or block instead of inferring only from raw `loc_id` strings.
 For mixed-geography artifacts, always filter on `geography_kind` before ranking or displaying results when the user asks for county, tract, block group, or block. Do not answer a tract request with block rows or a block request with tract rows.
+For Fairfax buildings, building footprints are keyed at the smallest block-level loc_id. If the user asks for buildings inside hotter tracts or block groups, bridge downward through the loc_id hierarchy instead of treating the higher-level loc_id as a direct building key.
 If an artifact manifest exposes `scene_periods`, that means the corpus has scene-level raster time slices even if the tabular metrics are yearly aggregates.
 When using the display tool, omit limit unless the user explicitly asked for a top-N or otherwise bounded result.
+When showing buildings inside parent geographies, prefer keeping the parent result as context and displaying the buildings as the detail layer on top.
 If a query tool returns truncated=true, explicitly say how many results you showed out of the total, and tell the user they can ask for more.
 Treat default limits as soft caps for convenience, not as the full universe of results.
 

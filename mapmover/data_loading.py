@@ -41,6 +41,7 @@ from copy import deepcopy
 from .pack_state import build_active_catalog
 from .paths import CATALOG_PATH, COUNTRIES_DIR, DATA_ROOT, GEOMETRY_DIR, WIP_CATALOG_PATH
 from .duckdb_helpers import select_rows
+from .request_risk_gate import block_gate, safe_gate
 from .runtime_config import get_runtime_config
 
 logger = logging.getLogger("mapmover")
@@ -342,6 +343,31 @@ def _build_pack_load_policy(source_count: int, file_size_mb_total: float, row_co
         )
 
     allowed = not reasons
+    gate = (
+        safe_gate(
+            lane="human_web_pack_load",
+            reason="Safe to load the full pack at once.",
+            soft_cap=PACK_LOAD_MAX_ROW_COUNT,
+            hard_cap=PACK_LOAD_MAX_ROW_COUNT,
+            estimated_count=row_count_total,
+            estimated_size_mb=file_size_mb_total,
+            measure="pack_load",
+            fallback_strategy="load",
+            details={"source_count": source_count, "max_sources": PACK_LOAD_MAX_SOURCES},
+        )
+        if allowed
+        else block_gate(
+            lane="human_web_pack_load",
+            reason="; ".join(reasons),
+            soft_cap=PACK_LOAD_MAX_ROW_COUNT,
+            hard_cap=PACK_LOAD_MAX_ROW_COUNT,
+            estimated_count=row_count_total,
+            estimated_size_mb=file_size_mb_total,
+            measure="pack_load",
+            fallback_strategy="narrow_pack",
+            details={"source_count": source_count, "max_sources": PACK_LOAD_MAX_SOURCES},
+        )
+    )
     return {
         "can_load_all_sources": allowed,
         "size_bucket": _describe_pack_size(source_count, file_size_mb_total, row_count_total),
@@ -349,6 +375,7 @@ def _build_pack_load_policy(source_count: int, file_size_mb_total: float, row_co
         "max_sources": PACK_LOAD_MAX_SOURCES,
         "max_file_size_mb": PACK_LOAD_MAX_FILE_SIZE_MB,
         "max_row_count": PACK_LOAD_MAX_ROW_COUNT,
+        "gate": gate,
     }
 
 

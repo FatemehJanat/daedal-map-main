@@ -1306,6 +1306,8 @@ export const App = {
     }
 
     const features = geojson.features || [];
+    const previousResearchGeojson = this.currentResearchDisplay?.geojson || null;
+    const previousResearchSourceId = this.currentResearchDisplay?.source_id || null;
     const uniqueLocIds = new Set(
       features
         .map((feature) => feature?.properties?.loc_id)
@@ -1341,8 +1343,22 @@ export const App = {
       dataset_name: 'Research Result',
       source_name: display?.source_id || 'Research Result'
     };
+    this.currentResearchDisplay = display;
+    const layerOptions = this.getResearchLayerOptions(display);
+    this.currentResearchLayerOptions = layerOptions;
 
-    MapAdapter.loadNavigationLayer(geojson);
+    if (display?.context_visibility === 'keep' && previousResearchGeojson && previousResearchSourceId !== display?.source_id) {
+      MapAdapter.setParentOutline(previousResearchGeojson, {
+        fillOpacity: 0,
+        strokeColor: '#ff9a1f',
+        strokeWidth: 3,
+        strokeOpacity: 0.95
+      });
+    } else {
+      MapAdapter.clearParentOutline?.();
+    }
+
+    MapAdapter.loadNavigationLayer(geojson, layerOptions);
     this.setupResearchDisplayInteractions();
 
     if (display?.fit !== false) {
@@ -1368,6 +1384,8 @@ export const App = {
     this.currentData = null;
     this.activeMetricOrderContext = null;
     this.clearMetricPrefetch();
+    this.currentResearchDisplay = null;
+    this.currentResearchLayerOptions = null;
 
     TimeSlider.reset?.();
     ChoroplethManager.reset?.();
@@ -1387,6 +1405,129 @@ export const App = {
     ViewportLoader.orderMode = false;
     MapAdapter.setChoroplethVisible?.(OverlaySelector?.isActive?.('demographics') === true);
     this.clearResearchDisplayInteractions();
+    this.currentResearchDisplay = null;
+    this.currentResearchLayerOptions = null;
+  },
+
+  getResearchLayerOptions(display) {
+    if (String(display?.source_id || '').trim() !== 'fairfax_buildings') {
+      return {};
+    }
+    return this.getResearchBuildingLayerOptions(display?.style || {});
+  },
+
+  getResearchBuildingTypeMetadata() {
+    return {
+      defaultTypeColors: {
+        SFR: '#ef4444',
+        C: '#3b82f6',
+        MU: '#2563eb',
+        MG: '#f59e0b',
+        P: '#10b981'
+      },
+      defaultFallbackColor: '#f97316',
+      typeLabels: {
+        SFR: 'Residential',
+        C: 'Commercial',
+        MU: 'Mixed-use',
+        MG: 'Transportation / Parking',
+        P: 'Public / Civic',
+        I: 'Industrial'
+      }
+    };
+  },
+
+  getResearchBuildingLayerOptions(style = {}) {
+    const {
+      defaultTypeColors,
+      defaultFallbackColor
+    } = this.getResearchBuildingTypeMetadata();
+    const overrideColors = style?.buildingTypeColors || {};
+    const typeColors = { ...defaultTypeColors, ...overrideColors };
+    const fillExpression = [
+      'match',
+      ['coalesce', ['get', 'TYPE'], '']
+    ];
+    Object.entries(typeColors).forEach(([typeCode, color]) => {
+      fillExpression.push(typeCode, color);
+    });
+    fillExpression.push(defaultFallbackColor);
+    return {
+      fillColorExpression: fillExpression,
+      fillOpacity: [
+        'case',
+        ['boolean', ['feature-state', 'hover'], false],
+        0.9,
+        0.72
+      ],
+      strokeColor: '#ffe0b2',
+      strokeWidth: [
+        'case',
+        ['boolean', ['feature-state', 'hover'], false],
+        2.6,
+        1.4
+      ]
+    };
+  },
+
+  getCurrentResearchBuildingLegend() {
+    if (String(this.currentResearchDisplay?.source_id || '').trim() !== 'fairfax_buildings') {
+      return null;
+    }
+    const {
+      defaultTypeColors,
+      defaultFallbackColor,
+      typeLabels
+    } = this.getResearchBuildingTypeMetadata();
+    const overrideColors = this.currentResearchDisplay?.style?.buildingTypeColors || {};
+    return {
+      source_id: this.currentResearchDisplay?.source_id || 'fairfax_buildings',
+      typeColors: { ...defaultTypeColors, ...overrideColors },
+      defaultColor: defaultFallbackColor,
+      typeLabels: { ...typeLabels },
+      locIdCount: Array.isArray(this.currentResearchDisplay?.loc_ids) ? this.currentResearchDisplay.loc_ids.length : 0,
+      featureCount: Array.isArray(this.currentResearchDisplay?.geojson?.features) ? this.currentResearchDisplay.geojson.features.length : 0
+    };
+  },
+
+  getCurrentResearchDisplayMemory() {
+    if (!this.currentResearchDisplay) {
+      return null;
+    }
+    const memory = {
+      source_id: this.currentResearchDisplay.source_id || null,
+      action: this.currentResearchDisplay.action || null,
+      loc_id_count: Array.isArray(this.currentResearchDisplay.loc_ids) ? this.currentResearchDisplay.loc_ids.length : 0,
+      feature_count: Array.isArray(this.currentResearchDisplay?.geojson?.features) ? this.currentResearchDisplay.geojson.features.length : 0,
+      context_visibility: this.currentResearchDisplay.context_visibility || null
+    };
+    const buildingLegend = this.getCurrentResearchBuildingLegend();
+    if (buildingLegend) {
+      memory.building_legend = buildingLegend;
+    }
+    return memory;
+  },
+
+  updateResearchDisplayStyle(styleUpdates = {}) {
+    if (!this.currentResearchDisplay?.geojson?.features?.length || String(this.currentResearchDisplay?.source_id || '').trim() !== 'fairfax_buildings') {
+      return false;
+    }
+    const mergedDisplay = {
+      ...this.currentResearchDisplay,
+      style: {
+        ...(this.currentResearchDisplay.style || {}),
+        ...styleUpdates,
+        buildingTypeColors: {
+          ...((this.currentResearchDisplay.style || {}).buildingTypeColors || {}),
+          ...((styleUpdates || {}).buildingTypeColors || {})
+        }
+      }
+    };
+    this.currentResearchDisplay = mergedDisplay;
+    this.currentResearchLayerOptions = this.getResearchLayerOptions(mergedDisplay);
+    MapAdapter.loadNavigationLayer(mergedDisplay.geojson, this.currentResearchLayerOptions);
+    this.setupResearchDisplayInteractions();
+    return true;
   },
 
   setupResearchDisplayInteractions() {
