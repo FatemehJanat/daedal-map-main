@@ -16,7 +16,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
 from mapmover import logger
-from mapmover.auth_context import build_session_cache_key, get_authenticated_user
+from mapmover.auth_context import build_session_cache_key, get_authenticated_user, get_authenticated_user_async
 from mapmover.corpus_registry import corpus_registry
 from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log_conversation
 from mapmover.security import get_client_ip
@@ -866,7 +866,7 @@ async def research_corpus_endpoint(req: Request):
     try:
         body = await _decode_msgpack_request(req)
         frontend_session_id = body.get("sessionId", "anonymous")
-        auth_user = get_authenticated_user(req)
+        auth_user = await get_authenticated_user_async(req)
         session_id = build_session_cache_key(frontend_session_id, auth_user)
         return msgpack_response(corpus_registry.manifest(session_id))
     except Exception as e:
@@ -883,7 +883,7 @@ async def research_load_saved_corpus_endpoint(req: Request):
         if not corpus_id:
             return msgpack_error("No corpusId provided", 400)
 
-        auth_user = get_authenticated_user(req)
+        auth_user = await get_authenticated_user_async(req)
         user_id = (auth_user or {}).get("id")
         if not user_id:
             return msgpack_error("Authentication required to load a saved corpus", 401)
@@ -918,9 +918,12 @@ async def research_chat_endpoint(req: Request):
         if not query:
             return msgpack_error("No query provided", 400)
         frontend_session_id = body.get("sessionId", "anonymous")
-        auth_user = get_authenticated_user(req)
+        auth_user = await get_authenticated_user_async(req)
         session_id = build_session_cache_key(frontend_session_id, auth_user)
-        result = run_research_chat(
+        # Run the synchronous LLM-driven research pipeline in a thread so we
+        # do not block the event loop. Mirrors the streaming endpoint below.
+        result = await asyncio.to_thread(
+            run_research_chat,
             session_id=session_id,
             query=query,
             chat_history=body.get("chatHistory", []),
@@ -955,7 +958,7 @@ async def research_chat_stream_endpoint(req: Request):
                 yield f"data: {json.dumps({'stage': 'complete', 'result': {'type': 'error', 'message': 'No query provided'}})}\n\n"
                 return
             frontend_session_id = body.get("sessionId", "anonymous")
-            auth_user = get_authenticated_user(req)
+            auth_user = await get_authenticated_user_async(req)
             session_id = build_session_cache_key(frontend_session_id, auth_user)
 
             yield f"data: {json.dumps({'stage': 'corpus', 'message': 'Reading Research workspace...'})}\n\n"

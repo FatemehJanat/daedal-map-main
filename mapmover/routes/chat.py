@@ -1,5 +1,6 @@
 """Chat API router endpoints."""
 
+import asyncio
 import hashlib
 import json
 import os
@@ -9,7 +10,7 @@ import msgpack
 from fastapi import APIRouter, Request
 from fastapi.responses import Response, StreamingResponse
 
-from mapmover.auth_context import build_session_cache_key, get_authenticated_user
+from mapmover.auth_context import build_session_cache_key, get_authenticated_user, get_authenticated_user_async
 from mapmover import logger, session_manager
 from mapmover.corpus_registry import corpus_registry
 from mapmover.order_executor import execute_order
@@ -144,7 +145,7 @@ async def chat_endpoint(req: Request):
         body = await decode_request_body(req)
 
         frontend_session_id = body.get("sessionId", "anonymous")
-        auth_user = get_authenticated_user(req)
+        auth_user = await get_authenticated_user_async(req)
         client_ip = get_client_ip(req)
         user_id = auth_user.get("id") if auth_user else None
         if user_id:
@@ -464,7 +465,9 @@ async def chat_endpoint(req: Request):
                 )
 
         t_interpret_start = time.perf_counter()
-        result = interpret_request(query, chat_history, hints=hints)
+        # Run the synchronous LLM call in a thread so we do not block the
+        # event loop for other concurrent requests on this worker.
+        result = await asyncio.to_thread(interpret_request, query, chat_history, hints=hints)
         _set_chat_analytics(
             req,
             lane="llm_chat",
@@ -652,7 +655,7 @@ async def chat_stream_endpoint(req: Request):
     async def generate_events():
         try:
             frontend_session_id = body.get("sessionId", "anonymous")
-            auth_user = get_authenticated_user(req)
+            auth_user = await get_authenticated_user_async(req)
             confirmed_order_rate_limit = None
             if body.get("confirmed_order"):
                 confirmed_order_rate_limit = _confirmed_order_rate_limit(req, auth_user)
@@ -806,7 +809,9 @@ async def chat_stream_endpoint(req: Request):
             t_llm_start = time.time()
             yield f"data: {json.dumps({'stage': 'thinking', 'message': 'Understanding your intent...'})}\n\n"
             await asyncio.sleep(0)
-            result = interpret_request(query, chat_history, hints=hints)
+            # Run the synchronous LLM call in a thread so we do not block
+            # the event loop while waiting on Anthropic.
+            result = await asyncio.to_thread(interpret_request, query, chat_history, hints=hints)
             t_llm_end = time.time()
             logger.info(f"[TIMING] LLM call: {(t_llm_end - t_llm_start) * 1000:.0f}ms")
 
