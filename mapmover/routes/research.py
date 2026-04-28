@@ -7,6 +7,8 @@ import json
 import os
 import asyncio
 from types import SimpleNamespace
+from shapely import wkt as shapely_wkt
+from shapely.geometry import mapping as shapely_mapping
 
 import msgpack
 from anthropic import Anthropic
@@ -20,7 +22,7 @@ from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log
 from mapmover.security import get_client_ip
 from mapmover.data_loading import get_pack_metadata, get_source_path, load_source_metadata
 from mapmover.api_query_runtime import execute_dataset_query, get_api_source_columns, get_api_source_spec
-from mapmover.duckdb_helpers import parquet_available, parquet_columns, select_columns_from_parquet
+from mapmover.duckdb_helpers import parquet_available, parquet_columns, path_to_uri, quote_ident, run_rows, select_columns_from_parquet
 from mapmover.research_postprocessor import normalize_research_result
 from mapmover.research_preprocessor import build_research_hint_context, preprocess_research_query
 from mapmover.research_prompt import build_research_system_prompt
@@ -230,6 +232,22 @@ def _load_runtime_rows(parquet_path, columns: list[str]) -> list[dict]:
     return df.to_dict(orient="records")
 
 
+def _load_runtime_rows_raw(parquet_path, columns: list[str]) -> list[dict]:
+    available_columns = parquet_columns(parquet_path)
+    selected = [column for column in columns if column in available_columns]
+    if not selected:
+        return []
+    select_exprs = []
+    for column in selected:
+        if column == "geometry":
+            select_exprs.append(f"CAST({quote_ident(column)} AS VARCHAR) AS {quote_ident(column)}")
+        else:
+            select_exprs.append(quote_ident(column))
+    sql = "SELECT " + ", ".join(select_exprs) + " FROM read_parquet(?)"
+    rows = run_rows(sql, [path_to_uri(parquet_path)])
+    return [dict(zip(selected, row)) for row in rows]
+
+
 def _hydrate_runtime_metrics_source(source_id: str, metadata: dict) -> dict:
     parquet_path = _find_primary_parquet(source_id, metadata)
     if parquet_path is None:
@@ -289,7 +307,10 @@ def _hydrate_runtime_geometry_source(source_id: str, metadata: dict) -> dict:
         "TYPE", "BLDG_CM_TYPE", "BLDG_CM_LABEL", "BLDG_HEIGHT", "SOURCE", "geometry",
     ]
     select_columns = [column for column in preferred_columns if column in available_columns]
-    rows = _load_runtime_rows(parquet_path, select_columns)
+    try:
+        rows = _load_runtime_rows_raw(parquet_path, select_columns)
+    except Exception:
+        return _hydrate_runtime_metrics_source(source_id, metadata)
     if not rows:
         return {"source_id": source_id, "status": "skipped", "reason": "no_rows"}
 
@@ -299,7 +320,14 @@ def _hydrate_runtime_geometry_source(source_id: str, metadata: dict) -> dict:
         if not geometry_value:
             continue
         try:
-            geometry = json.loads(geometry_value) if isinstance(geometry_value, str) else geometry_value
+            if isinstance(geometry_value, str):
+                stripped = geometry_value.strip()
+                if stripped.startswith("{"):
+                    geometry = json.loads(stripped)
+                else:
+                    geometry = shapely_mapping(shapely_wkt.loads(stripped))
+            else:
+                geometry = geometry_value
         except Exception:
             continue
         props = {k: v for k, v in row.items() if k != "geometry"}
