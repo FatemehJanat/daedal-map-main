@@ -13,10 +13,26 @@ import os
 import time
 from typing import Any, Dict, Optional
 
+import httpx
 import requests
 from fastapi import Request
 
 from . import logger
+
+
+_async_client: Optional[httpx.AsyncClient] = None
+
+
+def _get_async_client() -> httpx.AsyncClient:
+    """Lazily create a shared httpx.AsyncClient for Supabase auth verification.
+
+    Reusing one client keeps TLS sessions warm across requests, which matters
+    when many authenticated requests miss the in-memory cache simultaneously.
+    """
+    global _async_client
+    if _async_client is None:
+        _async_client = httpx.AsyncClient(timeout=httpx.Timeout(5.0))
+    return _async_client
 
 
 AUTH_CACHE_TTL_SECONDS = 300
@@ -60,29 +76,44 @@ def _cache_user(token: str, user: Optional[Dict[str, Any]]) -> None:
     }
 
 
-def get_authenticated_user(request: Request) -> Optional[Dict[str, Any]]:
-    """
-    Return verified Supabase user info if a bearer token is present and valid.
-    Returns None for anonymous requests or verification failures.
+def _try_cache_path(request: Request) -> tuple[bool, Optional[Dict[str, Any]], Optional[str], Optional[Dict[str, str]]]:
+    """Shared fast-path: per-request state cache, then per-token in-memory cache.
+
+    Returns (resolved, user, token, config). When `resolved` is True, the caller
+    should return `user` immediately. When False, the caller must verify against
+    Supabase using `token` and `config`.
     """
     cached_request_user = getattr(request.state, "authenticated_user_context", None)
     if cached_request_user is not None:
-        return cached_request_user
+        return True, cached_request_user, None, None
 
     token = _get_bearer_token(request)
     if not token:
         request.state.authenticated_user_context = None
-        return None
+        return True, None, None, None
 
     cached = _get_cached_user(token)
     if cached is not None:
         request.state.authenticated_user_context = cached
-        return cached
+        return True, cached, None, None
 
     config = _get_supabase_auth_config()
     if not config:
         request.state.authenticated_user_context = None
-        return None
+        return True, None, None, None
+
+    return False, None, token, config
+
+
+def get_authenticated_user(request: Request) -> Optional[Dict[str, Any]]:
+    """Sync entry point. Blocks the calling thread on cache miss.
+
+    Use `get_authenticated_user_async` from async code paths to avoid blocking
+    the event loop on Supabase verification.
+    """
+    resolved, user, token, config = _try_cache_path(request)
+    if resolved:
+        return user
 
     try:
         response = requests.get(
@@ -92,6 +123,40 @@ def get_authenticated_user(request: Request) -> Optional[Dict[str, Any]]:
                 "Authorization": f"Bearer {token}",
             },
             timeout=5,
+        )
+        if response.status_code != 200:
+            _cache_user(token, None)
+            request.state.authenticated_user_context = None
+            return None
+
+        user = response.json()
+        _cache_user(token, user)
+        request.state.authenticated_user_context = user
+        return user
+    except Exception as exc:
+        logger.warning(f"Supabase user verification failed: {exc}")
+        request.state.authenticated_user_context = None
+        return None
+
+
+async def get_authenticated_user_async(request: Request) -> Optional[Dict[str, Any]]:
+    """Async entry point that does not block the event loop on cache miss.
+
+    Identical contract to `get_authenticated_user`. The cache hit path is
+    synchronous in-memory work; only the Supabase verification fetch is awaited.
+    """
+    resolved, user, token, config = _try_cache_path(request)
+    if resolved:
+        return user
+
+    try:
+        client = _get_async_client()
+        response = await client.get(
+            f"{config['url']}/auth/v1/user",
+            headers={
+                "apikey": config["anon_key"],
+                "Authorization": f"Bearer {token}",
+            },
         )
         if response.status_code != 200:
             _cache_user(token, None)

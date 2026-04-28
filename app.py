@@ -26,7 +26,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from mapmover import initialize_catalog, load_conversions, logger
-from mapmover.auth_context import get_authenticated_user
+from mapmover.auth_context import get_authenticated_user, get_authenticated_user_async
 from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log_route_request_event
 from mapmover.security import get_allowed_origins, get_client_ip, is_https_request, rate_limiter
 from mapmover.order_executor import execute_order
@@ -280,7 +280,7 @@ async def static_no_cache(request: Request, call_next):
         except ValueError:
             pass
 
-    auth_user = get_authenticated_user(request)
+    auth_user = await get_authenticated_user_async(request)
     auth_user_id = str((auth_user or {}).get("id") or "").strip() or None
     client_ip = get_client_ip(request)
     rate_limit_config = _rate_limit_config_for_surface(surface)

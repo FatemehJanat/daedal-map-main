@@ -6,9 +6,10 @@ import json
 import logging
 import os
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from .paths import LOGS_DIR, ensure_dir
 
@@ -57,6 +58,33 @@ route_analytics_log_path = analytics_dir / "route_analytics.jsonl"
 # Initialize Supabase client (lazy loaded to avoid import issues)
 _supabase_client = None
 _missing_ip_salt_warned = False
+
+# Background executor for fire-and-forget Supabase logging.
+# Keeps synchronous Supabase HTTP calls off the response path.
+_analytics_pool_size = max(1, int(os.getenv("ANALYTICS_BG_WORKERS", "4")))
+_analytics_executor = ThreadPoolExecutor(
+    max_workers=_analytics_pool_size,
+    thread_name_prefix="analytics-bg",
+)
+
+
+def _submit_background(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> None:
+    """Submit a callable to the analytics background pool, fire-and-forget.
+
+    Errors raised inside the worker are swallowed and logged so they cannot
+    affect the response path or the next request.
+    """
+    def _run() -> None:
+        try:
+            fn(*args, **kwargs)
+        except Exception as exc:
+            logger.error("Background analytics call failed: %s", exc)
+
+    try:
+        _analytics_executor.submit(_run)
+    except RuntimeError:
+        # Executor was shut down (process exit). Run inline as fallback.
+        _run()
 
 
 def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
@@ -200,34 +228,32 @@ def log_api_query_event(
 
     supabase_client = get_supabase()
     if supabase_client:
-        try:
-            _meta = metadata or {}
-            supabase_client.log_api_usage_event(
-                event_kind=decision or "request_completed",
-                request_id=request_id,
-                capability_id=capability_id,
-                pack_id=pack_id,
-                source_id=source_id,
-                query_granularity=query_granularity,
-                decision=decision,
-                payment_rail=payment_rail,
-                auth_user_id=auth_user_id,
-                ip_hash=ip_hash,
-                status_code=status_code,
-                row_count=row_count or 0,
-                response_size_bytes=response_size_bytes or 0,
-                execution_latency_ms=execution_latency_ms,
-                warnings_count=warnings_count or 0,
-                error_code=error_code,
-                settlement_id=settlement_id,
-                amount_charged_usdc_base_units=amount_charged_usdc_base_units,
-                revenue_attributed_usdc_base_units=revenue_attributed_usdc_base_units,
-                mcp_client_name=str(_meta.get("mcp_client_name") or "")[:100] or None,
-                mcp_client_version=str(_meta.get("mcp_client_version") or "")[:50] or None,
-                metadata=event,
-            )
-        except Exception as e:
-            logger.error(f"Failed to log API query event to Supabase: {e}")
+        _meta = metadata or {}
+        _submit_background(
+            supabase_client.log_api_usage_event,
+            event_kind=decision or "request_completed",
+            request_id=request_id,
+            capability_id=capability_id,
+            pack_id=pack_id,
+            source_id=source_id,
+            query_granularity=query_granularity,
+            decision=decision,
+            payment_rail=payment_rail,
+            auth_user_id=auth_user_id,
+            ip_hash=ip_hash,
+            status_code=status_code,
+            row_count=row_count or 0,
+            response_size_bytes=response_size_bytes or 0,
+            execution_latency_ms=execution_latency_ms,
+            warnings_count=warnings_count or 0,
+            error_code=error_code,
+            settlement_id=settlement_id,
+            amount_charged_usdc_base_units=amount_charged_usdc_base_units,
+            revenue_attributed_usdc_base_units=revenue_attributed_usdc_base_units,
+            mcp_client_name=str(_meta.get("mcp_client_name") or "")[:100] or None,
+            mcp_client_version=str(_meta.get("mcp_client_version") or "")[:50] or None,
+            metadata=event,
+        )
 
 
 def log_route_request_event(
@@ -304,30 +330,28 @@ def log_route_request_event(
         rate_limited=rate_limited,
         error_code=error_code,
     ):
-        try:
-            supabase_client.log_security_event(
-                method=method,
-                path=path,
-                surface=surface,
-                request_id=request_id,
-                pack_id=pack_id,
-                source_id=source_id,
-                auth_user_id=auth_user_id,
-                ip_hash=ip_hash,
-                user_agent=user_agent[:300] if user_agent else None,
-                status_code=status_code,
-                execution_latency_ms=execution_latency_ms,
-                response_size_bytes=response_size_bytes or 0,
-                rate_limited=rate_limited,
-                retry_after_seconds=retry_after_seconds,
-                challenge_issued=challenge_issued,
-                settlement_failed=settlement_failed,
-                concurrency_rejected=concurrency_rejected,
-                error_code=error_code,
-                metadata=event,
-            )
-        except Exception as e:
-            logger.error(f"Failed to log route security event to Supabase: {e}")
+        _submit_background(
+            supabase_client.log_security_event,
+            method=method,
+            path=path,
+            surface=surface,
+            request_id=request_id,
+            pack_id=pack_id,
+            source_id=source_id,
+            auth_user_id=auth_user_id,
+            ip_hash=ip_hash,
+            user_agent=user_agent[:300] if user_agent else None,
+            status_code=status_code,
+            execution_latency_ms=execution_latency_ms,
+            response_size_bytes=response_size_bytes or 0,
+            rate_limited=rate_limited,
+            retry_after_seconds=retry_after_seconds,
+            challenge_issued=challenge_issued,
+            settlement_failed=settlement_failed,
+            concurrency_rejected=concurrency_rejected,
+            error_code=error_code,
+            metadata=event,
+        )
 
 
 def get_supabase():
@@ -381,20 +405,18 @@ def log_conversation(
 
     supabase_client = get_supabase()
     if supabase_client and session_id:
-        try:
-            supabase_client.log_session_message(
-                session_id=session_id,
-                user_query=query,
-                assistant_response=response_text or "",
-                surface=surface,
-                intent=intent,
-                dataset_selected=dataset_selected,
-                results_count=results_count,
-                ip_hash=ip_hash,
-                user_agent=user_agent,
-            )
-        except Exception as e:
-            logger.error(f"Failed to log session to Supabase: {e}")
+        _submit_background(
+            supabase_client.log_session_message,
+            session_id=session_id,
+            user_query=query,
+            assistant_response=response_text or "",
+            surface=surface,
+            intent=intent,
+            dataset_selected=dataset_selected,
+            results_count=results_count,
+            ip_hash=ip_hash,
+            user_agent=user_agent,
+        )
 
 
 def log_app_error(
@@ -432,22 +454,20 @@ def log_app_error(
 
     supabase_client = get_supabase()
     if supabase_client:
-        try:
-            supabase_client.log_error(
-                error_type=error_type,
-                error_message=error_message,
-                query=query,
-                traceback=traceback,
-                metadata={
-                    "surface": surface,
-                    "path": path,
-                    "request_id": request_id,
-                    "pack_id": pack_id,
-                    **(metadata or {}),
-                },
-            )
-        except Exception as e:
-            logger.error(f"Failed to log error to Supabase: {e}")
+        _submit_background(
+            supabase_client.log_error,
+            error_type=error_type,
+            error_message=error_message,
+            query=query,
+            traceback=traceback,
+            metadata={
+                "surface": surface,
+                "path": path,
+                "request_id": request_id,
+                "pack_id": pack_id,
+                **(metadata or {}),
+            },
+        )
 
 
 def log_missing_geometry(country_names, query=None, dataset=None, region=None):
@@ -489,15 +509,13 @@ def log_missing_geometry(country_names, query=None, dataset=None, region=None):
     # Log to Supabase if configured
     supabase_client = get_supabase()
     if supabase_client:
-        try:
-            supabase_client.log_missing_geometry(
-                country_names=country_names,
-                query=query,
-                dataset=dataset,
-                region=region
-            )
-        except Exception as e:
-            logger.error(f"Failed to log missing geometries to Supabase: {e}")
+        _submit_background(
+            supabase_client.log_missing_geometry,
+            country_names=country_names,
+            query=query,
+            dataset=dataset,
+            region=region,
+        )
 
 
 def log_error_to_cloud(error_type, error_message, query=None, tb=None, metadata=None):
@@ -513,16 +531,14 @@ def log_error_to_cloud(error_type, error_message, query=None, tb=None, metadata=
     """
     supabase_client = get_supabase()
     if supabase_client:
-        try:
-            supabase_client.log_error(
-                error_type=error_type,
-                error_message=error_message,
-                query=query,
-                traceback=tb,
-                metadata=metadata
-            )
-        except Exception as e:
-            logger.error(f"Failed to log error to Supabase: {e}")
+        _submit_background(
+            supabase_client.log_error,
+            error_type=error_type,
+            error_message=error_message,
+            query=query,
+            traceback=tb,
+            metadata=metadata,
+        )
 
 
 def log_missing_region_to_cloud(region_name, query=None, dataset=None):
@@ -536,14 +552,12 @@ def log_missing_region_to_cloud(region_name, query=None, dataset=None):
     """
     supabase_client = get_supabase()
     if supabase_client:
-        try:
-            supabase_client.log_missing_region(
-                region_name=region_name,
-                query=query,
-                dataset=dataset
-            )
-        except Exception as e:
-            logger.error(f"Failed to log missing region to Supabase: {e}")
+        _submit_background(
+            supabase_client.log_missing_region,
+            region_name=region_name,
+            query=query,
+            dataset=dataset,
+        )
 
     # Also log locally for backup
     if _local_logs_enabled:
