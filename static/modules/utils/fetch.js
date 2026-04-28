@@ -116,29 +116,17 @@ function shouldTrackCall(url) {
 
 /**
  * Log an API call to localStorage for session recovery.
+ * Recovery replay is currently disabled as part of chat/session simplification.
  */
 function logApiCall(url) {
-  try {
-    const calls = JSON.parse(localStorage.getItem(namespacedKey(API_CALLS_KEY)) || '[]');
-    // Avoid duplicates
-    if (!calls.includes(url)) {
-      calls.push(url);
-      localStorage.setItem(namespacedKey(API_CALLS_KEY), JSON.stringify(calls));
-    }
-  } catch (e) {
-    // localStorage not available
-  }
+  void url;
 }
 
 /**
  * Get all logged API calls for session recovery.
  */
 export function getApiCallsForRecovery() {
-  try {
-    return JSON.parse(localStorage.getItem(namespacedKey(API_CALLS_KEY)) || '[]');
-  } catch (e) {
-    return [];
-  }
+  return [];
 }
 
 /**
@@ -158,23 +146,7 @@ export function clearApiCalls() {
  * @param {Object} order - The order that was executed
  */
 export function logExecutedOrder(order) {
-  try {
-    const orders = JSON.parse(localStorage.getItem(namespacedKey(ORDERS_KEY)) || '[]');
-    // Store with timestamp and summary for display
-    const record = {
-      order: order,
-      summary: order.summary || 'Data order',
-      timestamp: Date.now()
-    };
-    orders.push(record);
-    // Keep only last 10 orders to avoid storage bloat
-    if (orders.length > 10) {
-      orders.shift();
-    }
-    localStorage.setItem(namespacedKey(ORDERS_KEY), JSON.stringify(orders));
-  } catch (e) {
-    console.warn('Failed to log executed order:', e);
-  }
+  void order;
 }
 
 /**
@@ -182,11 +154,7 @@ export function logExecutedOrder(order) {
  * @returns {Array} Array of {order, summary, timestamp} records
  */
 export function getExecutedOrdersForRecovery() {
-  try {
-    return JSON.parse(localStorage.getItem(namespacedKey(ORDERS_KEY)) || '[]');
-  } catch (e) {
-    return [];
-  }
+  return [];
 }
 
 /**

@@ -1,6 +1,6 @@
 /**
  * Chat Session Manager
- * Handles session ID lifecycle and chat state persistence via localStorage.
+ * Handles session ID lifecycle and minimal UI state persistence via localStorage.
  * Reusable across map app and admin dashboard.
  */
 
@@ -59,82 +59,49 @@ export function resetSessionId() {
 }
 
 /**
- * Save chat state to localStorage for persistence across browser close.
- * Accepts either the legacy `(history, messagesHtml)` shape or a richer state object.
+ * Save minimal chat UI state to localStorage.
+ * We intentionally do not persist chat transcripts across refresh.
  */
 export function saveChatState(historyOrState, messagesHtml) {
   try {
     const legacyPayload = Array.isArray(historyOrState);
     const payload = legacyPayload
       ? {
-          version: 2,
+          version: 3,
           activeMode: 'explore',
-          modeHistories: {
-            explore: historyOrState,
-            research: []
-          },
-          modeMessagesHtml: {
-            explore: messagesHtml || '',
-            research: ''
-          },
-          researchMemory: null,
           selectedResearchCorpusId: null
         }
       : {
-          version: 2,
-          activeMode: historyOrState?.activeMode || 'explore',
-          modeHistories: historyOrState?.modeHistories || { explore: [], research: [] },
-          modeMessagesHtml: historyOrState?.modeMessagesHtml || { explore: '', research: '' },
-          researchMemory: historyOrState?.researchMemory || null,
+          version: 3,
+          activeMode: historyOrState?.activeMode === 'research' ? 'research' : 'explore',
           selectedResearchCorpusId: historyOrState?.selectedResearchCorpusId || null
         };
 
     localStorage.setItem(namespacedKey(CHAT_HISTORY_KEY), JSON.stringify(payload));
-
-    const exploreHtml = payload.modeMessagesHtml?.explore || '';
-    if (exploreHtml) {
-      localStorage.setItem(namespacedKey(CHAT_MESSAGES_KEY), exploreHtml);
-    } else {
-      localStorage.removeItem(namespacedKey(CHAT_MESSAGES_KEY));
-    }
+    localStorage.removeItem(namespacedKey(CHAT_MESSAGES_KEY));
   } catch (e) {
     console.warn('[Session] Could not save chat state:', e.message);
   }
 }
 
 /**
- * Restore chat state from localStorage.
- * @returns {Object|null} { history: Array, messagesHtml: string } or null if nothing saved
+ * Restore minimal chat UI state from localStorage.
  */
 export function restoreChatState() {
   try {
     const historyJson = localStorage.getItem(namespacedKey(CHAT_HISTORY_KEY));
-    const messagesHtml = localStorage.getItem(namespacedKey(CHAT_MESSAGES_KEY));
-
-    if (historyJson || messagesHtml) {
-      const parsed = historyJson ? JSON.parse(historyJson) : [];
-      if (Array.isArray(parsed)) {
-        console.log('[Session] Restored chat history:', parsed.length, 'messages');
-        return { history: parsed, messagesHtml: messagesHtml || '' };
-      }
-
-      const activeMode = parsed?.activeMode || 'explore';
-      const modeHistories = parsed?.modeHistories || { explore: [], research: [] };
-      const modeMessagesHtml = {
-        explore: parsed?.modeMessagesHtml?.explore || messagesHtml || '',
-        research: parsed?.modeMessagesHtml?.research || ''
-      };
-      const activeHistory = modeHistories[activeMode] || [];
-
-      console.log('[Session] Restored chat history:', activeHistory.length, 'messages', `(${activeMode})`);
+    if (historyJson) {
+      const parsed = JSON.parse(historyJson);
+      const activeMode = parsed?.activeMode === 'research' ? 'research' : 'explore';
+      console.log('[Session] Restored chat mode:', activeMode);
       return {
         activeMode,
-        modeHistories,
-        modeMessagesHtml,
-        researchMemory: parsed?.researchMemory || null,
         selectedResearchCorpusId: parsed?.selectedResearchCorpusId || null,
-        history: activeHistory,
-        messagesHtml: modeMessagesHtml[activeMode] || ''
+        history: [],
+        messagesHtml: '',
+        modeHistories: { explore: [], research: [] },
+        modeMessagesHtml: { explore: '', research: '' },
+        researchMemory: null,
       };
     }
   } catch (e) {
