@@ -718,6 +718,8 @@ def _build_public_pack_list(api_ready_only: bool = False) -> list[dict]:
             "scope": s.get("scope", ""),
             "topic_tags": s.get("topic_tags") or [],
             "source_count": pack_counts[pid],
+            "file_size_mb": round(sum(float(src.get("file_size_mb") or 0) for src in pack_sources), 2),
+            "row_count": sum(int(src.get("row_count") or 0) for src in pack_sources),
             "temporal_start": tc.get("start"),
             "temporal_end": tc.get("end"),
             "pack_maintainer_name": s.get("pack_maintainer_name") or s.get("maintainer_name") or "DaedalMap",
