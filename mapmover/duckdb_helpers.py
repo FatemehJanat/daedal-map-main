@@ -138,36 +138,128 @@ def _configure_httpfs(con) -> None:
     con.execute(f"SET memory_limit='{mem_limit}'")
 
 
-def _make_connection():
-    """Create a DuckDB connection, configured for object storage in cloud mode."""
+# ---------------------------------------------------------------------------
+# Thread-local connection pool
+# ---------------------------------------------------------------------------
+#
+# Each worker thread keeps one fully-configured DuckDB connection that
+# persists across queries. This eliminates per-query connection setup
+# (LOAD httpfs + credentials + memory limit) which dominates "cheap"
+# filter queries in cloud mode.
+#
+# Why thread-local instead of one shared connection + cursor():
+#
+#   - DuckDB cursor() shares the database and globally-scoped settings,
+#     but session-scoped settings (notably s3_endpoint and httpfs
+#     credentials in 1.5.0) do NOT propagate. A 2026-04-27 deploy of a
+#     shared-primary design caused production 500s because cursors hit
+#     the default AWS endpoint instead of R2.
+#   - Thread-local sidesteps the scoping question entirely. Each
+#     connection is fully configured by _configure_httpfs at creation
+#     and never relies on inheritance.
+#
+# Trade-offs:
+#
+#   - Connection setup is paid once per worker thread (typically 5-40
+#     threads in uvicorn), not once per process. Small upfront cost,
+#     no per-query cost after that.
+#   - Each thread keeps its own HTTP metadata cache. Caches do not
+#     share across threads. Within ~10-20 queries on a thread, all hot
+#     parquets are warm in that thread's cache.
+#   - A bad query is isolated to its connection; recovery clears the
+#     thread-local entry so the next call rebuilds.
+
+_thread_state = threading.local()
+
+
+def _build_thread_connection():
+    """Create and fully configure a DuckDB connection for the current thread."""
     con = duckdb.connect()
     if is_cloud_mode():
         _configure_httpfs(con)
     return con
 
 
+def _get_thread_connection():
+    """Return this thread's DuckDB connection, creating it on first use."""
+    con = getattr(_thread_state, "con", None)
+    if con is None:
+        con = _build_thread_connection()
+        _thread_state.con = con
+    return con
+
+
+def _drop_thread_connection() -> None:
+    """Drop the current thread's connection; the next query rebuilds.
+
+    Called when an exception suggests the connection may be in a bad state
+    (e.g. transport-level error, broken pipe). Cursor-style query errors
+    are rare to non-existent here because we use the connection directly.
+    """
+    con = getattr(_thread_state, "con", None)
+    if con is not None:
+        try:
+            con.close()
+        except Exception:
+            pass
+        _thread_state.con = None
+
+
+def _make_connection():
+    """Backward-compatible accessor used by debug endpoints.
+
+    Returns the thread-local connection. Callers historically did
+    `con.close()` after use; that is now a no-op against the pool because
+    `close()` on a DuckDB connection only closes that handle, but the
+    pool returns the same handle on the next call. Debug endpoints that
+    used this pattern continue to work but no longer get isolation.
+    """
+    if duckdb is None:
+        return None
+    return _get_thread_connection()
+
+
 # ---------------------------------------------------------------------------
 # Core query runners
 # ---------------------------------------------------------------------------
 
+def _looks_like_connection_error(exc: BaseException) -> bool:
+    """Heuristic: distinguish transport-level errors from query-level errors.
+
+    Query errors (bad SQL, missing column, type mismatch) leave the
+    connection healthy and we keep it pooled. Transport errors (broken
+    socket, R2 reachability problems) suggest the connection state is
+    suspect; drop and rebuild on the next call.
+    """
+    name = type(exc).__name__
+    if name in {"IOException", "HTTPException", "ConnectionException"}:
+        return True
+    msg = str(exc).lower()
+    return any(s in msg for s in ("broken pipe", "connection reset", "connection refused"))
+
+
 def run_df(sql: str, params: list) -> pd.DataFrame:
     if duckdb is None:
         return pd.DataFrame()
-    con = _make_connection()
+    con = _get_thread_connection()
     try:
         return con.execute(sql, params).df()
-    finally:
-        con.close()
+    except Exception as exc:
+        if _looks_like_connection_error(exc):
+            _drop_thread_connection()
+        raise
 
 
 def run_rows(sql: str, params: list) -> list[tuple]:
     if duckdb is None:
         return []
-    con = _make_connection()
+    con = _get_thread_connection()
     try:
         return con.execute(sql, params).fetchall()
-    finally:
-        con.close()
+    except Exception as exc:
+        if _looks_like_connection_error(exc):
+            _drop_thread_connection()
+        raise
 
 
 def _normalize_ts_for_duckdb(val: str | None) -> str | None:
