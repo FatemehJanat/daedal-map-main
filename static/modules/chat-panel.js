@@ -25,9 +25,16 @@ import { sendStreamingRequest, sendChatRequest } from './chat/api.js';
 import { OrderPanel } from './order/manager.js';
 import { OrderTracker as OrderTrackerClass } from './order/tracker.js';
 import * as SavedOrders from './order/saved.js';
-import { getCurrentUser, getSupabaseClient, isAuthenticated, onAuthChanged } from './auth.js';
+import { getAccessToken, getCurrentUser, getSupabaseClient, isAuthenticated, onAuthChanged } from './auth.js';
 import { TutorialMode, parseTutorialCommand } from './tutorial-mode.js';
 import { ResearchModeToggle } from './research/mode.js';
+import {
+  getBrowserCorpusSnapshot,
+  getBrowserCorpusStorageSummary,
+  listBrowserCorpusSummaries,
+  removeBrowserCorpusSnapshot,
+  saveBrowserCorpusSnapshot
+} from './research/browser-corpus-store.js';
 
 // Dependencies set via setDependencies to avoid circular imports
 let MapAdapter = null;
@@ -324,10 +331,13 @@ export const ChatManager = {
   modeHistories: { explore: [], research: [] },
   modeMessagesHtml: { explore: '', research: '' },
   modeRequestInFlight: { explore: false, research: false },
+  pendingResearchRasterMode: null,
   researchMemory: null,
   selectedResearchCorpusId: '',
   researchCorpusOptions: [],
   latestResearchManifest: null,
+  lastResearchDisplay: null,
+  browserCorpusSummaries: new Map(),
   pendingMetricOrder: null,
   sessionId: null,
   messagePanes: {},
@@ -364,6 +374,11 @@ export const ChatManager = {
     this.setActiveMessagePane(this.mode);
 
     this.initModeToggle();
+    if (this.mode === 'research') {
+      App?.enterResearchCanvasMode?.();
+    } else {
+      App?.leaveResearchCanvasMode?.();
+    }
     Promise.resolve(this.seedEmptyConversation(this.mode)).catch((error) => {
       console.warn('Could not seed initial conversation:', error);
     });
@@ -399,6 +414,15 @@ export const ChatManager = {
         this.selectedResearchCorpusId = corpusId || '';
         this.updateResearchCorpusStatus();
         this.saveState();
+      },
+      onSaveCorpus: async (corpusId) => {
+        await this.saveResearchCorpusToBrowser(corpusId);
+      },
+      onSyncCorpus: async (corpusId) => {
+        await this.syncResearchCorpusBrowserCopy(corpusId);
+      },
+      onRemoveBrowserCopy: async (corpusId) => {
+        await this.removeResearchCorpusBrowserCopy(corpusId);
       }
     });
     researchModeToggle.mode = this.mode;
@@ -423,7 +447,10 @@ export const ChatManager = {
     }
 
     if (mode === 'research') {
+      App?.enterResearchCanvasMode?.();
       await this.refreshResearchCorpusOptions();
+    } else {
+      App?.leaveResearchCanvasMode?.();
     }
 
     if (this.history.length === 0 && !this.modeMessagesHtml[mode]) {
@@ -587,6 +614,7 @@ export const ChatManager = {
     }
 
     try {
+      await this.refreshBrowserCorpusSummaries();
       const { data, error } = await sb
         .from('research_corpora')
         .select('id, name, updated_at, research_corpus_items(item_type, item_id)')
@@ -599,13 +627,17 @@ export const ChatManager = {
         const items = Array.isArray(corpus.research_corpus_items) ? corpus.research_corpus_items : [];
         const packCount = items.filter(item => item.item_type === 'pack').length;
         const sourceCount = items.filter(item => item.item_type === 'source').length;
+        const browserSummary = this.getBrowserCorpusSummary(corpus.id);
+        const isStale = Boolean(browserSummary?.corpusUpdatedAt && corpus.updated_at && browserSummary.corpusUpdatedAt !== corpus.updated_at);
         return {
           id: corpus.id,
           name: corpus.name || 'Untitled corpus',
           label: `${corpus.name || 'Untitled corpus'}${packCount ? ` (${packCount} pack${packCount === 1 ? '' : 's'})` : ''}${sourceCount ? ` + ${sourceCount} source${sourceCount === 1 ? '' : 's'}` : ''}`,
           packCount,
           sourceCount,
-          updatedAt: corpus.updated_at || null
+          updatedAt: corpus.updated_at || null,
+          browserSummary,
+          browserStatus: browserSummary ? (isStale ? 'stale' : (browserSummary.status || 'complete')) : 'missing'
         };
       });
 
@@ -634,6 +666,61 @@ export const ChatManager = {
     return manifest;
   },
 
+  async refreshBrowserCorpusSummaries() {
+    try {
+      const summaries = await listBrowserCorpusSummaries();
+      this.browserCorpusSummaries = new Map((summaries || []).map(item => [item.corpusId, item]));
+    } catch (error) {
+      console.warn('Could not read browser corpus summaries:', error);
+      this.browserCorpusSummaries = new Map();
+    }
+    return this.browserCorpusSummaries;
+  },
+
+  getBrowserCorpusSummary(corpusId) {
+    return this.browserCorpusSummaries.get(corpusId) || null;
+  },
+
+  async buildResearchBrowserSnapshot(corpusId, { sessionId } = {}) {
+    const token = getAccessToken();
+    const response = await fetch('/api/research/browser-save/build', {
+      method: 'POST',
+      headers: Object.assign(
+        { 'Content-Type': 'application/json' },
+        token ? { Authorization: `Bearer ${token}` } : {}
+      ),
+      body: JSON.stringify({
+        sessionId: sessionId || this.getSessionIdForMode('research'),
+        corpusId
+      })
+    });
+    const payload = await response.json();
+    if (!response.ok || payload?.ok !== true || !payload?.snapshot) {
+      throw new Error(payload?.error || `HTTP ${response.status}`);
+    }
+    return payload;
+  },
+
+  async restoreResearchBrowserSnapshot(snapshot, { sessionId } = {}) {
+    const token = getAccessToken();
+    const response = await fetch('/api/research/browser-save/load', {
+      method: 'POST',
+      headers: Object.assign(
+        { 'Content-Type': 'application/json' },
+        token ? { Authorization: `Bearer ${token}` } : {}
+      ),
+      body: JSON.stringify({
+        sessionId: sessionId || this.getSessionIdForMode('research'),
+        snapshot
+      })
+    });
+    const payload = await response.json();
+    if (!response.ok || payload?.ok !== true) {
+      throw new Error(payload?.error || `HTTP ${response.status}`);
+    }
+    return payload;
+  },
+
   getSelectedResearchCorpusOption() {
     return this.researchCorpusOptions.find(option => option.id === this.selectedResearchCorpusId) || null;
   },
@@ -654,6 +741,9 @@ export const ChatManager = {
     const manifest = this.latestResearchManifest;
     const saved = manifest?.saved_corpus || null;
     const artifactCount = Number(manifest?.artifact_count || 0);
+    const browserStatus = selected?.browserStatus || 'missing';
+    const browserSummary = selected?.browserSummary || null;
+    const browserSizeText = browserSummary?.sizeBytes ? ` Browser copy ${this.formatBytes(browserSummary.sizeBytes)} on this device.` : '';
 
     if (!isAuthenticated()) {
       if (artifactCount > 0) {
@@ -667,11 +757,19 @@ export const ChatManager = {
       const sizeText = saved.estimated_file_size_mb_total
         ? ` Estimated size ${saved.estimated_file_size_mb_total.toFixed(1)} MB.`
         : '';
-      researchModeToggle.setCorpusStatus(`Loaded "${saved.name}" into this Research workspace.${sizeText}`);
+      const browserText = browserStatus === 'stale'
+        ? ' Browser copy on this device is out of date. Refresh it from the account page if needed.'
+        : (browserStatus === 'complete' ? browserSizeText : '');
+      researchModeToggle.setCorpusStatus(`Loaded "${saved.name}" into this Research workspace.${sizeText}${browserText}`);
       return;
     }
     if (selected) {
-      researchModeToggle.setCorpusStatus(`Selected "${selected.name}". Click Load Data to attach it to this Research workspace.`);
+      const browserText = browserStatus === 'complete'
+        ? ` Browser-saved on this device.${browserSizeText}`
+        : (browserStatus === 'stale'
+          ? ' Browser copy on this device is out of date. Refresh it from the account page if needed.'
+          : ' No browser copy on this device yet.');
+      researchModeToggle.setCorpusStatus(`Selected "${selected.name}". Click Load Data to attach it to this Research workspace.${browserText}`);
       return;
     }
     if (this.researchCorpusOptions.length > 0) {
@@ -683,6 +781,19 @@ export const ChatManager = {
       return;
     }
     researchModeToggle.setCorpusStatus('No saved corpora found yet.');
+  },
+
+  formatBytes(bytes) {
+    const value = Number(bytes || 0);
+    if (!Number.isFinite(value) || value <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let unitIndex = 0;
+    let current = value;
+    while (current >= 1024 && unitIndex < units.length - 1) {
+      current /= 1024;
+      unitIndex += 1;
+    }
+    return `${current.toFixed(current >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
   },
 
   async loadSelectedResearchCorpus(corpusId) {
@@ -698,10 +809,28 @@ export const ChatManager = {
     researchModeToggle?.setCorpusLoading(true);
 
     try {
-      const response = await postMsgpack('/api/research/load-saved-corpus', {
-        sessionId: this.getSessionIdForMode('research'),
-        corpusId: selectedId
-      });
+      const selected = this.getSelectedResearchCorpusOption();
+      const browserSnapshotRecord = selected?.browserStatus === 'complete'
+        ? await getBrowserCorpusSnapshot(selectedId)
+        : null;
+      let response = null;
+      if (browserSnapshotRecord?.snapshot) {
+        try {
+          response = await this.restoreResearchBrowserSnapshot(browserSnapshotRecord.snapshot);
+        } catch (browserError) {
+          console.warn('Browser snapshot restore failed, falling back to cloud load:', browserError);
+        }
+      }
+      if (!response) {
+        response = await postMsgpack('/api/research/load-saved-corpus', {
+          sessionId: this.getSessionIdForMode('research'),
+          corpusId: selectedId
+        });
+      }
+      this.lastResearchDisplay = null;
+      if (response?.focus_geojson?.features?.length) {
+        App?.focusResearchGeojson?.(response.focus_geojson);
+      }
       this.latestResearchManifest = response?.corpus || null;
       const saved = response?.corpus?.saved_corpus || null;
       const packCount = Number(saved?.pack_count || 0);
@@ -725,6 +854,49 @@ export const ChatManager = {
       this.updateResearchCorpusStatus();
       this.saveState();
     }
+  },
+
+  async saveResearchCorpusToBrowser(corpusId) {
+    const selectedId = corpusId || this.selectedResearchCorpusId;
+    if (!selectedId) return;
+    const selected = this.researchCorpusOptions.find(option => option.id === selectedId) || null;
+    const indicator = this.showTypingIndicator(true);
+    indicator.updateStage?.('thinking', 'Saving this corpus into browser storage...');
+    researchModeToggle?.setCorpusLoading(true);
+    try {
+      const payload = await this.buildResearchBrowserSnapshot(selectedId);
+      this.latestResearchManifest = payload?.corpus || this.latestResearchManifest;
+      await saveBrowserCorpusSnapshot({
+        corpusId: selectedId,
+        corpusName: selected?.name || payload?.corpus?.saved_corpus?.name || 'Saved corpus',
+        corpusUpdatedAt: selected?.updatedAt || payload?.corpus?.saved_corpus?.updated_at || null,
+        snapshot: payload.snapshot
+      });
+      await this.refreshBrowserCorpusSummaries();
+      await this.refreshResearchCorpusOptions();
+      this.addMessage(`Saved "${selected?.name || 'Saved corpus'}" in browser on this device.`, 'assistant', { mode: 'research' });
+    } catch (error) {
+      console.error('Browser save error:', error);
+      this.addMessage(error.message || 'Could not save this corpus in browser storage.', 'assistant', { mode: 'research' });
+    } finally {
+      indicator.remove();
+      researchModeToggle?.setCorpusLoading(false);
+      this.updateResearchCorpusStatus();
+    }
+  },
+
+  async syncResearchCorpusBrowserCopy(corpusId) {
+    await this.saveResearchCorpusToBrowser(corpusId);
+  },
+
+  async removeResearchCorpusBrowserCopy(corpusId) {
+    const selectedId = corpusId || this.selectedResearchCorpusId;
+    if (!selectedId) return;
+    const selected = this.researchCorpusOptions.find(option => option.id === selectedId) || null;
+    await removeBrowserCorpusSnapshot(selectedId);
+    await this.refreshBrowserCorpusSummaries();
+    await this.refreshResearchCorpusOptions();
+    this.addMessage(`Removed the browser copy for "${selected?.name || 'Saved corpus'}" on this device.`, 'assistant', { mode: 'research' });
   },
 
   /**
@@ -1336,6 +1508,22 @@ export const ChatManager = {
       return;
     }
 
+    if (requestMode === 'research') {
+      const rasterCommand = this.parseResearchRasterCommand(query);
+      if (rasterCommand) {
+        this.history.push({ role: 'user', content: query });
+        this.modeHistories[requestMode] = this.history;
+        if (rasterCommand.raster) {
+          App?.applyResearchDisplay?.({ action: 'raster_visibility', raster: rasterCommand.raster });
+        }
+        this.history.push({ role: 'assistant', content: rasterCommand.reply });
+        this.modeHistories[requestMode] = this.history;
+        this.addMessage(rasterCommand.reply, 'assistant', { mode: requestMode });
+        this.saveState();
+        return;
+      }
+    }
+
     // Track last query for potential re-send (metric warning)
     this.lastQuery = query;
 
@@ -1356,7 +1544,17 @@ export const ChatManager = {
 
       // Send via streaming API
       const endpoint = requestMode === 'research' ? '/chat/research/stream' : '/chat/stream';
-      const response = await sendStreamingRequest(payload, (stage, message, deltaText) => {
+      this.pendingResearchRasterMode = requestMode === 'research' && this.shouldAutoShowResearchRaster(query)
+        ? 'selection'
+        : null;
+      const response = await sendStreamingRequest(payload, (stage, message, deltaText, rawEvent) => {
+        if (stage === 'display' && rawEvent?.display) {
+          const displayPayload = this.decorateResearchDisplay(rawEvent.display, {
+            rasterMode: this.pendingResearchRasterMode
+          });
+          this.applySupplementalChatActions({ display: displayPayload });
+          return;
+        }
         if (stage === 'answer_start') {
           if (!removedIndicatorForStream) {
             indicator.remove();
@@ -1415,20 +1613,26 @@ export const ChatManager = {
           streamedAssistantEl.remove();
           this.syncModeMessagesHtml(requestMode);
         }
-        this.applySupplementalChatActions(response);
+        const decoratedResponse = this.decorateResearchResponse(response, {
+          rasterMode: this.pendingResearchRasterMode
+        });
+        this.applySupplementalChatActions(decoratedResponse);
         this.saveState();
       } else {
         if (streamedAssistantEl) {
           streamedAssistantEl.remove();
           this.syncModeMessagesHtml(requestMode);
         }
-        this.handleResponse({ ...response, _requestMode: requestMode });
+        this.handleResponse({ ...this.decorateResearchResponse(response, {
+          rasterMode: this.pendingResearchRasterMode
+        }), _requestMode: requestMode });
       }
 
     } catch (error) {
       console.error('Chat error:', error);
       this.addMessage('Sorry, something went wrong. Please try again.', 'assistant', { mode: requestMode });
     } finally {
+      this.pendingResearchRasterMode = null;
       if (!removedIndicatorForStream) {
         indicator.remove();
       }
@@ -1692,8 +1896,120 @@ export const ChatManager = {
     if (!display || !App) return;
 
     if (display.action === 'highlight_features' && display.geojson?.features?.length) {
+      this.lastResearchDisplay = display;
+      App.applyResearchDisplay?.(display);
+      return;
+    }
+
+    if (display.raster?.provider) {
       App.applyResearchDisplay?.(display);
     }
+  },
+
+  shouldAutoShowResearchRaster(query) {
+    const normalized = String(query || '').trim().toLowerCase();
+    if (!normalized) return false;
+    if (!/\b(raster|rasters|heat layer|heat map|heatmap)\b/.test(normalized)) return false;
+    if (/\b(turn on|turn off|hide|disable|enable|open|close|raster mode|normal mode|vector mode|map mode|go back|undo)\b/.test(normalized)) {
+      return false;
+    }
+    return /\b(hottest|coolest|top|rank|ranking|compare|find|identify|which|what|where|show me|list)\b/.test(normalized);
+  },
+
+  decorateResearchResponse(response, options = {}) {
+    if (!response || typeof response !== 'object') return response;
+    if (!response.display) return response;
+    return {
+      ...response,
+      display: this.decorateResearchDisplay(response.display, options)
+    };
+  },
+
+  decorateResearchDisplay(display, options = {}) {
+    if (!display || typeof display !== 'object') return display;
+    const rasterMode = options.rasterMode;
+    if (rasterMode !== 'selection') return display;
+    const locIds = Array.isArray(display.loc_ids) ? display.loc_ids.filter(Boolean) : [];
+    if (!locIds.length) return display;
+    return {
+      ...display,
+      raster: {
+        provider: 'fairfax_lst',
+        visibility: 'show',
+        clip_mode: 'selection',
+        loc_ids: locIds
+      }
+    };
+  },
+
+  parseResearchRasterCommand(query) {
+    const normalized = String(query || '').trim().toLowerCase();
+    if (!normalized) return null;
+    if (
+      /\b(raster|rasters|heat layer|heat map|heatmap)\b/.test(normalized) &&
+      /\b(hottest|coolest|top|rank|ranking|compare|find|identify|which|what|where|show me|list)\b/.test(normalized)
+    ) {
+      return null;
+    }
+
+    const referencesSelection = /\b(those|these|selected|selection|them)\b/.test(normalized);
+    if (referencesSelection && /\b(raster|rasters|heat layer|heat map|heatmap)\b/.test(normalized)) {
+      const locIds = Array.isArray(this.lastResearchDisplay?.loc_ids) ? this.lastResearchDisplay.loc_ids.filter(Boolean) : [];
+      if (!locIds.length) {
+        return {
+          reply: 'I do not have a recent highlighted selection to turn into raster clips yet. Highlight specific locations first, then ask for only those rasters.'
+        };
+      }
+      return {
+        raster: {
+          provider: 'fairfax_lst',
+          visibility: 'show',
+          clip_mode: 'selection',
+          loc_ids: locIds
+        },
+        reply: `Showing raster clips for the current ${locIds.length}-location Research selection.`
+      };
+    }
+
+    if (/\b(go back|undo)\b/.test(normalized) || /\bback to (the )?(first|previous|vector|normal) view\b/.test(normalized)) {
+      return {
+        raster: { provider: 'fairfax_lst', visibility: 'hide' },
+        reply: 'Went back to the vector-only view and hid the Fairfax heat raster layer.'
+      };
+    }
+
+    if (/\b(normal mode|vector mode|map mode)\b/.test(normalized)) {
+      return {
+        raster: { provider: 'fairfax_lst', visibility: 'hide' },
+        reply: 'Switched back to normal map mode and hid the Fairfax heat raster layer.'
+      };
+    }
+
+    if (/\b(raster mode|heat mode)\b/.test(normalized)) {
+      return {
+        raster: { provider: 'fairfax_lst', visibility: 'show' },
+        reply: 'Switched into raster mode and opened the Fairfax heat layer controls.'
+      };
+    }
+
+    const referencesRaster = /\b(raster|rasters|heat layer|heat map|heatmap)\b/.test(normalized);
+    if (!referencesRaster) return null;
+
+    if (/\b(turn off|hide|disable|remove|close)\b/.test(normalized)) {
+      return {
+        raster: { provider: 'fairfax_lst', visibility: 'hide' },
+        reply: 'Turned off the Fairfax heat raster layer.'
+      };
+    }
+
+    if (/\b(turn on|show|enable|open)\b/.test(normalized)) {
+      return {
+        raster: { provider: 'fairfax_lst', visibility: 'show' },
+        reply: 'Turned on the Fairfax heat raster layer.'
+      };
+    }
+
+    return null;
   },
 
   getResearchDisplayFallbackMessage(response) {

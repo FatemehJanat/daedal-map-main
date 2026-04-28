@@ -198,6 +198,7 @@ body.tutorial-mode #tutorialTimelineRegion {
 }
 
 #tutorialTimelineRegion > #timeSliderContainer,
+#tutorialTimelineRegion > #fairfax-raster-panel,
 #tutorialTimelineRegion > .tutorial-region-tip,
 #tutorialTimelineRegion > .tutorial-timeline-panel {
   pointer-events: auto;
@@ -2600,7 +2601,7 @@ body.tutorial-mode .popup-tutorial-wrap {
    ========================================================= */
 
 #fairfax-raster-panel {
-  position: absolute;
+  position: fixed;
   bottom: 120px;
   right: 12px;
   width: 260px;
@@ -2608,7 +2609,8 @@ body.tutorial-mode .popup-tutorial-wrap {
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
   padding: 10px 12px 12px;
-  z-index: 200;
+  z-index: 1200;
+  pointer-events: auto;
   color: #e0e0e0;
   font-size: 12px;
   box-shadow: 0 2px 12px rgba(0,0,0,0.5);

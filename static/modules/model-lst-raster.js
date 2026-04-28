@@ -104,6 +104,8 @@ export const LstRasterModel = {
   canvas:  null,
   ctx:     null,
   isVisible: false,
+  displayMode: 'scene',
+  clipEntries: [],
 
   // -----------------------------------------------------------------------
   // Load a scene from the backend
@@ -137,6 +139,8 @@ export const LstRasterModel = {
     this.height = data.height;
     this.bounds = data.bounds;
     this.period = data.period;
+    this.displayMode = 'scene';
+    this._clearClipLayers();
 
     console.log(`LstRasterModel: loaded ${this.width}x${this.height} pixels for ${period}`);
 
@@ -155,10 +159,18 @@ export const LstRasterModel = {
   setColorRange(minF, maxF) {
     this.minF = minF;
     this.maxF = maxF;
-    if (this.pixels) {
+    if (this.pixels || (this.clipEntries && this.clipEntries.length)) {
       this._rebuildLUT();
-      this._render();
-      this._updateMapSource();
+      if (this.pixels) {
+        this._render();
+        this._updateMapSource();
+      }
+      for (const entry of this.clipEntries || []) {
+        this._renderClipEntry(entry);
+      }
+      if (this.clipEntries?.length) {
+        this._updateClipLayers();
+      }
     }
   },
 
@@ -167,6 +179,11 @@ export const LstRasterModel = {
     if (MapAdapter?.map?.getLayer(LAYER_ID)) {
       MapAdapter.map.setPaintProperty(LAYER_ID, 'raster-opacity', opacity);
     }
+    for (const entry of this.clipEntries || []) {
+      if (MapAdapter?.map?.getLayer(entry.layerId)) {
+        MapAdapter.map.setPaintProperty(entry.layerId, 'raster-opacity', opacity);
+      }
+    }
   },
 
   // -----------------------------------------------------------------------
@@ -174,6 +191,15 @@ export const LstRasterModel = {
   // -----------------------------------------------------------------------
 
   show() {
+    if (this.displayMode === 'clips') {
+      for (const entry of this.clipEntries || []) {
+        if (MapAdapter?.map?.getLayer(entry.layerId)) {
+          MapAdapter.map.setLayoutProperty(entry.layerId, 'visibility', 'visible');
+        }
+      }
+      this.isVisible = true;
+      return;
+    }
     if (!this.pixels) return;
     if (MapAdapter?.map?.getLayer(LAYER_ID)) {
       MapAdapter.map.setLayoutProperty(LAYER_ID, 'visibility', 'visible');
@@ -185,7 +211,51 @@ export const LstRasterModel = {
     if (MapAdapter?.map?.getLayer(LAYER_ID)) {
       MapAdapter.map.setLayoutProperty(LAYER_ID, 'visibility', 'none');
     }
+    for (const entry of this.clipEntries || []) {
+      if (MapAdapter?.map?.getLayer(entry.layerId)) {
+        MapAdapter.map.setLayoutProperty(entry.layerId, 'visibility', 'none');
+      }
+    }
     this.isVisible = false;
+  },
+
+  async loadClips(payload) {
+    const clips = payload?.clips || [];
+    if (!clips.length) return false;
+
+    this.displayMode = 'clips';
+    this.period = payload?.period || this.period;
+    this._clearClipLayers();
+    if (MapAdapter?.map?.getLayer(LAYER_ID)) {
+      MapAdapter.map.setLayoutProperty(LAYER_ID, 'visibility', 'none');
+    }
+
+    this._rebuildLUT();
+    this.clipEntries = clips.map((clip, index) => {
+      const raw = clip.pixels;
+      const aligned = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength);
+      const pixels = new Float32Array(aligned);
+      const canvas = document.createElement('canvas');
+      canvas.width = clip.width;
+      canvas.height = clip.height;
+      const ctx = canvas.getContext('2d');
+      const entry = {
+        locId: clip.loc_id,
+        sourceId: `${SOURCE_ID}-clip-${index}`,
+        layerId: `${LAYER_ID}-clip-${index}`,
+        pixels,
+        width: clip.width,
+        height: clip.height,
+        bounds: clip.bounds,
+        canvas,
+        ctx
+      };
+      this._renderClipEntry(entry);
+      return entry;
+    });
+    this._updateClipLayers();
+    this.isVisible = true;
+    return true;
   },
 
   cleanup() {
@@ -194,10 +264,12 @@ export const LstRasterModel = {
       if (map.getLayer(LAYER_ID))  map.removeLayer(LAYER_ID);
       if (map.getSource(SOURCE_ID)) map.removeSource(SOURCE_ID);
     }
+    this._clearClipLayers();
     this.pixels  = null;
     this.canvas  = null;
     this.ctx     = null;
     this.isVisible = false;
+    this.displayMode = 'scene';
     console.log('LstRasterModel: cleaned up');
   },
 
@@ -251,6 +323,34 @@ export const LstRasterModel = {
     this.ctx.putImageData(imageData, 0, 0);
   },
 
+  _renderClipEntry(entry) {
+    if (!entry?.pixels || !entry?.ctx || !this.colorLUT) return;
+    const imageData = entry.ctx.createImageData(entry.width, entry.height);
+    const px = imageData.data;
+    const lut = this.colorLUT;
+    const minF = this.minF;
+    const maxF = this.maxF;
+    const range = maxF - minF;
+
+    for (let i = 0; i < entry.pixels.length; i++) {
+      const val = entry.pixels[i];
+      const idx = i * 4;
+      if (!val || val === 0) {
+        px[idx] = px[idx+1] = px[idx+2] = px[idx+3] = 0;
+        continue;
+      }
+      const norm = Math.max(0, Math.min(1, (val - minF) / range));
+      const lutIdx = Math.round(norm * 255);
+      const color = lut[lutIdx];
+      px[idx] = color[0];
+      px[idx+1] = color[1];
+      px[idx+2] = color[2];
+      px[idx+3] = color[3];
+    }
+
+    entry.ctx.putImageData(imageData, 0, 0);
+  },
+
   _updateMapSource() {
     const map = MapAdapter?.map;
     if (!map || !this.bounds || !this.canvas) return;
@@ -293,5 +393,56 @@ export const LstRasterModel = {
       this.isVisible = true;
       console.log('LstRasterModel: map layer created');
     }
+  },
+
+  _updateClipLayers() {
+    const map = MapAdapter?.map;
+    if (!map) return;
+
+    let labelLayerId;
+    for (const layer of map.getStyle().layers) {
+      if (layer.type === 'symbol' && layer.layout?.['text-field']) {
+        labelLayerId = layer.id;
+        break;
+      }
+    }
+
+    for (const entry of this.clipEntries || []) {
+      const { west, south, east, north } = entry.bounds || {};
+      if ([west, south, east, north].some((value) => !Number.isFinite(value))) continue;
+      const coordinates = [
+        [west, north],
+        [east, north],
+        [east, south],
+        [west, south],
+      ];
+      const dataUrl = entry.canvas.toDataURL('image/png');
+      const existing = map.getSource(entry.sourceId);
+      if (existing) {
+        existing.updateImage({ url: dataUrl, coordinates });
+      } else {
+        map.addSource(entry.sourceId, { type: 'image', url: dataUrl, coordinates });
+        map.addLayer({
+          id: entry.layerId,
+          type: 'raster',
+          source: entry.sourceId,
+          paint: {
+            'raster-opacity': this.opacity,
+            'raster-fade-duration': 0,
+          },
+        }, labelLayerId);
+      }
+    }
+  },
+
+  _clearClipLayers() {
+    const map = MapAdapter?.map;
+    if (map) {
+      for (const entry of this.clipEntries || []) {
+        if (map.getLayer(entry.layerId)) map.removeLayer(entry.layerId);
+        if (map.getSource(entry.sourceId)) map.removeSource(entry.sourceId);
+      }
+    }
+    this.clipEntries = [];
   },
 };

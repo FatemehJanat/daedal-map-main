@@ -525,6 +525,50 @@ def load_geometry_rows_by_loc_ids(iso3: str, loc_ids: list[str]):
         return pd.DataFrame()
 
 
+def _load_subcounty_rows_by_loc_ids(iso3: str, loc_ids: list[str]):
+    """
+    Load exact deep-admin geometry rows for canonical local loc_ids.
+
+    Reuses the established subcounty geometry system documented in crosswalk
+    `sub_admin_levels` instead of falling back to the country-level geometry bank.
+    """
+    requested_ids = [canonicalize_loc_id(loc_id) for loc_id in loc_ids if loc_id]
+    if not requested_ids:
+        return pd.DataFrame()
+
+    crosswalk = _load_crosswalk(iso3) or {}
+    sub_admin_levels = crosswalk.get("sub_admin_levels") or {}
+    if not sub_admin_levels:
+        return pd.DataFrame()
+
+    grouped: dict[tuple[int, str | None], list[str]] = {}
+    for loc_id in requested_ids:
+        parts = str(loc_id).split("-")
+        if not parts or parts[0] != iso3:
+            continue
+        segment_count = len(parts)
+        if segment_count < 4:
+            continue
+        admin_level = segment_count - 1
+        if f"admin_{admin_level}" not in sub_admin_levels:
+            continue
+        state_abbrev = parts[1] if len(parts) >= 2 else None
+        grouped.setdefault((admin_level, state_abbrev), []).append(loc_id)
+
+    frames = []
+    for (admin_level, state_abbrev), group_ids in grouped.items():
+        df = load_subcounty_geometry(iso3, admin_level=admin_level, state_abbrev=state_abbrev)
+        if df is None or df.empty:
+            continue
+        filtered = df[df["loc_id"].isin(group_ids)]
+        if not filtered.empty:
+            frames.append(filtered)
+
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True)
+
+
 def _load_deep_geometry_index_rows(
     iso3: str,
     admin_level: int,
@@ -2093,6 +2137,18 @@ def get_selection_geometries(loc_ids: list):
         # Check if any are country-level (just the ISO3 code)
         country_level_ids = [lid for lid in country_loc_ids if lid == iso3]
         sub_level_ids = [lid for lid in country_loc_ids if lid != iso3]
+        deep_level_ids = []
+        regular_sub_level_ids = []
+        crosswalk = _load_crosswalk(iso3) or {}
+        sub_admin_levels = crosswalk.get("sub_admin_levels") or {}
+        for lid in sub_level_ids:
+            parts = str(lid).split("-")
+            segment_count = len(parts)
+            admin_level = segment_count - 1
+            if segment_count >= 4 and f"admin_{admin_level}" in sub_admin_levels:
+                deep_level_ids.append(lid)
+            else:
+                regular_sub_level_ids.append(lid)
 
         # Fetch country-level from global.csv
         if country_level_ids:
@@ -2103,9 +2159,16 @@ def get_selection_geometries(loc_ids: list):
                     country_geojson = df_to_geojson(country_rows, polygon_only=True)
                     features.extend(country_geojson.get("features", []))
 
-        # Fetch sub-country levels from parquet
-        if sub_level_ids:
-            country_df = load_geometry_rows_by_loc_ids(iso3, sub_level_ids)
+        # Fetch canonical deep sub-country levels from the existing subcounty geometry system.
+        if deep_level_ids:
+            deep_df = _load_subcounty_rows_by_loc_ids(iso3, deep_level_ids)
+            if deep_df is not None and len(deep_df) > 0:
+                deep_geojson = df_to_geojson(deep_df, polygon_only=True)
+                features.extend(deep_geojson.get("features", []))
+
+        # Fetch remaining sub-country levels from the standard country/crosswalk path.
+        if regular_sub_level_ids:
+            country_df = load_geometry_rows_by_loc_ids(iso3, regular_sub_level_ids)
             if country_df is not None and len(country_df) > 0:
                 sub_geojson = df_to_geojson(country_df, polygon_only=True)
                 features.extend(sub_geojson.get("features", []))

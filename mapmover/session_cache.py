@@ -114,6 +114,23 @@ class SessionCache:
         """Get cached result by request key."""
         return self._results.get(request_key)
 
+    def export_results(self, request_keys: list[str] | None = None) -> Dict[str, Dict]:
+        """Export cached results, optionally filtered to a specific request key set."""
+        if not request_keys:
+            return dict(self._results)
+        requested = {str(key) for key in request_keys if key}
+        return {key: value for key, value in self._results.items() if key in requested}
+
+    def import_results(self, results: Dict[str, Dict] | None) -> None:
+        """Import cached results into the session cache."""
+        if not isinstance(results, dict):
+            return
+        for key, value in results.items():
+            if not key or not isinstance(value, dict):
+                continue
+            self._results[str(key)] = value
+        self.touch()
+
     def has_result(self, request_key: str) -> bool:
         """Check if result is cached."""
         return request_key in self._results

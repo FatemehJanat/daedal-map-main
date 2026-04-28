@@ -13,6 +13,8 @@ from copy import deepcopy
 from datetime import datetime
 from typing import Any
 
+from mapmover.data_loading import load_source_metadata
+
 
 def _stable_hash(value: Any) -> str:
     try:
@@ -103,6 +105,37 @@ def _build_scope(order: dict, response: dict) -> dict:
     }
 
 
+def _extract_source_runtime_hints(source_id: str | None) -> dict:
+    if not source_id:
+        return {}
+    metadata = load_source_metadata(source_id) or {}
+    raster_products = metadata.get("raster_products") or {}
+    scene_rasters = raster_products.get("scene_rasters") or {}
+    loc_id_clips = raster_products.get("loc_id_clips") or {}
+    hints = {}
+
+    scenes = scene_rasters.get("scenes") or []
+    if scenes:
+        hints["scene_periods"] = [
+            {
+                "period": scene.get("period"),
+                "year": scene.get("year"),
+            }
+            for scene in scenes[:12]
+            if scene.get("period")
+        ]
+
+    supported_levels = loc_id_clips.get("supported_levels") or {}
+    if supported_levels:
+        hints["raster_clip_levels"] = list(supported_levels.keys())
+        hints["supports_loc_id_raster_clips"] = True
+
+    if scene_rasters:
+        hints["supports_scene_rasters"] = True
+
+    return hints
+
+
 class CorpusRegistry:
     """In-memory research artifact registry keyed by authenticated session id."""
 
@@ -166,6 +199,7 @@ class CorpusRegistry:
             "order": deepcopy(order),
             "created_at": datetime.utcnow().isoformat() + "Z",
         }
+        artifact.update(_extract_source_runtime_hints(source_id))
         artifacts[artifact_id] = artifact
         return deepcopy(artifact)
 
@@ -189,6 +223,25 @@ class CorpusRegistry:
 
     def list_artifacts(self, session_id: str) -> list[dict]:
         return [self._public_artifact(a) for a in self._sessions.get(session_id, {}).values()]
+
+    def export_session_artifacts(self, session_id: str) -> list[dict]:
+        return [deepcopy(artifact) for artifact in self._sessions.get(session_id, {}).values()]
+
+    def import_session_artifacts(self, session_id: str, artifacts: list[dict] | None) -> None:
+        if not session_id:
+            return
+        restored: dict[str, dict] = {}
+        for artifact in artifacts or []:
+            if not isinstance(artifact, dict):
+                continue
+            artifact_id = str(artifact.get("artifact_id") or "").strip()
+            if not artifact_id:
+                continue
+            restored[artifact_id] = deepcopy(artifact)
+        if restored:
+            self._sessions[session_id] = restored
+        else:
+            self._sessions.pop(session_id, None)
 
     def clear_session(self, session_id: str) -> None:
         self._sessions.pop(session_id, None)

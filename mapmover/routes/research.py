@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import asyncio
+from datetime import datetime
 from types import SimpleNamespace
 from shapely import wkt as shapely_wkt
 from shapely.geometry import mapping as shapely_mapping
@@ -13,7 +14,7 @@ from shapely.geometry import mapping as shapely_mapping
 import msgpack
 from anthropic import Anthropic
 from fastapi import APIRouter, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from mapmover import logger
 from mapmover.auth_context import build_session_cache_key, get_authenticated_user, get_authenticated_user_async
@@ -23,6 +24,7 @@ from mapmover.security import get_client_ip
 from mapmover.data_loading import get_pack_metadata, get_source_path, load_source_metadata
 from mapmover.api_query_runtime import execute_dataset_query, get_api_source_columns, get_api_source_spec
 from mapmover.duckdb_helpers import parquet_available, parquet_columns, path_to_uri, quote_ident, run_rows, select_columns_from_parquet
+from mapmover.geometry_handlers import get_selection_geometries
 from mapmover.progress_bus import ProgressBus, ProgressEvent
 from mapmover.research_postprocessor import normalize_research_result
 from mapmover.research_preprocessor import build_research_hint_context, preprocess_research_query
@@ -62,6 +64,22 @@ def _research_heartbeat(idle_count: int) -> ProgressEvent:
 
 
 router = APIRouter()
+
+
+def _infer_loc_id_details(loc_id) -> tuple[int | None, str | None]:
+    text = str(loc_id or "").strip()
+    if not text:
+        return None, None
+    segment_count = text.count("-")
+    kind_map = {
+        0: "country",
+        1: "state_or_admin_1",
+        2: "county",
+        3: "tract",
+        4: "blockgroup",
+        5: "block",
+    }
+    return segment_count, kind_map.get(segment_count)
 
 
 def _build_saved_corpus_summary(corpus_row: dict | None) -> dict | None:
@@ -147,6 +165,7 @@ def _rows_to_temporal_result(rows: list[dict], source_id: str, metadata: dict, s
         if loc_id is None:
             continue
         loc_id = str(loc_id)
+        admin_level_num, geography_kind = _infer_loc_id_details(loc_id)
         name = row.get("name") or loc_id
         features_by_loc.setdefault(
             loc_id,
@@ -155,6 +174,8 @@ def _rows_to_temporal_result(rows: list[dict], source_id: str, metadata: dict, s
                 "properties": {
                     "loc_id": loc_id,
                     "name": name,
+                    "admin_level_num": admin_level_num,
+                    "geography_kind": geography_kind,
                 },
             },
         )
@@ -167,6 +188,10 @@ def _rows_to_temporal_result(rows: list[dict], source_id: str, metadata: dict, s
             for metric_id in metric_ids
             if metric_id in row
         }
+        if admin_level_num is not None:
+            metric_values["admin_level_num"] = admin_level_num
+        if geography_kind:
+            metric_values["geography_kind"] = geography_kind
         if not metric_values:
             continue
         year_data.setdefault(time_key, {})[loc_id] = metric_values
@@ -200,6 +225,9 @@ def _rows_to_static_result(rows: list[dict], source_id: str, metadata: dict, spe
         loc_id = props.get(spec.location_field)
         if loc_id is not None:
             props["loc_id"] = str(loc_id)
+            admin_level_num, geography_kind = _infer_loc_id_details(loc_id)
+            props.setdefault("admin_level_num", admin_level_num)
+            props.setdefault("geography_kind", geography_kind)
         if "name" not in props and props.get("loc_id"):
             props["name"] = props["loc_id"]
         features.append({"type": "Feature", "properties": props})
@@ -541,6 +569,43 @@ def _hydrate_saved_corpus(session_id: str, saved_corpus: dict) -> dict:
     return hydration
 
 
+def _browser_save_snapshot_bytes(snapshot: dict) -> int:
+    try:
+        return len(json.dumps(snapshot, separators=(",", ":"), default=str).encode("utf-8"))
+    except Exception:
+        return 0
+
+
+def _build_browser_corpus_snapshot(session_id: str, saved_corpus: dict) -> dict:
+    artifacts = corpus_registry.export_session_artifacts(session_id)
+    request_keys = [str(artifact.get("request_key") or "").strip() for artifact in artifacts if artifact.get("request_key")]
+    cache = session_manager.get(session_id)
+    results = cache.export_results(request_keys) if cache else {}
+    snapshot = {
+        "snapshot_version": 1,
+        "saved_at": datetime.utcnow().isoformat() + "Z",
+        "saved_corpus": saved_corpus,
+        "artifacts": artifacts,
+        "results": results,
+    }
+    snapshot["size_bytes"] = _browser_save_snapshot_bytes(snapshot)
+    return snapshot
+
+
+def _restore_browser_corpus_snapshot(session_id: str, snapshot: dict) -> dict:
+    saved_corpus = snapshot.get("saved_corpus")
+    artifacts = snapshot.get("artifacts") or []
+    results = snapshot.get("results") or {}
+
+    corpus_registry.clear_artifacts(session_id)
+    if saved_corpus:
+        corpus_registry.set_saved_corpus(session_id, saved_corpus)
+    cache = session_manager.get_or_create(session_id)
+    cache.import_results(results)
+    corpus_registry.import_session_artifacts(session_id, artifacts)
+    return corpus_registry.manifest(session_id)
+
+
 async def _decode_msgpack_request(req: Request) -> dict:
     body_bytes = await req.body()
     return msgpack.unpackb(body_bytes, raw=False)
@@ -683,6 +748,8 @@ def _compact_manifest_for_prompt(manifest: dict) -> dict:
                 "feature_count": artifact.get("feature_count"),
                 "row_count": artifact.get("row_count"),
                 "summary": artifact.get("summary"),
+                "scene_periods": (artifact.get("scene_periods") or [])[:8],
+                "raster_clip_levels": artifact.get("raster_clip_levels") or [],
             }
         )
 
@@ -693,6 +760,62 @@ def _compact_manifest_for_prompt(manifest: dict) -> dict:
         "artifacts": artifacts,
         "saved_corpus": compact_saved,
     }
+
+
+def _focus_loc_ids_from_result(result: dict | None) -> list[str]:
+    if not isinstance(result, dict):
+        return []
+
+    loc_ids: list[str] = []
+    seen = set()
+
+    for feature in ((result.get("geojson") or {}).get("features") or []):
+        loc_id = ((feature.get("properties") or {}).get("loc_id"))
+        if loc_id is None:
+            continue
+        text = str(loc_id).strip()
+        if text and text not in seen:
+            seen.add(text)
+            loc_ids.append(text)
+
+    for _year, loc_map in (result.get("year_data") or {}).items():
+        for loc_id in (loc_map or {}).keys():
+            text = str(loc_id).strip()
+            if text and text not in seen:
+                seen.add(text)
+                loc_ids.append(text)
+
+    if not loc_ids:
+        return []
+
+    shallowest = min(text.count("-") for text in loc_ids)
+    return [text for text in loc_ids if text.count("-") == shallowest][:24]
+
+
+def _build_research_focus_geojson(session_id: str) -> dict | None:
+    cache = session_manager.get(session_id)
+    if cache is None:
+        return None
+
+    focus_loc_ids: list[str] = []
+    seen = set()
+    for artifact in corpus_registry.list_artifacts(session_id):
+        request_key = str(artifact.get("request_key") or "").strip()
+        if not request_key:
+            continue
+        result = cache.get_cached_result(request_key)
+        for loc_id in _focus_loc_ids_from_result(result):
+            if loc_id not in seen:
+                seen.add(loc_id)
+                focus_loc_ids.append(loc_id)
+
+    if not focus_loc_ids:
+        return None
+
+    geojson = get_selection_geometries(focus_loc_ids)
+    if ((geojson or {}).get("features") or []):
+        return geojson
+    return None
 
 
 def _compact_tool_result_for_prompt(tool_name: str, tool_result: dict) -> dict:
@@ -734,6 +857,8 @@ def _compact_tool_result_for_prompt(tool_name: str, tool_result: dict) -> dict:
             "feature_count": artifact.get("feature_count"),
             "row_count": artifact.get("row_count"),
             "summary": artifact.get("summary"),
+            "scene_periods": (artifact.get("scene_periods") or [])[:8],
+            "raster_clip_levels": artifact.get("raster_clip_levels") or [],
         }
         return compact
 
@@ -867,6 +992,12 @@ def run_research_chat(
                 tool_result = execute_research_tool(session_id, block.name, block.input)
                 if isinstance(tool_result, dict) and isinstance(tool_result.get("display"), dict):
                     final_display = dict(tool_result["display"])
+                    if progress is not None:
+                        progress(ProgressEvent(
+                            stage="display",
+                            message="Updating the map display...",
+                            extra={"display": final_display},
+                        ))
                 compact_tool_result = _compact_tool_result_for_prompt(block.name, tool_result)
                 assistant_content.append(block)
                 tool_results.append(
@@ -958,15 +1089,81 @@ async def research_load_saved_corpus_endpoint(req: Request):
         corpus_registry.set_saved_corpus(session_id, saved_corpus)
         hydration = _hydrate_saved_corpus(session_id, saved_corpus)
         manifest = corpus_registry.manifest(session_id)
+        focus_geojson = _build_research_focus_geojson(session_id)
         return msgpack_response({
             "type": "saved_corpus_loaded",
             "message": f'Loaded "{saved_corpus.get("name")}" into the Research workspace.',
             "corpus": manifest,
             "hydration": hydration,
+            "focus_geojson": focus_geojson,
         })
     except Exception as e:
         logger.exception("Research saved corpus load error")
         return msgpack_error(str(e), 500)
+
+
+@router.post("/api/research/browser-save/build")
+async def research_build_browser_save_endpoint(req: Request):
+    """Build a browser-save snapshot for a saved corpus."""
+    try:
+        body = await _decode_json_or_msgpack_request(req)
+        corpus_id = str(body.get("corpusId") or "").strip()
+        if not corpus_id:
+            return JSONResponse({"ok": False, "error": "No corpusId provided"}, status_code=400)
+
+        auth_user = await get_authenticated_user_async(req)
+        user_id = (auth_user or {}).get("id")
+        if not user_id:
+            return JSONResponse({"ok": False, "error": "Authentication required"}, status_code=401)
+
+        frontend_session_id = str(body.get("sessionId") or f"browser-save:{corpus_id}").strip() or f"browser-save:{corpus_id}"
+        session_id = build_session_cache_key(frontend_session_id, auth_user)
+        saved_corpus = _load_saved_corpus_for_user(user_id, corpus_id)
+        if not saved_corpus:
+            return JSONResponse({"ok": False, "error": "Saved corpus not found"}, status_code=404)
+
+        current_saved = corpus_registry.get_saved_corpus(session_id)
+        current_corpus_id = str((current_saved or {}).get("id") or "").strip()
+        if current_corpus_id != corpus_id or not corpus_registry.list_artifacts(session_id):
+            corpus_registry.set_saved_corpus(session_id, saved_corpus)
+            _hydrate_saved_corpus(session_id, saved_corpus)
+
+        manifest = corpus_registry.manifest(session_id)
+        snapshot = _build_browser_corpus_snapshot(session_id, saved_corpus)
+        return JSONResponse({
+            "ok": True,
+            "snapshot": snapshot,
+            "corpus": manifest,
+        })
+    except Exception as exc:
+        logger.exception("Research browser-save build error")
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+
+
+@router.post("/api/research/browser-save/load")
+async def research_load_browser_save_endpoint(req: Request):
+    """Restore a browser-saved research corpus snapshot into the active session."""
+    try:
+        body = await _decode_json_or_msgpack_request(req)
+        snapshot = body.get("snapshot")
+        if not isinstance(snapshot, dict):
+            return JSONResponse({"ok": False, "error": "No snapshot provided"}, status_code=400)
+
+        frontend_session_id = str(body.get("sessionId") or "anonymous").strip() or "anonymous"
+        auth_user = await get_authenticated_user_async(req)
+        session_id = build_session_cache_key(frontend_session_id, auth_user)
+        manifest = _restore_browser_corpus_snapshot(session_id, snapshot)
+        saved_name = ((manifest.get("saved_corpus") or {}).get("name") or "Saved corpus")
+        focus_geojson = _build_research_focus_geojson(session_id)
+        return JSONResponse({
+            "ok": True,
+            "message": f'Loaded "{saved_name}" from browser storage into the Research workspace.',
+            "corpus": manifest,
+            "focus_geojson": focus_geojson,
+        })
+    except Exception as exc:
+        logger.exception("Research browser-save load error")
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
 
 
 @router.post("/chat/research")
@@ -1046,6 +1243,8 @@ async def research_chat_stream_endpoint(req: Request):
                 payload = {"stage": event.stage, "message": event.message}
                 if event.extra:
                     payload["extra"] = event.extra
+                    if isinstance(event.extra.get("display"), dict):
+                        payload["display"] = event.extra["display"]
                 yield f"data: {json.dumps(payload)}\n\n"
 
             result = await task

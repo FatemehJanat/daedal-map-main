@@ -75,14 +75,14 @@ export async function sendStreamingRequest(payload, onProgress, path = '/chat/st
         const text = data.text || data.message || '';
         deltaText += text;
         if (onProgress) {
-          onProgress(data.stage, text, deltaText);
+          onProgress(data.stage, text, deltaText, data);
         }
       } else if (data.stage === 'answer_start') {
         if (onProgress) {
-          onProgress(data.stage, data.message || '', deltaText);
+          onProgress(data.stage, data.message || '', deltaText, data);
         }
       } else if (onProgress) {
-        onProgress(data.stage, data.message, deltaText);
+        onProgress(data.stage, data.message, deltaText, data);
       }
     } catch (e) {
       console.warn('Failed to parse SSE data:', line);

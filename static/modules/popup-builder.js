@@ -109,8 +109,7 @@ export const PopupBuilder = {
     const lines = [];
 
     // Title - keep the popup name simple and clean.
-    let name = properties.name || properties.country_name ||
-               properties.country || properties.Name || 'Unknown';
+    let name = this.buildDisplayName(properties);
     const stateAbbr = properties.stusab || properties.abbrev || '';
 
     lines.push(`<strong>${name}${stateAbbr ? ', ' + stateAbbr : ''}</strong>`);
@@ -221,6 +220,34 @@ export const PopupBuilder = {
     lines.push('<em style="font-size: 10px; color: rgba(230, 243, 255, 0.62);">Zoom in for more</em>');
 
     return lines.join('<br>');
+  },
+
+  buildDisplayName(properties = {}) {
+    const locId = String(properties.loc_id || '').trim();
+    const geographyKind = String(
+      properties.geography_kind
+      || (properties.admin_level_num != null ? ({
+        3: 'tract',
+        4: 'blockgroup',
+        5: 'block'
+      }[Number(properties.admin_level_num)] || '') : '')
+    ).trim().toLowerCase();
+    const rawName = properties.name || properties.country_name || properties.country || properties.Name || 'Unknown';
+
+    if (locId) {
+      const parts = locId.split('-');
+      if (geographyKind === 'tract' && parts.length >= 4) {
+        return `Tract ${parts.slice(-1)[0]}`;
+      }
+      if (geographyKind === 'blockgroup' && parts.length >= 5) {
+        return `Block Group ${parts.slice(-2).join('-')}`;
+      }
+      if (geographyKind === 'block' && parts.length >= 6) {
+        return `Block ${parts.slice(-3).join('-')}`;
+      }
+    }
+
+    return rawName;
   },
 
   /**

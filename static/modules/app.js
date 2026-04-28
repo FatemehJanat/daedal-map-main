@@ -4,7 +4,7 @@
  */
 
 import { CONFIG } from './config.js';
-import { GeometryCache } from './cache.js';
+import { GeometryCache, LocationInfoCache } from './cache.js';
 import { fetchMsgpack, postMsgpack } from './utils/fetch.js';
 import { ViewportLoader, setDependencies as setViewportDeps } from './viewport-loader.js';
 import { MapAdapter, setDependencies as setMapDeps } from './map-adapter.js';
@@ -37,6 +37,10 @@ export const App = {
   mobileNoticeMql: null,
   activeMetricOrderContext: null,
   metricPrefetchHandle: null,
+  pendingCanvasMode: null,
+  _researchDisplayClickHandler: null,
+  _researchDisplayHoverHandler: null,
+  _researchDisplayLeaveHandler: null,
 
   getNumericAdminLevel(level) {
     if (typeof level === 'number' && !Number.isNaN(level)) return level;
@@ -518,6 +522,18 @@ export const App = {
 
     // Initialize map
     await MapAdapter.init();
+
+    if (this.pendingCanvasMode === 'research' || ChatManager.mode === 'research') {
+      this.enterResearchCanvasMode();
+      Promise.resolve(ChatManager.refreshResearchCorpusOptions?.()).catch((error) => {
+        console.warn('Could not refresh Research corpus options after map init:', error);
+      });
+      Promise.resolve(ChatManager.refreshResearchManifest?.()).catch((error) => {
+        console.warn('Could not refresh Research manifest after map init:', error);
+      });
+    } else {
+      this.leaveResearchCanvasMode();
+    }
 
     // Replay any overlays that were restored from localStorage before the map was ready.
     // OverlaySelector.init() restores saved state before MapAdapter.init() runs, so any
@@ -1268,8 +1284,23 @@ export const App = {
    * @param {Object} display - Structured display payload from Research
    */
   applyResearchDisplay(display) {
+    const raster = display?.raster;
+    if (raster?.provider === 'fairfax_lst') {
+      const visibility = String(raster.visibility || 'show').trim().toLowerCase();
+      if (visibility === 'hide') {
+        FairfaxRasterPanel.hide?.();
+      } else if (raster.clip_mode === 'selection') {
+        FairfaxRasterPanel.showSelectionClips?.(raster);
+      } else {
+        FairfaxRasterPanel.showScene?.(raster);
+      }
+    }
+
     const geojson = display?.geojson;
     if (!geojson?.features || geojson.features.length === 0) {
+      if (raster?.provider === 'fairfax_lst') {
+        return;
+      }
       console.warn('Research display payload missing features');
       return;
     }
@@ -1305,16 +1336,111 @@ export const App = {
       this._navigationClickHandler = null;
     }
     this.navigationLocations = null;
+    this.currentData = {
+      geojson,
+      dataset_name: 'Research Result',
+      source_name: display?.source_id || 'Research Result'
+    };
 
     MapAdapter.loadNavigationLayer(geojson);
+    this.setupResearchDisplayInteractions();
 
     if (display?.fit !== false) {
       MapAdapter.fitToBounds(geojson);
     }
 
-    const raster = display?.raster;
-    if (raster?.provider === 'fairfax_lst') {
-      FairfaxRasterPanel.showScene?.(raster);
+  },
+
+  focusResearchGeojson(geojson) {
+    if (!geojson?.features?.length || !MapAdapter?.map) return;
+    MapAdapter.clearNavigationLayer?.();
+    this.clearResearchDisplayInteractions();
+    this.navigationLocations = null;
+    this.currentData = null;
+    MapAdapter.fitToBounds(geojson);
+  },
+
+  enterResearchCanvasMode() {
+    this.pendingCanvasMode = 'research';
+    if (!MapAdapter?.map) return;
+    FairfaxRasterPanel.hide?.();
+    this.navigationLocations = null;
+    this.currentData = null;
+    this.activeMetricOrderContext = null;
+    this.clearMetricPrefetch();
+
+    TimeSlider.reset?.();
+    ChoroplethManager.reset?.();
+    MapAdapter.setChoroplethVisible?.(false);
+
+    MapAdapter.clearLayers?.();
+    MapAdapter.clearParentOutline?.();
+    MapAdapter.clearCityOverlay?.();
+    MapAdapter.clearNavigationLayer?.();
+    this.clearResearchDisplayInteractions();
+    ViewportLoader.orderMode = true;
+  },
+
+  leaveResearchCanvasMode() {
+    this.pendingCanvasMode = 'explore';
+    if (!MapAdapter?.map) return;
+    ViewportLoader.orderMode = false;
+    MapAdapter.setChoroplethVisible?.(OverlaySelector?.isActive?.('demographics') === true);
+    this.clearResearchDisplayInteractions();
+  },
+
+  setupResearchDisplayInteractions() {
+    if (!MapAdapter?.map) return;
+    this.clearResearchDisplayInteractions();
+
+    this._researchDisplayHoverHandler = (e) => {
+      if (!e.features?.length || MapAdapter.popupLocked) return;
+      const feature = e.features[0];
+      MapAdapter.map.getCanvas().style.cursor = 'pointer';
+      this.handleFeatureHover(feature, e.lngLat);
+    };
+
+    this._researchDisplayLeaveHandler = () => {
+      if (!MapAdapter?.map) return;
+      MapAdapter.map.getCanvas().style.cursor = '';
+      if (!MapAdapter.popupLocked) {
+        MapAdapter.hidePopup?.();
+      }
+    };
+
+    this._researchDisplayClickHandler = async (e) => {
+      if (!e.features?.length) return;
+      const feature = e.features[0];
+      const popupProperties = this.getPopupProperties(feature);
+      MapAdapter.popupLocked = true;
+      MapAdapter.setPopupFocusOverride?.(popupProperties);
+      this.handleFeatureHover(feature, e.lngLat);
+      const locationInfo = popupProperties?.loc_id ? await LocationInfoCache.fetch(popupProperties.loc_id) : null;
+      if (MapAdapter.popupLocked) {
+        const popupHtml = PopupBuilder.build(popupProperties, this.currentData, locationInfo || {});
+        MapAdapter.showPopup([e.lngLat.lng, e.lngLat.lat], popupHtml);
+        MapAdapter.setupPopupTabHandlers?.();
+      }
+    };
+
+    MapAdapter.map.on('mousemove', CONFIG.layers.selectionFill, this._researchDisplayHoverHandler);
+    MapAdapter.map.on('mouseleave', CONFIG.layers.selectionFill, this._researchDisplayLeaveHandler);
+    MapAdapter.map.on('click', CONFIG.layers.selectionFill, this._researchDisplayClickHandler);
+  },
+
+  clearResearchDisplayInteractions() {
+    if (!MapAdapter?.map) return;
+    if (this._researchDisplayHoverHandler) {
+      MapAdapter.map.off('mousemove', CONFIG.layers.selectionFill, this._researchDisplayHoverHandler);
+      this._researchDisplayHoverHandler = null;
+    }
+    if (this._researchDisplayLeaveHandler) {
+      MapAdapter.map.off('mouseleave', CONFIG.layers.selectionFill, this._researchDisplayLeaveHandler);
+      this._researchDisplayLeaveHandler = null;
+    }
+    if (this._researchDisplayClickHandler) {
+      MapAdapter.map.off('click', CONFIG.layers.selectionFill, this._researchDisplayClickHandler);
+      this._researchDisplayClickHandler = null;
     }
   },
 

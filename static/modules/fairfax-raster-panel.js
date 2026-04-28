@@ -7,14 +7,15 @@
 
 import { LstRasterModel } from './model-lst-raster.js';
 import { MapAdapter } from './map-adapter.js';
-import { fetchMsgpack } from './utils/fetch.js';
+import { fetchMsgpack, postMsgpack } from './utils/fetch.js';
+import { CONFIG } from './config.js';
 
 const PANEL_ID = 'fairfax-raster-panel';
 
 let _scenes    = [];
 let _activePeriod = null;
 let _initPromise = null;
-let _manifestUnavailable = false;
+let _sceneCatalogUnavailable = false;
 let _panelBuilt = false;
 
 // -------------------------------------------------------------------------
@@ -24,25 +25,25 @@ let _panelBuilt = false;
 export const FairfaxRasterPanel = {
 
   async init() {
-    if (_manifestUnavailable) return;
+    if (_sceneCatalogUnavailable) return;
     if (_initPromise) return _initPromise;
 
     _initPromise = (async () => {
     const panel = document.getElementById(PANEL_ID);
     if (!panel) return;
 
-    let manifest;
+    let sceneCatalog;
     try {
-      manifest = await fetchMsgpack('/api/fairfax/raster/manifest');
+      sceneCatalog = await fetchMsgpack('/api/fairfax/raster/scenes');
     } catch (err) {
-      console.error('FairfaxRasterPanel: failed to load manifest', err);
-      _manifestUnavailable = true;
+      console.error('FairfaxRasterPanel: failed to load scene catalog', err);
+      _sceneCatalogUnavailable = true;
       return;
     }
 
-    _scenes = manifest?.scenes || [];
+    _scenes = sceneCatalog?.scenes || [];
     if (_scenes.length === 0) {
-      _manifestUnavailable = true;
+      _sceneCatalogUnavailable = true;
       return;
     }
 
@@ -82,6 +83,10 @@ export const FairfaxRasterPanel = {
     LstRasterModel.show();
   },
 
+  getActivePeriod() {
+    return _activePeriod;
+  },
+
   async showScene(target = {}) {
     await this.init();
 
@@ -111,6 +116,50 @@ export const FairfaxRasterPanel = {
     return false;
   },
 
+  async showSelectionClips(target = {}) {
+    await this.init();
+    if (_scenes.length === 0) return false;
+
+    const locIds = Array.isArray(target?.loc_ids) ? target.loc_ids.filter(Boolean) : [];
+    if (locIds.length === 0) return false;
+
+    let period = String(target?.period || '').trim();
+    if (!period) {
+      const requestedYear = Number(target?.year);
+      if (Number.isFinite(requestedYear)) {
+        period = _scenes.find(scene => Number(scene.year) === requestedYear)?.period || '';
+      }
+    }
+    if (!period) {
+      period = _activePeriod || LstRasterModel.period || _scenes[0]?.period || '';
+    }
+    if (!period) return false;
+
+    let payload;
+    try {
+      payload = await postMsgpack('/api/fairfax/raster/clips', {
+        period,
+        loc_ids: locIds
+      });
+    } catch (err) {
+      console.error('FairfaxRasterPanel: failed to load raster clips', err);
+      return false;
+    }
+    if (!payload?.clips?.length) {
+      return false;
+    }
+
+    _activePeriod = period;
+    _updateActiveButton(period);
+    const ok = await LstRasterModel.loadClips(payload);
+    if (!ok) return false;
+    const panel = document.getElementById(PANEL_ID);
+    if (panel) panel.style.display = 'block';
+    LstRasterModel.show();
+    _hideFillOpacity();
+    return true;
+  },
+
   cleanup() {
     const panel = document.getElementById(PANEL_ID);
     if (panel) {
@@ -121,7 +170,7 @@ export const FairfaxRasterPanel = {
     _scenes = [];
     _activePeriod = null;
     _initPromise = null;
-    _manifestUnavailable = false;
+    _sceneCatalogUnavailable = false;
     _panelBuilt = false;
   },
 };
@@ -136,6 +185,7 @@ export const FairfaxRasterPanel = {
 // -------------------------------------------------------------------------
 
 let _origSetPaintProperty = null;
+let _selectionFillPatched = false;
 
 function _hideFillOpacity() {
   const map = MapAdapter?.map;
@@ -144,8 +194,13 @@ function _hideFillOpacity() {
   if (!_origSetPaintProperty) {
     _origSetPaintProperty = map.setPaintProperty.bind(map);
     map.setPaintProperty = function(layerId, property, value, ...rest) {
-      if (layerId === 'regions-fill' && property === 'fill-opacity') {
-        return _origSetPaintProperty('regions-fill', 'fill-opacity', 0);
+      if (property === 'fill-opacity') {
+        if (layerId === 'regions-fill') {
+          return _origSetPaintProperty('regions-fill', 'fill-opacity', 0);
+        }
+        if (layerId === CONFIG.layers.selectionFill) {
+          return _origSetPaintProperty(CONFIG.layers.selectionFill, 'fill-opacity', 0);
+        }
       }
       return _origSetPaintProperty(layerId, property, value, ...rest);
     };
@@ -153,6 +208,10 @@ function _hideFillOpacity() {
 
   if (map.getLayer('regions-fill')) {
     map.setPaintProperty('regions-fill', 'fill-opacity', 0);
+  }
+  if (map.getLayer(CONFIG.layers.selectionFill)) {
+    map.setPaintProperty(CONFIG.layers.selectionFill, 'fill-opacity', 0);
+    _selectionFillPatched = true;
   }
 }
 
@@ -163,6 +222,11 @@ function _restoreFillOpacity() {
   if (_origSetPaintProperty) {
     map.setPaintProperty = _origSetPaintProperty;
     _origSetPaintProperty = null;
+  }
+
+  if (_selectionFillPatched && map.getLayer(CONFIG.layers.selectionFill)) {
+    map.setPaintProperty(CONFIG.layers.selectionFill, 'fill-opacity', CONFIG.selectionColors.fillOpacity);
+    _selectionFillPatched = false;
   }
 
   MapAdapter?.updateFocalColors?.();

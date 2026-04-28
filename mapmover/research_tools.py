@@ -11,6 +11,7 @@ from typing import Any
 
 from mapmover import logger
 from mapmover.corpus_registry import corpus_registry
+from mapmover.geometry_handlers import get_selection_geometries
 from mapmover.session_cache import session_manager
 
 try:
@@ -93,6 +94,54 @@ RESEARCH_TOOL_DEFINITIONS = [
         },
     },
 ]
+
+
+def _normalize_tool_input(tool_name: str, tool_input: Any) -> dict:
+    if not isinstance(tool_input, dict):
+        return {}
+
+    normalized: dict[str, Any] = {}
+    artifact_id = tool_input.get("artifact_id")
+    if artifact_id is not None:
+        normalized["artifact_id"] = str(artifact_id)
+
+    for key in ("fields", "metrics", "group_by"):
+        values = tool_input.get(key)
+        if isinstance(values, list):
+            normalized[key] = [str(value) for value in values if value is not None and str(value).strip()]
+
+    filters = tool_input.get("filters")
+    if isinstance(filters, dict):
+        normalized["filters"] = filters
+
+    order_by = tool_input.get("order_by")
+    if isinstance(order_by, list):
+        cleaned_order = []
+        for item in order_by:
+            if not isinstance(item, dict):
+                continue
+            field = item.get("field")
+            if field is None or not str(field).strip():
+                continue
+            direction = str(item.get("direction") or "desc").strip().lower()
+            cleaned_order.append(
+                {
+                    "field": str(field),
+                    "direction": "asc" if direction == "asc" else "desc",
+                }
+            )
+        normalized["order_by"] = cleaned_order
+
+    if "limit" in tool_input:
+        normalized["limit"] = tool_input.get("limit")
+    if tool_name == "build_artifact_display_subset":
+        if "fit" in tool_input:
+            normalized["fit"] = bool(tool_input.get("fit"))
+        if "context_visibility" in tool_input:
+            visibility = str(tool_input.get("context_visibility") or "keep").strip().lower()
+            normalized["context_visibility"] = visibility if visibility in {"keep", "replace"} else "keep"
+
+    return normalized
 
 
 def _jsonable(value: Any):
@@ -244,6 +293,8 @@ def _query_rows_python(
 
     for sort in reversed(tool_input.get("order_by") or []):
         field = sort.get("field")
+        if group_by and field in metrics:
+            field = f"{field}_avg"
         reverse = sort.get("direction", "desc") == "desc"
         if field:
             rows.sort(key=lambda row: (row.get(field) is None, row.get(field)), reverse=reverse)
@@ -331,6 +382,8 @@ def _query_rows_duckdb(
         order_parts = []
         for sort in tool_input.get("order_by") or []:
             field = sort.get("field")
+            if group_by and field in metrics:
+                field = f"{field}_avg"
             direction = "ASC" if sort.get("direction") == "asc" else "DESC"
             allowed = set(df.columns) | {f"{m}_avg" for m in metrics} | {f"{m}_count" for m in metrics}
             if field in allowed:
@@ -383,6 +436,35 @@ def _build_display_subset(result: dict, artifact: dict, tool_input: dict) -> dic
         feature["properties"] = _jsonable(props)
         features.append(feature)
 
+    # Metric artifacts often store only loc_id/name placeholders in their
+    # lightweight geojson. Reuse the established selection geometry path to
+    # attach real polygons for display/highlight.
+    needs_geometry = not features or not any((feature.get("geometry") for feature in features))
+    if needs_geometry and loc_ids:
+        selection_geojson = get_selection_geometries(loc_ids)
+        selection_features = (selection_geojson or {}).get("features") or []
+        if selection_features:
+            feature_by_loc_id = {}
+            for feature in selection_features:
+                props = dict(feature.get("properties") or {})
+                loc_id = props.get("loc_id")
+                if loc_id is not None:
+                    feature_by_loc_id[str(loc_id)] = _jsonable(feature)
+            rebuilt = []
+            for row in matched_rows:
+                loc_id = row.get("loc_id")
+                if loc_id is None:
+                    continue
+                feature = feature_by_loc_id.get(str(loc_id))
+                if not feature:
+                    continue
+                props = dict(feature.get("properties") or {})
+                props.update(row or {})
+                feature["properties"] = _jsonable(props)
+                rebuilt.append(feature)
+            if rebuilt:
+                features = rebuilt
+
     display = {
         "action": "highlight_features",
         "artifact_id": artifact.get("artifact_id"),
@@ -412,35 +494,48 @@ def _build_display_subset(result: dict, artifact: dict, tool_input: dict) -> dic
 
 
 def execute_research_tool(session_id: str, tool_name: str, tool_input: dict) -> dict:
-    tool_input = tool_input or {}
-    if tool_name == "list_artifacts":
-        return {"artifacts": corpus_registry.list_artifacts(session_id)}
+    try:
+        tool_input = _normalize_tool_input(tool_name, tool_input)
+        if tool_name == "list_artifacts":
+            return {"artifacts": corpus_registry.list_artifacts(session_id)}
 
-    artifact_id = tool_input.get("artifact_id")
-    artifact = corpus_registry.get_artifact(session_id, artifact_id) if artifact_id else None
-    if not artifact:
-        return {"error": "artifact_not_found", "artifact_id": artifact_id}
+        artifact_id = tool_input.get("artifact_id")
+        artifact = corpus_registry.get_artifact(session_id, artifact_id) if artifact_id else None
+        if not artifact:
+            return {"error": "artifact_not_found", "artifact_id": artifact_id}
 
-    if tool_name == "describe_artifact":
-        artifact.pop("order", None)
-        return {"artifact": artifact}
+        if tool_name == "describe_artifact":
+            artifact.pop("order", None)
+            return {"artifact": artifact}
 
-    if tool_name == "query_artifact_slice":
-        result = _get_cached_result(session_id, artifact.get("request_key"))
-        if not result:
-            return {"error": "artifact_data_unavailable", "artifact_id": artifact_id}
-        rows = _rows_from_result(result)
-        query_result = _query_rows_duckdb(rows, tool_input, default_limit=25, maximum_limit=1000)
+        if tool_name == "query_artifact_slice":
+            result = _get_cached_result(session_id, artifact.get("request_key"))
+            if not result:
+                return {"error": "artifact_data_unavailable", "artifact_id": artifact_id}
+            rows = _rows_from_result(result)
+            query_result = _query_rows_duckdb(rows, tool_input, default_limit=25, maximum_limit=1000)
+            return {
+                "artifact_id": artifact_id,
+                "fields": artifact.get("fields", []),
+                **query_result,
+            }
+
+        if tool_name == "build_artifact_display_subset":
+            result = _get_cached_result(session_id, artifact.get("request_key"))
+            if not result:
+                return {"error": "artifact_data_unavailable", "artifact_id": artifact_id}
+            return _build_display_subset(result, artifact, tool_input)
+
+        return {"error": "unknown_tool", "tool_name": tool_name}
+    except Exception as exc:
+        logger.exception(
+            "Research tool execution failed session=%s tool=%s artifact_id=%s",
+            session_id,
+            tool_name,
+            (tool_input or {}).get("artifact_id") if isinstance(tool_input, dict) else None,
+        )
         return {
-            "artifact_id": artifact_id,
-            "fields": artifact.get("fields", []),
-            **query_result,
+            "error": "tool_execution_failed",
+            "tool_name": tool_name,
+            "detail": str(exc),
         }
-
-    if tool_name == "build_artifact_display_subset":
-        result = _get_cached_result(session_id, artifact.get("request_key"))
-        if not result:
-            return {"error": "artifact_data_unavailable", "artifact_id": artifact_id}
-        return _build_display_subset(result, artifact, tool_input)
-
-    return {"error": "unknown_tool", "tool_name": tool_name}

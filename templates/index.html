@@ -112,7 +112,8 @@
       data-tutorial-title="Account and Session"
       data-tutorial-body="Manage account access here, switch between account-backed and guest behavior, or collapse the sidebar to focus on the map."
     >
-      <h2>Map Explorer</h2>
+      <h2 id="sidebarModeTitle">Research Mode</h2>
+      <div id="sidebarModeMount"></div>
       <div id="sidebarHeaderButtons">
         <button id="authBtn" title="Open account or local setup">Account</button>
         <button id="closeSidebar" title="Close">&times;</button>
@@ -127,6 +128,8 @@
     <div id="mobileMapNotice" class="mobile-map-notice" aria-live="polite" hidden>
       This map works best on desktop. Mobile experiences are currently limited.
     </div>
+
+    <div id="sidebarResearchMount"></div>
 
     <div
       id="chatContainer"
@@ -301,9 +304,6 @@
       <span id="speedLabel" class="speed-value">1yr/sec</span>
       <button id="clearBoundsBtn" class="bounds-clear-btn" title="Reset trim to full range">Reset Trim</button>
     </div>
-    <!-- Fairfax LST raster controls -->
-    <div id="fairfax-raster-panel" style="display:none;"></div>
-
     <!-- Choropleth Legend (attached as bottom section of animator) -->
     <div id="choroplethLegend">
       <div class="legend-title" id="legendTitle">Value</div>
@@ -314,6 +314,8 @@
       </div>
     </div>
     </div>
+    <!-- Fairfax LST raster controls -->
+    <div id="fairfax-raster-panel" style="display:none;"></div>
   </div>
   <script type="module">
     try {

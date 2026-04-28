@@ -10,20 +10,38 @@ def _coerce_display(display: dict, research_hints: dict | None) -> dict | None:
     features = geojson.get("features") or []
     loc_ids = display.get("loc_ids") or []
     action = str(display.get("action") or "").strip()
-    if action != "highlight_features" or not features or not loc_ids:
+    raster = display.get("raster")
+    has_raster = isinstance(raster, dict) and str(raster.get("provider") or "").strip()
+    if action != "highlight_features" and not has_raster:
+        return None
+    if action == "highlight_features" and (not features or not loc_ids):
         return None
 
     display["fit"] = bool(display.get("fit", True))
     display["context_visibility"] = str(display.get("context_visibility") or "keep")
 
-    source_id = str(display.get("source_id") or "").strip()
     hint_time = (research_hints or {}).get("time") or {}
     specific_year = hint_time.get("specific_year")
-    if source_id.startswith("fairfax_lst"):
-        raster = {"provider": "fairfax_lst"}
-        if isinstance(specific_year, int):
-            raster["year"] = specific_year
-        display["raster"] = raster
+    if isinstance(raster, dict):
+        provider = str(raster.get("provider") or "").strip()
+        if provider:
+            normalized_raster = {"provider": provider}
+            period = str(raster.get("period") or "").strip()
+            if period:
+                normalized_raster["period"] = period
+            visibility = str(raster.get("visibility") or "").strip().lower()
+            if visibility in {"show", "hide"}:
+                normalized_raster["visibility"] = visibility
+            year = raster.get("year")
+            if isinstance(year, int):
+                normalized_raster["year"] = year
+            elif provider == "fairfax_lst" and isinstance(specific_year, int):
+                normalized_raster["year"] = specific_year
+            display["raster"] = normalized_raster
+        else:
+            display.pop("raster", None)
+    else:
+        display.pop("raster", None)
 
     return display
 
