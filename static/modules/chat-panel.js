@@ -348,7 +348,6 @@ export const ChatManager = {
       sidebar: document.getElementById('sidebar'),
       toggle: document.getElementById('sidebarToggle'),
       close: document.getElementById('closeSidebar'),
-      newChat: document.getElementById('newChatBtn'),
       messagesHost: document.getElementById('chatMessages'),
       messages: null,
       form: document.getElementById('chatForm'),
@@ -359,15 +358,15 @@ export const ChatManager = {
     };
     this.initMessagePanes();
 
-    // Restore chat state from localStorage
+    // Restore minimal chat UI state from localStorage
     this.restoreState();
-    if (!this.modeHistories.explore?.length && this.history.length && this.mode === 'explore') {
-      this.modeHistories.explore = this.history;
-    }
     this.syncAllMessagePanes();
     this.setActiveMessagePane(this.mode);
 
     this.initModeToggle();
+    Promise.resolve(this.seedEmptyConversation(this.mode)).catch((error) => {
+      console.warn('Could not seed initial conversation:', error);
+    });
     this.syncSidebarToggleVisibility();
     this.updateSidebarModeLayout();
     this.updateComposerState();
@@ -427,27 +426,42 @@ export const ChatManager = {
       await this.refreshResearchCorpusOptions();
     }
 
-    if (mode === 'research' && this.history.length === 0 && !this.modeMessagesHtml.research) {
-      try {
-        const manifest = await this.refreshResearchManifest();
-        if ((manifest?.artifact_count || 0) > 0) {
-          this.addMessage(`Research mode ready. Active corpus: ${manifest.artifact_count} loaded artifact${manifest.artifact_count === 1 ? '' : 's'}.`, 'assistant', { mode: 'research' });
-        } else if (manifest?.saved_corpus) {
-          const saved = manifest.saved_corpus;
-          this.addMessage(`Research workspace ready. "${saved.name}" is selected. Click Load Data to activate it for this session.`, 'assistant', { mode: 'research' });
-        } else {
-          this.addMessage(this.getResearchEmptyStateMessage(), 'assistant', { mode: 'research' });
-        }
-      } catch (error) {
-        console.warn('Research corpus snapshot failed:', error);
-        this.addMessage('Research mode is available, but I could not read the active corpus yet.', 'assistant', { mode: 'research' });
-      }
+    if (this.history.length === 0 && !this.modeMessagesHtml[mode]) {
+      await this.seedEmptyConversation(mode);
     }
 
     this.updateResearchCorpusStatus();
     this.updateSidebarModeLayout();
     this.updateComposerState();
     this.saveState();
+  },
+
+  async seedEmptyConversation(mode = this.mode) {
+    const pane = this.messagePanes?.[mode];
+    if (pane && pane.childElementCount > 0) return;
+
+    if (mode === 'research') {
+      try {
+        await this.refreshResearchCorpusOptions();
+        const manifest = await this.refreshResearchManifest();
+        if ((manifest?.artifact_count || 0) > 0) {
+          this.addMessage(`Research mode ready. Active corpus: ${manifest.artifact_count} loaded artifact${manifest.artifact_count === 1 ? '' : 's'}.`, 'assistant', { mode: 'research' });
+          return;
+        }
+        if (manifest?.saved_corpus) {
+          const saved = manifest.saved_corpus;
+          this.addMessage(`Research workspace ready. "${saved.name}" is selected. Click Load Data to activate it for this session.`, 'assistant', { mode: 'research' });
+          return;
+        }
+        this.addMessage(this.getResearchEmptyStateMessage(), 'assistant', { mode: 'research' });
+      } catch (error) {
+        console.warn('Research corpus snapshot failed:', error);
+        this.addMessage('Research mode is available, but I could not read the active corpus yet.', 'assistant', { mode: 'research' });
+      }
+      return;
+    }
+
+    this.addMessage(WELCOME_MESSAGE, 'assistant', { html: true, mode: 'explore' });
   },
 
   initMessagePanes() {
@@ -939,65 +953,30 @@ export const ChatManager = {
    */
   restoreState() {
     const state = restoreChatState();
-    const hasModeState = !!state?.modeHistories;
-    const hadChatSession = hasModeState
-      ? Object.values(state.modeHistories || {}).some(history => (history || []).some(m => m.role === 'user'))
-      : state?.history?.some(m => m.role === 'user');
-
-    if (hadChatSession) {
-      if (hasModeState) {
-        this.mode = state.activeMode === 'research' ? 'research' : 'explore';
-        this.modeHistories = {
-          explore: state.modeHistories?.explore || [],
-          research: state.modeHistories?.research || []
-        };
-        this.modeMessagesHtml = {
-          explore: state.modeMessagesHtml?.explore || '',
-          research: state.modeMessagesHtml?.research || ''
-        };
-        this.researchMemory = state.researchMemory || null;
-        this.selectedResearchCorpusId = state.selectedResearchCorpusId || '';
-        this.history = this.modeHistories[this.mode] || [];
-      } else {
-        this.history = state.history;
-        this.mode = 'explore';
-        this.modeHistories = { explore: state.history || [], research: [] };
-        this.modeMessagesHtml = { explore: state.messagesHtml || '', research: '' };
-        this.researchMemory = null;
-        this.selectedResearchCorpusId = '';
-      }
-
-      this.syncAllMessagePanes();
-      this.setActiveMessagePane(this.mode);
-
-      const apiCalls = getApiCallsForRecovery();
-      const executedOrders = getExecutedOrdersForRecovery();
-      if (apiCalls.length > 0 || executedOrders.length > 0) {
-        this.showRecoveryPrompt(apiCalls.length, executedOrders.length);
-      }
-    } else {
-      // No real chat session saved - always show fresh welcome message
-      this.mode = 'explore';
-      this.setActiveMessagePane('explore');
-      this.addMessage(WELCOME_MESSAGE, 'assistant', { html: true, mode: 'explore' });
+    if (state) {
+      this.mode = state.activeMode === 'research' ? 'research' : 'explore';
+      this.modeHistories = { explore: [], research: [] };
+      this.modeMessagesHtml = { explore: '', research: '' };
+      this.researchMemory = null;
+      this.selectedResearchCorpusId = state.selectedResearchCorpusId || '';
+      this.history = [];
+      return;
     }
+
+    this.mode = 'explore';
+    this.modeHistories = { explore: [], research: [] };
+    this.modeMessagesHtml = { explore: '', research: '' };
+    this.researchMemory = null;
+    this.selectedResearchCorpusId = '';
+    this.history = [];
   },
 
   /**
    * Save current chat state to localStorage.
    */
   saveState() {
-    this.modeHistories[this.mode] = this.history;
-    this.syncAllMessagePanes();
-    if (this.mode === 'research') {
-      const memoryState = buildResearchMemoryFromHistory(this.history);
-      this.researchMemory = memoryState.researchMemory;
-    }
     saveChatState({
       activeMode: this.mode,
-      modeHistories: this.modeHistories,
-      modeMessagesHtml: this.modeMessagesHtml,
-      researchMemory: this.researchMemory,
       selectedResearchCorpusId: this.selectedResearchCorpusId
     });
   },
@@ -1007,27 +986,29 @@ export const ChatManager = {
    */
   async clearSession() {
     const oldSessionIds = ['explore', 'research'].map(mode => this.getSessionIdForMode(mode));
+    const preservedMode = this.mode === 'research' ? 'research' : 'explore';
+    const preservedResearchCorpusId = preservedMode === 'research' ? this.selectedResearchCorpusId : '';
 
     // Clear state
     this.history = [];
-    this.mode = 'explore';
+    this.mode = preservedMode;
     this.modeHistories = { explore: [], research: [] };
     this.modeMessagesHtml = { explore: '', research: '' };
     this.modeRequestInFlight = { explore: false, research: false };
     this.researchMemory = null;
-    this.selectedResearchCorpusId = '';
+    this.selectedResearchCorpusId = preservedResearchCorpusId;
     this.researchCorpusOptions = [];
     this.latestResearchManifest = null;
     if (researchModeToggle) {
-      researchModeToggle.mode = 'explore';
-      researchModeToggle.setCorpusOptions([], '');
-      researchModeToggle.setCorpusStatus('Select a saved corpus to begin.');
+      researchModeToggle.mode = preservedMode;
+      researchModeToggle.setCorpusOptions([], preservedResearchCorpusId);
+      researchModeToggle.setCorpusStatus(preservedMode === 'research' ? 'Select a saved corpus to begin.' : '');
       researchModeToggle.updateActive();
     }
     this.lastDisambiguationOptions = null;
     if (this.elements.messages) {
       this.syncAllMessagePanes();
-      this.setActiveMessagePane('explore');
+      this.setActiveMessagePane(preservedMode);
     }
 
     // Clear order panel
@@ -1056,6 +1037,7 @@ export const ChatManager = {
     }
 
     console.log('[Session] Session cleared, new session:', this.sessionId);
+    await this.seedEmptyConversation(this.mode);
     return this.sessionId;
   },
 
@@ -1083,7 +1065,7 @@ export const ChatManager = {
     div.innerHTML = `
       <strong>Welcome Back</strong><br><br>
       Your previous session: <b>${dataSummary}</b><br><br>
-      Click <b>Recover Data</b> to reload your map data, or <b>New Chat</b> above to start fresh.
+      Click <b>Recover Data</b> to reload your map data, or refresh the page to start fresh.
       <div class="recovery-buttons" style="margin-top: 12px;">
         <button class="recovery-btn recover" data-action="recover">Recover Data</button>
       </div>
@@ -1212,7 +1194,7 @@ export const ChatManager = {
    * Setup event listeners
    */
   setupEventListeners() {
-    const { sidebar, toggle, close, newChat, form, input } = this.elements;
+    const { sidebar, toggle, close, form, input } = this.elements;
 
     // Sidebar toggle
     toggle.addEventListener('click', () => {
@@ -1224,16 +1206,6 @@ export const ChatManager = {
       sidebar.classList.add('collapsed');
       this.syncSidebarToggleVisibility();
     });
-
-    // New Chat button
-    if (newChat) {
-      newChat.addEventListener('click', async () => {
-        if (confirm('Start a new chat? This will clear your current conversation.')) {
-          await this.clearSession();
-          this.addMessage(WELCOME_MESSAGE, 'assistant', { html: true, mode: 'explore' });
-        }
-      });
-    }
 
     // Auto-resize textarea
     input.addEventListener('input', () => {
