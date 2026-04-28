@@ -60,6 +60,35 @@ export async function sendStreamingRequest(payload, onProgress, path = '/chat/st
   let buffer = '';
   let deltaText = '';
 
+  const processSseLine = (line) => {
+    if (!line.startsWith('data: ')) return;
+    try {
+      const data = JSON.parse(line.slice(6));
+
+      if (data.stage === 'complete') {
+        result = data.result;
+        if (deltaText && result && result.type === 'chat') {
+          result.message = deltaText;
+          result._streamed = true;
+        }
+      } else if (data.stage === 'delta') {
+        const text = data.text || data.message || '';
+        deltaText += text;
+        if (onProgress) {
+          onProgress(data.stage, text, deltaText);
+        }
+      } else if (data.stage === 'answer_start') {
+        if (onProgress) {
+          onProgress(data.stage, data.message || '', deltaText);
+        }
+      } else if (onProgress) {
+        onProgress(data.stage, data.message, deltaText);
+      }
+    } catch (e) {
+      console.warn('Failed to parse SSE data:', line);
+    }
+  };
+
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -71,34 +100,13 @@ export async function sendStreamingRequest(payload, onProgress, path = '/chat/st
     buffer = lines.pop() || '';  // Keep incomplete line in buffer
 
     for (const line of lines) {
-      if (line.startsWith('data: ')) {
-        try {
-          const data = JSON.parse(line.slice(6));
-
-          if (data.stage === 'complete') {
-            result = data.result;
-            if (deltaText && result && result.type === 'chat') {
-              result.message = deltaText;
-              result._streamed = true;
-            }
-          } else if (data.stage === 'delta') {
-            const text = data.text || data.message || '';
-            deltaText += text;
-            if (onProgress) {
-              onProgress(data.stage, text, deltaText);
-            }
-          } else if (data.stage === 'answer_start') {
-            if (onProgress) {
-              onProgress(data.stage, data.message || '', deltaText);
-            }
-          } else if (onProgress) {
-            onProgress(data.stage, data.message, deltaText);
-          }
-        } catch (e) {
-          console.warn('Failed to parse SSE data:', line);
-        }
-      }
+      processSseLine(line);
     }
+  }
+
+  const trailingLine = buffer.trim();
+  if (trailingLine) {
+    processSseLine(trailingLine);
   }
 
   return result;

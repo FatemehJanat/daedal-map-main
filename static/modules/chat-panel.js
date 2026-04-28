@@ -1385,17 +1385,25 @@ export const ChatManager = {
       // Send via streaming API
       const endpoint = requestMode === 'research' ? '/chat/research/stream' : '/chat/stream';
       const response = await sendStreamingRequest(payload, (stage, message, deltaText) => {
-        if (stage === 'answer_start' || stage === 'delta') {
+        if (stage === 'answer_start') {
           if (!removedIndicatorForStream) {
             indicator.remove();
             removedIndicatorForStream = true;
           }
-          if (!streamedAssistantEl && (stage === 'answer_start' || stage === 'delta')) {
+          return;
+        }
+        if (stage === 'delta') {
+          if (!removedIndicatorForStream) {
+            indicator.remove();
+            removedIndicatorForStream = true;
+          }
+          const nextText = deltaText || '';
+          if (!nextText) return;
+          if (!streamedAssistantEl) {
             streamedAssistantEl = this.addMessage('', 'assistant', { mode: requestMode });
           }
           if (streamedAssistantEl) {
-            const nextText = deltaText || '';
-            streamedAssistantEl.innerHTML = formatMessage(nextText || ' ');
+            streamedAssistantEl.innerHTML = formatMessage(nextText);
           }
           if (requestMessages && this.mode === requestMode && this.elements.messagesHost) {
             this.elements.messagesHost.scrollTop = this.elements.messagesHost.scrollHeight;
@@ -1431,10 +1439,17 @@ export const ChatManager = {
         } else if (streamedAssistantEl && finalText) {
           streamedAssistantEl.innerHTML = formatMessage(finalText);
           this.syncModeMessagesHtml(requestMode);
+        } else if (streamedAssistantEl && !finalText) {
+          streamedAssistantEl.remove();
+          this.syncModeMessagesHtml(requestMode);
         }
         this.applySupplementalChatActions(response);
         this.saveState();
       } else {
+        if (streamedAssistantEl) {
+          streamedAssistantEl.remove();
+          this.syncModeMessagesHtml(requestMode);
+        }
         this.handleResponse({ ...response, _requestMode: requestMode });
       }
 
