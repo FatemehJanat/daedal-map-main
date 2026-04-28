@@ -23,6 +23,7 @@ from mapmover.security import get_client_ip
 from mapmover.data_loading import get_pack_metadata, get_source_path, load_source_metadata
 from mapmover.api_query_runtime import execute_dataset_query, get_api_source_columns, get_api_source_spec
 from mapmover.duckdb_helpers import parquet_available, parquet_columns, path_to_uri, quote_ident, run_rows, select_columns_from_parquet
+from mapmover.progress_bus import ProgressBus, ProgressEvent
 from mapmover.research_postprocessor import normalize_research_result
 from mapmover.research_preprocessor import build_research_hint_context, preprocess_research_query
 from mapmover.research_prompt import build_research_system_prompt
@@ -30,6 +31,34 @@ from mapmover.research_tools import RESEARCH_TOOL_DEFINITIONS, execute_research_
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
 from mapmover.session_cache import session_manager
 from supabase_client import SupabaseClient
+
+
+# User-facing strings for each research tool. The tool loop emits one
+# of these as a ProgressEvent every time the LLM invokes the tool, so
+# the streaming UI shows what work is actually happening instead of
+# rotating filler messages.
+RESEARCH_TOOL_PROGRESS_MESSAGES = {
+    "list_artifacts": "Listing loaded research data...",
+    "describe_artifact": "Inspecting an artifact...",
+    "query_artifact_slice": "Reading values from your workspace...",
+    "build_artifact_display_subset": "Preparing the map display...",
+}
+
+
+# Heartbeat copy used only when no real progress event has arrived
+# within the heartbeat window. Cycles by idle count so users see
+# motion even if a single LLM call is taking a long time.
+_RESEARCH_HEARTBEAT_MESSAGES = [
+    "Still reading the workspace...",
+    "Cross-checking values...",
+    "Working through the research context...",
+    "Drafting your answer...",
+]
+
+
+def _research_heartbeat(idle_count: int) -> ProgressEvent:
+    message = _RESEARCH_HEARTBEAT_MESSAGES[idle_count % len(_RESEARCH_HEARTBEAT_MESSAGES)]
+    return ProgressEvent(stage="thinking", message=message, extra={"heartbeat": True})
 
 
 router = APIRouter()
@@ -727,7 +756,22 @@ def _compact_tool_result_for_prompt(tool_name: str, tool_result: dict) -> dict:
     return tool_result
 
 
-def run_research_chat(*, session_id: str, query: str, chat_history: list | None = None, research_memory: dict | None = None) -> dict:
+def run_research_chat(
+    *,
+    session_id: str,
+    query: str,
+    chat_history: list | None = None,
+    research_memory: dict | None = None,
+    progress=None,
+) -> dict:
+    """Synchronous research pipeline.
+
+    The streaming endpoint runs this on a worker thread via
+    asyncio.to_thread and passes a thread-safe `progress` callable from
+    a ProgressBus. The callable is invoked before each tool execution
+    so the UI can show what the model is actually doing. When `progress`
+    is None the function behaves identically to before.
+    """
     manifest = corpus_registry.manifest(session_id)
     if manifest.get("artifact_count", 0) == 0 and not manifest.get("saved_corpus"):
         return {
@@ -810,6 +854,16 @@ def run_research_chat(*, session_id: str, query: str, chat_history: list | None 
         tool_results = []
         for block in response.content:
             if getattr(block, "type", None) == "tool_use":
+                if progress is not None:
+                    friendly = RESEARCH_TOOL_PROGRESS_MESSAGES.get(
+                        block.name,
+                        f"Running {block.name}...",
+                    )
+                    progress(ProgressEvent(
+                        stage="tool",
+                        message=friendly,
+                        extra={"tool": block.name, "iteration": _iteration},
+                    ))
                 tool_result = execute_research_tool(session_id, block.name, block.input)
                 if isinstance(tool_result, dict) and isinstance(tool_result.get("display"), dict):
                     final_display = dict(tool_result["display"])
@@ -827,6 +881,13 @@ def run_research_chat(*, session_id: str, query: str, chat_history: list | None 
 
         messages.append({"role": "assistant", "content": assistant_content})
         messages.append({"role": "user", "content": tool_results})
+
+    if progress is not None:
+        progress(ProgressEvent(
+            stage="writing",
+            message="Drafting the answer...",
+            extra={"phase": "compose"},
+        ))
 
     text = _extract_text(response.content if response else [])
     if not text:
@@ -964,27 +1025,28 @@ async def research_chat_stream_endpoint(req: Request):
             yield f"data: {json.dumps({'stage': 'corpus', 'message': 'Reading Research workspace...'})}\n\n"
             yield f"data: {json.dumps({'stage': 'thinking', 'message': 'Researching loaded workspace data...'})}\n\n"
 
+            # Pipe real progress events from the worker thread through a
+            # ProgressBus so the UI shows what tool the LLM is actually
+            # calling, not rotating filler text. Heartbeat fires only when
+            # no real event arrives within the window.
+            bus = ProgressBus()
             task = asyncio.create_task(asyncio.to_thread(
                 run_research_chat,
                 session_id=session_id,
                 query=query,
                 chat_history=body.get("chatHistory", []),
                 research_memory=body.get("researchMemory"),
+                progress=bus.thread_emitter(),
             ))
-            heartbeat_messages = [
-                "Inspecting the active corpus...",
-                "Querying loaded artifacts...",
-                "Checking values before answering...",
-                "Still working through the research context...",
-            ]
-            heartbeat_index = 0
-            while not task.done():
-                await asyncio.sleep(3)
-                if task.done():
-                    break
-                message = heartbeat_messages[heartbeat_index % len(heartbeat_messages)]
-                heartbeat_index += 1
-                yield f"data: {json.dumps({'stage': 'thinking', 'message': message})}\n\n"
+            async for event in bus.drain_until(
+                task,
+                heartbeat_seconds=4.0,
+                heartbeat=_research_heartbeat,
+            ):
+                payload = {"stage": event.stage, "message": event.message}
+                if event.extra:
+                    payload["extra"] = event.extra
+                yield f"data: {json.dumps(payload)}\n\n"
 
             result = await task
             log_conversation(

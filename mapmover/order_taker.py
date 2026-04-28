@@ -23,6 +23,21 @@ from .constants import CHAT_HISTORY_LLM_LIMIT
 from .llm_tools import format_tools_for_provider, execute_tool, format_tool_result_for_llm
 from .aggregation_system import validate_aggregation_policy
 from .paths import APP_URL, SITE_URL
+from .progress_bus import ProgressEvent
+
+
+# User-facing strings for each explorer tool. Streaming /chat/stream
+# emits one of these as a ProgressEvent every time the LLM invokes the
+# tool, so the user sees real progress instead of "Understanding your
+# intent..." sitting there for several seconds.
+EXPLORER_TOOL_PROGRESS_MESSAGES = {
+    "get_source_details": "Looking up source details...",
+    "get_source_reference": "Reading source documentation...",
+    "list_source_metrics": "Listing available metrics...",
+    "list_multiple_sources_metrics": "Comparing source metrics...",
+    "list_packs": "Listing available packs...",
+    "get_pack_details": "Looking up pack details...",
+}
 
 load_dotenv()
 
@@ -615,7 +630,12 @@ CLARIFYING QUESTIONS - BE SPECIFIC:
 """
 
 
-def interpret_request(user_query: str, chat_history: list = None, hints: dict = None) -> dict:
+def interpret_request(
+    user_query: str,
+    chat_history: list = None,
+    hints: dict = None,
+    progress=None,
+) -> dict:
     """
     Interpret user request and return structured order or response.
 
@@ -623,6 +643,11 @@ def interpret_request(user_query: str, chat_history: list = None, hints: dict = 
         user_query: The user's natural language query
         chat_history: Previous messages for context
         hints: Preprocessor hints (topics, regions, time patterns, reference lookups)
+        progress: Optional callable invoked before each tool call so a streaming
+            caller can show real progress. Pass `bus.thread_emitter()` from a
+            ProgressBus when calling via asyncio.to_thread; pass None (default)
+            for the non-streaming /chat endpoint, where progress reporting is
+            not consumed anyway.
 
     Returns:
         {"type": "order", "order": {...}, "summary": "..."} or
@@ -710,6 +735,16 @@ def interpret_request(user_query: str, chat_history: list = None, hints: dict = 
                     # Execute the tool
                     tool_name = block.name
                     tool_input = block.input
+                    if progress is not None:
+                        friendly = EXPLORER_TOOL_PROGRESS_MESSAGES.get(
+                            tool_name,
+                            f"Running {tool_name}...",
+                        )
+                        progress(ProgressEvent(
+                            stage="tool",
+                            message=friendly,
+                            extra={"tool": tool_name, "iteration": iteration},
+                        ))
                     result = execute_tool(tool_name, tool_input)
 
                     # Format result for context

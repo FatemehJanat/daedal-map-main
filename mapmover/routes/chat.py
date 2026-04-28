@@ -17,9 +17,24 @@ from mapmover.order_executor import execute_order
 from mapmover.order_taker import interpret_request
 from mapmover.postprocessor import get_display_items, postprocess_order
 from mapmover.preprocessor import preprocess_query
+from mapmover.progress_bus import ProgressBus, ProgressEvent
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
 from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log_conversation
 from mapmover.security import get_client_ip, rate_limiter
+
+
+# Heartbeat copy for explorer mode. Used only when the LLM tool loop
+# is silent for longer than the heartbeat window. Cycles by idle count.
+_EXPLORER_HEARTBEAT_MESSAGES = [
+    "Still working through your request...",
+    "Cross-checking the catalog...",
+    "Putting your order together...",
+]
+
+
+def _explorer_heartbeat(idle_count: int) -> ProgressEvent:
+    message = _EXPLORER_HEARTBEAT_MESSAGES[idle_count % len(_EXPLORER_HEARTBEAT_MESSAGES)]
+    return ProgressEvent(stage="thinking", message=message, extra={"heartbeat": True})
 
 
 router = APIRouter()
@@ -810,8 +825,27 @@ async def chat_stream_endpoint(req: Request):
             yield f"data: {json.dumps({'stage': 'thinking', 'message': 'Understanding your intent...'})}\n\n"
             await asyncio.sleep(0)
             # Run the synchronous LLM call in a thread so we do not block
-            # the event loop while waiting on Anthropic.
-            result = await asyncio.to_thread(interpret_request, query, chat_history, hints=hints)
+            # the event loop. Pipe real progress events back through a
+            # ProgressBus so the user sees actual tool calls instead of
+            # "Understanding your intent..." sitting there for seconds.
+            bus = ProgressBus()
+            llm_task = asyncio.create_task(asyncio.to_thread(
+                interpret_request,
+                query,
+                chat_history,
+                hints=hints,
+                progress=bus.thread_emitter(),
+            ))
+            async for event in bus.drain_until(
+                llm_task,
+                heartbeat_seconds=4.0,
+                heartbeat=_explorer_heartbeat,
+            ):
+                payload = {"stage": event.stage, "message": event.message}
+                if event.extra:
+                    payload["extra"] = event.extra
+                yield f"data: {json.dumps(payload)}\n\n"
+            result = await llm_task
             t_llm_end = time.time()
             logger.info(f"[TIMING] LLM call: {(t_llm_end - t_llm_start) * 1000:.0f}ms")
 
