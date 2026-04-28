@@ -138,83 +138,12 @@ def _configure_httpfs(con) -> None:
     con.execute(f"SET memory_limit='{mem_limit}'")
 
 
-# ---------------------------------------------------------------------------
-# Connection pool
-# ---------------------------------------------------------------------------
-#
-# We keep one process-wide "primary" DuckDB connection. Every query uses
-# primary.cursor() which:
-#
-#   - shares the database catalog, settings, loaded extensions, and httpfs
-#     metadata cache with the primary
-#   - is isolated for transactional state, so concurrent cursors do not
-#     interfere with each other
-#
-# Why this matters in cloud mode:
-#
-#   - opening a connection re-runs LOAD httpfs and re-applies credentials
-#     each time (~10-50ms overhead)
-#   - the per-connection HTTP metadata cache (parquet footers, row group
-#     statistics) gets thrown away on con.close(), so the next query has to
-#     re-fetch the same footer over HTTP
-#   - by reusing one configured primary, that warm metadata is shared by
-#     every later query on every worker thread
-#
-# Verified on duckdb 1.5.0:
-#   - cursors see settings and tables created on the primary
-#   - multiple threads can run queries on cursors from the same primary
-#   - an error on one cursor does not poison sibling cursors or the primary
-
-_primary_connection_lock = threading.Lock()
-_primary_connection = None  # type: ignore[var-annotated]
-
-
-def _build_primary_connection():
-    """Create and fully configure the process-wide primary DuckDB connection."""
+def _make_connection():
+    """Create a DuckDB connection, configured for object storage in cloud mode."""
     con = duckdb.connect()
     if is_cloud_mode():
         _configure_httpfs(con)
     return con
-
-
-def _get_primary_connection():
-    """Return the shared primary connection, creating it on first use."""
-    global _primary_connection
-    if _primary_connection is None:
-        with _primary_connection_lock:
-            if _primary_connection is None:
-                _primary_connection = _build_primary_connection()
-    return _primary_connection
-
-
-def _reset_primary_connection() -> None:
-    """Drop the primary connection so the next query rebuilds from scratch.
-
-    Called after exceptions that may have left the connection in a bad state.
-    Cursor-level errors (bad SQL, missing tables, etc.) are isolated and do
-    NOT trigger this; only failures that look like connection-level corruption
-    should reset.
-    """
-    global _primary_connection
-    with _primary_connection_lock:
-        if _primary_connection is not None:
-            try:
-                _primary_connection.close()
-            except Exception:
-                pass
-            _primary_connection = None
-
-
-def _make_connection():
-    """Return a query handle.
-
-    Kept for backward compatibility with debug endpoints that previously
-    created their own connection. Returns a cursor on the shared primary so
-    those callers also benefit from the warm metadata cache.
-    """
-    if duckdb is None:
-        return None
-    return _get_primary_connection().cursor()
 
 
 # ---------------------------------------------------------------------------
@@ -224,61 +153,21 @@ def _make_connection():
 def run_df(sql: str, params: list) -> pd.DataFrame:
     if duckdb is None:
         return pd.DataFrame()
-    cur = _get_primary_connection().cursor()
+    con = _make_connection()
     try:
-        return cur.execute(sql, params).df()
+        return con.execute(sql, params).df()
     finally:
-        cur.close()
+        con.close()
 
 
 def run_rows(sql: str, params: list) -> list[tuple]:
     if duckdb is None:
         return []
-    cur = _get_primary_connection().cursor()
+    con = _make_connection()
     try:
-        return cur.execute(sql, params).fetchall()
+        return con.execute(sql, params).fetchall()
     finally:
-        cur.close()
-
-
-# ---------------------------------------------------------------------------
-# Metadata pre-warm (cloud mode)
-# ---------------------------------------------------------------------------
-#
-# Touching a parquet's footer over HTTP is the dominant cost on a cold query
-# in cloud mode. We can pay that cost once at startup against the primary
-# connection so every later query - on any worker thread, via cursor() - sees
-# the metadata already cached.
-#
-# Callers pass a list of (label, parquet_uri) pairs. Failures are logged and
-# skipped: a missing-or-renamed file should not block startup.
-
-def prewarm_parquet_metadata(targets) -> dict:
-    """Touch each parquet's metadata so the HTTP metadata cache is populated.
-
-    Returns a dict summarizing successes and failures for logging.
-    """
-    if duckdb is None:
-        return {"warmed": 0, "skipped": 0, "errors": []}
-
-    cur = _get_primary_connection().cursor()
-    warmed = 0
-    skipped = 0
-    errors = []
-    try:
-        for label, uri in targets:
-            if not uri:
-                skipped += 1
-                continue
-            try:
-                # parquet_metadata() reads only the footer, not row groups.
-                cur.execute("SELECT count(*) FROM parquet_metadata(?)", [uri]).fetchone()
-                warmed += 1
-            except Exception as exc:
-                errors.append({"label": label, "uri": uri, "error": str(exc)[:200]})
-    finally:
-        cur.close()
-    return {"warmed": warmed, "skipped": skipped, "errors": errors}
+        con.close()
 
 
 def _normalize_ts_for_duckdb(val: str | None) -> str | None:
@@ -894,38 +783,6 @@ def prewarm_disaster_sources(global_dir: Path) -> None:
 
     import logging
     log = logging.getLogger(__name__)
-
-    # ----------------------------------------------------------------------
-    # Step 1: cheap parquet metadata warm-up.
-    # ----------------------------------------------------------------------
-    # Touching each parquet's footer populates the primary connection's HTTP
-    # metadata cache. Every later query - DataFrame-cached prewarm below,
-    # paid agent queries on /api/v1/query/dataset, region drill-downs, custom
-    # filter combinations - will share that warm cache via cursor() and skip
-    # the cold R2 footer fetch (typically 50-300ms per file).
-    #
-    # This step is fast and runs before any DataFrame work so that even the
-    # subsequent prewarm queries below benefit from warm metadata.
-    metadata_targets = [
-        ("earthquakes_events", path_to_uri(global_dir / "disasters/earthquakes/events.parquet")),
-        ("tsunamis_events", path_to_uri(global_dir / "disasters/tsunamis/events.parquet")),
-        ("volcanoes_events", path_to_uri(global_dir / "disasters/volcanoes/events.parquet")),
-        ("tornadoes_events", path_to_uri(global_dir / "disasters/tornadoes/events.parquet")),
-        ("hurricanes_storms", path_to_uri(global_dir / "disasters/hurricanes/storms.parquet")),
-        ("hurricanes_positions", path_to_uri(global_dir / "disasters/hurricanes/positions.parquet")),
-        ("landslides_events", path_to_uri(global_dir / "disasters/landslides/events.parquet")),
-        ("floods_enriched", path_to_uri(global_dir / "disasters/floods/events_enriched.parquet")),
-        ("floods_events", path_to_uri(global_dir / "disasters/floods/events.parquet")),
-    ]
-    t0 = time.monotonic()
-    summary = prewarm_parquet_metadata(metadata_targets)
-    log.info(
-        "prewarm parquet metadata: warmed=%d skipped=%d errors=%d in %.2fs",
-        summary["warmed"], summary["skipped"], len(summary["errors"]),
-        time.monotonic() - t0,
-    )
-    for err in summary["errors"]:
-        log.warning("prewarm metadata %s failed: %s", err["label"], err["error"])
 
     # Animation years the user typically plays through.
     animation_years = list(range(2020, 2026))
