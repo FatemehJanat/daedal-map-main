@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import asyncio
+import math
 from datetime import datetime
 from types import SimpleNamespace
 from shapely import wkt as shapely_wkt
@@ -57,6 +58,8 @@ _RESEARCH_HEARTBEAT_MESSAGES = [
     "Drafting your answer...",
 ]
 
+_PROMPT_ARTIFACT_WINDOW = 32
+
 
 def _research_heartbeat(idle_count: int) -> ProgressEvent:
     message = _RESEARCH_HEARTBEAT_MESSAGES[idle_count % len(_RESEARCH_HEARTBEAT_MESSAGES)]
@@ -64,6 +67,17 @@ def _research_heartbeat(idle_count: int) -> ProgressEvent:
 
 
 router = APIRouter()
+
+
+def _manifest_prompt_window_warning(manifest: dict | None) -> str | None:
+    artifact_count = int((manifest or {}).get("artifact_count") or 0)
+    if artifact_count <= _PROMPT_ARTIFACT_WINDOW:
+        return None
+    return (
+        f"This corpus has {artifact_count} loaded artifacts, which is larger than the current "
+        f"prompt-friendly window of {_PROMPT_ARTIFACT_WINDOW}. Research can still work, "
+        "but broad questions may be less reliable unless you narrow the corpus or ask about a smaller subset."
+    )
 
 
 def _infer_loc_id_details(loc_id) -> tuple[int | None, str | None]:
@@ -675,6 +689,20 @@ def _browser_save_snapshot_bytes(snapshot: dict) -> int:
         return 0
 
 
+def _json_safe_value(value):
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {str(k): _json_safe_value(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_json_safe_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe_value(item) for item in value]
+    if isinstance(value, set):
+        return [_json_safe_value(item) for item in value]
+    return value
+
+
 def _build_browser_corpus_snapshot(session_id: str, saved_corpus: dict) -> dict:
     artifacts = corpus_registry.export_session_artifacts(session_id)
     request_keys = [str(artifact.get("request_key") or "").strip() for artifact in artifacts if artifact.get("request_key")]
@@ -683,9 +711,9 @@ def _build_browser_corpus_snapshot(session_id: str, saved_corpus: dict) -> dict:
     snapshot = {
         "snapshot_version": 1,
         "saved_at": datetime.utcnow().isoformat() + "Z",
-        "saved_corpus": saved_corpus,
-        "artifacts": artifacts,
-        "results": results,
+        "saved_corpus": _json_safe_value(saved_corpus),
+        "artifacts": _json_safe_value(artifacts),
+        "results": _json_safe_value(results),
     }
     snapshot["size_bytes"] = _browser_save_snapshot_bytes(snapshot)
     return snapshot
@@ -750,6 +778,30 @@ def _extract_text(content_blocks) -> str:
         if text:
             parts.append(text)
     return "\n".join(parts).strip()
+
+def _broad_research_fallback_message(query: str, manifest: dict, research_hints: dict | None = None) -> str:
+    artifact_count = int(manifest.get("artifact_count") or 0)
+    saved = manifest.get("saved_corpus") or {}
+    pack_count = int(saved.get("pack_count") or 0)
+    query_text = str(query or "").strip()
+    lowered = query_text.lower()
+    broad_markers = (
+        "other metrics",
+        "what can you tell me",
+        "what changed",
+        "how were",
+        "after its biggest earthquake",
+    )
+    if artifact_count >= 8 or any(marker in lowered for marker in broad_markers):
+        return (
+            f'That question is broad for the current Research workspace: it spans {artifact_count} loaded artifacts'
+            + (f" across {pack_count} packs" if pack_count else "")
+            + ". Try narrowing it to one event plus a smaller metric set. For example:\n"
+              "- `What changed in Japan after the 2011 Tohoku earthquake in SDG Goal 1 and Goal 8?`\n"
+              "- `Compare Japan before vs after 2011 for poverty, population, GDP, and energy use.`\n"
+              "- `What was Japan's biggest earthquake, and which 3-5 later indicators moved the most after it?`"
+        )
+    return "I could not produce a research answer from the active corpus."
 
 
 def _word_chunks(text: str, words_per_chunk: int = 4):
@@ -856,8 +908,9 @@ def _compact_manifest_for_prompt(manifest: dict) -> dict:
             ],
         }
 
+    manifest_artifacts = manifest.get("artifacts") or []
     artifacts = []
-    for artifact in (manifest.get("artifacts") or [])[:12]:
+    for artifact in manifest_artifacts[:_PROMPT_ARTIFACT_WINDOW]:
         artifacts.append(
             {
                 "artifact_id": artifact.get("artifact_id"),
@@ -876,13 +929,22 @@ def _compact_manifest_for_prompt(manifest: dict) -> dict:
             }
         )
 
-    return {
+    compact = {
         "session_id": manifest.get("session_id"),
         "mode": manifest.get("mode"),
         "artifact_count": manifest.get("artifact_count"),
         "artifacts": artifacts,
         "saved_corpus": compact_saved,
     }
+    omitted = max(0, len(manifest_artifacts) - len(artifacts))
+    if omitted:
+        compact["artifacts_omitted"] = omitted
+        compact["omitted_source_ids"] = [
+            str((artifact or {}).get("source_id") or "").strip()
+            for artifact in manifest_artifacts[len(artifacts):len(artifacts) + 20]
+            if str((artifact or {}).get("source_id") or "").strip()
+        ]
+    return compact
 
 
 def _focus_loc_ids_from_result(result: dict | None) -> list[str]:
@@ -961,9 +1023,17 @@ def _compact_tool_result_for_prompt(tool_name: str, tool_result: dict) -> dict:
                 "geographic_level": artifact.get("geographic_level"),
                 "metrics": (artifact.get("metrics") or [])[:8],
             }
-            for artifact in artifacts[:12]
+            for artifact in artifacts[:_PROMPT_ARTIFACT_WINDOW]
         ]
         compact["artifact_count"] = len(artifacts)
+        omitted = max(0, len(artifacts) - len(compact["artifacts"]))
+        if omitted:
+            compact["artifacts_omitted"] = omitted
+            compact["omitted_source_ids"] = [
+                str((artifact or {}).get("source_id") or "").strip()
+                for artifact in artifacts[len(compact["artifacts"]):len(compact["artifacts"]) + 20]
+                if str((artifact or {}).get("source_id") or "").strip()
+            ]
         return compact
 
     if tool_name == "describe_artifact":
@@ -1196,6 +1266,28 @@ def run_research_chat(
         )
         return _build_display_warning_result(manifest, display_warning, query)
 
+    if response and response.stop_reason == "tool_use":
+        if progress is not None:
+            progress(ProgressEvent(
+                stage="writing",
+                message="Finishing the analysis...",
+                extra={"phase": "final_synthesis"},
+            ))
+        try:
+            response = client.messages.create(
+                model=model,
+                system=system_prompt,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=1400,
+            )
+        except Exception:
+            logger.exception(
+                "Research final synthesis call failed after max tool iterations session=%s query=%r",
+                session_id,
+                query[:120],
+            )
+
     if progress is not None:
         progress(ProgressEvent(
             stage="writing",
@@ -1205,7 +1297,7 @@ def run_research_chat(
 
     text = _extract_text(response.content if response else [])
     if not text:
-        text = _fallback_display_message(final_display) or "I could not produce a research answer from the active corpus."
+        text = _fallback_display_message(final_display) or _broad_research_fallback_message(query, manifest, research_hints)
     result = {
         "type": "chat",
         "message": text,
@@ -1273,12 +1365,14 @@ async def research_load_saved_corpus_endpoint(req: Request):
         hydration = _hydrate_saved_corpus(session_id, saved_corpus)
         manifest = _annotate_manifest_saved_corpus_state(corpus_registry.manifest(session_id))
         focus_geojson = _build_research_focus_geojson(session_id)
+        prompt_window_warning = _manifest_prompt_window_warning(manifest)
         return msgpack_response({
             "type": "saved_corpus_loaded",
             "message": f'Loaded "{saved_corpus.get("name")}" into the Research workspace.',
             "corpus": manifest,
             "hydration": hydration,
             "focus_geojson": focus_geojson,
+            "warning": prompt_window_warning,
         })
     except Exception as e:
         logger.exception("Research saved corpus load error")
@@ -1318,11 +1412,11 @@ async def research_build_browser_save_endpoint(req: Request):
 
         manifest = _annotate_manifest_saved_corpus_state(corpus_registry.manifest(session_id))
         snapshot = _build_browser_corpus_snapshot(session_id, saved_corpus)
-        return JSONResponse({
+        return JSONResponse(_json_safe_value({
             "ok": True,
             "snapshot": snapshot,
             "corpus": manifest,
-        })
+        }))
     except Exception as exc:
         logger.exception("Research browser-save build error")
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
@@ -1353,12 +1447,14 @@ async def research_load_browser_save_endpoint(req: Request):
         ))
         saved_name = ((manifest.get("saved_corpus") or {}).get("name") or "Saved corpus")
         focus_geojson = _build_research_focus_geojson(session_id)
-        return JSONResponse({
+        prompt_window_warning = _manifest_prompt_window_warning(manifest)
+        return JSONResponse(_json_safe_value({
             "ok": True,
             "message": f'Loaded "{saved_name}" from browser storage into the Research workspace.',
             "corpus": manifest,
             "focus_geojson": focus_geojson,
-        })
+            "warning": prompt_window_warning,
+        }))
     except Exception as exc:
         logger.exception("Research browser-save load error")
         status_code = 409 if "out of date" in str(exc).lower() else 500

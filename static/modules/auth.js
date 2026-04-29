@@ -19,12 +19,48 @@ let currentProfile = null;
 let initialized = false;
 let _lastAuthUserId = null;
 
+function isLocalLikeHost(hostname) {
+  const value = String(hostname || '').trim().toLowerCase();
+  return value === 'localhost' || value === '127.0.0.1' || value === '0.0.0.0';
+}
+
+function getLocalLinkedSiteBase() {
+  if (!isLocalLikeHost(window.location.hostname)) return '';
+  return `${window.location.protocol}//${window.location.hostname}:8080`;
+}
+
 function getSiteBase() {
-  return String(authConfig?.site_url || '').trim().replace(/\/$/, '') || window.location.origin;
+  const configured = String(authConfig?.site_url || '').trim().replace(/\/$/, '');
+  const localLinked = getLocalLinkedSiteBase();
+  if (!configured) return localLinked || window.location.origin;
+  if (!localLinked) return configured;
+  try {
+    const configuredUrl = new URL(configured, window.location.origin);
+    if (!isLocalLikeHost(configuredUrl.hostname)) {
+      return localLinked;
+    }
+  } catch (_) {
+    return localLinked;
+  }
+  return configured;
 }
 
 function getAccountUrl() {
-  return String(currentProfile?.account_url || authConfig?.account_url || '/settings').trim() || '/settings';
+  const configured = String(currentProfile?.account_url || authConfig?.account_url || '/settings').trim() || '/settings';
+  const localLinked = getLocalLinkedSiteBase();
+  if (!localLinked) return configured;
+  try {
+    const configuredUrl = new URL(configured, window.location.origin);
+    if (!isLocalLikeHost(configuredUrl.hostname)) {
+      return `${localLinked}/account`;
+    }
+  } catch (_) {
+    if (configured.startsWith('/')) {
+      return configured;
+    }
+    return `${localLinked}/account`;
+  }
+  return configured;
 }
 
 async function fetchProfile() {

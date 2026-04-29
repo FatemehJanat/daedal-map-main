@@ -443,7 +443,8 @@ async def well_known_402index_verify():
 
 
 def _site_url() -> str:
-    return os.getenv("SITE_URL", "https://daedalmap.com").rstrip("/")
+    from mapmover.paths import SITE_URL
+    return str(SITE_URL or os.getenv("SITE_URL", "https://daedalmap.com")).rstrip("/")
 
 
 @app.get("/docs", include_in_schema=False)

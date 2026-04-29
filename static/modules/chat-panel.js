@@ -894,13 +894,15 @@ export const ChatManager = {
       const sourceCount = Number(saved?.source_count || 0);
       const artifactCount = Number(response?.corpus?.artifact_count || 0);
       const extraSourcesText = sourceCount ? ` and ${sourceCount} direct source${sourceCount === 1 ? '' : 's'}` : '';
-      this.addMessage(
-        saved
+        const baseLoadMessage = saved
           ? `Loaded "${saved.name}" into Research. This workspace includes ${packCount} pack${packCount === 1 ? '' : 's'}${extraSourcesText} and ${artifactCount} hydrated artifact${artifactCount === 1 ? '' : 's'}.`
-          : (response?.message || 'Loaded the saved corpus into Research.'),
-        'assistant',
-        { mode: 'research' }
-      );
+          : (response?.message || 'Loaded the saved corpus into Research.');
+        const loadWarning = String(response?.warning || '').trim();
+        this.addMessage(
+          loadWarning ? `${baseLoadMessage}\n\nNote: ${loadWarning}` : baseLoadMessage,
+          'assistant',
+          { mode: 'research' }
+        );
       this.updateResearchCorpusStatus();
     } catch (error) {
       console.error('Saved corpus load error:', error);
@@ -1657,13 +1659,13 @@ export const ChatManager = {
             indicator.remove();
             removedIndicatorForStream = true;
           }
-          const nextText = deltaText || '';
-          if (!nextText) return;
+          const accumulatedText = deltaText || '';
+          if (!accumulatedText) return;
           if (!streamedAssistantEl) {
             streamedAssistantEl = this.addMessage('', 'assistant', { mode: requestMode });
           }
           if (streamedAssistantEl) {
-            streamedAssistantEl.innerHTML = formatMessage(nextText);
+            streamedAssistantEl.innerHTML = formatMessage(accumulatedText);
           }
           if (requestMessages && this.mode === requestMode && this.elements.messagesHost) {
             this.elements.messagesHost.scrollTop = this.elements.messagesHost.scrollHeight;
