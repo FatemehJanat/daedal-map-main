@@ -71,6 +71,75 @@ def wildfire_year_from_path(path) -> int | None:
         return None
 
 
+def _resolve_wildfire_event_year(event_id: str, year: int | None = None) -> int | None:
+    """Resolve a wildfire event's year from summary data before scanning detail files."""
+    import pandas as pd
+    import pyarrow.parquet as pq
+
+    if year is not None:
+        return year
+
+    summary_candidates = [
+        GLOBAL_DIR / "disasters/wildfires/fires.parquet",
+        _resolve_first_existing(
+            GLOBAL_DIR / "disasters/wildfires/sources/usa/fires_enriched.parquet",
+            COUNTRIES_DIR / "USA/disasters/wildfires/fires_enriched.parquet",
+        ),
+        _resolve_first_existing(
+            GLOBAL_DIR / "disasters/wildfires/sources/can/fires_enriched.parquet",
+            COUNTRIES_DIR / "CAN/wildfires/fires_enriched.parquet",
+        ),
+    ]
+
+    for summary_path in summary_candidates:
+        if summary_path is None or not parquet_available(summary_path):
+            continue
+        try:
+            if duckdb_available():
+                df = select_rows(
+                    summary_path,
+                    columns=["event_id", "timestamp", "year"],
+                    exact_filters={"event_id": event_id},
+                )
+            else:
+                df = pq.read_table(
+                    summary_path,
+                    columns=["event_id", "timestamp", "year"],
+                    filters=[("event_id", "=", event_id)],
+                ).to_pandas()
+            if df is None or df.empty:
+                continue
+            row = df.iloc[0]
+            if pd.notna(row.get("year")):
+                return int(row["year"])
+            ts = pd.to_datetime(row.get("timestamp"), errors="coerce")
+            if pd.notna(ts):
+                return int(ts.year)
+        except Exception:
+            continue
+
+    for candidate_year, summary_path in list_wildfire_year_files():
+        if not parquet_available(summary_path):
+            continue
+        try:
+            if duckdb_available():
+                df = select_rows(
+                    summary_path,
+                    columns=["event_id"],
+                    exact_filters={"event_id": event_id},
+                )
+                if df is not None and not df.empty:
+                    return candidate_year
+            else:
+                table = pq.read_table(summary_path, columns=["event_id"], filters=[("event_id", "=", event_id)])
+                if table.num_rows > 0:
+                    return candidate_year
+        except Exception:
+            continue
+
+    return None
+
+
 @router.get("/api/wildfires/geojson")
 async def get_wildfires_geojson(
     year: int = None,
@@ -431,10 +500,11 @@ async def get_wildfire_perimeter(event_id: str, year: int = None):
     try:
         main_path = GLOBAL_DIR / "disasters/wildfires/fires.parquet"
         year_files = list_wildfire_year_files()
+        resolved_year = _resolve_wildfire_event_year(event_id, year)
 
         candidate_files = []
-        if year is not None:
-            candidate_files = [path for yr, path in year_files if yr == year]
+        if resolved_year is not None:
+            candidate_files = [path for yr, path in year_files if yr == resolved_year]
         else:
             candidate_files = [path for _, path in year_files]
 
@@ -513,6 +583,7 @@ async def get_wildfire_progression(event_id: str, year: int = None):
 
     try:
         progression_path = GLOBAL_DIR / "disasters/wildfires"
+        resolved_year = _resolve_wildfire_event_year(event_id, year)
         if not is_cloud_mode() and not progression_path.exists():
             return msgpack_response(
                 {
@@ -527,8 +598,8 @@ async def get_wildfire_progression(event_id: str, year: int = None):
                 }
             )
 
-        if year is not None:
-            candidate_files = [progression_path / f"fire_progression_{year}.parquet"]
+        if resolved_year is not None:
+            candidate_files = [progression_path / f"fire_progression_{resolved_year}.parquet"]
         else:
             candidate_files = sorted(progression_path.glob("fire_progression_*.parquet"), reverse=True)
 

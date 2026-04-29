@@ -740,6 +740,60 @@ body.mobile-limited #mobileMapNotice {
   border-bottom-left-radius: 4px;
 }
 
+.chat-message.assistant .chat-table-wrap {
+  margin: 8px 0;
+  overflow-x: auto;
+  border: 1px solid rgba(123, 231, 255, 0.14);
+  border-radius: 10px;
+  background: rgba(7, 20, 31, 0.34);
+}
+
+.chat-message.assistant .chat-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.chat-message.assistant .chat-table th,
+.chat-message.assistant .chat-table td {
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.chat-message.assistant .chat-table th {
+  background: rgba(123, 231, 255, 0.08);
+  color: #dff8ff;
+  font-weight: 700;
+  border-bottom: 1px solid rgba(123, 231, 255, 0.18);
+}
+
+.chat-message.assistant .chat-table td {
+  color: #d0d0d0;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.chat-message.assistant .chat-table tr:first-child td {
+  border-top: none;
+}
+
+.chat-message.assistant .chat-list {
+  margin: 8px 0 8px 18px;
+  padding: 0;
+  color: #d0d0d0;
+}
+
+.chat-message.assistant .chat-list li {
+  margin: 4px 0;
+  line-height: 1.45;
+}
+
+.chat-message.assistant .chat-list--ordered {
+  padding-left: 2px;
+}
+
 .chat-message.system {
   align-self: center;
   background: #3d3d2e;

@@ -396,6 +396,14 @@ class SessionManager:
             return True
         return False
 
+    def clear_all(self) -> int:
+        """Remove all in-memory session caches."""
+        count = len(self._sessions)
+        self._sessions = {}
+        if count:
+            logger.info(f"Cleared all session caches: {count}")
+        return count
+
     def _maybe_cleanup(self):
         """Cleanup expired sessions if interval has passed."""
         now = datetime.now()

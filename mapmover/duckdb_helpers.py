@@ -9,6 +9,7 @@ DuckDB fetches only the row groups it needs via HTTP range requests.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
@@ -24,6 +25,10 @@ try:
     import duckdb
 except ImportError:
     duckdb = None
+
+
+logger = logging.getLogger(__name__)
+_MISSING_TIME_FILTER_WARNING_KEYS: set[tuple[str, tuple[str, ...]]] = set()
 
 
 DUCKDB_EVENT_SOURCES = {
@@ -444,6 +449,15 @@ def select_filtered_event_rows(
     if end is not None and "timestamp" in available_cols:
         where.append('"timestamp" <= CAST(? AS TIMESTAMP)')
         params.append(_normalize_ts_for_duckdb(end))
+    if (start is not None or end is not None) and "timestamp" not in available_cols:
+        warning_key = (str(parquet_path), tuple(sorted(available_cols)))
+        if warning_key not in _MISSING_TIME_FILTER_WARNING_KEYS:
+            _MISSING_TIME_FILTER_WARNING_KEYS.add(warning_key)
+            logger.warning(
+                "select_filtered_event_rows ignored start/end for %s because no timestamp column exists. Available time-like columns: %s",
+                parquet_path,
+                [col for col in ("year", "start_date", "end_date", "date", "datetime") if col in available_cols],
+            )
 
     for col, value in (min_value_filters or {}).items():
         if col in available_cols and value is not None:
@@ -1035,12 +1049,9 @@ def prewarm_disaster_sources(global_dir: Path) -> None:
                     storms_df = storms_df[storms_df["max_category"].map(lambda x: cat_order.get(x, 0) >= 2)]
                     if not storms_df.empty:
                         storm_ids = storms_df["storm_id"].tolist()
-                        pos_df = select_filtered_event_rows(hur_positions_path, in_filters={"storm_id": storm_ids})
-                        pos_df = pos_df.dropna(subset=["latitude", "longitude"])
-                        if not pos_df.empty:
-                            pos_df["wind_sort"] = pos_df["wind_kt"].fillna(-1)
-                            max_pos = pos_df.loc[pos_df.groupby("storm_id")["wind_sort"].idxmax()]
-                            joined = storms_df.merge(max_pos[["storm_id", "latitude", "longitude"]], on="storm_id", how="inner", suffixes=("", "_pos"))
+                        peak_positions = select_peak_positions_by_storm_ids(hur_positions_path, storm_ids)
+                        if not peak_positions.empty:
+                            joined = storms_df.merge(peak_positions[["storm_id", "latitude", "longitude"]], on="storm_id", how="inner", suffixes=("", "_pos"))
                             if not joined.empty:
                                 cache_set(ck, joined, permanent=True)
                 log.info("prewarm hurricanes year=%d: %d storms in %.1fs", yr, len(storms_df), time.monotonic() - t0)

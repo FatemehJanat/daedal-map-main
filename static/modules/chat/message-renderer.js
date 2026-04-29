@@ -17,21 +17,121 @@ export function escapeHtml(text) {
 
 /**
  * Format assistant message text with basic markdown.
- * Supports bold (**text**), newlines, and inline formatting.
+ * Supports bold (**text**), markdown tables, newlines, and inline formatting.
  * @param {string} text - Raw message text
  * @returns {string} Formatted HTML string
  */
-export function formatMessage(text) {
+function formatInline(text) {
   let formatted = escapeHtml(text);
-
-  // Bold: **text** or __text__
   formatted = formatted.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   formatted = formatted.replace(/__(.+?)__/g, '<strong>$1</strong>');
-
-  // Newlines to <br>
-  formatted = formatted.replace(/\n/g, '<br>');
-
   return formatted;
+}
+
+function isTableSeparatorLine(line) {
+  const trimmed = String(line || '').trim();
+  if (!trimmed.includes('-')) return false;
+  const cells = trimmed
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map(cell => cell.trim());
+  if (!cells.length) return false;
+  return cells.every(cell => /^:?-{3,}:?$/.test(cell));
+}
+
+function splitTableCells(line) {
+  return String(line || '')
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map(cell => cell.trim());
+}
+
+function buildTableHtml(headerLine, bodyLines) {
+  const headers = splitTableCells(headerLine);
+  const rows = bodyLines
+    .map(splitTableCells)
+    .filter(cells => cells.length && cells.some(cell => cell.length > 0));
+  if (!headers.length || !rows.length) return null;
+  const thead = `<thead><tr>${headers.map(cell => `<th>${formatInline(cell)}</th>`).join('')}</tr></thead>`;
+  const tbody = `<tbody>${rows.map(cells => `<tr>${cells.map(cell => `<td>${formatInline(cell)}</td>`).join('')}</tr>`).join('')}</tbody>`;
+  return `<div class="chat-table-wrap"><table class="chat-table">${thead}${tbody}</table></div>`;
+}
+
+function isUnorderedListLine(line) {
+  return /^\s*[-*]\s+/.test(String(line || ''));
+}
+
+function isOrderedListLine(line) {
+  return /^\s*\d+\.\s+/.test(String(line || ''));
+}
+
+function stripListMarker(line, ordered = false) {
+  return ordered
+    ? String(line || '').replace(/^\s*\d+\.\s+/, '')
+    : String(line || '').replace(/^\s*[-*]\s+/, '');
+}
+
+function buildListHtml(lines, ordered = false) {
+  const tag = ordered ? 'ol' : 'ul';
+  const items = lines
+    .map(line => stripListMarker(line, ordered))
+    .filter(line => String(line || '').trim().length > 0)
+    .map(line => `<li>${formatInline(line)}</li>`)
+    .join('');
+  if (!items) return null;
+  return `<${tag} class="chat-list chat-list--${ordered ? 'ordered' : 'unordered'}">${items}</${tag}>`;
+}
+
+export function formatMessage(text) {
+  const lines = String(text || '').replace(/\r\n/g, '\n').split('\n');
+  const output = [];
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const current = lines[i] || '';
+    const next = lines[i + 1] || '';
+    if (current.includes('|') && isTableSeparatorLine(next)) {
+      const bodyLines = [];
+      let j = i + 2;
+      while (j < lines.length && String(lines[j] || '').includes('|')) {
+        bodyLines.push(lines[j]);
+        j += 1;
+      }
+      const tableHtml = buildTableHtml(current, bodyLines);
+      if (tableHtml) {
+        output.push(tableHtml);
+        i = j - 1;
+        continue;
+      }
+    }
+
+    if (isUnorderedListLine(current) || isOrderedListLine(current)) {
+      const ordered = isOrderedListLine(current);
+      const listLines = [current];
+      let j = i + 1;
+      while (j < lines.length) {
+        const line = lines[j] || '';
+        if (ordered ? isOrderedListLine(line) : isUnorderedListLine(line)) {
+          listLines.push(line);
+          j += 1;
+          continue;
+        }
+        break;
+      }
+      const listHtml = buildListHtml(listLines, ordered);
+      if (listHtml) {
+        output.push(listHtml);
+        i = j - 1;
+        continue;
+      }
+    }
+
+    output.push(formatInline(current));
+  }
+
+  return output.join('<br>');
 }
 
 /**

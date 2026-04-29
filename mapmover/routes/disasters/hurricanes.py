@@ -3,7 +3,7 @@
 from fastapi import APIRouter
 
 from mapmover.disaster_filters import apply_location_filters, get_default_min_year
-from mapmover.duckdb_helpers import cache_get, cache_set, duckdb_available, is_default_preload_range, make_cache_key, make_preload_cache_key, parquet_available, select_filtered_event_rows, select_rows_by_exact_value
+from mapmover.duckdb_helpers import cache_get, cache_set, duckdb_available, is_default_preload_range, make_cache_key, make_preload_cache_key, parquet_available, select_filtered_event_rows, select_peak_positions_by_storm_ids, select_rows_by_exact_value
 from mapmover.logging_analytics import logger
 from mapmover.paths import GLOBAL_DIR
 
@@ -59,7 +59,7 @@ async def get_storms_geojson(
         and loc_prefix is None
         and affected_loc_id is None
     )
-    _cache_key = make_cache_key("hurricanes", year=year, min_category=min_category) if _simple_cache else None
+    _cache_key = make_cache_key("hurricanes", year=year, min_category=min_category, basin=basin.upper() if basin is not None else None) if _simple_cache else None
 
     try:
         storms_path = GLOBAL_DIR / "disasters/hurricanes/storms.parquet"
@@ -99,14 +99,18 @@ async def get_storms_geojson(
             storms_df = select_filtered_event_rows(
                 storms_path,
                 year=year,
-                start=start,
-                end=end,
                 min_value_filters={"year": min_year} if year is None and start is None and end is None and min_year is not None else None,
                 exact_filters={"basin": basin.upper()} if basin is not None else None,
             )
-            if min_category is not None and "max_category" in storms_df.columns:
-                min_cat_val = CAT_ORDER.get(min_category, 0)
-                storms_df = storms_df[storms_df["max_category"].map(lambda x: CAT_ORDER.get(x, 0) >= min_cat_val)]
+            storms_df = _apply_storm_filters_pandas(
+                storms_df,
+                year=year,
+                start=start,
+                end=end,
+                min_year=min_year,
+                basin=basin,
+                min_category=min_category,
+            )
         else:
             storms_df = pd.read_parquet(storms_path)
             storms_df = _apply_storm_filters_pandas(
@@ -130,22 +134,19 @@ async def get_storms_geojson(
 
         storm_ids = storms_df["storm_id"].tolist()
         if use_duckdb:
-            positions_subset = select_filtered_event_rows(
-                positions_path,
-                in_filters={"storm_id": storm_ids},
-            )
+            max_positions = select_peak_positions_by_storm_ids(positions_path, storm_ids)
+            positions_subset = max_positions
         else:
             positions_df = pd.read_parquet(positions_path)
             positions_subset = positions_df[positions_df["storm_id"].isin(storm_ids)].copy()
+            positions_subset["wind_sort"] = positions_subset["wind_kt"].fillna(-1)
+            positions_subset = positions_subset.loc[positions_subset.groupby("storm_id")["wind_sort"].idxmax()]
         positions_subset = positions_subset.dropna(subset=["latitude", "longitude"])
         if positions_subset.empty:
             return msgpack_response({"type": "FeatureCollection", "features": [], "count": 0})
 
-        # If a storm has all-NaN wind values, fall back to the first valid position.
-        positions_subset["wind_sort"] = positions_subset["wind_kt"].fillna(-1)
-        max_positions = positions_subset.loc[positions_subset.groupby("storm_id")["wind_sort"].idxmax()]
         storms_with_pos = storms_df.merge(
-            max_positions[["storm_id", "latitude", "longitude"]],
+            positions_subset[["storm_id", "latitude", "longitude"]],
             on="storm_id",
             how="inner",
             suffixes=("", "_pos"),

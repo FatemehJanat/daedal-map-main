@@ -5,6 +5,7 @@ import io
 import ipaddress
 import json
 import os
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -43,6 +44,80 @@ def clear_public_pack_catalog_cache() -> None:
     for mode in (False, True):
         _public_pack_list_cache[mode] = {"value": None, "cached_at": 0.0}
     _public_pack_detail_cache.clear()
+
+
+def clear_release_marker_cache() -> None:
+    global _release_marker_cache, _release_marker_cache_time
+    _release_marker_cache = None
+    _release_marker_cache_time = 0.0
+
+
+def _admin_catalog_refresh_forbidden_response(req: Request) -> Response | None:
+    auth_user = get_authenticated_user(req)
+    if not auth_user:
+        logger.warning(
+            "Denied admin runtime action: anonymous caller ip=%s",
+            get_client_ip(req),
+        )
+        return msgpack_error("Unauthorized", 401)
+
+    service_key = os.getenv("SUPABASE_SERVICE_KEY", "").strip()
+    if service_key:
+        try:
+            from supabase_client import SupabaseClient
+            supa = SupabaseClient()
+            context = supa.get_user_entitlement_context(auth_user.get("id"))
+            if not context or context.get("error"):
+                logger.warning(
+                    "Denied admin runtime action: entitlement lookup empty user_id=%s",
+                    auth_user.get("id"),
+                )
+                return msgpack_error("Forbidden", 403)
+            if context.get("plan_id") != "master" and not context.get("is_admin"):
+                logger.warning(
+                    "Denied admin runtime action: insufficient privileges user_id=%s plan_id=%s is_admin=%s",
+                    auth_user.get("id"),
+                    context.get("plan_id"),
+                    context.get("is_admin"),
+                )
+                return msgpack_error("Forbidden", 403)
+        except Exception as exc:
+            logger.warning(f"Admin runtime action: entitlement check failed: {exc}")
+            return msgpack_error("Entitlement check failed", 500)
+    return None
+
+
+def _start_runtime_prewarm_threads() -> list[str]:
+    started: list[str] = []
+    try:
+        prewarm_public_pack_catalog()
+        started.append("public_pack_catalog")
+    except Exception as exc:
+        logger.warning("Runtime refresh: public pack catalog prewarm failed: %s", exc)
+
+    try:
+        from mapmover.duckdb_helpers import is_cloud_mode, prewarm_disaster_sources
+        from mapmover.geometry_handlers import prewarm_geometry
+        from mapmover.paths import GLOBAL_DIR
+
+        if is_cloud_mode():
+            threading.Thread(
+                target=prewarm_disaster_sources,
+                args=(GLOBAL_DIR,),
+                daemon=True,
+                name="prewarm-disasters-refresh",
+            ).start()
+            started.append("disasters")
+
+            threading.Thread(
+                target=prewarm_geometry,
+                daemon=True,
+                name="prewarm-geometry-refresh",
+            ).start()
+            started.append("geometry")
+    except Exception as exc:
+        logger.warning("Runtime refresh: background prewarm launch failed: %s", exc)
+    return started
 
 
 def _is_loopback_host(value: str) -> bool:
@@ -2037,37 +2112,9 @@ async def admin_catalog_refresh(req: Request):
     """
     import mapmover.data_loading as _dl
 
-    auth_user = get_authenticated_user(req)
-    if not auth_user:
-        logger.warning(
-            "Denied admin catalog refresh: anonymous caller ip=%s",
-            get_client_ip(req),
-        )
-        return msgpack_error("Unauthorized", 401)
-
-    service_key = os.getenv("SUPABASE_SERVICE_KEY", "").strip()
-    if service_key:
-        try:
-            from supabase_client import SupabaseClient
-            supa = SupabaseClient()
-            context = supa.get_user_entitlement_context(auth_user.get("id"))
-            if not context or context.get("error"):
-                logger.warning(
-                    "Denied admin catalog refresh: entitlement lookup empty user_id=%s",
-                    auth_user.get("id"),
-                )
-                return msgpack_error("Forbidden", 403)
-            if context.get("plan_id") != "master" and not context.get("is_admin"):
-                logger.warning(
-                    "Denied admin catalog refresh: insufficient privileges user_id=%s plan_id=%s is_admin=%s",
-                    auth_user.get("id"),
-                    context.get("plan_id"),
-                    context.get("is_admin"),
-                )
-                return msgpack_error("Forbidden", 403)
-        except Exception as exc:
-            logger.warning(f"Admin catalog refresh: entitlement check failed: {exc}")
-            return msgpack_error("Entitlement check failed", 500)
+    forbidden = _admin_catalog_refresh_forbidden_response(req)
+    if forbidden is not None:
+        return forbidden
 
     wants_json = "application/json" in (req.headers.get("accept", "") or "").lower()
     surface = str(req.query_params.get("surface", "all") or "all").strip().lower()
@@ -2100,6 +2147,57 @@ async def admin_catalog_refresh(req: Request):
         "source_count": source_count,
         "api_pack_count": api_pack_count,
         "message": "Requested catalog caches cleared and refreshed",
+    }
+    if wants_json:
+        return JSONResponse(payload)
+    return msgpack_response(payload)
+
+
+@router.post("/api/admin/runtime/refresh")
+async def admin_runtime_refresh(req: Request):
+    """Drop warmed runtime state and kick the normal prewarmers again."""
+    import mapmover.data_loading as _dl
+    from mapmover.data_cascade import clear_cache as clear_data_cascade_cache
+    from mapmover.duckdb_helpers import cache_clear, reset_thread_connection_pool
+    from mapmover.geometry_handlers import clear_cache as clear_geometry_cache
+
+    forbidden = _admin_catalog_refresh_forbidden_response(req)
+    if forbidden is not None:
+        return forbidden
+
+    wants_json = "application/json" in (req.headers.get("accept", "") or "").lower()
+
+    _dl.clear_catalog_cache()
+    clear_metadata_cache()
+    clear_public_pack_catalog_cache()
+    clear_release_marker_cache()
+    _dl.clear_api_discovery_cache()
+    clear_geometry_cache()
+    clear_data_cascade_cache()
+    cache_clear()
+    duckdb_generation = reset_thread_connection_pool()
+    cleared_sessions = session_manager.clear_all()
+    cleared_corpora = corpus_registry.clear_all()
+    initialize_catalog()
+    started_prewarmers = _start_runtime_prewarm_threads()
+
+    payload = {
+        "ok": True,
+        "message": "Requested runtime warm state cleared and prewarmers restarted",
+        "cleared": {
+            "catalog": True,
+            "metadata": True,
+            "public_pack_catalog": True,
+            "release_markers": True,
+            "api_discovery": True,
+            "geometry": True,
+            "data_cascade": True,
+            "duckdb_dataframe_cache": True,
+            "duckdb_connection_generation": duckdb_generation,
+            "session_caches": cleared_sessions,
+            "corpus_registry": cleared_corpora,
+        },
+        "prewarmers_started": started_prewarmers,
     }
     if wants_json:
         return JSONResponse(payload)

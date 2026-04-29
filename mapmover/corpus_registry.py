@@ -247,6 +247,16 @@ class CorpusRegistry:
         self._sessions.pop(session_id, None)
         self._saved_corpora.pop(session_id, None)
 
+    def clear_all(self) -> dict[str, int]:
+        artifact_sessions = len(self._sessions)
+        saved_corpora = len(self._saved_corpora)
+        self._sessions = {}
+        self._saved_corpora = {}
+        return {
+            "artifact_sessions": artifact_sessions,
+            "saved_corpora": saved_corpora,
+        }
+
     def clear_artifacts(self, session_id: str) -> None:
         if not session_id:
             return
