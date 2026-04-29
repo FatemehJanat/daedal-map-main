@@ -275,6 +275,7 @@ async def get_storm_tracks_geojson(
 
         use_duckdb = duckdb_available()
         preload_ck = None
+        positions_already_clean = False
         if (
             year is None and start is not None and end is not None and basin is None
             and min_category is not None and is_default_preload_range(start, end)
@@ -282,9 +283,14 @@ async def get_storm_tracks_geojson(
             preload_ck = make_preload_cache_key("hurricanes_tracks", min_category=min_category)
             cached_joined = cache_get(preload_ck)
             if cached_joined is not None:
-                positions_subset = cached_joined.copy()
+                # No .copy(): downstream dropna/sort/groupby return new frames
+                # without mutating the cached one, so a 303k-row deep copy is
+                # pure overhead. Mark cached data as already cleaned so the
+                # endpoint skips the redundant dropna/sort the prewarm did.
+                positions_subset = cached_joined
                 storms_df = None
                 use_duckdb = False
+                positions_already_clean = True
                 logger.info(
                     "hurricanes preload cache HIT key=%s rows=%d",
                     preload_ck, len(cached_joined),
@@ -339,6 +345,9 @@ async def get_storm_tracks_geojson(
                 positions_subset = positions_df[positions_df["storm_id"].isin(storm_ids_set)].copy()
             positions_subset = positions_subset.dropna(subset=["latitude", "longitude"])
             positions_subset = positions_subset.sort_values(["storm_id", "timestamp"])
+            # Rebuild path now produced a clean+sorted frame; the post-merge
+            # block below should not redo this work.
+            positions_already_clean = True
             if preload_ck is not None and not positions_subset.empty:
                 joined = positions_subset.merge(
                     storms_df.reset_index()[
@@ -367,8 +376,13 @@ async def get_storm_tracks_geojson(
                         preload_ck, len(joined),
                     )
 
-        positions_subset = positions_subset.dropna(subset=["latitude", "longitude"])
-        positions_subset = positions_subset.sort_values(["storm_id", "timestamp"])
+        # The prewarm path stored an already dropna'd and sorted frame, and
+        # the on-demand rebuild above sets positions_already_clean too. Only
+        # do this work when we know it has not been done yet (e.g. the
+        # non-preload code paths below).
+        if not positions_already_clean:
+            positions_subset = positions_subset.dropna(subset=["latitude", "longitude"])
+            positions_subset = positions_subset.sort_values(["storm_id", "timestamp"])
 
         # When the preload cache hits, positions_subset is the joined frame
         # (storm metadata flattened onto every position row) and storms_df
