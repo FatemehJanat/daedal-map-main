@@ -370,15 +370,23 @@ async def get_storm_tracks_geojson(
         positions_subset = positions_subset.dropna(subset=["latitude", "longitude"])
         positions_subset = positions_subset.sort_values(["storm_id", "timestamp"])
 
+        # When the preload cache hits, positions_subset is the joined frame
+        # (storm metadata flattened onto every position row) and storms_df
+        # is None. Capture the first position-row per storm during the
+        # groupby pass so the feature loop below can do an O(1) dict lookup
+        # instead of an O(N) pandas filter per storm. The naive filter cost
+        # 60 storms x 303k rows = ~11s on cache hits before this change.
         coords_by_storm = {}
+        storm_first_rows: dict = {}
         for storm_id, group in positions_subset.groupby("storm_id"):
             coords = list(zip(group["longitude"].tolist(), group["latitude"].tolist()))
             if len(coords) >= 2:
                 coords_by_storm[storm_id] = [[float(lon), float(lat)] for lon, lat in coords]
+                storm_first_rows[storm_id] = group.iloc[0]
 
         features = []
         for storm_id, coords in coords_by_storm.items():
-            storm = positions_subset[positions_subset["storm_id"] == storm_id].iloc[0] if storms_df is None else storms_df.loc[storm_id]
+            storm = storm_first_rows[storm_id] if storms_df is None else storms_df.loc[storm_id]
             features.append(
                 {
                     "type": "Feature",

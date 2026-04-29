@@ -309,17 +309,29 @@ def log_route_request_event(
 
     _append_jsonl(route_analytics_log_path, event)
 
-    logger.info(
-        "route_event method=%s path=%s surface=%s status=%s latency_ms=%s user_id=%s pack_id=%s source_id=%s",
-        method,
-        path,
-        surface or "-",
-        status_code,
-        execution_latency_ms,
-        auth_user_id or "anonymous",
-        pack_id or "-",
-        source_id or "-",
+    # Skip stdout logging for low-signal scanner traffic. JSONL still
+    # captures the full event for analytics. Supabase mirror is already
+    # selective for the same paths via _should_mirror_route_event_to_supabase.
+    # Always log when something interesting happened (rate limit, error).
+    _is_low_signal = (
+        (path == "/mcp" or path.startswith("/mcp/"))
+        and str(method or "").upper() in {"GET", "HEAD"}
+        and not rate_limited
+        and not error_code
+        and (status_code is None or status_code < 400)
     )
+    if not _is_low_signal:
+        logger.info(
+            "route_event method=%s path=%s surface=%s status=%s latency_ms=%s user_id=%s pack_id=%s source_id=%s",
+            method,
+            path,
+            surface or "-",
+            status_code,
+            execution_latency_ms,
+            auth_user_id or "anonymous",
+            pack_id or "-",
+            source_id or "-",
+        )
 
     supabase_client = get_supabase()
     if supabase_client and _should_mirror_route_event_to_supabase(
