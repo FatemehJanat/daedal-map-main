@@ -2498,21 +2498,31 @@ export const OverlayController = {
     const endMs = new Date(2025, 11, 31, 23, 59, 59).getTime();
     const disasterIds = ['earthquakes', 'hurricanes', 'volcanoes', 'wildfires', 'tsunamis', 'tornadoes'];
 
-    console.log('OverlayController: Preloading disasters 2020-2025...');
+    console.log('OverlayController: Preloading disasters 2020-2025 (parallel)...');
+    const t0 = performance.now();
 
+    // Each disaster's request is independent. Run them in parallel so total
+    // wall time is max(individual) instead of sum(individual). Wildfires is
+    // the largest dataset and dominates the warm-path total - parallelizing
+    // hides the smaller fetches behind it.
     const summary = {};
-    for (let i = 0; i < disasterIds.length; i++) {
-      const id = disasterIds[i];
+    let completed = 0;
+
+    const runOne = async (id) => {
       try {
         const result = await loadRangeData(id, startMs, endMs, OVERLAY_ENDPOINTS[id]);
         summary[id] = { loaded: result !== false };
       } catch (e) {
         summary[id] = { loaded: false, error: e.message };
       }
-      if (onProgress) onProgress(i + 1, disasterIds.length, id);
-    }
+      completed += 1;
+      if (onProgress) onProgress(completed, disasterIds.length, id);
+    };
 
-    console.log('OverlayController: Preload complete:', summary);
+    await Promise.all(disasterIds.map(runOne));
+
+    const elapsedMs = Math.round(performance.now() - t0);
+    console.log(`OverlayController: Preload complete in ${elapsedMs}ms:`, summary);
     return summary;
   }
 };

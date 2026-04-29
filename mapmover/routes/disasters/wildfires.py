@@ -101,16 +101,23 @@ async def get_wildfires_geojson(
         and not include_perimeter
     )
     _cache_key = make_cache_key("wildfires", year=year, min_area_km2=min_area_km2) if _simple_cache else None
+    _is_preload_path = False
     if (
         _cache_key is None
         and start is not None and end is not None and loc_prefix is None and affected_loc_id is None
         and is_default_preload_range(start, end)
     ):
         _cache_key = make_preload_cache_key("wildfires", min_area_km2=min_area_km2, include_perimeter=include_perimeter)
+        _is_preload_path = True
 
     try:
         if _cache_key is not None:
             cached_df = cache_get(_cache_key)
+            if _is_preload_path:
+                if cached_df is not None:
+                    logger.info("wildfires preload cache HIT key=%s rows=%d", _cache_key, len(cached_df))
+                else:
+                    logger.info("wildfires preload cache MISS key=%s (will rebuild and store)", _cache_key)
             if cached_df is not None:
                 valid_mask = cached_df["latitude"].notna() & cached_df["longitude"].notna()
                 records = cached_df[valid_mask].to_dict("records")

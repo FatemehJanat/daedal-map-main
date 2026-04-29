@@ -285,7 +285,15 @@ async def get_storm_tracks_geojson(
                 positions_subset = cached_joined.copy()
                 storms_df = None
                 use_duckdb = False
+                logger.info(
+                    "hurricanes preload cache HIT key=%s rows=%d",
+                    preload_ck, len(cached_joined),
+                )
             else:
+                logger.info(
+                    "hurricanes preload cache MISS key=%s (will rebuild and store)",
+                    preload_ck,
+                )
                 positions_subset = None
                 storms_df = None
         else:
@@ -354,6 +362,10 @@ async def get_storm_tracks_geojson(
                 if not joined.empty:
                     cache_set(preload_ck, joined, permanent=True)
                     positions_subset = joined
+                    logger.info(
+                        "hurricanes preload cache STORE key=%s rows=%d",
+                        preload_ck, len(joined),
+                    )
 
         positions_subset = positions_subset.dropna(subset=["latitude", "longitude"])
         positions_subset = positions_subset.sort_values(["storm_id", "timestamp"])
