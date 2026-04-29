@@ -23,7 +23,7 @@ from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log
 from mapmover.security import get_client_ip
 from mapmover.data_loading import get_pack_metadata, get_source_path, load_source_metadata
 from mapmover.api_query_runtime import execute_dataset_query, get_api_source_columns, get_api_source_spec
-from mapmover.duckdb_helpers import parquet_available, parquet_columns, path_to_uri, quote_ident, run_rows, select_columns_from_parquet
+from mapmover.duckdb_helpers import is_cloud_mode, parquet_available, parquet_columns, path_to_uri, quote_ident, run_rows, select_columns_from_parquet
 from mapmover.geometry_handlers import get_selection_geometries
 from mapmover.progress_bus import ProgressBus, ProgressEvent
 from mapmover.research_postprocessor import normalize_research_result
@@ -324,26 +324,64 @@ def _find_primary_parquet(source_id: str, metadata: dict):
     source_dir = get_source_path(source_id)
     if source_dir is None:
         return None
+
+    def candidate_accessible(candidate_path) -> bool:
+        if not is_cloud_mode():
+            return parquet_available(candidate_path)
+        try:
+            parquet_columns(candidate_path)
+            return True
+        except Exception:
+            return False
+
     candidate_names: list[str] = []
     for rel_path in metadata.get("primary_files") or []:
         candidate = source_dir / str(rel_path)
-        if candidate.suffix.lower() == ".parquet" and parquet_available(candidate):
+        if candidate.suffix.lower() == ".parquet" and candidate_accessible(candidate):
             return candidate
         if candidate.suffix.lower() == ".parquet":
             candidate_names.append(str(rel_path))
 
-    for fallback_name in (
-        "USA.parquet",
+    files_section = metadata.get("files") if isinstance(metadata.get("files"), dict) else {}
+    for file_info in files_section.values():
+        if not isinstance(file_info, dict):
+            continue
+        file_name = str(file_info.get("name") or file_info.get("filename") or "").strip()
+        if file_name.lower().endswith(".parquet"):
+            candidate_names.append(file_name)
+
+    fallback_names: list[str] = []
+    spec = get_api_source_spec(source_id)
+    if spec and str(spec.parquet_name or "").strip():
+        fallback_names.append(str(spec.parquet_name).strip())
+
+    normalized_kind = str(metadata.get("data_type") or "").strip().lower()
+    if normalized_kind == "events" or metadata.get("event_type"):
+        fallback_names.extend([
+            "events.parquet",
+            "storms.parquet",
+            "positions.parquet",
+            "fires.parquet",
+        ])
+
+    fallback_names.extend((
         "all_countries.parquet",
         "all_regions.parquet",
         "data.parquet",
         "events.parquet",
         "full_range.parquet",
-    ):
+        "USA.parquet",
+    ))
+
+    seen_fallbacks = set()
+    for fallback_name in fallback_names:
+        if fallback_name in seen_fallbacks:
+            continue
+        seen_fallbacks.add(fallback_name)
         if fallback_name in candidate_names:
             continue
         candidate = source_dir / fallback_name
-        if parquet_available(candidate):
+        if candidate_accessible(candidate):
             return candidate
     return None
 
@@ -376,7 +414,10 @@ def _hydrate_runtime_metrics_source(source_id: str, metadata: dict) -> dict:
     if parquet_path is None:
         return {"source_id": source_id, "status": "skipped", "reason": "missing_parquet"}
 
-    available_columns = parquet_columns(parquet_path)
+    try:
+        available_columns = parquet_columns(parquet_path)
+    except Exception as exc:
+        return {"source_id": source_id, "status": "skipped", "reason": "source_unavailable", "detail": str(exc)}
     if "loc_id" not in available_columns:
         return {"source_id": source_id, "status": "skipped", "reason": "missing_location_field"}
 
@@ -396,7 +437,10 @@ def _hydrate_runtime_metrics_source(source_id: str, metadata: dict) -> dict:
         if metric_id not in select_columns:
             select_columns.append(metric_id)
 
-    rows = _load_runtime_rows(parquet_path, select_columns)
+    try:
+        rows = _load_runtime_rows(parquet_path, select_columns)
+    except Exception as exc:
+        return {"source_id": source_id, "status": "skipped", "reason": "source_unavailable", "detail": str(exc)}
     if not rows:
         return {"source_id": source_id, "status": "skipped", "reason": "no_rows"}
 
@@ -421,7 +465,10 @@ def _hydrate_runtime_geometry_source(source_id: str, metadata: dict) -> dict:
     if parquet_path is None:
         return {"source_id": source_id, "status": "skipped", "reason": "missing_parquet"}
 
-    available_columns = parquet_columns(parquet_path)
+    try:
+        available_columns = parquet_columns(parquet_path)
+    except Exception as exc:
+        return {"source_id": source_id, "status": "skipped", "reason": "source_unavailable", "detail": str(exc)}
     if "geometry" not in available_columns:
         return {"source_id": source_id, "status": "skipped", "reason": "missing_geometry"}
 
