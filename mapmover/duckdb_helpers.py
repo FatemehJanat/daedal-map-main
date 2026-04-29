@@ -170,6 +170,8 @@ def _configure_httpfs(con) -> None:
 #     thread-local entry so the next call rebuilds.
 
 _thread_state = threading.local()
+_THREAD_CONNECTION_GENERATION = 0
+_THREAD_CONNECTION_GENERATION_LOCK = threading.Lock()
 
 
 def _build_thread_connection():
@@ -183,9 +185,16 @@ def _build_thread_connection():
 def _get_thread_connection():
     """Return this thread's DuckDB connection, creating it on first use."""
     con = getattr(_thread_state, "con", None)
-    if con is None:
+    generation = getattr(_thread_state, "generation", -1)
+    if con is None or generation != _THREAD_CONNECTION_GENERATION:
+        if con is not None:
+            try:
+                con.close()
+            except Exception:
+                pass
         con = _build_thread_connection()
         _thread_state.con = con
+        _thread_state.generation = _THREAD_CONNECTION_GENERATION
     return con
 
 
@@ -203,6 +212,21 @@ def _drop_thread_connection() -> None:
         except Exception:
             pass
         _thread_state.con = None
+        _thread_state.generation = -1
+
+
+def reset_thread_connection_pool() -> int:
+    """Invalidate all pooled thread-local DuckDB connections.
+
+    The current thread drops immediately. Other worker threads lazily rebuild
+    their connection on the next query when they observe the bumped generation.
+    """
+    global _THREAD_CONNECTION_GENERATION
+    with _THREAD_CONNECTION_GENERATION_LOCK:
+        _THREAD_CONNECTION_GENERATION += 1
+        generation = _THREAD_CONNECTION_GENERATION
+    _drop_thread_connection()
+    return generation
 
 
 def _make_connection():
@@ -1026,7 +1050,16 @@ def prewarm_disaster_sources(global_dir: Path) -> None:
     if cache_get(preload_ck) is None:
         try:
             t0 = time.monotonic()
-            storms_df = select_filtered_event_rows(hur_storms_path, start=preload_start, end=preload_end)
+            # storms.parquet has no `timestamp` column - it has `start_date` /
+            # `end_date` for each storm - so passing start/end here silently
+            # falls through and returns ALL storms (1842-2026, 13.5k rows).
+            # Filter by `year` directly so the join only covers storms in the
+            # canonical 2020-2025 preload window. Without this, the cached
+            # joined frame was ~303k rows instead of ~14k, and every hurricane
+            # request paid pandas-on-300k cost.
+            storms_df = select_filtered_event_rows(hur_storms_path)
+            if not storms_df.empty and "year" in storms_df.columns:
+                storms_df = storms_df[(storms_df["year"] >= 2020) & (storms_df["year"] <= 2025)]
             if not storms_df.empty:
                 cat_order = {"TD": 0, "TS": 1, "Cat1": 2, "Cat2": 3, "Cat3": 4, "Cat4": 5, "Cat5": 6}
                 storms_df = storms_df[storms_df["max_category"].map(lambda x: cat_order.get(x, 0) >= 2)]

@@ -306,19 +306,23 @@ async def get_storm_tracks_geojson(
             positions_subset = None
             storms_df = None
         if positions_subset is None and use_duckdb:
+            # storms.parquet has no `timestamp` column (it has `start_date`/
+            # `end_date` per storm), so DuckDB-side start/end filters silently
+            # fall through and return all 13.5k storms. Pull what DuckDB can
+            # filter (year, min_year, basin), then apply start/end + category
+            # via _apply_storm_filters_pandas, which knows the storm schema.
             storms_df = select_filtered_event_rows(
                 storms_path,
                 year=year,
-                start=start,
-                end=end,
                 min_value_filters={"year": min_year} if year is None and start is None and end is None and min_year is not None else None,
                 exact_filters={"basin": basin.upper()} if basin is not None else None,
             )
-            if min_category is not None:
-                min_cat_val = CAT_ORDER.get(min_category, 0)
-                storms_df["cat_val"] = storms_df["max_category"].map(lambda x: CAT_ORDER.get(x, 0))
-                storms_df = storms_df[storms_df["cat_val"] >= min_cat_val]
-                storms_df = storms_df.drop(columns=["cat_val"])
+            storms_df = _apply_storm_filters_pandas(
+                storms_df,
+                start=start,
+                end=end,
+                min_category=min_category,
+            )
         elif positions_subset is None:
             storms_df = pd.read_parquet(storms_path)
             storms_df = _apply_storm_filters_pandas(
