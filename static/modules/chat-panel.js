@@ -25,7 +25,7 @@ import { sendStreamingRequest, sendChatRequest } from './chat/api.js';
 import { OrderPanel } from './order/manager.js';
 import { OrderTracker as OrderTrackerClass } from './order/tracker.js';
 import * as SavedOrders from './order/saved.js';
-import { getAccessToken, getCurrentUser, getSupabaseClient, isAuthenticated, onAuthChanged } from './auth.js';
+import { ensureRuntimeAccessToken, getAccessToken, getCurrentUser, getSupabaseClient, isAuthenticated, onAuthChanged, refreshRuntimeSession } from './auth.js';
 import { TutorialMode, parseTutorialCommand } from './tutorial-mode.js';
 import { ResearchModeToggle } from './research/mode.js';
 import {
@@ -411,8 +411,23 @@ export const ChatManager = {
     // Initialize order panel and tracker
     this.initOrderPanel();
 
-    onAuthChanged(() => {
-      window.location.reload();
+    onAuthChanged((event) => {
+      Promise.resolve().then(async () => {
+        const authState = Boolean(event?.detail?.isAuthenticated);
+        try {
+          await this.refreshResearchCorpusOptions();
+          if (this.mode === 'research') {
+            await this.refreshResearchManifest();
+          }
+          this.updateComposerState();
+        } catch (error) {
+          console.warn('Could not refresh chat state after auth change:', error);
+        }
+
+        if (!authState && this.mode === 'research') {
+          this.updateResearchCorpusStatus();
+        }
+      });
     });
   },
 
@@ -866,6 +881,7 @@ export const ChatManager = {
     researchModeToggle?.setCorpusLoading(true);
 
     try {
+      await ensureRuntimeAccessToken();
       const selected = this.getSelectedResearchCorpusOption();
       const browserSnapshotRecord = selected?.browserStatus === 'complete'
         ? await getBrowserCorpusSnapshot(selectedId)
@@ -879,10 +895,22 @@ export const ChatManager = {
         }
       }
       if (!response) {
-        response = await postMsgpack('/api/research/load-saved-corpus', {
-          sessionId: this.getSessionIdForMode('research'),
-          corpusId: selectedId
-        });
+        try {
+          response = await postMsgpack('/api/research/load-saved-corpus', {
+            sessionId: this.getSessionIdForMode('research'),
+            corpusId: selectedId
+          });
+        } catch (loadError) {
+          if (Number(loadError?.status || 0) === 401) {
+            await refreshRuntimeSession();
+            response = await postMsgpack('/api/research/load-saved-corpus', {
+              sessionId: this.getSessionIdForMode('research'),
+              corpusId: selectedId
+            });
+          } else {
+            throw loadError;
+          }
+        }
       }
       this.lastResearchDisplay = null;
       if (response?.focus_geojson?.features?.length) {
@@ -906,7 +934,10 @@ export const ChatManager = {
       this.updateResearchCorpusStatus();
     } catch (error) {
       console.error('Saved corpus load error:', error);
-      this.addMessage(error.message || 'Could not load that saved corpus into Research.', 'assistant', { mode: 'research' });
+      const message = Number(error?.status || 0) === 401
+        ? 'Research could not verify your runtime session. Reload the app or sign in again, then retry Load Data.'
+        : (error.message || 'Could not load that saved corpus into Research.');
+      this.addMessage(message, 'assistant', { mode: 'research' });
     } finally {
       indicator.remove();
       researchModeToggle?.setCorpusLoading(false);

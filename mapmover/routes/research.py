@@ -58,7 +58,9 @@ _RESEARCH_HEARTBEAT_MESSAGES = [
     "Drafting your answer...",
 ]
 
-_PROMPT_ARTIFACT_WINDOW = 32
+_PROMPT_ARTIFACT_WINDOW = 64
+_RESEARCH_MAX_TOOL_ITERATIONS = 8
+_RESEARCH_MAX_TOKENS = 5000
 
 
 def _research_heartbeat(idle_count: int) -> ProgressEvent:
@@ -280,6 +282,7 @@ def _rows_to_temporal_result(rows: list[dict], source_id: str, metadata: dict, s
         "type": "data",
         "data_type": "metrics",
         "source_id": source_id,
+        "time_field": spec.time_field or "year",
         "geojson": {
             "type": "FeatureCollection",
             "features": list(features_by_loc.values()),
@@ -363,6 +366,16 @@ def _find_primary_parquet(source_id: str, metadata: dict):
         file_name = str(file_info.get("name") or file_info.get("filename") or "").strip()
         if file_name.lower().endswith(".parquet"):
             candidate_names.append(file_name)
+
+    seen_candidates = set()
+    for candidate_name in candidate_names:
+        normalized_name = str(candidate_name or "").strip()
+        if not normalized_name or normalized_name in seen_candidates:
+            continue
+        seen_candidates.add(normalized_name)
+        candidate = source_dir / normalized_name
+        if candidate_accessible(candidate):
+            return candidate
 
     fallback_names: list[str] = []
     spec = get_api_source_spec(source_id)
@@ -779,6 +792,116 @@ def _extract_text(content_blocks) -> str:
             parts.append(text)
     return "\n".join(parts).strip()
 
+
+def _content_block_types(content_blocks) -> list[str]:
+    types: list[str] = []
+    for block in content_blocks or []:
+        block_type = getattr(block, "type", None)
+        if block_type:
+            types.append(str(block_type))
+            continue
+        if isinstance(block, dict) and block.get("type"):
+            types.append(str(block.get("type")))
+    return types
+
+
+def _run_research_rescue_synthesis(
+    *,
+    client: Anthropic,
+    model: str,
+    temperature: float,
+    system_prompt: str,
+    messages: list[dict],
+    session_id: str,
+    query: str,
+) -> object | None:
+    rescue_messages = list(messages)
+    rescue_messages.append(
+        {
+            "role": "user",
+            "content": (
+                "Write the best grounded final answer now using only the evidence already gathered above. "
+                "Do not call tools. If the evidence is partial, answer the grounded part first and then "
+                "name the remaining limitation clearly."
+            ),
+        }
+    )
+    try:
+        return client.messages.create(
+            model=model,
+            system=system_prompt,
+            messages=rescue_messages,
+            temperature=temperature,
+            max_tokens=_RESEARCH_MAX_TOKENS,
+        )
+    except Exception:
+        logger.exception(
+            "Research rescue synthesis call failed session=%s query=%r",
+            session_id,
+            query[:120],
+        )
+        return None
+
+
+def _tool_call_signature(tool_name: str, tool_input: dict | None) -> str:
+    tool_input = tool_input if isinstance(tool_input, dict) else {}
+    filters = tool_input.get("filters") if isinstance(tool_input.get("filters"), dict) else {}
+    order_by = tool_input.get("order_by") if isinstance(tool_input.get("order_by"), list) else []
+    payload = {
+        "tool": tool_name,
+        "artifact_id": tool_input.get("artifact_id"),
+        "filter_keys": sorted(str(key) for key in filters.keys()),
+        "group_by": sorted(str(value) for value in (tool_input.get("group_by") or [])),
+        "metrics": sorted(str(value) for value in (tool_input.get("metrics") or [])),
+        "fields": sorted(str(value) for value in (tool_input.get("fields") or [])),
+        "order_by": [
+            {
+                "field": str(item.get("field") or ""),
+                "direction": str(item.get("direction") or "desc"),
+            }
+            for item in order_by
+            if isinstance(item, dict)
+        ],
+    }
+    return json.dumps(payload, sort_keys=True, default=str)
+
+
+def _build_research_tool_guardrail_message(
+    *,
+    tool_iterations_used: int,
+    recent_tool_signatures: list[str],
+) -> str | None:
+    if tool_iterations_used < 3:
+        return None
+
+    repeated_signature = (
+        len(recent_tool_signatures) >= 2
+        and recent_tool_signatures[-1] == recent_tool_signatures[-2]
+    )
+    repeated_recently = (
+        len(recent_tool_signatures) >= 3
+        and len(set(recent_tool_signatures[-3:])) == 1
+    )
+
+    if tool_iterations_used >= 5 or repeated_recently:
+        message = (
+            "Tool budget reminder: you have already used several tool rounds. "
+            "Do not keep retrying the same artifact with slightly different filters. "
+            "Either write the best grounded answer from the evidence you already have, "
+            "or ask one short clarifying question if a key ambiguity is blocking the answer. "
+            "Prefer a partial grounded answer over more exploratory retries."
+        )
+    else:
+        message = (
+            "Tool budget reminder: if you cannot isolate the answer after a few tool rounds, "
+            "stop and either answer from the evidence already gathered or ask one short clarifying question. "
+            "Do not assume a filter failed just because the preview is capped."
+        )
+
+    if repeated_signature:
+        message += " You appear to be repeating a very similar tool pattern; switch to synthesis or clarification now."
+    return message
+
 def _broad_research_fallback_message(query: str, manifest: dict, research_hints: dict | None = None) -> str:
     artifact_count = int(manifest.get("artifact_count") or 0)
     saved = manifest.get("saved_corpus") or {}
@@ -1043,6 +1166,7 @@ def _compact_tool_result_for_prompt(tool_name: str, tool_result: dict) -> dict:
             "source_id": artifact.get("source_id"),
             "source_name": artifact.get("source_name"),
             "data_type": artifact.get("data_type"),
+            "time_field": artifact.get("time_field"),
             "geographic_level": artifact.get("geographic_level"),
             "metrics": (artifact.get("metrics") or [])[:12],
             "fields": (artifact.get("fields") or [])[:20],
@@ -1059,6 +1183,11 @@ def _compact_tool_result_for_prompt(tool_name: str, tool_result: dict) -> dict:
         rows = tool_result.get("rows") or []
         compact["rows_preview"] = rows[:15]
         compact["preview_count"] = min(len(rows), 15)
+        compact["returned_row_count"] = len(rows)
+        compact["preview_note"] = (
+            "rows_preview is only a capped sample of the returned rows. "
+            "Use row_count for total matched rows and returned_row_count for rows actually returned by the tool."
+        )
         if isinstance(tool_result.get("display_warning"), dict):
             compact["display_warning"] = tool_result.get("display_warning")
         if tool_name == "build_artifact_display_subset":
@@ -1176,10 +1305,13 @@ def run_research_chat(
     ]
 
     client = Anthropic()
-    max_tool_iterations = 4
+    max_tool_iterations = _RESEARCH_MAX_TOOL_ITERATIONS
     response = None
     final_display = None
     display_warning = None
+    tool_iterations_used = 0
+    recent_tool_signatures: list[str] = []
+    last_guardrail_message: str | None = None
     for _iteration in range(max_tool_iterations + 1):
         try:
             response = client.messages.create(
@@ -1188,7 +1320,7 @@ def run_research_chat(
                 messages=messages,
                 tools=RESEARCH_TOOL_DEFINITIONS,
                 temperature=temperature,
-                max_tokens=1400,
+                max_tokens=_RESEARCH_MAX_TOKENS,
             )
         except Exception as exc:
             approx_message_chars = sum(len(json.dumps(message, default=str)) for message in messages)
@@ -1204,6 +1336,7 @@ def run_research_chat(
 
         if response.stop_reason != "tool_use":
             break
+        tool_iterations_used += 1
 
         assistant_content = []
         tool_results = []
@@ -1225,6 +1358,9 @@ def run_research_chat(
                     block.input,
                     force_large_display=force_large_display,
                 )
+                recent_tool_signatures.append(_tool_call_signature(block.name, block.input))
+                if len(recent_tool_signatures) > 8:
+                    recent_tool_signatures = recent_tool_signatures[-8:]
                 if isinstance(tool_result, dict) and isinstance(tool_result.get("display_warning"), dict):
                     display_warning = tool_result.get("display_warning")
                 if isinstance(tool_result, dict) and isinstance(tool_result.get("display"), dict):
@@ -1252,6 +1388,13 @@ def run_research_chat(
 
         messages.append({"role": "assistant", "content": assistant_content})
         messages.append({"role": "user", "content": tool_results})
+        guardrail_message = _build_research_tool_guardrail_message(
+            tool_iterations_used=tool_iterations_used,
+            recent_tool_signatures=recent_tool_signatures,
+        )
+        if guardrail_message and guardrail_message != last_guardrail_message:
+            messages.append({"role": "user", "content": guardrail_message})
+            last_guardrail_message = guardrail_message
 
     if display_warning:
         logger.info(
@@ -1279,7 +1422,7 @@ def run_research_chat(
                 system=system_prompt,
                 messages=messages,
                 temperature=temperature,
-                max_tokens=1400,
+                max_tokens=_RESEARCH_MAX_TOKENS,
             )
         except Exception:
             logger.exception(
@@ -1296,6 +1439,37 @@ def run_research_chat(
         ))
 
     text = _extract_text(response.content if response else [])
+    if not text:
+        logger.warning(
+            "Research response missing text session=%s query=%r stop_reason=%s content_types=%s tool_iterations_used=%s artifact_count=%s",
+            session_id,
+            query[:120],
+            getattr(response, "stop_reason", None) if response else None,
+            _content_block_types(response.content if response else []),
+            tool_iterations_used,
+            manifest.get("artifact_count"),
+        )
+        rescue_response = _run_research_rescue_synthesis(
+            client=client,
+            model=model,
+            temperature=temperature,
+            system_prompt=system_prompt,
+            messages=messages,
+            session_id=session_id,
+            query=query,
+        )
+        rescue_text = _extract_text(rescue_response.content if rescue_response else [])
+        if rescue_text:
+            response = rescue_response
+            text = rescue_text
+        else:
+            logger.warning(
+                "Research rescue synthesis also missing text session=%s query=%r stop_reason=%s content_types=%s",
+                session_id,
+                query[:120],
+                getattr(rescue_response, "stop_reason", None) if rescue_response else None,
+                _content_block_types(rescue_response.content if rescue_response else []),
+            )
     if not text:
         text = _fallback_display_message(final_display) or _broad_research_fallback_message(query, manifest, research_hints)
     result = {

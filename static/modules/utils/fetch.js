@@ -204,7 +204,9 @@ export async function fetchMsgpack(url, options = {}) {
       } catch (e) {
         errorMsg = response.statusText;
       }
-      throw new Error(errorMsg);
+      const error = new Error(errorMsg);
+      error.status = response.status;
+      throw error;
     }
 
     const buffer = await response.arrayBuffer();

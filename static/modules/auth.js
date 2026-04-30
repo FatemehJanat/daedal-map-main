@@ -361,6 +361,35 @@ export function getAccessToken() {
   return currentSession?.access_token || null;
 }
 
+export async function refreshRuntimeSession() {
+  if (!authClient || !authConfig?.enabled) {
+    return null;
+  }
+  try {
+    const { data, error } = await authClient.auth.getSession();
+    if (error) {
+      throw error;
+    }
+    currentSession = data?.session || null;
+    _lastAuthUserId = currentSession?.user?.id ?? null;
+    clearLegacySharedCookies();
+    await fetchProfile();
+    updateDom();
+    return currentSession;
+  } catch (error) {
+    console.warn('[Auth] Runtime session refresh failed:', error?.message || error);
+    return null;
+  }
+}
+
+export async function ensureRuntimeAccessToken() {
+  if (currentSession?.access_token) {
+    return currentSession.access_token;
+  }
+  const session = await refreshRuntimeSession();
+  return session?.access_token || null;
+}
+
 export function getStorageNamespace() {
   const user = getCurrentUser();
   return user?.id ? `user:${user.id}` : 'guest';

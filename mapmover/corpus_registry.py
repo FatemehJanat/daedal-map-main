@@ -53,7 +53,8 @@ def _collect_geojson_fields(response: dict) -> list:
 
 
 def _collect_year_data_fields(response: dict) -> list:
-    fields = ["loc_id", "year"]
+    time_field = str(response.get("time_field") or "year").strip() or "year"
+    fields = ["loc_id", time_field]
     for loc_map in (response.get("year_data") or {}).values():
         for metrics in (loc_map or {}).values():
             for key in (metrics or {}).keys():
@@ -84,6 +85,10 @@ def _collect_year_range(order: dict, response: dict):
         max_year = response_range.get("max")
         if min_year is not None or max_year is not None:
             return {"min": min_year, "max": max_year, "available_years": response_range.get("available_years", [])}
+    if isinstance(response_range, list) and response_range:
+        cleaned = [value for value in response_range if value is not None]
+        if cleaned:
+            return {"min": cleaned[0], "max": cleaned[-1], "available_years": cleaned[:50]}
     years = []
     for item in order.get("items") or []:
         for key in ("year", "year_start", "year_end"):
@@ -186,6 +191,7 @@ class CorpusRegistry:
             "source_id": source_id,
             "source_name": _source_name_from_response(source_id, response),
             "data_type": data_type,
+            "time_field": response.get("time_field"),
             "region": next((item.get("region") for item in items if item.get("region")), None),
             "geographic_level": response.get("geographic_level") or response.get("overlay_type"),
             "metrics": metrics,

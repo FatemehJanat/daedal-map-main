@@ -43,7 +43,7 @@ RESEARCH_TOOL_DEFINITIONS = [
     },
     {
         "name": "query_artifact_slice",
-        "description": "Return a small filtered, grouped, sorted slice from one loaded artifact.",
+        "description": "Return a small filtered, grouped, sorted slice from one loaded artifact. Grouped numeric metrics include sum, avg, count, min, and max fields.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -177,6 +177,7 @@ def _get_cached_result(session_id: str, request_key: str) -> dict | None:
 def _rows_from_result(result: dict) -> list[dict]:
     rows = []
     feature_names = {}
+    time_field = str(result.get("time_field") or "year").strip() or "year"
     for feature in (result.get("geojson") or {}).get("features") or []:
         props = dict(feature.get("properties") or {})
         loc_id = props.get("loc_id") or feature.get("id")
@@ -188,7 +189,8 @@ def _rows_from_result(result: dict) -> list[dict]:
     year_data = result.get("year_data") or {}
     for year, loc_map in year_data.items():
         for loc_id, metrics in (loc_map or {}).items():
-            row = {"loc_id": loc_id, "name": feature_names.get(str(loc_id), loc_id), "year": int(year) if str(year).isdigit() else year}
+            time_value = int(year) if str(year).isdigit() else year
+            row = {"loc_id": loc_id, "name": feature_names.get(str(loc_id), loc_id), time_field: time_value}
             row.update(metrics or {})
             rows.append(_jsonable(row))
     return rows
@@ -237,27 +239,39 @@ def _filter_rows_python(rows: list[dict], filters: dict | None) -> list[dict]:
     if not filters:
         return rows
 
+    def match_condition(actual: Any, condition: dict) -> bool:
+        if not isinstance(condition, dict):
+            return actual == condition
+        if "eq" in condition and actual != condition["eq"]:
+            return False
+        if "min" in condition and (actual is None or actual < condition["min"]):
+            return False
+        if "max" in condition and (actual is None or actual > condition["max"]):
+            return False
+        if "in" in condition and actual not in condition["in"]:
+            return False
+        if "starts_with" in condition:
+            prefix = str(condition["starts_with"] or "")
+            if not prefix or actual is None or not str(actual).startswith(prefix):
+                return False
+        if "starts_with_any" in condition:
+            prefixes = [str(prefix or "") for prefix in (condition["starts_with_any"] or []) if str(prefix or "")]
+            if prefixes:
+                if actual is None or not any(str(actual).startswith(prefix) for prefix in prefixes):
+                    return False
+        return True
+
     def matches(row: dict) -> bool:
         for field, expected in filters.items():
             actual = row.get(field)
             if isinstance(expected, dict):
-                if "min" in expected and (actual is None or actual < expected["min"]):
-                    return False
-                if "max" in expected and (actual is None or actual > expected["max"]):
-                    return False
-                if "eq" in expected and actual != expected["eq"]:
-                    return False
-                if "in" in expected and actual not in expected["in"]:
-                    return False
-                if "starts_with" in expected:
-                    prefix = str(expected["starts_with"] or "")
-                    if not prefix or actual is None or not str(actual).startswith(prefix):
+                if "hierarchy_any" in expected:
+                    conditions = expected.get("hierarchy_any") or []
+                    if conditions and not any(match_condition(actual, condition) for condition in conditions):
                         return False
-                if "starts_with_any" in expected:
-                    prefixes = [str(prefix or "") for prefix in (expected["starts_with_any"] or []) if str(prefix or "")]
-                    if prefixes:
-                        if actual is None or not any(str(actual).startswith(prefix) for prefix in prefixes):
-                            return False
+                    continue
+                if not match_condition(actual, expected):
+                    return False
             elif isinstance(expected, list):
                 if actual not in expected:
                     return False
@@ -298,8 +312,11 @@ def _query_rows_python(
             row = {field: bucket.get(field) for field in group_by}
             for metric in metrics:
                 values = bucket.get(f"_{metric}_values", [])
+                row[f"{metric}_sum"] = sum(values) if values else None
                 row[f"{metric}_avg"] = sum(values) / len(values) if values else None
                 row[f"{metric}_count"] = len(values)
+                row[f"{metric}_min"] = min(values) if values else None
+                row[f"{metric}_max"] = max(values) if values else None
             output.append(row)
         rows = output
     else:
@@ -353,6 +370,22 @@ def _query_rows_duckdb(
                 continue
             ident = _quote_identifier(field)
             if isinstance(expected, dict):
+                if "hierarchy_any" in expected:
+                    hierarchy_parts = []
+                    for condition in expected.get("hierarchy_any") or []:
+                        if not isinstance(condition, dict):
+                            continue
+                        if "eq" in condition:
+                            hierarchy_parts.append(f"{ident} = ?")
+                            params.append(condition["eq"])
+                        if "starts_with" in condition:
+                            prefix = str(condition.get("starts_with") or "").strip()
+                            if prefix:
+                                hierarchy_parts.append(f"{ident} LIKE ?")
+                                params.append(prefix + "%")
+                    if hierarchy_parts:
+                        where_parts.append("(" + " OR ".join(hierarchy_parts) + ")")
+                    continue
                 if "min" in expected:
                     where_parts.append(f"{ident} >= ?")
                     params.append(expected["min"])
@@ -396,8 +429,11 @@ def _query_rows_duckdb(
             select_parts = [_quote_identifier(field) for field in group_by]
             for metric in metrics:
                 ident = _quote_identifier(metric)
+                select_parts.append(f"sum({ident}) AS {_quote_identifier(metric + '_sum')}")
                 select_parts.append(f"avg({ident}) AS {_quote_identifier(metric + '_avg')}")
                 select_parts.append(f"count({ident}) AS {_quote_identifier(metric + '_count')}")
+                select_parts.append(f"min({ident}) AS {_quote_identifier(metric + '_min')}")
+                select_parts.append(f"max({ident}) AS {_quote_identifier(metric + '_max')}")
             sql = f"SELECT {', '.join(select_parts)} FROM artifact_rows"
         else:
             selected = [*fields, *metrics] or list(df.columns)
@@ -414,7 +450,14 @@ def _query_rows_duckdb(
             if group_by and field in metrics:
                 field = f"{field}_avg"
             direction = "ASC" if sort.get("direction") == "asc" else "DESC"
-            allowed = set(df.columns) | {f"{m}_avg" for m in metrics} | {f"{m}_count" for m in metrics}
+            allowed = (
+                set(df.columns)
+                | {f"{m}_sum" for m in metrics}
+                | {f"{m}_avg" for m in metrics}
+                | {f"{m}_count" for m in metrics}
+                | {f"{m}_min" for m in metrics}
+                | {f"{m}_max" for m in metrics}
+            )
             if field in allowed:
                 order_parts.append(f"{_quote_identifier(field)} {direction}")
         if order_parts:
@@ -444,52 +487,56 @@ def _loc_id_depth(loc_id: Any) -> int | None:
     return text.count("-")
 
 
-def _rewrite_building_loc_id_filters(artifact: dict, tool_input: dict) -> dict:
+def _rewrite_hierarchical_loc_id_filters(tool_input: dict) -> dict:
     if not isinstance(tool_input, dict):
         return {}
-    if str((artifact or {}).get("source_id") or "").strip() != "fairfax_buildings":
-        return tool_input
 
     filters = tool_input.get("filters")
     if not isinstance(filters, dict) or "loc_id" not in filters:
         return tool_input
 
     expected = filters.get("loc_id")
-    exact_values: list[str] = []
-    descendant_prefixes: list[str] = []
+    hierarchy_conditions: list[dict[str, str]] = []
 
     def add_loc_id(value: Any):
         text = str(value or "").strip()
         if not text:
             return
         depth = _loc_id_depth(text)
+        exact_condition = {"eq": text}
+        if exact_condition not in hierarchy_conditions:
+            hierarchy_conditions.append(exact_condition)
         if depth is not None and depth < 5:
-            prefix = text + "-"
-            if prefix not in descendant_prefixes:
-                descendant_prefixes.append(prefix)
-        elif text not in exact_values:
-            exact_values.append(text)
+            descendant_condition = {"starts_with": text + "-"}
+            if descendant_condition not in hierarchy_conditions:
+                hierarchy_conditions.append(descendant_condition)
 
     if isinstance(expected, dict):
         if "eq" in expected:
             add_loc_id(expected.get("eq"))
+        elif "in" not in expected and "starts_with" not in expected and "starts_with_any" not in expected:
+            return tool_input
         for value in expected.get("in") or []:
             add_loc_id(value)
         if "starts_with" in expected:
             prefix = str(expected.get("starts_with") or "").strip()
-            if prefix and prefix not in descendant_prefixes:
-                descendant_prefixes.append(prefix)
+            if prefix:
+                condition = {"starts_with": prefix}
+                if condition not in hierarchy_conditions:
+                    hierarchy_conditions.append(condition)
         for prefix in expected.get("starts_with_any") or []:
             text = str(prefix or "").strip()
-            if text and text not in descendant_prefixes:
-                descendant_prefixes.append(text)
+            if text:
+                condition = {"starts_with": text}
+                if condition not in hierarchy_conditions:
+                    hierarchy_conditions.append(condition)
     elif isinstance(expected, list):
         for value in expected:
             add_loc_id(value)
     else:
         add_loc_id(expected)
 
-    if not descendant_prefixes:
+    if not hierarchy_conditions:
         return tool_input
 
     rewritten = {
@@ -497,12 +544,7 @@ def _rewrite_building_loc_id_filters(artifact: dict, tool_input: dict) -> dict:
         for key, value in filters.items()
         if key != "loc_id"
     }
-    loc_id_filter: dict[str, Any] = {}
-    if exact_values:
-        loc_id_filter["in"] = exact_values
-    if descendant_prefixes:
-        loc_id_filter["starts_with_any"] = descendant_prefixes
-    rewritten["loc_id"] = loc_id_filter
+    rewritten["loc_id"] = {"hierarchy_any": hierarchy_conditions}
     patched = dict(tool_input)
     patched["filters"] = rewritten
     return patched
@@ -671,7 +713,7 @@ def execute_research_tool(
         if not artifact:
             return {"error": "artifact_not_found", "artifact_id": artifact_id}
 
-        tool_input = _rewrite_building_loc_id_filters(artifact, tool_input)
+        tool_input = _rewrite_hierarchical_loc_id_filters(tool_input)
 
         if tool_name == "describe_artifact":
             artifact.pop("order", None)
