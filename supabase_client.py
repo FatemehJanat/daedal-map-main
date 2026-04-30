@@ -750,6 +750,67 @@ class SupabaseClient:
             return result.data if result.data else None
         except Exception as e:
             print(f"Failed to get entitlement context: {e}")
+            return self._build_user_entitlement_context_fallback(user_id)
+
+    def _build_user_entitlement_context_fallback(self, user_id: str) -> Optional[Dict]:
+        """Best-effort entitlement context from base tables when the RPC is unavailable."""
+        try:
+            profile = self.get_profile(user_id)
+            if not profile:
+                return None
+
+            plan_id = profile.get("plan_id") or "free"
+            plan = self.get_plan(plan_id) or {}
+            memberships = self.get_user_memberships(user_id)
+            org_ids = []
+            org_plan_id = None
+            org_packs = []
+
+            for membership in memberships:
+                org_id = membership.get("org_id")
+                if org_id and org_id not in org_ids:
+                    org_ids.append(org_id)
+                org = membership.get("orgs") if isinstance(membership.get("orgs"), dict) else None
+                if org_plan_id is None and org and org.get("plan_id"):
+                    org_plan_id = org.get("plan_id")
+
+            user_pack_rows = self.get_user_pack_entitlements(user_id)
+            user_packs = sorted({
+                str(row.get("pack_id"))
+                for row in user_pack_rows
+                if isinstance(row, dict) and row.get("pack_id") and row.get("user_id") == user_id
+            })
+
+            org_packs = sorted({
+                str(row.get("pack_id"))
+                for row in user_pack_rows
+                if isinstance(row, dict) and row.get("pack_id") and row.get("org_id")
+            })
+
+            enabled_shells = plan.get("enabled_shells")
+            if not isinstance(enabled_shells, list):
+                enabled_shells = ["simple"]
+
+            max_packs = plan.get("max_packs")
+            if max_packs is None:
+                max_packs = 2
+
+            return {
+                "user_id": user_id,
+                "email": profile.get("email"),
+                "plan_id": plan_id,
+                "is_admin": bool(profile.get("is_admin")),
+                "org_id": profile.get("org_id"),
+                "org_ids": org_ids,
+                "enabled_shells": enabled_shells,
+                "max_packs": max_packs,
+                "user_packs": user_packs,
+                "org_packs": org_packs,
+                "org_plan_id": org_plan_id,
+                "fallback_used": True,
+            }
+        except Exception as fallback_error:
+            print(f"Failed fallback entitlement context: {fallback_error}")
             return None
 
     # --- Dataset Metadata ---

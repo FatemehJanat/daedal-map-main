@@ -231,7 +231,7 @@ class CorpusRegistry:
         return [self._public_artifact(a) for a in self._sessions.get(session_id, {}).values()]
 
     def export_session_artifacts(self, session_id: str) -> list[dict]:
-        return [deepcopy(artifact) for artifact in self._sessions.get(session_id, {}).values()]
+        return [self._public_artifact(artifact) for artifact in self._sessions.get(session_id, {}).values()]
 
     def import_session_artifacts(self, session_id: str, artifacts: list[dict] | None) -> None:
         if not session_id:

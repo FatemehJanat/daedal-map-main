@@ -793,7 +793,11 @@ export const ChatManager = {
     });
     const browserStatus = selected?.browserStatus || 'missing';
     const browserSummary = selected?.browserSummary || null;
-    const browserSizeText = browserSummary?.sizeBytes ? ` Browser copy ${this.formatBytes(browserSummary.sizeBytes)} on this device.` : '';
+    const browserSizeText = browserSummary?.sizeBytes
+      ? (browserSummary?.sizeKind === 'measured'
+        ? ` Browser copy ${this.formatBytes(browserSummary.sizeBytes)} on this device.`
+        : ` Browser copy ${this.formatBytes(browserSummary.sizeBytes)} as a compressed local snapshot.`)
+      : '';
 
     if (!isAuthenticated()) {
       if (artifactCount > 0) {

@@ -30,12 +30,73 @@ function buildStorageKey(namespace, corpusId) {
   return `${namespace}::${corpusId}`;
 }
 
+async function getStorageUsageBytes() {
+  try {
+    const estimate = await navigator.storage?.estimate?.();
+    return Number(estimate?.usage || 0);
+  } catch (_) {
+    return 0;
+  }
+}
+
 function safeJsonBytes(value) {
   try {
     return new Blob([JSON.stringify(value)]).size;
   } catch (_) {
     return 0;
   }
+}
+
+function supportsSnapshotCompression() {
+  return typeof window !== 'undefined'
+    && typeof window.CompressionStream === 'function'
+    && typeof window.DecompressionStream === 'function'
+    && typeof TextEncoder === 'function'
+    && typeof TextDecoder === 'function'
+    && typeof Response === 'function';
+}
+
+async function compressSnapshot(snapshot) {
+  if (!supportsSnapshotCompression()) {
+    return {
+      compression: 'identity',
+      payload: snapshot,
+      sizeBytes: Number(snapshot?.size_bytes || safeJsonBytes(snapshot))
+    };
+  }
+  const jsonText = JSON.stringify(snapshot);
+  const encoded = new TextEncoder().encode(jsonText);
+  const compressedStream = new Blob([encoded]).stream().pipeThrough(new window.CompressionStream('gzip'));
+  const compressedBuffer = await new Response(compressedStream).arrayBuffer();
+  return {
+    compression: 'gzip',
+    payload: compressedBuffer,
+    sizeBytes: compressedBuffer.byteLength || Number(snapshot?.size_bytes || 0) || safeJsonBytes(snapshot)
+  };
+}
+
+async function inflateSnapshotFromRecord(record) {
+  if (!record) return null;
+  if (record.snapshot && typeof record.snapshot === 'object') {
+    return record.snapshot;
+  }
+  const compression = String(record.snapshotCompression || 'identity');
+  if (compression === 'identity') {
+    return record.snapshotPayload && typeof record.snapshotPayload === 'object' ? record.snapshotPayload : null;
+  }
+  if (compression !== 'gzip' || !record.snapshotPayload) {
+    return null;
+  }
+  if (!supportsSnapshotCompression()) {
+    throw new Error('Browser snapshot is compressed, but this browser cannot restore it.');
+  }
+  const compressed = record.snapshotPayload instanceof ArrayBuffer
+    ? record.snapshotPayload
+    : record.snapshotPayload?.buffer;
+  if (!compressed) return null;
+  const decompressedStream = new Blob([compressed]).stream().pipeThrough(new window.DecompressionStream('gzip'));
+  const jsonText = await new Response(decompressedStream).text();
+  return JSON.parse(jsonText || '{}');
 }
 
 function summarizeRecord(record) {
@@ -48,6 +109,8 @@ function summarizeRecord(record) {
     savedAt: record.savedAt || null,
     status: record.status || 'complete',
     sizeBytes: Number(record.sizeBytes || 0),
+    payloadBytes: Number(record.payloadBytes || 0),
+    sizeKind: String(record.sizeKind || 'payload'),
     artifactCount: Number(record.artifactCount || 0),
     sourceCount: Number(record.sourceCount || 0),
     packCount: Number(record.packCount || 0)
@@ -59,22 +122,39 @@ export async function saveBrowserCorpusSnapshot({ corpusId, corpusName, corpusUp
   const namespace = getStorageNamespace();
   const db = await openDb();
   const savedCorpus = snapshot.saved_corpus || {};
+  const storageKey = buildStorageKey(namespace, corpusId);
+  const existingRecord = await requestToPromise(db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(storageKey));
+  const storedSnapshot = await compressSnapshot(snapshot);
+  const usageBefore = await getStorageUsageBytes();
   const record = {
-    storageKey: buildStorageKey(namespace, corpusId),
+    storageKey,
     namespace,
     corpusId,
     corpusName: corpusName || savedCorpus.name || corpusId,
     corpusUpdatedAt: corpusUpdatedAt || savedCorpus.updated_at || null,
     savedAt: new Date().toISOString(),
     status: 'complete',
-    sizeBytes: Number(snapshot.size_bytes || safeJsonBytes(snapshot)),
+    sizeBytes: 0,
+    payloadBytes: Number(storedSnapshot.sizeBytes || 0),
+    sizeKind: 'payload',
     artifactCount: Number((snapshot.artifacts || []).length || 0),
     sourceCount: Number(savedCorpus.source_count || 0),
     packCount: Number(savedCorpus.pack_count || 0),
-    snapshot
+    snapshotCompression: storedSnapshot.compression,
+    snapshotPayload: storedSnapshot.payload
   };
   const tx = db.transaction(STORE_NAME, 'readwrite');
   await requestToPromise(tx.objectStore(STORE_NAME).put(record));
+  const usageAfter = await getStorageUsageBytes();
+  const usageDelta = usageBefore > 0 && usageAfter > 0 ? (usageAfter - usageBefore) : 0;
+  const previousActualBytes = Number(existingRecord?.sizeBytes || 0);
+  const measuredBytes = usageDelta > 0 ? (existingRecord ? previousActualBytes + usageDelta : usageDelta) : 0;
+  record.sizeBytes = measuredBytes > 0 ? measuredBytes : record.payloadBytes;
+  record.sizeKind = measuredBytes > 0 ? 'measured' : 'payload';
+  if (record.sizeKind === 'measured') {
+    const finalizeTx = db.transaction(STORE_NAME, 'readwrite');
+    await requestToPromise(finalizeTx.objectStore(STORE_NAME).put(record));
+  }
   db.close();
   return summarizeRecord(record);
 }
@@ -85,7 +165,12 @@ export async function getBrowserCorpusSnapshot(corpusId) {
   const db = await openDb();
   const record = await requestToPromise(db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(buildStorageKey(namespace, corpusId)));
   db.close();
-  return record || null;
+  if (!record) return null;
+  const snapshot = await inflateSnapshotFromRecord(record);
+  return {
+    ...record,
+    snapshot
+  };
 }
 
 export async function listBrowserCorpusRecords() {
@@ -143,4 +228,3 @@ export async function getBrowserCorpusStorageSummary() {
     summaries
   };
 }
-

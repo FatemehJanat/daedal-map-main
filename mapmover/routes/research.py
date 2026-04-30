@@ -702,6 +702,33 @@ def _browser_save_snapshot_bytes(snapshot: dict) -> int:
         return 0
 
 
+def _compact_browser_snapshot_result(result: dict) -> dict:
+    if not isinstance(result, dict):
+        return {}
+    compact = {}
+    if "time_field" in result:
+        compact["time_field"] = result.get("time_field")
+    if "geojson" in result:
+        compact["geojson"] = result.get("geojson")
+    if "year_data" in result:
+        compact["year_data"] = result.get("year_data")
+    return compact
+
+
+def _compact_browser_snapshot_results(results: dict) -> dict:
+    if not isinstance(results, dict):
+        return {}
+    compact_results = {}
+    for request_key, result in results.items():
+        key = str(request_key or "").strip()
+        if not key:
+            continue
+        compact_result = _compact_browser_snapshot_result(result)
+        if compact_result:
+            compact_results[key] = compact_result
+    return compact_results
+
+
 def _json_safe_value(value):
     if isinstance(value, float):
         return value if math.isfinite(value) else None
@@ -720,7 +747,7 @@ def _build_browser_corpus_snapshot(session_id: str, saved_corpus: dict) -> dict:
     artifacts = corpus_registry.export_session_artifacts(session_id)
     request_keys = [str(artifact.get("request_key") or "").strip() for artifact in artifacts if artifact.get("request_key")]
     cache = session_manager.get(session_id)
-    results = cache.export_results(request_keys) if cache else {}
+    results = _compact_browser_snapshot_results(cache.export_results(request_keys) if cache else {})
     snapshot = {
         "snapshot_version": 1,
         "saved_at": datetime.utcnow().isoformat() + "Z",
