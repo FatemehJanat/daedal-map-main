@@ -25,6 +25,7 @@ import { AuthManager } from './auth.js';
 import { TutorialMode } from './tutorial-mode.js';
 import { FairfaxRasterPanel } from './fairfax-raster-panel.js';
 import { LstRasterModel, setDependencies as setLstRasterDeps } from './model-lst-raster.js';
+import { loadPublicPackCatalog } from './shared/catalog-cache.js';
 
 // ============================================================================
 // APP - Main application controller
@@ -41,6 +42,9 @@ export const App = {
   _researchDisplayClickHandler: null,
   _researchDisplayHoverHandler: null,
   _researchDisplayLeaveHandler: null,
+  publicPackCatalog: [],
+  publicPackCatalogLoadedAt: 0,
+  publicPackCatalogSource: '',
 
   getNumericAdminLevel(level) {
     if (typeof level === 'number' && !Number.isNaN(level)) return level;
@@ -503,6 +507,9 @@ export const App = {
     setLstRasterDeps({ MapAdapter });
 
     await AuthManager.init();
+    Promise.resolve(this.preloadPublicPackCatalog()).catch((error) => {
+      console.warn('Could not warm public pack catalog during app startup:', error);
+    });
     this.setupMobileExperienceNotice();
 
     // Initialize components
@@ -591,6 +598,36 @@ export const App = {
 
     console.log('Map Explorer ready');
     console.log('Press D to toggle debug mode (hierarchy depth colors)');
+  },
+
+  async preloadPublicPackCatalog({ forceRefresh = false } = {}) {
+    try {
+      const result = await loadPublicPackCatalog({ forceRefresh });
+      this.publicPackCatalog = Array.isArray(result?.packs) ? result.packs : [];
+      this.publicPackCatalogLoadedAt = Date.now();
+      this.publicPackCatalogSource = result?.source || '';
+      window.dispatchEvent(new CustomEvent('daedalmap:public-pack-catalog-loaded', {
+        detail: {
+          count: this.publicPackCatalog.length,
+          source: this.publicPackCatalogSource,
+          loadedAt: this.publicPackCatalogLoadedAt
+        }
+      }));
+      return this.publicPackCatalog;
+    } catch (error) {
+      console.warn('Could not preload public pack catalog for app surface:', error);
+      return this.publicPackCatalog;
+    }
+  },
+
+  getPublicPackCatalog() {
+    return Array.isArray(this.publicPackCatalog) ? this.publicPackCatalog : [];
+  },
+
+  getPublicPackCatalogEntry(packId) {
+    const normalizedPackId = String(packId || '').trim();
+    if (!normalizedPackId) return null;
+    return this.getPublicPackCatalog().find((pack) => pack && pack.pack_id === normalizedPackId) || null;
   },
 
   setupMobileExperienceNotice() {

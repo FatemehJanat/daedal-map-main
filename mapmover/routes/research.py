@@ -1583,22 +1583,26 @@ async def research_load_saved_corpus_endpoint(req: Request):
 @router.post("/api/research/browser-save/build")
 async def research_build_browser_save_endpoint(req: Request):
     """Build a browser-save snapshot for a saved corpus."""
+    wants_msgpack = "application/msgpack" in str(req.headers.get("accept") or "").lower()
     try:
         body = await _decode_json_or_msgpack_request(req)
         corpus_id = str(body.get("corpusId") or "").strip()
         if not corpus_id:
-            return JSONResponse({"ok": False, "error": "No corpusId provided"}, status_code=400)
+            payload = {"ok": False, "error": "No corpusId provided"}
+            return msgpack_response(payload, status_code=400) if wants_msgpack else JSONResponse(payload, status_code=400)
 
         auth_user = await get_authenticated_user_async(req)
         user_id = (auth_user or {}).get("id")
         if not user_id:
-            return JSONResponse({"ok": False, "error": "Authentication required"}, status_code=401)
+            payload = {"ok": False, "error": "Authentication required"}
+            return msgpack_response(payload, status_code=401) if wants_msgpack else JSONResponse(payload, status_code=401)
 
         frontend_session_id = str(body.get("sessionId") or f"browser-save:{corpus_id}").strip() or f"browser-save:{corpus_id}"
         session_id = build_session_cache_key(frontend_session_id, auth_user)
         saved_corpus = _load_saved_corpus_for_user(user_id, corpus_id)
         if not saved_corpus:
-            return JSONResponse({"ok": False, "error": "Saved corpus not found"}, status_code=404)
+            payload = {"ok": False, "error": "Saved corpus not found"}
+            return msgpack_response(payload, status_code=404) if wants_msgpack else JSONResponse(payload, status_code=404)
 
         current_saved = corpus_registry.get_saved_corpus(session_id)
         current_corpus_id = str((current_saved or {}).get("id") or "").strip()
@@ -1613,30 +1617,35 @@ async def research_build_browser_save_endpoint(req: Request):
 
         manifest = _annotate_manifest_saved_corpus_state(corpus_registry.manifest(session_id))
         snapshot = _build_browser_corpus_snapshot(session_id, saved_corpus)
-        return JSONResponse(_json_safe_value({
+        payload = _json_safe_value({
             "ok": True,
             "snapshot": snapshot,
             "corpus": manifest,
-        }))
+        })
+        return msgpack_response(payload) if wants_msgpack else JSONResponse(payload)
     except Exception as exc:
         logger.exception("Research browser-save build error")
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+        payload = {"ok": False, "error": str(exc)}
+        return msgpack_response(payload, status_code=500) if wants_msgpack else JSONResponse(payload, status_code=500)
 
 
 @router.post("/api/research/browser-save/load")
 async def research_load_browser_save_endpoint(req: Request):
     """Restore a browser-saved research corpus snapshot into the active session."""
+    wants_msgpack = "application/msgpack" in str(req.headers.get("accept") or "").lower()
     try:
         body = await _decode_json_or_msgpack_request(req)
         snapshot = body.get("snapshot")
         if not isinstance(snapshot, dict):
-            return JSONResponse({"ok": False, "error": "No snapshot provided"}, status_code=400)
+            payload = {"ok": False, "error": "No snapshot provided"}
+            return msgpack_response(payload, status_code=400) if wants_msgpack else JSONResponse(payload, status_code=400)
 
         frontend_session_id = str(body.get("sessionId") or "anonymous").strip() or "anonymous"
         auth_user = await get_authenticated_user_async(req)
         user_id = (auth_user or {}).get("id")
         if not user_id:
-            return JSONResponse({"ok": False, "error": "Authentication required"}, status_code=401)
+            payload = {"ok": False, "error": "Authentication required"}
+            return msgpack_response(payload, status_code=401) if wants_msgpack else JSONResponse(payload, status_code=401)
         session_id = build_session_cache_key(frontend_session_id, auth_user)
         snapshot_saved = snapshot.get("saved_corpus") or {}
         corpus_id = str(snapshot_saved.get("id") or "").strip()
@@ -1649,17 +1658,19 @@ async def research_load_browser_save_endpoint(req: Request):
         saved_name = ((manifest.get("saved_corpus") or {}).get("name") or "Saved corpus")
         focus_geojson = _build_research_focus_geojson(session_id)
         prompt_window_warning = _manifest_prompt_window_warning(manifest)
-        return JSONResponse(_json_safe_value({
+        payload = _json_safe_value({
             "ok": True,
             "message": f'Loaded "{saved_name}" from browser storage into the Research workspace.',
             "corpus": manifest,
             "focus_geojson": focus_geojson,
             "warning": prompt_window_warning,
-        }))
+        })
+        return msgpack_response(payload) if wants_msgpack else JSONResponse(payload)
     except Exception as exc:
         logger.exception("Research browser-save load error")
         status_code = 409 if "out of date" in str(exc).lower() else 500
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=status_code)
+        payload = {"ok": False, "error": str(exc)}
+        return msgpack_response(payload, status_code=status_code) if wants_msgpack else JSONResponse(payload, status_code=status_code)
 
 
 @router.post("/chat/research")

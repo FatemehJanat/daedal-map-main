@@ -1,4 +1,5 @@
 import { getStorageNamespace } from '../auth.js';
+import { canUseBridge, postBridgeMessage } from '../shared/cross-surface-bridge.js';
 
 const DB_NAME = 'countymap-research-browser-store';
 const DB_VERSION = 1;
@@ -64,7 +65,17 @@ async function compressSnapshot(snapshot) {
       sizeBytes: Number(snapshot?.size_bytes || safeJsonBytes(snapshot))
     };
   }
-  const jsonText = JSON.stringify(snapshot);
+  let jsonText = '';
+  try {
+    jsonText = JSON.stringify(snapshot);
+  } catch (error) {
+    console.warn('Research browser snapshot too large to stringify for gzip compression; storing structured snapshot directly.', error);
+    return {
+      compression: 'identity',
+      payload: snapshot,
+      sizeBytes: Number(snapshot?.size_bytes || safeJsonBytes(snapshot))
+    };
+  }
   const encoded = new TextEncoder().encode(jsonText);
   const compressedStream = new Blob([encoded]).stream().pipeThrough(new window.CompressionStream('gzip'));
   const compressedBuffer = await new Response(compressedStream).arrayBuffer();
@@ -117,9 +128,72 @@ function summarizeRecord(record) {
   };
 }
 
+async function getLocalBrowserCorpusRecord(namespace, corpusId) {
+  const db = await openDb();
+  const record = await requestToPromise(
+    db.transaction(STORE_NAME, 'readonly')
+      .objectStore(STORE_NAME)
+      .get(buildStorageKey(namespace, corpusId))
+  );
+  db.close();
+  return record || null;
+}
+
+async function listLocalBrowserCorpusRecords(namespace) {
+  const db = await openDb();
+  const tx = db.transaction(STORE_NAME, 'readonly');
+  const index = tx.objectStore(STORE_NAME).index('namespace');
+  const records = await requestToPromise(index.getAll(namespace));
+  db.close();
+  return Array.isArray(records) ? records : [];
+}
+
+async function migrateLocalRecordToBridge(namespace, corpusId) {
+  if (!canUseBridge()) return null;
+  const record = await getLocalBrowserCorpusRecord(namespace, corpusId);
+  if (!record) return null;
+  await postBridgeMessage('dm-browser-corpus-save', { record });
+  return record;
+}
+
+async function migrateAllLocalRecordsToBridge(namespace) {
+  if (!canUseBridge()) return [];
+  const records = await listLocalBrowserCorpusRecords(namespace);
+  for (const record of records) {
+    if (!record?.storageKey) continue;
+    await postBridgeMessage('dm-browser-corpus-save', { record });
+  }
+  return records;
+}
+
 export async function saveBrowserCorpusSnapshot({ corpusId, corpusName, corpusUpdatedAt, snapshot }) {
   if (!corpusId || !snapshot) throw new Error('Missing corpus snapshot');
   const namespace = getStorageNamespace();
+  if (canUseBridge()) {
+    const savedCorpus = snapshot.saved_corpus || {};
+    const storageKey = buildStorageKey(namespace, corpusId);
+    const existingRecord = await postBridgeMessage('dm-browser-corpus-get', { namespace, corpusId }).then(r => r.record || null).catch(() => null);
+    const storedSnapshot = await compressSnapshot(snapshot);
+    const record = {
+      storageKey,
+      namespace,
+      corpusId,
+      corpusName: corpusName || savedCorpus.name || corpusId,
+      corpusUpdatedAt: corpusUpdatedAt || savedCorpus.updated_at || null,
+      savedAt: new Date().toISOString(),
+      status: 'complete',
+      sizeBytes: Number(existingRecord?.sizeBytes || 0) || Number(storedSnapshot.sizeBytes || 0),
+      payloadBytes: Number(storedSnapshot.sizeBytes || 0),
+      sizeKind: Number(existingRecord?.sizeBytes || 0) > 0 ? String(existingRecord?.sizeKind || 'measured') : 'payload',
+      artifactCount: Number((snapshot.artifacts || []).length || 0),
+      sourceCount: Number(savedCorpus.source_count || 0),
+      packCount: Number(savedCorpus.pack_count || 0),
+      snapshotCompression: storedSnapshot.compression,
+      snapshotPayload: storedSnapshot.payload
+    };
+    const response = await postBridgeMessage('dm-browser-corpus-save', { record });
+    return response.summary || summarizeRecord(record);
+  }
   const db = await openDb();
   const savedCorpus = snapshot.saved_corpus || {};
   const storageKey = buildStorageKey(namespace, corpusId);
@@ -162,6 +236,23 @@ export async function saveBrowserCorpusSnapshot({ corpusId, corpusName, corpusUp
 export async function getBrowserCorpusSnapshot(corpusId) {
   if (!corpusId) return null;
   const namespace = getStorageNamespace();
+  if (canUseBridge()) {
+    let response = await postBridgeMessage('dm-browser-corpus-get', { namespace, corpusId });
+    let record = response.record || null;
+    if (!record) {
+      record = await migrateLocalRecordToBridge(namespace, corpusId);
+      if (record) {
+        response = await postBridgeMessage('dm-browser-corpus-get', { namespace, corpusId });
+        record = response.record || record;
+      }
+    }
+    if (!record) return null;
+    const snapshot = await inflateSnapshotFromRecord(record);
+    return {
+      ...record,
+      snapshot
+    };
+  }
   const db = await openDb();
   const record = await requestToPromise(db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(buildStorageKey(namespace, corpusId)));
   db.close();
@@ -175,6 +266,19 @@ export async function getBrowserCorpusSnapshot(corpusId) {
 
 export async function listBrowserCorpusRecords() {
   const namespace = getStorageNamespace();
+  if (canUseBridge()) {
+    let response = await postBridgeMessage('dm-browser-corpus-list-summaries', { namespace });
+    let summaries = Array.isArray(response.summaries) ? response.summaries : [];
+    if (!summaries.length) {
+      await migrateAllLocalRecordsToBridge(namespace);
+      response = await postBridgeMessage('dm-browser-corpus-list-summaries', { namespace });
+      summaries = Array.isArray(response.summaries) ? response.summaries : [];
+    }
+    return summaries.map(summary => ({
+      ...summary,
+      storageKey: buildStorageKey(namespace, summary.corpusId)
+    }));
+  }
   const db = await openDb();
   const tx = db.transaction(STORE_NAME, 'readonly');
   const index = tx.objectStore(STORE_NAME).index('namespace');
@@ -184,6 +288,17 @@ export async function listBrowserCorpusRecords() {
 }
 
 export async function listBrowserCorpusSummaries() {
+  if (canUseBridge()) {
+    const namespace = getStorageNamespace();
+    let response = await postBridgeMessage('dm-browser-corpus-list-summaries', { namespace });
+    let summaries = Array.isArray(response.summaries) ? response.summaries : [];
+    if (!summaries.length) {
+      await migrateAllLocalRecordsToBridge(namespace);
+      response = await postBridgeMessage('dm-browser-corpus-list-summaries', { namespace });
+      summaries = Array.isArray(response.summaries) ? response.summaries : [];
+    }
+    return summaries;
+  }
   const records = await listBrowserCorpusRecords();
   return records.map(summarizeRecord);
 }
@@ -191,6 +306,10 @@ export async function listBrowserCorpusSummaries() {
 export async function removeBrowserCorpusSnapshot(corpusId) {
   if (!corpusId) return;
   const namespace = getStorageNamespace();
+  if (canUseBridge()) {
+    await postBridgeMessage('dm-browser-corpus-remove', { namespace, corpusId });
+    return;
+  }
   const db = await openDb();
   const tx = db.transaction(STORE_NAME, 'readwrite');
   await requestToPromise(tx.objectStore(STORE_NAME).delete(buildStorageKey(namespace, corpusId)));
@@ -199,6 +318,10 @@ export async function removeBrowserCorpusSnapshot(corpusId) {
 
 export async function clearAllBrowserCorpusSnapshots() {
   const namespace = getStorageNamespace();
+  if (canUseBridge()) {
+    await postBridgeMessage('dm-browser-corpus-clear', { namespace });
+    return;
+  }
   const records = await listBrowserCorpusRecords();
   const db = await openDb();
   const tx = db.transaction(STORE_NAME, 'readwrite');
@@ -217,6 +340,17 @@ export async function clearAllBrowserCorpusSnapshots() {
 }
 
 export async function getBrowserCorpusStorageSummary() {
+  if (canUseBridge()) {
+    const namespace = getStorageNamespace();
+    const response = await postBridgeMessage('dm-browser-corpus-storage-summary', { namespace });
+    return response.summary || {
+      totalBytes: 0,
+      corpusCount: 0,
+      quotaBytes: 0,
+      usageBytes: 0,
+      summaries: []
+    };
+  }
   const summaries = await listBrowserCorpusSummaries();
   const totalBytes = summaries.reduce((sum, item) => sum + Number(item?.sizeBytes || 0), 0);
   const estimate = await navigator.storage?.estimate?.().catch(() => null);

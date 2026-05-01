@@ -23,6 +23,8 @@ export class ResearchModeToggle {
     this.loadedCorpusId = '';
     this.hasActiveArtifacts = false;
     this.hasStaleArtifacts = false;
+    this.optionsLoading = false;
+    this.optionsLoadingLabel = 'Loading saved corpora...';
   }
 
   init() {
@@ -192,7 +194,12 @@ export class ResearchModeToggle {
     if (!select) return;
 
     const options = [
-      { id: '', label: this.corpusOptions.length ? 'Select a saved corpus...' : 'No saved corpora found' },
+      {
+        id: '',
+        label: this.optionsLoading
+          ? this.optionsLoadingLabel
+          : (this.corpusOptions.length ? 'Select a saved corpus...' : 'No saved corpora found')
+      },
       ...this.corpusOptions.map(option => ({
         id: option.id,
         label: option.label || option.name || option.id
@@ -204,11 +211,18 @@ export class ResearchModeToggle {
       return `<option value="${option.id}"${selected}>${option.label}</option>`;
     }).join('');
 
-    select.disabled = this.corpusOptions.length === 0 || this.controls.loadBtn?.dataset.loading === 'true';
+    select.disabled = this.optionsLoading || this.corpusOptions.length === 0 || this.controls.loadBtn?.dataset.loading === 'true';
     const validSelectedId = this.corpusOptions.some(option => option.id === this.selectedCorpusId)
       ? this.selectedCorpusId
       : (this.corpusOptions[0]?.id || '');
     this.selectedCorpusId = validSelectedId;
     select.value = validSelectedId;
+  }
+
+  setCorpusOptionsLoading(isLoading, label = 'Loading saved corpora...') {
+    this.optionsLoading = Boolean(isLoading);
+    this.optionsLoadingLabel = label || 'Loading saved corpora...';
+    this.renderCorpusOptions();
+    this.updateActive();
   }
 }

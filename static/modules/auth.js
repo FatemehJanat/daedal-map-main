@@ -5,7 +5,10 @@
  * Self-host/local deployments can stay fully local and use /settings instead.
  */
 
+import { readAccountContextCache, writeAccountContextCache } from './shared/account-context-cache.js';
+
 const AUTH_EVENT = 'countymap-auth-changed';
+const AUTH_BOOT_EVENT = 'countymap-auth-boot-settled';
 const LOGGED_IN_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const GUEST_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const LEGACY_SHARED_COOKIE_DOMAIN = '.daedalmap.com';
@@ -18,6 +21,10 @@ let currentSession = null;
 let currentProfile = null;
 let initialized = false;
 let _lastAuthUserId = null;
+let initPromise = null;
+let authBootPending = false;
+let authBootSettled = false;
+let authBootWaiters = [];
 
 function isLocalLikeHost(hostname) {
   const value = String(hostname || '').trim().toLowerCase();
@@ -66,7 +73,15 @@ function getAccountUrl() {
 async function fetchProfile() {
   try {
     const token = currentSession?.access_token;
+    const userId = currentSession?.user?.id || '';
     if (!token) { currentProfile = null; return; }
+    if (userId) {
+      const cached = await readAccountContextCache(userId);
+      if (cached) {
+        currentProfile = cached;
+        return;
+      }
+    }
     const resp = await fetch('/api/auth/me', {
       headers: { Authorization: `Bearer ${token}` }
     });
@@ -74,6 +89,12 @@ async function fetchProfile() {
     const buf = await resp.arrayBuffer();
     const mp = window.MessagePack || {};
     currentProfile = mp.decode ? mp.decode(new Uint8Array(buf)) : null;
+    if (currentProfile?.user_id) {
+      await writeAccountContextCache({
+        ...currentProfile,
+        savedAt: Date.now()
+      });
+    }
   } catch (e) {
     currentProfile = null;
   }
@@ -148,8 +169,7 @@ async function importHashSession(client) {
   }
 }
 
-async function importHandoffCodeSession(client) {
-  const code = readWindowNameHandoffCode() || readHashHandoffCode();
+async function exchangeHandoffCodeSession(client, code) {
   if (!code) return null;
   try {
     const response = await fetch(`${getSiteBase()}/api/auth/handoff/exchange`, {
@@ -179,10 +199,80 @@ async function importHandoffCodeSession(client) {
   } catch (error) {
     console.warn('[Auth] Handoff exchange failed:', error?.message || error);
     return null;
+  }
+}
+
+async function importHandoffCodeSession(client) {
+  const code = readWindowNameHandoffCode() || readHashHandoffCode();
+  if (!code) return null;
+  try {
+    return await exchangeHandoffCodeSession(client, code);
   } finally {
     clearWindowNameHandoffCode();
     window.history.replaceState(null, '', window.location.pathname + window.location.search);
   }
+}
+
+async function trySilentSiteSessionImport(client) {
+  const siteBase = getSiteBase();
+  if (!siteBase || siteBase.replace(/\/$/, '') === window.location.origin.replace(/\/$/, '')) {
+    return null;
+  }
+
+  return await new Promise((resolve) => {
+    const iframe = document.createElement('iframe');
+    const bridgeUrl = `${siteBase.replace(/\/$/, '')}/auth/bridge.html`;
+    const timeoutMs = 3500;
+    let settled = false;
+    let readyPosted = false;
+
+    function cleanup(session = null) {
+      if (settled) return;
+      settled = true;
+      window.removeEventListener('message', onMessage);
+      window.clearTimeout(timer);
+      try {
+        iframe.remove();
+      } catch (_) {}
+      resolve(session);
+    }
+
+    async function requestHandoff() {
+      if (readyPosted || !iframe.contentWindow) return;
+      readyPosted = true;
+      iframe.contentWindow.postMessage({
+        type: 'dm-request-auth-handoff',
+        returnTo: window.location.origin + window.location.pathname + window.location.search
+      }, siteBase.replace(/\/$/, ''));
+    }
+
+    async function onMessage(event) {
+      const expectedOrigin = siteBase.replace(/\/$/, '');
+      if (event.origin.replace(/\/$/, '') !== expectedOrigin) return;
+      const data = event.data || {};
+      if (data?.type === 'dm-auth-bridge-ready') {
+        await requestHandoff();
+        return;
+      }
+      if (data?.type !== 'dm-auth-handoff-result') return;
+      if (!data?.ok || !data?.handoffCode) {
+        cleanup(null);
+        return;
+      }
+      const session = await exchangeHandoffCodeSession(client, String(data.handoffCode || '').trim());
+      cleanup(session);
+    }
+
+    const timer = window.setTimeout(() => cleanup(null), timeoutMs);
+    window.addEventListener('message', onMessage);
+    iframe.hidden = true;
+    iframe.setAttribute('aria-hidden', 'true');
+    iframe.src = bridgeUrl;
+    iframe.addEventListener('load', () => {
+      requestHandoff().catch(() => cleanup(null));
+    }, { once: true });
+    document.body.appendChild(iframe);
+  });
 }
 
 async function consumeLogoutSignal(client) {
@@ -217,6 +307,35 @@ async function consumeLogoutSignal(client) {
 
 function emitAuthChanged() {
   window.dispatchEvent(new CustomEvent(AUTH_EVENT, {
+    detail: {
+      isAuthenticated: isAuthenticated(),
+      user: getCurrentUser()
+    }
+  }));
+}
+
+function flushAuthBootWaiters() {
+  const waiters = authBootWaiters.slice();
+  authBootWaiters = [];
+  for (const resolve of waiters) {
+    try {
+      resolve(currentSession);
+    } catch (_) {
+      // Ignore waiter resolution errors.
+    }
+  }
+}
+
+function markAuthBootPending() {
+  authBootPending = true;
+  authBootSettled = false;
+}
+
+function markAuthBootSettled() {
+  authBootPending = false;
+  authBootSettled = true;
+  flushAuthBootWaiters();
+  window.dispatchEvent(new CustomEvent(AUTH_BOOT_EVENT, {
     detail: {
       isAuthenticated: isAuthenticated(),
       user: getCurrentUser()
@@ -288,8 +407,13 @@ export const AuthManager = {
       updateDom();
       return;
     }
+    if (initPromise) {
+      return initPromise;
+    }
 
-    try {
+    initPromise = (async () => {
+      markAuthBootPending();
+      try {
       authConfig = await loadConfig();
       if (authConfig.enabled) {
         const supabase = getBrowserSupabase();
@@ -312,10 +436,12 @@ export const AuthManager = {
         const handoffSession = await importHandoffCodeSession(authClient) || await importHashSession(authClient);
         const { data, error } = await authClient.auth.getSession();
         if (!error) {
-          currentSession = handoffSession || data.session;
+          currentSession = handoffSession || data.session || await trySilentSiteSessionImport(authClient);
           _lastAuthUserId = currentSession?.user?.id ?? null;
           clearLegacySharedCookies();
-          await fetchProfile();
+          Promise.resolve(fetchProfile()).then(() => {
+            updateDom();
+          }).catch(() => {});
         }
         authClient.auth.onAuthStateChange(async (_event, session) => {
           const newUserId = session?.user?.id ?? null;
@@ -330,18 +456,28 @@ export const AuthManager = {
           }
         });
       }
-    } catch (error) {
-      console.warn('[Auth] Disabled:', error.message);
-      authConfig = { enabled: false, supabase_url: '', supabase_anon_key: '' };
-    }
+      } catch (error) {
+        console.warn('[Auth] Disabled:', error.message);
+        authConfig = { enabled: false, supabase_url: '', supabase_anon_key: '' };
+      }
 
-    const btn = document.getElementById('authBtn');
-    if (btn) {
-      btn.addEventListener('click', handleAuthClick);
-    }
+      const btn = document.getElementById('authBtn');
+      if (btn) {
+        btn.addEventListener('click', handleAuthClick);
+      }
 
-    initialized = true;
-    updateDom();
+      initialized = true;
+      updateDom();
+      markAuthBootSettled();
+    })();
+
+    try {
+      await initPromise;
+    } finally {
+      if (authBootPending) {
+        markAuthBootSettled();
+      }
+    }
   }
 };
 
@@ -351,6 +487,35 @@ export function onAuthChanged(callback) {
 
 export function isAuthenticated() {
   return Boolean(currentSession?.user);
+}
+
+export function isAuthBootPending() {
+  return authBootPending;
+}
+
+export async function waitForAuthBoot(timeoutMs = 2500) {
+  if (authBootSettled || !authBootPending) {
+    return currentSession;
+  }
+  return await new Promise((resolve) => {
+    let timer = null;
+    const done = (session) => {
+      if (timer != null) {
+        window.clearTimeout(timer);
+      }
+      resolve(session);
+    };
+    authBootWaiters.push(done);
+    if (timeoutMs > 0) {
+      timer = window.setTimeout(() => {
+        const index = authBootWaiters.indexOf(done);
+        if (index >= 0) {
+          authBootWaiters.splice(index, 1);
+        }
+        resolve(currentSession);
+      }, timeoutMs);
+    }
+  });
 }
 
 export function getCurrentUser() {
@@ -405,4 +570,8 @@ export function getCurrentProfile() {
 
 export function getSupabaseClient() {
   return authClient;
+}
+
+export function getSiteBaseUrl() {
+  return getSiteBase();
 }

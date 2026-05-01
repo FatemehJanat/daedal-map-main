@@ -25,7 +25,7 @@ import { sendStreamingRequest, sendChatRequest } from './chat/api.js';
 import { OrderPanel } from './order/manager.js';
 import { OrderTracker as OrderTrackerClass } from './order/tracker.js';
 import * as SavedOrders from './order/saved.js';
-import { ensureRuntimeAccessToken, getAccessToken, getCurrentUser, getSupabaseClient, isAuthenticated, onAuthChanged, refreshRuntimeSession } from './auth.js';
+import { ensureRuntimeAccessToken, getAccessToken, getCurrentUser, getSupabaseClient, isAuthBootPending, isAuthenticated, onAuthChanged, refreshRuntimeSession, waitForAuthBoot } from './auth.js';
 import { TutorialMode, parseTutorialCommand } from './tutorial-mode.js';
 import { ResearchModeToggle } from './research/mode.js';
 import {
@@ -35,6 +35,7 @@ import {
   removeBrowserCorpusSnapshot,
   saveBrowserCorpusSnapshot
 } from './research/browser-corpus-store.js';
+import { getResearchPackCatalogMap } from './shared/research-pack-cache.js';
 
 // Dependencies set via setDependencies to avoid circular imports
 let MapAdapter = null;
@@ -183,6 +184,7 @@ function getResearchNamedColors() {
  * Each entry: { source_id, source_name, region, metric, years, data_type, overlay_type }
  */
 let loadedDataList = [];
+let researchPackCatalogById = new Map();
 
 /**
  * Register loaded data from an executed order.
@@ -359,6 +361,7 @@ export const ChatManager = {
   pendingMetricOrder: null,
   pendingResearchDisplayWarning: null,
   sessionId: null,
+  researchCorpusOptionsLoading: false,
   messagePanes: {},
   elements: {},
   lastDisambiguationOptions: null,
@@ -634,8 +637,17 @@ export const ChatManager = {
   async refreshResearchCorpusOptions() {
     if (!researchModeToggle) return [];
 
+    this.researchCorpusOptionsLoading = true;
+    if (isAuthBootPending()) {
+      researchModeToggle.setCorpusOptionsLoading(true, 'Checking account...');
+      researchModeToggle.setCorpusStatus('Checking account session...');
+      await waitForAuthBoot(3000);
+    }
+
     if (!isAuthenticated()) {
       this.researchCorpusOptions = [];
+      this.researchCorpusOptionsLoading = false;
+      researchModeToggle.setCorpusOptionsLoading(false);
       researchModeToggle.setCorpusOptions([], '');
       researchModeToggle.setCorpusStatus('Sign in to use saved corpora in Research.');
       return [];
@@ -645,13 +657,25 @@ export const ChatManager = {
     const user = getCurrentUser();
     if (!sb || !user?.id) {
       this.researchCorpusOptions = [];
+      this.researchCorpusOptionsLoading = false;
+      researchModeToggle.setCorpusOptionsLoading(false);
       researchModeToggle.setCorpusOptions([], '');
       researchModeToggle.setCorpusStatus('Saved corpora are not available right now.');
       return [];
     }
 
     try {
+      const email = String(user?.email || '').trim();
+      const loadingLabel = email ? `Loading saved corpora for ${email}...` : 'Loading saved corpora...';
+      researchModeToggle.setCorpusOptionsLoading(true, loadingLabel);
+      researchModeToggle.setCorpusStatus(email ? `${email}: authenticated runtime access enabled. Loading saved corpora...` : 'Authenticated runtime access enabled. Loading saved corpora...');
       await this.refreshBrowserCorpusSummaries();
+      try {
+        researchPackCatalogById = await getResearchPackCatalogMap();
+      } catch (metadataError) {
+        console.warn('Could not load shared research pack catalog metadata:', metadataError);
+        researchPackCatalogById = new Map();
+      }
       const { data, error } = await sb
         .from('research_corpora')
         .select('id, name, updated_at, research_corpus_items(item_type, item_id)')
@@ -662,19 +686,35 @@ export const ChatManager = {
 
       this.researchCorpusOptions = (data || []).map(corpus => {
         const items = Array.isArray(corpus.research_corpus_items) ? corpus.research_corpus_items : [];
-        const packCount = items.filter(item => item.item_type === 'pack').length;
+        const packIds = items
+          .filter(item => item.item_type === 'pack')
+          .map(item => String(item.item_id || '').trim())
+          .filter(Boolean);
+        const packCount = packIds.length;
         const sourceCount = items.filter(item => item.item_type === 'source').length;
         const browserSummary = this.getBrowserCorpusSummary(corpus.id);
         const isStale = Boolean(browserSummary?.corpusUpdatedAt && corpus.updated_at && browserSummary.corpusUpdatedAt !== corpus.updated_at);
+        const packMetadata = packIds
+          .map((packId) => researchPackCatalogById.get(packId))
+          .filter(Boolean);
+        const estimatedBrowserStorageMb = packMetadata.reduce((sum, pack) => {
+          return sum + Number(pack?.browser_storage_estimate_mb || 0);
+        }, 0);
+        const estimatedSourceRows = packMetadata.reduce((sum, pack) => {
+          return sum + Number(pack?.row_count || 0);
+        }, 0);
         return {
           id: corpus.id,
           name: corpus.name || 'Untitled corpus',
           label: `${corpus.name || 'Untitled corpus'}${packCount ? ` (${packCount} pack${packCount === 1 ? '' : 's'})` : ''}${sourceCount ? ` + ${sourceCount} source${sourceCount === 1 ? '' : 's'}` : ''}`,
           packCount,
+          packIds,
           sourceCount,
           updatedAt: corpus.updated_at || null,
           browserSummary,
-          browserStatus: browserSummary ? (isStale ? 'stale' : (browserSummary.status || 'complete')) : 'missing'
+          browserStatus: browserSummary ? (isStale ? 'stale' : (browserSummary.status || 'complete')) : 'missing',
+          estimatedBrowserStorageMb: estimatedBrowserStorageMb > 0 ? estimatedBrowserStorageMb : 0,
+          estimatedSourceRows: estimatedSourceRows > 0 ? estimatedSourceRows : 0
         };
       });
 
@@ -682,6 +722,8 @@ export const ChatManager = {
         this.selectedResearchCorpusId = '';
       }
 
+      this.researchCorpusOptionsLoading = false;
+      researchModeToggle.setCorpusOptionsLoading(false);
       researchModeToggle.setCorpusOptions(this.researchCorpusOptions, this.selectedResearchCorpusId);
       this.updateResearchCorpusStatus();
       this.saveState();
@@ -689,6 +731,8 @@ export const ChatManager = {
     } catch (error) {
       console.warn('Could not load saved corpora for Research:', error);
       this.researchCorpusOptions = [];
+      this.researchCorpusOptionsLoading = false;
+      researchModeToggle.setCorpusOptionsLoading(false);
       researchModeToggle.setCorpusOptions([], '');
       researchModeToggle.setCorpusStatus('Could not load saved corpora right now.');
       return [];
@@ -697,6 +741,10 @@ export const ChatManager = {
 
   async refreshResearchManifest() {
     if (!researchModeToggle) return null;
+    if (isAuthBootPending()) {
+      researchModeToggle.setCorpusStatus('Checking account session...');
+      await waitForAuthBoot(3000);
+    }
     const manifest = await researchModeToggle.snapshotCorpus();
     this.latestResearchManifest = manifest || null;
     this.updateResearchCorpusStatus();
@@ -720,42 +768,22 @@ export const ChatManager = {
 
   async buildResearchBrowserSnapshot(corpusId, { sessionId } = {}) {
     const token = getAccessToken();
-    const response = await fetch('/api/research/browser-save/build', {
-      method: 'POST',
-      headers: Object.assign(
-        { 'Content-Type': 'application/json' },
-        token ? { Authorization: `Bearer ${token}` } : {}
-      ),
-      body: JSON.stringify({
-        sessionId: sessionId || this.getSessionIdForMode('research'),
-        corpusId
-      })
+    return await postMsgpack('/api/research/browser-save/build', {
+      sessionId: sessionId || this.getSessionIdForMode('research'),
+      corpusId
+    }, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {}
     });
-    const payload = await response.json();
-    if (!response.ok || payload?.ok !== true || !payload?.snapshot) {
-      throw new Error(payload?.error || `HTTP ${response.status}`);
-    }
-    return payload;
   },
 
   async restoreResearchBrowserSnapshot(snapshot, { sessionId } = {}) {
     const token = getAccessToken();
-    const response = await fetch('/api/research/browser-save/load', {
-      method: 'POST',
-      headers: Object.assign(
-        { 'Content-Type': 'application/json' },
-        token ? { Authorization: `Bearer ${token}` } : {}
-      ),
-      body: JSON.stringify({
-        sessionId: sessionId || this.getSessionIdForMode('research'),
-        snapshot
-      })
+    return await postMsgpack('/api/research/browser-save/load', {
+      sessionId: sessionId || this.getSessionIdForMode('research'),
+      snapshot
+    }, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {}
     });
-    const payload = await response.json();
-    if (!response.ok || payload?.ok !== true) {
-      throw new Error(payload?.error || `HTTP ${response.status}`);
-    }
-    return payload;
   },
 
   getSelectedResearchCorpusOption() {
@@ -771,6 +799,15 @@ export const ChatManager = {
   },
 
   getResearchEmptyStateMessage() {
+    if (isAuthBootPending()) {
+      return 'Checking account session...';
+    }
+    if (this.researchCorpusOptionsLoading && isAuthenticated()) {
+      const email = String(getCurrentUser()?.email || '').trim();
+      return email
+        ? `${email}: authenticated runtime access enabled. Loading saved corpora...`
+        : 'Authenticated runtime access enabled. Loading saved corpora...';
+    }
     if (isAuthenticated()) {
       if (this.researchCorpusOptions.length > 0) {
         return 'No Research corpus is loaded yet. Select a saved corpus above and click Load Data.';
@@ -782,6 +819,27 @@ export const ChatManager = {
 
   updateResearchCorpusStatus() {
     if (!researchModeToggle) return;
+    if (isAuthBootPending()) {
+      researchModeToggle.setActiveCorpusState({
+        loadedCorpusId: '',
+        hasActiveArtifacts: false,
+        hasStaleArtifacts: false
+      });
+      researchModeToggle.setCorpusStatus('Checking account session...');
+      return;
+    }
+    if (this.researchCorpusOptionsLoading && isAuthenticated()) {
+      const email = String(getCurrentUser()?.email || '').trim();
+      researchModeToggle.setActiveCorpusState({
+        loadedCorpusId: '',
+        hasActiveArtifacts: false,
+        hasStaleArtifacts: false
+      });
+      researchModeToggle.setCorpusStatus(email
+        ? `${email}: authenticated runtime access enabled. Loading saved corpora...`
+        : 'Authenticated runtime access enabled. Loading saved corpora...');
+      return;
+    }
     const selected = this.getSelectedResearchCorpusOption();
     const manifest = this.latestResearchManifest;
     const saved = manifest?.saved_corpus || null;
@@ -793,6 +851,9 @@ export const ChatManager = {
     });
     const browserStatus = selected?.browserStatus || 'missing';
     const browserSummary = selected?.browserSummary || null;
+    const selectedEstimateText = selected?.estimatedBrowserStorageMb
+      ? ` Estimated browser save ${selected.estimatedBrowserStorageMb.toFixed(1)} MB.`
+      : '';
     const browserSizeText = browserSummary?.sizeBytes
       ? (browserSummary?.sizeKind === 'measured'
         ? ` Browser copy ${this.formatBytes(browserSummary.sizeBytes)} on this device.`
@@ -810,7 +871,7 @@ export const ChatManager = {
     if (saved && selected && saved.id === selected.id) {
       const sizeText = saved.estimated_file_size_mb_total
         ? ` Estimated size ${saved.estimated_file_size_mb_total.toFixed(1)} MB.`
-        : '';
+        : selectedEstimateText;
       if (manifest?.stale_artifacts) {
         researchModeToggle.setCorpusStatus(`"${saved.name}" is selected, but the current Research session is out of date. Click Load Data to refresh it.${sizeText}`);
         return;
@@ -827,7 +888,7 @@ export const ChatManager = {
         : (browserStatus === 'stale'
           ? ' Browser copy on this device is out of date. Refresh it from the account page if needed.'
           : ' No browser copy on this device yet.');
-      researchModeToggle.setCorpusStatus(`Selected "${selected.name}". Click Load Data to attach it to this Research workspace.${browserText}`);
+      researchModeToggle.setCorpusStatus(`Selected "${selected.name}". Click Load Data to attach it to this Research workspace.${selectedEstimateText}${browserText}`);
       return;
     }
     if (this.researchCorpusOptions.length > 0) {
