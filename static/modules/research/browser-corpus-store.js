@@ -101,9 +101,14 @@ async function inflateSnapshotFromRecord(record) {
   if (!supportsSnapshotCompression()) {
     throw new Error('Browser snapshot is compressed, but this browser cannot restore it.');
   }
-  const compressed = record.snapshotPayload instanceof ArrayBuffer
-    ? record.snapshotPayload
-    : record.snapshotPayload?.buffer;
+  const payload = record.snapshotPayload;
+  const compressed = payload instanceof ArrayBuffer
+    ? payload
+    : ArrayBuffer.isView(payload)
+      ? payload.buffer.slice(payload.byteOffset || 0, (payload.byteOffset || 0) + (payload.byteLength || 0))
+      : Array.isArray(payload)
+        ? new Uint8Array(payload).buffer
+        : (payload?.buffer instanceof ArrayBuffer ? payload.buffer : null);
   if (!compressed) return null;
   const decompressedStream = new Blob([compressed]).stream().pipeThrough(new window.DecompressionStream('gzip'));
   const jsonText = await new Response(decompressedStream).text();

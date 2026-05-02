@@ -766,6 +766,20 @@ export const ChatManager = {
     return this.browserCorpusSummaries.get(corpusId) || null;
   },
 
+  canUseBrowserSnapshotRecord(record, selectedOption = null) {
+    if (!record?.snapshot) return false;
+    const selectedUpdatedAt = String(selectedOption?.updatedAt || '').trim();
+    const snapshotUpdatedAt = String(record?.corpusUpdatedAt || '').trim();
+    if (!selectedUpdatedAt || !snapshotUpdatedAt) return true;
+    if (selectedUpdatedAt === snapshotUpdatedAt) return true;
+    const selectedMs = Date.parse(selectedUpdatedAt);
+    const snapshotMs = Date.parse(snapshotUpdatedAt);
+    if (Number.isFinite(selectedMs) && Number.isFinite(snapshotMs)) {
+      return Math.abs(selectedMs - snapshotMs) <= 1500;
+    }
+    return false;
+  },
+
   async buildResearchBrowserSnapshot(corpusId, { sessionId } = {}) {
     const token = getAccessToken();
     return await postMsgpack('/api/research/browser-save/build', {
@@ -947,13 +961,34 @@ export const ChatManager = {
 
     try {
       await ensureRuntimeAccessToken();
+      await this.refreshBrowserCorpusSummaries();
       const selected = this.getSelectedResearchCorpusOption();
-      const browserSnapshotRecord = selected?.browserStatus === 'complete'
-        ? await getBrowserCorpusSnapshot(selectedId)
-        : null;
-      let response = null;
-      if (browserSnapshotRecord?.snapshot) {
+      let browserSnapshotRecord = null;
+      try {
+        browserSnapshotRecord = await getBrowserCorpusSnapshot(selectedId);
+      } catch (browserLookupError) {
+        console.warn('Could not look up browser snapshot before loading corpus:', browserLookupError);
+      }
+      if (!browserSnapshotRecord && selected?.browserStatus !== 'complete') {
         try {
+          await this.refreshResearchCorpusOptions();
+        } catch (refreshError) {
+          console.warn('Could not refresh corpus options before browser restore attempt:', refreshError);
+        }
+      }
+      const refreshedSelected = this.getSelectedResearchCorpusOption() || selected;
+      const hasUsableBrowserSnapshot = this.canUseBrowserSnapshotRecord(browserSnapshotRecord, refreshedSelected);
+      if (browserSnapshotRecord && !hasUsableBrowserSnapshot) {
+        console.info('Browser snapshot exists but is stale for selected corpus; falling back to cloud load.', {
+          corpusId: selectedId,
+          selectedUpdatedAt: refreshedSelected?.updatedAt || selected?.updatedAt || null,
+          snapshotUpdatedAt: browserSnapshotRecord?.corpusUpdatedAt || null
+        });
+      }
+      let response = null;
+      if (hasUsableBrowserSnapshot) {
+        try {
+          indicator.updateStage?.('thinking', 'Restoring browser-saved corpus into Research...');
           response = await this.restoreResearchBrowserSnapshot(browserSnapshotRecord.snapshot);
         } catch (browserError) {
           console.warn('Browser snapshot restore failed, falling back to cloud load:', browserError);
@@ -961,6 +996,7 @@ export const ChatManager = {
       }
       if (!response) {
         try {
+          indicator.updateStage?.('thinking', 'Loading saved corpus from cloud into Research...');
           response = await postMsgpack('/api/research/load-saved-corpus', {
             sessionId: this.getSessionIdForMode('research'),
             corpusId: selectedId
@@ -968,6 +1004,7 @@ export const ChatManager = {
         } catch (loadError) {
           if (Number(loadError?.status || 0) === 401) {
             await refreshRuntimeSession();
+            indicator.updateStage?.('thinking', 'Rechecking account session, then loading corpus...');
             response = await postMsgpack('/api/research/load-saved-corpus', {
               sessionId: this.getSessionIdForMode('research'),
               corpusId: selectedId

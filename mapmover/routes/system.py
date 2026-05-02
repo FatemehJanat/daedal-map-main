@@ -320,6 +320,119 @@ def _default_pack_title(pack_id: str) -> str:
     return " ".join(words)
 
 
+def _data_type_tokens(value) -> set[str]:
+    if isinstance(value, str):
+        return {value.strip().lower()} if value.strip() else set()
+    if isinstance(value, (list, tuple, set)):
+        tokens = set()
+        for item in value:
+            text = str(item or "").strip().lower()
+            if text:
+                tokens.add(text)
+        return tokens
+    text = str(value or "").strip().lower()
+    return {text} if text else set()
+
+
+def _estimate_browser_storage_mb_for_source(source: dict) -> float:
+    if not isinstance(source, dict):
+        return 0.0
+    size = source.get("size") if isinstance(source.get("size"), dict) else {}
+    measured_browser_mb = float(size.get("browser_storage_estimate_mb") or source.get("browser_storage_estimate_mb") or 0)
+    if measured_browser_mb > 0:
+        return round(measured_browser_mb, 2)
+    row_count = int(source.get("row_count") or 0)
+    data_types = _data_type_tokens(source.get("data_type"))
+    if "geometry" in data_types:
+        bytes_per_row = 1100
+    elif "events" in data_types:
+        bytes_per_row = 425
+    elif "panel" in data_types:
+        bytes_per_row = 325
+    else:
+        bytes_per_row = 300
+    total_bytes = row_count * bytes_per_row
+    if total_bytes <= 0:
+        return 0.0
+    return round(total_bytes / (1024 * 1024), 1)
+
+
+def _estimate_browser_storage_mb_for_sources(sources: list[dict]) -> float:
+    total_mb = 0.0
+    for source in sources or []:
+        total_mb += _estimate_browser_storage_mb_for_source(source)
+    if total_mb <= 0:
+        return 0.0
+    has_measured_sizes = any(
+        float(((source.get("size") or {}).get("browser_storage_estimate_mb") if isinstance(source, dict) and isinstance(source.get("size"), dict) else source.get("browser_storage_estimate_mb") if isinstance(source, dict) else 0) or 0) > 0
+        for source in sources or []
+    )
+    return round(total_mb if has_measured_sizes else total_mb + 8.0, 2)
+
+
+def _normalize_browser_artifact(raw_value) -> dict | None:
+    if not isinstance(raw_value, dict):
+        return None
+    try:
+        transfer_mb = round(float(raw_value.get("transfer_mb") or 0), 2)
+        stored_mb = round(float(raw_value.get("stored_mb") or 0), 2)
+        expanded_mb = round(float(raw_value.get("expanded_mb") or 0), 2)
+    except (TypeError, ValueError):
+        return None
+    if not any([transfer_mb, stored_mb, expanded_mb, raw_value.get("storage_key"), raw_value.get("sha256")]):
+        return None
+    return {
+        "contract_version": int(raw_value.get("contract_version") or 1),
+        "artifact_version": str(raw_value.get("artifact_version") or "").strip(),
+        "format": str(raw_value.get("format") or "").strip(),
+        "storage_key": str(raw_value.get("storage_key") or "").strip(),
+        "sha256": str(raw_value.get("sha256") or "").strip(),
+        "transfer_bytes": int(raw_value.get("transfer_bytes") or 0),
+        "transfer_mb": transfer_mb,
+        "stored_bytes": int(raw_value.get("stored_bytes") or 0),
+        "stored_mb": stored_mb,
+        "expanded_bytes": int(raw_value.get("expanded_bytes") or 0),
+        "expanded_mb": expanded_mb,
+        "generated_at": str(raw_value.get("generated_at") or "").strip(),
+    }
+
+
+def _build_size_contract(transfer_mb: float | int | None, browser_storage_estimate_mb: float | int | None) -> dict:
+    transfer_value = round(float(transfer_mb or 0), 2)
+    browser_value = round(float(browser_storage_estimate_mb or 0), 1)
+    return {
+        "contract_version": 1,
+        "transfer_mb": transfer_value,
+        "browser_storage_estimate_mb": browser_value,
+        "working_set_estimate_mb": round(max(transfer_value, browser_value), 2),
+    }
+
+
+def _source_size_contract(source: dict) -> dict:
+    if not isinstance(source, dict):
+        return _build_size_contract(0, 0)
+    browser_artifact = _normalize_browser_artifact(source.get("browser_artifact"))
+    size = source.get("size") if isinstance(source.get("size"), dict) else {}
+    transfer_mb = float(size.get("transfer_mb") or source.get("file_size_mb") or 0)
+    browser_mb = float(size.get("browser_storage_estimate_mb") or source.get("browser_storage_estimate_mb") or 0)
+    working_mb = float(size.get("working_set_estimate_mb") or source.get("working_set_estimate_mb") or 0)
+    if browser_artifact:
+        transfer_mb = float(browser_artifact.get("transfer_mb") or transfer_mb)
+        browser_mb = float(browser_artifact.get("stored_mb") or browser_mb)
+        working_mb = float(browser_artifact.get("expanded_mb") or working_mb or max(transfer_mb, browser_mb))
+    elif browser_mb <= 0:
+        browser_mb = _estimate_browser_storage_mb_for_source(source)
+        working_mb = max(transfer_mb, browser_mb)
+    if working_mb <= 0:
+        working_mb = max(transfer_mb, browser_mb)
+    return {
+        "contract_version": 1,
+        "transfer_mb": round(transfer_mb, 2),
+        "browser_storage_estimate_mb": round(browser_mb, 2),
+        "working_set_estimate_mb": round(working_mb, 2),
+    }
+
+
 def _source_entity_label(source_url: str | None, fallback: str = "") -> str:
     text = str(source_url or "").strip().lower()
     if "unstats.un.org" in text:
@@ -770,6 +883,10 @@ def _build_public_pack_list(api_ready_only: bool = False) -> list[dict]:
         )
         if len(source_agencies) > 1:
             primary_source_name = _source_agency_summary(source_agencies)
+        source_sizes = [_source_size_contract(src) for src in pack_sources]
+        transfer_mb = round(sum(float(size.get("transfer_mb") or 0) for size in source_sizes), 2)
+        browser_storage_estimate_mb = round(sum(float(size.get("browser_storage_estimate_mb") or 0) for size in source_sizes), 2)
+        working_set_estimate_mb = round(sum(float(size.get("working_set_estimate_mb") or 0) for size in source_sizes), 2)
         packs.append({
             "pack_id": pid,
             "pack_name": display_name,
@@ -793,7 +910,15 @@ def _build_public_pack_list(api_ready_only: bool = False) -> list[dict]:
             "scope": s.get("scope", ""),
             "topic_tags": s.get("topic_tags") or [],
             "source_count": pack_counts[pid],
-            "file_size_mb": round(sum(float(src.get("file_size_mb") or 0) for src in pack_sources), 2),
+            "file_size_mb": transfer_mb,
+            "browser_storage_estimate_mb": browser_storage_estimate_mb,
+            "working_set_estimate_mb": working_set_estimate_mb,
+            "size": {
+                "contract_version": 1,
+                "transfer_mb": transfer_mb,
+                "browser_storage_estimate_mb": browser_storage_estimate_mb,
+                "working_set_estimate_mb": working_set_estimate_mb,
+            },
             "row_count": sum(int(src.get("row_count") or 0) for src in pack_sources),
             "temporal_start": tc.get("start"),
             "temporal_end": tc.get("end"),
@@ -883,6 +1008,7 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
                 else:
                     smetrics[key] = value
         stc = s.get("temporal_coverage", {}) or {}
+        source_size = _source_size_contract(s)
         subsources.append({
             "source_id": s.get("source_id"),
             "source_name": _best_source_text(
@@ -934,6 +1060,12 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
             "path": s.get("path", ""),
             "metric_count": len(smetrics),
             "metrics": smetrics,
+            "row_count": int(s.get("row_count") or 0),
+            "file_size_mb": source_size.get("transfer_mb"),
+            "browser_storage_estimate_mb": source_size.get("browser_storage_estimate_mb"),
+            "working_set_estimate_mb": source_size.get("working_set_estimate_mb"),
+            "size": source_size,
+            "browser_artifact": _normalize_browser_artifact(s.get("browser_artifact")),
             "temporal_coverage": {
                 "start": stc.get("start"),
                 "end": stc.get("end"),
@@ -963,6 +1095,10 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
     )
     if len(source_agencies) > 1:
         primary_source_name = _source_agency_summary(source_agencies)
+    pack_source_sizes = [_source_size_contract(source) for source in pack_sources]
+    pack_transfer_mb = round(sum(float(size.get("transfer_mb") or 0) for size in pack_source_sizes), 2)
+    pack_browser_storage_estimate_mb = round(sum(float(size.get("browser_storage_estimate_mb") or 0) for size in pack_source_sizes), 2)
+    pack_working_set_estimate_mb = round(sum(float(size.get("working_set_estimate_mb") or 0) for size in pack_source_sizes), 2)
 
     payload = {
         "pack_id": pack_id,
@@ -994,6 +1130,15 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
         "llm_summary": _best_source_text(primary_meta.get("llm_summary"), primary.get("llm_summary", "")),
         "source_count": len(pack_sources),
         "source_ids": [s["source_id"] for s in pack_sources],
+        "file_size_mb_total": pack_transfer_mb,
+        "browser_storage_estimate_mb_total": pack_browser_storage_estimate_mb,
+        "working_set_estimate_mb_total": pack_working_set_estimate_mb,
+        "size": {
+            "contract_version": 1,
+            "transfer_mb": pack_transfer_mb,
+            "browser_storage_estimate_mb": pack_browser_storage_estimate_mb,
+            "working_set_estimate_mb": pack_working_set_estimate_mb,
+        },
         "subsources": subsources,
     }
     _public_pack_detail_cache[cache_key] = {"value": payload, "cached_at": time.time()}
