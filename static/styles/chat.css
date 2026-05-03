@@ -690,9 +690,15 @@ body.mobile-limited #mobileMapNotice {
 
 .chat-mode-toggle__status {
   grid-column: 1 / -1;
-  font-size: 12px;
-  line-height: 1.45;
-  color: #a9bfd4;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(123, 231, 255, 0.16);
+  background: rgba(9, 17, 29, 0.88);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+  font-size: 13px;
+  line-height: 1.55;
+  color: #d8e8f6;
+  min-height: 48px;
 }
 
 /* Chat messages area */

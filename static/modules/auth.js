@@ -377,7 +377,7 @@ function updateDom() {
     btn.textContent = 'Account';
     btn.disabled = false;
     btn.classList.add('logged-in');
-    status.innerHTML = `${email}: authenticated runtime access enabled. <a href="${accountUrl}" target="_blank" rel="noopener">Open account settings</a>`;
+    status.innerHTML = `Signed in as ${email}. <a href="${accountUrl}" target="_blank" rel="noopener">Open account settings</a>`;
   } else {
     btn.textContent = 'Sign In';
     btn.disabled = false;
