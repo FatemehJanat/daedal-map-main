@@ -271,7 +271,7 @@ async def static_no_cache(request: Request, call_next):
     path = request.url.path
     surface = _classify_route_surface(path)
     request.state.analytics_surface = surface
-    max_body_bytes = int(os.getenv("MAX_REQUEST_BODY_BYTES", "1048576"))
+    max_body_bytes = int(os.getenv("MAX_REQUEST_BODY_BYTES", "268435456"))
     content_length = request.headers.get("content-length")
     if content_length:
         try:
@@ -324,7 +324,17 @@ async def static_no_cache(request: Request, call_next):
         response.headers["Cache-Control"] = "no-cache, must-revalidate"
 
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
+    if path == "/static/browser-corpus-bridge.html":
+        try:
+            if "X-Frame-Options" in response.headers:
+                del response.headers["X-Frame-Options"]
+        except Exception:
+            pass
+        response.headers["Content-Security-Policy"] = (
+            "frame-ancestors 'self' http://localhost:8080 https://www.daedalmap.com https://daedalmap.com"
+        )
+    else:
+        response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
     if is_https_request(request):

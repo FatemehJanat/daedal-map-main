@@ -6,8 +6,10 @@ import hashlib
 import json
 import os
 import asyncio
+import gzip
 import math
 from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
 from shapely import wkt as shapely_wkt
 from shapely.geometry import mapping as shapely_mapping
@@ -15,14 +17,14 @@ from shapely.geometry import mapping as shapely_mapping
 import msgpack
 from anthropic import Anthropic
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from mapmover import logger
 from mapmover.auth_context import build_session_cache_key, get_authenticated_user, get_authenticated_user_async
 from mapmover.corpus_registry import corpus_registry
 from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log_conversation
 from mapmover.security import get_client_ip
-from mapmover.data_loading import get_pack_metadata, get_source_path, load_source_metadata
+from mapmover.data_loading import get_pack_metadata, get_source_path, load_catalog, load_source_metadata
 from mapmover.api_query_runtime import execute_dataset_query, get_api_source_columns, get_api_source_spec
 from mapmover.duckdb_helpers import is_cloud_mode, parquet_available, parquet_columns, path_to_uri, quote_ident, run_rows, select_columns_from_parquet
 from mapmover.geometry_handlers import get_selection_geometries
@@ -61,6 +63,7 @@ _RESEARCH_HEARTBEAT_MESSAGES = [
 _PROMPT_ARTIFACT_WINDOW = 64
 _RESEARCH_MAX_TOOL_ITERATIONS = 8
 _RESEARCH_MAX_TOKENS = 5000
+_PRIVATE_BROWSER_ARTIFACT_OUTPUT_ROOT = Path(__file__).resolve().parents[3] / "county-map-private" / "build" / "browser_artifacts" / "output"
 
 
 def _research_heartbeat(idle_count: int) -> ProgressEvent:
@@ -695,40 +698,6 @@ def _hydrate_saved_corpus(session_id: str, saved_corpus: dict) -> dict:
     return hydration
 
 
-def _browser_save_snapshot_bytes(snapshot: dict) -> int:
-    try:
-        return len(json.dumps(snapshot, separators=(",", ":"), default=str).encode("utf-8"))
-    except Exception:
-        return 0
-
-
-def _compact_browser_snapshot_result(result: dict) -> dict:
-    if not isinstance(result, dict):
-        return {}
-    compact = {}
-    if "time_field" in result:
-        compact["time_field"] = result.get("time_field")
-    if "geojson" in result:
-        compact["geojson"] = result.get("geojson")
-    if "year_data" in result:
-        compact["year_data"] = result.get("year_data")
-    return compact
-
-
-def _compact_browser_snapshot_results(results: dict) -> dict:
-    if not isinstance(results, dict):
-        return {}
-    compact_results = {}
-    for request_key, result in results.items():
-        key = str(request_key or "").strip()
-        if not key:
-            continue
-        compact_result = _compact_browser_snapshot_result(result)
-        if compact_result:
-            compact_results[key] = compact_result
-    return compact_results
-
-
 def _json_safe_value(value):
     if isinstance(value, float):
         return value if math.isfinite(value) else None
@@ -743,50 +712,233 @@ def _json_safe_value(value):
     return value
 
 
-def _build_browser_corpus_snapshot(session_id: str, saved_corpus: dict) -> dict:
-    artifacts = corpus_registry.export_session_artifacts(session_id)
-    request_keys = [str(artifact.get("request_key") or "").strip() for artifact in artifacts if artifact.get("request_key")]
-    cache = session_manager.get(session_id)
-    results = _compact_browser_snapshot_results(cache.export_results(request_keys) if cache else {})
-    snapshot = {
-        "snapshot_version": 1,
-        "saved_at": datetime.utcnow().isoformat() + "Z",
-        "saved_corpus": _json_safe_value(saved_corpus),
-        "artifacts": _json_safe_value(artifacts),
-        "results": _json_safe_value(results),
+def _normalize_browser_artifact(raw_value: dict | None) -> dict | None:
+    if not isinstance(raw_value, dict):
+        return None
+
+    def _coerce_int(value) -> int:
+        try:
+            return int(round(float(value or 0)))
+        except (TypeError, ValueError):
+            return 0
+
+    storage_key = str(raw_value.get("storage_key") or "").strip()
+    sha256 = str(raw_value.get("sha256") or "").strip()
+    artifact_version = str(raw_value.get("artifact_version") or "").strip()
+    format_name = str(raw_value.get("format") or "").strip()
+    transfer_bytes = _coerce_int(raw_value.get("transfer_bytes"))
+    stored_bytes = _coerce_int(raw_value.get("stored_bytes") or transfer_bytes)
+    expanded_bytes = _coerce_int(raw_value.get("expanded_bytes"))
+    if not storage_key:
+        return None
+    return {
+        "contract_version": int(raw_value.get("contract_version") or 1),
+        "artifact_version": artifact_version,
+        "format": format_name,
+        "storage_key": storage_key,
+        "sha256": sha256,
+        "transfer_bytes": transfer_bytes,
+        "stored_bytes": stored_bytes,
+        "expanded_bytes": expanded_bytes,
+        "transfer_mb": round(transfer_bytes / (1024 * 1024), 2) if transfer_bytes > 0 else 0.0,
+        "stored_mb": round(stored_bytes / (1024 * 1024), 2) if stored_bytes > 0 else 0.0,
+        "expanded_mb": round(expanded_bytes / (1024 * 1024), 2) if expanded_bytes > 0 else 0.0,
+        "generated_at": str(raw_value.get("generated_at") or "").strip(),
     }
-    snapshot["size_bytes"] = _browser_save_snapshot_bytes(snapshot)
-    return snapshot
 
 
-def _restore_browser_corpus_snapshot(
+def _catalog_source_lookup() -> dict[str, dict]:
+    catalog = load_catalog() or {}
+    lookup: dict[str, dict] = {}
+    for source in catalog.get("sources") or []:
+        if not isinstance(source, dict):
+            continue
+        source_id = str(source.get("source_id") or "").strip()
+        if source_id:
+            lookup[source_id] = source
+    return lookup
+
+
+def _saved_corpus_source_pack_map(saved_corpus: dict | None) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    if not isinstance(saved_corpus, dict):
+        return mapping
+    for pack in saved_corpus.get("packs") or []:
+        if not isinstance(pack, dict):
+            continue
+        pack_id = str(pack.get("pack_id") or "").strip()
+        for source_id in pack.get("source_ids") or []:
+            source_text = str(source_id or "").strip()
+            if source_text and pack_id and source_text not in mapping:
+                mapping[source_text] = pack_id
+    return mapping
+
+
+def _build_browser_install_manifest(saved_corpus: dict) -> dict:
+    source_ids = _expected_saved_corpus_source_ids(saved_corpus)
+    if not source_ids:
+        raise ValueError("Saved corpus has no resolved sources")
+
+    source_lookup = _catalog_source_lookup()
+    source_pack_map = _saved_corpus_source_pack_map(saved_corpus)
+    manifest_sources = []
+    total_transfer_bytes = 0
+    total_stored_bytes = 0
+    total_expanded_bytes = 0
+
+    for source_id in source_ids:
+        source = source_lookup.get(source_id)
+        if not isinstance(source, dict):
+            raise ValueError(f"Published catalog is missing source metadata for {source_id}")
+        artifact = _normalize_browser_artifact(source.get("browser_artifact"))
+        if not artifact:
+            raise ValueError(f"Published catalog is missing browser artifact metadata for {source_id}")
+        if artifact.get("transfer_bytes", 0) <= 0 or artifact.get("stored_bytes", 0) <= 0 or artifact.get("expanded_bytes", 0) <= 0:
+            raise ValueError(f"Browser artifact metadata is incomplete for {source_id}")
+        total_transfer_bytes += int(artifact["transfer_bytes"])
+        total_stored_bytes += int(artifact["stored_bytes"])
+        total_expanded_bytes += int(artifact["expanded_bytes"])
+        manifest_sources.append({
+            "source_id": source_id,
+            "source_name": str(source.get("source_name") or source_id),
+            "pack_id": source_pack_map.get(source_id) or str(source.get("pack_id") or "").strip(),
+            "path": str(source.get("path") or "").strip(),
+            "browser_artifact": artifact,
+            "size": source.get("size") if isinstance(source.get("size"), dict) else None,
+            "download_path": f"/api/research/browser-save/source-artifact/{saved_corpus.get('id')}/{source_id}",
+        })
+
+    return {
+        "manifest_version": 1,
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "saved_corpus": {
+            "id": saved_corpus.get("id"),
+            "name": saved_corpus.get("name"),
+            "updated_at": saved_corpus.get("updated_at"),
+            "pack_ids": saved_corpus.get("pack_ids") or [],
+            "source_ids": saved_corpus.get("source_ids") or [],
+            "resolved_source_ids": source_ids,
+            "pack_count": saved_corpus.get("pack_count"),
+            "source_count": saved_corpus.get("source_count"),
+            "resolved_source_count": len(source_ids),
+        },
+        "sources": manifest_sources,
+        "totals": {
+            "transfer_bytes": total_transfer_bytes,
+            "stored_bytes": total_stored_bytes,
+            "expanded_bytes": total_expanded_bytes,
+            "transfer_mb": round(total_transfer_bytes / (1024 * 1024), 2),
+            "stored_mb": round(total_stored_bytes / (1024 * 1024), 2),
+            "expanded_mb": round(total_expanded_bytes / (1024 * 1024), 2),
+        },
+    }
+
+
+def _read_browser_artifact_bytes(storage_key: str) -> tuple[bytes, str]:
+    storage_key = str(storage_key or "").strip().lstrip("/")
+    if not storage_key:
+        raise FileNotFoundError("No browser artifact storage key provided")
+    if is_cloud_mode():
+        import boto3 as _boto3
+        from mapmover.runtime_config import get_runtime_config
+
+        cloud_cfg = get_runtime_config().get("cloud", {})
+        bucket = os.environ.get("S3_BUCKET", "").strip() or str(cloud_cfg.get("bucket", "")).strip()
+        endpoint_url = os.environ.get("S3_ENDPOINT_URL") or cloud_cfg.get("endpoint_url")
+        region = os.environ.get("AWS_DEFAULT_REGION") or os.environ.get("AWS_REGION") or "auto"
+        client = _boto3.client("s3", endpoint_url=endpoint_url, region_name=region)
+        obj = client.get_object(Bucket=bucket, Key=storage_key)
+        body = obj["Body"].read()
+        content_type = str(obj.get("ContentType") or "application/gzip")
+        return body, content_type
+
+    local_path = (_PRIVATE_BROWSER_ARTIFACT_OUTPUT_ROOT / storage_key.replace("/", os.sep)).resolve()
+    if not local_path.exists():
+        raise FileNotFoundError(f"Local browser artifact not found: {local_path}")
+    return local_path.read_bytes(), "application/gzip"
+
+
+def _restore_browser_install_source_snapshots(
     session_id: str,
-    snapshot: dict,
-    *,
-    expected_saved_corpus: dict | None = None,
+    saved_corpus: dict,
+    source_snapshots: list[dict] | None,
 ) -> dict:
-    saved_corpus = snapshot.get("saved_corpus")
-    artifacts = snapshot.get("artifacts") or []
-    results = snapshot.get("results") or {}
-    expected_corpus = expected_saved_corpus or saved_corpus
+    expected_source_ids = _expected_saved_corpus_source_ids(saved_corpus)
+    expected_source_set = set(expected_source_ids)
+    if not expected_source_ids:
+        raise ValueError("Saved corpus has no resolved sources")
 
-    if not _artifacts_match_saved_corpus(artifacts, expected_corpus):
-        expected_sources = _expected_saved_corpus_source_ids(expected_corpus)
-        actual_sources = _artifact_source_ids(artifacts)
+    cache = session_manager.get_or_create(session_id)
+    corpus_registry.clear_artifacts(session_id)
+    corpus_registry.set_saved_corpus(session_id, saved_corpus)
+
+    seen_source_ids: set[str] = set()
+    for snapshot in source_snapshots or []:
+        if not isinstance(snapshot, dict):
+            continue
+        source_meta = snapshot.get("source") or {}
+        result = snapshot.get("result")
+        source_id = str(source_meta.get("source_id") or "").strip()
+        if not source_id:
+            raise ValueError("Source snapshot is missing source_id")
+        if source_id in seen_source_ids:
+            continue
+        if source_id not in expected_source_set:
+            raise ValueError(f"Source snapshot {source_id} is not part of the saved corpus")
+        if not isinstance(result, dict):
+            raise ValueError(f"Source snapshot {source_id} is missing result payload")
+
+        request_key = _saved_corpus_request_key(str(saved_corpus.get("id") or "saved"), source_id)
+        cache.store_result(request_key, result)
+        order = {
+            "items": [
+                {
+                    "source_id": source_id,
+                    "region": "global",
+                    "metric": next(iter(result.get("available_metrics") or []), None),
+                }
+            ],
+            "summary": result.get("summary") or f"Loaded {source_id} into Research.",
+        }
+        corpus_registry.register_order_result(
+            session_id=session_id,
+            request_key=request_key,
+            order=order,
+            response=result,
+        )
+        seen_source_ids.add(source_id)
+
+    if seen_source_ids != expected_source_set:
+        missing = sorted(expected_source_set - seen_source_ids)
         raise ValueError(
-            "Browser-saved corpus is out of date for this saved corpus definition "
-            f"(expected sources: {expected_sources}, found: {actual_sources})"
+            "Browser source install is incomplete for this saved corpus "
+            f"(missing source snapshots: {missing})"
         )
 
-    corpus_registry.clear_artifacts(session_id)
-    if expected_corpus:
-        corpus_registry.set_saved_corpus(session_id, expected_corpus)
-    elif saved_corpus:
-        corpus_registry.set_saved_corpus(session_id, saved_corpus)
-    cache = session_manager.get_or_create(session_id)
-    cache.import_results(results)
-    corpus_registry.import_session_artifacts(session_id, artifacts)
     return corpus_registry.manifest(session_id)
+
+
+def _decode_browser_source_artifact_payloads(source_artifacts: list[dict] | None) -> list[dict]:
+    decoded_snapshots: list[dict] = []
+    for artifact_entry in source_artifacts or []:
+        if not isinstance(artifact_entry, dict):
+            continue
+        payload = artifact_entry.get("payload")
+        if isinstance(payload, memoryview):
+            payload = payload.tobytes()
+        elif isinstance(payload, bytearray):
+            payload = bytes(payload)
+        if not isinstance(payload, (bytes, bytearray)):
+            raise ValueError("Browser source artifact payload must be binary")
+        try:
+            json_bytes = gzip.decompress(bytes(payload))
+            decoded_snapshot = json.loads(json_bytes.decode("utf-8"))
+        except Exception as exc:
+            raise ValueError(f"Could not decode browser source artifact payload: {exc}") from exc
+        if not isinstance(decoded_snapshot, dict):
+            raise ValueError("Decoded browser source artifact payload is invalid")
+        decoded_snapshots.append(decoded_snapshot)
+    return decoded_snapshots
 
 
 async def _decode_msgpack_request(req: Request) -> dict:
@@ -1579,16 +1731,107 @@ async def research_load_saved_corpus_endpoint(req: Request):
         logger.exception("Research saved corpus load error")
         return msgpack_error(str(e), 500)
 
-
-@router.post("/api/research/browser-save/build")
-async def research_build_browser_save_endpoint(req: Request):
-    """Build a browser-save snapshot for a saved corpus."""
+@router.post("/api/research/browser-save/install-manifest")
+async def research_build_browser_install_manifest_endpoint(req: Request):
+    """Return a source-artifact install manifest for a saved corpus."""
     wants_msgpack = "application/msgpack" in str(req.headers.get("accept") or "").lower()
     try:
         body = await _decode_json_or_msgpack_request(req)
         corpus_id = str(body.get("corpusId") or "").strip()
         if not corpus_id:
             payload = {"ok": False, "error": "No corpusId provided"}
+            return msgpack_response(payload, status_code=400) if wants_msgpack else JSONResponse(payload, status_code=400)
+
+        auth_user = await get_authenticated_user_async(req)
+        user_id = (auth_user or {}).get("id")
+        if not user_id:
+            payload = {"ok": False, "error": "Authentication required"}
+            return msgpack_response(payload, status_code=401) if wants_msgpack else JSONResponse(payload, status_code=401)
+
+        saved_corpus = _load_saved_corpus_for_user(user_id, corpus_id)
+        if not saved_corpus:
+            payload = {"ok": False, "error": "Saved corpus not found"}
+            return msgpack_response(payload, status_code=404) if wants_msgpack else JSONResponse(payload, status_code=404)
+
+        install_manifest = _build_browser_install_manifest(saved_corpus)
+        payload = _json_safe_value({
+            "ok": True,
+            "install_manifest": install_manifest,
+        })
+        return msgpack_response(payload) if wants_msgpack else JSONResponse(payload)
+    except ValueError as exc:
+        payload = {"ok": False, "error": str(exc)}
+        return msgpack_response(payload, status_code=409) if wants_msgpack else JSONResponse(payload, status_code=409)
+    except Exception as exc:
+        logger.exception("Research browser install-manifest error")
+        payload = {"ok": False, "error": str(exc)}
+        return msgpack_response(payload, status_code=500) if wants_msgpack else JSONResponse(payload, status_code=500)
+
+
+@router.get("/api/research/browser-save/source-artifact/{corpus_id}/{source_id}")
+async def research_browser_source_artifact_endpoint(corpus_id: str, source_id: str, req: Request):
+    """Return the published gz browser artifact for one saved-corpus source."""
+    try:
+        corpus_id = str(corpus_id or "").strip()
+        source_id = str(source_id or "").strip()
+        if not corpus_id or not source_id:
+            return JSONResponse({"ok": False, "error": "Missing corpus_id or source_id"}, status_code=400)
+
+        auth_user = await get_authenticated_user_async(req)
+        user_id = (auth_user or {}).get("id")
+        if not user_id:
+            return JSONResponse({"ok": False, "error": "Authentication required"}, status_code=401)
+
+        saved_corpus = _load_saved_corpus_for_user(user_id, corpus_id)
+        if not saved_corpus:
+            return JSONResponse({"ok": False, "error": "Saved corpus not found"}, status_code=404)
+
+        install_manifest = _build_browser_install_manifest(saved_corpus)
+        source_entry = next(
+            (entry for entry in install_manifest.get("sources") or [] if str(entry.get("source_id") or "").strip() == source_id),
+            None,
+        )
+        if not source_entry:
+            return JSONResponse({"ok": False, "error": "Source is not part of the saved corpus"}, status_code=404)
+
+        artifact = source_entry.get("browser_artifact") or {}
+        storage_key = str(artifact.get("storage_key") or "").strip()
+        artifact_bytes, content_type = _read_browser_artifact_bytes(storage_key)
+        headers = {
+            "Content-Length": str(len(artifact_bytes)),
+            "Cache-Control": "private, max-age=300",
+            "Content-Disposition": f'inline; filename="{source_id}_runtime_snapshot_v1.json.gz"',
+            "X-DaedalMap-Source-Id": source_id,
+            "X-DaedalMap-Artifact-Version": str(artifact.get("artifact_version") or ""),
+            "X-DaedalMap-Sha256": str(artifact.get("sha256") or ""),
+        }
+        return Response(content=artifact_bytes, media_type=content_type or "application/gzip", headers=headers)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=409)
+    except FileNotFoundError as exc:
+        logger.warning("Research browser source artifact missing: %s", exc)
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=404)
+    except Exception as exc:
+        logger.exception("Research browser source artifact error")
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+
+
+@router.post("/api/research/browser-save/load-install-manifest")
+async def research_load_browser_install_manifest_endpoint(req: Request):
+    """Restore a browser-saved install manifest and source artifacts into the active session."""
+    wants_msgpack = "application/msgpack" in str(req.headers.get("accept") or "").lower()
+    try:
+        body = await _decode_json_or_msgpack_request(req)
+        corpus_id = str(body.get("corpusId") or "").strip()
+        source_snapshots = body.get("sourceSnapshots")
+        source_artifacts = body.get("sourceArtifacts")
+        if not corpus_id:
+            payload = {"ok": False, "error": "No corpusId provided"}
+            return msgpack_response(payload, status_code=400) if wants_msgpack else JSONResponse(payload, status_code=400)
+        if isinstance(source_artifacts, list):
+            source_snapshots = _decode_browser_source_artifact_payloads(source_artifacts)
+        if not isinstance(source_snapshots, list):
+            payload = {"ok": False, "error": "No sourceArtifacts or sourceSnapshots provided"}
             return msgpack_response(payload, status_code=400) if wants_msgpack else JSONResponse(payload, status_code=400)
 
         auth_user = await get_authenticated_user_async(req)
@@ -1604,74 +1847,27 @@ async def research_build_browser_save_endpoint(req: Request):
             payload = {"ok": False, "error": "Saved corpus not found"}
             return msgpack_response(payload, status_code=404) if wants_msgpack else JSONResponse(payload, status_code=404)
 
-        current_saved = corpus_registry.get_saved_corpus(session_id)
-        current_corpus_id = str((current_saved or {}).get("id") or "").strip()
-        current_artifacts = corpus_registry.list_artifacts(session_id)
-        if (
-            current_corpus_id != corpus_id
-            or not current_artifacts
-            or not _artifacts_match_saved_corpus(current_artifacts, saved_corpus)
-        ):
-            corpus_registry.set_saved_corpus(session_id, saved_corpus)
-            _hydrate_saved_corpus(session_id, saved_corpus)
-
-        manifest = _annotate_manifest_saved_corpus_state(corpus_registry.manifest(session_id))
-        snapshot = _build_browser_corpus_snapshot(session_id, saved_corpus)
+        manifest = _annotate_manifest_saved_corpus_state(
+            _restore_browser_install_source_snapshots(
+                session_id=session_id,
+                saved_corpus=saved_corpus,
+                source_snapshots=source_snapshots,
+            )
+        )
+        saved_name = ((manifest.get("saved_corpus") or {}).get("name") or "Saved corpus")
         payload = _json_safe_value({
             "ok": True,
-            "snapshot": snapshot,
             "corpus": manifest,
+            "message": f'Loaded "{saved_name}" into the Research workspace from browser-saved source artifacts.',
         })
         return msgpack_response(payload) if wants_msgpack else JSONResponse(payload)
+    except ValueError as exc:
+        payload = {"ok": False, "error": str(exc)}
+        return msgpack_response(payload, status_code=409) if wants_msgpack else JSONResponse(payload, status_code=409)
     except Exception as exc:
-        logger.exception("Research browser-save build error")
+        logger.exception("Research browser install-manifest restore error")
         payload = {"ok": False, "error": str(exc)}
         return msgpack_response(payload, status_code=500) if wants_msgpack else JSONResponse(payload, status_code=500)
-
-
-@router.post("/api/research/browser-save/load")
-async def research_load_browser_save_endpoint(req: Request):
-    """Restore a browser-saved research corpus snapshot into the active session."""
-    wants_msgpack = "application/msgpack" in str(req.headers.get("accept") or "").lower()
-    try:
-        body = await _decode_json_or_msgpack_request(req)
-        snapshot = body.get("snapshot")
-        if not isinstance(snapshot, dict):
-            payload = {"ok": False, "error": "No snapshot provided"}
-            return msgpack_response(payload, status_code=400) if wants_msgpack else JSONResponse(payload, status_code=400)
-
-        frontend_session_id = str(body.get("sessionId") or "anonymous").strip() or "anonymous"
-        auth_user = await get_authenticated_user_async(req)
-        user_id = (auth_user or {}).get("id")
-        if not user_id:
-            payload = {"ok": False, "error": "Authentication required"}
-            return msgpack_response(payload, status_code=401) if wants_msgpack else JSONResponse(payload, status_code=401)
-        session_id = build_session_cache_key(frontend_session_id, auth_user)
-        snapshot_saved = snapshot.get("saved_corpus") or {}
-        corpus_id = str(snapshot_saved.get("id") or "").strip()
-        expected_saved_corpus = _load_saved_corpus_for_user(user_id, corpus_id) if corpus_id else None
-        manifest = _annotate_manifest_saved_corpus_state(_restore_browser_corpus_snapshot(
-            session_id,
-            snapshot,
-            expected_saved_corpus=expected_saved_corpus,
-        ))
-        saved_name = ((manifest.get("saved_corpus") or {}).get("name") or "Saved corpus")
-        focus_geojson = _build_research_focus_geojson(session_id)
-        prompt_window_warning = _manifest_prompt_window_warning(manifest)
-        payload = _json_safe_value({
-            "ok": True,
-            "message": f'Loaded "{saved_name}" from browser storage into the Research workspace.',
-            "corpus": manifest,
-            "focus_geojson": focus_geojson,
-            "warning": prompt_window_warning,
-        })
-        return msgpack_response(payload) if wants_msgpack else JSONResponse(payload)
-    except Exception as exc:
-        logger.exception("Research browser-save load error")
-        status_code = 409 if "out of date" in str(exc).lower() else 500
-        payload = {"ok": False, "error": str(exc)}
-        return msgpack_response(payload, status_code=status_code) if wants_msgpack else JSONResponse(payload, status_code=status_code)
-
 
 @router.post("/chat/research")
 async def research_chat_endpoint(req: Request):
