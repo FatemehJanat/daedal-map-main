@@ -840,6 +840,7 @@ def _read_browser_artifact_bytes(storage_key: str) -> tuple[bytes, str]:
         raise FileNotFoundError("No browser artifact storage key provided")
     if is_cloud_mode():
         import boto3 as _boto3
+        from botocore.exceptions import ClientError as _BotoClientError
         from mapmover.runtime_config import get_runtime_config
 
         cloud_cfg = get_runtime_config().get("cloud", {})
@@ -847,7 +848,16 @@ def _read_browser_artifact_bytes(storage_key: str) -> tuple[bytes, str]:
         endpoint_url = os.environ.get("S3_ENDPOINT_URL") or cloud_cfg.get("endpoint_url")
         region = os.environ.get("AWS_DEFAULT_REGION") or os.environ.get("AWS_REGION") or "auto"
         client = _boto3.client("s3", endpoint_url=endpoint_url, region_name=region)
-        obj = client.get_object(Bucket=bucket, Key=storage_key)
+        try:
+            obj = client.get_object(Bucket=bucket, Key=storage_key)
+        except _BotoClientError as exc:
+            error_code = (exc.response or {}).get("Error", {}).get("Code", "")
+            status_code = (exc.response or {}).get("ResponseMetadata", {}).get("HTTPStatusCode")
+            if error_code in ("NoSuchKey", "NoSuchBucket", "404") or status_code == 404:
+                raise FileNotFoundError(
+                    f"Browser artifact not found in cloud at key {storage_key}"
+                ) from exc
+            raise
         body = obj["Body"].read()
         content_type = str(obj.get("ContentType") or "application/gzip")
         return body, content_type
