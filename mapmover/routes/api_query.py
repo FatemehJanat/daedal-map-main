@@ -1172,12 +1172,13 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
         for field, value in equals_filters.items():
             field_name = str(field).strip()
             if field_name not in spec.filterable_fields:
+                available = sorted(spec.filterable_fields)
                 return error_response(
                     request_id,
                     "field_not_filterable",
-                    f"Field '{field_name}' is not filterable for source '{spec.source_id}'.",
+                    f"Field '{field_name}' is not filterable for source '{spec.source_id}'. Filterable fields are: {', '.join(available)}.",
                     400,
-                    retry_hint="Only use filterable fields published for this source.",
+                    retry_hint=f"Use one of the filterable fields: {', '.join(available)}.",
                     pack_id=spec.pack_id,
                     source_id=source_id,
                 )
@@ -1211,12 +1212,13 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
             op = str(entry.get("op") or "").strip()
             value = entry.get("value")
             if field_name not in available_compare_fields:
+                available = sorted(available_compare_fields)
                 return error_response(
                     request_id,
                     "field_not_filterable",
-                    f"Field '{field_name}' is not filterable for source '{spec.source_id}'.",
+                    f"Field '{field_name}' is not filterable for source '{spec.source_id}'. Filterable or selected metric fields are: {', '.join(available)}.",
                     400,
-                    retry_hint="Only compare against filterable fields or selected metric columns.",
+                    retry_hint=f"Use one of the filterable or selected metric fields: {', '.join(available)}.",
                     pack_id=spec.pack_id,
                     source_id=source_id,
                 )

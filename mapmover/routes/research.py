@@ -63,6 +63,11 @@ _RESEARCH_HEARTBEAT_MESSAGES = [
 _PROMPT_ARTIFACT_WINDOW = 64
 _RESEARCH_MAX_TOOL_ITERATIONS = 8
 _RESEARCH_MAX_TOKENS = 5000
+_PROMPT_METRIC_LIMIT = 8
+_PROMPT_FIELD_LIMIT = 12
+_PROMPT_SCENE_PERIOD_LIMIT = 4
+_PROMPT_SAVED_PACK_LIMIT = 4
+_TOOL_ROWS_PREVIEW_LIMIT = 8
 _PRIVATE_BROWSER_ARTIFACT_OUTPUT_ROOT = Path(__file__).resolve().parents[3] / "county-map-private" / "build" / "browser_artifacts" / "output"
 
 
@@ -1216,7 +1221,7 @@ def _compact_manifest_for_prompt(manifest: dict) -> dict:
                     "time_coverage_start": pack.get("time_coverage_start"),
                     "time_coverage_end": pack.get("time_coverage_end"),
                 }
-                for pack in (saved_corpus.get("packs") or [])[:8]
+                for pack in (saved_corpus.get("packs") or [])[:_PROMPT_SAVED_PACK_LIMIT]
             ],
         }
 
@@ -1230,13 +1235,13 @@ def _compact_manifest_for_prompt(manifest: dict) -> dict:
                 "source_name": artifact.get("source_name"),
                 "data_type": artifact.get("data_type"),
                 "geographic_level": artifact.get("geographic_level"),
-                "metrics": (artifact.get("metrics") or [])[:12],
-                "fields": (artifact.get("fields") or [])[:20],
+                "metrics": (artifact.get("metrics") or [])[:_PROMPT_METRIC_LIMIT],
+                "fields": (artifact.get("fields") or [])[:_PROMPT_FIELD_LIMIT],
                 "year_range": artifact.get("year_range"),
                 "feature_count": artifact.get("feature_count"),
                 "row_count": artifact.get("row_count"),
                 "summary": artifact.get("summary"),
-                "scene_periods": (artifact.get("scene_periods") or [])[:8],
+                "scene_periods": (artifact.get("scene_periods") or [])[:_PROMPT_SCENE_PERIOD_LIMIT],
                 "raster_clip_levels": artifact.get("raster_clip_levels") or [],
             }
         )
@@ -1333,7 +1338,7 @@ def _compact_tool_result_for_prompt(tool_name: str, tool_result: dict) -> dict:
                 "source_name": artifact.get("source_name"),
                 "data_type": artifact.get("data_type"),
                 "geographic_level": artifact.get("geographic_level"),
-                "metrics": (artifact.get("metrics") or [])[:8],
+                "metrics": (artifact.get("metrics") or [])[:6],
             }
             for artifact in artifacts[:_PROMPT_ARTIFACT_WINDOW]
         ]
@@ -1357,21 +1362,21 @@ def _compact_tool_result_for_prompt(tool_name: str, tool_result: dict) -> dict:
             "data_type": artifact.get("data_type"),
             "time_field": artifact.get("time_field"),
             "geographic_level": artifact.get("geographic_level"),
-            "metrics": (artifact.get("metrics") or [])[:12],
-            "fields": (artifact.get("fields") or [])[:20],
+            "metrics": (artifact.get("metrics") or [])[:_PROMPT_METRIC_LIMIT],
+            "fields": (artifact.get("fields") or [])[:_PROMPT_FIELD_LIMIT],
             "year_range": artifact.get("year_range"),
             "feature_count": artifact.get("feature_count"),
             "row_count": artifact.get("row_count"),
             "summary": artifact.get("summary"),
-            "scene_periods": (artifact.get("scene_periods") or [])[:8],
+            "scene_periods": (artifact.get("scene_periods") or [])[:_PROMPT_SCENE_PERIOD_LIMIT],
             "raster_clip_levels": artifact.get("raster_clip_levels") or [],
         }
         return compact
 
     if tool_name in {"query_artifact_slice", "build_artifact_display_subset"}:
         rows = tool_result.get("rows") or []
-        compact["rows_preview"] = rows[:15]
-        compact["preview_count"] = min(len(rows), 15)
+        compact["rows_preview"] = rows[:_TOOL_ROWS_PREVIEW_LIMIT]
+        compact["preview_count"] = min(len(rows), _TOOL_ROWS_PREVIEW_LIMIT)
         compact["returned_row_count"] = len(rows)
         compact["preview_note"] = (
             "rows_preview is only a capped sample of the returned rows. "
@@ -1479,7 +1484,7 @@ def run_research_chat(
     messages = [
         {
             "role": "user",
-            "content": "Active corpus manifest:\n```json\n" + json.dumps(prompt_manifest, indent=2, default=str) + "\n```",
+            "content": "Active corpus manifest JSON:\n" + json.dumps(prompt_manifest, default=str, separators=(",", ":")),
         },
         *(
             [{

@@ -240,6 +240,15 @@ def _build_dynamic_source_spec(source_id: str) -> ApiSourceSpec | None:
         field_name = str(field).strip()
         if field_name:
             filterable_fields.add(field_name)
+    # Auto-promote dimension columns to filterable fields. Sources that declare
+    # a `dimensions` block (e.g. fairfax_lst's geo_level) want those columns
+    # available as filters without having to repeat them in filterable_fields.
+    metadata_dimensions = metadata.get("dimensions") if isinstance(metadata.get("dimensions"), dict) else {}
+    for dim_key, dim_spec in metadata_dimensions.items():
+        if isinstance(dim_spec, dict):
+            column = str(dim_spec.get("column") or dim_key).strip()
+            if column:
+                filterable_fields.add(column)
     metadata_sortable = metadata.get("sortable_fields") if isinstance(metadata.get("sortable_fields"), list) else []
     for field in metadata_sortable:
         field_name = str(field).strip()

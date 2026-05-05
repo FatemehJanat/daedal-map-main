@@ -64,27 +64,8 @@ def _detect_geography_terms(query: str) -> list[str]:
     return matched
 
 
-def _summarize_manifest(corpus_manifest: dict) -> list[dict]:
-    artifacts = corpus_manifest.get("artifacts") or []
-    summary = []
-    for artifact in artifacts[:8]:
-        summary.append(
-            {
-                "artifact_id": artifact.get("artifact_id"),
-                "source_id": artifact.get("source_id"),
-                "source_name": artifact.get("source_name"),
-                "data_type": artifact.get("data_type"),
-                "geographic_level": artifact.get("geographic_level"),
-                "metrics": artifact.get("metrics", [])[:8],
-                "year_range": artifact.get("year_range"),
-            }
-        )
-    return summary
-
-
 def preprocess_research_query(query: str, corpus_manifest: dict | None = None) -> dict:
     """Extract small corpus-safe hints for a Research turn."""
-    corpus_manifest = corpus_manifest or {}
     time_hints = detect_time_patterns_impl(query)
     return {
         "display_request_likely": _detect_boolean(query, DISPLAY_PATTERNS),
@@ -92,7 +73,6 @@ def preprocess_research_query(query: str, corpus_manifest: dict | None = None) -
         "comparison_request_likely": _detect_boolean(query, COMPARISON_PATTERNS),
         "geography_terms": _detect_geography_terms(query),
         "time": time_hints,
-        "corpus_summary": _summarize_manifest(corpus_manifest),
     }
 
 
@@ -122,13 +102,5 @@ def build_research_hint_context(hints: dict | None) -> str:
                 explicit_bits.append(f"{key}={value}")
         if explicit_bits:
             parts.append("Time hints: " + ", ".join(explicit_bits))
-
-    corpus_summary = hints.get("corpus_summary") or []
-    if corpus_summary:
-        parts.append("Compact corpus summary:\n" + "\n".join(
-            f"- {item.get('artifact_id')}: {item.get('source_name') or item.get('source_id')} "
-            f"({item.get('data_type')}, level={item.get('geographic_level')}, metrics={', '.join(item.get('metrics') or [])})"
-            for item in corpus_summary
-        ))
 
     return "\n".join(parts).strip()
