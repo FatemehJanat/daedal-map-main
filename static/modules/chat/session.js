@@ -16,6 +16,10 @@ function namespacedKey(baseKey) {
   return `${baseKey}:${getStorageNamespace()}`;
 }
 
+function normalizeActiveMode(mode) {
+  return mode === 'research' || mode === 'ops' ? mode : 'explore';
+}
+
 /**
  * Get existing session ID from localStorage or create a new one.
  * Session persists across tab close/refresh for recovery.
@@ -73,7 +77,7 @@ export function saveChatState(historyOrState, messagesHtml) {
         }
       : {
           version: 3,
-          activeMode: historyOrState?.activeMode === 'research' ? 'research' : 'explore',
+          activeMode: normalizeActiveMode(historyOrState?.activeMode),
           selectedResearchCorpusId: historyOrState?.selectedResearchCorpusId || null
         };
 
@@ -92,15 +96,15 @@ export function restoreChatState() {
     const historyJson = localStorage.getItem(namespacedKey(CHAT_HISTORY_KEY));
     if (historyJson) {
       const parsed = JSON.parse(historyJson);
-      const activeMode = parsed?.activeMode === 'research' ? 'research' : 'explore';
+      const activeMode = normalizeActiveMode(parsed?.activeMode);
       console.log('[Session] Restored chat mode:', activeMode);
       return {
         activeMode,
         selectedResearchCorpusId: parsed?.selectedResearchCorpusId || null,
         history: [],
         messagesHtml: '',
-        modeHistories: { explore: [], research: [] },
-        modeMessagesHtml: { explore: '', research: '' },
+        modeHistories: { explore: [], research: [], ops: [] },
+        modeMessagesHtml: { explore: '', research: '', ops: '' },
         researchMemory: null,
       };
     }

@@ -598,9 +598,15 @@ body.mobile-limited #mobileMapNotice {
   align-items: center;
 }
 
+.chat-mode-toggle__group {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .chat-mode-toggle__btn {
-  width: 112px;
-  min-width: 112px;
+  width: 96px;
+  min-width: 96px;
   border: 1px solid #36506e;
   background: #17314a;
   color: #d9e7f2;
@@ -642,6 +648,13 @@ body.mobile-limited #mobileMapNotice {
   background: #4a3420;
   color: #ffe4bf;
   box-shadow: 0 0 0 1px rgba(255, 166, 77, 0.2), 0 0 14px rgba(255, 166, 77, 0.26);
+}
+
+.chat-mode-toggle__btn[data-mode="ops"].active {
+  border-color: #e3c04a;
+  background: #473d19;
+  color: #fff0ba;
+  box-shadow: 0 0 0 1px rgba(227, 192, 74, 0.22), 0 0 14px rgba(227, 192, 74, 0.24);
 }
 
 .chat-mode-toggle__btn:not(.active) {

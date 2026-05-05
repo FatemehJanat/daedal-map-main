@@ -1,5 +1,5 @@
 /**
- * Minimal Explore / Research mode toggle for the chat panel.
+ * Workflow mode toggle for the chat panel.
  */
 
 import { postMsgpack } from '../utils/fetch.js';
@@ -27,16 +27,18 @@ export class ResearchModeToggle {
     this.optionsLoadingLabel = 'Loading saved corpora...';
   }
 
+  static MODES = ['explore', 'research', 'ops'];
+
   init() {
     if (!this.container) return;
 
-    const mount = document.getElementById('sidebarModeMount');
+    const mount = document.getElementById('mapModeMount') || document.getElementById('sidebarModeMount');
     const corpusMount = document.getElementById('sidebarResearchMount');
     const wrap = document.createElement('div');
     wrap.className = 'chat-mode-toggle chat-mode-toggle--header';
     const corpusControls = this.createCorpusControls();
 
-    wrap.appendChild(this.createToggleButton());
+    wrap.appendChild(this.createToggleButtons());
     if (mount) {
       mount.replaceChildren(wrap);
     } else {
@@ -50,18 +52,27 @@ export class ResearchModeToggle {
     this.updateActive();
   }
 
-  createToggleButton() {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'chat-mode-toggle__btn';
-    btn.dataset.mode = this.mode;
-    btn.addEventListener('click', async () => {
-      this.mode = this.mode === 'research' ? 'explore' : 'research';
-      this.updateActive();
-      await this.onModeChange?.(this.mode);
-    });
-    this.buttons.toggle = btn;
-    return btn;
+  createToggleButtons() {
+    const group = document.createElement('div');
+    group.className = 'chat-mode-toggle__group';
+
+    for (const mode of ResearchModeToggle.MODES) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'chat-mode-toggle__btn';
+      btn.dataset.mode = mode;
+      btn.textContent = this.getModeLabel(mode);
+      btn.addEventListener('click', async () => {
+        if (this.mode === mode) return;
+        this.mode = mode;
+        this.updateActive();
+        await this.onModeChange?.(this.mode);
+      });
+      this.buttons[mode] = btn;
+      group.appendChild(btn);
+    }
+
+    return group;
   }
 
   createCorpusControls() {
@@ -115,15 +126,15 @@ export class ResearchModeToggle {
     this.selectedCorpusId = selectedValue;
     const title = document.getElementById('sidebarModeTitle');
     if (title) {
-      title.textContent = this.mode === 'research' ? 'Research Mode' : 'Explore Mode';
+      title.textContent = this.getModeTitle(this.mode);
     }
-    const toggleBtn = this.buttons.toggle;
-    if (toggleBtn) {
-      toggleBtn.dataset.mode = this.mode;
-      toggleBtn.classList.add('active');
-      toggleBtn.textContent = 'Swap Modes';
-      toggleBtn.title = this.mode === 'research' ? 'Switch to Explore mode' : 'Switch to Research mode';
-      toggleBtn.setAttribute('aria-pressed', 'true');
+    for (const mode of ResearchModeToggle.MODES) {
+      const btn = this.buttons[mode];
+      if (!btn) continue;
+      const isActive = this.mode === mode;
+      btn.classList.toggle('active', isActive);
+      btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+      btn.title = isActive ? `${this.getModeTitle(mode)} active` : `Switch to ${this.getModeTitle(mode)}`;
     }
     if (this.controls.wrap) {
       const hideCorpusControls = this.mode !== 'research';
@@ -137,6 +148,14 @@ export class ResearchModeToggle {
         ? 'Loading...'
         : (alreadyLoaded ? 'Loaded' : 'Load Data');
     }
+  }
+
+  getModeLabel(mode) {
+    return mode === 'research' ? 'Research' : mode === 'ops' ? 'Ops' : 'Explore';
+  }
+
+  getModeTitle(mode) {
+    return mode === 'research' ? 'Research Mode' : mode === 'ops' ? 'Ops Mode' : 'Explore Mode';
   }
 
   async snapshotCorpus() {

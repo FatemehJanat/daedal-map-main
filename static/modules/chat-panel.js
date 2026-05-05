@@ -79,6 +79,12 @@ const EVENT_TYPE_TO_OVERLAY = {
   landslide: 'landslides'
 };
 
+const CHAT_MODES = ['explore', 'research', 'ops'];
+
+function normalizeChatMode(mode) {
+  return CHAT_MODES.includes(mode) ? mode : 'explore';
+}
+
 function normalizeResearchHistory(history) {
   return (history || [])
     .map(msg => ({
@@ -350,9 +356,9 @@ let researchModeToggle = null;
 export const ChatManager = {
   history: [],
   mode: 'explore',
-  modeHistories: { explore: [], research: [] },
-  modeMessagesHtml: { explore: '', research: '' },
-  modeRequestInFlight: { explore: false, research: false },
+  modeHistories: { explore: [], research: [], ops: [] },
+  modeMessagesHtml: { explore: '', research: '', ops: '' },
+  modeRequestInFlight: { explore: false, research: false, ops: false },
   pendingResearchRasterMode: null,
   researchMemory: null,
   selectedResearchCorpusId: '',
@@ -398,11 +404,7 @@ export const ChatManager = {
     this.setActiveMessagePane(this.mode);
 
     this.initModeToggle();
-    if (this.mode === 'research') {
-      App?.enterResearchCanvasMode?.();
-    } else {
-      App?.leaveResearchCanvasMode?.();
-    }
+    App?.activateLaneMapView?.(this.mode, { force: true });
     Promise.resolve(this.seedEmptyConversation(this.mode)).catch((error) => {
       console.warn('Could not seed initial conversation:', error);
     });
@@ -437,7 +439,7 @@ export const ChatManager = {
   },
 
   /**
-   * Initialize Explore/Research chat mode toggle.
+   * Initialize workflow mode toggle.
    */
   initModeToggle() {
     researchModeToggle = new ResearchModeToggle({
@@ -468,11 +470,11 @@ export const ChatManager = {
     researchModeToggle.init();
     researchModeToggle.setSelectedCorpusId(this.selectedResearchCorpusId);
     researchModeToggle.setCorpusOptions(this.researchCorpusOptions, this.selectedResearchCorpusId);
-    this.updateResearchCorpusStatus();
+    this.applyModeUiState();
   },
 
   async switchChatMode(mode) {
-    if (mode !== 'explore' && mode !== 'research') return;
+    mode = normalizeChatMode(mode);
     if (mode === this.mode) return;
 
     this.syncModeMessagesHtml(this.mode);
@@ -480,25 +482,18 @@ export const ChatManager = {
 
     this.mode = mode;
     this.history = this.modeHistories[mode] || [];
-    this.setActiveMessagePane(mode);
-    if (mode !== 'research') {
-      this.researchMemory = this.researchMemory || null;
-    }
+    this.applyModeUiState();
+    App?.activateLaneMapView?.(mode);
 
     if (mode === 'research') {
-      App?.enterResearchCanvasMode?.();
       await this.refreshResearchCorpusOptions();
-    } else {
-      App?.leaveResearchCanvasMode?.();
     }
 
     if (this.history.length === 0 && !this.modeMessagesHtml[mode]) {
       await this.seedEmptyConversation(mode);
     }
 
-    this.updateResearchCorpusStatus();
-    this.updateSidebarModeLayout();
-    this.updateComposerState();
+    this.applyModeUiState();
     this.saveState();
   },
 
@@ -530,6 +525,11 @@ export const ChatManager = {
       return;
     }
 
+    if (mode === 'ops') {
+      this.addMessage('Ops mode shell ready. This is a placeholder workflow state for focused live monitoring UI, while chat still uses the current Explore lane underneath.', 'assistant', { mode: 'ops' });
+      return;
+    }
+
     this.addMessage(WELCOME_MESSAGE, 'assistant', { html: true, mode: 'explore' });
   },
 
@@ -538,7 +538,7 @@ export const ChatManager = {
     if (!host) return;
     host.innerHTML = '';
     this.messagePanes = {};
-    for (const mode of ['explore', 'research']) {
+    for (const mode of CHAT_MODES) {
       const pane = document.createElement('div');
       pane.className = 'chat-messages-pane';
       pane.dataset.chatMode = mode;
@@ -566,7 +566,7 @@ export const ChatManager = {
   },
 
   syncAllMessagePanes() {
-    for (const mode of ['explore', 'research']) {
+    for (const mode of CHAT_MODES) {
       const pane = this.messagePanes?.[mode];
       if (!pane) continue;
       pane.innerHTML = this.modeMessagesHtml[mode] || '';
@@ -579,6 +579,36 @@ export const ChatManager = {
     const base = String(this.sessionId || '').trim();
     if (!base) return getOrCreateSessionId();
     return `${base}:${mode}`;
+  },
+
+  bindModeToMapView(mode, mapViewId, options = {}) {
+    const normalizedMode = normalizeChatMode(mode);
+    const boundViewId = App?.bindLaneToMapView?.(normalizedMode, mapViewId, {
+      activate: options.activate !== false
+    });
+    if (boundViewId && options.saveState !== false) {
+      this.saveState();
+    }
+    return boundViewId;
+  },
+
+  getModeMapViewBindings() {
+    return CHAT_MODES.reduce((acc, mode) => {
+      acc[mode] = App?.getLaneMapBinding?.(mode) || null;
+      return acc;
+    }, {});
+  },
+
+  applyModeUiState() {
+    if (researchModeToggle) {
+      researchModeToggle.mode = this.mode;
+      researchModeToggle.setSelectedCorpusId(this.selectedResearchCorpusId);
+      researchModeToggle.updateActive();
+    }
+    this.setActiveMessagePane(this.mode);
+    this.updateResearchCorpusStatus();
+    this.updateSidebarModeLayout();
+    this.updateComposerState();
   },
 
   updateComposerState() {
@@ -596,11 +626,12 @@ export const ChatManager = {
 
   updateSidebarModeLayout() {
     const { orderPanel, resizeOrder, form } = this.elements;
-    const hideOrderTaker = this.mode === 'research';
+    const hideOrderTaker = this.mode === 'research' || this.mode === 'ops';
     const container = document.getElementById('chatContainer');
     if (container) {
-      container.classList.toggle('chat-container--research', hideOrderTaker);
-      container.classList.toggle('chat-container--explore', !hideOrderTaker);
+      container.classList.toggle('chat-container--research', this.mode === 'research');
+      container.classList.toggle('chat-container--ops', this.mode === 'ops');
+      container.classList.toggle('chat-container--explore', this.mode === 'explore');
     }
     if (orderPanel) {
       orderPanel.hidden = hideOrderTaker;
@@ -619,12 +650,13 @@ export const ChatManager = {
   },
 
   enforceResearchUiBoundaries() {
-    const hideOrderTaker = this.mode === 'research';
+    const hideOrderTaker = this.mode === 'research' || this.mode === 'ops';
     const { orderPanel, resizeOrder } = this.elements;
     const container = document.getElementById('chatContainer');
     if (container) {
-      container.classList.toggle('chat-container--research', hideOrderTaker);
-      container.classList.toggle('chat-container--explore', !hideOrderTaker);
+      container.classList.toggle('chat-container--research', this.mode === 'research');
+      container.classList.toggle('chat-container--ops', this.mode === 'ops');
+      container.classList.toggle('chat-container--explore', this.mode === 'explore');
     }
     for (const element of [orderPanel, resizeOrder]) {
       if (!element) continue;
@@ -1311,7 +1343,7 @@ export const ChatManager = {
           if (result.type === 'events') {
             ingestEventsToOverlay(result);
           }
-          App?.displayData(result);
+          App?.displayMapPayload(result);
         }
       },
       onFailed: (queueId, error) => {
@@ -1385,13 +1417,13 @@ export const ChatManager = {
       // Handle removal orders (no geojson, just identifiers)
       const message = data.summary || `Removed ${data.count || 0} ${data.data_type || 'items'}`;
       this.addMessage(message, 'assistant');
-      App?.displayData(data, { order });
+      App?.displayMapPayload(data, { order });
       unregisterLoadedData(order);  // Track removal for LLM context
       if (orderPanel.switchTab) orderPanel.switchTab('loaded');
     } else if (data.type === 'mixed_order' && data.results) {
       // Handle mixed add/remove orders - process each result
       for (const result of data.results) {
-        App?.displayData(result, { order });
+        App?.displayMapPayload(result, { order });
       }
       // Track both adds and removes for LLM context
       registerLoadedData(order, data);
@@ -1429,7 +1461,7 @@ export const ChatManager = {
       // Track loaded data for LLM context
       registerLoadedData(order, data);
 
-      App?.displayData(data, { order });
+      App?.displayMapPayload(data, { order });
     }
   },
 
@@ -1471,9 +1503,9 @@ export const ChatManager = {
   restoreState() {
     const state = restoreChatState();
     if (state) {
-      this.mode = state.activeMode === 'research' ? 'research' : 'explore';
-      this.modeHistories = { explore: [], research: [] };
-      this.modeMessagesHtml = { explore: '', research: '' };
+      this.mode = normalizeChatMode(state.activeMode);
+      this.modeHistories = { explore: [], research: [], ops: [] };
+      this.modeMessagesHtml = { explore: '', research: '', ops: '' };
       this.researchMemory = null;
       this.selectedResearchCorpusId = state.selectedResearchCorpusId || '';
       this.history = [];
@@ -1481,8 +1513,8 @@ export const ChatManager = {
     }
 
     this.mode = 'explore';
-    this.modeHistories = { explore: [], research: [] };
-    this.modeMessagesHtml = { explore: '', research: '' };
+    this.modeHistories = { explore: [], research: [], ops: [] };
+    this.modeMessagesHtml = { explore: '', research: '', ops: '' };
     this.researchMemory = null;
     this.selectedResearchCorpusId = '';
     this.history = [];
@@ -1502,16 +1534,16 @@ export const ChatManager = {
    * Clear current session and start fresh.
    */
   async clearSession() {
-    const oldSessionIds = ['explore', 'research'].map(mode => this.getSessionIdForMode(mode));
-    const preservedMode = this.mode === 'research' ? 'research' : 'explore';
+    const oldSessionIds = CHAT_MODES.map(mode => this.getSessionIdForMode(mode));
+    const preservedMode = normalizeChatMode(this.mode);
     const preservedResearchCorpusId = preservedMode === 'research' ? this.selectedResearchCorpusId : '';
 
     // Clear state
     this.history = [];
     this.mode = preservedMode;
-    this.modeHistories = { explore: [], research: [] };
-    this.modeMessagesHtml = { explore: '', research: '' };
-    this.modeRequestInFlight = { explore: false, research: false };
+    this.modeHistories = { explore: [], research: [], ops: [] };
+    this.modeMessagesHtml = { explore: '', research: '', ops: '' };
+    this.modeRequestInFlight = { explore: false, research: false, ops: false };
     this.researchMemory = null;
     this.selectedResearchCorpusId = preservedResearchCorpusId;
     this.researchCorpusOptions = [];
@@ -1767,6 +1799,8 @@ export const ChatManager = {
     btn.innerHTML = '<span class="btn-spinner"></span> Loading...';
     try {
       const disasterIds = ['earthquakes', 'hurricanes', 'volcanoes', 'wildfires', 'tsunamis', 'tornadoes'];
+      const startMs = new Date(Date.UTC(2020, 0, 1)).getTime();
+      const endMs = new Date(Date.UTC(2025, 11, 31, 23, 59, 59)).getTime();
 
       // Move trim handles to 2020-2025 (overall range stays at default 2000-present)
       window.TimeSlider?.setTrimBounds(2020, 2025);
@@ -1783,6 +1817,23 @@ export const ChatManager = {
           window.OverlaySelector?.toggle(id);
         }
       }
+
+      // Preload fills the cache before overlays are enabled, which means the normal
+      // overlay activation path may skip its first-time slider initialization.
+      // Seed the slider explicitly, then force a cache-based render so Explore
+      // immediately shows the loaded disaster window.
+      if (window.TimeSlider) {
+        window.TimeSlider.setTimeRange({
+          min: startMs,
+          max: endMs,
+          granularity: 'timestamp',
+          available: null,
+          replace: true
+        });
+        window.TimeSlider.show?.();
+        window.TimeSlider.setTime?.(startMs, 'api');
+      }
+      window.OverlayController?.rerenderFromCache?.();
 
       const loaded = summary ? Object.values(summary).filter(r => r.loaded).length : 0;
       btn.textContent = `Loaded (${loaded}/6 datasets)`;
@@ -2135,13 +2186,13 @@ export const ChatManager = {
 
       case 'data':
         add(response.summary || 'Here is your data.', 'assistant');
-        App?.displayData(response);
+        App?.displayMapPayload(response);
         break;
 
       case 'events':
         add(response.summary || `Showing ${response.count} ${response.event_type} events.`, 'assistant');
         ingestEventsToOverlay(response);
-        App?.displayData(response);
+        App?.displayMapPayload(response);
         break;
 
       case 'cache_answer':
@@ -2155,14 +2206,14 @@ export const ChatManager = {
         } else {
           add(response.summary || 'Order complete.', 'assistant');
         }
-        App?.displayData(response);
+        App?.displayMapPayload(response);
         break;
 
       case 'mixed_order':
         // Handle mixed add/remove orders
         if (response.results) {
           for (const result of response.results) {
-            App?.displayData(result);
+            App?.displayMapPayload(result);
           }
         }
         add(response.summary || `Updated: added ${response.add_count || 0}, removed ${response.remove_count || 0}`, 'assistant');
@@ -2171,7 +2222,7 @@ export const ChatManager = {
       case 'geometry_remove':
         // Legacy: Remove geometry regions from display (now handled by order_response)
         add(response.message || 'Removing geometry.', 'assistant');
-        App?.displayData({ ...response, action: 'remove', data_type: 'geometry' });
+        App?.displayMapPayload({ ...response, action: 'remove', data_type: 'geometry' });
         break;
 
       case 'filter_update':
@@ -2292,7 +2343,7 @@ export const ChatManager = {
           if (response.event_type) {
             ingestEventsToOverlay(response);
           }
-          App?.displayData(response);
+          App?.displayMapPayload(response);
         } else {
           add(response.summary || response.message || 'Could you be more specific?', 'assistant');
         }
@@ -2307,12 +2358,12 @@ export const ChatManager = {
 
     if (display.action === 'highlight_features' && display.geojson?.features?.length) {
       this.lastResearchDisplay = display;
-      App.applyResearchDisplay?.(display);
+      App.displayMapPayload?.({ display }, { origin: 'research' });
       return;
     }
 
     if (display.raster?.provider) {
-      App.applyResearchDisplay?.(display);
+      App.displayMapPayload?.({ display }, { origin: 'research' });
     }
   },
 
@@ -2986,7 +3037,7 @@ export const ChatManager = {
 
         // Display the geometry overlay via the geometry pipeline
         // displayData will handle fitToBounds internally
-        App?.displayData({
+        App?.displayMapPayload({
           data_type: 'geometry',
           geojson: overlayGeojson,
           source_id: geometryOverlay.source_id,
