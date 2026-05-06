@@ -1,6 +1,10 @@
 import { getSiteBaseUrl } from '../auth.js';
 
 let bridgeFramePromise = null;
+let bridgeUnavailableUntilMs = 0;
+const BRIDGE_INIT_TIMEOUT_MS = 1200;
+const BRIDGE_REQUEST_TIMEOUT_MS = 1200;
+const BRIDGE_FAILURE_COOLDOWN_MS = 30000;
 
 export function getBridgeOrigin() {
   const siteBase = String(getSiteBaseUrl?.() || '').trim().replace(/\/$/, '');
@@ -10,7 +14,7 @@ export function getBridgeOrigin() {
 }
 
 export function canUseBridge() {
-  return Boolean(getBridgeOrigin());
+  return Boolean(getBridgeOrigin()) && Date.now() >= bridgeUnavailableUntilMs;
 }
 
 export async function getBridgeFrame() {
@@ -20,7 +24,7 @@ export async function getBridgeFrame() {
   bridgeFramePromise = new Promise((resolve, reject) => {
     const bridgeOrigin = getBridgeOrigin();
     const iframe = document.createElement('iframe');
-    const timeoutMs = 4000;
+    const timeoutMs = BRIDGE_INIT_TIMEOUT_MS;
     let settled = false;
 
     function cleanup() {
@@ -54,6 +58,7 @@ export async function getBridgeFrame() {
     document.body.appendChild(iframe);
   }).catch((error) => {
     bridgeFramePromise = null;
+    bridgeUnavailableUntilMs = Date.now() + BRIDGE_FAILURE_COOLDOWN_MS;
     throw error;
   });
 
@@ -68,7 +73,7 @@ export async function postBridgeMessage(type, payload = {}) {
 
   return await new Promise((resolve, reject) => {
     const requestId = `bridge_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-    const timeoutMs = 4000;
+    const timeoutMs = BRIDGE_REQUEST_TIMEOUT_MS;
 
     function cleanup() {
       window.removeEventListener('message', onMessage);
@@ -89,6 +94,7 @@ export async function postBridgeMessage(type, payload = {}) {
 
     const timer = window.setTimeout(() => {
       cleanup();
+      bridgeUnavailableUntilMs = Date.now() + BRIDGE_FAILURE_COOLDOWN_MS;
       reject(new Error('Shared storage bridge request timed out'));
     }, timeoutMs);
 
