@@ -428,7 +428,7 @@ body.map-ui-fullscreen #tutorialTimelineRegion {
   flex-direction: column;
   align-items: center;
   gap: 10px;
-  pointer-events: none;
+  pointer-events: auto;
   z-index: 5900;
   opacity: 0;
   transform: translate(-50%, -50%) scale(0.9);
@@ -486,6 +486,34 @@ body.map-ui-fullscreen #tutorialTimelineRegion {
   letter-spacing: 0.02em;
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.3);
   white-space: nowrap;
+}
+
+.map-loading-cancel {
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 178, 77, 0.34);
+  background: rgba(7, 20, 31, 0.92);
+  color: #ffe7bf;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease, opacity 0.15s ease;
+}
+
+.map-loading-cancel:hover {
+  border-color: rgba(255, 178, 77, 0.62);
+  background: rgba(18, 30, 43, 0.98);
+  transform: translateY(-1px);
+}
+
+.map-loading-cancel:disabled {
+  opacity: 0.45;
+  cursor: default;
+  transform: none;
 }
 
 @keyframes map-loading-spin {

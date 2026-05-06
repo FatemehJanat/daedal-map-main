@@ -5,7 +5,7 @@
 
 import { CONFIG } from './config.js';
 import { GeometryCache, LocationInfoCache } from './cache.js';
-import { fetchMsgpack, postMsgpack } from './utils/fetch.js';
+import { cancelActiveRequests, fetchMsgpack, postMsgpack } from './utils/fetch.js';
 import { ViewportLoader, setDependencies as setViewportDeps } from './viewport-loader.js';
 import { MapAdapter, setDependencies as setMapDeps } from './map-adapter.js';
 import { NavigationManager, setDependencies as setNavDeps } from './navigation.js';
@@ -562,6 +562,7 @@ export const App = {
     this.setupMobileExperienceNotice();
     this.initializeMapViews();
     this.setupFullscreenToggle();
+    this.setupLoadingIndicatorControls();
 
     // Initialize components
     ChatManager.init();
@@ -1054,6 +1055,18 @@ export const App = {
       this.setUiFullscreen(!this.uiFullscreen);
     });
     this.setUiFullscreen(false);
+  },
+
+  setupLoadingIndicatorControls() {
+    const btn = document.getElementById('cancelLoadingButton');
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      cancelActiveRequests();
+      ViewportLoader.abortController?.abort?.();
+      for (const controller of OverlayController?.abortControllers?.values?.() || []) {
+        controller.abort();
+      }
+    });
   },
 
   async preloadPublicPackCatalog({ forceRefresh = false } = {}) {

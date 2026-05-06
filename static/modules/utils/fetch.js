@@ -12,6 +12,7 @@ const msgpack = window.MessagePack || {};
 let activeRequestCount = 0;
 let loadingIndicatorTimer = null;
 const activeLoadingLabels = [];
+const activeAbortControllers = new Set();
 
 // localStorage key for tracking API calls for session recovery
 const API_CALLS_KEY = 'countymap_api_calls';
@@ -48,6 +49,10 @@ function getGlobalLoadingText() {
   return document.querySelector('#loadingIndicator .map-loading-text');
 }
 
+function getGlobalLoadingCancelButton() {
+  return document.getElementById('cancelLoadingButton');
+}
+
 function inferLoadingLabel(url, options = {}) {
   const method = String(options.method || 'GET').toUpperCase();
 
@@ -81,11 +86,15 @@ function inferLoadingLabel(url, options = {}) {
 function syncGlobalLoadingIndicator() {
   const indicator = getGlobalLoadingIndicator();
   const text = getGlobalLoadingText();
+  const cancelButton = getGlobalLoadingCancelButton();
   if (!indicator) return;
   if (text) {
     text.textContent = activeLoadingLabels.length > 0
       ? activeLoadingLabels[activeLoadingLabels.length - 1]
       : 'Loading data...';
+  }
+  if (cancelButton) {
+    cancelButton.disabled = activeRequestCount <= 0;
   }
   if (activeRequestCount > 0) {
     if (loadingIndicatorTimer == null) {
@@ -104,6 +113,16 @@ function syncGlobalLoadingIndicator() {
     }
     indicator.classList.remove('visible');
     indicator.setAttribute('aria-hidden', 'true');
+  }
+}
+
+export function cancelActiveRequests() {
+  for (const controller of [...activeAbortControllers]) {
+    try {
+      controller.abort();
+    } catch (error) {
+      console.warn('Could not abort active request', error);
+    }
   }
 }
 
@@ -181,6 +200,15 @@ export async function fetchMsgpack(url, options = {}) {
   }
 
   const loadingLabel = inferLoadingLabel(url, options);
+  const requestController = new AbortController();
+  activeAbortControllers.add(requestController);
+  if (options.signal) {
+    if (options.signal.aborted) {
+      requestController.abort();
+    } else {
+      options.signal.addEventListener('abort', () => requestController.abort(), { once: true });
+    }
+  }
   activeRequestCount += 1;
   activeLoadingLabels.push(loadingLabel);
   syncGlobalLoadingIndicator();
@@ -188,6 +216,7 @@ export async function fetchMsgpack(url, options = {}) {
   try {
     const response = await fetch(url, {
       ...options,
+      signal: requestController.signal,
       headers: {
         'Accept': 'application/msgpack',
         ...buildAuthHeaders(),
@@ -212,6 +241,7 @@ export async function fetchMsgpack(url, options = {}) {
     const buffer = await response.arrayBuffer();
     return msgpack.decode(new Uint8Array(buffer));
   } finally {
+    activeAbortControllers.delete(requestController);
     activeRequestCount = Math.max(0, activeRequestCount - 1);
     const labelIndex = activeLoadingLabels.lastIndexOf(loadingLabel);
     if (labelIndex >= 0) {
