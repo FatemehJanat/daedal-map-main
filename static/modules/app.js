@@ -23,8 +23,8 @@ import { DisasterPopup, setDependencies as setDisasterPopupDeps } from './disast
 import { GeometryModel, setDependencies as setGeometryDeps } from './models/model-geometry.js';
 import { AuthManager } from './auth.js';
 import { TutorialMode } from './tutorial-mode.js';
-import { FairfaxRasterPanel } from './fairfax-raster-panel.js';
-import { LstRasterModel, setDependencies as setLstRasterDeps } from './model-lst-raster.js';
+import { RasterPanel } from './raster-panel.js';
+import { setDependencies as setSceneRasterDeps } from './scene-raster-model.js';
 import { loadPublicPackCatalog } from './shared/catalog-cache.js';
 
 const CHAT_MAP_LANES = ['explore', 'research', 'ops'];
@@ -93,6 +93,7 @@ export const App = {
     ops: 'view-ops-watch'
   },
   activeMapViewId: null,
+  activeMapLane: 'explore',
 
   getNumericAdminLevel(level) {
     if (typeof level === 'number' && !Number.isNaN(level)) return level;
@@ -552,7 +553,7 @@ export const App = {
     setOverlayControllerDeps({ MapAdapter, ModelRegistry, OverlaySelector, TimeSlider });
     setDisasterPopupDeps({ MapAdapter });
     setGeometryDeps({ MapAdapter });
-    setLstRasterDeps({ MapAdapter });
+    setSceneRasterDeps({ MapAdapter });
 
     await AuthManager.init();
     Promise.resolve(this.preloadPublicPackCatalog()).catch((error) => {
@@ -660,7 +661,6 @@ export const App = {
       state: {
         canvasMode: 'explore',
         camera: null,
-        researchDisplay: null,
         ...cloneSerializable(seedState)
       }
     };
@@ -727,8 +727,113 @@ export const App = {
     return {
       canvasMode: this.currentCanvasMode || normalizeChatMapLane(this.pendingCanvasMode),
       camera,
-      researchDisplay: cloneSerializable(this.currentResearchDisplay || null)
+      surfaceState: this.captureCurrentSurfaceState()
     };
+  },
+
+  captureTimeSliderState() {
+    if (!TimeSlider) return null;
+    const isVisible = Boolean(TimeSlider.container?.classList?.contains('visible'));
+    if (TimeSlider.currentTime == null && !isVisible) return null;
+    return {
+      visible: isVisible,
+      currentTime: TimeSlider.currentTime,
+      boundMinTime: TimeSlider.boundMinTime,
+      boundMaxTime: TimeSlider.boundMaxTime,
+      speedSliderValue: TimeSlider.speedSliderValue,
+      activeScaleId: TimeSlider.activeScaleId || null,
+      isLiveMode: Boolean(TimeSlider.isLiveMode),
+      isLiveLocked: Boolean(TimeSlider.isLiveLocked)
+    };
+  },
+
+  applyTimeSliderState(timeSliderState = null) {
+    if (!timeSliderState || !TimeSlider) return;
+    if (typeof timeSliderState.speedSliderValue === 'number' && TimeSlider.setSpeedFromSlider) {
+      TimeSlider.setSpeedFromSlider(timeSliderState.speedSliderValue);
+      if (TimeSlider.speedSlider) {
+        TimeSlider.speedSlider.value = String(timeSliderState.speedSliderValue);
+      }
+    }
+    if (timeSliderState.boundMinTime != null || timeSliderState.boundMaxTime != null) {
+      TimeSlider.setTrimBounds?.(timeSliderState.boundMinTime ?? null, timeSliderState.boundMaxTime ?? null);
+    } else {
+      TimeSlider.resetTrimBounds?.();
+    }
+    if (timeSliderState.activeScaleId && TimeSlider.activeScaleId !== timeSliderState.activeScaleId) {
+      TimeSlider.setActiveScale?.(timeSliderState.activeScaleId);
+    }
+    if (timeSliderState.currentTime != null) {
+      TimeSlider.setTime?.(timeSliderState.currentTime, 'api');
+    }
+    if (timeSliderState.visible) {
+      TimeSlider.show?.();
+      TimeSlider.refreshDisplay?.();
+    } else {
+      TimeSlider.hide?.();
+    }
+  },
+
+  captureCurrentSurfaceState() {
+    const surfaceState = {};
+
+    if (this.currentCanvasMode === 'explore') {
+      if (this.currentData && (this.currentData.data_type || this.currentData.type || this.currentData.geojson?.features?.length)) {
+        surfaceState.dataPayload = cloneSerializable(this.currentData);
+      }
+      const timeSliderState = this.captureTimeSliderState();
+      if (timeSliderState) {
+        surfaceState.timeSlider = timeSliderState;
+      }
+    }
+
+    const rasterState = RasterPanel.getState?.();
+    if (rasterState?.source_id || rasterState?.visible) {
+      if (rasterState.clip_mode === 'selection') {
+        rasterState.loc_ids = Array.isArray(this.currentResearchDisplay?.loc_ids)
+          ? [...this.currentResearchDisplay.loc_ids]
+          : [];
+      }
+      surfaceState.raster = rasterState;
+    }
+
+    return Object.keys(surfaceState).length ? surfaceState : null;
+  },
+
+  restoreSurfaceState(surfaceState = null, options = {}) {
+    const lane = normalizeChatMapLane(options.lane);
+    const restored = surfaceState && typeof surfaceState === 'object' ? surfaceState : {};
+
+    RasterPanel.hide?.();
+    if (lane !== 'explore') {
+      TimeSlider.hide?.();
+    }
+
+    if (lane === 'explore') {
+      const dataPayload = restored.dataPayload && typeof restored.dataPayload === 'object'
+        ? cloneSerializable(restored.dataPayload)
+        : null;
+      if (dataPayload) {
+        this.renderStandardDataPayload(dataPayload, { restoringViewState: true });
+      }
+      if (restored.timeSlider) {
+        this.applyTimeSliderState(restored.timeSlider);
+      } else if (!dataPayload) {
+        TimeSlider.hide?.();
+      }
+      if (!dataPayload && restored.timeSlider && OverlayController?.rerenderFromCache) {
+        OverlayController.rerenderFromCache();
+      }
+    }
+
+    if (restored.raster?.visible) {
+      const rasterState = { ...restored.raster };
+      if (rasterState.clip_mode === 'selection' && Array.isArray(rasterState.loc_ids) && rasterState.loc_ids.length) {
+        RasterPanel.showSelectionClips?.(rasterState);
+      } else {
+        RasterPanel.showScene?.(rasterState);
+      }
+    }
   },
 
   saveActiveMapViewState() {
@@ -752,16 +857,19 @@ export const App = {
     this.leaveOpsCanvasMode();
   },
 
-  applyMapViewState(mapViewState = {}) {
+  applyMapViewState(mapViewState = {}, options = {}) {
     const state = cloneSerializable(mapViewState) || {};
     this.applyCanvasMode(state.canvasMode || 'explore');
 
-    if (state.canvasMode === 'research' && state.researchDisplay) {
-      const display = {
-        ...state.researchDisplay,
-        fit: false
-      };
-      this.displayMapPayload({ display }, { origin: 'research' });
+    if (options.lane === 'research') {
+      const laneDisplay = ChatManager?.getResearchDisplayForMode?.('research');
+      if (laneDisplay) {
+        const display = {
+          ...laneDisplay,
+          fit: false
+        };
+        this.displayMapPayload({ display }, { origin: 'research' });
+      }
     }
 
     if (state.camera && MapAdapter?.map) {
@@ -770,6 +878,11 @@ export const App = {
         zoom: state.camera.zoom
       });
     }
+
+    if (options.lane === 'research' && !state.surfaceState?.raster) {
+      RasterPanel.hide?.();
+    }
+    this.restoreSurfaceState(state.surfaceState, options);
   },
 
   activateLaneMapView(lane, options = {}) {
@@ -782,18 +895,106 @@ export const App = {
     if (!MapAdapter?.map) {
       this.pendingCanvasMode = targetView?.state?.canvasMode || normalizedLane;
       this.activeMapViewId = targetViewId;
+      this.activeMapLane = normalizedLane;
       return targetViewId;
     }
 
     if (this.activeMapViewId && this.activeMapViewId !== targetViewId) {
       this.saveActiveMapViewState();
-    } else if (this.activeMapViewId === targetViewId && options.force !== true) {
+    } else if (
+      this.activeMapViewId === targetViewId &&
+      this.activeMapLane === normalizedLane &&
+      options.force !== true
+    ) {
       return targetViewId;
     }
 
     this.activeMapViewId = targetViewId;
-    this.applyMapViewState(targetView.state);
+    this.activeMapLane = normalizedLane;
+    this.applyMapViewState(targetView.state, { lane: normalizedLane });
     return targetViewId;
+  },
+
+  buildResearchDisplayMemory(display = null) {
+    if (!display) {
+      return null;
+    }
+    const locIds = Array.isArray(display.loc_ids)
+      ? display.loc_ids.map(locId => String(locId || '').trim()).filter(Boolean)
+      : [];
+    const memory = {
+      source_id: display.source_id || null,
+      action: display.action || null,
+      loc_id_count: locIds.length,
+      loc_ids: locIds.slice(0, 50),
+      feature_count: Array.isArray(display?.geojson?.features) ? display.geojson.features.length : 0,
+      context_visibility: display.context_visibility || null,
+      style: display?.style ? cloneSerializable(display.style) : null,
+    };
+    const buildingLegend = this.buildResearchBuildingLegend(display);
+    if (buildingLegend) {
+      memory.building_legend = buildingLegend;
+    }
+    return memory;
+  },
+
+  buildResearchBuildingLegend(display = null) {
+    if (String(display?.source_id || '').trim() !== 'fairfax_buildings') {
+      return null;
+    }
+    const {
+      defaultTypeColors,
+      defaultFallbackColor,
+      typeLabels
+    } = this.getResearchBuildingTypeMetadata();
+    const overrideColors = display?.style?.buildingTypeColors || {};
+    return {
+      source_id: display?.source_id || 'fairfax_buildings',
+      typeColors: { ...defaultTypeColors, ...overrideColors },
+      defaultColor: defaultFallbackColor,
+      typeLabels: { ...typeLabels },
+      locIdCount: Array.isArray(display?.loc_ids) ? display.loc_ids.length : 0,
+      featureCount: Array.isArray(display?.geojson?.features) ? display.geojson.features.length : 0
+    };
+  },
+
+  getCurrentResearchDisplayMemory() {
+    return this.buildResearchDisplayMemory(this.currentResearchDisplay);
+  },
+
+  getCurrentResearchBuildingLegend() {
+    return this.buildResearchBuildingLegend(this.currentResearchDisplay);
+  },
+
+  getCurrentResearchDisplayLayers() {
+    return ChatManager?.getResearchDisplayLayersForMode?.('research') || [];
+  },
+
+  updateResearchDisplayStyle(styleUpdates = {}) {
+    const currentLayers = this.getCurrentResearchDisplayLayers();
+    if (!currentLayers.length) {
+      return false;
+    }
+    const currentDisplay = currentLayers[currentLayers.length - 1];
+    if (!currentDisplay?.geojson?.features?.length) return false;
+    const mergedDisplay = {
+      ...currentDisplay,
+      style: {
+        ...(currentDisplay.style || {}),
+        ...styleUpdates,
+        buildingTypeColors: {
+          ...((currentDisplay.style || {}).buildingTypeColors || {}),
+          ...((styleUpdates || {}).buildingTypeColors || {})
+        }
+      }
+    };
+    const nextLayers = [...currentLayers.slice(0, -1), mergedDisplay];
+    this.currentResearchDisplay = mergedDisplay;
+    ChatManager?.setResearchDisplayLayersForMode?.('research', nextLayers);
+    this.currentResearchLayerOptions = this.getResearchLayerOptions(mergedDisplay);
+    this.renderResearchDisplayLayers(nextLayers);
+    this.setupResearchDisplayInteractions();
+    return true;
   },
 
   applySidebarPadding() {
@@ -1238,7 +1439,7 @@ export const App = {
     return '';
   },
 
-  coerceDisplayIntentToStandardPayload(display) {
+  buildMapPayloadFromDisplay(display) {
     const geojson = display?.geojson;
     const features = geojson?.features || [];
     if (!features.length) return null;
@@ -1275,22 +1476,23 @@ export const App = {
 
   applyResearchRasterDisplay(display) {
     const raster = display?.raster;
-    if (raster?.provider !== 'fairfax_lst') return false;
+    const rasterSourceId = String(raster?.source_id || raster?.provider || '').trim();
+    if (!raster || (!rasterSourceId && String(raster?.visibility || '').trim().toLowerCase() !== 'hide')) return false;
 
     const visibility = String(raster.visibility || 'show').trim().toLowerCase();
     if (visibility === 'hide') {
-      FairfaxRasterPanel.hide?.();
+      RasterPanel.hide?.();
     } else if (raster.clip_mode === 'selection') {
-      FairfaxRasterPanel.showSelectionClips?.(raster);
+      RasterPanel.showSelectionClips?.(raster);
     } else {
-      FairfaxRasterPanel.showScene?.(raster);
+      RasterPanel.showScene?.(raster);
     }
     return true;
   },
 
   displayStructuredSelection(display, options = {}) {
     const showedRaster = this.applyResearchRasterDisplay(display);
-    const routedPayload = this.coerceDisplayIntentToStandardPayload(display);
+    const routedPayload = this.buildMapPayloadFromDisplay(display);
     if (routedPayload) {
       this.renderStandardDataPayload(routedPayload, options);
       return;
@@ -1309,10 +1511,6 @@ export const App = {
   renderSelectionDisplay(display, options = {}) {
     const geojson = display?.geojson;
     const features = geojson?.features || [];
-    const preserveContext = options.preserveContext !== false;
-    const previousResearchGeojson = preserveContext ? (this.currentResearchDisplay?.geojson || null) : null;
-    const previousResearchSourceId = preserveContext ? (this.currentResearchDisplay?.source_id || null) : null;
-    const previousLayerOptions = preserveContext ? (this.currentResearchLayerOptions || null) : null;
 
     console.log('Applying selection display', {
       action: display?.action || null,
@@ -1332,30 +1530,35 @@ export const App = {
       dataset_name: 'Selection Result',
       source_name: display?.source_id || 'Selection Result'
     };
-    this.currentResearchDisplay = display;
-    const layerOptions = this.getResearchLayerOptions(display);
-    this.currentResearchLayerOptions = layerOptions;
-
-    if (display?.context_visibility === 'keep' && previousResearchGeojson && previousResearchSourceId !== display?.source_id) {
-      const outlineOptions = previousLayerOptions && Object.keys(previousLayerOptions).length
-        ? previousLayerOptions
-        : {
-            fillOpacity: 0,
-            strokeColor: '#ff9a1f',
-            strokeWidth: 3,
-            strokeOpacity: 0.95
-          };
-      MapAdapter.setParentOutline(previousResearchGeojson, outlineOptions);
-    } else {
-      MapAdapter.clearParentOutline?.();
-    }
-
-    MapAdapter.loadNavigationLayer(geojson, layerOptions);
+    const activeLayers = options.origin === 'research'
+      ? this.getCurrentResearchDisplayLayers()
+      : [];
+    const displayLayers = activeLayers.length ? activeLayers : [display];
+    this.currentResearchDisplay = displayLayers[displayLayers.length - 1] || display;
+    this.currentResearchLayerOptions = this.getResearchLayerOptions(this.currentResearchDisplay);
+    this.renderResearchDisplayLayers(displayLayers);
     this.setupResearchDisplayInteractions();
 
     if (display?.fit !== false) {
       MapAdapter.fitToBounds(geojson);
     }
+  },
+
+  renderResearchDisplayLayers(displays = []) {
+    const validDisplays = (displays || []).filter(display => display?.geojson?.features?.length);
+    MapAdapter.clearParentOutline?.();
+    MapAdapter.clearNavigationLayer?.();
+    if (!validDisplays.length) {
+      MapAdapter.clearResearchDisplayLayers?.();
+      return;
+    }
+    const layers = validDisplays.map((display, index) => ({
+      id: `research-${index}`,
+      geojson: display.geojson,
+      options: this.getResearchLayerOptions(display),
+      label: display?.label || display?.title || display?.source_id || `Research layer ${index + 1}`
+    }));
+    MapAdapter.loadResearchDisplayLayers?.(layers);
   },
 
   renderStandardDataPayload(data, options = {}) {
@@ -1648,9 +1851,8 @@ export const App = {
       this.setMetricOrderContext(options.order, data);
     }
 
-    // Show the LST raster panel when any Fairfax climate source is loaded
-    if (data.data_type === 'metrics' && String(data.source_id || '').startsWith('fairfax_lst')) {
-      FairfaxRasterPanel.init();
+    if (data.data_type === 'metrics' && String(data.source_id || '').trim()) {
+      RasterPanel.init(String(data.source_id || '').trim());
     }
 
     // Collapse sidebar on mobile
@@ -1703,9 +1905,20 @@ export const App = {
   focusResearchGeojson(geojson) {
     if (!geojson?.features?.length || !MapAdapter?.map) return;
     MapAdapter.clearNavigationLayer?.();
+    MapAdapter.clearResearchDisplayLayers?.();
     this.clearResearchDisplayInteractions();
     this.navigationLocations = null;
-    this.currentData = null;
+    this.currentData = {
+      geojson,
+      dataset_name: 'Research Focus',
+      source_name: 'Research Focus',
+      isNavigation: true
+    };
+    MapAdapter.loadNavigationLayer(geojson, {
+      fillOpacity: 0.12,
+      strokeColor: '#ffd38a',
+      strokeWidth: 2.2
+    });
     MapAdapter.fitToBounds(geojson);
   },
 
@@ -1713,7 +1926,7 @@ export const App = {
     this.currentCanvasMode = 'research';
     this.pendingCanvasMode = 'research';
     if (!MapAdapter?.map) return;
-    FairfaxRasterPanel.hide?.();
+    RasterPanel.hide?.();
     this.navigationLocations = null;
     this.currentData = null;
     this.activeMetricOrderContext = null;
@@ -1721,7 +1934,7 @@ export const App = {
     this.currentResearchDisplay = null;
     this.currentResearchLayerOptions = null;
 
-    TimeSlider.reset?.();
+    TimeSlider.hide?.();
     ChoroplethManager.reset?.();
     MapAdapter.setChoroplethVisible?.(false);
 
@@ -1729,6 +1942,7 @@ export const App = {
     MapAdapter.clearParentOutline?.();
     MapAdapter.clearCityOverlay?.();
     MapAdapter.clearNavigationLayer?.();
+    MapAdapter.clearResearchDisplayLayers?.();
     this.clearResearchDisplayInteractions();
     ViewportLoader.orderMode = true;
   },
@@ -1744,13 +1958,15 @@ export const App = {
     this.clearResearchDisplayInteractions();
     this.currentResearchDisplay = null;
     this.currentResearchLayerOptions = null;
+    MapAdapter.clearResearchDisplayLayers?.();
   },
 
   enterOpsCanvasMode() {
     this.currentCanvasMode = 'ops';
     this.pendingCanvasMode = 'ops';
     if (!MapAdapter?.map) return;
-    FairfaxRasterPanel.hide?.();
+    TimeSlider.hide?.();
+    RasterPanel.hide?.();
     this.navigationLocations = null;
     this.currentData = null;
     this.activeMetricOrderContext = null;
@@ -1761,6 +1977,7 @@ export const App = {
     MapAdapter.clearParentOutline?.();
     MapAdapter.clearCityOverlay?.();
     MapAdapter.clearNavigationLayer?.();
+    MapAdapter.clearResearchDisplayLayers?.();
     this.clearResearchDisplayInteractions();
     ViewportLoader.orderMode = true;
   },
@@ -1777,13 +1994,34 @@ export const App = {
       ViewportLoader.orderMode = false;
     }
     this.clearResearchDisplayInteractions();
+    MapAdapter.clearResearchDisplayLayers?.();
   },
 
   getResearchLayerOptions(display) {
+    const style = display?.style || {};
+    const baseOptions = this.getResearchSimpleLayerOptions(style);
     if (String(display?.source_id || '').trim() !== 'fairfax_buildings') {
-      return {};
+      return baseOptions;
     }
-    return this.getResearchBuildingLayerOptions(display?.style || {});
+    return {
+      ...this.getResearchBuildingLayerOptions(style),
+      ...baseOptions
+    };
+  },
+
+  getResearchSimpleLayerOptions(style = {}) {
+    const fillColor = style.fill_color || style.fillColor || null;
+    const strokeColor = style.stroke_color || style.strokeColor || null;
+    const options = {};
+    if (fillColor) {
+      options.fillColor = fillColor;
+      options.fillOpacity = 0.22;
+    }
+    if (strokeColor) {
+      options.strokeColor = strokeColor;
+      options.strokeWidth = 2.4;
+    }
+    return options;
   },
 
   getResearchBuildingTypeMetadata() {
@@ -1840,69 +2078,10 @@ export const App = {
     };
   },
 
-  getCurrentResearchBuildingLegend() {
-    if (String(this.currentResearchDisplay?.source_id || '').trim() !== 'fairfax_buildings') {
-      return null;
-    }
-    const {
-      defaultTypeColors,
-      defaultFallbackColor,
-      typeLabels
-    } = this.getResearchBuildingTypeMetadata();
-    const overrideColors = this.currentResearchDisplay?.style?.buildingTypeColors || {};
-    return {
-      source_id: this.currentResearchDisplay?.source_id || 'fairfax_buildings',
-      typeColors: { ...defaultTypeColors, ...overrideColors },
-      defaultColor: defaultFallbackColor,
-      typeLabels: { ...typeLabels },
-      locIdCount: Array.isArray(this.currentResearchDisplay?.loc_ids) ? this.currentResearchDisplay.loc_ids.length : 0,
-      featureCount: Array.isArray(this.currentResearchDisplay?.geojson?.features) ? this.currentResearchDisplay.geojson.features.length : 0
-    };
-  },
-
-  getCurrentResearchDisplayMemory() {
-    if (!this.currentResearchDisplay) {
-      return null;
-    }
-    const memory = {
-      source_id: this.currentResearchDisplay.source_id || null,
-      action: this.currentResearchDisplay.action || null,
-      loc_id_count: Array.isArray(this.currentResearchDisplay.loc_ids) ? this.currentResearchDisplay.loc_ids.length : 0,
-      feature_count: Array.isArray(this.currentResearchDisplay?.geojson?.features) ? this.currentResearchDisplay.geojson.features.length : 0,
-      context_visibility: this.currentResearchDisplay.context_visibility || null
-    };
-    const buildingLegend = this.getCurrentResearchBuildingLegend();
-    if (buildingLegend) {
-      memory.building_legend = buildingLegend;
-    }
-    return memory;
-  },
-
-  updateResearchDisplayStyle(styleUpdates = {}) {
-    if (!this.currentResearchDisplay?.geojson?.features?.length || String(this.currentResearchDisplay?.source_id || '').trim() !== 'fairfax_buildings') {
-      return false;
-    }
-    const mergedDisplay = {
-      ...this.currentResearchDisplay,
-      style: {
-        ...(this.currentResearchDisplay.style || {}),
-        ...styleUpdates,
-        buildingTypeColors: {
-          ...((this.currentResearchDisplay.style || {}).buildingTypeColors || {}),
-          ...((styleUpdates || {}).buildingTypeColors || {})
-        }
-      }
-    };
-    this.currentResearchDisplay = mergedDisplay;
-    this.currentResearchLayerOptions = this.getResearchLayerOptions(mergedDisplay);
-    MapAdapter.loadNavigationLayer(mergedDisplay.geojson, this.currentResearchLayerOptions);
-    this.setupResearchDisplayInteractions();
-    return true;
-  },
-
   setupResearchDisplayInteractions() {
     if (!MapAdapter?.map) return;
     this.clearResearchDisplayInteractions();
+    const interactiveLayerIds = MapAdapter.getResearchDisplayFillLayerIds?.() || [CONFIG.layers.selectionFill];
 
     this._researchDisplayHoverHandler = (e) => {
       if (!e.features?.length || MapAdapter.popupLocked) return;
@@ -1934,25 +2113,33 @@ export const App = {
       }
     };
 
-    MapAdapter.map.on('mousemove', CONFIG.layers.selectionFill, this._researchDisplayHoverHandler);
-    MapAdapter.map.on('mouseleave', CONFIG.layers.selectionFill, this._researchDisplayLeaveHandler);
-    MapAdapter.map.on('click', CONFIG.layers.selectionFill, this._researchDisplayClickHandler);
+    this._researchDisplayInteractiveLayerIds = interactiveLayerIds.filter(Boolean);
+    for (const layerId of this._researchDisplayInteractiveLayerIds) {
+      if (!MapAdapter.map.getLayer(layerId)) continue;
+      MapAdapter.map.on('mousemove', layerId, this._researchDisplayHoverHandler);
+      MapAdapter.map.on('mouseleave', layerId, this._researchDisplayLeaveHandler);
+      MapAdapter.map.on('click', layerId, this._researchDisplayClickHandler);
+    }
   },
 
   clearResearchDisplayInteractions() {
     if (!MapAdapter?.map) return;
-    if (this._researchDisplayHoverHandler) {
-      MapAdapter.map.off('mousemove', CONFIG.layers.selectionFill, this._researchDisplayHoverHandler);
-      this._researchDisplayHoverHandler = null;
+    const layerIds = this._researchDisplayInteractiveLayerIds || [CONFIG.layers.selectionFill];
+    for (const layerId of layerIds) {
+      if (this._researchDisplayHoverHandler) {
+        MapAdapter.map.off('mousemove', layerId, this._researchDisplayHoverHandler);
+      }
+      if (this._researchDisplayLeaveHandler) {
+        MapAdapter.map.off('mouseleave', layerId, this._researchDisplayLeaveHandler);
+      }
+      if (this._researchDisplayClickHandler) {
+        MapAdapter.map.off('click', layerId, this._researchDisplayClickHandler);
+      }
     }
-    if (this._researchDisplayLeaveHandler) {
-      MapAdapter.map.off('mouseleave', CONFIG.layers.selectionFill, this._researchDisplayLeaveHandler);
-      this._researchDisplayLeaveHandler = null;
-    }
-    if (this._researchDisplayClickHandler) {
-      MapAdapter.map.off('click', CONFIG.layers.selectionFill, this._researchDisplayClickHandler);
-      this._researchDisplayClickHandler = null;
-    }
+    this._researchDisplayInteractiveLayerIds = [];
+    this._researchDisplayHoverHandler = null;
+    this._researchDisplayLeaveHandler = null;
+    this._researchDisplayClickHandler = null;
   },
 
   /**

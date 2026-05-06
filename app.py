@@ -43,7 +43,7 @@ from mapmover.routes.disasters.tornadoes import router as tornadoes_router
 from mapmover.routes.disasters.tsunamis import router as tsunamis_router
 from mapmover.routes.disasters.volcanoes import router as volcanoes_router
 from mapmover.routes.disasters.wildfires import router as wildfires_router
-from mapmover.routes.fairfax import router as fairfax_router
+from mapmover.routes.raster import router as raster_router
 from mapmover.routes.geometry import router as geometry_router
 from mapmover.routes.mcp import router as mcp_router
 from mapmover.routes.research import router as research_router
@@ -508,7 +508,7 @@ app.include_router(system_router)
 app.include_router(mcp_router)
 app.include_router(api_query_router)
 app.include_router(geometry_router)
-app.include_router(fairfax_router)
+app.include_router(raster_router)
 app.include_router(earthquakes_router)
 app.include_router(related_events_router)
 app.include_router(volcanoes_router)

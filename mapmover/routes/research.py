@@ -8,6 +8,7 @@ import os
 import asyncio
 import gzip
 import math
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -67,7 +68,7 @@ _PROMPT_METRIC_LIMIT = 8
 _PROMPT_FIELD_LIMIT = 12
 _PROMPT_SCENE_PERIOD_LIMIT = 4
 _PROMPT_SAVED_PACK_LIMIT = 4
-_TOOL_ROWS_PREVIEW_LIMIT = 8
+_TOOL_ROWS_PREVIEW_LIMIT = 10
 _PRIVATE_BROWSER_ARTIFACT_OUTPUT_ROOT = Path(__file__).resolve().parents[3] / "county-map-private" / "build" / "browser_artifacts" / "output"
 
 
@@ -118,6 +119,11 @@ def _build_saved_corpus_summary(corpus_row: dict | None) -> dict | None:
     resolved_seen = set()
     pack_row_count_total = 0
     pack_file_size_mb_total = 0.0
+    source_lookup = _catalog_source_lookup()
+    resolved_sources = []
+    resolved_transfer_bytes_total = 0
+    resolved_stored_bytes_total = 0
+    resolved_expanded_bytes_total = 0
 
     for item in items:
         item_type = str(item.get("item_type") or "").strip().lower()
@@ -134,6 +140,14 @@ def _build_saved_corpus_summary(corpus_row: dict | None) -> dict | None:
                     if pack_source_text and pack_source_text not in resolved_seen:
                         resolved_seen.add(pack_source_text)
                         resolved_source_ids.append(pack_source_text)
+                        source_meta = source_lookup.get(pack_source_text)
+                        if isinstance(source_meta, dict):
+                            resolved_sources.append(deepcopy(source_meta))
+                            browser_artifact = _normalize_browser_artifact(source_meta.get("browser_artifact"))
+                            if browser_artifact:
+                                resolved_transfer_bytes_total += int(browser_artifact.get("transfer_bytes") or 0)
+                                resolved_stored_bytes_total += int(browser_artifact.get("stored_bytes") or 0)
+                                resolved_expanded_bytes_total += int(browser_artifact.get("expanded_bytes") or 0)
                 pack_row_count_total += int(pack_meta.get("row_count_total") or 0)
                 pack_file_size_mb_total += float(pack_meta.get("file_size_mb_total") or 0.0)
             else:
@@ -143,6 +157,14 @@ def _build_saved_corpus_summary(corpus_row: dict | None) -> dict | None:
             if item_id not in resolved_seen:
                 resolved_seen.add(item_id)
                 resolved_source_ids.append(item_id)
+                source_meta = source_lookup.get(item_id)
+                if isinstance(source_meta, dict):
+                    resolved_sources.append(deepcopy(source_meta))
+                    browser_artifact = _normalize_browser_artifact(source_meta.get("browser_artifact"))
+                    if browser_artifact:
+                        resolved_transfer_bytes_total += int(browser_artifact.get("transfer_bytes") or 0)
+                        resolved_stored_bytes_total += int(browser_artifact.get("stored_bytes") or 0)
+                        resolved_expanded_bytes_total += int(browser_artifact.get("expanded_bytes") or 0)
 
     return {
         "id": corpus_row.get("id"),
@@ -158,6 +180,15 @@ def _build_saved_corpus_summary(corpus_row: dict | None) -> dict | None:
         "estimated_file_size_mb_total": round(pack_file_size_mb_total, 2),
         "packs": packs,
         "resolved_source_ids": resolved_source_ids,
+        "sources": resolved_sources,
+        "browser_artifact_totals": {
+            "transfer_bytes": resolved_transfer_bytes_total,
+            "stored_bytes": resolved_stored_bytes_total,
+            "expanded_bytes": resolved_expanded_bytes_total,
+            "transfer_mb": round(resolved_transfer_bytes_total / (1024 * 1024), 2),
+            "stored_mb": round(resolved_stored_bytes_total / (1024 * 1024), 2),
+            "expanded_mb": round(resolved_expanded_bytes_total / (1024 * 1024), 2),
+        },
     }
 
 
@@ -243,10 +274,17 @@ def _source_summary_text(source_id: str, metadata: dict, row_count: int) -> str:
     return f"{source_name}: {row_count:,} rows loaded for Research."
 
 
-def _rows_to_temporal_result(rows: list[dict], source_id: str, metadata: dict, spec) -> dict:
+def _rows_to_temporal_result(
+    rows: list[dict],
+    source_id: str,
+    metadata: dict,
+    spec,
+    dimension_columns: list[str] | None = None,
+) -> dict:
     features_by_loc: dict[str, dict] = {}
     year_data: dict[str, dict] = {}
     metric_ids = list((metadata.get("metrics") or {}).keys())
+    dimension_columns = [str(column).strip() for column in (dimension_columns or []) if str(column).strip()]
     if not metric_ids:
         metric_ids = [metric_id for metric_id in spec.metrics.keys() if metric_id != "event_count"]
 
@@ -269,6 +307,10 @@ def _rows_to_temporal_result(rows: list[dict], source_id: str, metadata: dict, s
                 },
             },
         )
+        feature_props = features_by_loc[loc_id]["properties"]
+        for column_name in dimension_columns:
+            if column_name in row and column_name not in {spec.location_field, spec.time_field, "name"}:
+                feature_props.setdefault(column_name, row.get(column_name))
         time_value = row.get(spec.time_field) if spec.time_field else None
         if time_value is None:
             continue
@@ -282,6 +324,9 @@ def _rows_to_temporal_result(rows: list[dict], source_id: str, metadata: dict, s
             metric_values["admin_level_num"] = admin_level_num
         if geography_kind:
             metric_values["geography_kind"] = geography_kind
+        for column_name in dimension_columns:
+            if column_name in row and column_name not in {spec.location_field, spec.time_field, "name"}:
+                metric_values[column_name] = row.get(column_name)
         if not metric_values:
             continue
         year_data.setdefault(time_key, {})[loc_id] = metric_values
@@ -616,6 +661,18 @@ def _hydrate_saved_source_into_research(*, session_id: str, corpus_id: str, sour
         select_columns.append(spec.time_field)
     if "name" in available_columns:
         select_columns.append("name")
+    dimension_columns: list[str] = []
+    metadata_dimensions = metadata.get("dimensions") if isinstance(metadata.get("dimensions"), dict) else {}
+    for dim_key, dim_spec in metadata_dimensions.items():
+        if not isinstance(dim_spec, dict):
+            continue
+        column_name = str(dim_spec.get("column") or dim_key).strip()
+        if not column_name or column_name not in available_columns:
+            continue
+        if column_name not in dimension_columns:
+            dimension_columns.append(column_name)
+        if column_name not in select_columns:
+            select_columns.append(column_name)
 
     metric_ids = []
     for metric_id, metric_spec in spec.metrics.items():
@@ -645,7 +702,7 @@ def _hydrate_saved_source_into_research(*, session_id: str, corpus_id: str, sour
         return {"source_id": source_id, "status": "skipped", "reason": "no_rows"}
 
     if spec.time_field:
-        result = _rows_to_temporal_result(rows, source_id, metadata, spec)
+        result = _rows_to_temporal_result(rows, source_id, metadata, spec, dimension_columns=dimension_columns)
     else:
         result = _rows_to_static_result(rows, source_id, metadata, spec)
 
@@ -1141,8 +1198,8 @@ def _fallback_display_message(display: dict | None) -> str | None:
     source_id = str(display.get("source_id") or "").strip()
     if source_id == "fairfax_buildings":
         noun = "building footprint"
-    elif source_id == "fairfax_lst":
-        noun = "hot area"
+    elif "lst" in source_id or "raster" in source_id:
+        noun = "raster area"
     else:
         noun = "matching feature"
     suffix = "" if feature_count == 1 else "s"

@@ -198,7 +198,7 @@ body.tutorial-mode #tutorialTimelineRegion {
 }
 
 #tutorialTimelineRegion > #timeSliderContainer,
-#tutorialTimelineRegion > #fairfax-raster-panel,
+#tutorialTimelineRegion > #raster-panel,
 #tutorialTimelineRegion > .tutorial-region-tip,
 #tutorialTimelineRegion > .tutorial-timeline-panel {
   pointer-events: auto;
@@ -597,6 +597,14 @@ body.map-ui-fullscreen #tutorialTimelineRegion {
   top: 80px;
   right: 10px;
   z-index: 1000;
+}
+
+body.chat-mode-research #overlaySelectorRegion,
+body.chat-mode-ops #overlaySelectorRegion {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateX(22px);
 }
 
 #overlaySelectorRegion > .tutorial-region-tip {
@@ -2741,7 +2749,7 @@ body.tutorial-mode .popup-tutorial-wrap {
    Fairfax LST Raster Panel
    ========================================================= */
 
-#fairfax-raster-panel {
+#raster-panel {
   position: fixed;
   bottom: 120px;
   right: 12px;

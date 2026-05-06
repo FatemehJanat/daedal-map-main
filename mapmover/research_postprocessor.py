@@ -19,13 +19,28 @@ def _coerce_display(display: dict, research_hints: dict | None) -> dict | None:
 
     display["fit"] = bool(display.get("fit", True))
     display["context_visibility"] = str(display.get("context_visibility") or "keep")
+    style = display.get("style")
+    if isinstance(style, dict):
+        normalized_style = {}
+        fill_color = str(style.get("fill_color") or "").strip()
+        stroke_color = str(style.get("stroke_color") or "").strip()
+        if fill_color:
+            normalized_style["fill_color"] = fill_color
+        if stroke_color:
+            normalized_style["stroke_color"] = stroke_color
+        if normalized_style:
+            display["style"] = normalized_style
+        else:
+            display.pop("style", None)
+    else:
+        display.pop("style", None)
 
     hint_time = (research_hints or {}).get("time") or {}
     specific_year = hint_time.get("specific_year")
     if isinstance(raster, dict):
-        provider = str(raster.get("provider") or "").strip()
-        if provider:
-            normalized_raster = {"provider": provider}
+        source_id = str(raster.get("source_id") or raster.get("provider") or "").strip()
+        if source_id:
+            normalized_raster = {"source_id": source_id}
             period = str(raster.get("period") or "").strip()
             if period:
                 normalized_raster["period"] = period
@@ -35,7 +50,7 @@ def _coerce_display(display: dict, research_hints: dict | None) -> dict | None:
             year = raster.get("year")
             if isinstance(year, int):
                 normalized_raster["year"] = year
-            elif provider == "fairfax_lst" and isinstance(specific_year, int):
+            elif isinstance(specific_year, int):
                 normalized_raster["year"] = specific_year
             display["raster"] = normalized_raster
         else:

@@ -46,6 +46,7 @@ export const MapAdapter = {
   pendingClickFeature: null,  // Feature from pending single click
   currentFocusLngLat: null,
   popupFocusOverride: null,
+  researchDisplayLayerIds: [],
 
   /**
    * Initialize the map
@@ -1438,6 +1439,88 @@ export const MapAdapter = {
     }
   },
 
+  loadResearchDisplayLayers(layers = []) {
+    this.clearResearchDisplayLayers();
+    if (!Array.isArray(layers) || !layers.length) return;
+
+    layers.forEach((layer, index) => {
+      const geojson = layer?.geojson;
+      if (!geojson?.features?.length) return;
+
+      const sourceId = `research-display-source-${index}`;
+      const fillId = `research-display-fill-${index}`;
+      const strokeId = `research-display-stroke-${index}`;
+      const options = layer?.options || {};
+      const fillColor = options.fillColorExpression || options.fillColor || [
+        'case',
+        ['boolean', ['feature-state', 'hover'], false],
+        CONFIG.selectionColors.hoverFill,
+        CONFIG.selectionColors.fill
+      ];
+      const fillOpacity = options.fillOpacityExpression || options.fillOpacity || [
+        'case',
+        ['boolean', ['feature-state', 'hover'], false],
+        CONFIG.selectionColors.hoverOpacity,
+        CONFIG.selectionColors.fillOpacity
+      ];
+      const strokeColor = options.strokeColorExpression || options.strokeColor || CONFIG.selectionColors.stroke;
+      const strokeWidth = options.strokeWidthExpression || options.strokeWidth || [
+        'case',
+        ['boolean', ['feature-state', 'hover'], false],
+        CONFIG.selectionColors.hoverStrokeWidth,
+        CONFIG.selectionColors.strokeWidth
+      ];
+
+      geojson.features.forEach((feature, featureIndex) => {
+        feature.id = featureIndex;
+      });
+
+      this.map.addSource(sourceId, {
+        type: 'geojson',
+        data: geojson,
+        generateId: true
+      });
+      this.map.addLayer({
+        id: fillId,
+        type: 'fill',
+        source: sourceId,
+        paint: {
+          'fill-color': fillColor,
+          'fill-opacity': fillOpacity
+        }
+      });
+      this.map.addLayer({
+        id: strokeId,
+        type: 'line',
+        source: sourceId,
+        paint: {
+          'line-color': strokeColor,
+          'line-width': strokeWidth
+        }
+      });
+      this.researchDisplayLayerIds.push({ sourceId, fillId, strokeId });
+    });
+  },
+
+  getResearchDisplayFillLayerIds() {
+    return (this.researchDisplayLayerIds || []).map(layer => layer.fillId).filter(Boolean);
+  },
+
+  clearResearchDisplayLayers() {
+    for (const layer of this.researchDisplayLayerIds || []) {
+      if (layer?.strokeId && this.map.getLayer(layer.strokeId)) {
+        this.map.removeLayer(layer.strokeId);
+      }
+      if (layer?.fillId && this.map.getLayer(layer.fillId)) {
+        this.map.removeLayer(layer.fillId);
+      }
+      if (layer?.sourceId && this.map.getSource(layer.sourceId)) {
+        this.map.removeSource(layer.sourceId);
+      }
+    }
+    this.researchDisplayLayerIds = [];
+  },
+
   /**
    * Full memory cleanup - call when switching major views
    */
@@ -1446,6 +1529,7 @@ export const MapAdapter = {
     this.clearParentOutline();
     this.clearCityOverlay();
     this.clearNavigationLayer();
+    this.clearResearchDisplayLayers();
     this.clearHurricaneLayer();
     this.clearHurricaneTrack();
     this.clearEventLayer();

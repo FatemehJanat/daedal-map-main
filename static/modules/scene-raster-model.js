@@ -1,16 +1,5 @@
 /**
- * LST Raster Model - Renders Fairfax land surface temperature as a raster image layer.
- *
- * Same canvas-to-MapLibre-image-source pattern as model-weather-grid.js, but
- * scoped to a county bounding box instead of global bounds.
- *
- * Data flow:
- *   1. Fetch pixel array + bounds from /api/fairfax/raster/{period}
- *   2. Build a 256-entry color LUT from configurable min/max Fahrenheit range
- *   3. Render float32 pixels to an HTML canvas using the LUT (nodata=0 -> transparent)
- *   4. Add canvas as a MapLibre image source using the county bounds
- *   5. On colormap change: rebuild LUT and re-render (no network request)
- *   6. On scene change: fetch new period, re-render
+ * Scene raster model for source-driven image overlays.
  */
 
 let MapAdapter = null;
@@ -19,15 +8,13 @@ export function setDependencies(deps) {
   MapAdapter = deps.MapAdapter;
 }
 
-const SOURCE_ID = 'fairfax-lst-raster-source';
-const LAYER_ID  = 'fairfax-lst-raster-layer';
+const SOURCE_ID = 'scene-raster-source';
+const LAYER_ID = 'scene-raster-layer';
 
-// Default color stops (value in Fahrenheit -> hex color)
-// Runs from cool blue at 85F through yellow/orange to dark red at 135F+
 const DEFAULT_COLOR_STOPS = [
-  [85,  '#313695'],
-  [93,  '#4575b4'],
-  [98,  '#74add1'],
+  [85, '#313695'],
+  [93, '#4575b4'],
+  [98, '#74add1'],
   [103, '#fee090'],
   [108, '#fdae61'],
   [113, '#f46d43'],
@@ -40,34 +27,31 @@ const DEFAULT_MIN_F = 90;
 const DEFAULT_MAX_F = 130;
 const DEFAULT_OPACITY = 0.75;
 
-// -------------------------------------------------------------------------
-// Helpers
-// -------------------------------------------------------------------------
-
 function hexToRgb(hex) {
-  const r = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-  return r ? { r: parseInt(r[1], 16), g: parseInt(r[2], 16), b: parseInt(r[3], 16) }
-           : { r: 128, g: 128, b: 128 };
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result
+    ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) }
+    : { r: 128, g: 128, b: 128 };
 }
 
 function buildColorLUT(minF, maxF, stops) {
   const range = maxF - minF;
   const lut = new Array(256);
 
-  for (let i = 0; i < 256; i++) {
+  for (let i = 0; i < 256; i += 1) {
     const value = minF + (i / 255) * range;
 
-    let low  = stops[0];
+    let low = stops[0];
     let high = stops[stops.length - 1];
-    for (let j = 0; j < stops.length - 1; j++) {
+    for (let j = 0; j < stops.length - 1; j += 1) {
       if (value >= stops[j][0] && value <= stops[j + 1][0]) {
-        low  = stops[j];
+        low = stops[j];
         high = stops[j + 1];
         break;
       }
     }
 
-    const t  = high[0] === low[0] ? 0 : (value - low[0]) / (high[0] - low[0]);
+    const t = high[0] === low[0] ? 0 : (value - low[0]) / (high[0] - low[0]);
     const lc = hexToRgb(low[1]);
     const hc = hexToRgb(high[1]);
 
@@ -82,67 +66,52 @@ function buildColorLUT(minF, maxF, stops) {
   return lut;
 }
 
-// -------------------------------------------------------------------------
-// LstRasterModel
-// -------------------------------------------------------------------------
+export const SceneRasterModel = {
+  pixels: null,
+  width: 0,
+  height: 0,
+  bounds: null,
+  period: null,
+  sourceId: null,
 
-export const LstRasterModel = {
-  // Raw data (kept in memory so colormap changes don't need a re-fetch)
-  pixels:  null,   // Float32Array
-  width:   0,
-  height:  0,
-  bounds:  null,   // { west, south, east, north }
-  period:  null,
-
-  // Render state
-  minF:    DEFAULT_MIN_F,
-  maxF:    DEFAULT_MAX_F,
+  minF: DEFAULT_MIN_F,
+  maxF: DEFAULT_MAX_F,
   opacity: DEFAULT_OPACITY,
   colorStops: DEFAULT_COLOR_STOPS,
   colorLUT: null,
 
-  canvas:  null,
-  ctx:     null,
+  canvas: null,
+  ctx: null,
   isVisible: false,
   displayMode: 'scene',
   clipEntries: [],
 
-  // -----------------------------------------------------------------------
-  // Load a scene from the backend
-  // -----------------------------------------------------------------------
-
-  async load(period) {
+  async load(sourceId, period) {
     const { fetchMsgpack } = await import('./utils/fetch.js');
-
-    console.log(`LstRasterModel: loading period ${period}`);
 
     let data;
     try {
-      data = await fetchMsgpack(`/api/fairfax/raster/${encodeURIComponent(period)}`);
+      data = await fetchMsgpack(`/api/raster/${encodeURIComponent(sourceId)}/${encodeURIComponent(period)}`);
     } catch (err) {
-      console.error('LstRasterModel: fetch failed', err);
+      console.error('SceneRasterModel: fetch failed', err);
       return false;
     }
 
     if (!data || !data.pixels) {
-      console.error('LstRasterModel: empty response');
+      console.error('SceneRasterModel: empty response');
       return false;
     }
 
-    // msgpack bytes field arrives as Uint8Array - reinterpret as Float32Array.
-    // slice() creates an aligned copy so the Float32Array constructor does not
-    // throw a RangeError when the Uint8Array view has a non-4-byte byteOffset.
     const raw = data.pixels;
     const aligned = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength);
     this.pixels = new Float32Array(aligned);
-    this.width  = data.width;
+    this.width = data.width;
     this.height = data.height;
     this.bounds = data.bounds;
     this.period = data.period;
+    this.sourceId = data.source_id || sourceId;
     this.displayMode = 'scene';
     this._clearClipLayers();
-
-    console.log(`LstRasterModel: loaded ${this.width}x${this.height} pixels for ${period}`);
 
     this._ensureCanvas();
     this._rebuildLUT();
@@ -151,10 +120,6 @@ export const LstRasterModel = {
 
     return true;
   },
-
-  // -----------------------------------------------------------------------
-  // Color range control - re-render without re-fetching
-  // -----------------------------------------------------------------------
 
   setColorRange(minF, maxF) {
     this.minF = minF;
@@ -186,10 +151,6 @@ export const LstRasterModel = {
     }
   },
 
-  // -----------------------------------------------------------------------
-  // Show / hide
-  // -----------------------------------------------------------------------
-
   show() {
     if (this.displayMode === 'clips') {
       for (const entry of this.clipEntries || []) {
@@ -219,12 +180,13 @@ export const LstRasterModel = {
     this.isVisible = false;
   },
 
-  async loadClips(payload) {
+  async loadClips(sourceId, payload) {
     const clips = payload?.clips || [];
     if (!clips.length) return false;
 
     this.displayMode = 'clips';
     this.period = payload?.period || this.period;
+    this.sourceId = payload?.source_id || sourceId;
     this._clearClipLayers();
     if (MapAdapter?.map?.getLayer(LAYER_ID)) {
       MapAdapter.map.setLayoutProperty(LAYER_ID, 'visibility', 'none');
@@ -261,26 +223,24 @@ export const LstRasterModel = {
   cleanup() {
     const map = MapAdapter?.map;
     if (map) {
-      if (map.getLayer(LAYER_ID))  map.removeLayer(LAYER_ID);
+      if (map.getLayer(LAYER_ID)) map.removeLayer(LAYER_ID);
       if (map.getSource(SOURCE_ID)) map.removeSource(SOURCE_ID);
     }
     this._clearClipLayers();
-    this.pixels  = null;
-    this.canvas  = null;
-    this.ctx     = null;
+    this.pixels = null;
+    this.canvas = null;
+    this.ctx = null;
+    this.bounds = null;
+    this.period = null;
+    this.sourceId = null;
     this.isVisible = false;
     this.displayMode = 'scene';
-    console.log('LstRasterModel: cleaned up');
   },
-
-  // -----------------------------------------------------------------------
-  // Internal
-  // -----------------------------------------------------------------------
 
   _ensureCanvas() {
     if (!this.canvas || this.canvas.width !== this.width || this.canvas.height !== this.height) {
       this.canvas = document.createElement('canvas');
-      this.canvas.width  = this.width;
+      this.canvas.width = this.width;
       this.canvas.height = this.height;
       this.ctx = this.canvas.getContext('2d');
     }
@@ -300,24 +260,23 @@ export const LstRasterModel = {
     const maxF = this.maxF;
     const range = maxF - minF;
 
-    for (let i = 0; i < this.pixels.length; i++) {
+    for (let i = 0; i < this.pixels.length; i += 1) {
       const val = this.pixels[i];
       const idx = i * 4;
 
       if (!val || val === 0) {
-        // nodata - transparent
-        px[idx] = px[idx+1] = px[idx+2] = px[idx+3] = 0;
+        px[idx] = px[idx + 1] = px[idx + 2] = px[idx + 3] = 0;
         continue;
       }
 
-      const norm   = Math.max(0, Math.min(1, (val - minF) / range));
+      const norm = Math.max(0, Math.min(1, (val - minF) / range));
       const lutIdx = Math.round(norm * 255);
-      const color  = lut[lutIdx];
+      const color = lut[lutIdx];
 
-      px[idx]   = color[0];
-      px[idx+1] = color[1];
-      px[idx+2] = color[2];
-      px[idx+3] = color[3];
+      px[idx] = color[0];
+      px[idx + 1] = color[1];
+      px[idx + 2] = color[2];
+      px[idx + 3] = color[3];
     }
 
     this.ctx.putImageData(imageData, 0, 0);
@@ -332,20 +291,20 @@ export const LstRasterModel = {
     const maxF = this.maxF;
     const range = maxF - minF;
 
-    for (let i = 0; i < entry.pixels.length; i++) {
+    for (let i = 0; i < entry.pixels.length; i += 1) {
       const val = entry.pixels[i];
       const idx = i * 4;
       if (!val || val === 0) {
-        px[idx] = px[idx+1] = px[idx+2] = px[idx+3] = 0;
+        px[idx] = px[idx + 1] = px[idx + 2] = px[idx + 3] = 0;
         continue;
       }
       const norm = Math.max(0, Math.min(1, (val - minF) / range));
       const lutIdx = Math.round(norm * 255);
       const color = lut[lutIdx];
       px[idx] = color[0];
-      px[idx+1] = color[1];
-      px[idx+2] = color[2];
-      px[idx+3] = color[3];
+      px[idx + 1] = color[1];
+      px[idx + 2] = color[2];
+      px[idx + 3] = color[3];
     }
 
     entry.ctx.putImageData(imageData, 0, 0);
@@ -357,10 +316,10 @@ export const LstRasterModel = {
 
     const { west, south, east, north } = this.bounds;
     const coordinates = [
-      [west,  north],
-      [east,  north],
-      [east,  south],
-      [west,  south],
+      [west, north],
+      [east, north],
+      [east, south],
+      [west, south],
     ];
 
     const dataUrl = this.canvas.toDataURL('image/png');
@@ -371,7 +330,6 @@ export const LstRasterModel = {
     } else {
       map.addSource(SOURCE_ID, { type: 'image', url: dataUrl, coordinates });
 
-      // Insert below the first symbol/label layer so labels stay on top
       let labelLayerId;
       for (const layer of map.getStyle().layers) {
         if (layer.type === 'symbol' && layer.layout?.['text-field']) {
@@ -381,17 +339,16 @@ export const LstRasterModel = {
       }
 
       map.addLayer({
-        id:     LAYER_ID,
-        type:   'raster',
+        id: LAYER_ID,
+        type: 'raster',
         source: SOURCE_ID,
         paint: {
-          'raster-opacity':       this.opacity,
+          'raster-opacity': this.opacity,
           'raster-fade-duration': 0,
         },
       }, labelLayerId);
 
       this.isVisible = true;
-      console.log('LstRasterModel: map layer created');
     }
   },
 

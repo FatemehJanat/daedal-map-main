@@ -90,6 +90,13 @@ RESEARCH_TOOL_DEFINITIONS = [
                 "limit": {"type": "integer", "minimum": 1},
                 "fit": {"type": "boolean"},
                 "context_visibility": {"type": "string", "enum": ["keep", "replace"]},
+                "style": {
+                    "type": "object",
+                    "properties": {
+                        "fill_color": {"type": "string"},
+                        "stroke_color": {"type": "string"},
+                    },
+                },
             },
             "required": ["artifact_id"],
         },
@@ -145,6 +152,17 @@ def _normalize_tool_input(tool_name: str, tool_input: Any) -> dict:
         if "context_visibility" in tool_input:
             visibility = str(tool_input.get("context_visibility") or "keep").strip().lower()
             normalized["context_visibility"] = visibility if visibility in {"keep", "replace"} else "keep"
+        style = tool_input.get("style")
+        if isinstance(style, dict):
+            cleaned_style = {}
+            fill_color = str(style.get("fill_color") or "").strip()
+            stroke_color = str(style.get("stroke_color") or "").strip()
+            if fill_color:
+                cleaned_style["fill_color"] = fill_color
+            if stroke_color:
+                cleaned_style["stroke_color"] = stroke_color
+            if cleaned_style:
+                normalized["style"] = cleaned_style
 
     return normalized
 
@@ -259,6 +277,13 @@ def _filter_rows_python(rows: list[dict], filters: dict | None) -> list[dict]:
             if prefixes:
                 if actual is None or not any(str(actual).startswith(prefix) for prefix in prefixes):
                     return False
+        if "contains_segment" in condition:
+            segment = str(condition["contains_segment"] or "").strip()
+            actual_text = str(actual or "").strip()
+            if not segment or not actual_text:
+                return False
+            if f"-{segment}-" not in f"-{actual_text}-":
+                return False
         return True
 
     def matches(row: dict) -> bool:
@@ -383,6 +408,11 @@ def _query_rows_duckdb(
                             if prefix:
                                 hierarchy_parts.append(f"{ident} LIKE ?")
                                 params.append(prefix + "%")
+                        if "contains_segment" in condition:
+                            segment = str(condition.get("contains_segment") or "").strip()
+                            if segment:
+                                hierarchy_parts.append(f"('-' || CAST({ident} AS VARCHAR) || '-') LIKE ?")
+                                params.append("%-" + segment + "-%")
                     if hierarchy_parts:
                         where_parts.append("(" + " OR ".join(hierarchy_parts) + ")")
                     continue
@@ -510,6 +540,10 @@ def _rewrite_hierarchical_loc_id_filters(tool_input: dict) -> dict:
             descendant_condition = {"starts_with": text + "-"}
             if descendant_condition not in hierarchy_conditions:
                 hierarchy_conditions.append(descendant_condition)
+        if "-" not in text:
+            segment_condition = {"contains_segment": text}
+            if segment_condition not in hierarchy_conditions:
+                hierarchy_conditions.append(segment_condition)
 
     if isinstance(expected, dict):
         if "eq" in expected:
@@ -677,6 +711,8 @@ def _build_display_subset(result: dict, artifact: dict, tool_input: dict) -> dic
         "fit": bool(tool_input.get("fit", True)),
         "context_visibility": str(tool_input.get("context_visibility") or "keep"),
     }
+    if isinstance(tool_input.get("style"), dict):
+        display["style"] = dict(tool_input["style"])
     logger.info(
         "Research display subset source=%s artifact=%s matched_rows=%s rendered_features=%s unique_loc_ids=%s truncated=%s requested_limit=%s",
         artifact.get("source_id"),
