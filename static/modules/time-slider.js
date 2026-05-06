@@ -2309,6 +2309,8 @@ export const TimeSlider = {
     if (this.container) {
       this.container.classList.add('visible');
     }
+    const timelineRegion = document.getElementById('tutorialTimelineRegion');
+    timelineRegion?.classList?.add('timeline-region-active');
   },
 
   /**
@@ -2319,6 +2321,8 @@ export const TimeSlider = {
     if (this.container) {
       this.container.classList.remove('visible');
     }
+    const timelineRegion = document.getElementById('tutorialTimelineRegion');
+    timelineRegion?.classList?.remove('timeline-region-active');
   },
 
   /**

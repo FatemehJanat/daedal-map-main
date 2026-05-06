@@ -300,7 +300,7 @@ body.tutorial-mode #tutorialTimelineRegion {
 #fullscreenUiToggle {
   position: absolute;
   top: 16px;
-  right: 18px;
+  right: 250px;
   z-index: 5200;
   min-height: 36px;
   padding: 0 14px;
@@ -329,20 +329,25 @@ body.map-ui-fullscreen #fullscreenUiToggle {
   color: #fff0cf;
 }
 
-body:not(.map-ui-fullscreen) #sidebar,
+body:not(.map-ui-fullscreen) #sidebar:not(.collapsed),
 body:not(.map-ui-fullscreen) #sidebarToggle,
-body:not(.map-ui-fullscreen) #mapModeMount,
 body:not(.map-ui-fullscreen) #breadcrumb,
 body:not(.map-ui-fullscreen) #globeToggle,
 body:not(.map-ui-fullscreen) #zoomLevel,
 body:not(.map-ui-fullscreen) #levelButtons,
 body:not(.map-ui-fullscreen) #overlaySelectorRegion,
-body:not(.map-ui-fullscreen) #statsOverlay,
-body:not(.map-ui-fullscreen) #tutorialTimelineRegion {
+body:not(.map-ui-fullscreen) #statsOverlay {
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
   transform: none;
+}
+
+body:not(.map-ui-fullscreen) #mapModeMount,
+body:not(.map-ui-fullscreen) #tutorialTimelineRegion {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
 }
 
 #sidebar,
@@ -605,6 +610,17 @@ body.chat-mode-ops #overlaySelectorRegion {
   visibility: hidden;
   pointer-events: none;
   transform: translateX(22px);
+}
+
+body.chat-mode-research #tutorialTimelineRegion:not(.timeline-region-active) > #timeSliderContainer,
+body.chat-mode-research #tutorialTimelineRegion:not(.timeline-region-active) > .tutorial-region-tip,
+body.chat-mode-research #tutorialTimelineRegion:not(.timeline-region-active) > .tutorial-timeline-panel,
+body.chat-mode-ops #tutorialTimelineRegion:not(.timeline-region-active) > #timeSliderContainer,
+body.chat-mode-ops #tutorialTimelineRegion:not(.timeline-region-active) > .tutorial-region-tip,
+body.chat-mode-ops #tutorialTimelineRegion:not(.timeline-region-active) > .tutorial-timeline-panel {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 #overlaySelectorRegion > .tutorial-region-tip {

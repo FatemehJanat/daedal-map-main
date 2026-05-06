@@ -117,6 +117,7 @@ body.chat-mode-ops {
   display: flex;
   align-items: center;
   gap: 12px;
+  position: relative;
 }
 
 #sidebarHeader > .tutorial-region-tip {
@@ -188,6 +189,8 @@ body.chat-mode-ops {
   gap: 10px;
   flex: 0 0 auto;
   margin-left: 10px;
+  position: relative;
+  z-index: 5105;
 }
 
 #newChatBtn {
@@ -630,6 +633,8 @@ body.chat-mode-ops #sidebarHeader {
   font-size: 24px;
   cursor: pointer;
   padding: 0 5px;
+  position: relative;
+  z-index: 5106;
 }
 
 /* ==========================================================================
@@ -711,10 +716,10 @@ body.chat-mode-ops #sidebarHeader {
 }
 
 .chat-mode-toggle__btn[data-mode="ops"].active {
-  border-color: #e3c04a;
-  background: #473d19;
-  color: #fff0ba;
-  box-shadow: 0 0 0 1px rgba(227, 192, 74, 0.22), 0 0 14px rgba(227, 192, 74, 0.24);
+  border-color: #ff6b6b;
+  background: #4a1f24;
+  color: #ffe1e1;
+  box-shadow: 0 0 0 1px rgba(255, 107, 107, 0.24), 0 0 14px rgba(255, 107, 107, 0.26);
 }
 
 .chat-mode-toggle__btn:not(.active) {

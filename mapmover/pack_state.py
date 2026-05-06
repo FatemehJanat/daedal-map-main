@@ -31,6 +31,71 @@ DEFAULT_PACK_STATE = {
 }
 
 
+def _titleize_overlay_part(value: str) -> str:
+    return str(value or "").replace("_", " ").title()
+
+
+def _extract_overlay_path(source: dict) -> str:
+    overlay = source.get("overlay")
+    if isinstance(overlay, str):
+        return overlay.strip()
+    if isinstance(overlay, dict):
+        return str(overlay.get("path") or "").strip()
+    return ""
+
+
+def _extract_overlay_label(source: dict, leaf_key: str) -> str:
+    overlay = source.get("overlay")
+    if isinstance(overlay, dict):
+        label = str(overlay.get("label") or "").strip()
+        if label:
+            return label
+    return _titleize_overlay_part(leaf_key)
+
+
+def _build_overlay_tree_for_sources(sources: list[dict]) -> dict:
+    tree: dict = {}
+
+    for source in sources or []:
+        overlay_path = _extract_overlay_path(source)
+        if not overlay_path:
+            continue
+
+        parts = [part.strip() for part in overlay_path.split("/") if str(part).strip()]
+        if not parts:
+            continue
+
+        current = tree
+        for part in parts[:-1]:
+            if part not in current:
+                current[part] = {
+                    "label": _titleize_overlay_part(part),
+                    "children": {},
+                }
+            current = current[part]["children"]
+
+        leaf_key = parts[-1]
+        leaf = current.setdefault(
+            leaf_key,
+            {
+                "label": _extract_overlay_label(source, leaf_key),
+                "sources": [],
+            },
+        )
+        leaf["sources"].append({
+            "source_id": source.get("source_id"),
+            "scope": source.get("scope"),
+            "data_type": source.get("data_type"),
+        })
+
+    return tree
+
+
+def build_overlay_tree_for_sources(sources: list[dict]) -> dict:
+    """Build a runtime overlay tree from active source records."""
+    return _build_overlay_tree_for_sources(sources)
+
+
 def _normalize_pack_ids(pack_ids) -> list[str]:
     normalized = []
     seen = set()
@@ -304,7 +369,6 @@ def build_active_catalog(full_catalog: dict, state: dict | None = None) -> dict:
     state = state or load_pack_state()
     sources = full_catalog.get("sources", [])
     packs = full_catalog.get("packs", [])
-    overlay_tree = full_catalog.get("overlay_tree", {})
 
     if state.get("catalog_mode") == "unmanaged_data_root":
         active_sources = list(sources)
@@ -347,7 +411,7 @@ def build_active_catalog(full_catalog: dict, state: dict | None = None) -> dict:
         or any(source_id in active_source_ids for source_id in (pack.get("source_ids") or []))
     ]
     active_catalog["total_packs"] = len(active_catalog["packs"])
-    active_catalog["overlay_tree"] = overlay_tree
+    active_catalog["overlay_tree"] = _build_overlay_tree_for_sources(active_sources)
     active_catalog["runtime_pack_state"] = {
         "catalog_mode": state.get("catalog_mode", "unmanaged_data_root"),
         "installed_pack_ids": get_installed_pack_ids(state),

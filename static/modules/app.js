@@ -836,6 +836,33 @@ export const App = {
     }
   },
 
+  clearVisibleMapSurface(options = {}) {
+    const preserveOverlayState = options.preserveOverlayState !== false;
+
+    if (preserveOverlayState && OverlaySelector?.getActiveOverlays && OverlayController?.hideOverlay) {
+      const activeOverlays = OverlaySelector.getActiveOverlays() || [];
+      for (const overlayId of activeOverlays) {
+        if (!overlayId || overlayId === 'demographics') continue;
+        try {
+          OverlayController.hideOverlay(overlayId);
+        } catch (error) {
+          console.warn(`Could not hide overlay during lane switch: ${overlayId}`, error);
+        }
+      }
+    }
+
+    TimeSlider.hide?.();
+    RasterPanel.hide?.();
+    ChoroplethManager.reset?.();
+    MapAdapter.setChoroplethVisible?.(false);
+    MapAdapter.cleanup?.();
+    this.clearResearchDisplayInteractions();
+    this.navigationLocations = null;
+    this.currentData = null;
+    this.currentResearchDisplay = null;
+    this.currentResearchLayerOptions = null;
+  },
+
   saveActiveMapViewState() {
     if (!this.activeMapViewId) return;
     const view = this.ensureMapView(this.activeMapViewId);
@@ -911,6 +938,7 @@ export const App = {
 
     this.activeMapViewId = targetViewId;
     this.activeMapLane = normalizedLane;
+    this.clearVisibleMapSurface({ preserveOverlayState: true });
     this.applyMapViewState(targetView.state, { lane: normalizedLane });
     return targetViewId;
   },

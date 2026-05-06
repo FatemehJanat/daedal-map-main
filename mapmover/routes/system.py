@@ -1924,6 +1924,7 @@ async def get_v1_pack(pack_id: str):
 async def get_catalog_overlays(req: Request):
     """Get overlay tree from the catalog, filtered to the user's entitled packs."""
     from mapmover.data_loading import load_catalog
+    from mapmover.pack_state import build_overlay_tree_for_sources
 
     catalog = load_catalog()
     entitled = _get_entitled_packs(req)
@@ -1953,7 +1954,7 @@ async def get_catalog_overlays(req: Request):
     return msgpack_response(
         {
             "sources": filtered_sources,
-            "overlay_tree": catalog.get("overlay_tree", {}),
+            "overlay_tree": build_overlay_tree_for_sources(all_sources),
             "overlay_count": len(filtered_sources),
         }
     )
