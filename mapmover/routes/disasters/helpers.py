@@ -6,12 +6,13 @@ from fastapi import Response
 import msgpack
 
 
-def msgpack_response(data: dict, status_code: int = 200) -> Response:
+def msgpack_response(data: dict, status_code: int = 200, headers: dict | None = None) -> Response:
     """Standard MessagePack response for API endpoints."""
     return Response(
         content=msgpack.packb(data, use_bin_type=True),
         media_type="application/msgpack",
         status_code=status_code,
+        headers=headers,
     )
 
 

@@ -25,6 +25,7 @@ from mapmover.auth_context import build_session_cache_key, get_authenticated_use
 from mapmover.corpus_registry import corpus_registry
 from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log_conversation
 from mapmover.llm_usage import LLMUsageRecorder, classify_caller
+from mapmover.chat_budget import budget_rejection_payload, check_anonymous_chat_budget
 from mapmover.security import get_client_ip
 from mapmover.data_loading import get_pack_metadata, get_source_path, load_catalog, load_source_metadata
 from mapmover.api_query_runtime import execute_dataset_query, get_api_source_columns, get_api_source_spec
@@ -2029,6 +2030,16 @@ async def research_chat_endpoint(req: Request):
             auth_user=auth_user,
             ip_hash=hash_ip_for_analytics(client_ip),
         )
+        budget_decision = check_anonymous_chat_budget(caller_ctx)
+        if not budget_decision.allowed:
+            return msgpack_response(
+                budget_rejection_payload(budget_decision),
+                status_code=429,
+                headers={
+                    "Retry-After": str(budget_decision.retry_after_seconds),
+                    "Cache-Control": "no-store",
+                },
+            )
         usage_recorder = LLMUsageRecorder(
             surface="research",
             call_kind="research_main",
@@ -2092,6 +2103,11 @@ async def research_chat_stream_endpoint(req: Request):
                 auth_user=auth_user,
                 ip_hash=hash_ip_for_analytics(client_ip),
             )
+            budget_decision = check_anonymous_chat_budget(caller_ctx)
+            if not budget_decision.allowed:
+                rejection = budget_rejection_payload(budget_decision)
+                yield f"data: {json.dumps({'stage': 'complete', 'result': rejection})}\n\n"
+                return
             usage_recorder = LLMUsageRecorder(
                 surface="research",
                 call_kind="research_main",
