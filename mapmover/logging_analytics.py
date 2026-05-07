@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import hashlib
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -73,12 +74,31 @@ def _submit_background(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Non
 
     Errors raised inside the worker are swallowed and logged so they cannot
     affect the response path or the next request.
+
+    Retry policy: one retry on any exception with a 100ms backoff. The most
+    common failure here is httpx's "Server disconnected" when the postgrest
+    connection pool holds a connection the Supabase server has closed (idle
+    timeout, restart). httpx evicts the dead connection on the failed attempt,
+    so the second try uses a fresh connection. Retrying any exception is
+    safe because these calls are idempotent inserts with server-generated ids.
     """
     def _run() -> None:
-        try:
-            fn(*args, **kwargs)
-        except Exception as exc:
-            logger.error("Background analytics call failed: %s", exc)
+        last_exc: Exception | None = None
+        for attempt in (1, 2):
+            try:
+                fn(*args, **kwargs)
+                return
+            except Exception as exc:
+                last_exc = exc
+                if attempt == 1:
+                    logger.warning(
+                        "Background analytics call attempt %d failed (retrying): %s",
+                        attempt,
+                        exc,
+                    )
+                    time.sleep(0.1)
+                    continue
+        logger.error("Background analytics call failed after retry: %s", last_exc)
 
     try:
         _analytics_executor.submit(_run)
