@@ -2002,7 +2002,8 @@ async def get_runtime_pack_release_markers(req: Request):
         return msgpack_response(payload)
 
     now = time.time()
-    if _release_marker_cache is not None and (now - _release_marker_cache_time) < _RELEASE_MARKER_TTL_SECONDS:
+    force_refresh = str(req.query_params.get("refresh", "") or "").strip().lower() in {"1", "true", "yes", "force"}
+    if (not force_refresh) and _release_marker_cache is not None and (now - _release_marker_cache_time) < _RELEASE_MARKER_TTL_SECONDS:
         return _response(_release_marker_cache)
 
     candidates = []
@@ -2277,6 +2278,7 @@ async def admin_catalog_refresh(req: Request):
         _dl._catalog_missing_time = 0.0
         clear_metadata_cache()
         clear_public_pack_catalog_cache()
+        clear_release_marker_cache()
         initialize_catalog()
         source_count = len((_dl.load_catalog() or {}).get("sources", []))
         refreshed.append("runtime")
