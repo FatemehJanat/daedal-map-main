@@ -1097,7 +1097,7 @@ def _run_research_rescue_synthesis(
     client: Anthropic,
     model: str,
     temperature: float,
-    system_prompt: str,
+    system_prompt,  # str or list of cache_control content blocks
     messages: list[dict],
     session_id: str,
     query: str,
@@ -1591,10 +1591,24 @@ def run_research_chat(
     research_hints = preprocess_research_query(query, manifest)
     hint_context = build_research_hint_context(research_hints)
     prompt_manifest = _compact_manifest_for_prompt(manifest)
+    # Two cache breakpoints (Anthropic allows up to 4 per request):
+    #   1. system_prompt_blocks - full research system prompt (stable per deploy).
+    #   2. corpus manifest message - stable for the lifetime of the corpus, large.
+    # Iterations 2..N of one user query, plus any subsequent queries within the
+    # 5-minute TTL, read these from cache at ~10% of the input price.
+    system_prompt_blocks = [{
+        "type": "text",
+        "text": system_prompt,
+        "cache_control": {"type": "ephemeral"},
+    }]
     messages = [
         {
             "role": "user",
-            "content": "Active corpus manifest JSON:\n" + json.dumps(prompt_manifest, default=str, separators=(",", ":")),
+            "content": [{
+                "type": "text",
+                "text": "Active corpus manifest JSON:\n" + json.dumps(prompt_manifest, default=str, separators=(",", ":")),
+                "cache_control": {"type": "ephemeral"},
+            }],
         },
         *(
             [{
@@ -1620,7 +1634,7 @@ def run_research_chat(
         try:
             response = client.messages.create(
                 model=model,
-                system=system_prompt,
+                system=system_prompt_blocks,
                 messages=messages,
                 tools=RESEARCH_TOOL_DEFINITIONS,
                 temperature=temperature,
@@ -1725,7 +1739,7 @@ def run_research_chat(
         try:
             response = client.messages.create(
                 model=model,
-                system=system_prompt,
+                system=system_prompt_blocks,
                 messages=messages,
                 temperature=temperature,
                 max_tokens=_RESEARCH_MAX_TOKENS,
@@ -1761,7 +1775,7 @@ def run_research_chat(
             client=client,
             model=model,
             temperature=temperature,
-            system_prompt=system_prompt,
+            system_prompt=system_prompt_blocks,
             messages=messages,
             session_id=session_id,
             query=query,

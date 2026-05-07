@@ -715,10 +715,18 @@ def interpret_request(
 
     # Tool use loop - allow up to 3 tool calls per request
     max_tool_iterations = 3
+    # Cache the system prompt (full catalog + instructions). Stable across all
+    # iterations of this query AND across other calls within the 5-minute TTL,
+    # so a stream of orders from the same user benefits from cache reads.
+    system_blocks = [{
+        "type": "text",
+        "text": system_content.strip(),
+        "cache_control": {"type": "ephemeral"},
+    }]
     for iteration in range(max_tool_iterations + 1):
         response = client.messages.create(
             model="claude-haiku-4-5-20251001",
-            system=system_content.strip(),
+            system=system_blocks,
             messages=chat_messages,
             tools=tools,
             temperature=0.0,
