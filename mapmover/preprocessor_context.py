@@ -50,6 +50,33 @@ def build_tier3_context(
     """Build Tier 3 (Just-in-Time) context string from preprocessor hints."""
     context_parts = []
 
+    def _build_scenario_routing_lines(scenario_defaults: dict) -> list[str]:
+        if not isinstance(scenario_defaults, dict):
+            return []
+        lines: list[str] = []
+        for concept_key, scenario_map in scenario_defaults.items():
+            if not isinstance(scenario_map, dict) or not scenario_map:
+                continue
+            pretty_concept = {
+                "projected_risk_score": "projected risk score",
+                "hazard_multiplier": "hazard multiplier",
+                "projected_annual_loss_rate_band": "projected annual loss rate band",
+                "annual_loss_rate_change_band": "annual loss rate change band",
+            }.get(concept_key, concept_key.replace("_", " "))
+            scenario_examples = []
+            for scenario_key, metric_name in scenario_map.items():
+                if not metric_name:
+                    continue
+                pretty_scenario = scenario_key.replace("_", " ")
+                scenario_examples.append(f'"{pretty_scenario}" -> metric="{metric_name}"')
+            if scenario_examples:
+                lines.append(
+                    f"For {pretty_concept} requests, map scenario language to explicit metrics as follows: "
+                    + "; ".join(scenario_examples[:6])
+                    + "."
+                )
+        return lines
+
     if hints.get("summary"):
         context_parts.append(f"[Preprocessor hints: {hints['summary']}]")
 
@@ -295,6 +322,9 @@ def build_tier3_context(
             for col, human in metrics_mapping.items():
                 msg += f'  "{col}": {human}\n'
             routing_lines = []
+            routing_lines.append(
+                f'When this detected source clearly matches the query, keep the order item anchored to source_id="{source_id}" instead of switching to a different same-pack source.'
+            )
             if routing_hints.get("prefer_order_for_analytics") and routing_hints.get("single_metric_default"):
                 routing_lines.append(
                     f'For broad analytical queries that clearly match this source, prefer type="order" with metric="{routing_hints["single_metric_default"]}" unless the user asks for a different metric.'
@@ -316,6 +346,20 @@ def build_tier3_context(
                 routing_lines.append(
                     f"If the user asks for an unsupported metric such as {examples}, clarify honestly using the supported metrics above and accurately mention the supported geography ({geo_summary or 'see metadata'})."
                 )
+            scenario_defaults = routing_hints.get("scenario_metric_defaults")
+            routing_lines.extend(_build_scenario_routing_lines(scenario_defaults))
+            metric_aliases = routing_hints.get("metric_aliases") or {}
+            if isinstance(metric_aliases, dict) and metric_aliases:
+                alias_examples = []
+                for alias, metric_name in metric_aliases.items():
+                    if alias and metric_name:
+                        alias_examples.append(f'"{alias}" -> metric="{metric_name}"')
+                if alias_examples:
+                    routing_lines.append(
+                        "When the query uses one of these metric phrases, map it directly to the matching metric: "
+                        + "; ".join(alias_examples[:8])
+                        + "."
+                    )
             if routing_lines:
                 msg += "\n\nROUTING GUIDANCE:\n"
                 for line in routing_lines:

@@ -52,6 +52,10 @@ Grouped query results may include numeric fields like `<metric>_sum`, `<metric>_
 When an artifact exposes `time_field`, treat that as the canonical temporal field for filtering, sorting, and windowing. Prefer `timestamp` when available. Use helper fields like `year`, `date`, `month`, or `iso_week` only for grouping, labeling, or source-native interpretation unless the artifact manifest explicitly makes one of them canonical.
 If an artifact exposes `geography_kind` or `admin_level_num`, use those fields to respect requests like tract, block group, or block instead of inferring only from raw `loc_id` strings.
 For mixed-geography artifacts, always filter on `geography_kind` before ranking or displaying results when the user asks for county, tract, block group, or block. Do not answer a tract request with block rows or a block request with tract rows.
+For USA county artifacts, state requests should normally be handled by filtering `loc_id` with the `prefix` operator and a state prefix such as `USA-CA-`, `USA-FL-`, `USA-OK-`, or `USA-ND-`.
+When you need a state subset, prefer an explicit filter like `{"loc_id":{"prefix":"USA-FL-"}}` rather than prose-only assumptions.
+If a state filter attempt did not isolate rows, do not quietly answer from a national ranking sample, and do not claim the state subset is unavailable unless a direct `loc_id` prefix filter truly returned zero rows.
+For ranked county or state-subset slices, include identifier fields such as `loc_id` and `name` along with the requested metric so the result rows can be attributed correctly.
 For Fairfax buildings, building footprints are keyed at the smallest block-level loc_id. If the user asks for buildings inside hotter tracts or block groups, bridge downward through the loc_id hierarchy instead of treating the higher-level loc_id as a direct building key.
 For deeper hierarchical artifacts such as WorldPop admin-2 population, a country request like `DEU` may require aggregating descendant loc_ids such as `DEU-*` rather than expecting one country row.
 For currency artifacts, country-shaped loc_ids like `DEU` can span currency transitions. Treat pre-1999 Germany as Deutsche Mark-denominated and post-1999 Germany as euro-denominated unless the tool results show otherwise.
@@ -59,6 +63,8 @@ Do not describe post-1999 `DEU` FX values as a standalone `EUR` loc_id series. P
 If the user asks for `EUR` or "the euro" without naming a country, default to euro-era analysis from 1999-01-01 onward. Do not silently substitute pre-1999 predecessor currencies such as IEP, DEM, FRF, ITL, or ESP as if they were the euro itself.
 If you must use country-shaped rows as a proxy for euro behavior after 1999, say explicitly that they are post-1999 euro-denominated country proxies, not the euro's full prehistory.
 If an artifact manifest exposes `scene_periods`, that means the corpus has scene-level raster time slices even if the tabular metrics are yearly aggregates.
+If an artifact manifest says `future_available=true`, do not claim that the source lacks future or scenario fields unless your tool results actually prove that the relevant hazard/scenario metrics are absent.
+For hazard-split NRI sources, treat the artifact's `metric_groups` as the source-of-truth summary of baseline vs future coverage. If `metric_groups.future` exists, the source supports scenario-style future queries for that hazard. If it does not exist, answer as baseline-only and do not fabricate projections.
 When using the display tool, omit limit unless the user explicitly asked for a top-N or otherwise bounded result.
 When showing buildings inside parent geographies, prefer keeping the parent result as context and displaying the buildings as the detail layer on top.
 If a query tool returns truncated=true, explicitly say how many results you showed out of the total, and tell the user they can ask for more.

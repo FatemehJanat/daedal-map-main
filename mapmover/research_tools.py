@@ -272,11 +272,25 @@ def _filter_rows_python(rows: list[dict], filters: dict | None) -> list[dict]:
             prefix = str(condition["starts_with"] or "")
             if not prefix or actual is None or not str(actual).startswith(prefix):
                 return False
+        if "prefix" in condition:
+            prefix = str(condition["prefix"] or "")
+            if not prefix or actual is None or not str(actual).startswith(prefix):
+                return False
         if "starts_with_any" in condition:
             prefixes = [str(prefix or "") for prefix in (condition["starts_with_any"] or []) if str(prefix or "")]
             if prefixes:
                 if actual is None or not any(str(actual).startswith(prefix) for prefix in prefixes):
                     return False
+        if "contains" in condition:
+            needle = str(condition["contains"] or "").strip().lower()
+            haystack = str(actual or "").strip().lower()
+            if not needle or needle not in haystack:
+                return False
+        if "contains_any" in condition:
+            needles = [str(value or "").strip().lower() for value in (condition["contains_any"] or []) if str(value or "").strip()]
+            haystack = str(actual or "").strip().lower()
+            if needles and not any(needle in haystack for needle in needles):
+                return False
         if "contains_segment" in condition:
             segment = str(condition["contains_segment"] or "").strip()
             actual_text = str(actual or "").strip()
@@ -408,6 +422,22 @@ def _query_rows_duckdb(
                             if prefix:
                                 hierarchy_parts.append(f"{ident} LIKE ?")
                                 params.append(prefix + "%")
+                        if "prefix" in condition:
+                            prefix = str(condition.get("prefix") or "").strip()
+                            if prefix:
+                                hierarchy_parts.append(f"{ident} LIKE ?")
+                                params.append(prefix + "%")
+                        if "contains" in condition:
+                            needle = str(condition.get("contains") or "").strip()
+                            if needle:
+                                hierarchy_parts.append(f"lower(CAST({ident} AS VARCHAR)) LIKE ?")
+                                params.append("%" + needle.lower() + "%")
+                        if "contains_any" in condition:
+                            for needle in condition.get("contains_any") or []:
+                                text = str(needle or "").strip()
+                                if text:
+                                    hierarchy_parts.append(f"lower(CAST({ident} AS VARCHAR)) LIKE ?")
+                                    params.append("%" + text.lower() + "%")
                         if "contains_segment" in condition:
                             segment = str(condition.get("contains_segment") or "").strip()
                             if segment:
@@ -434,6 +464,11 @@ def _query_rows_duckdb(
                     if prefix:
                         where_parts.append(f"{ident} LIKE ?")
                         params.append(prefix + "%")
+                if "prefix" in expected:
+                    prefix = str(expected["prefix"] or "").strip()
+                    if prefix:
+                        where_parts.append(f"{ident} LIKE ?")
+                        params.append(prefix + "%")
                 if "starts_with_any" in expected and expected["starts_with_any"]:
                     prefix_parts = []
                     for prefix in expected["starts_with_any"]:
@@ -444,6 +479,21 @@ def _query_rows_duckdb(
                         params.append(text + "%")
                     if prefix_parts:
                         where_parts.append("(" + " OR ".join(prefix_parts) + ")")
+                if "contains" in expected:
+                    needle = str(expected["contains"] or "").strip()
+                    if needle:
+                        where_parts.append(f"lower(CAST({ident} AS VARCHAR)) LIKE ?")
+                        params.append("%" + needle.lower() + "%")
+                if "contains_any" in expected and expected["contains_any"]:
+                    needle_parts = []
+                    for needle in expected["contains_any"]:
+                        text = str(needle or "").strip()
+                        if not text:
+                            continue
+                        needle_parts.append(f"lower(CAST({ident} AS VARCHAR)) LIKE ?")
+                        params.append("%" + text.lower() + "%")
+                    if needle_parts:
+                        where_parts.append("(" + " OR ".join(needle_parts) + ")")
             elif isinstance(expected, list) and expected:
                 placeholders = ", ".join("?" for _ in expected)
                 where_parts.append(f"{ident} IN ({placeholders})")

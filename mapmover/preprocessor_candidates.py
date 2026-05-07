@@ -77,9 +77,16 @@ def detect_source_candidates(
                     coarse_candidate_ids.add(source_id)
                     break
 
-        if source_id and source_id.lower() in query_lower:
-            add_candidate(source_id, source_name, score_source_id_match + data_boost, "source_id", source_id)
-            coarse_candidate_ids.add(source_id)
+        if source_id:
+            source_id_lower = source_id.lower()
+            if source_id_lower.isdigit():
+                source_id_pattern = rf"(?<!\d){re.escape(source_id_lower)}(?!\d)"
+                if re.search(r"\b(?:sdg|goal|sustainable\s+development\s+goal)\b", query_lower) and re.search(source_id_pattern, query_lower):
+                    add_candidate(source_id, source_name, score_source_id_match + data_boost, "source_id", source_id)
+                    coarse_candidate_ids.add(source_id)
+            elif source_id_lower in query_lower:
+                add_candidate(source_id, source_name, score_source_id_match + data_boost, "source_id", source_id)
+                coarse_candidate_ids.add(source_id)
 
         for phrase in source_keywords + source_topic_tags:
             if len(phrase) < 4:

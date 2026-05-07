@@ -65,7 +65,7 @@ _RESEARCH_HEARTBEAT_MESSAGES = [
 _PROMPT_ARTIFACT_WINDOW = 64
 _RESEARCH_MAX_TOOL_ITERATIONS = 8
 _RESEARCH_MAX_TOKENS = 5000
-_PROMPT_METRIC_LIMIT = 8
+_PROMPT_METRIC_LIMIT = 24
 _PROMPT_FIELD_LIMIT = 12
 _PROMPT_SCENE_PERIOD_LIMIT = 4
 _PROMPT_SAVED_PACK_LIMIT = 4
@@ -106,6 +106,41 @@ def _infer_loc_id_details(loc_id) -> tuple[int | None, str | None]:
         5: "block",
     }
     return segment_count, kind_map.get(segment_count)
+
+
+def _sample_prompt_metrics(metrics: list | None, limit: int) -> list[str]:
+    values = [str(metric).strip() for metric in (metrics or []) if str(metric).strip()]
+    if len(values) <= limit:
+        return values
+
+    grouped: dict[str, list[str]] = {}
+    ordered_prefixes: list[str] = []
+    for metric in values:
+        prefix = metric.split("_", 1)[0] if "_" in metric else "__root__"
+        if prefix not in grouped:
+            grouped[prefix] = []
+            ordered_prefixes.append(prefix)
+        grouped[prefix].append(metric)
+
+    preview: list[str] = []
+    seen = set()
+    round_index = 0
+    while len(preview) < limit:
+        added = False
+        for prefix in ordered_prefixes:
+            items = grouped.get(prefix) or []
+            if round_index < len(items):
+                metric = items[round_index]
+                if metric not in seen:
+                    preview.append(metric)
+                    seen.add(metric)
+                    added = True
+                    if len(preview) >= limit:
+                        break
+        if not added:
+            break
+        round_index += 1
+    return preview
 
 
 def _build_saved_corpus_summary(corpus_row: dict | None) -> dict | None:
@@ -1297,7 +1332,11 @@ def _compact_manifest_for_prompt(manifest: dict) -> dict:
                 "source_name": artifact.get("source_name"),
                 "data_type": artifact.get("data_type"),
                 "geographic_level": artifact.get("geographic_level"),
-                "metrics": (artifact.get("metrics") or [])[:_PROMPT_METRIC_LIMIT],
+                "future_available": artifact.get("future_available"),
+                "routing_summary": artifact.get("routing_summary"),
+                "metric_groups": artifact.get("metric_groups") or {},
+                "metrics": _sample_prompt_metrics(artifact.get("metrics") or [], _PROMPT_METRIC_LIMIT),
+                "metric_count": len(artifact.get("metrics") or []),
                 "fields": (artifact.get("fields") or [])[:_PROMPT_FIELD_LIMIT],
                 "year_range": artifact.get("year_range"),
                 "feature_count": artifact.get("feature_count"),
@@ -1400,7 +1439,10 @@ def _compact_tool_result_for_prompt(tool_name: str, tool_result: dict) -> dict:
                 "source_name": artifact.get("source_name"),
                 "data_type": artifact.get("data_type"),
                 "geographic_level": artifact.get("geographic_level"),
-                "metrics": (artifact.get("metrics") or [])[:6],
+                "future_available": artifact.get("future_available"),
+                "metric_groups": artifact.get("metric_groups") or {},
+                "metrics": _sample_prompt_metrics(artifact.get("metrics") or [], min(12, _PROMPT_METRIC_LIMIT)),
+                "metric_count": len(artifact.get("metrics") or []),
             }
             for artifact in artifacts[:_PROMPT_ARTIFACT_WINDOW]
         ]
@@ -1424,7 +1466,11 @@ def _compact_tool_result_for_prompt(tool_name: str, tool_result: dict) -> dict:
             "data_type": artifact.get("data_type"),
             "time_field": artifact.get("time_field"),
             "geographic_level": artifact.get("geographic_level"),
-            "metrics": (artifact.get("metrics") or [])[:_PROMPT_METRIC_LIMIT],
+            "future_available": artifact.get("future_available"),
+            "routing_summary": artifact.get("routing_summary"),
+            "metric_groups": artifact.get("metric_groups") or {},
+            "metrics": _sample_prompt_metrics(artifact.get("metrics") or [], _PROMPT_METRIC_LIMIT),
+            "metric_count": len(artifact.get("metrics") or []),
             "fields": (artifact.get("fields") or [])[:_PROMPT_FIELD_LIMIT],
             "year_range": artifact.get("year_range"),
             "feature_count": artifact.get("feature_count"),

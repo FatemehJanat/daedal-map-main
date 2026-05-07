@@ -579,6 +579,23 @@ def validate_item(item: dict, catalog: dict) -> dict:
         item["_error"] = "Missing source_id"
         return item
 
+    # Some published-pack prompts still come back with the pack_id in source_id.
+    # Normalize that here so the executor can resolve the concrete source.
+    if not item.get("pack_id"):
+        pack = _get_catalog_pack(catalog, source_id)
+        if pack:
+            item["pack_id"] = source_id
+            item.pop("source_id", None)
+            resolved_source = _resolve_pack_source(catalog, source_id, item.get("region"))
+            if resolved_source:
+                item["source_id"] = resolved_source
+                item["_resolved_from_pack"] = True
+                source_id = resolved_source
+            else:
+                item["_valid"] = False
+                item["_error"] = f"Unable to resolve pack_id '{source_id}' to a concrete source"
+                return item
+
     # Check source exists in catalog (sources is a list)
     sources = _catalog_sources(catalog)
     source_ids = [s.get("source_id") for s in sources] if isinstance(sources, list) else list(sources.keys())

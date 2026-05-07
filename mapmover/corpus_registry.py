@@ -138,6 +138,28 @@ def _extract_source_runtime_hints(source_id: str | None) -> dict:
     if scene_rasters:
         hints["supports_scene_rasters"] = True
 
+    routing_hints = metadata.get("routing_hints") if isinstance(metadata.get("routing_hints"), dict) else {}
+    use_for = str(routing_hints.get("use_for") or "").strip()
+    if use_for:
+        hints["routing_summary"] = use_for
+    if "future_available" in routing_hints:
+        hints["future_available"] = bool(routing_hints.get("future_available"))
+
+    metric_groups = metadata.get("metric_groups") if isinstance(metadata.get("metric_groups"), dict) else {}
+    if metric_groups:
+        compact_groups = {}
+        for group_key, group in metric_groups.items():
+            if not isinstance(group, dict):
+                continue
+            metrics = [str(metric).strip() for metric in (group.get("metrics") or []) if str(metric).strip()]
+            compact_groups[str(group_key)] = {
+                "label": str(group.get("label") or group_key).strip(),
+                "count": len(metrics),
+                "sample_metrics": metrics[:8],
+            }
+        if compact_groups:
+            hints["metric_groups"] = compact_groups
+
     return hints
 
 
