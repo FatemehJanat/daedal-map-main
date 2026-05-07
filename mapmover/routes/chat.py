@@ -20,6 +20,7 @@ from mapmover.preprocessor import preprocess_query
 from mapmover.progress_bus import ProgressBus, ProgressEvent
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
 from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log_conversation
+from mapmover.llm_usage import LLMUsageRecorder, classify_caller
 from mapmover.security import get_client_ip, rate_limiter
 
 
@@ -480,9 +481,29 @@ async def chat_endpoint(req: Request):
                 )
 
         t_interpret_start = time.perf_counter()
+        caller_ctx = classify_caller(
+            auth_user=auth_user,
+            ip_hash=hash_ip_for_analytics(client_ip),
+        )
+        usage_recorder = LLMUsageRecorder(
+            surface="explorer",
+            call_kind="order_taker",
+            session_id=session_id,
+            request_id=trace_id,
+            **caller_ctx,
+        )
         # Run the synchronous LLM call in a thread so we do not block the
         # event loop for other concurrent requests on this worker.
-        result = await asyncio.to_thread(interpret_request, query, chat_history, hints=hints)
+        try:
+            result = await asyncio.to_thread(
+                interpret_request,
+                query,
+                chat_history,
+                hints=hints,
+                usage_recorder=usage_recorder,
+            )
+        finally:
+            usage_recorder.flush()
         _set_chat_analytics(
             req,
             lane="llm_chat",
@@ -829,6 +850,16 @@ async def chat_stream_endpoint(req: Request):
             # the event loop. Pipe real progress events back through a
             # ProgressBus so the user sees actual tool calls instead of
             # "Understanding your intent..." sitting there for seconds.
+            caller_ctx = classify_caller(
+                auth_user=auth_user,
+                ip_hash=hash_ip_for_analytics(client_ip),
+            )
+            usage_recorder = LLMUsageRecorder(
+                surface="explorer",
+                call_kind="order_taker",
+                session_id=session_id,
+                **caller_ctx,
+            )
             bus = ProgressBus()
             llm_task = asyncio.create_task(asyncio.to_thread(
                 interpret_request,
@@ -836,17 +867,21 @@ async def chat_stream_endpoint(req: Request):
                 chat_history,
                 hints=hints,
                 progress=bus.thread_emitter(),
+                usage_recorder=usage_recorder,
             ))
-            async for event in bus.drain_until(
-                llm_task,
-                heartbeat_seconds=4.0,
-                heartbeat=_explorer_heartbeat,
-            ):
-                payload = {"stage": event.stage, "message": event.message}
-                if event.extra:
-                    payload["extra"] = event.extra
-                yield f"data: {json.dumps(payload)}\n\n"
-            result = await llm_task
+            try:
+                async for event in bus.drain_until(
+                    llm_task,
+                    heartbeat_seconds=4.0,
+                    heartbeat=_explorer_heartbeat,
+                ):
+                    payload = {"stage": event.stage, "message": event.message}
+                    if event.extra:
+                        payload["extra"] = event.extra
+                    yield f"data: {json.dumps(payload)}\n\n"
+                result = await llm_task
+            finally:
+                usage_recorder.flush()
             t_llm_end = time.time()
             logger.info(f"[TIMING] LLM call: {(t_llm_end - t_llm_start) * 1000:.0f}ms")
 

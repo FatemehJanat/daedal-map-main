@@ -431,6 +431,66 @@ def log_conversation(
         )
 
 
+def log_llm_usage_event(
+    *,
+    request_id: str | None = None,
+    session_id: str | None = None,
+    surface: str | None = None,
+    call_kind: str | None = None,
+    model: str | None = None,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    cache_creation_tokens: int = 0,
+    cache_read_tokens: int = 0,
+    tool_iterations: int = 0,
+    latency_ms: int | None = None,
+    caller_kind: str | None = None,
+    caller_label: str | None = None,
+    auth_user_id: str | None = None,
+    plan_id: str | None = None,
+    ip_hash: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    """Fire-and-forget chat-LLM usage event (one per user query, summed across tool loop)."""
+    logger.info(
+        "llm_usage surface=%s call_kind=%s model=%s in=%s out=%s cache_c=%s cache_r=%s iters=%s latency_ms=%s caller=%s plan=%s",
+        surface or "-",
+        call_kind or "-",
+        model or "-",
+        input_tokens,
+        output_tokens,
+        cache_creation_tokens,
+        cache_read_tokens,
+        tool_iterations,
+        latency_ms,
+        caller_kind or "-",
+        plan_id or "-",
+    )
+
+    supabase_client = get_supabase()
+    if supabase_client:
+        _submit_background(
+            supabase_client.log_llm_usage_event,
+            request_id=request_id,
+            session_id=session_id,
+            surface=surface,
+            call_kind=call_kind,
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_creation_tokens=cache_creation_tokens,
+            cache_read_tokens=cache_read_tokens,
+            tool_iterations=tool_iterations,
+            latency_ms=latency_ms,
+            caller_kind=caller_kind,
+            caller_label=caller_label,
+            auth_user_id=auth_user_id,
+            plan_id=plan_id,
+            ip_hash=ip_hash,
+            metadata=metadata,
+        )
+
+
 def log_app_error(
     error_type: str,
     error_message: str,

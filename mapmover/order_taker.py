@@ -635,6 +635,7 @@ def interpret_request(
     chat_history: list = None,
     hints: dict = None,
     progress=None,
+    usage_recorder=None,
 ) -> dict:
     """
     Interpret user request and return structured order or response.
@@ -723,6 +724,8 @@ def interpret_request(
             temperature=0.0,
             max_tokens=500
         )
+        if usage_recorder is not None:
+            usage_recorder.record(response)
 
         # Check if LLM wants to use a tool
         if response.stop_reason == "tool_use":

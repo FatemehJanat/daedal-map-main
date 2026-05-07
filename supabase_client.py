@@ -371,6 +371,59 @@ class SupabaseClient:
             print(f"Failed to log API usage event to Supabase: {e}")
             return None
 
+    def log_llm_usage_event(
+        self,
+        *,
+        request_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        surface: Optional[str] = None,
+        call_kind: Optional[str] = None,
+        model: Optional[str] = None,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        cache_creation_tokens: int = 0,
+        cache_read_tokens: int = 0,
+        tool_iterations: int = 0,
+        latency_ms: Optional[int] = None,
+        caller_kind: Optional[str] = None,
+        caller_label: Optional[str] = None,
+        auth_user_id: Optional[str] = None,
+        plan_id: Optional[str] = None,
+        ip_hash: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict]:
+        """Log a single chat-LLM call to llm_usage_events.
+
+        One row per user query; tool-loop iterations are summed into the totals
+        before this is called. Cost is computed via the llm_usage_events_with_cost
+        view (joined to llm_model_prices), not stored on the row.
+        """
+        try:
+            data = {
+                "request_id": request_id,
+                "session_id": session_id,
+                "surface": surface,
+                "call_kind": call_kind,
+                "model": model,
+                "input_tokens": int(input_tokens or 0),
+                "output_tokens": int(output_tokens or 0),
+                "cache_creation_tokens": int(cache_creation_tokens or 0),
+                "cache_read_tokens": int(cache_read_tokens or 0),
+                "tool_iterations": int(tool_iterations or 0),
+                "latency_ms": latency_ms,
+                "caller_kind": caller_kind,
+                "caller_label": caller_label,
+                "auth_user_id": auth_user_id,
+                "plan_id": plan_id,
+                "ip_hash": ip_hash,
+                "metadata": metadata or {},
+            }
+            result = self.client.table("llm_usage_events").insert(data).execute()
+            return result.data[0] if result.data else None
+        except Exception as e:
+            print(f"Failed to log LLM usage event to Supabase: {e}")
+            return None
+
     def log_security_event(
         self,
         *,

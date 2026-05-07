@@ -24,6 +24,7 @@ from mapmover import logger
 from mapmover.auth_context import build_session_cache_key, get_authenticated_user, get_authenticated_user_async
 from mapmover.corpus_registry import corpus_registry
 from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log_conversation
+from mapmover.llm_usage import LLMUsageRecorder, classify_caller
 from mapmover.security import get_client_ip
 from mapmover.data_loading import get_pack_metadata, get_source_path, load_catalog, load_source_metadata
 from mapmover.api_query_runtime import execute_dataset_query, get_api_source_columns, get_api_source_spec
@@ -1065,6 +1066,7 @@ def _run_research_rescue_synthesis(
     messages: list[dict],
     session_id: str,
     query: str,
+    usage_recorder=None,
 ) -> object | None:
     rescue_messages = list(messages)
     rescue_messages.append(
@@ -1078,13 +1080,16 @@ def _run_research_rescue_synthesis(
         }
     )
     try:
-        return client.messages.create(
+        response = client.messages.create(
             model=model,
             system=system_prompt,
             messages=rescue_messages,
             temperature=temperature,
             max_tokens=_RESEARCH_MAX_TOKENS,
         )
+        if usage_recorder is not None:
+            usage_recorder.record(response)
+        return response
     except Exception:
         logger.exception(
             "Research rescue synthesis call failed session=%s query=%r",
@@ -1497,6 +1502,8 @@ def run_research_chat(
     research_memory: dict | None = None,
     progress=None,
     force_large_display: bool = False,
+    usage_recorder=None,
+    rescue_usage_recorder=None,
 ) -> dict:
     """Synchronous research pipeline.
 
@@ -1573,6 +1580,8 @@ def run_research_chat(
                 temperature=temperature,
                 max_tokens=_RESEARCH_MAX_TOKENS,
             )
+            if usage_recorder is not None:
+                usage_recorder.record(response)
         except Exception as exc:
             approx_message_chars = sum(len(json.dumps(message, default=str)) for message in messages)
             logger.exception(
@@ -1675,6 +1684,8 @@ def run_research_chat(
                 temperature=temperature,
                 max_tokens=_RESEARCH_MAX_TOKENS,
             )
+            if usage_recorder is not None:
+                usage_recorder.record(response)
         except Exception:
             logger.exception(
                 "Research final synthesis call failed after max tool iterations session=%s query=%r",
@@ -1708,6 +1719,7 @@ def run_research_chat(
             messages=messages,
             session_id=session_id,
             query=query,
+            usage_recorder=rescue_usage_recorder,
         )
         rescue_text = _extract_text(rescue_response.content if rescue_response else [])
         if rescue_text:
@@ -1953,16 +1965,38 @@ async def research_chat_endpoint(req: Request):
         frontend_session_id = body.get("sessionId", "anonymous")
         auth_user = await get_authenticated_user_async(req)
         session_id = build_session_cache_key(frontend_session_id, auth_user)
+        caller_ctx = classify_caller(
+            auth_user=auth_user,
+            ip_hash=hash_ip_for_analytics(client_ip),
+        )
+        usage_recorder = LLMUsageRecorder(
+            surface="research",
+            call_kind="research_main",
+            session_id=session_id,
+            **caller_ctx,
+        )
+        rescue_usage_recorder = LLMUsageRecorder(
+            surface="research",
+            call_kind="research_rescue",
+            session_id=session_id,
+            **caller_ctx,
+        )
         # Run the synchronous LLM-driven research pipeline in a thread so we
         # do not block the event loop. Mirrors the streaming endpoint below.
-        result = await asyncio.to_thread(
-            run_research_chat,
-            session_id=session_id,
-            query=query,
-            chat_history=body.get("chatHistory", []),
-            research_memory=body.get("researchMemory"),
-            force_large_display=bool(body.get("force_research_display")),
-        )
+        try:
+            result = await asyncio.to_thread(
+                run_research_chat,
+                session_id=session_id,
+                query=query,
+                chat_history=body.get("chatHistory", []),
+                research_memory=body.get("researchMemory"),
+                force_large_display=bool(body.get("force_research_display")),
+                usage_recorder=usage_recorder,
+                rescue_usage_recorder=rescue_usage_recorder,
+            )
+        finally:
+            usage_recorder.flush()
+            rescue_usage_recorder.flush(skip_if_empty=True)
         log_conversation(
             frontend_session_id,
             query,
@@ -1994,6 +2028,22 @@ async def research_chat_stream_endpoint(req: Request):
             frontend_session_id = body.get("sessionId", "anonymous")
             auth_user = await get_authenticated_user_async(req)
             session_id = build_session_cache_key(frontend_session_id, auth_user)
+            caller_ctx = classify_caller(
+                auth_user=auth_user,
+                ip_hash=hash_ip_for_analytics(client_ip),
+            )
+            usage_recorder = LLMUsageRecorder(
+                surface="research",
+                call_kind="research_main",
+                session_id=session_id,
+                **caller_ctx,
+            )
+            rescue_usage_recorder = LLMUsageRecorder(
+                surface="research",
+                call_kind="research_rescue",
+                session_id=session_id,
+                **caller_ctx,
+            )
 
             yield f"data: {json.dumps({'stage': 'corpus', 'message': 'Reading Research workspace...'})}\n\n"
             yield f"data: {json.dumps({'stage': 'thinking', 'message': 'Researching loaded workspace data...'})}\n\n"
@@ -2011,20 +2061,26 @@ async def research_chat_stream_endpoint(req: Request):
                 research_memory=body.get("researchMemory"),
                 progress=bus.thread_emitter(),
                 force_large_display=bool(body.get("force_research_display")),
+                usage_recorder=usage_recorder,
+                rescue_usage_recorder=rescue_usage_recorder,
             ))
-            async for event in bus.drain_until(
-                task,
-                heartbeat_seconds=4.0,
-                heartbeat=_research_heartbeat,
-            ):
-                payload = {"stage": event.stage, "message": event.message}
-                if event.extra:
-                    payload["extra"] = event.extra
-                    if isinstance(event.extra.get("display"), dict):
-                        payload["display"] = event.extra["display"]
-                yield f"data: {json.dumps(payload)}\n\n"
+            try:
+                async for event in bus.drain_until(
+                    task,
+                    heartbeat_seconds=4.0,
+                    heartbeat=_research_heartbeat,
+                ):
+                    payload = {"stage": event.stage, "message": event.message}
+                    if event.extra:
+                        payload["extra"] = event.extra
+                        if isinstance(event.extra.get("display"), dict):
+                            payload["display"] = event.extra["display"]
+                    yield f"data: {json.dumps(payload)}\n\n"
 
-            result = await task
+                result = await task
+            finally:
+                usage_recorder.flush()
+                rescue_usage_recorder.flush(skip_if_empty=True)
             log_conversation(
                 frontend_session_id,
                 query,
