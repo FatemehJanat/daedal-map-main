@@ -52,6 +52,7 @@ from .geometry_handlers import (
 from .paths import DATA_ROOT, CATALOG_PATH
 from .data_loading import load_source_metadata
 from .aggregation_system import build_aggregation_spec, apply_temporal_aggregation
+from .foundation_helpers import load_reference_json
 from .duckdb_helpers import (
     can_query_event_source,
     is_cloud_mode,
@@ -67,8 +68,6 @@ from .duckdb_helpers import (
 )
 
 CONVERSIONS_PATH = Path(__file__).parent / "conversions.json"
-REFERENCE_DIR = Path(__file__).parent / "reference"
-
 # Cache conversions to avoid repeated file reads
 _conversions_cache = None
 _iso_codes_cache = None
@@ -743,12 +742,8 @@ def _load_iso_codes() -> dict:
     """Load reference/iso_codes.json with caching."""
     global _iso_codes_cache
     if _iso_codes_cache is None:
-        iso_path = REFERENCE_DIR / "iso_codes.json"
-        if iso_path.exists():
-            with open(iso_path, encoding='utf-8') as f:
-                _iso_codes_cache = json.load(f)
-        else:
-            _iso_codes_cache = {}
+        data = load_reference_json("iso_codes.json")
+        _iso_codes_cache = data if isinstance(data, dict) else {}
     return _iso_codes_cache
 
 
@@ -756,12 +751,8 @@ def _load_usa_admin() -> dict:
     """Load reference/usa_admin.json with caching."""
     global _usa_admin_cache
     if _usa_admin_cache is None:
-        usa_path = REFERENCE_DIR / "usa_admin.json"
-        if usa_path.exists():
-            with open(usa_path, encoding='utf-8') as f:
-                _usa_admin_cache = json.load(f)
-        else:
-            _usa_admin_cache = {}
+        data = load_reference_json("usa/usa_admin.json")
+        _usa_admin_cache = data if isinstance(data, dict) else {}
     return _usa_admin_cache
 
 

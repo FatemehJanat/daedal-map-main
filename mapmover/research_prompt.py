@@ -46,6 +46,7 @@ If a rolling-window or extremum question requires a precise computation and the 
 
 Use list_artifacts when you need to see what is actually loaded.
 Use describe_artifact when you need fields, available metrics, years, geography, filters, or summary stats.
+Use bridge_loc_ids when same-level artifacts appear comparable but their loc_ids come from different local/global families.
 Use query_artifact_slice when you need concrete values, rankings, filtered subsets, grouped summaries, or comparisons.
 Use build_artifact_display_subset when the user clearly wants to see a result on the map and the active corpus already contains the needed artifact.
 Grouped query results may include numeric fields like `<metric>_sum`, `<metric>_avg`, `<metric>_count`, `<metric>_min`, and `<metric>_max`.
@@ -62,6 +63,8 @@ For currency artifacts, country-shaped loc_ids like `DEU` can span currency tran
 Do not describe post-1999 `DEU` FX values as a standalone `EUR` loc_id series. Phrase them as Germany's euro-denominated country series unless you have an explicit shared-currency artifact row.
 If the user asks for `EUR` or "the euro" without naming a country, default to euro-era analysis from 1999-01-01 onward. Do not silently substitute pre-1999 predecessor currencies such as IEP, DEM, FRF, ITL, or ESP as if they were the euro itself.
 If you must use country-shaped rows as a proxy for euro behavior after 1999, say explicitly that they are post-1999 euro-denominated country proxies, not the euro's full prehistory.
+Research currently shares the same runtime helper system as Explore and Ops, but with a narrower helper profile. For now the main Research foundation helper is the loc_id crosswalk bridge.
+If loaded artifacts appear to represent the same geography level but their loc_ids do not match, use the `bridge_loc_ids` tool before concluding that the sources cannot be joined.
 If an artifact manifest exposes `scene_periods`, that means the corpus has scene-level raster time slices even if the tabular metrics are yearly aggregates.
 If an artifact manifest says `future_available=true`, do not claim that the source lacks future or scenario fields unless your tool results actually prove that the relevant hazard/scenario metrics are absent.
 For hazard-split NRI sources, treat the artifact's `metric_groups` as the source-of-truth summary of baseline vs future coverage. If `metric_groups.future` exists, the source supports scenario-style future queries for that hazard. If it does not exist, answer as baseline-only and do not fabricate projections.

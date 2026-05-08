@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Callable
 
+from .foundation_helpers import load_country_crosswalk
+
 
 def format_filter_description(filters: dict, overlay_type: str) -> str:
     """Format filter settings as a human-readable description."""
@@ -226,11 +228,9 @@ def build_tier3_context(
 
         iso3 = location.get("iso3")
         if iso3 and countries_dir:
-            crosswalk_path = Path(countries_dir) / iso3 / "crosswalk.json"
-            if crosswalk_path.exists():
+            crosswalk = load_country_crosswalk(iso3)
+            if crosswalk:
                 try:
-                    with open(crosswalk_path, encoding="utf-8") as f:
-                        crosswalk = json.load(f)
 
                     overlap_blocks = []
                     for level_key, info in (crosswalk.get("overlap_levels") or {}).items():

@@ -28,6 +28,12 @@ except ImportError:
 
 from .paths import GEOMETRY_DIR, DATA_ROOT, COUNTRIES_DIR
 from .duckdb_helpers import is_cloud_mode, parquet_columns, select_rows
+from .foundation_helpers import (
+    load_country_crosswalk,
+    load_global_countries_frame,
+    load_reference_json,
+    load_world_factbook_static_frame,
+)
 
 logger = logging.getLogger("mapmover")
 
@@ -37,19 +43,8 @@ _country_parquet_cache_lock = threading.Lock()
 _country_parquet_inflight = set()  # keys currently being fetched from R2
 _country_parquet_waiters = {}  # key -> Event for concurrent waiters
 
-# Cache for global countries data
-_global_countries_cache = None
-
 # Cache for country bounding boxes (for viewport filtering)
 _country_bounds_cache = None
-
-# Cache for admin level names from reference/admin_levels.json
-_admin_levels_cache = None
-
-# Cache for small world factbook static country attributes used in popups
-_world_factbook_static_cache = None
-_crosswalk_cache: dict[str, dict | None] = {}
-
 
 def _parquet_accessible(path: Path) -> bool:
     """Returns True if a parquet file exists locally or is accessible via S3/DuckDB."""
@@ -63,35 +58,8 @@ def _parquet_accessible(path: Path) -> bool:
 
 
 def _load_crosswalk(iso3: str) -> dict | None:
-    """Load and cache a country crosswalk."""
-    iso3 = (iso3 or "").upper()
-    if not iso3:
-        return None
-    if iso3 in _crosswalk_cache:
-        return _crosswalk_cache[iso3]
-
-    crosswalk_path = COUNTRIES_DIR / iso3 / "crosswalk.json"
-    if not crosswalk_path.exists():
-        if is_cloud_mode():
-            try:
-                from .data_loading import _fetch_json_from_s3
-                data = _fetch_json_from_s3(f"countries/{iso3}/crosswalk.json")
-                _crosswalk_cache[iso3] = data
-                return data
-            except Exception as e:
-                logger.warning(f"Failed to load crosswalk for {iso3} from cloud storage: {e}")
-        _crosswalk_cache[iso3] = None
-        return None
-
-    try:
-        with open(crosswalk_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        _crosswalk_cache[iso3] = data
-        return data
-    except Exception as e:
-        logger.warning(f"Failed to load crosswalk for {iso3}: {e}")
-        _crosswalk_cache[iso3] = None
-        return None
+    """Compatibility shim over the shared foundation helper layer."""
+    return load_country_crosswalk(iso3)
 
 
 def canonicalize_loc_id(loc_id: str) -> str:
@@ -174,27 +142,7 @@ def load_global_countries():
     Load global.csv (all countries, admin_0 only) from backup path.
     Returns DataFrame or None if file doesn't exist.
     """
-    global _global_countries_cache
-    if _global_countries_cache is not None:
-        return _global_countries_cache
-
-    geom_path = get_geometry_path()
-    if not geom_path:
-        logger.warning("No backup path configured")
-        return None
-
-    global_file = geom_path / "global.csv"
-    if not global_file.exists():
-        logger.warning(f"global.csv not found at {global_file}")
-        return None
-
-    try:
-        _global_countries_cache = pd.read_csv(global_file)
-        logger.info(f"Loaded {len(_global_countries_cache)} countries from global.csv")
-        return _global_countries_cache
-    except Exception as e:
-        logger.error(f"Error loading global.csv: {e}")
-        return None
+    return load_global_countries_frame()
 
 
 def load_world_factbook_static():
@@ -202,22 +150,7 @@ def load_world_factbook_static():
     Load world_factbook_static/all_countries.parquet for lightweight country popup enrichment.
     Returns DataFrame or None if unavailable.
     """
-    global _world_factbook_static_cache
-    if _world_factbook_static_cache is not None:
-        return _world_factbook_static_cache
-
-    factbook_file = DATA_ROOT / "global" / "world_factbook_static" / "all_countries.parquet"
-    if not _parquet_accessible(factbook_file):
-        logger.warning("world_factbook_static parquet not accessible at %s", factbook_file)
-        return None
-
-    try:
-        _world_factbook_static_cache = pd.read_parquet(factbook_file)
-        logger.info("Loaded %d rows from world_factbook_static", len(_world_factbook_static_cache))
-        return _world_factbook_static_cache
-    except Exception as e:
-        logger.warning("Error loading world_factbook_static parquet: %s", e)
-        return None
+    return load_world_factbook_static_frame()
 
 
 def load_country_parquet(iso3: str, admin_level: int = None):
@@ -1614,24 +1547,10 @@ def _extract_display_name(value):
 
 def _load_admin_levels():
     """Load admin level names from reference/admin_levels.json."""
-    global _admin_levels_cache
-    if _admin_levels_cache is not None:
-        return _admin_levels_cache
-
-    try:
-        admin_levels_path = Path(__file__).parent / "reference" / "admin_levels.json"
-        if admin_levels_path.exists():
-            with open(admin_levels_path, 'r', encoding='utf-8') as f:
-                _admin_levels_cache = json.load(f)
-                logger.debug(f"Loaded admin_levels.json with {len(_admin_levels_cache)} entries")
-        else:
-            logger.warning("admin_levels.json not found")
-            _admin_levels_cache = {}
-    except Exception as e:
-        logger.warning(f"Failed to load admin_levels.json: {e}")
-        _admin_levels_cache = {}
-
-    return _admin_levels_cache
+    data = load_reference_json("admin_levels.json")
+    if isinstance(data, dict):
+        return data
+    return {}
 
 
 def _get_level_names(iso3: str) -> dict:

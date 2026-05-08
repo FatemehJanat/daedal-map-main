@@ -11,6 +11,7 @@ from typing import Any
 
 from mapmover import logger
 from mapmover.corpus_registry import corpus_registry
+from mapmover.foundation_helpers import bridge_loc_id_family, get_foundation_helper_registry
 from mapmover.geometry_handlers import get_selection_geometries
 from mapmover.request_risk_gate import block_gate, warn_gate
 from mapmover.session_cache import session_manager
@@ -101,6 +102,19 @@ RESEARCH_TOOL_DEFINITIONS = [
             "required": ["artifact_id"],
         },
     },
+    {
+        "name": "bridge_loc_ids",
+        "description": "Translate loc_ids between local/canonical and geometry/global families using the shared runtime crosswalk helper. Use when loaded artifacts appear to describe the same geography level but their loc_ids do not match.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "artifact_id": {"type": "string"},
+                "loc_ids": {"type": "array", "items": {"type": "string"}},
+                "target_family": {"type": "string", "enum": ["geometry", "local"]},
+            },
+            "required": ["loc_ids"],
+        },
+    },
 ]
 
 
@@ -146,6 +160,12 @@ def _normalize_tool_input(tool_name: str, tool_input: Any) -> dict:
 
     if "limit" in tool_input:
         normalized["limit"] = tool_input.get("limit")
+    if tool_name == "bridge_loc_ids":
+        loc_ids = tool_input.get("loc_ids")
+        if isinstance(loc_ids, list):
+            normalized["loc_ids"] = [str(value) for value in loc_ids if value is not None and str(value).strip()]
+        target_family = str(tool_input.get("target_family") or "geometry").strip().lower()
+        normalized["target_family"] = target_family if target_family in {"geometry", "local"} else "geometry"
     if tool_name == "build_artifact_display_subset":
         if "fit" in tool_input:
             normalized["fit"] = bool(tool_input.get("fit"))
@@ -251,6 +271,30 @@ def _normalize_optional_limit(value, *, maximum: int | None = None) -> int | Non
     if maximum is not None:
         parsed = min(parsed, maximum)
     return parsed
+
+
+def _bridge_loc_ids(loc_ids: list[str], *, target_family: str = "geometry") -> dict:
+    mappings = []
+    for loc_id in loc_ids or []:
+        source = str(loc_id or "").strip()
+        if not source:
+            continue
+        bridged = bridge_loc_id_family(source, target_family=target_family)
+        mappings.append(
+            {
+                "source_loc_id": source,
+                "bridged_loc_id": bridged,
+                "changed": bridged != source,
+            }
+        )
+    changed_count = sum(1 for item in mappings if item.get("changed"))
+    return {
+        "target_family": target_family,
+        "mapping_count": len(mappings),
+        "changed_count": changed_count,
+        "mappings": mappings,
+        "foundation_helper_family": "country_crosswalks",
+    }
 
 
 def _filter_rows_python(rows: list[dict], filters: dict | None) -> list[dict]:
@@ -791,6 +835,12 @@ def execute_research_tool(
 ) -> dict:
     try:
         tool_input = _normalize_tool_input(tool_name, tool_input)
+        if tool_name == "bridge_loc_ids":
+            loc_ids = tool_input.get("loc_ids") or []
+            artifact_id = tool_input.get("artifact_id")
+            if artifact_id and not corpus_registry.get_artifact(session_id, artifact_id):
+                return {"error": "artifact_not_found", "artifact_id": artifact_id}
+            return _bridge_loc_ids(loc_ids, target_family=str(tool_input.get("target_family") or "geometry"))
         if tool_name == "list_artifacts":
             return {"artifacts": corpus_registry.list_artifacts(session_id)}
 
@@ -803,6 +853,10 @@ def execute_research_tool(
 
         if tool_name == "describe_artifact":
             artifact.pop("order", None)
+            artifact["foundation_helpers"] = {
+                "available_mode_profile": (get_foundation_helper_registry().get("mode_profiles") or {}).get("research", []),
+                "loc_id_bridge_available": True,
+            }
             return {"artifact": artifact}
 
         if tool_name == "query_artifact_slice":

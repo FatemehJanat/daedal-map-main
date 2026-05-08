@@ -10,6 +10,7 @@ from pathlib import Path
 import logging
 
 from .constants import UNIT_MULTIPLIERS
+from .foundation_helpers import load_reference_json
 
 logger = logging.getLogger(__name__)
 
@@ -22,12 +23,11 @@ def _load_unit_conversions():
     """Load unit conversions from reference file (cached)."""
     global _UNIT_CONVERSIONS_CACHE
     if _UNIT_CONVERSIONS_CACHE is None:
-        ref_path = Path(__file__).parent / "reference" / "unit_conversions.json"
-        try:
-            with open(ref_path, encoding='utf-8') as f:
-                _UNIT_CONVERSIONS_CACHE = json.load(f)
-        except Exception as e:
-            logger.warning(f"Could not load unit_conversions.json: {e}")
+        data = load_reference_json("unit_conversions.json")
+        if isinstance(data, dict):
+            _UNIT_CONVERSIONS_CACHE = data
+        else:
+            logger.warning("Could not load unit_conversions.json")
             _UNIT_CONVERSIONS_CACHE = {}
     return _UNIT_CONVERSIONS_CACHE
 
@@ -35,14 +35,11 @@ def _get_state_abbreviations():
     """Load state abbreviations from usa_admin.json reference file."""
     global _STATE_ABBREVS_CACHE
     if _STATE_ABBREVS_CACHE is None:
-        ref_path = Path(__file__).parent / "reference" / "usa" / "usa_admin.json"
-        try:
-            with open(ref_path, encoding='utf-8') as f:
-                data = json.load(f)
-                # Filter out metadata keys (starting with _)
-                abbrevs = data.get("state_abbreviations", {})
-                _STATE_ABBREVS_CACHE = {k: v for k, v in abbrevs.items() if not k.startswith("_")}
-        except Exception:
+        data = load_reference_json("usa/usa_admin.json")
+        if isinstance(data, dict):
+            abbrevs = data.get("state_abbreviations", {})
+            _STATE_ABBREVS_CACHE = {k: v for k, v in abbrevs.items() if not k.startswith("_")}
+        else:
             _STATE_ABBREVS_CACHE = {}
     return _STATE_ABBREVS_CACHE
 

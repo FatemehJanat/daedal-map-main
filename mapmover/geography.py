@@ -7,6 +7,7 @@ import json
 import logging
 import pandas as pd
 from pathlib import Path
+from .foundation_helpers import load_reference_json
 
 # Base directory for file paths
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -50,15 +51,10 @@ def load_iso_codes():
     if _ISO_CODES_CACHE is not None:
         return _ISO_CODES_CACHE
 
-    iso_path = BASE_DIR / "mapmover" / "reference" / "iso_codes.json"
-    if iso_path.exists():
-        try:
-            with open(iso_path, 'r', encoding='utf-8') as f:
-                _ISO_CODES_CACHE = json.load(f)
-                logger.debug(f"Loaded iso_codes.json with {len(_ISO_CODES_CACHE.get('iso3_to_name', {}))} countries")
-        except Exception as e:
-            logger.warning(f"Failed to load iso_codes.json: {e}")
-            _ISO_CODES_CACHE = {}
+    data = load_reference_json("iso_codes.json")
+    if isinstance(data, dict):
+        _ISO_CODES_CACHE = data
+        logger.debug(f"Loaded iso_codes.json with {len(_ISO_CODES_CACHE.get('iso3_to_name', {}))} countries")
     else:
         logger.warning("iso_codes.json not found")
         _ISO_CODES_CACHE = {}

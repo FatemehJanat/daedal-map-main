@@ -18,6 +18,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from mapmover.auth_context import build_session_cache_key, get_authenticated_user
 from mapmover.corpus_registry import corpus_registry
 from mapmover import ACCOUNT_URL, CacheSignature, clear_metadata_cache, initialize_catalog, logger, session_manager
+from mapmover.foundation_helpers import load_reference_json
 from mapmover.order_queue import order_queue
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
 from mapmover.security import get_client_ip, is_https_request, rate_limiter
@@ -2490,12 +2491,9 @@ async def serve_settings_page(request: Request):
 async def get_admin_levels():
     """Get admin level names for all countries."""
     try:
-        ref_path = BASE_DIR / "mapmover" / "reference" / "admin_levels.json"
-        if not ref_path.exists():
+        data = load_reference_json("admin_levels.json")
+        if not isinstance(data, dict):
             return msgpack_error("admin_levels.json not found", 404)
-
-        with open(ref_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
         return msgpack_response(data)
     except Exception as e:
         logger.error(f"Error loading admin_levels.json: {e}")

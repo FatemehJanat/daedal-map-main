@@ -23,6 +23,7 @@ from typing import Optional
 import logging
 
 from .data_loading import load_catalog, load_source_metadata, get_source_path
+from .foundation_helpers import load_reference_json
 from .preprocessor_candidates import (
     adjust_scores_with_context as adjust_scores_with_context_impl,
     detect_intent_candidates as detect_intent_candidates_impl,
@@ -107,9 +108,6 @@ CONVERSIONS_PATH = Path(__file__).parent / "conversions.json"
 REFERENCE_DIR = Path(__file__).parent / "reference"
 GEOMETRY_DIR = GEOM_DIR
 
-# Reference file cache (loaded once per file)
-_REFERENCE_FILE_CACHE = {}  # filepath_str -> dict
-
 # Conversions.json cache
 _CONVERSIONS_CACHE = None
 
@@ -172,23 +170,19 @@ def _load_disaster_overlays() -> dict:
     if _DISASTERS_CACHE is not None:
         return _DISASTERS_CACHE
 
-    ref_path = REFERENCE_DIR / "disasters.json"
-    try:
-        with open(ref_path, encoding='utf-8') as f:
-            data = json.load(f)
-            overlays = data.get("overlays", {})
-            # Extract just the keywords for each overlay
-            _DISASTERS_CACHE = {
-                overlay: info.get("keywords", [])
-                for overlay, info in overlays.items()
-                if not overlay.startswith("_")
-            }
-            logger.debug(f"Loaded {len(_DISASTERS_CACHE)} disaster overlays from reference file")
-            return _DISASTERS_CACHE
-    except Exception as e:
-        logger.warning(f"Error loading disasters.json: {e}")
-        _DISASTERS_CACHE = {}
+    data = load_reference_json("disasters.json")
+    if isinstance(data, dict):
+        overlays = data.get("overlays", {})
+        _DISASTERS_CACHE = {
+            overlay: info.get("keywords", [])
+            for overlay, info in overlays.items()
+            if not overlay.startswith("_")
+        }
+        logger.debug(f"Loaded {len(_DISASTERS_CACHE)} disaster overlays from reference file")
         return _DISASTERS_CACHE
+    logger.warning("Error loading disasters.json")
+    _DISASTERS_CACHE = {}
+    return _DISASTERS_CACHE
 
 def normalize_query_for_location_matching(query: str) -> str:
     """
@@ -228,22 +222,9 @@ def load_conversions() -> dict:
 
 
 def load_reference_file(filepath: Path) -> Optional[dict]:
-    """Load a reference JSON file if it exists. Cached after first load."""
-    global _REFERENCE_FILE_CACHE
-
-    cache_key = str(filepath)
-    if cache_key in _REFERENCE_FILE_CACHE:
-        return _REFERENCE_FILE_CACHE[cache_key]
-
-    if filepath.exists():
-        with open(filepath, encoding='utf-8') as f:
-            data = json.load(f)
-            _REFERENCE_FILE_CACHE[cache_key] = data
-            logger.debug(f"Cached reference file: {filepath.name}")
-            return data
-
-    _REFERENCE_FILE_CACHE[cache_key] = None
-    return None
+    """Compatibility shim to the shared runtime foundation helper loader."""
+    data = load_reference_json(filepath)
+    return data if isinstance(data, dict) else None
 
 
 # =============================================================================

@@ -6,31 +6,19 @@ import re
 from pathlib import Path
 from typing import Callable, Optional
 
-
+from .foundation_helpers import load_global_countries_frame
 _PARQUET_NAMES_CACHE = {}
 _PARQUET_SORTED_NAMES_CACHE = {}
-_GLOBAL_CSV_CACHE = None
 
 
 def get_countries_in_viewport(bounds: dict, *, geometry_dir: Path, logger) -> list:
     """Get ISO3 codes for countries visible in the viewport."""
-    global _GLOBAL_CSV_CACHE
     if not bounds:
         return []
-    if _GLOBAL_CSV_CACHE is None:
-        global_csv = geometry_dir / "global.csv"
-        if not global_csv.exists():
-            return []
-        try:
-            import pandas as pd
-
-            _GLOBAL_CSV_CACHE = pd.read_csv(global_csv)
-            logger.debug(f"Cached global.csv with {len(_GLOBAL_CSV_CACHE)} countries")
-        except Exception as e:
-            logger.warning(f"Error loading global.csv: {e}")
-            return []
+    df = load_global_countries_frame()
+    if df is None:
+        return []
     try:
-        df = _GLOBAL_CSV_CACHE
         v_west = bounds.get("west", -180)
         v_south = bounds.get("south", -90)
         v_east = bounds.get("east", 180)

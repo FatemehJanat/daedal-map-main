@@ -21,6 +21,7 @@ from typing import Dict, List, Optional, Tuple, Set
 from rapidfuzz import fuzz, process
 
 from .duckdb_helpers import duckdb_available, select_columns_from_parquet
+from .foundation_helpers import load_reference_json
 from .paths import GEOMETRY_DIR
 
 
@@ -70,13 +71,8 @@ class NameStandardizer:
                 conv = json.load(f)
 
             # Load ISO codes from reference/iso_codes.json
-            iso_codes_path = self.data_dir / "reference" / "iso_codes.json"
-            if iso_codes_path.exists():
-                with open(iso_codes_path, 'r', encoding='utf-8') as f:
-                    iso_data = json.load(f)
-                iso3_to_name = iso_data.get('iso3_to_name', {})
-            else:
-                iso3_to_name = {}
+            iso_data = load_reference_json("iso_codes.json")
+            iso3_to_name = iso_data.get('iso3_to_name', {}) if isinstance(iso_data, dict) else {}
 
             # Build alias map from iso_codes.json
             for code, name in iso3_to_name.items():

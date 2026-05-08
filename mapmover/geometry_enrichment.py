@@ -9,6 +9,7 @@ import os
 import pandas as pd
 from pathlib import Path
 
+from .foundation_helpers import load_reference_json
 from .geography import get_fallback_coordinates, load_conversions, CONVERSIONS_DATA, get_iso_codes
 
 # Base directory for file paths
@@ -30,17 +31,14 @@ def _load_country_aliases() -> dict:
     if _COUNTRY_ALIASES_CACHE is not None:
         return _COUNTRY_ALIASES_CACHE
 
-    ref_path = REFERENCE_DIR / "country_aliases.json"
-    try:
-        with open(ref_path, encoding='utf-8') as f:
-            data = json.load(f)
-            _COUNTRY_ALIASES_CACHE = data.get("aliases", {})
-            logger.debug(f"Loaded {len(_COUNTRY_ALIASES_CACHE)} country aliases from reference file")
-            return _COUNTRY_ALIASES_CACHE
-    except Exception as e:
-        logger.warning(f"Error loading country_aliases.json: {e}")
+    data = load_reference_json("country_aliases.json")
+    if isinstance(data, dict):
+        _COUNTRY_ALIASES_CACHE = data.get("aliases", {})
+        logger.debug(f"Loaded {len(_COUNTRY_ALIASES_CACHE)} country aliases from reference file")
+    else:
+        logger.warning("Error loading country_aliases.json")
         _COUNTRY_ALIASES_CACHE = {}
-        return _COUNTRY_ALIASES_CACHE
+    return _COUNTRY_ALIASES_CACHE
 
 
 def get_geometry_lookup():

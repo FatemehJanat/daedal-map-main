@@ -18,6 +18,7 @@ from anthropic import Anthropic
 from dotenv import load_dotenv
 
 from .data_loading import load_catalog, load_source_metadata, get_source_path
+from .foundation_helpers import load_reference_json
 from .preprocessor import build_tier3_context, build_tier4_context
 from .constants import CHAT_HISTORY_LLM_LIMIT
 from .llm_tools import format_tools_for_provider, execute_tool, format_tool_result_for_llm
@@ -42,8 +43,6 @@ EXPLORER_TOOL_PROGRESS_MESSAGES = {
 load_dotenv()
 
 CONVERSIONS_PATH = Path(__file__).parent / "conversions.json"
-REFERENCE_DIR = Path(__file__).parent / "reference"
-
 
 def load_conversions() -> dict:
     """Load the conversions/regional groupings."""
@@ -53,11 +52,8 @@ def load_conversions() -> dict:
 
 def load_usa_admin() -> dict:
     """Load USA admin data from reference/usa_admin.json."""
-    usa_path = REFERENCE_DIR / "usa_admin.json"
-    if usa_path.exists():
-        with open(usa_path, encoding='utf-8') as f:
-            return json.load(f)
-    return {}
+    data = load_reference_json("usa/usa_admin.json")
+    return data if isinstance(data, dict) else {}
 
 
 def _is_localish_url(url: str) -> bool:

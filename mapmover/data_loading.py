@@ -38,6 +38,7 @@ import time
 from pathlib import Path
 from copy import deepcopy
 
+from .foundation_helpers import load_country_crosswalk
 from .pack_state import build_active_catalog
 from .paths import CATALOG_PATH, COUNTRIES_DIR, DATA_ROOT, GEOMETRY_DIR, WIP_CATALOG_PATH
 from .duckdb_helpers import select_rows
@@ -720,23 +721,9 @@ def load_geometry_for_country(iso3: str):
                 logger.warning(f"Error loading {country_geom_path}: {e}")
 
     # Tier 2: Load crosswalk if exists (for translating loc_ids)
-    crosswalk = None
-    runtime_mode = str(get_runtime_config().get("runtime_mode", "local")).strip().lower()
-    if runtime_mode == "cloud":
-        try:
-            crosswalk = _fetch_json_from_s3(f"countries/{iso3}/crosswalk.json")
-            logger.debug(f"Loaded crosswalk for {iso3} from S3: {len(crosswalk.get('mappings', {}))} mappings")
-        except Exception:
-            pass  # No crosswalk for this country is normal
-    elif countries_folder:
-        crosswalk_path = countries_folder / iso3 / "crosswalk.json"
-        if crosswalk_path.exists():
-            try:
-                with open(crosswalk_path, 'r') as f:
-                    crosswalk = json.load(f)
-                logger.debug(f"Loaded crosswalk for {iso3}: {len(crosswalk.get('mappings', {}))} mappings")
-            except Exception as e:
-                logger.warning(f"Error loading crosswalk {crosswalk_path}: {e}")
+    crosswalk = load_country_crosswalk(iso3)
+    if crosswalk:
+        logger.debug(f"Loaded crosswalk for {iso3}: {len(crosswalk.get('mappings', {}))} mappings")
 
     # Tier 3: GADM fallback geometry
     if geometry_folder:
@@ -791,7 +778,6 @@ def fetch_geometries_by_loc_ids(loc_ids: list) -> dict:
         countries_folder = get_countries_folder()
         geometry_folder = get_geometry_folder()
         country_geom_path = countries_folder / country / "geometry.parquet" if countries_folder else None
-        crosswalk_path = countries_folder / country / "crosswalk.json" if countries_folder else None
         fallback_geom_path = geometry_folder / f"{country}.parquet" if geometry_folder else None
 
         parquet_path = None
@@ -805,27 +791,21 @@ def fetch_geometries_by_loc_ids(loc_ids: list) -> dict:
                 parquet_path = country_geom_path
             elif fallback_geom_path:
                 parquet_path = fallback_geom_path
-            # Try to load crosswalk from S3
-            try:
-                crosswalk = _fetch_json_from_s3(f"countries/{country}/crosswalk.json")
-                if parquet_path == country_geom_path:
-                    pass  # no crosswalk needed for direct geometry
-                else:
-                    uses_crosswalk = True
-            except Exception:
-                pass
+            crosswalk = load_country_crosswalk(country)
+            if crosswalk and parquet_path != country_geom_path:
+                uses_crosswalk = True
         elif country_geom_path and country_geom_path.exists():
             parquet_path = country_geom_path
-        elif crosswalk_path and crosswalk_path.exists() and fallback_geom_path and fallback_geom_path.exists():
-            parquet_path = fallback_geom_path
-            uses_crosswalk = True
-            try:
-                with open(crosswalk_path, "r", encoding="utf-8") as f:
-                    crosswalk = json_module.load(f)
-            except Exception as e:
-                logger.warning(f"Error loading crosswalk {crosswalk_path}: {e}")
         elif fallback_geom_path and fallback_geom_path.exists():
+            crosswalk = load_country_crosswalk(country)
+            if crosswalk:
+                parquet_path = fallback_geom_path
+                uses_crosswalk = True
+            else:
+                parquet_path = fallback_geom_path
+        if parquet_path is None and fallback_geom_path and fallback_geom_path.exists():
             parquet_path = fallback_geom_path
+            crosswalk = None
 
         if parquet_path is None:
             logger.warning(f"No geometry found for {country}")
