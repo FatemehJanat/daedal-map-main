@@ -241,10 +241,22 @@ def build_system_prompt(catalog: dict, conversions: dict) -> str:
     published_pack_text = ", ".join(sorted({src.get("pack_id") for src in published_sources if src.get("pack_id")})) or "(none)"
 
     def _year(dt_str):
-        """Extract 4-digit year from an ISO datetime string."""
-        if not dt_str:
+        """Extract a 4-digit year string from mixed int / float / ISO-like inputs."""
+        if dt_str is None or dt_str == "":
             return "?"
-        return str(dt_str)[:4]
+        if isinstance(dt_str, bool):
+            return "?"
+        if isinstance(dt_str, int):
+            return str(dt_str)
+        if isinstance(dt_str, float):
+            return str(int(dt_str))
+        text = str(dt_str).strip()
+        return text[:4] if len(text) >= 4 else text or "?"
+
+    def _year_int(value):
+        """Coerce temporal coverage values into comparable year ints when possible."""
+        text = _year(value)
+        return int(text) if text.isdigit() else None
 
     def format_multi_scope_pack(pid, srcs):
         """
@@ -274,9 +286,21 @@ def build_system_prompt(catalog: dict, conversions: dict) -> str:
                 coverage_parts.append(f"{scope} ({sname}, {yr_s}-{yr_e})")
 
         # Overall time range
-        all_starts = [src.get("temporal_coverage", {}).get("start") for src in srcs if src.get("temporal_coverage", {}).get("start")]
-        all_ends = [src.get("temporal_coverage", {}).get("end") for src in srcs if src.get("temporal_coverage", {}).get("end")]
-        time_range = f"{_year(min(all_starts))}-{_year(max(all_ends))}" if all_starts and all_ends else "?"
+        all_starts = [
+            year for year in (
+                _year_int(src.get("temporal_coverage", {}).get("start"))
+                for src in srcs
+            )
+            if year is not None
+        ]
+        all_ends = [
+            year for year in (
+                _year_int(src.get("temporal_coverage", {}).get("end"))
+                for src in srcs
+            )
+            if year is not None
+        ]
+        time_range = f"{min(all_starts)}-{max(all_ends)}" if all_starts and all_ends else "?"
 
         # Admin area coverage (from event_areas join)
         total_admin2 = sum(

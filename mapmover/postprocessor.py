@@ -242,6 +242,25 @@ def _source_has_metrics(catalog_source: dict | None) -> bool:
     return False
 
 
+def _source_has_aggregate_files(catalog_source: dict | None) -> bool:
+    files = (catalog_source or {}).get("files") or {}
+    if not isinstance(files, dict):
+        files = {}
+    if any(key in files for key in ("yearly", "rolling_10y", "rolling_20y")):
+        return True
+
+    source_path = (catalog_source or {}).get("path")
+    if not source_path:
+        return False
+    aggregate_dir = _resolve_aggregate_admin2_dir(str(DATA_ROOT / source_path))
+    candidates = (
+        aggregate_dir / "yearly.parquet",
+        aggregate_dir / "rolling_10y.parquet",
+        aggregate_dir / "rolling_20y.parquet",
+    )
+    return any(path.exists() for path in candidates)
+
+
 def _source_requires_metric(item: dict, catalog_source: dict | None) -> bool:
     if item.get("type") in {"derived", "derived_result"}:
         return False
@@ -262,12 +281,25 @@ def _format_metric_label(metric_key: str) -> str:
     return str(metric_key or "").replace("_", " ").strip().title()
 
 
+def _resolve_aggregate_admin2_dir(source_path: str) -> Path:
+    """
+    Resolve the admin2 aggregate folder for either a parent hazard source path
+    or a dedicated aggregate source path rooted at `.../aggregates/admin2`.
+    """
+    source_dir = DATA_ROOT / source_path
+    if source_dir.name.lower() == "admin2" and source_dir.parent.name.lower() == "aggregates":
+        return source_dir
+    if source_dir.name.lower() == "aggregates":
+        return source_dir / "admin2"
+    return source_dir / "aggregates" / "admin2"
+
+
 def _get_disaster_aggregate_metric_columns(catalog_source: dict | None) -> set[str]:
     source_path = str((catalog_source or {}).get("path") or "").strip()
     if not source_path:
         return set()
 
-    aggregate_dir = DATA_ROOT / source_path / "aggregates" / "admin2"
+    aggregate_dir = _resolve_aggregate_admin2_dir(source_path)
     candidates = [
         aggregate_dir / "yearly.parquet",
         aggregate_dir / "rolling_10y.parquet",
@@ -558,11 +590,6 @@ def validate_item(item: dict, catalog: dict) -> dict:
         item["_needs_expansion"] = True
         return item
 
-    # Skip event mode items - they don't require metric validation
-    if item.get("mode") == "events":
-        item["_valid"] = True
-        return item
-
     if not source_id and item.get("pack_id"):
         resolved_source = _resolve_pack_source(catalog, item.get("pack_id"), item.get("region"))
         if resolved_source:
@@ -605,6 +632,48 @@ def validate_item(item: dict, catalog: dict) -> dict:
         return item
 
     catalog_source = _get_catalog_source(catalog, source_id)
+
+    if (
+        not item.get("mode")
+        and _source_has_metrics(catalog_source)
+        and _source_has_aggregate_files(catalog_source)
+    ):
+        item["mode"] = "aggregate"
+
+        query = str(((item.get("_hints") or {}).get("original_query")) or "").lower()
+        if not query and isinstance(catalog_source, dict):
+            query = ""
+        if item.get("aggregate_use_rolling") is None and ("rolling" in query or "last 10 years" in query or "past 10 years" in query):
+            item["aggregate_use_rolling"] = True
+            item["aggregate_window_years"] = 10
+        elif item.get("aggregate_use_rolling") is None and ("last 20 years" in query or "past 20 years" in query):
+            item["aggregate_use_rolling"] = True
+            item["aggregate_window_years"] = 20
+        elif item.get("aggregate_use_rolling") is None and ("last 30 years" in query or "past 30 years" in query):
+            item["aggregate_use_rolling"] = True
+            item["aggregate_window_years"] = 30
+
+    # Some metric-only sources may still be returned with mode="events" because
+    # the pack family also contains event-capable siblings. Normalize those
+    # items back to the metrics/aggregate path here rather than letting the
+    # executor try to open a non-existent event parquet.
+    if item.get("mode") == "events" and not _source_supports_events(catalog_source):
+        item.pop("event_file", None)
+        if (
+            item.get("aggregate_use_rolling")
+            or item.get("aggregate_window_years")
+            or item.get("aggregate_rollup_level")
+            or item.get("aggregate_all_years")
+            or _source_has_aggregate_files(catalog_source)
+        ):
+            item["mode"] = "aggregate"
+        else:
+            item.pop("mode", None)
+
+    # Skip valid event mode items - they don't require metric validation
+    if item.get("mode") == "events":
+        item["_valid"] = True
+        return item
 
     # Load full metadata for metric validation and metadata-backed defaults
     metadata = load_source_metadata(source_id)
@@ -1101,6 +1170,52 @@ def detect_event_mode(items: list, hints: dict = None) -> list:
     return updated_items
 
 
+def normalize_aggregate_metric_mode(items: list, hints: dict = None, catalog: dict | None = None) -> list:
+    """
+    Normalize dedicated aggregate metric sources onto mode="aggregate" when the
+    query language is clearly asking for rolled-up wildfire/disaster exposure
+    rather than individual events.
+    """
+    catalog = catalog or load_catalog()
+    query = ""
+    if hints:
+        query = str(hints.get("original_query", "") or "").lower()
+
+    updated_items = []
+
+    for item in items:
+        source_id = item.get("source_id")
+        catalog_source = _get_catalog_source(catalog, source_id)
+        if (
+            source_id
+            and not item.get("mode")
+            and _source_has_metrics(catalog_source)
+            and _source_has_aggregate_files(catalog_source)
+        ):
+            item["mode"] = "aggregate"
+            if item.get("aggregate_use_rolling") is None and ("rolling" in query or "last 10 years" in query or "past 10 years" in query):
+                item["aggregate_use_rolling"] = True
+                item["aggregate_window_years"] = 10
+            elif item.get("aggregate_use_rolling") is None and ("last 20 years" in query or "past 20 years" in query):
+                item["aggregate_use_rolling"] = True
+                item["aggregate_window_years"] = 20
+            elif item.get("aggregate_use_rolling") is None and ("last 30 years" in query or "past 30 years" in query):
+                item["aggregate_use_rolling"] = True
+                item["aggregate_window_years"] = 30
+
+            if "historically" in query:
+                item["aggregate_all_years"] = True
+
+            if "countries" in query or "country" in query:
+                item["aggregate_rollup_level"] = "admin_0"
+            elif "counties" in query or "county" in query:
+                item["aggregate_rollup_level"] = "admin_2"
+
+        updated_items.append(item)
+
+    return updated_items
+
+
 # =============================================================================
 # Main Postprocessor
 # =============================================================================
@@ -1182,6 +1297,10 @@ def postprocess_order(order: dict, hints: dict = None) -> dict:
 
     # Step 1: Detect event mode for disaster/event sources
     items = detect_event_mode(items, hints)
+
+    # Step 1a: Dedicated aggregate metric sources should still enter the
+    # aggregate execution path even when they sit alongside event sources in a pack.
+    items = normalize_aggregate_metric_mode(items, hints, catalog)
 
     # Step 1b: Expand explicit full-pack load requests into one item per source.
     items = expand_full_pack_loads(items, catalog)

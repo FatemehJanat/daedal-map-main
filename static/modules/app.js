@@ -1764,10 +1764,17 @@ export const App = {
         showDamageRadius: true,
         onEventClick: (props) => {
           console.log('Event clicked:', props);
-          // Show detailed popup on click
-          const html = MapAdapter._buildEventPopupHtml(props, data.event_type);
-          MapAdapter.popup.setHTML(html);
-          MapAdapter.popupLocked = true;
+          // Route event clicks through the shared disaster popup system.
+          const coords = props?.lon != null && props?.lat != null
+            ? [Number(props.lon), Number(props.lat)]
+            : props?.longitude != null && props?.latitude != null
+              ? [Number(props.longitude), Number(props.latitude)]
+              : props?.lng != null && props?.lat != null
+                ? [Number(props.lng), Number(props.lat)]
+                : null;
+          if (coords && Number.isFinite(coords[0]) && Number.isFinite(coords[1])) {
+            DisasterPopup.show(coords, props, data.event_type);
+          }
         }
       });
 

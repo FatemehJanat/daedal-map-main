@@ -313,10 +313,23 @@ def _aggregate_metric_frame(df: pd.DataFrame, group_cols: list[str]) -> pd.DataF
     return out
 
 
+def _resolve_aggregate_admin2_dir(source_dir: Path) -> Path:
+    """
+    Resolve the admin2 aggregate folder for either:
+    - a parent hazard source directory containing `aggregates/admin2/`, or
+    - a dedicated aggregate source already rooted at `.../aggregates/admin2`.
+    """
+    if source_dir.name.lower() == "admin2" and source_dir.parent.name.lower() == "aggregates":
+        return source_dir
+    if source_dir.name.lower() == "aggregates":
+        return source_dir / "admin2"
+    return source_dir / "aggregates" / "admin2"
+
+
 def _load_disaster_aggregate_data(source_id: str, item: dict) -> tuple[Optional[pd.DataFrame], Optional[dict]]:
     """Load disaster aggregate parquet for event sources when query intent is choropleth/aggregate."""
     source_dir = _get_source_path(source_id)
-    agg_dir = source_dir / "aggregates" / "admin2"
+    agg_dir = _resolve_aggregate_admin2_dir(source_dir)
     use_rolling = bool(item.get("aggregate_use_rolling"))
     requested_window = item.get("aggregate_window_years")
 
@@ -383,6 +396,19 @@ def _load_disaster_aggregate_data(source_id: str, item: dict) -> tuple[Optional[
         f"rows={len(df)} level={metadata.get('geographic_level')}"
     )
     return df, metadata
+
+
+def _source_supports_disaster_aggregates(source_id: str) -> bool:
+    source_dir = _get_source_path(source_id)
+    if not source_dir:
+        return False
+    agg_dir = _resolve_aggregate_admin2_dir(source_dir)
+    candidates = (
+        agg_dir / "yearly.parquet",
+        agg_dir / "rolling_10y.parquet",
+        agg_dir / "rolling_20y.parquet",
+    )
+    return any(path.exists() for path in candidates)
 
 
 def _get_source_data_type(source_id: str) -> str:
@@ -2130,6 +2156,14 @@ def execute_order(order: dict) -> dict:
 
     # Stage 1: resolve pack_id -> source_id for all items before any processing
     items = _normalize_order_items(items, _load_catalog())
+    for item in items:
+        if item.get("mode"):
+            continue
+        source_id = item.get("source_id")
+        if not source_id:
+            continue
+        if _get_source_data_type(source_id) == "metrics" and _source_supports_disaster_aggregates(source_id):
+            item["mode"] = "aggregate"
     validation_error = _validate_execution_items(items)
     if validation_error:
         return {
@@ -2156,12 +2190,18 @@ def execute_order(order: dict) -> dict:
 
     # Check if this is an events order (explicit mode or data_type from catalog)
     def is_event_item(item):
+        source_id = item.get("source_id")
+        source_info = _get_source_from_catalog(source_id) if source_id else None
+        source_data_type = (source_info or {}).get("data_type", "metrics")
+        if isinstance(source_data_type, list):
+            supports_events = "events" in source_data_type
+        else:
+            supports_events = source_data_type == "events"
         if item.get("mode") == "aggregate":
             return False
         if item.get("mode") == "events":
-            return True
-        source_id = item.get("source_id")
-        return _get_source_data_type(source_id) == "events" if source_id else False
+            return supports_events
+        return supports_events
 
     # If any item is events type, route to event pipeline.
     # For mixed event+metric orders, execute only the event subset here
