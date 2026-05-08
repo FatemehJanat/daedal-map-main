@@ -49,6 +49,9 @@ Use describe_artifact when you need fields, available metrics, years, geography,
 Use bridge_loc_ids when same-level artifacts appear comparable but their loc_ids come from different local/global families.
 Use query_artifact_slice when you need concrete values, rankings, filtered subsets, grouped summaries, or comparisons.
 Use build_artifact_display_subset when the user clearly wants to see a result on the map and the active corpus already contains the needed artifact.
+For follow-up requests like "same question, but...", preserve the analytical frame, geography, and metric intent from the immediately preceding grounded answer unless the user explicitly changes them.
+If your previous grounded answer was about counties, tracts, block groups, blocks, or states, keep the follow-up display at that same geography level unless the user explicitly asks for raw events or point incidents.
+Do not substitute event points for county or other administrative shapes just because both are available in the corpus. If the user asks to highlight counties, choose an artifact whose rows resolve to county/admin geometries.
 Grouped query results may include numeric fields like `<metric>_sum`, `<metric>_avg`, `<metric>_count`, `<metric>_min`, and `<metric>_max`.
 When an artifact exposes `time_field`, treat that as the canonical temporal field for filtering, sorting, and windowing. Prefer `timestamp` when available. Use helper fields like `year`, `date`, `month`, or `iso_week` only for grouping, labeling, or source-native interpretation unless the artifact manifest explicitly makes one of them canonical.
 If an artifact exposes `geography_kind` or `admin_level_num`, use those fields to respect requests like tract, block group, or block instead of inferring only from raw `loc_id` strings.

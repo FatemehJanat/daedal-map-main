@@ -29,7 +29,6 @@ import { ensureRuntimeAccessToken, getAccessToken, getCurrentUser, getSupabaseCl
 import { TutorialMode, parseTutorialCommand } from './tutorial-mode.js';
 import { ResearchModeToggle } from './research/mode.js';
 import {
-  getBrowserCorpusInstallBundle,
   getBrowserCorpusStorageSummary,
   listBrowserCorpusSummaries,
   removeBrowserCorpusSnapshot,
@@ -913,26 +912,6 @@ export const ChatManager = {
     };
   },
 
-  normalizeResearchBrowserSourceArtifactPayload(payload) {
-    if (payload instanceof Uint8Array) return payload;
-    if (payload instanceof ArrayBuffer) return new Uint8Array(payload);
-    if (ArrayBuffer.isView(payload)) {
-      return new Uint8Array(payload.buffer.slice(payload.byteOffset || 0, (payload.byteOffset || 0) + (payload.byteLength || 0)));
-    }
-    throw new Error('Browser source artifact payload is missing');
-  },
-
-  async restoreResearchBrowserInstallBundle(corpusId, sourceArtifacts, { sessionId } = {}) {
-    const token = getAccessToken();
-    return await postMsgpack('/api/research/browser-save/load-install-manifest', {
-      sessionId: sessionId || this.getSessionIdForMode('research'),
-      corpusId,
-      sourceArtifacts: sourceArtifacts || []
-    }, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {}
-    });
-  },
-
   getSelectedResearchCorpusOption() {
     return this.researchCorpusOptions.find(option => option.id === this.selectedResearchCorpusId) || null;
   },
@@ -1074,22 +1053,6 @@ export const ChatManager = {
     return `${current.toFixed(current >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
   },
 
-  hasUsableResearchBrowserInstallBundle(bundle, expectedUpdatedAt = '') {
-    const manifestRecord = bundle?.manifestRecord || null;
-    const installManifest = manifestRecord?.installManifest || null;
-    const sourceCount = Number(manifestRecord?.sourceCount || 0);
-    const artifactCount = Array.isArray(bundle?.artifactRecords) ? bundle.artifactRecords.length : 0;
-    const manifestUpdatedAt = String(manifestRecord?.corpusUpdatedAt || '').trim();
-    const targetUpdatedAt = String(expectedUpdatedAt || '').trim();
-    return Boolean(
-      installManifest
-      && artifactCount > 0
-      && sourceCount > 0
-      && artifactCount === sourceCount
-      && (!targetUpdatedAt || !manifestUpdatedAt || manifestUpdatedAt === targetUpdatedAt)
-    );
-  },
-
   async loadSelectedResearchCorpus(corpusId) {
     const selectedId = corpusId || this.selectedResearchCorpusId;
     if (!selectedId) return;
@@ -1124,62 +1087,31 @@ export const ChatManager = {
       await ensureRuntimeAccessToken();
       await this.refreshBrowserCorpusSummaries();
       const selected = this.getSelectedResearchCorpusOption();
-      researchModeToggle?.setCorpusStatus(`Loading "${selected?.name || 'saved corpus'}" into this Research workspace. Checking browser copy on this device...`);
-      let browserInstallBundle = null;
-      try {
-        browserInstallBundle = await getBrowserCorpusInstallBundle(selectedId);
-      } catch (installLookupError) {
-        console.warn('Could not look up browser install bundle before loading corpus:', installLookupError);
-      }
-      if (!browserInstallBundle && selected?.browserStatus !== 'complete') {
-        try {
-          await this.refreshResearchCorpusOptions();
-        } catch (refreshError) {
-          console.warn('Could not refresh corpus options before browser restore attempt:', refreshError);
-        }
-      }
-      const refreshedSelected = this.getSelectedResearchCorpusOption() || selected;
+      const selectedUpdatedAt = String(selected?.updatedAt || '').trim();
+      const browserSummary = this.getBrowserCorpusSummary(selectedId);
+      const browserReady = browserSummary?.status === 'complete'
+        && (!selectedUpdatedAt || !browserSummary?.corpusUpdatedAt || String(browserSummary.corpusUpdatedAt).trim() === selectedUpdatedAt);
+      const loadModeLabel = browserReady ? 'saved runtime snapshots' : 'runtime snapshots';
+      researchModeToggle?.setCorpusStatus(`Loading "${selected?.name || 'saved corpus'}" into this Research workspace from ${loadModeLabel}...`);
       let response = null;
-      const selectedUpdatedAt = String(refreshedSelected?.updatedAt || selected?.updatedAt || '').trim();
-      const hasUsableInstallBundle = this.hasUsableResearchBrowserInstallBundle(browserInstallBundle, selectedUpdatedAt);
-      if (hasUsableInstallBundle) {
-        try {
-          indicator.updateStage?.('thinking', 'Loading from browser: restoring saved source artifacts into Research...');
-          researchModeToggle?.setCorpusStatus(`Loading from browser. Restoring saved source artifacts for "${refreshedSelected?.name || selected?.name || 'saved corpus'}"...`);
-          const sourceArtifacts = [];
-          for (const record of browserInstallBundle.artifactRecords) {
-            sourceArtifacts.push({
-              sourceId: String(record?.sourceId || '').trim(),
-              artifactVersion: String(record?.artifactVersion || '').trim(),
-              payload: this.normalizeResearchBrowserSourceArtifactPayload(record.payload)
-            });
-          }
-          response = await this.restoreResearchBrowserInstallBundle(selectedId, sourceArtifacts);
-        } catch (installBundleError) {
-          console.warn('Browser install bundle restore failed, falling back to server load:', installBundleError);
-          browserInstallBundle = null;
-        }
-      }
-      if (!response) {
-        try {
-          indicator.updateStage?.('thinking', 'Loading from server: checking warm runtime data, then cloud artifacts if needed...');
-          researchModeToggle?.setCorpusStatus(`Loading from server. "${refreshedSelected?.name || selected?.name || 'Saved corpus'}" is not ready in app browser storage yet.`);
+      try {
+        indicator.updateStage?.('thinking', `Loading from ${loadModeLabel}: restoring Research workspace state...`);
+        researchModeToggle?.setCorpusStatus(`Loading from ${loadModeLabel}. Restoring "${selected?.name || 'Saved corpus'}" into this Research workspace...`);
+        response = await postMsgpack('/api/research/load-saved-corpus', {
+          sessionId: this.getSessionIdForMode('research'),
+          corpusId: selectedId
+        });
+      } catch (loadError) {
+        if (Number(loadError?.status || 0) === 401) {
+          await refreshRuntimeSession();
+          indicator.updateStage?.('thinking', 'Refreshing account session, then retrying Research load...');
+          researchModeToggle?.setCorpusStatus('Refreshing account session, then retrying the Research load...');
           response = await postMsgpack('/api/research/load-saved-corpus', {
             sessionId: this.getSessionIdForMode('research'),
             corpusId: selectedId
           });
-        } catch (loadError) {
-          if (Number(loadError?.status || 0) === 401) {
-            await refreshRuntimeSession();
-            indicator.updateStage?.('thinking', 'Refreshing account session, then retrying server load...');
-            researchModeToggle?.setCorpusStatus('Refreshing account session, then retrying the server load...');
-            response = await postMsgpack('/api/research/load-saved-corpus', {
-              sessionId: this.getSessionIdForMode('research'),
-              corpusId: selectedId
-            });
-          } else {
-            throw loadError;
-          }
+        } else {
+          throw loadError;
         }
       }
       this.setResearchDisplayForMode('research', null);

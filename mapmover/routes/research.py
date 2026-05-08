@@ -48,6 +48,7 @@ from supabase_client import SupabaseClient
 RESEARCH_TOOL_PROGRESS_MESSAGES = {
     "list_artifacts": "Listing loaded research data...",
     "describe_artifact": "Inspecting an artifact...",
+    "bridge_loc_ids": "Checking the loc_id bridge...",
     "query_artifact_slice": "Reading values from your workspace...",
     "build_artifact_display_subset": "Preparing the map display...",
 }
@@ -1027,6 +1028,37 @@ def _restore_browser_install_source_snapshots(
     return corpus_registry.manifest(session_id)
 
 
+def _published_browser_install_source_snapshots(saved_corpus: dict) -> list[dict]:
+    manifest = _build_browser_install_manifest(saved_corpus)
+    decoded_snapshots: list[dict] = []
+    for source_entry in manifest.get("sources") or []:
+        browser_artifact = source_entry.get("browser_artifact") or {}
+        storage_key = str(browser_artifact.get("storage_key") or "").strip()
+        source_id = str(source_entry.get("source_id") or "").strip()
+        if not storage_key:
+            raise ValueError(f"Published browser artifact metadata is incomplete for {source_id or 'unknown source'}")
+        artifact_bytes, _ = _read_browser_artifact_bytes(storage_key)
+        try:
+            json_bytes = gzip.decompress(artifact_bytes)
+            decoded_snapshot = json.loads(json_bytes.decode("utf-8"))
+        except Exception as exc:
+            raise ValueError(
+                f"Could not decode published browser artifact payload for {source_id or 'unknown source'}: {exc}"
+            ) from exc
+        if not isinstance(decoded_snapshot, dict):
+            raise ValueError(f"Published browser artifact payload is invalid for {source_id or 'unknown source'}")
+        decoded_snapshots.append(decoded_snapshot)
+    return decoded_snapshots
+
+
+def _restore_saved_corpus_from_published_browser_artifacts(session_id: str, saved_corpus: dict) -> dict:
+    return _restore_browser_install_source_snapshots(
+        session_id=session_id,
+        saved_corpus=saved_corpus,
+        source_snapshots=_published_browser_install_source_snapshots(saved_corpus),
+    )
+
+
 def _decode_browser_source_artifact_payloads(source_artifacts: list[dict] | None) -> list[dict]:
     decoded_snapshots: list[dict] = []
     for artifact_entry in source_artifacts or []:
@@ -1479,7 +1511,16 @@ def _compact_tool_result_for_prompt(tool_name: str, tool_result: dict) -> dict:
             "summary": artifact.get("summary"),
             "scene_periods": (artifact.get("scene_periods") or [])[:_PROMPT_SCENE_PERIOD_LIMIT],
             "raster_clip_levels": artifact.get("raster_clip_levels") or [],
+            "foundation_helpers": artifact.get("foundation_helpers") or {},
         }
+        return compact
+
+    if tool_name == "bridge_loc_ids":
+        compact["target_family"] = tool_result.get("target_family")
+        compact["mapping_count"] = tool_result.get("mapping_count")
+        compact["changed_count"] = tool_result.get("changed_count")
+        compact["foundation_helper_family"] = tool_result.get("foundation_helper_family")
+        compact["mappings_preview"] = (tool_result.get("mappings") or [])[:_TOOL_ROWS_PREVIEW_LIMIT]
         return compact
 
     if tool_name in {"query_artifact_slice", "build_artifact_display_subset"}:
@@ -1860,17 +1901,41 @@ async def research_load_saved_corpus_endpoint(req: Request):
             return msgpack_error("Saved corpus not found", 404)
 
         corpus_registry.set_saved_corpus(session_id, saved_corpus)
-        hydration = _hydrate_saved_corpus(session_id, saved_corpus)
+        load_path = "raw_hydration"
+        hydration_warning = None
+        try:
+            _restore_saved_corpus_from_published_browser_artifacts(session_id, saved_corpus)
+            hydration = {
+                "loaded_sources": [],
+                "skipped_sources": [],
+                "restore_mode": "published_browser_artifacts",
+            }
+            load_path = "published_browser_artifacts"
+        except Exception as snapshot_restore_error:
+            logger.warning(
+                "Research saved corpus published-browser-artifact restore failed for %s: %s",
+                saved_corpus.get("id"),
+                snapshot_restore_error,
+            )
+            hydration_warning = (
+                "Published runtime snapshots were unavailable for this corpus, "
+                "so Research fell back to a slower server-side restore."
+            )
+            hydration = _hydrate_saved_corpus(session_id, saved_corpus)
         manifest = _annotate_manifest_saved_corpus_state(corpus_registry.manifest(session_id))
         focus_geojson = _build_research_focus_geojson(session_id)
         prompt_window_warning = _manifest_prompt_window_warning(manifest)
+        combined_warning = "\n\n".join(
+            part for part in [hydration_warning, prompt_window_warning] if part
+        ) or None
         return msgpack_response({
             "type": "saved_corpus_loaded",
             "message": f'Loaded "{saved_corpus.get("name")}" into the Research workspace.',
             "corpus": manifest,
             "hydration": hydration,
             "focus_geojson": focus_geojson,
-            "warning": prompt_window_warning,
+            "warning": combined_warning,
+            "load_path": load_path,
         })
     except Exception as e:
         logger.exception("Research saved corpus load error")
