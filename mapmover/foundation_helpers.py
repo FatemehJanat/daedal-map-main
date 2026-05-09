@@ -85,7 +85,7 @@ def load_reference_json(relative_path: str | Path) -> Any:
         _REFERENCE_JSON_CACHE[cache_key] = None
         return None
     try:
-        with open(path, encoding="utf-8") as f:
+        with open(path, encoding="utf-8-sig") as f:
             data = json.load(f)
         _REFERENCE_JSON_CACHE[cache_key] = data
         return data
@@ -123,7 +123,7 @@ def load_country_crosswalk(iso3: str) -> dict | None:
         return None
 
     try:
-        with open(crosswalk_path, "r", encoding="utf-8") as f:
+        with open(crosswalk_path, "r", encoding="utf-8-sig") as f:
             data = json.load(f)
         _COUNTRY_CROSSWALK_CACHE[iso3] = data
         return data

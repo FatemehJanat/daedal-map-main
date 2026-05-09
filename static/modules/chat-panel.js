@@ -660,6 +660,25 @@ export const ChatManager = {
     if (!response || !App) return false;
     const origin = options.origin || 'unknown';
 
+    if (origin === 'research' && Array.isArray(response.displays) && response.displays.length) {
+      const validDisplays = response.displays.filter(display => display?.action === 'highlight_features' && display?.geojson?.features?.length);
+      if (validDisplays.length) {
+        const keepDisplays = validDisplays.filter(display => String(display.context_visibility || '').trim().toLowerCase() === 'keep');
+        const replaceDisplays = validDisplays.filter(display => String(display.context_visibility || '').trim().toLowerCase() !== 'keep');
+        if (replaceDisplays.length) {
+          this.setResearchDisplayLayersForMode('research', replaceDisplays);
+          for (const display of keepDisplays) {
+            this.appendResearchDisplayForMode('research', display);
+          }
+        } else {
+          this.setResearchDisplayLayersForMode('research', validDisplays);
+        }
+        const lastDisplay = validDisplays[validDisplays.length - 1];
+        App.displayMapPayload?.({ display: lastDisplay }, { origin });
+        return true;
+      }
+    }
+
     if (response.display) {
       if (origin === 'research' && response.display.action === 'highlight_features' && response.display.geojson?.features?.length) {
         if (String(response.display.context_visibility || '').trim().toLowerCase() === 'keep') {
@@ -1369,14 +1388,23 @@ export const ChatManager = {
       unregisterLoadedData(order);  // Track removal for LLM context
       if (orderPanel.switchTab) orderPanel.switchTab('loaded');
     } else if (data.type === 'mixed_order' && data.results) {
-      // Handle mixed add/remove orders - process each result
+      // Handle layered mixed results. This includes legacy add/remove splits and
+      // additive multi-layer map responses that should coexist on the map.
+      let sawAdditiveLayer = false;
+      let sawRemoval = false;
       for (const result of data.results) {
         App?.displayMapPayload(result, { order });
+        if (result?.action === 'remove') {
+          sawRemoval = true;
+        } else {
+          sawAdditiveLayer = true;
+          registerLoadedData(order, result);
+        }
       }
-      // Track both adds and removes for LLM context
-      registerLoadedData(order, data);
-      unregisterLoadedData(order);
-      const message = data.summary || `Updated map: added ${data.add_count || 0}, removed ${data.remove_count || 0}`;
+      if (sawRemoval) {
+        unregisterLoadedData(order);
+      }
+      const message = data.summary || `Rendered ${data.layer_count || data.results.length || 0} map layers`;
       this.addMessage(message, 'assistant');
       if (orderPanel.switchTab) orderPanel.switchTab('loaded');
     } else if (data.geojson) {
@@ -2330,10 +2358,14 @@ export const ChatManager = {
 
   decorateResearchResponse(response, options = {}) {
     if (!response || typeof response !== 'object') return response;
-    if (!response.display) return response;
+    const displays = Array.isArray(response.displays)
+      ? response.displays.map(display => this.decorateResearchDisplay(display, options))
+      : null;
+    if (!response.display && !displays?.length) return response;
     return {
       ...response,
-      display: this.decorateResearchDisplay(response.display, options)
+      display: response.display ? this.decorateResearchDisplay(response.display, options) : (displays ? displays[displays.length - 1] : response.display),
+      displays
     };
   },
 

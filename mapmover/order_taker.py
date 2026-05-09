@@ -254,6 +254,16 @@ def build_system_prompt(catalog: dict, conversions: dict) -> str:
         text = _year(value)
         return int(text) if text.isdigit() else None
 
+    def _shape_note(shape_value):
+        shape = str(shape_value or "").strip().lower()
+        if shape == "geometry_shape":
+            return "county/tract/admin geometry choropleth with geometry-region popups"
+        if shape == "event_shape":
+            return "event/perimeter overlay with disaster/event popups"
+        if shape == "building_shape":
+            return "building footprint geometry with building popups"
+        return ""
+
     def format_multi_scope_pack(pid, srcs):
         """
         Build a single catalog line for a multi-scope pack.
@@ -298,6 +308,15 @@ def build_system_prompt(catalog: dict, conversions: dict) -> str:
         ]
         time_range = f"{min(all_starts)}-{max(all_ends)}" if all_starts and all_ends else "?"
 
+        shape_notes = []
+        for src in sorted_srcs:
+            shape_note = _shape_note(src.get("geojson_shape"))
+            if not shape_note:
+                continue
+            scope = src.get("scope", "global")
+            sname = src.get("source_name", src.get("source_id", "?"))
+            shape_notes.append(f"{scope}: {sname} -> {shape_note}")
+
         # Admin area coverage (from event_areas join)
         total_admin2 = sum(
             src.get("affected_coverage", {}).get("admin2_regions_affected", 0) or 0
@@ -312,6 +331,8 @@ def build_system_prompt(catalog: dict, conversions: dict) -> str:
         ]
         if total_admin2 > 0:
             lines.append(f"  Admin regions: {total_admin2:,} counties/districts covered (event_areas join available)")
+        if shape_notes:
+            lines.append(f"  Map shape behavior: {'; '.join(shape_notes)}")
         return "\n".join(lines)
 
     def format_source_group(sources, scope_label):
@@ -334,7 +355,9 @@ def build_system_prompt(catalog: dict, conversions: dict) -> str:
             geo_level = src.get("geographic_level", "")
             geo_level_str = "/".join(geo_level) if isinstance(geo_level, list) else geo_level
             geo_note = f"; {geo_level_str}" if geo_level_str and geo_level_str not in ("country", "admin_0") else ""
-            lines.append(f"- {name} [{publish_note}; source_id: {sid}{geo_note}]: {temp.get('start', '?')}-{temp.get('end', '?')}")
+            shape_note = _shape_note(src.get("geojson_shape"))
+            shape_suffix = f"; map shape: {shape_note}" if shape_note else ""
+            lines.append(f"- {name} [{publish_note}; source_id: {sid}{geo_note}{shape_suffix}]: {temp.get('start', '?')}-{temp.get('end', '?')}")
 
         # List SDG sources individually with human-readable goal titles
         if sdg_sources:
@@ -502,6 +525,13 @@ DISASTER AGGREGATE RULES:
 - "Typhoons" and "cyclones" are the same as hurricanes in the IBTrACS pack — use pack_id="hurricanes" for all tropical cyclone queries regardless of regional name.
 
 
+DISASTER ROUTING CORRECTION:
+- When disaster guidance conflicts, follow map-shape and subject semantics first.
+- If the user is asking for counties, tracts, districts, states, provinces, countries, rankings, or affected regions, prefer geometry_shape or aggregate routing when available in the pack.
+- If the user is asking for individual incidents, named events, perimeters, tracks, or actual fires/storms/earthquakes on the map, prefer event_shape routing with mode="events".
+- Do not use raw event overlays to satisfy county rankings when the pack has a geometry_shape regional source.
+- Do not use aggregate region layers to satisfy "biggest fires", named-event, perimeter, or incident-overlay requests when the pack has an event_shape source.
+
 WHEN USER ASKS about a specific source ("what's in X?" or "show me metrics"):
 - Use the list_source_metrics tool to get the actual metrics
 - List the available metrics using ONLY the human-readable names (never show column names)
@@ -518,6 +548,9 @@ INTERACTION POLICY:
 - For source-backed analytical questions, prefer returning type="order" over type="chat".
 - For published geographic packs, "show me/map/display [place] [topic]" should default to a real order, not a catalog-status explanation.
 - If the user broadly asks to show/map/display a specific source or pack's "data" without naming a metric, prefer a real order using `metric: "*"` over a metric-list clarification, unless metadata explicitly requires choosing one metric first.
+- Respect `map shape` in the catalog. `geometry_shape` means region geometry like counties/tracts with geometry-region popups. `event_shape` means incident/perimeter/event overlays with disaster/event popups.
+- For county/tract/state/province ranking requests ("top counties", "highest counties on the map"), prefer `geometry_shape` sources. Do not satisfy region choropleths with `event_shape` sources.
+- When a user combines regional rankings with event-derived metrics, prefer an aggregate regional source if one exists in the same pack. Use direct event sources only when the user is asking for incidents, perimeters, tracks, or individual events on the map.
 - If the user names a published geographic pack/topic but not an exact metric, choose the best-fit metric from the source's keywords/names and use the latest available year unless the user asked for a specific year or comparison.
 - If the user asks broadly for a published source's "data" and then says "all", prefer a real order for all metrics rather than re-describing availability or publication state.
 - Do not say you cannot retrieve metrics for a published pack just because the user asked broadly. Either return an order or ask one tight clarification about metric/time if genuinely needed.
@@ -536,6 +569,7 @@ Event packs (wildfires, earthquakes, etc.) REQUIRE mode="events":
 {{"items": [{{"pack_id": "wildfires", "metric": "area_km2", "region": "canada-bc", "mode": "events"}}], "summary": "Wildfires in BC"}}
 ```
 The system routes to the correct regional source automatically based on region.
+Only include mode="events" when the user is asking for the actual incidents or event overlays. For county or region rankings, omit event mode and prefer the pack's geometry_shape or aggregate source.
 
 For sources shown with [source_id: X] (individual sources, SDGs, Factbook, pre-release), use source_id:
 ```json
@@ -963,6 +997,38 @@ def _scope_matches_region_for_validation(scope: str, region) -> bool:
     return r.startswith(str(scope).lower())
 
 
+def _item_prefers_geometry_source_for_validation(item: dict) -> bool:
+    text = " ".join(
+        str(value or "")
+        for value in (
+            item.get("summary"),
+            item.get("metric"),
+            item.get("region"),
+            ((item.get("_hints") or {}).get("original_query") if isinstance(item.get("_hints"), dict) else ""),
+        )
+    ).lower()
+    geometry_terms = (
+        "county",
+        "counties",
+        "district",
+        "districts",
+        "admin_2",
+        "admin2",
+        "tract",
+        "tracts",
+        "state",
+        "states",
+        "province",
+        "provinces",
+        "top ",
+        "highest",
+        "lowest",
+        "rank",
+        "ranking",
+    )
+    return any(term in text for term in geometry_terms)
+
+
 def _resolve_source_for_validation(item: dict) -> str | None:
     """Resolve pack_id to a concrete source_id during validation."""
     pack_id = item.get("pack_id")
@@ -976,6 +1042,18 @@ def _resolve_source_for_validation(item: dict) -> str | None:
         return item.get("source_id")
 
     region = item.get("region")
+    if _item_prefers_geometry_source_for_validation(item):
+        geometry_sources = [src for src in pack_sources if src.get("geojson_shape") == "geometry_shape"]
+        exact_geometry = [
+            src for src in geometry_sources
+            if src.get("scope") != "global" and _scope_matches_region_for_validation(src.get("scope", "global"), region)
+        ]
+        if exact_geometry:
+            return exact_geometry[0].get("source_id")
+        global_geometry = [src for src in geometry_sources if src.get("scope") == "global"]
+        if global_geometry:
+            return global_geometry[0].get("source_id")
+
     exact_matches = [
         src for src in pack_sources
         if src.get("scope") != "global" and _scope_matches_region_for_validation(src.get("scope", "global"), region)

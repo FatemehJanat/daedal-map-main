@@ -175,7 +175,7 @@ def load_catalog():
         return {"sources": [], "total_sources": 0}
 
     try:
-        with open(catalog_path, 'r', encoding='utf-8') as f:
+        with open(catalog_path, 'r', encoding='utf-8-sig') as f:
             raw_catalog = json.load(f)
             _catalog_cache = raw_catalog
             _catalog_cache_time = now
@@ -279,7 +279,7 @@ def load_full_catalog():
     catalog_path = get_wip_catalog_path()
     if catalog_path and catalog_path.exists():
         try:
-            with open(catalog_path, "r", encoding="utf-8") as f:
+            with open(catalog_path, "r", encoding="utf-8-sig") as f:
                 raw_catalog = json.load(f)
             _full_catalog_cache = raw_catalog
             _full_catalog_cache_time = now
@@ -535,7 +535,7 @@ def load_source_metadata(source_id: str):
         return None
 
     try:
-        with open(metadata_path, 'r', encoding='utf-8') as f:
+        with open(metadata_path, 'r', encoding='utf-8-sig') as f:
             metadata = json.load(f)
             _metadata_cache[source_id] = metadata
             return metadata
@@ -581,7 +581,7 @@ def load_source_reference(source_id: str):
         return None
 
     try:
-        with open(reference_path, 'r', encoding='utf-8') as f:
+        with open(reference_path, 'r', encoding='utf-8-sig') as f:
             data = json.load(f)
             return data if isinstance(data, dict) else None
     except Exception as e:

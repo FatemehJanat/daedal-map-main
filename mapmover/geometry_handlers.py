@@ -206,6 +206,7 @@ def load_country_parquet(iso3: str, admin_level: int = None):
 
     # Priority 1: Country-specific geometry (matches data loc_ids like NUTS)
     country_geom_file = DATA_ROOT / "countries" / iso3 / "geometry.parquet"
+    county_geom_file = DATA_ROOT / "countries" / iso3 / "geometry" / "county.parquet"
     # Priority 2: Crosswalk file (for translating loc_ids)
     crosswalk_file = DATA_ROOT / "countries" / iso3 / "crosswalk.json"
     # Priority 3: Global geometry folder (GADM fallback)
@@ -215,7 +216,10 @@ def load_country_parquet(iso3: str, admin_level: int = None):
     parquet_file = None
     crosswalk_data = None
 
-    if _parquet_accessible(country_geom_file):
+    if admin_level == 2 and _parquet_accessible(county_geom_file):
+        parquet_file = county_geom_file
+        logger.debug(f"Using county geometry: {county_geom_file}")
+    elif _parquet_accessible(country_geom_file):
         parquet_file = country_geom_file
         logger.debug(f"Using country-specific geometry: {country_geom_file}")
     elif crosswalk_file.exists() and _parquet_accessible(global_geom_file):
@@ -406,11 +410,61 @@ def load_geometry_rows_by_loc_ids(iso3: str, loc_ids: list[str]):
     if not requested_ids:
         return pd.DataFrame()
 
+    county_geom_file = DATA_ROOT / "countries" / iso3 / "geometry" / "county.parquet"
+    crosswalk_data = _load_crosswalk(iso3) or {}
+    local_to_geo, geo_to_local = _build_crosswalk_maps(crosswalk_data)
+    requested_set = set(requested_ids)
+
+    # USA county geometry is stored under the local county id family
+    # (e.g. USA-CA-001), while the runtime often joins on geometry-space
+    # G-IDs (e.g. USA-G123331-G224259). Query the county file in local id
+    # space, then translate rows back into the caller's requested id space.
+    if _parquet_accessible(county_geom_file):
+        county_query_ids = []
+        for loc_id in requested_ids:
+            local_id = geo_to_local.get(loc_id, loc_id)
+            if isinstance(local_id, str) and local_id.count("-") == 2:
+                county_query_ids.append(local_id)
+
+        if county_query_ids:
+            try:
+                df = select_rows(
+                    county_geom_file,
+                    in_filters={"loc_id": county_query_ids},
+                )
+
+                if df.empty and not is_cloud_mode():
+                    df = pd.read_parquet(
+                        county_geom_file,
+                        filters=[("loc_id", "in", county_query_ids)],
+                    )
+
+                if not df.empty:
+                    df = df.copy()
+                    df["source_loc_id"] = df["loc_id"]
+
+                    def resolve_requested_county_id(source_value):
+                        geo_value = local_to_geo.get(source_value)
+                        if geo_value in requested_set:
+                            return geo_value
+                        if source_value in requested_set:
+                            return source_value
+                        return geo_value or source_value
+
+                    df["loc_id"] = df["source_loc_id"].map(resolve_requested_county_id)
+                    df = df[
+                        df["loc_id"].isin(requested_set) |
+                        df["source_loc_id"].isin(requested_set)
+                    ]
+                    if not df.empty:
+                        return df
+            except Exception as e:
+                logger.error(f"Error loading county geometry rows for {iso3}: {e}")
+
     parquet_file, crosswalk_data = _resolve_geometry_source(iso3)
     if parquet_file is None:
         return pd.DataFrame()
 
-    requested_set = set(requested_ids)
     query_ids = requested_ids
     reverse_map = None
 

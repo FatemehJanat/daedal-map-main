@@ -1668,6 +1668,7 @@ def run_research_chat(
     max_tool_iterations = _RESEARCH_MAX_TOOL_ITERATIONS
     response = None
     final_display = None
+    final_displays: list[dict] = []
     display_warning = None
     tool_iterations_used = 0
     recent_tool_signatures: list[str] = []
@@ -1727,6 +1728,7 @@ def run_research_chat(
                     display_warning = tool_result.get("display_warning")
                 if isinstance(tool_result, dict) and isinstance(tool_result.get("display"), dict):
                     final_display = dict(tool_result["display"])
+                    final_displays.append(final_display)
                     if progress is not None:
                         progress(ProgressEvent(
                             stage="display",
@@ -1842,19 +1844,21 @@ def run_research_chat(
         "message": text,
         "corpus": manifest,
         "display": final_display,
+        "displays": final_displays,
         "research_hints": research_hints,
     }
     if final_display:
         display_geojson = final_display.get("geojson") or {}
         display_features = display_geojson.get("features") or []
         logger.info(
-            "Research final response session=%s query=%r message_len=%s display_action=%s display_source=%s display_features=%s",
+            "Research final response session=%s query=%r message_len=%s display_action=%s display_source=%s display_features=%s display_layers=%s",
             session_id,
             query[:120],
             len(text or ""),
             final_display.get("action"),
             final_display.get("source_id"),
             len(display_features),
+            len(final_displays),
         )
     else:
         logger.info(

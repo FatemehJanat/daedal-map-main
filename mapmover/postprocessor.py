@@ -126,13 +126,57 @@ def _scope_matches_region(scope: str, region: str | None) -> bool:
     return value.startswith(scope.lower())
 
 
-def _resolve_pack_source(catalog: dict, pack_id: str | None, region: str | None) -> str | None:
+def _item_prefers_geometry_pack_source(item: dict) -> bool:
+    text = " ".join(
+        str(value or "")
+        for value in (
+            item.get("summary"),
+            item.get("metric"),
+            item.get("region"),
+            ((item.get("_hints") or {}).get("original_query") if isinstance(item.get("_hints"), dict) else ""),
+        )
+    ).lower()
+    geometry_terms = (
+        "county",
+        "counties",
+        "district",
+        "districts",
+        "admin_2",
+        "admin2",
+        "tract",
+        "tracts",
+        "state",
+        "states",
+        "province",
+        "provinces",
+        "top ",
+        "highest",
+        "lowest",
+        "rank",
+        "ranking",
+    )
+    return any(term in text for term in geometry_terms)
+
+
+def _resolve_pack_source(catalog: dict, pack_id: str | None, region: str | None, item: dict | None = None) -> str | None:
     if not pack_id:
         return None
 
     pack_sources = [s for s in _catalog_sources(catalog) if s.get("pack_id") == pack_id]
     if not pack_sources:
         return None
+
+    if _item_prefers_geometry_pack_source(item or {"pack_id": pack_id, "region": region}):
+        geometry_sources = [s for s in pack_sources if s.get("geojson_shape") == "geometry_shape"]
+        exact_geometry = [
+            s for s in geometry_sources
+            if s.get("scope") != "global" and _scope_matches_region(s.get("scope", "global"), region)
+        ]
+        if len(exact_geometry) == 1:
+            return exact_geometry[0].get("source_id")
+        global_geometry = [s for s in geometry_sources if s.get("scope") == "global"]
+        if len(global_geometry) == 1:
+            return global_geometry[0].get("source_id")
 
     exact_matches = [
         s for s in pack_sources
@@ -591,7 +635,7 @@ def validate_item(item: dict, catalog: dict) -> dict:
         return item
 
     if not source_id and item.get("pack_id"):
-        resolved_source = _resolve_pack_source(catalog, item.get("pack_id"), item.get("region"))
+        resolved_source = _resolve_pack_source(catalog, item.get("pack_id"), item.get("region"), item)
         if resolved_source:
             item["source_id"] = resolved_source
             item["_resolved_from_pack"] = True
@@ -613,7 +657,7 @@ def validate_item(item: dict, catalog: dict) -> dict:
         if pack:
             item["pack_id"] = source_id
             item.pop("source_id", None)
-            resolved_source = _resolve_pack_source(catalog, source_id, item.get("region"))
+            resolved_source = _resolve_pack_source(catalog, source_id, item.get("region"), item)
             if resolved_source:
                 item["source_id"] = resolved_source
                 item["_resolved_from_pack"] = True
@@ -800,7 +844,7 @@ def expand_wildcard_metrics(items: list) -> list:
         if metric in ("*", "all", "all_metrics"):
             source_id = item.get("source_id")
             if not source_id and item.get("pack_id"):
-                resolved_source = _resolve_pack_source(catalog, item.get("pack_id"), item.get("region"))
+                resolved_source = _resolve_pack_source(catalog, item.get("pack_id"), item.get("region"), item)
                 if resolved_source:
                     item["source_id"] = resolved_source
                     item["_resolved_from_pack"] = True
@@ -1065,17 +1109,42 @@ def expand_all_derived_fields(items: list) -> list:
 # Event Mode Detection
 # =============================================================================
 
-# Source IDs that support event mode (individual events vs aggregates)
-EVENT_SOURCES = {
-    "earthquakes": "events",
-    "floods": "events",
-    "hurricanes": "storms",
-    "landslides": "events",
-    "tornadoes": "events",
-    "tsunamis": "events",
-    "volcanoes": "events",
-    "wildfires": "fires",
-}
+def _preferred_event_file_key(catalog_source: dict | None) -> str | None:
+    files = (catalog_source or {}).get("files") or {}
+    if not isinstance(files, dict):
+        files = {}
+    for key in ("events", "fires", "storms", "positions", "tracks"):
+        if key in files:
+            return key
+    return None
+
+
+def _resolve_pack_source_by_shape(
+    catalog: dict,
+    pack_id: str | None,
+    region: str | None,
+    desired_shape: str,
+) -> str | None:
+    if not pack_id:
+        return None
+    pack_sources = [
+        s for s in _catalog_sources(catalog)
+        if s.get("pack_id") == pack_id and s.get("geojson_shape") == desired_shape
+    ]
+    if not pack_sources:
+        return None
+    exact_matches = [
+        s for s in pack_sources
+        if s.get("scope") != "global" and _scope_matches_region(s.get("scope", "global"), region)
+    ]
+    if len(exact_matches) == 1:
+        return exact_matches[0].get("source_id")
+    global_matches = [s for s in pack_sources if s.get("scope") == "global"]
+    if len(global_matches) == 1:
+        return global_matches[0].get("source_id")
+    if len(pack_sources) == 1:
+        return pack_sources[0].get("source_id")
+    return None
 
 
 def detect_event_mode(items: list, hints: dict = None) -> list:
@@ -1120,15 +1189,37 @@ def detect_event_mode(items: list, hints: dict = None) -> list:
             # Default: if disaster noun present without aggregate words, show events
             wants_events = has_event_noun
 
+    catalog = load_catalog()
     updated_items = []
 
     for item in items:
         source_id = item.get("source_id", "")
+        catalog_source = _get_catalog_source(catalog, source_id)
+        pack_id = item.get("pack_id") or (catalog_source or {}).get("pack_id")
+        if pack_id and not item.get("pack_id"):
+            item["pack_id"] = pack_id
 
-        # Check if source supports events
-        event_file_key = EVENT_SOURCES.get(source_id)
+        if wants_events and not wants_aggregate and pack_id:
+            event_source_id = _resolve_pack_source_by_shape(catalog, pack_id, item.get("region"), "event_shape")
+            if event_source_id:
+                item["source_id"] = event_source_id
+                if event_source_id != source_id:
+                    item["_resolved_from_pack"] = True
+                source_id = event_source_id
+                catalog_source = _get_catalog_source(catalog, source_id)
+        elif wants_aggregate and pack_id:
+            geometry_source_id = _resolve_pack_source_by_shape(catalog, pack_id, item.get("region"), "geometry_shape")
+            if geometry_source_id:
+                item["source_id"] = geometry_source_id
+                if geometry_source_id != source_id:
+                    item["_resolved_from_pack"] = True
+                source_id = geometry_source_id
+                catalog_source = _get_catalog_source(catalog, source_id)
 
-        if event_file_key and wants_events and not wants_aggregate:
+        event_file_key = _preferred_event_file_key(catalog_source)
+        supports_events = _source_supports_events(catalog_source)
+
+        if supports_events and event_file_key and wants_events and not wants_aggregate:
             # Check if metric explicitly requests aggregate
             metric = item.get("metric", "")
             explicit_aggregate = metric and any(
@@ -1142,7 +1233,7 @@ def detect_event_mode(items: list, hints: dict = None) -> list:
                 # Remove metric if it's just a placeholder
                 if metric in ("*", "all", "all_metrics", ""):
                     item.pop("metric", None)
-        elif event_file_key and wants_aggregate:
+        elif wants_aggregate:
             item["mode"] = "aggregate"
             item.pop("event_file", None)
 

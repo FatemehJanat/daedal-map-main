@@ -572,7 +572,17 @@ def _query_rows_duckdb(
         for sort in tool_input.get("order_by") or []:
             field = sort.get("field")
             if group_by and field in metrics:
-                field = f"{field}_avg"
+                field = f"{field}_sum"
+            if isinstance(field, str) and field not in df.columns:
+                for suffix in ("_sum", "_avg", "_count", "_min", "_max"):
+                    if field.endswith(suffix):
+                        base_field = field[: -len(suffix)]
+                        if group_by and base_field in metrics:
+                            field = f"{base_field}{suffix}"
+                            break
+                        if base_field in df.columns:
+                            field = base_field
+                            break
             direction = "ASC" if sort.get("direction") == "asc" else "DESC"
             allowed = (
                 set(df.columns)

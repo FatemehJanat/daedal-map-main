@@ -65,6 +65,7 @@ def normalize_research_result(result: dict | None, *, lane: str = "research") ->
     """Normalize a Research response into a frontend-safe shape."""
     payload = deepcopy(result or {})
     display = payload.get("display")
+    displays = payload.get("displays")
     research_hints = payload.get("research_hints")
 
     if isinstance(display, dict):
@@ -74,5 +75,21 @@ def normalize_research_result(result: dict | None, *, lane: str = "research") ->
             payload.pop("display", None)
         else:
             payload["display"] = normalized
+
+    if isinstance(displays, list):
+        normalized_displays = []
+        for display_item in displays:
+            if not isinstance(display_item, dict):
+                continue
+            next_display = dict(display_item)
+            next_display["lane"] = lane
+            normalized = _coerce_display(next_display, research_hints)
+            if normalized:
+                normalized_displays.append(normalized)
+        if normalized_displays:
+            payload["displays"] = normalized_displays
+            payload["display"] = normalized_displays[-1]
+        else:
+            payload.pop("displays", None)
 
     return payload

@@ -5,7 +5,6 @@ import os
 from pathlib import Path
 
 import msgpack
-import tifffile
 from fastapi import APIRouter, Request
 from shapely.geometry import shape as shapely_shape
 
@@ -18,6 +17,18 @@ from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
 from mapmover.runtime_config import get_runtime_config
 
 router = APIRouter()
+
+
+def _require_tifffile():
+    """Import tifffile only when a raster endpoint is actually exercised."""
+    try:
+        import tifffile  # type: ignore
+    except ImportError as exc:
+        raise RuntimeError(
+            "Raster endpoints require the optional Python package 'tifffile'. "
+            "Install county-map/requirements.txt to enable raster scene reads."
+        ) from exc
+    return tifffile
 
 
 def _cloud_object_bytes(relative_path: str) -> bytes | None:
@@ -198,6 +209,7 @@ async def get_raster_scene(source_id: str, period: str):
     raster_dir, raster_relative_dir = _raster_dirs_for_source(source_id, catalog)
 
     try:
+        tifffile = _require_tifffile()
         if is_cloud_mode():
             raw_tif = _cloud_object_bytes(f"{raster_relative_dir}/{scene['file']}")
             if raw_tif is None:
@@ -262,6 +274,7 @@ async def get_raster_clips(source_id: str, req: Request):
                 continue
             relative_path = f"{raster_relative_dir}/locid_clips/{level}/{period}/{loc_id}.tif"
             try:
+                tifffile = _require_tifffile()
                 if is_cloud_mode():
                     raw_tif = _cloud_object_bytes(relative_path)
                     if raw_tif is None:

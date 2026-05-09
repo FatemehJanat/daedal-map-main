@@ -194,6 +194,38 @@ def _scope_matches_region(scope: str, region) -> bool:
     return r.startswith(scope.lower())
 
 
+def _item_prefers_geometry_pack_source(item: dict) -> bool:
+    text = " ".join(
+        str(value or "")
+        for value in (
+            item.get("summary"),
+            item.get("metric"),
+            item.get("region"),
+            ((item.get("_hints") or {}).get("original_query") if isinstance(item.get("_hints"), dict) else ""),
+        )
+    ).lower()
+    geometry_terms = (
+        "county",
+        "counties",
+        "district",
+        "districts",
+        "admin_2",
+        "admin2",
+        "tract",
+        "tracts",
+        "state",
+        "states",
+        "province",
+        "provinces",
+        "top ",
+        "highest",
+        "lowest",
+        "rank",
+        "ranking",
+    )
+    return any(term in text for term in geometry_terms)
+
+
 def _resolve_source_for_item(item: dict, catalog: dict) -> str:
     """
     Resolve the correct source_id for an order item.
@@ -219,6 +251,19 @@ def _resolve_source_for_item(item: dict, catalog: dict) -> str:
         # Unknown pack - fall back to source_id if provided, else None
         return source_id
 
+    if _item_prefers_geometry_pack_source(item):
+        geometry_sources = [s for s in pack_sources if s.get("geojson_shape") == "geometry_shape"]
+        exact_geometry = [
+            s for s in geometry_sources
+            if s.get("scope") != "global" and _scope_matches_region(s.get("scope", "global"), region)
+        ]
+        if exact_geometry:
+            return exact_geometry[0]["source_id"]
+
+        global_geometry = [s for s in geometry_sources if s.get("scope") == "global"]
+        if global_geometry:
+            return global_geometry[0]["source_id"]
+
     # Prefer exact (non-global) scope match, fall back to global
     exact_matches = [s for s in pack_sources if s.get("scope") != "global" and _scope_matches_region(s.get("scope", "global"), region)]
     if exact_matches:
@@ -236,12 +281,26 @@ def _resolve_source_for_item(item: dict, catalog: dict) -> str:
 def _normalize_order_items(items: list, catalog: dict) -> list:
     """
     Resolve pack_id -> source_id for all items in an order.
-    Items that already have source_id and no pack_id are passed through unchanged.
+    Items that already have a valid source_id keep it, even when pack_id is also
+    present. This preserves earlier pack resolution done by the order-taker and
+    avoids re-routing an aggregate item back to an event source at execution time.
     """
+    catalog_sources = {
+        str(src.get("source_id") or "").strip(): src
+        for src in catalog.get("sources", [])
+        if src.get("source_id")
+    }
     resolved = []
     for item in items:
         item = dict(item)  # shallow copy so we don't mutate the original
-        if item.get("pack_id"):
+        source_id = str(item.get("source_id") or "").strip()
+        pack_id = item.get("pack_id")
+        if pack_id and source_id:
+            src = catalog_sources.get(source_id)
+            if src and src.get("pack_id") == pack_id:
+                resolved.append(item)
+                continue
+        if pack_id:
             item["source_id"] = _resolve_source_for_item(item, catalog)
             logger.debug(f"[routing] pack_id={item['pack_id']} region={item.get('region')} -> source_id={item['source_id']}")
         resolved.append(item)
@@ -2104,6 +2163,72 @@ def _execute_split_order(order: dict, add_items: list, remove_items: list, sourc
     }
 
 
+def _classify_execution_family(item: dict) -> str:
+    """
+    Classify an item into the renderer family it needs at execution time.
+
+    This stays generic:
+    - geometry overlays render through the geometry pipeline
+    - event items render through the event pipeline
+    - everything else renders through the metrics/choropleth pipeline
+    """
+    source_id = item.get("source_id")
+    source_info = _get_source_from_catalog(source_id) if source_id else {}
+    data_type = (source_info or {}).get("data_type", "metrics")
+    geo_level = str((source_info or {}).get("geographic_level") or "").strip().lower()
+
+    if item.get("overlay_type") or (geo_level in SPECIAL_GEOMETRY_LEVELS and _has_geometry_data_type(data_type)):
+        return "geometry"
+
+    if item.get("mode") == "aggregate":
+        return "metrics"
+
+    supports_events = False
+    if isinstance(data_type, list):
+        supports_events = "events" in data_type
+    else:
+        supports_events = data_type == "events"
+
+    if item.get("mode") == "events" or supports_events:
+        return "events"
+
+    return "metrics"
+
+
+def _execute_multi_layer_order_if_needed(order: dict, items: list) -> dict | None:
+    """
+    Execute multi-item orders as layered results.
+
+    The shared map-facing contract is one payload containing independent layers.
+    Preserve one layer per order item so:
+    - metrics + events can coexist
+    - two metrics sources can coexist without collapsing into one choropleth
+    - multiple geometry overlays can coexist
+    """
+    if len(items) <= 1:
+        return None
+
+    results = []
+    for item in items:
+        family = _classify_execution_family(item)
+        sub_order = {**order, "items": [item]}
+        if family == "geometry":
+            result = execute_geometry_order(sub_order)
+        else:
+            result = execute_order(sub_order)
+        if isinstance(result, dict):
+            result.setdefault("layer_source_id", item.get("source_id"))
+            result.setdefault("layer_family", family)
+        results.append(result)
+
+    return {
+        "type": "mixed_order",
+        "results": results,
+        "summary": order.get("summary", f"Rendered {len(results)} map layers"),
+        "layer_count": len(results),
+    }
+
+
 def execute_order(order: dict) -> dict:
     """
     Execute a confirmed order and return GeoJSON response.
@@ -2179,6 +2304,10 @@ def execute_order(order: dict) -> dict:
     if mixed_result:
         return mixed_result
 
+    layered_result = _execute_multi_layer_order_if_needed(order, items)
+    if layered_result:
+        return layered_result
+
     # Check if this is an events order (explicit mode or data_type from catalog)
     def is_event_item(item):
         source_id = item.get("source_id")
@@ -2244,7 +2373,13 @@ def execute_order(order: dict) -> dict:
                     geo_levels.add(gl)
             except Exception:
                 pass
-    _executor_log(trace_id, "source_metadata_collected", t_execute_start, f"sources={len(sources_used)} geo_levels={sorted(geo_levels)}")
+    normalized_geo_levels = sorted(str(level) for level in geo_levels if level is not None)
+    _executor_log(
+        trace_id,
+        "source_metadata_collected",
+        t_execute_start,
+        f"sources={len(sources_used)} geo_levels={normalized_geo_levels}",
+    )
 
     # For multi-year: year_data[year][loc_id] = {metric: value}
     # For single-year: boxes[loc_id] = {metric: value}
@@ -2586,7 +2721,7 @@ def execute_order(order: dict) -> dict:
 
                 country_geom = load_geometry_rows_by_loc_ids(iso3, country_loc_ids)
                 if country_geom is None or country_geom.empty:
-                    country_geom = load_country_parquet(iso3)
+                    country_geom = load_country_parquet(iso3, admin_level=primary_admin_num)
                     if country_geom is not None and not country_geom.empty:
                         country_geom = country_geom[country_geom["loc_id"].isin(country_loc_ids)]
 
@@ -2601,6 +2736,9 @@ def execute_order(order: dict) -> dict:
     if is_multi_level and geometry_df is not None and loc_ids_to_check:
         relevant_loc_ids = set(loc_ids_to_check)
         geometry_df = geometry_df[geometry_df["loc_id"].isin(relevant_loc_ids)]
+
+    if geometry_df is not None and not geometry_df.empty and "loc_id" in geometry_df.columns:
+        geometry_df = geometry_df.drop_duplicates(subset=["loc_id"], keep="first")
 
     _executor_log(trace_id, "geometry_loaded", t_execute_start, f"level={primary_level} geometry_rows={len(geometry_df) if geometry_df is not None else 0}")
 
