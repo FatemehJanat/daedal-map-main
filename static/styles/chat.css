@@ -176,6 +176,10 @@ body.chat-mode-ops {
   margin-left: 12px;
 }
 
+.chat-mode-toggle-host {
+  position: relative;
+}
+
 #sidebarResearchMount {
   padding: 10px 15px 0;
   display: flex;
@@ -663,10 +667,85 @@ body.chat-mode-ops #sidebarHeader {
   align-items: center;
 }
 
+.chat-mode-toggle__header-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .chat-mode-toggle__group {
   display: inline-flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.chat-mode-toggle__surface {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(8, 18, 28, 0.7);
+}
+
+.chat-mode-toggle__surface--floating {
+  position: absolute;
+  right: calc(100% + 12px);
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1;
+}
+
+.chat-mode-toggle__surface.hidden {
+  display: none !important;
+}
+
+.chat-mode-toggle__surface-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #9eb4c7;
+}
+
+.chat-mode-toggle__surface-group {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.chat-mode-toggle__surface-btn {
+  min-width: 54px;
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(123, 231, 255, 0.14);
+  background: rgba(18, 40, 60, 0.74);
+  color: #cfe3f3;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.chat-mode-toggle__surface-btn:hover {
+  background: rgba(28, 56, 80, 0.88);
+}
+
+.chat-mode-toggle__surface-btn.active[data-surface="published"] {
+  border-color: rgba(101, 195, 255, 0.45);
+  background: rgba(26, 76, 116, 0.92);
+  color: #eef8ff;
+  box-shadow: 0 0 14px rgba(77, 174, 242, 0.18);
+}
+
+.chat-mode-toggle__surface-btn.active[data-surface="wip"] {
+  border-color: rgba(255, 178, 74, 0.5);
+  background: rgba(84, 53, 18, 0.92);
+  color: #ffe6bf;
+  box-shadow: 0 0 14px rgba(255, 178, 74, 0.18);
 }
 
 .chat-mode-toggle__btn {

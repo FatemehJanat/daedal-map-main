@@ -26,6 +26,11 @@ from mapmover.corpus_registry import corpus_registry
 from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log_conversation
 from mapmover.llm_usage import LLMUsageRecorder, classify_caller
 from mapmover.chat_budget import budget_rejection_payload, check_anonymous_chat_budget
+from mapmover.catalog_surface import (
+    catalog_surface_scope,
+    normalize_catalog_surface,
+    request_can_use_wip_catalog,
+)
 from mapmover.security import get_client_ip
 from mapmover.data_loading import get_pack_metadata, get_source_path, load_catalog, load_source_metadata
 from mapmover.api_query_runtime import execute_dataset_query, get_api_source_columns, get_api_source_spec
@@ -72,6 +77,8 @@ _PROMPT_FIELD_LIMIT = 12
 _PROMPT_SCENE_PERIOD_LIMIT = 4
 _PROMPT_SAVED_PACK_LIMIT = 4
 _TOOL_ROWS_PREVIEW_LIMIT = 10
+_RESEARCH_LIVE_SOURCE_ROW_THRESHOLD = 250_000
+_RESEARCH_LIVE_SOURCE_FILE_MB_THRESHOLD = 25.0
 _PRIVATE_BROWSER_ARTIFACT_OUTPUT_ROOT = Path(__file__).resolve().parents[3] / "county-map-private" / "build" / "browser_artifacts" / "output"
 
 
@@ -81,6 +88,19 @@ def _research_heartbeat(idle_count: int) -> ProgressEvent:
 
 
 router = APIRouter()
+
+
+def _catalog_surface_for_request(req: Request, body: dict, auth_user: dict | None) -> tuple[str | None, Response | None]:
+    surface = normalize_catalog_surface(body.get("catalog_surface"))
+    if surface == "wip" and not request_can_use_wip_catalog(req, auth_user):
+        return None, msgpack_response(
+            {
+                "type": "error",
+                "message": "WIP catalog access is limited to admin accounts.",
+            },
+            status_code=403,
+        )
+    return surface, None
 
 
 def _manifest_prompt_window_warning(manifest: dict | None) -> str | None:
@@ -428,6 +448,19 @@ def _is_runtime_research_source(metadata: dict) -> bool:
     return release_state == "published" or bool(metadata.get("pack_id"))
 
 
+def _should_register_live_source_artifact(metadata: dict) -> bool:
+    if not isinstance(metadata, dict):
+        return False
+    data_type = metadata.get("data_type")
+    normalized_types = data_type if isinstance(data_type, list) else [data_type]
+    normalized = {str(value or "").strip().lower() for value in normalized_types if value}
+    if "geometry" in normalized:
+        return False
+    row_count = int(metadata.get("row_count") or 0)
+    file_size_mb = float(metadata.get("file_size_mb") or 0.0)
+    return row_count >= _RESEARCH_LIVE_SOURCE_ROW_THRESHOLD or file_size_mb >= _RESEARCH_LIVE_SOURCE_FILE_MB_THRESHOLD
+
+
 def _find_primary_parquet(source_id: str, metadata: dict):
     source_dir = get_source_path(source_id)
     if source_dir is None:
@@ -655,6 +688,21 @@ def _hydrate_saved_source_into_research(*, session_id: str, corpus_id: str, sour
     metadata = load_source_metadata(source_id) or {}
     if not _is_runtime_research_source(metadata):
         return {"source_id": source_id, "status": "skipped", "reason": "source_not_runtime_ready"}
+
+    if _should_register_live_source_artifact(metadata):
+        request_key = _saved_corpus_request_key(corpus_id, source_id)
+        artifact = corpus_registry.register_live_source_artifact(
+            session_id=session_id,
+            request_key=request_key,
+            source_id=source_id,
+        )
+        if artifact:
+            return {
+                "source_id": source_id,
+                "status": "loaded",
+                "row_count": int(metadata.get("row_count") or 0),
+                "hydration_mode": "live_source",
+            }
 
     runtime_outcome = _hydrate_runtime_source(source_id, metadata)
     result = runtime_outcome.get("result")
@@ -1560,13 +1608,13 @@ def _build_display_warning_result(manifest: dict, warning: dict, query: str) -> 
     if not message:
         if level == "hard_cap":
             message = (
-                f"This request would draw about {row_count:,} features, which exceeds the safe display cap of "
-                f"{hard_cap:,}. Narrow it first."
+                f"This request would display about {row_count:,} map shapes/locations. "
+                "Are you really sure? This may crash the map and make you lose chat history."
             )
         else:
             message = (
-                f"This request matches about {row_count:,} features, which may slow the map down. "
-                "Narrow it first, or confirm that you want to load it anyway."
+                f"This request would display about {row_count:,} map shapes/locations. "
+                "That may slow the map down. Would you like to continue anyway?"
             )
     return {
         "type": "display_warning",
@@ -1577,7 +1625,7 @@ def _build_display_warning_result(manifest: dict, warning: dict, query: str) -> 
         "row_count": row_count,
         "soft_cap": soft_cap,
         "hard_cap": hard_cap,
-        "override_allowed": level == "soft_cap",
+        "override_allowed": True,
         "gate": gate,
     }
 
@@ -2094,6 +2142,9 @@ async def research_chat_endpoint(req: Request):
             return msgpack_error("No query provided", 400)
         frontend_session_id = body.get("sessionId", "anonymous")
         auth_user = await get_authenticated_user_async(req)
+        catalog_surface, surface_error = _catalog_surface_for_request(req, body, auth_user)
+        if surface_error:
+            return surface_error
         session_id = build_session_cache_key(frontend_session_id, auth_user)
         caller_ctx = classify_caller(
             auth_user=auth_user,
@@ -2124,16 +2175,17 @@ async def research_chat_endpoint(req: Request):
         # Run the synchronous LLM-driven research pipeline in a thread so we
         # do not block the event loop. Mirrors the streaming endpoint below.
         try:
-            result = await asyncio.to_thread(
-                run_research_chat,
-                session_id=session_id,
-                query=query,
-                chat_history=body.get("chatHistory", []),
-                research_memory=body.get("researchMemory"),
-                force_large_display=bool(body.get("force_research_display")),
-                usage_recorder=usage_recorder,
-                rescue_usage_recorder=rescue_usage_recorder,
-            )
+            with catalog_surface_scope(catalog_surface):
+                result = await asyncio.to_thread(
+                    run_research_chat,
+                    session_id=session_id,
+                    query=query,
+                    chat_history=body.get("chatHistory", []),
+                    research_memory=body.get("researchMemory"),
+                    force_large_display=bool(body.get("force_research_display")),
+                    usage_recorder=usage_recorder,
+                    rescue_usage_recorder=rescue_usage_recorder,
+                )
         finally:
             usage_recorder.flush()
             rescue_usage_recorder.flush(skip_if_empty=True)
@@ -2167,6 +2219,17 @@ async def research_chat_stream_endpoint(req: Request):
                 return
             frontend_session_id = body.get("sessionId", "anonymous")
             auth_user = await get_authenticated_user_async(req)
+            catalog_surface, surface_error = _catalog_surface_for_request(req, body, auth_user)
+            if surface_error:
+                payload = {
+                    "stage": "complete",
+                    "result": {
+                        "type": "error",
+                        "message": "WIP catalog access is limited to admin accounts.",
+                    },
+                }
+                yield f"data: {json.dumps(payload)}\n\n"
+                return
             session_id = build_session_cache_key(frontend_session_id, auth_user)
             caller_ctx = classify_caller(
                 auth_user=auth_user,
@@ -2198,17 +2261,18 @@ async def research_chat_stream_endpoint(req: Request):
             # calling, not rotating filler text. Heartbeat fires only when
             # no real event arrives within the window.
             bus = ProgressBus()
-            task = asyncio.create_task(asyncio.to_thread(
-                run_research_chat,
-                session_id=session_id,
-                query=query,
-                chat_history=body.get("chatHistory", []),
-                research_memory=body.get("researchMemory"),
-                progress=bus.thread_emitter(),
-                force_large_display=bool(body.get("force_research_display")),
-                usage_recorder=usage_recorder,
-                rescue_usage_recorder=rescue_usage_recorder,
-            ))
+            with catalog_surface_scope(catalog_surface):
+                task = asyncio.create_task(asyncio.to_thread(
+                    run_research_chat,
+                    session_id=session_id,
+                    query=query,
+                    chat_history=body.get("chatHistory", []),
+                    research_memory=body.get("researchMemory"),
+                    progress=bus.thread_emitter(),
+                    force_large_display=bool(body.get("force_research_display")),
+                    usage_recorder=usage_recorder,
+                    rescue_usage_recorder=rescue_usage_recorder,
+                ))
             try:
                 async for event in bus.drain_until(
                     task,

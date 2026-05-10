@@ -163,6 +163,55 @@ def _extract_source_runtime_hints(source_id: str | None) -> dict:
     return hints
 
 
+def _metadata_year_range(metadata: dict | None) -> dict | None:
+    temporal = metadata.get("temporal_coverage") if isinstance(metadata, dict) else {}
+    if not isinstance(temporal, dict):
+        return None
+    start = temporal.get("start")
+    end = temporal.get("end")
+    if start is None and end is None:
+        return None
+    available_years = []
+    if isinstance(start, int) and isinstance(end, int) and end >= start and (end - start) <= 200:
+        available_years = list(range(start, end + 1))
+    return {"min": start, "max": end, "available_years": available_years}
+
+
+def _artifact_fields_from_metadata(metadata: dict | None) -> list[str]:
+    fields: list[str] = []
+
+    def add_field(value) -> None:
+        text = str(value or "").strip()
+        if text and text not in fields:
+            fields.append(text)
+
+    add_field("loc_id")
+    temporal = metadata.get("temporal_coverage") if isinstance(metadata, dict) else {}
+    if isinstance(temporal, dict):
+        add_field(temporal.get("field"))
+    add_field("year")
+    add_field("timestamp")
+    add_field("name")
+
+    for field in (metadata.get("filterable_fields") or []) if isinstance(metadata, dict) else []:
+        add_field(field)
+
+    dimensions = metadata.get("dimensions") if isinstance(metadata, dict) else {}
+    if isinstance(dimensions, dict):
+        for dim_key, dim_spec in dimensions.items():
+            if isinstance(dim_spec, dict):
+                add_field(dim_spec.get("column") or dim_key)
+            else:
+                add_field(dim_key)
+
+    metrics = metadata.get("metrics") if isinstance(metadata, dict) else {}
+    if isinstance(metrics, dict):
+        for metric_id in metrics.keys():
+            add_field(metric_id)
+
+    return fields
+
+
 class CorpusRegistry:
     """In-memory research artifact registry keyed by authenticated session id."""
 
@@ -302,6 +351,60 @@ class CorpusRegistry:
         for artifact_id in to_remove:
             artifacts.pop(artifact_id, None)
         return len(to_remove)
+
+    def register_live_source_artifact(
+        self,
+        *,
+        session_id: str,
+        request_key: str,
+        source_id: str,
+    ) -> dict | None:
+        if not session_id or not request_key or not source_id:
+            return None
+
+        metadata = load_source_metadata(source_id) or {}
+        if not metadata:
+            return None
+
+        artifacts = self._sessions.setdefault(session_id, {})
+        metric_ids = [
+            str(metric_id).strip()
+            for metric_id in ((metadata.get("metrics") or {}).keys() if isinstance(metadata.get("metrics"), dict) else [])
+            if str(metric_id).strip()
+        ]
+        temporal = metadata.get("temporal_coverage") if isinstance(metadata.get("temporal_coverage"), dict) else {}
+        time_field = str(temporal.get("field") or "").strip() or None
+        year_range = _metadata_year_range(metadata)
+        artifact_id = f"artifact_{_stable_hash({'session': session_id, 'request': request_key, 'source': source_id, 'mode': 'live_source'})}"
+        artifact = {
+            "artifact_id": artifact_id,
+            "session_id": session_id,
+            "request_key": request_key,
+            "source_id": source_id,
+            "source_name": str(metadata.get("source_name") or source_id),
+            "data_type": metadata.get("data_type") or "data",
+            "time_field": time_field,
+            "region": "global",
+            "geographic_level": metadata.get("geographic_level") or next(iter(metadata.get("geographic_levels") or []), None),
+            "metrics": metric_ids,
+            "year_range": year_range,
+            "feature_count": 0,
+            "row_count": metadata.get("row_count"),
+            "fields": _artifact_fields_from_metadata(metadata),
+            "summary": str(metadata.get("llm_summary") or metadata.get("description") or f"Loaded {source_id} into Research.").strip(),
+            "loaded_scope": {
+                "regions": ["global"],
+                "geographic_level": metadata.get("geographic_level") or next(iter(metadata.get("geographic_levels") or []), None),
+                "filters": [],
+                "year_range": year_range,
+            },
+            "view_scope": None,
+            "created_at": datetime.utcnow().isoformat() + "Z",
+            "hydration_mode": "live_source",
+        }
+        artifact.update(_extract_source_runtime_hints(source_id))
+        artifacts[artifact_id] = artifact
+        return deepcopy(artifact)
 
     def set_saved_corpus(self, session_id: str, saved_corpus: dict | None) -> None:
         if not session_id:

@@ -38,6 +38,7 @@ import time
 from pathlib import Path
 from copy import deepcopy
 
+from .catalog_surface import get_catalog_surface_override
 from .foundation_helpers import load_country_crosswalk
 from .pack_state import build_active_catalog
 from .paths import CATALOG_PATH, COUNTRIES_DIR, DATA_ROOT, GEOMETRY_DIR, WIP_CATALOG_PATH
@@ -97,6 +98,18 @@ def get_wip_catalog_path():
     return WIP_CATALOG_PATH
 
 
+def _use_wip_catalog_for_local_runtime() -> bool:
+    raw = str(os.environ.get("USE_WIP_CATALOG", "")).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _requested_catalog_surface() -> str:
+    override = get_catalog_surface_override()
+    if override in {"published", "wip"}:
+        return override
+    return "wip" if _use_wip_catalog_for_local_runtime() else "published"
+
+
 def _fetch_json_from_s3(relative_path: str) -> dict:
     """Fetch a JSON file directly from S3 into memory. Cloud mode only."""
     import boto3 as _boto3
@@ -146,6 +159,9 @@ def load_catalog():
     """
     global _catalog_cache, _catalog_cache_time, _catalog_missing_time
 
+    if _requested_catalog_surface() == "wip":
+        return load_full_catalog()
+
     now = time.time()
     if _catalog_cache is not None and (now - _catalog_cache_time) < _CATALOG_TTL_SECONDS:
         return _catalog_cache
@@ -168,7 +184,8 @@ def load_catalog():
             return {"sources": [], "total_sources": 0}
 
     # Local mode: read from disk
-    catalog_path = get_catalog_path()
+    use_wip_catalog = _use_wip_catalog_for_local_runtime()
+    catalog_path = get_wip_catalog_path() if use_wip_catalog else get_catalog_path()
     if not catalog_path or not catalog_path.exists():
         _catalog_missing_time = now
         logger.warning(f"Catalog not found at {catalog_path}")
@@ -179,11 +196,12 @@ def load_catalog():
             raw_catalog = json.load(f)
             _catalog_cache = raw_catalog
             _catalog_cache_time = now
-            active_catalog = build_active_catalog(raw_catalog)
-            logger.debug(f"Loaded catalog.json with {len(raw_catalog.get('sources', []))} sources")
+            active_catalog = raw_catalog if use_wip_catalog else build_active_catalog(raw_catalog)
+            catalog_label = "wip_catalog.json" if use_wip_catalog else "catalog.json"
+            logger.debug(f"Loaded {catalog_label} with {len(raw_catalog.get('sources', []))} sources")
             return active_catalog
     except Exception as e:
-        logger.error(f"Error loading catalog.json: {e}")
+        logger.error(f"Error loading {'wip_catalog.json' if use_wip_catalog else 'catalog.json'}: {e}")
         return {"sources": [], "total_sources": 0}
 
 
@@ -273,7 +291,18 @@ def load_full_catalog():
         except Exception as e:
             _full_catalog_missing_time = now
             logger.warning(f"wip_catalog.json S3 fetch failed, falling back to catalog.json: {e}")
-            fallback = load_catalog()
+            override = get_catalog_surface_override()
+            if override == "wip":
+                token = None
+                try:
+                    from .catalog_surface import _catalog_surface_override
+                    token = _catalog_surface_override.set("published")
+                    fallback = load_catalog()
+                finally:
+                    if token is not None:
+                        _catalog_surface_override.reset(token)
+            else:
+                fallback = load_catalog()
             return fallback or {"sources": [], "total_sources": 0}
 
     catalog_path = get_wip_catalog_path()
@@ -289,7 +318,18 @@ def load_full_catalog():
             logger.error(f"Error loading wip_catalog.json: {e}")
 
     _full_catalog_missing_time = now
-    fallback = load_catalog()
+    override = get_catalog_surface_override()
+    if override == "wip":
+        token = None
+        try:
+            from .catalog_surface import _catalog_surface_override
+            token = _catalog_surface_override.set("published")
+            fallback = load_catalog()
+        finally:
+            if token is not None:
+                _catalog_surface_override.reset(token)
+    else:
+        fallback = load_catalog()
     return fallback or {"sources": [], "total_sources": 0}
 
 

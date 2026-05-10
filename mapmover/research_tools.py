@@ -7,10 +7,13 @@ JSON-serializable results for LLM context.
 from __future__ import annotations
 
 import math
+from pathlib import Path
 from typing import Any
 
 from mapmover import logger
 from mapmover.corpus_registry import corpus_registry
+from mapmover.data_loading import get_source_path, load_source_metadata
+from mapmover.duckdb_helpers import parquet_columns, path_to_uri, quote_ident, run_df
 from mapmover.foundation_helpers import bridge_loc_id_family, get_foundation_helper_registry
 from mapmover.geometry_handlers import get_selection_geometries
 from mapmover.request_risk_gate import block_gate, warn_gate
@@ -210,6 +213,230 @@ def _get_cached_result(session_id: str, request_key: str) -> dict | None:
         return result
     root_key = str(request_key or "").split(":", 1)[0]
     return cache.get_cached_result(root_key) if root_key else None
+
+
+def _artifact_is_live_source(artifact: dict | None) -> bool:
+    return str((artifact or {}).get("hydration_mode") or "").strip().lower() == "live_source"
+
+
+def _find_primary_parquet_for_live_source(source_id: str, metadata: dict) -> Path | None:
+    source_dir = get_source_path(source_id)
+    if source_dir is None:
+        return None
+
+    candidate_names: list[str] = []
+    for rel_path in metadata.get("primary_files") or []:
+        text = str(rel_path or "").strip()
+        if text:
+            candidate_names.append(text)
+
+    files_section = metadata.get("files") if isinstance(metadata.get("files"), dict) else {}
+    for file_info in files_section.values():
+        if not isinstance(file_info, dict):
+            continue
+        file_name = str(file_info.get("name") or file_info.get("filename") or "").strip()
+        if file_name:
+            candidate_names.append(file_name)
+
+    for rel_path in candidate_names:
+        candidate = source_dir / rel_path
+        if candidate.suffix.lower() == ".parquet":
+            return candidate
+    for fallback_name in ("data.parquet", "events.parquet", "USA.parquet"):
+        candidate = source_dir / fallback_name
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _query_live_source_rows(
+    artifact: dict,
+    tool_input: dict,
+    *,
+    default_limit: int | None,
+    maximum_limit: int | None,
+    required_columns: list[str] | None = None,
+) -> dict:
+    if duckdb is None:
+        return {"error": "duckdb_unavailable", "artifact_id": artifact.get("artifact_id")}
+
+    source_id = str(artifact.get("source_id") or "").strip()
+    metadata = load_source_metadata(source_id) or {}
+    parquet_path = _find_primary_parquet_for_live_source(source_id, metadata)
+    if parquet_path is None:
+        return {"error": "artifact_data_unavailable", "artifact_id": artifact.get("artifact_id")}
+
+    available_columns = parquet_columns(parquet_path)
+    if not available_columns:
+        return {"error": "artifact_data_unavailable", "artifact_id": artifact.get("artifact_id")}
+
+    filters = tool_input.get("filters") or {}
+    fields = [f for f in (tool_input.get("fields") or []) if f in available_columns]
+    metrics = [m for m in (tool_input.get("metrics") or []) if m in available_columns]
+    group_by = [g for g in (tool_input.get("group_by") or []) if g in available_columns]
+    required = [column for column in (required_columns or []) if column in available_columns]
+
+    selected = []
+    for column in [*group_by, *fields, *metrics, *required]:
+        if column and column not in selected:
+            selected.append(column)
+    if not selected:
+        for fallback in ("loc_id", "name", "year", "timestamp"):
+            if fallback in available_columns and fallback not in selected:
+                selected.append(fallback)
+    if not selected:
+        return {"rows": [], "row_count": 0, "truncated": False}
+
+    params: list[Any] = [path_to_uri(parquet_path)]
+    where_parts: list[str] = []
+    for field, expected in filters.items():
+        if field not in available_columns:
+            continue
+        ident = quote_ident(field)
+        if isinstance(expected, dict):
+            if "hierarchy_any" in expected:
+                hierarchy_parts = []
+                for condition in expected.get("hierarchy_any") or []:
+                    if not isinstance(condition, dict):
+                        continue
+                    if "eq" in condition:
+                        hierarchy_parts.append(f"{ident} = ?")
+                        params.append(condition["eq"])
+                    if "starts_with" in condition:
+                        prefix = str(condition.get("starts_with") or "").strip()
+                        if prefix:
+                            hierarchy_parts.append(f"{ident} LIKE ?")
+                            params.append(prefix + "%")
+                    if "prefix" in condition:
+                        prefix = str(condition.get("prefix") or "").strip()
+                        if prefix:
+                            hierarchy_parts.append(f"{ident} LIKE ?")
+                            params.append(prefix + "%")
+                    if "contains" in condition:
+                        needle = str(condition.get("contains") or "").strip()
+                        if needle:
+                            hierarchy_parts.append(f"lower(CAST({ident} AS VARCHAR)) LIKE ?")
+                            params.append("%" + needle.lower() + "%")
+                    if "contains_any" in condition:
+                        for needle in condition.get("contains_any") or []:
+                            text = str(needle or "").strip()
+                            if text:
+                                hierarchy_parts.append(f"lower(CAST({ident} AS VARCHAR)) LIKE ?")
+                                params.append("%" + text.lower() + "%")
+                    if "contains_segment" in condition:
+                        segment = str(condition.get("contains_segment") or "").strip()
+                        if segment:
+                            hierarchy_parts.append(f"('-' || CAST({ident} AS VARCHAR) || '-') LIKE ?")
+                            params.append("%-" + segment + "-%")
+                if hierarchy_parts:
+                    where_parts.append("(" + " OR ".join(hierarchy_parts) + ")")
+                continue
+            if "min" in expected:
+                where_parts.append(f"{ident} >= ?")
+                params.append(expected["min"])
+            if "max" in expected:
+                where_parts.append(f"{ident} <= ?")
+                params.append(expected["max"])
+            if "eq" in expected:
+                where_parts.append(f"{ident} = ?")
+                params.append(expected["eq"])
+            if "in" in expected and expected["in"]:
+                placeholders = ", ".join("?" for _ in expected["in"])
+                where_parts.append(f"{ident} IN ({placeholders})")
+                params.extend(expected["in"])
+            if "starts_with" in expected:
+                prefix = str(expected["starts_with"] or "").strip()
+                if prefix:
+                    where_parts.append(f"{ident} LIKE ?")
+                    params.append(prefix + "%")
+            if "prefix" in expected:
+                prefix = str(expected["prefix"] or "").strip()
+                if prefix:
+                    where_parts.append(f"{ident} LIKE ?")
+                    params.append(prefix + "%")
+            if "starts_with_any" in expected and expected["starts_with_any"]:
+                prefix_parts = []
+                for prefix in expected["starts_with_any"]:
+                    text = str(prefix or "").strip()
+                    if not text:
+                        continue
+                    prefix_parts.append(f"{ident} LIKE ?")
+                    params.append(text + "%")
+                if prefix_parts:
+                    where_parts.append("(" + " OR ".join(prefix_parts) + ")")
+            if "contains" in expected:
+                needle = str(expected["contains"] or "").strip()
+                if needle:
+                    where_parts.append(f"lower(CAST({ident} AS VARCHAR)) LIKE ?")
+                    params.append("%" + needle.lower() + "%")
+            if "contains_any" in expected and expected["contains_any"]:
+                needle_parts = []
+                for needle in expected["contains_any"]:
+                    text = str(needle or "").strip()
+                    if not text:
+                        continue
+                    needle_parts.append(f"lower(CAST({ident} AS VARCHAR)) LIKE ?")
+                    params.append("%" + text.lower() + "%")
+                if needle_parts:
+                    where_parts.append("(" + " OR ".join(needle_parts) + ")")
+        elif isinstance(expected, list) and expected:
+            placeholders = ", ".join("?" for _ in expected)
+            where_parts.append(f"{ident} IN ({placeholders})")
+            params.extend(expected)
+        else:
+            where_parts.append(f"{ident} = ?")
+            params.append(expected)
+
+    if group_by:
+        select_parts = [quote_ident(field) for field in group_by]
+        for metric in metrics:
+            ident = quote_ident(metric)
+            select_parts.append(f"sum({ident}) AS {quote_ident(metric + '_sum')}")
+            select_parts.append(f"avg({ident}) AS {quote_ident(metric + '_avg')}")
+            select_parts.append(f"count({ident}) AS {quote_ident(metric + '_count')}")
+            select_parts.append(f"min({ident}) AS {quote_ident(metric + '_min')}")
+            select_parts.append(f"max({ident}) AS {quote_ident(metric + '_max')}")
+        sql = f"SELECT {', '.join(select_parts)} FROM read_parquet(?)"
+    else:
+        sql = f"SELECT {', '.join(quote_ident(field) for field in selected)} FROM read_parquet(?)"
+
+    if where_parts:
+        sql += " WHERE " + " AND ".join(where_parts)
+    if group_by:
+        sql += " GROUP BY " + ", ".join(quote_ident(field) for field in group_by)
+
+    order_parts = []
+    allowed_order_fields = set(selected) | {f"{metric}_{suffix}" for metric in metrics for suffix in ("sum", "avg", "count", "min", "max")}
+    for sort in tool_input.get("order_by") or []:
+        field = sort.get("field")
+        if group_by and field in metrics:
+            field = f"{field}_sum"
+        direction = "ASC" if sort.get("direction") == "asc" else "DESC"
+        if field in allowed_order_fields:
+            order_parts.append(f"{quote_ident(field)} {direction}")
+    if order_parts:
+        sql += " ORDER BY " + ", ".join(order_parts)
+
+    limit = _normalize_optional_limit(tool_input.get("limit"), maximum=maximum_limit)
+    if limit is None:
+        limit = default_limit
+
+    count_sql = f"SELECT count(*) AS row_count FROM ({sql}) q"
+    row_count_df = run_df(count_sql, params)
+    row_count = int(row_count_df.iloc[0]["row_count"]) if not row_count_df.empty else 0
+    if limit is not None:
+        sql += " LIMIT ?"
+        query_params = [*params, limit]
+    else:
+        query_params = params
+
+    output_df = run_df(sql, query_params)
+    output = output_df.to_dict("records") if not output_df.empty else []
+    return {
+        "rows": _jsonable(output),
+        "row_count": row_count,
+        "truncated": bool(limit is not None and row_count > limit),
+    }
 
 
 def _rows_from_result(result: dict) -> list[dict]:
@@ -699,8 +926,8 @@ def _build_display_subset(result: dict, artifact: dict, tool_input: dict) -> dic
         gate = block_gate(
             lane="human_web_research_display",
             reason=(
-                f"This would draw about {row_count:,} features, which exceeds the safe display cap of "
-                f"{RESEARCH_DISPLAY_HARD_CAP:,}. Narrow the request or ask for a smaller subset first."
+                f"This would draw about {row_count:,} features, which exceeds the high-risk display threshold of "
+                f"{RESEARCH_DISPLAY_HARD_CAP:,}. This may crash the map or make you lose chat history."
             ),
             soft_cap=RESEARCH_DISPLAY_SOFT_CAP,
             hard_cap=RESEARCH_DISPLAY_HARD_CAP,
@@ -719,7 +946,10 @@ def _build_display_subset(result: dict, artifact: dict, tool_input: dict) -> dic
                 "row_count": row_count,
                 "soft_cap": RESEARCH_DISPLAY_SOFT_CAP,
                 "hard_cap": RESEARCH_DISPLAY_HARD_CAP,
-                "message": gate.get("reason"),
+                "message": (
+                    f"This request would display about {row_count:,} map shapes/locations. "
+                    "Are you really sure? This may crash the map and make you lose chat history."
+                ),
                 "gate": gate,
             },
         }
@@ -870,6 +1100,13 @@ def execute_research_tool(
             return {"artifact": artifact}
 
         if tool_name == "query_artifact_slice":
+            if _artifact_is_live_source(artifact):
+                query_result = _query_live_source_rows(artifact, tool_input, default_limit=25, maximum_limit=1000)
+                return {
+                    "artifact_id": artifact_id,
+                    "fields": artifact.get("fields", []),
+                    **query_result,
+                }
             result = _get_cached_result(session_id, artifact.get("request_key"))
             if not result:
                 return {"error": "artifact_data_unavailable", "artifact_id": artifact_id}
@@ -882,6 +1119,126 @@ def execute_research_tool(
             }
 
         if tool_name == "build_artifact_display_subset":
+            if _artifact_is_live_source(artifact):
+                if force_large_display:
+                    tool_input = dict(tool_input or {})
+                    tool_input["_force_large_display"] = True
+                explicit_limit = _normalize_optional_limit(tool_input.get("limit"), maximum=None)
+                query_default_limit = None if explicit_limit is not None else (RESEARCH_DISPLAY_HARD_CAP + 1)
+                query_result = _query_live_source_rows(
+                    artifact,
+                    tool_input,
+                    default_limit=query_default_limit,
+                    maximum_limit=None,
+                    required_columns=["loc_id"],
+                )
+                if query_result.get("error"):
+                    return query_result
+                row_count = int(query_result.get("row_count", 0) or 0)
+                force_large_display = bool(tool_input.get("_force_large_display"))
+                if explicit_limit is None and row_count > RESEARCH_DISPLAY_HARD_CAP:
+                    gate = block_gate(
+                        lane="human_web_research_display",
+                        reason=(
+                            f"This would draw about {row_count:,} features, which exceeds the high-risk display threshold of "
+                            f"{RESEARCH_DISPLAY_HARD_CAP:,}. This may crash the map or make you lose chat history."
+                        ),
+                        soft_cap=RESEARCH_DISPLAY_SOFT_CAP,
+                        hard_cap=RESEARCH_DISPLAY_HARD_CAP,
+                        estimated_count=row_count,
+                        measure="display_features",
+                        fallback_strategy="narrow_subset",
+                        suggested_narrowing=["top 100", "one tract", "one county"],
+                    )
+                    return {
+                        "artifact_id": artifact.get("artifact_id"),
+                        "rows": [],
+                        "row_count": row_count,
+                        "truncated": True,
+                        "display_warning": {
+                            "level": "hard_cap",
+                            "row_count": row_count,
+                            "soft_cap": RESEARCH_DISPLAY_SOFT_CAP,
+                            "hard_cap": RESEARCH_DISPLAY_HARD_CAP,
+                            "message": (
+                                f"This request would display about {row_count:,} map shapes/locations. "
+                                "Are you really sure? This may crash the map and make you lose chat history."
+                            ),
+                            "gate": gate,
+                        },
+                    }
+                if explicit_limit is None and row_count > RESEARCH_DISPLAY_SOFT_CAP and not force_large_display:
+                    gate = warn_gate(
+                        lane="human_web_research_display",
+                        reason=(
+                            f"This request matches about {row_count:,} features. Displaying that many at once may hurt map "
+                            f"performance. Narrow it first, or ask for a bounded subset like the top 100 or one county."
+                        ),
+                        soft_cap=RESEARCH_DISPLAY_SOFT_CAP,
+                        hard_cap=RESEARCH_DISPLAY_HARD_CAP,
+                        estimated_count=row_count,
+                        override_allowed=True,
+                        measure="display_features",
+                        fallback_strategy="warn_then_override",
+                        suggested_narrowing=["top 100", "one county", "one year"],
+                    )
+                    return {
+                        "artifact_id": artifact.get("artifact_id"),
+                        "rows": [],
+                        "row_count": row_count,
+                        "truncated": True,
+                        "display_warning": {
+                            "level": "soft_cap",
+                            "row_count": row_count,
+                            "soft_cap": RESEARCH_DISPLAY_SOFT_CAP,
+                            "hard_cap": RESEARCH_DISPLAY_HARD_CAP,
+                            "message": gate.get("reason"),
+                            "gate": gate,
+                        },
+                    }
+                matched_rows = query_result.get("rows") or []
+                loc_ids = []
+                for row in matched_rows:
+                    loc_id = row.get("loc_id")
+                    if loc_id is not None and str(loc_id) not in loc_ids:
+                        loc_ids.append(str(loc_id))
+                selection_geojson = get_selection_geometries(loc_ids)
+                feature_by_loc_id = {}
+                for feature in (selection_geojson or {}).get("features") or []:
+                    props = dict(feature.get("properties") or {})
+                    loc_id = props.get("loc_id")
+                    if loc_id is not None:
+                        feature_by_loc_id[str(loc_id)] = _jsonable(feature)
+                features = []
+                for row in matched_rows:
+                    loc_id = row.get("loc_id")
+                    if loc_id is None:
+                        continue
+                    feature = feature_by_loc_id.get(str(loc_id))
+                    if not feature:
+                        continue
+                    props = dict(feature.get("properties") or {})
+                    props.update(row or {})
+                    feature["properties"] = _jsonable(props)
+                    features.append(feature)
+                display = {
+                    "action": "highlight_features",
+                    "artifact_id": artifact.get("artifact_id"),
+                    "source_id": artifact.get("source_id"),
+                    "geojson": {"type": "FeatureCollection", "features": features},
+                    "loc_ids": loc_ids,
+                    "fit": bool(tool_input.get("fit", True)),
+                    "context_visibility": str(tool_input.get("context_visibility") or "keep"),
+                }
+                if isinstance(tool_input.get("style"), dict):
+                    display["style"] = dict(tool_input["style"])
+                return {
+                    "artifact_id": artifact.get("artifact_id"),
+                    "rows": matched_rows,
+                    "row_count": row_count,
+                    "truncated": bool(query_result.get("truncated")),
+                    "display": display,
+                }
             result = _get_cached_result(session_id, artifact.get("request_key"))
             if not result:
                 return {"error": "artifact_data_unavailable", "artifact_id": artifact_id}

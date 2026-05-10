@@ -25,7 +25,7 @@ import { sendStreamingRequest, sendChatRequest } from './chat/api.js';
 import { OrderPanel } from './order/manager.js';
 import { OrderTracker as OrderTrackerClass } from './order/tracker.js';
 import * as SavedOrders from './order/saved.js';
-import { ensureRuntimeAccessToken, getAccessToken, getCurrentUser, getSupabaseClient, isAuthBootPending, isAuthenticated, onAuthChanged, refreshRuntimeSession, waitForAuthBoot } from './auth.js';
+import { ensureRuntimeAccessToken, getAccessToken, getCurrentProfile, getCurrentUser, getSupabaseClient, isAuthBootPending, isAuthenticated, onAuthChanged, refreshRuntimeSession, waitForAuthBoot } from './auth.js';
 import { TutorialMode, parseTutorialCommand } from './tutorial-mode.js';
 import { ResearchModeToggle } from './research/mode.js';
 import {
@@ -353,6 +353,8 @@ let researchModeToggle = null;
 export const ChatManager = {
   history: [],
   mode: 'explore',
+  catalogSurface: 'published',
+  canUseWipCatalog: false,
   modeHistories: { explore: [], research: [], ops: [] },
   modeMessagesHtml: { explore: '', research: '', ops: '' },
   modeRequestInFlight: { explore: false, research: false, ops: false },
@@ -401,6 +403,7 @@ export const ChatManager = {
     this.setActiveMessagePane(this.mode);
 
     this.initModeToggle();
+    this.updateCatalogSurfaceAccess();
     App?.activateLaneMapView?.(this.mode, { force: true });
     Promise.resolve(this.seedEmptyConversation(this.mode)).catch((error) => {
       console.warn('Could not seed initial conversation:', error);
@@ -423,6 +426,7 @@ export const ChatManager = {
           if (this.mode === 'research') {
             await this.refreshResearchManifest();
           }
+          this.updateCatalogSurfaceAccess();
           this.updateComposerState();
         } catch (error) {
           console.warn('Could not refresh chat state after auth change:', error);
@@ -461,12 +465,19 @@ export const ChatManager = {
       },
       onRemoveBrowserCopy: async (corpusId) => {
         await this.removeResearchCorpusBrowserCopy(corpusId);
+      },
+      onCatalogSurfaceChange: async (surface) => {
+        this.setCatalogSurface(surface);
       }
     });
     researchModeToggle.mode = this.mode;
     researchModeToggle.init();
     researchModeToggle.setSelectedCorpusId(this.selectedResearchCorpusId);
     researchModeToggle.setCorpusOptions(this.researchCorpusOptions, this.selectedResearchCorpusId);
+    researchModeToggle.setCatalogSurfaceAccess({
+      canUse: this.canUseWipCatalog,
+      currentSurface: this.catalogSurface
+    });
     this.applyModeUiState();
   },
 
@@ -1363,6 +1374,7 @@ export const ChatManager = {
     const data = await postMsgpack(apiUrl, {
       confirmed_order: order,
       sessionId: this.getSessionIdForMode('explore'),
+      catalog_surface: this.getEffectiveCatalogSurface(),
       force: options.force || false  // Bypass dedup for recovery
     });
 
@@ -1480,6 +1492,7 @@ export const ChatManager = {
     const state = restoreChatState();
     if (state) {
       this.mode = normalizeChatMode(state.activeMode);
+      this.catalogSurface = this.normalizeCatalogSurface(state.catalogSurface);
       this.modeHistories = { explore: [], research: [], ops: [] };
       this.modeMessagesHtml = { explore: '', research: '', ops: '' };
       this.researchDisplayLayersByMode = { explore: [], research: [], ops: [] };
@@ -1490,6 +1503,7 @@ export const ChatManager = {
     }
 
     this.mode = 'explore';
+    this.catalogSurface = 'published';
     this.modeHistories = { explore: [], research: [], ops: [] };
     this.modeMessagesHtml = { explore: '', research: '', ops: '' };
     this.researchDisplayLayersByMode = { explore: [], research: [], ops: [] };
@@ -1504,8 +1518,55 @@ export const ChatManager = {
   saveState() {
     saveChatState({
       activeMode: this.mode,
-      selectedResearchCorpusId: this.selectedResearchCorpusId
+      selectedResearchCorpusId: this.selectedResearchCorpusId,
+      catalogSurface: this.getEffectiveCatalogSurface()
     });
+  },
+
+  normalizeCatalogSurface(surface) {
+    return String(surface || '').trim().toLowerCase() === 'wip' ? 'wip' : 'published';
+  },
+
+  accountCanUseWipCatalog() {
+    const profile = getCurrentProfile();
+    return Boolean(profile && (profile.is_admin || profile.plan_id === 'master'));
+  },
+
+  getEffectiveCatalogSurface() {
+    if (!this.canUseWipCatalog) return 'published';
+    return this.normalizeCatalogSurface(this.catalogSurface);
+  },
+
+  updateCatalogSurfaceAccess() {
+    this.canUseWipCatalog = this.accountCanUseWipCatalog();
+    if (!this.canUseWipCatalog) {
+      this.catalogSurface = 'published';
+    } else {
+      this.catalogSurface = this.normalizeCatalogSurface(this.catalogSurface);
+    }
+    researchModeToggle?.setCatalogSurfaceAccess({
+      canUse: this.canUseWipCatalog,
+      currentSurface: this.catalogSurface
+    });
+    this.saveState();
+  },
+
+  setCatalogSurface(surface) {
+    const nextSurface = this.normalizeCatalogSurface(surface);
+    const allowedSurface = (this.canUseWipCatalog || nextSurface !== 'wip') ? nextSurface : 'published';
+    if (allowedSurface === this.catalogSurface) {
+      researchModeToggle?.setCatalogSurfaceAccess({
+        canUse: this.canUseWipCatalog,
+        currentSurface: this.catalogSurface
+      });
+      return;
+    }
+    this.catalogSurface = allowedSurface;
+    researchModeToggle?.setCatalogSurfaceAccess({
+      canUse: this.canUseWipCatalog,
+      currentSurface: this.catalogSurface
+    });
+    this.saveState();
   },
 
   /**
@@ -2121,7 +2182,7 @@ export const ChatManager = {
 
         if (response.override_allowed) {
           const yesBtn = document.createElement('button');
-          yesBtn.textContent = 'Yes, load it anyway';
+          yesBtn.textContent = 'Continue anyway';
           yesBtn.className = 'chat-action-btn confirm';
           yesBtn.addEventListener('click', () => {
             btnContainer.remove();
@@ -3175,6 +3236,7 @@ export const ChatManager = {
 
     return {
       query,
+      catalog_surface: this.getEffectiveCatalogSurface(),
       viewport: {
         center: { lat: view.center.lat, lng: view.center.lng },
         zoom: view.zoom,

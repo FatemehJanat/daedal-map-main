@@ -6,7 +6,17 @@ import { postMsgpack } from '../utils/fetch.js';
 import { getApiUrl } from '../chat/api.js';
 
 export class ResearchModeToggle {
-  constructor({ container, getSessionId, onModeChange, onLoadCorpus, onSelectCorpus, onSaveCorpus, onSyncCorpus, onRemoveBrowserCopy }) {
+  constructor({
+    container,
+    getSessionId,
+    onModeChange,
+    onLoadCorpus,
+    onSelectCorpus,
+    onSaveCorpus,
+    onSyncCorpus,
+    onRemoveBrowserCopy,
+    onCatalogSurfaceChange
+  }) {
     this.container = container;
     this.getSessionId = getSessionId;
     this.onModeChange = onModeChange;
@@ -15,8 +25,12 @@ export class ResearchModeToggle {
     this.onSaveCorpus = onSaveCorpus;
     this.onSyncCorpus = onSyncCorpus;
     this.onRemoveBrowserCopy = onRemoveBrowserCopy;
+    this.onCatalogSurfaceChange = onCatalogSurfaceChange;
     this.mode = 'explore';
+    this.catalogSurface = 'published';
+    this.canUseCatalogSurface = false;
     this.buttons = {};
+    this.surfaceButtons = {};
     this.corpusOptions = [];
     this.selectedCorpusId = '';
     this.controls = {};
@@ -36,13 +50,16 @@ export class ResearchModeToggle {
     const corpusMount = document.getElementById('sidebarResearchMount');
     const wrap = document.createElement('div');
     wrap.className = 'chat-mode-toggle chat-mode-toggle--header';
+    const surfaceControls = this.createCatalogSurfaceControls();
     const corpusControls = this.createCorpusControls();
 
     wrap.appendChild(this.createToggleButtons());
     if (mount) {
-      mount.replaceChildren(wrap);
+      mount.classList.add('chat-mode-toggle-host');
+      mount.replaceChildren(wrap, surfaceControls);
     } else {
       this.container.insertBefore(wrap, this.container.firstChild);
+      this.container.insertBefore(surfaceControls, wrap);
     }
     if (corpusMount) {
       corpusMount.replaceChildren(corpusControls);
@@ -73,6 +90,44 @@ export class ResearchModeToggle {
     }
 
     return group;
+  }
+
+  createCatalogSurfaceControls() {
+    const wrap = document.createElement('div');
+    wrap.className = 'chat-mode-toggle__surface chat-mode-toggle__surface--floating';
+    wrap.hidden = true;
+
+    const label = document.createElement('span');
+    label.className = 'chat-mode-toggle__surface-label';
+    label.textContent = 'Catalog';
+    wrap.appendChild(label);
+
+    const group = document.createElement('div');
+    group.className = 'chat-mode-toggle__surface-group';
+
+    const surfaces = [
+      { id: 'published', label: 'Live' },
+      { id: 'wip', label: 'WIP' }
+    ];
+    for (const surface of surfaces) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'chat-mode-toggle__surface-btn';
+      btn.dataset.surface = surface.id;
+      btn.textContent = surface.label;
+      btn.addEventListener('click', async () => {
+        if (this.catalogSurface === surface.id) return;
+        this.catalogSurface = surface.id;
+        this.updateActive();
+        await this.onCatalogSurfaceChange?.(surface.id);
+      });
+      this.surfaceButtons[surface.id] = btn;
+      group.appendChild(btn);
+    }
+
+    wrap.appendChild(group);
+    this.controls.surfaceWrap = wrap;
+    return wrap;
   }
 
   createCorpusControls() {
@@ -135,6 +190,16 @@ export class ResearchModeToggle {
       btn.classList.toggle('active', isActive);
       btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
       btn.title = isActive ? `${this.getModeTitle(mode)} active` : `Switch to ${this.getModeTitle(mode)}`;
+    }
+    if (this.controls.surfaceWrap) {
+      const showSurfaceControls = this.canUseCatalogSurface;
+      this.controls.surfaceWrap.hidden = !showSurfaceControls;
+      this.controls.surfaceWrap.classList.toggle('hidden', !showSurfaceControls);
+    }
+    for (const [surface, btn] of Object.entries(this.surfaceButtons || {})) {
+      const isActive = this.catalogSurface === surface;
+      btn.classList.toggle('active', isActive);
+      btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
     }
     if (this.controls.wrap) {
       const hideCorpusControls = this.mode !== 'research';
@@ -242,6 +307,14 @@ export class ResearchModeToggle {
     this.optionsLoading = Boolean(isLoading);
     this.optionsLoadingLabel = label || 'Loading saved corpora...';
     this.renderCorpusOptions();
+    this.updateActive();
+  }
+
+  setCatalogSurfaceAccess({ canUse = false, currentSurface = 'published' } = {}) {
+    this.canUseCatalogSurface = Boolean(canUse);
+    this.catalogSurface = this.canUseCatalogSurface && currentSurface === 'wip'
+      ? 'wip'
+      : 'published';
     this.updateActive();
   }
 }

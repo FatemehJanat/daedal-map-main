@@ -77,7 +77,8 @@ function inferLoadingLabel(url, options = {}) {
   if (url.includes('/api/floods/')) return 'Loading floods...';
   if (url.includes('/api/weather/') || url.includes('/api/climate/')) return 'Loading climate data...';
   if (url.includes('/api/catalog/')) return 'Loading catalog...';
-  if (url.includes('/reference/')) return 'Loading references...';
+  if (url.includes('/reference/admin-levels')) return 'Loading admin level names...';
+  if (url.includes('/reference/')) return 'Loading helper data...';
   if (url.includes('/chat')) return 'Thinking...';
   if (method === 'POST') return 'Sending request...';
   return 'Loading data...';

@@ -22,6 +22,11 @@ from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
 from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log_conversation
 from mapmover.llm_usage import LLMUsageRecorder, classify_caller
 from mapmover.chat_budget import budget_rejection_payload, check_anonymous_chat_budget
+from mapmover.catalog_surface import (
+    catalog_surface_scope,
+    normalize_catalog_surface,
+    request_can_use_wip_catalog,
+)
 from mapmover.security import get_client_ip, rate_limiter
 
 
@@ -100,6 +105,19 @@ def _confirmed_order_user_error() -> dict:
     }
 
 
+def _catalog_surface_for_request(req: Request, body: dict, auth_user: dict | None) -> tuple[str | None, Response | None]:
+    surface = normalize_catalog_surface(body.get("catalog_surface"))
+    if surface == "wip" and not request_can_use_wip_catalog(req, auth_user):
+        return None, msgpack_response(
+            {
+                "type": "error",
+                "message": "WIP catalog access is limited to admin accounts.",
+            },
+            status_code=403,
+        )
+    return surface, None
+
+
 def _address_prompt_response(prompt: dict | None) -> dict:
     prompt = prompt or {}
     return {
@@ -175,6 +193,9 @@ async def chat_endpoint(req: Request):
                 return _rate_limited_message("Too many anonymous chat requests. Please wait a moment and try again.", retry_after)
 
         session_id = build_session_cache_key(frontend_session_id, auth_user)
+        catalog_surface, surface_error = _catalog_surface_for_request(req, body, auth_user)
+        if surface_error:
+            return surface_error
         query_preview = body.get("query", "") or "[confirmed_order]"
         trace_id = _chat_trace_id(session_id, query_preview)
         logger.info(
@@ -198,11 +219,12 @@ async def chat_endpoint(req: Request):
                 confirmed_order = body["confirmed_order"]
                 force_refetch = body.get("force", False)
                 t_exec_start = time.perf_counter()
-                result, request_key, reused_cached_result = _execute_confirmed_order_with_session_cache(
-                    cache,
-                    confirmed_order,
-                    force_refetch=force_refetch,
-                )
+                with catalog_surface_scope(catalog_surface):
+                    result, request_key, reused_cached_result = _execute_confirmed_order_with_session_cache(
+                        cache,
+                        confirmed_order,
+                        force_refetch=force_refetch,
+                    )
                 _chat_log_timing(
                     trace_id,
                     "confirmed_order_executed",
@@ -389,15 +411,16 @@ async def chat_endpoint(req: Request):
 
         logger.debug(f"[chat:{trace_id}] Chat query: {query[:100]}...")
         t_preprocess_start = time.perf_counter()
-        hints = preprocess_query(
-            query,
-            viewport=viewport,
-            active_overlays=active_overlays,
-            cache_stats=cache_stats,
-            saved_order_names=saved_order_names,
-            time_state=time_state,
-            loaded_data=loaded_data,
-        )
+        with catalog_surface_scope(catalog_surface):
+            hints = preprocess_query(
+                query,
+                viewport=viewport,
+                active_overlays=active_overlays,
+                cache_stats=cache_stats,
+                saved_order_names=saved_order_names,
+                time_state=time_state,
+                loaded_data=loaded_data,
+            )
         hints["original_query"] = query
         _chat_log_timing(
             trace_id,
@@ -512,13 +535,14 @@ async def chat_endpoint(req: Request):
         # Run the synchronous LLM call in a thread so we do not block the
         # event loop for other concurrent requests on this worker.
         try:
-            result = await asyncio.to_thread(
-                interpret_request,
-                query,
-                chat_history,
-                hints=hints,
-                usage_recorder=usage_recorder,
-            )
+            with catalog_surface_scope(catalog_surface):
+                result = await asyncio.to_thread(
+                    interpret_request,
+                    query,
+                    chat_history,
+                    hints=hints,
+                    usage_recorder=usage_recorder,
+                )
         finally:
             usage_recorder.flush()
         _set_chat_analytics(
@@ -532,7 +556,8 @@ async def chat_endpoint(req: Request):
         if result["type"] == "order":
             result_summary = result.get("summary") or result.get("order", {}).get("summary") or "Data request"
             t_postprocess_start = time.perf_counter()
-            processed = postprocess_order(result["order"], hints)
+            with catalog_surface_scope(catalog_surface):
+                processed = postprocess_order(result["order"], hints)
             _chat_log_timing(
                 trace_id,
                 "postprocess_complete",
@@ -710,6 +735,17 @@ async def chat_stream_endpoint(req: Request):
         try:
             frontend_session_id = body.get("sessionId", "anonymous")
             auth_user = await get_authenticated_user_async(req)
+            catalog_surface, surface_error = _catalog_surface_for_request(req, body, auth_user)
+            if surface_error:
+                payload = {
+                    "stage": "complete",
+                    "result": {
+                        "type": "error",
+                        "message": "WIP catalog access is limited to admin accounts.",
+                    },
+                }
+                yield f"data: {json.dumps(payload)}\n\n"
+                return
             confirmed_order_rate_limit = None
             if body.get("confirmed_order"):
                 confirmed_order_rate_limit = _confirmed_order_rate_limit(req, auth_user)
@@ -724,11 +760,12 @@ async def chat_stream_endpoint(req: Request):
             if body.get("confirmed_order"):
                 yield f"data: {json.dumps({'stage': 'fetching', 'message': 'Fetching data...'})}\n\n"
                 try:
-                    result, request_key, reused_cached_result = _execute_confirmed_order_with_session_cache(
-                        cache,
-                        body["confirmed_order"],
-                        force_refetch=bool(body.get("force", False)),
-                    )
+                    with catalog_surface_scope(catalog_surface):
+                        result, request_key, reused_cached_result = _execute_confirmed_order_with_session_cache(
+                            cache,
+                            body["confirmed_order"],
+                            force_refetch=bool(body.get("force", False)),
+                        )
                     logger.info(
                         "Streaming confirmed_order request_key=%s reused=%s type=%s source=%s",
                         request_key,
@@ -794,15 +831,16 @@ async def chat_stream_endpoint(req: Request):
             yield f"data: {json.dumps({'stage': 'analyzing', 'message': 'Analyzing your request...'})}\n\n"
             await asyncio.sleep(0)
 
-            hints = preprocess_query(
-                query,
-                viewport=viewport,
-                active_overlays=active_overlays,
-                cache_stats=cache_stats,
-                saved_order_names=saved_order_names,
-                time_state=time_state,
-                loaded_data=loaded_data,
-            )
+            with catalog_surface_scope(catalog_surface):
+                hints = preprocess_query(
+                    query,
+                    viewport=viewport,
+                    active_overlays=active_overlays,
+                    cache_stats=cache_stats,
+                    saved_order_names=saved_order_names,
+                    time_state=time_state,
+                    loaded_data=loaded_data,
+                )
             hints["original_query"] = query
             t_preprocess_end = time.time()
             logger.info(f"[TIMING] Preprocessing: {(t_preprocess_end - t_preprocess_start) * 1000:.0f}ms")
@@ -883,14 +921,15 @@ async def chat_stream_endpoint(req: Request):
                 **caller_ctx,
             )
             bus = ProgressBus()
-            llm_task = asyncio.create_task(asyncio.to_thread(
-                interpret_request,
-                query,
-                chat_history,
-                hints=hints,
-                progress=bus.thread_emitter(),
-                usage_recorder=usage_recorder,
-            ))
+            with catalog_surface_scope(catalog_surface):
+                llm_task = asyncio.create_task(asyncio.to_thread(
+                    interpret_request,
+                    query,
+                    chat_history,
+                    hints=hints,
+                    progress=bus.thread_emitter(),
+                    usage_recorder=usage_recorder,
+                ))
             try:
                 async for event in bus.drain_until(
                     llm_task,
@@ -911,7 +950,8 @@ async def chat_stream_endpoint(req: Request):
                 yield f"data: {json.dumps({'stage': 'preparing', 'message': 'Preparing your order...'})}\n\n"
                 await asyncio.sleep(0)
                 result_summary = result.get("summary") or result.get("order", {}).get("summary") or "Data request"
-                processed = postprocess_order(result["order"], hints)
+                with catalog_surface_scope(catalog_surface):
+                    processed = postprocess_order(result["order"], hints)
                 if processed.get("needs_clarify"):
                     final_result = {
                         "type": "clarify",

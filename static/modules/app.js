@@ -1480,6 +1480,24 @@ export const App = {
     return '';
   },
 
+  isAdministrativeResearchDisplay(display) {
+    const features = display?.geojson?.features || [];
+    if (!features.length) return false;
+
+    const polygonLike = features.some((feature) => {
+      const geometryType = String(feature?.geometry?.type || '').trim();
+      return geometryType === 'Polygon' || geometryType === 'MultiPolygon';
+    });
+    if (polygonLike) return true;
+
+    const firstProps = features[0]?.properties || {};
+    if (firstProps.admin_level_num != null) return true;
+    if (String(firstProps.geography_kind || '').trim()) return true;
+    if (String(firstProps.type || '').trim().toLowerCase() === 'admin') return true;
+
+    return false;
+  },
+
   buildMapPayloadFromDisplay(display) {
     const geojson = display?.geojson;
     const features = geojson?.features || [];
@@ -1499,7 +1517,9 @@ export const App = {
       };
     }
 
-    const eventType = this.inferDisplayEventType(display);
+    const eventType = this.isAdministrativeResearchDisplay(display)
+      ? ''
+      : this.inferDisplayEventType(display);
     if (eventType) {
       return {
         source_id: sourceId || eventType,

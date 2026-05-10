@@ -439,9 +439,8 @@ export const AuthManager = {
           currentSession = handoffSession || data.session || await trySilentSiteSessionImport(authClient);
           _lastAuthUserId = currentSession?.user?.id ?? null;
           clearLegacySharedCookies();
-          Promise.resolve(fetchProfile()).then(() => {
-            updateDom();
-          }).catch(() => {});
+          await fetchProfile();
+          updateDom();
         }
         authClient.auth.onAuthStateChange(async (_event, session) => {
           const newUserId = session?.user?.id ?? null;
@@ -469,6 +468,7 @@ export const AuthManager = {
       initialized = true;
       updateDom();
       markAuthBootSettled();
+      emitAuthChanged();
     })();
 
     try {
