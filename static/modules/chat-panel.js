@@ -671,35 +671,25 @@ export const ChatManager = {
     if (!response || !App) return false;
     const origin = options.origin || 'unknown';
 
-    if (origin === 'research' && Array.isArray(response.displays) && response.displays.length) {
-      const validDisplays = response.displays.filter(display => display?.action === 'highlight_features' && display?.geojson?.features?.length);
-      if (validDisplays.length) {
-        const keepDisplays = validDisplays.filter(display => String(display.context_visibility || '').trim().toLowerCase() === 'keep');
-        const replaceDisplays = validDisplays.filter(display => String(display.context_visibility || '').trim().toLowerCase() !== 'keep');
-        if (replaceDisplays.length) {
-          this.setResearchDisplayLayersForMode('research', replaceDisplays);
-          for (const display of keepDisplays) {
-            this.appendResearchDisplayForMode('research', display);
+    // Research now produces Explore-shaped payloads (data_type at top level,
+    // geojson at top level). `layers` carries multi-display stacks; the latest
+    // display's fields are already promoted to the top level of `response`.
+    if (origin === 'research' && Array.isArray(response.layers) && response.layers.length) {
+      const validLayers = response.layers.filter(layer => layer?.geojson?.features?.length);
+      if (validLayers.length) {
+        const keepLayers = validLayers.filter(layer => String(layer.context_visibility || '').trim().toLowerCase() === 'keep');
+        const replaceLayers = validLayers.filter(layer => String(layer.context_visibility || '').trim().toLowerCase() !== 'keep');
+        if (replaceLayers.length) {
+          this.setResearchDisplayLayersForMode('research', replaceLayers);
+          for (const layer of keepLayers) {
+            this.appendResearchDisplayForMode('research', layer);
           }
         } else {
-          this.setResearchDisplayLayersForMode('research', validDisplays);
+          this.setResearchDisplayLayersForMode('research', validLayers);
         }
-        const lastDisplay = validDisplays[validDisplays.length - 1];
-        App.displayMapPayload?.({ display: lastDisplay }, { origin });
+        App.displayMapPayload?.(response, { origin, order: options.order });
         return true;
       }
-    }
-
-    if (response.display) {
-      if (origin === 'research' && response.display.action === 'highlight_features' && response.display.geojson?.features?.length) {
-        if (String(response.display.context_visibility || '').trim().toLowerCase() === 'keep') {
-          this.appendResearchDisplayForMode('research', response.display);
-        } else {
-          this.setResearchDisplayForMode('research', response.display);
-        }
-      }
-      App.displayMapPayload?.({ display: response.display }, { origin });
-      return true;
     }
 
     if (response.action === 'remove' && response.data_type) {
@@ -708,6 +698,13 @@ export const ChatManager = {
     }
 
     if (response.geojson?.features?.length) {
+      if (origin === 'research') {
+        if (String(response.context_visibility || '').trim().toLowerCase() === 'keep') {
+          this.appendResearchDisplayForMode('research', response);
+        } else {
+          this.setResearchDisplayForMode('research', response);
+        }
+      }
       App.displayMapPayload?.(response, { origin, order: options.order });
       return true;
     }
@@ -2028,11 +2025,11 @@ export const ChatManager = {
         ? 'selection'
         : null;
       const response = await sendStreamingRequest(payload, (stage, message, deltaText, rawEvent) => {
-        if (stage === 'display' && rawEvent?.display) {
-          const displayPayload = this.decorateResearchDisplay(rawEvent.display, {
+        if (stage === 'display' && rawEvent?.map_payload) {
+          const mapPayload = this.decorateResearchDisplay(rawEvent.map_payload, {
             rasterMode: this.pendingResearchRasterMode
           });
-          this.applySupplementalChatActions({ display: displayPayload });
+          this.applySupplementalChatActions(mapPayload);
           return;
         }
         if (stage === 'answer_start') {
@@ -2419,21 +2416,26 @@ export const ChatManager = {
   },
 
   _researchDisplaySignature(response) {
-    const displays = Array.isArray(response?.displays) && response.displays.length
-      ? response.displays
-      : (response?.display ? [response.display] : []);
-    if (!displays.length) return '';
-    return displays.map(display => {
-      if (!display || typeof display !== 'object') return '';
-      const features = display.geojson?.features || [];
-      const locIds = (display.loc_ids && display.loc_ids.length)
-        ? [...display.loc_ids].sort()
+    // After the Explore-unification refactor, Research responses carry data
+    // payloads at the top level (`response.geojson`, `response.data_type`, etc.)
+    // and the multi-layer set lives at `response.layers`. The streaming display
+    // event sends just a single map payload as the whole response.
+    const layers = Array.isArray(response?.layers) && response.layers.length
+      ? response.layers
+      : (response?.geojson ? [response] : []);
+    if (!layers.length) return '';
+    return layers.map(layer => {
+      if (!layer || typeof layer !== 'object') return '';
+      const features = layer.geojson?.features || [];
+      const locIds = (layer.loc_ids && layer.loc_ids.length)
+        ? [...layer.loc_ids].sort()
         : features.map(f => f?.properties?.loc_id).filter(Boolean).sort();
       return [
-        display.action || '',
-        display.source_id || '',
-        display.artifact_id || '',
+        layer.data_type || '',
+        layer.source_id || '',
+        layer.artifact_id || '',
         features.length,
+        (layer.years || []).length,
         locIds.join(','),
       ].join('|');
     }).join(';');
@@ -2462,14 +2464,17 @@ export const ChatManager = {
 
   decorateResearchResponse(response, options = {}) {
     if (!response || typeof response !== 'object') return response;
-    const displays = Array.isArray(response.displays)
-      ? response.displays.map(display => this.decorateResearchDisplay(display, options))
+    const hasTopLevelPayload = response.geojson && response.geojson.features && response.geojson.features.length;
+    const layers = Array.isArray(response.layers)
+      ? response.layers.map(layer => this.decorateResearchDisplay(layer, options))
       : null;
-    if (!response.display && !displays?.length) return response;
+    if (!hasTopLevelPayload && !layers?.length) return response;
+    const decoratedTop = hasTopLevelPayload
+      ? this.decorateResearchDisplay(response, options)
+      : response;
     return {
-      ...response,
-      display: response.display ? this.decorateResearchDisplay(response.display, options) : (displays ? displays[displays.length - 1] : response.display),
-      displays
+      ...decoratedTop,
+      layers,
     };
   },
 
@@ -2715,15 +2720,14 @@ export const ChatManager = {
   },
 
   getResearchDisplayFallbackMessage(response) {
-    const display = response?.display;
-    if (!display || display.action !== 'highlight_features') return '';
-    const featureCount = display?.geojson?.features?.length || 0;
+    if (!response) return '';
+    const featureCount = response?.geojson?.features?.length || 0;
     if (!featureCount) return '';
-    const sourceId = String(display?.source_id || '').trim();
+    const sourceId = String(response?.source_id || '').trim();
     if (sourceId === 'fairfax_buildings') {
       return `Highlighted ${featureCount} building footprint${featureCount === 1 ? '' : 's'} on the map.`;
     }
-    if (display?.raster || /lst|raster|heat/i.test(sourceId)) {
+    if (response?.raster || /lst|raster|heat/i.test(sourceId)) {
       return `Highlighted ${featureCount} raster-linked area${featureCount === 1 ? '' : 's'} on the map.`;
     }
     return `Highlighted ${featureCount} matching feature${featureCount === 1 ? '' : 's'} on the map.`;
@@ -3071,11 +3075,11 @@ export const ChatManager = {
       );
       const endpoint = requestMode === 'research' ? '/chat/research/stream' : '/chat/stream';
       const response = await sendStreamingRequest(payload, (stage, message, deltaText, rawEvent) => {
-        if (stage === 'display' && rawEvent?.display) {
-          const displayPayload = this.decorateResearchDisplay(rawEvent.display, {
+        if (stage === 'display' && rawEvent?.map_payload) {
+          const mapPayload = this.decorateResearchDisplay(rawEvent.map_payload, {
             rasterMode: this.pendingResearchRasterMode
           });
-          this.applySupplementalChatActions({ display: displayPayload });
+          this.applySupplementalChatActions(mapPayload);
           return;
         }
         indicator.updateStage(stage, message);
