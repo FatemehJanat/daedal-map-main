@@ -1183,7 +1183,7 @@ export const ChatManager = {
     if (!selectedId) return;
     const selected = this.researchCorpusOptions.find(option => option.id === selectedId) || null;
     const indicator = this.showTypingIndicator(true);
-    indicator.updateStage?.('thinking', 'Saving source artifacts into browser storage...');
+    indicator.updateStage?.('thinking', 'Saving corpus mount state into browser storage...');
     researchModeToggle?.setCorpusLoading(true);
     try {
       const payload = await this.buildResearchBrowserInstallManifest(selectedId);
@@ -1191,6 +1191,7 @@ export const ChatManager = {
       if (!installManifest?.saved_corpus || !Array.isArray(installManifest?.sources) || !installManifest.sources.length) {
         throw new Error('Browser install manifest is incomplete for this saved corpus.');
       }
+      const installMode = String(installManifest?.install_mode || '').trim() || 'manifest_only';
       this.latestResearchManifest = payload?.corpus || this.latestResearchManifest;
       await saveBrowserCorpusInstallManifest({
         corpusId: selectedId,
@@ -1199,27 +1200,31 @@ export const ChatManager = {
         installManifest
       });
       let downloadedSources = 0;
-      for (const sourceEntry of installManifest.sources) {
-        const sourceId = String(sourceEntry?.source_id || '').trim();
-        const browserArtifact = sourceEntry?.browser_artifact || null;
-        const downloadPath = String(sourceEntry?.download_path || '').trim();
-        if (!sourceId || !browserArtifact || !downloadPath) {
-          throw new Error(`Install manifest entry is incomplete for ${sourceId || 'unknown source'}.`);
+      if (installMode === 'source_artifacts') {
+        for (const sourceEntry of installManifest.sources) {
+          const sourceId = String(sourceEntry?.source_id || '').trim();
+          const browserArtifact = sourceEntry?.browser_artifact || null;
+          const downloadPath = String(sourceEntry?.download_path || '').trim();
+          if (!sourceId || !browserArtifact || !downloadPath) {
+            throw new Error(`Install manifest entry is incomplete for ${sourceId || 'unknown source'}.`);
+          }
+          indicator.updateStage?.(
+            'thinking',
+            `Saving source artifacts into browser storage... ${downloadedSources + 1} / ${installManifest.sources.length}`
+          );
+          const artifactDownload = await this.downloadResearchBrowserSourceArtifact(downloadPath);
+          await saveBrowserSourceArtifact({
+            sourceId,
+            artifactVersion: artifactDownload.artifactVersion || browserArtifact.artifact_version,
+            sha256: artifactDownload.sha256 || browserArtifact.sha256,
+            payload: artifactDownload.payload,
+            browserArtifact,
+            corpusId: selectedId
+          });
+          downloadedSources += 1;
         }
-        indicator.updateStage?.(
-          'thinking',
-          `Saving source artifacts into browser storage... ${downloadedSources + 1} / ${installManifest.sources.length}`
-        );
-        const artifactDownload = await this.downloadResearchBrowserSourceArtifact(downloadPath);
-        await saveBrowserSourceArtifact({
-          sourceId,
-          artifactVersion: artifactDownload.artifactVersion || browserArtifact.artifact_version,
-          sha256: artifactDownload.sha256 || browserArtifact.sha256,
-          payload: artifactDownload.payload,
-          browserArtifact,
-          corpusId: selectedId
-        });
-        downloadedSources += 1;
+      } else {
+        indicator.updateStage?.('thinking', 'Saving corpus mount state for faster restore...');
       }
       await saveBrowserCorpusInstallSummary({
         corpusId: selectedId,
@@ -1229,7 +1234,13 @@ export const ChatManager = {
       });
       await this.refreshBrowserCorpusSummaries();
       await this.refreshResearchCorpusOptions();
-      this.addMessage(`Saved "${selected?.name || 'Saved corpus'}" in browser on this device.`, 'assistant', { mode: 'research' });
+      this.addMessage(
+        installMode === 'source_artifacts'
+          ? `Saved "${selected?.name || 'Saved corpus'}" in browser on this device.`
+          : `Saved a browser restore copy for "${selected?.name || 'Saved corpus'}" on this device.`,
+        'assistant',
+        { mode: 'research' }
+      );
     } catch (error) {
       console.error('Browser save error:', error);
       this.addMessage(error.message || 'Could not save this corpus in browser storage.', 'assistant', { mode: 'research' });

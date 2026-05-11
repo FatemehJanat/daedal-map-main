@@ -933,31 +933,38 @@ def _build_browser_install_manifest(saved_corpus: dict) -> dict:
     total_transfer_bytes = 0
     total_stored_bytes = 0
     total_expanded_bytes = 0
+    artifact_ready_source_count = 0
 
     for source_id in source_ids:
         source = source_lookup.get(source_id)
         if not isinstance(source, dict):
             raise ValueError(f"Published catalog is missing source metadata for {source_id}")
         artifact = _normalize_browser_artifact(source.get("browser_artifact"))
-        if not artifact:
-            raise ValueError(f"Published catalog is missing browser artifact metadata for {source_id}")
-        if artifact.get("transfer_bytes", 0) <= 0 or artifact.get("stored_bytes", 0) <= 0 or artifact.get("expanded_bytes", 0) <= 0:
-            raise ValueError(f"Browser artifact metadata is incomplete for {source_id}")
-        total_transfer_bytes += int(artifact["transfer_bytes"])
-        total_stored_bytes += int(artifact["stored_bytes"])
-        total_expanded_bytes += int(artifact["expanded_bytes"])
+        artifact_ready = bool(
+            artifact
+            and artifact.get("transfer_bytes", 0) > 0
+            and artifact.get("stored_bytes", 0) > 0
+            and artifact.get("expanded_bytes", 0) > 0
+        )
+        if artifact_ready:
+            artifact_ready_source_count += 1
+            total_transfer_bytes += int(artifact["transfer_bytes"])
+            total_stored_bytes += int(artifact["stored_bytes"])
+            total_expanded_bytes += int(artifact["expanded_bytes"])
         manifest_sources.append({
             "source_id": source_id,
             "source_name": str(source.get("source_name") or source_id),
             "pack_id": source_pack_map.get(source_id) or str(source.get("pack_id") or "").strip(),
             "path": str(source.get("path") or "").strip(),
-            "browser_artifact": artifact,
+            "browser_artifact": artifact if artifact_ready else None,
             "size": source.get("size") if isinstance(source.get("size"), dict) else None,
-            "download_path": f"/api/research/browser-save/source-artifact/{saved_corpus.get('id')}/{source_id}",
+            "download_path": f"/api/research/browser-save/source-artifact/{saved_corpus.get('id')}/{source_id}" if artifact_ready else "",
         })
+    install_mode = "source_artifacts" if artifact_ready_source_count == len(source_ids) else "manifest_only"
 
     return {
         "manifest_version": 1,
+        "install_mode": install_mode,
         "generated_at": datetime.utcnow().isoformat() + "Z",
         "saved_corpus": {
             "id": saved_corpus.get("id"),
@@ -969,6 +976,7 @@ def _build_browser_install_manifest(saved_corpus: dict) -> dict:
             "pack_count": saved_corpus.get("pack_count"),
             "source_count": saved_corpus.get("source_count"),
             "resolved_source_count": len(source_ids),
+            "artifact_ready_source_count": artifact_ready_source_count,
         },
         "sources": manifest_sources,
         "totals": {

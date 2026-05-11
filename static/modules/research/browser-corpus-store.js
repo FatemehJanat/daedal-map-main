@@ -213,6 +213,7 @@ export async function saveBrowserCorpusInstallSummary({ corpusId, corpusName, co
   const namespace = getStorageNamespace();
   const totals = installManifest?.totals || {};
   const savedCorpus = installManifest?.saved_corpus || {};
+  const installMode = String(installManifest?.install_mode || '').trim() || 'manifest_only';
   const record = {
     storageKey: buildStorageKey(namespace, corpusId),
     namespace,
@@ -221,10 +222,10 @@ export async function saveBrowserCorpusInstallSummary({ corpusId, corpusName, co
     corpusUpdatedAt: corpusUpdatedAt || savedCorpus.updated_at || null,
     savedAt: new Date().toISOString(),
     status: 'complete',
-    sizeBytes: Number(totals.stored_bytes || 0),
-    payloadBytes: Number(totals.transfer_bytes || totals.stored_bytes || 0),
-    sizeKind: 'catalog',
-    artifactCount: Number(savedCorpus.resolved_source_count || installManifest?.sources?.length || 0),
+    sizeBytes: Number(installMode === 'source_artifacts' ? (totals.stored_bytes || 0) : 0),
+    payloadBytes: Number(installMode === 'source_artifacts' ? (totals.transfer_bytes || totals.stored_bytes || 0) : 0),
+    sizeKind: installMode === 'source_artifacts' ? 'catalog' : 'manifest',
+    artifactCount: Number(installMode === 'source_artifacts' ? (savedCorpus.artifact_ready_source_count || installManifest?.sources?.length || 0) : 0),
     sourceCount: Number(savedCorpus.resolved_source_count || installManifest?.sources?.length || 0),
     packCount: Number(savedCorpus.pack_count || 0)
   };
