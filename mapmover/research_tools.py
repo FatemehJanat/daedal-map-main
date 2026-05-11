@@ -915,6 +915,216 @@ def _rewrite_hierarchical_loc_id_filters(tool_input: dict) -> dict:
     return patched
 
 
+_NON_METRIC_ROW_KEYS = {"loc_id", "name", "geography_kind", "admin_level_num"}
+
+
+def _infer_primary_metric(matched_rows: list, time_field: str, requested: str | None) -> str:
+    if requested:
+        return str(requested)
+    for row in matched_rows:
+        for key, value in (row or {}).items():
+            if key in _NON_METRIC_ROW_KEYS or key == time_field:
+                continue
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return str(key)
+    return ""
+
+
+def _build_research_map_payload(
+    matched_rows: list,
+    query_result: dict,
+    artifact: dict,
+    tool_input: dict,
+    *,
+    feature_lookup: dict | None = None,
+    time_field_hint: str | None = None,
+) -> dict:
+    """Produce an Explore-shaped data payload from research tool output.
+
+    Output shape matches what Explore's renderStandardDataPayload expects:
+    {data_type, source_id, geographic_level, geojson, loc_ids, year_data?, years?,
+    metric?, fit, context_visibility, rows, row_count, truncated, ...}
+
+    The frontend treats this exactly like an Explore chat response, so the choropleth,
+    TimeSlider, popup, and hover all work without research-specific renderers.
+    """
+    feature_lookup = feature_lookup or {}
+    data_type = str(artifact.get("data_type") or "data").lower()
+    source_id = artifact.get("source_id")
+    geographic_level = (
+        artifact.get("geographic_level")
+        or (matched_rows[0].get("geography_kind") if matched_rows else None)
+    )
+    time_field = str(
+        time_field_hint
+        or artifact.get("time_field")
+        or "year"
+    ).strip() or "year"
+
+    # Group rows by loc_id so one geometry feature -> one entry, regardless of how many
+    # time-rows feed it. This fixes the prior "22 references to the same Python dict"
+    # bug for multi-year metric queries.
+    loc_id_order: list[str] = []
+    rows_by_loc_id: dict[str, list[dict]] = {}
+    for row in matched_rows:
+        loc_id = row.get("loc_id")
+        if loc_id is None:
+            continue
+        key = str(loc_id)
+        bucket = rows_by_loc_id.get(key)
+        if bucket is None:
+            rows_by_loc_id[key] = [row]
+            loc_id_order.append(key)
+        else:
+            bucket.append(row)
+
+    # Resolve geometry. Prefer features already in the artifact's cached geojson;
+    # fall back to the selection-geometry path for metric/live-source artifacts.
+    feature_by_loc_id: dict[str, dict] = {}
+    for key, lookup_feature in feature_lookup.items():
+        props = (lookup_feature or {}).get("properties") or {}
+        lid = props.get("loc_id") or key
+        if lid is not None and (lookup_feature or {}).get("geometry"):
+            feature_by_loc_id.setdefault(str(lid), _jsonable(lookup_feature))
+
+    missing = [lid for lid in loc_id_order if lid not in feature_by_loc_id]
+    if missing:
+        selection_geojson = get_selection_geometries(missing)
+        for feature in (selection_geojson or {}).get("features") or []:
+            props = dict(feature.get("properties") or {})
+            lid = props.get("loc_id")
+            if lid is None:
+                continue
+            feature_by_loc_id[str(lid)] = _jsonable(feature)
+
+    # Build year_data for time-varying data families. year_data is keyed by the
+    # time value as a string, then by loc_id, with the full per-row metric bundle
+    # as the value (so the popup can show every metric per year, not just the
+    # primary).
+    year_data: dict[str, dict[str, dict]] = {}
+    years_seen: list[str] = []
+    has_time_axis = False
+    for loc_id in loc_id_order:
+        for row in rows_by_loc_id[loc_id]:
+            time_value = row.get(time_field)
+            if time_value is None or time_value == "":
+                continue
+            has_time_axis = True
+            time_key = str(time_value)
+            bucket = year_data.setdefault(time_key, {})
+            metrics_dict = {
+                k: v for k, v in row.items()
+                if k not in _NON_METRIC_ROW_KEYS and k != time_field
+            }
+            bucket[loc_id] = metrics_dict
+            if time_key not in years_seen:
+                years_seen.append(time_key)
+
+    years_sorted = sorted(years_seen, key=lambda y: (len(y), y))
+
+    # Build one feature per loc_id. Attach the most recent row's values as
+    # feature.properties so the static (non-animated) view has reasonable defaults
+    # and so the popup builder has at-rest values to show.
+    features = []
+    for loc_id in loc_id_order:
+        feature = feature_by_loc_id.get(loc_id)
+        if not feature:
+            continue
+        loc_rows = rows_by_loc_id[loc_id]
+        latest_row = loc_rows[-1]
+        props = dict(feature.get("properties") or {})
+        for k, v in (latest_row or {}).items():
+            props[k] = v
+        props.setdefault("loc_id", loc_id)
+        feature["properties"] = _jsonable(props)
+        features.append(feature)
+
+    metric = _infer_primary_metric(matched_rows, time_field, tool_input.get("metric"))
+
+    payload: dict = {
+        "artifact_id": artifact.get("artifact_id"),
+        "source_id": source_id,
+        "data_type": data_type,
+        "geographic_level": geographic_level,
+        "geojson": {"type": "FeatureCollection", "features": features},
+        "loc_ids": loc_id_order,
+        "feature_count": len(features),
+        "fit": bool(tool_input.get("fit", True)),
+        "context_visibility": str(tool_input.get("context_visibility") or "keep"),
+        "rows": matched_rows,
+        "row_count": int(query_result.get("row_count", 0) or 0),
+        "truncated": bool(query_result.get("truncated")),
+    }
+    if has_time_axis:
+        # Coerce time keys to integers when possible so the TimeSlider's
+        # year-based min/max math works for SDG/LODES-style yearly data. For
+        # non-numeric time keys (date strings, ISO weeks, months), fall back to
+        # string-sorted boundaries which the slider walks as labels.
+        numeric_years: list[int] = []
+        for token in years_sorted:
+            try:
+                numeric_years.append(int(token))
+            except (ValueError, TypeError):
+                numeric_years = []
+                break
+
+        # Collect every metric key that appears in year_data so the slider's
+        # metric-picker UI sees the full set.
+        metric_keys_seen: set[str] = set()
+        for loc_bucket in year_data.values():
+            for metrics_dict in loc_bucket.values():
+                for k, v in (metrics_dict or {}).items():
+                    if isinstance(v, (int, float)) and not isinstance(v, bool):
+                        metric_keys_seen.add(str(k))
+        available_metrics = sorted(metric_keys_seen)
+
+        primary_metric = metric or (available_metrics[0] if available_metrics else "")
+
+        # Per-metric year range. The simple assumption is every metric spans the
+        # full time set seen in the payload; refine later if a metric's coverage
+        # genuinely differs.
+        metric_year_ranges = {}
+        if numeric_years and available_metrics:
+            year_min, year_max = numeric_years[0], numeric_years[-1]
+            for m in available_metrics:
+                metric_year_ranges[m] = {"min": year_min, "max": year_max}
+
+        payload["year_data"] = year_data
+        payload["years"] = years_sorted
+        payload["time_field"] = time_field
+        payload["multi_year"] = len(years_sorted) > 1
+        if numeric_years:
+            payload["year_range"] = {
+                "min": numeric_years[0],
+                "max": numeric_years[-1],
+                "available_years": numeric_years,
+            }
+        else:
+            payload["year_range"] = {
+                "min": years_sorted[0],
+                "max": years_sorted[-1],
+                "available_years": years_sorted,
+            }
+        payload["metric"] = primary_metric
+        payload["metric_key"] = primary_metric
+        payload["available_metrics"] = available_metrics
+        payload["metric_year_ranges"] = metric_year_ranges
+    if isinstance(tool_input.get("style"), dict):
+        payload["style"] = dict(tool_input["style"])
+
+    logger.info(
+        "Research display payload source=%s artifact=%s data_type=%s features=%s loc_ids=%s years=%s truncated=%s",
+        source_id,
+        artifact.get("artifact_id"),
+        data_type,
+        len(features),
+        len(loc_id_order),
+        len(years_sorted),
+        payload["truncated"],
+    )
+    return payload
+
+
 def _build_display_subset(result: dict, artifact: dict, tool_input: dict) -> dict:
     rows = _rows_from_result(result)
     explicit_limit = _normalize_optional_limit(tool_input.get("limit"), maximum=None)
@@ -984,86 +1194,14 @@ def _build_display_subset(result: dict, artifact: dict, tool_input: dict) -> dic
         }
     matched_rows = query_result.get("rows") or []
     feature_lookup = _feature_lookup_from_result(result)
-
-    loc_ids = []
-    rows_by_identity: dict[str, dict] = {}
-    for row in matched_rows:
-        loc_id = row.get("loc_id")
-        if loc_id is not None:
-            loc_text = str(loc_id)
-            if loc_text not in loc_ids:
-                loc_ids.append(loc_text)
-        identity = _feature_identity_from_props(row)
-        if identity:
-            rows_by_identity.setdefault(identity, row)
-
-    features = []
-    for identity, row in rows_by_identity.items():
-        feature = feature_lookup.get(identity)
-        if not feature:
-            continue
-        props = dict(feature.get("properties") or {})
-        props.update(row or {})
-        feature["properties"] = _jsonable(props)
-        features.append(feature)
-
-    # Metric artifacts often store only loc_id/name placeholders in their
-    # lightweight geojson. Reuse the established selection geometry path to
-    # attach real polygons for display/highlight.
-    needs_geometry = not features or not any((feature.get("geometry") for feature in features))
-    if needs_geometry and loc_ids:
-        selection_geojson = get_selection_geometries(loc_ids)
-        selection_features = (selection_geojson or {}).get("features") or []
-        if selection_features:
-            feature_by_loc_id = {}
-            for feature in selection_features:
-                props = dict(feature.get("properties") or {})
-                loc_id = props.get("loc_id")
-                if loc_id is not None:
-                    feature_by_loc_id[str(loc_id)] = _jsonable(feature)
-            rebuilt = []
-            for row in matched_rows:
-                loc_id = row.get("loc_id")
-                if loc_id is None:
-                    continue
-                feature = feature_by_loc_id.get(str(loc_id))
-                if not feature:
-                    continue
-                props = dict(feature.get("properties") or {})
-                props.update(row or {})
-                feature["properties"] = _jsonable(props)
-                rebuilt.append(feature)
-            if rebuilt:
-                features = rebuilt
-
-    display = {
-        "action": "highlight_features",
-        "artifact_id": artifact.get("artifact_id"),
-        "source_id": artifact.get("source_id"),
-        "geojson": {"type": "FeatureCollection", "features": features},
-        "loc_ids": loc_ids,
-        "fit": bool(tool_input.get("fit", True)),
-        "context_visibility": str(tool_input.get("context_visibility") or "keep"),
-    }
-    if isinstance(tool_input.get("style"), dict):
-        display["style"] = dict(tool_input["style"])
-    logger.info(
-        "Research display subset source=%s artifact=%s matched_rows=%s rendered_features=%s unique_loc_ids=%s truncated=%s requested_limit=%s",
-        artifact.get("source_id"),
-        artifact.get("artifact_id"),
-        len(matched_rows),
-        len(features),
-        len(loc_ids),
-        bool(query_result.get("truncated")),
-        tool_input.get("limit"),
+    return _build_research_map_payload(
+        matched_rows,
+        query_result,
+        artifact,
+        tool_input,
+        feature_lookup=feature_lookup,
+        time_field_hint=result.get("time_field"),
     )
-    return {
-        "artifact_id": artifact.get("artifact_id"),
-        "rows": matched_rows,
-        "row_count": row_count,
-        "truncated": bool(query_result.get("truncated")),
-        "display": display,
-    }
 
 
 def execute_research_tool(
@@ -1197,48 +1335,12 @@ def execute_research_tool(
                         },
                     }
                 matched_rows = query_result.get("rows") or []
-                loc_ids = []
-                for row in matched_rows:
-                    loc_id = row.get("loc_id")
-                    if loc_id is not None and str(loc_id) not in loc_ids:
-                        loc_ids.append(str(loc_id))
-                selection_geojson = get_selection_geometries(loc_ids)
-                feature_by_loc_id = {}
-                for feature in (selection_geojson or {}).get("features") or []:
-                    props = dict(feature.get("properties") or {})
-                    loc_id = props.get("loc_id")
-                    if loc_id is not None:
-                        feature_by_loc_id[str(loc_id)] = _jsonable(feature)
-                features = []
-                for row in matched_rows:
-                    loc_id = row.get("loc_id")
-                    if loc_id is None:
-                        continue
-                    feature = feature_by_loc_id.get(str(loc_id))
-                    if not feature:
-                        continue
-                    props = dict(feature.get("properties") or {})
-                    props.update(row or {})
-                    feature["properties"] = _jsonable(props)
-                    features.append(feature)
-                display = {
-                    "action": "highlight_features",
-                    "artifact_id": artifact.get("artifact_id"),
-                    "source_id": artifact.get("source_id"),
-                    "geojson": {"type": "FeatureCollection", "features": features},
-                    "loc_ids": loc_ids,
-                    "fit": bool(tool_input.get("fit", True)),
-                    "context_visibility": str(tool_input.get("context_visibility") or "keep"),
-                }
-                if isinstance(tool_input.get("style"), dict):
-                    display["style"] = dict(tool_input["style"])
-                return {
-                    "artifact_id": artifact.get("artifact_id"),
-                    "rows": matched_rows,
-                    "row_count": row_count,
-                    "truncated": bool(query_result.get("truncated")),
-                    "display": display,
-                }
+                return _build_research_map_payload(
+                    matched_rows,
+                    query_result,
+                    artifact,
+                    tool_input,
+                )
             result = _get_cached_result(session_id, artifact.get("request_key"))
             if not result:
                 return {"error": "artifact_data_unavailable", "artifact_id": artifact_id}

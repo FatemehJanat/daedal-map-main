@@ -1319,8 +1319,6 @@ def _word_chunks(text: str, words_per_chunk: int = 4):
 def _fallback_display_message(display: dict | None) -> str | None:
     if not isinstance(display, dict):
         return None
-    if str(display.get("action") or "").strip() != "highlight_features":
-        return None
     feature_count = len(((display.get("geojson") or {}).get("features") or []))
     if feature_count <= 0:
         return None
@@ -1452,6 +1450,43 @@ def _compact_manifest_for_prompt(manifest: dict) -> dict:
             if str((artifact or {}).get("source_id") or "").strip()
         ]
     return compact
+
+
+_MAP_PAYLOAD_FIELDS = (
+    "artifact_id",
+    "source_id",
+    "data_type",
+    "geographic_level",
+    "geojson",
+    "loc_ids",
+    "feature_count",
+    "year_data",
+    "years",
+    "year_range",
+    "time_field",
+    "multi_year",
+    "metric",
+    "metric_key",
+    "available_metrics",
+    "metric_year_ranges",
+    "fit",
+    "context_visibility",
+    "style",
+)
+
+
+def _research_map_payload_from_tool_result(tool_result: dict) -> dict:
+    """Extract just the map-rendering fields from a build_artifact_display_subset
+    tool result.
+
+    The tool result also carries `rows`, `row_count`, `truncated` which exist for
+    the LLM context — those don't belong on the client-facing map payload.
+    """
+    payload: dict = {}
+    for key in _MAP_PAYLOAD_FIELDS:
+        if key in tool_result:
+            payload[key] = tool_result[key]
+    return payload
 
 
 def _focus_entities_from_coverage(coverage: dict) -> tuple[int | None, list[str]]:
@@ -1630,14 +1665,17 @@ def _compact_tool_result_for_prompt(tool_name: str, tool_result: dict) -> dict:
         if isinstance(tool_result.get("display_warning"), dict):
             compact["display_warning"] = tool_result.get("display_warning")
         if tool_name == "build_artifact_display_subset":
-            display = tool_result.get("display") or {}
+            geojson = tool_result.get("geojson") or {}
             compact["display"] = {
-                "action": display.get("action"),
-                "source_id": display.get("source_id"),
-                "fit": display.get("fit"),
-                "context_visibility": display.get("context_visibility"),
-                "feature_count": len(((display.get("geojson") or {}).get("features") or [])),
-                "loc_id_count": len(display.get("loc_ids") or []),
+                "data_type": tool_result.get("data_type"),
+                "source_id": tool_result.get("source_id"),
+                "geographic_level": tool_result.get("geographic_level"),
+                "fit": tool_result.get("fit"),
+                "context_visibility": tool_result.get("context_visibility"),
+                "feature_count": len((geojson.get("features") or [])),
+                "loc_id_count": len(tool_result.get("loc_ids") or []),
+                "year_count": len(tool_result.get("years") or []),
+                "metric": tool_result.get("metric"),
             }
         return compact
 
@@ -1821,14 +1859,18 @@ def run_research_chat(
                     recent_tool_signatures = recent_tool_signatures[-8:]
                 if isinstance(tool_result, dict) and isinstance(tool_result.get("display_warning"), dict):
                     display_warning = tool_result.get("display_warning")
-                if isinstance(tool_result, dict) and isinstance(tool_result.get("display"), dict):
-                    final_display = dict(tool_result["display"])
+                if (
+                    isinstance(tool_result, dict)
+                    and block.name == "build_artifact_display_subset"
+                    and tool_result.get("geojson")
+                ):
+                    final_display = _research_map_payload_from_tool_result(tool_result)
                     final_displays.append(final_display)
                     if progress is not None:
                         progress(ProgressEvent(
                             stage="display",
                             message="Updating the map display...",
-                            extra={"display": final_display},
+                            extra={"map_payload": final_display},
                         ))
                 compact_tool_result = _compact_tool_result_for_prompt(block.name, tool_result)
                 assistant_content.append(block)
@@ -1938,21 +1980,29 @@ def run_research_chat(
         "type": "chat",
         "message": text,
         "corpus": manifest,
-        "display": final_display,
-        "displays": final_displays,
         "research_hints": research_hints,
     }
+    # Promote the latest display payload's fields to the top level of the chat
+    # response so the frontend can route through the same renderStandardDataPayload
+    # path Explore uses. final_displays is preserved as `layers` so multi-call
+    # responses can still produce a layer stack.
+    if final_display:
+        for key, value in final_display.items():
+            result[key] = value
+    if final_displays:
+        result["layers"] = final_displays
     if final_display:
         display_geojson = final_display.get("geojson") or {}
         display_features = display_geojson.get("features") or []
         logger.info(
-            "Research final response session=%s query=%r message_len=%s display_action=%s display_source=%s display_features=%s display_layers=%s",
+            "Research final response session=%s query=%r message_len=%s data_type=%s source_id=%s features=%s years=%s layers=%s",
             session_id,
             query[:120],
             len(text or ""),
-            final_display.get("action"),
+            final_display.get("data_type"),
             final_display.get("source_id"),
             len(display_features),
+            len(final_display.get("years") or []),
             len(final_displays),
         )
     else:
@@ -2329,8 +2379,8 @@ async def research_chat_stream_endpoint(req: Request):
                     payload = {"stage": event.stage, "message": event.message}
                     if event.extra:
                         payload["extra"] = event.extra
-                        if isinstance(event.extra.get("display"), dict):
-                            payload["display"] = event.extra["display"]
+                        if isinstance(event.extra.get("map_payload"), dict):
+                            payload["map_payload"] = event.extra["map_payload"]
                     yield f"data: {json.dumps(payload)}\n\n"
 
                 result = await task
