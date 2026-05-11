@@ -614,7 +614,6 @@ def _pack_display_meta(primary: dict, primary_doc: dict | None) -> dict:
             "source_url": _best_source_text(
                 pack_ref.get("primary_source_url"),
                 pack_ref.get("source_url"),
-                metadata.get("primary_source_url"),
                 primary_upstream.get("agency_upstream_url"),
                 primary_upstream.get("source_url"),
                 ref_source.get("source_url"),
@@ -623,11 +622,9 @@ def _pack_display_meta(primary: dict, primary_doc: dict | None) -> dict:
             ),
             "primary_source_name": _best_source_text(
                 pack_ref.get("primary_source_name"),
-                metadata.get("primary_source_name"),
                 primary_upstream.get("agency"),
             ),
             "primary_source_license": _best_source_text(
-                metadata.get("primary_source_license"),
                 primary_upstream.get("license"),
                 ref_source.get("license"),
                 metadata.get("license"),
@@ -656,7 +653,6 @@ def _pack_display_meta(primary: dict, primary_doc: dict | None) -> dict:
             primary.get("description"),
         ),
         "source_url": _best_source_text(
-            metadata.get("primary_source_url"),
             primary_upstream.get("agency_upstream_url"),
             primary_upstream.get("source_url"),
             ref_source.get("source_url"),
@@ -664,11 +660,9 @@ def _pack_display_meta(primary: dict, primary_doc: dict | None) -> dict:
             primary.get("source_url"),
         ),
         "primary_source_name": _best_source_text(
-            metadata.get("primary_source_name"),
             primary_upstream.get("agency"),
         ),
         "primary_source_license": _best_source_text(
-            metadata.get("primary_source_license"),
             primary_upstream.get("license"),
             ref_source.get("license"),
             metadata.get("license"),
@@ -1023,7 +1017,6 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
                 s.get("description", ""),
             ),
             "source_url": _best_source_text(
-                smeta.get("primary_source_url"),
                 primary_upstream.get("agency_upstream_url"),
                 primary_upstream.get("source_url"),
                 sref_source.get("source_url"),
@@ -1037,12 +1030,10 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
             ),
             "primary_source_name": _best_source_text(
                 s.get("primary_source_name"),
-                smeta.get("primary_source_name"),
                 primary_upstream.get("agency"),
             ),
             "primary_source_url": _best_source_text(
                 s.get("primary_source_url"),
-                smeta.get("primary_source_url"),
                 primary_upstream.get("agency_upstream_url"),
                 primary_upstream.get("source_url"),
                 sref_source.get("source_url"),
@@ -1051,7 +1042,6 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
             ),
             "primary_source_license": _best_source_text(
                 s.get("primary_source_license"),
-                smeta.get("primary_source_license"),
                 primary_upstream.get("license"),
                 sref_source.get("license"),
                 smeta.get("license"),
