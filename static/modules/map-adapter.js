@@ -1040,10 +1040,29 @@ export const MapAdapter = {
   },
 
   // Fixed center points for countries with problematic bounding boxes
+  // Fixed center+zoom for countries whose true bbox produces a bad fit, either
+  // because they cross the antimeridian (naive bbox wraps the wrong way) or
+  // because overseas territories drag a mathematically-correct bbox far from
+  // where the user wants to look. Keys are ISO3 loc_ids.
   countryFixedCenters: {
-    'USA': { center: [-98.5, 39.5], zoom: 4 },  // Center of contiguous US
-    'RUS': { center: [100, 60], zoom: 3 },      // Russia spans many time zones
-    'FJI': { center: [178, -18], zoom: 6 }      // Fiji crosses date line
+    // Antimeridian crossers
+    'USA': { center: [-98.5, 39.5], zoom: 4 },
+    'RUS': { center: [100, 60], zoom: 3 },
+    'FJI': { center: [178, -18], zoom: 6 },
+    'NZL': { center: [172, -41], zoom: 5 },
+    'KIR': { center: [-170, 0], zoom: 5 },
+    'ATA': { center: [0, -82], zoom: 2 },
+    // Wide overseas-territory cases
+    'FRA': { center: [2.5, 46.5], zoom: 5 },
+    'GBR': { center: [-2, 54], zoom: 5 },
+    'NLD': { center: [5.5, 52], zoom: 6 },
+    'NOR': { center: [9, 63], zoom: 4 },
+    'DNK': { center: [10, 56], zoom: 5 },
+    'PRT': { center: [-8, 39.5], zoom: 6 },
+    'ESP': { center: [-3.7, 40.4], zoom: 5 },
+    'CHL': { center: [-71, -35], zoom: 4 },
+    'ECU': { center: [-78, -1.5], zoom: 6 },
+    'AUS': { center: [134, -25], zoom: 4 },
   },
 
   /**
@@ -1054,12 +1073,15 @@ export const MapAdapter = {
   fitToBounds(geojson, options = {}) {
     if (!geojson || !geojson.features || geojson.features.length === 0) return;
 
-    // Check if this is a single country with a fixed center
-    if (geojson.features.length > 1) {
-      const firstFeature = geojson.features[0];
-      const parentId = firstFeature.properties?.parent_id;
-      if (parentId && this.countryFixedCenters[parentId]) {
-        const fixed = this.countryFixedCenters[parentId];
+    // Fixed-center short-circuit: applies when any feature's own loc_id (single
+    // country focus) or parent_id (rendered as children of a country) matches
+    // a known wide/dateline-crossing country. Skips the bounds math entirely so
+    // antimeridian crossers like USA don't wrap to "show the whole world".
+    for (const feature of geojson.features) {
+      const props = feature.properties || {};
+      const key = props.loc_id || props.parent_id || feature.id;
+      const fixed = key && this.countryFixedCenters[String(key)];
+      if (fixed) {
         this.map.flyTo({
           center: fixed.center,
           zoom: options.minZoom || fixed.zoom,

@@ -1983,7 +1983,7 @@ export const App = {
       isNavigation: true
     };
     MapAdapter.loadNavigationLayer(geojson, {
-      fillOpacity: 0.12,
+      fillOpacity: 0,
       strokeColor: '#ffd38a',
       strokeWidth: 2.2
     });

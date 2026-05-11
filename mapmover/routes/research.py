@@ -1454,57 +1454,96 @@ def _compact_manifest_for_prompt(manifest: dict) -> dict:
     return compact
 
 
-def _focus_loc_ids_from_result(result: dict | None) -> list[str]:
-    if not isinstance(result, dict):
-        return []
+def _focus_entities_from_coverage(coverage: dict) -> tuple[int | None, list[str]]:
+    """Pick the broadest grain from one source's geographic_coverage and the entities at that grain.
 
-    loc_ids: list[str] = []
-    seen = set()
+    Returns (admin_level, [entity loc_ids]). admin_level is the smallest value in
+    coverage["admin_levels"]; entities are the loc_ids that represent that
+    artifact's footprint at that level. Returns (None, []) if metadata is
+    incomplete or the shape is not recognized. Sources covering "global" scope
+    return (0, []) so the caller can treat them as "no specific entity, default
+    view" without resolving 200+ country polygons.
+    """
+    if not isinstance(coverage, dict):
+        return (None, [])
+    admin_levels = coverage.get("admin_levels") or []
+    if not admin_levels:
+        return (None, [])
+    lowest = min(int(level) for level in admin_levels if isinstance(level, (int, float)) or str(level).lstrip("-").isdigit())
 
-    for feature in ((result.get("geojson") or {}).get("features") or []):
-        loc_id = ((feature.get("properties") or {}).get("loc_id"))
-        if loc_id is None:
-            continue
-        text = str(loc_id).strip()
-        if text and text not in seen:
-            seen.add(text)
-            loc_ids.append(text)
+    if lowest == 0:
+        coverage_type = str(coverage.get("type") or "").strip().lower()
+        if coverage_type == "country":
+            country = str(coverage.get("country") or "").strip()
+            return (0, [country] if country else [])
+        if coverage_type in ("multi_country", "regional"):
+            return (0, [str(c).strip() for c in (coverage.get("countries") or []) if str(c).strip()])
+        if coverage_type == "global":
+            return (0, [])
+        return (None, [])
 
-    for _year, loc_map in (result.get("year_data") or {}).items():
-        for loc_id in (loc_map or {}).keys():
-            text = str(loc_id).strip()
-            if text and text not in seen:
-                seen.add(text)
-                loc_ids.append(text)
+    if lowest == 1:
+        country = str(coverage.get("country") or "").strip()
+        states = coverage.get("states") or ([coverage.get("state")] if coverage.get("state") else [])
+        if not country:
+            return (None, [])
+        return (1, [f"{country}-{str(s).strip()}" for s in states if str(s or "").strip()])
 
-    if not loc_ids:
-        return []
+    if lowest == 2:
+        country = str(coverage.get("country") or "").strip()
+        state = str(coverage.get("state") or "").strip()
+        counties = coverage.get("counties") or ([coverage.get("county")] if coverage.get("county") else [])
+        if not (country and state):
+            return (None, [])
+        return (2, [f"{country}-{state}-{str(c).strip()}" for c in counties if str(c or "").strip()])
 
-    shallowest = min(text.count("-") for text in loc_ids)
-    return [text for text in loc_ids if text.count("-") == shallowest][:24]
+    return (None, [])
 
 
 def _build_research_focus_geojson(session_id: str) -> dict | None:
-    cache = session_manager.get(session_id)
-    if cache is None:
+    """Return a single outline FeatureCollection for the corpus's broadest shared grain.
+
+    Picks the lowest admin_level any loaded artifact supports (country wins over
+    state wins over county), then unions the entities (loc_ids) at that level
+    across all artifacts that have it. The resolved geometry is rendered as an
+    outline overlay so the user sees the corpus footprint without per-row paint.
+    Returns None if no artifact has usable coverage metadata, leaving the map at
+    its current view.
+    """
+    artifacts = corpus_registry.list_artifacts(session_id)
+    if not artifacts:
         return None
 
-    focus_loc_ids: list[str] = []
-    seen = set()
-    for artifact in corpus_registry.list_artifacts(session_id):
-        request_key = str(artifact.get("request_key") or "").strip()
-        if not request_key:
+    per_artifact: list[tuple[int, list[str]]] = []
+    for artifact in artifacts:
+        source_id = str(artifact.get("source_id") or "").strip()
+        if not source_id:
             continue
-        result = cache.get_cached_result(request_key)
-        for loc_id in _focus_loc_ids_from_result(result):
-            if loc_id not in seen:
-                seen.add(loc_id)
-                focus_loc_ids.append(loc_id)
+        metadata = load_source_metadata(source_id) or {}
+        coverage = metadata.get("geographic_coverage") if isinstance(metadata.get("geographic_coverage"), dict) else None
+        level, entities = _focus_entities_from_coverage(coverage or {})
+        if level is None:
+            continue
+        per_artifact.append((level, entities))
 
-    if not focus_loc_ids:
+    if not per_artifact:
         return None
 
-    geojson = get_selection_geometries(focus_loc_ids)
+    corpus_lowest = min(level for level, _ in per_artifact)
+    union: list[str] = []
+    seen = set()
+    for level, entities in per_artifact:
+        if level != corpus_lowest:
+            continue
+        for entity in entities:
+            if entity and entity not in seen:
+                seen.add(entity)
+                union.append(entity)
+
+    if not union:
+        return None
+
+    geojson = get_selection_geometries(union)
     if ((geojson or {}).get("features") or []):
         return geojson
     return None
