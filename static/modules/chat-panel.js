@@ -2404,7 +2404,39 @@ export const ChatManager = {
 
   applySupplementalChatActions(response) {
     this.enforceResearchUiBoundaries();
+    // The streaming `stage=display` progress event and the final chat response
+    // both carry the same display payload. Letting both reach routeMapResponse
+    // double-renders the research layers; the second render tears down the
+    // first render's MapLibre listener bindings before the new ones are fully
+    // wired, leaving the rendered polygon non-interactive. Dedupe by a stable
+    // signature of the display content so the second pass is a no-op.
+    const sig = this._researchDisplaySignature(response);
+    if (sig && sig === this._lastResearchDisplaySig) {
+      return;
+    }
+    this._lastResearchDisplaySig = sig;
     this.routeMapResponse(response, { origin: 'research' });
+  },
+
+  _researchDisplaySignature(response) {
+    const displays = Array.isArray(response?.displays) && response.displays.length
+      ? response.displays
+      : (response?.display ? [response.display] : []);
+    if (!displays.length) return '';
+    return displays.map(display => {
+      if (!display || typeof display !== 'object') return '';
+      const features = display.geojson?.features || [];
+      const locIds = (display.loc_ids && display.loc_ids.length)
+        ? [...display.loc_ids].sort()
+        : features.map(f => f?.properties?.loc_id).filter(Boolean).sort();
+      return [
+        display.action || '',
+        display.source_id || '',
+        display.artifact_id || '',
+        features.length,
+        locIds.join(','),
+      ].join('|');
+    }).join(';');
   },
 
   isMixedResearchRasterRequest(normalizedQuery) {
