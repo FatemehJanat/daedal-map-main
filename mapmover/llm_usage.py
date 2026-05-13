@@ -131,6 +131,42 @@ def classify_caller(
     }
 
 
+def ensure_recorder(
+    recorder: "Optional[LLMUsageRecorder]",
+    *,
+    surface: str,
+    call_kind: str,
+    session_id: Optional[str] = None,
+    request_id: Optional[str] = None,
+) -> tuple["LLMUsageRecorder", bool]:
+    """Return (recorder, owns_lifecycle).
+
+    Guarantees every chat-path call site gets a recorder so we always log
+    billing rows, no matter how the function was reached (HTTP route, in-process
+    QA suite, future Ops mode, agent/API path).
+
+    - If a recorder was already passed in (HTTP routes do this after caller
+      classification), return it with owns_lifecycle=False; the original caller
+      owns flush().
+    - Otherwise, build a fresh recorder using the current QA env override (if
+      set) or the anonymous classification, and return owns_lifecycle=True.
+      The caller MUST flush() it in a finally block.
+    """
+    if recorder is not None:
+        return recorder, False
+    caller_ctx = classify_caller(auth_user=None, ip_hash=None)
+    return (
+        LLMUsageRecorder(
+            surface=surface,
+            call_kind=call_kind,
+            session_id=session_id,
+            request_id=request_id,
+            **caller_ctx,
+        ),
+        True,
+    )
+
+
 @dataclass
 class LLMUsageRecorder:
     """Per-request token + latency accumulator across a tool-loop.

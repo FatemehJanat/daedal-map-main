@@ -24,7 +24,7 @@ from mapmover import logger
 from mapmover.auth_context import build_session_cache_key, get_authenticated_user, get_authenticated_user_async
 from mapmover.corpus_registry import corpus_registry
 from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log_conversation
-from mapmover.llm_usage import LLMUsageRecorder, classify_caller
+from mapmover.llm_usage import LLMUsageRecorder, classify_caller, ensure_recorder
 from mapmover.chat_budget import budget_rejection_payload, check_anonymous_chat_budget
 from mapmover.catalog_surface import (
     catalog_surface_scope,
@@ -1177,24 +1177,34 @@ def _run_research_rescue_synthesis(
             ),
         }
     )
+    usage_recorder, _owns_rescue = ensure_recorder(
+        usage_recorder,
+        surface="research",
+        call_kind="research_rescue",
+        session_id=session_id,
+    )
     try:
-        response = client.messages.create(
-            model=model,
-            system=system_prompt,
-            messages=rescue_messages,
-            max_tokens=_RESEARCH_MAX_TOKENS,
-            **_temperature_kwargs(model, temperature),
-        )
-        if usage_recorder is not None:
-            usage_recorder.record(response)
-        return response
-    except Exception:
-        logger.exception(
-            "Research rescue synthesis call failed session=%s query=%r",
-            session_id,
-            query[:120],
-        )
-        return None
+        try:
+            response = client.messages.create(
+                model=model,
+                system=system_prompt,
+                messages=rescue_messages,
+                max_tokens=_RESEARCH_MAX_TOKENS,
+                **_temperature_kwargs(model, temperature),
+            )
+            if usage_recorder is not None:
+                usage_recorder.record(response)
+            return response
+        except Exception:
+            logger.exception(
+                "Research rescue synthesis call failed session=%s query=%r",
+                session_id,
+                query[:120],
+            )
+            return None
+    finally:
+        if _owns_rescue:
+            usage_recorder.flush(skip_if_empty=True)
 
 
 def _tool_call_signature(tool_name: str, tool_input: dict | None) -> str:
@@ -1770,15 +1780,31 @@ def run_research_chat(
     ]
 
     client = Anthropic()
-    max_tool_iterations = _RESEARCH_MAX_TOOL_ITERATIONS
-    response = None
-    final_display = None
-    final_displays: list[dict] = []
-    display_warning = None
-    tool_iterations_used = 0
-    recent_tool_signatures: list[str] = []
-    last_guardrail_message: str | None = None
-    for _iteration in range(max_tool_iterations + 1):
+    # Guarantee recorders so in-process callers (QA suites, ops/agent paths)
+    # still log llm_usage_events rows for both the main loop and any rescue
+    # synthesis, no matter how this function was reached.
+    usage_recorder, _owns_main = ensure_recorder(
+        usage_recorder,
+        surface="research",
+        call_kind="research_main",
+        session_id=session_id,
+    )
+    rescue_usage_recorder, _owns_rescue = ensure_recorder(
+        rescue_usage_recorder,
+        surface="research",
+        call_kind="research_rescue",
+        session_id=session_id,
+    )
+    try:
+      max_tool_iterations = _RESEARCH_MAX_TOOL_ITERATIONS
+      response = None
+      final_display = None
+      final_displays: list[dict] = []
+      display_warning = None
+      tool_iterations_used = 0
+      recent_tool_signatures: list[str] = []
+      last_guardrail_message: str | None = None
+      for _iteration in range(max_tool_iterations + 1):
         try:
             response = client.messages.create(
                 model=model,
@@ -1869,7 +1895,7 @@ def run_research_chat(
             messages.append({"role": "user", "content": guardrail_message})
             last_guardrail_message = guardrail_message
 
-    if display_warning:
+      if display_warning:
         logger.info(
             "Research display warning session=%s query=%r level=%s row_count=%s soft_cap=%s hard_cap=%s force=%s",
             session_id,
@@ -1882,7 +1908,7 @@ def run_research_chat(
         )
         return _build_display_warning_result(manifest, display_warning, query)
 
-    if response and response.stop_reason == "tool_use":
+      if response and response.stop_reason == "tool_use":
         if progress is not None:
             progress(ProgressEvent(
                 stage="writing",
@@ -1906,15 +1932,15 @@ def run_research_chat(
                 query[:120],
             )
 
-    if progress is not None:
+      if progress is not None:
         progress(ProgressEvent(
             stage="writing",
             message="Drafting the answer...",
             extra={"phase": "compose"},
         ))
 
-    text = _extract_text(response.content if response else [])
-    if not text:
+      text = _extract_text(response.content if response else [])
+      if not text:
         logger.warning(
             "Research response missing text session=%s query=%r stop_reason=%s content_types=%s tool_iterations_used=%s artifact_count=%s",
             session_id,
@@ -1946,24 +1972,24 @@ def run_research_chat(
                 getattr(rescue_response, "stop_reason", None) if rescue_response else None,
                 _content_block_types(rescue_response.content if rescue_response else []),
             )
-    if not text:
+      if not text:
         text = _fallback_display_message(final_display) or _broad_research_fallback_message(query, manifest, research_hints)
-    result = {
+      result = {
         "type": "chat",
         "message": text,
         "corpus": manifest,
         "research_hints": research_hints,
-    }
-    # Promote the latest display payload's fields to the top level of the chat
-    # response so the frontend can route through the same renderStandardDataPayload
-    # path Explore uses. final_displays is preserved as `layers` so multi-call
-    # responses can still produce a layer stack.
-    if final_display:
+      }
+      # Promote the latest display payload's fields to the top level of the chat
+      # response so the frontend can route through the same renderStandardDataPayload
+      # path Explore uses. final_displays is preserved as `layers` so multi-call
+      # responses can still produce a layer stack.
+      if final_display:
         for key, value in final_display.items():
             result[key] = value
-    if final_displays:
+      if final_displays:
         result["layers"] = final_displays
-    if final_display:
+      if final_display:
         display_geojson = final_display.get("geojson") or {}
         display_features = display_geojson.get("features") or []
         logger.info(
@@ -1977,14 +2003,19 @@ def run_research_chat(
             len(final_display.get("years") or []),
             len(final_displays),
         )
-    else:
+      else:
         logger.info(
             "Research final response session=%s query=%r message_len=%s display_action=none",
             session_id,
             query[:120],
             len(text or ""),
         )
-    return normalize_research_result(result, lane="research")
+      return normalize_research_result(result, lane="research")
+    finally:
+        if _owns_main:
+            usage_recorder.flush(skip_if_empty=True)
+        if _owns_rescue:
+            rescue_usage_recorder.flush(skip_if_empty=True)
 
 
 @router.post("/api/research/corpus")

@@ -777,81 +777,91 @@ def interpret_request(
         "text": system_content.strip(),
         "cache_control": {"type": "ephemeral"},
     }]
-    for iteration in range(max_tool_iterations + 1):
-        response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            system=system_blocks,
-            messages=chat_messages,
-            tools=tools,
-            temperature=0.0,
-            max_tokens=500
-        )
-        if usage_recorder is not None:
-            usage_recorder.record(response)
+    # Guarantee a recorder so in-process callers (QA suites, ops/agent paths)
+    # still log llm_usage_events rows even when no recorder was passed in.
+    from .llm_usage import ensure_recorder
+    usage_recorder, _owns_recorder = ensure_recorder(
+        usage_recorder, surface="explorer", call_kind="order_taker",
+    )
+    try:
+        for iteration in range(max_tool_iterations + 1):
+            response = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                system=system_blocks,
+                messages=chat_messages,
+                tools=tools,
+                temperature=0.0,
+                max_tokens=500
+            )
+            if usage_recorder is not None:
+                usage_recorder.record(response)
 
-        # Check if LLM wants to use a tool
-        if response.stop_reason == "tool_use":
-            # Find tool use block(s) in response
-            tool_results = []
-            assistant_content = []
+            # Check if LLM wants to use a tool
+            if response.stop_reason == "tool_use":
+                # Find tool use block(s) in response
+                tool_results = []
+                assistant_content = []
 
-            for block in response.content:
-                if block.type == "tool_use":
-                    # Execute the tool
-                    tool_name = block.name
-                    tool_input = block.input
-                    if progress is not None:
-                        friendly = EXPLORER_TOOL_PROGRESS_MESSAGES.get(
-                            tool_name,
-                            f"Running {tool_name}...",
-                        )
-                        progress(ProgressEvent(
-                            stage="tool",
-                            message=friendly,
-                            extra={"tool": tool_name, "iteration": iteration},
-                        ))
-                    result = execute_tool(tool_name, tool_input)
+                for block in response.content:
+                    if block.type == "tool_use":
+                        # Execute the tool
+                        tool_name = block.name
+                        tool_input = block.input
+                        if progress is not None:
+                            friendly = EXPLORER_TOOL_PROGRESS_MESSAGES.get(
+                                tool_name,
+                                f"Running {tool_name}...",
+                            )
+                            progress(ProgressEvent(
+                                stage="tool",
+                                message=friendly,
+                                extra={"tool": tool_name, "iteration": iteration},
+                            ))
+                        result = execute_tool(tool_name, tool_input)
 
-                    # Format result for context
-                    formatted_result = format_tool_result_for_llm(result)
+                        # Format result for context
+                        formatted_result = format_tool_result_for_llm(result)
 
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": formatted_result
-                    })
-                    assistant_content.append(block)
-                elif block.type == "text":
-                    assistant_content.append(block)
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": formatted_result
+                        })
+                        assistant_content.append(block)
+                    elif block.type == "text":
+                        assistant_content.append(block)
 
-            # Add assistant message with tool calls
-            chat_messages.append({
-                "role": "assistant",
-                "content": assistant_content
-            })
+                # Add assistant message with tool calls
+                chat_messages.append({
+                    "role": "assistant",
+                    "content": assistant_content
+                })
 
-            # Add tool results
-            chat_messages.append({
-                "role": "user",
-                "content": tool_results
-            })
+                # Add tool results
+                chat_messages.append({
+                    "role": "user",
+                    "content": tool_results
+                })
 
-            # Continue loop for next LLM response
-            continue
+                # Continue loop for next LLM response
+                continue
 
-        # No tool use - we have the final response
-        break
+            # No tool use - we have the final response
+            break
 
-    # Extract final text response
-    content = ""
-    for block in response.content:
-        if hasattr(block, 'text'):
-            content += block.text
+        # Extract final text response
+        content = ""
+        for block in response.content:
+            if hasattr(block, 'text'):
+                content += block.text
 
-    content = content.strip()
+        content = content.strip()
 
-    # Parse response
-    return parse_llm_response(content, hints=hints, user_query=user_query)
+        # Parse response
+        return parse_llm_response(content, hints=hints, user_query=user_query)
+    finally:
+        if _owns_recorder:
+            usage_recorder.flush(skip_if_empty=True)
 
 
 def validate_order_item(item: dict) -> dict:
