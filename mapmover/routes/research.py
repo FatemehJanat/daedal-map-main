@@ -32,7 +32,7 @@ from mapmover.catalog_surface import (
     request_can_use_wip_catalog,
 )
 from mapmover.security import get_client_ip
-from mapmover.data_loading import get_pack_metadata, get_source_path, load_catalog, load_source_metadata
+from mapmover.data_loading import get_source_path, load_catalog, load_source_metadata
 from mapmover.api_query_runtime import execute_dataset_query, get_api_source_columns, get_api_source_spec
 from mapmover.duckdb_helpers import is_cloud_mode, parquet_available, parquet_columns, path_to_uri, quote_ident, run_rows, select_columns_from_parquet
 from mapmover.geometry_handlers import get_selection_geometries
@@ -75,7 +75,6 @@ _RESEARCH_MAX_TOKENS = 5000
 _PROMPT_METRIC_LIMIT = 24
 _PROMPT_FIELD_LIMIT = 12
 _PROMPT_SCENE_PERIOD_LIMIT = 4
-_PROMPT_SAVED_PACK_LIMIT = 4
 _TOOL_ROWS_PREVIEW_LIMIT = 10
 _RESEARCH_LIVE_SOURCE_ROW_THRESHOLD = 250_000
 _RESEARCH_LIVE_SOURCE_FILE_MB_THRESHOLD = 25.0
@@ -170,74 +169,54 @@ def _build_saved_corpus_summary(corpus_row: dict | None) -> dict | None:
         return None
 
     items = corpus_row.get("research_corpus_items") or []
-    packs = []
-    source_ids = []
-    pack_ids = []
-    resolved_source_ids: list[str] = []
-    resolved_seen = set()
-    pack_row_count_total = 0
-    pack_file_size_mb_total = 0.0
+    source_ids: list[str] = []
+    source_seen = set()
     source_lookup = _catalog_source_lookup()
     resolved_sources = []
     resolved_transfer_bytes_total = 0
     resolved_stored_bytes_total = 0
     resolved_expanded_bytes_total = 0
+    estimated_row_count_total = 0
+    estimated_file_size_mb_total = 0.0
+    derived_pack_ids: list[str] = []
+    derived_pack_seen = set()
 
     for item in items:
-        item_type = str(item.get("item_type") or "").strip().lower()
         item_id = str(item.get("item_id") or "").strip()
         if not item_id:
             continue
-        if item_type == "pack":
-            pack_meta = get_pack_metadata(item_id)
-            if pack_meta:
-                packs.append(pack_meta)
-                pack_ids.append(item_id)
-                for pack_source_id in pack_meta.get("source_ids") or []:
-                    pack_source_text = str(pack_source_id or "").strip()
-                    if pack_source_text and pack_source_text not in resolved_seen:
-                        resolved_seen.add(pack_source_text)
-                        resolved_source_ids.append(pack_source_text)
-                        source_meta = source_lookup.get(pack_source_text)
-                        if isinstance(source_meta, dict):
-                            resolved_sources.append(deepcopy(source_meta))
-                            browser_artifact = _normalize_browser_artifact(source_meta.get("browser_artifact"))
-                            if browser_artifact:
-                                resolved_transfer_bytes_total += int(browser_artifact.get("transfer_bytes") or 0)
-                                resolved_stored_bytes_total += int(browser_artifact.get("stored_bytes") or 0)
-                                resolved_expanded_bytes_total += int(browser_artifact.get("expanded_bytes") or 0)
-                pack_row_count_total += int(pack_meta.get("row_count_total") or 0)
-                pack_file_size_mb_total += float(pack_meta.get("file_size_mb_total") or 0.0)
-            else:
-                pack_ids.append(item_id)
-        elif item_type == "source":
-            source_ids.append(item_id)
-            if item_id not in resolved_seen:
-                resolved_seen.add(item_id)
-                resolved_source_ids.append(item_id)
-                source_meta = source_lookup.get(item_id)
-                if isinstance(source_meta, dict):
-                    resolved_sources.append(deepcopy(source_meta))
-                    browser_artifact = _normalize_browser_artifact(source_meta.get("browser_artifact"))
-                    if browser_artifact:
-                        resolved_transfer_bytes_total += int(browser_artifact.get("transfer_bytes") or 0)
-                        resolved_stored_bytes_total += int(browser_artifact.get("stored_bytes") or 0)
-                        resolved_expanded_bytes_total += int(browser_artifact.get("expanded_bytes") or 0)
+        if item_id in source_seen:
+            continue
+        source_seen.add(item_id)
+        source_ids.append(item_id)
+        source_meta = source_lookup.get(item_id)
+        if isinstance(source_meta, dict):
+            resolved_sources.append(deepcopy(source_meta))
+            estimated_row_count_total += int(source_meta.get("row_count") or 0)
+            estimated_file_size_mb_total += float((source_meta.get("size") or {}).get("transfer_mb") or source_meta.get("file_size_mb") or 0.0)
+            pack_id = str(source_meta.get("pack_id") or "").strip()
+            if pack_id and pack_id not in derived_pack_seen:
+                derived_pack_seen.add(pack_id)
+                derived_pack_ids.append(pack_id)
+            browser_artifact = _normalize_browser_artifact(source_meta.get("browser_artifact"))
+            if browser_artifact:
+                resolved_transfer_bytes_total += int(browser_artifact.get("transfer_bytes") or 0)
+                resolved_stored_bytes_total += int(browser_artifact.get("stored_bytes") or 0)
+                resolved_expanded_bytes_total += int(browser_artifact.get("expanded_bytes") or 0)
 
     return {
         "id": corpus_row.get("id"),
         "name": corpus_row.get("name") or "Untitled corpus",
         "description": corpus_row.get("description") or "",
         "updated_at": corpus_row.get("updated_at"),
-        "pack_ids": pack_ids,
         "source_ids": source_ids,
-        "pack_count": len(pack_ids),
+        "pack_count": len(derived_pack_ids),
         "source_count": len(source_ids),
-        "resolved_source_count": len(resolved_source_ids),
-        "estimated_row_count_total": pack_row_count_total,
-        "estimated_file_size_mb_total": round(pack_file_size_mb_total, 2),
-        "packs": packs,
-        "resolved_source_ids": resolved_source_ids,
+        "resolved_source_count": len(source_ids),
+        "estimated_row_count_total": estimated_row_count_total,
+        "estimated_file_size_mb_total": round(estimated_file_size_mb_total, 2),
+        "derived_pack_ids": derived_pack_ids,
+        "resolved_source_ids": source_ids,
         "sources": resolved_sources,
         "browser_artifact_totals": {
             "transfer_bytes": resolved_transfer_bytes_total,
@@ -275,12 +254,6 @@ def _expected_saved_corpus_source_ids(saved_corpus: dict | None) -> list[str]:
         return []
     resolved = []
     seen = set()
-    for pack in saved_corpus.get("packs") or []:
-        for source_id in pack.get("source_ids") or []:
-            text = str(source_id or "").strip()
-            if text and text not in seen:
-                seen.add(text)
-                resolved.append(text)
     for source_id in saved_corpus.get("source_ids") or []:
         text = str(source_id or "").strip()
         if text and text not in seen:
@@ -907,28 +880,12 @@ def _catalog_source_lookup() -> dict[str, dict]:
     return lookup
 
 
-def _saved_corpus_source_pack_map(saved_corpus: dict | None) -> dict[str, str]:
-    mapping: dict[str, str] = {}
-    if not isinstance(saved_corpus, dict):
-        return mapping
-    for pack in saved_corpus.get("packs") or []:
-        if not isinstance(pack, dict):
-            continue
-        pack_id = str(pack.get("pack_id") or "").strip()
-        for source_id in pack.get("source_ids") or []:
-            source_text = str(source_id or "").strip()
-            if source_text and pack_id and source_text not in mapping:
-                mapping[source_text] = pack_id
-    return mapping
-
-
 def _build_browser_install_manifest(saved_corpus: dict) -> dict:
     source_ids = _expected_saved_corpus_source_ids(saved_corpus)
     if not source_ids:
         raise ValueError("Saved corpus has no resolved sources")
 
     source_lookup = _catalog_source_lookup()
-    source_pack_map = _saved_corpus_source_pack_map(saved_corpus)
     manifest_sources = []
     total_transfer_bytes = 0
     total_stored_bytes = 0
@@ -954,7 +911,7 @@ def _build_browser_install_manifest(saved_corpus: dict) -> dict:
         manifest_sources.append({
             "source_id": source_id,
             "source_name": str(source.get("source_name") or source_id),
-            "pack_id": source_pack_map.get(source_id) or str(source.get("pack_id") or "").strip(),
+            "pack_id": str(source.get("pack_id") or "").strip(),
             "path": str(source.get("path") or "").strip(),
             "browser_artifact": artifact if artifact_ready else None,
             "size": source.get("size") if isinstance(source.get("size"), dict) else None,
@@ -970,7 +927,6 @@ def _build_browser_install_manifest(saved_corpus: dict) -> dict:
             "id": saved_corpus.get("id"),
             "name": saved_corpus.get("name"),
             "updated_at": saved_corpus.get("updated_at"),
-            "pack_ids": saved_corpus.get("pack_ids") or [],
             "source_ids": saved_corpus.get("source_ids") or [],
             "resolved_source_ids": source_ids,
             "pack_count": saved_corpus.get("pack_count"),
@@ -1392,21 +1348,7 @@ def _compact_manifest_for_prompt(manifest: dict) -> dict:
             "source_count": saved_corpus.get("source_count"),
             "estimated_row_count_total": saved_corpus.get("estimated_row_count_total"),
             "estimated_file_size_mb_total": saved_corpus.get("estimated_file_size_mb_total"),
-            "pack_ids": saved_corpus.get("pack_ids") or [],
             "source_ids": saved_corpus.get("source_ids") or [],
-            "packs": [
-                {
-                    "pack_id": pack.get("pack_id"),
-                    "pack_name": pack.get("pack_name"),
-                    "source_ids": pack.get("source_ids") or [],
-                    "source_count": pack.get("source_count"),
-                    "file_size_mb_total": pack.get("file_size_mb_total"),
-                    "row_count_total": pack.get("row_count_total"),
-                    "time_coverage_start": pack.get("time_coverage_start"),
-                    "time_coverage_end": pack.get("time_coverage_end"),
-                }
-                for pack in (saved_corpus.get("packs") or [])[:_PROMPT_SAVED_PACK_LIMIT]
-            ],
         }
 
     manifest_artifacts = manifest.get("artifacts") or []
