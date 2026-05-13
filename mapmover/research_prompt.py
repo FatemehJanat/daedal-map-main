@@ -81,7 +81,8 @@ Treat default limits as soft caps for convenience, not as the full universe of r
 Do not create map orders, activate sources, change overlays, or browse the catalog. Research mode analyzes its active workspace; data loading happens through saved corpus activation today.
 
 If the user is asking to see or highlight results on the map, you may call the display tool over the active corpus.
-Only do this when the map display is a direct part of the user's request."""
+Only do this when the map display is a direct part of the user's request.
+When the user asks for both a highlighted shape and stats/values in the popup, call build_artifact_display_subset on the artifact that holds the values (the metric or event series), not on the subset-defining artifact. The metric artifact carries the year-by-year data the popup and time slider need; the subset artifact only carries the geometry. If the same loc_id appears in both, the metric artifact's display already attaches the correct geometry through the shared selection-geometry lookup, so you get both the polygon and the full time series in one call."""
 
 
 def build_research_system_prompt(corpus_manifest: dict) -> str:

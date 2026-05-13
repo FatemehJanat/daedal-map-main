@@ -1492,6 +1492,10 @@ export const App = {
     MapAdapter.clearHurricaneLayer();
     MapAdapter.clearHurricaneTrack();
     MapAdapter.clearEventLayer();
+    // The corpus-load focus overlay (e.g. the USA outline drawn when a Research
+    // corpus is first activated) is a navigation layer. Any new data payload
+    // supersedes that focus context, so clear it before rendering.
+    MapAdapter.clearNavigationLayer?.();
 
     // Handle removal orders first (works for all data types)
     // Removal payloads are minimal - just identifiers, not full data
