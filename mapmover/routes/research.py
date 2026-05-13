@@ -1127,6 +1127,13 @@ def _research_settings() -> tuple[str, float]:
     return model, temperature
 
 
+def _temperature_kwargs(model: str, temperature: float) -> dict:
+    # Opus 4.7+ reject the temperature parameter outright.
+    if "opus-4-7" in (model or "").lower():
+        return {}
+    return {"temperature": temperature}
+
+
 def _extract_text(content_blocks) -> str:
     parts = []
     for block in content_blocks or []:
@@ -1175,8 +1182,8 @@ def _run_research_rescue_synthesis(
             model=model,
             system=system_prompt,
             messages=rescue_messages,
-            temperature=temperature,
             max_tokens=_RESEARCH_MAX_TOKENS,
+            **_temperature_kwargs(model, temperature),
         )
         if usage_recorder is not None:
             usage_recorder.record(response)
@@ -1778,8 +1785,8 @@ def run_research_chat(
                 system=system_prompt_blocks,
                 messages=messages,
                 tools=RESEARCH_TOOL_DEFINITIONS,
-                temperature=temperature,
                 max_tokens=_RESEARCH_MAX_TOKENS,
+                **_temperature_kwargs(model, temperature),
             )
             if usage_recorder is not None:
                 usage_recorder.record(response)
@@ -1887,8 +1894,8 @@ def run_research_chat(
                 model=model,
                 system=system_prompt_blocks,
                 messages=messages,
-                temperature=temperature,
                 max_tokens=_RESEARCH_MAX_TOKENS,
+                **_temperature_kwargs(model, temperature),
             )
             if usage_recorder is not None:
                 usage_recorder.record(response)
