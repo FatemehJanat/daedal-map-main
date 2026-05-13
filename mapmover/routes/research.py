@@ -1398,6 +1398,7 @@ _MAP_PAYLOAD_FIELDS = (
     "artifact_id",
     "source_id",
     "data_type",
+    "declared_data_type",
     "geographic_level",
     "geojson",
     "loc_ids",

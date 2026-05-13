@@ -949,7 +949,7 @@ def _build_research_map_payload(
     TimeSlider, popup, and hover all work without research-specific renderers.
     """
     feature_lookup = feature_lookup or {}
-    data_type = str(artifact.get("data_type") or "data").lower()
+    declared_data_type = str(artifact.get("data_type") or "data").lower()
     source_id = artifact.get("source_id")
     geographic_level = (
         artifact.get("geographic_level")
@@ -1041,10 +1041,24 @@ def _build_research_map_payload(
 
     metric = _infer_primary_metric(matched_rows, time_field, tool_input.get("metric"))
 
+    # Classify the payload by data shape, not by the artifact's stamped data_type.
+    # The hydration layer stamps everything `metrics`, but a designation list
+    # like usa_opportunity_zones is structurally a geometry overlay (loc_ids +
+    # attribute labels, no time axis, no metric values). See MAPPING.md
+    # "Queryable Geometry Overlays" and data_pipeline.md "Attribute-Overlay
+    # Datasets".
+    if has_time_axis:
+        data_type = "metrics"
+    elif declared_data_type == "events":
+        data_type = "events"
+    else:
+        data_type = "geometry"
+
     payload: dict = {
         "artifact_id": artifact.get("artifact_id"),
         "source_id": source_id,
         "data_type": data_type,
+        "declared_data_type": declared_data_type,
         "geographic_level": geographic_level,
         "geojson": {"type": "FeatureCollection", "features": features},
         "loc_ids": loc_id_order,

@@ -1582,33 +1582,49 @@ export const App = {
 
       // Render geometry if we have features (geometryType already computed above)
       if (data.geojson && data.geojson.features && data.geojson.features.length > 0) {
-        // Map geometryType to overlay ID
+        // Map geometryType to known overlay ID. Only the geometry types with a
+        // dedicated overlay control go through OverlayController; everything
+        // else (attribute-overlay datasets like usa_opportunity_zones, ad-hoc
+        // tract highlights) renders directly via the shared ad-hoc geometry
+        // layer renderer so hover/click/popup work without requiring a
+        // registered overlay slot. See MAPPING.md "Queryable Geometry Overlays".
         const geometryTypeToOverlayId = {
           'zcta': 'zip_codes',
           'tribal': 'tribal_areas',
           'watershed': 'watersheds',
           'park': 'parks'
         };
-        const overlayId = geometryTypeToOverlayId[geometryType] || 'zip_codes';
+        const knownOverlayId = geometryTypeToOverlayId[geometryType];
 
-        // Store geometry data for OverlayController to render when overlay is enabled
-        // This ensures render happens AFTER overlay is toggled ON
-        OverlayController.pendingGeometry = {
-          geojson: data.geojson,
-          geometryType: geometryType,
-          sourceId: data.source_id,
-          options: { showLabels: false }
-        };
-
-        // Enable the overlay - handleOverlayChange will render from pendingGeometry
-        // If already active, it will refresh the display
-        if (OverlaySelector && !OverlaySelector.isActive(overlayId)) {
-          OverlaySelector.setActive(overlayId, true);
+        if (knownOverlayId) {
+          OverlayController.pendingGeometry = {
+            geojson: data.geojson,
+            geometryType: geometryType,
+            sourceId: data.source_id,
+            options: { showLabels: false }
+          };
+          if (OverlaySelector && !OverlaySelector.isActive(knownOverlayId)) {
+            OverlaySelector.setActive(knownOverlayId, true);
+          }
+          OverlayController.handleOverlayChange(knownOverlayId, true);
+          console.log(`Geometry queued for render as type: ${geometryType}`);
+        } else {
+          // Ad-hoc geometry overlay (OZ tracts, designation lists, etc.):
+          // render directly with hover/click/popup. Same layer system that
+          // serves Research analytical layers today; not lane-specific.
+          const layer = {
+            id: `geometry-${data.source_id || geometryType}`,
+            geojson: data.geojson,
+            options: {},
+            label: data.source_id || geometryType || 'Geometry layer'
+          };
+          MapAdapter.loadResearchDisplayLayers?.([layer]);
+          this.setupResearchDisplayInteractions?.();
+          if (data.fit !== false) {
+            MapAdapter.fitToBounds(data.geojson);
+          }
+          console.log(`Ad-hoc geometry rendered: source=${data.source_id} level=${geometryType} features=${data.geojson.features.length}`);
         }
-        // Always notify - if already on, this triggers a refresh
-        OverlayController.handleOverlayChange(overlayId, true);
-
-        console.log(`Geometry queued for render as type: ${geometryType}`);
       }
 
       // Update summary display
