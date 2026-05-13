@@ -33,6 +33,7 @@ from mapmover.catalog_surface import (
 )
 from mapmover.security import get_client_ip
 from mapmover.data_loading import get_source_path, load_catalog, load_source_metadata
+from mapmover.source_time_contract import build_metric_year_ranges
 from mapmover.api_query_runtime import execute_dataset_query, get_api_source_columns, get_api_source_spec
 from mapmover.duckdb_helpers import is_cloud_mode, parquet_available, parquet_columns, path_to_uri, quote_ident, run_rows, select_columns_from_parquet
 from mapmover.geometry_handlers import get_selection_geometries
@@ -55,6 +56,7 @@ RESEARCH_TOOL_PROGRESS_MESSAGES = {
     "describe_artifact": "Inspecting an artifact...",
     "bridge_loc_ids": "Checking the loc_id bridge...",
     "query_artifact_slice": "Reading values from your workspace...",
+    "query_artifact_subset_join": "Joining loaded artifacts by loc_id...",
     "build_artifact_display_subset": "Preparing the map display...",
 }
 
@@ -84,6 +86,10 @@ _PRIVATE_BROWSER_ARTIFACT_OUTPUT_ROOT = Path(__file__).resolve().parents[3] / "c
 def _research_heartbeat(idle_count: int) -> ProgressEvent:
     message = _RESEARCH_HEARTBEAT_MESSAGES[idle_count % len(_RESEARCH_HEARTBEAT_MESSAGES)]
     return ProgressEvent(stage="thinking", message=message, extra={"heartbeat": True})
+
+
+def _json_dumps_safe(value) -> str:
+    return json.dumps(value, default=str)
 
 
 router = APIRouter()
@@ -367,6 +373,8 @@ def _rows_to_temporal_result(
         "data_type": "metrics",
         "source_id": source_id,
         "time_field": spec.time_field or "year",
+        "temporal_coverage": metadata.get("temporal_coverage") or {},
+        "metrics": metadata.get("metrics") if isinstance(metadata.get("metrics"), dict) else {},
         "geojson": {
             "type": "FeatureCollection",
             "features": list(features_by_loc.values()),
@@ -375,7 +383,7 @@ def _rows_to_temporal_result(
         "multi_year": True,
         "year_range": sorted(year_data.keys()),
         "available_metrics": metric_ids,
-        "metric_year_ranges": {},
+        "metric_year_ranges": build_metric_year_ranges(metadata),
         "summary": _source_summary_text(source_id, metadata, len(rows)),
         "count": len(rows),
         "sources": [{"id": source_id, "name": str(metadata.get("source_name") or source_id)}],
@@ -403,11 +411,14 @@ def _rows_to_static_result(rows: list[dict], source_id: str, metadata: dict, spe
         "type": "data",
         "data_type": "metrics",
         "source_id": source_id,
+        "temporal_coverage": metadata.get("temporal_coverage") or {},
+        "metrics": metadata.get("metrics") if isinstance(metadata.get("metrics"), dict) else {},
         "geojson": {
             "type": "FeatureCollection",
             "features": features,
         },
         "available_metrics": metric_ids,
+        "metric_year_ranges": build_metric_year_ranges(metadata),
         "summary": _source_summary_text(source_id, metadata, len(rows)),
         "count": len(rows),
         "sources": [{"id": source_id, "name": str(metadata.get("source_name") or source_id)}],
@@ -1225,12 +1236,15 @@ def _build_research_tool_guardrail_message(
             "Do not keep retrying the same artifact with slightly different filters. "
             "Either write the best grounded answer from the evidence you already have, "
             "or ask one short clarifying question if a key ambiguity is blocking the answer. "
+            "If the answer depends on an exact loc_id-based subset join between already loaded artifacts, "
+            "do that exact join instead of switching to an approximate top-N synthesis. "
             "Prefer a partial grounded answer over more exploratory retries."
         )
     else:
         message = (
             "Tool budget reminder: if you cannot isolate the answer after a few tool rounds, "
             "stop and either answer from the evidence already gathered or ask one short clarifying question. "
+            "If one exact loc_id-based join across loaded artifacts would settle the question, do that instead. "
             "Do not assume a filter failed just because the preview is capped."
         )
 
@@ -1366,6 +1380,7 @@ def _compact_manifest_for_prompt(manifest: dict) -> dict:
                 "metric_groups": artifact.get("metric_groups") or {},
                 "metrics": _sample_prompt_metrics(artifact.get("metrics") or [], _PROMPT_METRIC_LIMIT),
                 "metric_count": len(artifact.get("metrics") or []),
+                "metric_year_ranges": artifact.get("metric_year_ranges") or {},
                 "fields": (artifact.get("fields") or [])[:_PROMPT_FIELD_LIMIT],
                 "year_range": artifact.get("year_range"),
                 "feature_count": artifact.get("feature_count"),
@@ -1412,6 +1427,8 @@ _MAP_PAYLOAD_FIELDS = (
     "metric_key",
     "available_metrics",
     "metric_year_ranges",
+    "scene_periods",
+    "raster_clip_levels",
     "fit",
     "context_visibility",
     "style",
@@ -1577,6 +1594,7 @@ def _compact_tool_result_for_prompt(tool_name: str, tool_result: dict) -> dict:
             "metric_groups": artifact.get("metric_groups") or {},
             "metrics": _sample_prompt_metrics(artifact.get("metrics") or [], _PROMPT_METRIC_LIMIT),
             "metric_count": len(artifact.get("metrics") or []),
+            "metric_year_ranges": artifact.get("metric_year_ranges") or {},
             "fields": (artifact.get("fields") or [])[:_PROMPT_FIELD_LIMIT],
             "year_range": artifact.get("year_range"),
             "feature_count": artifact.get("feature_count"),
@@ -1596,7 +1614,7 @@ def _compact_tool_result_for_prompt(tool_name: str, tool_result: dict) -> dict:
         compact["mappings_preview"] = (tool_result.get("mappings") or [])[:_TOOL_ROWS_PREVIEW_LIMIT]
         return compact
 
-    if tool_name in {"query_artifact_slice", "build_artifact_display_subset"}:
+    if tool_name in {"query_artifact_slice", "query_artifact_subset_join", "build_artifact_display_subset"}:
         rows = tool_result.get("rows") or []
         compact["rows_preview"] = rows[:_TOOL_ROWS_PREVIEW_LIMIT]
         compact["preview_count"] = min(len(rows), _TOOL_ROWS_PREVIEW_LIMIT)
@@ -1605,6 +1623,10 @@ def _compact_tool_result_for_prompt(tool_name: str, tool_result: dict) -> dict:
             "rows_preview is only a capped sample of the returned rows. "
             "Use row_count for total matched rows and returned_row_count for rows actually returned by the tool."
         )
+        if tool_name == "query_artifact_subset_join":
+            compact["subset_artifact_id"] = tool_result.get("subset_artifact_id")
+            compact["subset_row_count"] = tool_result.get("subset_row_count")
+            compact["subset_loc_id_count"] = tool_result.get("subset_loc_id_count")
         if isinstance(tool_result.get("display_warning"), dict):
             compact["display_warning"] = tool_result.get("display_warning")
         if tool_name == "build_artifact_display_subset":
@@ -2293,8 +2315,8 @@ async def research_chat_stream_endpoint(req: Request):
                 **caller_ctx,
             )
 
-            yield f"data: {json.dumps({'stage': 'corpus', 'message': 'Reading Research workspace...'})}\n\n"
-            yield f"data: {json.dumps({'stage': 'thinking', 'message': 'Researching loaded workspace data...'})}\n\n"
+            yield f"data: {_json_dumps_safe({'stage': 'corpus', 'message': 'Reading Research workspace...'})}\n\n"
+            yield f"data: {_json_dumps_safe({'stage': 'thinking', 'message': 'Researching loaded workspace data...'})}\n\n"
 
             # Pipe real progress events from the worker thread through a
             # ProgressBus so the UI shows what tool the LLM is actually
@@ -2324,7 +2346,7 @@ async def research_chat_stream_endpoint(req: Request):
                         payload["extra"] = event.extra
                         if isinstance(event.extra.get("map_payload"), dict):
                             payload["map_payload"] = event.extra["map_payload"]
-                    yield f"data: {json.dumps(payload)}\n\n"
+                    yield f"data: {_json_dumps_safe(payload)}\n\n"
 
                 result = await task
             finally:
@@ -2339,18 +2361,18 @@ async def research_chat_stream_endpoint(req: Request):
                 ip_hash=hash_ip_for_analytics(client_ip),
                 user_agent=(req.headers.get("user-agent") or "")[:300] or None,
             )
-            yield f"data: {json.dumps({'stage': 'writing', 'message': 'Writing research answer...'})}\n\n"
+            yield f"data: {_json_dumps_safe({'stage': 'writing', 'message': 'Writing research answer...'})}\n\n"
             if result.get("type") == "chat" and result.get("message"):
-                yield f"data: {json.dumps({'stage': 'answer_start', 'message': ''})}\n\n"
+                yield f"data: {_json_dumps_safe({'stage': 'answer_start', 'message': ''})}\n\n"
                 for chunk in _word_chunks(result.get("message", "")):
-                    yield f"data: {json.dumps({'stage': 'delta', 'text': chunk})}\n\n"
+                    yield f"data: {_json_dumps_safe({'stage': 'delta', 'text': chunk})}\n\n"
                     await asyncio.sleep(0.035)
-            yield f"data: {json.dumps({'stage': 'complete', 'result': result})}\n\n"
+            yield f"data: {_json_dumps_safe({'stage': 'complete', 'result': result})}\n\n"
         except Exception as e:
             logger.exception("Research chat stream error")
             log_app_error(type(e).__name__, str(e), surface="human_app", path="/chat/research/stream")
             error_result = {"type": "error", "message": "Research mode encountered an error. Please try again."}
-            yield f"data: {json.dumps({'stage': 'complete', 'result': error_result})}\n\n"
+            yield f"data: {_json_dumps_safe({'stage': 'complete', 'result': error_result})}\n\n"
 
     return StreamingResponse(
         generate_events(),

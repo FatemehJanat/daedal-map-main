@@ -186,7 +186,8 @@ export const OverlaySelector = {
    * Initialize the overlay selector UI.
    * Fetches categories from API and builds UI.
    */
-  async init() {
+  async init(options = {}) {
+    const restoreState = options.restoreState !== false;
     // Find container first
     this.container = document.getElementById('overlaySelector');
     if (!this.container) {
@@ -235,13 +236,15 @@ export const OverlaySelector = {
     }
 
     // Try to restore from localStorage, fall back to defaults
-    if (!this._restoreState()) {
+    if (restoreState && !this._restoreState()) {
       // Set default overlays if no saved state
       for (const overlay of OVERLAYS) {
         if (overlay.default) {
           this.activeOverlays.add(overlay.id);
         }
       }
+    } else if (!restoreState) {
+      this.activeOverlays.clear();
     }
 
     // Initialize category expanded state

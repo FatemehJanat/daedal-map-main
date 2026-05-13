@@ -66,7 +66,10 @@ def _rate_limited_message(message: str, retry_after: int) -> Response:
     return response
 
 
-def _confirmed_order_rate_limit(req: Request, auth_user: dict | None) -> Response | None:
+def _confirmed_order_rate_limit(req: Request, auth_user: dict | None, caller_ctx: dict | None = None) -> Response | None:
+    caller_kind = (caller_ctx or {}).get("caller_kind")
+    if caller_kind == "qa_suite":
+        return None
     user_id = (auth_user or {}).get("id")
     window_seconds = int(os.getenv("CONFIRMED_ORDER_RATE_WINDOW_SECONDS", "60"))
     if user_id:
@@ -182,8 +185,15 @@ async def chat_endpoint(req: Request):
         frontend_session_id = body.get("sessionId", "anonymous")
         auth_user = await get_authenticated_user_async(req)
         client_ip = get_client_ip(req)
+        caller_ctx = classify_caller(
+            auth_user=auth_user,
+            ip_hash=hash_ip_for_analytics(client_ip),
+        )
         user_id = auth_user.get("id") if auth_user else None
-        if user_id:
+        caller_kind = caller_ctx.get("caller_kind")
+        if caller_kind == "qa_suite":
+            pass
+        elif user_id:
             allowed, retry_after = rate_limiter.check(f"chat:user:{user_id}", limit=60, window_seconds=60)
             if not allowed:
                 return _rate_limited_message("Too many chat requests. Please slow down and try again shortly.", retry_after)
@@ -206,7 +216,7 @@ async def chat_endpoint(req: Request):
         cache = session_manager.get_or_create(session_id)
 
         if body.get("confirmed_order"):
-            confirmed_order_rate_limit = _confirmed_order_rate_limit(req, auth_user)
+            confirmed_order_rate_limit = _confirmed_order_rate_limit(req, auth_user, caller_ctx)
             if confirmed_order_rate_limit:
                 _set_chat_analytics(
                     req,
@@ -505,10 +515,6 @@ async def chat_endpoint(req: Request):
                 )
 
         t_interpret_start = time.perf_counter()
-        caller_ctx = classify_caller(
-            auth_user=auth_user,
-            ip_hash=hash_ip_for_analytics(client_ip),
-        )
         budget_decision = check_anonymous_chat_budget(caller_ctx)
         if not budget_decision.allowed:
             _set_chat_analytics(
@@ -554,10 +560,10 @@ async def chat_endpoint(req: Request):
         _chat_log_timing(trace_id, "interpret_complete", t_interpret_start, f"type={result.get('type')}")
 
         if result["type"] == "order":
-            result_summary = result.get("summary") or result.get("order", {}).get("summary") or "Data request"
             t_postprocess_start = time.perf_counter()
             with catalog_surface_scope(catalog_surface):
                 processed = postprocess_order(result["order"], hints)
+            result_summary = processed.get("summary") or result.get("summary") or result.get("order", {}).get("summary") or "Data request"
             _chat_log_timing(
                 trace_id,
                 "postprocess_complete",

@@ -46,7 +46,14 @@ export const MapAdapter = {
   pendingClickFeature: null,  // Feature from pending single click
   currentFocusLngLat: null,
   popupFocusOverride: null,
+  lockedPopupLocationInfo: null,
   researchDisplayLayerIds: [],
+  mapClickHandlerBound: false,
+  baseLayerHandlerRefs: {
+    click: null,
+    mousemove: null,
+    mouseleave: null
+  },
 
   /**
    * Initialize the map
@@ -393,11 +400,8 @@ export const MapAdapter = {
       }
     });
 
-    // Setup event handlers (only once)
-    if (!this.handlersSetup) {
-      this.setupEventHandlers();
-      this.handlersSetup = true;
-    }
+    // Rebind base-layer interactions whenever regions-fill is recreated.
+    this.setupEventHandlers();
 
     // Update stats
     document.getElementById('totalAreas').textContent = geojson.features.length;
@@ -413,6 +417,9 @@ export const MapAdapter = {
     geojson.features.forEach((feature, index) => {
       feature.id = index;
     });
+
+    // Keep popup lookups aligned with the currently visible time slice.
+    this.currentRegionGeojson = geojson;
 
     // Get the existing source and update its data
     const source = this.map.getSource(CONFIG.layers.source);
@@ -806,61 +813,141 @@ export const MapAdapter = {
   setupEventHandlers() {
     const fillLayer = CONFIG.layers.fill;
 
-    // Click handler - locks popup and fetches enriched data
-    this.map.on('click', fillLayer, async (e) => {
-      // Check if click was on an event/overlay layer - if so, skip base layer handling
-      // Event layers should take priority over base geometry
-      const eventFeatures = this.map.queryRenderedFeatures(e.point, {
-        layers: [CONFIG.layers.eventCircle, CONFIG.layers.hurricaneMarker, CONFIG.layers.polygonFill].filter(
-          layerId => this.map.getLayer(layerId)
-        )
-      });
-      if (eventFeatures.length > 0) {
-        return; // Let event layer handler deal with this click
-      }
+    if (!this.baseLayerHandlerRefs.click) {
+      this.baseLayerHandlerRefs.click = async (e) => {
+        // Check if click was on an event/overlay layer - if so, skip base layer handling
+        // Event layers should take priority over base geometry
+        const eventFeatures = this.map.queryRenderedFeatures(e.point, {
+          layers: [CONFIG.layers.eventCircle, CONFIG.layers.hurricaneMarker, CONFIG.layers.polygonFill].filter(
+            layerId => this.map.getLayer(layerId)
+          )
+        });
+        if (eventFeatures.length > 0) {
+          return; // Let event layer handler deal with this click
+        }
 
-      if (e.features.length > 0) {
-        const feature = e.features[0];
-        const popupProperties = App?.getPopupProperties ? App.getPopupProperties(feature) : feature.properties;
-        this.popupLocked = true;
-        this.setPopupFocusOverride(popupProperties);
-        // Show basic popup immediately
-        App?.handleFeatureHover(feature, e.lngLat);
-        // Fetch enriched data and update popup
-        const locId = popupProperties?.loc_id;
-        if (locId) {
-          const locationInfo = await LocationInfoCache.fetch(locId);
-          if (locationInfo && this.popupLocked) {
-            // Update popup with enriched data
-            const popupHtml = PopupBuilder?.build(popupProperties, App?.currentData, locationInfo);
-            this.showPopup([e.lngLat.lng, e.lngLat.lat], popupHtml);
-            // Wire up tab click delegation for tabbed popups
-            this.setupPopupTabHandlers();
+        if (e.features.length > 0) {
+          const feature = e.features[0];
+          const popupProperties = App?.getPopupProperties ? App.getPopupProperties(feature) : feature.properties;
+          this.popupLocked = true;
+          this.setPopupFocusOverride(popupProperties);
+          // Show basic popup immediately
+          App?.handleFeatureHover(feature, e.lngLat);
+          // Fetch enriched data and update popup
+          const locId = popupProperties?.loc_id;
+          if (locId) {
+            const locationInfo = await LocationInfoCache.fetch(locId);
+            if (locationInfo && this.popupLocked) {
+              this.lockedPopupLocationInfo = locationInfo;
+              // Update popup with enriched data
+              const popupHtml = PopupBuilder?.build(popupProperties, App?.currentData, locationInfo);
+              this.showPopup([e.lngLat.lng, e.lngLat.lat], popupHtml);
+              // Wire up tab click delegation for tabbed popups
+              this.setupPopupTabHandlers();
+            }
           }
         }
-      }
-    });
+      };
+    }
+
+    if (!this.baseLayerHandlerRefs.mousemove) {
+      this.baseLayerHandlerRefs.mousemove = (e) => {
+        const regionSource = this.map.getSource(CONFIG.layers.source);
+        if (!regionSource) {
+          this.hoveredFeatureId = null;
+          return;
+        }
+        if (e.features.length > 0) {
+          const feature = e.features[0];
+
+          // Reset previous hover state
+          if (this.hoveredFeatureId !== null) {
+            this.map.setFeatureState(
+              { source: CONFIG.layers.source, id: this.hoveredFeatureId },
+              { hover: false }
+            );
+          }
+
+          // Set new hover state
+          this.hoveredFeatureId = feature.id;
+          this.map.setFeatureState(
+            { source: CONFIG.layers.source, id: this.hoveredFeatureId },
+            { hover: true }
+          );
+
+          this.map.getCanvas().style.cursor = 'pointer';
+
+          // Show popup on hover (only if not locked to another location)
+          if (!this.popupLocked) {
+            App?.handleFeatureHover(feature, e.lngLat);
+          }
+        }
+      };
+    }
+
+    if (!this.baseLayerHandlerRefs.mouseleave) {
+      this.baseLayerHandlerRefs.mouseleave = () => {
+        const regionSource = this.map.getSource(CONFIG.layers.source);
+        if (!regionSource) {
+          this.hoveredFeatureId = null;
+          this.map.getCanvas().style.cursor = '';
+          if (!this.popupLocked) {
+            this.hidePopup();
+          }
+          return;
+        }
+        if (this.hoveredFeatureId !== null) {
+          this.map.setFeatureState(
+            { source: CONFIG.layers.source, id: this.hoveredFeatureId },
+            { hover: false }
+          );
+        }
+        this.hoveredFeatureId = null;
+        this.map.getCanvas().style.cursor = '';
+        // Only hide popup if not locked
+        if (!this.popupLocked) {
+          this.hidePopup();
+        }
+      };
+    }
+
+    // Refresh delegated fill-layer handlers after the layer is recreated.
+    try {
+      this.map.off('click', fillLayer, this.baseLayerHandlerRefs.click);
+      this.map.off('mousemove', fillLayer, this.baseLayerHandlerRefs.mousemove);
+      this.map.off('mouseleave', fillLayer, this.baseLayerHandlerRefs.mouseleave);
+    } catch (e) {}
+
+    // Click handler - locks popup and fetches enriched data
+    this.map.on('click', fillLayer, this.baseLayerHandlerRefs.click);
 
     // Click on map (not on feature) - unlock and hide popup
-    this.map.on('click', (e) => {
-      // Check if click was on any interactive feature (choropleth or event layer)
-      // We need to check multiple layers to avoid interfering with event click handlers
-      const fillFeatures = this.map.queryRenderedFeatures(e.point, { layers: [fillLayer] });
-      const selectionFeatures = this.map.getLayer(CONFIG.layers.selectionFill)
-        ? this.map.queryRenderedFeatures(e.point, { layers: [CONFIG.layers.selectionFill] })
-        : [];
-      // Only query event-circle layer if it exists
-      const eventFeatures = this.map.getLayer('event-circle')
-        ? this.map.queryRenderedFeatures(e.point, { layers: ['event-circle'] })
-        : [];
-      const allFeatures = [...fillFeatures, ...selectionFeatures, ...eventFeatures];
+    if (!this.mapClickHandlerBound) {
+      this.map.on('click', (e) => {
+        // Check if click was on any interactive feature (choropleth or event layer)
+        // We need to check multiple layers to avoid interfering with event click handlers
+        const fillFeatures = this.map.queryRenderedFeatures(e.point, { layers: [fillLayer] });
+        const selectionFeatures = this.map.getLayer(CONFIG.layers.selectionFill)
+          ? this.map.queryRenderedFeatures(e.point, { layers: [CONFIG.layers.selectionFill] })
+          : [];
+        // Only query event-circle layer if it exists
+        const eventFeatures = this.map.getLayer('event-circle')
+          ? this.map.queryRenderedFeatures(e.point, { layers: ['event-circle'] })
+          : [];
+        const allFeatures = [...fillFeatures, ...selectionFeatures, ...eventFeatures];
 
-      if (allFeatures.length === 0 && this.popupLocked) {
-        this.popupLocked = false;
-        this.clearPopupFocusOverride('map-click-empty');
-        this.hidePopup();
-      }
-    });
+        if (allFeatures.length === 0 && this.popupLocked) {
+          this.popupLocked = false;
+          this.clearPopupFocusOverride('map-click-empty');
+          this.hidePopup();
+        }
+      });
+      this.mapClickHandlerBound = true;
+    }
+
+    // Hover handlers - show popup on hover (unless locked)
+    this.map.on('mousemove', fillLayer, this.baseLayerHandlerRefs.mousemove);
+    this.map.on('mouseleave', fillLayer, this.baseLayerHandlerRefs.mouseleave);
 
     // Double-click handler for drill-down - DISABLED (using zoom controls instead)
     // this.map.on('dblclick', fillLayer, (e) => {
@@ -872,63 +959,6 @@ export const MapAdapter = {
     //   }
     // });
 
-    // Hover handlers - show popup on hover (unless locked)
-    this.map.on('mousemove', fillLayer, (e) => {
-      const regionSource = this.map.getSource(CONFIG.layers.source);
-      if (!regionSource) {
-        this.hoveredFeatureId = null;
-        return;
-      }
-      if (e.features.length > 0) {
-        const feature = e.features[0];
-
-        // Reset previous hover state
-        if (this.hoveredFeatureId !== null) {
-          this.map.setFeatureState(
-            { source: CONFIG.layers.source, id: this.hoveredFeatureId },
-            { hover: false }
-          );
-        }
-
-        // Set new hover state
-        this.hoveredFeatureId = feature.id;
-        this.map.setFeatureState(
-          { source: CONFIG.layers.source, id: this.hoveredFeatureId },
-          { hover: true }
-        );
-
-        this.map.getCanvas().style.cursor = 'pointer';
-
-        // Show popup on hover (only if not locked to another location)
-        if (!this.popupLocked) {
-          App?.handleFeatureHover(feature, e.lngLat);
-        }
-      }
-    });
-
-    this.map.on('mouseleave', fillLayer, () => {
-      const regionSource = this.map.getSource(CONFIG.layers.source);
-      if (!regionSource) {
-        this.hoveredFeatureId = null;
-        this.map.getCanvas().style.cursor = '';
-        if (!this.popupLocked) {
-          this.hidePopup();
-        }
-        return;
-      }
-      if (this.hoveredFeatureId !== null) {
-        this.map.setFeatureState(
-          { source: CONFIG.layers.source, id: this.hoveredFeatureId },
-          { hover: false }
-        );
-      }
-      this.hoveredFeatureId = null;
-      this.map.getCanvas().style.cursor = '';
-      // Only hide popup if not locked
-      if (!this.popupLocked) {
-        this.hidePopup();
-      }
-    });
   },
 
   /**
@@ -960,11 +990,38 @@ export const MapAdapter = {
     this.isShowingPopup = true;
     this.popup.remove();
     this.popupLocked = false;
+    this.lockedPopupLocationInfo = null;
     this.clearPopupFocusOverride('hidePopup');
     this.resetVisualFocus();
     setTimeout(() => {
       this.isShowingPopup = false;
     }, 50);
+  },
+
+  refreshLockedPopup() {
+    if (!this.popupLocked || !this.popupFocusOverride?.locId || !Array.isArray(this.currentFocusLngLat)) {
+      return;
+    }
+
+    const locId = this.popupFocusOverride.locId;
+    const feature = this.currentRegionGeojson?.features?.find((candidate) => {
+      const candidateLocId = candidate?.properties?.loc_id || candidate?.id;
+      return String(candidateLocId || '') === locId;
+    });
+    if (!feature?.properties) {
+      return;
+    }
+
+    const popupProperties = App?.getPopupProperties
+      ? App.getPopupProperties(feature)
+      : feature.properties;
+    const popupHtml = PopupBuilder?.build(
+      popupProperties,
+      App?.currentData,
+      this.lockedPopupLocationInfo || {}
+    );
+    this.showPopup(this.currentFocusLngLat, popupHtml);
+    this.setupPopupTabHandlers?.();
   },
 
   setVisualFocus(lngLat) {
@@ -1101,13 +1158,48 @@ export const MapAdapter = {
     });
 
     if (!bounds.isEmpty()) {
+      const uiPadding = this.getFitBoundsPadding(options.padding);
       this.map.fitBounds(bounds, {
-        padding: 50,
+        padding: uiPadding,
         duration: 1000,
         maxZoom: options.maxZoom || 10,
         minZoom: options.minZoom || undefined
       });
     }
+  },
+
+  getFitBoundsPadding(overridePadding = null) {
+    if (overridePadding != null) {
+      return overridePadding;
+    }
+
+    const basePadding = { top: 50, right: 50, bottom: 50, left: 50 };
+    const timelineRegion = document.getElementById('tutorialTimelineRegion');
+    const timeSlider = document.getElementById('timeSliderContainer');
+    const mapContainer = document.getElementById('mapContainer');
+
+    const timelineActive =
+      timelineRegion?.classList?.contains('timeline-region-active') ||
+      timeSlider?.classList?.contains('visible');
+
+    if (!timelineActive || !mapContainer || !timeSlider) {
+      return basePadding;
+    }
+
+    const mapRect = mapContainer.getBoundingClientRect();
+    const sliderRect = timeSlider.getBoundingClientRect();
+    if (!mapRect.width || !mapRect.height || !sliderRect.width || !sliderRect.height) {
+      return basePadding;
+    }
+
+    const overlapBottom = Math.max(0, mapRect.bottom - sliderRect.top);
+    if (overlapBottom <= 0) {
+      return basePadding;
+    }
+
+    // Keep selected geometry above the interactive timeline hitbox.
+    basePadding.bottom = Math.max(basePadding.bottom, Math.ceil(overlapBottom + 24));
+    return basePadding;
   },
 
   /**

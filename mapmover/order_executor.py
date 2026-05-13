@@ -51,6 +51,7 @@ from .geometry_handlers import (
 
 from .paths import DATA_ROOT, CATALOG_PATH
 from .data_loading import load_source_metadata
+from .source_time_contract import available_years_for_range, metadata_metric_year_range
 from .aggregation_system import build_aggregation_spec, apply_temporal_aggregation
 from .foundation_helpers import load_reference_json
 from .duckdb_helpers import (
@@ -2471,7 +2472,19 @@ def execute_order(order: dict) -> dict:
                 all_metrics.append(item_label)  # Track all metrics
             # Track year range per metric
             if year_start and year_end:
-                metric_year_ranges[item_label] = {"min": year_start, "max": year_end}
+                metric_year_ranges[item_label] = {
+                    "min": year_start,
+                    "max": year_end,
+                    "available_years": available_years_for_range(year_start, year_end),
+                }
+            else:
+                metric_min_year, metric_max_year = metadata_metric_year_range(metadata, metric_col)
+                if metric_min_year is not None and metric_max_year is not None:
+                    metric_year_ranges[item_label] = {
+                        "min": metric_min_year,
+                        "max": metric_max_year,
+                        "available_years": available_years_for_range(metric_min_year, metric_max_year),
+                    }
 
         # Filter by year (different logic for single vs range)
         if year_start and year_end and "year" in df.columns:

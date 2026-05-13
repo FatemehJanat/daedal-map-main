@@ -225,7 +225,8 @@ Typical metadata fields:
   "metrics": {
     "magnitude": {
       "name": "Magnitude",
-      "unit": "Mw"
+      "unit": "Mw",
+      "years": [1900, 2026]
     }
   }
 }
@@ -243,6 +244,12 @@ Good metadata is important for:
 - source transparency
 - pack documentation
 - QA and release decisions
+
+Time-range contract:
+- `temporal_coverage` is the source-level discovery range.
+- `metrics.{metric_id}.years` is the metric-level execution range when a specific metric is selected.
+- Explore chat and Research chat should both clamp default time windows and metric slider bounds to `metrics.{metric_id}.years` when present.
+- Shared helper logic for this lives in `mapmover/source_time_contract.py`.
 
 ---
 

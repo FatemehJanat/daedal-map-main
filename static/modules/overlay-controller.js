@@ -608,13 +608,23 @@ export const OverlayController = {
   // Format: { geojson, geometryType, options }
   pendingGeometry: null,
 
+  // Startup/runtime mode flags
+  initialized: false,
+  exploreRuntimeEnabled: false,
+
   /**
    * Initialize the overlay controller.
    * Registers as listener to OverlaySelector and TimeSlider.
    */
-  init() {
+  init(options = {}) {
     if (!OverlaySelector) {
       console.warn('OverlayController: OverlaySelector not available');
+      return;
+    }
+    if (this.initialized) {
+      if (options.enableExploreRuntime) {
+        this.enableExploreRuntime();
+      }
       return;
     }
 
@@ -632,6 +642,17 @@ export const OverlayController = {
       console.log('OverlayController: Registered TimeSlider listener');
     }
 
+    if (options.enableExploreRuntime !== false) {
+      this.enableExploreRuntime();
+    }
+    this.initialized = true;
+    console.log('OverlayController initialized');
+  },
+
+  enableExploreRuntime() {
+    if (this.exploreRuntimeEnabled) return;
+    this.exploreRuntimeEnabled = true;
+
     // Setup aftershock sequence listener
     this.setupSequenceListener();
 
@@ -646,11 +667,8 @@ export const OverlayController = {
       this.refreshLiveOverlays();
     });
     window.addEventListener('live-lock-engaged', () => {
-      // Immediate refresh when entering live mode
       this.refreshLiveOverlays();
     });
-
-    console.log('OverlayController initialized');
   },
 
   /**

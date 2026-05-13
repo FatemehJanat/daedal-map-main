@@ -265,6 +265,20 @@ Key concepts:
 
 These are intentionally distinct.
 
+## Explore And Research Contract
+
+Explore chat and Research chat use different discovery paths:
+- Explore starts from the runtime catalog, then selects sources.
+- Research starts from the active corpus manifest or loaded artifacts, then selects sources.
+
+After a specific source is selected, they should follow the same source contract:
+- source-level `temporal_coverage` is discovery guidance
+- metric-level `metrics.{metric_id}.years` is the execution truth
+- default year windows, slider bounds, and metric year ranges should clamp to the selected metric when available
+
+That shared source-specific logic now lives in [mapmover/source_time_contract.py](mapmover/source_time_contract.py).
+Use that helper module for metric-aware year bounds instead of re-implementing time-range logic separately in Explore or Research code paths.
+
 ## Settings Page
 
 `/settings` now behaves differently depending on mode:

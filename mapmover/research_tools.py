@@ -13,6 +13,8 @@ from typing import Any
 from mapmover import logger
 from mapmover.corpus_registry import corpus_registry
 from mapmover.data_loading import get_source_path, load_source_metadata
+from mapmover.loc_id_join import apply_loc_id_subset_filter, unique_loc_ids_from_rows
+from mapmover.source_time_contract import build_metric_year_ranges
 from mapmover.duckdb_helpers import parquet_columns, path_to_uri, quote_ident, run_df
 from mapmover.foundation_helpers import bridge_loc_id_family, get_foundation_helper_registry
 from mapmover.geometry_handlers import get_selection_geometries
@@ -69,6 +71,34 @@ RESEARCH_TOOL_DEFINITIONS = [
                 "limit": {"type": "integer", "minimum": 1},
             },
             "required": ["artifact_id"],
+        },
+    },
+    {
+        "name": "query_artifact_subset_join",
+        "description": "Query one artifact after restricting it to the loc_ids enumerated by another loaded artifact. Use when one artifact defines a subset and the other holds the metric values.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "artifact_id": {"type": "string"},
+                "subset_artifact_id": {"type": "string"},
+                "subset_filters": {"type": "object"},
+                "fields": {"type": "array", "items": {"type": "string"}},
+                "metrics": {"type": "array", "items": {"type": "string"}},
+                "filters": {"type": "object"},
+                "group_by": {"type": "array", "items": {"type": "string"}},
+                "order_by": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "field": {"type": "string"},
+                            "direction": {"type": "string", "enum": ["asc", "desc"]},
+                        },
+                    },
+                },
+                "limit": {"type": "integer", "minimum": 1},
+            },
+            "required": ["artifact_id", "subset_artifact_id"],
         },
     },
     {
@@ -163,6 +193,13 @@ def _normalize_tool_input(tool_name: str, tool_input: Any) -> dict:
 
     if "limit" in tool_input:
         normalized["limit"] = tool_input.get("limit")
+    if tool_name == "query_artifact_subset_join":
+        subset_artifact_id = tool_input.get("subset_artifact_id")
+        if subset_artifact_id is not None:
+            normalized["subset_artifact_id"] = str(subset_artifact_id)
+        subset_filters = tool_input.get("subset_filters")
+        if isinstance(subset_filters, dict):
+            normalized["subset_filters"] = subset_filters
     if tool_name == "bridge_loc_ids":
         loc_ids = tool_input.get("loc_ids")
         if isinstance(loc_ids, list):
@@ -592,6 +629,35 @@ def _filter_rows_python(rows: list[dict], filters: dict | None) -> list[dict]:
     return [row for row in rows if matches(row)]
 
 
+def _rows_for_artifact(
+    session_id: str,
+    artifact: dict,
+    *,
+    filters: dict | None = None,
+    required_columns: list[str] | None = None,
+) -> dict:
+    tool_input = {"filters": filters or {}}
+    if _artifact_is_live_source(artifact):
+        return _query_live_source_rows(
+            artifact,
+            tool_input,
+            default_limit=None,
+            maximum_limit=None,
+            required_columns=required_columns,
+        )
+    result = _get_cached_result(session_id, artifact.get("request_key"))
+    if not result:
+        return {"error": "artifact_data_unavailable", "artifact_id": artifact.get("artifact_id")}
+    rows = _rows_from_result(result)
+    filtered_rows = _filter_rows_python(rows, filters or {})
+    if required_columns:
+        trimmed_rows = []
+        for row in filtered_rows:
+            trimmed_rows.append({key: row.get(key) for key in required_columns if key in row})
+        filtered_rows = trimmed_rows
+    return {"rows": filtered_rows, "row_count": len(filtered_rows), "truncated": False}
+
+
 def _query_rows_python(
     rows: list[dict],
     tool_input: dict,
@@ -646,6 +712,56 @@ def _query_rows_python(
     if limit is None:
         return {"rows": rows, "row_count": len(rows), "truncated": False}
     return {"rows": rows[:limit], "row_count": len(rows), "truncated": len(rows) > limit}
+
+
+def _query_artifact_subset_join(
+    session_id: str,
+    artifact: dict,
+    subset_artifact: dict,
+    tool_input: dict,
+) -> dict:
+    subset_filters = tool_input.get("subset_filters") if isinstance(tool_input.get("subset_filters"), dict) else {}
+    subset_rows_result = _rows_for_artifact(
+        session_id,
+        subset_artifact,
+        filters=subset_filters,
+        required_columns=["loc_id"],
+    )
+    if subset_rows_result.get("error"):
+        return subset_rows_result
+
+    subset_loc_ids = unique_loc_ids_from_rows(subset_rows_result.get("rows") or [])
+
+    filters = dict(tool_input.get("filters") or {})
+    filters = apply_loc_id_subset_filter(filters, subset_loc_ids)
+    joined_tool_input = {
+        "filters": filters,
+        "fields": list(tool_input.get("fields") or []),
+        "metrics": list(tool_input.get("metrics") or []),
+        "group_by": list(tool_input.get("group_by") or []),
+        "order_by": list(tool_input.get("order_by") or []),
+    }
+    if "limit" in tool_input:
+        joined_tool_input["limit"] = tool_input.get("limit")
+
+    if _artifact_is_live_source(artifact):
+        query_result = _query_live_source_rows(
+            artifact,
+            joined_tool_input,
+            default_limit=25,
+            maximum_limit=1000,
+        )
+    else:
+        result = _get_cached_result(session_id, artifact.get("request_key"))
+        if not result:
+            return {"error": "artifact_data_unavailable", "artifact_id": artifact.get("artifact_id")}
+        rows = _rows_from_result(result)
+        query_result = _query_rows_duckdb(rows, joined_tool_input, default_limit=25, maximum_limit=1000)
+
+    query_result["subset_artifact_id"] = subset_artifact.get("artifact_id")
+    query_result["subset_row_count"] = int(subset_rows_result.get("row_count", 0) or 0)
+    query_result["subset_loc_id_count"] = len(subset_loc_ids)
+    return query_result
 
 
 def _quote_identifier(identifier: str) -> str:
@@ -916,6 +1032,61 @@ def _rewrite_hierarchical_loc_id_filters(tool_input: dict) -> dict:
 
 
 _NON_METRIC_ROW_KEYS = {"loc_id", "name", "geography_kind", "admin_level_num"}
+_NON_VALUE_FIELD_KEYS = _NON_METRIC_ROW_KEYS | {"year", "timestamp", "time", "data_time"}
+
+
+def _coerce_year_token(value) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if value == int(value) else None
+    text = str(value).strip()
+    if not text:
+        return None
+    if len(text) >= 4 and text[:4].lstrip("-").isdigit():
+        try:
+            return int(text[:4])
+        except ValueError:
+            return None
+    if text.lstrip("-").isdigit():
+        try:
+            return int(text)
+        except ValueError:
+            return None
+    return None
+
+
+def _should_use_yearly_time_keys(rows: list[dict], time_field: str, temporal_granularity: str) -> bool:
+    if temporal_granularity in {"yearly", "annual"}:
+        return True
+    if time_field == "year":
+        return True
+
+    raw_values: list = []
+    coerced_years: list[int] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        value = row.get(time_field)
+        if value is None or value == "":
+            continue
+        raw_values.append(value)
+        year_value = _coerce_year_token(value)
+        if year_value is None:
+            return False
+        coerced_years.append(year_value)
+
+    if not raw_values or not coerced_years:
+        return False
+
+    raw_distinct = {str(value) for value in raw_values}
+    year_distinct = set(coerced_years)
+
+    # Annual timestamp-like series (e.g. pandas Timestamp at Jan 1 each year)
+    # should collapse cleanly to one unique year token per unique raw token.
+    return len(raw_distinct) == len(year_distinct)
 
 
 def _infer_primary_metric(matched_rows: list, time_field: str, requested: str | None) -> str:
@@ -923,11 +1094,76 @@ def _infer_primary_metric(matched_rows: list, time_field: str, requested: str | 
         return str(requested)
     for row in matched_rows:
         for key, value in (row or {}).items():
-            if key in _NON_METRIC_ROW_KEYS or key == time_field:
+            if key in _NON_VALUE_FIELD_KEYS or key == time_field:
                 continue
             if isinstance(value, (int, float)) and not isinstance(value, bool):
                 return str(key)
     return ""
+
+
+def _expand_display_rows_to_full_time_history(
+    artifact: dict,
+    tool_input: dict,
+    matched_rows: list[dict],
+    *,
+    source_rows: list[dict] | None = None,
+) -> list[dict]:
+    time_field = str((artifact or {}).get("time_field") or "year").strip() or "year"
+    if not matched_rows or not time_field:
+        return matched_rows
+
+    filters = tool_input.get("filters") or {}
+
+    loc_ids: list[str] = []
+    for row in matched_rows:
+        loc_id = row.get("loc_id")
+        if loc_id is None:
+            continue
+        text = str(loc_id)
+        if text and text not in loc_ids:
+            loc_ids.append(text)
+    if not loc_ids:
+        return matched_rows
+
+    # For a narrowly selected set of locations, display should reopen the full
+    # local time history even if the ranking/query step used an explicit year
+    # filter (e.g. "winner in 2023, then show it on the map"). For broad
+    # many-feature displays, preserve the caller's explicit time slice.
+    if time_field in filters and len(loc_ids) > 25:
+        return matched_rows
+
+    if source_rows is not None:
+        expanded = []
+        for row in source_rows:
+            loc_id = row.get("loc_id")
+            if loc_id is None or str(loc_id) not in loc_ids:
+                continue
+            expanded.append(row)
+        return expanded or matched_rows
+
+    if not _artifact_is_live_source(artifact):
+        return matched_rows
+
+    expanded_tool_input = {
+        "filters": {
+            key: value
+            for key, value in filters.items()
+            if key != "loc_id" and key != time_field
+        },
+        "fields": list(tool_input.get("fields") or []),
+        "metrics": list(tool_input.get("metrics") or []),
+    }
+    expanded_tool_input["filters"]["loc_id"] = {"in": loc_ids}
+
+    expanded_result = _query_live_source_rows(
+        artifact,
+        expanded_tool_input,
+        default_limit=None,
+        maximum_limit=None,
+        required_columns=["loc_id", time_field],
+    )
+    expanded_rows = expanded_result.get("rows") or []
+    return expanded_rows or matched_rows
 
 
 def _build_research_map_payload(
@@ -938,6 +1174,7 @@ def _build_research_map_payload(
     *,
     feature_lookup: dict | None = None,
     time_field_hint: str | None = None,
+    source_result: dict | None = None,
 ) -> dict:
     """Produce an Explore-shaped data payload from research tool output.
 
@@ -948,18 +1185,27 @@ def _build_research_map_payload(
     The frontend treats this exactly like an Explore chat response, so the choropleth,
     TimeSlider, popup, and hover all work without research-specific renderers.
     """
+    matched_rows = _expand_display_rows_to_full_time_history(
+        artifact,
+        tool_input,
+        matched_rows,
+        source_rows=_rows_from_result(source_result) if isinstance(source_result, dict) else None,
+    )
     feature_lookup = feature_lookup or {}
     declared_data_type = str(artifact.get("data_type") or "data").lower()
     source_id = artifact.get("source_id")
-    geographic_level = (
-        artifact.get("geographic_level")
-        or (matched_rows[0].get("geography_kind") if matched_rows else None)
-    )
     time_field = str(
         time_field_hint
         or artifact.get("time_field")
         or "year"
     ).strip() or "year"
+    temporal_coverage = source_result.get("temporal_coverage") if isinstance(source_result, dict) and isinstance(source_result.get("temporal_coverage"), dict) else {}
+    temporal_granularity = str(temporal_coverage.get("granularity") or "").strip().lower()
+    use_yearly_keys = _should_use_yearly_time_keys(matched_rows, time_field, temporal_granularity)
+    geographic_level = (
+        artifact.get("geographic_level")
+        or (matched_rows[0].get("geography_kind") if matched_rows else None)
+    )
 
     # Group rows by loc_id so one geometry feature -> one entry, regardless of how many
     # time-rows feed it. This fixes the prior "22 references to the same Python dict"
@@ -1010,11 +1256,18 @@ def _build_research_map_payload(
             if time_value is None or time_value == "":
                 continue
             has_time_axis = True
-            time_key = str(time_value)
+            normalized_time_value = time_value
+            if use_yearly_keys:
+                normalized_time_value = _coerce_year_token(time_value)
+                if normalized_time_value is None:
+                    normalized_time_value = _coerce_year_token(row.get("year"))
+                if normalized_time_value is None:
+                    continue
+            time_key = str(normalized_time_value)
             bucket = year_data.setdefault(time_key, {})
             metrics_dict = {
                 k: v for k, v in row.items()
-                if k not in _NON_METRIC_ROW_KEYS and k != time_field
+                if k not in _NON_VALUE_FIELD_KEYS and k != time_field
             }
             bucket[loc_id] = metrics_dict
             if time_key not in years_seen:
@@ -1094,35 +1347,48 @@ def _build_research_map_payload(
 
         primary_metric = metric or (available_metrics[0] if available_metrics else "")
 
-        # Per-metric year range. The simple assumption is every metric spans the
-        # full time set seen in the payload; refine later if a metric's coverage
-        # genuinely differs.
+        artifact_metric_year_ranges = artifact.get("metric_year_ranges") if isinstance(artifact.get("metric_year_ranges"), dict) else {}
         metric_year_ranges = {}
-        if numeric_years and available_metrics:
-            year_min, year_max = numeric_years[0], numeric_years[-1]
-            for m in available_metrics:
-                metric_year_ranges[m] = {"min": year_min, "max": year_max}
+        for metric_name in available_metrics:
+            if metric_name in artifact_metric_year_ranges and isinstance(artifact_metric_year_ranges[metric_name], dict):
+                metric_year_ranges[str(metric_name)] = _jsonable(artifact_metric_year_ranges[metric_name])
+        if not metric_year_ranges:
+            metric_year_ranges = build_metric_year_ranges(
+                source_result if isinstance(source_result, dict) else {},
+                available_metrics,
+                fallback_min=(numeric_years[0] if numeric_years else None),
+                fallback_max=(numeric_years[-1] if numeric_years else None),
+                fallback_available_years=numeric_years,
+            )
 
         payload["year_data"] = year_data
         payload["years"] = years_sorted
-        payload["time_field"] = time_field
+        payload["time_field"] = "year" if use_yearly_keys else time_field
         payload["multi_year"] = len(years_sorted) > 1
         if numeric_years:
             payload["year_range"] = {
                 "min": numeric_years[0],
                 "max": numeric_years[-1],
                 "available_years": numeric_years,
+                "granularity": "yearly" if use_yearly_keys else None,
+                "useTimestamps": False if use_yearly_keys else None,
             }
         else:
             payload["year_range"] = {
                 "min": years_sorted[0],
                 "max": years_sorted[-1],
                 "available_years": years_sorted,
+                "granularity": "yearly" if use_yearly_keys else None,
+                "useTimestamps": False if use_yearly_keys else None,
             }
         payload["metric"] = primary_metric
         payload["metric_key"] = primary_metric
         payload["available_metrics"] = available_metrics
         payload["metric_year_ranges"] = metric_year_ranges
+        if artifact.get("scene_periods"):
+            payload["scene_periods"] = _jsonable(artifact.get("scene_periods"))
+        if artifact.get("raster_clip_levels"):
+            payload["raster_clip_levels"] = _jsonable(artifact.get("raster_clip_levels"))
     if isinstance(tool_input.get("style"), dict):
         payload["style"] = dict(tool_input["style"])
 
@@ -1215,6 +1481,7 @@ def _build_display_subset(result: dict, artifact: dict, tool_input: dict) -> dic
         tool_input,
         feature_lookup=feature_lookup,
         time_field_hint=result.get("time_field"),
+        source_result=result,
     )
 
 
@@ -1264,6 +1531,18 @@ def execute_research_tool(
                 return {"error": "artifact_data_unavailable", "artifact_id": artifact_id}
             rows = _rows_from_result(result)
             query_result = _query_rows_duckdb(rows, tool_input, default_limit=25, maximum_limit=1000)
+            return {
+                "artifact_id": artifact_id,
+                "fields": artifact.get("fields", []),
+                **query_result,
+            }
+
+        if tool_name == "query_artifact_subset_join":
+            subset_artifact_id = tool_input.get("subset_artifact_id")
+            subset_artifact = corpus_registry.get_artifact(session_id, subset_artifact_id) if subset_artifact_id else None
+            if not subset_artifact:
+                return {"error": "artifact_not_found", "artifact_id": subset_artifact_id}
+            query_result = _query_artifact_subset_join(session_id, artifact, subset_artifact, tool_input)
             return {
                 "artifact_id": artifact_id,
                 "fields": artifact.get("fields", []),

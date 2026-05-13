@@ -26,6 +26,7 @@ import { TutorialMode } from './tutorial-mode.js';
 import { RasterPanel } from './raster-panel.js';
 import { setDependencies as setSceneRasterDeps } from './scene-raster-model.js';
 import { loadPublicPackCatalog } from './shared/catalog-cache.js';
+import { restoreChatState } from './chat/session.js';
 
 const CHAT_MAP_LANES = ['explore', 'research', 'ops'];
 const DISPLAY_GEOMETRY_TYPES = new Set(['zcta', 'tribal', 'watershed', 'park']);
@@ -47,6 +48,12 @@ const DISPLAY_SOURCE_EVENT_TYPE_HINTS = [
   ['drought', 'drought'],
   ['landslide', 'landslide']
 ];
+
+function getStartupChatMode() {
+  const restored = restoreChatState();
+  const mode = String(restored?.activeMode || '').trim().toLowerCase();
+  return CHAT_MAP_LANES.includes(mode) ? mode : 'explore';
+}
 
 function normalizeChatMapLane(lane) {
   return CHAT_MAP_LANES.includes(lane) ? lane : 'explore';
@@ -82,6 +89,7 @@ export const App = {
   _researchDisplayClickHandler: null,
   _researchDisplayHoverHandler: null,
   _researchDisplayLeaveHandler: null,
+  _popupTimeChangeListener: null,
   publicPackCatalog: [],
   publicPackCatalogLoadedAt: 0,
   publicPackCatalogSource: '',
@@ -575,15 +583,23 @@ export const App = {
     // This ensures the slider is visible and listener system is ready
     // before overlays are enabled
     TimeSlider.initSlider();
+    if (!this._popupTimeChangeListener) {
+      this._popupTimeChangeListener = () => {
+        MapAdapter.refreshLockedPopup?.();
+      };
+      TimeSlider.addChangeListener(this._popupTimeChangeListener);
+    }
 
-    await OverlaySelector.init();
-    OverlayController.init();
+    const startupMode = getStartupChatMode();
+    const researchStartup = startupMode === 'research';
+    await OverlaySelector.init({ restoreState: !researchStartup });
+    OverlayController.init({ enableExploreRuntime: !researchStartup });
 
     // Initialize map
     await MapAdapter.init();
 
-    this.activateLaneMapView(ChatManager.mode, { force: true });
-    if (ChatManager.mode === 'research') {
+    this.activateLaneMapView(startupMode, { force: true });
+    if (startupMode === 'research') {
       Promise.resolve(ChatManager.refreshResearchCorpusOptions?.()).catch((error) => {
         console.warn('Could not refresh Research corpus options after map init:', error);
       });
@@ -595,8 +611,10 @@ export const App = {
     // Replay any overlays that were restored from localStorage before the map was ready.
     // OverlaySelector.init() restores saved state before MapAdapter.init() runs, so any
     // active overlays fire into a map that doesn't exist yet. Re-trigger them now.
-    for (const overlayId of OverlaySelector.activeOverlays) {
-      OverlayController.handleOverlayChange(overlayId, true);
+    if (!researchStartup) {
+      for (const overlayId of OverlaySelector.activeOverlays) {
+        OverlayController.handleOverlayChange(overlayId, true);
+      }
     }
 
     // Shift the map's logical center to account for the sidebar width.
@@ -628,7 +646,7 @@ export const App = {
     // onMoveEnd fires during MapAdapter.init() but onViewportChange only loads on level
     // *changes* - since currentAdminLevel starts at 0 and world zoom maps to 0, no
     // load is ever triggered. Kick it manually here after overlay state is set.
-    if (OverlaySelector.getActiveOverlays().includes('demographics')) {
+    if (!researchStartup && OverlaySelector.getActiveOverlays().includes('demographics')) {
       ViewportLoader.load(ViewportLoader.currentAdminLevel);
     }
 
@@ -915,6 +933,9 @@ export const App = {
 
   activateLaneMapView(lane, options = {}) {
     const normalizedLane = normalizeChatMapLane(lane);
+    if (normalizedLane !== 'research') {
+      OverlayController.enableExploreRuntime?.();
+    }
     const targetViewId = this.getLaneMapBinding(normalizedLane);
     const targetView = this.ensureMapView(targetViewId, {
       canvasMode: normalizedLane === 'research' ? 'research' : normalizedLane === 'ops' ? 'ops' : 'explore'
@@ -1231,6 +1252,9 @@ export const App = {
    * Load world countries
    */
   async loadCountries() {
+    if (ChatManager?.mode === 'research') {
+      return;
+    }
     // Note: Geometry overlays (ZCTA, tribal) use separate layers, so they can coexist
     // with the main choropleth display. No need to skip.
     try {
@@ -1707,7 +1731,7 @@ export const App = {
       // Auto-enable demographics overlay for demographic data from chat orders
       // This ensures viewport-based admin level filtering works
       const OverlaySelector = window.OverlaySelector;
-      if (OverlaySelector && !OverlaySelector.isActive('demographics')) {
+      if (ChatManager?.mode !== 'research' && OverlaySelector && !OverlaySelector.isActive('demographics')) {
         console.log('Auto-enabling demographics overlay for chat order data');
         OverlaySelector.setActive('demographics', true);
       }
@@ -1748,7 +1772,7 @@ export const App = {
         const bounds = MapAdapter.map?.getBounds();
         if (bounds) {
           const viewportLevel = ViewportLoader.getAdminLevelForViewport(bounds);
-          const displayLevel = loadedAdminLevel !== null && viewportLevel > loadedAdminLevel
+          const displayLevel = loadedAdminLevel !== null
             ? loadedAdminLevel
             : viewportLevel;
           ViewportLoader.holdOrderModeLevel?.(displayLevel, 1400);
@@ -1773,7 +1797,7 @@ export const App = {
           ViewportLoader.holdOrderModeLevel?.(loadedAdminLevel, 1400);
         }
 
-        if (data.data_type === 'metrics' && OverlaySelector && !OverlaySelector.isActive('demographics')) {
+        if (ChatManager?.mode !== 'research' && data.data_type === 'metrics' && OverlaySelector && !OverlaySelector.isActive('demographics')) {
           console.log('Auto-enabling demographics overlay for chat order data');
           OverlaySelector.setActive('demographics', true);
         }
@@ -1784,8 +1808,14 @@ export const App = {
       this.setMetricOrderContext(options.order, data);
     }
 
-    if (data.data_type === 'metrics' && String(data.source_id || '').trim()) {
+    const hasRasterCapability = Boolean(
+      (Array.isArray(data.scene_periods) && data.scene_periods.length > 0) ||
+      (Array.isArray(data.raster_clip_levels) && data.raster_clip_levels.length > 0)
+    );
+    if (data.data_type === 'metrics' && hasRasterCapability && String(data.source_id || '').trim()) {
       RasterPanel.init(String(data.source_id || '').trim());
+    } else if (!hasRasterCapability) {
+      RasterPanel.hide?.();
     }
 
     // Collapse sidebar on mobile

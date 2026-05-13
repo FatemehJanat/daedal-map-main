@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Optional
 
 from .data_loading import load_catalog, load_source_metadata, get_pack_metadata
+from .source_time_contract import metadata_metric_year_range
 from .duckdb_helpers import parquet_columns
 from .paths import DATA_ROOT
 from .request_risk_gate import warn_gate
@@ -323,6 +324,79 @@ def _source_requires_metric(item: dict, catalog_source: dict | None) -> bool:
 
 def _format_metric_label(metric_key: str) -> str:
     return str(metric_key or "").replace("_", " ").strip().title()
+
+
+def _clamp_item_years_to_metric(item: dict, metadata: dict | None, metric_key: str | None) -> None:
+    metric_min_year, metric_max_year = metadata_metric_year_range(metadata, metric_key)
+    if metric_min_year is None or metric_max_year is None:
+        return
+
+    changed = False
+
+    year = item.get("year")
+    if isinstance(year, int):
+        clamped_year = min(max(year, metric_min_year), metric_max_year)
+        if clamped_year != year:
+            item["year"] = clamped_year
+            changed = True
+
+    year_start = item.get("year_start")
+    year_end = item.get("year_end")
+    if isinstance(year_start, int) and isinstance(year_end, int):
+        clamped_start = max(year_start, metric_min_year)
+        clamped_end = min(year_end, metric_max_year)
+        if clamped_start > clamped_end:
+            clamped_start = metric_min_year
+            clamped_end = metric_max_year
+        if clamped_start != year_start:
+            item["year_start"] = clamped_start
+            changed = True
+        if clamped_end != year_end:
+            item["year_end"] = clamped_end
+            changed = True
+
+    item["_metric_year_range"] = {"min": metric_min_year, "max": metric_max_year}
+    if changed:
+        item["_time_range_clamped"] = True
+
+
+def _rewrite_processed_order_summary(order: dict, validated_items: list[dict]) -> str | None:
+    if not validated_items:
+        return order.get("summary")
+    if not any(item.get("_time_range_clamped") for item in validated_items):
+        return order.get("summary")
+    if len(validated_items) != 1:
+        return order.get("summary")
+
+    item = validated_items[0]
+    if not item.get("_valid"):
+        return order.get("summary")
+
+    metric_label = str(item.get("metric_label") or item.get("metric") or item.get("source_id") or "Result").strip()
+    source_id = str(item.get("source_id") or "").strip()
+    metadata = load_source_metadata(source_id) or {}
+    source_name = str(metadata.get("source_name") or source_id).strip()
+    region = str(item.get("region") or "").strip()
+    year = item.get("year")
+    year_start = item.get("year_start")
+    year_end = item.get("year_end")
+
+    if isinstance(year, int):
+        time_text = f"in {year}"
+    elif isinstance(year_start, int) and isinstance(year_end, int):
+        time_text = f"in {year_start}" if year_start == year_end else f"from {year_start} to {year_end}"
+    else:
+        metric_range = item.get("_metric_year_range") or {}
+        metric_min_year = metric_range.get("min")
+        metric_max_year = metric_range.get("max")
+        if isinstance(metric_min_year, int) and isinstance(metric_max_year, int):
+            time_text = f"in {metric_min_year}" if metric_min_year == metric_max_year else f"from {metric_min_year} to {metric_max_year}"
+        else:
+            return order.get("summary")
+
+    if region and region.lower() != "global":
+        return f"{metric_label} for {region} {time_text} under {source_name}"
+    return f"{metric_label} {time_text} under {source_name}"
 
 
 def _resolve_aggregate_admin2_dir(source_path: str) -> Path:
@@ -811,6 +885,8 @@ def validate_item(item: dict, catalog: dict) -> dict:
         else:
             item["metric_label"] = name
 
+        _clamp_item_years_to_metric(item, metadata, metric)
+
     item["_valid"] = True
     return item
 
@@ -872,10 +948,10 @@ def expand_wildcard_metrics(items: list) -> list:
 
                 # Use per-metric year range if available in metadata
                 # metadata.metrics.{metric}.years = [start, end]
-                metric_years = metric_info.get("years")
-                if metric_years and len(metric_years) == 2:
-                    new_item["year_start"] = metric_years[0]
-                    new_item["year_end"] = metric_years[1]
+                metric_min_year, metric_max_year = metadata_metric_year_range(metadata, metric_key)
+                if metric_min_year is not None and metric_max_year is not None:
+                    new_item["year_start"] = metric_min_year
+                    new_item["year_end"] = metric_max_year
                 else:
                     # Fallback to item-level years if no per-metric range
                     if item.get("year"):
@@ -1466,7 +1542,7 @@ def postprocess_order(order: dict, hints: dict = None) -> dict:
         "validation_summary": summary,
         "all_valid": len(errors) == 0,
         # Preserve original order fields
-        "summary": order.get("summary"),
+        "summary": _rewrite_processed_order_summary(order, validated_items),
         "region": order.get("region"),
         "year": order.get("year"),
         "year_start": order.get("year_start"),

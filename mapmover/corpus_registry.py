@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import Any
 
 from mapmover.data_loading import load_source_metadata
+from mapmover.source_time_contract import build_metric_year_ranges
 
 
 def _stable_hash(value: Any) -> str:
@@ -98,6 +99,29 @@ def _collect_year_range(order: dict, response: dict):
     if years:
         return {"min": min(years), "max": max(years), "available_years": sorted(set(years))}
     return None
+
+
+def _collect_metric_year_ranges(response: dict) -> dict:
+    explicit = response.get("metric_year_ranges")
+    if isinstance(explicit, dict) and explicit:
+        cleaned = {}
+        for metric_id, year_info in explicit.items():
+            if not isinstance(year_info, dict):
+                continue
+            min_year = year_info.get("min")
+            max_year = year_info.get("max")
+            available_years = year_info.get("available_years")
+            if min_year is None and max_year is None and not available_years:
+                continue
+            cleaned[str(metric_id)] = {
+                "min": min_year,
+                "max": max_year,
+                "available_years": available_years if isinstance(available_years, list) else [],
+            }
+        if cleaned:
+            return cleaned
+
+    return build_metric_year_ranges(response)
 
 
 def _build_scope(order: dict, response: dict) -> dict:
@@ -267,6 +291,7 @@ class CorpusRegistry:
             "geographic_level": response.get("geographic_level") or response.get("overlay_type"),
             "metrics": metrics,
             "year_range": year_range,
+            "metric_year_ranges": _collect_metric_year_ranges(response),
             "feature_count": len(((response.get("geojson") or {}).get("features") or [])),
             "row_count": response.get("count"),
             "fields": fields,
@@ -388,6 +413,7 @@ class CorpusRegistry:
             "geographic_level": metadata.get("geographic_level") or next(iter(metadata.get("geographic_levels") or []), None),
             "metrics": metric_ids,
             "year_range": year_range,
+            "metric_year_ranges": _collect_metric_year_ranges(metadata),
             "feature_count": 0,
             "row_count": metadata.get("row_count"),
             "fields": _artifact_fields_from_metadata(metadata),
