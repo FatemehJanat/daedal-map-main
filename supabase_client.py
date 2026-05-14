@@ -14,6 +14,7 @@ Setup:
 
 import os
 import json
+from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 
@@ -422,6 +423,76 @@ class SupabaseClient:
             return result.data[0] if result.data else None
         except Exception as e:
             print(f"Failed to log LLM usage event to Supabase: {e}")
+            return None
+
+    def get_llm_usage_cost_usd(
+        self,
+        *,
+        request_id: str,
+        auth_user_id: Optional[str] = None,
+        surface: Optional[str] = None,
+    ) -> Decimal:
+        """Return summed cost_usd for llm_usage rows matching this request."""
+        try:
+            query = (
+                self.client
+                .table("llm_usage_events_with_cost")
+                .select("cost_usd")
+                .eq("request_id", request_id)
+            )
+            if auth_user_id:
+                query = query.eq("auth_user_id", auth_user_id)
+            if surface:
+                query = query.eq("surface", surface)
+            result = query.execute()
+            rows = result.data or []
+            total = Decimal("0")
+            for row in rows:
+                value = row.get("cost_usd")
+                if value is None:
+                    continue
+                try:
+                    total += Decimal(str(value))
+                except InvalidOperation:
+                    continue
+            return total
+        except Exception as e:
+            print(f"Failed to get LLM usage cost from Supabase: {e}")
+            return Decimal("0")
+
+    def deduct_micro_credits_with_floor(
+        self,
+        *,
+        user_id: str,
+        amount_micro_usd: int,
+        operation_type: str,
+        min_balance_micro_usd: int,
+        payment_rail: str = "account_credit",
+        settlement_id: Optional[str] = None,
+        request_id: Optional[str] = None,
+        request_fingerprint: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        notes: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict]:
+        """Deduct micro credits while allowing the balance to cross a floor."""
+        try:
+            result = self.client.rpc("deduct_micro_credits_with_floor", {
+                "p_user_id": user_id,
+                "p_amount_micro_usd": int(amount_micro_usd),
+                "p_operation_type": operation_type,
+                "p_min_balance_micro_usd": int(min_balance_micro_usd),
+                "p_payment_rail": payment_rail,
+                "p_settlement_id": settlement_id,
+                "p_request_id": request_id,
+                "p_request_fingerprint": request_fingerprint,
+                "p_idempotency_key": idempotency_key,
+                "p_notes": notes,
+                "p_metadata": metadata or {},
+            }).execute()
+            return result.data if result.data else None
+        except Exception as e:
+            print(f"Failed to deduct micro credits with floor: {e}")
             return None
 
     def log_security_event(
@@ -932,7 +1003,7 @@ class SupabaseClient:
             "conversation_sessions", "error_logs",
             "plans", "orgs", "profiles", "memberships", "pack_entitlements",
             "api_usage_events", "security_events", "security_event_daily_rollups",
-            "commercial_access_pending_settlements", "credit_transactions",
+            "commercial_access_pending_settlements", "account_balance_transactions",
             "feedback", "waitlist",
         ]:
                 try:

@@ -8,6 +8,7 @@ import os
 import asyncio
 import gzip
 import math
+import uuid
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -26,6 +27,11 @@ from mapmover.corpus_registry import corpus_registry
 from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log_conversation
 from mapmover.llm_usage import LLMUsageRecorder, classify_caller, ensure_recorder
 from mapmover.chat_budget import budget_rejection_payload, check_anonymous_chat_budget
+from mapmover.account_credit import (
+    check_research_budget,
+    research_budget_rejection_payload,
+    settle_research_charge,
+)
 from mapmover.catalog_surface import (
     catalog_surface_scope,
     normalize_catalog_surface,
@@ -93,6 +99,12 @@ def _json_dumps_safe(value) -> str:
 
 
 router = APIRouter()
+
+
+def _research_request_id(session_id: str, query: str) -> str:
+    query_hash = hashlib.md5((query or "").encode("utf-8")).hexdigest()[:8]
+    session_hash = hashlib.md5((session_id or "").encode("utf-8")).hexdigest()[:8]
+    return f"research_{session_hash}_{query_hash}_{uuid.uuid4().hex[:8]}"
 
 
 def _catalog_surface_for_request(req: Request, body: dict, auth_user: dict | None) -> tuple[str | None, Response | None]:
@@ -2246,6 +2258,8 @@ async def research_chat_endpoint(req: Request):
         if surface_error:
             return surface_error
         session_id = build_session_cache_key(frontend_session_id, auth_user)
+        request_id = _research_request_id(session_id, query)
+        req.state.analytics_request_id = request_id
         caller_ctx = classify_caller(
             auth_user=auth_user,
             ip_hash=hash_ip_for_analytics(client_ip),
@@ -2260,16 +2274,25 @@ async def research_chat_endpoint(req: Request):
                     "Cache-Control": "no-store",
                 },
             )
+        research_budget = check_research_budget(caller_ctx)
+        if not research_budget.allowed:
+            return msgpack_response(
+                research_budget_rejection_payload(research_budget),
+                status_code=402,
+                headers={"Cache-Control": "no-store"},
+            )
         usage_recorder = LLMUsageRecorder(
             surface="research",
             call_kind="research_main",
             session_id=session_id,
+            request_id=request_id,
             **caller_ctx,
         )
         rescue_usage_recorder = LLMUsageRecorder(
             surface="research",
             call_kind="research_rescue",
             session_id=session_id,
+            request_id=request_id,
             **caller_ctx,
         )
         # Run the synchronous LLM-driven research pipeline in a thread so we
@@ -2289,6 +2312,12 @@ async def research_chat_endpoint(req: Request):
         finally:
             usage_recorder.flush()
             rescue_usage_recorder.flush(skip_if_empty=True)
+        await asyncio.to_thread(
+            settle_research_charge,
+            request_id=request_id,
+            caller_ctx=caller_ctx,
+            request_fingerprint=session_id,
+        )
         log_conversation(
             frontend_session_id,
             query,
@@ -2331,6 +2360,8 @@ async def research_chat_stream_endpoint(req: Request):
                 yield f"data: {json.dumps(payload)}\n\n"
                 return
             session_id = build_session_cache_key(frontend_session_id, auth_user)
+            request_id = _research_request_id(session_id, query)
+            req.state.analytics_request_id = request_id
             caller_ctx = classify_caller(
                 auth_user=auth_user,
                 ip_hash=hash_ip_for_analytics(client_ip),
@@ -2340,16 +2371,23 @@ async def research_chat_stream_endpoint(req: Request):
                 rejection = budget_rejection_payload(budget_decision)
                 yield f"data: {json.dumps({'stage': 'complete', 'result': rejection})}\n\n"
                 return
+            research_budget = check_research_budget(caller_ctx)
+            if not research_budget.allowed:
+                rejection = research_budget_rejection_payload(research_budget)
+                yield f"data: {json.dumps({'stage': 'complete', 'result': rejection})}\n\n"
+                return
             usage_recorder = LLMUsageRecorder(
                 surface="research",
                 call_kind="research_main",
                 session_id=session_id,
+                request_id=request_id,
                 **caller_ctx,
             )
             rescue_usage_recorder = LLMUsageRecorder(
                 surface="research",
                 call_kind="research_rescue",
                 session_id=session_id,
+                request_id=request_id,
                 **caller_ctx,
             )
 
@@ -2390,6 +2428,12 @@ async def research_chat_stream_endpoint(req: Request):
             finally:
                 usage_recorder.flush()
                 rescue_usage_recorder.flush(skip_if_empty=True)
+            await asyncio.to_thread(
+                settle_research_charge,
+                request_id=request_id,
+                caller_ctx=caller_ctx,
+                request_fingerprint=session_id,
+            )
             log_conversation(
                 frontend_session_id,
                 query,
