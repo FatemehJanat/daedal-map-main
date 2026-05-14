@@ -64,6 +64,24 @@ def _cached_profile(user_id: str) -> Optional[dict]:
         return None
 
 
+def _fresh_profile_after_topup(user_id: str) -> Optional[dict]:
+    """Bypass the profile cache to fetch the authoritative `account_locked`
+    state from Supabase. Called only when the cached profile says the user is
+    locked, so a just-topped-up user does not eat up to 5 minutes of stale
+    rejection while their cache entry expires.
+
+    Cost: one Supabase round trip per locked-user attempt. The unlocked hot
+    path is unaffected.
+    """
+    client = get_supabase_client()
+    if client is None:
+        return None
+    try:
+        return client.get_profile(user_id)
+    except Exception:
+        return None
+
+
 def check_research_budget(caller_ctx: dict, model: str | None = None) -> ResearchBudgetDecision:
     """Pre-call budget gate. Reads `account_locked` from the cached profile so
     the hot path costs zero Supabase round trips. Settlement still runs
@@ -94,6 +112,20 @@ def check_research_budget(caller_ctx: dict, model: str | None = None) -> Researc
         balance_micro_usd = 0
 
     if account_locked:
+        # A user who just topped up via Stripe may have a stale cached profile
+        # showing the old lock state. The webhook runs in a separate process
+        # so in-process cache invalidation does not reach across. Re-fetch
+        # authoritatively before rejecting; cost is one Supabase round trip
+        # per locked-user attempt, which is acceptable because locked users
+        # cannot make Research calls anyway.
+        fresh = _fresh_profile_after_topup(user_id)
+        if isinstance(fresh, dict) and not bool(fresh.get("account_locked")):
+            try:
+                balance_micro_usd = int(fresh.get("balance_micro_usd") or 0)
+            except Exception:
+                pass
+            return ResearchBudgetDecision(allowed=True, balance_micro_usd=balance_micro_usd)
+
         return ResearchBudgetDecision(
             allowed=False,
             balance_micro_usd=balance_micro_usd,
