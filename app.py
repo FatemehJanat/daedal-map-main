@@ -28,7 +28,13 @@ from fastapi.staticfiles import StaticFiles
 from mapmover import initialize_catalog, load_conversions, logger
 from mapmover.auth_context import get_authenticated_user, get_authenticated_user_async
 from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log_route_request_event
-from mapmover.security import get_allowed_origins, get_client_ip, is_https_request, rate_limiter
+from mapmover.security import (
+    get_allowed_origins,
+    get_client_ip,
+    is_https_request,
+    log_startup_security_warnings,
+    rate_limiter,
+)
 from mapmover.order_executor import execute_order
 from mapmover.order_queue import processor as order_processor
 from mapmover.routes.chat import router as chat_router
@@ -182,6 +188,7 @@ async def lifespan(app: FastAPI):
     import threading
 
     logger.info("Starting county-map API...")
+    log_startup_security_warnings(logger)
     load_conversions()
     initialize_catalog()
 

@@ -92,6 +92,10 @@ def _env_truthy(name: str) -> bool:
     return str(os.getenv(name, "")).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _deployment_name() -> str:
+    return str(os.getenv("DEPLOYMENT", "")).strip().lower()
+
+
 def _trusted_proxy_cidrs():
     networks = []
     for raw_value in os.getenv("TRUSTED_PROXY_CIDRS", "").split(","):
@@ -143,6 +147,22 @@ def get_client_ip(request: Request) -> str:
             if raw:
                 return raw.split(",", 1)[0].strip()
     return request.client.host if request.client else "unknown"
+
+
+def log_startup_security_warnings(logger) -> None:
+    """Emit loud warnings for risky-but-valid hosted security configs."""
+    if _env_truthy("TRUST_PROXY_HEADERS") and not _trusted_proxy_cidrs():
+        logger.warning(
+            "Security warning: TRUST_PROXY_HEADERS=true but TRUSTED_PROXY_CIDRS is empty. "
+            "Any immediate peer will be trusted for client-IP headers."
+        )
+
+    forced_qa_user_id = str(os.getenv("LLM_USAGE_FORCE_QA_USER_ID", "")).strip()
+    if forced_qa_user_id and _deployment_name() not in {"", "local"}:
+        logger.warning(
+            "Security warning: LLM_USAGE_FORCE_QA_USER_ID is set in a non-local deployment. "
+            "Hosted chat calls may be misclassified as qa_suite until this env var is removed."
+        )
 
 
 class SlidingWindowRateLimiter:
