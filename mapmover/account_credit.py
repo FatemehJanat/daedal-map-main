@@ -33,6 +33,9 @@ def _to_micro_usd(cost_usd: Decimal) -> int:
 
 
 def get_user_balance_micro_usd(user_id: str) -> Optional[int]:
+    """Fetch authoritative balance from Supabase. Used by settlement only;
+    the pre-call hot path reads `account_locked` from the cached profile via
+    `_get_cached_profile()` in `mapmover.llm_usage` to avoid a round trip."""
     client = get_supabase_client()
     if client is None:
         return None
@@ -45,35 +48,57 @@ def get_user_balance_micro_usd(user_id: str) -> Optional[int]:
         return None
 
 
+def _cached_profile(user_id: str) -> Optional[dict]:
+    """Read from the 5-minute in-process profile cache used by classify_caller.
+
+    Returns None if the cache layer is unavailable. The caller decides whether
+    to fail open or block on cache miss.
+    """
+    try:
+        from mapmover.llm_usage import _get_cached_profile  # type: ignore
+    except Exception:
+        return None
+    try:
+        return _get_cached_profile(user_id)
+    except Exception:
+        return None
+
+
 def check_research_budget(caller_ctx: dict, model: str | None = None) -> ResearchBudgetDecision:
+    """Pre-call budget gate. Reads `account_locked` from the cached profile so
+    the hot path costs zero Supabase round trips. Settlement still runs
+    post-call against the authoritative ledger inside
+    `deduct_micro_credits_with_floor()`.
+
+    Lock semantics: `account_locked = TRUE` whenever the most recent settlement
+    pushed `balance_micro_usd` below zero. The previous turn already completed
+    (settlement is post-call); this gate rejects the *next* turn. Top-up via
+    `grant_micro_credits()` clears the flag in the same transaction.
+    """
     caller_kind = str((caller_ctx or {}).get("caller_kind") or "").strip().lower()
     user_id = str((caller_ctx or {}).get("auth_user_id") or "").strip()
-    normalized_model = str(model or "").strip().lower()
 
     if caller_kind not in {"authenticated", "qa_suite"} or not user_id:
         return ResearchBudgetDecision(allowed=True, balance_micro_usd=0)
 
-    balance_micro_usd = get_user_balance_micro_usd(user_id)
-    if balance_micro_usd is None:
-        # Fail open on billing lookup problems so we do not break Research.
+    profile = _cached_profile(user_id)
+    if not isinstance(profile, dict):
+        # Fail open on cache lookup problems so we never break Research on
+        # transient Supabase issues. Settlement still enforces the floor.
         return ResearchBudgetDecision(allowed=True, balance_micro_usd=0)
 
-    if balance_micro_usd <= RESEARCH_NEGATIVE_FLOOR_MICRO_USD:
+    account_locked = bool(profile.get("account_locked"))
+    try:
+        balance_micro_usd = int(profile.get("balance_micro_usd") or 0)
+    except Exception:
+        balance_micro_usd = 0
+
+    if account_locked:
         return ResearchBudgetDecision(
             allowed=False,
             balance_micro_usd=balance_micro_usd,
             error_code="research_top_up_required",
             message="Top up your account to continue using hosted Research.",
-            cta=RESEARCH_TOP_UP_CTA,
-            cta_url=RESEARCH_TOP_UP_URL,
-        )
-
-    if normalized_model == "claude-opus-4-7" and balance_micro_usd < 0:
-        return ResearchBudgetDecision(
-            allowed=False,
-            balance_micro_usd=balance_micro_usd,
-            error_code="research_opus_requires_positive_balance",
-            message="Opus requires a non-negative account balance. Top up to continue.",
             cta=RESEARCH_TOP_UP_CTA,
             cta_url=RESEARCH_TOP_UP_URL,
         )
