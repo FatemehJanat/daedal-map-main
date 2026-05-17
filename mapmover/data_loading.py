@@ -81,6 +81,36 @@ PACK_LOAD_MAX_ROW_COUNT = 2_000_000
 RETIRED_PACK_SOURCE_IDS = {
     "world_factbook_overlap",
 }
+PACK_MCP_ROUTING_HINTS: dict[str, dict[str, str]] = {
+    "currency": {
+        "preferred_tool": "get_fx_rates",
+    },
+    "earthquakes": {
+        "preferred_tool": "get_earthquake_events",
+        "live_fallback_tool": "get_live_earthquake_events",
+        "live_fallback_when": "Only when the caller explicitly asks for live/preliminary upstream data or needs time beyond canonical_available_through.",
+    },
+    "tsunamis": {
+        "preferred_tool": "get_tsunami_events",
+    },
+    "volcanoes": {
+        "preferred_tool": "get_volcanic_activity",
+        "live_fallback_tool": "get_live_volcano_events",
+        "live_fallback_when": "Only when the caller explicitly asks for live/preliminary upstream data or needs time beyond canonical_available_through.",
+    },
+    "hurricanes": {
+        "preferred_tool": "query_dataset",
+    },
+    "un_sdg": {
+        "preferred_tool": "query_dataset",
+    },
+    "world_factbook": {
+        "preferred_tool": "query_dataset",
+    },
+    "worldpop": {
+        "preferred_tool": "query_dataset",
+    },
+}
 
 
 def get_data_folder():
@@ -263,9 +293,144 @@ def load_api_pack_detail(pack_id: str) -> dict | None:
         _api_pack_missing_time[pack_id] = now
         return None
 
+    payload = _hydrate_api_pack_detail_from_source_metadata(payload)
+
     _api_pack_cache[pack_id] = payload
     _api_pack_cache_time[pack_id] = now
     return payload
+
+
+def _hydrate_api_pack_detail_from_source_metadata(payload: dict | None) -> dict | None:
+    """
+    Refresh pack-detail freshness fields from source metadata.
+
+    The generated pack JSON is useful for broad descriptive metadata, but the
+    source metadata is the sharper source of truth for live/canonical freshness.
+    By overlaying source metadata here, pack detail stays current as long as the
+    live pipeline updates metadata.json correctly.
+    """
+    if not isinstance(payload, dict):
+        return payload
+
+    hydrated = deepcopy(payload)
+    source_rows = hydrated.get("sources")
+    if not isinstance(source_rows, list) or not source_rows:
+        return hydrated
+
+    refreshed_sources: list[dict] = []
+    pack_start = None
+    pack_end = None
+    pack_live_watermark = None
+    pack_live_updates_enabled = False
+    pack_last_updated = None
+    pack_processing_states: list[str] = []
+
+    for source in source_rows:
+        if not isinstance(source, dict):
+            refreshed_sources.append(source)
+            continue
+
+        refreshed = deepcopy(source)
+        source_id = str(refreshed.get("source_id") or "").strip()
+        metadata = load_source_metadata(source_id) if source_id else None
+        if isinstance(metadata, dict) and metadata:
+            source_temporal = metadata.get("temporal_coverage")
+            if isinstance(source_temporal, dict) and source_temporal:
+                refreshed["temporal_coverage"] = deepcopy(source_temporal)
+                start_value = source_temporal.get("start")
+                end_value = source_temporal.get("end")
+                if start_value is not None:
+                    start_text = str(start_value)
+                    if pack_start is None or start_text < pack_start:
+                        pack_start = start_text
+                if end_value is not None:
+                    end_text = str(end_value)
+                    if pack_end is None or end_text > pack_end:
+                        pack_end = end_text
+                    refreshed.setdefault("canonical_available_through", end_text)
+
+            time_field = metadata.get("time_field")
+            if time_field:
+                refreshed["time_field"] = time_field
+
+            location_field = metadata.get("location_field")
+            if location_field:
+                refreshed["location_field"] = location_field
+
+            default_limit = metadata.get("default_limit")
+            if default_limit is not None:
+                refreshed["default_limit"] = default_limit
+
+            browser_artifact = metadata.get("browser_artifact")
+            if isinstance(browser_artifact, dict) and browser_artifact:
+                refreshed["browser_artifact"] = deepcopy(browser_artifact)
+
+            live_watermark = metadata.get("live_watermark_utc")
+            if live_watermark:
+                refreshed["live_watermark_utc"] = live_watermark
+                live_text = str(live_watermark)
+                if pack_live_watermark is None or live_text > pack_live_watermark:
+                    pack_live_watermark = live_text
+
+            live_updates_enabled = bool(metadata.get("live_updates_enabled"))
+            if live_updates_enabled:
+                refreshed["live_updates_enabled"] = True
+                pack_live_updates_enabled = True
+
+            processing_state = metadata.get("processing_state")
+            if processing_state:
+                refreshed["processing_state"] = processing_state
+                pack_processing_states.append(str(processing_state))
+
+            last_updated = metadata.get("last_updated")
+            if last_updated:
+                refreshed["last_updated"] = last_updated
+                last_updated_text = str(last_updated)
+                if pack_last_updated is None or last_updated_text > pack_last_updated:
+                    pack_last_updated = last_updated_text
+
+        refreshed_sources.append(refreshed)
+
+    hydrated["sources"] = refreshed_sources
+
+    temporal = hydrated.get("temporal_coverage")
+    if not isinstance(temporal, dict):
+        temporal = {}
+    if pack_start is not None:
+        temporal["start"] = pack_start
+    if pack_end is not None:
+        temporal["end"] = pack_end
+    if temporal:
+        hydrated["temporal_coverage"] = temporal
+
+    if pack_live_watermark is not None:
+        hydrated["live_watermark_utc"] = pack_live_watermark
+        hydrated["canonical_available_through"] = pack_live_watermark
+    elif pack_end is not None:
+        hydrated["canonical_available_through"] = pack_end
+    if pack_last_updated is not None:
+        hydrated["last_updated"] = pack_last_updated
+    if pack_live_updates_enabled:
+        hydrated["live_updates_enabled"] = True
+    if pack_processing_states:
+        state_rank = {
+            "raw_collected": 1,
+            "canonical_ready": 2,
+            "event_area_ready": 3,
+            "link_ready": 4,
+            "aggregate_ready": 5,
+        }
+        hydrated["processing_state"] = max(
+            pack_processing_states,
+            key=lambda value: state_rank.get(str(value), 0),
+        )
+
+    pack_id = str(hydrated.get("pack_id") or "").strip().lower()
+    routing_hints = PACK_MCP_ROUTING_HINTS.get(pack_id) or {}
+    for key, value in routing_hints.items():
+        hydrated.setdefault(key, value)
+
+    return hydrated
 
 
 def load_full_catalog():

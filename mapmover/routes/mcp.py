@@ -127,6 +127,20 @@ PACK_SERVER_PROFILES = {
             ],
         },
     },
+    "worldpop": {
+        "name": "com.daedalmap/worldpop",
+        "title": "DaedalMap WorldPop Population Estimates",
+        "description": "WorldPop population estimates and density-ready geography from 2000 to 2030 across country and sub-national levels. Free.",
+        "pricing": "free",
+        "registry_meta": {
+            "categories": ["demographic", "data", "geospatial"],
+            "highlights": [
+                "WorldPop population estimates across multiple admin levels",
+                "Free MCP access for country and sub-national population queries",
+                "Country and regional lookups tied to DaedalMap loc_id geography",
+            ],
+        },
+    },
 }
 
 PACK_TOOL_ALLOWLIST: dict[str, set[str]] = {
@@ -137,6 +151,7 @@ PACK_TOOL_ALLOWLIST: dict[str, set[str]] = {
     "hurricanes": {"get_catalog", "get_pack", "query_dataset"},
     "un_sdg": {"get_catalog", "get_pack", "query_dataset"},
     "world_factbook": {"get_catalog", "get_pack", "query_dataset"},
+    "worldpop": {"get_catalog", "get_pack", "query_dataset"},
 }
 
 PACK_PROMPT_ALLOWLIST: dict[str, set[str]] = {
@@ -491,13 +506,13 @@ def _tool_definitions() -> list[dict[str, Any]]:
         {
             "name": "get_pack",
             "title": "Get Pack",
-            "description": "Free discovery. Returns detailed metadata, coverage, metrics, and first-query guidance for one pack.",
+            "description": "Free discovery. Returns detailed metadata, coverage, freshness, preferred canonical tool guidance, and first-query examples for one pack.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "pack_id": {
                         "type": "string",
-                        "description": "Pack identifier such as 'currency', 'earthquakes', 'volcanoes', 'tsunamis', 'hurricanes', 'un_sdg', or 'world_factbook'.",
+                        "description": "Pack identifier such as 'currency', 'earthquakes', 'volcanoes', 'tsunamis', 'hurricanes', 'un_sdg', 'world_factbook', or 'worldpop'.",
                     }
                 },
                 "required": ["pack_id"],
@@ -637,7 +652,7 @@ def _tool_definitions() -> list[dict[str, Any]]:
                 "properties": {
                     "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing and idempotency."},
                     "source_id": {"type": "string", "description": "Concrete source id such as 'earthquakes_events', 'volcanoes_events', 'hurricanes_events', or 'un_sdg/01'."},
-                    "pack_id": {"type": "string", "description": "Pack id such as 'currency', 'earthquakes', 'volcanoes', 'tsunamis', 'hurricanes', 'un_sdg', or 'world_factbook'."},
+                    "pack_id": {"type": "string", "description": "Pack id such as 'currency', 'earthquakes', 'volcanoes', 'tsunamis', 'hurricanes', 'un_sdg', 'world_factbook', or 'worldpop'."},
                     "metrics": {"type": "array", "items": {"type": "string"}, "description": "Metric ids to return. Use event_count for aggregate counts when supported."},
                     "filters": {"type": "object", "description": "Structured filters including time, region_ids, and compare clauses."},
                     "sort": {"anyOf": [{"type": "array"}, {"type": "object"}], "description": "Optional sort instructions for row-returning queries."},
@@ -898,7 +913,7 @@ def _read_resource(uri: str, pack_id: str | None = None) -> dict[str, Any] | Non
                 "# For Agents - DaedalMap Quickstart\n\n"
                 "## Step 1: Discover what is available (free)\n\n"
                 "Call get_catalog to see all live packs and their free/paid status.\n"
-                "Call get_pack with a pack_id to get coverage dates, available metrics, and a first-query example.\n\n"
+                "Call get_pack with a pack_id to get coverage dates, canonical freshness metadata, available metrics, preferred canonical tool guidance, and a first-query example.\n\n"
                 "## Step 2: Get free data immediately\n\n"
                 "Both of these return real data with no payment or setup:\n\n"
                 "get_volcanic_activity - eruption records from Holocene to present\n"
@@ -912,6 +927,7 @@ def _read_resource(uri: str, pack_id: str | None = None) -> dict[str, Any] | Non
                 "Requests too broad for live API access return narrowing suggestions instead of a payment challenge.\n\n"
                 "## Canonical first, live second\n\n"
                 "Prefer canonical DaedalMap pack tools first.\n"
+                "Use the get_pack response as the source of truth for canonical_available_through, preferred_tool, and any live_fallback_tool guidance.\n"
                 "For earthquakes, use get_earthquake_events for normal historical or recent questions because it is the processed canonical lane.\n"
                 "Only use get_live_earthquake_events when the caller explicitly asks for live/preliminary upstream results or needs a very recent window not yet present in the published canonical lane.\n\n"
                 "## Step 4: Use prompts for ready-to-use examples\n\n"
@@ -1215,10 +1231,11 @@ async def mcp_endpoint(request: Request, pack_id: str | None = None):
                 "instructions": (
                     f"Safety: {AGENT_SAFETY_NOTICE} "
                     "Step 1: call get_catalog to see all live packs and which are free vs paid. "
-                    "Step 2: call get_pack with a pack_id for coverage dates, available metrics, and a first-query example. "
+                    "Step 2: call get_pack with a pack_id for coverage dates, canonical freshness metadata, preferred canonical tool guidance, and a first-query example. "
                     "Step 3: call get_volcanic_activity or get_fx_rates to get real data immediately - both are free, no setup needed. "
                     "Step 4: call prompts/list to get ready-to-use example calls for every supported query shape. "
-                    "Canonical pack tools come first. For earthquakes, prefer get_earthquake_events for normal historical or recent questions and only use get_live_earthquake_events when the caller explicitly asks for live/preliminary upstream data or the published canonical window is not sufficient. "
+                    "Canonical pack tools come first. Use get_pack as the source of truth for canonical_available_through, preferred_tool, and any live_fallback_tool guidance. "
+                    "For earthquakes, prefer get_earthquake_events for normal historical or recent questions and only use get_live_earthquake_events when the caller explicitly asks for live/preliminary upstream data or the published canonical window is not sufficient. "
                     "Paid packs ("
                     + ", ".join(sorted(_paid_pack_ids()))
                     + "): call the tool without payment first - the server returns HTTP 402 with the exact price and payment address before any charge occurs."
