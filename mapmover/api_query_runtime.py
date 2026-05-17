@@ -221,7 +221,11 @@ def _build_dynamic_source_spec(source_id: str) -> ApiSourceSpec | None:
     location_field = str(source_defaults["location_field"])
     temporal_coverage = metadata.get("temporal_coverage") if isinstance(metadata.get("temporal_coverage"), dict) else {}
     time_field = temporal_coverage.get("field") or source_defaults.get("time_field")
-    time_granularity = temporal_coverage.get("granularity") or source_defaults.get("time_granularity")
+    time_granularity = normalize_time_granularity(
+        temporal_coverage.get("granularity") or source_defaults.get("time_granularity")
+    )
+    if not time_granularity and str(time_field or "").strip().lower() == "timestamp":
+        time_granularity = "timestamp"
     location_filter_mode = str(
         metadata.get("location_filter_mode")
         or source_defaults.get("location_filter_mode")
@@ -281,6 +285,7 @@ def is_temporal_time_field(spec: ApiSourceSpec) -> bool:
         "daily",
         "weekly",
         "monthly",
+        "event",
         "timestamp",
         "datetime",
     }
@@ -324,6 +329,8 @@ def normalize_time_granularity(value: str | None) -> str | None:
     if not normalized:
         return None
     alias_map = {
+        "event": "timestamp",
+        "events": "timestamp",
         "day": "daily",
         "daily": "daily",
         "date": "daily",

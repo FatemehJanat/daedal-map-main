@@ -65,7 +65,7 @@ AGGREGATE_PATTERNS = [
     "statistics", "stats", "average", "sum",
     "per year", "annually", "yearly", "annual", "over time",
     "trend", "compare", "frequency", "exposure",
-    "per capita", "historically", "highest", "most",
+    "per capita", "historically",
     "last 10 years", "last 20 years", "last 30 years",
     "past 10 years", "past 20 years", "past 30 years",
     "rolling", "between the 1990s", "between the 2010s",
@@ -86,6 +86,29 @@ EXPLICIT_AGGREGATE_VIEW_PATTERNS = [
     "last 10 years", "last 20 years", "last 30 years",
     "past 10 years", "past 20 years", "past 30 years",
 ]
+
+RECENT_EVENT_PATTERNS = [
+    "most recent",
+    "latest",
+    "newest",
+    "recent",
+]
+
+
+def _query_requests_recent_events(query: str) -> bool:
+    query_lower = str(query or "").strip().lower()
+    if not query_lower:
+        return False
+    return any(pattern in query_lower for pattern in RECENT_EVENT_PATTERNS)
+
+
+def _query_requests_single_latest_event(query: str) -> bool:
+    query_lower = str(query or "").strip().lower()
+    if not query_lower:
+        return False
+    if not any(pattern in query_lower for pattern in ("most recent", "latest", "newest")):
+        return False
+    return not any(pattern in query_lower for pattern in ("top ", "show me 10", "show 10", "ten most recent"))
 
 
 def _metric_display_name(source_id: str, metric_key: str) -> str:
@@ -1192,6 +1215,8 @@ def _preferred_event_file_key(catalog_source: dict | None) -> str | None:
     for key in ("events", "fires", "storms", "positions", "tracks"):
         if key in files:
             return key
+    if _source_supports_events(catalog_source):
+        return "events"
     return None
 
 
@@ -1245,6 +1270,8 @@ def detect_event_mode(items: list, hints: dict = None) -> list:
         "counties", "county", "countries", "country",
         "regions", "region", "areas"
     ]
+    requests_recent_events = _query_requests_recent_events(query)
+    requests_single_latest_event = _query_requests_single_latest_event(query)
 
     # Determine intent from query
     wants_events, wants_aggregate = _query_signals_event_vs_aggregate(query)
@@ -1306,6 +1333,10 @@ def detect_event_mode(items: list, hints: dict = None) -> list:
                 # Add event mode
                 item["mode"] = "events"
                 item["event_file"] = event_file_key
+                if requests_recent_events:
+                    item["sort"] = {"by": "timestamp", "order": "desc"}
+                    if requests_single_latest_event and not item.get("limit"):
+                        item["limit"] = 1
                 # Remove metric if it's just a placeholder
                 if metric in ("*", "all", "all_metrics", ""):
                     item.pop("metric", None)

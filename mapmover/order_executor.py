@@ -127,6 +127,21 @@ def _normalize_sort_spec(sort_spec):
         normalized["order"] = str(sort_spec.get("order", "desc")).lower()
         return normalized
     if isinstance(sort_spec, str):
+        raw = str(sort_spec).strip().lower()
+        alias_map = {
+            "date_desc": {"by": "timestamp", "order": "desc"},
+            "date_asc": {"by": "timestamp", "order": "asc"},
+            "time_desc": {"by": "timestamp", "order": "desc"},
+            "time_asc": {"by": "timestamp", "order": "asc"},
+            "timestamp_desc": {"by": "timestamp", "order": "desc"},
+            "timestamp_asc": {"by": "timestamp", "order": "asc"},
+            "latest": {"by": "timestamp", "order": "desc"},
+            "newest": {"by": "timestamp", "order": "desc"},
+            "recent": {"by": "timestamp", "order": "desc"},
+            "most_recent": {"by": "timestamp", "order": "desc"},
+        }
+        if raw in alias_map:
+            return alias_map[raw]
         return {"by": sort_spec, "order": "desc"}
     if isinstance(sort_spec, list):
         for candidate in sort_spec:
@@ -1028,6 +1043,7 @@ def _load_event_data_duckdb(source_id: str, item: dict, event_file_key: str = "e
     year, year_start, year_end = _normalize_year_filters(item)
     filters = item.get("filters", {}) or {}
     requested_limit = item.get("limit")
+    sort_spec = _normalize_sort_spec(item.get("sort"))
     time_col = "year" if "year" in available_cols else ("timestamp" if "timestamp" in available_cols else None)
     loc_id_col = "loc_id" if "loc_id" in available_cols else None
 
@@ -1087,9 +1103,23 @@ def _load_event_data_duckdb(source_id: str, item: dict, event_file_key: str = "e
         sql += " WHERE " + " AND ".join(where_clauses)
 
     limit = min(requested_limit or DEFAULT_EVENT_LIMIT, MAX_EVENT_LIMIT)
-    sig_col = metadata.get("significance_column")
-    if sig_col and sig_col in available_cols:
-        sql += f" ORDER BY {quote_ident(sig_col)} DESC NULLS LAST"
+    sort_col = None
+    sort_order = "DESC"
+    if sort_spec:
+        requested_sort_col = str(sort_spec.get("by") or "").strip()
+        if requested_sort_col in available_cols:
+            sort_col = requested_sort_col
+            sort_order = "ASC" if str(sort_spec.get("order", "desc")).lower() == "asc" else "DESC"
+        elif requested_sort_col in {"date", "time"} and "timestamp" in available_cols:
+            sort_col = "timestamp"
+            sort_order = "ASC" if str(sort_spec.get("order", "desc")).lower() == "asc" else "DESC"
+    if not sort_col:
+        sig_col = metadata.get("significance_column")
+        if sig_col and sig_col in available_cols:
+            sort_col = sig_col
+            sort_order = "DESC"
+    if sort_col:
+        sql += f" ORDER BY {quote_ident(sort_col)} {sort_order} NULLS LAST"
     sql += " LIMIT ?"
     params.append(limit)
 
@@ -1689,6 +1719,7 @@ def execute_event_order(order: dict) -> dict:
     year, year_start, year_end = _normalize_year_filters(item)
     filters = item.get("filters", {})
     requested_limit = item.get("limit")
+    sort_spec = _normalize_sort_spec(item.get("sort"))
 
     # Load event data
     try:
@@ -1786,14 +1817,30 @@ def execute_event_order(order: dict) -> dict:
         # Apply limit (use requested limit, capped at max)
         limit = min(requested_limit or DEFAULT_EVENT_LIMIT, MAX_EVENT_LIMIT)
 
-        if len(df) > limit:
-            # Sort by significance column from metadata and take top N
+        sort_col = None
+        ascending = False
+        if sort_spec:
+            requested_sort_col = str(sort_spec.get("by") or "").strip()
+            if requested_sort_col in df.columns:
+                sort_col = requested_sort_col
+            elif requested_sort_col in {"date", "time"} and "timestamp" in df.columns:
+                sort_col = "timestamp"
+            ascending = str(sort_spec.get("order", "desc")).lower() == "asc"
+
+        if not sort_col:
             sig_col = _get_significance_column(source_id)
             if sig_col and sig_col in df.columns:
-                df = df.nlargest(limit, sig_col)
+                sort_col = sig_col
+
+        if sort_col and sort_col in df.columns:
+            if sort_col == "timestamp":
+                df = df.sort_values(sort_col, ascending=ascending, na_position="last")
             else:
-                df = df.head(limit)
-            print(f"  Limited to {limit} events (sorted by {sig_col or 'order'})")
+                df = df.sort_values(sort_col, ascending=ascending, na_position="last")
+
+        if len(df) > limit:
+            df = df.head(limit)
+            print(f"  Limited to {limit} events (sorted by {sort_col or 'order'})")
     else:
         print(f"  DuckDB filtered to {len(df)} events")
 

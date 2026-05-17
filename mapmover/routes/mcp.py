@@ -508,7 +508,7 @@ def _tool_definitions() -> list[dict[str, Any]]:
         {
             "name": "get_earthquake_events",
             "title": "Get Earthquake Events",
-            "description": "Paid x402 tool. Queries earthquakes_events. Call without payment first - the server returns HTTP 402 with the exact USDC price before any charge. Small queries stay cheap; broad scans cost more or need narrower filters.",
+            "description": "Paid x402 canonical tool. Queries the published earthquakes_events lane. Use this first for earthquake questions because it is the enriched DaedalMap history lane with stable loc_id geography, not the preliminary upstream wrapper. Call without payment first - the server returns HTTP 402 with the exact USDC price before any charge. Small queries stay cheap; broad scans cost more or need narrower filters.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -527,7 +527,7 @@ def _tool_definitions() -> list[dict[str, Any]]:
         {
             "name": "get_live_earthquake_events",
             "title": "Get Live Earthquake Events",
-            "description": "Free live wrapper. Calls the USGS FDSN API for recent preliminary earthquake events normalized to DaedalMap event fields. This is not the enriched canonical history lane.",
+            "description": "Free live wrapper. Calls the USGS FDSN API for recent preliminary earthquake events normalized to DaedalMap event fields. Use this only when the caller explicitly wants live/preliminary upstream results or needs a very recent window not yet present in the published canonical earthquake lane. This is not the enriched canonical history lane.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -910,6 +910,10 @@ def _read_resource(uri: str, pack_id: str | None = None) -> dict[str, Any] | Non
                 "Call them without payment first - the server returns HTTP 402 with the exact price before any charge.\n"
                 "Small queries stay cheap; very broad scans cost more or need narrower filters.\n"
                 "Requests too broad for live API access return narrowing suggestions instead of a payment challenge.\n\n"
+                "## Canonical first, live second\n\n"
+                "Prefer canonical DaedalMap pack tools first.\n"
+                "For earthquakes, use get_earthquake_events for normal historical or recent questions because it is the processed canonical lane.\n"
+                "Only use get_live_earthquake_events when the caller explicitly asks for live/preliminary upstream results or needs a very recent window not yet present in the published canonical lane.\n\n"
                 "## Step 4: Use prompts for ready-to-use examples\n\n"
                 "Call prompts/list to get complete example tool calls for every supported query shape.\n\n"
                 "## Reference\n\n"
@@ -1214,6 +1218,7 @@ async def mcp_endpoint(request: Request, pack_id: str | None = None):
                     "Step 2: call get_pack with a pack_id for coverage dates, available metrics, and a first-query example. "
                     "Step 3: call get_volcanic_activity or get_fx_rates to get real data immediately - both are free, no setup needed. "
                     "Step 4: call prompts/list to get ready-to-use example calls for every supported query shape. "
+                    "Canonical pack tools come first. For earthquakes, prefer get_earthquake_events for normal historical or recent questions and only use get_live_earthquake_events when the caller explicitly asks for live/preliminary upstream data or the published canonical window is not sufficient. "
                     "Paid packs ("
                     + ", ".join(sorted(_paid_pack_ids()))
                     + "): call the tool without payment first - the server returns HTTP 402 with the exact price and payment address before any charge occurs."
