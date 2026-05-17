@@ -368,6 +368,7 @@ def _hydrate_api_pack_detail_from_source_metadata(payload: dict | None) -> dict 
             live_watermark = metadata.get("live_watermark_utc")
             if live_watermark:
                 refreshed["live_watermark_utc"] = live_watermark
+                refreshed["canonical_available_through"] = str(live_watermark)
                 live_text = str(live_watermark)
                 if pack_live_watermark is None or live_text > pack_live_watermark:
                     pack_live_watermark = live_text
