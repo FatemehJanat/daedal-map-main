@@ -430,6 +430,12 @@ def _apply_dataframe_filters(df: pd.DataFrame, filters: dict | None) -> pd.DataF
                 filtered = filtered[filtered[field] == value.get("value")]
             continue
 
+        if isinstance(value, (list, tuple, set)):
+            candidates = [candidate for candidate in value if candidate is not None]
+            if candidates:
+                filtered = filtered[filtered[field].isin(candidates)]
+            continue
+
         filtered = filtered[filtered[field] == value]
 
     return filtered

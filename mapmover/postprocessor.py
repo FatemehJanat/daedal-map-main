@@ -370,6 +370,13 @@ def _apply_aggregate_query_hints(item: dict, query: str) -> None:
         item["aggregate_rollup_level"] = "admin_0"
     elif "counties" in query or "county" in query:
         item["aggregate_rollup_level"] = "admin_2"
+    elif not item.get("region") and not item.get("aggregate_rollup_level"):
+        geo_terms = (
+            "county", "counties", "state", "states", "province", "provinces",
+            "district", "districts", "tract", "tracts", "admin_1", "admin_2", "admin_3",
+        )
+        if not any(term in query for term in geo_terms):
+            item["aggregate_rollup_level"] = "admin_0"
 
 
 def _normalize_item_filters(item: dict, catalog_source: dict | None) -> None:
@@ -870,6 +877,10 @@ def validate_item(item: dict, catalog: dict) -> dict:
         if not query and isinstance(catalog_source, dict):
             query = ""
         _apply_aggregate_query_hints(item, query)
+    elif item.get("mode") == "aggregate":
+        query = str(((item.get("_hints") or {}).get("original_query")) or "").lower()
+        if query:
+            _apply_aggregate_query_hints(item, query)
 
     # Some metric-only sources may still be returned with mode="events" because
     # the pack family also contains event-capable siblings. Normalize those
@@ -953,6 +964,17 @@ def validate_item(item: dict, catalog: dict) -> dict:
                     item["metric_label"] = _format_metric_label(aggregate_exact_match)
                     item["_valid"] = True
                     return item
+
+            pack_metric_source = _resolve_pack_source_for_metric(
+                catalog,
+                item.get("pack_id"),
+                item.get("region"),
+                metric,
+            )
+            if pack_metric_source and pack_metric_source != source_id:
+                item["source_id"] = pack_metric_source
+                item["_resolved_from_pack"] = True
+                return validate_item(item, catalog)
 
             # No exact match, suggest close matches (by key or name)
             close_matches = []
@@ -1353,6 +1375,57 @@ def _resolve_pack_aggregate_source(
         ),
     )
     return candidates[0].get("source_id") if candidates else None
+
+
+def _pack_source_supports_metric(source: dict, metric: str) -> bool:
+    source_id = str(source.get("source_id") or "").strip()
+    metric_lower = str(metric or "").strip().lower()
+    if not source_id or not metric_lower:
+        return False
+    metadata = load_source_metadata(source_id) or {}
+    metrics = metadata.get("metrics") or {}
+    if not isinstance(metrics, dict):
+        return False
+    for key, info in metrics.items():
+        if str(key or "").strip().lower() == metric_lower:
+            return True
+        if isinstance(info, dict) and str(info.get("name") or "").strip().lower() == metric_lower:
+            return True
+    return False
+
+
+def _resolve_pack_source_for_metric(
+    catalog: dict,
+    pack_id: str | None,
+    region: str | None,
+    metric: str | None,
+) -> str | None:
+    if not pack_id or not metric:
+        return None
+    pack_sources = [s for s in _catalog_sources(catalog) if s.get("pack_id") == pack_id]
+    if not pack_sources:
+        return None
+
+    exact_matches = [
+        s for s in pack_sources
+        if s.get("scope") != "global"
+        and _scope_matches_region(s.get("scope", "global"), region)
+        and _pack_source_supports_metric(s, metric)
+    ]
+    if len(exact_matches) == 1:
+        return exact_matches[0].get("source_id")
+
+    global_matches = [
+        s for s in pack_sources
+        if s.get("scope") == "global" and _pack_source_supports_metric(s, metric)
+    ]
+    if len(global_matches) == 1:
+        return global_matches[0].get("source_id")
+
+    any_matches = [s for s in pack_sources if _pack_source_supports_metric(s, metric)]
+    if len(any_matches) == 1:
+        return any_matches[0].get("source_id")
+    return None
 
 
 def detect_event_mode(items: list, hints: dict = None) -> list:
