@@ -1763,6 +1763,43 @@ async def get_pack_mcp_server_card(pack_id: str):
     return response
 
 
+@router.get("/.well-known/ai-plugin.json")
+async def get_ai_plugin_json():
+    app_url = str(get_runtime_config().get("app_url", "https://app.daedalmap.com")).rstrip("/")
+    payload = {
+        "schema_version": "v1",
+        "name_for_human": "DaedalMap Geographic Data",
+        "name_for_model": "daedalmap",
+        "description_for_human": (
+            "Geographic data packs for disasters, FX rates, demographics, and global indicators. "
+            "Free discovery. Free and paid execution lanes via HTTP API and MCP."
+        ),
+        "description_for_model": (
+            "Query structured geographic data across disasters (earthquakes, tsunamis, volcanoes, "
+            "hurricanes, tornadoes, floods), FX rates, UN SDG indicators, World Factbook country "
+            "profiles, and WorldPop population estimates. "
+            "Start with GET /api/v1/catalog to discover packs, then GET /api/v1/packs/{pack_id} "
+            "for the full metric inventory and query rules, then POST /api/v1/query/dataset with "
+            "the structured body from quick_start.first_query_template. "
+            "All packs share a loc_id key (ISO3 for countries, hierarchical for sub-national) "
+            "enabling cross-pack joins on a single column with no geography normalization. "
+            "Free packs: currency, volcanoes, hurricanes, un_sdg, world_factbook, worldpop, "
+            "floods, tornadoes. Paid packs via x402 on Base USDC: earthquakes, tsunamis."
+        ),
+        "auth": {"type": "none"},
+        "api": {
+            "type": "openapi",
+            "url": f"{app_url}/openapi.json",
+        },
+        "logo_url": "https://daedalmap.com/site-static/daedalmap_logo_v1.png",
+        "contact_email": "contact@daedalmap.com",
+        "legal_info_url": "https://daedalmap.com/about",
+    }
+    response = JSONResponse(payload)
+    response.headers["Cache-Control"] = "public, max-age=3600"
+    return response
+
+
 @router.get("/apis.json")
 async def get_apis_json():
     response = JSONResponse(_build_apis_json_payload())
