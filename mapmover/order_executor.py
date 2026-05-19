@@ -328,6 +328,8 @@ def _execution_requires_metric(item: dict, source_info: dict | None) -> bool:
         return False
     if item.get("mode") == "events":
         return False
+    if str((source_info or {}).get("geojson_shape") or "").strip().lower() == "location_shape":
+        return False
 
     data_type = (source_info or {}).get("data_type", "metrics")
     if isinstance(data_type, list):
@@ -335,6 +337,44 @@ def _execution_requires_metric(item: dict, source_info: dict | None) -> bool:
             return False
         return "metrics" in data_type
     return data_type == "metrics"
+
+
+def _apply_dataframe_filters(df: pd.DataFrame, filters: dict | None) -> pd.DataFrame:
+    """Apply generic equality/range/presence filters to a DataFrame."""
+    if df is None or df.empty or not isinstance(filters, dict) or not filters:
+        return df
+
+    filtered = df
+    for field, value in filters.items():
+        if field.endswith("_min"):
+            col = field[:-4]
+            if col in filtered.columns:
+                filtered = filtered[filtered[col] >= value]
+            continue
+        if field.endswith("_max"):
+            col = field[:-4]
+            if col in filtered.columns:
+                filtered = filtered[filtered[col] <= value]
+            continue
+        if field not in filtered.columns:
+            continue
+
+        if isinstance(value, dict):
+            op = str(value.get("op") or "").strip().lower()
+            if op == "not_empty":
+                series = filtered[field]
+                filtered = filtered[series.notna() & (series.astype(str).str.strip() != "")]
+            elif op == "in":
+                candidates = value.get("values") or []
+                if candidates:
+                    filtered = filtered[filtered[field].isin(candidates)]
+            elif op == "eq" and "value" in value:
+                filtered = filtered[filtered[field] == value.get("value")]
+            continue
+
+        filtered = filtered[filtered[field] == value]
+
+    return filtered
 
 
 def _validate_execution_items(items: list) -> str | None:
@@ -2473,6 +2513,7 @@ def execute_order(order: dict) -> dict:
     metric_source_map = {}  # Track which metric belongs to which source
     aggregation_trace = []  # Track applied aggregation contract per item
     loc_level_map = {}  # Track loc_id -> geo_level for multi-level multi-year filtering
+    location_features = []  # Direct point features for location_shape sources
     requested_year_start = None  # Track requested range for comparison
     requested_year_end = None
     all_region_codes = set()  # Track all requested region codes for GeoJSON
@@ -2483,6 +2524,7 @@ def execute_order(order: dict) -> dict:
         source_id = item.get("source_id")
         metric = item.get("metric")
         region = item.get("region")
+        filters = item.get("filters") or {}
         requested_geo_level = _normalize_geo_level(item.get("geo_level"))
         if requested_geo_level:
             requested_geo_levels.add(requested_geo_level)
@@ -2613,6 +2655,9 @@ def execute_order(order: dict) -> dict:
         if requested_geo_level and "geo_level" in df.columns:
             df = df[df["geo_level"] == requested_geo_level]
 
+        df = _apply_dataframe_filters(df, filters)
+        t_after_filter = _executor_log(trace_id, "field_filters_applied", t_after_region_filter, f"item={idx}/{len(items)} source={source_id} rows={len(df)}")
+
         # Apply sort/limit if specified (only for single-year mode)
         if sort_spec and not multi_year_mode:
             sort_col = sort_spec.get("by")
@@ -2623,7 +2668,39 @@ def execute_order(order: dict) -> dict:
                     df = df.sort_values(matched_col, ascending=ascending, na_position='last')
                     if sort_spec.get("limit"):
                         df = df.head(sort_spec["limit"])
-        t_after_sort = _executor_log(trace_id, "sort_applied", t_after_region_filter, f"item={idx}/{len(items)} source={source_id} rows={len(df)}")
+        t_after_sort = _executor_log(trace_id, "sort_applied", t_after_filter, f"item={idx}/{len(items)} source={source_id} rows={len(df)}")
+
+        if str(metadata.get("geojson_shape", "")).strip().lower() == "location_shape":
+            lat_col, lon_col = _get_coordinate_columns(df)
+            if lat_col and lon_col:
+                for _, row in df.iterrows():
+                    lat = row.get(lat_col)
+                    lon = row.get(lon_col)
+                    if pd.isna(lat) or pd.isna(lon):
+                        continue
+
+                    properties = {}
+                    for col in df.columns:
+                        if col.startswith("_"):
+                            continue
+                        val = row.get(col)
+                        if pd.notna(val):
+                            if hasattr(val, "item"):
+                                val = val.item()
+                            if isinstance(val, pd.Timestamp):
+                                val = val.isoformat()
+                            properties[col] = val
+
+                    location_features.append({
+                        "type": "Feature",
+                        "geometry": {
+                            "type": "Point",
+                            "coordinates": [float(lon), float(lat)]
+                        },
+                        "properties": properties
+                    })
+            _executor_log(trace_id, "location_features_built", t_after_sort, f"item={idx}/{len(items)} source={source_id} features={len(location_features)}")
+            continue
 
         # metric_col already found above for year filtering
         if not metric_col:
@@ -2741,6 +2818,36 @@ def execute_order(order: dict) -> dict:
     if year_data:
         for year_locs in year_data.values():
             loc_ids_to_check = loc_ids_to_check | set(year_locs.keys())
+
+    if location_features and not loc_ids_to_check and not year_data:
+        source_info = [
+            {
+                "id": sid,
+                "name": meta.get("source_name", sid),
+                "url": meta.get("source_url", ""),
+                "category": meta.get("category", "general")
+            }
+            for sid, meta in sources_used.items()
+        ]
+        primary_source = list(sources_used.keys())[0] if sources_used else None
+        response = {
+            "type": "data",
+            "data_type": "geometry",
+            "geographic_level": "points",
+            "available_geo_levels": ["points"],
+            "source_id": primary_source,
+            "geojson": {
+                "type": "FeatureCollection",
+                "features": location_features
+            },
+            "summary": summary or f"Showing {len(location_features)} locations",
+            "count": len(location_features),
+            "sources": source_info,
+            "metric_sources": metric_source_map,
+            "aggregation_trace": aggregation_trace,
+        }
+        _executor_log(trace_id, "complete", t_execute_start, f"features={len(location_features)} source={primary_source} response_type={response.get('type')}")
+        return response
 
     geometry_df = None
 

@@ -260,6 +260,8 @@ def build_system_prompt(catalog: dict, conversions: dict) -> str:
             return "county/tract/admin geometry choropleth with geometry-region popups"
         if shape == "event_shape":
             return "event/perimeter overlay with disaster/event popups"
+        if shape == "location_shape":
+            return "point-location map with place/facility popups"
         if shape == "building_shape":
             return "building footprint geometry with building popups"
         return ""
@@ -548,9 +550,11 @@ INTERACTION POLICY:
 - For source-backed analytical questions, prefer returning type="order" over type="chat".
 - For published geographic packs, "show me/map/display [place] [topic]" should default to a real order, not a catalog-status explanation.
 - If the user broadly asks to show/map/display a specific source or pack's "data" without naming a metric, prefer a real order using `metric: "*"` over a metric-list clarification, unless metadata explicitly requires choosing one metric first.
-- Respect `map shape` in the catalog. `geometry_shape` means region geometry like counties/tracts with geometry-region popups. `event_shape` means incident/perimeter/event overlays with disaster/event popups.
+- Respect `map shape` in the catalog. `geometry_shape` means region geometry like counties/tracts with geometry-region popups. `event_shape` means incident/perimeter/event overlays with disaster/event popups. `location_shape` means point locations or facilities that should usually be shown directly on the map.
 - For county/tract/state/province ranking requests ("top counties", "highest counties on the map"), prefer `geometry_shape` sources. Do not satisfy region choropleths with `event_shape` sources.
+- For `location_shape` sources, "show/find/map/list/count [locations/facilities/sites] in [place]" should default to a real order instead of chat. Use `location_shape` for point registries, facilities, workshops, labs, and nearest-site style questions.
 - When a user combines regional rankings with event-derived metrics, prefer an aggregate regional source if one exists in the same pack. Use direct event sources only when the user is asking for incidents, perimeters, tracks, or individual events on the map.
+- If the user asks "how many", "most", "highest count", "frequency", "share", or "rank", prefer a count/frequency/share metric or an aggregate regional source when available. Do not choose unrelated numeric metrics like duration just because they are present.
 - If the user names a published geographic pack/topic but not an exact metric, choose the best-fit metric from the source's keywords/names and use the latest available year unless the user asked for a specific year or comparison.
 - If the user asks broadly for a published source's "data" and then says "all", prefer a real order for all metrics rather than re-describing availability or publication state.
 - Do not say you cannot retrieve metrics for a published pack just because the user asked broadly. Either return an order or ask one tight clarification about metric/time if genuinely needed.

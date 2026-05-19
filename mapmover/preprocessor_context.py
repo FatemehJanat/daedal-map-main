@@ -333,6 +333,9 @@ def build_tier3_context(
                 routing_lines.append(
                     "For broad topic/goal queries without a specific metric, respond with type=\"clarify\" and ask the user which metric they want using human-readable metric names."
                 )
+            filter_advice = routing_hints.get("filter_advice")
+            if filter_advice:
+                routing_lines.append(f"Filter guidance: {filter_advice}")
             unsupported_aliases = routing_hints.get("unsupported_metric_aliases") or []
             if unsupported_aliases:
                 examples = ", ".join(str(v) for v in unsupported_aliases[:4])
@@ -360,6 +363,10 @@ def build_tier3_context(
                         + "; ".join(alias_examples[:8])
                         + "."
                     )
+            if str(metadata.get("geojson_shape", "")).strip().lower() == "location_shape":
+                routing_lines.append(
+                    "For point-location registry queries ('show/find/map/list/count locations in X'), prefer type=\"order\" anchored to this source. Use loc_id for country filters and facility_type/source/website when the query names a facility class or asks for websites/public spaces."
+                )
             if routing_lines:
                 msg += "\n\nROUTING GUIDANCE:\n"
                 for line in routing_lines:
