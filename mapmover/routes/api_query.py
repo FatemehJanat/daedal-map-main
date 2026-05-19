@@ -36,7 +36,7 @@ from mapmover.api_query_runtime import (
 from mapmover.geography import get_country_names_from_codes
 from mapmover.logging_analytics import hash_ip_for_analytics, log_api_query_event
 from mapmover.paths import SITE_URL
-from mapmover.security import get_client_ip
+from mapmover.security import get_client_ip, rate_limiter
 
 
 router = APIRouter()
@@ -216,6 +216,25 @@ def _parse_temporal_filter_value(raw_value: Any) -> str:
 
 def _commercial_access_enabled() -> bool:
     return str(os.getenv("COMMERCIAL_ACCESS_ENABLED", "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _trusted_artifact_tokens() -> set[str]:
+    raw = os.getenv("ARTIFACT_ACCESS_TOKENS", "").strip()
+    if not raw:
+        return set()
+    return {tok.strip() for tok in raw.split(",") if tok.strip()}
+
+
+def _get_trusted_artifact_token(request: Request) -> str | None:
+    """Return the matched token string if the request carries a valid artifact token, else None."""
+    tokens = _trusted_artifact_tokens()
+    if not tokens:
+        return None
+    auth_header = request.headers.get("authorization", "").strip()
+    if not auth_header.lower().startswith("bearer "):
+        return None
+    provided = auth_header[7:].strip()
+    return provided if provided in tokens else None
 
 
 def _pack_requires_commercial_access(pack_id: str | None) -> bool:
@@ -1454,7 +1473,36 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
     verifier_payload: dict[str, Any] | None = None
     payment_rail: str | None = None
     amount_charged_usdc_base_units: int | None = None
-    if _pack_requires_commercial_access(spec.pack_id):
+    artifact_token = _get_trusted_artifact_token(req)
+    if artifact_token is not None:
+        token_limit = int(os.getenv("ARTIFACT_TOKEN_RATE_LIMIT", "20"))
+        token_window = int(os.getenv("ARTIFACT_TOKEN_RATE_WINDOW_SECONDS", "60"))
+        allowed, retry_after = rate_limiter.check(
+            f"artifact_token:{artifact_token}",
+            limit=token_limit,
+            window_seconds=token_window,
+        )
+        if not allowed:
+            return error_response(
+                request_id,
+                "rate_limited",
+                "Too many requests for this access token. Please slow down and try again shortly.",
+                429,
+                retry_hint=f"Retry after {retry_after} seconds.",
+                pack_id=spec.pack_id,
+                source_id=source_id,
+            )
+        payment_rail = "trusted_artifact"
+        token_id = hashlib.sha256(artifact_token.encode()).hexdigest()[:8]
+        _api_analytics_metadata(
+            req,
+            query_scope=query_scope,
+            access_lane="trusted_artifact",
+        )
+        existing_meta = getattr(req.state, "analytics_metadata", {})
+        existing_meta["artifact_token_id"] = token_id
+        req.state.analytics_metadata = existing_meta
+    elif _pack_requires_commercial_access(spec.pack_id):
         if not _commercial_access_enabled():
             return error_response(
                 request_id,
