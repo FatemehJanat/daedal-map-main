@@ -85,8 +85,14 @@ def detect_source_candidates(
                     add_candidate(source_id, source_name, score_source_id_match + data_boost, "source_id", source_id)
                     coarse_candidate_ids.add(source_id)
             elif source_id_lower in query_lower:
-                add_candidate(source_id, source_name, score_source_id_match + data_boost, "source_id", source_id)
-                coarse_candidate_ids.add(source_id)
+                short_alpha_id = source_id_lower.isalpha() and len(source_id_lower) <= 6
+                explicit_source_ref = re.search(
+                    rf"\b(?:{re.escape(source_id_lower)}\s+(?:data|dataset|source)|from\s+{re.escape(source_id_lower)}|using\s+{re.escape(source_id_lower)})\b",
+                    query_lower,
+                )
+                if not short_alpha_id or explicit_source_ref:
+                    add_candidate(source_id, source_name, score_source_id_match + data_boost, "source_id", source_id)
+                    coarse_candidate_ids.add(source_id)
 
         for phrase in source_keywords + source_topic_tags:
             if len(phrase) < 4:
@@ -102,6 +108,9 @@ def detect_source_candidates(
     metadata_scan_sources = sources
     if coarse_candidate_ids:
         metadata_scan_sources = [src for src in sources if src.get("source_id") in coarse_candidate_ids]
+        strongest_coarse_confidence = max((cand.get("confidence", 0.0) for cand in candidates), default=0.0)
+        if strongest_coarse_confidence <= max(score_source_partial_8, score_source_partial_4):
+            metadata_scan_sources = sources
 
     for source in metadata_scan_sources:
         source_id = source.get("source_id", "")
