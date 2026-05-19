@@ -107,10 +107,20 @@
       "_note": "Southern Asian region",
       "countries": ["AFG", "BGD", "BTN", "IND", "MDV", "NPL", "PAK", "LKA"]
     },
+    "Pacific_Ring_of_Fire": {
+      "code": "ROF",
+      "_note": "Approximate Pacific Rim countries commonly used for earthquake/volcano trend questions",
+      "countries": ["AUS", "CAN", "CHL", "COL", "CRI", "ECU", "GTM", "HND", "IDN", "JPN", "MEX", "NZL", "NIC", "PAN", "PER", "PHL", "PNG", "RUS", "SLB", "TWN", "USA", "VUT"]
+    },
     "Southeast_Asia": {
       "code": "SEASIA",
       "_note": "Southeast Asian region",
       "countries": ["BRN", "KHM", "IDN", "LAO", "MYS", "MMR", "PHL", "SGP", "THA", "TLS", "VNM"]
+    },
+    "Mediterranean_Sea": {
+      "code": "MED",
+      "_note": "Approximate set of Mediterranean littoral countries for basin-level disaster queries",
+      "countries": ["ALB", "DZA", "BIH", "HRV", "CYP", "EGY", "FRA", "GRC", "ISR", "ITA", "LBN", "LBY", "MCO", "MNE", "MAR", "PSE", "SVN", "ESP", "SYR", "TUN", "TUR"]
     },
     "Central_Asia": {
       "code": "CASIA",
@@ -331,6 +341,10 @@
     "North Africa": "North_Africa",
     "East Asia": "East_Asia",
     "South Asia": "South_Asia",
+    "Ring of Fire": "Pacific_Ring_of_Fire",
+    "Pacific Ring of Fire": "Pacific_Ring_of_Fire",
+    "Mediterranean": "Mediterranean_Sea",
+    "Mediterranean Sea": "Mediterranean_Sea",
     "Central Asia": "Central_Asia",
     "LDCs": "Least_Developed_Countries",
     "Least developed": "Least_Developed_Countries",

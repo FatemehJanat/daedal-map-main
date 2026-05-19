@@ -1066,19 +1066,52 @@ def _load_event_data_duckdb(source_id: str, item: dict, event_file_key: str = "e
             params.append(year)
 
     region_codes = expand_region(region)
-    if region_codes and loc_id_col:
+    if region_codes:
         us_state_prefixes = sorted(c for c in region_codes if c.startswith("USA-"))
         country_codes = sorted(c for c in region_codes if not c.startswith("USA-"))
         region_parts = []
 
-        for prefix in us_state_prefixes:
-            region_parts.append(f"{quote_ident(loc_id_col)} LIKE ?")
-            params.append(f"{prefix}%")
+        if loc_id_col:
+            for prefix in us_state_prefixes:
+                region_parts.append(f"{quote_ident(loc_id_col)} LIKE ?")
+                params.append(f"{prefix}%")
 
-        if country_codes:
-            placeholders = ", ".join("?" for _ in country_codes)
-            region_parts.append(f"split_part({quote_ident(loc_id_col)}, '-', 1) IN ({placeholders})")
-            params.extend(country_codes)
+            if country_codes:
+                placeholders = ", ".join("?" for _ in country_codes)
+                region_parts.append(f"split_part({quote_ident(loc_id_col)}, '-', 1) IN ({placeholders})")
+                params.extend(country_codes)
+
+        # Some event sources use loc_id as an event identifier instead of a hierarchical
+        # geography code. Fall back to country/name fields so regional filtering still works.
+        country_name_cols = [col for col in ("country", "country_name") if col in available_cols]
+        if country_codes and country_name_cols:
+            iso3_to_name = _load_iso_codes().get("iso3_to_name", {})
+            country_names = sorted(
+                {
+                    str(iso3_to_name.get(code, "")).strip().upper()
+                    for code in country_codes
+                    if str(iso3_to_name.get(code, "")).strip()
+                }
+            )
+            for col in country_name_cols:
+                if country_names:
+                    placeholders = ", ".join("?" for _ in country_names)
+                    region_parts.append(f"upper({quote_ident(col)}) IN ({placeholders})")
+                    params.extend(country_names)
+
+        state_abbrevs = _load_usa_admin().get("state_abbreviations", {})
+        state_name_cols = [col for col in ("state", "state_name", "admin1_name") if col in available_cols]
+        state_text_cols = [col for col in ("place", "location", "name", "title") if col in available_cols]
+        for prefix in us_state_prefixes:
+            state_abbrev = prefix.split("-")[1]
+            state_name = str(state_abbrevs.get(state_abbrev, "")).strip().upper()
+            if state_name:
+                for col in state_name_cols:
+                    region_parts.append(f"upper({quote_ident(col)}) = ?")
+                    params.append(state_name)
+                for col in state_text_cols:
+                    region_parts.append(f"upper({quote_ident(col)}) LIKE ?")
+                    params.append(f"%{state_name}%")
 
         if region_parts:
             where_clauses.append("(" + " OR ".join(region_parts) + ")")
@@ -1740,7 +1773,7 @@ def execute_event_order(order: dict) -> dict:
 
     if (
         source_id == "hurricanes"
-        and event_file_key == "storms"
+        and event_file_key in {"events", "storms"}
         and ("latitude" not in df.columns or "longitude" not in df.columns)
     ):
         positions_path, _ = _resolve_event_parquet_path(source_id, "positions")

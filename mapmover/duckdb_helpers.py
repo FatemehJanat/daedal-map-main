@@ -32,6 +32,7 @@ _MISSING_TIME_FILTER_WARNING_KEYS: set[tuple[str, tuple[str, ...]]] = set()
 
 
 DUCKDB_EVENT_SOURCES = {
+    # Legacy pack-level event ids
     "earthquakes",
     "floods",
     "hurricanes",
@@ -39,6 +40,15 @@ DUCKDB_EVENT_SOURCES = {
     "tornadoes",
     "tsunamis",
     "volcanoes",
+    # Current pack-facing event source ids after disaster source cleanup
+    "earthquakes_events",
+    "tsunamis_events",
+    "volcanoes_events",
+    # Wildfire event sources remain split by upstream family rather than a single
+    # shared events parquet, so keep the concrete event-capable ids here.
+    "global_fire_atlas",
+    "wildfires_usa",
+    "can_wildfires",
 }
 
 
