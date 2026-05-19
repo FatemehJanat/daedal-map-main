@@ -618,6 +618,16 @@ def _infer_implicit_aggregate_rollup_level(item: dict) -> Optional[str]:
     if item.get("aggregate_rollup_level"):
         return None
     region = item.get("region")
+    if not region:
+        if item.get("aggregate_all_years") or item.get("aggregate_use_rolling"):
+            return "admin_0"
+        year = item.get("year")
+        year_start = item.get("year_start")
+        year_end = item.get("year_end")
+        if year_start is not None or year_end is not None:
+            if year is None or year_start != year_end:
+                return "admin_0"
+        return None
     region_codes = expand_region(region)
     if len(region_codes) <= 1:
         return None

@@ -122,7 +122,9 @@ def detect_source_candidates(
         aliases = []
         for field_name in ("query_aliases", "broad_topic_aliases"):
             field_values = routing_hints.get(field_name) or []
-            if isinstance(field_values, list):
+            if isinstance(field_values, dict):
+                aliases.extend(str(v).strip().lower() for v in field_values.keys() if v)
+            elif isinstance(field_values, list):
                 aliases.extend(str(v).strip().lower() for v in field_values if v)
         if not aliases:
             continue
