@@ -370,6 +370,9 @@ def build_tier3_context(
                 routing_lines.append(
                     "For point-location registry queries ('show/find/map/list/count locations in X'), prefer type=\"order\" anchored to this source. Use loc_id for country filters and facility_type/source/website when the query names a facility class or asks for websites/public spaces. It is valid to omit metric entirely for location listings and filtered point maps."
                 )
+                routing_lines.append(
+                    "If this detected location source already clearly matches the user query, do not switch to type=\"chat\" just to describe the source. Queries such as 'show all fab labs in the United States', 'show all public Prusa spaces on the map', or 'map all fab labs globally' should return a real order with region and filters when needed."
+                )
             if routing_lines:
                 msg += "\n\nROUTING GUIDANCE:\n"
                 for line in routing_lines:

@@ -488,12 +488,6 @@ async def chat_endpoint(req: Request):
                         "geojson": geojson,
                     }
                 )
-            return msgpack_response(
-                {
-                    "type": "chat",
-                    "reply": "I don't have a list of locations to display. Please first ask about specific locations (e.g., 'show me washington county') to get a list.",
-                }
-            )
 
         navigation = hints.get("navigation")
         if navigation and navigation.get("is_navigation"):
@@ -880,9 +874,6 @@ async def chat_stream_endpoint(req: Request):
                         }
                         yield f"data: {json.dumps({'stage': 'complete', 'result': result})}\n\n"
                         return
-                result = {"type": "chat", "reply": "I don't have a list of locations to display."}
-                yield f"data: {json.dumps({'stage': 'complete', 'result': result})}\n\n"
-                return
 
             if hints.get("address_prompt"):
                 yield f"data: {json.dumps({'stage': 'complete', 'result': _address_prompt_response(hints.get('address_prompt'))})}\n\n"
