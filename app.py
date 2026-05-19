@@ -206,6 +206,7 @@ async def lifespan(app: FastAPI):
     # DataFrame cache, and the geometry cache so cold object-storage fetches do not hit
     # the first user requests.
     try:
+        from mapmover.data_loading import prewarm_api_catalog
         from mapmover.duckdb_helpers import is_cloud_mode, prewarm_disaster_sources
         from mapmover.geometry_handlers import prewarm_geometry
         from mapmover.paths import GLOBAL_DIR
@@ -215,6 +216,12 @@ async def lifespan(app: FastAPI):
             name="prewarm-public-pack-catalog",
         )
         t_public_catalog.start()
+        t_api_catalog = threading.Thread(
+            target=prewarm_api_catalog,
+            daemon=True,
+            name="prewarm-api-catalog",
+        )
+        t_api_catalog.start()
         if is_cloud_mode():
             t_disaster = threading.Thread(
                 target=prewarm_disaster_sources,
@@ -231,9 +238,9 @@ async def lifespan(app: FastAPI):
             )
             t_geom.start()
 
-            logger.info("Pre-warmers started: public-pack-catalog + disasters + geometry")
+            logger.info("Pre-warmers started: public-pack-catalog + api-catalog + disasters + geometry")
         else:
-            logger.info("Pre-warmers started: public-pack-catalog")
+            logger.info("Pre-warmers started: public-pack-catalog + api-catalog")
     except Exception as exc:
         logger.warning("Pre-warmer failed to start: %s", exc)
 

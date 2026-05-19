@@ -74,6 +74,11 @@ _api_guide_missing_time = 0.0
 _api_pack_cache: dict[str, dict] = {}
 _api_pack_cache_time: dict[str, float] = {}
 _api_pack_missing_time: dict[str, float] = {}
+# Agent/API catalog changes only on deliberate publish, not on every live-source
+# tick. Use a longer TTL than the human catalog to avoid cold R2 round trips on
+# frequent external probes (e.g. 402 Index health checks). clear_api_discovery_cache()
+# forces an immediate refresh when a new pack is published.
+_API_CATALOG_TTL_SECONDS = 3600  # 1 hour
 
 PACK_LOAD_MAX_SOURCES = 8
 PACK_LOAD_MAX_FILE_SIZE_MB = 200.0
@@ -239,7 +244,7 @@ def load_api_catalog() -> dict:
     global _api_catalog_cache, _api_catalog_cache_time, _api_catalog_missing_time
 
     now = time.time()
-    if _api_catalog_cache is not None and (now - _api_catalog_cache_time) < _CATALOG_TTL_SECONDS:
+    if _api_catalog_cache is not None and (now - _api_catalog_cache_time) < _API_CATALOG_TTL_SECONDS:
         return _api_catalog_cache
     if _api_catalog_cache is None and (now - _api_catalog_missing_time) < _CATALOG_MISS_TTL_SECONDS:
         return {"catalog_version": "1.0", "generated_at": None, "source_mode": "api_catalog", "pack_count": 0, "packs": []}
@@ -258,7 +263,7 @@ def load_api_guide() -> dict:
     global _api_guide_cache, _api_guide_cache_time, _api_guide_missing_time
 
     now = time.time()
-    if _api_guide_cache is not None and (now - _api_guide_cache_time) < _CATALOG_TTL_SECONDS:
+    if _api_guide_cache is not None and (now - _api_guide_cache_time) < _API_CATALOG_TTL_SECONDS:
         return _api_guide_cache
     if _api_guide_cache is None and (now - _api_guide_missing_time) < _CATALOG_MISS_TTL_SECONDS:
         return {}
@@ -283,7 +288,7 @@ def load_api_pack_detail(pack_id: str) -> dict | None:
     now = time.time()
     cached = _api_pack_cache.get(pack_id)
     cached_time = _api_pack_cache_time.get(pack_id, 0.0)
-    if cached is not None and (now - cached_time) < _CATALOG_TTL_SECONDS:
+    if cached is not None and (now - cached_time) < _API_CATALOG_TTL_SECONDS:
         return cached
     if cached is None and (now - _api_pack_missing_time.get(pack_id, 0.0)) < _CATALOG_MISS_TTL_SECONDS:
         return None
@@ -854,6 +859,21 @@ def clear_metadata_cache():
     global _metadata_cache
     _metadata_cache = {}
     logger.info("Metadata cache cleared")
+
+
+def prewarm_api_catalog() -> None:
+    """Load agent/API discovery artifacts into cache at startup."""
+    try:
+        catalog = load_api_catalog()
+        pack_count = len((catalog or {}).get("packs", []))
+        load_api_guide()
+        for pack in (catalog or {}).get("packs", []):
+            pack_id = pack.get("pack_id")
+            if pack_id:
+                load_api_pack_detail(pack_id)
+        logger.info("API catalog prewarm complete: %d packs loaded", pack_count)
+    except Exception as exc:
+        logger.warning("API catalog prewarm failed: %s", exc)
 
 
 def clear_api_discovery_cache():
