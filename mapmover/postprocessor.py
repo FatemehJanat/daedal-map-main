@@ -329,10 +329,94 @@ def _source_has_aggregate_files(catalog_source: dict | None) -> bool:
     return any(path.exists() for path in candidates)
 
 
+def _source_geojson_shape(catalog_source: dict | None) -> str:
+    return str((catalog_source or {}).get("geojson_shape") or "").strip().lower()
+
+
+def _source_is_location_shape(catalog_source: dict | None) -> bool:
+    return _source_geojson_shape(catalog_source) == "location_shape"
+
+
+def _source_supports_aggregate_mode(catalog_source: dict | None) -> bool:
+    if _source_is_location_shape(catalog_source):
+        return False
+    data_type = (catalog_source or {}).get("data_type")
+    if isinstance(data_type, list):
+        if "events" in data_type and "metrics" not in data_type:
+            return False
+    elif data_type == "events":
+        return False
+    return _source_has_aggregate_files(catalog_source)
+
+
+def _apply_aggregate_query_hints(item: dict, query: str) -> None:
+    item["mode"] = "aggregate"
+    item.pop("event_file", None)
+
+    if item.get("aggregate_use_rolling") is None and ("rolling" in query or "last 10 years" in query or "past 10 years" in query):
+        item["aggregate_use_rolling"] = True
+        item["aggregate_window_years"] = 10
+    elif item.get("aggregate_use_rolling") is None and ("last 20 years" in query or "past 20 years" in query):
+        item["aggregate_use_rolling"] = True
+        item["aggregate_window_years"] = 20
+    elif item.get("aggregate_use_rolling") is None and ("last 30 years" in query or "past 30 years" in query):
+        item["aggregate_use_rolling"] = True
+        item["aggregate_window_years"] = 30
+
+    if "historically" in query:
+        item["aggregate_all_years"] = True
+
+    if "countries" in query or "country" in query:
+        item["aggregate_rollup_level"] = "admin_0"
+    elif "counties" in query or "county" in query:
+        item["aggregate_rollup_level"] = "admin_2"
+
+
+def _normalize_item_filters(item: dict, catalog_source: dict | None) -> None:
+    filterable_fields = (catalog_source or {}).get("filterable_fields") or []
+    if not filterable_fields:
+        source_id = item.get("source_id")
+        metadata = load_source_metadata(source_id) if source_id else {}
+        filterable_fields = metadata.get("filterable_fields") or []
+    if not isinstance(filterable_fields, list) or not filterable_fields:
+        return
+
+    filters = item.get("filters")
+    if not isinstance(filters, dict):
+        filters = {}
+
+    reserved = {
+        "type", "source_id", "pack_id", "metric", "metric_label", "region", "year", "year_start", "year_end",
+        "mode", "event_file", "filters", "sort", "limit", "summary", "all_sources", "load_scope",
+        "aggregate_use_rolling", "aggregate_window_years", "aggregate_rollup_level", "aggregate_all_years",
+    }
+
+    moved = False
+    for field_name in filterable_fields:
+        if field_name == "loc_id":
+            continue
+        if field_name in item and field_name not in reserved and field_name not in filters:
+            filters[field_name] = item.pop(field_name)
+            moved = True
+
+    if moved or filters:
+        item["filters"] = filters
+
+
+def _normalize_location_shape_metric(item: dict, catalog_source: dict | None) -> None:
+    if not _source_is_location_shape(catalog_source):
+        return
+    metric = str(item.get("metric") or "").strip().lower()
+    if metric in {"", "*", "all", "all_metrics", "latitude", "longitude", "lat", "lon", "lng"}:
+        item.pop("metric", None)
+
+
 def _source_requires_metric(item: dict, catalog_source: dict | None) -> bool:
     if item.get("type") in {"derived", "derived_result"}:
         return False
     if item.get("mode") == "events":
+        return False
+    if _source_is_location_shape(catalog_source):
         return False
     if not _source_has_metrics(catalog_source):
         return False
@@ -773,26 +857,19 @@ def validate_item(item: dict, catalog: dict) -> dict:
         return item
 
     catalog_source = _get_catalog_source(catalog, source_id)
+    _normalize_item_filters(item, catalog_source)
+    _normalize_location_shape_metric(item, catalog_source)
+    metric = item.get("metric")
 
     if (
         not item.get("mode")
         and _source_has_metrics(catalog_source)
-        and _source_has_aggregate_files(catalog_source)
+        and _source_supports_aggregate_mode(catalog_source)
     ):
-        item["mode"] = "aggregate"
-
         query = str(((item.get("_hints") or {}).get("original_query")) or "").lower()
         if not query and isinstance(catalog_source, dict):
             query = ""
-        if item.get("aggregate_use_rolling") is None and ("rolling" in query or "last 10 years" in query or "past 10 years" in query):
-            item["aggregate_use_rolling"] = True
-            item["aggregate_window_years"] = 10
-        elif item.get("aggregate_use_rolling") is None and ("last 20 years" in query or "past 20 years" in query):
-            item["aggregate_use_rolling"] = True
-            item["aggregate_window_years"] = 20
-        elif item.get("aggregate_use_rolling") is None and ("last 30 years" in query or "past 30 years" in query):
-            item["aggregate_use_rolling"] = True
-            item["aggregate_window_years"] = 30
+        _apply_aggregate_query_hints(item, query)
 
     # Some metric-only sources may still be returned with mode="events" because
     # the pack family also contains event-capable siblings. Normalize those
@@ -805,7 +882,7 @@ def validate_item(item: dict, catalog: dict) -> dict:
             or item.get("aggregate_window_years")
             or item.get("aggregate_rollup_level")
             or item.get("aggregate_all_years")
-            or _source_has_aggregate_files(catalog_source)
+            or _source_supports_aggregate_mode(catalog_source)
         ):
             item["mode"] = "aggregate"
         else:
@@ -1248,6 +1325,36 @@ def _resolve_pack_source_by_shape(
     return None
 
 
+def _resolve_pack_aggregate_source(
+    catalog: dict,
+    pack_id: str | None,
+    region: str | None,
+) -> str | None:
+    if not pack_id:
+        return None
+    pack_sources = [
+        s for s in _catalog_sources(catalog)
+        if s.get("pack_id") == pack_id and _source_supports_aggregate_mode(s)
+    ]
+    if not pack_sources:
+        return None
+
+    exact_matches = [
+        s for s in pack_sources
+        if s.get("scope") != "global" and _scope_matches_region(s.get("scope", "global"), region)
+    ]
+    candidates = exact_matches or pack_sources
+    candidates = sorted(
+        candidates,
+        key=lambda s: (
+            0 if "aggregate" in str(s.get("source_id") or "").lower() else 1,
+            0 if _source_geojson_shape(s) == "geometry_shape" else 1,
+            str(s.get("source_id") or ""),
+        ),
+    )
+    return candidates[0].get("source_id") if candidates else None
+
+
 def detect_event_mode(items: list, hints: dict = None) -> list:
     """
     Detect if items should use event mode instead of aggregate mode.
@@ -1311,13 +1418,21 @@ def detect_event_mode(items: list, hints: dict = None) -> list:
                 source_id = event_source_id
                 catalog_source = _get_catalog_source(catalog, source_id)
         elif wants_aggregate and pack_id:
-            geometry_source_id = _resolve_pack_source_by_shape(catalog, pack_id, item.get("region"), "geometry_shape")
-            if geometry_source_id:
-                item["source_id"] = geometry_source_id
-                if geometry_source_id != source_id:
+            aggregate_source_id = _resolve_pack_aggregate_source(catalog, pack_id, item.get("region"))
+            if aggregate_source_id:
+                item["source_id"] = aggregate_source_id
+                if aggregate_source_id != source_id:
                     item["_resolved_from_pack"] = True
-                source_id = geometry_source_id
+                source_id = aggregate_source_id
                 catalog_source = _get_catalog_source(catalog, source_id)
+            else:
+                geometry_source_id = _resolve_pack_source_by_shape(catalog, pack_id, item.get("region"), "geometry_shape")
+                if geometry_source_id and _source_supports_aggregate_mode(_get_catalog_source(catalog, geometry_source_id)):
+                    item["source_id"] = geometry_source_id
+                    if geometry_source_id != source_id:
+                        item["_resolved_from_pack"] = True
+                    source_id = geometry_source_id
+                    catalog_source = _get_catalog_source(catalog, source_id)
 
         event_file_key = _preferred_event_file_key(catalog_source)
         supports_events = _source_supports_events(catalog_source)
@@ -1340,28 +1455,8 @@ def detect_event_mode(items: list, hints: dict = None) -> list:
                 # Remove metric if it's just a placeholder
                 if metric in ("*", "all", "all_metrics", ""):
                     item.pop("metric", None)
-        elif wants_aggregate:
-            item["mode"] = "aggregate"
-            item.pop("event_file", None)
-
-            # Annotate rolling-window intent so executor can choose aggregate files directly.
-            if item.get("aggregate_use_rolling") is None and ("rolling" in query or "last 10 years" in query or "past 10 years" in query):
-                item["aggregate_use_rolling"] = True
-                item["aggregate_window_years"] = 10
-            elif item.get("aggregate_use_rolling") is None and ("last 20 years" in query or "past 20 years" in query):
-                item["aggregate_use_rolling"] = True
-                item["aggregate_window_years"] = 20
-
-            # Trend/history queries often want accumulated historical aggregate output
-            # rather than raw yearly/event display.
-            if "historically" in query:
-                item["aggregate_all_years"] = True
-
-            # Country-level wording should roll admin2 aggregates up to admin0.
-            if "countries" in query or "country" in query:
-                item["aggregate_rollup_level"] = "admin_0"
-            elif "counties" in query or "county" in query:
-                item["aggregate_rollup_level"] = "admin_2"
+        elif wants_aggregate and _source_supports_aggregate_mode(catalog_source):
+            _apply_aggregate_query_hints(item, query)
 
         updated_items.append(item)
 
@@ -1388,26 +1483,9 @@ def normalize_aggregate_metric_mode(items: list, hints: dict = None, catalog: di
             source_id
             and not item.get("mode")
             and _source_has_metrics(catalog_source)
-            and _source_has_aggregate_files(catalog_source)
+            and _source_supports_aggregate_mode(catalog_source)
         ):
-            item["mode"] = "aggregate"
-            if item.get("aggregate_use_rolling") is None and ("rolling" in query or "last 10 years" in query or "past 10 years" in query):
-                item["aggregate_use_rolling"] = True
-                item["aggregate_window_years"] = 10
-            elif item.get("aggregate_use_rolling") is None and ("last 20 years" in query or "past 20 years" in query):
-                item["aggregate_use_rolling"] = True
-                item["aggregate_window_years"] = 20
-            elif item.get("aggregate_use_rolling") is None and ("last 30 years" in query or "past 30 years" in query):
-                item["aggregate_use_rolling"] = True
-                item["aggregate_window_years"] = 30
-
-            if "historically" in query:
-                item["aggregate_all_years"] = True
-
-            if "countries" in query or "country" in query:
-                item["aggregate_rollup_level"] = "admin_0"
-            elif "counties" in query or "county" in query:
-                item["aggregate_rollup_level"] = "admin_2"
+            _apply_aggregate_query_hints(item, query)
 
         updated_items.append(item)
 

@@ -329,6 +329,9 @@ def build_tier3_context(
                 routing_lines.append(
                     f'For broad analytical queries that clearly match this source, prefer type="order" with metric="{routing_hints["single_metric_default"]}" unless the user asks for a different metric.'
                 )
+                routing_lines.append(
+                    "This includes count/share/ranking questions. Do not fall back to chat just because the source is static, tract-level, or analytical."
+                )
             if routing_hints.get("clarify_on_missing_metric"):
                 routing_lines.append(
                     "For broad topic/goal queries without a specific metric, respond with type=\"clarify\" and ask the user which metric they want using human-readable metric names."
@@ -365,7 +368,7 @@ def build_tier3_context(
                     )
             if str(metadata.get("geojson_shape", "")).strip().lower() == "location_shape":
                 routing_lines.append(
-                    "For point-location registry queries ('show/find/map/list/count locations in X'), prefer type=\"order\" anchored to this source. Use loc_id for country filters and facility_type/source/website when the query names a facility class or asks for websites/public spaces."
+                    "For point-location registry queries ('show/find/map/list/count locations in X'), prefer type=\"order\" anchored to this source. Use loc_id for country filters and facility_type/source/website when the query names a facility class or asks for websites/public spaces. It is valid to omit metric entirely for location listings and filtered point maps."
                 )
             if routing_lines:
                 msg += "\n\nROUTING GUIDANCE:\n"

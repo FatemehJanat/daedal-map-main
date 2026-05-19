@@ -73,6 +73,13 @@ CONVERSIONS_PATH = Path(__file__).parent / "conversions.json"
 _conversions_cache = None
 _iso_codes_cache = None
 _usa_admin_cache = None
+_usa_county_slug_cache = {}
+_US_REGIONAL_GROUPS = {
+    "usa west": {"USA-AZ", "USA-CA", "USA-CO", "USA-ID", "USA-MT", "USA-NM", "USA-NV", "USA-OR", "USA-UT", "USA-WA", "USA-WY"},
+    "western us": {"USA-AZ", "USA-CA", "USA-CO", "USA-ID", "USA-MT", "USA-NM", "USA-NV", "USA-OR", "USA-UT", "USA-WA", "USA-WY"},
+    "western u.s.": {"USA-AZ", "USA-CA", "USA-CO", "USA-ID", "USA-MT", "USA-NM", "USA-NV", "USA-OR", "USA-UT", "USA-WA", "USA-WY"},
+    "western united states": {"USA-AZ", "USA-CA", "USA-CO", "USA-ID", "USA-MT", "USA-NM", "USA-NV", "USA-OR", "USA-UT", "USA-WA", "USA-WY"},
+}
 
 
 def _coerce_year(value) -> Optional[int]:
@@ -112,6 +119,57 @@ def _normalize_year_filters(item: dict) -> tuple[Optional[int], Optional[int], O
         item["year_end"] = year_end
 
     return year, year_start, year_end
+
+
+def _normalize_county_slug(value: str) -> str:
+    text = str(value or "").strip().lower().replace("-", " ")
+    text = re.sub(r"[^a-z0-9 ]+", " ", text)
+    for suffix in (
+        " county",
+        " parish",
+        " borough",
+        " census area",
+        " municipality",
+        " city and borough",
+        " city",
+    ):
+        if text.endswith(suffix):
+            text = text[: -len(suffix)]
+            break
+    return " ".join(text.split())
+
+
+def _resolve_us_county_slug_loc_id(region: str) -> Optional[str]:
+    value = str(region or "").strip()
+    match = re.fullmatch(r"USA-([A-Z]{2})-([A-Za-z0-9-]+)", value)
+    if not match:
+        return None
+
+    state_abbrev = match.group(1)
+    county_slug = match.group(2)
+    if county_slug.isdigit():
+        return None
+
+    cache_key = (state_abbrev, county_slug.lower())
+    if cache_key in _usa_county_slug_cache:
+        return _usa_county_slug_cache[cache_key]
+
+    counties_df = load_country_parquet("USA", admin_level=2)
+    if counties_df is None or counties_df.empty or "loc_id" not in counties_df.columns or "name" not in counties_df.columns:
+        _usa_county_slug_cache[cache_key] = None
+        return None
+
+    target = _normalize_county_slug(county_slug)
+    subset = counties_df[counties_df["loc_id"].astype(str).str.startswith(f"USA-{state_abbrev}-", na=False)].copy()
+    if subset.empty:
+        _usa_county_slug_cache[cache_key] = None
+        return None
+
+    subset["_norm_name"] = subset["name"].map(_normalize_county_slug)
+    exact = subset[subset["_norm_name"] == target]
+    loc_id = str(exact.iloc[0]["loc_id"]) if not exact.empty else None
+    _usa_county_slug_cache[cache_key] = loc_id
+    return loc_id
 
 
 def _normalize_sort_spec(sort_spec):
@@ -402,6 +460,8 @@ def _aggregate_metric_frame(df: pd.DataFrame, group_cols: list[str]) -> pd.DataF
     for col in df.columns:
         if col in group_cols or col == "source":
             continue
+        if col in {"year", "window_end_year"}:
+            continue
         if col.startswith("max_"):
             agg_map[col] = "max"
         elif col.startswith("avg_"):
@@ -479,11 +539,24 @@ def _load_disaster_aggregate_data(source_id: str, item: dict) -> tuple[Optional[
 
     metadata = load_source_metadata(source_id) or {}
     metadata = dict(metadata)
-    metadata["geographic_level"] = item.get("aggregate_rollup_level") or "admin_2"
+    implicit_rollup_level = _infer_implicit_aggregate_rollup_level(item)
+    rollup_level = item.get("aggregate_rollup_level") or implicit_rollup_level or "admin_2"
+    metadata["geographic_level"] = rollup_level
     metadata["aggregate_parquet"] = str(parquet_path)
 
     if "window_end_year" in df.columns and "year" not in df.columns:
         df = df.rename(columns={"window_end_year": "year"})
+
+    requested_metric = str(item.get("metric") or "").strip()
+    if requested_metric and requested_metric not in df.columns:
+        fallback_df, fallback_metadata = _derive_event_metric_aggregate_data(source_id, item, requested_metric)
+        if fallback_df is not None and fallback_metadata is not None:
+            df = fallback_df
+            metadata = fallback_metadata
+            rollup_level = "admin_0"
+            logger.info(
+                f"[aggregate] fallback {source_id}: derived metric='{requested_metric}' from event rows at admin_0"
+            )
 
     # If using rolling windows without an explicit year filter, default to latest window per loc_id.
     year, year_start, year_end = _normalize_year_filters(item)
@@ -496,7 +569,7 @@ def _load_disaster_aggregate_data(source_id: str, item: dict) -> tuple[Optional[
         df = _aggregate_metric_frame(df, group_cols)
 
     # Roll admin2 aggregates up to admin0 when explicitly requested.
-    if item.get("aggregate_rollup_level") == "admin_0" and "loc_id" in df.columns:
+    if rollup_level == "admin_0" and "loc_id" in df.columns:
         df = df.copy()
         df["loc_id"] = df["loc_id"].astype(str).str.split("-").str[0]
         group_cols = ["loc_id"]
@@ -504,12 +577,84 @@ def _load_disaster_aggregate_data(source_id: str, item: dict) -> tuple[Optional[
             group_cols.append("year")
         df = _aggregate_metric_frame(df, group_cols)
         metadata["geographic_level"] = "admin_0"
+    elif rollup_level == "admin_1" and "loc_id" in df.columns:
+        df = df.copy()
+        df["loc_id"] = (
+            df["loc_id"]
+            .astype(str)
+            .map(translate_geometry_id_to_local_id)
+            .str.split("-")
+            .str[:2]
+            .str.join("-")
+        )
+        group_cols = ["loc_id"]
+        if "year" in df.columns:
+            group_cols.append("year")
+        df = _aggregate_metric_frame(df, group_cols)
+        metadata["geographic_level"] = "admin_1"
 
     logger.info(
         f"[aggregate] load {source_id}: path={path_to_uri(parquet_path) if is_cloud_mode() else parquet_path} "
         f"rows={len(df)} level={metadata.get('geographic_level')}"
     )
     return df, metadata
+
+
+def _infer_implicit_aggregate_rollup_level(item: dict) -> Optional[str]:
+    if item.get("aggregate_rollup_level"):
+        return None
+    region = item.get("region")
+    region_codes = expand_region(region)
+    if len(region_codes) <= 1:
+        return None
+
+    normalized = [str(code) for code in region_codes if isinstance(code, str)]
+    if not normalized:
+        return None
+
+    if all("-" not in code for code in normalized):
+        return "admin_0"
+
+    country_prefixes = {code.split("-")[0] for code in normalized if "-" in code}
+    if len(country_prefixes) == 1 and all(code.count("-") >= 1 for code in normalized):
+        return "admin_1"
+
+    return None
+
+
+def _derive_event_metric_aggregate_data(source_id: str, item: dict, requested_metric: str) -> tuple[Optional[pd.DataFrame], Optional[dict]]:
+    event_df, metadata = load_event_data(source_id)
+    if event_df is None or event_df.empty:
+        return None, None
+    if requested_metric not in event_df.columns or "timestamp" not in event_df.columns:
+        return None, None
+
+    df = event_df.copy()
+    timestamps = pd.to_datetime(df["timestamp"], errors="coerce")
+    df = df[timestamps.notna()].copy()
+    if df.empty:
+        return None, None
+    df["year"] = timestamps[timestamps.notna()].dt.year.astype("Int64")
+    df = df[df["year"].notna()].copy()
+    if df.empty:
+        return None, None
+
+    # Raw event loc_ids are incident ids with country prefixes; for aggregate fallback
+    # we can still build meaningful country-level totals from the prefix.
+    df["loc_id"] = df["loc_id"].astype(str).str.split("-").str[0]
+    df["event_count"] = 1
+
+    group_cols = ["loc_id", "year"]
+    agg_map = {requested_metric: "sum"}
+    if requested_metric != "event_count":
+        agg_map["event_count"] = "sum"
+    out = df.groupby(group_cols, as_index=False).agg(agg_map)
+    out["source"] = source_id
+
+    fallback_metadata = dict(metadata or {})
+    fallback_metadata["geographic_level"] = "admin_0"
+    fallback_metadata["aggregate_parquet"] = "event_metric_fallback"
+    return out, fallback_metadata
 
 
 def _source_supports_disaster_aggregates(source_id: str) -> bool:
@@ -1216,24 +1361,35 @@ def expand_region(region: str) -> set:
     if not region or region.lower() in ("global", "all", "world"):
         return set()
 
+    county_loc_id = _resolve_us_county_slug_loc_id(region)
+    if county_loc_id:
+        return {county_loc_id}
+
+    normalized_region = str(region).strip().lower().replace("_", " ").replace("-", " ")
+    if normalized_region in _US_REGIONAL_GROUPS:
+        return set(_US_REGIONAL_GROUPS[normalized_region])
+
     # If it's already a loc_id format (e.g., USA-FL, USA-CA-037), return as-is
     if "-" in region and region.split("-")[0].isupper() and len(region.split("-")[0]) == 3:
         return {region}
 
     conversions = _load_conversions()
     region_lower = region.lower()
+    region_normalized = region_lower.replace("_", " ").replace("-", " ")
 
     # Check region_aliases first (maps friendly names to grouping keys)
     region_aliases = conversions.get("region_aliases", {})
     for alias, grouping_key in region_aliases.items():
-        if alias.lower() == region_lower:
+        alias_lower = alias.lower()
+        if alias_lower == region_lower or alias_lower.replace("_", " ").replace("-", " ") == region_normalized:
             grouping = conversions.get("regional_groupings", {}).get(grouping_key, {})
             return set(grouping.get("countries", []))
 
     # Check direct grouping names
     regional_groupings = conversions.get("regional_groupings", {})
     for key, grouping in regional_groupings.items():
-        if key.lower() == region_lower or key.lower().replace("_", " ") == region_lower:
+        key_lower = key.lower()
+        if key_lower == region_lower or key_lower.replace("_", " ").replace("-", " ") == region_normalized:
             return set(grouping.get("countries", []))
 
     # Check if it's a country name -> return its ISO3 code
@@ -2350,6 +2506,77 @@ def _execute_multi_layer_order_if_needed(order: dict, items: list) -> dict | Non
     }
 
 
+def _check_sparse_year(
+    df,
+    metric_col: str,
+    selected_year: int,
+    metadata: dict | None,
+) -> dict | None:
+    """Return a clarify dict when selected_year has suspiciously sparse coverage.
+
+    Uses density * countries from metric metadata as the expected-per-year baseline.
+    Only fires when year was not explicitly requested by the user (null-year path).
+    Returns None when coverage looks normal or the metric is inherently sparse.
+    """
+    metrics = (metadata or {}).get("metrics", {})
+    metric_info = metrics.get(metric_col) if isinstance(metrics, dict) else None
+    if not isinstance(metric_info, dict):
+        return None
+
+    density = float(metric_info.get("density") or 0)
+    countries = int(metric_info.get("countries") or 0)
+    expected_per_year = density * countries
+
+    # Skip inherently sparse metrics - if the average expectation is < 5 per year,
+    # sparsity is normal for this metric and we should not second-guess it.
+    if expected_per_year < 5:
+        return None
+
+    actual_count = int((df[metric_col].notna() & (df["year"] == selected_year)).sum())
+
+    # Not sparse - coverage is at least 25% of what's expected.
+    if actual_count >= expected_per_year * 0.25:
+        return None
+
+    # Find the best alternative: most recent year with meaningful coverage.
+    year_counts = (
+        df[df[metric_col].notna()]
+        .groupby("year")[metric_col]
+        .count()
+        .sort_index()
+    )
+    if year_counts.empty:
+        return None
+
+    best_count = int(year_counts.max())
+    # Suggested year: most recent year with >= 50% of best coverage.
+    good_years = year_counts[year_counts >= max(int(best_count * 0.5), int(expected_per_year * 0.25))]
+    if good_years.empty:
+        return None
+
+    suggested_year = int(good_years.index.max())
+    suggested_count = int(year_counts[suggested_year])
+
+    # Do not clarify if the suggested year is the same as the selected year.
+    if suggested_year == selected_year:
+        return None
+
+    metric_name = metric_info.get("name") or metric_col
+    noun = "country" if actual_count == 1 else "countries"
+    msg = (
+        f"{selected_year} only has data for {actual_count} {noun} "
+        f"for \"{metric_name}\". "
+        f"{suggested_year} has much better coverage ({suggested_count} countries). "
+        f"Would you like to use {suggested_year} instead, or specify a different year?"
+    )
+    return {
+        "type": "clarify",
+        "message": msg,
+        "geojson": {"type": "FeatureCollection", "features": []},
+        "count": 0,
+    }
+
+
 def execute_order(order: dict) -> dict:
     """
     Execute a confirmed order and return GeoJSON response.
@@ -2468,6 +2695,7 @@ def execute_order(order: dict) -> dict:
     target_countries = set()
     geo_levels = set()
     sources_used = {}
+    aggregate_item_cache = {}
 
     for idx, item in enumerate(items, start=1):
         region = item.get("region")
@@ -2483,6 +2711,20 @@ def execute_order(order: dict) -> dict:
                     aggregate_df, metadata = _load_disaster_aggregate_data(source_id, item)
                     if aggregate_df is None:
                         _, metadata = load_source_data(source_id)
+                    else:
+                        cache_key = (
+                            source_id,
+                            item.get("metric"),
+                            item.get("region"),
+                            item.get("year"),
+                            item.get("year_start"),
+                            item.get("year_end"),
+                            item.get("aggregate_use_rolling"),
+                            item.get("aggregate_window_years"),
+                            item.get("aggregate_rollup_level"),
+                            item.get("aggregate_all_years"),
+                        )
+                        aggregate_item_cache[cache_key] = (aggregate_df, dict(metadata or {}))
                 else:
                     _, metadata = load_source_data(source_id)
                 sources_used[source_id] = metadata
@@ -2548,7 +2790,23 @@ def execute_order(order: dict) -> dict:
         t_item_start = time.perf_counter()
         try:
             if item.get("mode") == "aggregate":
-                df, metadata = _load_disaster_aggregate_data(source_id, item)
+                cache_key = (
+                    source_id,
+                    item.get("metric"),
+                    item.get("region"),
+                    item.get("year"),
+                    item.get("year_start"),
+                    item.get("year_end"),
+                    item.get("aggregate_use_rolling"),
+                    item.get("aggregate_window_years"),
+                    item.get("aggregate_rollup_level"),
+                    item.get("aggregate_all_years"),
+                )
+                cached = aggregate_item_cache.get(cache_key)
+                if cached is not None:
+                    df, metadata = cached[0].copy(), dict(cached[1] or {})
+                else:
+                    df, metadata = _load_disaster_aggregate_data(source_id, item)
                 if df is None or metadata is None:
                     df, metadata = load_source_data(source_id, year=_pushdown_year, loc_id_prefix=_pushdown_prefix)
             else:
@@ -2620,7 +2878,11 @@ def execute_order(order: dict) -> dict:
             if metric_col and metric_col in df.columns:
                 years_with_data = df[df[metric_col].notna()]["year"].unique()
                 if len(years_with_data) > 0:
-                    df = df[df["year"] == max(years_with_data)]
+                    selected_year = max(years_with_data)
+                    sparse_clarify = _check_sparse_year(df, metric_col, selected_year, metadata)
+                    if sparse_clarify:
+                        return sparse_clarify
+                    df = df[df["year"] == selected_year]
                 else:
                     df = df[df["year"] == df["year"].max()]
             else:
