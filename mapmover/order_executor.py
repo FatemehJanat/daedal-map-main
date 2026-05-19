@@ -989,6 +989,59 @@ def _get_source_path(source_id: str) -> Path:
     return DATA_ROOT / "global" / source_id
 
 
+def _candidate_parquet_paths(source_dir: Path, metadata: dict) -> list[Path]:
+    """Return ordered parquet candidates for a source.
+
+    Cloud mode cannot list remote directories, so we need to trust metadata
+    before falling back to generic filenames.
+    """
+    candidates: list[Path] = []
+    seen: set[str] = set()
+
+    def _add_candidate(name: str | None) -> None:
+        filename = str(name or "").strip()
+        if not filename or not filename.endswith(".parquet"):
+            return
+        if filename in seen:
+            return
+        seen.add(filename)
+        candidates.append(source_dir / filename)
+
+    files_section = metadata.get("files")
+    if isinstance(files_section, dict):
+        for info in files_section.values():
+            if not isinstance(info, dict):
+                continue
+            _add_candidate(info.get("name") or info.get("filename"))
+
+    primary_files = metadata.get("primary_files")
+    if isinstance(primary_files, list):
+        for entry in primary_files:
+            _add_candidate(entry)
+
+    for key in ("primary_file", "parquet_file", "data_file", "data_filename", "filename", "file_name"):
+        _add_candidate(metadata.get(key))
+
+    coverage = metadata.get("geographic_coverage", {}) or {}
+    country_code = str(coverage.get("country", "")).strip().upper()
+    if country_code:
+        _add_candidate(f"{country_code}.parquet")
+
+    source_parts = source_dir.parts
+    if "countries" in source_parts:
+        try:
+            countries_idx = source_parts.index("countries")
+            inferred_country = source_parts[countries_idx + 1].upper()
+            _add_candidate(f"{inferred_country}.parquet")
+        except Exception:
+            pass
+
+    for fallback_name in ("all_countries.parquet", "GLOBAL.parquet", "data.parquet"):
+        _add_candidate(fallback_name)
+
+    return candidates
+
+
 def _load_conversions() -> dict:
     """Load conversions.json with caching."""
     global _conversions_cache
@@ -1040,56 +1093,36 @@ def load_source_data(source_id: str, *, year: int | None = None, loc_id_prefix: 
     if loc_id_prefix:
         starts_with_filters["loc_id"] = loc_id_prefix
 
+    parquet_candidates = _candidate_parquet_paths(source_dir, metadata)
     if is_cloud_mode():
-        # In S3 mode, no local parquet files exist - pick preferred filename and let
-        # select_rows() fetch from R2 via DuckDB httpfs (path_to_uri handles the s3:// conversion).
-        parquet_path = None
-        # Check metadata files section first (allows non-standard filenames like population.parquet)
-        for _key, info in metadata.get("files", {}).items():
-            fname = (info.get("name") or info.get("filename")) if isinstance(info, dict) else None
-            if fname and fname.endswith(".parquet"):
-                parquet_path = source_dir / fname
-                break
-        # Fall back to standard names if no files section
-        if parquet_path is None:
-            fallback_names = []
-            coverage = metadata.get("geographic_coverage", {}) or {}
-            country_code = str(coverage.get("country", "")).strip().upper()
-            if country_code:
-                fallback_names.append(f"{country_code}.parquet")
-            source_parts = source_dir.parts
-            if "countries" in source_parts:
-                try:
-                    countries_idx = source_parts.index("countries")
-                    inferred_country = source_parts[countries_idx + 1].upper()
-                    candidate = f"{inferred_country}.parquet"
-                    if candidate not in fallback_names:
-                        fallback_names.append(candidate)
-                except Exception:
-                    pass
-            fallback_names.extend(["all_countries.parquet", "GLOBAL.parquet"])
-
-            for name in fallback_names:
-                parquet_path = source_dir / name
-                break
-        if parquet_path is None:
+        # In S3 mode, no local parquet files exist. Try metadata-declared parquet
+        # names first, then only fall back to generic filenames.
+        if not parquet_candidates:
             raise ValueError(f"Cannot determine parquet path for {source_id} in S3 mode")
-        uri = path_to_uri(parquet_path)
-        logger.info(f"[S3] load_source_data({source_id}): uri={uri} year={year} prefix={loc_id_prefix}")
-        df = select_rows(parquet_path, exact_filters=exact_filters or None, starts_with_filters=starts_with_filters or None)
-        logger.info(f"[S3] load_source_data({source_id}): rows={len(df)}")
+
+        last_df = pd.DataFrame()
+        for parquet_path in parquet_candidates:
+            uri = path_to_uri(parquet_path)
+            logger.info(f"[S3] load_source_data({source_id}): trying uri={uri} year={year} prefix={loc_id_prefix}")
+            df = select_rows(parquet_path, exact_filters=exact_filters or None, starts_with_filters=starts_with_filters or None)
+            logger.info(f"[S3] load_source_data({source_id}): candidate={parquet_path.name} rows={len(df)}")
+            last_df = df
+            if not df.empty:
+                return df, metadata
+        df = last_df
     else:
         # Local mode: glob for parquet files on disk
         parquet_files = list(source_dir.glob("*.parquet"))
         if not parquet_files:
             raise ValueError(f"No parquet file found for {source_id} in {source_dir}")
 
-        parquet_path = parquet_files[0]
-        for name in ["all_countries.parquet", "USA.parquet"]:
-            candidate = source_dir / name
+        parquet_path = None
+        for candidate in parquet_candidates:
             if candidate.exists():
                 parquet_path = candidate
                 break
+        if parquet_path is None:
+            parquet_path = parquet_files[0]
 
         df = select_rows(parquet_path, exact_filters=exact_filters or None, starts_with_filters=starts_with_filters or None)
         if df.empty and not exact_filters and not starts_with_filters:
@@ -1368,6 +1401,8 @@ def expand_region(region: str) -> set:
     normalized_region = str(region).strip().lower().replace("_", " ").replace("-", " ")
     if normalized_region in _US_REGIONAL_GROUPS:
         return set(_US_REGIONAL_GROUPS[normalized_region])
+    if normalized_region in {"puerto rico", "puerto rico usa"}:
+        return {"USA-PR"}
 
     # If it's already a loc_id format (e.g., USA-FL, USA-CA-037), return as-is
     if "-" in region and region.split("-")[0].isupper() and len(region.split("-")[0]) == 3:
@@ -2734,8 +2769,8 @@ def execute_order(order: dict) -> dict:
                         geo_levels.add(level)
                 else:
                     geo_levels.add(gl)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(f"[executor:{trace_id}] failed to collect source metadata for {source_id}: {exc}")
     normalized_geo_levels = sorted(str(level) for level in geo_levels if level is not None)
     _executor_log(
         trace_id,
