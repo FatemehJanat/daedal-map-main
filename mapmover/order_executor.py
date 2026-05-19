@@ -436,6 +436,14 @@ def _apply_dataframe_filters(df: pd.DataFrame, filters: dict | None) -> pd.DataF
                 filtered = filtered[filtered[field].isin(candidates)]
             continue
 
+        if isinstance(value, bool):
+            series = filtered[field]
+            if value:
+                filtered = filtered[series.notna() & (series.astype(str).str.strip() != "")]
+            else:
+                filtered = filtered[series.isna() | (series.astype(str).str.strip() == "")]
+            continue
+
         filtered = filtered[filtered[field] == value]
 
     return filtered

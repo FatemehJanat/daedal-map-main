@@ -418,6 +418,48 @@ def _normalize_location_shape_metric(item: dict, catalog_source: dict | None) ->
         item.pop("metric", None)
 
 
+def _expand_filter_value_aliases(item: dict, metadata: dict | None) -> None:
+    filters = item.get("filters")
+    if not isinstance(filters, dict) or not filters:
+        return
+    routing_hints = metadata.get("routing_hints", {}) if isinstance(metadata, dict) else {}
+    filter_aliases = routing_hints.get("filter_value_aliases") or {}
+    if not isinstance(filter_aliases, dict):
+        return
+
+    for field, alias_map in filter_aliases.items():
+        if field not in filters or not isinstance(alias_map, dict):
+            continue
+        raw_value = filters.get(field)
+        values = raw_value if isinstance(raw_value, (list, tuple, set)) else [raw_value]
+        expanded: list = []
+        changed = False
+        for value in values:
+            if value is None:
+                continue
+            alias_key = str(value).strip().lower()
+            mapped = alias_map.get(alias_key)
+            if isinstance(mapped, list):
+                expanded.extend(mapped)
+                changed = True
+            elif mapped is not None:
+                expanded.append(mapped)
+                changed = True
+            else:
+                expanded.append(value)
+        if changed:
+            deduped = []
+            seen = set()
+            for value in expanded:
+                marker = json.dumps(value, sort_keys=True, default=str)
+                if marker in seen:
+                    continue
+                seen.add(marker)
+                deduped.append(value)
+            filters[field] = deduped
+    item["filters"] = filters
+
+
 def _source_requires_metric(item: dict, catalog_source: dict | None) -> bool:
     if item.get("type") in {"derived", "derived_result"}:
         return False
@@ -906,6 +948,7 @@ def validate_item(item: dict, catalog: dict) -> dict:
 
     # Load full metadata for metric validation and metadata-backed defaults
     metadata = load_source_metadata(source_id)
+    _expand_filter_value_aliases(item, metadata)
     routing_hints = metadata.get("routing_hints", {}) if metadata else {}
 
     if _source_requires_metric(item, catalog_source) and not metric:
