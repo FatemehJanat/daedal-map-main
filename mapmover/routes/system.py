@@ -2267,6 +2267,57 @@ async def admin_runtime_refresh(req: Request):
     return msgpack_response(payload)
 
 
+@router.post("/api/admin/runtime/soft-refresh")
+async def admin_runtime_soft_refresh(req: Request):
+    """Drop warmed runtime caches without clearing active session/corpus state."""
+    import mapmover.data_loading as _dl
+    from mapmover.data_cascade import clear_cache as clear_data_cascade_cache
+    from mapmover.duckdb_helpers import cache_clear, reset_thread_connection_pool
+    from mapmover.geometry_handlers import clear_cache as clear_geometry_cache
+
+    forbidden = _admin_catalog_refresh_forbidden_response(req)
+    if forbidden is not None:
+        return forbidden
+
+    wants_json = "application/json" in (req.headers.get("accept", "") or "").lower()
+
+    _dl.clear_catalog_cache()
+    clear_metadata_cache()
+    clear_public_pack_catalog_cache()
+    clear_release_marker_cache()
+    _dl.clear_api_discovery_cache()
+    clear_geometry_cache()
+    clear_data_cascade_cache()
+    cache_clear()
+    duckdb_generation = reset_thread_connection_pool()
+
+    payload = {
+        "ok": True,
+        "message": "Requested warmed runtime caches cleared without dropping active sessions",
+        "cleared": {
+            "catalog": True,
+            "metadata": True,
+            "public_pack_catalog": True,
+            "release_markers": True,
+            "api_discovery": True,
+            "geometry": True,
+            "data_cascade": True,
+            "duckdb_dataframe_cache": True,
+            "duckdb_connection_generation": duckdb_generation,
+            "session_caches": False,
+            "corpus_registry": False,
+        },
+        "prewarmers_started": [],
+        "notes": [
+            "Active session and corpus memory were preserved.",
+            "Warm DuckDB connections will rebuild lazily on the next query.",
+        ],
+    }
+    if wants_json:
+        return JSONResponse(payload)
+    return msgpack_response(payload)
+
+
 @router.get("/", response_class=HTMLResponse)
 async def serve_index():
     """Serve the frontend HTML shell with cache-busting version stamps on static assets."""
