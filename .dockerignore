@@ -22,5 +22,7 @@ research_mode_server*.err.log
 mcp-publisher.exe
 mcp-publisher.tar.gz
 
+static/counties.mbtiles
+
 *.tmp
 *.bak
