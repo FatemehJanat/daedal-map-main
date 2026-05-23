@@ -507,6 +507,16 @@ def _resolve_aggregate_admin2_dir(source_dir: Path) -> Path:
     - a parent hazard source directory containing `aggregates/admin2/`, or
     - a dedicated aggregate source already rooted at `.../aggregates/admin2`.
     """
+    # Pack-facing aggregate source rows live under `.../sources/aggregates`,
+    # but the actual parquet files still live at the parent hazard path.
+    if (
+        source_dir.name.lower() == "admin2"
+        and source_dir.parent.name.lower() == "aggregates"
+        and source_dir.parent.parent.name.lower() == "sources"
+    ):
+        return source_dir.parent.parent.parent / "aggregates" / "admin2"
+    if source_dir.name.lower() == "aggregates" and source_dir.parent.name.lower() == "sources":
+        return source_dir.parent.parent / "aggregates" / "admin2"
     if source_dir.name.lower() == "admin2" and source_dir.parent.name.lower() == "aggregates":
         return source_dir
     if source_dir.name.lower() == "aggregates":
@@ -2957,6 +2967,7 @@ def execute_order(order: dict) -> dict:
             normalized_region_codes = set()
             for code in region_codes:
                 normalized_region_codes.add(code)
+                normalized_region_codes.add(translate_loc_id_to_geometry_id(code))
                 normalized_region_codes.add(translate_geometry_id_to_local_id(code))
             # Check for US state filtering (loc_ids starting with USA-)
             us_state_prefixes = [c for c in normalized_region_codes if isinstance(c, str) and c.startswith("USA-")]

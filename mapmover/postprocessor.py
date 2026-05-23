@@ -561,6 +561,14 @@ def _resolve_aggregate_admin2_dir(source_path: str) -> Path:
     or a dedicated aggregate source path rooted at `.../aggregates/admin2`.
     """
     source_dir = DATA_ROOT / source_path
+    if (
+        source_dir.name.lower() == "admin2"
+        and source_dir.parent.name.lower() == "aggregates"
+        and source_dir.parent.parent.name.lower() == "sources"
+    ):
+        return source_dir.parent.parent.parent / "aggregates" / "admin2"
+    if source_dir.name.lower() == "aggregates" and source_dir.parent.name.lower() == "sources":
+        return source_dir.parent.parent / "aggregates" / "admin2"
     if source_dir.name.lower() == "admin2" and source_dir.parent.name.lower() == "aggregates":
         return source_dir
     if source_dir.name.lower() == "aggregates":
