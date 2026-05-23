@@ -419,7 +419,13 @@ def _apply_dataframe_filters(df: pd.DataFrame, filters: dict | None) -> pd.DataF
 
         if isinstance(value, dict):
             op = str(value.get("op") or "").strip().lower()
-            if op == "not_empty":
+            min_value = value.get("min")
+            max_value = value.get("max")
+            if min_value is not None:
+                filtered = filtered[filtered[field] >= min_value]
+            if max_value is not None:
+                filtered = filtered[filtered[field] <= max_value]
+            if op in {"not_empty", "present", "exists"}:
                 series = filtered[field]
                 filtered = filtered[series.notna() & (series.astype(str).str.strip() != "")]
             elif op == "in":
@@ -428,6 +434,16 @@ def _apply_dataframe_filters(df: pd.DataFrame, filters: dict | None) -> pd.DataF
                     filtered = filtered[filtered[field].isin(candidates)]
             elif op == "eq" and "value" in value:
                 filtered = filtered[filtered[field] == value.get("value")]
+            elif op in {"!=", "ne"} and "value" in value:
+                filtered = filtered[filtered[field] != value.get("value")]
+            elif op in {">", "gt"} and "value" in value:
+                filtered = filtered[filtered[field] > value.get("value")]
+            elif op in {">=", "gte"} and "value" in value:
+                filtered = filtered[filtered[field] >= value.get("value")]
+            elif op in {"<", "lt"} and "value" in value:
+                filtered = filtered[filtered[field] < value.get("value")]
+            elif op in {"<=", "lte"} and "value" in value:
+                filtered = filtered[filtered[field] <= value.get("value")]
             continue
 
         if isinstance(value, (list, tuple, set)):
@@ -447,6 +463,97 @@ def _apply_dataframe_filters(df: pd.DataFrame, filters: dict | None) -> pd.DataF
         filtered = filtered[filtered[field] == value]
 
     return filtered
+
+
+def _append_duckdb_filter_clause(
+    where_clauses: list[str],
+    params: list,
+    available_cols: set[str],
+    field: str,
+    value,
+) -> None:
+    """Translate an order filter entry into DuckDB WHERE fragments."""
+    if field.endswith("_min"):
+        col = field[:-4]
+        if col in available_cols and value is not None:
+            where_clauses.append(f"{quote_ident(col)} >= ?")
+            params.append(value)
+        return
+
+    if field.endswith("_max"):
+        col = field[:-4]
+        if col in available_cols and value is not None:
+            where_clauses.append(f"{quote_ident(col)} <= ?")
+            params.append(value)
+        return
+
+    if field not in available_cols:
+        return
+
+    if isinstance(value, dict):
+        min_value = value.get("min")
+        max_value = value.get("max")
+        if min_value is not None:
+            where_clauses.append(f"{quote_ident(field)} >= ?")
+            params.append(min_value)
+        if max_value is not None:
+            where_clauses.append(f"{quote_ident(field)} <= ?")
+            params.append(max_value)
+
+        op = str(value.get("op") or "").strip().lower()
+        if op in {"not_empty", "present", "exists"}:
+            where_clauses.append(f"{quote_ident(field)} IS NOT NULL")
+            where_clauses.append(f"trim(CAST({quote_ident(field)} AS VARCHAR)) <> ''")
+            return
+        if op == "in":
+            candidates = [candidate for candidate in (value.get("values") or []) if candidate is not None]
+            if candidates:
+                placeholders = ", ".join("?" for _ in candidates)
+                where_clauses.append(f"{quote_ident(field)} IN ({placeholders})")
+                params.extend(candidates)
+            return
+        if "value" in value:
+            op_map = {
+                "eq": "=",
+                "=": "=",
+                "ne": "!=",
+                "!=": "!=",
+                "gt": ">",
+                ">": ">",
+                "gte": ">=",
+                ">=": ">=",
+                "lt": "<",
+                "<": "<",
+                "lte": "<=",
+                "<=": "<=",
+            }
+            sql_op = op_map.get(op)
+            if sql_op:
+                where_clauses.append(f"{quote_ident(field)} {sql_op} ?")
+                params.append(value.get("value"))
+            return
+        return
+
+    if isinstance(value, (list, tuple, set)):
+        candidates = [candidate for candidate in value if candidate is not None]
+        if candidates:
+            placeholders = ", ".join("?" for _ in candidates)
+            where_clauses.append(f"{quote_ident(field)} IN ({placeholders})")
+            params.extend(candidates)
+        return
+
+    if isinstance(value, bool):
+        if value:
+            where_clauses.append(f"{quote_ident(field)} IS NOT NULL")
+            where_clauses.append(f"trim(CAST({quote_ident(field)} AS VARCHAR)) <> ''")
+        else:
+            where_clauses.append(
+                f"({quote_ident(field)} IS NULL OR trim(CAST({quote_ident(field)} AS VARCHAR)) = '')"
+            )
+        return
+
+    where_clauses.append(f"{quote_ident(field)} = ?")
+    params.append(value)
 
 
 def _validate_execution_items(items: list) -> str | None:
@@ -1369,19 +1476,7 @@ def _load_event_data_duckdb(source_id: str, item: dict, event_file_key: str = "e
             where_clauses.append("(" + " OR ".join(region_parts) + ")")
 
     for field, value in filters.items():
-        if field.endswith("_min"):
-            col = field[:-4]
-            if col in available_cols:
-                where_clauses.append(f"{quote_ident(col)} >= ?")
-                params.append(value)
-        elif field.endswith("_max"):
-            col = field[:-4]
-            if col in available_cols:
-                where_clauses.append(f"{quote_ident(col)} <= ?")
-                params.append(value)
-        elif field in available_cols:
-            where_clauses.append(f"{quote_ident(field)} = ?")
-            params.append(value)
+        _append_duckdb_filter_clause(where_clauses, params, available_cols, field, value)
 
     sql = "SELECT * FROM read_parquet(?)"
     if where_clauses:
@@ -1979,6 +2074,51 @@ def _get_id_column(df: pd.DataFrame, event_type: str) -> str:
     return None
 
 
+def _order_item_original_query(item: dict | None) -> str:
+    if not isinstance(item, dict):
+        return ""
+    hints = item.get("_hints") if isinstance(item.get("_hints"), dict) else {}
+    return str(hints.get("original_query") or item.get("summary") or "").strip()
+
+
+def _build_empty_wildfire_perimeter_response(order: dict, item: dict, source_id: str) -> dict | None:
+    query_text = " ".join(
+        part for part in (
+            _order_item_original_query(item),
+            str(order.get("summary") or "").strip(),
+        )
+        if part
+    ).lower()
+    if "wildfire" not in query_text and "fire" not in query_text:
+        return None
+    if "perimeter" not in query_text:
+        return None
+
+    source_note = (
+        "The published USA and Canada wildfire event sources do not reliably include perimeter polygons for every named fire."
+        if source_id in {"wildfires_usa", "can_wildfires"}
+        else "Perimeter coverage in this wildfire source is incomplete, and this specific fire does not have a published perimeter polygon."
+    )
+    message = (
+        f"{source_note} I could not draw a perimeter for this request from the current published data. "
+        "I can still help with the fire's event details, affected areas, or a different wildfire that has perimeter coverage."
+    )
+    return {
+        "type": "chat",
+        "data_type": "events",
+        "source_id": source_id,
+        "geojson": {"type": "FeatureCollection", "features": []},
+        "summary": order.get("summary") or "Wildfire perimeter not available in the current published data",
+        "message": message,
+        "count": 0,
+        "sources": [{
+            "id": source_id,
+            "name": _get_source_from_catalog(source_id).get("source_name", source_id),
+            "url": _get_source_from_catalog(source_id).get("source_url", ""),
+        }],
+    }
+
+
 def execute_event_order(order: dict) -> dict:
     """
     Execute order in event mode - returns individual events as GeoJSON points.
@@ -2187,6 +2327,12 @@ def execute_event_order(order: dict) -> dict:
         times = pd.to_datetime(df[time_col])
         time_range["min"] = int(times.min().timestamp() * 1000)
         time_range["max"] = int(times.max().timestamp() * 1000)
+
+    primary_item = items[0] if items else {}
+    if not features and event_type == "wildfire":
+        perimeter_gap = _build_empty_wildfire_perimeter_response(order, primary_item, source_id)
+        if perimeter_gap:
+            return perimeter_gap
 
     # Build source info
     source_info = [{
@@ -2969,19 +3115,19 @@ def execute_order(order: dict) -> dict:
                 normalized_region_codes.add(code)
                 normalized_region_codes.add(translate_loc_id_to_geometry_id(code))
                 normalized_region_codes.add(translate_geometry_id_to_local_id(code))
-            # Check for US state filtering (loc_ids starting with USA-)
-            us_state_prefixes = [c for c in normalized_region_codes if isinstance(c, str) and c.startswith("USA-")]
-            country_codes = [c for c in normalized_region_codes if not (isinstance(c, str) and c.startswith("USA-"))]
-
-            if us_state_prefixes:
-                # Filter to US locations matching state prefix
-                mask = loc_id_series.str.startswith(tuple(us_state_prefixes), na=False)
+            region_prefixes = tuple(
+                str(code).strip()
+                for code in normalized_region_codes
+                if isinstance(code, str) and str(code).strip()
+            )
+            if region_prefixes:
+                # Treat region filters as hierarchical loc_id prefixes globally.
+                # This supports country codes, admin1 codes such as `USA-TX`,
+                # exact admin2/global geometry ids such as `CAN-AB-EI`, and
+                # hazards whose aggregate files stay in the rougher geometry-id
+                # system for worldwide consistency.
+                mask = loc_id_series.str.startswith(region_prefixes, na=False)
                 df = df[mask]
-            elif country_codes:
-                # Filter to country-level or sub-national within those countries
-                df["_country_code"] = loc_id_series.str.split("-").str[0]
-                df = df[df["_country_code"].isin(country_codes)]
-                df = df.drop(columns=["_country_code"])
         t_after_region_filter = _executor_log(trace_id, "region_filtered", t_after_time_filter, f"item={idx}/{len(items)} source={source_id} rows={len(df)}")
 
         if requested_geo_level and "geo_level" in df.columns:

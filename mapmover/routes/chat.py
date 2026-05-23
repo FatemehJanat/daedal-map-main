@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import time
 
 import msgpack
@@ -128,6 +129,42 @@ def _address_prompt_response(prompt: dict | None) -> dict:
         "message": prompt.get("message") or "Start typing an address and choose a suggestion.",
         "placeholder": prompt.get("placeholder") or "Search for an address...",
     }
+
+
+def _compact_followup_message(message: str) -> str:
+    text = str(message or "").strip()
+    if not text or text.count("?") <= 2:
+        return text
+
+    lower = text.lower()
+    cue_patterns = (
+        r"\bwould you like me to\b",
+        r"\bwhich approach\b",
+        r"\blet me know which approach\b",
+        r"\bwould you like me\b",
+    )
+    cut_idx = None
+    for pattern in cue_patterns:
+        match = re.search(pattern, lower)
+        if match and (cut_idx is None or match.start() < cut_idx):
+            cut_idx = match.start()
+
+    if cut_idx is None:
+        return text
+
+    lead = text[:cut_idx].rstrip()
+    lead = re.sub(r"\n{3,}", "\n\n", lead).strip()
+    if lead and lead[-1] not in ".!?":
+        lead += "."
+
+    if "volcan" in lower and ("increasing" in lower or "trend" in lower):
+        followup = "If you want, I can focus on a recent period such as the last 100 or 500 years for a cleaner trend analysis."
+    elif "wildfire" in lower and "population" in lower and ("burned" in lower or "areas" in lower):
+        followup = "If you want, I can either show the burned areas for Canada in 2023 or narrow this to a population-exposure estimate path."
+    else:
+        followup = "If you want, I can narrow this to one concrete metric, region, or time window."
+
+    return f"{lead}\n\n{followup}".strip()
 
 
 def _execute_confirmed_order_with_session_cache(cache, confirmed_order: dict, *, force_refetch: bool = False):
@@ -672,13 +709,14 @@ async def chat_endpoint(req: Request):
             )
 
         if result["type"] == "clarify":
+            result["message"] = _compact_followup_message(result.get("message", ""))
             _chat_log_timing(trace_id, "responding", t_request_start, "type=clarify")
             return msgpack_response(
                 {"type": "clarify", "message": result["message"], "geojson": {"type": "FeatureCollection", "features": []}, "needsMoreInfo": True}
             )
 
         _chat_log_timing(trace_id, "responding", t_request_start, "type=chat")
-        chat_result = result.get("message", "I'm not sure how to help with that.")
+        chat_result = _compact_followup_message(result.get("message", "I'm not sure how to help with that."))
         log_conversation(
             frontend_session_id,
             query,
@@ -1024,10 +1062,15 @@ async def chat_stream_endpoint(req: Request):
                 }
                 yield f"data: {json.dumps({'stage': 'complete', 'result': final_result})}\n\n"
             elif result["type"] == "clarify":
-                final_result = {"type": "clarify", "message": result["message"], "geojson": {"type": "FeatureCollection", "features": []}, "needsMoreInfo": True}
+                final_result = {
+                    "type": "clarify",
+                    "message": _compact_followup_message(result.get("message", "")),
+                    "geojson": {"type": "FeatureCollection", "features": []},
+                    "needsMoreInfo": True,
+                }
                 yield f"data: {json.dumps({'stage': 'complete', 'result': final_result})}\n\n"
             else:
-                chat_msg = result.get("message", "I'm not sure how to help with that.")
+                chat_msg = _compact_followup_message(result.get("message", "I'm not sure how to help with that."))
                 final_result = {
                     "type": "chat",
                     "message": chat_msg,

@@ -929,8 +929,7 @@ def validate_item(item: dict, catalog: dict) -> dict:
         _apply_aggregate_query_hints(item, query)
     elif item.get("mode") == "aggregate":
         query = str(((item.get("_hints") or {}).get("original_query")) or "").lower()
-        if query:
-            _apply_aggregate_query_hints(item, query)
+        _apply_aggregate_query_hints(item, query)
 
     # Some metric-only sources may still be returned with mode="events" because
     # the pack family also contains event-capable siblings. Normalize those
@@ -1642,6 +1641,18 @@ def postprocess_order(order: dict, hints: dict = None) -> dict:
     """
     catalog = load_catalog()
     items = order.get("items", [])
+    original_query = str((hints or {}).get("original_query") or "").strip()
+
+    # Ensure item-level normalization/validation can see the original user query
+    # even when the LLM omits per-item _hints blocks.
+    if original_query:
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            item_hints = item.get("_hints") if isinstance(item.get("_hints"), dict) else {}
+            if not item_hints.get("original_query"):
+                item_hints["original_query"] = original_query
+                item["_hints"] = item_hints
 
     # Step 0: Inject time range from preprocessor hints if LLM left year as null
     time_hints = hints.get("time", {}) if hints else {}
