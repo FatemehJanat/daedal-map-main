@@ -14,6 +14,7 @@ The postprocessor ensures:
 """
 
 import json
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -22,6 +23,7 @@ from .source_time_contract import metadata_metric_year_range
 from .duckdb_helpers import parquet_columns
 from .paths import DATA_ROOT
 from .request_risk_gate import warn_gate
+from .foundation_helpers import load_reference_json
 
 
 # =============================================================================
@@ -55,6 +57,7 @@ EVENT_DISPLAY_PATTERNS = [
     "which", "what", "list", "find",
     "struck", "hit", "affected", "impacted",
     "occurred", "happened",
+    "significant", "major", "severe", "largest", "strongest", "deadliest",
     "magnitude", "category", "m4", "m5", "m6", "m7",
     "cat 1", "cat 2", "cat 3", "cat 4", "cat 5",
     "individual", "events", "event", "tracks", "track", "points",
@@ -66,8 +69,6 @@ AGGREGATE_PATTERNS = [
     "per year", "annually", "yearly", "annual", "over time",
     "trend", "compare", "frequency", "exposure",
     "per capita", "historically",
-    "last 10 years", "last 20 years", "last 30 years",
-    "past 10 years", "past 20 years", "past 30 years",
     "rolling", "between the 1990s", "between the 2010s",
     "aggregate", "aggregated",
 ]
@@ -76,6 +77,7 @@ EXPLICIT_EVENT_VIEW_PATTERNS = [
     "individual", "individual events", "events", "event",
     "tracks", "track", "track points", "points",
     "occurred", "happened", "struck", "hit",
+    "significant", "major", "severe", "largest", "strongest", "deadliest",
     "magnitude", "category", "m4", "m5", "m6", "m7",
     "cat 1", "cat 2", "cat 3", "cat 4", "cat 5",
 ]
@@ -83,8 +85,6 @@ EXPLICIT_EVENT_VIEW_PATTERNS = [
 EXPLICIT_AGGREGATE_VIEW_PATTERNS = [
     "aggregate", "aggregated", "annual", "annually", "yearly", "per year",
     "count", "counts", "frequency", "trend", "compare", "rolling",
-    "last 10 years", "last 20 years", "last 30 years",
-    "past 10 years", "past 20 years", "past 30 years",
 ]
 
 RECENT_EVENT_PATTERNS = [
@@ -93,6 +93,40 @@ RECENT_EVENT_PATTERNS = [
     "newest",
     "recent",
 ]
+
+EVENT_STYLE_ADJECTIVES = (
+    "significant",
+    "major",
+    "severe",
+    "largest",
+    "strongest",
+    "deadliest",
+)
+
+AGGREGATE_ONLY_PATTERNS = (
+    "how many",
+    "count",
+    "counts",
+    "number of",
+    "total",
+    "average",
+    "avg",
+    "mean",
+    "sum",
+    "frequency",
+    "trend",
+    "compare",
+    "ranking",
+    "rank",
+    "highest",
+    "lowest",
+    "most affected",
+    "per year",
+    "rolling",
+    "exposure",
+    "share",
+    "rate",
+)
 
 
 def _query_requests_recent_events(query: str) -> bool:
@@ -109,6 +143,138 @@ def _query_requests_single_latest_event(query: str) -> bool:
     if not any(pattern in query_lower for pattern in ("most recent", "latest", "newest")):
         return False
     return not any(pattern in query_lower for pattern in ("top ", "show me 10", "show 10", "ten most recent"))
+
+
+def _load_disaster_overlay_reference() -> dict:
+    data = load_reference_json("disasters.json")
+    overlays = data.get("overlays", {}) if isinstance(data, dict) else {}
+    return overlays if isinstance(overlays, dict) else {}
+
+
+def _item_disaster_key(item: dict, catalog_source: dict | None) -> str | None:
+    overlays = _load_disaster_overlay_reference()
+    metadata = load_source_metadata(item.get("source_id")) or {}
+    for candidate in (
+        metadata.get("event_type"),
+        (catalog_source or {}).get("event_type"),
+        item.get("pack_id"),
+    ):
+        text = str(candidate or "").strip().lower()
+        if not text:
+            continue
+        if text in overlays:
+            return text
+        plural = f"{text}s"
+        if plural in overlays:
+            return plural
+    return None
+
+
+def _query_has_time_window(query: str) -> bool:
+    query_lower = str(query or "").strip().lower()
+    if not query_lower:
+        return False
+    if re.search(r"\b(?:since|from|between|during|in)\s+\d{4}\b", query_lower):
+        return True
+    return any(
+        token in query_lower
+        for token in (
+            "last 10 years",
+            "last 20 years",
+            "last 30 years",
+            "past 10 years",
+            "past 20 years",
+            "past 30 years",
+            "this year",
+            "last year",
+        )
+    )
+
+
+def _query_requests_event_window(query: str) -> bool:
+    query_lower = str(query or "").strip().lower()
+    if not query_lower:
+        return False
+    has_event_subject = any(pattern in query_lower for pattern in EVENT_DISPLAY_PATTERNS)
+    has_time_window = _query_has_time_window(query_lower)
+    has_aggregate_only = any(pattern in query_lower for pattern in AGGREGATE_ONLY_PATTERNS)
+    return has_event_subject and has_time_window and not has_aggregate_only
+
+
+def _query_prefers_event_source(query: str) -> bool:
+    query_lower = str(query or "").strip().lower()
+    if not query_lower:
+        return False
+    explicit_events, explicit_aggregate = _query_explicit_view_mode(query_lower)
+    if explicit_events and not explicit_aggregate:
+        return True
+    if _query_requests_event_window(query_lower):
+        return True
+    has_event_adjective = any(re.search(rf"\b{re.escape(token)}\b", query_lower) for token in EVENT_STYLE_ADJECTIVES)
+    has_aggregate_only = any(pattern in query_lower for pattern in AGGREGATE_ONLY_PATTERNS)
+    return has_event_adjective and not has_aggregate_only
+
+
+def _query_semantic_filter_tokens(query: str, disaster_key: str | None) -> list[tuple[str, dict]]:
+    if not disaster_key:
+        return []
+    overlays = _load_disaster_overlay_reference()
+    overlay = overlays.get(disaster_key) or {}
+    semantic_filters = overlay.get("semantic_filters") or {}
+    if not isinstance(semantic_filters, dict):
+        return []
+    query_lower = str(query or "").strip().lower()
+    matched = []
+    for token, spec in semantic_filters.items():
+        if not isinstance(spec, dict):
+            continue
+        if re.search(rf"\b{re.escape(str(token).lower())}\b", query_lower):
+            matched.append((str(token), spec))
+    return matched
+
+
+def _apply_disaster_semantic_filters(item: dict, catalog_source: dict | None, query: str) -> None:
+    disaster_key = _item_disaster_key(item, catalog_source)
+    matched = _query_semantic_filter_tokens(query, disaster_key)
+    if not matched:
+        return
+
+    filters = item.get("filters")
+    if not isinstance(filters, dict):
+        filters = {}
+
+    for _, spec in matched:
+        field = str(spec.get("field") or "").strip()
+        if not field or field in filters:
+            continue
+        if "min" in spec:
+            filters[field] = {"min": spec.get("min")}
+        elif "max" in spec:
+            filters[field] = {"max": spec.get("max")}
+
+    if filters:
+        item["filters"] = filters
+
+
+def _reroute_item_to_event_sibling(item: dict, catalog: dict) -> bool:
+    pack_id = item.get("pack_id")
+    if not pack_id:
+        return False
+    event_source_id = _resolve_pack_source_by_shape(catalog, pack_id, item.get("region"), "event_shape")
+    if not event_source_id:
+        return False
+    item["source_id"] = event_source_id
+    item["_resolved_from_pack"] = True
+    item["mode"] = "events"
+    item["event_file"] = "events"
+    for field in (
+        "aggregate_use_rolling",
+        "aggregate_window_years",
+        "aggregate_rollup_level",
+        "aggregate_all_years",
+    ):
+        item.pop(field, None)
+    return True
 
 
 def _metric_display_name(source_id: str, metric_key: str) -> str:
@@ -657,6 +823,9 @@ def _query_signals_event_vs_aggregate(query: str) -> tuple[bool, bool]:
         return False, False
     wants_events = any(pattern in query_lower for pattern in EVENT_DISPLAY_PATTERNS)
     wants_aggregate = any(pattern in query_lower for pattern in AGGREGATE_PATTERNS)
+    if _query_requests_event_window(query_lower):
+        wants_events = True
+        wants_aggregate = False
     return wants_events, wants_aggregate
 
 
@@ -917,18 +1086,16 @@ def validate_item(item: dict, catalog: dict) -> dict:
     _normalize_item_filters(item, catalog_source)
     _normalize_location_shape_metric(item, catalog_source)
     metric = item.get("metric")
+    query = str(((item.get("_hints") or {}).get("original_query")) or "").lower()
+    _apply_disaster_semantic_filters(item, catalog_source, query)
 
     if (
         not item.get("mode")
         and _source_has_metrics(catalog_source)
         and _source_supports_aggregate_mode(catalog_source)
     ):
-        query = str(((item.get("_hints") or {}).get("original_query")) or "").lower()
-        if not query and isinstance(catalog_source, dict):
-            query = ""
         _apply_aggregate_query_hints(item, query)
     elif item.get("mode") == "aggregate":
-        query = str(((item.get("_hints") or {}).get("original_query")) or "").lower()
         _apply_aggregate_query_hints(item, query)
 
     # Some metric-only sources may still be returned with mode="events" because
@@ -948,6 +1115,13 @@ def validate_item(item: dict, catalog: dict) -> dict:
         else:
             item.pop("mode", None)
 
+    if (
+        _query_prefers_event_source(query)
+        and not _source_supports_events(catalog_source)
+        and _reroute_item_to_event_sibling(item, catalog)
+    ):
+        return validate_item(item, catalog)
+
     # Skip valid event mode items - they don't require metric validation
     if item.get("mode") == "events":
         item["_valid"] = True
@@ -963,6 +1137,8 @@ def validate_item(item: dict, catalog: dict) -> dict:
         if default_metric:
             item["metric"] = default_metric
             metric = default_metric
+        elif _query_prefers_event_source(query) and _reroute_item_to_event_sibling(item, catalog):
+            return validate_item(item, catalog)
         else:
             item["_valid"] = False
             item["_error"] = f"Source '{source_id}' requires a concrete metric before execution"

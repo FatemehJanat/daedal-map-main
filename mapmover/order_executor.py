@@ -381,6 +381,123 @@ def _normalize_order_items(items: list, catalog: dict) -> list:
     return resolved
 
 
+def _resolve_event_sibling_source(catalog: dict, item: dict) -> str | None:
+    pack_id = item.get("pack_id")
+    if not pack_id:
+        source_id = str(item.get("source_id") or "").strip()
+        for source in catalog.get("sources", []):
+            if source.get("source_id") == source_id:
+                pack_id = source.get("pack_id")
+                if pack_id:
+                    item["pack_id"] = pack_id
+                break
+    if not pack_id:
+        return None
+
+    region = item.get("region")
+    pack_sources = [
+        s for s in catalog.get("sources", [])
+        if s.get("pack_id") == pack_id and s.get("geojson_shape") == "event_shape"
+    ]
+    if not pack_sources:
+        return None
+
+    exact_matches = [
+        s for s in pack_sources
+        if s.get("scope") != "global" and _scope_matches_region(s.get("scope", "global"), region)
+    ]
+    if len(exact_matches) == 1:
+        return exact_matches[0].get("source_id")
+
+    global_matches = [s for s in pack_sources if s.get("scope") == "global"]
+    if len(global_matches) == 1:
+        return global_matches[0].get("source_id")
+
+    if len(pack_sources) == 1:
+        return pack_sources[0].get("source_id")
+    return None
+
+
+def _query_prefers_event_retry(query: str) -> bool:
+    text = str(query or "").strip().lower()
+    if not text:
+        return False
+    event_terms = (
+        "show me",
+        "display",
+        "map",
+        "list",
+        "find",
+        "events",
+        "event",
+        "significant",
+        "major",
+        "severe",
+        "largest",
+        "strongest",
+        "deadliest",
+        "occurred",
+        "happened",
+        "struck",
+        "hit",
+    )
+    aggregate_terms = (
+        "how many",
+        "count",
+        "counts",
+        "number of",
+        "total",
+        "average",
+        "avg",
+        "mean",
+        "sum",
+        "frequency",
+        "trend",
+        "compare",
+        "ranking",
+        "rank",
+        "highest",
+        "lowest",
+        "per year",
+        "rolling",
+        "share",
+        "rate",
+        "exposure",
+    )
+    has_event_terms = any(term in text for term in event_terms)
+    has_aggregate_terms = any(term in text for term in aggregate_terms)
+    has_time_window = bool(re.search(r"\b(?:since|from|between|during|in)\s+\d{4}\b", text)) or any(
+        term in text for term in ("last 10 years", "last 20 years", "last 30 years", "past 10 years", "past 20 years", "past 30 years")
+    )
+    return has_event_terms and (not has_aggregate_terms or has_time_window)
+
+
+def _build_event_retry_order(order: dict, items: list, catalog: dict) -> dict | None:
+    rebuilt_items = []
+    for item in items:
+        query = str(((item.get("_hints") or {}).get("original_query")) or "")
+        if not _query_prefers_event_retry(query):
+            return None
+        event_source_id = _resolve_event_sibling_source(catalog, item)
+        if not event_source_id:
+            return None
+        rebuilt = dict(item)
+        rebuilt["source_id"] = event_source_id
+        rebuilt["mode"] = "events"
+        rebuilt["event_file"] = "events"
+        for field in (
+            "aggregate_use_rolling",
+            "aggregate_window_years",
+            "aggregate_rollup_level",
+            "aggregate_all_years",
+        ):
+            rebuilt.pop(field, None)
+        rebuilt_items.append(rebuilt)
+    if not rebuilt_items:
+        return None
+    return {**order, "items": rebuilt_items}
+
+
 def _execution_requires_metric(item: dict, source_info: dict | None) -> bool:
     if item.get("type") in {"derived", "derived_result"}:
         return False
@@ -3545,6 +3662,18 @@ def execute_order(order: dict) -> dict:
         "metric_sources": metric_source_map,
         "aggregation_trace": aggregation_trace,
     }
+
+    if response["count"] == 0 and not order.get("_event_retry_attempted"):
+        retry_order = _build_event_retry_order(order, items, _load_catalog())
+        if retry_order:
+            retry_result = execute_order({**retry_order, "_event_retry_attempted": True})
+            if int(retry_result.get("count") or 0) > 0:
+                retry_result["fallback_used"] = True
+                retry_result.setdefault(
+                    "fallback_note",
+                    "Initial aggregate execution returned no results, so the runtime retried the pack's event lane.",
+                )
+                return retry_result
 
     # Add multi-year data if applicable
     if multi_year_mode and year_data:
