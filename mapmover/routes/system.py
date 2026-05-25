@@ -1765,6 +1765,8 @@ async def get_pack_mcp_server_card(pack_id: str):
 
 @router.get("/.well-known/ai-plugin.json")
 async def get_ai_plugin_json():
+    from mapmover.runtime_config import get_runtime_config
+
     app_url = str(get_runtime_config().get("app_url", "https://app.daedalmap.com")).rstrip("/")
     payload = {
         "schema_version": "v1",
