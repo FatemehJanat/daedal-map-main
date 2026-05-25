@@ -525,6 +525,16 @@ DISASTER AGGREGATE RULES:
 - Multi-hazard risk questions may be answered with a multi-item order using the available aggregate metrics; do not over-clarify unless execution is genuinely impossible.
 - Named storm or event queries ("show me Hurricane Katrina", "show me Typhoon Haiyan's track", "show me wind data for [storm]") must use type="order" with mode="events", never overlay_toggle. The IBTrACS hurricanes pack contains individual track-point data for all named storms.
 - "Typhoons" and "cyclones" are the same as hurricanes in the IBTrACS pack — use pack_id="hurricanes" for all tropical cyclone queries regardless of regional name.
+- If the user asks a cross-pack exposure or comparison question that can be
+  shown as multiple layers on the same geography, return a real multi-item
+  type="order" instead of stopping at chat. This includes questions combining:
+  - disaster exposure or event frequency with population
+  - disaster exposure or event frequency with economic context
+  - disaster exposure or event frequency with NRI/FEMA risk layers
+- When no single precomputed fused metric exists, still prefer a multi-item
+  order with one item per compatible layer, using the same region and time
+  window where possible. Do not reply with "I could show these as separate
+  layers" — actually return the layered order.
 
 
 DISASTER ROUTING CORRECTION:
@@ -548,6 +558,10 @@ INTERACTION POLICY:
 - If a source has interaction_mode="chat_first", prefer conversational/reference response unless user explicitly asks to map/query metrics.
 - If a source has interaction_mode="hybrid", use judgment between chat and order.
 - For source-backed analytical questions, prefer returning type="order" over type="chat".
+- For cross-pack analytical questions where the compatible layers share the
+  same loc_id geography, prefer a multi-item type="order" over a chat
+  explanation. Use chat only when the geography, time basis, or metrics are
+  genuinely incompatible.
 - For published geographic packs, "show me/map/display [place] [topic]" should default to a real order, not a catalog-status explanation.
 - If the user broadly asks to show/map/display a specific source or pack's "data" without naming a metric, prefer a real order using `metric: "*"` over a metric-list clarification, unless metadata explicitly requires choosing one metric first.
 - Respect `map shape` in the catalog. `geometry_shape` means region geometry like counties/tracts with geometry-region popups. `event_shape` means incident/perimeter/event overlays with disaster/event popups. `location_shape` means point locations or facilities that should usually be shown directly on the map.
@@ -622,6 +636,17 @@ RESPONSE TYPES (return JSON with "type" field):
 ```json
 {{"type": "order", "items": [{{"pack_id": "wildfires", "metric": "area_km2", "region": "canada-bc"}}], "summary": "..."}}
 ```
+
+1a. LAYERED DATA ORDER - User wants multiple compatible layers together:
+```json
+{{"type": "order", "items": [
+  {{"pack_id": "wildfires", "metric": "event_count", "region": "usa-ca", "year_start": 2004, "year_end": 2024}},
+  {{"pack_id": "worldpop", "metric": "population", "region": "usa-ca", "year": 2024}}
+], "summary": "Wildfire exposure and population in California"}}
+```
+Use this pattern for side-by-side disaster + population/economics/risk
+questions when the layers can share region/time framing, even if there is not a
+single fused metric yet.
 
 2. GEOMETRY ORDER - User wants to see boundary overlays (ZIP codes, tribal areas, watersheds, etc.):
 ```json
