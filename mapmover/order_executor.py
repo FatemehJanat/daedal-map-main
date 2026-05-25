@@ -648,13 +648,37 @@ def _load_disaster_aggregate_data(source_id: str, item: dict) -> tuple[Optional[
     parquet_path = None
     df = None
     last_error = None
+    year, year_start, year_end = _normalize_year_filters(item)
+    region = item.get("region")
     for candidate in candidates:
         if parquet_path is not None:
             break
         if not is_cloud_mode() and not candidate.exists():
             continue
         try:
-            maybe_df = select_rows(candidate)
+            exact_filters = {}
+            compare_filters = []
+            starts_with_filters = {}
+            available_cols = parquet_columns(candidate)
+            aggregate_year_col = "year" if "year" in available_cols else ("window_end_year" if "window_end_year" in available_cols else None)
+            if aggregate_year_col:
+                if year is not None:
+                    exact_filters[aggregate_year_col] = year
+                elif year_start is not None and year_end is not None:
+                    compare_filters.extend(
+                        [
+                            (aggregate_year_col, ">=", year_start),
+                            (aggregate_year_col, "<=", year_end),
+                        ]
+                    )
+            if region and "loc_id" in available_cols and re.match(r"^[A-Z]{2,3}(?:-[A-Z0-9]+)*$", str(region).strip()):
+                starts_with_filters["loc_id"] = str(region).strip()
+            maybe_df = select_rows(
+                candidate,
+                exact_filters=exact_filters or None,
+                compare_filters=compare_filters or None,
+                starts_with_filters=starts_with_filters or None,
+            )
             if maybe_df.empty and candidate.exists():
                 maybe_df = pd.read_parquet(candidate)
             parquet_path = candidate
