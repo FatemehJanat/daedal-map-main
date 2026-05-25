@@ -25,7 +25,7 @@ from mapmover import logger
 from mapmover.auth_context import build_session_cache_key, get_authenticated_user, get_authenticated_user_async
 from mapmover.corpus_registry import corpus_registry
 from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log_conversation
-from mapmover.llm_usage import LLMUsageRecorder, classify_caller, ensure_recorder
+from mapmover.llm_usage import LLMUsageRecorder, classify_caller, ensure_recorder, extract_qa_http_label
 from mapmover.chat_budget import budget_rejection_payload, check_anonymous_chat_budget
 from mapmover.account_credit import (
     check_research_budget,
@@ -2119,6 +2119,7 @@ async def research_chat_endpoint(req: Request):
         caller_ctx = classify_caller(
             auth_user=auth_user,
             ip_hash=hash_ip_for_analytics(client_ip),
+            qa_http_label=extract_qa_http_label(req.headers),
         )
         budget_decision = check_anonymous_chat_budget(caller_ctx)
         if not budget_decision.allowed:
@@ -2220,6 +2221,7 @@ async def research_chat_stream_endpoint(req: Request):
             caller_ctx = classify_caller(
                 auth_user=auth_user,
                 ip_hash=hash_ip_for_analytics(client_ip),
+                qa_http_label=extract_qa_http_label(req.headers),
             )
             budget_decision = check_anonymous_chat_budget(caller_ctx)
             if not budget_decision.allowed:

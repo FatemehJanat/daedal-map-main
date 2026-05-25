@@ -20,7 +20,7 @@ from mapmover.preprocessor import preprocess_query
 from mapmover.progress_bus import ProgressBus, ProgressEvent
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
 from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log_conversation
-from mapmover.llm_usage import LLMUsageRecorder, classify_caller
+from mapmover.llm_usage import LLMUsageRecorder, classify_caller, extract_qa_http_label
 from mapmover.chat_budget import budget_rejection_payload, check_anonymous_chat_budget
 from mapmover.catalog_surface import (
     catalog_surface_scope,
@@ -77,7 +77,7 @@ def _rate_limited_message(message: str, retry_after: int) -> Response:
 
 def _confirmed_order_rate_limit(req: Request, auth_user: dict | None, caller_ctx: dict | None = None) -> Response | None:
     caller_kind = (caller_ctx or {}).get("caller_kind")
-    if caller_kind == "qa_suite":
+    if caller_kind in {"qa_suite", "qa_http_suite"}:
         return None
     user_id = (auth_user or {}).get("id")
     window_seconds = int(os.getenv("CONFIRMED_ORDER_RATE_WINDOW_SECONDS", "60"))
@@ -176,10 +176,11 @@ async def chat_endpoint(req: Request):
         caller_ctx = classify_caller(
             auth_user=auth_user,
             ip_hash=hash_ip_for_analytics(client_ip),
+            qa_http_label=extract_qa_http_label(req.headers),
         )
         user_id = auth_user.get("id") if auth_user else None
         caller_kind = caller_ctx.get("caller_kind")
-        if caller_kind == "qa_suite":
+        if caller_kind in {"qa_suite", "qa_http_suite"}:
             pass
         elif user_id:
             allowed, retry_after = rate_limiter.check(f"chat:user:{user_id}", limit=60, window_seconds=60)

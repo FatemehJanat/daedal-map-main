@@ -9,6 +9,7 @@ Cost is computed in the llm_usage_events_with_cost view, not here.
 
 Caller classification:
 - qa_suite      explicit in-process QA override
+- qa_http_suite explicit hosted QA run with auth + QA label header
 - authenticated profile present (including master plan)
 - anonymous     no auth
 
@@ -28,6 +29,8 @@ from .logging_analytics import log_llm_usage_event, logger
 
 _QA_OVERRIDE_ENV = "LLM_USAGE_FORCE_QA_USER_ID"
 _QA_OVERRIDE_LABEL_ENV = "LLM_USAGE_FORCE_QA_LABEL"
+_QA_HTTP_LABEL_HEADER = "x-county-map-qa-label"
+_QA_RUNNER_USER_ENV = "QA_RUNNER_USER_ID"
 
 
 def _qa_override_classification(ip_hash: Optional[str]) -> Optional[dict]:
@@ -47,6 +50,22 @@ def _qa_override_classification(ip_hash: Optional[str]) -> Optional[dict]:
         "plan_id": "master",
         "ip_hash": ip_hash,
     }
+
+
+def extract_qa_http_label(headers: Any) -> Optional[str]:
+    """Return the hosted QA label header if present.
+
+    This is only a raw header extractor. The caller classifier decides whether
+    the label is trusted based on the authenticated user.
+    """
+    if headers is None:
+        return None
+    try:
+        raw = headers.get(_QA_HTTP_LABEL_HEADER, "")
+    except Exception:
+        raw = ""
+    label = str(raw or "").strip()
+    return label or None
 
 
 _PROFILE_CACHE: dict[str, tuple[float, dict | None]] = {}
@@ -88,12 +107,14 @@ def classify_caller(
     *,
     auth_user: Optional[dict],
     ip_hash: Optional[str],
+    qa_http_label: Optional[str] = None,
 ) -> dict:
     """Return a dict describing the caller for llm_usage tagging.
 
     Keys: caller_kind, caller_label, auth_user_id, plan_id, ip_hash.
 
     - qa_suite      explicit in-process QA override
+    - qa_http_suite explicit hosted QA run with auth + QA label header
     - authenticated auth present (defaults to 'free' if profile missing)
     - anonymous     no auth
     """
@@ -119,6 +140,17 @@ def classify_caller(
     profile = _get_cached_profile(user_id) or {}
     plan_id = (profile.get("plan_id") or "free").strip() or "free"
     email = (auth_user.get("email") or profile.get("email") or "").strip() or None
+    qa_runner_user_id = (os.getenv(_QA_RUNNER_USER_ENV) or "").strip()
+    qa_label = str(qa_http_label or "").strip()
+
+    if qa_label and qa_runner_user_id and user_id == qa_runner_user_id:
+        return {
+            "caller_kind": "qa_http_suite",
+            "caller_label": qa_label,
+            "auth_user_id": user_id,
+            "plan_id": plan_id,
+            "ip_hash": ip_hash,
+        }
 
     return {
         "caller_kind": "authenticated",

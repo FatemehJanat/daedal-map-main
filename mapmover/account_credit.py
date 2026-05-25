@@ -96,7 +96,7 @@ def check_research_budget(caller_ctx: dict, model: str | None = None) -> Researc
     caller_kind = str((caller_ctx or {}).get("caller_kind") or "").strip().lower()
     user_id = str((caller_ctx or {}).get("auth_user_id") or "").strip()
 
-    if caller_kind not in {"authenticated", "qa_suite"} or not user_id:
+    if caller_kind not in {"authenticated", "qa_suite", "qa_http_suite"} or not user_id:
         return ResearchBudgetDecision(allowed=True, balance_micro_usd=0)
 
     profile = _cached_profile(user_id)
@@ -160,7 +160,7 @@ def settle_research_charge(
 ) -> Optional[dict]:
     caller_kind = str((caller_ctx or {}).get("caller_kind") or "").strip().lower()
     user_id = str((caller_ctx or {}).get("auth_user_id") or "").strip()
-    if caller_kind not in {"authenticated", "qa_suite"} or not user_id or not request_id:
+    if caller_kind not in {"authenticated", "qa_suite", "qa_http_suite"} or not user_id or not request_id:
         return None
 
     client = get_supabase_client()
