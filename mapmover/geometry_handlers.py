@@ -82,7 +82,24 @@ def translate_loc_id_to_geometry_id(loc_id: str) -> str:
     iso3 = canonical.split("-", 1)[0]
     crosswalk = _load_crosswalk(iso3)
     local_to_geo, _ = _build_crosswalk_maps(crosswalk)
-    return local_to_geo.get(canonical, canonical)
+    direct = local_to_geo.get(canonical)
+    if direct:
+        return direct
+
+    # Some USA disaster/admin2 files use 5-digit county FIPS inside
+    # `USA-{ST}-{SSCCC}` loc_ids, while the geometry crosswalk stores the
+    # county key as `USA-{ST}-{CCC}` because the state is already encoded by the
+    # state abbreviation segment. Bridge that format difference here so
+    # aggregate outputs can still join against geometry.
+    if iso3 == "USA":
+        parts = canonical.split("-")
+        if len(parts) == 3 and parts[2].isdigit() and len(parts[2]) > 3:
+            county_only = f"{parts[0]}-{parts[1]}-{parts[2][-3:]}"
+            bridged = local_to_geo.get(county_only)
+            if bridged:
+                return bridged
+
+    return canonical
 
 
 def translate_geometry_id_to_local_id(loc_id: str) -> str:

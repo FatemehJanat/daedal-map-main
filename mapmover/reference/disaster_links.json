@@ -1,0 +1,51 @@
+{
+  "_description": "Canonical disaster link semantics for shared links.parquet and embedded relationship fields",
+  "_schema_version": "1.0.0",
+  "_last_updated": "2026-05-24",
+  "shared_table": {
+    "preferred_columns": [
+      "parent_event_id",
+      "child_event_id",
+      "link_type"
+    ],
+    "compatible_columns": [
+      "parent_loc_id",
+      "child_loc_id",
+      "link_type"
+    ],
+    "allowed_link_types": [
+      "aftershock",
+      "triggered"
+    ]
+  },
+  "embedded_fields": {
+    "triggered_by": {
+      "kind": "single_parent",
+      "note": "Hazard-native parent relationship field when a row explicitly references its cause."
+    },
+    "triggered": {
+      "kind": "child_list",
+      "note": "Hazard-native child relationship field when a row embeds downstream effects."
+    },
+    "earthquake_event_ids": {
+      "kind": "related_list",
+      "note": "Hazard-native related-earthquake list; should not be treated as a direct substitute for the shared link table."
+    },
+    "tsunami_event_id": {
+      "kind": "single_related",
+      "note": "Single related tsunami reference on an event row."
+    },
+    "tsunami_event_ids": {
+      "kind": "related_list",
+      "note": "Multiple related tsunami references on an event row."
+    },
+    "aftershock_count": {
+      "kind": "summary_only",
+      "note": "Count summary only; not a canonical edge field."
+    },
+    "link_type": {
+      "kind": "embedded_label",
+      "note": "Hazard-native relationship label when a row also carries embedded relationship ids."
+    }
+  }
+}
