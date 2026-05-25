@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 
-from mapmover.preprocessor_metadata import detect_time_patterns as detect_time_patterns_impl
+from mapmover.runtime.preprocess_primitives import detect_time_patterns as detect_time_patterns_impl
 
 
 DISPLAY_PATTERNS = [

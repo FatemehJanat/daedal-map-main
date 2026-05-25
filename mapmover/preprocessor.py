@@ -28,7 +28,7 @@ from .explore.preprocess_pipeline import build_candidate_bundle
 from .explore.preprocess_pipeline import resolve_navigation_and_location
 from .explore.preprocess_summary import build_preprocessor_summary
 from .foundation_helpers import load_reference_json
-from .preprocessor_candidates import (
+from .runtime.candidate_scoring import (
     adjust_scores_with_context as adjust_scores_with_context_impl,
     detect_intent_candidates as detect_intent_candidates_impl,
     detect_source_candidates as detect_source_candidates_impl,
@@ -38,41 +38,33 @@ from .preprocessor_context import (
     build_tier4_context as build_tier4_context_impl,
     format_filter_description as format_filter_description_impl,
 )
-from .preprocessor_geo import (
-    get_countries_in_viewport as get_countries_in_viewport_impl,
-    get_sorted_location_names as get_sorted_location_names_impl,
-    load_parquet_names as load_parquet_names_impl,
-    lookup_location_in_viewport as lookup_location_in_viewport_impl,
-    search_locations_globally as search_locations_globally_impl,
-)
-from .preprocessor_intents import (
-    detect_derived_intent as detect_derived_intent_impl,
-    detect_filter_intent as detect_filter_intent_impl,
-    detect_navigation_intent as detect_navigation_intent_impl,
-    detect_overlay_intent as detect_overlay_intent_impl,
-    detect_show_borders_intent as detect_show_borders_intent_impl,
-)
-from .preprocessor_locations import (
+from .runtime.preprocess_primitives import (
     build_name_to_iso3 as build_name_to_iso3_impl,
     build_subregion_to_iso3 as build_subregion_to_iso3_impl,
+    detect_derived_intent as detect_derived_intent_impl,
     detect_drilldown_pattern as detect_drilldown_pattern_impl,
+    detect_filter_intent as detect_filter_intent_impl,
     detect_location_candidates as detect_location_candidates_impl,
+    detect_navigation_intent as detect_navigation_intent_impl,
+    detect_overlay_intent as detect_overlay_intent_impl,
+    detect_reference_lookup as detect_reference_lookup_impl,
+    detect_show_borders_intent as detect_show_borders_intent_impl,
+    detect_time_patterns as detect_time_patterns_impl,
     extract_country_from_query as extract_country_from_query_impl,
     extract_multiple_locations as extract_multiple_locations_impl,
-)
-from .preprocessor_metadata import (
-    detect_time_patterns as detect_time_patterns_impl,
     extract_topics as extract_topics_impl,
+    get_countries_in_viewport as get_countries_in_viewport_impl,
     get_region_aliases as get_region_aliases_impl,
     get_relevant_sources_with_metrics as get_relevant_sources_with_metrics_impl,
+    get_sorted_location_names as get_sorted_location_names_impl,
     load_country_index as load_country_index_impl,
+    load_parquet_names as load_parquet_names_impl,
+    lookup_country_specific_data as lookup_country_specific_data_impl,
+    lookup_location_in_viewport as lookup_location_in_viewport_impl,
     resolve_regions as resolve_regions_impl,
+    search_locations_globally as search_locations_globally_impl,
 )
 from .paths import GEOMETRY_DIR as GEOM_DIR, COUNTRIES_DIR
-from .preprocessor_reference import (
-    detect_reference_lookup as detect_reference_lookup_impl,
-    lookup_country_specific_data as lookup_country_specific_data_impl,
-)
 
 logger = logging.getLogger(__name__)
 

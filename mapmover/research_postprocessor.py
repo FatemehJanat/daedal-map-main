@@ -5,6 +5,37 @@ from __future__ import annotations
 from copy import deepcopy
 
 
+_TOP_LEVEL_DISPLAY_KEYS = (
+    "action",
+    "geojson",
+    "loc_ids",
+    "years",
+    "data_type",
+    "source_id",
+    "artifact_id",
+    "geographic_level",
+    "fit",
+    "context_visibility",
+    "style",
+    "raster",
+    "metric",
+    "metric_key",
+    "available_metrics",
+    "metric_year_ranges",
+    "scene_periods",
+    "raster_clip_levels",
+)
+
+
+def _extract_top_level_display(payload: dict) -> dict | None:
+    display = {key: payload.get(key) for key in _TOP_LEVEL_DISPLAY_KEYS if key in payload}
+    if not display:
+        return None
+    if not any(key in display for key in ("geojson", "raster", "action")):
+        return None
+    return display
+
+
 def _coerce_display(display: dict, research_hints: dict | None) -> dict | None:
     geojson = display.get("geojson") or {}
     features = geojson.get("features") or []
@@ -67,6 +98,12 @@ def normalize_research_result(result: dict | None, *, lane: str = "research") ->
     display = payload.get("display")
     displays = payload.get("displays")
     research_hints = payload.get("research_hints")
+
+    if not isinstance(display, dict):
+        extracted_display = _extract_top_level_display(payload)
+        if extracted_display:
+            payload["display"] = extracted_display
+            display = extracted_display
 
     if isinstance(display, dict):
         display["lane"] = lane

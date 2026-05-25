@@ -17,6 +17,7 @@ from typing import Any
 import pandas as pd
 
 from .duckdb_helpers import is_cloud_mode, parquet_columns
+from .orchestrator_specs import list_orchestrator_specs
 from .paths import COUNTRIES_DIR, DATA_ROOT, GEOMETRY_DIR
 
 logger = logging.getLogger("mapmover")
@@ -37,17 +38,22 @@ FOUNDATION_HELPER_REGISTRY = {
     "country_crosswalks": "countries/{ISO3}/crosswalk.json",
     "global_country_geometry": "geometry/global.csv",
     "world_factbook_static": "global/world_factbook_static/all_countries.parquet",
+    "orchestrator_specs": "mapmover/orchestrator_specs.py",
     "mode_profiles": {
         "explore": [
             "reference_json",
             "country_crosswalks",
             "global_country_geometry",
             "world_factbook_static",
+            "orchestrator_specs",
         ],
         "research": [
             "country_crosswalks",
+            "orchestrator_specs",
         ],
-        "ops": [],
+        "ops": [
+            "orchestrator_specs",
+        ],
     },
 }
 
@@ -98,6 +104,11 @@ def load_reference_json(relative_path: str | Path) -> Any:
 def get_foundation_helper_registry() -> dict[str, Any]:
     """Return the declared runtime-owned helper assets."""
     return FOUNDATION_HELPER_REGISTRY
+
+
+def load_orchestrator_specs() -> dict[str, Any]:
+    """Return the shared orchestrator spec registry."""
+    return list_orchestrator_specs()
 
 
 def load_country_crosswalk(iso3: str) -> dict | None:

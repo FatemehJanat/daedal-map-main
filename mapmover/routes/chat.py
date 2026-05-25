@@ -4,7 +4,6 @@ import asyncio
 import hashlib
 import json
 import os
-import re
 import time
 
 import msgpack
@@ -28,24 +27,33 @@ from mapmover.catalog_surface import (
     normalize_catalog_surface,
     request_can_use_wip_catalog,
 )
+from mapmover.explore.explore_confirmed_order import execute_confirmed_order_with_session_cache
+from mapmover.explore.explore_followups import (
+    address_prompt_response,
+    build_drilldown_response,
+    build_show_borders_response,
+)
+from mapmover.explore.orchestrator import ExploreOrchestrator
+from mapmover.explore.explore_request_context import (
+    extract_chat_request_context,
+)
+from mapmover.explore.explore_response_adapter import (
+    build_chat_response,
+    build_clarify_response,
+    build_disambiguate_response,
+    build_filter_update_response,
+    build_metric_warning_response,
+    build_navigate_response,
+    build_order_response,
+    build_overlay_toggle_response,
+)
 from mapmover.security import get_client_ip, rate_limiter
 
 
 # Heartbeat copy for explorer mode. Used only when the LLM tool loop
 # is silent for longer than the heartbeat window. Cycles by idle count.
-_EXPLORER_HEARTBEAT_MESSAGES = [
-    "Still working through your request...",
-    "Cross-checking the catalog...",
-    "Putting your order together...",
-]
-
-
-def _explorer_heartbeat(idle_count: int) -> ProgressEvent:
-    message = _EXPLORER_HEARTBEAT_MESSAGES[idle_count % len(_EXPLORER_HEARTBEAT_MESSAGES)]
-    return ProgressEvent(stage="thinking", message=message, extra={"heartbeat": True})
-
-
 router = APIRouter()
+explore_orchestrator = ExploreOrchestrator()
 
 
 def _chat_trace_id(session_id: str, query: str) -> str:
@@ -120,63 +128,6 @@ def _catalog_surface_for_request(req: Request, body: dict, auth_user: dict | Non
             status_code=403,
         )
     return surface, None
-
-
-def _address_prompt_response(prompt: dict | None) -> dict:
-    prompt = prompt or {}
-    return {
-        "type": "address_prompt",
-        "message": prompt.get("message") or "Start typing an address and choose a suggestion.",
-        "placeholder": prompt.get("placeholder") or "Search for an address...",
-    }
-
-
-def _compact_followup_message(message: str) -> str:
-    text = str(message or "").strip()
-    if not text or text.count("?") <= 2:
-        return text
-
-    lower = text.lower()
-    cue_patterns = (
-        r"\bwould you like me to\b",
-        r"\bwhich approach\b",
-        r"\blet me know which approach\b",
-        r"\bwould you like me\b",
-    )
-    cut_idx = None
-    for pattern in cue_patterns:
-        match = re.search(pattern, lower)
-        if match and (cut_idx is None or match.start() < cut_idx):
-            cut_idx = match.start()
-
-    if cut_idx is None:
-        return text
-
-    lead = text[:cut_idx].rstrip()
-    lead = re.sub(r"\n{3,}", "\n\n", lead).strip()
-    if lead and lead[-1] not in ".!?":
-        lead += "."
-
-    if "volcan" in lower and ("increasing" in lower or "trend" in lower):
-        followup = "If you want, I can focus on a recent period such as the last 100 or 500 years for a cleaner trend analysis."
-    elif "wildfire" in lower and "population" in lower and ("burned" in lower or "areas" in lower):
-        followup = "If you want, I can either show the burned areas for Canada in 2023 or narrow this to a population-exposure estimate path."
-    else:
-        followup = "If you want, I can narrow this to one concrete metric, region, or time window."
-
-    return f"{lead}\n\n{followup}".strip()
-
-
-def _execute_confirmed_order_with_session_cache(cache, confirmed_order: dict, *, force_refetch: bool = False):
-    order_str = json.dumps(confirmed_order, sort_keys=True)
-    request_key = hashlib.md5(order_str.encode()).hexdigest()[:16]
-    if not force_refetch:
-        cached_result = cache.get_cached_result(request_key)
-        if cached_result is not None:
-            return cached_result, request_key, True
-    result = execute_order(confirmed_order)
-    cache.store_result(request_key, result)
-    return result, request_key, False
 
 
 def _set_chat_analytics(
@@ -267,10 +218,11 @@ async def chat_endpoint(req: Request):
                 force_refetch = body.get("force", False)
                 t_exec_start = time.perf_counter()
                 with catalog_surface_scope(catalog_surface):
-                    result, request_key, reused_cached_result = _execute_confirmed_order_with_session_cache(
+                    result, request_key, reused_cached_result = execute_confirmed_order_with_session_cache(
                         cache,
                         confirmed_order,
                         force_refetch=force_refetch,
+                        execute_order_func=execute_order,
                     )
                 _chat_log_timing(
                     trace_id,
@@ -442,16 +394,17 @@ async def chat_endpoint(req: Request):
                 )
                 return msgpack_response(_confirmed_order_user_error(), status_code=400)
 
-        query = body.get("query", "")
-        chat_history = body.get("chatHistory", [])
-        viewport = body.get("viewport")
-        resolved_location = body.get("resolved_location")
-        active_overlays = body.get("activeOverlays")
-        cache_stats = body.get("cacheStats")
-        time_state = body.get("timeState")
-        saved_order_names = body.get("savedOrderNames", [])
-        loaded_data = body.get("loadedData", [])
-        tutorial_mode = body.get("tutorialMode", {})
+        request_context = extract_chat_request_context(body)
+        query = request_context["query"]
+        chat_history = request_context["chat_history"]
+        viewport = request_context["viewport"]
+        resolved_location = request_context["resolved_location"]
+        active_overlays = request_context["active_overlays"]
+        cache_stats = request_context["cache_stats"]
+        time_state = request_context["time_state"]
+        saved_order_names = request_context["saved_order_names"]
+        loaded_data = request_context["loaded_data"]
+        tutorial_mode = request_context["tutorial_mode"]
 
         if not query:
             return msgpack_error("No query provided", 400)
@@ -459,33 +412,22 @@ async def chat_endpoint(req: Request):
         logger.debug(f"[chat:{trace_id}] Chat query: {query[:100]}...")
         t_preprocess_start = time.perf_counter()
         with catalog_surface_scope(catalog_surface):
-            hints = preprocess_query(
-                query,
+            hints = explore_orchestrator.preprocess(
+                query=query,
                 viewport=viewport,
                 active_overlays=active_overlays,
                 cache_stats=cache_stats,
                 saved_order_names=saved_order_names,
                 time_state=time_state,
                 loaded_data=loaded_data,
+                resolved_location=resolved_location,
             )
-        hints["original_query"] = query
         _chat_log_timing(
             trace_id,
             "preprocess_complete",
             t_preprocess_start,
             f"show_borders={bool(hints.get('show_borders'))} nav={bool((hints.get('navigation') or {}).get('is_navigation'))}",
         )
-
-        if resolved_location:
-            hints["location"] = {
-                "matched_term": resolved_location.get("matched_term"),
-                "iso3": resolved_location.get("iso3"),
-                "country_name": resolved_location.get("country_name"),
-                "loc_id": resolved_location.get("loc_id"),
-                "is_subregion": resolved_location.get("loc_id") != resolved_location.get("iso3"),
-                "source": "disambiguation_selection",
-            }
-            hints["disambiguation"] = None
 
         if hints.get("tutorial_mode"):
             action = hints["tutorial_mode"].get("action", "toggle")
@@ -506,25 +448,16 @@ async def chat_endpoint(req: Request):
             )
 
         if hints.get("address_prompt"):
-            return msgpack_response(_address_prompt_response(hints.get("address_prompt")))
+            return msgpack_response(address_prompt_response(hints.get("address_prompt")))
 
         if hints.get("show_borders"):
-            previous_options = body.get("previous_disambiguation_options", [])
+            previous_options = request_context["previous_disambiguation_options"]
             loc_ids_to_show = [opt.get("loc_id") for opt in previous_options if opt.get("loc_id")] if previous_options else []
             if loc_ids_to_show:
                 from mapmover.data_loading import fetch_geometries_by_loc_ids
 
                 geojson = fetch_geometries_by_loc_ids(loc_ids_to_show)
-                return msgpack_response(
-                    {
-                        "type": "navigate",
-                        "message": f"Showing {len(loc_ids_to_show)} locations on the map. Click any location to see data options.",
-                        "locations": previous_options if previous_options else [{"loc_id": lid} for lid in loc_ids_to_show],
-                        "loc_ids": loc_ids_to_show,
-                        "original_query": query,
-                        "geojson": geojson,
-                    }
-                )
+                return msgpack_response(build_show_borders_response(previous_options, original_query=query, geojson=geojson))
 
         navigation = hints.get("navigation")
         if navigation and navigation.get("is_navigation"):
@@ -535,14 +468,7 @@ async def chat_endpoint(req: Request):
                 drill_level = loc.get("drill_to_level")
                 name = loc.get("matched_term", loc_id)
                 return msgpack_response(
-                    {
-                        "type": "drilldown",
-                        "message": f"Showing {drill_level} of {name}...",
-                        "loc_id": loc_id,
-                        "name": name,
-                        "drill_to_level": drill_level,
-                        "original_query": query,
-                    }
+                    build_drilldown_response(loc, original_query=query)
                 )
 
         t_interpret_start = time.perf_counter()
@@ -572,14 +498,13 @@ async def chat_endpoint(req: Request):
         # Run the synchronous LLM call in a thread so we do not block the
         # event loop for other concurrent requests on this worker.
         try:
-            with catalog_surface_scope(catalog_surface):
-                result = await asyncio.to_thread(
-                    interpret_request,
-                    query,
-                    chat_history,
-                    hints=hints,
-                    usage_recorder=usage_recorder,
-                )
+            result = await explore_orchestrator.interpret(
+                query=query,
+                chat_history=chat_history,
+                hints=hints,
+                usage_recorder=usage_recorder,
+                catalog_surface=catalog_surface,
+            )
         finally:
             usage_recorder.flush()
         _set_chat_analytics(
@@ -593,62 +518,22 @@ async def chat_endpoint(req: Request):
         if result["type"] == "order":
             t_postprocess_start = time.perf_counter()
             with catalog_surface_scope(catalog_surface):
-                processed = postprocess_order(result["order"], hints)
-            result_summary = processed.get("summary") or result.get("summary") or result.get("order", {}).get("summary") or "Data request"
+                response_tag, final_result = explore_orchestrator.finalize_order(
+                    result=result,
+                    hints=hints,
+                    force_metrics=bool(body.get("force_metrics")),
+                    build_clarify_response_func=build_clarify_response,
+                    build_metric_warning_response_func=build_metric_warning_response,
+                    build_order_response_func=build_order_response,
+                )
             _chat_log_timing(
                 trace_id,
                 "postprocess_complete",
                 t_postprocess_start,
-                f"items={len(processed.get('items', []) or [])} derived={len(processed.get('derived_specs', []) or [])}",
+                f"type={response_tag}",
             )
-            if processed.get("needs_clarify"):
-                _chat_log_timing(trace_id, "responding", t_request_start, "type=clarify_multiple_paths")
-                return msgpack_response(
-                    {
-                        "type": "clarify",
-                        "message": processed.get("clarify_message") or processed.get("validation_summary") or "I need a more specific path before I can run that.",
-                        "summary": result_summary,
-                        "full_order": processed,
-                    }
-                )
-            if not processed.get("all_valid", True):
-                _chat_log_timing(trace_id, "responding", t_request_start, "type=clarify_invalid_order")
-                return msgpack_response(
-                    {
-                        "type": "clarify",
-                        "message": processed.get("validation_summary") or "I need a more specific executable request before I can run that.",
-                        "summary": result_summary,
-                        "full_order": processed,
-                    }
-                )
-            if processed.get("metric_warning") and not body.get("force_metrics"):
-                display_items = get_display_items(processed.get("items", []), processed.get("derived_specs", []))
-                full_order = {**result["order"], "items": display_items, "derived_specs": processed.get("derived_specs", [])}
-                _chat_log_timing(trace_id, "responding", t_request_start, "type=metric_warning")
-                return msgpack_response(
-                    {
-                        "type": "metric_warning",
-                        "message": processed["metric_warning"]["message"],
-                        "metric_count": processed["metric_warning"]["count"],
-                        "gate": processed["metric_warning"].get("gate"),
-                        "pending_order": full_order,
-                        "full_order": processed,
-                        "summary": result_summary,
-                    }
-                )
-
-            display_items = get_display_items(processed.get("items", []), processed.get("derived_specs", []))
-            _chat_log_timing(trace_id, "responding", t_request_start, "type=order")
-            return msgpack_response(
-                {
-                    "type": "order",
-                    "order": {**result["order"], "items": display_items, "derived_specs": processed.get("derived_specs", [])},
-                    "full_order": processed,
-                    "summary": result_summary,
-                    "validation_summary": processed.get("validation_summary"),
-                    "all_valid": processed.get("all_valid", True),
-                }
-            )
+            _chat_log_timing(trace_id, "responding", t_request_start, f"type={response_tag}")
+            return msgpack_response(final_result)
 
         if result["type"] == "navigate":
             locations = result.get("locations", [])
@@ -660,63 +545,34 @@ async def chat_endpoint(req: Request):
 
                 geojson = execute_geometry_overlay(geometry_overlay, loc_ids)
             _chat_log_timing(trace_id, "responding", t_request_start, f"type=navigate locations={len(locations)}")
-            return msgpack_response(
-                {
-                    "type": "navigate",
-                    "data_type": "geometry" if geometry_overlay else None,
-                    "message": result.get("message", f"Showing {len(locations)} location(s)"),
-                    "locations": locations,
-                    "loc_ids": loc_ids,
-                    "original_query": query,
-                    "geojson": geojson,
-                    "geometry_overlay": geometry_overlay,
-                }
-            )
+            return msgpack_response(build_navigate_response(result, loc_ids=loc_ids, original_query=query, geojson=geojson))
 
         if result["type"] == "disambiguate":
             _chat_log_timing(trace_id, "responding", t_request_start, f"type=disambiguate options={len(result.get('options', []))}")
-            return msgpack_response(
-                {
-                    "type": "disambiguate",
-                    "message": result.get("message", "Multiple locations found. Please select one."),
-                    "query_term": result.get("query_term", "location"),
-                    "original_query": query,
-                    "options": result.get("options", []),
-                    "geojson": {"type": "FeatureCollection", "features": []},
-                }
-            )
+            return msgpack_response(build_disambiguate_response(result, original_query=query))
 
         if result["type"] == "filter_update":
             _chat_log_timing(trace_id, "responding", t_request_start, "type=filter_update")
-            return msgpack_response(
-                {
-                    "type": "filter_update",
-                    "overlay": result.get("overlay", ""),
-                    "filters": result.get("filters", {}),
-                    "message": result.get("message", "Updating filters"),
-                }
-            )
+            return msgpack_response(build_filter_update_response(result))
 
         if result["type"] == "overlay_toggle":
             _chat_log_timing(trace_id, "responding", t_request_start, "type=overlay_toggle")
+            return msgpack_response(build_overlay_toggle_response(result))
+
+        if result["type"] == "clarify":
+            result["message"] = explore_orchestrator.compact_followup(result.get("message", ""))
+            _chat_log_timing(trace_id, "responding", t_request_start, "type=clarify")
             return msgpack_response(
                 {
-                    "type": "overlay_toggle",
-                    "overlay": result.get("overlay", ""),
-                    "enabled": result.get("enabled", True),
-                    "message": result.get("message", "Toggling overlay"),
+                    "type": "clarify",
+                    "message": result["message"],
+                    "geojson": {"type": "FeatureCollection", "features": []},
+                    "needsMoreInfo": True,
                 }
             )
 
-        if result["type"] == "clarify":
-            result["message"] = _compact_followup_message(result.get("message", ""))
-            _chat_log_timing(trace_id, "responding", t_request_start, "type=clarify")
-            return msgpack_response(
-                {"type": "clarify", "message": result["message"], "geojson": {"type": "FeatureCollection", "features": []}, "needsMoreInfo": True}
-            )
-
         _chat_log_timing(trace_id, "responding", t_request_start, "type=chat")
-        chat_result = _compact_followup_message(result.get("message", "I'm not sure how to help with that."))
+        chat_result = explore_orchestrator.compact_followup(result.get("message", "I'm not sure how to help with that."))
         log_conversation(
             frontend_session_id,
             query,
@@ -726,15 +582,7 @@ async def chat_endpoint(req: Request):
             ip_hash=hash_ip_for_analytics(client_ip),
             user_agent=(req.headers.get("user-agent") or "")[:300] or None,
         )
-        return msgpack_response(
-            {
-                "type": "chat",
-                "message": chat_result,
-                "geojson": {"type": "FeatureCollection", "features": []},
-                "auth_user": {"id": auth_user.get("id"), "email": auth_user.get("email")} if auth_user else None,
-                "needsMoreInfo": False,
-            }
-        )
+        return msgpack_response(build_chat_response(chat_result, auth_user=auth_user))
     except Exception as e:
         logger.exception(f"[chat:{trace_id}] Chat error")
         log_app_error(
@@ -799,10 +647,11 @@ async def chat_stream_endpoint(req: Request):
                 yield f"data: {json.dumps({'stage': 'fetching', 'message': 'Fetching data...'})}\n\n"
                 try:
                     with catalog_surface_scope(catalog_surface):
-                        result, request_key, reused_cached_result = _execute_confirmed_order_with_session_cache(
+                        result, request_key, reused_cached_result = execute_confirmed_order_with_session_cache(
                             cache,
                             body["confirmed_order"],
                             force_refetch=bool(body.get("force", False)),
+                            execute_order_func=execute_order,
                         )
                     logger.info(
                         "Streaming confirmed_order request_key=%s reused=%s type=%s source=%s",
@@ -851,15 +700,16 @@ async def chat_stream_endpoint(req: Request):
                     yield f"data: {json.dumps({'stage': 'complete', 'result': _confirmed_order_user_error()})}\n\n"
                 return
 
-            query = body.get("query", "")
-            chat_history = body.get("chatHistory", [])
-            viewport = body.get("viewport")
-            resolved_location = body.get("resolved_location")
-            active_overlays = body.get("activeOverlays")
-            cache_stats = body.get("cacheStats")
-            time_state = body.get("timeState")
-            saved_order_names = body.get("savedOrderNames", [])
-            loaded_data = body.get("loadedData", [])
+            request_context = extract_chat_request_context(body)
+            query = request_context["query"]
+            chat_history = request_context["chat_history"]
+            viewport = request_context["viewport"]
+            resolved_location = request_context["resolved_location"]
+            active_overlays = request_context["active_overlays"]
+            cache_stats = request_context["cache_stats"]
+            time_state = request_context["time_state"]
+            saved_order_names = request_context["saved_order_names"]
+            loaded_data = request_context["loaded_data"]
 
             if not query:
                 yield f"data: {json.dumps({'stage': 'complete', 'result': {'type': 'error', 'message': 'No query provided'}})}\n\n"
@@ -870,51 +720,33 @@ async def chat_stream_endpoint(req: Request):
             await asyncio.sleep(0)
 
             with catalog_surface_scope(catalog_surface):
-                hints = preprocess_query(
-                    query,
+                hints = explore_orchestrator.preprocess(
+                    query=query,
                     viewport=viewport,
                     active_overlays=active_overlays,
                     cache_stats=cache_stats,
                     saved_order_names=saved_order_names,
                     time_state=time_state,
                     loaded_data=loaded_data,
+                    resolved_location=resolved_location,
                 )
-            hints["original_query"] = query
             t_preprocess_end = time.time()
             logger.info(f"[TIMING] Preprocessing: {(t_preprocess_end - t_preprocess_start) * 1000:.0f}ms")
 
-            if resolved_location:
-                hints["location"] = {
-                    "matched_term": resolved_location.get("matched_term"),
-                    "iso3": resolved_location.get("iso3"),
-                    "country_name": resolved_location.get("country_name"),
-                    "loc_id": resolved_location.get("loc_id"),
-                    "is_subregion": resolved_location.get("loc_id") != resolved_location.get("iso3"),
-                    "source": "disambiguation_selection",
-                }
-                hints["disambiguation"] = None
-
             if hints.get("show_borders"):
-                previous_options = body.get("previous_disambiguation_options", [])
+                previous_options = request_context["previous_disambiguation_options"]
                 if previous_options:
                     loc_ids_to_show = [opt.get("loc_id") for opt in previous_options if opt.get("loc_id")]
                     if loc_ids_to_show:
                         from mapmover.data_loading import fetch_geometries_by_loc_ids
 
                         geojson = fetch_geometries_by_loc_ids(loc_ids_to_show)
-                        result = {
-                            "type": "navigate",
-                            "message": f"Showing {len(loc_ids_to_show)} locations on the map.",
-                            "locations": previous_options,
-                            "loc_ids": loc_ids_to_show,
-                            "original_query": query,
-                            "geojson": geojson,
-                        }
+                        result = build_show_borders_response(previous_options, original_query=query, geojson=geojson)
                         yield f"data: {json.dumps({'stage': 'complete', 'result': result})}\n\n"
                         return
 
             if hints.get("address_prompt"):
-                yield f"data: {json.dumps({'stage': 'complete', 'result': _address_prompt_response(hints.get('address_prompt'))})}\n\n"
+                yield f"data: {json.dumps({'stage': 'complete', 'result': address_prompt_response(hints.get('address_prompt'))})}\n\n"
                 return
 
             navigation = hints.get("navigation")
@@ -922,14 +754,7 @@ async def chat_stream_endpoint(req: Request):
                 locations = navigation.get("locations", [])
                 if len(locations) == 1 and locations[0].get("drill_to_level"):
                     loc = locations[0]
-                    result = {
-                        "type": "drilldown",
-                        "message": f"Showing {loc.get('drill_to_level')} of {loc.get('matched_term', loc.get('loc_id'))}...",
-                        "loc_id": loc.get("loc_id"),
-                        "name": loc.get("matched_term", loc.get("loc_id")),
-                        "drill_to_level": loc.get("drill_to_level"),
-                        "original_query": query,
-                    }
+                    result = build_drilldown_response(loc, original_query=query)
                     yield f"data: {json.dumps({'stage': 'complete', 'result': result})}\n\n"
                     return
 
@@ -955,21 +780,18 @@ async def chat_stream_endpoint(req: Request):
                 session_id=session_id,
                 **caller_ctx,
             )
-            bus = ProgressBus()
-            with catalog_surface_scope(catalog_surface):
-                llm_task = asyncio.create_task(asyncio.to_thread(
-                    interpret_request,
-                    query,
-                    chat_history,
-                    hints=hints,
-                    progress=bus.thread_emitter(),
-                    usage_recorder=usage_recorder,
-                ))
+            bus, llm_task = await explore_orchestrator.interpret_with_progress(
+                query=query,
+                chat_history=chat_history,
+                hints=hints,
+                usage_recorder=usage_recorder,
+                catalog_surface=catalog_surface,
+            )
             try:
                 async for event in bus.drain_until(
                     llm_task,
                     heartbeat_seconds=4.0,
-                    heartbeat=_explorer_heartbeat,
+                    heartbeat=explore_orchestrator.heartbeat,
                 ):
                     payload = {"stage": event.stage, "message": event.message}
                     if event.extra:
@@ -984,36 +806,15 @@ async def chat_stream_endpoint(req: Request):
             if result["type"] == "order":
                 yield f"data: {json.dumps({'stage': 'preparing', 'message': 'Preparing your order...'})}\n\n"
                 await asyncio.sleep(0)
-                result_summary = result.get("summary") or result.get("order", {}).get("summary") or "Data request"
                 with catalog_surface_scope(catalog_surface):
-                    processed = postprocess_order(result["order"], hints)
-                if processed.get("needs_clarify"):
-                    final_result = {
-                        "type": "clarify",
-                        "message": processed.get("clarify_message") or processed.get("validation_summary") or "I need a more specific path before I can run that.",
-                        "summary": result_summary,
-                        "full_order": processed,
-                    }
-                    yield f"data: {json.dumps({'stage': 'complete', 'result': final_result})}\n\n"
-                    return
-                if not processed.get("all_valid", True):
-                    final_result = {
-                        "type": "clarify",
-                        "message": processed.get("validation_summary") or "I need a more specific executable request before I can run that.",
-                        "summary": result_summary,
-                        "full_order": processed,
-                    }
-                    yield f"data: {json.dumps({'stage': 'complete', 'result': final_result})}\n\n"
-                    return
-                display_items = get_display_items(processed.get("items", []), processed.get("derived_specs", []))
-                final_result = {
-                    "type": "order",
-                    "order": {**result["order"], "items": display_items, "derived_specs": processed.get("derived_specs", [])},
-                    "full_order": processed,
-                    "summary": result_summary,
-                    "validation_summary": processed.get("validation_summary"),
-                    "all_valid": processed.get("all_valid", True),
-                }
+                    response_tag, final_result = explore_orchestrator.finalize_order(
+                        result=result,
+                        hints=hints,
+                        force_metrics=False,
+                        build_clarify_response_func=build_clarify_response,
+                        build_metric_warning_response_func=build_metric_warning_response,
+                        build_order_response_func=build_order_response,
+                    )
                 yield f"data: {json.dumps({'stage': 'complete', 'result': final_result})}\n\n"
             elif result["type"] == "navigate":
                 locations = result.get("locations", [])
@@ -1024,59 +825,28 @@ async def chat_stream_endpoint(req: Request):
                     from mapmover.order_executor import execute_geometry_overlay
 
                     geojson = execute_geometry_overlay(geometry_overlay, loc_ids)
-                final_result = {
-                    "type": "navigate",
-                    "data_type": "geometry" if geometry_overlay else None,
-                    "message": result.get("message", f"Showing {len(locations)} location(s)"),
-                    "locations": locations,
-                    "loc_ids": loc_ids,
-                    "original_query": query,
-                    "geojson": geojson,
-                    "geometry_overlay": geometry_overlay,
-                }
+                final_result = build_navigate_response(result, loc_ids=loc_ids, original_query=query, geojson=geojson)
                 yield f"data: {json.dumps({'stage': 'complete', 'result': final_result})}\n\n"
             elif result["type"] == "disambiguate":
-                final_result = {
-                    "type": "disambiguate",
-                    "message": result.get("message", "Multiple locations found. Please select one."),
-                    "query_term": result.get("query_term", "location"),
-                    "original_query": query,
-                    "options": result.get("options", []),
-                    "geojson": {"type": "FeatureCollection", "features": []},
-                }
+                final_result = build_disambiguate_response(result, original_query=query)
                 yield f"data: {json.dumps({'stage': 'complete', 'result': final_result})}\n\n"
             elif result["type"] == "filter_update":
-                final_result = {
-                    "type": "filter_update",
-                    "overlay": result.get("overlay", ""),
-                    "filters": result.get("filters", {}),
-                    "message": result.get("message", "Updating filters"),
-                }
+                final_result = build_filter_update_response(result)
                 yield f"data: {json.dumps({'stage': 'complete', 'result': final_result})}\n\n"
             elif result["type"] == "overlay_toggle":
-                final_result = {
-                    "type": "overlay_toggle",
-                    "overlay": result.get("overlay", ""),
-                    "enabled": result.get("enabled", True),
-                    "message": result.get("message", "Toggling overlay"),
-                }
+                final_result = build_overlay_toggle_response(result)
                 yield f"data: {json.dumps({'stage': 'complete', 'result': final_result})}\n\n"
             elif result["type"] == "clarify":
                 final_result = {
                     "type": "clarify",
-                    "message": _compact_followup_message(result.get("message", "")),
+                    "message": explore_orchestrator.compact_followup(result.get("message", "")),
                     "geojson": {"type": "FeatureCollection", "features": []},
                     "needsMoreInfo": True,
                 }
                 yield f"data: {json.dumps({'stage': 'complete', 'result': final_result})}\n\n"
             else:
-                chat_msg = _compact_followup_message(result.get("message", "I'm not sure how to help with that."))
-                final_result = {
-                    "type": "chat",
-                    "message": chat_msg,
-                    "geojson": {"type": "FeatureCollection", "features": []},
-                    "needsMoreInfo": False,
-                }
+                chat_msg = explore_orchestrator.compact_followup(result.get("message", "I'm not sure how to help with that."))
+                final_result = build_chat_response(chat_msg)
                 log_conversation(
                     frontend_session_id,
                     query,

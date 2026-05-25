@@ -47,6 +47,7 @@ from mapmover.progress_bus import ProgressBus, ProgressEvent
 from mapmover.research_postprocessor import normalize_research_result
 from mapmover.research_preprocessor import build_research_hint_context, preprocess_research_query
 from mapmover.research_prompt import build_research_system_prompt
+from mapmover.research_orchestrator import ResearchOrchestrator
 from mapmover.research_runtime import (
     build_research_messages,
     finalize_research_response,
@@ -76,13 +77,6 @@ RESEARCH_TOOL_PROGRESS_MESSAGES = {
 # Heartbeat copy used only when no real progress event has arrived
 # within the heartbeat window. Cycles by idle count so users see
 # motion even if a single LLM call is taking a long time.
-_RESEARCH_HEARTBEAT_MESSAGES = [
-    "Still reading the workspace...",
-    "Cross-checking values...",
-    "Working through the research context...",
-    "Drafting your answer...",
-]
-
 _PROMPT_ARTIFACT_WINDOW = 64
 _RESEARCH_MAX_TOOL_ITERATIONS = 8
 _RESEARCH_MAX_TOKENS = 5000
@@ -94,17 +88,12 @@ _RESEARCH_LIVE_SOURCE_ROW_THRESHOLD = 250_000
 _RESEARCH_LIVE_SOURCE_FILE_MB_THRESHOLD = 25.0
 _PRIVATE_BROWSER_ARTIFACT_OUTPUT_ROOT = Path(__file__).resolve().parents[3] / "county-map-private" / "build" / "browser_artifacts" / "output"
 
-
-def _research_heartbeat(idle_count: int) -> ProgressEvent:
-    message = _RESEARCH_HEARTBEAT_MESSAGES[idle_count % len(_RESEARCH_HEARTBEAT_MESSAGES)]
-    return ProgressEvent(stage="thinking", message=message, extra={"heartbeat": True})
-
-
 def _json_dumps_safe(value) -> str:
     return json.dumps(value, default=str)
 
 
 router = APIRouter()
+research_orchestrator = ResearchOrchestrator()
 
 
 def _research_request_id(session_id: str, query: str) -> str:
@@ -2165,17 +2154,16 @@ async def research_chat_endpoint(req: Request):
         # Run the synchronous LLM-driven research pipeline in a thread so we
         # do not block the event loop. Mirrors the streaming endpoint below.
         try:
-            with catalog_surface_scope(catalog_surface):
-                result = await asyncio.to_thread(
-                    run_research_chat,
-                    session_id=session_id,
-                    query=query,
-                    chat_history=body.get("chatHistory", []),
-                    research_memory=body.get("researchMemory"),
-                    force_large_display=bool(body.get("force_research_display")),
-                    usage_recorder=usage_recorder,
-                    rescue_usage_recorder=rescue_usage_recorder,
-                )
+            result = await research_orchestrator.run(
+                session_id=session_id,
+                query=query,
+                chat_history=body.get("chatHistory", []),
+                research_memory=body.get("researchMemory"),
+                force_large_display=bool(body.get("force_research_display")),
+                usage_recorder=usage_recorder,
+                rescue_usage_recorder=rescue_usage_recorder,
+                catalog_surface=catalog_surface,
+            )
         finally:
             usage_recorder.flush()
             rescue_usage_recorder.flush(skip_if_empty=True)
@@ -2265,24 +2253,21 @@ async def research_chat_stream_endpoint(req: Request):
             # ProgressBus so the UI shows what tool the LLM is actually
             # calling, not rotating filler text. Heartbeat fires only when
             # no real event arrives within the window.
-            bus = ProgressBus()
-            with catalog_surface_scope(catalog_surface):
-                task = asyncio.create_task(asyncio.to_thread(
-                    run_research_chat,
-                    session_id=session_id,
-                    query=query,
-                    chat_history=body.get("chatHistory", []),
-                    research_memory=body.get("researchMemory"),
-                    progress=bus.thread_emitter(),
-                    force_large_display=bool(body.get("force_research_display")),
-                    usage_recorder=usage_recorder,
-                    rescue_usage_recorder=rescue_usage_recorder,
-                ))
+            bus, task = await research_orchestrator.run_with_progress(
+                session_id=session_id,
+                query=query,
+                chat_history=body.get("chatHistory", []),
+                research_memory=body.get("researchMemory"),
+                force_large_display=bool(body.get("force_research_display")),
+                usage_recorder=usage_recorder,
+                rescue_usage_recorder=rescue_usage_recorder,
+                catalog_surface=catalog_surface,
+            )
             try:
                 async for event in bus.drain_until(
                     task,
                     heartbeat_seconds=4.0,
-                    heartbeat=_research_heartbeat,
+                    heartbeat=research_orchestrator.heartbeat,
                 ):
                     payload = {"stage": event.stage, "message": event.message}
                     if event.extra:

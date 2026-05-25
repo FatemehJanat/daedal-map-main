@@ -67,10 +67,39 @@ from .duckdb_helpers import (
     select_peak_positions_by_storm_ids,
     select_rows,
 )
-from .execution.load_strategies import collect_source_metadata, load_order_item_dataframe
-from .execution.item_processing import process_metric_items
-from .execution.order_dispatch import prepare_execution_items, route_special_order
-from .execution.response_builder import build_metrics_response
+from .execution.special_order_capabilities import (
+    route_default_special_order,
+)
+from .execution.event_execution import (
+    build_empty_wildfire_perimeter_response as build_empty_wildfire_perimeter_response_impl,
+    detect_event_type as detect_event_type_impl,
+    execute_event_order_impl,
+    get_coordinate_columns as get_coordinate_columns_impl,
+    get_id_column as get_id_column_impl,
+    get_significance_column as get_significance_column_impl,
+    get_time_column as get_time_column_impl,
+)
+from .execution.geometry_execution import (
+    execute_geometry_order_impl,
+    execute_geometry_overlay_impl,
+)
+from .execution.removal_execution import (
+    execute_removal_order_impl,
+)
+from .runtime.query_intent_primitives import (
+    query_prefers_event_retry as query_prefers_event_retry_impl,
+)
+from .runtime.retry_primitives import (
+    build_event_retry_order as build_event_retry_order_impl,
+    resolve_event_sibling_source as resolve_event_sibling_source_impl,
+)
+from .runtime.execution_primitives import (
+    build_metrics_response,
+    collect_source_metadata,
+    load_order_item_dataframe,
+    process_metric_items,
+    prepare_execution_items,
+)
 
 CONVERSIONS_PATH = Path(__file__).parent / "conversions.json"
 # Cache conversions to avoid repeated file reads
@@ -411,120 +440,25 @@ def _normalize_order_items(items: list, catalog: dict) -> list:
 
 
 def _resolve_event_sibling_source(catalog: dict, item: dict) -> str | None:
-    pack_id = item.get("pack_id")
-    if not pack_id:
-        source_id = str(item.get("source_id") or "").strip()
-        for source in catalog.get("sources", []):
-            if source.get("source_id") == source_id:
-                pack_id = source.get("pack_id")
-                if pack_id:
-                    item["pack_id"] = pack_id
-                break
-    if not pack_id:
-        return None
-
-    region = item.get("region")
-    pack_sources = [
-        s for s in catalog.get("sources", [])
-        if s.get("pack_id") == pack_id and s.get("geojson_shape") == "event_shape"
-    ]
-    if not pack_sources:
-        return None
-
-    exact_matches = [
-        s for s in pack_sources
-        if s.get("scope") != "global" and _scope_matches_region(s.get("scope", "global"), region)
-    ]
-    if len(exact_matches) == 1:
-        return exact_matches[0].get("source_id")
-
-    global_matches = [s for s in pack_sources if s.get("scope") == "global"]
-    if len(global_matches) == 1:
-        return global_matches[0].get("source_id")
-
-    if len(pack_sources) == 1:
-        return pack_sources[0].get("source_id")
-    return None
+    return resolve_event_sibling_source_impl(
+        catalog,
+        item,
+        scope_matches_region_func=_scope_matches_region,
+    )
 
 
 def _query_prefers_event_retry(query: str) -> bool:
-    text = str(query or "").strip().lower()
-    if not text:
-        return False
-    event_terms = (
-        "show me",
-        "display",
-        "map",
-        "list",
-        "find",
-        "events",
-        "event",
-        "significant",
-        "major",
-        "severe",
-        "largest",
-        "strongest",
-        "deadliest",
-        "occurred",
-        "happened",
-        "struck",
-        "hit",
-    )
-    aggregate_terms = (
-        "how many",
-        "count",
-        "counts",
-        "number of",
-        "total",
-        "average",
-        "avg",
-        "mean",
-        "sum",
-        "frequency",
-        "trend",
-        "compare",
-        "ranking",
-        "rank",
-        "highest",
-        "lowest",
-        "per year",
-        "rolling",
-        "share",
-        "rate",
-        "exposure",
-    )
-    has_event_terms = any(term in text for term in event_terms)
-    has_aggregate_terms = any(term in text for term in aggregate_terms)
-    has_time_window = bool(re.search(r"\b(?:since|from|between|during|in)\s+\d{4}\b", text)) or any(
-        term in text for term in ("last 10 years", "last 20 years", "last 30 years", "past 10 years", "past 20 years", "past 30 years")
-    )
-    return has_event_terms and (not has_aggregate_terms or has_time_window)
+    return query_prefers_event_retry_impl(query)
 
 
 def _build_event_retry_order(order: dict, items: list, catalog: dict) -> dict | None:
-    rebuilt_items = []
-    for item in items:
-        query = str(((item.get("_hints") or {}).get("original_query")) or "")
-        if not _query_prefers_event_retry(query):
-            return None
-        event_source_id = _resolve_event_sibling_source(catalog, item)
-        if not event_source_id:
-            return None
-        rebuilt = dict(item)
-        rebuilt["source_id"] = event_source_id
-        rebuilt["mode"] = "events"
-        rebuilt["event_file"] = "events"
-        for field in (
-            "aggregate_use_rolling",
-            "aggregate_window_years",
-            "aggregate_rollup_level",
-            "aggregate_all_years",
-        ):
-            rebuilt.pop(field, None)
-        rebuilt_items.append(rebuilt)
-    if not rebuilt_items:
-        return None
-    return {**order, "items": rebuilt_items}
+    return build_event_retry_order_impl(
+        order,
+        items,
+        catalog,
+        query_prefers_event_retry_func=_query_prefers_event_retry,
+        resolve_event_sibling_source_func=_resolve_event_sibling_source,
+    )
 
 
 def _execution_requires_metric(item: dict, source_info: dict | None) -> bool:
@@ -1131,168 +1065,22 @@ def _load_geometry_from_source(source_info: dict, filter_regions: set = None) ->
 
 
 def execute_geometry_overlay(geometry_overlay: dict, filter_loc_ids: list = None) -> dict:
-    """
-    Load geometry overlay data and return as GeoJSON.
-
-    Used for "show me ZIP codes in California" type queries.
-
-    Args:
-        geometry_overlay: {source_id, overlay_type}
-        filter_loc_ids: List of loc_ids to filter by (e.g., ["USA-CA"] for California)
-
-    Returns:
-        GeoJSON FeatureCollection with geometry features
-    """
-    import logging
-    logger = logging.getLogger(__name__)
-
-    source_id = geometry_overlay.get("source_id")
-    if not source_id:
-        logger.warning("No source_id in geometry_overlay")
-        return {"type": "FeatureCollection", "features": []}
-
-    # Get source path from catalog
-    source_path = _get_source_path(source_id)
-    if not source_path:
-        logger.warning(f"Source not found in catalog: {source_id}")
-        return {"type": "FeatureCollection", "features": []}
-
-    # Build full path to parquet file
-    # Path format: countries/USA/geometry/zcta -> countries/USA/geometry/zcta/USA.parquet
-    full_path = DATA_ROOT / source_path
-    parquet_files = list(full_path.glob("*.parquet")) if full_path.is_dir() else []
-
-    if not parquet_files:
-        logger.warning(f"No parquet files found in {full_path}")
-        return {"type": "FeatureCollection", "features": []}
-
-    # Load the parquet file (use first one found)
-    parquet_path = parquet_files[0]
-    logger.info(f"Loading geometry overlay from {parquet_path}")
-
-    try:
-        columns = parquet_columns(parquet_path) or ["loc_id", "name", "geometry", "parent_id"]
-        df = select_columns_from_parquet(parquet_path, columns)
-        if df.empty:
-            df = pd.read_parquet(parquet_path, columns=columns)
-        logger.info(f"Loaded {len(df)} features from {parquet_path}")
-
-        # Filter by region if specified
-        # For ZCTA, parent_id contains the county loc_id (e.g., USA-CA-037)
-        # To filter by state, we check if parent_id starts with the state prefix
-        if filter_loc_ids and len(filter_loc_ids) > 0 and "parent_id" in df.columns:
-            filter_conditions = []
-            for loc_id in filter_loc_ids:
-                # Match parent_id that starts with the filter loc_id
-                # e.g., filter_loc_id="USA-CA" matches parent_id="USA-CA-037"
-                filter_conditions.append(df["parent_id"].str.startswith(loc_id + "-", na=False))
-                # Also match exact parent_id
-                filter_conditions.append(df["parent_id"] == loc_id)
-
-            if filter_conditions:
-                combined_filter = filter_conditions[0]
-                for cond in filter_conditions[1:]:
-                    combined_filter = combined_filter | cond
-                df = df[combined_filter]
-                logger.info(f"Filtered to {len(df)} features for regions: {filter_loc_ids}")
-
-        # Convert to GeoJSON
-        geojson = df_to_geojson(df, polygon_only=True)
-        logger.info(f"Returning {len(geojson.get('features', []))} geometry features")
-
-        return geojson
-
-    except Exception as e:
-        logger.error(f"Error loading geometry overlay: {e}")
-        return {"type": "FeatureCollection", "features": []}
+    return execute_geometry_overlay_impl(
+        geometry_overlay,
+        filter_loc_ids=filter_loc_ids,
+        get_source_path_func=_get_source_path,
+        parquet_columns_func=parquet_columns,
+        select_columns_from_parquet_func=select_columns_from_parquet,
+        df_to_geojson_func=df_to_geojson,
+    )
 
 
 def execute_geometry_order(order: dict) -> dict:
-    """
-    Execute geometry order, returning GeoJSON with all requested features.
-
-    Routes through the order system to enable:
-    - Accumulating multiple geometry requests in an order
-    - Using cache system with dedup by loc_id
-    - Add/remove regions incrementally
-
-    Args:
-        order: {items: [{source_id, region, overlay_type}], summary: str}
-
-    Returns:
-        {
-            type: "geometry",
-            data_type: "geometry",
-            geojson: {type: "FeatureCollection", features: [...]},
-            count: int,
-            overlay_type: str,
-            summary: str
-        }
-    """
-    import logging
-    logger = logging.getLogger(__name__)
-
-    items = order.get("items", [])
-    summary = order.get("summary", "")
-
-    if not items:
-        return {
-            "type": "geometry",
-            "data_type": "geometry",
-            "geojson": {"type": "FeatureCollection", "features": []},
-            "count": 0,
-            "message": "No items in order"
-        }
-
-    all_features = []
-    overlay_type = None
-
-    for item in items:
-        source_id = item.get("source_id")
-        region = item.get("region")
-        item_overlay_type = item.get("overlay_type")
-        if not item_overlay_type and source_id:
-            try:
-                source_meta = load_source_metadata(source_id) or {}
-                item_overlay_type = source_meta.get("overlay_type") or item_overlay_type
-            except Exception:
-                item_overlay_type = item_overlay_type
-
-        if not source_id:
-            continue
-
-        # Track overlay_type for response
-        if item_overlay_type and not overlay_type:
-            overlay_type = item_overlay_type
-
-        # Build filter_loc_ids from region
-        # Region can be "USA-CA" for California or "USA-CA-037" for a county
-        filter_loc_ids = [region] if region else None
-
-        logger.info(f"Executing geometry order: source={source_id}, region={region}, overlay_type={item_overlay_type}")
-
-        # Execute geometry overlay for this item
-        geojson = execute_geometry_overlay(
-            {"source_id": source_id, "overlay_type": item_overlay_type},
-            filter_loc_ids=filter_loc_ids
-        )
-
-        # Accumulate features
-        item_features = geojson.get("features", [])
-        all_features.extend(item_features)
-        logger.info(f"Added {len(item_features)} features from {source_id}")
-
-    return {
-        "type": "geometry",
-        "data_type": "geometry",
-        "overlay_type": overlay_type or "zcta",
-        "geojson": {
-            "type": "FeatureCollection",
-            "features": all_features
-        },
-        "count": len(all_features),
-        "summary": summary or f"Showing {len(all_features)} geometry features"
-    }
+    return execute_geometry_order_impl(
+        order,
+        execute_geometry_overlay_func=execute_geometry_overlay,
+        load_source_metadata_func=load_source_metadata,
+    )
 
 
 def _get_source_path(source_id: str) -> Path:
@@ -2173,18 +1961,19 @@ def _get_source_from_catalog(source_id: str) -> dict:
 
 
 def _detect_event_type(source_id: str) -> str:
-    """Detect event type from catalog metadata."""
-    source = _get_source_from_catalog(source_id)
-    if source.get("event_type"):
-        return source.get("event_type")
-    metadata = load_source_metadata(_resolve_event_source_id(source_id)) or {}
-    return metadata.get("event_type", "unknown")
+    return detect_event_type_impl(
+        source_id,
+        get_source_from_catalog_func=_get_source_from_catalog,
+        load_source_metadata_func=load_source_metadata,
+        resolve_event_source_id_func=_resolve_event_source_id,
+    )
 
 
 def _get_significance_column(source_id: str) -> str:
-    """Get significance column from catalog metadata."""
-    source = _get_source_from_catalog(source_id)
-    return source.get("significance_column")
+    return get_significance_column_impl(
+        source_id,
+        get_source_from_catalog_func=_get_source_from_catalog,
+    )
 
 
 def _find_source_files(source_id: str) -> list:
@@ -2214,42 +2003,15 @@ def _find_source_files(source_id: str) -> list:
 
 
 def _get_coordinate_columns(df: pd.DataFrame) -> tuple:
-    """Find lat/lon column names in DataFrame."""
-    lat_candidates = ["lat", "latitude", "centroid_lat"]
-    lon_candidates = ["lon", "longitude", "centroid_lon"]
-
-    lat_col = None
-    lon_col = None
-
-    for col in lat_candidates:
-        if col in df.columns:
-            lat_col = col
-            break
-
-    for col in lon_candidates:
-        if col in df.columns:
-            lon_col = col
-            break
-
-    return lat_col, lon_col
+    return get_coordinate_columns_impl(df)
 
 
 def _get_time_column(df: pd.DataFrame) -> str:
-    """Find timestamp column name in DataFrame."""
-    time_candidates = ["time", "timestamp", "event_date", "date", "ignition_date"]
-    for col in time_candidates:
-        if col in df.columns:
-            return col
-    return None
+    return get_time_column_impl(df)
 
 
 def _get_id_column(df: pd.DataFrame, event_type: str) -> str:
-    """Find event ID column name in DataFrame."""
-    id_candidates = ["event_id", f"{event_type}_id", "id", "storm_id", "fire_id"]
-    for col in id_candidates:
-        if col in df.columns:
-            return col
-    return None
+    return get_id_column_impl(df, event_type)
 
 
 def _order_item_original_query(item: dict | None) -> str:
@@ -2260,396 +2022,52 @@ def _order_item_original_query(item: dict | None) -> str:
 
 
 def _build_empty_wildfire_perimeter_response(order: dict, item: dict, source_id: str) -> dict | None:
-    query_text = " ".join(
-        part for part in (
-            _order_item_original_query(item),
-            str(order.get("summary") or "").strip(),
-        )
-        if part
-    ).lower()
-    if "wildfire" not in query_text and "fire" not in query_text:
-        return None
-    if "perimeter" not in query_text:
-        return None
-
-    source_note = (
-        "The published USA and Canada wildfire event sources do not reliably include perimeter polygons for every named fire."
-        if source_id in {"wildfires_usa", "can_wildfires"}
-        else "Perimeter coverage in this wildfire source is incomplete, and this specific fire does not have a published perimeter polygon."
+    return build_empty_wildfire_perimeter_response_impl(
+        order,
+        item,
+        source_id,
+        get_source_from_catalog_func=_get_source_from_catalog,
     )
-    message = (
-        f"{source_note} I could not draw a perimeter for this request from the current published data. "
-        "I can still help with the fire's event details, affected areas, or a different wildfire that has perimeter coverage."
-    )
-    return {
-        "type": "chat",
-        "data_type": "events",
-        "source_id": source_id,
-        "geojson": {"type": "FeatureCollection", "features": []},
-        "summary": order.get("summary") or "Wildfire perimeter not available in the current published data",
-        "message": message,
-        "count": 0,
-        "sources": [{
-            "id": source_id,
-            "name": _get_source_from_catalog(source_id).get("source_name", source_id),
-            "url": _get_source_from_catalog(source_id).get("source_url", ""),
-        }],
-    }
 
 
 def execute_event_order(order: dict) -> dict:
-    """
-    Execute order in event mode - returns individual events as GeoJSON points.
-
-    Args:
-        order: {items: [{source_id, mode, event_file, region, year_start, year_end, filters, limit}]}
-
-    Returns:
-        {
-            type: "events",
-            event_type: "earthquake",
-            geojson: {type: "FeatureCollection", features: [...]},
-            time_range: {min, max, granularity},
-            summary: str,
-            count: int,
-            sources: [...]
-        }
-    """
-    items = order.get("items", [])
-    summary = order.get("summary", "")
-
-    if not items:
-        return {
-            "type": "error",
-            "message": "No items in order",
-            "geojson": {"type": "FeatureCollection", "features": []},
-            "count": 0
-        }
-
-    # Event mode typically uses single source
-    item = items[0]
-    source_id = item.get("source_id")
-    resolved_source_id = _resolve_event_source_id(source_id)
-    event_file_key = item.get("event_file", "events")
-    region = item.get("region")
-    year, year_start, year_end = _normalize_year_filters(item)
-    filters = item.get("filters", {})
-    requested_limit = item.get("limit")
-    sort_spec = _normalize_sort_spec(item.get("sort"))
-
-    # Load event data
-    try:
-        if _duckdb_can_query_events(source_id):
-            df, metadata = _load_event_data_duckdb(resolved_source_id, item, event_file_key)
-        else:
-            df, metadata = load_event_data(resolved_source_id, event_file_key)
-    except Exception as e:
-        return {
-            "type": "error",
-            "message": f"Failed to load event data: {e}",
-            "geojson": {"type": "FeatureCollection", "features": []},
-            "count": 0
-        }
-
-    event_type = _detect_event_type(source_id)
-    print(f"Event mode: {resolved_source_id} -> {event_type}, {len(df)} raw events")
-
-    if (
-        source_id == "hurricanes"
-        and event_file_key in {"events", "storms"}
-        and ("latitude" not in df.columns or "longitude" not in df.columns)
-    ):
-        positions_path, _ = _resolve_event_parquet_path(source_id, "positions")
-        peak_positions = select_peak_positions_by_storm_ids(positions_path, df.get("storm_id", []).tolist())
-        if not peak_positions.empty:
-            df = df.merge(
-                peak_positions[["storm_id", "latitude", "longitude"]],
-                on="storm_id",
-                how="left",
-                suffixes=("", "_pos"),
-            )
-
-    # Find coordinate columns
-    lat_col, lon_col = _get_coordinate_columns(df)
-    if not lat_col or not lon_col:
-        return {
-            "type": "error",
-            "message": f"No coordinate columns found in {source_id}",
-            "geojson": {"type": "FeatureCollection", "features": []},
-            "count": 0
-        }
-
-    # Find time column
-    time_col = _get_time_column(df)
-
-    # Find ID column
-    id_col = _get_id_column(df, event_type)
-
-    if not _duckdb_can_query_events(source_id):
-        # Apply year filter
-        if year_start and year_end:
-            if "year" in df.columns:
-                df = df[(df["year"] >= year_start) & (df["year"] <= year_end)]
-            elif time_col:
-                # Extract year from timestamp
-                df["_year"] = pd.to_datetime(df[time_col]).dt.year
-                df = df[(df["_year"] >= year_start) & (df["_year"] <= year_end)]
-        elif year:
-            if "year" in df.columns:
-                df = df[df["year"] == year]
-            elif time_col:
-                df["_year"] = pd.to_datetime(df[time_col]).dt.year
-                df = df[df["_year"] == year]
-
-        # Apply region filter
-        region_codes = expand_region(region)
-        if region_codes and "loc_id" in df.columns:
-            # Check for US state filtering
-            us_state_prefixes = [c for c in region_codes if c.startswith("USA-")]
-            country_codes = [c for c in region_codes if not c.startswith("USA-")]
-
-            if us_state_prefixes:
-                mask = df["loc_id"].str.startswith(tuple(us_state_prefixes), na=False)
-                df = df[mask]
-            elif country_codes:
-                df["_country"] = df["loc_id"].str.split("-").str[0]
-                df = df[df["_country"].isin(country_codes)]
-
-        # Apply filters (e.g., magnitude_min, category)
-        for field, value in filters.items():
-            if field.endswith("_min"):
-                col = field[:-4]
-                if col in df.columns:
-                    df = df[df[col] >= value]
-            elif field.endswith("_max"):
-                col = field[:-4]
-                if col in df.columns:
-                    df = df[df[col] <= value]
-            elif field in df.columns:
-                df = df[df[field] == value]
-
-        print(f"  After filters: {len(df)} events")
-
-        # Apply limit (use requested limit, capped at max)
-        limit = min(requested_limit or DEFAULT_EVENT_LIMIT, MAX_EVENT_LIMIT)
-
-        sort_col = None
-        ascending = False
-        if sort_spec:
-            requested_sort_col = str(sort_spec.get("by") or "").strip()
-            if requested_sort_col in df.columns:
-                sort_col = requested_sort_col
-            elif requested_sort_col in {"date", "time"} and "timestamp" in df.columns:
-                sort_col = "timestamp"
-            ascending = str(sort_spec.get("order", "desc")).lower() == "asc"
-
-        if not sort_col:
-            sig_col = _get_significance_column(source_id)
-            if sig_col and sig_col in df.columns:
-                sort_col = sig_col
-
-        if sort_col and sort_col in df.columns:
-            if sort_col == "timestamp":
-                df = df.sort_values(sort_col, ascending=ascending, na_position="last")
-            else:
-                df = df.sort_values(sort_col, ascending=ascending, na_position="last")
-
-        if len(df) > limit:
-            df = df.head(limit)
-            print(f"  Limited to {limit} events (sorted by {sort_col or 'order'})")
-    else:
-        print(f"  DuckDB filtered to {len(df)} events")
-
-    # Build GeoJSON features
-    features = []
-    for idx, row in df.iterrows():
-        lat = row.get(lat_col)
-        lon = row.get(lon_col)
-
-        if pd.isna(lat) or pd.isna(lon):
-            continue
-
-        # Build properties - include all columns except geometry
-        properties = {}
-        for col in df.columns:
-            if col.startswith("_"):  # Skip temp columns
-                continue
-            val = row.get(col)
-            if pd.notna(val):
-                # Convert numpy types to Python types
-                if hasattr(val, 'item'):
-                    val = val.item()
-                # Convert timestamps to ISO string
-                if isinstance(val, pd.Timestamp):
-                    val = val.isoformat()
-                properties[col] = val
-
-        # Ensure event_id exists
-        if "event_id" not in properties and id_col:
-            properties["event_id"] = properties.get(id_col, idx)
-        elif "event_id" not in properties:
-            properties["event_id"] = idx
-
-        features.append({
-            "type": "Feature",
-            "geometry": {
-                "type": "Point",
-                "coordinates": [float(lon), float(lat)]
-            },
-            "properties": properties
-        })
-
-    # Calculate time range
-    time_range = {"min": None, "max": None, "granularity": "daily"}
-    if time_col and len(df) > 0:
-        times = pd.to_datetime(df[time_col])
-        time_range["min"] = int(times.min().timestamp() * 1000)
-        time_range["max"] = int(times.max().timestamp() * 1000)
-
-    primary_item = items[0] if items else {}
-    if not features and event_type == "wildfire":
-        perimeter_gap = _build_empty_wildfire_perimeter_response(order, primary_item, source_id)
-        if perimeter_gap:
-            return perimeter_gap
-
-    # Build source info
-    source_info = [{
-        "id": source_id,
-        "name": metadata.get("source_name", source_id),
-        "url": metadata.get("source_url", "")
-    }]
-
-    return {
-        "type": "events",
-        "data_type": "events",
-        "source_id": source_id,
-        "event_type": event_type,
-        "geojson": {
-            "type": "FeatureCollection",
-            "features": features
-        },
-        "time_range": time_range,
-        "summary": summary or f"Showing {len(features)} {event_type} events",
-        "count": len(features),
-        "sources": source_info
-    }
+    return execute_event_order_impl(
+        order,
+        normalize_year_filters_func=_normalize_year_filters,
+        normalize_sort_spec_func=_normalize_sort_spec,
+        resolve_event_source_id_func=_resolve_event_source_id,
+        duckdb_can_query_events_func=_duckdb_can_query_events,
+        load_event_data_duckdb_func=_load_event_data_duckdb,
+        load_event_data_func=load_event_data,
+        detect_event_type_func=_detect_event_type,
+        resolve_event_parquet_path_func=_resolve_event_parquet_path,
+        select_peak_positions_by_storm_ids_func=select_peak_positions_by_storm_ids,
+        get_coordinate_columns_func=_get_coordinate_columns,
+        get_time_column_func=_get_time_column,
+        get_id_column_func=_get_id_column,
+        expand_region_func=expand_region,
+        get_significance_column_func=_get_significance_column,
+        build_empty_wildfire_perimeter_response_func=_build_empty_wildfire_perimeter_response,
+        default_event_limit=DEFAULT_EVENT_LIMIT,
+        max_event_limit=MAX_EVENT_LIMIT,
+    )
 
 
 def _execute_removal_order(order: dict, items: list, source_id: str) -> dict:
-    """
-    Execute a removal order - returns minimal identifiers for frontend to remove.
-
-    Scalable for all data types:
-    - Geometry: returns loc_ids (filter features by loc_id)
-    - Events: returns event_ids (filter features by event_id)
-    - Metrics: returns loc_ids + years + metric (delete column from year_data)
-
-    Backend queries its cache/parquet to find matching items, returns them
-    to frontend for removal. This keeps caches synchronized.
-
-    Args:
-        order: The full order dict with action="remove"
-        items: Order items (each has region/criteria to remove)
-        source_id: Primary source ID
-
-    Returns:
-        Geometry: {data_type, action, source_id, loc_ids, regions, summary, count}
-        Events: {data_type, action, source_id, event_ids, regions, summary, count}
-        Metrics: {data_type, action, source_id, loc_ids, years, metric, regions, summary, count}
-    """
-    logger = logging.getLogger(__name__)
     from .session_cache import session_manager
 
-    # Determine data_type from catalog (events, geometry, or metrics)
-    data_type = _get_source_data_type(source_id) if source_id else "metrics"
-    source_info = _get_source_from_catalog(source_id)
-    geo_level = source_info.get("geographic_level") if source_info else None
-
-    # Override: special geometry levels are geometry type
-    if geo_level in ("zcta", "tribal", "watershed", "park"):
-        data_type = "geometry"
-
-    # Collect regions from items
-    regions = []
-    for item in items:
-        region = item.get("region")
-        if region:
-            expanded = expand_region(region)
-            regions.extend(expanded)
-    regions = list(set(regions))  # deduplicate
-
-    # Collect metric/year info for metrics removal
-    metric_to_remove = None
-    years_to_remove = []
-    for item in items:
-        if item.get("metric"):
-            metric_to_remove = item.get("metric")
-        item_year = _coerce_year(item.get("year"))
-        item_year_start = _coerce_year(item.get("year_start"))
-        item_year_end = _coerce_year(item.get("year_end"))
-        if item_year is not None:
-            years_to_remove.append(item_year)
-        if item_year_start is not None and item_year_end is not None:
-            years_to_remove.extend(range(item_year_start, item_year_end + 1))
-    years_to_remove = list(set(years_to_remove))
-
-    # Get session cache
-    session_id = order.get("session_id")
-    cache = session_manager.get(session_id) if session_id else None
-
-    # Build response based on data_type
-    response = {
-        "data_type": data_type,
-        "action": "remove",
-        "source_id": source_id,
-        "regions": regions,
-    }
-
-    if data_type == "geometry":
-        # Query parquet for loc_ids matching regions
-        loc_ids = _get_loc_ids_by_region(source_id, regions) if regions else []
-        response["loc_ids"] = loc_ids
-        response["geographic_level"] = geo_level
-        response["count"] = len(loc_ids)
-        response["summary"] = order.get("summary", f"Removed {len(loc_ids)} areas from {', '.join(regions)}")
-
-        # Clear from session cache
-        if cache and loc_ids:
-            removed = cache.remove_geometry_by_loc_ids(source_id, loc_ids)
-            logger.info(f"Removed {removed} geometry items from session cache")
-
-    elif data_type == "events":
-        # Query parquet for event_ids matching regions/time
-        event_ids = _get_event_ids_by_region(source_id, regions) if regions else []
-        response["event_ids"] = event_ids
-        response["count"] = len(event_ids)
-        response["summary"] = order.get("summary", f"Removed {len(event_ids)} events from {', '.join(regions)}")
-
-        # Clear from session cache
-        if cache and event_ids:
-            for eid in event_ids:
-                cache._sent_all.discard(eid)
-            # Also clear from source tracking
-            source_set = cache._sent_by_source.get(source_id, set())
-            for eid in event_ids:
-                source_set.discard(eid)
-            logger.info(f"Removed {len(event_ids)} event items from session cache")
-
-    else:  # metrics
-        # For metrics, we remove a "column" - all cells for given metric + optional region/year filter
-        loc_ids = _get_loc_ids_by_region(source_id, regions) if regions else []
-        response["loc_ids"] = loc_ids
-        response["years"] = years_to_remove
-        response["metric"] = metric_to_remove
-        response["count"] = len(loc_ids) * max(len(years_to_remove), 1)
-        response["summary"] = order.get("summary", f"Removed {metric_to_remove or 'data'} from {', '.join(regions) or 'selection'}")
-
-        # Clear from session cache (metric-based keys)
-        if cache and metric_to_remove:
-            removed = cache.clear_source(metric_to_remove)
-            logger.info(f"Removed {removed} metric items from session cache")
-
-    return response
+    return execute_removal_order_impl(
+        order,
+        items,
+        source_id,
+        get_source_data_type_func=_get_source_data_type,
+        get_source_from_catalog_func=_get_source_from_catalog,
+        expand_region_func=expand_region,
+        get_loc_ids_by_region_func=_get_loc_ids_by_region,
+        get_event_ids_by_region_func=_get_event_ids_by_region,
+        session_manager=session_manager,
+        coerce_year_func=_coerce_year,
+    )
 
 
 def _get_event_ids_by_region(source_id: str, regions: list) -> list:
@@ -3032,7 +2450,7 @@ def execute_order(order: dict) -> dict:
     primary_source_id = items[0].get("source_id") if items else None
     order_data_type = _get_source_data_type(primary_source_id) if primary_source_id else "metrics"
 
-    routed_result = route_special_order(
+    routed_result = route_default_special_order(
         order=order,
         items=items,
         action=action,

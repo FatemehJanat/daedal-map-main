@@ -8,8 +8,8 @@ llm_usage_events row per user query.
 Cost is computed in the llm_usage_events_with_cost view, not here.
 
 Caller classification:
-- qa_suite      profile.plan_id == 'master'
-- authenticated profile present, any other plan
+- qa_suite      explicit in-process QA override
+- authenticated profile present (including master plan)
 - anonymous     no auth
 
 See docs/future/llm_usage_tracking_implementation.md for the full design.
@@ -33,8 +33,8 @@ _QA_OVERRIDE_LABEL_ENV = "LLM_USAGE_FORCE_QA_LABEL"
 def _qa_override_classification(ip_hash: Optional[str]) -> Optional[dict]:
     """If LLM_USAGE_FORCE_QA_USER_ID is set, return a qa_suite classification.
 
-    This is the in-process testing path. HTTP-based callers should authenticate
-    as the master account instead so the override is unnecessary in production.
+    This is the in-process testing path. HTTP-based callers should remain
+    authenticated traffic, even when they use the master plan.
     """
     forced_id = (os.getenv(_QA_OVERRIDE_ENV) or "").strip()
     if not forced_id:
@@ -93,8 +93,8 @@ def classify_caller(
 
     Keys: caller_kind, caller_label, auth_user_id, plan_id, ip_hash.
 
-    - qa_suite      auth + profile.plan_id == 'master'
-    - authenticated auth + any other plan_id (defaults to 'free' if profile missing)
+    - qa_suite      explicit in-process QA override
+    - authenticated auth present (defaults to 'free' if profile missing)
     - anonymous     no auth
     """
     forced = _qa_override_classification(ip_hash)
@@ -120,10 +120,8 @@ def classify_caller(
     plan_id = (profile.get("plan_id") or "free").strip() or "free"
     email = (auth_user.get("email") or profile.get("email") or "").strip() or None
 
-    caller_kind = "qa_suite" if plan_id == "master" else "authenticated"
-
     return {
-        "caller_kind": caller_kind,
+        "caller_kind": "authenticated",
         "caller_label": email,
         "auth_user_id": user_id,
         "plan_id": plan_id,
