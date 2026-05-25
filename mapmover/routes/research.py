@@ -47,6 +47,12 @@ from mapmover.progress_bus import ProgressBus, ProgressEvent
 from mapmover.research_postprocessor import normalize_research_result
 from mapmover.research_preprocessor import build_research_hint_context, preprocess_research_query
 from mapmover.research_prompt import build_research_system_prompt
+from mapmover.research_runtime import (
+    build_research_messages,
+    finalize_research_response,
+    run_research_final_synthesis,
+    run_research_tool_loop,
+)
 from mapmover.research_tools import RESEARCH_TOOL_DEFINITIONS, execute_research_tool
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
 from mapmover.session_cache import session_manager
@@ -1770,26 +1776,15 @@ def run_research_chat(
         "text": system_prompt,
         "cache_control": {"type": "ephemeral"},
     }]
-    messages = [
-        {
-            "role": "user",
-            "content": [{
-                "type": "text",
-                "text": "Active corpus manifest JSON:\n" + json.dumps(prompt_manifest, default=str, separators=(",", ":")),
-                "cache_control": {"type": "ephemeral"},
-            }],
-        },
-        *(
-            [{
-                "role": "user",
-                "content": "Research preprocessor hints:\n" + hint_context,
-            }]
-            if hint_context else []
-        ),
-        *_research_memory_messages(research_memory),
-        *_history_messages(chat_history or []),
-        {"role": "user", "content": query},
-    ]
+    messages = build_research_messages(
+        prompt_manifest=prompt_manifest,
+        hint_context=hint_context,
+        research_memory=research_memory,
+        chat_history=chat_history,
+        query=query,
+        research_memory_messages_func=_research_memory_messages,
+        history_messages_func=_history_messages,
+    )
 
     client = Anthropic()
     # Guarantee recorders so in-process callers (QA suites, ops/agent paths)
@@ -1808,104 +1803,37 @@ def run_research_chat(
         session_id=session_id,
     )
     try:
-      max_tool_iterations = _RESEARCH_MAX_TOOL_ITERATIONS
-      response = None
-      final_display = None
-      final_displays: list[dict] = []
-      display_warning = None
-      tool_iterations_used = 0
-      recent_tool_signatures: list[str] = []
-      last_guardrail_message: str | None = None
-      for _iteration in range(max_tool_iterations + 1):
-        try:
-            response = client.messages.create(
-                model=model,
-                system=system_prompt_blocks,
-                messages=messages,
-                tools=RESEARCH_TOOL_DEFINITIONS,
-                max_tokens=_RESEARCH_MAX_TOKENS,
-                **_temperature_kwargs(model, temperature),
-            )
-            if usage_recorder is not None:
-                usage_recorder.record(response)
-        except Exception as exc:
-            approx_message_chars = sum(len(json.dumps(message, default=str)) for message in messages)
-            logger.exception(
-                "Research Anthropic call failed iteration=%s session=%s query=%r approx_message_chars=%s artifact_count=%s",
-                _iteration,
-                session_id,
-                query[:120],
-                approx_message_chars,
-                manifest.get("artifact_count"),
-            )
-            raise
-
-        if response.stop_reason != "tool_use":
-            break
-        tool_iterations_used += 1
-
-        assistant_content = []
-        tool_results = []
-        for block in response.content:
-            if getattr(block, "type", None) == "tool_use":
-                if progress is not None:
-                    friendly = RESEARCH_TOOL_PROGRESS_MESSAGES.get(
-                        block.name,
-                        f"Running {block.name}...",
-                    )
-                    progress(ProgressEvent(
-                        stage="tool",
-                        message=friendly,
-                        extra={"tool": block.name, "iteration": _iteration},
-                    ))
-                tool_result = execute_research_tool(
-                    session_id,
-                    block.name,
-                    block.input,
-                    force_large_display=force_large_display,
-                )
-                recent_tool_signatures.append(_tool_call_signature(block.name, block.input))
-                if len(recent_tool_signatures) > 8:
-                    recent_tool_signatures = recent_tool_signatures[-8:]
-                if isinstance(tool_result, dict) and isinstance(tool_result.get("display_warning"), dict):
-                    display_warning = tool_result.get("display_warning")
-                if (
-                    isinstance(tool_result, dict)
-                    and block.name == "build_artifact_display_subset"
-                    and tool_result.get("geojson")
-                ):
-                    final_display = _research_map_payload_from_tool_result(tool_result)
-                    final_displays.append(final_display)
-                    if progress is not None:
-                        progress(ProgressEvent(
-                            stage="display",
-                            message="Updating the map display...",
-                            extra={"map_payload": final_display},
-                        ))
-                compact_tool_result = _compact_tool_result_for_prompt(block.name, tool_result)
-                assistant_content.append(block)
-                tool_results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": json.dumps(compact_tool_result, default=str),
-                    }
-                )
-            else:
-                assistant_content.append(block)
-
-        if display_warning:
-            break
-
-        messages.append({"role": "assistant", "content": assistant_content})
-        messages.append({"role": "user", "content": tool_results})
-        guardrail_message = _build_research_tool_guardrail_message(
-            tool_iterations_used=tool_iterations_used,
-            recent_tool_signatures=recent_tool_signatures,
-        )
-        if guardrail_message and guardrail_message != last_guardrail_message:
-            messages.append({"role": "user", "content": guardrail_message})
-            last_guardrail_message = guardrail_message
+      tool_state = run_research_tool_loop(
+          client=client,
+          model=model,
+          temperature=temperature,
+          system_prompt_blocks=system_prompt_blocks,
+          messages=messages,
+          max_tool_iterations=_RESEARCH_MAX_TOOL_ITERATIONS,
+          research_tool_definitions=RESEARCH_TOOL_DEFINITIONS,
+          max_tokens=_RESEARCH_MAX_TOKENS,
+          temperature_kwargs_func=_temperature_kwargs,
+          usage_recorder=usage_recorder,
+          session_id=session_id,
+          query=query,
+          manifest=manifest,
+          logger=logger,
+          progress=progress,
+          progress_event_cls=ProgressEvent,
+          progress_messages=RESEARCH_TOOL_PROGRESS_MESSAGES,
+          execute_research_tool_func=execute_research_tool,
+          force_large_display=force_large_display,
+          tool_call_signature_func=_tool_call_signature,
+          research_map_payload_from_tool_result_func=_research_map_payload_from_tool_result,
+          compact_tool_result_for_prompt_func=_compact_tool_result_for_prompt,
+          build_guardrail_message_func=_build_research_tool_guardrail_message,
+      )
+      response = tool_state["response"]
+      messages = tool_state["messages"]
+      display_warning = tool_state["display_warning"]
+      final_display = tool_state["final_display"]
+      final_displays = tool_state["final_displays"]
+      tool_iterations_used = tool_state["tool_iterations_used"]
 
       if display_warning:
         logger.info(
@@ -1921,108 +1849,47 @@ def run_research_chat(
         return _build_display_warning_result(manifest, display_warning, query)
 
       if response and response.stop_reason == "tool_use":
-        if progress is not None:
-            progress(ProgressEvent(
-                stage="writing",
-                message="Finishing the analysis...",
-                extra={"phase": "final_synthesis"},
-            ))
-        try:
-            response = client.messages.create(
-                model=model,
-                system=system_prompt_blocks,
-                messages=messages,
-                max_tokens=_RESEARCH_MAX_TOKENS,
-                **_temperature_kwargs(model, temperature),
-            )
-            if usage_recorder is not None:
-                usage_recorder.record(response)
-        except Exception:
-            logger.exception(
-                "Research final synthesis call failed after max tool iterations session=%s query=%r",
-                session_id,
-                query[:120],
-            )
-
-      if progress is not None:
-        progress(ProgressEvent(
-            stage="writing",
-            message="Drafting the answer...",
-            extra={"phase": "compose"},
-        ))
-
-      text = _extract_text(response.content if response else [])
-      if not text:
-        logger.warning(
-            "Research response missing text session=%s query=%r stop_reason=%s content_types=%s tool_iterations_used=%s artifact_count=%s",
-            session_id,
-            query[:120],
-            getattr(response, "stop_reason", None) if response else None,
-            _content_block_types(response.content if response else []),
-            tool_iterations_used,
-            manifest.get("artifact_count"),
-        )
-        rescue_response = _run_research_rescue_synthesis(
+        response = run_research_final_synthesis(
             client=client,
             model=model,
             temperature=temperature,
-            system_prompt=system_prompt_blocks,
+            system_prompt_blocks=system_prompt_blocks,
             messages=messages,
+            max_tokens=_RESEARCH_MAX_TOKENS,
+            temperature_kwargs_func=_temperature_kwargs,
+            usage_recorder=usage_recorder,
+            progress=progress,
+            progress_event_cls=ProgressEvent,
+            logger=logger,
             session_id=session_id,
             query=query,
-            usage_recorder=rescue_usage_recorder,
         )
-        rescue_text = _extract_text(rescue_response.content if rescue_response else [])
-        if rescue_text:
-            response = rescue_response
-            text = rescue_text
-        else:
-            logger.warning(
-                "Research rescue synthesis also missing text session=%s query=%r stop_reason=%s content_types=%s",
-                session_id,
-                query[:120],
-                getattr(rescue_response, "stop_reason", None) if rescue_response else None,
-                _content_block_types(rescue_response.content if rescue_response else []),
-            )
-      if not text:
-        text = _fallback_display_message(final_display) or _broad_research_fallback_message(query, manifest, research_hints)
-      result = {
-        "type": "chat",
-        "message": text,
-        "corpus": manifest,
-        "research_hints": research_hints,
-      }
-      # Promote the latest display payload's fields to the top level of the chat
-      # response so the frontend can route through the same renderStandardDataPayload
-      # path Explore uses. final_displays is preserved as `layers` so multi-call
-      # responses can still produce a layer stack.
-      if final_display:
-        for key, value in final_display.items():
-            result[key] = value
-      if final_displays:
-        result["layers"] = final_displays
-      if final_display:
-        display_geojson = final_display.get("geojson") or {}
-        display_features = display_geojson.get("features") or []
-        logger.info(
-            "Research final response session=%s query=%r message_len=%s data_type=%s source_id=%s features=%s years=%s layers=%s",
-            session_id,
-            query[:120],
-            len(text or ""),
-            final_display.get("data_type"),
-            final_display.get("source_id"),
-            len(display_features),
-            len(final_display.get("years") or []),
-            len(final_displays),
-        )
-      else:
-        logger.info(
-            "Research final response session=%s query=%r message_len=%s display_action=none",
-            session_id,
-            query[:120],
-            len(text or ""),
-        )
-      return normalize_research_result(result, lane="research")
+
+      return finalize_research_response(
+          response=response,
+          client=client,
+          model=model,
+          temperature=temperature,
+          system_prompt_blocks=system_prompt_blocks,
+          messages=messages,
+          session_id=session_id,
+          query=query,
+          manifest=manifest,
+          research_hints=research_hints,
+          final_display=final_display,
+          final_displays=final_displays,
+          tool_iterations_used=tool_iterations_used,
+          rescue_usage_recorder=rescue_usage_recorder,
+          progress=progress,
+          progress_event_cls=ProgressEvent,
+          logger=logger,
+          extract_text_func=_extract_text,
+          content_block_types_func=_content_block_types,
+          run_research_rescue_synthesis_func=_run_research_rescue_synthesis,
+          fallback_display_message_func=_fallback_display_message,
+          broad_research_fallback_message_func=_broad_research_fallback_message,
+          normalize_research_result_func=normalize_research_result,
+      )
     finally:
         if _owns_main:
             usage_recorder.flush(skip_if_empty=True)

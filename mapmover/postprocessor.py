@@ -19,10 +19,25 @@ from pathlib import Path
 from typing import Optional
 
 from .data_loading import load_catalog, load_source_metadata, get_pack_metadata
+from .explore.postprocess_pipeline import (
+    apply_preprocessor_time_hints,
+    build_validation_summary,
+    inject_original_query_hints,
+    run_pre_validation_pipeline,
+    split_derived_specs,
+    validate_regular_items,
+)
+from .explore.postprocess_validation import validate_item as validate_item_impl
+from .explore.postprocess_warnings import build_clarify_result, build_metric_warning
+from .runtime.order_semantics import (
+    detect_event_mode as detect_event_mode_impl,
+    normalize_aggregate_metric_mode as normalize_aggregate_metric_mode_impl,
+    resolve_pack_source_by_shape,
+    resolve_pack_source_for_metric,
+)
 from .source_time_contract import metadata_metric_year_range
 from .duckdb_helpers import parquet_columns
 from .paths import DATA_ROOT
-from .request_risk_gate import warn_gate
 from .foundation_helpers import load_reference_json
 
 
@@ -129,15 +144,27 @@ AGGREGATE_ONLY_PATTERNS = (
 )
 
 
+def _semantic_query_text(query: str) -> str:
+    text = str(query or "").strip()
+    if not text:
+        return ""
+    marker = " qa mode:"
+    lower = text.lower()
+    idx = lower.find(marker)
+    if idx >= 0:
+        text = text[:idx]
+    return text.strip().lower()
+
+
 def _query_requests_recent_events(query: str) -> bool:
-    query_lower = str(query or "").strip().lower()
+    query_lower = _semantic_query_text(query)
     if not query_lower:
         return False
     return any(pattern in query_lower for pattern in RECENT_EVENT_PATTERNS)
 
 
 def _query_requests_single_latest_event(query: str) -> bool:
-    query_lower = str(query or "").strip().lower()
+    query_lower = _semantic_query_text(query)
     if not query_lower:
         return False
     if not any(pattern in query_lower for pattern in ("most recent", "latest", "newest")):
@@ -171,7 +198,7 @@ def _item_disaster_key(item: dict, catalog_source: dict | None) -> str | None:
 
 
 def _query_has_time_window(query: str) -> bool:
-    query_lower = str(query or "").strip().lower()
+    query_lower = _semantic_query_text(query)
     if not query_lower:
         return False
     if re.search(r"\b(?:since|from|between|during|in)\s+\d{4}\b", query_lower):
@@ -192,7 +219,7 @@ def _query_has_time_window(query: str) -> bool:
 
 
 def _query_requests_event_window(query: str) -> bool:
-    query_lower = str(query or "").strip().lower()
+    query_lower = _semantic_query_text(query)
     if not query_lower:
         return False
     has_event_subject = any(pattern in query_lower for pattern in EVENT_DISPLAY_PATTERNS)
@@ -202,7 +229,7 @@ def _query_requests_event_window(query: str) -> bool:
 
 
 def _query_prefers_event_source(query: str) -> bool:
-    query_lower = str(query or "").strip().lower()
+    query_lower = _semantic_query_text(query)
     if not query_lower:
         return False
     explicit_events, explicit_aggregate = _query_explicit_view_mode(query_lower)
@@ -260,7 +287,7 @@ def _reroute_item_to_event_sibling(item: dict, catalog: dict) -> bool:
     pack_id = item.get("pack_id")
     if not pack_id:
         return False
-    event_source_id = _resolve_pack_source_by_shape(catalog, pack_id, item.get("region"), "event_shape")
+    event_source_id = resolve_pack_source_by_shape(catalog, pack_id, item.get("region"), "event_shape")
     if not event_source_id:
         return False
     item["source_id"] = event_source_id
@@ -1019,224 +1046,31 @@ def _resolve_population_dependency(
 # =============================================================================
 
 def validate_item(item: dict, catalog: dict) -> dict:
-    """
-    Validate an order item against catalog.
-
-    Returns item with validation fields added:
-    - _valid: bool
-    - _error: str (if invalid)
-    - metric_label: str (if valid)
-    """
-    source_id = item.get("source_id")
-    metric = item.get("metric")
-
-    # Skip derived_result items - they're calculated, not fetched
-    if item.get("type") == "derived_result":
-        item["_valid"] = True
-        return item
-
-    # Skip derived items that need expansion first
-    if item.get("type") == "derived":
-        item["_valid"] = True
-        item["_needs_expansion"] = True
-        return item
-
-    if not source_id and item.get("pack_id"):
-        resolved_source = _resolve_pack_source(catalog, item.get("pack_id"), item.get("region"), item)
-        if resolved_source:
-            item["source_id"] = resolved_source
-            item["_resolved_from_pack"] = True
-            source_id = resolved_source
-        else:
-            item["_valid"] = False
-            item["_error"] = f"Unable to resolve pack_id '{item.get('pack_id')}' to a concrete source"
-            return item
-
-    if not source_id:
-        item["_valid"] = False
-        item["_error"] = "Missing source_id"
-        return item
-
-    # Some published-pack prompts still come back with the pack_id in source_id.
-    # Normalize that here so the executor can resolve the concrete source.
-    if not item.get("pack_id"):
-        pack = _get_catalog_pack(catalog, source_id)
-        if pack:
-            item["pack_id"] = source_id
-            item.pop("source_id", None)
-            resolved_source = _resolve_pack_source(catalog, source_id, item.get("region"), item)
-            if resolved_source:
-                item["source_id"] = resolved_source
-                item["_resolved_from_pack"] = True
-                source_id = resolved_source
-            else:
-                item["_valid"] = False
-                item["_error"] = f"Unable to resolve pack_id '{source_id}' to a concrete source"
-                return item
-
-    # Check source exists in catalog (sources is a list)
-    sources = _catalog_sources(catalog)
-    source_ids = [s.get("source_id") for s in sources] if isinstance(sources, list) else list(sources.keys())
-    if source_id not in source_ids:
-        item["_valid"] = False
-        item["_error"] = f"Unknown source: {source_id}"
-        return item
-
-    catalog_source = _get_catalog_source(catalog, source_id)
-    _normalize_item_filters(item, catalog_source)
-    _normalize_location_shape_metric(item, catalog_source)
-    metric = item.get("metric")
-    query = str(((item.get("_hints") or {}).get("original_query")) or "").lower()
-    _apply_disaster_semantic_filters(item, catalog_source, query)
-
-    if (
-        not item.get("mode")
-        and _source_has_metrics(catalog_source)
-        and _source_supports_aggregate_mode(catalog_source)
-    ):
-        _apply_aggregate_query_hints(item, query)
-    elif item.get("mode") == "aggregate":
-        _apply_aggregate_query_hints(item, query)
-
-    # Some metric-only sources may still be returned with mode="events" because
-    # the pack family also contains event-capable siblings. Normalize those
-    # items back to the metrics/aggregate path here rather than letting the
-    # executor try to open a non-existent event parquet.
-    if item.get("mode") == "events" and not _source_supports_events(catalog_source):
-        item.pop("event_file", None)
-        if (
-            item.get("aggregate_use_rolling")
-            or item.get("aggregate_window_years")
-            or item.get("aggregate_rollup_level")
-            or item.get("aggregate_all_years")
-            or _source_supports_aggregate_mode(catalog_source)
-        ):
-            item["mode"] = "aggregate"
-        else:
-            item.pop("mode", None)
-
-    if (
-        _query_prefers_event_source(query)
-        and not _source_supports_events(catalog_source)
-        and _reroute_item_to_event_sibling(item, catalog)
-    ):
-        return validate_item(item, catalog)
-
-    # Skip valid event mode items - they don't require metric validation
-    if item.get("mode") == "events":
-        item["_valid"] = True
-        return item
-
-    # Load full metadata for metric validation and metadata-backed defaults
-    metadata = load_source_metadata(source_id)
-    _expand_filter_value_aliases(item, metadata)
-    routing_hints = metadata.get("routing_hints", {}) if metadata else {}
-
-    if _source_requires_metric(item, catalog_source) and not metric:
-        default_metric = routing_hints.get("single_metric_default")
-        if default_metric:
-            item["metric"] = default_metric
-            metric = default_metric
-        elif _query_prefers_event_source(query) and _reroute_item_to_event_sibling(item, catalog):
-            return validate_item(item, catalog)
-        else:
-            item["_valid"] = False
-            item["_error"] = f"Source '{source_id}' requires a concrete metric before execution"
-            return item
-
-    if not metadata:
-        # Source in catalog but no metadata file - still valid
-        item["_valid"] = True
-        return item
-
-    # Check metric exists (case-insensitive matching with auto-correction)
-    metrics = metadata.get("metrics", {})
-    aggregate_metric_cols = set()
-    if item.get("mode") == "aggregate":
-        aggregate_metric_cols = _get_disaster_aggregate_metric_columns(catalog_source)
-
-    if metric and metric not in metrics and metric in aggregate_metric_cols:
-        item["metric_label"] = _format_metric_label(metric)
-        item["_valid"] = True
-        return item
-
-    if metric and metric not in metrics:
-        # Try case-insensitive exact match on key first
-        metric_lower = metric.lower()
-        exact_match = None
-        for k in metrics.keys():
-            if k.lower() == metric_lower:
-                exact_match = k
-                break
-
-        # If no key match, try matching by display name
-        if not exact_match:
-            for k, v in metrics.items():
-                if isinstance(v, dict):
-                    name = v.get("name", "")
-                    if name.lower() == metric_lower:
-                        exact_match = k
-                        break
-
-        if exact_match:
-            # Auto-correct to the actual metric key
-            item["metric"] = exact_match
-            metric = exact_match
-        else:
-            if item.get("mode") == "aggregate" and aggregate_metric_cols:
-                aggregate_exact_match = next((col for col in aggregate_metric_cols if col.lower() == metric_lower), None)
-                if aggregate_exact_match:
-                    item["metric"] = aggregate_exact_match
-                    item["metric_label"] = _format_metric_label(aggregate_exact_match)
-                    item["_valid"] = True
-                    return item
-
-            pack_metric_source = _resolve_pack_source_for_metric(
-                catalog,
-                item.get("pack_id"),
-                item.get("region"),
-                metric,
-            )
-            if pack_metric_source and pack_metric_source != source_id:
-                item["source_id"] = pack_metric_source
-                item["_resolved_from_pack"] = True
-                return validate_item(item, catalog)
-
-            # No exact match, suggest close matches (by key or name)
-            close_matches = []
-            for k, v in metrics.items():
-                name = v.get("name", "") if isinstance(v, dict) else ""
-                if metric_lower in k.lower() or k.lower() in metric_lower:
-                    close_matches.append(k)
-                elif name and (metric_lower in name.lower() or name.lower() in metric_lower):
-                    close_matches.append(k)
-            if item.get("mode") == "aggregate":
-                for col in aggregate_metric_cols:
-                    if metric_lower in col.lower() or col.lower() in metric_lower:
-                        close_matches.append(col)
-            close_matches = list(dict.fromkeys(close_matches))  # Remove duplicates
-            if close_matches:
-                item["_valid"] = False
-                item["_error"] = f"Metric '{metric}' not found. Did you mean: {', '.join(close_matches[:3])}?"
-            else:
-                item["_valid"] = False
-                item["_error"] = f"Metric '{metric}' not found in {source_id}"
-            return item
-
-    # Add metric label
-    if metric:
-        metric_info = metrics.get(metric, {})
-        name = metric_info.get("name", metric)
-        unit = metric_info.get("unit", "")
-        if unit and unit != "unknown":
-            item["metric_label"] = f"{name} ({unit})"
-        else:
-            item["metric_label"] = name
-
-        _clamp_item_years_to_metric(item, metadata, metric)
-
-    item["_valid"] = True
-    return item
+    return validate_item_impl(
+        item,
+        catalog,
+        validate_item_func=validate_item,
+        resolve_pack_source_func=_resolve_pack_source,
+        get_catalog_pack_func=_get_catalog_pack,
+        catalog_sources_func=_catalog_sources,
+        get_catalog_source_func=_get_catalog_source,
+        normalize_item_filters_func=_normalize_item_filters,
+        normalize_location_shape_metric_func=_normalize_location_shape_metric,
+        apply_disaster_semantic_filters_func=_apply_disaster_semantic_filters,
+        source_has_metrics_func=_source_has_metrics,
+        source_supports_aggregate_mode_func=_source_supports_aggregate_mode,
+        apply_aggregate_query_hints_func=_apply_aggregate_query_hints,
+        source_supports_events_func=_source_supports_events,
+        query_prefers_event_source_func=_query_prefers_event_source,
+        reroute_item_to_event_sibling_func=_reroute_item_to_event_sibling,
+        load_source_metadata_func=load_source_metadata,
+        expand_filter_value_aliases_func=_expand_filter_value_aliases,
+        source_requires_metric_func=_source_requires_metric,
+        get_disaster_aggregate_metric_columns_func=_get_disaster_aggregate_metric_columns,
+        format_metric_label_func=_format_metric_label,
+        resolve_pack_source_for_metric_func=resolve_pack_source_for_metric,
+        clamp_item_years_to_metric_func=_clamp_item_years_to_metric,
+    )
 
 
 # =============================================================================
@@ -1530,268 +1364,6 @@ def expand_all_derived_fields(items: list) -> list:
 
 
 # =============================================================================
-# Event Mode Detection
-# =============================================================================
-
-def _preferred_event_file_key(catalog_source: dict | None) -> str | None:
-    files = (catalog_source or {}).get("files") or {}
-    if not isinstance(files, dict):
-        files = {}
-    for key in ("events", "fires", "storms", "positions", "tracks"):
-        if key in files:
-            return key
-    if _source_supports_events(catalog_source):
-        return "events"
-    return None
-
-
-def _resolve_pack_source_by_shape(
-    catalog: dict,
-    pack_id: str | None,
-    region: str | None,
-    desired_shape: str,
-) -> str | None:
-    if not pack_id:
-        return None
-    pack_sources = [
-        s for s in _catalog_sources(catalog)
-        if s.get("pack_id") == pack_id and s.get("geojson_shape") == desired_shape
-    ]
-    if not pack_sources:
-        return None
-    exact_matches = [
-        s for s in pack_sources
-        if s.get("scope") != "global" and _scope_matches_region(s.get("scope", "global"), region)
-    ]
-    if len(exact_matches) == 1:
-        return exact_matches[0].get("source_id")
-    global_matches = [s for s in pack_sources if s.get("scope") == "global"]
-    if len(global_matches) == 1:
-        return global_matches[0].get("source_id")
-    if len(pack_sources) == 1:
-        return pack_sources[0].get("source_id")
-    return None
-
-
-def _resolve_pack_aggregate_source(
-    catalog: dict,
-    pack_id: str | None,
-    region: str | None,
-) -> str | None:
-    if not pack_id:
-        return None
-    pack_sources = [
-        s for s in _catalog_sources(catalog)
-        if s.get("pack_id") == pack_id and _source_supports_aggregate_mode(s)
-    ]
-    if not pack_sources:
-        return None
-
-    exact_matches = [
-        s for s in pack_sources
-        if s.get("scope") != "global" and _scope_matches_region(s.get("scope", "global"), region)
-    ]
-    candidates = exact_matches or pack_sources
-    candidates = sorted(
-        candidates,
-        key=lambda s: (
-            0 if "aggregate" in str(s.get("source_id") or "").lower() else 1,
-            0 if _source_geojson_shape(s) == "geometry_shape" else 1,
-            str(s.get("source_id") or ""),
-        ),
-    )
-    return candidates[0].get("source_id") if candidates else None
-
-
-def _pack_source_supports_metric(source: dict, metric: str) -> bool:
-    source_id = str(source.get("source_id") or "").strip()
-    metric_lower = str(metric or "").strip().lower()
-    if not source_id or not metric_lower:
-        return False
-    metadata = load_source_metadata(source_id) or {}
-    metrics = metadata.get("metrics") or {}
-    if not isinstance(metrics, dict):
-        return False
-    for key, info in metrics.items():
-        if str(key or "").strip().lower() == metric_lower:
-            return True
-        if isinstance(info, dict) and str(info.get("name") or "").strip().lower() == metric_lower:
-            return True
-    return False
-
-
-def _resolve_pack_source_for_metric(
-    catalog: dict,
-    pack_id: str | None,
-    region: str | None,
-    metric: str | None,
-) -> str | None:
-    if not pack_id or not metric:
-        return None
-    pack_sources = [s for s in _catalog_sources(catalog) if s.get("pack_id") == pack_id]
-    if not pack_sources:
-        return None
-
-    exact_matches = [
-        s for s in pack_sources
-        if s.get("scope") != "global"
-        and _scope_matches_region(s.get("scope", "global"), region)
-        and _pack_source_supports_metric(s, metric)
-    ]
-    if len(exact_matches) == 1:
-        return exact_matches[0].get("source_id")
-
-    global_matches = [
-        s for s in pack_sources
-        if s.get("scope") == "global" and _pack_source_supports_metric(s, metric)
-    ]
-    if len(global_matches) == 1:
-        return global_matches[0].get("source_id")
-
-    any_matches = [s for s in pack_sources if _pack_source_supports_metric(s, metric)]
-    if len(any_matches) == 1:
-        return any_matches[0].get("source_id")
-    return None
-
-
-def detect_event_mode(items: list, hints: dict = None) -> list:
-    """
-    Detect if items should use event mode instead of aggregate mode.
-
-    Event mode is triggered when:
-    1. Source has an events file (events.parquet, fires.parquet, etc.)
-    2. Query intent suggests viewing individual events (not aggregates)
-
-    Query intent detection:
-    - "show me earthquakes" / "display wildfires" -> EVENT mode (markers on map)
-    - "how many earthquakes" / "count of fires" -> AGGREGATE mode (county choropleth)
-
-    Adds mode: "events" to items that should use event display.
-    """
-    query = ""
-    if hints:
-        query = hints.get("original_query", "").lower()
-
-    geography_aggregate_terms = [
-        "counties", "county", "countries", "country",
-        "regions", "region", "areas"
-    ]
-    requests_recent_events = _query_requests_recent_events(query)
-    requests_single_latest_event = _query_requests_single_latest_event(query)
-
-    # Determine intent from query
-    wants_events, wants_aggregate = _query_signals_event_vs_aggregate(query)
-
-    # If both or neither detected, use heuristics
-    if wants_events == wants_aggregate:
-        # Check for event-type nouns as main subject (default to events for disaster queries)
-        event_nouns = ["earthquake", "quake", "volcano", "eruption", "wildfire",
-                      "fire", "hurricane", "cyclone", "storm", "tsunami", "tornado"]
-        has_event_noun = any(noun in query for noun in event_nouns)
-        has_geo_agg = any(term in query for term in geography_aggregate_terms)
-        # If user is asking for regions/counties/countries plus a disaster noun,
-        # prefer aggregate choropleth behavior over raw event display.
-        if has_event_noun and has_geo_agg:
-            wants_aggregate = True
-            wants_events = False
-        else:
-            # Default: if disaster noun present without aggregate words, show events
-            wants_events = has_event_noun
-
-    catalog = load_catalog()
-    updated_items = []
-
-    for item in items:
-        source_id = item.get("source_id", "")
-        catalog_source = _get_catalog_source(catalog, source_id)
-        pack_id = item.get("pack_id") or (catalog_source or {}).get("pack_id")
-        if pack_id and not item.get("pack_id"):
-            item["pack_id"] = pack_id
-
-        if wants_events and not wants_aggregate and pack_id:
-            event_source_id = _resolve_pack_source_by_shape(catalog, pack_id, item.get("region"), "event_shape")
-            if event_source_id:
-                item["source_id"] = event_source_id
-                if event_source_id != source_id:
-                    item["_resolved_from_pack"] = True
-                source_id = event_source_id
-                catalog_source = _get_catalog_source(catalog, source_id)
-        elif wants_aggregate and pack_id:
-            aggregate_source_id = _resolve_pack_aggregate_source(catalog, pack_id, item.get("region"))
-            if aggregate_source_id:
-                item["source_id"] = aggregate_source_id
-                if aggregate_source_id != source_id:
-                    item["_resolved_from_pack"] = True
-                source_id = aggregate_source_id
-                catalog_source = _get_catalog_source(catalog, source_id)
-            else:
-                geometry_source_id = _resolve_pack_source_by_shape(catalog, pack_id, item.get("region"), "geometry_shape")
-                if geometry_source_id and _source_supports_aggregate_mode(_get_catalog_source(catalog, geometry_source_id)):
-                    item["source_id"] = geometry_source_id
-                    if geometry_source_id != source_id:
-                        item["_resolved_from_pack"] = True
-                    source_id = geometry_source_id
-                    catalog_source = _get_catalog_source(catalog, source_id)
-
-        event_file_key = _preferred_event_file_key(catalog_source)
-        supports_events = _source_supports_events(catalog_source)
-
-        if supports_events and event_file_key and wants_events and not wants_aggregate:
-            # Check if metric explicitly requests aggregate
-            metric = item.get("metric", "")
-            explicit_aggregate = metric and any(
-                agg in metric.lower() for agg in ["count", "total", "sum", "avg", "mean"]
-            )
-
-            if not explicit_aggregate:
-                # Add event mode
-                item["mode"] = "events"
-                item["event_file"] = event_file_key
-                if requests_recent_events:
-                    item["sort"] = {"by": "timestamp", "order": "desc"}
-                    if requests_single_latest_event and not item.get("limit"):
-                        item["limit"] = 1
-                # Remove metric if it's just a placeholder
-                if metric in ("*", "all", "all_metrics", ""):
-                    item.pop("metric", None)
-        elif wants_aggregate and _source_supports_aggregate_mode(catalog_source):
-            _apply_aggregate_query_hints(item, query)
-
-        updated_items.append(item)
-
-    return updated_items
-
-
-def normalize_aggregate_metric_mode(items: list, hints: dict = None, catalog: dict | None = None) -> list:
-    """
-    Normalize dedicated aggregate metric sources onto mode="aggregate" when the
-    query language is clearly asking for rolled-up wildfire/disaster exposure
-    rather than individual events.
-    """
-    catalog = catalog or load_catalog()
-    query = ""
-    if hints:
-        query = str(hints.get("original_query", "") or "").lower()
-
-    updated_items = []
-
-    for item in items:
-        source_id = item.get("source_id")
-        catalog_source = _get_catalog_source(catalog, source_id)
-        if (
-            source_id
-            and not item.get("mode")
-            and _source_has_metrics(catalog_source)
-            and _source_supports_aggregate_mode(catalog_source)
-        ):
-            _apply_aggregate_query_hints(item, query)
-
-        updated_items.append(item)
-
-    return updated_items
-
-
-# =============================================================================
 # Main Postprocessor
 # =============================================================================
 
@@ -1819,141 +1391,40 @@ def postprocess_order(order: dict, hints: dict = None) -> dict:
     items = order.get("items", [])
     original_query = str((hints or {}).get("original_query") or "").strip()
 
-    # Ensure item-level normalization/validation can see the original user query
-    # even when the LLM omits per-item _hints blocks.
-    if original_query:
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            item_hints = item.get("_hints") if isinstance(item.get("_hints"), dict) else {}
-            if not item_hints.get("original_query"):
-                item_hints["original_query"] = original_query
-                item["_hints"] = item_hints
+    inject_original_query_hints(items, original_query)
 
-    # Step 0: Inject time range from preprocessor hints if LLM left year as null
     time_hints = hints.get("time", {}) if hints else {}
-    if time_hints.get("is_time_series"):
-        for item in items:
-            # If year is null/None and no year_start/year_end, inject time range
-            if item.get("year") is None and not item.get("year_start") and not item.get("year_end"):
-                # Case 1: Preprocessor detected specific year range (e.g., "from 2010 to now")
-                if time_hints.get("year_start") and time_hints.get("year_end"):
-                    item["year_start"] = time_hints["year_start"]
-                    item["year_end"] = time_hints["year_end"]
-                # Case 2: Trend detected but no specific years (e.g., "all years")
-                # Look up the source metadata to get actual available range
-                elif time_hints.get("pattern_type") == "trend" and item.get("source_id"):
-                    metadata = load_source_metadata(item["source_id"])
-                    if metadata:
-                        temp = metadata.get("temporal_coverage", {})
-                        if temp.get("start") and temp.get("end"):
-                            item["year_start"] = temp["start"]
-                            item["year_end"] = temp["end"]
+    apply_preprocessor_time_hints(items, time_hints, load_source_metadata)
 
     clarify_message = detect_multiple_path_clarify(items, catalog, hints)
     if clarify_message:
-        return {
-            "items": items,
-            "derived_specs": [],
-            "validation_summary": clarify_message,
-            "all_valid": False,
-            "needs_clarify": True,
-            "clarify_message": clarify_message,
-            "summary": order.get("summary"),
-            "region": order.get("region"),
-            "year": order.get("year"),
-            "year_start": order.get("year_start"),
-            "year_end": order.get("year_end"),
-        }
+        return build_clarify_result(order, items, clarify_message)
 
     full_pack_clarify = detect_full_pack_load_clarify(items, catalog)
     if full_pack_clarify:
-        return {
-            "items": items,
-            "derived_specs": [],
-            "validation_summary": full_pack_clarify,
-            "all_valid": False,
-            "needs_clarify": True,
-            "clarify_message": full_pack_clarify,
-            "summary": order.get("summary"),
-            "region": order.get("region"),
-            "year": order.get("year"),
-            "year_start": order.get("year_start"),
-            "year_end": order.get("year_end"),
-        }
+        return build_clarify_result(order, items, full_pack_clarify)
 
-    # Step 1: Detect event mode for disaster/event sources
-    items = detect_event_mode(items, hints)
-
-    # Step 1a: Dedicated aggregate metric sources should still enter the
-    # aggregate execution path even when they sit alongside event sources in a pack.
-    items = normalize_aggregate_metric_mode(items, hints, catalog)
-
-    # Step 1b: Expand explicit full-pack load requests into one item per source.
-    items = expand_full_pack_loads(items, catalog)
-
-    # Step 2: Expand wildcard metrics (metric: "*" -> all metrics from source)
-    items = expand_wildcard_metrics(items)
-
-    # Step 2b: Check metric count for display warning
     METRIC_DISPLAY_WARN = 15
-    metric_count = sum(1 for item in items if item.get("type") != "derived_result")
+    expanded_items, metric_count = run_pre_validation_pipeline(
+        items,
+        hints,
+        catalog,
+        detect_event_mode_impl,
+        normalize_aggregate_metric_mode_impl,
+        expand_full_pack_loads,
+        expand_wildcard_metrics,
+        expand_all_derived_fields,
+    )
+    regular_items, derived_specs = split_derived_specs(expanded_items)
+    validated_items, errors, valid_count = validate_regular_items(
+        regular_items,
+        catalog,
+        _normalize_source_declared_scope,
+        validate_item,
+    )
+    summary = build_validation_summary(validated_items, errors, valid_count)
 
-    # Step 3: Expand derived fields
-    expanded_items = expand_all_derived_fields(items)
-
-    # Step 4: Separate derived specs from regular items
-    regular_items = []
-    derived_specs = []
-
-    for item in expanded_items:
-        if item.get("type") == "derived_result":
-            derived_specs.append(item)
-        else:
-            regular_items.append(item)
-
-    # Step 4: Validate regular items
-    validated_items = []
-    errors = []
-    valid_count = 0
-
-    for item in regular_items:
-        item = _normalize_source_declared_scope(item)
-        validated = validate_item(item, catalog)
-        validated_items.append(validated)
-        if validated.get("_valid"):
-            valid_count += 1
-        else:
-            errors.append(validated.get("_error", "Unknown error"))
-
-    # Build validation summary
-    total = len(validated_items)
-    if errors:
-        summary = f"{valid_count}/{total} items valid. Errors: {'; '.join(errors)}"
-    else:
-        summary = f"All {total} items validated successfully"
-
-    # Build metric warning if count exceeds threshold
-    metric_warning = None
-    if metric_count > METRIC_DISPLAY_WARN:
-        gate = warn_gate(
-            lane="human_web_explore_metrics",
-            reason=(
-                f"Your request has {metric_count} metrics. More than 15 is hard to display well in popups. "
-                "Would you like all of them in your order?"
-            ),
-            soft_cap=METRIC_DISPLAY_WARN,
-            estimated_count=metric_count,
-            override_allowed=True,
-            measure="metric_count",
-            fallback_strategy="warn_then_override",
-            suggested_narrowing=["choose a few metrics", "split by topic", "display one metric at a time"],
-        )
-        metric_warning = {
-            "count": metric_count,
-            "message": gate.get("reason"),
-            "gate": gate,
-        }
+    metric_warning = build_metric_warning(metric_count, METRIC_DISPLAY_WARN)
 
     # Return processed order
     result = {

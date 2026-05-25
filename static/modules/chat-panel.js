@@ -22,12 +22,48 @@ import {
 } from './chat/message-renderer.js';
 
 import { sendStreamingRequest, sendChatRequest } from './chat/api.js';
+import {
+  buildPayload as buildPayloadImpl,
+  getActiveOverlays as getActiveOverlaysImpl,
+  getCacheStats as getCacheStatsImpl,
+  getTimeState as getTimeStateImpl
+} from './chat/chat-payload-builder.js';
+import {
+  applyModeUiState as applyModeUiStateImpl,
+  enforceResearchUiBoundaries as enforceResearchUiBoundariesImpl,
+  seedEmptyConversation as seedEmptyConversationImpl,
+  switchChatMode as switchChatModeImpl,
+  syncSidebarToggleVisibility as syncSidebarToggleVisibilityImpl,
+  updateComposerState as updateComposerStateImpl,
+  updateSidebarModeLayout as updateSidebarModeLayoutImpl
+} from './chat/chat-lane-controller.js';
+import {
+  applyFilterUpdate as applyFilterUpdateImpl,
+  handleResponse as handleResponseImpl,
+  routeMapResponse as routeMapResponseImpl
+} from './chat/chat-response-router.js';
+import {
+  isResearchDisplayConfirmation as isResearchDisplayConfirmationImpl,
+  resendWithForce as resendWithForceImpl,
+  resendWithResearchDisplayForce as resendWithResearchDisplayForceImpl
+} from './chat/chat-warning-actions.js';
 import { OrderPanel } from './order/manager.js';
 import { OrderTracker as OrderTrackerClass } from './order/tracker.js';
 import * as SavedOrders from './order/saved.js';
 import { ensureRuntimeAccessToken, getAccessToken, getCurrentProfile, getCurrentUser, getSupabaseClient, isAuthBootPending, isAuthenticated, onAuthChanged, refreshRuntimeSession, waitForAuthBoot } from './auth.js';
 import { TutorialMode, parseTutorialCommand } from './tutorial-mode.js';
 import { ResearchModeToggle } from './research/mode.js';
+import {
+  isMixedResearchRasterRequest as isMixedResearchRasterRequestImpl,
+  shouldAutoShowResearchRaster as shouldAutoShowResearchRasterImpl,
+  decorateResearchResponse as decorateResearchResponseImpl,
+  decorateResearchDisplay as decorateResearchDisplayImpl,
+  getResearchRasterSourceHint as getResearchRasterSourceHintImpl,
+  parseResearchLegendCommand as parseResearchLegendCommandImpl,
+  parseResearchStyleCommand as parseResearchStyleCommandImpl,
+  parseResearchRasterCommand as parseResearchRasterCommandImpl,
+  getResearchDisplayFallbackMessage as getResearchDisplayFallbackMessageImpl
+} from './research/research-chat-commands.js';
 import {
   getBrowserCorpusStorageSummary,
   listBrowserCorpusSummaries,
@@ -81,104 +117,6 @@ const CHAT_MODES = ['explore', 'research', 'ops'];
 
 function normalizeChatMode(mode) {
   return CHAT_MODES.includes(mode) ? mode : 'explore';
-}
-
-function normalizeResearchHistory(history) {
-  return (history || [])
-    .map(msg => ({
-      role: msg?.role === 'assistant' ? 'assistant' : 'user',
-      content: String(msg?.content || '').replace(/\s+/g, ' ').trim()
-    }))
-    .filter(msg => msg.content);
-}
-
-function clipResearchMemoryText(text, maxLen = 220) {
-  const normalized = String(text || '').replace(/\s+/g, ' ').trim();
-  if (!normalized) return '';
-  if (normalized.length <= maxLen) return normalized;
-  return normalized.slice(0, maxLen - 3).trimEnd() + '...';
-}
-
-function uniqueResearchLines(values, maxItems) {
-  const lines = [];
-  for (const value of values || []) {
-    const clipped = clipResearchMemoryText(value);
-    if (!clipped || lines.includes(clipped)) continue;
-    lines.push(clipped);
-    if (lines.length >= maxItems) break;
-  }
-  return lines;
-}
-
-function buildResearchMemoryFromHistory(history) {
-  const normalized = normalizeResearchHistory(history);
-  const recentLimit = CONFIG.research?.recentHistorySendLimit || CONFIG.chatHistorySendLimit;
-  const trigger = CONFIG.research?.compactionTriggerMessages || recentLimit;
-  const recentHistory = normalized.slice(-recentLimit);
-  const olderHistory = normalized.slice(0, Math.max(0, normalized.length - recentLimit));
-  const originalGoal = normalized.find(msg => msg.role === 'user')?.content || '';
-
-  if (olderHistory.length < trigger) {
-    return {
-      chatHistory: recentHistory,
-      researchMemory: originalGoal
-        ? {
-            originalGoal,
-            summary: '',
-            compactedMessageCount: 0,
-            totalMessageCount: normalized.length
-          }
-        : null
-    };
-  }
-
-  const maxBullets = CONFIG.research?.maxSummaryBullets || 4;
-  const olderUserTurns = olderHistory.filter(msg => msg.role === 'user').map(msg => msg.content);
-  const olderAssistantTurns = olderHistory.filter(msg => msg.role === 'assistant').map(msg => msg.content);
-  const recentQuestions = uniqueResearchLines(olderUserTurns.slice(-maxBullets), maxBullets);
-  const recentFindings = uniqueResearchLines(olderAssistantTurns.slice(-maxBullets), maxBullets);
-
-  const summaryParts = [];
-  if (recentQuestions.length) {
-    summaryParts.push(`Earlier questions:\n- ${recentQuestions.join('\n- ')}`);
-  }
-  if (recentFindings.length) {
-    summaryParts.push(`Earlier findings and replies:\n- ${recentFindings.join('\n- ')}`);
-  }
-
-  let summary = summaryParts.join('\n\n').trim();
-  const maxSummaryChars = CONFIG.research?.maxSummaryChars || 1800;
-  if (summary.length > maxSummaryChars) {
-    summary = summary.slice(0, maxSummaryChars - 3).trimEnd() + '...';
-  }
-
-  return {
-    chatHistory: recentHistory,
-    researchMemory: {
-      originalGoal,
-      summary,
-      compactedMessageCount: olderHistory.length,
-      totalMessageCount: normalized.length
-    }
-  };
-}
-
-function normalizeResearchColorHex(color) {
-  return String(color || '').trim().toLowerCase();
-}
-
-function getResearchNamedColors() {
-  return {
-    red: '#ef4444',
-    blue: '#3b82f6',
-    green: '#10b981',
-    orange: '#f59e0b',
-    yellow: '#eab308',
-    purple: '#8b5cf6',
-    pink: '#ec4899',
-    cyan: '#06b6d4',
-    teal: '#14b8a6'
-  };
 }
 
 // =============================================================================
@@ -482,63 +420,11 @@ export const ChatManager = {
   },
 
   async switchChatMode(mode) {
-    mode = normalizeChatMode(mode);
-    if (mode === this.mode) return;
-
-    this.syncModeMessagesHtml(this.mode);
-    this.modeHistories[this.mode] = this.history;
-
-    this.mode = mode;
-    this.history = this.modeHistories[mode] || [];
-    this.applyModeUiState();
-    App?.activateLaneMapView?.(mode);
-
-    if (mode === 'research') {
-      await this.refreshResearchCorpusOptions();
-    }
-
-    if (this.history.length === 0 && !this.modeMessagesHtml[mode]) {
-      await this.seedEmptyConversation(mode);
-    }
-
-    this.applyModeUiState();
-    this.saveState();
+    return switchChatModeImpl(this, mode, { App, CHAT_MODES });
   },
 
   async seedEmptyConversation(mode = this.mode) {
-    const pane = this.messagePanes?.[mode];
-    if (pane && pane.childElementCount > 0) return;
-
-    if (mode === 'research') {
-      try {
-        await this.refreshResearchCorpusOptions();
-        const manifest = await this.refreshResearchManifest();
-        if ((manifest?.artifact_count || 0) > 0 && !manifest?.stale_artifacts) {
-          this.addMessage(`Research mode ready. Active corpus: ${manifest.artifact_count} loaded artifact${manifest.artifact_count === 1 ? '' : 's'}.`, 'assistant', { mode: 'research' });
-          return;
-        }
-        if (manifest?.saved_corpus) {
-          const saved = manifest.saved_corpus;
-          const message = manifest?.stale_artifacts
-            ? `Research workspace found an out-of-date local session for "${saved.name}". Click Load Data to refresh it.`
-            : `Research workspace ready. "${saved.name}" is selected. Click Load Data to activate it for this session.`;
-          this.addMessage(message, 'assistant', { mode: 'research' });
-          return;
-        }
-        this.addMessage(this.getResearchEmptyStateMessage(), 'assistant', { mode: 'research' });
-      } catch (error) {
-        console.warn('Research corpus manifest check failed:', error);
-        this.addMessage('Research mode is available, but I could not read the active corpus yet.', 'assistant', { mode: 'research' });
-      }
-      return;
-    }
-
-    if (mode === 'ops') {
-      this.addMessage('Ops mode shell ready. This is a placeholder workflow state for focused live monitoring UI, while chat still uses the current Explore lane underneath.', 'assistant', { mode: 'ops' });
-      return;
-    }
-
-    this.addMessage(WELCOME_MESSAGE, 'assistant', { html: true, mode: 'explore' });
+    return seedEmptyConversationImpl(this, mode, { WELCOME_MESSAGE });
   },
 
   initMessagePanes() {
@@ -668,123 +554,27 @@ export const ChatManager = {
   },
 
   routeMapResponse(response, options = {}) {
-    if (!response || !App) return false;
-    const origin = options.origin || 'unknown';
-
-    // Research now produces Explore-shaped payloads (data_type at top level,
-    // geojson at top level). `layers` carries multi-display stacks; the latest
-    // display's fields are already promoted to the top level of `response`.
-    if (origin === 'research' && Array.isArray(response.layers) && response.layers.length) {
-      const validLayers = response.layers.filter(layer => layer?.geojson?.features?.length);
-      if (validLayers.length) {
-        const keepLayers = validLayers.filter(layer => String(layer.context_visibility || '').trim().toLowerCase() === 'keep');
-        const replaceLayers = validLayers.filter(layer => String(layer.context_visibility || '').trim().toLowerCase() !== 'keep');
-        if (replaceLayers.length) {
-          this.setResearchDisplayLayersForMode('research', replaceLayers);
-          for (const layer of keepLayers) {
-            this.appendResearchDisplayForMode('research', layer);
-          }
-        } else {
-          this.setResearchDisplayLayersForMode('research', validLayers);
-        }
-        App.displayMapPayload?.(response, { origin, order: options.order });
-        return true;
-      }
-    }
-
-    if (response.action === 'remove' && response.data_type) {
-      App.displayMapPayload?.(response, { origin, order: options.order });
-      return true;
-    }
-
-    if (response.geojson?.features?.length) {
-      if (origin === 'research') {
-        if (String(response.context_visibility || '').trim().toLowerCase() === 'keep') {
-          this.appendResearchDisplayForMode('research', response);
-        } else {
-          this.setResearchDisplayForMode('research', response);
-        }
-      }
-      App.displayMapPayload?.(response, { origin, order: options.order });
-      return true;
-    }
-
-    return false;
+    return routeMapResponseImpl(this, response, options, { App });
   },
 
   applyModeUiState() {
-    if (researchModeToggle) {
-      researchModeToggle.mode = this.mode;
-      researchModeToggle.setSelectedCorpusId(this.selectedResearchCorpusId);
-      researchModeToggle.updateActive();
-    }
-    this.setActiveMessagePane(this.mode);
-    this.updateResearchCorpusStatus();
-    this.updateSidebarModeLayout();
-    this.updateComposerState();
+    return applyModeUiStateImpl(this, { researchModeToggle });
   },
 
   updateComposerState() {
-    const { input, sendBtn } = this.elements;
-    const disabled = !!this.modeRequestInFlight?.[this.mode];
-    if (sendBtn) sendBtn.disabled = disabled;
-    if (input) input.disabled = disabled;
+    return updateComposerStateImpl(this);
   },
 
   syncSidebarToggleVisibility() {
-    const { sidebar, toggle } = this.elements;
-    if (!sidebar || !toggle) return;
-    toggle.style.display = sidebar.classList.contains('collapsed') ? 'flex' : 'none';
+    return syncSidebarToggleVisibilityImpl(this);
   },
 
   updateSidebarModeLayout() {
-    const { orderPanel, resizeOrder, form } = this.elements;
-    const hideOrderTaker = this.mode === 'research' || this.mode === 'ops';
-    const container = document.getElementById('chatContainer');
-    document.body.classList.toggle('chat-mode-research', this.mode === 'research');
-    document.body.classList.toggle('chat-mode-ops', this.mode === 'ops');
-    document.body.classList.toggle('chat-mode-explore', this.mode === 'explore');
-    if (container) {
-      container.classList.toggle('chat-container--research', this.mode === 'research');
-      container.classList.toggle('chat-container--ops', this.mode === 'ops');
-      container.classList.toggle('chat-container--explore', this.mode === 'explore');
-    }
-    if (orderPanel) {
-      orderPanel.hidden = hideOrderTaker;
-      orderPanel.setAttribute('aria-hidden', hideOrderTaker ? 'true' : 'false');
-      orderPanel.style.display = hideOrderTaker ? 'none' : '';
-    }
-    if (resizeOrder) {
-      resizeOrder.hidden = hideOrderTaker;
-      resizeOrder.setAttribute('aria-hidden', hideOrderTaker ? 'true' : 'false');
-      resizeOrder.style.display = hideOrderTaker ? 'none' : '';
-    }
-    if (form) {
-      form.setAttribute('data-chat-mode', this.mode);
-    }
-    this.enforceResearchUiBoundaries();
+    return updateSidebarModeLayoutImpl(this);
   },
 
   enforceResearchUiBoundaries() {
-    const hideOrderTaker = this.mode === 'research' || this.mode === 'ops';
-    const { orderPanel, resizeOrder } = this.elements;
-    const container = document.getElementById('chatContainer');
-    document.body.classList.toggle('chat-mode-research', this.mode === 'research');
-    document.body.classList.toggle('chat-mode-ops', this.mode === 'ops');
-    document.body.classList.toggle('chat-mode-explore', this.mode === 'explore');
-    if (container) {
-      container.classList.toggle('chat-container--research', this.mode === 'research');
-      container.classList.toggle('chat-container--ops', this.mode === 'ops');
-      container.classList.toggle('chat-container--explore', this.mode === 'explore');
-    }
-    for (const element of [orderPanel, resizeOrder]) {
-      if (!element) continue;
-      element.hidden = hideOrderTaker;
-      element.setAttribute('aria-hidden', hideOrderTaker ? 'true' : 'false');
-      element.style.display = hideOrderTaker ? 'none' : '';
-      element.style.visibility = hideOrderTaker ? 'hidden' : '';
-      element.style.pointerEvents = hideOrderTaker ? 'none' : '';
-    }
+    return enforceResearchUiBoundariesImpl(this);
   },
 
   async refreshResearchCorpusOptions() {
@@ -2124,279 +1914,16 @@ export const ChatManager = {
    * @param {Object} response - The API response
    */
   handleResponse(response) {
-    const targetMode = response?._requestMode || this.mode;
-    if (targetMode === 'research' || this.mode === 'research') {
-      this.enforceResearchUiBoundaries();
-    }
-    const add = (text, type = 'assistant', options = {}) => this.addMessage(text, type, { ...options, mode: targetMode });
-    switch (response.type) {
-      case 'order':
-        this.pendingMetricOrder = null;
-        add('Added to your order. Click "Display on Map" when ready.', 'assistant');
-        orderPanel.setOrder(response.order, response.summary, response.full_order || response.order);
-        break;
-
-      case 'already_loaded':
-        add(response.message || 'This data is already loaded on your map.', 'assistant');
-        // Switch to Loaded tab so user can see their data
-        if (orderPanel.switchTab) orderPanel.switchTab('loaded');
-        break;
-
-      case 'metric_warning': {
-        this.pendingResearchDisplayWarning = null;
-        this.pendingMetricOrder = {
-          order: response.pending_order,
-          full_order: response.full_order,
-          summary: response.summary
-        };
-        const msgEl = add(response.message, 'assistant');
-        const btnContainer = document.createElement('div');
-        btnContainer.className = 'metric-warning-buttons';
-
-        const yesBtn = document.createElement('button');
-        yesBtn.textContent = 'Yes, show all';
-        yesBtn.className = 'chat-action-btn confirm';
-        yesBtn.addEventListener('click', () => {
-          btnContainer.remove();
-          this.resendWithForce();
-        });
-
-        const noBtn = document.createElement('button');
-        noBtn.textContent = 'No, let me narrow it';
-        noBtn.className = 'chat-action-btn cancel';
-        noBtn.addEventListener('click', () => {
-          btnContainer.remove();
-          add('Sure - what specific metrics would you like?', 'assistant');
-        });
-
-        btnContainer.appendChild(yesBtn);
-        btnContainer.appendChild(noBtn);
-        msgEl.appendChild(btnContainer);
-        break;
-      }
-
-      case 'display_warning': {
-        this.pendingMetricOrder = null;
-        this.pendingResearchDisplayWarning = {
-          level: response.warning_level,
-          rowCount: response.row_count,
-          softCap: response.soft_cap,
-          hardCap: response.hard_cap,
-          overrideAllowed: Boolean(response.override_allowed)
-        };
-        const msgEl = add(response.message, 'assistant');
-        const btnContainer = document.createElement('div');
-        btnContainer.className = 'metric-warning-buttons';
-
-        if (response.override_allowed) {
-          const yesBtn = document.createElement('button');
-          yesBtn.textContent = 'Continue anyway';
-          yesBtn.className = 'chat-action-btn confirm';
-          yesBtn.addEventListener('click', () => {
-            btnContainer.remove();
-            this.resendWithResearchDisplayForce();
-          });
-          btnContainer.appendChild(yesBtn);
-        }
-        if (btnContainer.childNodes.length) {
-          msgEl.appendChild(btnContainer);
-        }
-        break;
-      }
-
-      case 'clarify':
-        this.pendingMetricOrder = null;
-        this.pendingResearchDisplayWarning = null;
-        add(response.message || 'Could you be more specific?', 'assistant');
-        break;
-
-      case 'disambiguate':
-        add(response.message || 'Please select a location:', 'assistant');
-        this.lastDisambiguationOptions = response.options || [];
-        if (SelectionManager) {
-          SelectionManager.enter(response, (selected, originalQuery) => {
-            this.handleDisambiguationSelection(selected, originalQuery);
-          });
-        }
-        break;
-
-      case 'navigate':
-        add(response.message || 'Showing locations.', 'assistant');
-        this.handleNavigation(response);
-        break;
-
-      case 'drilldown':
-        add(response.message || 'Loading...', 'assistant');
-        if (App && response.loc_id) {
-          App.drillDown(response.loc_id, response.name || response.loc_id);
-        }
-        break;
-
-      case 'data':
-        add(response.summary || 'Here is your data.', 'assistant');
-        this.routeMapResponse(response, { origin: targetMode });
-        break;
-
-      case 'events':
-        add(response.summary || `Showing ${response.count} ${response.event_type} events.`, 'assistant');
-        ingestEventsToOverlay(response);
-        this.routeMapResponse(response, { origin: targetMode });
-        break;
-
-      case 'cache_answer':
-        add(response.message || 'Here is the current state.', 'assistant');
-        break;
-
-      case 'order_response':
-        // Handle order execution responses (including removals)
-        if (response.action === 'remove') {
-          add(response.summary || `Removed ${response.count || 0} ${response.data_type || 'items'}.`, 'assistant');
-        } else {
-          add(response.summary || 'Order complete.', 'assistant');
-        }
-        this.routeMapResponse(response, { origin: targetMode });
-        break;
-
-      case 'mixed_order':
-        // Handle mixed add/remove orders
-        if (response.results) {
-          for (const result of response.results) {
-            this.routeMapResponse(result, { origin: targetMode });
-          }
-        }
-        add(response.summary || `Updated: added ${response.add_count || 0}, removed ${response.remove_count || 0}`, 'assistant');
-        break;
-
-      case 'geometry_remove':
-        // Legacy: Remove geometry regions from display (now handled by order_response)
-        add(response.message || 'Removing geometry.', 'assistant');
-        this.routeMapResponse({ ...response, action: 'remove', data_type: 'geometry' }, { origin: targetMode });
-        break;
-
-      case 'filter_update':
-        add(response.message || 'Updating filters.', 'assistant');
-        this.applyFilterUpdate(response);
-        break;
-
-      case 'filter_existing':
-        add(response.message || 'Filtering cached data.', 'assistant');
-        if (response.overlay && response.filters && OverlayController) {
-          OverlayController.updateFilters(response.overlay, response.filters);
-          OverlayController.rerenderFromCache?.();
-        }
-        break;
-
-      case 'overlay_toggle':
-        add(response.message || (response.enabled ? 'Enabling overlay.' : 'Disabling overlay.'), 'assistant');
-        if (response.overlay && OverlaySelector) {
-          const isCurrentlyActive = OverlaySelector.isActive(response.overlay);
-          if (response.enabled && !isCurrentlyActive) {
-            OverlaySelector.toggle(response.overlay);
-          } else if (!response.enabled && isCurrentlyActive) {
-            OverlaySelector.toggle(response.overlay);
-          }
-          if (response.enabled && response.filters && OverlayController) {
-            OverlayController.updateFilters(response.overlay, response.filters);
-            OverlayController.reloadOverlay(response.overlay);
-          }
-        }
-        break;
-
-      case 'tutorial_mode': {
-        const result = TutorialMode.applyCommand(response.action || (response.enabled ? 'on' : 'off'));
-        add(response.message || result.message, 'assistant');
-        break;
-      }
-
-      case 'address_prompt':
-        this.showAddressPrompt(response);
-        break;
-
-      case 'save_order':
-        if (response.name) {
-          const saved = SavedOrders.save(
-            response.name,
-            orderPanel?.currentOrder?.items || [],
-            orderPanel?.currentOrder?.summary || ''
-          );
-          if (saved) {
-            add(`Order saved as "${saved.name}"`, 'assistant');
-          } else {
-            add('No order to save.', 'assistant');
-          }
-        } else {
-          add('Please specify a name to save the order (e.g., "save as California Data").', 'assistant');
-        }
-        break;
-
-      case 'list_orders': {
-        const savedOrders = SavedOrders.getAll();
-        if (savedOrders.length === 0) {
-          add('No saved orders. Save an order first with "save as [name]".', 'assistant');
-        } else {
-          const names = savedOrders.map(o => `- ${o.name}`).join('\n');
-          add(`Saved orders:\n${names}`, 'assistant');
-        }
-        break;
-      }
-
-      case 'load_order':
-        if (response.name) {
-          const order = SavedOrders.load(response.name);
-          if (order && orderPanel) {
-            orderPanel.currentOrder = {
-              items: JSON.parse(JSON.stringify(order.items)),
-              summary: order.summary || 'Loaded saved order: ' + order.name
-            };
-            orderPanel.render(orderPanel.currentOrder.summary);
-            orderPanel.switchTab('order');
-            add(`Loaded saved order: "${order.name}"`, 'assistant');
-          } else if (!order) {
-            add(`No saved order found with name "${response.name}".`, 'assistant');
-          }
-        } else {
-          const allOrders = SavedOrders.getAll();
-          if (allOrders.length > 0) {
-            const names = allOrders.map(o => `- ${o.name}`).join('\n');
-            add(`Which order? Available:\n${names}`, 'assistant');
-          } else {
-            add('No saved orders available.', 'assistant');
-          }
-        }
-        break;
-
-      case 'delete_order':
-        if (response.name) {
-          if (SavedOrders.deleteOrder(response.name)) {
-            add(`Deleted saved order: "${response.name}"`, 'assistant');
-          } else {
-            add(`No saved order found with name "${response.name}".`, 'assistant');
-          }
-        } else {
-          add('Please specify which order to delete (e.g., "delete order California Analysis").', 'assistant');
-        }
-        break;
-
-      case 'error':
-        add(response.message || 'An error occurred. Please try again.', 'assistant');
-        break;
-
-      case 'chat':
-      default:
-        this.pendingMetricOrder = null;
-        this.pendingResearchDisplayWarning = null;
-        this.applySupplementalChatActions(response);
-        if (response.geojson && response.geojson.features && response.geojson.features.length > 0) {
-          add(response.summary || response.message || 'Found data for you.', 'assistant');
-          if (response.event_type) {
-            ingestEventsToOverlay(response);
-          }
-          App?.displayMapPayload(response);
-        } else {
-          add(response.summary || response.message || 'Could you be more specific?', 'assistant');
-        }
-        break;
-    }
+    return handleResponseImpl(this, response, {
+      App,
+      OverlayController,
+      OverlaySelector,
+      SelectionManager,
+      TutorialMode,
+      SavedOrders,
+      orderPanel,
+      ingestEventsToOverlay
+    });
   },
 
   applySupplementalChatActions(response) {
@@ -2442,295 +1969,39 @@ export const ChatManager = {
   },
 
   isMixedResearchRasterRequest(normalizedQuery) {
-    const normalized = String(normalizedQuery || '').trim().toLowerCase();
-    if (!normalized) return false;
-    const hasRasterReference = /\b(raster|rasters|heat layer|heat map|heatmap)\b/.test(normalized);
-    if (!hasRasterReference) return false;
-    const hasChainedRequest = /\b(and then|and also|also show|while also|plus show)\b/.test(normalized);
-    const hasSecondaryDisplayTarget = /\b(geojson|shape|shapes|impervious|building|buildings|event|events|tract|block group|blockgroup|county)\b/.test(normalized);
-    return hasChainedRequest || (hasSecondaryDisplayTarget && /\b(show|display|leave|keep)\b/.test(normalized) && /\b(top|most|another|next)\b/.test(normalized));
+    return isMixedResearchRasterRequestImpl(this, normalizedQuery);
   },
 
   shouldAutoShowResearchRaster(query) {
-    const normalized = String(query || '').trim().toLowerCase();
-    if (!normalized) return false;
-    if (this.isMixedResearchRasterRequest(normalized)) return false;
-    if (!/\b(raster|rasters|heat layer|heat map|heatmap)\b/.test(normalized)) return false;
-    if (/\b(turn on|turn off|hide|disable|enable|open|close|raster mode|normal mode|vector mode|map mode|go back|undo)\b/.test(normalized)) {
-      return false;
-    }
-    return /\b(hottest|coolest|top|rank|ranking|compare|find|identify|which|what|where|show me|list)\b/.test(normalized);
+    return shouldAutoShowResearchRasterImpl(this, query);
   },
 
   decorateResearchResponse(response, options = {}) {
-    if (!response || typeof response !== 'object') return response;
-    const hasTopLevelPayload = response.geojson && response.geojson.features && response.geojson.features.length;
-    const layers = Array.isArray(response.layers)
-      ? response.layers.map(layer => this.decorateResearchDisplay(layer, options))
-      : null;
-    if (!hasTopLevelPayload && !layers?.length) return response;
-    const decoratedTop = hasTopLevelPayload
-      ? this.decorateResearchDisplay(response, options)
-      : response;
-    return {
-      ...decoratedTop,
-      layers,
-    };
+    return decorateResearchResponseImpl(this, response, options, { App });
   },
 
   decorateResearchDisplay(display, options = {}) {
-    if (!display || typeof display !== 'object') return display;
-    const rasterMode = options.rasterMode;
-    let decorated = display;
-    if (String(display.source_id || '').trim() === 'fairfax_buildings') {
-      decorated = {
-        ...decorated,
-        context_visibility: decorated.context_visibility || 'keep',
-        style: {
-          ...(decorated.style || {}),
-          building_fill_mode: 'type'
-        }
-      };
-    }
-    if (rasterMode !== 'selection') return decorated;
-    const locIds = Array.isArray(decorated.loc_ids) ? decorated.loc_ids.filter(Boolean) : [];
-    if (!locIds.length) return decorated;
-    return {
-      ...decorated,
-      raster: {
-        source_id: String(decorated.source_id || '').trim() || undefined,
-        visibility: 'show',
-        clip_mode: 'selection',
-        loc_ids: locIds
-      }
-    };
+    return decorateResearchDisplayImpl(this, display, options, { App });
   },
 
   getResearchRasterSourceHint(mode = 'research') {
-    const activeDisplay = this.getResearchDisplayForMode(mode);
-    if (activeDisplay?.raster && typeof activeDisplay.raster === 'object') {
-      const explicitRasterSourceId = String(activeDisplay.raster.source_id || activeDisplay.raster.provider || '').trim();
-      if (explicitRasterSourceId) return explicitRasterSourceId;
-    }
-    const displaySourceId = String(activeDisplay?.source_id || '').trim();
-    return displaySourceId || '';
+    return getResearchRasterSourceHintImpl(this, mode);
   },
 
   parseResearchLegendCommand(query) {
-    const normalized = String(query || '').trim().toLowerCase();
-    if (!normalized) return null;
-    if (String(this.getResearchDisplayForMode('research')?.source_id || '').trim() !== 'fairfax_buildings') return null;
-    if (/\b(make|color|turn|change|set)\b/.test(normalized) && /\b(red|blue|green|orange|yellow|purple|pink|cyan|teal)\b/.test(normalized)) {
-      return null;
-    }
-
-    const colorMatch = normalized.match(/\b(red|blue|green|orange|yellow|purple|pink|cyan|teal)\b/);
-    if (!colorMatch) return null;
-    if (!/\b(building|buildings|color|colors)\b/.test(normalized)) return null;
-
-    const legend = App?.getCurrentResearchBuildingLegend?.();
-    if (!legend) return null;
-
-    const namedColors = getResearchNamedColors();
-    const requestedColorName = colorMatch[1];
-    const requestedColor = normalizeResearchColorHex(namedColors[requestedColorName]);
-    const entries = Object.entries(legend.typeColors || {});
-    const typeLabels = legend.typeLabels || {};
-    const matchedLabels = entries
-      .filter(([, color]) => normalizeResearchColorHex(color) === requestedColor)
-      .map(([typeCode]) => typeLabels[typeCode] || typeCode);
-    const fallbackMatches = normalizeResearchColorHex(legend.defaultColor) === requestedColor;
-
-    if (!matchedLabels.length && !fallbackMatches) {
-      return {
-        reply: `No buildings in the current Research display are specifically assigned ${requestedColorName} right now.`
-      };
-    }
-
-    const uniqueLabels = [...new Set(matchedLabels)];
-    const parts = [];
-    if (uniqueLabels.length) {
-      parts.push(
-        `${requestedColorName[0].toUpperCase()}${requestedColorName.slice(1)} currently marks ${uniqueLabels.join(', ')} buildings.`
-      );
-    }
-    if (fallbackMatches) {
-      parts.push(
-        `${requestedColorName[0].toUpperCase()}${requestedColorName.slice(1)} is also the fallback color for any buildings whose TYPE is not currently mapped, including unclassified or less-common codes.`
-      );
-    }
-    return {
-      reply: parts.join(' ')
-    };
+    return parseResearchLegendCommandImpl(this, query, { App });
   },
 
   parseResearchStyleCommand(query) {
-    const normalized = String(query || '').trim().toLowerCase();
-    if (!normalized) return null;
-    if (!/\b(red|blue|green|orange|yellow|purple|pink|cyan|teal)\b/.test(normalized)) return null;
-    const activeDisplay = this.getResearchDisplayForMode('research');
-    if (!activeDisplay?.geojson?.features?.length) return null;
-    const referencesCurrentLayer = /\b(these|those|them|current|selected|selection|display|layer|highlighted|mapped)\b/.test(normalized);
-    const requestsFreshDisplay = /\b(show|map|display|highlight|find|list|rank|top|highest|lowest|most|least|hottest|coolest|next)\b/.test(normalized);
-    if (requestsFreshDisplay && !referencesCurrentLayer) return null;
-
-    const namedColors = getResearchNamedColors();
-    const colorNameMatch = normalized.match(/\b(red|blue|green|orange|yellow|purple|pink|cyan|teal)\b/);
-    const requestedColorName = colorNameMatch?.[1] || '';
-    const requestedColor = requestedColorName ? namedColors[requestedColorName] : null;
-    const colorUpdates = {};
-
-    if (String(activeDisplay?.source_id || '').trim() === 'fairfax_buildings') {
-      const residentialMatch = normalized.match(/\bresidential(?:\s+buildings?)?.{0,24}?\b(red|blue|green|orange|yellow|purple|pink|cyan|teal)\b/);
-      if (residentialMatch) {
-        colorUpdates.SFR = namedColors[residentialMatch[1]];
-      }
-      const commercialMatch = normalized.match(/\bcommercial(?:\s+buildings?)?.{0,24}?\b(red|blue|green|orange|yellow|purple|pink|cyan|teal)\b/);
-      if (commercialMatch) {
-        colorUpdates.C = namedColors[commercialMatch[1]];
-        colorUpdates.MU = namedColors[commercialMatch[1]];
-      }
-      const parkingMatch = normalized.match(/\b(parking|transportation)(?:\s+buildings?)?.{0,24}?\b(red|blue|green|orange|yellow|purple|pink|cyan|teal)\b/);
-      if (parkingMatch) {
-        colorUpdates.MG = namedColors[parkingMatch[2]];
-      }
-      const industrialMatch = normalized.match(/\bindustrial(?:\s+buildings?)?.{0,24}?\b(red|blue|green|orange|yellow|purple|pink|cyan|teal)\b/);
-      if (industrialMatch) {
-        colorUpdates.I = namedColors[industrialMatch[1]];
-      }
-      const mixedUseMatch = normalized.match(/\b(mixed(?:-|\s)?use|mixed)(?:\s+buildings?)?.{0,24}?\b(red|blue|green|orange|yellow|purple|pink|cyan|teal)\b/);
-      if (mixedUseMatch) {
-        colorUpdates.MU = namedColors[mixedUseMatch[2]];
-      }
-      const publicMatch = normalized.match(/\b(public|civic|government)(?:\s+buildings?)?.{0,24}?\b(red|blue|green|orange|yellow|purple|pink|cyan|teal)\b/);
-      if (publicMatch) {
-        colorUpdates.P = namedColors[publicMatch[2]];
-      }
-    }
-
-    const styleUpdates = {};
-    if (Object.keys(colorUpdates).length) {
-      styleUpdates.buildingTypeColors = colorUpdates;
-    }
-    if (requestedColor) {
-      const wantsOutlineOnly = /\b(outline|border|stroke)\b/.test(normalized) && !/\b(fill)\b/.test(normalized);
-      const wantsFillOnly = /\bfill\b/.test(normalized) && !/\b(outline|border|stroke)\b/.test(normalized);
-      if (wantsOutlineOnly) {
-        styleUpdates.stroke_color = requestedColor;
-      } else if (wantsFillOnly) {
-        styleUpdates.fill_color = requestedColor;
-      } else {
-        styleUpdates.fill_color = styleUpdates.fill_color || requestedColor;
-        styleUpdates.stroke_color = styleUpdates.stroke_color || requestedColor;
-      }
-    }
-
-    if (!Object.keys(styleUpdates).length) return null;
-    const labelParts = [];
-    if (colorUpdates.SFR) labelParts.push('residential');
-    if (colorUpdates.C || colorUpdates.MU) labelParts.push('commercial/mixed-use');
-    if (colorUpdates.I) labelParts.push('industrial');
-    if (colorUpdates.MG) labelParts.push('parking/transportation');
-    if (colorUpdates.P) labelParts.push('public');
-    if (styleUpdates.fill_color && styleUpdates.stroke_color) {
-      labelParts.push('fill/outline');
-    } else if (styleUpdates.fill_color) {
-      labelParts.push('fill');
-    } else if (styleUpdates.stroke_color) {
-      labelParts.push('outline');
-    }
-    return {
-      styleUpdates,
-      reply: labelParts.length
-        ? `Updated the ${labelParts.join(', ')} colors for the current Research display.`
-        : 'Updated the current Research display colors.'
-    };
+    return parseResearchStyleCommandImpl(this, query);
   },
 
   parseResearchRasterCommand(query) {
-    const normalized = String(query || '').trim().toLowerCase();
-    if (!normalized) return null;
-    if (this.isMixedResearchRasterRequest(normalized)) return null;
-    if (
-      /\b(raster|rasters|heat layer|heat map|heatmap)\b/.test(normalized) &&
-      /\b(hottest|coolest|top|rank|ranking|compare|find|identify|which|what|where|show me|list)\b/.test(normalized)
-    ) {
-      return null;
-    }
-
-    const referencesSelection = /\b(those|these|selected|selection|them)\b/.test(normalized);
-    if (referencesSelection && /\b(raster|rasters|heat layer|heat map|heatmap)\b/.test(normalized)) {
-      const activeDisplay = this.getResearchDisplayForMode('research');
-      const locIds = Array.isArray(activeDisplay?.loc_ids) ? activeDisplay.loc_ids.filter(Boolean) : [];
-      if (!locIds.length) {
-        return {
-          reply: 'I do not have a recent highlighted selection to turn into raster clips yet. Highlight specific locations first, then ask for only those rasters.'
-        };
-      }
-      return {
-        raster: {
-          source_id: this.getResearchRasterSourceHint('research') || undefined,
-          visibility: 'show',
-          clip_mode: 'selection',
-          loc_ids: locIds
-        },
-        reply: `Showing raster clips for the current ${locIds.length}-location Research selection.`
-      };
-    }
-
-    if (/\b(go back|undo)\b/.test(normalized) || /\bback to (the )?(first|previous|vector|normal) view\b/.test(normalized)) {
-      return {
-        raster: { source_id: this.getResearchRasterSourceHint('research') || undefined, visibility: 'hide' },
-        reply: 'Went back to the vector-only view and hid the raster layer.'
-      };
-    }
-
-    if (/\b(normal mode|vector mode|map mode)\b/.test(normalized)) {
-      return {
-        raster: { source_id: this.getResearchRasterSourceHint('research') || undefined, visibility: 'hide' },
-        reply: 'Switched back to normal map mode and hid the raster layer.'
-      };
-    }
-
-    if (/\b(raster mode|heat mode)\b/.test(normalized)) {
-      return {
-        raster: { source_id: this.getResearchRasterSourceHint('research') || undefined, visibility: 'show' },
-        reply: 'Switched into raster mode and opened the raster layer controls.'
-      };
-    }
-
-    const referencesRaster = /\b(raster|rasters|heat layer|heat map|heatmap)\b/.test(normalized);
-    if (!referencesRaster) return null;
-
-    if (/\b(turn off|hide|disable|remove|close)\b/.test(normalized)) {
-      return {
-        raster: { source_id: this.getResearchRasterSourceHint('research') || undefined, visibility: 'hide' },
-        reply: 'Turned off the raster layer.'
-      };
-    }
-
-    if (/\b(turn on|show|enable|open)\b/.test(normalized)) {
-      return {
-        raster: { source_id: this.getResearchRasterSourceHint('research') || undefined, visibility: 'show' },
-        reply: 'Turned on the raster layer.'
-      };
-    }
-
-    return null;
+    return parseResearchRasterCommandImpl(this, query);
   },
 
   getResearchDisplayFallbackMessage(response) {
-    if (!response) return '';
-    const featureCount = response?.geojson?.features?.length || 0;
-    if (!featureCount) return '';
-    const sourceId = String(response?.source_id || '').trim();
-    if (sourceId === 'fairfax_buildings') {
-      return `Highlighted ${featureCount} building footprint${featureCount === 1 ? '' : 's'} on the map.`;
-    }
-    if (response?.raster || /lst|raster|heat/i.test(sourceId)) {
-      return `Highlighted ${featureCount} raster-linked area${featureCount === 1 ? '' : 's'} on the map.`;
-    }
-    return `Highlighted ${featureCount} matching feature${featureCount === 1 ? '' : 's'} on the map.`;
+    return getResearchDisplayFallbackMessageImpl(this, response);
   },
 
   isAllMetricsConfirmation(query) {
@@ -3010,98 +2281,15 @@ export const ChatManager = {
    * Re-send the last query with force_metrics flag to bypass metric count warning.
    */
   async resendWithForce() {
-    if (!this.lastQuery) return;
-
-    const requestMode = this.mode;
-    if (this.modeRequestInFlight[requestMode]) return;
-    this.modeRequestInFlight[requestMode] = true;
-    this.updateComposerState();
-
-    const indicator = this.showTypingIndicator(true);
-
-    try {
-      const payload = this.buildPayload(this.lastQuery, null, { force_metrics: true });
-      const response = await sendStreamingRequest(payload, (stage, message) => {
-        indicator.updateStage(stage, message);
-      });
-
-      if (response) {
-        this.history.push({ role: 'assistant', content: response.message || response.summary });
-        this.handleResponse(response);
-      }
-    } catch (error) {
-      console.error('Force metrics re-send error:', error);
-      this.addMessage('Sorry, something went wrong. Please try again.', 'assistant');
-    } finally {
-      indicator.remove();
-      this.modeRequestInFlight[requestMode] = false;
-      this.updateComposerState();
-      this.elements.input?.focus();
-    }
+    return resendWithForceImpl(this, { sendStreamingRequest });
   },
 
   isResearchDisplayConfirmation(query) {
-    const normalized = String(query || '').trim().toLowerCase();
-    if (!normalized) return false;
-    return [
-      'yes',
-      'yes, show all',
-      'yes, load it anyway',
-      'load it anyway',
-      'show it anyway',
-      'do it anyway',
-      'go ahead',
-      'proceed',
-      'continue'
-    ].includes(normalized);
+    return isResearchDisplayConfirmationImpl(query);
   },
 
   async resendWithResearchDisplayForce() {
-    if (!this.lastQuery || !this.pendingResearchDisplayWarning?.overrideAllowed) return;
-
-    const requestMode = this.mode;
-    if (this.modeRequestInFlight[requestMode]) return;
-    this.modeRequestInFlight[requestMode] = true;
-    this.updateComposerState();
-
-    const indicator = this.showTypingIndicator(true, requestMode);
-
-    try {
-      const payload = this.buildPayload(
-        this.lastQuery,
-        null,
-        { force_research_display: true },
-        requestMode
-      );
-      const endpoint = requestMode === 'research' ? '/chat/research/stream' : '/chat/stream';
-      const response = await sendStreamingRequest(payload, (stage, message, deltaText, rawEvent) => {
-        if (stage === 'display' && rawEvent?.map_payload) {
-          const mapPayload = this.decorateResearchDisplay(rawEvent.map_payload, {
-            rasterMode: this.pendingResearchRasterMode
-          });
-          this.applySupplementalChatActions(mapPayload);
-          return;
-        }
-        indicator.updateStage(stage, message);
-      }, endpoint);
-
-      if (response) {
-        this.pendingResearchDisplayWarning = null;
-        this.history.push({ role: 'assistant', content: response.message || response.summary });
-        this.handleResponse({ ...this.decorateResearchResponse(response, {
-          rasterMode: this.pendingResearchRasterMode
-        }), _requestMode: requestMode });
-      }
-    } catch (error) {
-      console.error('Force research display re-send error:', error);
-      this.addMessage('Sorry, something went wrong. Please try again.', 'assistant', { mode: requestMode });
-    } finally {
-      this.pendingResearchRasterMode = null;
-      indicator.remove();
-      this.modeRequestInFlight[requestMode] = false;
-      this.updateComposerState();
-      this.elements.input?.focus();
-    }
+    return resendWithResearchDisplayForceImpl(this, { sendStreamingRequest });
   },
 
   /**
@@ -3237,77 +2425,16 @@ export const ChatManager = {
    * @returns {Object} Full request payload
    */
   buildPayload(query, resolvedLocation = null, extraOptions = {}, modeOverride = this.mode) {
-    const view = MapAdapter?.getView() || { center: { lat: 0, lng: 0 }, zoom: 2, bounds: null, adminLevel: 0 };
-
-    // Check for navigation location if no explicit resolution
-    if (!resolvedLocation) {
-      const navLocations = orderPanel?.currentOrder?.navigationLocations;
-      if (navLocations && navLocations.length === 1) {
-        const loc = navLocations[0];
-        resolvedLocation = {
-          loc_id: loc.loc_id,
-          iso3: loc.iso3,
-          matched_term: loc.matched_term,
-          country_name: loc.country_name
-        };
-      }
-    }
-
-    const normalizedQuery = String(query || '').trim();
-    const sourceHistory = Array.isArray(this.modeHistories?.[modeOverride])
-      ? this.modeHistories[modeOverride]
-      : (modeOverride === this.mode ? this.history : []);
-    const historyForPayload = Array.isArray(sourceHistory) ? [...sourceHistory] : [];
-    const lastHistoryMessage = historyForPayload[historyForPayload.length - 1];
-    if (
-      normalizedQuery &&
-      lastHistoryMessage?.role === 'user' &&
-      String(lastHistoryMessage.content || '').trim() === normalizedQuery
-    ) {
-      historyForPayload.pop();
-    }
-
-    const researchHistoryState = modeOverride === 'research'
-      ? buildResearchMemoryFromHistory(historyForPayload)
-      : null;
-    if (modeOverride === 'research') {
-      const activeDisplayState = this.getResearchDisplayMemoryForMode('research');
-      const nextResearchMemory = researchHistoryState?.researchMemory
-        ? {
-            ...researchHistoryState.researchMemory,
-            activeDisplayState
-          }
-        : (activeDisplayState ? { activeDisplayState } : null);
-      this.researchMemory = nextResearchMemory || this.researchMemory;
-    }
-
-    return {
-      query,
-      catalog_surface: this.getEffectiveCatalogSurface(),
-      viewport: {
-        center: { lat: view.center.lat, lng: view.center.lng },
-        zoom: view.zoom,
-        bounds: view.bounds,
-        adminLevel: view.adminLevel
-      },
-      chatHistory: modeOverride === 'research'
-        ? (researchHistoryState?.chatHistory || [])
-        : historyForPayload.slice(-CONFIG.chatHistorySendLimit),
-      researchMemory: modeOverride === 'research'
-        ? (this.researchMemory || null)
-        : null,
-      sessionId: this.getSessionIdForMode(modeOverride),
-      resolved_location: resolvedLocation,
-      previous_disambiguation_options: this.lastDisambiguationOptions || [],
-      activeOverlays: this.getActiveOverlays(),
-      cacheStats: this.getCacheStats(),
-      timeState: this.getTimeState(),
-      savedOrderNames: SavedOrders.getNames(),
-      loadedData: getLoadedDataList(),  // Track what data is loaded for LLM context
-      selectedAddress: this.addressContext,
-      tutorialMode: { enabled: TutorialMode.enabled },
-      ...extraOptions
-    };
+    return buildPayloadImpl(this, query, resolvedLocation, extraOptions, modeOverride, {
+      MapAdapter,
+      orderPanel,
+      CONFIG,
+      OverlayController,
+      OverlaySelector,
+      SavedOrders,
+      TutorialMode,
+      getLoadedDataList
+    });
   },
 
   /**
@@ -3358,19 +2485,7 @@ export const ChatManager = {
    * @returns {Object} Active overlay info
    */
   getActiveOverlays() {
-    const activeList = OverlaySelector?.getActiveOverlays() || [];
-    if (activeList.length === 0) {
-      return { type: null, filters: {} };
-    }
-
-    const primaryOverlay = activeList[0];
-    const filters = OverlayController?.getActiveFilters?.(primaryOverlay) || {};
-
-    return {
-      type: primaryOverlay,
-      filters: filters,
-      allActive: activeList
-    };
+    return getActiveOverlaysImpl(this, { OverlayController, OverlaySelector });
   },
 
   /**
@@ -3378,55 +2493,7 @@ export const ChatManager = {
    * @returns {Object} Cache stats per overlay
    */
   getCacheStats() {
-    if (!OverlayController) return {};
-
-    const stats = {};
-    const activeList = OverlaySelector?.getActiveOverlays() || [];
-
-    for (const overlayId of activeList) {
-      const cached = OverlayController.getCachedData(overlayId);
-      if (cached && cached.features) {
-        const features = cached.features;
-        stats[overlayId] = {
-          count: features.length,
-          years: OverlayController.getLoadedYears(overlayId),
-          loadedFilters: OverlayController.getLoadedFilters?.(overlayId) || {}
-        };
-
-        // Overlay-specific stats
-        if (overlayId === 'earthquakes') {
-          const mags = features.map(f => f.properties?.magnitude).filter(m => m != null);
-          if (mags.length > 0) {
-            stats[overlayId].minMag = Math.min(...mags);
-            stats[overlayId].maxMag = Math.max(...mags);
-          }
-        } else if (overlayId === 'hurricanes') {
-          const cats = features.map(f => f.properties?.max_category).filter(c => c != null);
-          if (cats.length > 0) {
-            stats[overlayId].categories = [...new Set(cats)].sort();
-          }
-        } else if (overlayId === 'wildfires') {
-          const areas = features.map(f => f.properties?.area_km2).filter(a => a != null);
-          if (areas.length > 0) {
-            stats[overlayId].minAreaKm2 = Math.min(...areas);
-            stats[overlayId].maxAreaKm2 = Math.max(...areas);
-          }
-        } else if (overlayId === 'volcanoes') {
-          const veis = features.map(f => f.properties?.vei).filter(v => v != null);
-          if (veis.length > 0) {
-            stats[overlayId].minVei = Math.min(...veis);
-            stats[overlayId].maxVei = Math.max(...veis);
-          }
-        } else if (overlayId === 'tornadoes') {
-          const scales = features.map(f => f.properties?.scale).filter(s => s != null);
-          if (scales.length > 0) {
-            stats[overlayId].scales = [...new Set(scales)].sort();
-          }
-        }
-      }
-    }
-
-    return stats;
+    return getCacheStatsImpl(this, { OverlayController, OverlaySelector });
   },
 
   /**
@@ -3434,20 +2501,7 @@ export const ChatManager = {
    * @returns {Object} Time state info
    */
   getTimeState() {
-    const TimeSlider = window.TimeSlider;
-    if (!TimeSlider) return { available: false };
-
-    return {
-      available: true,
-      isLiveLocked: TimeSlider.isLiveLocked || false,
-      isLiveMode: TimeSlider.isLiveMode || false,
-      currentTime: TimeSlider.currentTime,
-      currentTimeFormatted: TimeSlider.formatTimeLabel?.(TimeSlider.currentTime) || null,
-      minTime: TimeSlider.minTime,
-      maxTime: TimeSlider.maxTime,
-      granularity: TimeSlider.granularity || 'yearly',
-      timezone: TimeSlider.liveTimezone || 'local'
-    };
+    return getTimeStateImpl();
   },
 
   /**
@@ -3455,20 +2509,7 @@ export const ChatManager = {
    * @param {Object} response - { overlay, filters }
    */
   applyFilterUpdate(response) {
-    const { overlay, filters } = response;
-
-    if (!OverlayController) {
-      console.warn('OverlayController not available for filter update');
-      return;
-    }
-
-    if (filters.clear) {
-      OverlayController.clearFilters?.(overlay);
-    } else {
-      OverlayController.updateFilters?.(overlay, filters);
-    }
-
-    OverlayController.reloadOverlay?.(overlay);
+    return applyFilterUpdateImpl(this, response, { OverlayController });
   }
 };
 

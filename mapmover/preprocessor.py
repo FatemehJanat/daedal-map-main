@@ -23,6 +23,10 @@ from typing import Optional
 import logging
 
 from .data_loading import load_catalog, load_source_metadata, get_source_path
+from .explore.preprocess_pipeline import build_preprocessor_hints
+from .explore.preprocess_pipeline import build_candidate_bundle
+from .explore.preprocess_pipeline import resolve_navigation_and_location
+from .explore.preprocess_summary import build_preprocessor_summary
 from .foundation_helpers import load_reference_json
 from .preprocessor_candidates import (
     adjust_scores_with_context as adjust_scores_with_context_impl,
@@ -669,259 +673,75 @@ def preprocess_query(query: str, viewport: dict = None, active_overlays: dict = 
     Returns a hints dict that can be injected into LLM context.
     """
     show_borders = detect_show_borders_intent(query)
-    nav_intent = detect_navigation_intent(query)
-
-    navigation = None
-    disambiguation = None
-
-    if nav_intent.get("is_navigation") and nav_intent.get("location_text"):
-        location_result = extract_multiple_locations(nav_intent["location_text"], viewport)
-        locations = location_result.get("locations", [])
-        if locations:
-            if location_result.get("needs_disambiguation"):
-                disambiguation = {
-                    "needed": True,
-                    "query_term": location_result.get("query_term", "location"),
-                    "options": locations,
-                    "count": len(locations)
-                }
-            else:
-                navigation = {
-                    "is_navigation": True,
-                    "pattern": nav_intent.get("pattern"),
-                    "locations": locations,
-                    "count": len(locations)
-                }
-
-    # Canonical source detection path: candidate-based only.
-    source_candidates = detect_source_candidates(query)
-    detected_source = source_candidates.get("best")
-
-    # Resolve location for non-navigation queries (data orders, etc.)
-    # Pass viewport to enable parquet-based city/location lookups
-    location = None
-
-    if not navigation and not disambiguation:
-        location_result = extract_country_from_query(query, viewport=viewport)
-
-        # Filter likely false positives where location token is part of the source name.
-        if detected_source and location_result.get("match"):
-            source_name_lower = detected_source.get("source_name", "").lower()
-            matched_term = location_result["match"][0].lower()
-            if matched_term in source_name_lower:
-                location_result = {}
-
-        if location_result.get("match"):
-            matched_term, iso3, is_subregion = location_result["match"]
-            iso_data = load_reference_file(REFERENCE_DIR / "iso_codes.json")
-            country_name = iso_data.get("iso3_to_name", {}).get(iso3, matched_term.title()) if iso_data else matched_term.title()
-            location = {
-                "matched_term": matched_term,
-                "iso3": iso3,
-                "country_name": country_name,
-                "is_subregion": is_subregion,
-                "source": location_result.get("source"),
-            }
-
-            if location_result.get("ambiguous") and location_result.get("matches"):
-                matches = location_result["matches"]
-
-                resolved_by_viewport = False
-                if viewport:
-                    filtered_matches = matches
-
-                    current_admin_level = viewport.get("adminLevel")
-                    if current_admin_level is not None and current_admin_level >= 0:
-                        for check_level in range(current_admin_level, -1, -1):
-                            level_matches = [
-                                m for m in filtered_matches
-                                if m.get("admin_level", 0) == check_level
-                            ]
-                            if level_matches:
-                                filtered_matches = level_matches
-                                logger.debug(f"Admin level filter: {len(level_matches)} matches at level {check_level} (viewing level {current_admin_level})")
-                                break
-
-                    if len(filtered_matches) > 1 and viewport.get("bounds"):
-                        countries_in_view = get_countries_in_viewport(viewport["bounds"])
-                        if countries_in_view:
-                            country_matches = [
-                                m for m in filtered_matches
-                                if m.get("iso3", "").split("-")[0] in countries_in_view
-                            ]
-                            if country_matches:
-                                filtered_matches = country_matches
-
-                    if len(filtered_matches) == 1:
-                        m = filtered_matches[0]
-                        location = {
-                            "matched_term": m.get("matched_term", matched_term),
-                            "iso3": m.get("iso3", iso3),
-                            "loc_id": m.get("loc_id"),
-                            "country_name": m.get("country_name", country_name),
-                            "is_subregion": m.get("is_subregion", is_subregion),
-                            "source": "viewport_resolved",
-                        }
-                        resolved_by_viewport = True
-                        logger.info(f"Viewport auto-resolved '{matched_term}' to {m.get('loc_id')}")
-                    elif len(filtered_matches) > 1:
-                        disambiguation = {
-                            "needed": True,
-                            "query_term": matched_term,
-                            "options": filtered_matches,
-                            "count": len(filtered_matches)
-                        }
-                        resolved_by_viewport = True
-
-                if not resolved_by_viewport:
-                    disambiguation = {
-                        "needed": True,
-                        "query_term": matched_term,
-                        "options": matches,
-                        "count": len(matches)
-                    }
+    resolution = resolve_navigation_and_location(
+        query=query,
+        viewport=viewport,
+        detect_navigation_intent=detect_navigation_intent,
+        extract_multiple_locations=extract_multiple_locations,
+        detect_source_candidates=detect_source_candidates,
+        extract_country_from_query=extract_country_from_query,
+        load_reference_file=load_reference_file,
+        reference_dir=REFERENCE_DIR,
+        get_countries_in_viewport=get_countries_in_viewport,
+        logger=logger,
+    )
+    navigation = resolution["navigation"]
+    disambiguation = resolution["disambiguation"]
+    source_candidates = resolution["source_candidates"]
+    detected_source = resolution["detected_source"]
+    location = resolution["location"]
 
     filter_intent = detect_filter_intent(query, active_overlays) if active_overlays else None
 
     overlay_intent = detect_overlay_intent(query, active_overlays)
 
-    location_candidates = detect_location_candidates(query, viewport)
-    intent_candidates = detect_intent_candidates(query, source_candidates, location_candidates)
+    candidates = build_candidate_bundle(
+        query=query,
+        viewport=viewport,
+        source_candidates=source_candidates,
+        detect_location_candidates=detect_location_candidates,
+        detect_intent_candidates=detect_intent_candidates,
+        adjust_scores_with_context=adjust_scores_with_context,
+    )
 
-    # Cross-reference to adjust scores (e.g., penalize "bureau" location if "Bureau of Statistics" source detected)
-    adjusted = adjust_scores_with_context(source_candidates, location_candidates, intent_candidates)
+    hints = build_preprocessor_hints(
+        query=query,
+        viewport=viewport,
+        show_borders=show_borders,
+        navigation=navigation,
+        address_prompt=detect_address_prompt_intent(query),
+        topics=extract_topics(query),
+        regions=resolve_regions(query),
+        location=location,
+        disambiguation=disambiguation,
+        time_hints=detect_time_patterns(query),
+        reference_lookup=detect_reference_lookup(query),
+        derived_intent=detect_derived_intent(query),
+        tutorial_mode=detect_tutorial_mode_intent(query),
+        detected_source=detected_source,
+        active_overlays=active_overlays,
+        cache_stats=cache_stats,
+        filter_intent=filter_intent,
+        overlay_intent=overlay_intent,
+        candidates=candidates,
+        saved_order_names=saved_order_names,
+        time_state=time_state,
+        loaded_data=loaded_data,
+    )
 
-    candidates = {
-        "sources": adjusted["sources"],
-        "locations": adjusted["locations"],
-        "intents": adjusted["intents"],
-    }
-
-    hints = {
-        "original_query": query,
-        "viewport": viewport,
-        "show_borders": show_borders if show_borders.get("is_show_borders") else None,
-        "navigation": navigation,
-        "address_prompt": detect_address_prompt_intent(query),
-        "topics": extract_topics(query),
-        "regions": resolve_regions(query),
-        "location": location,
-        "disambiguation": disambiguation,
-        "time": detect_time_patterns(query),
-        "reference_lookup": detect_reference_lookup(query),
-        "derived_intent": detect_derived_intent(query),
-        "tutorial_mode": detect_tutorial_mode_intent(query),
-        "detected_source": detected_source,
-        "active_overlays": active_overlays,
-        "cache_stats": cache_stats,
-        "filter_intent": filter_intent,
-        "overlay_intent": overlay_intent,
-        "candidates": candidates,
-        "saved_order_names": saved_order_names or [],
-        "time_state": time_state,
-        "loaded_data": loaded_data or [],
-    }
-
-    # Build summary for LLM context injection
-    summary_parts = []
-
-    # Navigation intent takes priority
-    if navigation:
-        loc_names = [loc.get("matched_term", loc.get("loc_id", "?")) for loc in navigation["locations"]]
-        summary_parts.append(f"NAVIGATION: Show {navigation['count']} locations: {', '.join(loc_names[:5])}")
-
-    if hints["topics"]:
-        summary_parts.append(f"Topics detected: {', '.join(hints['topics'])}")
-
-    if hints["regions"]:
-        region_names = [r["match"] for r in hints["regions"]]
-        summary_parts.append(f"Regions mentioned: {', '.join(region_names)}")
-
-    # Add location resolution to summary - critical for city->country resolution
-    if location and not navigation:
-        if disambiguation:
-            # Multiple matches - note ambiguity in summary
-            summary_parts.append(f"AMBIGUOUS: '{location['matched_term']}' matches {disambiguation['count']} locations")
-        elif location["is_subregion"]:
-            summary_parts.append(f"Location: '{location['matched_term']}' -> {location['country_name']} ({location['iso3']})")
-        else:
-            summary_parts.append(f"Location: {location['country_name']} ({location['iso3']})")
-
-    if hints["time"]["is_time_series"]:
-        if hints["time"]["year_start"] and hints["time"]["year_end"]:
-            summary_parts.append(f"Time range: {hints['time']['year_start']}-{hints['time']['year_end']}")
-        else:
-            summary_parts.append("Time series requested (trend/historical)")
-
-    if hints["reference_lookup"]:
-        summary_parts.append(f"Reference lookup: {hints['reference_lookup']['type']}")
-
-    if hints["derived_intent"]:
-        summary_parts.append(f"Derived calculation: {hints['derived_intent']['type']}")
-
-    if hints["tutorial_mode"]:
-        summary_parts.append(f"TUTORIAL_MODE: {hints['tutorial_mode']['action']}")
-
-    if hints["address_prompt"]:
-        summary_parts.append("ADDRESS_PROMPT: open address entry UI")
-
-    if hints["detected_source"]:
-        summary_parts.append(f"Source specified: {hints['detected_source']['source_name']}")
-
-    # Add active overlay context
-    if active_overlays and active_overlays.get("type"):
-        overlay_type = active_overlays["type"]
-        filters = active_overlays.get("filters", {})
-        filter_desc = format_filter_description(filters, overlay_type)
-        summary_parts.append(f"OVERLAY: {overlay_type} ({filter_desc})")
-
-    # Add filter intent
-    if filter_intent:
-        if filter_intent["type"] == "read_filters":
-            summary_parts.append("INTENT: Query about current filters")
-        elif filter_intent["type"] == "change_filters":
-            summary_parts.append(f"INTENT: Change filters ({filter_intent.get('filter_type', 'unknown')})")
-
-    # Add overlay intent (detects disaster keywords even without active overlay)
-    if overlay_intent:
-        action = overlay_intent.get("action", "unknown")
-        overlay = overlay_intent.get("overlay", "unknown")
-        severity = overlay_intent.get("severity")
-        if action == "enable":
-            summary_parts.append(f"OVERLAY_INTENT: Enable {overlay} overlay")
-        elif action == "filter":
-            summary_parts.append(f"OVERLAY_INTENT: Filter {overlay} ({severity})")
-        elif action == "query":
-            summary_parts.append(f"OVERLAY_INTENT: Query about {overlay}")
-
-    # Add time state (live mode) info
-    if time_state and time_state.get("available"):
-        if time_state.get("isLiveLocked"):
-            tz = time_state.get("timezone", "local")
-            summary_parts.append(f"TIME: LIVE MODE (locked to current time, timezone: {tz})")
-        elif time_state.get("currentTimeFormatted"):
-            summary_parts.append(f"TIME: Viewing {time_state['currentTimeFormatted']}")
-
-    # Add saved orders info if any exist
-    if saved_order_names:
-        summary_parts.append(f"SAVED_ORDERS: {', '.join(saved_order_names)}")
-
-    # Add loaded data info for removal context
-    if loaded_data:
-        loaded_strs = []
-        for entry in loaded_data:
-            src = entry.get("source_id", "?")
-            region = entry.get("region", "global")
-            metric = entry.get("metric")
-            years = entry.get("years", "")
-            dtype = entry.get("data_type", "metrics")
-            if metric:
-                loaded_strs.append(f"{src}: {metric} in {region} ({years})")
-            else:
-                loaded_strs.append(f"{src}: {region} ({years})")
-        summary_parts.append(f"LOADED_DATA: {'; '.join(loaded_strs)}")
-
-    hints["summary"] = "; ".join(summary_parts) if summary_parts else None
+    hints["summary"] = build_preprocessor_summary(
+        hints,
+        navigation=navigation,
+        location=location,
+        disambiguation=disambiguation,
+        active_overlays=active_overlays,
+        filter_intent=filter_intent,
+        overlay_intent=overlay_intent,
+        time_state=time_state,
+        saved_order_names=saved_order_names,
+        loaded_data=loaded_data,
+        format_filter_description_func=format_filter_description,
+    )
 
     return hints
 

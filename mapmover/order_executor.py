@@ -67,6 +67,10 @@ from .duckdb_helpers import (
     select_peak_positions_by_storm_ids,
     select_rows,
 )
+from .execution.load_strategies import collect_source_metadata, load_order_item_dataframe
+from .execution.item_processing import process_metric_items
+from .execution.order_dispatch import prepare_execution_items, route_special_order
+from .execution.response_builder import build_metrics_response
 
 CONVERSIONS_PATH = Path(__file__).parent / "conversions.json"
 # Cache conversions to avoid repeated file reads
@@ -3007,17 +3011,14 @@ def execute_order(order: dict) -> dict:
             "count": 0
         }
 
-    # Stage 1: resolve pack_id -> source_id for all items before any processing
-    items = _normalize_order_items(items, _load_catalog())
-    for item in items:
-        if item.get("mode"):
-            continue
-        source_id = item.get("source_id")
-        if not source_id:
-            continue
-        if _get_source_data_type(source_id) == "metrics" and _source_supports_disaster_aggregates(source_id):
-            item["mode"] = "aggregate"
-    validation_error = _validate_execution_items(items)
+    items, validation_error = prepare_execution_items(
+        items=items,
+        load_catalog_func=_load_catalog,
+        normalize_order_items_func=_normalize_order_items,
+        get_source_data_type_func=_get_source_data_type,
+        source_supports_disaster_aggregates_func=_source_supports_disaster_aggregates,
+        validate_execution_items_func=_validate_execution_items,
+    )
     if validation_error:
         return {
             "type": "error",
@@ -3031,45 +3032,19 @@ def execute_order(order: dict) -> dict:
     primary_source_id = items[0].get("source_id") if items else None
     order_data_type = _get_source_data_type(primary_source_id) if primary_source_id else "metrics"
 
-    # Handle removal orders (negative orders)
-    if action == "remove":
-        return _execute_removal_order(order, items, primary_source_id)
-
-    # Handle mixed orders (some items to add, some to remove based on item.action or cache state)
-    # This allows "remove texas, add california" in a single order
-    mixed_result = _execute_mixed_order_if_needed(order, items, primary_source_id)
-    if mixed_result:
-        return mixed_result
-
-    layered_result = _execute_multi_layer_order_if_needed(order, items)
-    if layered_result:
-        return layered_result
-
-    # Check if this is an events order (explicit mode or data_type from catalog)
-    def is_event_item(item):
-        source_id = item.get("source_id")
-        source_info = _get_source_from_catalog(source_id) if source_id else None
-        source_data_type = (source_info or {}).get("data_type", "metrics")
-        if isinstance(source_data_type, list):
-            supports_events = "events" in source_data_type
-        else:
-            supports_events = source_data_type == "events"
-        if item.get("mode") == "aggregate":
-            return False
-        if item.get("mode") == "events":
-            return supports_events
-        return supports_events
-
-    # If any item is events type, route to event pipeline.
-    # For mixed event+metric orders, execute only the event subset here
-    # to avoid trying to load metric sources as event files.
-    event_items = [it for it in items if is_event_item(it)]
-    if event_items:
-        event_order = {**order, "items": event_items}
-        result = execute_event_order(event_order)
-        result["data_type"] = "events"
-        result["source_id"] = event_items[0].get("source_id")
-        return result
+    routed_result = route_special_order(
+        order=order,
+        items=items,
+        action=action,
+        primary_source_id=primary_source_id,
+        get_source_from_catalog_func=_get_source_from_catalog,
+        execute_removal_order_func=_execute_removal_order,
+        execute_mixed_order_if_needed_func=_execute_mixed_order_if_needed,
+        execute_multi_layer_order_if_needed_func=_execute_multi_layer_order_if_needed,
+        execute_event_order_func=execute_event_order,
+    )
+    if routed_result is not None:
+        return routed_result
 
     # Note: Geometry orders (dual sources like ZCTA) go through metrics pipeline
     # They get special handling in Step 4 based on geographic_level
@@ -3081,50 +3056,18 @@ def execute_order(order: dict) -> dict:
     )
 
     # Step 1: Determine all target loc_ids and collect metadata
-    target_countries = set()
-    geo_levels = set()
-    sources_used = {}
-    aggregate_item_cache = {}
-
-    for idx, item in enumerate(items, start=1):
-        region = item.get("region")
-        countries = expand_region(region)
-        if countries:
-            target_countries.update(countries)
-
-        # Track sources
-        source_id = item.get("source_id")
-        if source_id and source_id not in sources_used:
-            try:
-                if item.get("mode") == "aggregate":
-                    aggregate_df, metadata = _load_disaster_aggregate_data(source_id, item)
-                    if aggregate_df is None:
-                        _, metadata = load_source_data(source_id)
-                    else:
-                        cache_key = (
-                            source_id,
-                            item.get("metric"),
-                            item.get("region"),
-                            item.get("year"),
-                            item.get("year_start"),
-                            item.get("year_end"),
-                            item.get("aggregate_use_rolling"),
-                            item.get("aggregate_window_years"),
-                            item.get("aggregate_rollup_level"),
-                            item.get("aggregate_all_years"),
-                        )
-                        aggregate_item_cache[cache_key] = (aggregate_df, dict(metadata or {}))
-                else:
-                    _, metadata = load_source_data(source_id)
-                sources_used[source_id] = metadata
-                gl = metadata.get("geographic_level", "country")
-                if isinstance(gl, list):
-                    for level in gl:
-                        geo_levels.add(level)
-                else:
-                    geo_levels.add(gl)
-            except Exception as exc:
-                logger.warning(f"[executor:{trace_id}] failed to collect source metadata for {source_id}: {exc}")
+    metadata_state = collect_source_metadata(
+        items=items,
+        expand_region_func=expand_region,
+        load_disaster_aggregate_data_func=_load_disaster_aggregate_data,
+        load_source_data_func=load_source_data,
+        logger=logger,
+        trace_id=trace_id,
+    )
+    target_countries = metadata_state["target_countries"]
+    geo_levels = metadata_state["geo_levels"]
+    sources_used = metadata_state["sources_used"]
+    aggregate_item_cache = metadata_state["aggregate_item_cache"]
     normalized_geo_levels = sorted(str(level) for level in geo_levels if level is not None)
     _executor_log(
         trace_id,
@@ -3150,593 +3093,103 @@ def execute_order(order: dict) -> dict:
     all_region_codes = set()  # Track all requested region codes for GeoJSON
     requested_geo_levels = set()
 
-    # Step 3: Process each order item
-    for idx, item in enumerate(items, start=1):
-        source_id = item.get("source_id")
-        metric = item.get("metric")
-        region = item.get("region")
-        filters = item.get("filters") or {}
-        requested_geo_level = _normalize_geo_level(item.get("geo_level"))
-        if requested_geo_level:
-            requested_geo_levels.add(requested_geo_level)
-        year, year_start, year_end = _normalize_year_filters(item)
-        sort_spec = _normalize_sort_spec(item.get("sort"))
-
-        # Track requested range for comparison with actual data
-        if year_start and year_end:
-            requested_year_start = year_start
-            requested_year_end = year_end
-
-        if not source_id:
-            continue
-
-        # Derive pushdown hints from the order item so DuckDB only fetches needed row groups.
-        # Only use a single year for exact pushdown; multi-year ranges are filtered in Python after load.
-        _pushdown_year = year if (year and not year_start and not year_end) else None
-        # Use region as loc_id prefix only when it already looks like a loc_id (e.g. "USA-CA", "IND").
-        _pushdown_prefix = region if (region and re.match(r'^[A-Z]{2,3}(-[A-Z0-9]+)?$', region)) else None
-
-        t_item_start = time.perf_counter()
-        try:
-            if item.get("mode") == "aggregate":
-                cache_key = (
-                    source_id,
-                    item.get("metric"),
-                    item.get("region"),
-                    item.get("year"),
-                    item.get("year_start"),
-                    item.get("year_end"),
-                    item.get("aggregate_use_rolling"),
-                    item.get("aggregate_window_years"),
-                    item.get("aggregate_rollup_level"),
-                    item.get("aggregate_all_years"),
-                )
-                cached = aggregate_item_cache.get(cache_key)
-                if cached is not None:
-                    df, metadata = cached[0].copy(), dict(cached[1] or {})
-                else:
-                    df, metadata = _load_disaster_aggregate_data(source_id, item)
-                if df is None or metadata is None:
-                    df, metadata = load_source_data(source_id, year=_pushdown_year, loc_id_prefix=_pushdown_prefix)
-            else:
-                df, metadata = load_source_data(source_id, year=_pushdown_year, loc_id_prefix=_pushdown_prefix)
-        except Exception as e:
-            logger.error(f"Error loading {source_id}: {e}", exc_info=True)
-            continue
-        t_after_load = _executor_log(trace_id, "item_loaded", t_item_start, f"item={idx}/{len(items)} source={source_id} rows={len(df)} cols={len(df.columns)}")
-
-        if source_id == "eurostat" and "geo_level" not in df.columns and "loc_id" in df.columns:
-            df = df.copy()
-            df["geo_level"] = df["loc_id"].map(_derive_eurostat_geo_level)
-
-        # Apply shared aggregation contract for FX temporal requests.
-        if source_id == "fx_usd_historical":
-            fx_df, trace = _load_fx_with_aggregation(source_id, item, metadata)
-            aggregation_trace.append(trace)
-            if fx_df is not None:
-                df = fx_df
-        t_after_fx = _executor_log(trace_id, "item_aggregation_applied", t_after_load, f"item={idx}/{len(items)} source={source_id} rows={len(df)}")
-
-        # Find the metric column first (needed for smart year filtering)
-        if metric:
-            metric_col = find_metric_column(df, metric, metadata=metadata)
-        else:
-            metric_col = None
-        _executor_log(trace_id, "metric_resolved", t_after_fx, f"item={idx}/{len(items)} source={source_id} metric={metric_col}")
-
-        if metric is not None and not metric_col:
-            return {
-                "type": "error",
-                "message": f"Metric '{metric}' could not be resolved for source '{source_id}'",
-                "geojson": {"type": "FeatureCollection", "features": []},
-                "count": 0,
-            }
-
-        # Store metric label for frontend
-        item_label = item.get("metric_label", metric_col)
-        if metric_col and item_label:
-            if not metric_key:
-                metric_key = item_label  # First metric is the default
-            if item_label not in all_metrics:
-                all_metrics.append(item_label)  # Track all metrics
-            # Track year range per metric
-            if year_start and year_end:
-                metric_year_ranges[item_label] = {
-                    "min": year_start,
-                    "max": year_end,
-                    "available_years": available_years_for_range(year_start, year_end),
-                }
-            else:
-                metric_min_year, metric_max_year = metadata_metric_year_range(metadata, metric_col)
-                if metric_min_year is not None and metric_max_year is not None:
-                    metric_year_ranges[item_label] = {
-                        "min": metric_min_year,
-                        "max": metric_max_year,
-                        "available_years": available_years_for_range(metric_min_year, metric_max_year),
-                    }
-
-        # Filter by year (different logic for single vs range)
-        if year_start and year_end and "year" in df.columns:
-            # Multi-year range mode
-            df = df[(df["year"] >= year_start) & (df["year"] <= year_end)]
-        elif year and "year" in df.columns:
-            # Single year mode
-            df = df[df["year"] == year]
-        elif "year" in df.columns:
-            # Use latest year that has data for this metric
-            if metric_col and metric_col in df.columns:
-                years_with_data = df[df[metric_col].notna()]["year"].unique()
-                if len(years_with_data) > 0:
-                    selected_year = max(years_with_data)
-                    sparse_clarify = _check_sparse_year(df, metric_col, selected_year, metadata)
-                    if sparse_clarify:
-                        return sparse_clarify
-                    df = df[df["year"] == selected_year]
-                else:
-                    df = df[df["year"] == df["year"].max()]
-            else:
-                df = df[df["year"] == df["year"].max()]
-        t_after_time_filter = _executor_log(trace_id, "time_filtered", t_after_fx, f"item={idx}/{len(items)} source={source_id} rows={len(df)}")
-
-        # Filter by region
-        region_codes = expand_region(region)
-        if region_codes:
-            all_region_codes.update(region_codes)  # Track for GeoJSON building
-        if region_codes and "loc_id" in df.columns:
-            loc_id_series = df["loc_id"].map(canonicalize_loc_id)
-            normalized_region_codes = set()
-            for code in region_codes:
-                normalized_region_codes.add(code)
-                normalized_region_codes.add(translate_loc_id_to_geometry_id(code))
-                normalized_region_codes.add(translate_geometry_id_to_local_id(code))
-            region_prefixes = tuple(
-                str(code).strip()
-                for code in normalized_region_codes
-                if isinstance(code, str) and str(code).strip()
-            )
-            if region_prefixes:
-                # Treat region filters as hierarchical loc_id prefixes globally.
-                # This supports country codes, admin1 codes such as `USA-TX`,
-                # exact admin2/global geometry ids such as `CAN-AB-EI`, and
-                # hazards whose aggregate files stay in the rougher geometry-id
-                # system for worldwide consistency.
-                mask = loc_id_series.str.startswith(region_prefixes, na=False)
-                df = df[mask]
-        t_after_region_filter = _executor_log(trace_id, "region_filtered", t_after_time_filter, f"item={idx}/{len(items)} source={source_id} rows={len(df)}")
-
-        if requested_geo_level and "geo_level" in df.columns:
-            df = df[df["geo_level"] == requested_geo_level]
-
-        df = _apply_dataframe_filters(df, filters)
-        t_after_filter = _executor_log(trace_id, "field_filters_applied", t_after_region_filter, f"item={idx}/{len(items)} source={source_id} rows={len(df)}")
-
-        # Apply sort/limit if specified (only for single-year mode)
-        if sort_spec and not multi_year_mode:
-            sort_col = sort_spec.get("by")
-            if sort_col:
-                matched_col = find_metric_column(df, sort_col, metadata=metadata)
-                if matched_col:
-                    ascending = sort_spec.get("order", "desc") == "asc"
-                    df = df.sort_values(matched_col, ascending=ascending, na_position='last')
-                    if sort_spec.get("limit"):
-                        df = df.head(sort_spec["limit"])
-        t_after_sort = _executor_log(trace_id, "sort_applied", t_after_filter, f"item={idx}/{len(items)} source={source_id} rows={len(df)}")
-
-        if str(metadata.get("geojson_shape", "")).strip().lower() == "location_shape":
-            lat_col, lon_col = _get_coordinate_columns(df)
-            if lat_col and lon_col:
-                for _, row in df.iterrows():
-                    lat = row.get(lat_col)
-                    lon = row.get(lon_col)
-                    if pd.isna(lat) or pd.isna(lon):
-                        continue
-
-                    properties = {}
-                    for col in df.columns:
-                        if col.startswith("_"):
-                            continue
-                        val = row.get(col)
-                        if pd.notna(val):
-                            if hasattr(val, "item"):
-                                val = val.item()
-                            if isinstance(val, pd.Timestamp):
-                                val = val.isoformat()
-                            properties[col] = val
-
-                    location_features.append({
-                        "type": "Feature",
-                        "geometry": {
-                            "type": "Point",
-                            "coordinates": [float(lon), float(lat)]
-                        },
-                        "properties": properties
-                    })
-            _executor_log(trace_id, "location_features_built", t_after_sort, f"item={idx}/{len(items)} source={source_id} features={len(location_features)}")
-            continue
-
-        # metric_col already found above for year filtering
-        if not metric_col:
-            continue
-
-        # Fill data structures
-        label = item.get("metric_label", metric_col)
-        if source_id and label not in metric_source_map:
-            metric_source_map[label] = source_id
-
-        for _, row in df.iterrows():
-            raw_loc_id = row.get("loc_id")
-            loc_id = canonicalize_loc_id(raw_loc_id)
-            if not loc_id:
-                continue
-            geom_loc_id = translate_loc_id_to_geometry_id(loc_id)
-
-            val = row.get(metric_col)
-            if pd.notna(val):
-                if hasattr(val, 'item'):
-                    val = val.item()
-
-                if multi_year_mode:
-                    # Multi-year: organize by year -> loc_id
-                    row_year = int(row.get("year")) if "year" in df.columns else 0
-                    all_years.add(row_year)
-                    row_geo_level = row.get("geo_level") if "geo_level" in df.columns else requested_geo_level
-                    if row_geo_level:
-                        loc_level_map[geom_loc_id] = row_geo_level
-
-                    if row_year not in year_data:
-                        year_data[row_year] = {}
-                    if geom_loc_id not in year_data[row_year]:
-                        year_data[row_year][geom_loc_id] = {}
-
-                    year_data[row_year][geom_loc_id][label] = val
-                else:
-                    # Single year: organize by loc_id
-                    if geom_loc_id not in boxes:
-                        box = {"year": row.get("year")} if "year" in df.columns else {}
-                        if "geo_level" in df.columns:
-                            box["_geo_level"] = row.get("geo_level")
-                        elif requested_geo_level:
-                            box["_geo_level"] = requested_geo_level
-                        boxes[geom_loc_id] = box
-
-                    boxes[geom_loc_id][label] = val
-        tracked_rows = len(df)
-        box_count = len(year_data) if multi_year_mode and year_data is not None else len(boxes or {})
-        _executor_log(trace_id, "item_values_applied", t_after_sort, f"item={idx}/{len(items)} source={source_id} metric={label} rows={tracked_rows} box_count={box_count}")
-
-    # Step 3.5: Apply derived field calculations
-    derived_specs = order.get("derived_specs", [])
-    if derived_specs and boxes:
-        # Get year from first item or first box
-        calc_year = None
-        if items:
-            calc_year = items[0].get("year")
-        if not calc_year and boxes:
-            first_box = next(iter(boxes.values()))
-            calc_year = first_box.get("year")
-
-        derivation_warnings = apply_derived_fields(boxes, derived_specs, calc_year)
-        if derivation_warnings:
-            print(f"Derivation warnings: {derivation_warnings[:5]}")  # Log first 5
+    item_state = process_metric_items(
+        order=order,
+        items=items,
+        multi_year_mode=multi_year_mode,
+        aggregate_item_cache=aggregate_item_cache,
+        year_data=year_data,
+        boxes=boxes,
+        all_years=all_years,
+        metric_key=metric_key,
+        all_metrics=all_metrics,
+        metric_year_ranges=metric_year_ranges,
+        metric_source_map=metric_source_map,
+        aggregation_trace=aggregation_trace,
+        loc_level_map=loc_level_map,
+        location_features=location_features,
+        requested_year_start=requested_year_start,
+        requested_year_end=requested_year_end,
+        all_region_codes=all_region_codes,
+        requested_geo_levels=requested_geo_levels,
+        trace_id=trace_id,
+        logger=logger,
+        executor_log_func=_executor_log,
+        perf_counter_func=time.perf_counter,
+        normalize_year_filters_func=_normalize_year_filters,
+        normalize_geo_level_func=_normalize_geo_level,
+        normalize_sort_spec_func=_normalize_sort_spec,
+        load_order_item_dataframe_func=lambda **kwargs: load_order_item_dataframe(
+            **kwargs,
+            load_disaster_aggregate_data_func=_load_disaster_aggregate_data,
+            load_source_data_func=load_source_data,
+        ),
+        derive_eurostat_geo_level_func=_derive_eurostat_geo_level,
+        load_fx_with_aggregation_func=_load_fx_with_aggregation,
+        find_metric_column_func=find_metric_column,
+        check_sparse_year_func=_check_sparse_year,
+        expand_region_func=expand_region,
+        canonicalize_loc_id_func=canonicalize_loc_id,
+        translate_loc_id_to_geometry_id_func=translate_loc_id_to_geometry_id,
+        translate_geometry_id_to_local_id_func=translate_geometry_id_to_local_id,
+        apply_dataframe_filters_func=_apply_dataframe_filters,
+        get_coordinate_columns_func=_get_coordinate_columns,
+        available_years_for_range_func=available_years_for_range,
+        metadata_metric_year_range_func=metadata_metric_year_range,
+        apply_derived_fields_func=apply_derived_fields,
+    )
+    if item_state.get("early_result") is not None:
+        return item_state["early_result"]
+    year_data = item_state["year_data"]
+    boxes = item_state["boxes"]
+    all_years = item_state["all_years"]
+    metric_key = item_state["metric_key"]
+    all_metrics = item_state["all_metrics"]
+    metric_year_ranges = item_state["metric_year_ranges"]
+    metric_source_map = item_state["metric_source_map"]
+    aggregation_trace = item_state["aggregation_trace"]
+    loc_level_map = item_state["loc_level_map"]
+    location_features = item_state["location_features"]
+    requested_year_start = item_state["requested_year_start"]
+    requested_year_end = item_state["requested_year_end"]
+    all_region_codes = item_state["all_region_codes"]
+    requested_geo_levels = item_state["requested_geo_levels"]
     _executor_log(trace_id, "data_boxes_ready", t_execute_start, f"multi_year={multi_year_mode} boxes={len(boxes or {})} years={len(year_data or {})}")
 
-    # Step 4: Join with geometry
-    # Determine geographic level from sources
-    # If multiple admin_N levels are present (multi-level source), use the lowest (most zoomed out)
-    admin_numbered = sorted(
-        [l for l in geo_levels if isinstance(l, str) and l.startswith("admin_") and l[6:].isdigit()],
-        key=lambda l: int(l[6:])
+    return build_metrics_response(
+        order=order,
+        items=items,
+        summary=summary,
+        multi_year_mode=multi_year_mode,
+        geo_levels=geo_levels,
+        requested_geo_levels=requested_geo_levels,
+        sources_used=sources_used,
+        boxes=boxes,
+        year_data=year_data,
+        loc_level_map=loc_level_map,
+        location_features=location_features,
+        all_region_codes=all_region_codes,
+        metric_source_map=metric_source_map,
+        aggregation_trace=aggregation_trace,
+        requested_year_start=requested_year_start,
+        requested_year_end=requested_year_end,
+        all_years=all_years,
+        metric_key=metric_key,
+        all_metrics=all_metrics,
+        metric_year_ranges=metric_year_ranges,
+        trace_id=trace_id,
+        t_execute_start=t_execute_start,
+        logger=logger,
+        executor_log_func=_executor_log,
+        perf_counter_func=time.perf_counter,
+        special_geometry_levels=SPECIAL_GEOMETRY_LEVELS,
+        find_geometry_source_for_level_func=_find_geometry_source_for_level,
+        load_geometry_from_source_func=_load_geometry_from_source,
+        load_global_countries_func=load_global_countries,
+        load_subcounty_geometry_func=load_subcounty_geometry,
+        load_geometry_rows_by_loc_ids_func=load_geometry_rows_by_loc_ids,
+        load_country_parquet_func=load_country_parquet,
+        build_event_retry_order_func=_build_event_retry_order,
+        execute_order_func=execute_order,
+        load_catalog_func=_load_catalog,
     )
-    is_multi_level = any(
-        isinstance(metadata.get("geographic_level"), list)
-        for metadata in sources_used.values()
-    )
-    requested_admin_numbered = sorted(
-        [l for l in requested_geo_levels if isinstance(l, str) and l.startswith("admin_") and l[6:].isdigit()],
-        key=lambda l: int(l[6:])
-    )
-    if requested_admin_numbered:
-        primary_level = requested_admin_numbered[0]
-    elif admin_numbered:
-        primary_level = admin_numbered[0]
-    elif "country" in geo_levels:
-        primary_level = "country"
-    else:
-        primary_level = list(geo_levels)[0] if geo_levels else "country"
-    uses_global_country_geometry = primary_level in {"country", "admin_0"}
-    primary_admin_num = None
-    if isinstance(primary_level, str) and primary_level.startswith("admin_") and primary_level[6:].isdigit():
-        primary_admin_num = int(primary_level[6:])
-
-    # For multi-level sources, filter boxes to only the primary (lowest) level
-    if is_multi_level and boxes:
-        boxes = {
-            loc_id: box for loc_id, box in boxes.items()
-            if box.get("_geo_level") == primary_level or "_geo_level" not in box
-        }
-    if is_multi_level and year_data:
-        filtered_year_data = {}
-        for year, loc_map in year_data.items():
-            kept_loc_map = {
-                loc_id: metrics
-                for loc_id, metrics in loc_map.items()
-                if loc_level_map.get(loc_id) == primary_level
-            }
-            if kept_loc_map:
-                filtered_year_data[year] = kept_loc_map
-        year_data = filtered_year_data
-
-    loc_ids_to_check = set(boxes.keys()) if boxes else set()
-    if year_data:
-        for year_locs in year_data.values():
-            loc_ids_to_check = loc_ids_to_check | set(year_locs.keys())
-
-    if location_features and not loc_ids_to_check and not year_data:
-        source_info = [
-            {
-                "id": sid,
-                "name": meta.get("source_name", sid),
-                "url": meta.get("source_url", ""),
-                "category": meta.get("category", "general")
-            }
-            for sid, meta in sources_used.items()
-        ]
-        primary_source = list(sources_used.keys())[0] if sources_used else None
-        response = {
-            "type": "data",
-            "data_type": "geometry",
-            "geographic_level": "points",
-            "available_geo_levels": ["points"],
-            "source_id": primary_source,
-            "geojson": {
-                "type": "FeatureCollection",
-                "features": location_features
-            },
-            "summary": summary or f"Showing {len(location_features)} locations",
-            "count": len(location_features),
-            "sources": source_info,
-            "metric_sources": metric_source_map,
-            "aggregation_trace": aggregation_trace,
-        }
-        _executor_log(trace_id, "complete", t_execute_start, f"features={len(location_features)} source={primary_source} response_type={response.get('type')}")
-        return response
-
-    geometry_df = None
-
-    if primary_level in SPECIAL_GEOMETRY_LEVELS:
-        # Special levels (zcta, tribal) - find geometry from dual source with matching geographic_level
-        # The source has data_type: ["geometry", "metrics"] and geographic_level matching primary_level
-        geometry_source = _find_geometry_source_for_level(primary_level)
-        if geometry_source:
-            # Filter by requested regions (e.g., USA-FL for Florida ZIPs)
-            geometry_df = _load_geometry_from_source(geometry_source, filter_regions=all_region_codes if all_region_codes else None)
-            print(f"Loaded {len(geometry_df) if geometry_df is not None else 0} geometries from dual source: {geometry_source.get('source_id')} (filtered to {len(all_region_codes) if all_region_codes else 'all'} regions)")
-        else:
-            print(f"Warning: No geometry source found for special level: {primary_level}")
-
-    elif uses_global_country_geometry:
-        geometry_df = load_global_countries()
-        logger.info(f"[DEBUG] load_global_countries returned: {len(geometry_df) if geometry_df is not None else None} rows")
-        logger.info(f"[DEBUG] all_region_codes sample: {list(all_region_codes)[:5]}, year_data years: {list(year_data.keys())[:3] if year_data else []}")
-        # Filter to requested region if specified (so all region countries appear, with or without data)
-        if all_region_codes and geometry_df is not None and "loc_id" in geometry_df.columns:
-            geometry_df = geometry_df[geometry_df["loc_id"].isin(all_region_codes)]
-            logger.info(f"[DEBUG] After region filter: {len(geometry_df)} rows")
-    elif primary_admin_num is not None and primary_admin_num >= 3:
-        geometry_rows = []
-        loc_ids_by_state: dict[tuple[str, str], list[str]] = {}
-
-        for loc_id in loc_ids_to_check:
-            parts = loc_id.split("-")
-            if len(parts) < 2:
-                continue
-            iso3 = parts[0]
-            state_abbrev = parts[1]
-            loc_ids_by_state.setdefault((iso3, state_abbrev), []).append(loc_id)
-
-        for (iso3, state_abbrev), state_loc_ids in loc_ids_by_state.items():
-            state_geom = load_subcounty_geometry(iso3, admin_level=primary_admin_num, state_abbrev=state_abbrev)
-            if state_geom is None or state_geom.empty:
-                continue
-
-            filtered_geom = state_geom[state_geom["loc_id"].isin(state_loc_ids)]
-            if filtered_geom is None or filtered_geom.empty:
-                continue
-
-            keep_cols = [c for c in ["loc_id", "name", "geometry"] if c in filtered_geom.columns]
-            geometry_rows.append(filtered_geom[keep_cols])
-
-        geometry_df = pd.concat(geometry_rows, ignore_index=True) if geometry_rows else None
-
-    else:
-        # Standard admin levels (admin_1, admin_2) - load from country parquet files
-        iso3_codes = set()
-
-        for loc_id in loc_ids_to_check:
-            iso3 = loc_id.split("-")[0] if "-" in loc_id else loc_id
-            iso3_codes.add(iso3)
-
-        if "eurostat" in sources_used:
-            geometry_df = load_geometry_rows_by_loc_ids("EUR", list(loc_ids_to_check))
-            if geometry_df is not None and not geometry_df.empty:
-                keep_cols = [c for c in ["loc_id", "name", "geometry"] if c in geometry_df.columns]
-                geometry_df = geometry_df[keep_cols]
-        else:
-            geometry_rows = []
-            for iso3 in iso3_codes:
-                country_loc_ids = sorted(
-                    loc_id for loc_id in loc_ids_to_check
-                    if (loc_id.split("-")[0] if "-" in loc_id else loc_id) == iso3
-                )
-                if not country_loc_ids:
-                    continue
-
-                country_geom = load_geometry_rows_by_loc_ids(iso3, country_loc_ids)
-                if country_geom is None or country_geom.empty:
-                    country_geom = load_country_parquet(iso3, admin_level=primary_admin_num)
-                    if country_geom is not None and not country_geom.empty:
-                        country_geom = country_geom[country_geom["loc_id"].isin(country_loc_ids)]
-
-                if country_geom is not None and not country_geom.empty:
-                    keep_cols = [c for c in ["loc_id", "name", "geometry"] if c in country_geom.columns]
-                    geometry_rows.append(country_geom[keep_cols])
-
-            geometry_df = pd.concat(geometry_rows, ignore_index=True) if geometry_rows else None
-
-    # For multi-level sources, restrict geometry to only the loc_ids that have data
-    # to avoid sending unrelated country-wide polygons to the frontend
-    if is_multi_level and geometry_df is not None and loc_ids_to_check:
-        relevant_loc_ids = set(loc_ids_to_check)
-        geometry_df = geometry_df[geometry_df["loc_id"].isin(relevant_loc_ids)]
-
-    if geometry_df is not None and not geometry_df.empty and "loc_id" in geometry_df.columns:
-        geometry_df = geometry_df.drop_duplicates(subset=["loc_id"], keep="first")
-
-    _executor_log(trace_id, "geometry_loaded", t_execute_start, f"level={primary_level} geometry_rows={len(geometry_df) if geometry_df is not None else 0}")
-
-    # Step 5: Build GeoJSON features
-    # Include ALL locations in geometry (region), with or without data
-    features = []
-
-    if geometry_df is not None and not geometry_df.empty and "loc_id" in geometry_df.columns:
-        t_geom_lookup = time.perf_counter()
-        geom_lookup = geometry_df.set_index("loc_id")[["name", "geometry"]].to_dict("index")
-        t_after_geom_lookup = _executor_log(trace_id, "geometry_lookup_built", t_geom_lookup, f"entries={len(geom_lookup)}")
-
-        if multi_year_mode:
-            # Multi-year: build base geometry features (no year-specific data)
-            # Include ALL geometry rows, not just those with data
-            for loc_id in geom_lookup.keys():
-                geom_data = geom_lookup.get(loc_id)
-                if not geom_data:
-                    continue
-
-                geom_str = geom_data.get("geometry")
-                if pd.isna(geom_str) or not geom_str:
-                    continue
-
-                try:
-                    geom = json.loads(geom_str) if isinstance(geom_str, str) else geom_str
-                except (json.JSONDecodeError, TypeError):
-                    continue
-
-                # Base properties (no year-specific values - those come from year_data)
-                properties = {"loc_id": loc_id, "name": geom_data.get("name", loc_id)}
-
-                features.append({
-                    "type": "Feature",
-                    "geometry": geom,
-                    "properties": properties
-                })
-        else:
-            # Single year: include ALL geometry rows, with data where available
-            for loc_id in geom_lookup.keys():
-                geom_data = geom_lookup.get(loc_id)
-                if not geom_data:
-                    continue
-
-                geom_str = geom_data.get("geometry")
-                if pd.isna(geom_str) or not geom_str:
-                    continue
-
-                try:
-                    geom = json.loads(geom_str) if isinstance(geom_str, str) else geom_str
-                except (json.JSONDecodeError, TypeError):
-                    continue
-
-                # Build properties - get data from boxes if available
-                properties = {"loc_id": loc_id, "name": geom_data.get("name", loc_id)}
-                if boxes and loc_id in boxes:
-                    properties.update(boxes[loc_id])
-
-                features.append({
-                    "type": "Feature",
-                    "geometry": geom,
-                    "properties": properties
-                })
-        _executor_log(trace_id, "features_built", t_after_geom_lookup, f"features={len(features)} multi_year={multi_year_mode}")
-    else:
-        _executor_log(trace_id, "geometry_lookup_skipped", t_execute_start, "no_geometry_rows")
-
-    # Build source info for response (include URL and category)
-    source_info = [
-        {
-            "id": sid,
-            "name": meta.get("source_name", sid),
-            "url": meta.get("source_url", ""),
-            "category": meta.get("category", "general")
-        }
-        for sid, meta in sources_used.items()
-    ]
-
-    # Build response
-    # Determine primary source_id for this response
-    primary_source = list(sources_used.keys())[0] if sources_used else None
-
-    # Determine response data_type - use "geometry" for special levels, "metrics" otherwise
-    # This tells frontend whether to render as geometry overlay or choropleth
-    response_data_type = "geometry" if primary_level in SPECIAL_GEOMETRY_LEVELS else "metrics"
-
-    data_feature_count = len(year_data or {}) if multi_year_mode else len(boxes or {})
-
-    response = {
-        "type": "data",
-        "data_type": response_data_type,
-        "geographic_level": primary_level,
-        "available_geo_levels": admin_numbered if admin_numbered else sorted([str(l) for l in geo_levels if l]),
-        "source_id": primary_source,
-        "geojson": {
-            "type": "FeatureCollection",
-            "features": features
-        },
-        "summary": summary or f"Showing {len(features)} locations",
-        "count": data_feature_count,
-        "sources": source_info,
-        "metric_sources": metric_source_map,
-        "aggregation_trace": aggregation_trace,
-    }
-
-    if response["count"] == 0 and not order.get("_event_retry_attempted"):
-        retry_order = _build_event_retry_order(order, items, _load_catalog())
-        if retry_order:
-            retry_result = execute_order({**retry_order, "_event_retry_attempted": True})
-            if int(retry_result.get("count") or 0) > 0:
-                retry_result["fallback_used"] = True
-                retry_result.setdefault(
-                    "fallback_note",
-                    "Initial aggregate execution returned no results, so the runtime retried the pack's event lane.",
-                )
-                return retry_result
-
-    # Add multi-year data if applicable
-    if multi_year_mode and year_data:
-        sorted_years = sorted(all_years)
-        actual_min = sorted_years[0] if sorted_years else 0
-        actual_max = sorted_years[-1] if sorted_years else 0
-
-        response["multi_year"] = True
-        response["year_data"] = year_data
-        response["year_range"] = {
-            "min": actual_min,
-            "max": actual_max,
-            "available_years": sorted_years
-        }
-        response["metric_key"] = metric_key
-        response["available_metrics"] = all_metrics  # All metrics from order items
-        response["metric_year_ranges"] = metric_year_ranges  # Per-metric year ranges for slider
-
-        # Add data note if year range differs from requested
-        data_notes = []
-        if requested_year_start and requested_year_end:
-            if actual_min != requested_year_start or actual_max != requested_year_end:
-                data_notes.append(f"Note: Data available for {actual_min}-{actual_max} (requested {requested_year_start}-{requested_year_end})")
-            # Check for sparse years
-            expected_years = set(range(actual_min, actual_max + 1))
-            missing_years = expected_years - all_years
-            if missing_years:
-                data_notes.append(f"Some years have no data: {sorted(missing_years)[:5]}{'...' if len(missing_years) > 5 else ''}")
-        if data_notes:
-            response["data_note"] = " | ".join(data_notes)
-
-    _executor_log(trace_id, "complete", t_execute_start, f"features={len(features)} source={primary_source} response_type={response.get('type')}")
-    return response
