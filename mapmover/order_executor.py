@@ -105,11 +105,36 @@ def _coerce_year(value) -> Optional[int]:
         return None
 
 
+def _coerce_date_year(value) -> Optional[int]:
+    """Best-effort extraction of a calendar year from ISO-ish date fields."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return _coerce_year(value)
+    text = str(value).strip()
+    if not text:
+        return None
+    if len(text) >= 4 and text[:4].isdigit():
+        return int(text[:4])
+    return None
+
+
 def _normalize_year_filters(item: dict) -> tuple[Optional[int], Optional[int], Optional[int]]:
-    """Normalize year/year_start/year_end in-place and return coerced values."""
+    """Normalize year/year_start/year_end in-place and bridge ISO date bounds to years."""
     year = _coerce_year(item.get("year"))
     year_start = _coerce_year(item.get("year_start"))
     year_end = _coerce_year(item.get("year_end"))
+    date_start_year = _coerce_date_year(item.get("date_start"))
+    date_end_year = _coerce_date_year(item.get("date_end"))
+
+    if year_start is None and date_start_year is not None:
+        year_start = date_start_year
+    if year_end is None and date_end_year is not None:
+        year_end = date_end_year
+    if year is None and year_start is not None and year_end is not None and year_start == year_end:
+        year = year_start
 
     if year is not None:
         item["year"] = year
@@ -949,7 +974,15 @@ def _source_supports_disaster_aggregates(source_id: str) -> bool:
         agg_dir / "rolling_10y.parquet",
         agg_dir / "rolling_20y.parquet",
     )
-    return any(path.exists() for path in candidates)
+    if not is_cloud_mode():
+        return any(path.exists() for path in candidates)
+    for path in candidates:
+        try:
+            if parquet_columns(path):
+                return True
+        except Exception:
+            continue
+    return False
 
 
 def _get_source_data_type(source_id: str) -> str:

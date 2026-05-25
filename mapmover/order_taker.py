@@ -1185,11 +1185,36 @@ def _coerce_year(value):
         return None
 
 
+def _coerce_date_year(value) -> int | None:
+    """Best-effort extraction of a calendar year from ISO-ish date fields."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return _coerce_year(value)
+    text = str(value).strip()
+    if not text:
+        return None
+    if len(text) >= 4 and text[:4].isdigit():
+        return int(text[:4])
+    return None
+
+
 def _normalize_item_year_fields(item: dict) -> None:
-    """Normalize year fields on order item in place."""
+    """Normalize year fields on order item in place, including ISO date bounds."""
     year = _coerce_year(item.get("year"))
     year_start = _coerce_year(item.get("year_start"))
     year_end = _coerce_year(item.get("year_end"))
+    date_start_year = _coerce_date_year(item.get("date_start"))
+    date_end_year = _coerce_date_year(item.get("date_end"))
+
+    if year_start is None and date_start_year is not None:
+        year_start = date_start_year
+    if year_end is None and date_end_year is not None:
+        year_end = date_end_year
+    if year is None and year_start is not None and year_end is not None and year_start == year_end:
+        year = year_start
 
     if year is not None:
         item["year"] = year
