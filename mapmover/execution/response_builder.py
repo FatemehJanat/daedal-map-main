@@ -44,6 +44,7 @@ def build_metrics_response(
     build_event_retry_order_func,
     execute_order_func,
     load_catalog_func,
+    cap_info=None,
 ):
     """Build the final non-event executor response."""
     admin_numbered = sorted(
@@ -120,6 +121,11 @@ def build_metrics_response(
             "metric_sources": metric_source_map,
             "aggregation_trace": aggregation_trace,
         }
+        if isinstance(cap_info, dict) and cap_info.get("cap_hit"):
+            response["truncated"] = True
+            response["cap_info"] = cap_info
+            response["available_count"] = cap_info.get("available_rows")
+            response["returned_count"] = cap_info.get("returned_rows")
         executor_log_func(trace_id, "complete", t_execute_start, f"features={len(location_features)} source={primary_source} response_type={response.get('type')}")
         return response
 
@@ -291,6 +297,11 @@ def build_metrics_response(
         "metric_sources": metric_source_map,
         "aggregation_trace": aggregation_trace,
     }
+    if isinstance(cap_info, dict) and cap_info.get("cap_hit"):
+        response["truncated"] = True
+        response["cap_info"] = cap_info
+        response["available_count"] = cap_info.get("available_rows")
+        response["returned_count"] = cap_info.get("returned_rows")
 
     if response["count"] == 0 and not order.get("_event_retry_attempted"):
         retry_order = build_event_retry_order_func(order, items, load_catalog_func())

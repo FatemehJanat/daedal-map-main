@@ -46,8 +46,11 @@ def process_metric_items(
     available_years_for_range_func,
     metadata_metric_year_range_func,
     apply_derived_fields_func,
+    apply_runtime_result_cap_func=None,
+    merge_cap_info_func=None,
 ) -> dict:
     """Process all metric items and populate the executor data structures."""
+    cap_infos = []
     for idx, item in enumerate(items, start=1):
         source_id = item.get("source_id")
         metric = item.get("metric")
@@ -171,6 +174,22 @@ def process_metric_items(
                         df = df.head(sort_spec["limit"])
         t_after_sort = executor_log_func(trace_id, "sort_applied", t_after_filter, f"item={idx}/{len(items)} source={source_id} rows={len(df)}")
 
+        if apply_runtime_result_cap_func is not None:
+            requested_limit = sort_spec.get("limit") if isinstance(sort_spec, dict) else None
+            df, item_cap_info = apply_runtime_result_cap_func(
+                df,
+                source_metadata=metadata,
+                requested_limit=requested_limit,
+            )
+            if item_cap_info:
+                cap_infos.append(item_cap_info)
+            t_after_sort = executor_log_func(
+                trace_id,
+                "runtime_cap_applied",
+                t_after_sort,
+                f"item={idx}/{len(items)} source={source_id} rows={len(df)} cap_hit={bool(item_cap_info)}",
+            )
+
         if str(metadata.get("geojson_shape", "")).strip().lower() == "location_shape":
             lat_col, lon_col = get_coordinate_columns_func(df)
             if lat_col and lon_col:
@@ -259,6 +278,13 @@ def process_metric_items(
         if derivation_warnings:
             print(f"Derivation warnings: {derivation_warnings[:5]}")
 
+    merged_cap_info = None
+    if cap_infos:
+        if merge_cap_info_func is not None:
+            merged_cap_info = merge_cap_info_func(*cap_infos)
+        else:
+            merged_cap_info = cap_infos[0]
+
     return {
         "year_data": year_data,
         "boxes": boxes,
@@ -274,4 +300,5 @@ def process_metric_items(
         "requested_year_end": requested_year_end,
         "all_region_codes": all_region_codes,
         "requested_geo_levels": requested_geo_levels,
+        "cap_info": merged_cap_info,
     }

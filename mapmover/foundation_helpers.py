@@ -19,6 +19,12 @@ import pandas as pd
 from .duckdb_helpers import is_cloud_mode, parquet_columns
 from .orchestrator_specs import list_orchestrator_specs
 from .paths import COUNTRIES_DIR, DATA_ROOT, GEOMETRY_DIR
+from .runtime.explainer_response import build_explainer_response, looks_like_explainer_question
+from .runtime.result_cap import (
+    apply_runtime_feature_cap_to_payload,
+    apply_runtime_result_cap,
+    merge_cap_info,
+)
 
 logger = logging.getLogger("mapmover")
 
@@ -39,6 +45,8 @@ FOUNDATION_HELPER_REGISTRY = {
     "global_country_geometry": "geometry/global.csv",
     "world_factbook_static": "global/world_factbook_static/all_countries.parquet",
     "orchestrator_specs": "mapmover/orchestrator_specs.py",
+    "runtime_result_cap": "mapmover/runtime/result_cap.py",
+    "runtime_explainer_response": "mapmover/runtime/explainer_response.py",
     "mode_profiles": {
         "explore": [
             "reference_json",
@@ -46,13 +54,19 @@ FOUNDATION_HELPER_REGISTRY = {
             "global_country_geometry",
             "world_factbook_static",
             "orchestrator_specs",
+            "runtime_result_cap",
+            "runtime_explainer_response",
         ],
         "research": [
             "country_crosswalks",
             "orchestrator_specs",
+            "runtime_result_cap",
+            "runtime_explainer_response",
         ],
         "ops": [
             "orchestrator_specs",
+            "runtime_result_cap",
+            "runtime_explainer_response",
         ],
     },
 }
@@ -109,6 +123,23 @@ def get_foundation_helper_registry() -> dict[str, Any]:
 def load_orchestrator_specs() -> dict[str, Any]:
     """Return the shared orchestrator spec registry."""
     return list_orchestrator_specs()
+
+
+def load_runtime_result_cap_helpers() -> dict[str, Any]:
+    """Return the shared runtime cap helpers."""
+    return {
+        "apply_runtime_result_cap": apply_runtime_result_cap,
+        "apply_runtime_feature_cap_to_payload": apply_runtime_feature_cap_to_payload,
+        "merge_cap_info": merge_cap_info,
+    }
+
+
+def load_runtime_explainer_helpers() -> dict[str, Any]:
+    """Return the shared explainer helpers."""
+    return {
+        "looks_like_explainer_question": looks_like_explainer_question,
+        "build_explainer_response": build_explainer_response,
+    }
 
 
 def load_country_crosswalk(iso3: str) -> dict | None:

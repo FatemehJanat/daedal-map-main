@@ -1,6 +1,8 @@
 """Chat API router endpoints."""
 
 import asyncio
+import ctypes
+import gc
 import hashlib
 import json
 import os
@@ -9,6 +11,7 @@ import time
 import msgpack
 from fastapi import APIRouter, Request
 from fastapi.responses import Response, StreamingResponse
+from starlette.background import BackgroundTask
 
 from mapmover.auth_context import build_session_cache_key, get_authenticated_user, get_authenticated_user_async
 from mapmover import logger, session_manager
@@ -22,6 +25,7 @@ from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
 from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log_conversation
 from mapmover.llm_usage import LLMUsageRecorder, classify_caller, extract_qa_http_label
 from mapmover.chat_budget import budget_rejection_payload, check_anonymous_chat_budget
+from mapmover.data_loading import load_source_metadata
 from mapmover.catalog_surface import (
     catalog_surface_scope,
     normalize_catalog_surface,
@@ -54,6 +58,7 @@ from mapmover.security import get_client_ip, rate_limiter
 # is silent for longer than the heartbeat window. Cycles by idle count.
 router = APIRouter()
 explore_orchestrator = ExploreOrchestrator()
+_LARGE_RESPONSE_FEATURE_THRESHOLD = 1000
 
 
 def _chat_trace_id(session_id: str, query: str) -> str:
@@ -67,6 +72,32 @@ def _chat_log_timing(trace_id: str, stage: str, started_at: float, extra: str = 
     suffix = f" | {extra}" if extra else ""
     logger.info(f"[chat:{trace_id}] {stage}: {elapsed_ms:.1f}ms{suffix}")
     return now
+
+
+def _trim_process_memory() -> None:
+    gc.collect()
+    if os.name != "posix":
+        return
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        return
+
+
+def _maybe_attach_memory_relief(response: Response, payload: dict | None) -> Response:
+    if not isinstance(payload, dict):
+        return response
+    feature_count = 0
+    geojson = payload.get("geojson")
+    if isinstance(geojson, dict):
+        features = geojson.get("features")
+        if isinstance(features, list):
+            feature_count = len(features)
+    available_count = int(payload.get("available_count") or 0)
+    if feature_count < _LARGE_RESPONSE_FEATURE_THRESHOLD and available_count < _LARGE_RESPONSE_FEATURE_THRESHOLD:
+        return response
+    response.background = BackgroundTask(_trim_process_memory)
+    return response
 
 
 def _rate_limited_message(message: str, retry_after: int) -> Response:
@@ -224,6 +255,11 @@ async def chat_endpoint(req: Request):
                         confirmed_order,
                         force_refetch=force_refetch,
                         execute_order_func=execute_order,
+                        transform_result_func=lambda next_result: explore_orchestrator.apply_runtime_result_cap(
+                            next_result,
+                            confirmed_order=confirmed_order,
+                            load_source_metadata_func=load_source_metadata,
+                        ),
                     )
                 _chat_log_timing(
                     trace_id,
@@ -257,10 +293,10 @@ async def chat_endpoint(req: Request):
 
                 if result.get("action") == "remove":
                     logger.info(f"Removal order executed: {result.get('count')} items from {result.get('source_id')}")
-                    return msgpack_response({"type": "order_response", **result})
+                    return _maybe_attach_memory_relief(msgpack_response({"type": "order_response", **result}), result)
                 if result.get("type") == "mixed_order":
                     logger.info(f"Mixed order executed: added {result.get('add_count', 0)}, removed {result.get('remove_count', 0)}")
-                    return msgpack_response(result)
+                    return _maybe_attach_memory_relief(msgpack_response(result), result)
 
                 if force_refetch:
                     logger.info("Force refetch requested - clearing session cache for this data")
@@ -378,7 +414,7 @@ async def chat_endpoint(req: Request):
                     ip_hash=hash_ip_for_analytics(client_ip),
                     user_agent=(req.headers.get("user-agent") or "")[:300] or None,
                 )
-                return msgpack_response(response)
+                return _maybe_attach_memory_relief(msgpack_response(response), response)
             except Exception as e:
                 logger.exception(f"[chat:{trace_id}] Order execution error")
                 _set_chat_analytics(
@@ -534,7 +570,7 @@ async def chat_endpoint(req: Request):
                 f"type={response_tag}",
             )
             _chat_log_timing(trace_id, "responding", t_request_start, f"type={response_tag}")
-            return msgpack_response(final_result)
+            return _maybe_attach_memory_relief(msgpack_response(final_result), final_result)
 
         if result["type"] == "navigate":
             locations = result.get("locations", [])
@@ -573,7 +609,19 @@ async def chat_endpoint(req: Request):
             )
 
         _chat_log_timing(trace_id, "responding", t_request_start, "type=chat")
-        chat_result = explore_orchestrator.compact_followup(result.get("message", "I'm not sure how to help with that."))
+        explainer_result = explore_orchestrator.maybe_build_explainer_response(
+            query=query,
+            hints=hints,
+            build_chat_response_func=build_chat_response,
+            auth_user=auth_user,
+            load_source_metadata_func=load_source_metadata,
+        )
+        if explainer_result is not None:
+            chat_payload = explainer_result
+            chat_result = chat_payload.get("message", "")
+        else:
+            chat_result = explore_orchestrator.compact_followup(result.get("message", "I'm not sure how to help with that."))
+            chat_payload = build_chat_response(chat_result, auth_user=auth_user)
         log_conversation(
             frontend_session_id,
             query,
@@ -583,7 +631,7 @@ async def chat_endpoint(req: Request):
             ip_hash=hash_ip_for_analytics(client_ip),
             user_agent=(req.headers.get("user-agent") or "")[:300] or None,
         )
-        return msgpack_response(build_chat_response(chat_result, auth_user=auth_user))
+        return _maybe_attach_memory_relief(msgpack_response(chat_payload), chat_payload)
     except Exception as e:
         logger.exception(f"[chat:{trace_id}] Chat error")
         log_app_error(
@@ -654,6 +702,11 @@ async def chat_stream_endpoint(req: Request):
                             force_refetch=bool(body.get("force", False)),
                             execute_order_func=execute_order,
                         )
+                    result = explore_orchestrator.apply_runtime_result_cap(
+                        result,
+                        confirmed_order=body["confirmed_order"],
+                        load_source_metadata_func=load_source_metadata,
+                    )
                     logger.info(
                         "Streaming confirmed_order request_key=%s reused=%s type=%s source=%s",
                         request_key,
@@ -846,8 +899,19 @@ async def chat_stream_endpoint(req: Request):
                 }
                 yield f"data: {json.dumps({'stage': 'complete', 'result': final_result})}\n\n"
             else:
-                chat_msg = explore_orchestrator.compact_followup(result.get("message", "I'm not sure how to help with that."))
-                final_result = build_chat_response(chat_msg)
+                explainer_result = explore_orchestrator.maybe_build_explainer_response(
+                    query=query,
+                    hints=hints,
+                    build_chat_response_func=build_chat_response,
+                    auth_user=auth_user,
+                    load_source_metadata_func=load_source_metadata,
+                )
+                if explainer_result is not None:
+                    final_result = explainer_result
+                    chat_msg = final_result.get("message", "")
+                else:
+                    chat_msg = explore_orchestrator.compact_followup(result.get("message", "I'm not sure how to help with that."))
+                    final_result = build_chat_response(chat_msg)
                 log_conversation(
                     frontend_session_id,
                     query,

@@ -105,12 +105,33 @@ def build_overlay_toggle_response(result: dict) -> dict:
     }
 
 
-def build_chat_response(message: str, *, auth_user: dict | None = None) -> dict:
+def build_chat_response(
+    message: str,
+    *,
+    auth_user: dict | None = None,
+    source_id: str | None = None,
+    pack_id: str | None = None,
+    explainer_sections: dict | None = None,
+    stub_order: dict | None = None,
+    cap_info: dict | None = None,
+) -> dict:
     """Build a plain chat response payload."""
-    return {
+    response = {
         "type": "chat",
         "message": message,
         "geojson": {"type": "FeatureCollection", "features": []},
         "auth_user": {"id": auth_user.get("id"), "email": auth_user.get("email")} if auth_user else None,
         "needsMoreInfo": False,
     }
+    if source_id:
+        response["source_id"] = source_id
+    if pack_id:
+        response["pack_id"] = pack_id
+    if isinstance(explainer_sections, dict) and explainer_sections:
+        response["explainer_sections"] = explainer_sections
+    if isinstance(stub_order, dict) and stub_order:
+        response["stub_order"] = stub_order
+    if isinstance(cap_info, dict) and cap_info:
+        response["cap_info"] = cap_info
+        response["truncated"] = bool(cap_info.get("cap_hit"))
+    return response

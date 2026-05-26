@@ -54,6 +54,7 @@ from .data_loading import load_source_metadata
 from .source_time_contract import available_years_for_range, metadata_metric_year_range
 from .aggregation_system import build_aggregation_spec, apply_temporal_aggregation
 from .foundation_helpers import load_reference_json
+from .foundation_helpers import load_runtime_result_cap_helpers
 from .duckdb_helpers import (
     can_query_event_source,
     is_cloud_mode,
@@ -2555,6 +2556,8 @@ def execute_order(order: dict) -> dict:
         available_years_for_range_func=available_years_for_range,
         metadata_metric_year_range_func=metadata_metric_year_range,
         apply_derived_fields_func=apply_derived_fields,
+        apply_runtime_result_cap_func=load_runtime_result_cap_helpers()["apply_runtime_result_cap"],
+        merge_cap_info_func=load_runtime_result_cap_helpers()["merge_cap_info"],
     )
     if item_state.get("early_result") is not None:
         return item_state["early_result"]
@@ -2572,6 +2575,7 @@ def execute_order(order: dict) -> dict:
     requested_year_end = item_state["requested_year_end"]
     all_region_codes = item_state["all_region_codes"]
     requested_geo_levels = item_state["requested_geo_levels"]
+    cap_info = item_state.get("cap_info")
     _executor_log(trace_id, "data_boxes_ready", t_execute_start, f"multi_year={multi_year_mode} boxes={len(boxes or {})} years={len(year_data or {})}")
 
     return build_metrics_response(
@@ -2610,4 +2614,5 @@ def execute_order(order: dict) -> dict:
         build_event_retry_order_func=_build_event_retry_order,
         execute_order_func=execute_order,
         load_catalog_func=_load_catalog,
+        cap_info=cap_info,
     )
