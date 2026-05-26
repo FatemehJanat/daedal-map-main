@@ -18,7 +18,7 @@ from mapmover.source_time_contract import build_metric_year_ranges
 from mapmover.duckdb_helpers import parquet_columns, path_to_uri, quote_ident, run_df
 from mapmover.foundation_helpers import bridge_loc_id_family, get_foundation_helper_registry
 from mapmover.geometry_handlers import get_selection_geometries
-from mapmover.request_risk_gate import block_gate, warn_gate
+from mapmover.runtime.warning_primitives import build_display_warning
 from mapmover.session_cache import session_manager
 
 try:
@@ -1412,65 +1412,24 @@ def _build_display_subset(result: dict, artifact: dict, tool_input: dict) -> dic
     query_default_limit = None if explicit_limit is not None else (RESEARCH_DISPLAY_HARD_CAP + 1)
     query_result = _query_rows_duckdb(rows, tool_input, default_limit=query_default_limit, maximum_limit=None)
     row_count = int(query_result.get("row_count", 0) or 0)
-    if explicit_limit is None and row_count > RESEARCH_DISPLAY_HARD_CAP:
-        gate = block_gate(
-            lane="human_web_research_display",
-            reason=(
-                f"This would draw about {row_count:,} features, which exceeds the high-risk display threshold of "
-                f"{RESEARCH_DISPLAY_HARD_CAP:,}. This may crash the map or make you lose chat history."
-            ),
-            soft_cap=RESEARCH_DISPLAY_SOFT_CAP,
-            hard_cap=RESEARCH_DISPLAY_HARD_CAP,
-            estimated_count=row_count,
-            measure="display_features",
-            fallback_strategy="narrow_subset",
-            suggested_narrowing=["top 100", "one tract", "one building type"],
-        )
+    display_warning = build_display_warning(
+        row_count,
+        soft_cap=RESEARCH_DISPLAY_SOFT_CAP,
+        hard_cap=RESEARCH_DISPLAY_HARD_CAP,
+        lane="human_web_research_display",
+        soft_narrowing=["top 100", "one tract", "one year", "one building type"],
+        hard_narrowing=["top 100", "one tract", "one building type"],
+    )
+    if explicit_limit is None and display_warning and (
+        display_warning.get("level") == "hard_cap"
+        or (display_warning.get("level") == "soft_cap" and not force_large_display)
+    ):
         return {
             "artifact_id": artifact.get("artifact_id"),
             "rows": [],
             "row_count": row_count,
             "truncated": True,
-            "display_warning": {
-                "level": "hard_cap",
-                "row_count": row_count,
-                "soft_cap": RESEARCH_DISPLAY_SOFT_CAP,
-                "hard_cap": RESEARCH_DISPLAY_HARD_CAP,
-                "message": (
-                    f"This request would display about {row_count:,} map shapes/locations. "
-                    "Are you really sure? This may crash the map and make you lose chat history."
-                ),
-                "gate": gate,
-            },
-        }
-    if explicit_limit is None and row_count > RESEARCH_DISPLAY_SOFT_CAP and not force_large_display:
-        gate = warn_gate(
-            lane="human_web_research_display",
-            reason=(
-                f"This request matches about {row_count:,} features. Displaying that many at once may hurt map "
-                f"performance. Narrow it first, or ask for a bounded subset like the top 100 or one tract."
-            ),
-            soft_cap=RESEARCH_DISPLAY_SOFT_CAP,
-            hard_cap=RESEARCH_DISPLAY_HARD_CAP,
-            estimated_count=row_count,
-            override_allowed=True,
-            measure="display_features",
-            fallback_strategy="warn_then_override",
-            suggested_narrowing=["top 100", "one tract", "one year", "one building type"],
-        )
-        return {
-            "artifact_id": artifact.get("artifact_id"),
-            "rows": [],
-            "row_count": row_count,
-            "truncated": True,
-            "display_warning": {
-                "level": "soft_cap",
-                "row_count": row_count,
-                "soft_cap": RESEARCH_DISPLAY_SOFT_CAP,
-                "hard_cap": RESEARCH_DISPLAY_HARD_CAP,
-                "message": gate.get("reason"),
-                "gate": gate,
-            },
+            "display_warning": display_warning,
         }
     matched_rows = query_result.get("rows") or []
     feature_lookup = _feature_lookup_from_result(result)
@@ -1567,65 +1526,24 @@ def execute_research_tool(
                     return query_result
                 row_count = int(query_result.get("row_count", 0) or 0)
                 force_large_display = bool(tool_input.get("_force_large_display"))
-                if explicit_limit is None and row_count > RESEARCH_DISPLAY_HARD_CAP:
-                    gate = block_gate(
-                        lane="human_web_research_display",
-                        reason=(
-                            f"This would draw about {row_count:,} features, which exceeds the high-risk display threshold of "
-                            f"{RESEARCH_DISPLAY_HARD_CAP:,}. This may crash the map or make you lose chat history."
-                        ),
-                        soft_cap=RESEARCH_DISPLAY_SOFT_CAP,
-                        hard_cap=RESEARCH_DISPLAY_HARD_CAP,
-                        estimated_count=row_count,
-                        measure="display_features",
-                        fallback_strategy="narrow_subset",
-                        suggested_narrowing=["top 100", "one tract", "one county"],
-                    )
+                display_warning = build_display_warning(
+                    row_count,
+                    soft_cap=RESEARCH_DISPLAY_SOFT_CAP,
+                    hard_cap=RESEARCH_DISPLAY_HARD_CAP,
+                    lane="human_web_research_display",
+                    soft_narrowing=["top 100", "one county", "one year"],
+                    hard_narrowing=["top 100", "one tract", "one county"],
+                )
+                if explicit_limit is None and display_warning and (
+                    display_warning.get("level") == "hard_cap"
+                    or (display_warning.get("level") == "soft_cap" and not force_large_display)
+                ):
                     return {
                         "artifact_id": artifact.get("artifact_id"),
                         "rows": [],
                         "row_count": row_count,
                         "truncated": True,
-                        "display_warning": {
-                            "level": "hard_cap",
-                            "row_count": row_count,
-                            "soft_cap": RESEARCH_DISPLAY_SOFT_CAP,
-                            "hard_cap": RESEARCH_DISPLAY_HARD_CAP,
-                            "message": (
-                                f"This request would display about {row_count:,} map shapes/locations. "
-                                "Are you really sure? This may crash the map and make you lose chat history."
-                            ),
-                            "gate": gate,
-                        },
-                    }
-                if explicit_limit is None and row_count > RESEARCH_DISPLAY_SOFT_CAP and not force_large_display:
-                    gate = warn_gate(
-                        lane="human_web_research_display",
-                        reason=(
-                            f"This request matches about {row_count:,} features. Displaying that many at once may hurt map "
-                            f"performance. Narrow it first, or ask for a bounded subset like the top 100 or one county."
-                        ),
-                        soft_cap=RESEARCH_DISPLAY_SOFT_CAP,
-                        hard_cap=RESEARCH_DISPLAY_HARD_CAP,
-                        estimated_count=row_count,
-                        override_allowed=True,
-                        measure="display_features",
-                        fallback_strategy="warn_then_override",
-                        suggested_narrowing=["top 100", "one county", "one year"],
-                    )
-                    return {
-                        "artifact_id": artifact.get("artifact_id"),
-                        "rows": [],
-                        "row_count": row_count,
-                        "truncated": True,
-                        "display_warning": {
-                            "level": "soft_cap",
-                            "row_count": row_count,
-                            "soft_cap": RESEARCH_DISPLAY_SOFT_CAP,
-                            "hard_cap": RESEARCH_DISPLAY_HARD_CAP,
-                            "message": gate.get("reason"),
-                            "gate": gate,
-                        },
+                        "display_warning": display_warning,
                     }
                 matched_rows = query_result.get("rows") or []
                 return _build_research_map_payload(

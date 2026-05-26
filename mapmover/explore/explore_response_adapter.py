@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from mapmover.runtime.warning_primitives import build_display_warning_result
+
 
 def build_clarify_response(message: str, *, summary: str | None = None, full_order: dict | None = None) -> dict:
     """Build a clarify response payload."""
@@ -51,6 +53,20 @@ def build_metric_warning_response(
         "full_order": processed,
         "summary": summary,
     }
+
+
+def build_display_warning_response(
+    order: dict,
+    warning: dict,
+    *,
+    summary: str,
+) -> dict:
+    """Build the Explore broad-display warning response payload."""
+    return build_display_warning_result(
+        warning,
+        pending_order=order,
+        summary=summary,
+    )
 
 
 def build_navigate_response(

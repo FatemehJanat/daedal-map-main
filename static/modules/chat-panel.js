@@ -302,9 +302,10 @@ export const ChatManager = {
   researchCorpusOptions: [],
   latestResearchManifest: null,
   researchDisplayLayersByMode: { explore: [], research: [], ops: [] },
-  browserCorpusSummaries: new Map(),
-  pendingMetricOrder: null,
-  pendingResearchDisplayWarning: null,
+    browserCorpusSummaries: new Map(),
+    pendingMetricOrder: null,
+    pendingDisplayOrder: null,
+    pendingResearchDisplayWarning: null,
   sessionId: null,
   researchCorpusOptionsLoading: false,
   messagePanes: {},
@@ -1137,9 +1138,9 @@ export const ChatManager = {
   /**
    * Execute a confirmed order - send to backend and display results.
    * @param {Object} order - The order to execute
-   * @param {Object} options - Options {skipLog: boolean, force: boolean} - skip logging, force re-fetch (bypass dedup)
-   */
-  async executeOrder(order, options = {}) {
+    * @param {Object} options - Options {skipLog: boolean, force: boolean, forceLargeDisplay: boolean}
+     */
+    async executeOrder(order, options = {}) {
     const apiUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL)
       ? `${API_BASE_URL}/chat`
       : '/chat';
@@ -1170,11 +1171,12 @@ export const ChatManager = {
     console.log('Sending order:', JSON.stringify(order, null, 2));
 
     const data = await postMsgpack(apiUrl, {
-      confirmed_order: order,
-      sessionId: this.getSessionIdForMode('explore'),
-      catalog_surface: this.getEffectiveCatalogSurface(),
-      force: options.force || false  // Bypass dedup for recovery
-    });
+        confirmed_order: order,
+        sessionId: this.getSessionIdForMode('explore'),
+        catalog_surface: this.getEffectiveCatalogSurface(),
+        force: options.force || false,  // Bypass dedup for recovery
+        force_large_display: options.forceLargeDisplay || false
+      });
 
     console.log('Received response:', {
       type: data.type,

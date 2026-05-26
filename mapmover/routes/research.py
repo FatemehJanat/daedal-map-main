@@ -56,6 +56,7 @@ from mapmover.research_runtime import (
 )
 from mapmover.research_tools import RESEARCH_TOOL_DEFINITIONS, execute_research_tool
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
+from mapmover.runtime.warning_primitives import build_display_warning_result
 from mapmover.session_cache import session_manager
 from supabase_client import SupabaseClient
 
@@ -1673,35 +1674,11 @@ def _compact_tool_result_for_prompt(tool_name: str, tool_result: dict) -> dict:
 
 def _build_display_warning_result(manifest: dict, warning: dict, query: str) -> dict:
     warning = warning or {}
-    level = str(warning.get("level") or "soft_cap")
-    row_count = int(warning.get("row_count") or 0)
-    soft_cap = int(warning.get("soft_cap") or 0)
-    hard_cap = int(warning.get("hard_cap") or 0)
-    message = str(warning.get("message") or "").strip()
-    gate = warning.get("gate") if isinstance(warning.get("gate"), dict) else None
-    if not message:
-        if level == "hard_cap":
-            message = (
-                f"This request would display about {row_count:,} map shapes/locations. "
-                "Are you really sure? This may crash the map and make you lose chat history."
-            )
-        else:
-            message = (
-                f"This request would display about {row_count:,} map shapes/locations. "
-                "That may slow the map down. Would you like to continue anyway?"
-            )
-    return {
-        "type": "display_warning",
-        "message": message,
-        "corpus": manifest,
-        "query": query,
-        "warning_level": level,
-        "row_count": row_count,
-        "soft_cap": soft_cap,
-        "hard_cap": hard_cap,
-        "override_allowed": True,
-        "gate": gate,
-    }
+    return build_display_warning_result(
+        warning,
+        corpus=manifest,
+        query=query,
+    )
 
 
 def run_research_chat(

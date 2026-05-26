@@ -58,7 +58,7 @@ export async function resendWithResearchDisplayForce(ctx, deps = {}) {
   if (typeof sendStreamingRequest !== 'function') {
     throw new Error('sendStreamingRequest dependency is required');
   }
-  if (!ctx.lastQuery || !ctx.pendingResearchDisplayWarning?.overrideAllowed) return;
+  if (!ctx.pendingResearchDisplayWarning?.overrideAllowed) return;
 
   const requestMode = ctx.mode;
   if (ctx.modeRequestInFlight[requestMode]) return;
@@ -68,6 +68,13 @@ export async function resendWithResearchDisplayForce(ctx, deps = {}) {
   const indicator = ctx.showTypingIndicator(true, requestMode);
 
   try {
+    if (requestMode !== 'research' && ctx.pendingDisplayOrder) {
+      await ctx.executeOrder(ctx.pendingDisplayOrder, { forceLargeDisplay: true });
+      ctx.pendingDisplayOrder = null;
+      ctx.pendingResearchDisplayWarning = null;
+      return;
+    }
+    if (!ctx.lastQuery) return;
     const payload = ctx.buildPayload(
       ctx.lastQuery,
       null,

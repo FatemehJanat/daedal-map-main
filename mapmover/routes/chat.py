@@ -44,6 +44,7 @@ from mapmover.explore.explore_request_context import (
 from mapmover.explore.explore_response_adapter import (
     build_chat_response,
     build_clarify_response,
+    build_display_warning_response,
     build_disambiguate_response,
     build_filter_update_response,
     build_metric_warning_response,
@@ -51,6 +52,7 @@ from mapmover.explore.explore_response_adapter import (
     build_order_response,
     build_overlay_toggle_response,
 )
+from mapmover.runtime.warning_primitives import build_display_warning
 from mapmover.security import get_client_ip, rate_limiter
 
 
@@ -248,6 +250,7 @@ async def chat_endpoint(req: Request):
             try:
                 confirmed_order = body["confirmed_order"]
                 force_refetch = body.get("force", False)
+                force_large_display = bool(body.get("force_large_display"))
                 t_exec_start = time.perf_counter()
                 with catalog_surface_scope(catalog_surface):
                     result, request_key, reused_cached_result = execute_confirmed_order_with_session_cache(
@@ -277,6 +280,27 @@ async def chat_endpoint(req: Request):
                     result_type=result.get("type"),
                     source_id=result.get("source_id"),
                 )
+                cap_info = result.get("cap_info") if isinstance(result.get("cap_info"), dict) else None
+                available_rows = int((cap_info or {}).get("available_rows") or 0)
+                display_warning = None if force_large_display else build_display_warning(available_rows)
+                if display_warning:
+                    _set_chat_analytics(
+                        req,
+                        lane="confirmed_order_display_warning",
+                        confirmed_order=True,
+                        request_key=request_key,
+                        reused_cached_result=reused_cached_result,
+                        force_refetch=bool(force_refetch),
+                        result_type="display_warning",
+                        source_id=result.get("source_id"),
+                    )
+                    return msgpack_response(
+                        build_display_warning_response(
+                            confirmed_order,
+                            display_warning,
+                            summary=result.get("summary") or confirmed_order.get("summary") or "Data request",
+                        )
+                    )
                 if result.get("type") == "error":
                     _set_chat_analytics(
                         req,
@@ -368,6 +392,11 @@ async def chat_endpoint(req: Request):
                     "count": result.get("count", delta_count),
                     "sources": result.get("sources", []),
                 }
+                if cap_info:
+                    response["cap_info"] = cap_info
+                    response["truncated"] = bool(result.get("truncated") or cap_info.get("cap_hit"))
+                    response["available_count"] = result.get("available_count", cap_info.get("available_rows"))
+                    response["returned_count"] = result.get("returned_count", cap_info.get("returned_rows"))
 
                 if is_events:
                     response["event_type"] = result.get("event_type")

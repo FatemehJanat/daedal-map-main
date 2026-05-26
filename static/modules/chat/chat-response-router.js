@@ -93,6 +93,7 @@ export function handleResponse(ctx, response, deps = {}) {
       break;
 
     case 'metric_warning': {
+      ctx.pendingDisplayOrder = null;
       ctx.pendingResearchDisplayWarning = null;
       ctx.pendingMetricOrder = {
         order: response.pending_order,
@@ -127,6 +128,7 @@ export function handleResponse(ctx, response, deps = {}) {
 
     case 'display_warning': {
       ctx.pendingMetricOrder = null;
+      ctx.pendingDisplayOrder = response.pending_order || null;
       ctx.pendingResearchDisplayWarning = {
         level: response.warning_level,
         rowCount: response.row_count,
