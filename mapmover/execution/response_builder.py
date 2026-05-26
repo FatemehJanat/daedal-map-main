@@ -6,6 +6,9 @@ import json
 
 import pandas as pd
 
+from mapmover.runtime.result_cap import apply_cap_info_to_payload
+from mapmover.runtime.retry_primitives import execute_event_retry_fallback
+
 
 def build_metrics_response(
     *,
@@ -41,7 +44,8 @@ def build_metrics_response(
     load_subcounty_geometry_func,
     load_geometry_rows_by_loc_ids_func,
     load_country_parquet_func,
-    build_event_retry_order_func,
+    query_prefers_event_retry_func,
+    scope_matches_region_func,
     execute_order_func,
     load_catalog_func,
     cap_info=None,
@@ -121,11 +125,7 @@ def build_metrics_response(
             "metric_sources": metric_source_map,
             "aggregation_trace": aggregation_trace,
         }
-        if isinstance(cap_info, dict) and cap_info.get("cap_hit"):
-            response["truncated"] = True
-            response["cap_info"] = cap_info
-            response["available_count"] = cap_info.get("available_rows")
-            response["returned_count"] = cap_info.get("returned_rows")
+        response = apply_cap_info_to_payload(response, cap_info)
         executor_log_func(trace_id, "complete", t_execute_start, f"features={len(location_features)} source={primary_source} response_type={response.get('type')}")
         return response
 
@@ -297,23 +297,19 @@ def build_metrics_response(
         "metric_sources": metric_source_map,
         "aggregation_trace": aggregation_trace,
     }
-    if isinstance(cap_info, dict) and cap_info.get("cap_hit"):
-        response["truncated"] = True
-        response["cap_info"] = cap_info
-        response["available_count"] = cap_info.get("available_rows")
-        response["returned_count"] = cap_info.get("returned_rows")
+    response = apply_cap_info_to_payload(response, cap_info)
 
-    if response["count"] == 0 and not order.get("_event_retry_attempted"):
-        retry_order = build_event_retry_order_func(order, items, load_catalog_func())
-        if retry_order:
-            retry_result = execute_order_func({**retry_order, "_event_retry_attempted": True})
-            if int(retry_result.get("count") or 0) > 0:
-                retry_result["fallback_used"] = True
-                retry_result.setdefault(
-                    "fallback_note",
-                    "Initial aggregate execution returned no results, so the runtime retried the pack's event lane.",
-                )
-                return retry_result
+    if response["count"] == 0:
+        retry_result = execute_event_retry_fallback(
+            order,
+            items,
+            query_prefers_event_retry_func=query_prefers_event_retry_func,
+            scope_matches_region_func=scope_matches_region_func,
+            execute_order_func=execute_order_func,
+            load_catalog_func=load_catalog_func,
+        )
+        if retry_result:
+            return retry_result
 
     if multi_year_mode and year_data:
         sorted_years = sorted(all_years)

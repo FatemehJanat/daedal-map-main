@@ -8,6 +8,7 @@ from mapmover.catalog_surface import catalog_surface_scope
 from mapmover.foundation_helpers import load_runtime_result_cap_helpers
 from mapmover.orchestrator_specs import OrchestratorSpec, RESEARCH_ORCHESTRATOR_SPEC
 from mapmover.progress_bus import ProgressBus, ProgressEvent
+from mapmover.runtime.result_cap import cap_payload_for_source
 
 
 _RESEARCH_HEARTBEAT_MESSAGES = [
@@ -42,8 +43,12 @@ class ResearchOrchestrator:
         display = next_result.get("display")
         if isinstance(display, dict):
             source_id = str(display.get("source_id") or next_result.get("source_id") or "").strip()
-            metadata = load_source_metadata_func(source_id) if source_id else None
-            capped_display, cap_info = cap_payload(display, source_metadata=metadata or {})
+            capped_display, cap_info = cap_payload_for_source(
+                display,
+                source_id=source_id,
+                load_source_metadata_func=load_source_metadata_func,
+                cap_payload_func=cap_payload,
+            )
             next_result["display"] = capped_display
             if cap_info:
                 next_result["cap_info"] = cap_info
@@ -58,8 +63,12 @@ class ResearchOrchestrator:
                     capped_displays.append(display_item)
                     continue
                 source_id = str(display_item.get("source_id") or next_result.get("source_id") or "").strip()
-                metadata = load_source_metadata_func(source_id) if source_id else None
-                capped_display, cap_info = cap_payload(display_item, source_metadata=metadata or {})
+                capped_display, cap_info = cap_payload_for_source(
+                    display_item,
+                    source_id=source_id,
+                    load_source_metadata_func=load_source_metadata_func,
+                    cap_payload_func=cap_payload,
+                )
                 capped_displays.append(capped_display)
                 if cap_info:
                     cap_infos.append(cap_info)

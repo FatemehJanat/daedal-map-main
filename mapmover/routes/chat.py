@@ -44,15 +44,18 @@ from mapmover.explore.explore_request_context import (
 from mapmover.explore.explore_response_adapter import (
     build_chat_response,
     build_clarify_response,
-    build_display_warning_response,
     build_disambiguate_response,
     build_filter_update_response,
-    build_metric_warning_response,
     build_navigate_response,
     build_order_response,
     build_overlay_toggle_response,
 )
-from mapmover.runtime.warning_primitives import build_display_warning
+from mapmover.runtime.warning_primitives import (
+    build_display_warning,
+    build_display_warning_result,
+    build_metric_warning_result,
+)
+from mapmover.runtime.result_cap import apply_cap_info_to_payload
 from mapmover.security import get_client_ip, rate_limiter
 
 
@@ -295,9 +298,9 @@ async def chat_endpoint(req: Request):
                         source_id=result.get("source_id"),
                     )
                     return msgpack_response(
-                        build_display_warning_response(
-                            confirmed_order,
+                        build_display_warning_result(
                             display_warning,
+                            pending_order=confirmed_order,
                             summary=result.get("summary") or confirmed_order.get("summary") or "Data request",
                         )
                     )
@@ -393,10 +396,12 @@ async def chat_endpoint(req: Request):
                     "sources": result.get("sources", []),
                 }
                 if cap_info:
-                    response["cap_info"] = cap_info
                     response["truncated"] = bool(result.get("truncated") or cap_info.get("cap_hit"))
-                    response["available_count"] = result.get("available_count", cap_info.get("available_rows"))
-                    response["returned_count"] = result.get("returned_count", cap_info.get("returned_rows"))
+                    if result.get("available_count") is not None:
+                        response["available_count"] = result.get("available_count")
+                    if result.get("returned_count") is not None:
+                        response["returned_count"] = result.get("returned_count")
+                    response = apply_cap_info_to_payload(response, cap_info)
 
                 if is_events:
                     response["event_type"] = result.get("event_type")
@@ -589,7 +594,7 @@ async def chat_endpoint(req: Request):
                     hints=hints,
                     force_metrics=bool(body.get("force_metrics")),
                     build_clarify_response_func=build_clarify_response,
-                    build_metric_warning_response_func=build_metric_warning_response,
+                    build_metric_warning_response_func=build_metric_warning_result,
                     build_order_response_func=build_order_response,
                 )
             _chat_log_timing(
@@ -895,7 +900,7 @@ async def chat_stream_endpoint(req: Request):
                         hints=hints,
                         force_metrics=False,
                         build_clarify_response_func=build_clarify_response,
-                        build_metric_warning_response_func=build_metric_warning_response,
+                        build_metric_warning_response_func=build_metric_warning_result,
                         build_order_response_func=build_order_response,
                     )
                 yield f"data: {json.dumps({'stage': 'complete', 'result': final_result})}\n\n"

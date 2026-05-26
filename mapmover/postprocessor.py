@@ -15,11 +15,10 @@ The postprocessor ensures:
 
 import json
 import re
-from pathlib import Path
 from typing import Optional
 
 from .data_loading import load_catalog, load_source_metadata, get_pack_metadata
-from .explore.postprocess_pipeline import (
+from .runtime.postprocess_pipeline import (
     apply_preprocessor_time_hints,
     build_validation_summary,
     inject_original_query_hints,
@@ -37,6 +36,8 @@ from .runtime.clarify_routing_primitives import (
 )
 from .runtime.aggregate_primitives import (
     apply_aggregate_query_hints as apply_aggregate_query_hints_impl,
+    get_disaster_aggregate_metric_columns as get_disaster_aggregate_metric_columns_impl,
+    resolve_aggregate_admin2_dir as resolve_aggregate_admin2_dir_impl,
     source_geojson_shape as source_geojson_shape_impl,
     source_has_aggregate_files as source_has_aggregate_files_impl,
     source_has_metrics as source_has_metrics_impl,
@@ -59,11 +60,38 @@ from .runtime.retry_primitives import (
 from .runtime.order_semantics import (
     detect_event_mode as detect_event_mode_impl,
     normalize_aggregate_metric_mode as normalize_aggregate_metric_mode_impl,
+    resolve_pack_source as resolve_pack_source_impl,
     resolve_pack_source_by_shape,
     resolve_pack_source_for_metric,
 )
 from .runtime.postprocess_validation import validate_item as validate_item_impl
-from .runtime.warning_primitives import build_metric_warning
+from .runtime.postprocess_contracts import (
+    build_processed_order_result,
+    format_validation_messages,
+    get_display_items,
+)
+from .runtime.postprocess_source_helpers import (
+    catalog_sources as catalog_sources_impl,
+    get_catalog_source as get_catalog_source_impl,
+    get_item_source_metadata as get_item_source_metadata_impl,
+    is_full_pack_load as is_full_pack_load_impl,
+    source_has_aggregate_files as source_has_aggregate_files_helper,
+    source_requires_metric as source_requires_metric_impl,
+    source_supports_aggregate_mode as source_supports_aggregate_mode_helper,
+    source_supports_events as source_supports_events_impl,
+)
+from .runtime.disaster_semantic_filters import (
+    apply_disaster_semantic_filters as apply_disaster_semantic_filters_impl,
+    item_disaster_key as item_disaster_key_impl,
+    query_semantic_filter_tokens as query_semantic_filter_tokens_impl,
+)
+from .runtime.population_resolution import (
+    find_population_metric_key as find_population_metric_key_impl,
+    get_source_admin_levels as get_source_admin_levels_impl,
+    resolve_population_dependency as resolve_population_dependency_impl,
+    scope_matches_population_region as scope_matches_population_region_impl,
+)
+from .runtime.warning_primitives import build_metric_warning, METRIC_DISPLAY_WARN
 from .source_time_contract import metadata_metric_year_range
 from .duckdb_helpers import parquet_columns
 from .paths import DATA_ROOT
@@ -173,18 +201,6 @@ AGGREGATE_ONLY_PATTERNS = (
 )
 
 
-def _semantic_query_text(query: str) -> str:
-    return semantic_query_text_impl(query)
-
-
-def _query_requests_recent_events(query: str) -> bool:
-    return query_requests_recent_events_impl(query)
-
-
-def _query_requests_single_latest_event(query: str) -> bool:
-    return query_requests_single_latest_event_impl(query)
-
-
 def _load_disaster_overlay_reference() -> dict:
     data = load_reference_json("disasters.json")
     overlays = data.get("overlays", {}) if isinstance(data, dict) else {}
@@ -192,84 +208,31 @@ def _load_disaster_overlay_reference() -> dict:
 
 
 def _item_disaster_key(item: dict, catalog_source: dict | None) -> str | None:
-    overlays = _load_disaster_overlay_reference()
-    metadata = load_source_metadata(item.get("source_id")) or {}
-    for candidate in (
-        metadata.get("event_type"),
-        (catalog_source or {}).get("event_type"),
-        item.get("pack_id"),
-    ):
-        text = str(candidate or "").strip().lower()
-        if not text:
-            continue
-        if text in overlays:
-            return text
-        plural = f"{text}s"
-        if plural in overlays:
-            return plural
-    return None
-
-
-def _query_has_time_window(query: str) -> bool:
-    return query_has_time_window_impl(query)
-
-
-def _query_requests_event_window(query: str) -> bool:
-    return query_requests_event_window_impl(query)
-
-
-def _query_prefers_event_source(query: str) -> bool:
-    return query_prefers_event_source_impl(query)
+    return item_disaster_key_impl(
+        item,
+        catalog_source,
+        overlays=_load_disaster_overlay_reference(),
+        load_source_metadata_func=load_source_metadata,
+    )
 
 
 def _query_semantic_filter_tokens(query: str, disaster_key: str | None) -> list[tuple[str, dict]]:
-    if not disaster_key:
-        return []
-    overlays = _load_disaster_overlay_reference()
-    overlay = overlays.get(disaster_key) or {}
-    semantic_filters = overlay.get("semantic_filters") or {}
-    if not isinstance(semantic_filters, dict):
-        return []
-    query_lower = str(query or "").strip().lower()
-    matched = []
-    for token, spec in semantic_filters.items():
-        if not isinstance(spec, dict):
-            continue
-        if re.search(rf"\b{re.escape(str(token).lower())}\b", query_lower):
-            matched.append((str(token), spec))
-    return matched
+    return query_semantic_filter_tokens_impl(
+        query,
+        disaster_key,
+        overlays=_load_disaster_overlay_reference(),
+    )
 
 
 def _apply_disaster_semantic_filters(item: dict, catalog_source: dict | None, query: str) -> None:
-    disaster_key = _item_disaster_key(item, catalog_source)
-    matched = _query_semantic_filter_tokens(query, disaster_key)
-    if not matched:
-        return
-
-    filters = item.get("filters")
-    if not isinstance(filters, dict):
-        filters = {}
-
-    for _, spec in matched:
-        field = str(spec.get("field") or "").strip()
-        if not field or field in filters:
-            continue
-        if "min" in spec:
-            filters[field] = {"min": spec.get("min")}
-        elif "max" in spec:
-            filters[field] = {"max": spec.get("max")}
-
-    if filters:
-        item["filters"] = filters
-
-
-def _reroute_item_to_event_sibling(item: dict, catalog: dict) -> bool:
-    return reroute_item_to_event_sibling_impl(
+    return apply_disaster_semantic_filters_impl(
         item,
-        catalog,
-        resolve_pack_source_by_shape_func=resolve_pack_source_by_shape,
+        catalog_source,
+        query,
+        overlays=_load_disaster_overlay_reference(),
+        item_disaster_key_func=_item_disaster_key,
+        query_semantic_filter_tokens_func=_query_semantic_filter_tokens,
     )
-
 
 def _metric_display_name(source_id: str, metric_key: str) -> str:
     metadata = load_source_metadata(source_id) or {}
@@ -278,17 +241,11 @@ def _metric_display_name(source_id: str, metric_key: str) -> str:
 
 
 def _catalog_sources(catalog: dict) -> list[dict]:
-    sources = catalog.get("sources", [])
-    return sources if isinstance(sources, list) else []
+    return catalog_sources_impl(catalog)
 
 
 def _get_catalog_source(catalog: dict, source_id: str | None) -> dict | None:
-    if not source_id:
-        return None
-    for source in _catalog_sources(catalog):
-        if source.get("source_id") == source_id:
-            return source
-    return None
+    return get_catalog_source_impl(catalog, source_id)
 
 
 def _get_catalog_pack(catalog: dict, pack_id: str | None) -> dict | None:
@@ -297,115 +254,16 @@ def _get_catalog_pack(catalog: dict, pack_id: str | None) -> dict | None:
     return get_pack_metadata(pack_id, catalog)
 
 
-def _scope_matches_region(scope: str, region: str | None) -> bool:
-    if not region:
-        return scope == "global"
-    value = str(region).lower()
-    if scope == "CAN":
-        return value.startswith("can") or value.startswith("canada")
-    if scope == "USA":
-        return value.startswith("usa") or value.startswith("us-")
-    if scope == "global":
-        return True
-    return value.startswith(scope.lower())
-
-
-def _item_prefers_geometry_pack_source(item: dict) -> bool:
-    text = " ".join(
-        str(value or "")
-        for value in (
-            item.get("summary"),
-            item.get("metric"),
-            item.get("region"),
-            ((item.get("_hints") or {}).get("original_query") if isinstance(item.get("_hints"), dict) else ""),
-        )
-    ).lower()
-    geometry_terms = (
-        "county",
-        "counties",
-        "district",
-        "districts",
-        "admin_2",
-        "admin2",
-        "tract",
-        "tracts",
-        "state",
-        "states",
-        "province",
-        "provinces",
-        "top ",
-        "highest",
-        "lowest",
-        "rank",
-        "ranking",
-    )
-    return any(term in text for term in geometry_terms)
-
-
 def _resolve_pack_source(catalog: dict, pack_id: str | None, region: str | None, item: dict | None = None) -> str | None:
-    if not pack_id:
-        return None
-
-    pack_sources = [s for s in _catalog_sources(catalog) if s.get("pack_id") == pack_id]
-    if not pack_sources:
-        return None
-
-    if _item_prefers_geometry_pack_source(item or {"pack_id": pack_id, "region": region}):
-        geometry_sources = [s for s in pack_sources if s.get("geojson_shape") == "geometry_shape"]
-        exact_geometry = [
-            s for s in geometry_sources
-            if s.get("scope") != "global" and _scope_matches_region(s.get("scope", "global"), region)
-        ]
-        if len(exact_geometry) == 1:
-            return exact_geometry[0].get("source_id")
-        global_geometry = [s for s in geometry_sources if s.get("scope") == "global"]
-        if len(global_geometry) == 1:
-            return global_geometry[0].get("source_id")
-
-    exact_matches = [
-        s for s in pack_sources
-        if s.get("scope") != "global" and _scope_matches_region(s.get("scope", "global"), region)
-    ]
-    if len(exact_matches) == 1:
-        return exact_matches[0].get("source_id")
-    if len(exact_matches) > 1:
-        return None
-
-    global_matches = [s for s in pack_sources if s.get("scope") == "global"]
-    if len(global_matches) == 1:
-        return global_matches[0].get("source_id")
-    if len(pack_sources) == 1:
-        return pack_sources[0].get("source_id")
-    return None
+    return resolve_pack_source_impl(catalog, pack_id, region, item)
 
 
 def _is_full_pack_load(item: dict) -> bool:
-    load_scope = str(item.get("load_scope") or "").strip().lower()
-    return bool(item.get("pack_id")) and (
-        load_scope in {"pack", "all_sources", "full_pack"}
-        or item.get("all_sources") is True
-    )
+    return is_full_pack_load_impl(item)
 
 
 def _source_supports_events(source: dict | None) -> bool:
-    data_type = (source or {}).get("data_type")
-    if isinstance(data_type, list):
-        return "events" in data_type
-    return data_type == "events"
-
-
-def _build_pack_load_clarify(item: dict, pack: dict) -> str:
-    return build_pack_load_clarify_impl(item, pack)
-
-
-def detect_full_pack_load_clarify(items: list, catalog: dict) -> str | None:
-    return detect_full_pack_load_clarify_impl(
-        items,
-        catalog,
-        is_full_pack_load_func=_is_full_pack_load,
-        get_catalog_pack_func=_get_catalog_pack,
-        build_pack_load_clarify_func=_build_pack_load_clarify,
-    )
+    return source_supports_events_impl(source)
 
 
 def expand_full_pack_loads(items: list, catalog: dict) -> list:
@@ -416,40 +274,24 @@ def expand_full_pack_loads(items: list, catalog: dict) -> list:
         catalog_sources_func=_catalog_sources,
         get_catalog_pack_func=_get_catalog_pack,
         source_supports_events_func=_source_supports_events,
-        source_has_metrics_func=_source_has_metrics,
+        source_has_metrics_func=source_has_metrics_impl,
     )
-
-
-def _source_has_metrics(catalog_source: dict | None) -> bool:
-    return source_has_metrics_impl(catalog_source)
 
 
 def _source_has_aggregate_files(catalog_source: dict | None) -> bool:
-    return source_has_aggregate_files_impl(
+    return source_has_aggregate_files_helper(
         catalog_source,
+        source_has_aggregate_files_func=source_has_aggregate_files_impl,
         data_root=DATA_ROOT,
-        resolve_aggregate_admin2_dir_func=_resolve_aggregate_admin2_dir,
     )
-
-
-def _source_geojson_shape(catalog_source: dict | None) -> str:
-    return source_geojson_shape_impl(catalog_source)
-
-
-def _source_is_location_shape(catalog_source: dict | None) -> bool:
-    return source_is_location_shape_impl(catalog_source)
 
 
 def _source_supports_aggregate_mode(catalog_source: dict | None) -> bool:
-    return source_supports_aggregate_mode_impl(
+    return source_supports_aggregate_mode_helper(
         catalog_source,
-        source_is_location_shape_func=_source_is_location_shape,
+        source_supports_aggregate_mode_func=source_supports_aggregate_mode_impl,
         source_has_aggregate_files_func=_source_has_aggregate_files,
     )
-
-
-def _apply_aggregate_query_hints(item: dict, query: str) -> None:
-    apply_aggregate_query_hints_impl(item, query)
 
 
 def _normalize_item_filters(item: dict, catalog_source: dict | None) -> None:
@@ -484,7 +326,7 @@ def _normalize_item_filters(item: dict, catalog_source: dict | None) -> None:
 
 
 def _normalize_location_shape_metric(item: dict, catalog_source: dict | None) -> None:
-    if not _source_is_location_shape(catalog_source):
+    if not source_is_location_shape_impl(catalog_source):
         return
     metric = str(item.get("metric") or "").strip().lower()
     if metric in {"", "*", "all", "all_metrics", "latitude", "longitude", "lat", "lon", "lng"}:
@@ -534,21 +376,12 @@ def _expand_filter_value_aliases(item: dict, metadata: dict | None) -> None:
 
 
 def _source_requires_metric(item: dict, catalog_source: dict | None) -> bool:
-    if item.get("type") in {"derived", "derived_result"}:
-        return False
-    if item.get("mode") == "events":
-        return False
-    if _source_is_location_shape(catalog_source):
-        return False
-    if not _source_has_metrics(catalog_source):
-        return False
-
-    data_type = (catalog_source or {}).get("data_type", "metrics")
-    if isinstance(data_type, list):
-        if "events" in data_type and item.get("mode") != "aggregate":
-            return False
-        return "metrics" in data_type
-    return data_type == "metrics"
+    return source_requires_metric_impl(
+        item,
+        catalog_source,
+        source_is_location_shape_func=_source_is_location_shape,
+        source_has_metrics_func=source_has_metrics_impl,
+    )
 
 
 def _format_metric_label(metric_key: str) -> str:
@@ -628,51 +461,12 @@ def _rewrite_processed_order_summary(order: dict, validated_items: list[dict]) -
     return f"{metric_label} {time_text} under {source_name}"
 
 
-def _resolve_aggregate_admin2_dir(source_path: str) -> Path:
-    """
-    Resolve the admin2 aggregate folder for either a parent hazard source path
-    or a dedicated aggregate source path rooted at `.../aggregates/admin2`.
-    """
-    source_dir = DATA_ROOT / source_path
-    if (
-        source_dir.name.lower() == "admin2"
-        and source_dir.parent.name.lower() == "aggregates"
-        and source_dir.parent.parent.name.lower() == "sources"
-    ):
-        return source_dir.parent.parent.parent / "aggregates" / "admin2"
-    if source_dir.name.lower() == "aggregates" and source_dir.parent.name.lower() == "sources":
-        return source_dir.parent.parent / "aggregates" / "admin2"
-    if source_dir.name.lower() == "admin2" and source_dir.parent.name.lower() == "aggregates":
-        return source_dir
-    if source_dir.name.lower() == "aggregates":
-        return source_dir / "admin2"
-    return source_dir / "aggregates" / "admin2"
-
-
 def _get_disaster_aggregate_metric_columns(catalog_source: dict | None) -> set[str]:
-    source_path = str((catalog_source or {}).get("path") or "").strip()
-    if not source_path:
-        return set()
-
-    aggregate_dir = _resolve_aggregate_admin2_dir(source_path)
-    candidates = [
-        aggregate_dir / "yearly.parquet",
-        aggregate_dir / "rolling_10y.parquet",
-        aggregate_dir / "rolling_20y.parquet",
-    ]
-    excluded = {"loc_id", "year", "window_end_year", "window_start_year", "window_years", "source"}
-    metric_cols: set[str] = set()
-
-    for candidate in candidates:
-        try:
-            if not candidate.exists():
-                continue
-            cols = parquet_columns(candidate)
-            metric_cols.update(str(col) for col in cols if str(col) not in excluded)
-        except Exception:
-            continue
-
-    return metric_cols
+    return get_disaster_aggregate_metric_columns_impl(
+        catalog_source,
+        data_root=DATA_ROOT,
+        parquet_columns_func=parquet_columns,
+    )
 
 
 def _normalize_source_declared_scope(item: dict) -> dict:
@@ -714,110 +508,28 @@ def _normalize_source_declared_scope(item: dict) -> dict:
 
 
 def _get_item_source_metadata(item: dict, catalog: dict) -> dict:
-    """Load source metadata for an item, resolving pack_id when needed."""
-    source_id = item.get("source_id")
-    if not source_id and item.get("pack_id"):
-        source_id = _resolve_pack_source(catalog, item.get("pack_id"), item.get("region"))
-    if not source_id:
-        return {}
-    return load_source_metadata(source_id) or {}
-
-
-def _query_signals_event_vs_aggregate(query: str) -> tuple[bool, bool]:
-    """Return coarse event-vs-aggregate intent signals from the raw query."""
-    return query_signals_event_vs_aggregate_impl(query)
-
-
-def _query_explicit_view_mode(query: str) -> tuple[bool, bool]:
-    """Return whether the query explicitly asks for event-view or aggregate-view semantics."""
-    return query_explicit_view_mode_impl(query)
-
-
-def _build_multiple_paths_clarify(item: dict, metadata: dict) -> str:
-    return build_multiple_paths_clarify_impl(item, metadata)
-
-
-def detect_multiple_path_clarify(items: list, catalog: dict, hints: dict | None = None) -> str | None:
-    return detect_multiple_path_clarify_impl(
-        items,
+    return get_item_source_metadata_impl(
+        item,
         catalog,
-        hints=hints,
-        query_explicit_view_mode_func=_query_explicit_view_mode,
-        get_item_source_metadata_func=_get_item_source_metadata,
-        build_multiple_paths_clarify_func=_build_multiple_paths_clarify,
+        resolve_pack_source_func=_resolve_pack_source,
+        load_source_metadata_func=load_source_metadata,
     )
 
 
 def _get_source_admin_levels(metadata: dict | None) -> list[int]:
-    if not metadata:
-        return []
-
-    coverage = metadata.get("geographic_coverage", {}) or {}
-    admin_levels = coverage.get("admin_levels")
-    if isinstance(admin_levels, list):
-        return sorted(
-            {
-                int(level)
-                for level in admin_levels
-                if isinstance(level, (int, float)) or str(level).isdigit()
-            }
-        )
-
-    geo_level = metadata.get("geographic_level")
-    if isinstance(geo_level, list):
-        values = []
-        for level in geo_level:
-            text = str(level or "")
-            if text.startswith("admin_") and text[6:].isdigit():
-                values.append(int(text[6:]))
-        return sorted(set(values))
-    if isinstance(geo_level, str) and geo_level.startswith("admin_") and geo_level[6:].isdigit():
-        return [int(geo_level[6:])]
-    if geo_level in {"country", "admin_0"}:
-        return [0]
-    return []
+    return get_source_admin_levels_impl(metadata)
 
 
 def _scope_matches_population_region(metadata: dict | None, region: str | None) -> bool:
-    if not metadata:
-        return False
-    coverage = metadata.get("geographic_coverage", {}) or {}
-    coverage_type = str(coverage.get("type") or "global").lower()
-    if not region:
-        return coverage_type == "global"
-
-    region_upper = str(region).strip().upper()
-    country = region_upper.split("-")[0] if region_upper else ""
-
-    if coverage_type == "global":
-        return True
-    if coverage_type == "country":
-        return str(coverage.get("country") or "").upper() == country
-    if coverage_type == "regional":
-        missing = {
-            str(code).upper()
-            for code in coverage.get("common_missing", []) or []
-        }
-        common_count = coverage.get("common_count")
-        if common_count:
-            return country not in missing
-        return False
-    return False
+    return scope_matches_population_region_impl(metadata, region)
 
 
 def _find_population_metric_key(source_id: str) -> str | None:
-    metadata = load_source_metadata(source_id) or {}
-    metrics = metadata.get("metrics", {}) or {}
-    preferred = (
-        (((metadata.get("selection_priority") or {}).get(POPULATION_FAMILY) or {}).get("metric"))
-        or ""
+    return find_population_metric_key_impl(
+        source_id,
+        load_source_metadata_func=load_source_metadata,
+        population_family=POPULATION_FAMILY,
     )
-    if preferred and preferred in metrics:
-        return preferred
-    for candidate in ("population", "total_pop"):
-        if candidate in metrics:
-            return candidate
-    return None
 
 
 def _resolve_population_dependency(
@@ -826,56 +538,18 @@ def _resolve_population_dependency(
     preferred_source_id: str | None,
     target_level: int | None,
 ) -> tuple[str | None, str]:
-    cache_key = (region or "", preferred_source_id or "", target_level)
-    cached = _POPULATION_RESOLUTION_CACHE.get(cache_key)
-    if cached:
-        return cached
-
-    if preferred_source_id:
-        preferred_metric = _find_population_metric_key(preferred_source_id)
-        preferred_metadata = load_source_metadata(preferred_source_id) or {}
-        preferred_levels = _get_source_admin_levels(preferred_metadata)
-        if preferred_metric and (
-            target_level is None
-            or not preferred_levels
-            or target_level in preferred_levels
-        ):
-            resolved = (preferred_source_id, preferred_metric)
-            _POPULATION_RESOLUTION_CACHE[cache_key] = resolved
-            return resolved
-
-    candidates = []
-    catalog = load_catalog()
-    for source in catalog.get("sources", []):
-        source_id = source.get("source_id")
-        if not source_id:
-            continue
-        metadata = load_source_metadata(source_id) or {}
-        priority = ((metadata.get("selection_priority") or {}).get(POPULATION_FAMILY) or {})
-        metric_key = priority.get("metric")
-        if not metric_key:
-            continue
-        if metric_key not in (metadata.get("metrics") or {}):
-            continue
-        if not _scope_matches_population_region(metadata, region):
-            continue
-
-        admin_levels = _get_source_admin_levels(metadata)
-        if target_level is not None and admin_levels and target_level not in admin_levels:
-            continue
-
-        candidates.append(
-            (
-                int(priority.get("priority_rank", 9999)),
-                source_id,
-                metric_key,
-            )
-        )
-
-    candidates.sort(key=lambda item: (item[0], item[1]))
-    resolved = (candidates[0][1], candidates[0][2]) if candidates else (None, "population")
-    _POPULATION_RESOLUTION_CACHE[cache_key] = resolved
-    return resolved
+    return resolve_population_dependency_impl(
+        region=region,
+        preferred_source_id=preferred_source_id,
+        target_level=target_level,
+        cache_dict=_POPULATION_RESOLUTION_CACHE,
+        population_family=POPULATION_FAMILY,
+        find_population_metric_key_func=_find_population_metric_key,
+        load_source_metadata_func=load_source_metadata,
+        get_source_admin_levels_func=_get_source_admin_levels,
+        scope_matches_population_region_func=_scope_matches_population_region,
+        load_catalog_func=load_catalog,
+    )
 
 # =============================================================================
 # Validation
@@ -893,12 +567,13 @@ def validate_item(item: dict, catalog: dict) -> dict:
         normalize_item_filters_func=_normalize_item_filters,
         normalize_location_shape_metric_func=_normalize_location_shape_metric,
         apply_disaster_semantic_filters_func=_apply_disaster_semantic_filters,
-        source_has_metrics_func=_source_has_metrics,
+        source_has_metrics_func=source_has_metrics_impl,
         source_supports_aggregate_mode_func=_source_supports_aggregate_mode,
-        apply_aggregate_query_hints_func=_apply_aggregate_query_hints,
+        apply_aggregate_query_hints_func=apply_aggregate_query_hints_impl,
         source_supports_events_func=_source_supports_events,
-        query_prefers_event_source_func=_query_prefers_event_source,
-        reroute_item_to_event_sibling_func=_reroute_item_to_event_sibling,
+        query_prefers_event_source_func=query_prefers_event_source_impl,
+        reroute_item_to_event_sibling_func=reroute_item_to_event_sibling_impl,
+        resolve_pack_source_by_shape_func=resolve_pack_source_by_shape,
         load_source_metadata_func=load_source_metadata,
         expand_filter_value_aliases_func=_expand_filter_value_aliases,
         source_requires_metric_func=_source_requires_metric,
@@ -1232,15 +907,27 @@ def postprocess_order(order: dict, hints: dict = None) -> dict:
     time_hints = hints.get("time", {}) if hints else {}
     apply_preprocessor_time_hints(items, time_hints, load_source_metadata)
 
-    clarify_message = detect_multiple_path_clarify(items, catalog, hints)
+    clarify_message = detect_multiple_path_clarify_impl(
+        items,
+        catalog,
+        hints=hints,
+        query_explicit_view_mode_func=query_explicit_view_mode_impl,
+        get_item_source_metadata_func=_get_item_source_metadata,
+        build_multiple_paths_clarify_func=build_multiple_paths_clarify_impl,
+    )
     if clarify_message:
         return build_clarify_result(order, items, clarify_message)
 
-    full_pack_clarify = detect_full_pack_load_clarify(items, catalog)
+    full_pack_clarify = detect_full_pack_load_clarify_impl(
+        items,
+        catalog,
+        is_full_pack_load_func=_is_full_pack_load,
+        get_catalog_pack_func=_get_catalog_pack,
+        build_pack_load_clarify_func=build_pack_load_clarify_impl,
+    )
     if full_pack_clarify:
         return build_clarify_result(order, items, full_pack_clarify)
 
-    METRIC_DISPLAY_WARN = 15
     expanded_items, metric_count = run_pre_validation_pipeline(
         items,
         hints,
@@ -1262,78 +949,12 @@ def postprocess_order(order: dict, hints: dict = None) -> dict:
 
     metric_warning = build_metric_warning(metric_count, METRIC_DISPLAY_WARN)
 
-    # Return processed order
-    result = {
-        "items": validated_items,
-        "derived_specs": derived_specs,
-        "validation_summary": summary,
-        "all_valid": len(errors) == 0,
-        # Preserve original order fields
-        "summary": _rewrite_processed_order_summary(order, validated_items),
-        "region": order.get("region"),
-        "year": order.get("year"),
-        "year_start": order.get("year_start"),
-        "year_end": order.get("year_end"),
-    }
-    if metric_warning:
-        result["metric_warning"] = metric_warning
-    return result
-
-
-def get_display_items(items: list, derived_specs: list = None) -> list:
-    """
-    Get items for display in the order panel.
-
-    Filters out items with for_derivation=True.
-    Adds display representations for derived specs.
-    """
-    display = []
-
-    # Add non-derivation regular items
-    for item in items:
-        if not item.get("for_derivation"):
-            display.append(item)
-
-    # Add display items for derived specs
-    if derived_specs:
-        for spec in derived_specs:
-            display.append({
-                "type": "derived",
-                "metric": spec.get("label", "Derived"),
-                "metric_label": f"{spec.get('label', 'Derived')} (calculated)",
-                "_valid": True,
-                "_is_derived": True,
-            })
-
-    return display
-
-
-def format_validation_messages(order: dict) -> list:
-    """
-    Format validation results as chat messages.
-
-    Returns list of strings for display to user.
-    """
-    messages = []
-    items = order.get("items", [])
-
-    for item in items:
-        if item.get("for_derivation"):
-            continue  # Don't show derivation source items
-
-        if item.get("_valid"):
-            source = item.get("source_id", "?")
-            metric = item.get("metric_label") or item.get("metric", "?")
-            messages.append(f"+ {metric}: Found in {source}")
-        else:
-            metric = item.get("metric", "?")
-            error = item.get("_error", "Unknown error")
-            messages.append(f"- {metric}: {error}")
-
-    # Add derived field info
-    derived = order.get("derived_specs", [])
-    for spec in derived:
-        label = spec.get("label", "Derived")
-        messages.append(f"+ {label} (calculated)")
-
-    return messages
+    return build_processed_order_result(
+        order,
+        validated_items=validated_items,
+        derived_specs=derived_specs,
+        validation_summary=summary,
+        all_valid=len(errors) == 0,
+        summary=_rewrite_processed_order_summary(order, validated_items),
+        metric_warning=metric_warning,
+    )

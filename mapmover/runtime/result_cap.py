@@ -162,7 +162,55 @@ def apply_runtime_feature_cap_to_payload(
     next_geojson["features"] = list(capped_features)
     next_payload["geojson"] = next_geojson
     next_payload["truncated"] = True
+    next_payload = apply_cap_info_to_payload(next_payload, cap_info)
+    return next_payload, cap_info
+
+
+def apply_cap_info_to_payload(payload: Any, cap_info: Optional[dict]) -> Any:
+    """Attach normalized cap/truncation fields to a response payload.
+
+    This keeps the shared output contract aligned across Explore, Research,
+    metrics responses, and any future orchestrator wrappers.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    if not isinstance(cap_info, dict) or not cap_info:
+        return payload
+
+    next_payload = payload
     next_payload["cap_info"] = cap_info
+    next_payload["truncated"] = bool(cap_info.get("cap_hit"))
     next_payload.setdefault("available_count", cap_info.get("available_rows"))
     next_payload.setdefault("returned_count", cap_info.get("returned_rows"))
-    return next_payload, cap_info
+    return next_payload
+
+
+def cap_payload_for_source(
+    payload: Any,
+    *,
+    source_id: Any,
+    load_source_metadata_func,
+    requested_limit: Optional[int] = None,
+    cap_payload_func=None,
+) -> tuple[Any, Optional[dict]]:
+    """Cap a result/display payload using the metadata for one source.
+
+    This centralizes the shared orchestrator behavior:
+    - normalize source_id
+    - load source metadata if available
+    - apply the feature-cap helper
+    """
+    if cap_payload_func is None:
+        cap_payload_func = apply_runtime_feature_cap_to_payload
+
+    normalized_source_id = str(source_id or "").strip()
+    source_metadata = (
+        load_source_metadata_func(normalized_source_id) or {}
+        if normalized_source_id and load_source_metadata_func is not None
+        else {}
+    )
+    return cap_payload_func(
+        payload,
+        source_metadata=source_metadata,
+        requested_limit=requested_limit,
+    )

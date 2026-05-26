@@ -1,6 +1,27 @@
 from pathlib import Path
 
 
+def resolve_aggregate_admin2_dir(source_path: str | Path, *, data_root: Path | None = None) -> Path:
+    """Resolve the canonical admin2 aggregate directory for a source path."""
+    source_dir = Path(source_path)
+    if data_root is not None and not source_dir.is_absolute():
+        source_dir = data_root / source_dir
+
+    if (
+        source_dir.name.lower() == "admin2"
+        and source_dir.parent.name.lower() == "aggregates"
+        and source_dir.parent.parent.name.lower() == "sources"
+    ):
+        return source_dir.parent.parent.parent / "aggregates" / "admin2"
+    if source_dir.name.lower() == "aggregates" and source_dir.parent.name.lower() == "sources":
+        return source_dir.parent.parent / "aggregates" / "admin2"
+    if source_dir.name.lower() == "admin2" and source_dir.parent.name.lower() == "aggregates":
+        return source_dir
+    if source_dir.name.lower() == "aggregates":
+        return source_dir / "admin2"
+    return source_dir / "aggregates" / "admin2"
+
+
 def source_has_metrics(catalog_source: dict | None) -> bool:
     metrics = (catalog_source or {}).get("metrics") or {}
     if isinstance(metrics, dict) and metrics:
@@ -28,7 +49,6 @@ def source_has_aggregate_files(
     catalog_source: dict | None,
     *,
     data_root: Path,
-    resolve_aggregate_admin2_dir_func,
 ) -> bool:
     files = (catalog_source or {}).get("files") or {}
     if not isinstance(files, dict):
@@ -39,7 +59,7 @@ def source_has_aggregate_files(
     source_path = (catalog_source or {}).get("path")
     if not source_path:
         return False
-    aggregate_dir = resolve_aggregate_admin2_dir_func(str(data_root / source_path))
+    aggregate_dir = resolve_aggregate_admin2_dir(source_path, data_root=data_root)
     candidates = (
         aggregate_dir / "yearly.parquet",
         aggregate_dir / "rolling_10y.parquet",
@@ -48,13 +68,44 @@ def source_has_aggregate_files(
     return any(path.exists() for path in candidates)
 
 
+def get_disaster_aggregate_metric_columns(
+    catalog_source: dict | None,
+    *,
+    data_root: Path,
+    parquet_columns_func,
+) -> set[str]:
+    """Return metric columns exposed by a disaster aggregate parquet family."""
+    source_path = str((catalog_source or {}).get("path") or "").strip()
+    if not source_path:
+        return set()
+
+    aggregate_dir = resolve_aggregate_admin2_dir(source_path, data_root=data_root)
+    candidates = [
+        aggregate_dir / "yearly.parquet",
+        aggregate_dir / "rolling_10y.parquet",
+        aggregate_dir / "rolling_20y.parquet",
+    ]
+    excluded = {"loc_id", "year", "window_end_year", "window_start_year", "window_years", "source"}
+    metric_cols: set[str] = set()
+
+    for candidate in candidates:
+        try:
+            if not candidate.exists():
+                continue
+            cols = parquet_columns_func(candidate)
+            metric_cols.update(str(col) for col in cols if str(col) not in excluded)
+        except Exception:
+            continue
+
+    return metric_cols
+
+
 def source_supports_aggregate_mode(
     catalog_source: dict | None,
     *,
-    source_is_location_shape_func,
     source_has_aggregate_files_func,
 ) -> bool:
-    if source_is_location_shape_func(catalog_source):
+    if source_is_location_shape(catalog_source):
         return False
     data_type = (catalog_source or {}).get("data_type")
     if isinstance(data_type, list):

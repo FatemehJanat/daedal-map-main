@@ -7,9 +7,10 @@ from mapmover.request_risk_gate import block_gate, warn_gate
 
 DISPLAY_SOFT_CAP = 1000
 DISPLAY_HARD_CAP = 5000
+METRIC_DISPLAY_WARN = 15
 
 
-def build_metric_warning(metric_count: int, metric_display_warn: int = 15) -> dict | None:
+def build_metric_warning(metric_count: int, metric_display_warn: int = METRIC_DISPLAY_WARN) -> dict | None:
     """Build the standard metric-count warning payload when needed."""
     if metric_count <= metric_display_warn:
         return None
@@ -30,6 +31,26 @@ def build_metric_warning(metric_count: int, metric_display_warn: int = 15) -> di
         "count": metric_count,
         "message": gate.get("reason"),
         "gate": gate,
+    }
+
+
+def build_metric_warning_result(
+    order: dict,
+    processed: dict,
+    *,
+    display_items: list,
+    summary: str,
+) -> dict:
+    """Build the shared metric-warning response payload."""
+    warning = processed.get("metric_warning") or {}
+    return {
+        "type": "metric_warning",
+        "message": warning.get("message"),
+        "metric_count": warning.get("count"),
+        "gate": warning.get("gate"),
+        "pending_order": {**order, "items": display_items, "derived_specs": processed.get("derived_specs", [])},
+        "full_order": processed,
+        "summary": summary,
     }
 
 

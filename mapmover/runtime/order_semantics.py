@@ -496,6 +496,89 @@ def resolve_pack_source_by_shape(
     return _resolve_pack_source_by_shape(catalog, pack_id, region, desired_shape)
 
 
+def scope_matches_region(scope: str, region: str | None) -> bool:
+    """Public wrapper for scope-to-region coverage matching."""
+    return _scope_matches_region(scope, region)
+
+
+def item_prefers_geometry_pack_source(item: dict | None) -> bool:
+    """Return True when the query semantics suggest a geometry-shape sibling."""
+    item = item or {}
+    text = " ".join(
+        str(value or "")
+        for value in (
+            item.get("summary"),
+            item.get("metric"),
+            item.get("region"),
+            ((item.get("_hints") or {}).get("original_query") if isinstance(item.get("_hints"), dict) else ""),
+        )
+    ).lower()
+    geometry_terms = (
+        "county",
+        "counties",
+        "district",
+        "districts",
+        "admin_2",
+        "admin2",
+        "tract",
+        "tracts",
+        "state",
+        "states",
+        "province",
+        "provinces",
+        "top ",
+        "highest",
+        "lowest",
+        "rank",
+        "ranking",
+    )
+    return any(term in text for term in geometry_terms)
+
+
+def resolve_pack_source(
+    catalog: dict,
+    pack_id: str | None,
+    region: str | None,
+    item: dict | None = None,
+) -> str | None:
+    """Resolve the best concrete source for a pack-scoped request."""
+    if not pack_id:
+        return None
+
+    pack_sources = [s for s in _catalog_sources(catalog) if s.get("pack_id") == pack_id]
+    if not pack_sources:
+        return None
+
+    if item_prefers_geometry_pack_source(item or {"pack_id": pack_id, "region": region}):
+        geometry_sources = [s for s in pack_sources if s.get("geojson_shape") == "geometry_shape"]
+        exact_geometry = [
+            s for s in geometry_sources
+            if s.get("scope") != "global" and _scope_matches_region(s.get("scope", "global"), region)
+        ]
+        if len(exact_geometry) == 1:
+            return exact_geometry[0].get("source_id")
+
+        global_geometry = [s for s in geometry_sources if s.get("scope") == "global"]
+        if len(global_geometry) == 1:
+            return global_geometry[0].get("source_id")
+
+    exact_matches = [
+        s for s in pack_sources
+        if s.get("scope") != "global" and _scope_matches_region(s.get("scope", "global"), region)
+    ]
+    if len(exact_matches) == 1:
+        return exact_matches[0].get("source_id")
+    if len(exact_matches) > 1:
+        return None
+
+    global_matches = [s for s in pack_sources if s.get("scope") == "global"]
+    if len(global_matches) == 1:
+        return global_matches[0].get("source_id")
+    if len(pack_sources) == 1:
+        return pack_sources[0].get("source_id")
+    return None
+
+
 def detect_event_mode(items: list, hints: dict = None) -> list:
     query = ""
     if hints:

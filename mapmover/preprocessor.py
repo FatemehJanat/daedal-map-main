@@ -23,9 +23,9 @@ from typing import Optional
 import logging
 
 from .data_loading import load_catalog, load_source_metadata, get_source_path
-from .explore.preprocess_pipeline import build_preprocessor_hints
-from .explore.preprocess_pipeline import build_candidate_bundle
-from .explore.preprocess_pipeline import resolve_navigation_and_location
+from .runtime.preprocess_pipeline import build_preprocessor_hints
+from .runtime.preprocess_pipeline import build_candidate_bundle
+from .runtime.preprocess_pipeline import resolve_navigation_and_location
 from .explore.preprocess_summary import build_preprocessor_summary
 from .foundation_helpers import load_reference_json
 from .runtime.candidate_scoring import (

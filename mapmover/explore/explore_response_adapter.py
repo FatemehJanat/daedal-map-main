@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from mapmover.runtime.warning_primitives import build_display_warning_result
+from mapmover.runtime.result_cap import apply_cap_info_to_payload
 
 
 def build_clarify_response(message: str, *, summary: str | None = None, full_order: dict | None = None) -> dict:
@@ -34,40 +34,6 @@ def build_order_response(
         "validation_summary": processed.get("validation_summary"),
         "all_valid": processed.get("all_valid", True),
     }
-
-
-def build_metric_warning_response(
-    order: dict,
-    processed: dict,
-    *,
-    display_items: list,
-    summary: str,
-) -> dict:
-    """Build the Explore metric warning response payload."""
-    return {
-        "type": "metric_warning",
-        "message": processed["metric_warning"]["message"],
-        "metric_count": processed["metric_warning"]["count"],
-        "gate": processed["metric_warning"].get("gate"),
-        "pending_order": {**order, "items": display_items, "derived_specs": processed.get("derived_specs", [])},
-        "full_order": processed,
-        "summary": summary,
-    }
-
-
-def build_display_warning_response(
-    order: dict,
-    warning: dict,
-    *,
-    summary: str,
-) -> dict:
-    """Build the Explore broad-display warning response payload."""
-    return build_display_warning_result(
-        warning,
-        pending_order=order,
-        summary=summary,
-    )
-
 
 def build_navigate_response(
     result: dict,
@@ -147,7 +113,4 @@ def build_chat_response(
         response["explainer_sections"] = explainer_sections
     if isinstance(stub_order, dict) and stub_order:
         response["stub_order"] = stub_order
-    if isinstance(cap_info, dict) and cap_info:
-        response["cap_info"] = cap_info
-        response["truncated"] = bool(cap_info.get("cap_hit"))
-    return response
+    return apply_cap_info_to_payload(response, cap_info)

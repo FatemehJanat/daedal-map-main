@@ -1671,16 +1671,6 @@ def _compact_tool_result_for_prompt(tool_name: str, tool_result: dict) -> dict:
 
     return tool_result
 
-
-def _build_display_warning_result(manifest: dict, warning: dict, query: str) -> dict:
-    warning = warning or {}
-    return build_display_warning_result(
-        warning,
-        corpus=manifest,
-        query=query,
-    )
-
-
 def run_research_chat(
     *,
     session_id: str,
@@ -1812,7 +1802,11 @@ def run_research_chat(
             display_warning.get("hard_cap"),
             force_large_display,
         )
-        return _build_display_warning_result(manifest, display_warning, query)
+        return build_display_warning_result(
+            display_warning or {},
+            corpus=manifest,
+            query=query,
+        )
 
       if response and response.stop_reason == "tool_use":
         response = run_research_final_synthesis(

@@ -48,6 +48,29 @@ _EXPLAINER_PATTERNS = (
     re.compile(r"\bwhat types? of\b", re.IGNORECASE),
 )
 
+_DATA_REQUEST_BLOCKERS = (
+    " per capita",
+    " exposure",
+    " trend",
+    " over the last ",
+    " over last ",
+    " in the last ",
+    " over time",
+    " compare ",
+    " count",
+    " total",
+    " average",
+    " highest",
+    " lowest",
+    " counties in ",
+    " tracts in ",
+    " regions in ",
+    " areas in ",
+    " in japan",
+    " in california",
+    " in florida",
+)
+
 
 def _normalize(text: Any) -> str:
     if not isinstance(text, str):
@@ -64,6 +87,8 @@ def looks_like_explainer_question(question: Any) -> bool:
     """
     norm = _normalize(question)
     if not norm:
+        return False
+    if any(token in norm for token in _DATA_REQUEST_BLOCKERS):
         return False
     if any(norm.startswith(prefix) for prefix in _EXPLAINER_PREFIXES):
         return True

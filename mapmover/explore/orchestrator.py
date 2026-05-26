@@ -20,6 +20,7 @@ from mapmover.foundation_helpers import (
     load_runtime_explainer_helpers,
     load_runtime_result_cap_helpers,
 )
+from mapmover.runtime.result_cap import cap_payload_for_source
 
 
 _EXPLORER_HEARTBEAT_MESSAGES = [
@@ -177,13 +178,14 @@ class ExploreOrchestrator:
         ).strip()
         if not source_id:
             return result
-        source_metadata = load_source_metadata_func(source_id) or {}
         requested_limit = self._requested_limit_from_order(confirmed_order)
         helper = load_runtime_result_cap_helpers()
-        payload, _cap_info = helper["apply_runtime_feature_cap_to_payload"](
+        payload, _cap_info = cap_payload_for_source(
             result,
-            source_metadata=source_metadata,
+            source_id=source_id,
+            load_source_metadata_func=load_source_metadata_func,
             requested_limit=requested_limit,
+            cap_payload_func=helper["apply_runtime_feature_cap_to_payload"],
         )
         return payload
 

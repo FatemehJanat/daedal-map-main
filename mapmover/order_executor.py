@@ -61,28 +61,46 @@ from .duckdb_helpers import (
     parquet_columns,
     path_to_uri,
     quote_ident,
-    resolve_event_parquet_path,
     run_df,
     select_columns_from_parquet,
     select_event_ids_by_regions,
     select_peak_positions_by_storm_ids,
     select_rows,
 )
+from .execution.event_loading import (
+    load_event_data as load_event_data_impl,
+    load_event_data_duckdb as load_event_data_duckdb_impl,
+    resolve_event_parquet_path_for_source,
+    resolve_event_source_id as resolve_event_source_id_impl,
+)
+from .execution.source_loading import (
+    candidate_parquet_paths as candidate_parquet_paths_impl,
+    get_source_path as get_source_path_impl,
+    load_source_data as load_source_data_impl,
+)
 from .execution.special_order_capabilities import (
     route_default_special_order,
 )
 from .execution.event_execution import (
-    build_empty_wildfire_perimeter_response as build_empty_wildfire_perimeter_response_impl,
-    detect_event_type as detect_event_type_impl,
     execute_event_order_impl,
     get_coordinate_columns as get_coordinate_columns_impl,
     get_id_column as get_id_column_impl,
-    get_significance_column as get_significance_column_impl,
     get_time_column as get_time_column_impl,
+)
+from .execution.aggregate_loading import (
+    derive_event_metric_aggregate_data as derive_event_metric_aggregate_data_impl,
+    infer_implicit_aggregate_rollup_level as infer_implicit_aggregate_rollup_level_impl,
+    load_disaster_aggregate_data_impl,
 )
 from .execution.geometry_execution import (
     execute_geometry_order_impl,
     execute_geometry_overlay_impl,
+)
+from .execution.multi_order_execution import (
+    classify_execution_family_impl,
+    execute_mixed_order_if_needed_impl,
+    execute_multi_layer_order_if_needed_impl,
+    execute_split_order_impl,
 )
 from .execution.removal_execution import (
     execute_removal_order_impl,
@@ -90,9 +108,25 @@ from .execution.removal_execution import (
 from .runtime.query_intent_primitives import (
     query_prefers_event_retry as query_prefers_event_retry_impl,
 )
-from .runtime.retry_primitives import (
-    build_event_retry_order as build_event_retry_order_impl,
-    resolve_event_sibling_source as resolve_event_sibling_source_impl,
+from .runtime.order_semantics import (
+    resolve_pack_source as resolve_pack_source_impl,
+    scope_matches_region as scope_matches_region_impl,
+)
+from .runtime.order_routing import (
+    normalize_order_items as normalize_order_items_impl,
+    resolve_source_for_item as resolve_source_for_item_impl,
+)
+from .runtime.aggregate_primitives import (
+    resolve_aggregate_admin2_dir as resolve_aggregate_admin2_dir_impl,
+    source_has_aggregate_files as source_has_aggregate_files_impl,
+)
+from .runtime.region_expansion import (
+    expand_region as expand_region_impl,
+    normalize_county_slug as normalize_county_slug_impl,
+    resolve_us_county_slug_loc_id as resolve_us_county_slug_loc_id_impl,
+)
+from .runtime.sparse_year_clarify import (
+    check_sparse_year as check_sparse_year_impl,
 )
 from .runtime.execution_primitives import (
     build_metrics_response,
@@ -100,6 +134,15 @@ from .runtime.execution_primitives import (
     load_order_item_dataframe,
     process_metric_items,
     prepare_execution_items,
+)
+from .runtime.filter_primitives import (
+    append_duckdb_filter_clause as append_duckdb_filter_clause_impl,
+    apply_dataframe_filters as apply_dataframe_filters_impl,
+    normalize_sort_spec as normalize_sort_spec_impl,
+)
+from .runtime.order_validation import (
+    execution_requires_metric as execution_requires_metric_impl,
+    validate_execution_items as validate_execution_items_impl,
 )
 
 CONVERSIONS_PATH = Path(__file__).parent / "conversions.json"
@@ -181,91 +224,19 @@ def _normalize_year_filters(item: dict) -> tuple[Optional[int], Optional[int], O
 
 
 def _normalize_county_slug(value: str) -> str:
-    text = str(value or "").strip().lower().replace("-", " ")
-    text = re.sub(r"[^a-z0-9 ]+", " ", text)
-    for suffix in (
-        " county",
-        " parish",
-        " borough",
-        " census area",
-        " municipality",
-        " city and borough",
-        " city",
-    ):
-        if text.endswith(suffix):
-            text = text[: -len(suffix)]
-            break
-    return " ".join(text.split())
+    return normalize_county_slug_impl(value)
 
 
 def _resolve_us_county_slug_loc_id(region: str) -> Optional[str]:
-    value = str(region or "").strip()
-    match = re.fullmatch(r"USA-([A-Z]{2})-([A-Za-z0-9-]+)", value)
-    if not match:
-        return None
-
-    state_abbrev = match.group(1)
-    county_slug = match.group(2)
-    if county_slug.isdigit():
-        return None
-
-    cache_key = (state_abbrev, county_slug.lower())
-    if cache_key in _usa_county_slug_cache:
-        return _usa_county_slug_cache[cache_key]
-
-    counties_df = load_country_parquet("USA", admin_level=2)
-    if counties_df is None or counties_df.empty or "loc_id" not in counties_df.columns or "name" not in counties_df.columns:
-        _usa_county_slug_cache[cache_key] = None
-        return None
-
-    target = _normalize_county_slug(county_slug)
-    subset = counties_df[counties_df["loc_id"].astype(str).str.startswith(f"USA-{state_abbrev}-", na=False)].copy()
-    if subset.empty:
-        _usa_county_slug_cache[cache_key] = None
-        return None
-
-    subset["_norm_name"] = subset["name"].map(_normalize_county_slug)
-    exact = subset[subset["_norm_name"] == target]
-    loc_id = str(exact.iloc[0]["loc_id"]) if not exact.empty else None
-    _usa_county_slug_cache[cache_key] = loc_id
-    return loc_id
+    return resolve_us_county_slug_loc_id_impl(
+        region,
+        cache_dict=_usa_county_slug_cache,
+        load_country_parquet_func=load_country_parquet,
+    )
 
 
 def _normalize_sort_spec(sort_spec):
-    """Coerce LLM-generated sort payloads into a consistent dict shape."""
-    if not sort_spec:
-        return None
-    if isinstance(sort_spec, dict):
-        by_value = sort_spec.get("by")
-        if not by_value:
-            return None
-        normalized = dict(sort_spec)
-        normalized["by"] = str(by_value)
-        normalized["order"] = str(sort_spec.get("order", "desc")).lower()
-        return normalized
-    if isinstance(sort_spec, str):
-        raw = str(sort_spec).strip().lower()
-        alias_map = {
-            "date_desc": {"by": "timestamp", "order": "desc"},
-            "date_asc": {"by": "timestamp", "order": "asc"},
-            "time_desc": {"by": "timestamp", "order": "desc"},
-            "time_asc": {"by": "timestamp", "order": "asc"},
-            "timestamp_desc": {"by": "timestamp", "order": "desc"},
-            "timestamp_asc": {"by": "timestamp", "order": "asc"},
-            "latest": {"by": "timestamp", "order": "desc"},
-            "newest": {"by": "timestamp", "order": "desc"},
-            "recent": {"by": "timestamp", "order": "desc"},
-            "most_recent": {"by": "timestamp", "order": "desc"},
-        }
-        if raw in alias_map:
-            return alias_map[raw]
-        return {"by": sort_spec, "order": "desc"}
-    if isinstance(sort_spec, list):
-        for candidate in sort_spec:
-            normalized = _normalize_sort_spec(candidate)
-            if normalized:
-                return normalized
-    return None
+    return normalize_sort_spec_impl(sort_spec)
 
 
 def _normalize_geo_level(value) -> Optional[str]:
@@ -312,238 +283,29 @@ def _load_catalog() -> dict:
     return _load_catalog_dl()
 
 
-def _scope_matches_region(scope: str, region) -> bool:
-    """Return True if the given catalog scope covers the requested region string."""
-    if not region:
-        return scope == "global"
-    r = str(region).lower()
-    if scope == "CAN":
-        return r.startswith("can") or r.startswith("canada")
-    if scope == "USA":
-        return r.startswith("usa") or r.startswith("us-")
-    if scope == "global":
-        return True  # global is always a valid fallback
-    # For other ISO scopes (e.g. "AUS") match by lowercase prefix
-    return r.startswith(scope.lower())
-
-
-def _item_prefers_geometry_pack_source(item: dict) -> bool:
-    text = " ".join(
-        str(value or "")
-        for value in (
-            item.get("summary"),
-            item.get("metric"),
-            item.get("region"),
-            ((item.get("_hints") or {}).get("original_query") if isinstance(item.get("_hints"), dict) else ""),
-        )
-    ).lower()
-    geometry_terms = (
-        "county",
-        "counties",
-        "district",
-        "districts",
-        "admin_2",
-        "admin2",
-        "tract",
-        "tracts",
-        "state",
-        "states",
-        "province",
-        "provinces",
-        "top ",
-        "highest",
-        "lowest",
-        "rank",
-        "ranking",
-    )
-    return any(term in text for term in geometry_terms)
-
-
 def _resolve_source_for_item(item: dict, catalog: dict) -> str:
-    """
-    Resolve the correct source_id for an order item.
-
-    Resolution order:
-    1. If item already has source_id and no pack_id: use it directly (pre-release / internal).
-    2. If item has pack_id: find all catalog sources with that pack_id, pick the best scope match.
-    3. If no specific match found: fall back to the global-scoped source in the pack.
-    4. If routing is still ambiguous or unsupported: return None so the request can fail early.
-    """
-    pack_id = item.get("pack_id")
-    source_id = item.get("source_id")
-
-    if not pack_id:
-        # No pack routing requested - use source_id as-is
-        return source_id
-
-    region = item.get("region")
-    sources = catalog.get("sources", [])
-    pack_sources = [s for s in sources if s.get("pack_id") == pack_id]
-
-    if not pack_sources:
-        # Unknown pack - fall back to source_id if provided, else None
-        return source_id
-
-    if _item_prefers_geometry_pack_source(item):
-        geometry_sources = [s for s in pack_sources if s.get("geojson_shape") == "geometry_shape"]
-        exact_geometry = [
-            s for s in geometry_sources
-            if s.get("scope") != "global" and _scope_matches_region(s.get("scope", "global"), region)
-        ]
-        if exact_geometry:
-            return exact_geometry[0]["source_id"]
-
-        global_geometry = [s for s in geometry_sources if s.get("scope") == "global"]
-        if global_geometry:
-            return global_geometry[0]["source_id"]
-
-    # Prefer exact (non-global) scope match, fall back to global
-    exact_matches = [s for s in pack_sources if s.get("scope") != "global" and _scope_matches_region(s.get("scope", "global"), region)]
-    if exact_matches:
-        return exact_matches[0]["source_id"]
-
-    global_matches = [s for s in pack_sources if s.get("scope") == "global"]
-    if global_matches:
-        return global_matches[0]["source_id"]
-
-    # No safe resolution path remains. Let validation stop execution instead of
-    # silently choosing an arbitrary source from the pack.
-    return None
+    return resolve_source_for_item_impl(
+        item,
+        catalog,
+        resolve_pack_source_func=resolve_pack_source_impl,
+    )
 
 
 def _normalize_order_items(items: list, catalog: dict) -> list:
-    """
-    Resolve pack_id -> source_id for all items in an order.
-    Items that already have a valid source_id keep it, even when pack_id is also
-    present. This preserves earlier pack resolution done by the order-taker and
-    avoids re-routing an aggregate item back to an event source at execution time.
-    """
-    catalog_sources = {
-        str(src.get("source_id") or "").strip(): src
-        for src in catalog.get("sources", [])
-        if src.get("source_id")
-    }
-    resolved = []
-    for item in items:
-        item = dict(item)  # shallow copy so we don't mutate the original
-        source_id = str(item.get("source_id") or "").strip()
-        pack_id = item.get("pack_id")
-        if pack_id and source_id:
-            src = catalog_sources.get(source_id)
-            if src and src.get("pack_id") == pack_id:
-                resolved.append(item)
-                continue
-        if pack_id:
-            item["source_id"] = _resolve_source_for_item(item, catalog)
-            logger.debug(f"[routing] pack_id={item['pack_id']} region={item.get('region')} -> source_id={item['source_id']}")
-        resolved.append(item)
-    return resolved
-
-
-def _resolve_event_sibling_source(catalog: dict, item: dict) -> str | None:
-    return resolve_event_sibling_source_impl(
-        catalog,
-        item,
-        scope_matches_region_func=_scope_matches_region,
-    )
-
-
-def _query_prefers_event_retry(query: str) -> bool:
-    return query_prefers_event_retry_impl(query)
-
-
-def _build_event_retry_order(order: dict, items: list, catalog: dict) -> dict | None:
-    return build_event_retry_order_impl(
-        order,
+    return normalize_order_items_impl(
         items,
         catalog,
-        query_prefers_event_retry_func=_query_prefers_event_retry,
-        resolve_event_sibling_source_func=_resolve_event_sibling_source,
+        resolve_source_for_item_func=_resolve_source_for_item,
+        logger=logger,
     )
 
 
 def _execution_requires_metric(item: dict, source_info: dict | None) -> bool:
-    if item.get("type") in {"derived", "derived_result"}:
-        return False
-    if item.get("mode") == "events":
-        return False
-    if str((source_info or {}).get("geojson_shape") or "").strip().lower() == "location_shape":
-        return False
-
-    data_type = (source_info or {}).get("data_type", "metrics")
-    if isinstance(data_type, list):
-        if "events" in data_type and item.get("mode") != "aggregate":
-            return False
-        return "metrics" in data_type
-    return data_type == "metrics"
+    return execution_requires_metric_impl(item, source_info)
 
 
 def _apply_dataframe_filters(df: pd.DataFrame, filters: dict | None) -> pd.DataFrame:
-    """Apply generic equality/range/presence filters to a DataFrame."""
-    if df is None or df.empty or not isinstance(filters, dict) or not filters:
-        return df
-
-    filtered = df
-    for field, value in filters.items():
-        if field.endswith("_min"):
-            col = field[:-4]
-            if col in filtered.columns:
-                filtered = filtered[filtered[col] >= value]
-            continue
-        if field.endswith("_max"):
-            col = field[:-4]
-            if col in filtered.columns:
-                filtered = filtered[filtered[col] <= value]
-            continue
-        if field not in filtered.columns:
-            continue
-
-        if isinstance(value, dict):
-            op = str(value.get("op") or "").strip().lower()
-            min_value = value.get("min")
-            max_value = value.get("max")
-            if min_value is not None:
-                filtered = filtered[filtered[field] >= min_value]
-            if max_value is not None:
-                filtered = filtered[filtered[field] <= max_value]
-            if op in {"not_empty", "present", "exists"}:
-                series = filtered[field]
-                filtered = filtered[series.notna() & (series.astype(str).str.strip() != "")]
-            elif op == "in":
-                candidates = value.get("values") or []
-                if candidates:
-                    filtered = filtered[filtered[field].isin(candidates)]
-            elif op == "eq" and "value" in value:
-                filtered = filtered[filtered[field] == value.get("value")]
-            elif op in {"!=", "ne"} and "value" in value:
-                filtered = filtered[filtered[field] != value.get("value")]
-            elif op in {">", "gt"} and "value" in value:
-                filtered = filtered[filtered[field] > value.get("value")]
-            elif op in {">=", "gte"} and "value" in value:
-                filtered = filtered[filtered[field] >= value.get("value")]
-            elif op in {"<", "lt"} and "value" in value:
-                filtered = filtered[filtered[field] < value.get("value")]
-            elif op in {"<=", "lte"} and "value" in value:
-                filtered = filtered[filtered[field] <= value.get("value")]
-            continue
-
-        if isinstance(value, (list, tuple, set)):
-            candidates = [candidate for candidate in value if candidate is not None]
-            if candidates:
-                filtered = filtered[filtered[field].isin(candidates)]
-            continue
-
-        if isinstance(value, bool):
-            series = filtered[field]
-            if value:
-                filtered = filtered[series.notna() & (series.astype(str).str.strip() != "")]
-            else:
-                filtered = filtered[series.isna() | (series.astype(str).str.strip() == "")]
-            continue
-
-        filtered = filtered[filtered[field] == value]
-
-    return filtered
+    return apply_dataframe_filters_impl(df, filters)
 
 
 def _append_duckdb_filter_clause(
@@ -553,107 +315,22 @@ def _append_duckdb_filter_clause(
     field: str,
     value,
 ) -> None:
-    """Translate an order filter entry into DuckDB WHERE fragments."""
-    if field.endswith("_min"):
-        col = field[:-4]
-        if col in available_cols and value is not None:
-            where_clauses.append(f"{quote_ident(col)} >= ?")
-            params.append(value)
-        return
-
-    if field.endswith("_max"):
-        col = field[:-4]
-        if col in available_cols and value is not None:
-            where_clauses.append(f"{quote_ident(col)} <= ?")
-            params.append(value)
-        return
-
-    if field not in available_cols:
-        return
-
-    if isinstance(value, dict):
-        min_value = value.get("min")
-        max_value = value.get("max")
-        if min_value is not None:
-            where_clauses.append(f"{quote_ident(field)} >= ?")
-            params.append(min_value)
-        if max_value is not None:
-            where_clauses.append(f"{quote_ident(field)} <= ?")
-            params.append(max_value)
-
-        op = str(value.get("op") or "").strip().lower()
-        if op in {"not_empty", "present", "exists"}:
-            where_clauses.append(f"{quote_ident(field)} IS NOT NULL")
-            where_clauses.append(f"trim(CAST({quote_ident(field)} AS VARCHAR)) <> ''")
-            return
-        if op == "in":
-            candidates = [candidate for candidate in (value.get("values") or []) if candidate is not None]
-            if candidates:
-                placeholders = ", ".join("?" for _ in candidates)
-                where_clauses.append(f"{quote_ident(field)} IN ({placeholders})")
-                params.extend(candidates)
-            return
-        if "value" in value:
-            op_map = {
-                "eq": "=",
-                "=": "=",
-                "ne": "!=",
-                "!=": "!=",
-                "gt": ">",
-                ">": ">",
-                "gte": ">=",
-                ">=": ">=",
-                "lt": "<",
-                "<": "<",
-                "lte": "<=",
-                "<=": "<=",
-            }
-            sql_op = op_map.get(op)
-            if sql_op:
-                where_clauses.append(f"{quote_ident(field)} {sql_op} ?")
-                params.append(value.get("value"))
-            return
-        return
-
-    if isinstance(value, (list, tuple, set)):
-        candidates = [candidate for candidate in value if candidate is not None]
-        if candidates:
-            placeholders = ", ".join("?" for _ in candidates)
-            where_clauses.append(f"{quote_ident(field)} IN ({placeholders})")
-            params.extend(candidates)
-        return
-
-    if isinstance(value, bool):
-        if value:
-            where_clauses.append(f"{quote_ident(field)} IS NOT NULL")
-            where_clauses.append(f"trim(CAST({quote_ident(field)} AS VARCHAR)) <> ''")
-        else:
-            where_clauses.append(
-                f"({quote_ident(field)} IS NULL OR trim(CAST({quote_ident(field)} AS VARCHAR)) = '')"
-            )
-        return
-
-    where_clauses.append(f"{quote_ident(field)} = ?")
-    params.append(value)
+    append_duckdb_filter_clause_impl(
+        where_clauses,
+        params,
+        available_cols,
+        field,
+        value,
+        quote_ident_func=quote_ident,
+    )
 
 
 def _validate_execution_items(items: list) -> str | None:
-    for idx, item in enumerate(items, start=1):
-        source_id = item.get("source_id")
-        pack_id = item.get("pack_id")
-        if not source_id:
-            if pack_id:
-                return f"Item {idx} could not resolve pack_id '{pack_id}' to a concrete source_id"
-            return f"Item {idx} is missing source_id"
-
-        source_info = _get_source_from_catalog(source_id)
-        if not source_info:
-            return f"Item {idx} references unknown source_id '{source_id}'"
-
-        if _execution_requires_metric(item, source_info) and not item.get("metric"):
-            return f"Item {idx} for source '{source_id}' is missing a concrete metric"
-
-    return None
+    return validate_execution_items_impl(
+        items,
+        get_source_from_catalog_func=_get_source_from_catalog,
+        execution_requires_metric_func=_execution_requires_metric,
+    )
 
 
 def _aggregate_metric_frame(df: pd.DataFrame, group_cols: list[str]) -> pd.DataFrame:
@@ -689,232 +366,67 @@ def _aggregate_metric_frame(df: pd.DataFrame, group_cols: list[str]) -> pd.DataF
     return out
 
 
-def _resolve_aggregate_admin2_dir(source_dir: Path) -> Path:
-    """
-    Resolve the admin2 aggregate folder for either:
-    - a parent hazard source directory containing `aggregates/admin2/`, or
-    - a dedicated aggregate source already rooted at `.../aggregates/admin2`.
-    """
-    # Pack-facing aggregate source rows live under `.../sources/aggregates`,
-    # but the actual parquet files still live at the parent hazard path.
-    if (
-        source_dir.name.lower() == "admin2"
-        and source_dir.parent.name.lower() == "aggregates"
-        and source_dir.parent.parent.name.lower() == "sources"
-    ):
-        return source_dir.parent.parent.parent / "aggregates" / "admin2"
-    if source_dir.name.lower() == "aggregates" and source_dir.parent.name.lower() == "sources":
-        return source_dir.parent.parent / "aggregates" / "admin2"
-    if source_dir.name.lower() == "admin2" and source_dir.parent.name.lower() == "aggregates":
-        return source_dir
-    if source_dir.name.lower() == "aggregates":
-        return source_dir / "admin2"
-    return source_dir / "aggregates" / "admin2"
-
-
 def _load_disaster_aggregate_data(source_id: str, item: dict) -> tuple[Optional[pd.DataFrame], Optional[dict]]:
-    """Load disaster aggregate parquet for event sources when query intent is choropleth/aggregate."""
-    source_dir = _get_source_path(source_id)
-    agg_dir = _resolve_aggregate_admin2_dir(source_dir)
-    use_rolling = bool(item.get("aggregate_use_rolling"))
-    requested_window = item.get("aggregate_window_years")
-
-    candidates = []
-    if use_rolling and requested_window:
-        candidates.append(agg_dir / f"rolling_{int(requested_window)}y.parquet")
-    if use_rolling:
-        candidates.extend([agg_dir / "rolling_20y.parquet", agg_dir / "rolling_10y.parquet"])
-    candidates.append(agg_dir / "yearly.parquet")
-
-    parquet_path = None
-    df = None
-    last_error = None
-    year, year_start, year_end = _normalize_year_filters(item)
-    region = item.get("region")
-    for candidate in candidates:
-        if parquet_path is not None:
-            break
-        if not is_cloud_mode() and not candidate.exists():
-            continue
-        try:
-            exact_filters = {}
-            compare_filters = []
-            starts_with_filters = {}
-            available_cols = parquet_columns(candidate)
-            aggregate_year_col = "year" if "year" in available_cols else ("window_end_year" if "window_end_year" in available_cols else None)
-            if aggregate_year_col:
-                if year is not None:
-                    exact_filters[aggregate_year_col] = year
-                elif year_start is not None and year_end is not None:
-                    compare_filters.extend(
-                        [
-                            (aggregate_year_col, ">=", year_start),
-                            (aggregate_year_col, "<=", year_end),
-                        ]
-                    )
-            if region and "loc_id" in available_cols and re.match(r"^[A-Z]{2,3}(?:-[A-Z0-9]+)*$", str(region).strip()):
-                starts_with_filters["loc_id"] = str(region).strip()
-            maybe_df = select_rows(
-                candidate,
-                exact_filters=exact_filters or None,
-                compare_filters=compare_filters or None,
-                starts_with_filters=starts_with_filters or None,
-            )
-            if maybe_df.empty and candidate.exists():
-                maybe_df = pd.read_parquet(candidate)
-            parquet_path = candidate
-            df = maybe_df
-        except Exception as exc:
-            last_error = exc
-            continue
-
-    if parquet_path is None or df is None:
-        if last_error:
-            logger.warning(f"[aggregate] failed to load aggregate parquet for {source_id}: {last_error}")
-        return None, None
-
-    metadata = load_source_metadata(source_id) or {}
-    metadata = dict(metadata)
-    implicit_rollup_level = _infer_implicit_aggregate_rollup_level(item)
-    rollup_level = item.get("aggregate_rollup_level") or implicit_rollup_level or "admin_2"
-    metadata["geographic_level"] = rollup_level
-    metadata["aggregate_parquet"] = str(parquet_path)
-
-    if "window_end_year" in df.columns and "year" not in df.columns:
-        df = df.rename(columns={"window_end_year": "year"})
-
-    requested_metric = str(item.get("metric") or "").strip()
-    if requested_metric and requested_metric not in df.columns:
-        fallback_df, fallback_metadata = _derive_event_metric_aggregate_data(source_id, item, requested_metric)
-        if fallback_df is not None and fallback_metadata is not None:
-            df = fallback_df
-            metadata = fallback_metadata
-            rollup_level = "admin_0"
-            logger.info(
-                f"[aggregate] fallback {source_id}: derived metric='{requested_metric}' from event rows at admin_0"
-            )
-
-    # If using rolling windows without an explicit year filter, default to latest window per loc_id.
-    year, year_start, year_end = _normalize_year_filters(item)
-    if "year" in df.columns and use_rolling and year is None and year_start is None and year_end is None:
-        df = df.sort_values(["loc_id", "year"]).groupby("loc_id", as_index=False).tail(1)
-
-    # Historical rollups over all years.
-    if item.get("aggregate_all_years") and "year" in df.columns:
-        group_cols = ["loc_id"]
-        df = _aggregate_metric_frame(df, group_cols)
-
-    # Roll admin2 aggregates up to admin0 when explicitly requested.
-    if rollup_level == "admin_0" and "loc_id" in df.columns:
-        df = df.copy()
-        df["loc_id"] = df["loc_id"].astype(str).str.split("-").str[0]
-        group_cols = ["loc_id"]
-        if "year" in df.columns:
-            group_cols.append("year")
-        df = _aggregate_metric_frame(df, group_cols)
-        metadata["geographic_level"] = "admin_0"
-    elif rollup_level == "admin_1" and "loc_id" in df.columns:
-        df = df.copy()
-        df["loc_id"] = (
-            df["loc_id"]
-            .astype(str)
-            .map(translate_geometry_id_to_local_id)
-            .str.split("-")
-            .str[:2]
-            .str.join("-")
-        )
-        group_cols = ["loc_id"]
-        if "year" in df.columns:
-            group_cols.append("year")
-        df = _aggregate_metric_frame(df, group_cols)
-        metadata["geographic_level"] = "admin_1"
-
-    logger.info(
-        f"[aggregate] load {source_id}: path={path_to_uri(parquet_path) if is_cloud_mode() else parquet_path} "
-        f"rows={len(df)} level={metadata.get('geographic_level')}"
+    return load_disaster_aggregate_data_impl(
+        source_id,
+        item,
+        get_source_path_func=_get_source_path,
+        resolve_aggregate_admin2_dir_func=resolve_aggregate_admin2_dir_impl,
+        normalize_year_filters_func=_normalize_year_filters,
+        parquet_columns_func=parquet_columns,
+        select_rows_func=select_rows,
+        is_cloud_mode_func=is_cloud_mode,
+        load_source_metadata_func=load_source_metadata,
+        infer_implicit_aggregate_rollup_level_func=_infer_implicit_aggregate_rollup_level,
+        derive_event_metric_aggregate_data_func=_derive_event_metric_aggregate_data,
+        aggregate_metric_frame_func=_aggregate_metric_frame,
+        translate_geometry_id_to_local_id_func=translate_geometry_id_to_local_id,
+        path_to_uri_func=path_to_uri,
+        logger=logger,
     )
-    return df, metadata
 
 
 def _infer_implicit_aggregate_rollup_level(item: dict) -> Optional[str]:
-    if item.get("aggregate_rollup_level"):
-        return None
-    region = item.get("region")
-    if not region:
-        if item.get("aggregate_all_years") or item.get("aggregate_use_rolling"):
-            return "admin_0"
-        year = item.get("year")
-        year_start = item.get("year_start")
-        year_end = item.get("year_end")
-        if year_start is not None or year_end is not None:
-            if year is None or year_start != year_end:
-                return "admin_0"
-        return None
-    region_codes = expand_region(region)
-    if len(region_codes) <= 1:
-        return None
-
-    normalized = [str(code) for code in region_codes if isinstance(code, str)]
-    if not normalized:
-        return None
-
-    if all("-" not in code for code in normalized):
-        return "admin_0"
-
-    country_prefixes = {code.split("-")[0] for code in normalized if "-" in code}
-    if len(country_prefixes) == 1 and all(code.count("-") >= 1 for code in normalized):
-        return "admin_1"
-
-    return None
+    return infer_implicit_aggregate_rollup_level_impl(
+        item,
+        expand_region_func=expand_region,
+    )
 
 
 def _derive_event_metric_aggregate_data(source_id: str, item: dict, requested_metric: str) -> tuple[Optional[pd.DataFrame], Optional[dict]]:
-    event_df, metadata = load_event_data(source_id)
-    if event_df is None or event_df.empty:
-        return None, None
-    if requested_metric not in event_df.columns or "timestamp" not in event_df.columns:
-        return None, None
-
-    df = event_df.copy()
-    timestamps = pd.to_datetime(df["timestamp"], errors="coerce")
-    df = df[timestamps.notna()].copy()
-    if df.empty:
-        return None, None
-    df["year"] = timestamps[timestamps.notna()].dt.year.astype("Int64")
-    df = df[df["year"].notna()].copy()
-    if df.empty:
-        return None, None
-
-    # Raw event loc_ids are incident ids with country prefixes; for aggregate fallback
-    # we can still build meaningful country-level totals from the prefix.
-    df["loc_id"] = df["loc_id"].astype(str).str.split("-").str[0]
-    df["event_count"] = 1
-
-    group_cols = ["loc_id", "year"]
-    agg_map = {requested_metric: "sum"}
-    if requested_metric != "event_count":
-        agg_map["event_count"] = "sum"
-    out = df.groupby(group_cols, as_index=False).agg(agg_map)
-    out["source"] = source_id
-
-    fallback_metadata = dict(metadata or {})
-    fallback_metadata["geographic_level"] = "admin_0"
-    fallback_metadata["aggregate_parquet"] = "event_metric_fallback"
-    return out, fallback_metadata
+    return derive_event_metric_aggregate_data_impl(
+        source_id,
+        item,
+        requested_metric,
+        load_event_data_func=load_event_data,
+    )
 
 
 def _source_supports_disaster_aggregates(source_id: str) -> bool:
-    source_dir = _get_source_path(source_id)
-    if not source_dir:
+    catalog_source = _get_source_from_catalog(source_id)
+    if not catalog_source:
         return False
-    agg_dir = _resolve_aggregate_admin2_dir(source_dir)
+    if not is_cloud_mode():
+        return source_has_aggregate_files_impl(
+            catalog_source,
+            data_root=DATA_ROOT,
+        )
+
+    files = (catalog_source or {}).get("files") or {}
+    if not isinstance(files, dict):
+        files = {}
+    if any(key in files for key in ("yearly", "rolling_10y", "rolling_20y")):
+        return True
+
+    source_path = (catalog_source or {}).get("path")
+    if not source_path:
+        return False
+    agg_dir = resolve_aggregate_admin2_dir_impl(source_path, data_root=DATA_ROOT)
     candidates = (
         agg_dir / "yearly.parquet",
         agg_dir / "rolling_10y.parquet",
         agg_dir / "rolling_20y.parquet",
     )
-    if not is_cloud_mode():
-        return any(path.exists() for path in candidates)
     for path in candidates:
         try:
             if parquet_columns(path):
@@ -936,33 +448,12 @@ def _get_source_data_type(source_id: str) -> str:
     return "metrics"  # Default to metrics if not found
 
 
-def _get_source_path(source_id: str) -> Optional[str]:
-    """Get the path for a source from catalog."""
-    catalog = _load_catalog()
-    for src in catalog.get("sources", []):
-        if src.get("source_id") == source_id:
-            return src.get("path")
-    return None
-
-
 def _resolve_event_source_id(source_id: str) -> str:
-    """Resolve a human-facing event pack alias to its canonical event source id."""
-    normalized = str(source_id or "").strip()
-    if not normalized:
-        return normalized
-    if load_source_metadata(normalized) is not None:
-        return normalized
-
-    catalog = _load_catalog()
-    event_sources = [
-        str(src.get("source_id") or "").strip()
-        for src in catalog.get("sources", [])
-        if str(src.get("pack_id") or "").strip() == normalized and str(src.get("data_type") or "").strip() == "events"
-    ]
-    event_sources = [source for source in event_sources if source]
-    if len(event_sources) == 1:
-        return event_sources[0]
-    return normalized
+    return resolve_event_source_id_impl(
+        source_id,
+        load_source_metadata_func=load_source_metadata,
+        load_catalog_func=_load_catalog,
+    )
 
 
 # Special geographic levels that need geometry from dual sources (not standard admin hierarchy)
@@ -1085,69 +576,15 @@ def execute_geometry_order(order: dict) -> dict:
 
 
 def _get_source_path(source_id: str) -> Path:
-    """Get the full path to a source directory using catalog path field."""
-    catalog = _load_catalog()
-    for source in catalog.get("sources", []):
-        if source.get("source_id") == source_id:
-            # Use path field if present, otherwise fall back to old structure
-            source_path = source.get("path", f"global/{source_id}")
-            return DATA_ROOT / source_path
-
-    # Source not in catalog - try old path as fallback
-    return DATA_ROOT / "global" / source_id
+    return get_source_path_impl(
+        source_id,
+        load_catalog_func=_load_catalog,
+        data_root=DATA_ROOT,
+    )
 
 
 def _candidate_parquet_paths(source_dir: Path, metadata: dict) -> list[Path]:
-    """Return ordered parquet candidates for a source.
-
-    Cloud mode cannot list remote directories, so we need to trust metadata
-    before falling back to generic filenames.
-    """
-    candidates: list[Path] = []
-    seen: set[str] = set()
-
-    def _add_candidate(name: str | None) -> None:
-        filename = str(name or "").strip()
-        if not filename or not filename.endswith(".parquet"):
-            return
-        if filename in seen:
-            return
-        seen.add(filename)
-        candidates.append(source_dir / filename)
-
-    files_section = metadata.get("files")
-    if isinstance(files_section, dict):
-        for info in files_section.values():
-            if not isinstance(info, dict):
-                continue
-            _add_candidate(info.get("name") or info.get("filename"))
-
-    primary_files = metadata.get("primary_files")
-    if isinstance(primary_files, list):
-        for entry in primary_files:
-            _add_candidate(entry)
-
-    for key in ("primary_file", "parquet_file", "data_file", "data_filename", "filename", "file_name"):
-        _add_candidate(metadata.get(key))
-
-    coverage = metadata.get("geographic_coverage", {}) or {}
-    country_code = str(coverage.get("country", "")).strip().upper()
-    if country_code:
-        _add_candidate(f"{country_code}.parquet")
-
-    source_parts = source_dir.parts
-    if "countries" in source_parts:
-        try:
-            countries_idx = source_parts.index("countries")
-            inferred_country = source_parts[countries_idx + 1].upper()
-            _add_candidate(f"{inferred_country}.parquet")
-        except Exception:
-            pass
-
-    for fallback_name in ("all_countries.parquet", "GLOBAL.parquet", "data.parquet"):
-        _add_candidate(fallback_name)
-
-    return candidates
+    return candidate_parquet_paths_impl(source_dir, metadata)
 
 
 def _load_conversions() -> dict:
@@ -1178,176 +615,39 @@ def _load_usa_admin() -> dict:
 
 
 def load_source_data(source_id: str, *, year: int | None = None, loc_id_prefix: str | None = None) -> tuple:
-    """
-    Load parquet and metadata for a source.
-
-    Args:
-        year: If provided, push year filter into DuckDB query (avoids full scan).
-        loc_id_prefix: If provided, push loc_id prefix filter into DuckDB query (e.g. 'USA-CA').
-
-    Returns:
-        tuple: (DataFrame, metadata dict)
-    """
-    source_dir = _get_source_path(source_id)
-
-    metadata = load_source_metadata(source_id)
-    if metadata is None:
-        raise ValueError(f"Could not load metadata for {source_id}")
-
-    exact_filters = {}
-    starts_with_filters = {}
-    if year is not None:
-        exact_filters["year"] = year
-    if loc_id_prefix:
-        starts_with_filters["loc_id"] = loc_id_prefix
-
-    parquet_candidates = _candidate_parquet_paths(source_dir, metadata)
-    if is_cloud_mode():
-        # In S3 mode, no local parquet files exist. Try metadata-declared parquet
-        # names first, then only fall back to generic filenames.
-        if not parquet_candidates:
-            raise ValueError(f"Cannot determine parquet path for {source_id} in S3 mode")
-
-        last_df = pd.DataFrame()
-        for parquet_path in parquet_candidates:
-            uri = path_to_uri(parquet_path)
-            logger.info(f"[S3] load_source_data({source_id}): trying uri={uri} year={year} prefix={loc_id_prefix}")
-            df = select_rows(parquet_path, exact_filters=exact_filters or None, starts_with_filters=starts_with_filters or None)
-            logger.info(f"[S3] load_source_data({source_id}): candidate={parquet_path.name} rows={len(df)}")
-            last_df = df
-            if not df.empty:
-                return df, metadata
-        df = last_df
-    else:
-        # Local mode: glob for parquet files on disk
-        parquet_files = list(source_dir.glob("*.parquet"))
-        if not parquet_files:
-            raise ValueError(f"No parquet file found for {source_id} in {source_dir}")
-
-        parquet_path = None
-        for candidate in parquet_candidates:
-            if candidate.exists():
-                parquet_path = candidate
-                break
-        if parquet_path is None:
-            parquet_path = parquet_files[0]
-
-        df = select_rows(parquet_path, exact_filters=exact_filters or None, starts_with_filters=starts_with_filters or None)
-        if df.empty and not exact_filters and not starts_with_filters:
-            df = pd.read_parquet(parquet_path)
-
-    return df, metadata
+    return load_source_data_impl(
+        source_id,
+        year=year,
+        loc_id_prefix=loc_id_prefix,
+        get_source_path_func=_get_source_path,
+        load_source_metadata_func=load_source_metadata,
+        candidate_parquet_paths_func=_candidate_parquet_paths,
+        is_cloud_mode_func=is_cloud_mode,
+        path_to_uri_func=path_to_uri,
+        select_rows_func=select_rows,
+        logger=logger,
+    )
 
 
 def load_event_data(source_id: str, event_file_key: str = "events") -> tuple:
-    """
-    Load event-level parquet (e.g., events.parquet, fires.parquet) for a source.
-
-    Args:
-        source_id: e.g., "usgs_earthquakes", "mtbs_wildfires"
-        event_file_key: Key from metadata.files (e.g., "events", "fires", "positions")
-
-    Returns:
-        tuple: (DataFrame, metadata dict)
-    """
-    source_dir = _get_source_path(source_id)
-
-    metadata = load_source_metadata(source_id)
-    if metadata is None:
-        raise ValueError(f"Could not load metadata for {source_id}")
-
-    # Get filename from metadata.files
-    files_section = metadata.get("files")
-    files_info = files_section if isinstance(files_section, dict) else {}
-    file_info = files_info.get(event_file_key)
-    if not isinstance(file_info, dict):
-        file_info = None
-
-    if not file_info:
-        # Try common event file names as fallback
-        fallback_names = [
-            f"{event_file_key}.parquet",
-            "events.parquet",
-            "fires.parquet",
-            "positions.parquet",
-            "storms.parquet",
-        ]
-        for name in fallback_names:
-            candidate = source_dir / name
-            if is_cloud_mode() or candidate.exists():
-                df = select_rows(candidate)
-                if df.empty and not is_cloud_mode():
-                    df = pd.read_parquet(candidate)
-                return df, metadata
-        if not is_cloud_mode():
-            # Last-resort fallback: use any parquet in source dir (local mode only)
-            parquet_candidates = sorted(source_dir.glob("*.parquet"))
-            for candidate in parquet_candidates:
-                if candidate.name in ("all_countries.parquet", "all_regions.parquet"):
-                    continue
-                df = select_rows(candidate)
-                if df.empty:
-                    df = pd.read_parquet(candidate)
-                return df, metadata
-        raise ValueError(f"No event file '{event_file_key}' found in {source_id}")
-
-    # Get filename - handle both 'name' and 'filename' keys
-    filename = file_info.get("name") or file_info.get("filename")
-    if not filename:
-        raise ValueError(f"No filename specified for '{event_file_key}' in {source_id}")
-
-    parquet_path = source_dir / filename
-    if not is_cloud_mode() and not parquet_path.exists():
-        raise ValueError(f"Event file not found: {parquet_path}")
-
-    df = select_rows(parquet_path)
-    if df.empty:
-        df = pd.read_parquet(parquet_path)
-    return df, metadata
+    return load_event_data_impl(
+        source_id,
+        event_file_key,
+        get_source_path_func=_get_source_path,
+        load_source_metadata_func=load_source_metadata,
+        is_cloud_mode_func=is_cloud_mode,
+        select_rows_func=select_rows,
+    )
 
 
 def _resolve_event_parquet_path(source_id: str, event_file_key: str = "events") -> tuple[Path, dict]:
-    """Resolve event parquet path from source metadata without loading the full dataframe.
-    Uses load_source_metadata so it works in both local and cloud mode."""
-    source_dir = _get_source_path(source_id)
-    metadata = load_source_metadata(source_id)
-    if metadata is None:
-        raise ValueError(f"Could not load metadata for {source_id}")
-
-    files_section = metadata.get("files")
-    files_info = files_section if isinstance(files_section, dict) else {}
-    file_info = files_info.get(event_file_key)
-    if not isinstance(file_info, dict):
-        file_info = None
-
-    if not file_info:
-        fallback_names = [
-            f"{event_file_key}.parquet",
-            "events.parquet",
-            "fires.parquet",
-            "positions.parquet",
-            "storms.parquet",
-        ]
-        for name in fallback_names:
-            candidate = source_dir / name
-            if is_cloud_mode() or candidate.exists():
-                return candidate, metadata
-        if not is_cloud_mode():
-            parquet_candidates = sorted(source_dir.glob("*.parquet"))
-            for candidate in parquet_candidates:
-                if candidate.name in ("all_countries.parquet", "all_regions.parquet"):
-                    continue
-                return candidate, metadata
-        raise ValueError(f"No event file '{event_file_key}' found in {source_dir}")
-
-    filename = file_info.get("name") or file_info.get("filename")
-    if not filename:
-        raise ValueError(f"No filename specified for '{event_file_key}' in {source_dir}")
-
-    parquet_path = source_dir / filename
-    if not is_cloud_mode() and not parquet_path.exists():
-        raise ValueError(f"Event file not found: {parquet_path}")
-    return parquet_path, metadata
+    return resolve_event_parquet_path_for_source(
+        source_id,
+        event_file_key,
+        get_source_path_func=_get_source_path,
+        load_source_metadata_func=load_source_metadata,
+        is_cloud_mode_func=is_cloud_mode,
+    )
 
 
 def _duckdb_can_query_events(source_id: str) -> bool:
@@ -1355,194 +655,35 @@ def _duckdb_can_query_events(source_id: str) -> bool:
 
 
 def _load_event_data_duckdb(source_id: str, item: dict, event_file_key: str = "events") -> tuple[pd.DataFrame, dict]:
-    """
-    Load and filter event data with DuckDB for first-pass migration sources.
-
-    This keeps the response-building contract unchanged while moving the heavy
-    parquet scan/filter work into DuckDB.
-    """
-    parquet_path, metadata = _resolve_event_parquet_path(source_id, event_file_key)
-
-    available_cols = parquet_columns(parquet_path)
-
-    region = item.get("region")
-    year, year_start, year_end = _normalize_year_filters(item)
-    filters = item.get("filters", {}) or {}
-    requested_limit = item.get("limit")
-    sort_spec = _normalize_sort_spec(item.get("sort"))
-    time_col = "year" if "year" in available_cols else ("timestamp" if "timestamp" in available_cols else None)
-    loc_id_col = "loc_id" if "loc_id" in available_cols else None
-
-    where_clauses = []
-    params = [path_to_uri(parquet_path)]
-
-    if year_start is not None and year_end is not None:
-        if time_col == "year":
-            where_clauses.append('"year" BETWEEN ? AND ?')
-            params.extend([year_start, year_end])
-        elif time_col:
-            where_clauses.append(f"year({quote_ident(time_col)}) BETWEEN ? AND ?")
-            params.extend([year_start, year_end])
-    elif year is not None:
-        if time_col == "year":
-            where_clauses.append('"year" = ?')
-            params.append(year)
-        elif time_col:
-            where_clauses.append(f"year({quote_ident(time_col)}) = ?")
-            params.append(year)
-
-    region_codes = expand_region(region)
-    if region_codes:
-        us_state_prefixes = sorted(c for c in region_codes if c.startswith("USA-"))
-        country_codes = sorted(c for c in region_codes if not c.startswith("USA-"))
-        region_parts = []
-
-        if loc_id_col:
-            for prefix in us_state_prefixes:
-                region_parts.append(f"{quote_ident(loc_id_col)} LIKE ?")
-                params.append(f"{prefix}%")
-
-            if country_codes:
-                placeholders = ", ".join("?" for _ in country_codes)
-                region_parts.append(f"split_part({quote_ident(loc_id_col)}, '-', 1) IN ({placeholders})")
-                params.extend(country_codes)
-
-        # Some event sources use loc_id as an event identifier instead of a hierarchical
-        # geography code. Fall back to country/name fields so regional filtering still works.
-        country_name_cols = [col for col in ("country", "country_name") if col in available_cols]
-        if country_codes and country_name_cols:
-            iso3_to_name = _load_iso_codes().get("iso3_to_name", {})
-            country_names = sorted(
-                {
-                    str(iso3_to_name.get(code, "")).strip().upper()
-                    for code in country_codes
-                    if str(iso3_to_name.get(code, "")).strip()
-                }
-            )
-            for col in country_name_cols:
-                if country_names:
-                    placeholders = ", ".join("?" for _ in country_names)
-                    region_parts.append(f"upper({quote_ident(col)}) IN ({placeholders})")
-                    params.extend(country_names)
-
-        state_abbrevs = _load_usa_admin().get("state_abbreviations", {})
-        state_name_cols = [col for col in ("state", "state_name", "admin1_name") if col in available_cols]
-        state_text_cols = [col for col in ("place", "location", "name", "title") if col in available_cols]
-        for prefix in us_state_prefixes:
-            state_abbrev = prefix.split("-")[1]
-            state_name = str(state_abbrevs.get(state_abbrev, "")).strip().upper()
-            if state_name:
-                for col in state_name_cols:
-                    region_parts.append(f"upper({quote_ident(col)}) = ?")
-                    params.append(state_name)
-                for col in state_text_cols:
-                    region_parts.append(f"upper({quote_ident(col)}) LIKE ?")
-                    params.append(f"%{state_name}%")
-
-        if region_parts:
-            where_clauses.append("(" + " OR ".join(region_parts) + ")")
-
-    for field, value in filters.items():
-        _append_duckdb_filter_clause(where_clauses, params, available_cols, field, value)
-
-    sql = "SELECT * FROM read_parquet(?)"
-    if where_clauses:
-        sql += " WHERE " + " AND ".join(where_clauses)
-
-    limit = min(requested_limit or DEFAULT_EVENT_LIMIT, MAX_EVENT_LIMIT)
-    sort_col = None
-    sort_order = "DESC"
-    if sort_spec:
-        requested_sort_col = str(sort_spec.get("by") or "").strip()
-        if requested_sort_col in available_cols:
-            sort_col = requested_sort_col
-            sort_order = "ASC" if str(sort_spec.get("order", "desc")).lower() == "asc" else "DESC"
-        elif requested_sort_col in {"date", "time"} and "timestamp" in available_cols:
-            sort_col = "timestamp"
-            sort_order = "ASC" if str(sort_spec.get("order", "desc")).lower() == "asc" else "DESC"
-    if not sort_col:
-        sig_col = metadata.get("significance_column")
-        if sig_col and sig_col in available_cols:
-            sort_col = sig_col
-            sort_order = "DESC"
-    if sort_col:
-        sql += f" ORDER BY {quote_ident(sort_col)} {sort_order} NULLS LAST"
-    sql += " LIMIT ?"
-    params.append(limit)
-
-    df = run_df(sql, params)
-    return df, metadata
+    return load_event_data_duckdb_impl(
+        source_id,
+        item,
+        event_file_key,
+        resolve_event_parquet_path_func=_resolve_event_parquet_path,
+        parquet_columns_func=parquet_columns,
+        normalize_year_filters_func=_normalize_year_filters,
+        normalize_sort_spec_func=_normalize_sort_spec,
+        expand_region_func=expand_region,
+        load_iso_codes_func=_load_iso_codes,
+        load_usa_admin_func=_load_usa_admin,
+        append_duckdb_filter_clause_func=_append_duckdb_filter_clause,
+        path_to_uri_func=path_to_uri,
+        quote_ident_func=quote_ident,
+        run_df_func=run_df,
+        default_event_limit=DEFAULT_EVENT_LIMIT,
+        max_event_limit=MAX_EVENT_LIMIT,
+    )
 
 
 def expand_region(region: str) -> set:
-    """
-    Expand a region name to a set of country codes (ISO3).
-
-    Supports:
-    - Region aliases (e.g., "europe" -> WHO_European_Region countries)
-    - Direct grouping names (e.g., "European_Union")
-    - Single country names (returns that country code)
-    - "global" or null -> empty set (means no filtering)
-
-    Returns:
-        set: Country codes (ISO3), or empty set for global/all
-    """
-    if not region or region.lower() in ("global", "all", "world"):
-        return set()
-
-    county_loc_id = _resolve_us_county_slug_loc_id(region)
-    if county_loc_id:
-        return {county_loc_id}
-
-    normalized_region = str(region).strip().lower().replace("_", " ").replace("-", " ")
-    if normalized_region in _US_REGIONAL_GROUPS:
-        return set(_US_REGIONAL_GROUPS[normalized_region])
-    if normalized_region in {"puerto rico", "puerto rico usa"}:
-        return {"USA-PR"}
-
-    # If it's already a loc_id format (e.g., USA-FL, USA-CA-037), return as-is
-    if "-" in region and region.split("-")[0].isupper() and len(region.split("-")[0]) == 3:
-        return {region}
-
-    conversions = _load_conversions()
-    region_lower = region.lower()
-    region_normalized = region_lower.replace("_", " ").replace("-", " ")
-
-    # Check region_aliases first (maps friendly names to grouping keys)
-    region_aliases = conversions.get("region_aliases", {})
-    for alias, grouping_key in region_aliases.items():
-        alias_lower = alias.lower()
-        if alias_lower == region_lower or alias_lower.replace("_", " ").replace("-", " ") == region_normalized:
-            grouping = conversions.get("regional_groupings", {}).get(grouping_key, {})
-            return set(grouping.get("countries", []))
-
-    # Check direct grouping names
-    regional_groupings = conversions.get("regional_groupings", {})
-    for key, grouping in regional_groupings.items():
-        key_lower = key.lower()
-        if key_lower == region_lower or key_lower.replace("_", " ").replace("-", " ") == region_normalized:
-            return set(grouping.get("countries", []))
-
-    # Check if it's a country name -> return its ISO3 code
-    iso_data = _load_iso_codes()
-    iso3_to_name = iso_data.get("iso3_to_name", {})
-    for code, name in iso3_to_name.items():
-        if name.lower() == region_lower:
-            return {code}
-
-    # Check if it's already an ISO3 code
-    if region.upper() in iso3_to_name:
-        return {region.upper()}
-
-    # Check US state abbreviations for state-level queries
-    usa_admin = _load_usa_admin()
-    state_abbrevs = usa_admin.get("state_abbreviations", {})
-    for abbrev, name in state_abbrevs.items():
-        if name.lower() == region_lower or abbrev.lower() == region_lower:
-            # Return special marker for US state filtering
-            return {f"USA-{abbrev}"}
-
-    return set()
+    return expand_region_impl(
+        region,
+        resolve_us_county_slug_loc_id_func=_resolve_us_county_slug_loc_id,
+        regional_groups=_US_REGIONAL_GROUPS,
+        load_conversions_func=_load_conversions,
+        load_iso_codes_func=_load_iso_codes,
+        load_usa_admin_func=_load_usa_admin,
+    )
 
 
 def find_metric_column(df: pd.DataFrame, metric: str, metadata: Optional[dict] = None) -> Optional[str]:
@@ -1961,22 +1102,6 @@ def _get_source_from_catalog(source_id: str) -> dict:
     return {}
 
 
-def _detect_event_type(source_id: str) -> str:
-    return detect_event_type_impl(
-        source_id,
-        get_source_from_catalog_func=_get_source_from_catalog,
-        load_source_metadata_func=load_source_metadata,
-        resolve_event_source_id_func=_resolve_event_source_id,
-    )
-
-
-def _get_significance_column(source_id: str) -> str:
-    return get_significance_column_impl(
-        source_id,
-        get_source_from_catalog_func=_get_source_from_catalog,
-    )
-
-
 def _find_source_files(source_id: str) -> list:
     """
     Find parquet files for a source_id.
@@ -2003,34 +1128,6 @@ def _find_source_files(source_id: str) -> list:
     return []
 
 
-def _get_coordinate_columns(df: pd.DataFrame) -> tuple:
-    return get_coordinate_columns_impl(df)
-
-
-def _get_time_column(df: pd.DataFrame) -> str:
-    return get_time_column_impl(df)
-
-
-def _get_id_column(df: pd.DataFrame, event_type: str) -> str:
-    return get_id_column_impl(df, event_type)
-
-
-def _order_item_original_query(item: dict | None) -> str:
-    if not isinstance(item, dict):
-        return ""
-    hints = item.get("_hints") if isinstance(item.get("_hints"), dict) else {}
-    return str(hints.get("original_query") or item.get("summary") or "").strip()
-
-
-def _build_empty_wildfire_perimeter_response(order: dict, item: dict, source_id: str) -> dict | None:
-    return build_empty_wildfire_perimeter_response_impl(
-        order,
-        item,
-        source_id,
-        get_source_from_catalog_func=_get_source_from_catalog,
-    )
-
-
 def execute_event_order(order: dict) -> dict:
     return execute_event_order_impl(
         order,
@@ -2040,15 +1137,14 @@ def execute_event_order(order: dict) -> dict:
         duckdb_can_query_events_func=_duckdb_can_query_events,
         load_event_data_duckdb_func=_load_event_data_duckdb,
         load_event_data_func=load_event_data,
-        detect_event_type_func=_detect_event_type,
+        get_source_from_catalog_func=_get_source_from_catalog,
+        load_source_metadata_func=load_source_metadata,
         resolve_event_parquet_path_func=_resolve_event_parquet_path,
         select_peak_positions_by_storm_ids_func=select_peak_positions_by_storm_ids,
-        get_coordinate_columns_func=_get_coordinate_columns,
-        get_time_column_func=_get_time_column,
-        get_id_column_func=_get_id_column,
+        get_coordinate_columns_func=get_coordinate_columns_impl,
+        get_time_column_func=get_time_column_impl,
+        get_id_column_func=get_id_column_impl,
         expand_region_func=expand_region,
-        get_significance_column_func=_get_significance_column,
-        build_empty_wildfire_perimeter_response_func=_build_empty_wildfire_perimeter_response,
         default_event_limit=DEFAULT_EVENT_LIMIT,
         max_event_limit=MAX_EVENT_LIMIT,
     )
@@ -2166,227 +1262,44 @@ def _get_loc_ids_by_region(source_id: str, regions: list) -> list:
 
 
 def _execute_mixed_order_if_needed(order: dict, items: list, source_id: str) -> dict:
-    """
-    Check if order has mixed add/remove items and execute accordingly.
-
-    Checks for:
-    1. Explicit item.action = "remove" on some items
-    2. Session cache: regions already loaded should be removed, new regions added
-
-    If mixed, splits into two operations and returns combined results.
-    Returns None if not a mixed order (let normal flow handle it).
-    """
-    logger = logging.getLogger(__name__)
-    from .session_cache import session_manager
-
-    session_id = order.get("session_id")
-    cache = session_manager.get(session_id) if session_id else None
-
-    # Check for explicit item-level actions (works for all data types: geometry, metrics, events)
-    add_items = []
-    remove_items = []
-
-    for item in items:
-        item_action = item.get("action", "add")
-        if item_action == "remove":
-            remove_items.append(item)
-        else:
-            add_items.append(item)
-
-    # If we have explicit removes, handle the split
-    if remove_items:
-        logger.info(f"Mixed order detected: {len(add_items)} adds, {len(remove_items)} removes")
-        return _execute_split_order(order, add_items, remove_items, source_id)
-
-    # No explicit removes - check cache to see if any regions already exist
-    # (user says "show california" when texas is loaded = remove texas, add california)
-    # This is optional behavior - for now, just return None and let normal accumulation happen
-    return None
+    return execute_mixed_order_if_needed_impl(
+        order,
+        items,
+        source_id,
+        execute_split_order_func=_execute_split_order,
+        logger=logging.getLogger(__name__),
+    )
 
 
 def _execute_split_order(order: dict, add_items: list, remove_items: list, source_id: str) -> dict:
-    """
-    Execute a split order with both adds and removes.
-
-    Executes removals first, then adds, returns combined response.
-    """
-    logger = logging.getLogger(__name__)
-    results = []
-
-    # Execute removals first
-    if remove_items:
-        remove_order = {
-            **order,
-            "action": "remove",
-            "items": remove_items,
-            "summary": f"Removing {len(remove_items)} region(s)"
-        }
-        remove_result = _execute_removal_order(remove_order, remove_items, source_id)
-        results.append(remove_result)
-        logger.info(f"Split order: removed {remove_result.get('count', 0)} items")
-
-    # Execute adds second
-    add_result = None
-    if add_items:
-        add_order = {
-            **order,
-            "action": "add",
-            "items": add_items,
-        }
-        # Call execute_order recursively for adds (but it won't recurse again since no removes)
-        add_result = execute_order(add_order)
-        results.append(add_result)
-        logger.info(f"Split order: added {add_result.get('count', 0)} items")
-
-    # Return combined response
-    if len(results) == 1:
-        return results[0]
-
-    # Combine results for mixed response
-    return {
-        "type": "mixed_order",
-        "results": results,
-        "summary": order.get("summary", f"Processed {len(add_items)} adds and {len(remove_items)} removes"),
-        "add_count": add_result.get("count", 0) if add_result else 0,
-        "remove_count": results[0].get("count", 0) if remove_items else 0
-    }
+    return execute_split_order_impl(
+        order,
+        add_items,
+        remove_items,
+        source_id,
+        execute_removal_order_func=_execute_removal_order,
+        execute_order_func=execute_order,
+        logger=logging.getLogger(__name__),
+    )
 
 
 def _classify_execution_family(item: dict) -> str:
-    """
-    Classify an item into the renderer family it needs at execution time.
-
-    This stays generic:
-    - geometry overlays render through the geometry pipeline
-    - event items render through the event pipeline
-    - everything else renders through the metrics/choropleth pipeline
-    """
-    source_id = item.get("source_id")
-    source_info = _get_source_from_catalog(source_id) if source_id else {}
-    data_type = (source_info or {}).get("data_type", "metrics")
-    geo_level = str((source_info or {}).get("geographic_level") or "").strip().lower()
-
-    if item.get("overlay_type") or (geo_level in SPECIAL_GEOMETRY_LEVELS and _has_geometry_data_type(data_type)):
-        return "geometry"
-
-    if item.get("mode") == "aggregate":
-        return "metrics"
-
-    supports_events = False
-    if isinstance(data_type, list):
-        supports_events = "events" in data_type
-    else:
-        supports_events = data_type == "events"
-
-    if item.get("mode") == "events" or supports_events:
-        return "events"
-
-    return "metrics"
+    return classify_execution_family_impl(
+        item,
+        get_source_from_catalog_func=_get_source_from_catalog,
+        special_geometry_levels=SPECIAL_GEOMETRY_LEVELS,
+        has_geometry_data_type_func=_has_geometry_data_type,
+    )
 
 
 def _execute_multi_layer_order_if_needed(order: dict, items: list) -> dict | None:
-    """
-    Execute multi-item orders as layered results.
-
-    The shared map-facing contract is one payload containing independent layers.
-    Preserve one layer per order item so:
-    - metrics + events can coexist
-    - two metrics sources can coexist without collapsing into one choropleth
-    - multiple geometry overlays can coexist
-    """
-    if len(items) <= 1:
-        return None
-
-    results = []
-    for item in items:
-        family = _classify_execution_family(item)
-        sub_order = {**order, "items": [item]}
-        if family == "geometry":
-            result = execute_geometry_order(sub_order)
-        else:
-            result = execute_order(sub_order)
-        if isinstance(result, dict):
-            result.setdefault("layer_source_id", item.get("source_id"))
-            result.setdefault("layer_family", family)
-        results.append(result)
-
-    return {
-        "type": "mixed_order",
-        "results": results,
-        "summary": order.get("summary", f"Rendered {len(results)} map layers"),
-        "layer_count": len(results),
-    }
-
-
-def _check_sparse_year(
-    df,
-    metric_col: str,
-    selected_year: int,
-    metadata: dict | None,
-) -> dict | None:
-    """Return a clarify dict when selected_year has suspiciously sparse coverage.
-
-    Uses density * countries from metric metadata as the expected-per-year baseline.
-    Only fires when year was not explicitly requested by the user (null-year path).
-    Returns None when coverage looks normal or the metric is inherently sparse.
-    """
-    metrics = (metadata or {}).get("metrics", {})
-    metric_info = metrics.get(metric_col) if isinstance(metrics, dict) else None
-    if not isinstance(metric_info, dict):
-        return None
-
-    density = float(metric_info.get("density") or 0)
-    countries = int(metric_info.get("countries") or 0)
-    expected_per_year = density * countries
-
-    # Skip inherently sparse metrics - if the average expectation is < 5 per year,
-    # sparsity is normal for this metric and we should not second-guess it.
-    if expected_per_year < 5:
-        return None
-
-    actual_count = int((df[metric_col].notna() & (df["year"] == selected_year)).sum())
-
-    # Not sparse - coverage is at least 25% of what's expected.
-    if actual_count >= expected_per_year * 0.25:
-        return None
-
-    # Find the best alternative: most recent year with meaningful coverage.
-    year_counts = (
-        df[df[metric_col].notna()]
-        .groupby("year")[metric_col]
-        .count()
-        .sort_index()
+    return execute_multi_layer_order_if_needed_impl(
+        order,
+        items,
+        classify_execution_family_func=_classify_execution_family,
+        execute_geometry_order_func=execute_geometry_order,
+        execute_order_func=execute_order,
     )
-    if year_counts.empty:
-        return None
-
-    best_count = int(year_counts.max())
-    # Suggested year: most recent year with >= 50% of best coverage.
-    good_years = year_counts[year_counts >= max(int(best_count * 0.5), int(expected_per_year * 0.25))]
-    if good_years.empty:
-        return None
-
-    suggested_year = int(good_years.index.max())
-    suggested_count = int(year_counts[suggested_year])
-
-    # Do not clarify if the suggested year is the same as the selected year.
-    if suggested_year == selected_year:
-        return None
-
-    metric_name = metric_info.get("name") or metric_col
-    noun = "country" if actual_count == 1 else "countries"
-    msg = (
-        f"{selected_year} only has data for {actual_count} {noun} "
-        f"for \"{metric_name}\". "
-        f"{suggested_year} has much better coverage ({suggested_count} countries). "
-        f"Would you like to use {suggested_year} instead, or specify a different year?"
-    )
-    return {
-        "type": "clarify",
-        "message": msg,
-        "geojson": {"type": "FeatureCollection", "features": []},
-        "count": 0,
-    }
 
 
 def execute_order(order: dict) -> dict:
@@ -2546,7 +1459,7 @@ def execute_order(order: dict) -> dict:
         derive_eurostat_geo_level_func=_derive_eurostat_geo_level,
         load_fx_with_aggregation_func=_load_fx_with_aggregation,
         find_metric_column_func=find_metric_column,
-        check_sparse_year_func=_check_sparse_year,
+        check_sparse_year_func=check_sparse_year_impl,
         expand_region_func=expand_region,
         canonicalize_loc_id_func=canonicalize_loc_id,
         translate_loc_id_to_geometry_id_func=translate_loc_id_to_geometry_id,
@@ -2611,7 +1524,8 @@ def execute_order(order: dict) -> dict:
         load_subcounty_geometry_func=load_subcounty_geometry,
         load_geometry_rows_by_loc_ids_func=load_geometry_rows_by_loc_ids,
         load_country_parquet_func=load_country_parquet,
-        build_event_retry_order_func=_build_event_retry_order,
+        query_prefers_event_retry_func=query_prefers_event_retry_impl,
+        scope_matches_region_func=scope_matches_region_impl,
         execute_order_func=execute_order,
         load_catalog_func=_load_catalog,
         cap_info=cap_info,

@@ -110,15 +110,14 @@ def execute_event_order_impl(
     duckdb_can_query_events_func,
     load_event_data_duckdb_func,
     load_event_data_func,
-    detect_event_type_func,
+    get_source_from_catalog_func,
+    load_source_metadata_func,
     resolve_event_parquet_path_func,
     select_peak_positions_by_storm_ids_func,
     get_coordinate_columns_func,
     get_time_column_func,
     get_id_column_func,
     expand_region_func,
-    get_significance_column_func,
-    build_empty_wildfire_perimeter_response_func,
     default_event_limit,
     max_event_limit,
 ) -> dict:
@@ -156,7 +155,12 @@ def execute_event_order_impl(
             "count": 0,
         }
 
-    event_type = detect_event_type_func(source_id)
+    event_type = detect_event_type(
+        source_id,
+        get_source_from_catalog_func=get_source_from_catalog_func,
+        load_source_metadata_func=load_source_metadata_func,
+        resolve_event_source_id_func=resolve_event_source_id_func,
+    )
     print(f"Event mode: {resolved_source_id} -> {event_type}, {len(df)} raw events")
 
     if (
@@ -239,7 +243,10 @@ def execute_event_order_impl(
             ascending = str(sort_spec.get("order", "desc")).lower() == "asc"
 
         if not sort_col:
-            sig_col = get_significance_column_func(source_id)
+            sig_col = get_significance_column(
+                source_id,
+                get_source_from_catalog_func=get_source_from_catalog_func,
+            )
             if sig_col and sig_col in df.columns:
                 sort_col = sig_col
 
@@ -290,7 +297,12 @@ def execute_event_order_impl(
 
     primary_item = items[0] if items else {}
     if not features and event_type == "wildfire":
-        perimeter_gap = build_empty_wildfire_perimeter_response_func(order, primary_item, source_id)
+        perimeter_gap = build_empty_wildfire_perimeter_response(
+            order,
+            primary_item,
+            source_id,
+            get_source_from_catalog_func=get_source_from_catalog_func,
+        )
         if perimeter_gap:
             return perimeter_gap
 

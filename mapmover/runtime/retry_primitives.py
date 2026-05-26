@@ -75,14 +75,18 @@ def build_event_retry_order(
     catalog: dict,
     *,
     query_prefers_event_retry_func,
-    resolve_event_sibling_source_func,
+    scope_matches_region_func,
 ) -> dict | None:
     rebuilt_items = []
     for item in items:
         query = str(((item.get("_hints") or {}).get("original_query")) or "")
         if not query_prefers_event_retry_func(query):
             return None
-        event_source_id = resolve_event_sibling_source_func(catalog, item)
+        event_source_id = resolve_event_sibling_source(
+            catalog,
+            item,
+            scope_matches_region_func=scope_matches_region_func,
+        )
         if not event_source_id:
             return None
         rebuilt = dict(item)
@@ -100,3 +104,38 @@ def build_event_retry_order(
     if not rebuilt_items:
         return None
     return {**order, "items": rebuilt_items}
+
+
+def execute_event_retry_fallback(
+    order: dict,
+    items: list,
+    *,
+    query_prefers_event_retry_func,
+    scope_matches_region_func,
+    execute_order_func,
+    load_catalog_func,
+) -> dict | None:
+    """Run the shared aggregate-to-event retry path and decorate success."""
+    if order.get("_event_retry_attempted"):
+        return None
+
+    retry_order = build_event_retry_order(
+        order,
+        items,
+        load_catalog_func(),
+        query_prefers_event_retry_func=query_prefers_event_retry_func,
+        scope_matches_region_func=scope_matches_region_func,
+    )
+    if not retry_order:
+        return None
+
+    retry_result = execute_order_func({**retry_order, "_event_retry_attempted": True})
+    if int(retry_result.get("count") or 0) <= 0:
+        return None
+
+    retry_result["fallback_used"] = True
+    retry_result.setdefault(
+        "fallback_note",
+        "Initial aggregate execution returned no results, so the runtime retried the pack's event lane.",
+    )
+    return retry_result
