@@ -116,6 +116,51 @@ def source_supports_aggregate_mode(
     return source_has_aggregate_files_func(catalog_source)
 
 
+def source_supports_disaster_aggregates(
+    source_id: str,
+    *,
+    get_source_from_catalog_func,
+    is_cloud_mode_func,
+    source_has_aggregate_files_func,
+    resolve_aggregate_admin2_dir_func,
+    parquet_columns_func,
+    data_root: Path,
+) -> bool:
+    """Return whether a source exposes disaster aggregate parquet families."""
+    catalog_source = get_source_from_catalog_func(source_id)
+    if not catalog_source:
+        return False
+
+    if not is_cloud_mode_func():
+        return source_has_aggregate_files_func(
+            catalog_source,
+            data_root=data_root,
+        )
+
+    files = (catalog_source or {}).get("files") or {}
+    if not isinstance(files, dict):
+        files = {}
+    if any(key in files for key in ("yearly", "rolling_10y", "rolling_20y")):
+        return True
+
+    source_path = (catalog_source or {}).get("path")
+    if not source_path:
+        return False
+    agg_dir = resolve_aggregate_admin2_dir_func(source_path, data_root=data_root)
+    candidates = (
+        agg_dir / "yearly.parquet",
+        agg_dir / "rolling_10y.parquet",
+        agg_dir / "rolling_20y.parquet",
+    )
+    for path in candidates:
+        try:
+            if parquet_columns_func(path):
+                return True
+        except Exception:
+            continue
+    return False
+
+
 def apply_aggregate_query_hints(item: dict, query: str) -> None:
     item["mode"] = "aggregate"
     item.pop("event_file", None)

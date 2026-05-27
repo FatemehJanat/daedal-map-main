@@ -7,6 +7,39 @@ import re
 import pandas as pd
 
 
+def aggregate_metric_frame(df: pd.DataFrame, group_cols: list[str]) -> pd.DataFrame:
+    """Aggregate a disaster metric frame to a coarser spatial level."""
+    agg_map = {}
+    for col in df.columns:
+        if col in group_cols or col == "source":
+            continue
+        if col in {"year", "window_end_year"}:
+            continue
+        if col.startswith("max_"):
+            agg_map[col] = "max"
+        elif col.startswith("avg_"):
+            agg_map[col] = "mean"
+        elif col in {"event_count", "deaths", "injuries", "damage_usd", "damage_millions"}:
+            agg_map[col] = "sum"
+        elif col.startswith("total_"):
+            agg_map[col] = "sum"
+        elif col in {"years_observed"}:
+            agg_map[col] = "max"
+        elif col in {"window_start_year", "window_years"}:
+            agg_map[col] = "first"
+        else:
+            if pd.api.types.is_numeric_dtype(df[col]):
+                agg_map[col] = "sum"
+
+    if not agg_map:
+        return df[group_cols].drop_duplicates().reset_index(drop=True)
+
+    out = df.groupby(group_cols, as_index=False).agg(agg_map)
+    if "source" in df.columns:
+        out["source"] = df["source"].iloc[0]
+    return out
+
+
 def infer_implicit_aggregate_rollup_level(item: dict, *, expand_region_func) -> str | None:
     """Infer an aggregate rollup level when the order did not state one."""
     if item.get("aggregate_rollup_level"):
