@@ -5,6 +5,13 @@ from __future__ import annotations
 import re
 
 
+def load_disaster_overlays(*, load_reference_json_func) -> dict:
+    """Load shared disaster overlay reference data from reference/disasters.json."""
+    data = load_reference_json_func("disasters.json")
+    overlays = data.get("overlays", {}) if isinstance(data, dict) else {}
+    return overlays if isinstance(overlays, dict) else {}
+
+
 def item_disaster_key(
     item: dict,
     catalog_source: dict | None,

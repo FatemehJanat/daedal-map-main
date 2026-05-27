@@ -42,6 +42,7 @@ def run_pre_validation_pipeline(
     catalog: dict,
     detect_event_mode,
     normalize_aggregate_metric_mode,
+    normalize_order_items,
     expand_full_pack_loads,
     expand_wildcard_metrics,
     expand_all_derived_fields,
@@ -49,6 +50,7 @@ def run_pre_validation_pipeline(
     """Run the deterministic item expansion pipeline before validation."""
     items = detect_event_mode(items, hints)
     items = normalize_aggregate_metric_mode(items, hints, catalog)
+    items = normalize_order_items(items, catalog)
     items = expand_full_pack_loads(items, catalog)
     items = expand_wildcard_metrics(items)
     metric_count = sum(1 for item in items if item.get("type") != "derived_result")

@@ -3,29 +3,33 @@
 from __future__ import annotations
 
 from mapmover.request_risk_gate import block_gate, warn_gate
+from mapmover.runtime.warning_policy import (
+    DEFAULT_DISPLAY_WARNING_POLICY,
+    DEFAULT_METRIC_WARNING_POLICY,
+    DisplayWarningPolicy,
+    MetricWarningPolicy,
+)
 
 
-DISPLAY_SOFT_CAP = 1000
-DISPLAY_HARD_CAP = 5000
-METRIC_DISPLAY_WARN = 15
-
-
-def build_metric_warning(metric_count: int, metric_display_warn: int = METRIC_DISPLAY_WARN) -> dict | None:
+def build_metric_warning(
+    metric_count: int,
+    policy: MetricWarningPolicy = DEFAULT_METRIC_WARNING_POLICY,
+) -> dict | None:
     """Build the standard metric-count warning payload when needed."""
-    if metric_count <= metric_display_warn:
+    if metric_count <= policy.threshold:
         return None
     gate = warn_gate(
-        lane="human_web_metrics",
+        lane=policy.lane,
         reason=(
-            f"Your request has {metric_count} metrics. More than 15 is hard to display well in popups. "
+            f"Your request has {metric_count} metrics. More than {policy.threshold} is hard to display well in popups. "
             "Would you like all of them in your order?"
         ),
-        soft_cap=metric_display_warn,
+        soft_cap=policy.threshold,
         estimated_count=metric_count,
-        override_allowed=True,
-        measure="metric_count",
-        fallback_strategy="warn_then_override",
-        suggested_narrowing=["choose a few metrics", "split by topic", "display one metric at a time"],
+        override_allowed=policy.override_allowed,
+        measure=policy.measure,
+        fallback_strategy=policy.fallback_strategy,
+        suggested_narrowing=list(policy.suggested_narrowing),
     )
     return {
         "count": metric_count,
@@ -57,38 +61,30 @@ def build_metric_warning_result(
 def build_display_warning(
     available_rows: int,
     *,
-    soft_cap: int = DISPLAY_SOFT_CAP,
-    hard_cap: int = DISPLAY_HARD_CAP,
-    lane: str = "human_web_display",
-    soft_narrowing: list[str] | None = None,
-    hard_narrowing: list[str] | None = None,
+    policy: DisplayWarningPolicy = DEFAULT_DISPLAY_WARNING_POLICY,
 ) -> dict | None:
     """Build the standard broad-display warning payload when needed."""
-    if available_rows <= soft_cap:
+    if available_rows <= policy.soft_cap:
         return None
-    if soft_narrowing is None:
-        soft_narrowing = ["choose a smaller area", "ask for a top 100 subset", "focus on one state or county"]
-    if hard_narrowing is None:
-        hard_narrowing = list(soft_narrowing)
-    if available_rows > hard_cap:
+    if available_rows > policy.hard_cap:
         gate = block_gate(
-            lane=lane,
+            lane=policy.lane,
             reason=(
                 f"This request would display about {available_rows:,} map shapes/locations, which exceeds the high-risk "
-                f"display threshold of {hard_cap:,}. This may crash the map or make you lose chat history."
+                f"display threshold of {policy.hard_cap:,}. This may crash the map or make you lose chat history."
             ),
-            soft_cap=soft_cap,
-            hard_cap=hard_cap,
+            soft_cap=policy.soft_cap,
+            hard_cap=policy.hard_cap,
             estimated_count=available_rows,
-            measure="display_features",
+            measure=policy.measure,
             fallback_strategy="narrow_subset",
-            suggested_narrowing=hard_narrowing,
+            suggested_narrowing=list(policy.hard_narrowing),
         )
         return {
             "level": "hard_cap",
             "row_count": available_rows,
-            "soft_cap": soft_cap,
-            "hard_cap": hard_cap,
+            "soft_cap": policy.soft_cap,
+            "hard_cap": policy.hard_cap,
             "message": (
                 f"This request would display about {available_rows:,} map shapes/locations. "
                 "Are you really sure? This may crash the map and make you lose chat history."
@@ -96,26 +92,65 @@ def build_display_warning(
             "gate": gate,
         }
     gate = warn_gate(
-        lane=lane,
+        lane=policy.lane,
         reason=(
             f"This request matches about {available_rows:,} features. Displaying that many at once may hurt map "
             "performance. Narrow it first, or ask for a bounded subset like the top 100 or one state."
         ),
-        soft_cap=soft_cap,
-        hard_cap=hard_cap,
+        soft_cap=policy.soft_cap,
+        hard_cap=policy.hard_cap,
         estimated_count=available_rows,
-        override_allowed=True,
-        measure="display_features",
-        fallback_strategy="warn_then_override",
-        suggested_narrowing=soft_narrowing,
+        override_allowed=policy.override_allowed,
+        measure=policy.measure,
+        fallback_strategy=policy.fallback_strategy,
+        suggested_narrowing=list(policy.soft_narrowing),
     )
     return {
         "level": "soft_cap",
         "row_count": available_rows,
-        "soft_cap": soft_cap,
-        "hard_cap": hard_cap,
+        "soft_cap": policy.soft_cap,
+        "hard_cap": policy.hard_cap,
         "message": gate.get("reason"),
         "gate": gate,
+    }
+
+
+def evaluate_display_warning_gate(
+    available_rows: int,
+    *,
+    policy: DisplayWarningPolicy = DEFAULT_DISPLAY_WARNING_POLICY,
+    force_large_display: bool = False,
+) -> tuple[dict | None, bool]:
+    """Return `(warning, should_interrupt)` for large-display gating.
+
+    This keeps the decision logic aligned across Explore, Research, and any
+    future lane that wants shared default warning behavior with lane-specific
+    policy overrides.
+    """
+    warning = build_display_warning(available_rows, policy=policy)
+    if not warning:
+        return None, False
+    should_interrupt = warning.get("level") == "hard_cap" or (
+        warning.get("level") == "soft_cap" and not force_large_display
+    )
+    return warning, should_interrupt
+
+
+def build_interrupted_display_warning_payload(
+    warning: dict,
+    *,
+    rows: list | None = None,
+    truncated: bool = True,
+    **extra_fields,
+) -> dict:
+    """Build the shared interrupted payload used below final lane responses."""
+    warning = warning or {}
+    return {
+        "rows": list(rows or []),
+        "row_count": warning.get("row_count"),
+        "truncated": bool(truncated),
+        "display_warning": warning,
+        **extra_fields,
     }
 
 

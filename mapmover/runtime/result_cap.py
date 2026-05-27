@@ -130,6 +130,33 @@ def merge_cap_info(*infos: Optional[dict]) -> Optional[dict]:
     }
 
 
+def build_cap_info_from_counts(
+    *,
+    returned_rows: int,
+    available_rows: int,
+    cap_value: int | None = None,
+    cap_reason: str = "requested_limit",
+) -> Optional[dict]:
+    """Build normalized cap info from explicit row counts.
+
+    Use this when callers already know total matched rows and returned rows but
+    are not flowing through the DataFrame-based cap helper.
+    """
+    returned_rows = max(0, int(returned_rows))
+    available_rows = max(0, int(available_rows))
+    if available_rows <= returned_rows:
+        return None
+    if cap_value is None:
+        cap_value = returned_rows
+    return {
+        "cap_hit": True,
+        "returned_rows": returned_rows,
+        "available_rows": available_rows,
+        "cap_value": int(cap_value),
+        "cap_reason": cap_reason,
+    }
+
+
 def apply_runtime_feature_cap_to_payload(
     payload: Any,
     source_metadata: Optional[dict] = None,
@@ -183,6 +210,31 @@ def apply_cap_info_to_payload(payload: Any, cap_info: Optional[dict]) -> Any:
     next_payload.setdefault("available_count", cap_info.get("available_rows"))
     next_payload.setdefault("returned_count", cap_info.get("returned_rows"))
     return next_payload
+
+
+def apply_row_count_cap_to_payload(
+    payload: Any,
+    *,
+    rows_key: str = "rows",
+    row_count_key: str = "row_count",
+    cap_reason: str = "requested_limit",
+) -> Any:
+    """Attach shared cap fields to row-based payloads when rows are truncated."""
+    if not isinstance(payload, dict):
+        return payload
+    rows = payload.get(rows_key)
+    if not isinstance(rows, list):
+        return payload
+    try:
+        available_rows = int(payload.get(row_count_key) or 0)
+    except (TypeError, ValueError):
+        return payload
+    cap_info = build_cap_info_from_counts(
+        returned_rows=len(rows),
+        available_rows=available_rows,
+        cap_reason=cap_reason,
+    )
+    return apply_cap_info_to_payload(payload, cap_info)
 
 
 def cap_payload_for_source(

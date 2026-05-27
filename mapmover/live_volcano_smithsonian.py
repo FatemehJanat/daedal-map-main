@@ -8,6 +8,8 @@ from urllib.parse import urlencode
 
 import requests
 
+from mapmover.runtime.result_cap import apply_row_count_cap_to_payload
+
 
 GVP_WFS = "https://webservices.volcano.si.edu/geoserver/GVP-VOTW/ows"
 GVP_ERUPTIONS_TYPENAME = "GVP-VOTW:Smithsonian_VOTW_Holocene_Eruptions"
@@ -283,11 +285,12 @@ def fetch_live_volcanoes(
     else:
         rows.sort(key=lambda row: str(row.get("timestamp") or ""), reverse=reverse)
 
-    truncated = len(rows) > normalized_limit
+    total_row_count = len(rows)
+    truncated = total_row_count > normalized_limit
     rows = rows[:normalized_limit]
     live_watermark = max((str(row["timestamp"]) for row in rows if row.get("timestamp")), default=None)
 
-    return {
+    return apply_row_count_cap_to_payload({
         "request_id": request_id,
         "capability_id": "live_volcano_events",
         "pack_id": "volcanoes",
@@ -306,7 +309,7 @@ def fetch_live_volcanoes(
         },
         "sort": [{"field": "VEI" if normalized_orderby.startswith("vei") else "timestamp", "direction": "asc" if normalized_orderby.endswith("-asc") else "desc"}],
         "limit": normalized_limit,
-        "row_count": len(rows),
+        "row_count": total_row_count,
         "truncated": truncated,
         "rows": rows,
         "provenance": {
@@ -329,4 +332,4 @@ def fetch_live_volcanoes(
                 "message": "Smithsonian/GVP eruption updates are low-frequency official updates, not minute-by-minute operational alerts.",
             },
         ],
-    }
+    }, cap_reason="live_wrapper_limit")

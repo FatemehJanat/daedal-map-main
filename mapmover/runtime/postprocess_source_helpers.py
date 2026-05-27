@@ -94,3 +94,15 @@ def get_item_source_metadata(
     if not source_id:
         return {}
     return load_source_metadata_func(source_id) or {}
+
+
+def metric_display_name(
+    source_id: str,
+    metric_key: str,
+    *,
+    load_source_metadata_func,
+) -> str:
+    """Resolve a user-facing metric display name from source metadata."""
+    metadata = load_source_metadata_func(source_id) or {}
+    metric_info = (metadata.get("metrics") or {}).get(metric_key, {})
+    return metric_info.get("name", metric_key) if isinstance(metric_info, dict) else metric_key

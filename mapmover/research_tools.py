@@ -18,7 +18,12 @@ from mapmover.source_time_contract import build_metric_year_ranges
 from mapmover.duckdb_helpers import parquet_columns, path_to_uri, quote_ident, run_df
 from mapmover.foundation_helpers import bridge_loc_id_family, get_foundation_helper_registry
 from mapmover.geometry_handlers import get_selection_geometries
-from mapmover.runtime.warning_primitives import build_display_warning
+from mapmover.runtime.result_cap import apply_row_count_cap_to_payload
+from mapmover.runtime.warning_policy import DEFAULT_DISPLAY_WARNING_POLICY
+from mapmover.runtime.warning_primitives import (
+    build_interrupted_display_warning_payload,
+    evaluate_display_warning_gate,
+)
 from mapmover.session_cache import session_manager
 
 try:
@@ -149,10 +154,6 @@ RESEARCH_TOOL_DEFINITIONS = [
         },
     },
 ]
-
-
-RESEARCH_DISPLAY_SOFT_CAP = 5000
-RESEARCH_DISPLAY_HARD_CAP = 25000
 
 
 def _normalize_tool_input(tool_name: str, tool_input: Any) -> dict:
@@ -469,11 +470,11 @@ def _query_live_source_rows(
 
     output_df = run_df(sql, query_params)
     output = output_df.to_dict("records") if not output_df.empty else []
-    return {
+    return apply_row_count_cap_to_payload({
         "rows": _jsonable(output),
         "row_count": row_count,
         "truncated": bool(limit is not None and row_count > limit),
-    }
+    })
 
 
 def _rows_from_result(result: dict) -> list[dict]:
@@ -711,7 +712,11 @@ def _query_rows_python(
         limit = default_limit
     if limit is None:
         return {"rows": rows, "row_count": len(rows), "truncated": False}
-    return {"rows": rows[:limit], "row_count": len(rows), "truncated": len(rows) > limit}
+    return apply_row_count_cap_to_payload({
+        "rows": rows[:limit],
+        "row_count": len(rows),
+        "truncated": len(rows) > limit,
+    })
 
 
 def _query_artifact_subset_join(
@@ -948,11 +953,11 @@ def _query_rows_duckdb(
         if limit is not None:
             sql += f" LIMIT {limit}"
         output = con.execute(sql, params).fetchdf().to_dict("records")
-        return {
+        return apply_row_count_cap_to_payload({
             "rows": _jsonable(output),
             "row_count": row_count,
             "truncated": bool(limit is not None and row_count > limit),
-        }
+        })
     finally:
         con.close()
 
@@ -1409,28 +1414,20 @@ def _build_display_subset(result: dict, artifact: dict, tool_input: dict) -> dic
     rows = _rows_from_result(result)
     explicit_limit = _normalize_optional_limit(tool_input.get("limit"), maximum=None)
     force_large_display = bool(tool_input.get("_force_large_display"))
-    query_default_limit = None if explicit_limit is not None else (RESEARCH_DISPLAY_HARD_CAP + 1)
+    warning_policy = tool_input.get("_display_warning_policy") or DEFAULT_DISPLAY_WARNING_POLICY
+    query_default_limit = None if explicit_limit is not None else (warning_policy.hard_cap + 1)
     query_result = _query_rows_duckdb(rows, tool_input, default_limit=query_default_limit, maximum_limit=None)
     row_count = int(query_result.get("row_count", 0) or 0)
-    display_warning = build_display_warning(
+    display_warning, should_interrupt = evaluate_display_warning_gate(
         row_count,
-        soft_cap=RESEARCH_DISPLAY_SOFT_CAP,
-        hard_cap=RESEARCH_DISPLAY_HARD_CAP,
-        lane="human_web_research_display",
-        soft_narrowing=["top 100", "one tract", "one year", "one building type"],
-        hard_narrowing=["top 100", "one tract", "one building type"],
+        policy=warning_policy,
+        force_large_display=force_large_display,
     )
-    if explicit_limit is None and display_warning and (
-        display_warning.get("level") == "hard_cap"
-        or (display_warning.get("level") == "soft_cap" and not force_large_display)
-    ):
-        return {
-            "artifact_id": artifact.get("artifact_id"),
-            "rows": [],
-            "row_count": row_count,
-            "truncated": True,
-            "display_warning": display_warning,
-        }
+    if explicit_limit is None and should_interrupt:
+        return build_interrupted_display_warning_payload(
+            display_warning or {},
+            artifact_id=artifact.get("artifact_id"),
+        )
     matched_rows = query_result.get("rows") or []
     feature_lookup = _feature_lookup_from_result(result)
     return _build_research_map_payload(
@@ -1450,6 +1447,7 @@ def execute_research_tool(
     tool_input: dict,
     *,
     force_large_display: bool = False,
+    display_warning_policy=DEFAULT_DISPLAY_WARNING_POLICY,
 ) -> dict:
     try:
         tool_input = _normalize_tool_input(tool_name, tool_input)
@@ -1513,8 +1511,9 @@ def execute_research_tool(
                 if force_large_display:
                     tool_input = dict(tool_input or {})
                     tool_input["_force_large_display"] = True
+                tool_input["_display_warning_policy"] = display_warning_policy
                 explicit_limit = _normalize_optional_limit(tool_input.get("limit"), maximum=None)
-                query_default_limit = None if explicit_limit is not None else (RESEARCH_DISPLAY_HARD_CAP + 1)
+                query_default_limit = None if explicit_limit is not None else (display_warning_policy.hard_cap + 1)
                 query_result = _query_live_source_rows(
                     artifact,
                     tool_input,
@@ -1526,25 +1525,16 @@ def execute_research_tool(
                     return query_result
                 row_count = int(query_result.get("row_count", 0) or 0)
                 force_large_display = bool(tool_input.get("_force_large_display"))
-                display_warning = build_display_warning(
+                display_warning, should_interrupt = evaluate_display_warning_gate(
                     row_count,
-                    soft_cap=RESEARCH_DISPLAY_SOFT_CAP,
-                    hard_cap=RESEARCH_DISPLAY_HARD_CAP,
-                    lane="human_web_research_display",
-                    soft_narrowing=["top 100", "one county", "one year"],
-                    hard_narrowing=["top 100", "one tract", "one county"],
+                    policy=display_warning_policy,
+                    force_large_display=force_large_display,
                 )
-                if explicit_limit is None and display_warning and (
-                    display_warning.get("level") == "hard_cap"
-                    or (display_warning.get("level") == "soft_cap" and not force_large_display)
-                ):
-                    return {
-                        "artifact_id": artifact.get("artifact_id"),
-                        "rows": [],
-                        "row_count": row_count,
-                        "truncated": True,
-                        "display_warning": display_warning,
-                    }
+                if explicit_limit is None and should_interrupt:
+                    return build_interrupted_display_warning_payload(
+                        display_warning or {},
+                        artifact_id=artifact.get("artifact_id"),
+                    )
                 matched_rows = query_result.get("rows") or []
                 return _build_research_map_payload(
                     matched_rows,
@@ -1558,6 +1548,7 @@ def execute_research_tool(
             if force_large_display:
                 tool_input = dict(tool_input or {})
                 tool_input["_force_large_display"] = True
+            tool_input["_display_warning_policy"] = display_warning_policy
             return _build_display_subset(result, artifact, tool_input)
 
         return {"error": "unknown_tool", "tool_name": tool_name}

@@ -137,9 +137,80 @@ def _build_stub_order(source_metadata: dict) -> Optional[dict]:
     }
 
 
+def _first_nonempty(*values: Any) -> Optional[str]:
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _extract_reference_sections(source_reference: dict) -> dict[str, Any]:
+    sections: dict[str, Any] = {}
+    if not isinstance(source_reference, dict):
+        return sections
+
+    source_info = source_reference.get("source")
+    if isinstance(source_info, dict):
+        description = _first_nonempty(
+            source_info.get("description"),
+            source_info.get("summary"),
+        )
+        if description:
+            sections["reference_description"] = description
+
+    context = source_reference.get("context")
+    if isinstance(context, str) and context.strip():
+        sections["reference_context"] = context.strip()
+    elif isinstance(context, dict):
+        context_parts = []
+        for key in ("overview", "methodology", "usage_notes", "interpretation"):
+            value = context.get(key)
+            if isinstance(value, str) and value.strip():
+                context_parts.append(value.strip())
+        if context_parts:
+            sections["reference_context"] = "\n\n".join(context_parts)
+
+    about = source_reference.get("about")
+    if isinstance(about, dict):
+        about_parts = []
+        for key in ("summary", "history", "methodology", "source_context"):
+            value = about.get(key)
+            if isinstance(value, str) and value.strip():
+                about_parts.append(value.strip())
+        if about_parts and "reference_context" not in sections:
+            sections["reference_context"] = "\n\n".join(about_parts)
+
+    goal = source_reference.get("goal")
+    if isinstance(goal, dict):
+        goal_title = _first_nonempty(goal.get("full_title"), goal.get("name"))
+        goal_description = _first_nonempty(goal.get("description"))
+        if goal_title:
+            sections["reference_title"] = goal_title
+        if goal_description:
+            sections["reference_description"] = goal_description
+        targets = goal.get("targets")
+        if isinstance(targets, list) and targets:
+            lines = []
+            for entry in targets[:8]:
+                if isinstance(entry, dict):
+                    text = _first_nonempty(entry.get("description"), entry.get("title"), entry.get("name"))
+                    code = _first_nonempty(entry.get("code"), entry.get("id"))
+                    if text and code:
+                        lines.append(f"- {code}: {text}")
+                    elif text:
+                        lines.append(f"- {text}")
+                elif isinstance(entry, str) and entry.strip():
+                    lines.append(f"- {entry.strip()}")
+            if lines:
+                sections["reference_targets"] = "Targets:\n" + "\n".join(lines)
+
+    return sections
+
+
 def build_explainer_response(
     source_metadata: Optional[dict],
     question: Any,
+    source_reference: Optional[dict] = None,
 ) -> Optional[dict]:
     """Build an explainer response from pack metadata, or return None.
 
@@ -158,56 +229,74 @@ def build_explainer_response(
         "stub_order": <minimal order pointing at the pack> | None,
       }
     """
-    if not isinstance(source_metadata, dict):
+    if not isinstance(source_metadata, dict) and not isinstance(source_reference, dict):
         return None
     if not looks_like_explainer_question(question):
         return None
 
-    description = source_metadata.get("description")
-    llm_summary = source_metadata.get("llm_summary")
-    if not (isinstance(description, str) and description.strip()) and not (
-        isinstance(llm_summary, str) and llm_summary.strip()
+    reference_sections = _extract_reference_sections(source_reference or {})
+    description = source_metadata.get("description") if isinstance(source_metadata, dict) else None
+    llm_summary = source_metadata.get("llm_summary") if isinstance(source_metadata, dict) else None
+    if not reference_sections and not (
+        (isinstance(description, str) and description.strip())
+        or (isinstance(llm_summary, str) and llm_summary.strip())
     ):
         return None
 
     sections: dict[str, Any] = {}
+    for key in ("reference_title", "reference_description", "reference_context", "reference_targets"):
+        if key in reference_sections:
+            sections[key] = reference_sections[key]
     if isinstance(description, str) and description.strip():
         sections["description"] = description.strip()
     if isinstance(llm_summary, str) and llm_summary.strip():
         sections["summary"] = llm_summary.strip()
 
-    facility_types_block = _format_structured_dict(
-        "Facility types", source_metadata.get("facility_types")
-    )
-    if facility_types_block:
-        sections["facility_types"] = facility_types_block
+    if isinstance(source_metadata, dict):
+        facility_types_block = _format_structured_dict(
+            "Facility types", source_metadata.get("facility_types")
+        )
+        if facility_types_block:
+            sections["facility_types"] = facility_types_block
 
-    upstream_summary = _summarize_upstream_sources(source_metadata)
+    upstream_summary = _summarize_upstream_sources(source_metadata or {})
     if upstream_summary:
         sections["upstream_sources"] = upstream_summary
 
-    last_updated = source_metadata.get("last_updated")
+    last_updated = source_metadata.get("last_updated") if isinstance(source_metadata, dict) else None
     if isinstance(last_updated, str) and last_updated.strip():
         sections["last_updated"] = last_updated.strip()
 
     text_parts = []
-    if "summary" in sections:
+    if "reference_title" in sections:
+        text_parts.append(sections["reference_title"])
+    if "reference_description" in sections:
+        text_parts.append(sections["reference_description"])
+    elif "summary" in sections:
         text_parts.append(sections["summary"])
     elif "description" in sections:
         text_parts.append(sections["description"])
+    if "reference_context" in sections:
+        text_parts.append(sections["reference_context"])
+    elif "summary" in sections and sections["summary"] not in text_parts:
+        text_parts.append(sections["summary"])
     if "facility_types" in sections:
         text_parts.append(sections["facility_types"])
+    if "reference_targets" in sections:
+        text_parts.append(sections["reference_targets"])
     if "upstream_sources" in sections:
         text_parts.append(f"Upstream sources: {sections['upstream_sources']}.")
     if "last_updated" in sections:
         text_parts.append(f"Last updated: {sections['last_updated']}.")
     text = "\n\n".join(part for part in text_parts if part)
 
+    source_payload = source_metadata if isinstance(source_metadata, dict) else (source_reference or {})
+
     return {
         "intent": "explainer",
-        "source_id": source_metadata.get("source_id"),
-        "pack_id": source_metadata.get("pack_id"),
+        "source_id": source_payload.get("source_id"),
+        "pack_id": source_payload.get("pack_id"),
         "text": text,
         "sections": sections,
-        "stub_order": _build_stub_order(source_metadata),
+        "stub_order": _build_stub_order(source_payload),
     }
