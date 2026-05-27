@@ -35,6 +35,7 @@ def finalize_explore_order_result(
     result: dict,
     hints: dict,
     force_metrics: bool,
+    metric_warning_policy,
     postprocess_order_func,
     get_display_items_func,
     build_clarify_response_func,
@@ -42,7 +43,7 @@ def finalize_explore_order_result(
     build_order_response_func,
 ) -> tuple[str, dict]:
     """Postprocess one Explore order-taker result into a final route payload."""
-    processed = postprocess_order_func(result["order"], hints)
+    processed = postprocess_order_func(result["order"], hints, metric_warning_policy=metric_warning_policy)
     result_summary = processed.get("summary") or result.get("summary") or result.get("order", {}).get("summary") or "Data request"
 
     if processed.get("needs_clarify"):

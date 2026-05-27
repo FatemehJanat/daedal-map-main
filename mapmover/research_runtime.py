@@ -59,6 +59,7 @@ def run_research_tool_loop(
     progress_messages: dict,
     execute_research_tool_func,
     force_large_display: bool,
+    display_warning_policy,
     tool_call_signature_func,
     research_map_payload_from_tool_result_func,
     compact_tool_result_for_prompt_func,
@@ -120,6 +121,7 @@ def run_research_tool_loop(
                     block.name,
                     block.input,
                     force_large_display=force_large_display,
+                    display_warning_policy=display_warning_policy,
                 )
                 recent_tool_signatures.append(tool_call_signature_func(block.name, block.input))
                 if len(recent_tool_signatures) > 8:

@@ -1,37 +1,34 @@
 """Chat API router endpoints."""
 
 import asyncio
-import ctypes
-import gc
-import hashlib
 import json
-import os
-import time
 
-import msgpack
 from fastapi import APIRouter, Request
 from fastapi.responses import Response, StreamingResponse
-from starlette.background import BackgroundTask
 
-from mapmover.auth_context import build_session_cache_key, get_authenticated_user, get_authenticated_user_async
-from mapmover import logger, session_manager
+from mapmover.auth_context import get_authenticated_user
+from mapmover import logger
 from mapmover.corpus_registry import corpus_registry
-from mapmover.order_executor import execute_order
+from mapmover.order_executor import execute_geometry_overlay, execute_order
 from mapmover.order_taker import interpret_request
 from mapmover.postprocessor import get_display_items, postprocess_order
 from mapmover.preprocessor import preprocess_query
 from mapmover.progress_bus import ProgressBus, ProgressEvent
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
 from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log_conversation
-from mapmover.llm_usage import LLMUsageRecorder, classify_caller, extract_qa_http_label
-from mapmover.chat_budget import budget_rejection_payload, check_anonymous_chat_budget
-from mapmover.data_loading import load_source_metadata
-from mapmover.catalog_surface import (
-    catalog_surface_scope,
-    normalize_catalog_surface,
-    request_can_use_wip_catalog,
+from mapmover.data_loading import fetch_geometries_by_loc_ids, load_source_metadata, load_source_reference
+from mapmover.explore.chat_route_runtime import (
+    anonymous_budget_rejection_payload,
+    build_llm_usage_recorder,
+    execute_confirmed_order_http,
+    execute_confirmed_order_stream,
+    prepare_explore_chat_route_context,
 )
-from mapmover.explore.explore_confirmed_order import execute_confirmed_order_with_session_cache
+from mapmover.explore.chat_lane_runtime import (
+    maybe_build_shortcut_payload,
+)
+from mapmover.explore.chat_request_runtime import prepare_explore_request
+from mapmover.explore.chat_result_runtime import build_explore_final_result
 from mapmover.explore.explore_followups import (
     address_prompt_response,
     build_drilldown_response,
@@ -50,431 +47,65 @@ from mapmover.explore.explore_response_adapter import (
     build_order_response,
     build_overlay_toggle_response,
 )
-from mapmover.runtime.warning_primitives import (
-    build_display_warning,
-    build_display_warning_result,
-    build_metric_warning_result,
+from mapmover.runtime.warning_primitives import build_metric_warning_result
+from mapmover.routes.chat_shared import (
+    _chat_log_timing,
+    _confirmed_order_rate_limit,
+    _maybe_attach_memory_relief,
+    _set_chat_analytics,
+    decode_json_or_msgpack_body,
+    decode_request_body,
 )
-from mapmover.runtime.result_cap import apply_cap_info_to_payload
-from mapmover.security import get_client_ip, rate_limiter
+from mapmover.runtime.sse import SSE_HEADERS, encode_sse, progress_payload, stage_payload
 
-
-# Heartbeat copy for explorer mode. Used only when the LLM tool loop
-# is silent for longer than the heartbeat window. Cycles by idle count.
 router = APIRouter()
 explore_orchestrator = ExploreOrchestrator()
-_LARGE_RESPONSE_FEATURE_THRESHOLD = 1000
-
-
-def _chat_trace_id(session_id: str, query: str) -> str:
-    seed = f"{session_id}|{query[:80]}"
-    return hashlib.md5(seed.encode()).hexdigest()[:10]
-
-
-def _chat_log_timing(trace_id: str, stage: str, started_at: float, extra: str = "") -> float:
-    now = time.perf_counter()
-    elapsed_ms = (now - started_at) * 1000
-    suffix = f" | {extra}" if extra else ""
-    logger.info(f"[chat:{trace_id}] {stage}: {elapsed_ms:.1f}ms{suffix}")
-    return now
-
-
-def _trim_process_memory() -> None:
-    gc.collect()
-    if os.name != "posix":
-        return
-    try:
-        ctypes.CDLL("libc.so.6").malloc_trim(0)
-    except Exception:
-        return
-
-
-def _maybe_attach_memory_relief(response: Response, payload: dict | None) -> Response:
-    if not isinstance(payload, dict):
-        return response
-    feature_count = 0
-    geojson = payload.get("geojson")
-    if isinstance(geojson, dict):
-        features = geojson.get("features")
-        if isinstance(features, list):
-            feature_count = len(features)
-    available_count = int(payload.get("available_count") or 0)
-    if feature_count < _LARGE_RESPONSE_FEATURE_THRESHOLD and available_count < _LARGE_RESPONSE_FEATURE_THRESHOLD:
-        return response
-    response.background = BackgroundTask(_trim_process_memory)
-    return response
-
-
-def _rate_limited_message(message: str, retry_after: int) -> Response:
-    response = msgpack_response({"error": message, "retry_after": retry_after}, status_code=429)
-    response.headers["Retry-After"] = str(retry_after)
-    return response
-
-
-def _confirmed_order_rate_limit(req: Request, auth_user: dict | None, caller_ctx: dict | None = None) -> Response | None:
-    caller_kind = (caller_ctx or {}).get("caller_kind")
-    if caller_kind in {"qa_suite", "qa_http_suite"}:
-        return None
-    user_id = (auth_user or {}).get("id")
-    window_seconds = int(os.getenv("CONFIRMED_ORDER_RATE_WINDOW_SECONDS", "60"))
-    if user_id:
-        limit = int(os.getenv("CONFIRMED_ORDER_RATE_LIMIT_AUTH", "30"))
-        allowed, retry_after = rate_limiter.check(
-            f"confirmed_order:user:{user_id}",
-            limit=limit,
-            window_seconds=window_seconds,
-        )
-        if not allowed:
-            return _rate_limited_message(
-                "Too many direct order executions. Please slow down and try again shortly.",
-                retry_after,
-            )
-        return None
-
-    client_ip = get_client_ip(req)
-    limit = int(os.getenv("CONFIRMED_ORDER_RATE_LIMIT_ANON", "10"))
-    allowed, retry_after = rate_limiter.check(
-        f"confirmed_order:ip:{client_ip}",
-        limit=limit,
-        window_seconds=window_seconds,
-    )
-    if not allowed:
-        return _rate_limited_message(
-            "Too many anonymous direct order executions. Please wait a moment and try again.",
-            retry_after,
-        )
-    return None
-
-
-def _confirmed_order_user_error() -> dict:
-    return {
-        "type": "error",
-        "message": "Order execution failed. Please try again.",
-    }
-
-
-def _catalog_surface_for_request(req: Request, body: dict, auth_user: dict | None) -> tuple[str | None, Response | None]:
-    surface = normalize_catalog_surface(body.get("catalog_surface"))
-    if surface == "wip" and not request_can_use_wip_catalog(req, auth_user):
-        return None, msgpack_response(
-            {
-                "type": "error",
-                "message": "WIP catalog access is limited to admin accounts.",
-            },
-            status_code=403,
-        )
-    return surface, None
-
-
-def _set_chat_analytics(
-    req: Request,
-    *,
-    lane: str,
-    confirmed_order: bool = False,
-    request_key: str | None = None,
-    reused_cached_result: bool | None = None,
-    force_refetch: bool | None = None,
-    result_type: str | None = None,
-    source_id: str | None = None,
-    error_code: str | None = None,
-) -> None:
-    if error_code is not None:
-        req.state.analytics_error_code = error_code
-    if source_id:
-        req.state.analytics_source_id = source_id
-    req.state.analytics_metadata = {
-        "chat_lane": lane,
-        "confirmed_order": confirmed_order,
-        "request_key": request_key,
-        "reused_cached_result": reused_cached_result,
-        "force_refetch": force_refetch,
-        "result_type": result_type,
-    }
-
-
-async def decode_request_body(request: Request) -> dict:
-    """Decode MessagePack request body."""
-    body_bytes = await request.body()
-    return msgpack.unpackb(body_bytes, raw=False)
 
 
 @router.post("/chat")
 async def chat_endpoint(req: Request):
     """Chat endpoint - Order Taker model."""
+    import time
+
     t_request_start = time.perf_counter()
     trace_id = "unknown"
     try:
         body = await decode_request_body(req)
-
-        frontend_session_id = body.get("sessionId", "anonymous")
-        auth_user = await get_authenticated_user_async(req)
-        client_ip = get_client_ip(req)
-        caller_ctx = classify_caller(
-            auth_user=auth_user,
-            ip_hash=hash_ip_for_analytics(client_ip),
-            qa_http_label=extract_qa_http_label(req.headers),
+        route_context, route_error = await prepare_explore_chat_route_context(
+            req,
+            body,
+            request_started_at=t_request_start,
         )
-        user_id = auth_user.get("id") if auth_user else None
-        caller_kind = caller_ctx.get("caller_kind")
-        if caller_kind in {"qa_suite", "qa_http_suite"}:
-            pass
-        elif user_id:
-            allowed, retry_after = rate_limiter.check(f"chat:user:{user_id}", limit=60, window_seconds=60)
-            if not allowed:
-                return _rate_limited_message("Too many chat requests. Please slow down and try again shortly.", retry_after)
-        else:
-            allowed, retry_after = rate_limiter.check(f"chat:ip:{client_ip}", limit=20, window_seconds=60)
-            if not allowed:
-                return _rate_limited_message("Too many anonymous chat requests. Please wait a moment and try again.", retry_after)
-
-        session_id = build_session_cache_key(frontend_session_id, auth_user)
-        catalog_surface, surface_error = _catalog_surface_for_request(req, body, auth_user)
-        if surface_error:
-            return surface_error
-        query_preview = body.get("query", "") or "[confirmed_order]"
-        trace_id = _chat_trace_id(session_id, query_preview)
-        logger.info(
-            f"[chat:{trace_id}] request start | confirmed_order={bool(body.get('confirmed_order'))} "
-            f"| query_len={len(body.get('query', '') or '')} | user={'auth' if user_id else 'anon'}"
-        )
-        _chat_log_timing(trace_id, "body_decoded", t_request_start, f"session={frontend_session_id}")
-        cache = session_manager.get_or_create(session_id)
+        if route_error:
+            return route_error
+        assert route_context is not None
+        trace_id = route_context.trace_id
 
         if body.get("confirmed_order"):
-            confirmed_order_rate_limit = _confirmed_order_rate_limit(req, auth_user, caller_ctx)
-            if confirmed_order_rate_limit:
-                _set_chat_analytics(
-                    req,
-                    lane="confirmed_order",
-                    confirmed_order=True,
-                    error_code="confirmed_order_rate_limited",
-                )
-                return confirmed_order_rate_limit
-            try:
-                confirmed_order = body["confirmed_order"]
-                force_refetch = body.get("force", False)
-                force_large_display = bool(body.get("force_large_display"))
-                t_exec_start = time.perf_counter()
-                with catalog_surface_scope(catalog_surface):
-                    result, request_key, reused_cached_result = execute_confirmed_order_with_session_cache(
-                        cache,
-                        confirmed_order,
-                        force_refetch=force_refetch,
-                        execute_order_func=execute_order,
-                        transform_result_func=lambda next_result: explore_orchestrator.apply_runtime_result_cap(
-                            next_result,
-                            confirmed_order=confirmed_order,
-                            load_source_metadata_func=load_source_metadata,
-                        ),
-                    )
-                _chat_log_timing(
-                    trace_id,
-                    "confirmed_order_executed",
-                    t_exec_start,
-                    f"request_key={request_key} type={result.get('type')} source={result.get('source_id')} reused={reused_cached_result}",
-                )
-                _set_chat_analytics(
-                    req,
-                    lane="confirmed_order",
-                    confirmed_order=True,
-                    request_key=request_key,
-                    reused_cached_result=reused_cached_result,
-                    force_refetch=bool(force_refetch),
-                    result_type=result.get("type"),
-                    source_id=result.get("source_id"),
-                )
-                cap_info = result.get("cap_info") if isinstance(result.get("cap_info"), dict) else None
-                available_rows = int((cap_info or {}).get("available_rows") or 0)
-                display_warning = None if force_large_display else build_display_warning(available_rows)
-                if display_warning:
-                    _set_chat_analytics(
-                        req,
-                        lane="confirmed_order_display_warning",
-                        confirmed_order=True,
-                        request_key=request_key,
-                        reused_cached_result=reused_cached_result,
-                        force_refetch=bool(force_refetch),
-                        result_type="display_warning",
-                        source_id=result.get("source_id"),
-                    )
-                    return msgpack_response(
-                        build_display_warning_result(
-                            display_warning,
-                            pending_order=confirmed_order,
-                            summary=result.get("summary") or confirmed_order.get("summary") or "Data request",
-                        )
-                    )
-                if result.get("type") == "error":
-                    _set_chat_analytics(
-                        req,
-                        lane="confirmed_order",
-                        confirmed_order=True,
-                        request_key=request_key,
-                        reused_cached_result=reused_cached_result,
-                        force_refetch=bool(force_refetch),
-                        result_type=result.get("type"),
-                        source_id=result.get("source_id"),
-                        error_code="confirmed_order_execution_error",
-                    )
-                    return msgpack_response({"type": "error", "message": result.get("message", "Order execution failed.")}, status_code=400)
+            return execute_confirmed_order_http(
+                req,
+                route_context=route_context,
+                body=body,
+                explore_orchestrator=explore_orchestrator,
+                request_started_at=t_request_start,
+            )
 
-                if result.get("action") == "remove":
-                    logger.info(f"Removal order executed: {result.get('count')} items from {result.get('source_id')}")
-                    return _maybe_attach_memory_relief(msgpack_response({"type": "order_response", **result}), result)
-                if result.get("type") == "mixed_order":
-                    logger.info(f"Mixed order executed: added {result.get('add_count', 0)}, removed {result.get('remove_count', 0)}")
-                    return _maybe_attach_memory_relief(msgpack_response(result), result)
-
-                if force_refetch:
-                    logger.info("Force refetch requested - clearing session cache for this data")
-                    cache.clear()
-
-                is_events = result.get("type") == "events"
-                is_geometry = result.get("data_type") == "geometry"
-                event_type_to_overlay = {
-                    "earthquake": "earthquakes",
-                    "volcano": "volcanoes",
-                    "tsunami": "tsunamis",
-                    "hurricane": "hurricanes",
-                    "wildfire": "wildfires",
-                    "tornado": "tornadoes",
-                    "flood": "floods",
-                    "drought": "drought",
-                    "landslide": "landslides",
-                }
-                event_type = result.get("event_type", "")
-                source_id = event_type_to_overlay.get(event_type, event_type) if is_events else result.get("metric_key", "data")
-                geojson = result["geojson"]
-                features = geojson.get("features", [])
-                original_count = len(features)
-
-                if is_events:
-                    new_features = cache.filter_events(features)
-                    delta_count = len(new_features)
-                    filtered_geojson = {"type": "FeatureCollection", "features": new_features}
-                    filtered_year_data = None
-                elif is_geometry:
-                    new_features = cache.filter_geometry_features(features)
-                    delta_count = len(new_features)
-                    filtered_geojson = {"type": "FeatureCollection", "features": new_features}
-                    filtered_year_data = None
-                elif result.get("multi_year") and result.get("year_data"):
-                    year_data = result["year_data"]
-                    filtered_year_data = cache.filter_year_data(year_data)
-
-                    new_loc_ids = set()
-                    for loc_data in filtered_year_data.values():
-                        new_loc_ids.update(loc_data.keys())
-
-                    new_features = [f for f in features if (f.get("properties", {}).get("loc_id") or f.get("id")) in new_loc_ids]
-                    delta_count = len(new_features)
-                    filtered_geojson = {"type": "FeatureCollection", "features": new_features}
-                else:
-                    new_features = features
-                    delta_count = original_count
-                    filtered_geojson = geojson
-                    filtered_year_data = None
-
-                if delta_count == 0 and original_count > 0:
-                    logger.debug(f"Dedup: all {original_count} features already sent, returning already_loaded")
-                    return msgpack_response(
-                        {
-                            "type": "already_loaded",
-                            "message": f"This data ({original_count} features) is already loaded on your map.",
-                            "summary": result.get("summary", ""),
-                        }
-                    )
-
-                response = {
-                    "type": result.get("type", "data"),
-                    "data_type": result.get("data_type"),
-                    "source_id": result.get("source_id"),
-                    "available_geo_levels": result.get("available_geo_levels", []),
-                    "geojson": filtered_geojson,
-                    "summary": result.get("summary", ""),
-                    "count": result.get("count", delta_count),
-                    "sources": result.get("sources", []),
-                }
-                if cap_info:
-                    response["truncated"] = bool(result.get("truncated") or cap_info.get("cap_hit"))
-                    if result.get("available_count") is not None:
-                        response["available_count"] = result.get("available_count")
-                    if result.get("returned_count") is not None:
-                        response["returned_count"] = result.get("returned_count")
-                    response = apply_cap_info_to_payload(response, cap_info)
-
-                if is_events:
-                    response["event_type"] = result.get("event_type")
-                    response["time_range"] = result.get("time_range")
-                if is_geometry:
-                    geo_level = result.get("geographic_level") or result.get("overlay_type", "zcta")
-                    response["overlay_type"] = geo_level
-                    response["geographic_level"] = geo_level
-                if result.get("multi_year"):
-                    response["multi_year"] = True
-                    response["year_range"] = result["year_range"]
-                    response["metric_key"] = result.get("metric_key")
-                    response["available_metrics"] = result.get("available_metrics", [])
-                    response["metric_year_ranges"] = result.get("metric_year_ranges", {})
-                    response["year_data"] = filtered_year_data if filtered_year_data else {}
-
-                if is_events and new_features:
-                    cache.register_sent_events(new_features, source_id)
-                elif is_geometry and new_features:
-                    geo_source_id = result.get("source_id") or "geometry_zcta"
-                    cache.register_sent_geometry(new_features, geo_source_id)
-                elif filtered_year_data:
-                    cache.register_sent_year_data(filtered_year_data)
-
-                corpus_registry.register_order_result(
-                    session_id=session_id,
-                    request_key=request_key,
-                    order=confirmed_order,
-                    response=response,
-                )
-
-                cache.touch()
-                if delta_count < original_count:
-                    logger.info(f"Delta sent: {delta_count}/{original_count} features ({original_count - delta_count} deduped)")
-
-                _chat_log_timing(trace_id, "responding", t_request_start, f"type={response.get('type')} count={response.get('count')}")
-                log_conversation(
-                    frontend_session_id,
-                    confirmed_order.get("summary", "confirmed_order"),
-                    response.get("summary", ""),
-                    surface="explorer_map",
-                    dataset_selected=response.get("source_id"),
-                    results_count=response.get("count", 0),
-                    ip_hash=hash_ip_for_analytics(client_ip),
-                    user_agent=(req.headers.get("user-agent") or "")[:300] or None,
-                )
-                return _maybe_attach_memory_relief(msgpack_response(response), response)
-            except Exception as e:
-                logger.exception(f"[chat:{trace_id}] Order execution error")
-                _set_chat_analytics(
-                    req,
-                    lane="confirmed_order",
-                    confirmed_order=True,
-                    error_code="confirmed_order_exception",
-                )
-                log_app_error(
-                    type(e).__name__,
-                    str(e),
-                    surface="human_app",
-                    path="/chat",
-                )
-                return msgpack_response(_confirmed_order_user_error(), status_code=400)
-
-        request_context = extract_chat_request_context(body)
-        query = request_context["query"]
-        chat_history = request_context["chat_history"]
-        viewport = request_context["viewport"]
-        resolved_location = request_context["resolved_location"]
-        active_overlays = request_context["active_overlays"]
-        cache_stats = request_context["cache_stats"]
-        time_state = request_context["time_state"]
-        saved_order_names = request_context["saved_order_names"]
-        loaded_data = request_context["loaded_data"]
+        prepared_request = prepare_explore_request(
+            body=body,
+            route_context=route_context,
+            explore_orchestrator=explore_orchestrator,
+            extract_chat_request_context_func=extract_chat_request_context,
+            maybe_build_shortcut_payload_func=maybe_build_shortcut_payload,
+            address_prompt_response_func=address_prompt_response,
+            build_show_borders_response_func=build_show_borders_response,
+            build_drilldown_response_func=build_drilldown_response,
+            fetch_geometries_by_loc_ids_func=fetch_geometries_by_loc_ids,
+        )
+        request_context = prepared_request["request_context"]
+        query = prepared_request["query"]
+        chat_history = prepared_request["chat_history"]
+        hints = prepared_request["hints"]
+        shortcut_payload = prepared_request["shortcut_payload"]
         tutorial_mode = request_context["tutorial_mode"]
 
         if not query:
@@ -482,17 +113,6 @@ async def chat_endpoint(req: Request):
 
         logger.debug(f"[chat:{trace_id}] Chat query: {query[:100]}...")
         t_preprocess_start = time.perf_counter()
-        with catalog_surface_scope(catalog_surface):
-            hints = explore_orchestrator.preprocess(
-                query=query,
-                viewport=viewport,
-                active_overlays=active_overlays,
-                cache_stats=cache_stats,
-                saved_order_names=saved_order_names,
-                time_state=time_state,
-                loaded_data=loaded_data,
-                resolved_location=resolved_location,
-            )
         _chat_log_timing(
             trace_id,
             "preprocess_complete",
@@ -500,71 +120,27 @@ async def chat_endpoint(req: Request):
             f"show_borders={bool(hints.get('show_borders'))} nav={bool((hints.get('navigation') or {}).get('is_navigation'))}",
         )
 
-        if hints.get("tutorial_mode"):
-            action = hints["tutorial_mode"].get("action", "toggle")
-            current_enabled = bool(tutorial_mode.get("enabled"))
-            enabled = (not current_enabled) if action == "toggle" else (action == "on")
-            message = (
-                "Tutorial mode on. Hover or tap a help marker to see what that part of the app does."
-                if enabled
-                else "Tutorial mode off."
-            )
-            return msgpack_response(
-                {
-                    "type": "tutorial_mode",
-                    "action": action,
-                    "enabled": enabled,
-                    "message": message,
-                }
-            )
-
-        if hints.get("address_prompt"):
-            return msgpack_response(address_prompt_response(hints.get("address_prompt")))
-
-        if hints.get("show_borders"):
-            previous_options = request_context["previous_disambiguation_options"]
-            loc_ids_to_show = [opt.get("loc_id") for opt in previous_options if opt.get("loc_id")] if previous_options else []
-            if loc_ids_to_show:
-                from mapmover.data_loading import fetch_geometries_by_loc_ids
-
-                geojson = fetch_geometries_by_loc_ids(loc_ids_to_show)
-                return msgpack_response(build_show_borders_response(previous_options, original_query=query, geojson=geojson))
-
-        navigation = hints.get("navigation")
-        if navigation and navigation.get("is_navigation"):
-            locations = navigation.get("locations", [])
-            if len(locations) == 1 and locations[0].get("drill_to_level"):
-                loc = locations[0]
-                loc_id = loc.get("loc_id")
-                drill_level = loc.get("drill_to_level")
-                name = loc.get("matched_term", loc_id)
-                return msgpack_response(
-                    build_drilldown_response(loc, original_query=query)
-                )
+        if shortcut_payload is not None:
+            return msgpack_response(shortcut_payload)
 
         t_interpret_start = time.perf_counter()
-        budget_decision = check_anonymous_chat_budget(caller_ctx)
-        if not budget_decision.allowed:
+        rejection_payload, rejection_status, rejection_headers = anonymous_budget_rejection_payload(route_context.caller_ctx)
+        if rejection_payload is not None:
             _set_chat_analytics(
                 req,
                 lane="anonymous_budget_blocked",
                 confirmed_order=False,
-                error_code=budget_decision.error_code,
+                error_code=rejection_payload.get("error_code"),
             )
             return msgpack_response(
-                budget_rejection_payload(budget_decision),
-                status_code=429,
-                headers={
-                    "Retry-After": str(budget_decision.retry_after_seconds),
-                    "Cache-Control": "no-store",
-                },
+                rejection_payload,
+                status_code=rejection_status or 429,
+                headers=rejection_headers or {},
             )
-        usage_recorder = LLMUsageRecorder(
-            surface="explorer",
-            call_kind="order_taker",
-            session_id=session_id,
-            request_id=trace_id,
-            **caller_ctx,
+        usage_recorder = build_llm_usage_recorder(
+            session_id=route_context.session_id,
+            trace_id=trace_id,
+            caller_ctx=route_context.caller_ctx,
         )
         # Run the synchronous LLM call in a thread so we do not block the
         # event loop for other concurrent requests on this worker.
@@ -574,7 +150,7 @@ async def chat_endpoint(req: Request):
                 chat_history=chat_history,
                 hints=hints,
                 usage_recorder=usage_recorder,
-                catalog_surface=catalog_surface,
+                catalog_surface=route_context.catalog_surface,
             )
         finally:
             usage_recorder.flush()
@@ -586,86 +162,45 @@ async def chat_endpoint(req: Request):
         )
         _chat_log_timing(trace_id, "interpret_complete", t_interpret_start, f"type={result.get('type')}")
 
-        if result["type"] == "order":
-            t_postprocess_start = time.perf_counter()
-            with catalog_surface_scope(catalog_surface):
-                response_tag, final_result = explore_orchestrator.finalize_order(
-                    result=result,
-                    hints=hints,
-                    force_metrics=bool(body.get("force_metrics")),
-                    build_clarify_response_func=build_clarify_response,
-                    build_metric_warning_response_func=build_metric_warning_result,
-                    build_order_response_func=build_order_response,
-                )
-            _chat_log_timing(
-                trace_id,
-                "postprocess_complete",
-                t_postprocess_start,
-                f"type={response_tag}",
-            )
-            _chat_log_timing(trace_id, "responding", t_request_start, f"type={response_tag}")
-            return _maybe_attach_memory_relief(msgpack_response(final_result), final_result)
-
-        if result["type"] == "navigate":
-            locations = result.get("locations", [])
-            loc_ids = [loc.get("loc_id") for loc in locations if loc.get("loc_id")]
-            geometry_overlay = result.get("geometry_overlay")
-            geojson = {"type": "FeatureCollection", "features": []}
-            if geometry_overlay:
-                from mapmover.order_executor import execute_geometry_overlay
-
-                geojson = execute_geometry_overlay(geometry_overlay, loc_ids)
-            _chat_log_timing(trace_id, "responding", t_request_start, f"type=navigate locations={len(locations)}")
-            return msgpack_response(build_navigate_response(result, loc_ids=loc_ids, original_query=query, geojson=geojson))
-
-        if result["type"] == "disambiguate":
-            _chat_log_timing(trace_id, "responding", t_request_start, f"type=disambiguate options={len(result.get('options', []))}")
-            return msgpack_response(build_disambiguate_response(result, original_query=query))
-
-        if result["type"] == "filter_update":
-            _chat_log_timing(trace_id, "responding", t_request_start, "type=filter_update")
-            return msgpack_response(build_filter_update_response(result))
-
-        if result["type"] == "overlay_toggle":
-            _chat_log_timing(trace_id, "responding", t_request_start, "type=overlay_toggle")
-            return msgpack_response(build_overlay_toggle_response(result))
-
-        if result["type"] == "clarify":
-            result["message"] = explore_orchestrator.compact_followup(result.get("message", ""))
-            _chat_log_timing(trace_id, "responding", t_request_start, "type=clarify")
-            return msgpack_response(
-                {
-                    "type": "clarify",
-                    "message": result["message"],
-                    "geojson": {"type": "FeatureCollection", "features": []},
-                    "needsMoreInfo": True,
-                }
-            )
-
-        _chat_log_timing(trace_id, "responding", t_request_start, "type=chat")
-        explainer_result = explore_orchestrator.maybe_build_explainer_response(
+        t_postprocess_start = time.perf_counter()
+        response_tag, final_result, chat_result = build_explore_final_result(
+            result,
             query=query,
             hints=hints,
+            auth_user=route_context.auth_user,
+            catalog_surface=route_context.catalog_surface,
+            force_metrics=bool(body.get("force_metrics")),
+            explore_orchestrator=explore_orchestrator,
+            build_clarify_response_func=build_clarify_response,
+            build_metric_warning_response_func=build_metric_warning_result,
+            build_order_response_func=build_order_response,
+            build_navigate_response_func=build_navigate_response,
+            execute_geometry_overlay_func=execute_geometry_overlay,
+            build_disambiguate_response_func=build_disambiguate_response,
+            build_filter_update_response_func=build_filter_update_response,
+            build_overlay_toggle_response_func=build_overlay_toggle_response,
             build_chat_response_func=build_chat_response,
-            auth_user=auth_user,
             load_source_metadata_func=load_source_metadata,
+            load_source_reference_func=load_source_reference,
         )
-        if explainer_result is not None:
-            chat_payload = explainer_result
-            chat_result = chat_payload.get("message", "")
-        else:
-            chat_result = explore_orchestrator.compact_followup(result.get("message", "I'm not sure how to help with that."))
-            chat_payload = build_chat_response(chat_result, auth_user=auth_user)
-        log_conversation(
-            frontend_session_id,
-            query,
-            chat_result,
-            surface="explorer",
-            intent=result.get("type"),
-            ip_hash=hash_ip_for_analytics(client_ip),
-            user_agent=(req.headers.get("user-agent") or "")[:300] or None,
+        _chat_log_timing(
+            trace_id,
+            "postprocess_complete",
+            t_postprocess_start,
+            f"type={response_tag}",
         )
-        return _maybe_attach_memory_relief(msgpack_response(chat_payload), chat_payload)
+        _chat_log_timing(trace_id, "responding", t_request_start, f"type={response_tag}")
+        if chat_result is not None:
+            log_conversation(
+                route_context.frontend_session_id,
+                query,
+                chat_result,
+                surface="explorer",
+                intent=result.get("type"),
+                ip_hash=hash_ip_for_analytics(route_context.client_ip),
+                user_agent=(req.headers.get("user-agent") or "")[:300] or None,
+            )
+        return _maybe_attach_memory_relief(msgpack_response(final_result), final_result)
     except Exception as e:
         logger.exception(f"[chat:{trace_id}] Chat error")
         log_app_error(
@@ -691,189 +226,98 @@ async def chat_stream_endpoint(req: Request):
     import time
 
     t_start = time.time()
-    client_ip = get_client_ip(req)
-    body_bytes = await req.body()
-    try:
-        body = json.loads(body_bytes.decode("utf-8"))
-    except json.JSONDecodeError:
-        body = msgpack.unpackb(body_bytes, raw=False)
+    body = await decode_json_or_msgpack_body(req)
     t_parse = time.time()
     logger.debug(f"[TIMING] Body parse: {(t_parse - t_start) * 1000:.0f}ms")
 
     async def generate_events():
         try:
-            frontend_session_id = body.get("sessionId", "anonymous")
-            auth_user = await get_authenticated_user_async(req)
-            catalog_surface, surface_error = _catalog_surface_for_request(req, body, auth_user)
-            if surface_error:
-                payload = {
-                    "stage": "complete",
-                    "result": {
-                        "type": "error",
-                        "message": "WIP catalog access is limited to admin accounts.",
-                    },
-                }
-                yield f"data: {json.dumps(payload)}\n\n"
+            route_context, route_error = await prepare_explore_chat_route_context(
+                req,
+                body,
+                request_started_at=time.perf_counter(),
+            )
+            if route_error:
+                yield encode_sse(stage_payload("complete", result={"type": "error", "message": "WIP catalog access is limited to admin accounts."}))
                 return
+            assert route_context is not None
             confirmed_order_rate_limit = None
             if body.get("confirmed_order"):
-                confirmed_order_rate_limit = _confirmed_order_rate_limit(req, auth_user)
+                confirmed_order_rate_limit = _confirmed_order_rate_limit(req, route_context.auth_user)
             if confirmed_order_rate_limit:
                 retry_after = int(confirmed_order_rate_limit.headers.get("Retry-After", "1"))
                 message = "Too many direct order executions. Please slow down and try again shortly."
-                yield f"data: {json.dumps({'stage': 'complete', 'result': {'type': 'error', 'message': message, 'retry_after': retry_after}})}\n\n"
+                yield encode_sse(stage_payload("complete", result={"type": "error", "message": message, "retry_after": retry_after}))
                 return
-            session_id = build_session_cache_key(frontend_session_id, auth_user)
-            cache = session_manager.get_or_create(session_id)
 
             if body.get("confirmed_order"):
-                yield f"data: {json.dumps({'stage': 'fetching', 'message': 'Fetching data...'})}\n\n"
+                yield encode_sse(stage_payload("fetching", message="Fetching data..."))
                 try:
-                    with catalog_surface_scope(catalog_surface):
-                        result, request_key, reused_cached_result = execute_confirmed_order_with_session_cache(
-                            cache,
-                            body["confirmed_order"],
-                            force_refetch=bool(body.get("force", False)),
-                            execute_order_func=execute_order,
-                        )
-                    result = explore_orchestrator.apply_runtime_result_cap(
-                        result,
-                        confirmed_order=body["confirmed_order"],
-                        load_source_metadata_func=load_source_metadata,
+                    response = execute_confirmed_order_stream(
+                        req=req,
+                        route_context=route_context,
+                        body=body,
+                        explore_orchestrator=explore_orchestrator,
                     )
-                    logger.info(
-                        "Streaming confirmed_order request_key=%s reused=%s type=%s source=%s",
-                        request_key,
-                        reused_cached_result,
-                        result.get("type"),
-                        result.get("source_id"),
-                    )
-                    response = {
-                        "type": result.get("type", "data"),
-                        "data_type": result.get("data_type"),
-                        "source_id": result.get("source_id"),
-                        "available_geo_levels": result.get("available_geo_levels", []),
-                        "geojson": result["geojson"],
-                        "summary": result["summary"],
-                        "count": result["count"],
-                        "sources": result.get("sources", []),
-                    }
-                    if result.get("multi_year"):
-                        response["multi_year"] = True
-                        response["year_data"] = result["year_data"]
-                        response["year_range"] = result["year_range"]
-                        response["metric_key"] = result.get("metric_key")
-                        response["available_metrics"] = result.get("available_metrics", [])
-                        response["metric_year_ranges"] = result.get("metric_year_ranges", {})
-                    corpus_registry.register_order_result(
-                        session_id=session_id,
-                        request_key=request_key,
-                        order=body["confirmed_order"],
-                        response=response,
-                    )
-                    log_conversation(
-                        frontend_session_id,
-                        body["confirmed_order"].get("summary", "confirmed_order"),
-                        response.get("summary", ""),
-                        surface="explorer_map",
-                        dataset_selected=response.get("source_id"),
-                        results_count=response.get("count", 0),
-                        ip_hash=hash_ip_for_analytics(client_ip),
-                        user_agent=(req.headers.get("user-agent") or "")[:300] or None,
-                    )
-                    yield f"data: {json.dumps({'stage': 'complete', 'result': response})}\n\n"
+                    yield encode_sse(stage_payload("complete", result=response))
                 except Exception as e:
                     logger.exception("Streaming order execution error")
                     log_app_error(type(e).__name__, str(e), surface="human_app", path="/chat/stream")
-                    yield f"data: {json.dumps({'stage': 'complete', 'result': _confirmed_order_user_error()})}\n\n"
+                    yield encode_sse(stage_payload("complete", result={"type": "error", "message": "Order execution failed. Please try again."}))
                 return
 
-            request_context = extract_chat_request_context(body)
-            query = request_context["query"]
-            chat_history = request_context["chat_history"]
-            viewport = request_context["viewport"]
-            resolved_location = request_context["resolved_location"]
-            active_overlays = request_context["active_overlays"]
-            cache_stats = request_context["cache_stats"]
-            time_state = request_context["time_state"]
-            saved_order_names = request_context["saved_order_names"]
-            loaded_data = request_context["loaded_data"]
+            prepared_request = prepare_explore_request(
+                body=body,
+                route_context=route_context,
+                explore_orchestrator=explore_orchestrator,
+                extract_chat_request_context_func=extract_chat_request_context,
+                maybe_build_shortcut_payload_func=maybe_build_shortcut_payload,
+                address_prompt_response_func=address_prompt_response,
+                build_show_borders_response_func=build_show_borders_response,
+                build_drilldown_response_func=build_drilldown_response,
+                fetch_geometries_by_loc_ids_func=fetch_geometries_by_loc_ids,
+            )
+            request_context = prepared_request["request_context"]
+            query = prepared_request["query"]
+            chat_history = prepared_request["chat_history"]
+            hints = prepared_request["hints"]
+            shortcut_payload = prepared_request["shortcut_payload"]
 
             if not query:
-                yield f"data: {json.dumps({'stage': 'complete', 'result': {'type': 'error', 'message': 'No query provided'}})}\n\n"
+                yield encode_sse(stage_payload("complete", result={"type": "error", "message": "No query provided"}))
                 return
 
             t_preprocess_start = time.time()
-            yield f"data: {json.dumps({'stage': 'analyzing', 'message': 'Analyzing your request...'})}\n\n"
+            yield encode_sse(stage_payload("analyzing", message="Analyzing your request..."))
             await asyncio.sleep(0)
-
-            with catalog_surface_scope(catalog_surface):
-                hints = explore_orchestrator.preprocess(
-                    query=query,
-                    viewport=viewport,
-                    active_overlays=active_overlays,
-                    cache_stats=cache_stats,
-                    saved_order_names=saved_order_names,
-                    time_state=time_state,
-                    loaded_data=loaded_data,
-                    resolved_location=resolved_location,
-                )
             t_preprocess_end = time.time()
             logger.info(f"[TIMING] Preprocessing: {(t_preprocess_end - t_preprocess_start) * 1000:.0f}ms")
 
-            if hints.get("show_borders"):
-                previous_options = request_context["previous_disambiguation_options"]
-                if previous_options:
-                    loc_ids_to_show = [opt.get("loc_id") for opt in previous_options if opt.get("loc_id")]
-                    if loc_ids_to_show:
-                        from mapmover.data_loading import fetch_geometries_by_loc_ids
-
-                        geojson = fetch_geometries_by_loc_ids(loc_ids_to_show)
-                        result = build_show_borders_response(previous_options, original_query=query, geojson=geojson)
-                        yield f"data: {json.dumps({'stage': 'complete', 'result': result})}\n\n"
-                        return
-
-            if hints.get("address_prompt"):
-                yield f"data: {json.dumps({'stage': 'complete', 'result': address_prompt_response(hints.get('address_prompt'))})}\n\n"
+            if shortcut_payload is not None:
+                yield encode_sse(stage_payload("complete", result=shortcut_payload))
                 return
 
-            navigation = hints.get("navigation")
-            if navigation and navigation.get("is_navigation"):
-                locations = navigation.get("locations", [])
-                if len(locations) == 1 and locations[0].get("drill_to_level"):
-                    loc = locations[0]
-                    result = build_drilldown_response(loc, original_query=query)
-                    yield f"data: {json.dumps({'stage': 'complete', 'result': result})}\n\n"
-                    return
-
             t_llm_start = time.time()
-            yield f"data: {json.dumps({'stage': 'thinking', 'message': 'Understanding your intent...'})}\n\n"
+            yield encode_sse(stage_payload("thinking", message="Understanding your intent..."))
             await asyncio.sleep(0)
             # Run the synchronous LLM call in a thread so we do not block
             # the event loop. Pipe real progress events back through a
             # ProgressBus so the user sees actual tool calls instead of
             # "Understanding your intent..." sitting there for seconds.
-            caller_ctx = classify_caller(
-                auth_user=auth_user,
-                ip_hash=hash_ip_for_analytics(client_ip),
-            )
-            budget_decision = check_anonymous_chat_budget(caller_ctx)
-            if not budget_decision.allowed:
-                rejection = budget_rejection_payload(budget_decision)
-                yield f"data: {json.dumps({'stage': 'complete', 'result': rejection})}\n\n"
+            rejection_payload, _rejection_status, _rejection_headers = anonymous_budget_rejection_payload(route_context.caller_ctx)
+            if rejection_payload is not None:
+                yield encode_sse(stage_payload("complete", result=rejection_payload))
                 return
-            usage_recorder = LLMUsageRecorder(
-                surface="explorer",
-                call_kind="order_taker",
-                session_id=session_id,
-                **caller_ctx,
+            usage_recorder = build_llm_usage_recorder(
+                session_id=route_context.session_id,
+                caller_ctx=route_context.caller_ctx,
             )
             bus, llm_task = await explore_orchestrator.interpret_with_progress(
                 query=query,
                 chat_history=chat_history,
                 hints=hints,
                 usage_recorder=usage_recorder,
-                catalog_surface=catalog_surface,
+                catalog_surface=route_context.catalog_surface,
             )
             try:
                 async for event in bus.drain_until(
@@ -881,10 +325,7 @@ async def chat_stream_endpoint(req: Request):
                     heartbeat_seconds=4.0,
                     heartbeat=explore_orchestrator.heartbeat,
                 ):
-                    payload = {"stage": event.stage, "message": event.message}
-                    if event.extra:
-                        payload["extra"] = event.extra
-                    yield f"data: {json.dumps(payload)}\n\n"
+                    yield encode_sse(progress_payload(event))
                 result = await llm_task
             finally:
                 usage_recorder.flush()
@@ -892,70 +333,39 @@ async def chat_stream_endpoint(req: Request):
             logger.info(f"[TIMING] LLM call: {(t_llm_end - t_llm_start) * 1000:.0f}ms")
 
             if result["type"] == "order":
-                yield f"data: {json.dumps({'stage': 'preparing', 'message': 'Preparing your order...'})}\n\n"
+                yield encode_sse(stage_payload("preparing", message="Preparing your order..."))
                 await asyncio.sleep(0)
-                with catalog_surface_scope(catalog_surface):
-                    response_tag, final_result = explore_orchestrator.finalize_order(
-                        result=result,
-                        hints=hints,
-                        force_metrics=False,
-                        build_clarify_response_func=build_clarify_response,
-                        build_metric_warning_response_func=build_metric_warning_result,
-                        build_order_response_func=build_order_response,
-                    )
-                yield f"data: {json.dumps({'stage': 'complete', 'result': final_result})}\n\n"
-            elif result["type"] == "navigate":
-                locations = result.get("locations", [])
-                loc_ids = [loc.get("loc_id") for loc in locations if loc.get("loc_id")]
-                geometry_overlay = result.get("geometry_overlay")
-                geojson = {"type": "FeatureCollection", "features": []}
-                if geometry_overlay:
-                    from mapmover.order_executor import execute_geometry_overlay
-
-                    geojson = execute_geometry_overlay(geometry_overlay, loc_ids)
-                final_result = build_navigate_response(result, loc_ids=loc_ids, original_query=query, geojson=geojson)
-                yield f"data: {json.dumps({'stage': 'complete', 'result': final_result})}\n\n"
-            elif result["type"] == "disambiguate":
-                final_result = build_disambiguate_response(result, original_query=query)
-                yield f"data: {json.dumps({'stage': 'complete', 'result': final_result})}\n\n"
-            elif result["type"] == "filter_update":
-                final_result = build_filter_update_response(result)
-                yield f"data: {json.dumps({'stage': 'complete', 'result': final_result})}\n\n"
-            elif result["type"] == "overlay_toggle":
-                final_result = build_overlay_toggle_response(result)
-                yield f"data: {json.dumps({'stage': 'complete', 'result': final_result})}\n\n"
-            elif result["type"] == "clarify":
-                final_result = {
-                    "type": "clarify",
-                    "message": explore_orchestrator.compact_followup(result.get("message", "")),
-                    "geojson": {"type": "FeatureCollection", "features": []},
-                    "needsMoreInfo": True,
-                }
-                yield f"data: {json.dumps({'stage': 'complete', 'result': final_result})}\n\n"
-            else:
-                explainer_result = explore_orchestrator.maybe_build_explainer_response(
-                    query=query,
-                    hints=hints,
-                    build_chat_response_func=build_chat_response,
-                    auth_user=auth_user,
-                    load_source_metadata_func=load_source_metadata,
-                )
-                if explainer_result is not None:
-                    final_result = explainer_result
-                    chat_msg = final_result.get("message", "")
-                else:
-                    chat_msg = explore_orchestrator.compact_followup(result.get("message", "I'm not sure how to help with that."))
-                    final_result = build_chat_response(chat_msg)
+            _response_tag, final_result, chat_msg = build_explore_final_result(
+                result=result,
+                query=query,
+                hints=hints,
+                auth_user=route_context.auth_user,
+                catalog_surface=route_context.catalog_surface,
+                force_metrics=False,
+                explore_orchestrator=explore_orchestrator,
+                build_clarify_response_func=build_clarify_response,
+                build_metric_warning_response_func=build_metric_warning_result,
+                build_order_response_func=build_order_response,
+                build_navigate_response_func=build_navigate_response,
+                execute_geometry_overlay_func=execute_geometry_overlay,
+                build_disambiguate_response_func=build_disambiguate_response,
+                build_filter_update_response_func=build_filter_update_response,
+                build_overlay_toggle_response_func=build_overlay_toggle_response,
+                build_chat_response_func=build_chat_response,
+                load_source_metadata_func=load_source_metadata,
+                load_source_reference_func=load_source_reference,
+            )
+            if chat_msg is not None:
                 log_conversation(
-                    frontend_session_id,
+                    route_context.frontend_session_id,
                     query,
                     chat_msg,
                     surface="explorer",
                     intent=result.get("type"),
-                    ip_hash=hash_ip_for_analytics(client_ip),
+                    ip_hash=hash_ip_for_analytics(route_context.client_ip),
                     user_agent=(req.headers.get("user-agent") or "")[:300] or None,
                 )
-                yield f"data: {json.dumps({'stage': 'complete', 'result': final_result})}\n\n"
+            yield encode_sse(stage_payload("complete", result=final_result))
         except Exception as e:
             logger.exception("Chat stream error")
             log_app_error(type(e).__name__, str(e), surface="human_app", path="/chat/stream")
@@ -964,10 +374,10 @@ async def chat_stream_endpoint(req: Request):
                 "message": "Sorry, I encountered an error. Please try again.",
                 "geojson": {"type": "FeatureCollection", "features": []},
             }
-            yield f"data: {json.dumps({'stage': 'complete', 'result': error_result})}\n\n"
+            yield encode_sse(stage_payload("complete", result=error_result))
 
     return StreamingResponse(
         generate_events(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+        headers=SSE_HEADERS,
     )
