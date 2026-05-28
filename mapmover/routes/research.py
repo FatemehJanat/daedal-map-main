@@ -35,11 +35,11 @@ from mapmover.research_lane_runtime import (
     research_request_id,
     run_research_chat,
 )
-from mapmover.research_orchestrator import ResearchOrchestrator
 from mapmover.research_route_runtime import (
     prepare_research_chat_route_context,
     settle_and_log_research_turn,
 )
+from mapmover.orchestrator_registry import get_orchestrator
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
 from mapmover.routes.chat_shared import (
     _catalog_surface_for_request,
@@ -51,7 +51,7 @@ from mapmover.runtime.sse import SSE_HEADERS, encode_sse, stage_payload
 
 
 router = APIRouter()
-research_orchestrator = ResearchOrchestrator()
+research_orchestrator = get_orchestrator("research")
 
 
 @router.post("/api/research/corpus")

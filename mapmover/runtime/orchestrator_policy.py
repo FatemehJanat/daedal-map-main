@@ -19,6 +19,13 @@ class ResearchRetryPolicy:
     rescue_prompt: str
 
 
+@dataclass(frozen=True)
+class OpsRefreshRetryPolicy:
+    max_refresh_attempts: int
+    backoff_seconds: tuple[int, ...]
+    degrade_to_cached: bool = True
+
+
 EXPLORE_HEARTBEAT_POLICY = HeartbeatPolicy(
     stage="thinking",
     messages=(
@@ -39,6 +46,16 @@ RESEARCH_HEARTBEAT_POLICY = HeartbeatPolicy(
 )
 
 
+OPS_HEARTBEAT_POLICY = HeartbeatPolicy(
+    stage="thinking",
+    messages=(
+        "Reviewing the watch scope...",
+        "Checking live operational context...",
+        "Building the status picture...",
+    ),
+)
+
+
 DEFAULT_RESEARCH_RETRY_POLICY = ResearchRetryPolicy(
     max_tool_iterations=8,
     guardrail_start_iteration=3,
@@ -48,6 +65,13 @@ DEFAULT_RESEARCH_RETRY_POLICY = ResearchRetryPolicy(
         "Do not call tools. If the evidence is partial, answer the grounded part first and then "
         "name the remaining limitation clearly."
     ),
+)
+
+
+DEFAULT_OPS_RETRY_POLICY = OpsRefreshRetryPolicy(
+    max_refresh_attempts=2,
+    backoff_seconds=(3, 10),
+    degrade_to_cached=True,
 )
 
 

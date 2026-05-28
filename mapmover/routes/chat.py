@@ -33,7 +33,6 @@ from mapmover.explore.explore_followups import (
     build_drilldown_response,
     build_show_borders_response,
 )
-from mapmover.explore.orchestrator import ExploreOrchestrator
 from mapmover.explore.explore_request_context import (
     extract_chat_request_context,
 )
@@ -48,6 +47,7 @@ from mapmover.explore.explore_response_adapter import (
 )
 from mapmover.runtime.warning_primitives import build_metric_warning_result
 from mapmover.runtime.chat_route_support import build_usage_recorder
+from mapmover.orchestrator_registry import get_orchestrator
 from mapmover.routes.chat_shared import (
     _chat_log_timing,
     _confirmed_order_rate_limit,
@@ -59,7 +59,7 @@ from mapmover.routes.chat_shared import (
 from mapmover.runtime.sse import SSE_HEADERS, encode_sse, progress_payload, stage_payload
 
 router = APIRouter()
-explore_orchestrator = ExploreOrchestrator()
+explore_orchestrator = get_orchestrator("explore")
 
 
 @router.post("/chat")
