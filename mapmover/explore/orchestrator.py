@@ -18,6 +18,7 @@ from mapmover.explore.explore_runtime import (
 )
 from mapmover.orchestrator_specs import EXPLORE_ORCHESTRATOR_SPEC, OrchestratorSpec
 from mapmover.runtime.orchestrator_policy import (
+    DEFAULT_EXPLORE_COMPLEXITY_POLICY,
     EXPLORE_HEARTBEAT_POLICY,
     build_heartbeat_event,
 )
@@ -131,10 +132,14 @@ class ExploreOrchestrator:
             build_clarify_response_func=build_clarify_response_func,
             build_metric_warning_response_func=build_metric_warning_response_func,
             build_order_response_func=build_order_response_func,
+            complexity_policy=self.complexity_policy(),
         )
 
     def metric_warning_policy(self):
         return DEFAULT_METRIC_WARNING_POLICY
+
+    def complexity_policy(self):
+        return DEFAULT_EXPLORE_COMPLEXITY_POLICY
 
     def build_system_prompt(self, catalog: dict, conversions: dict) -> str:
         return build_explore_system_prompt(catalog, conversions)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .source_hints import get_single_metric_default
+
 
 def validate_item(
     item: dict,
@@ -131,10 +133,9 @@ def validate_item(
 
     metadata = load_source_metadata_func(source_id)
     expand_filter_value_aliases_func(item, metadata)
-    routing_hints = metadata.get("routing_hints", {}) if metadata else {}
 
     if source_requires_metric_func(item, catalog_source) and not metric:
-        default_metric = routing_hints.get("single_metric_default")
+        default_metric = get_single_metric_default(metadata)
         if default_metric:
             item["metric"] = default_metric
             metric = default_metric

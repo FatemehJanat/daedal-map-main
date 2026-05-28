@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from mapmover.runtime.lane_complexity import evaluate_source_count_handoff
+
 
 def preprocess_explore_request(
     *,
@@ -41,6 +43,7 @@ def finalize_explore_order_result(
     build_clarify_response_func,
     build_metric_warning_response_func,
     build_order_response_func,
+    complexity_policy,
 ) -> tuple[str, dict]:
     """Postprocess one Explore order-taker result into a final route payload."""
     processed = postprocess_order_func(result["order"], hints, metric_warning_policy=metric_warning_policy)
@@ -61,6 +64,24 @@ def finalize_explore_order_result(
             "clarify_invalid_order",
             build_clarify_response_func(
                 processed.get("validation_summary") or "I need a more specific executable request before I can run that.",
+                summary=result_summary,
+                full_order=processed,
+            ),
+        )
+
+    complexity_handoff = evaluate_source_count_handoff(
+        processed,
+        max_distinct_sources=complexity_policy.max_distinct_sources,
+    )
+    if complexity_handoff is not None:
+        handoff_message = (
+            f"{complexity_policy.handoff_message} "
+            f"This request currently resolves to {complexity_handoff['distinct_source_count']} sources."
+        )
+        return (
+            "clarify_research_handoff",
+            build_clarify_response_func(
+                handoff_message,
                 summary=result_summary,
                 full_order=processed,
             ),

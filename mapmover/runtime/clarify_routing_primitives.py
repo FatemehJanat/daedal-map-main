@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .source_hints import get_routing_hints
+
 
 def build_pack_load_clarify(item: dict, pack: dict) -> str:
     load_policy = pack.get("load_policy") or {}
@@ -82,7 +84,7 @@ def expand_full_pack_loads(
 
 def build_multiple_paths_clarify(item: dict, metadata: dict) -> str:
     """Build a grounded clarify message for metadata-declared multi-path ambiguity."""
-    routing_hints = metadata.get("routing_hints") or {}
+    routing_hints = get_routing_hints(metadata)
     summary = str(routing_hints.get("clarify_multiple_paths_summary") or "").strip()
     dimensions = routing_hints.get("clarify_path_dimensions") or []
     options = []
@@ -118,7 +120,7 @@ def detect_multiple_path_clarify(
 
     for item in items:
         metadata = get_item_source_metadata_func(item, catalog)
-        routing_hints = metadata.get("routing_hints") or {}
+        routing_hints = get_routing_hints(metadata)
         if not routing_hints.get("clarify_on_multiple_paths"):
             continue
 

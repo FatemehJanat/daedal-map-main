@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from typing import Callable
 
+from .runtime.source_hints import get_hint_alias_terms, get_hint_query_priority
+
 
 def detect_source_candidates(
     query: str,
@@ -25,11 +27,20 @@ def detect_source_candidates(
     sources = catalog.get("sources", [])
     candidates = []
 
-    def add_candidate(source_id: str, source_name: str, confidence: float, match_type: str, matched_text: str) -> None:
+    def add_candidate(
+        source_id: str,
+        source_name: str,
+        confidence: float,
+        match_type: str,
+        matched_text: str,
+        *,
+        pack_id: str = "",
+    ) -> None:
         candidates.append(
             {
                 "source_id": source_id,
                 "source_name": source_name or source_id,
+                "pack_id": pack_id,
                 "confidence": min(1.0, confidence),
                 "match_type": match_type,
                 "matched_text": matched_text,
@@ -47,10 +58,11 @@ def detect_source_candidates(
             for source in sources:
                 source_id = source.get("source_id", "")
                 source_name = source.get("source_name", f"UN SDG Goal {goal_num}")
+                pack_id = str(source.get("pack_id") or "").strip()
                 topic_tags = source.get("topic_tags", [])
                 source_name_lower = source_name.lower()
                 if goal_tag in topic_tags or f"goal {goal_num}:" in source_name_lower or f"goal {goal_num} " in source_name_lower:
-                    add_candidate(source_id, source_name, 1.0, "sdg_alias", sdg_pattern.group(0))
+                    add_candidate(source_id, source_name, 1.0, "sdg_alias", sdg_pattern.group(0), pack_id=pack_id)
 
     coarse_candidate_ids = set()
 
@@ -65,7 +77,14 @@ def detect_source_candidates(
         source_topic_tags = [str(v).strip().lower() for v in (source.get("topic_tags") or []) if v]
 
         if source_name and source_name_lower in query_lower:
-            add_candidate(source_id, source_name, score_source_full_match + data_boost, "full_name", source_name)
+            add_candidate(
+                source_id,
+                source_name,
+                score_source_full_match + data_boost,
+                "full_name",
+                source_name,
+                pack_id=pack_id,
+            )
             coarse_candidate_ids.add(source_id)
         elif source_name:
             name_parts = [p.strip() for p in source_name.replace(" - ", "|").replace(": ", "|").split("|")]
@@ -73,7 +92,7 @@ def detect_source_candidates(
                 part_lower = part.lower()
                 if len(part) >= 4 and part_lower in query_lower:
                     base_score = score_source_partial_8 if len(part) >= 8 else score_source_partial_4
-                    add_candidate(source_id, source_name, base_score + data_boost, "partial_name", part)
+                    add_candidate(source_id, source_name, base_score + data_boost, "partial_name", part, pack_id=pack_id)
                     coarse_candidate_ids.add(source_id)
                     break
 
@@ -82,7 +101,7 @@ def detect_source_candidates(
             if source_id_lower.isdigit():
                 source_id_pattern = rf"(?<!\d){re.escape(source_id_lower)}(?!\d)"
                 if re.search(r"\b(?:sdg|goal|sustainable\s+development\s+goal)\b", query_lower) and re.search(source_id_pattern, query_lower):
-                    add_candidate(source_id, source_name, score_source_id_match + data_boost, "source_id", source_id)
+                    add_candidate(source_id, source_name, score_source_id_match + data_boost, "source_id", source_id, pack_id=pack_id)
                     coarse_candidate_ids.add(source_id)
             elif source_id_lower in query_lower:
                 short_alpha_id = source_id_lower.isalpha() and len(source_id_lower) <= 6
@@ -91,7 +110,7 @@ def detect_source_candidates(
                     query_lower,
                 )
                 if not short_alpha_id or explicit_source_ref:
-                    add_candidate(source_id, source_name, score_source_id_match + data_boost, "source_id", source_id)
+                    add_candidate(source_id, source_name, score_source_id_match + data_boost, "source_id", source_id, pack_id=pack_id)
                     coarse_candidate_ids.add(source_id)
 
         for phrase in source_keywords + source_topic_tags:
@@ -99,7 +118,7 @@ def detect_source_candidates(
                 continue
             if phrase in query_lower:
                 base_score = score_source_partial_8 if len(phrase) >= 8 else score_source_partial_4
-                add_candidate(source_id, source_name, base_score + data_boost, "catalog_keyword", phrase)
+                add_candidate(source_id, source_name, base_score + data_boost, "catalog_keyword", phrase, pack_id=pack_id)
                 coarse_candidate_ids.add(source_id)
                 break
 
@@ -118,18 +137,11 @@ def detect_source_candidates(
             continue
         source_name = source.get("source_name", "")
         metadata = load_source_metadata(source_id) or {}
-        routing_hints = metadata.get("routing_hints") or {}
-        aliases = []
-        for field_name in ("query_aliases", "broad_topic_aliases"):
-            field_values = routing_hints.get(field_name) or []
-            if isinstance(field_values, dict):
-                aliases.extend(str(v).strip().lower() for v in field_values.keys() if v)
-            elif isinstance(field_values, list):
-                aliases.extend(str(v).strip().lower() for v in field_values if v)
+        aliases = get_hint_alias_terms(metadata, "query_aliases", "broad_topic_aliases")
         if not aliases:
             continue
-        priority_bonus = float(routing_hints.get("query_priority") or 0.0)
-        priority_bonus = max(0.0, min(0.25, priority_bonus))
+        pack_id = str(source.get("pack_id") or metadata.get("pack_id") or "").strip()
+        priority_bonus = get_hint_query_priority(metadata)
         for alias in aliases:
             if len(alias) < 3:
                 continue
@@ -141,6 +153,7 @@ def detect_source_candidates(
                     base_score + data_boost + priority_bonus,
                     "metadata_alias",
                     alias,
+                    pack_id=pack_id,
                 )
                 break
 

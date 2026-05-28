@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import Any
 
 from mapmover.data_loading import load_source_metadata
+from mapmover.runtime.source_hints import get_routing_hints
 from mapmover.source_time_contract import build_metric_year_ranges
 
 
@@ -162,7 +163,7 @@ def _extract_source_runtime_hints(source_id: str | None) -> dict:
     if scene_rasters:
         hints["supports_scene_rasters"] = True
 
-    routing_hints = metadata.get("routing_hints") if isinstance(metadata.get("routing_hints"), dict) else {}
+    routing_hints = get_routing_hints(metadata)
     use_for = str(routing_hints.get("use_for") or "").strip()
     if use_for:
         hints["routing_summary"] = use_for

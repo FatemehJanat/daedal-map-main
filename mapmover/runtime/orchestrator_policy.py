@@ -26,6 +26,12 @@ class OpsRefreshRetryPolicy:
     degrade_to_cached: bool = True
 
 
+@dataclass(frozen=True)
+class ExploreComplexityPolicy:
+    max_distinct_sources: int
+    handoff_message: str
+
+
 EXPLORE_HEARTBEAT_POLICY = HeartbeatPolicy(
     stage="thinking",
     messages=(
@@ -72,6 +78,16 @@ DEFAULT_OPS_RETRY_POLICY = OpsRefreshRetryPolicy(
     max_refresh_attempts=2,
     backoff_seconds=(3, 10),
     degrade_to_cached=True,
+)
+
+
+DEFAULT_EXPLORE_COMPLEXITY_POLICY = ExploreComplexityPolicy(
+    max_distinct_sources=2,
+    handoff_message=(
+        "Research mode is better suited to this question because it combines more than "
+        "two sources. Explore works best for one-source requests and straightforward "
+        "two-source overlays."
+    ),
 )
 
 

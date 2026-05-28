@@ -7,6 +7,7 @@ import json
 from mapmover.aggregation_system import validate_aggregation_policy
 from mapmover.data_loading import load_catalog, load_source_metadata
 from mapmover.runtime.order_taker_prompt import get_source_visibility_mode
+from mapmover.runtime.source_hints import get_supported_geography_summary, get_unsupported_metric_aliases
 
 
 def validate_order_item(item: dict) -> dict:
@@ -312,8 +313,7 @@ def _matches_unsupported_metric_alias(user_query: str, metadata: dict) -> bool:
     query_lower = str(user_query or "").strip().lower()
     if not query_lower or not isinstance(metadata, dict):
         return False
-    routing_hints = metadata.get("routing_hints") or {}
-    aliases = routing_hints.get("unsupported_metric_aliases") or []
+    aliases = get_unsupported_metric_aliases(metadata)
     for alias in aliases:
         alias_text = str(alias or "").strip().lower()
         if alias_text and alias_text in query_lower:
@@ -322,18 +322,7 @@ def _matches_unsupported_metric_alias(user_query: str, metadata: dict) -> bool:
 
 
 def _summarize_supported_geography(metadata: dict) -> str:
-    routing_hints = metadata.get("routing_hints") or {}
-    geo_summary = str(routing_hints.get("supported_geography_summary") or "").strip()
-    if geo_summary:
-        return geo_summary
-    geo_levels = metadata.get("geographic_level")
-    if isinstance(geo_levels, list):
-        cleaned = [str(level).replace("_", " ") for level in geo_levels if level]
-        if cleaned:
-            return ", ".join(cleaned)
-    if geo_levels:
-        return str(geo_levels).replace("_", " ")
-    return "see source metadata"
+    return get_supported_geography_summary(metadata)
 
 
 def _build_metadata_unsupported_metric_clarify(user_query: str, metadata: dict) -> dict:
@@ -351,8 +340,7 @@ def _build_metadata_unsupported_metric_clarify(user_query: str, metadata: dict) 
     geo_summary = _summarize_supported_geography(metadata)
 
     unsupported_label = "that metric"
-    routing_hints = metadata.get("routing_hints") or {}
-    aliases = routing_hints.get("unsupported_metric_aliases") or []
+    aliases = get_unsupported_metric_aliases(metadata)
     query_lower = str(user_query or "").strip().lower()
     for alias in aliases:
         alias_text = str(alias or "").strip()

@@ -7,6 +7,12 @@ from pathlib import Path
 from typing import Callable
 
 from .foundation_helpers import load_country_crosswalk
+from .runtime.source_hints import (
+    build_pack_family_preference_guidance,
+    build_reference_summary,
+    build_source_routing_guidance,
+    get_routing_hints,
+)
 
 
 def format_filter_description(filters: dict, overlay_type: str) -> str:
@@ -51,33 +57,6 @@ def build_tier3_context(
 ) -> str:
     """Build Tier 3 (Just-in-Time) context string from preprocessor hints."""
     context_parts = []
-
-    def _build_scenario_routing_lines(scenario_defaults: dict) -> list[str]:
-        if not isinstance(scenario_defaults, dict):
-            return []
-        lines: list[str] = []
-        for concept_key, scenario_map in scenario_defaults.items():
-            if not isinstance(scenario_map, dict) or not scenario_map:
-                continue
-            pretty_concept = {
-                "projected_risk_score": "projected risk score",
-                "hazard_multiplier": "hazard multiplier",
-                "projected_annual_loss_rate_band": "projected annual loss rate band",
-                "annual_loss_rate_change_band": "annual loss rate change band",
-            }.get(concept_key, concept_key.replace("_", " "))
-            scenario_examples = []
-            for scenario_key, metric_name in scenario_map.items():
-                if not metric_name:
-                    continue
-                pretty_scenario = scenario_key.replace("_", " ")
-                scenario_examples.append(f'"{pretty_scenario}" -> metric="{metric_name}"')
-            if scenario_examples:
-                lines.append(
-                    f"For {pretty_concept} requests, map scenario language to explicit metrics as follows: "
-                    + "; ".join(scenario_examples[:6])
-                    + "."
-                )
-        return lines
 
     if hints.get("summary"):
         context_parts.append(f"[Preprocessor hints: {hints['summary']}]")
@@ -291,7 +270,7 @@ def build_tier3_context(
             metrics = metadata.get("metrics", {})
             temporal = metadata.get("temporal_coverage", {})
             year_range = f"{temporal.get('start', '?')}-{temporal.get('end', '?')}"
-            routing_hints = metadata.get("routing_hints", {}) or {}
+            routing_hints = get_routing_hints(metadata)
             metrics_mapping = {}
             for col, info in metrics.items():
                 human_name = info.get("name", col)
@@ -308,9 +287,9 @@ def build_tier3_context(
 
                     with open(ref_path, encoding="utf-8") as f:
                         ref_data = ref_json.load(f)
-                    if ref_data.get("goal"):
-                        goal = ref_data["goal"]
-                        reference_context = f"\nGoal: {goal.get('name', '')}\nDescription: {goal.get('description', '')}"
+                    summary = build_reference_summary(ref_data)
+                    if summary:
+                        reference_context = "\n" + summary
             except Exception:
                 pass
 
@@ -321,61 +300,18 @@ def build_tier3_context(
             msg += "\n\nALL METRICS (use column name in JSON 'metric' field, human name when talking to user):\n"
             for col, human in metrics_mapping.items():
                 msg += f'  "{col}": {human}\n'
-            routing_lines = []
-            routing_lines.append(
-                f'When this detected source clearly matches the query, keep the order item anchored to source_id="{source_id}" instead of switching to a different same-pack source.'
-            )
-            if routing_hints.get("prefer_order_for_analytics") and routing_hints.get("single_metric_default"):
-                routing_lines.append(
-                    f'For broad analytical queries that clearly match this source, prefer type="order" with metric="{routing_hints["single_metric_default"]}" unless the user asks for a different metric.'
-                )
-                routing_lines.append(
-                    "This includes count/share/ranking questions. Do not fall back to chat just because the source is static, tract-level, or analytical."
-                )
-            if routing_hints.get("clarify_on_missing_metric"):
-                routing_lines.append(
-                    "For broad topic/goal queries without a specific metric, respond with type=\"clarify\" and ask the user which metric they want using human-readable metric names."
-                )
-            filter_advice = routing_hints.get("filter_advice")
-            if filter_advice:
-                routing_lines.append(f"Filter guidance: {filter_advice}")
-            unsupported_aliases = routing_hints.get("unsupported_metric_aliases") or []
-            if unsupported_aliases:
-                examples = ", ".join(str(v) for v in unsupported_aliases[:4])
-                geo_summary = routing_hints.get("supported_geography_summary")
-                if not geo_summary:
-                    geo_levels = metadata.get("geographic_level") or []
-                    if isinstance(geo_levels, list):
-                        geo_summary = ", ".join(str(level) for level in geo_levels)
-                    elif geo_levels:
-                        geo_summary = str(geo_levels)
-                routing_lines.append(
-                    f"If the user asks for an unsupported metric such as {examples}, clarify honestly using the supported metrics above and accurately mention the supported geography ({geo_summary or 'see metadata'})."
-                )
-            scenario_defaults = routing_hints.get("scenario_metric_defaults")
-            routing_lines.extend(_build_scenario_routing_lines(scenario_defaults))
-            metric_aliases = routing_hints.get("metric_aliases") or {}
-            if isinstance(metric_aliases, dict) and metric_aliases:
-                alias_examples = []
-                for alias, metric_name in metric_aliases.items():
-                    if alias and metric_name:
-                        alias_examples.append(f'"{alias}" -> metric="{metric_name}"')
-                if alias_examples:
-                    routing_lines.append(
-                        "When the query uses one of these metric phrases, map it directly to the matching metric: "
-                        + "; ".join(alias_examples[:8])
-                        + "."
-                    )
-            if str(metadata.get("geojson_shape", "")).strip().lower() == "location_shape":
-                routing_lines.append(
-                    "For point-location registry queries ('show/find/map/list/count locations in X'), prefer type=\"order\" anchored to this source. Use loc_id for country filters and facility_type/source/website when the query names a facility class or asks for websites/public spaces. It is valid to omit metric entirely for location listings and filtered point maps."
-                )
-                routing_lines.append(
-                    "If this detected location source already clearly matches the user query, do not switch to type=\"chat\" just to describe the source. Queries such as 'show all fab labs in the United States', 'show all public Prusa spaces on the map', or 'map all fab labs globally' should return a real order with region and filters when needed."
-                )
+            routing_lines = build_source_routing_guidance(metadata, source_id)
             if routing_lines:
                 msg += "\n\nROUTING GUIDANCE:\n"
                 for line in routing_lines:
+                    msg += f"- {line}\n"
+            pack_family_lines = build_pack_family_preference_guidance(
+                detected_source,
+                hints.get("candidates", {}).get("sources", {}),
+            )
+            if pack_family_lines:
+                msg += "\nPACK FAMILY GUIDANCE:\n"
+                for line in pack_family_lines:
                     msg += f"- {line}\n"
             msg += "\n(REPLY RULES: When listing metrics to user, show max 10 and use human names only. Say 'I can get them all' not '*'.)"
             context_parts.append(msg)

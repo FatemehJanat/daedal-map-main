@@ -12,13 +12,14 @@ from typing import Any
 
 from mapmover import logger
 from mapmover.corpus_registry import corpus_registry
-from mapmover.data_loading import get_source_path, load_source_metadata
+from mapmover.data_loading import get_source_path, load_source_metadata, load_source_reference
 from mapmover.loc_id_join import apply_loc_id_subset_filter, unique_loc_ids_from_rows
 from mapmover.source_time_contract import build_metric_year_ranges
 from mapmover.duckdb_helpers import parquet_columns, path_to_uri, quote_ident, run_df
 from mapmover.foundation_helpers import bridge_loc_id_family, get_foundation_helper_registry
 from mapmover.geometry_handlers import get_selection_geometries
 from mapmover.runtime.result_cap import apply_row_count_cap_to_payload
+from mapmover.runtime.source_hints import build_reference_summary, build_source_routing_guidance, get_routing_hints
 from mapmover.runtime.warning_policy import DEFAULT_DISPLAY_WARNING_POLICY
 from mapmover.runtime.warning_primitives import (
     interrupt_display_payload_if_needed,
@@ -1466,9 +1467,17 @@ def execute_research_tool(
 
         if tool_name == "describe_artifact":
             artifact.pop("order", None)
+            source_id = str(artifact.get("source_id") or "").strip()
+            metadata = load_source_metadata(source_id) or {}
+            reference_summary = build_reference_summary(load_source_reference(source_id) or {})
             artifact["foundation_helpers"] = {
                 "available_mode_profile": (get_foundation_helper_registry().get("mode_profiles") or {}).get("research", []),
                 "loc_id_bridge_available": True,
+            }
+            artifact["source_guidance"] = {
+                "routing_hints": get_routing_hints(metadata),
+                "routing_guidance": build_source_routing_guidance(metadata, source_id),
+                "reference_summary": reference_summary,
             }
             return {"artifact": artifact}
 
