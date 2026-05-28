@@ -17,6 +17,7 @@ from mapmover.runtime.orchestrator_policy import (
     RESEARCH_HEARTBEAT_POLICY,
     build_heartbeat_event,
 )
+from mapmover.runtime.llm_policy import resolve_lane_llm_selection
 from mapmover.runtime.prompt_runtime import build_cached_system_prompt_blocks
 from mapmover.runtime.warning_policy import DEFAULT_DISPLAY_WARNING_POLICY
 from mapmover.research_prompt import build_research_system_prompt
@@ -89,6 +90,7 @@ class ResearchOrchestrator:
             retry_policy=self.retry_policy(),
             system_prompt_builder=self.build_system_prompt,
             system_prompt_block_builder=self.build_system_prompt_blocks,
+            llm_selection=self.llm_selection(),
         )
 
     async def run_with_progress(
@@ -120,4 +122,11 @@ class ResearchOrchestrator:
             retry_policy=self.retry_policy(),
             system_prompt_builder=self.build_system_prompt,
             system_prompt_block_builder=self.build_system_prompt_blocks,
+            llm_selection=self.llm_selection(),
+        )
+
+    def llm_selection(self, override: dict | None = None):
+        return resolve_lane_llm_selection(
+            self.spec.model_policy,
+            override=override,
         )

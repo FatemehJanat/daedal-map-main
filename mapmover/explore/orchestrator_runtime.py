@@ -24,6 +24,7 @@ async def run_explore_interpret(
     interpret_request_func,
     system_prompt_builder,
     system_prompt_block_builder,
+    llm_selection,
 ) -> dict:
     return await run_catalog_scoped_to_thread(
         catalog_surface=catalog_surface,
@@ -34,6 +35,7 @@ async def run_explore_interpret(
         usage_recorder=usage_recorder,
         system_prompt_builder=system_prompt_builder,
         system_prompt_block_builder=system_prompt_block_builder,
+        llm_selection=llm_selection,
     )
 
 
@@ -48,6 +50,7 @@ async def run_explore_interpret_with_progress(
     interpret_request_func,
     system_prompt_builder,
     system_prompt_block_builder,
+    llm_selection,
 ) -> tuple[object, asyncio.Task]:
     return await run_catalog_scoped_to_thread_with_progress(
         catalog_surface=catalog_surface,
@@ -59,6 +62,7 @@ async def run_explore_interpret_with_progress(
         usage_recorder=usage_recorder,
         system_prompt_builder=system_prompt_builder,
         system_prompt_block_builder=system_prompt_block_builder,
+        llm_selection=llm_selection,
     )
 
 

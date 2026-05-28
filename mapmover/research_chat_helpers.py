@@ -3,10 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
-
-from anthropic import Anthropic
-
 from mapmover import logger
 
 
@@ -87,15 +83,6 @@ def _sample_prompt_metrics(metrics: list | None, limit: int) -> list[str]:
             break
         round_index += 1
     return preview
-
-
-def _research_settings() -> tuple[str, float]:
-    model = os.getenv("RESEARCH_MODEL", "claude-sonnet-4-6").strip() or "claude-sonnet-4-6"
-    try:
-        temperature = float(os.getenv("RESEARCH_TEMPERATURE", "0.1"))
-    except ValueError:
-        temperature = 0.1
-    return model, temperature
 
 
 def _temperature_kwargs(model: str, temperature: float) -> dict:

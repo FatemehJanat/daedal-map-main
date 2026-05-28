@@ -11,6 +11,7 @@ from mapmover.runtime.orchestrator_policy import (
     OPS_HEARTBEAT_POLICY,
     build_heartbeat_event,
 )
+from mapmover.runtime.llm_policy import resolve_lane_llm_selection
 from mapmover.runtime.prompt_runtime import build_cached_system_prompt_blocks
 from mapmover.runtime.warning_policy import DEFAULT_DISPLAY_WARNING_POLICY
 
@@ -54,3 +55,9 @@ class OpsOrchestrator:
 
     def heartbeat_policy(self):
         return OPS_HEARTBEAT_POLICY
+
+    def llm_selection(self, override: dict | None = None):
+        return resolve_lane_llm_selection(
+            self.spec.model_policy,
+            override=override,
+        )

@@ -6,8 +6,6 @@ import hashlib
 import json
 import uuid
 
-from anthropic import Anthropic
-
 from mapmover import logger
 from mapmover.corpus_registry import corpus_registry
 from mapmover.progress_bus import ProgressEvent
@@ -22,7 +20,6 @@ from mapmover.research_chat_helpers import (
     _history_messages,
     _research_map_payload_from_tool_result,
     _research_memory_messages,
-    _research_settings,
     _temperature_kwargs,
     _tool_call_signature,
 )
@@ -37,6 +34,10 @@ from mapmover.research_runtime import (
 )
 from mapmover.research_tools import RESEARCH_TOOL_DEFINITIONS, execute_research_tool
 from mapmover.runtime.orchestrator_policy import DEFAULT_RESEARCH_RETRY_POLICY
+from mapmover.runtime.llm_policy import (
+    build_provider_client,
+    resolve_lane_llm_selection,
+)
 from mapmover.runtime.prompt_runtime import build_cached_system_prompt_blocks
 from mapmover.runtime.research_retry_runtime import (
     build_research_tool_guardrail_message,
@@ -79,6 +80,7 @@ def run_research_chat(
     retry_policy=None,
     system_prompt_builder=build_research_system_prompt,
     system_prompt_block_builder=build_cached_system_prompt_blocks,
+    llm_selection=None,
 ) -> dict:
     """Synchronous research pipeline."""
     retry_policy = retry_policy or DEFAULT_RESEARCH_RETRY_POLICY
@@ -109,7 +111,9 @@ def run_research_chat(
             "corpus": manifest,
         }
 
-    model, temperature = _research_settings()
+    llm_selection = llm_selection or resolve_lane_llm_selection("research_deep_sonnet_opus_default")
+    model = llm_selection.model
+    temperature = llm_selection.temperature
     system_prompt = system_prompt_builder(manifest)
     research_hints = preprocess_research_query(query, manifest)
     hint_context = build_research_hint_context(research_hints)
@@ -125,7 +129,7 @@ def run_research_chat(
         history_messages_func=_history_messages,
     )
 
-    client = Anthropic()
+    client = build_provider_client(llm_selection)
     usage_recorder, owns_main = ensure_recorder(
         usage_recorder,
         surface="research",

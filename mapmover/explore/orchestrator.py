@@ -21,6 +21,7 @@ from mapmover.runtime.orchestrator_policy import (
     EXPLORE_HEARTBEAT_POLICY,
     build_heartbeat_event,
 )
+from mapmover.runtime.llm_policy import resolve_lane_llm_selection
 from mapmover.runtime.order_taker_prompt import build_system_prompt as build_explore_system_prompt
 from mapmover.runtime.prompt_runtime import build_cached_system_prompt_blocks
 from mapmover.runtime.warning_policy import DEFAULT_DISPLAY_WARNING_POLICY, DEFAULT_METRIC_WARNING_POLICY
@@ -85,6 +86,7 @@ class ExploreOrchestrator:
             interpret_request_func=interpret_request,
             system_prompt_builder=self.build_system_prompt,
             system_prompt_block_builder=self.build_system_prompt_blocks,
+            llm_selection=self.llm_selection(),
         )
 
     async def interpret_with_progress(
@@ -106,6 +108,7 @@ class ExploreOrchestrator:
             interpret_request_func=interpret_request,
             system_prompt_builder=self.build_system_prompt,
             system_prompt_block_builder=self.build_system_prompt_blocks,
+            llm_selection=self.llm_selection(),
         )
 
     def finalize_order(
@@ -138,6 +141,12 @@ class ExploreOrchestrator:
 
     def build_system_prompt_blocks(self, prompt_text: str) -> list[dict]:
         return build_cached_system_prompt_blocks(prompt_text)
+
+    def llm_selection(self, override: dict | None = None):
+        return resolve_lane_llm_selection(
+            self.spec.model_policy,
+            override=override,
+        )
 
     def display_warning_policy(self):
         return DEFAULT_DISPLAY_WARNING_POLICY

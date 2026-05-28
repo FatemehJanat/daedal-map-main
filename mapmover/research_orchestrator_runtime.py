@@ -57,6 +57,7 @@ async def run_research_orchestrator_call(
     retry_policy,
     system_prompt_builder,
     system_prompt_block_builder,
+    llm_selection,
 ) -> dict:
     result = await run_catalog_scoped_to_thread(
         catalog_surface=catalog_surface,
@@ -72,6 +73,7 @@ async def run_research_orchestrator_call(
         retry_policy=retry_policy,
         system_prompt_builder=system_prompt_builder,
         system_prompt_block_builder=system_prompt_block_builder,
+        llm_selection=llm_selection,
     )
     return apply_research_runtime_result_cap(
         result,
@@ -96,6 +98,7 @@ async def run_research_orchestrator_with_progress(
     retry_policy,
     system_prompt_builder,
     system_prompt_block_builder,
+    llm_selection,
 ) -> tuple[object, asyncio.Task]:
     bus, raw_task = await run_catalog_scoped_to_thread_with_progress(
         catalog_surface=catalog_surface,
@@ -112,6 +115,7 @@ async def run_research_orchestrator_with_progress(
         retry_policy=retry_policy,
         system_prompt_builder=system_prompt_builder,
         system_prompt_block_builder=system_prompt_block_builder,
+        llm_selection=llm_selection,
     )
 
     async def capped_result_task():
