@@ -95,6 +95,7 @@ from mapmover.runtime.postprocess_validation import validate_item as validate_it
 from mapmover.runtime.query_intent_primitives import (
     query_explicit_view_mode as query_explicit_view_mode_impl,
     query_prefers_event_source as query_prefers_event_source_impl,
+    query_requests_short_current_window as query_requests_short_current_window_impl,
 )
 from mapmover.runtime.retry_primitives import (
     reroute_item_to_event_sibling as reroute_item_to_event_sibling_impl,
@@ -181,6 +182,7 @@ def run_postprocess_order(
             apply_aggregate_query_hints_func=apply_aggregate_query_hints_impl,
             source_supports_events_func=source_supports_events_impl,
             query_prefers_event_source_func=query_prefers_event_source_impl,
+            query_requests_short_current_window_func=query_requests_short_current_window_impl,
             reroute_item_to_event_sibling_func=reroute_item_to_event_sibling_impl,
             resolve_pack_source_by_shape_func=resolve_pack_source_by_shape,
             load_source_metadata_func=load_source_metadata,

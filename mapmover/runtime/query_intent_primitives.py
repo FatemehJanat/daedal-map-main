@@ -127,7 +127,31 @@ EVENT_STYLE_ADJECTIVES = (
     "newest",
 )
 
+SHORT_CURRENT_WINDOW_REGEX = re.compile(
+    r"\b(?:today|current|currently|right now|last\s+\d+\s+(?:hour|hours|day|days|week|weeks|month|months)|"
+    r"past\s+\d+\s+(?:hour|hours|day|days|week|weeks|month|months)|"
+    r"last\s+(?:week|month)|past\s+(?:week|month))\b"
+)
+
 TIME_WINDOW_TERMS = (
+    "today",
+    "current",
+    "currently",
+    "right now",
+    "last 24 hours",
+    "past 24 hours",
+    "last 7 days",
+    "past 7 days",
+    "last 30 days",
+    "past 30 days",
+    "last 60 days",
+    "past 60 days",
+    "last 90 days",
+    "past 90 days",
+    "last week",
+    "past week",
+    "last month",
+    "past month",
     "last 10 years",
     "last 20 years",
     "last 30 years",
@@ -173,6 +197,8 @@ def query_has_time_window(query: str) -> bool:
         return False
     if re.search(r"\b(?:since|from|between|during|in)\s+\d{4}\b", query_lower):
         return True
+    if re.search(r"\b(?:last|past)\s+\d+\s+(?:day|days|week|weeks|month|months|year|years|hour|hours)\b", query_lower):
+        return True
     return any(token in query_lower for token in TIME_WINDOW_TERMS)
 
 
@@ -183,7 +209,20 @@ def query_requests_event_window(query: str) -> bool:
     has_event_subject = any(pattern in query_lower for pattern in EVENT_DISPLAY_PATTERNS)
     has_time_window = query_has_time_window(query_lower)
     has_aggregate_only = any(pattern in query_lower for pattern in AGGREGATE_ONLY_PATTERNS)
-    return has_event_subject and has_time_window and not has_aggregate_only
+    if not (has_event_subject and has_time_window):
+        return False
+    if SHORT_CURRENT_WINDOW_REGEX.search(query_lower):
+        return True
+    return not has_aggregate_only
+
+
+def query_requests_short_current_window(query: str) -> bool:
+    query_lower = semantic_query_text(query)
+    if not query_lower:
+        return False
+    if not SHORT_CURRENT_WINDOW_REGEX.search(query_lower):
+        return False
+    return query_has_time_window(query_lower)
 
 
 def query_explicit_view_mode(query: str) -> tuple[bool, bool]:

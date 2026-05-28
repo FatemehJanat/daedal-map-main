@@ -22,6 +22,7 @@ def validate_item(
     apply_aggregate_query_hints_func,
     source_supports_events_func,
     query_prefers_event_source_func,
+    query_requests_short_current_window_func,
     reroute_item_to_event_sibling_func,
     resolve_pack_source_by_shape_func,
     load_source_metadata_func,
@@ -117,7 +118,10 @@ def validate_item(
             item.pop("mode", None)
 
     if (
-        query_prefers_event_source_func(query)
+        (
+            query_prefers_event_source_func(query)
+            or query_requests_short_current_window_func(query)
+        )
         and not source_supports_events_func(catalog_source)
         and reroute_item_to_event_sibling_func(
             item,
@@ -139,7 +143,10 @@ def validate_item(
         if default_metric:
             item["metric"] = default_metric
             metric = default_metric
-        elif query_prefers_event_source_func(query) and reroute_item_to_event_sibling_func(
+        elif (
+            query_prefers_event_source_func(query)
+            or query_requests_short_current_window_func(query)
+        ) and reroute_item_to_event_sibling_func(
             item,
             catalog,
             resolve_pack_source_by_shape_func=resolve_pack_source_by_shape_func,
