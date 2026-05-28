@@ -212,6 +212,24 @@ def apply_cap_info_to_payload(payload: Any, cap_info: Optional[dict]) -> Any:
     return next_payload
 
 
+def copy_cap_fields_to_payload(payload: Any, source_payload: Any) -> Any:
+    """Copy normalized cap fields from one payload/result dict onto another."""
+    if not isinstance(payload, dict) or not isinstance(source_payload, dict):
+        return payload
+    cap_info = source_payload.get("cap_info")
+    if not isinstance(cap_info, dict) or not cap_info:
+        return payload
+
+    next_payload = dict(payload)
+    if source_payload.get("available_count") is not None:
+        next_payload["available_count"] = source_payload.get("available_count")
+    if source_payload.get("returned_count") is not None:
+        next_payload["returned_count"] = source_payload.get("returned_count")
+    if source_payload.get("truncated") is not None:
+        next_payload["truncated"] = bool(source_payload.get("truncated"))
+    return apply_cap_info_to_payload(next_payload, cap_info)
+
+
 def apply_row_count_cap_to_payload(
     payload: Any,
     *,

@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from mapmover.foundation_helpers import load_runtime_explainer_helpers
+from mapmover.runtime.orchestrator_helper_runtime import (
+    best_source_metadata,
+    requested_limit_from_order,
+)
 from mapmover.runtime.orchestrator_result_cap import cap_runtime_payload
 from mapmover.runtime.orchestrator_threading import (
     run_catalog_scoped_to_thread,
@@ -18,14 +22,18 @@ async def run_explore_interpret(
     usage_recorder,
     catalog_surface: str | None,
     interpret_request_func,
+    system_prompt_builder,
+    system_prompt_block_builder,
 ) -> dict:
     return await run_catalog_scoped_to_thread(
         catalog_surface=catalog_surface,
         func=interpret_request_func,
-        query=query,
+        user_query=query,
         chat_history=chat_history,
         hints=hints,
         usage_recorder=usage_recorder,
+        system_prompt_builder=system_prompt_builder,
+        system_prompt_block_builder=system_prompt_block_builder,
     )
 
 
@@ -38,15 +46,19 @@ async def run_explore_interpret_with_progress(
     catalog_surface: str | None,
     progress_bus_cls,
     interpret_request_func,
+    system_prompt_builder,
+    system_prompt_block_builder,
 ) -> tuple[object, asyncio.Task]:
     return await run_catalog_scoped_to_thread_with_progress(
         catalog_surface=catalog_surface,
         progress_bus_cls=progress_bus_cls,
         func=interpret_request_func,
-        query=query,
+        user_query=query,
         chat_history=chat_history,
         hints=hints,
         usage_recorder=usage_recorder,
+        system_prompt_builder=system_prompt_builder,
+        system_prompt_block_builder=system_prompt_block_builder,
     )
 
 
@@ -111,47 +123,3 @@ def maybe_build_explore_explainer_response(
         explainer_sections=explainer.get("sections"),
         stub_order=explainer.get("stub_order"),
     )
-
-
-def requested_limit_from_order(order: dict | None) -> int | None:
-    if not isinstance(order, dict):
-        return None
-    items = order.get("items") or []
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        sort_spec = item.get("sort") or {}
-        raw_limit = sort_spec.get("limit")
-        try:
-            limit = int(raw_limit)
-        except (TypeError, ValueError):
-            continue
-        if limit > 0:
-            return limit
-    return None
-
-
-def best_source_metadata(hints: dict, load_source_metadata_func) -> dict | None:
-    candidate_ids: list[str] = []
-    detected = hints.get("detected_source") or {}
-    detected_source_id = str(detected.get("source_id") or "").strip()
-    if detected_source_id:
-        candidate_ids.append(detected_source_id)
-
-    source_bundle = ((hints.get("candidates") or {}).get("sources") or {})
-    best_candidate = source_bundle.get("best") or {}
-    best_source_id = str(best_candidate.get("source_id") or "").strip()
-    if best_source_id and best_source_id not in candidate_ids:
-        candidate_ids.append(best_source_id)
-
-    for candidate in source_bundle.get("candidates") or []:
-        source_id = str((candidate or {}).get("source_id") or "").strip()
-        if source_id and source_id not in candidate_ids:
-            candidate_ids.append(source_id)
-
-    for source_id in candidate_ids:
-        metadata = load_source_metadata_func(source_id) or {}
-        if isinstance(metadata, dict) and metadata:
-            metadata.setdefault("source_id", source_id)
-            return metadata
-    return None

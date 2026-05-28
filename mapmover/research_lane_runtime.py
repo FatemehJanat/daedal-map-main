@@ -37,6 +37,7 @@ from mapmover.research_runtime import (
 )
 from mapmover.research_tools import RESEARCH_TOOL_DEFINITIONS, execute_research_tool
 from mapmover.runtime.orchestrator_policy import DEFAULT_RESEARCH_RETRY_POLICY
+from mapmover.runtime.prompt_runtime import build_cached_system_prompt_blocks
 from mapmover.runtime.research_retry_runtime import (
     build_research_tool_guardrail_message,
     run_research_rescue_synthesis,
@@ -76,6 +77,8 @@ def run_research_chat(
     rescue_usage_recorder=None,
     display_warning_policy=None,
     retry_policy=None,
+    system_prompt_builder=build_research_system_prompt,
+    system_prompt_block_builder=build_cached_system_prompt_blocks,
 ) -> dict:
     """Synchronous research pipeline."""
     retry_policy = retry_policy or DEFAULT_RESEARCH_RETRY_POLICY
@@ -107,15 +110,11 @@ def run_research_chat(
         }
 
     model, temperature = _research_settings()
-    system_prompt = build_research_system_prompt(manifest)
+    system_prompt = system_prompt_builder(manifest)
     research_hints = preprocess_research_query(query, manifest)
     hint_context = build_research_hint_context(research_hints)
     prompt_manifest = _compact_manifest_for_prompt(manifest)
-    system_prompt_blocks = [{
-        "type": "text",
-        "text": system_prompt,
-        "cache_control": {"type": "ephemeral"},
-    }]
+    system_prompt_blocks = system_prompt_block_builder(system_prompt)
     messages = build_research_messages(
         prompt_manifest=prompt_manifest,
         hint_context=hint_context,

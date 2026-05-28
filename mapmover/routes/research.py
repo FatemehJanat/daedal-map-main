@@ -37,9 +37,7 @@ from mapmover.research_lane_runtime import (
 )
 from mapmover.research_orchestrator import ResearchOrchestrator
 from mapmover.research_route_runtime import (
-    build_research_usage_recorders,
     prepare_research_chat_route_context,
-    progress_event_payload,
     settle_and_log_research_turn,
 )
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
@@ -48,6 +46,7 @@ from mapmover.routes.chat_shared import (
     decode_json_or_msgpack_body,
     decode_request_body,
 )
+from mapmover.runtime.chat_route_support import build_usage_recorders
 from mapmover.runtime.sse import SSE_HEADERS, encode_sse, stage_payload
 
 
@@ -287,7 +286,13 @@ async def research_chat_endpoint(req: Request):
                 headers=rejection_headers or {},
             )
         assert route_context is not None
-        usage_recorder, rescue_usage_recorder = build_research_usage_recorders(route_context=route_context)
+        usage_recorder, rescue_usage_recorder = build_usage_recorders(
+            surface="research",
+            call_kinds=("research_main", "research_rescue"),
+            session_id=route_context.session_id,
+            request_id=route_context.request_id,
+            caller_ctx=route_context.caller_ctx,
+        )
         try:
             result = await research_orchestrator.run(
                 session_id=route_context.session_id,
@@ -336,7 +341,13 @@ async def research_chat_stream_endpoint(req: Request):
                 yield encode_sse(stage_payload("complete", result=payload))
                 return
             assert route_context is not None
-            usage_recorder, rescue_usage_recorder = build_research_usage_recorders(route_context=route_context)
+            usage_recorder, rescue_usage_recorder = build_usage_recorders(
+                surface="research",
+                call_kinds=("research_main", "research_rescue"),
+                session_id=route_context.session_id,
+                request_id=route_context.request_id,
+                caller_ctx=route_context.caller_ctx,
+            )
 
             yield encode_sse(stage_payload("corpus", message="Reading Research workspace..."), dumps=json_dumps_safe)
             yield encode_sse(stage_payload("thinking", message="Researching loaded workspace data..."), dumps=json_dumps_safe)
@@ -357,7 +368,7 @@ async def research_chat_stream_endpoint(req: Request):
                     heartbeat_seconds=4.0,
                     heartbeat=research_orchestrator.heartbeat,
                 ):
-                    yield encode_sse(progress_event_payload(event), dumps=json_dumps_safe)
+                    yield encode_sse(progress_payload(event), dumps=json_dumps_safe)
 
                 result = await task
             finally:

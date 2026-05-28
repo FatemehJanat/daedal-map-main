@@ -154,6 +154,31 @@ def build_interrupted_display_warning_payload(
     }
 
 
+def interrupt_display_payload_if_needed(
+    available_rows: int,
+    *,
+    policy: DisplayWarningPolicy = DEFAULT_DISPLAY_WARNING_POLICY,
+    force_large_display: bool = False,
+    rows: list | None = None,
+    truncated: bool = True,
+    **extra_fields,
+) -> dict | None:
+    """Return a shared interrupted payload when display gating should stop work."""
+    warning, should_interrupt = evaluate_display_warning_gate(
+        available_rows,
+        policy=policy,
+        force_large_display=force_large_display,
+    )
+    if not should_interrupt:
+        return None
+    return build_interrupted_display_warning_payload(
+        warning or {},
+        rows=rows,
+        truncated=truncated,
+        **extra_fields,
+    )
+
+
 def build_display_warning_result(
     warning: dict,
     *,

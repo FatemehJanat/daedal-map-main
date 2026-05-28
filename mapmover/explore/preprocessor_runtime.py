@@ -15,7 +15,7 @@ from typing import Optional
 from ..data_loading import get_source_path, load_catalog, load_source_metadata
 from .preprocess_summary import build_preprocessor_summary
 from ..foundation_helpers import load_reference_json
-from ..paths import COUNTRIES_DIR, GEOMETRY_DIR as GEOM_DIR
+from ..paths import GEOMETRY_DIR as GEOM_DIR
 from ..runtime.candidate_scoring import (
     adjust_scores_with_context as adjust_scores_with_context_impl,
     detect_intent_candidates as detect_intent_candidates_impl,
@@ -45,12 +45,7 @@ from ..runtime.preprocess_primitives import (
     extract_country_from_query as extract_country_from_query_impl,
     extract_multiple_locations as extract_multiple_locations_impl,
     extract_topics as extract_topics_impl,
-    get_countries_in_viewport as get_countries_in_viewport_impl,
     get_region_aliases as get_region_aliases_impl,
-    get_relevant_sources_with_metrics as get_relevant_sources_with_metrics_impl,
-    get_sorted_location_names as get_sorted_location_names_impl,
-    load_country_index as load_country_index_impl,
-    load_parquet_names as load_parquet_names_impl,
     lookup_country_specific_data as lookup_country_specific_data_impl,
     lookup_location_in_viewport as lookup_location_in_viewport_impl,
     resolve_regions as resolve_regions_impl,
@@ -62,7 +57,14 @@ from ..runtime.preprocess_user_intents import (
     normalize_query_for_location_matching,
 )
 from ..runtime.preprocessor_runtime import build_preprocessor_signal_bundle
-from ..runtime.preprocessor_context_runtime import format_filter_description
+from ..runtime.preprocessor_context_runtime import (
+    format_filter_description,
+    get_countries_in_viewport,
+    get_relevant_sources_with_metrics,
+    get_sorted_location_names,
+    load_country_index,
+    load_parquet_names,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -111,7 +113,7 @@ def load_conversions() -> dict:
     if _CONVERSIONS_CACHE is not None:
         return _CONVERSIONS_CACHE
 
-    from .runtime.geography_reference import load_conversions as load_conversions_impl
+    from ..runtime.geography_reference import load_conversions as load_conversions_impl
 
     _CONVERSIONS_CACHE = load_conversions_impl()
     if _CONVERSIONS_CACHE:
@@ -126,18 +128,6 @@ def load_reference_file(filepath: Path) -> Optional[dict]:
     """Compatibility shim to the shared runtime foundation helper loader."""
     data = load_reference_json(filepath)
     return data if isinstance(data, dict) else None
-
-
-def get_countries_in_viewport(bounds: dict) -> list:
-    return get_countries_in_viewport_impl(bounds, geometry_dir=GEOMETRY_DIR, logger=logger)
-
-
-def load_parquet_names(iso3: str) -> dict:
-    return load_parquet_names_impl(iso3, geometry_dir=GEOMETRY_DIR, logger=logger)
-
-
-def get_sorted_location_names(iso3: str) -> list:
-    return get_sorted_location_names_impl(iso3, load_parquet_names_func=load_parquet_names, logger=logger)
 
 
 def search_locations_globally(name: str, admin_level: int = None, limit_countries: list = None) -> list:
@@ -178,20 +168,6 @@ def extract_country_from_query(query: str, viewport: dict = None) -> dict:
         normalize_query_for_location_matching=normalize_query_for_location_matching,
         reference_dir=REFERENCE_DIR,
         load_reference_file=load_reference_file,
-    )
-
-
-def load_country_index(iso3: str) -> Optional[dict]:
-    return load_country_index_impl(iso3, countries_dir=COUNTRIES_DIR, logger=logger)
-
-
-def get_relevant_sources_with_metrics(topics: list, iso3: str = None) -> dict:
-    return get_relevant_sources_with_metrics_impl(
-        topics,
-        iso3,
-        load_catalog=load_catalog,
-        load_source_metadata=load_source_metadata,
-        load_country_index_func=load_country_index,
     )
 
 
@@ -381,4 +357,3 @@ def preprocess_query(
         format_filter_description_func=format_filter_description,
     )
     return hints
-

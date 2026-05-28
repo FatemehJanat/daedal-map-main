@@ -37,3 +37,23 @@ def build_usage_recorder(
     if request_id:
         recorder_kwargs["request_id"] = request_id
     return LLMUsageRecorder(**recorder_kwargs)
+
+
+def build_usage_recorders(
+    *,
+    surface: str,
+    call_kinds: tuple[str, ...],
+    session_id: str,
+    caller_ctx: dict,
+    request_id: str | None = None,
+) -> tuple[LLMUsageRecorder, ...]:
+    return tuple(
+        build_usage_recorder(
+            surface=surface,
+            call_kind=call_kind,
+            session_id=session_id,
+            caller_ctx=caller_ctx,
+            request_id=request_id,
+        )
+        for call_kind in call_kinds
+    )

@@ -6,6 +6,8 @@ from typing import Any
 
 import requests
 
+from mapmover.runtime.result_cap import apply_row_count_cap_to_payload
+
 
 USGS_EVENTS_API = "https://earthquake.usgs.gov/fdsnws/event/1/query"
 DEFAULT_HOURS = 24
@@ -186,6 +188,7 @@ def fetch_live_earthquakes(
     max_limit = _max_limit()
     if normalized_limit < 1 or normalized_limit > max_limit:
         raise ValueError(f"limit must be between 1 and {max_limit}")
+    probe_limit = min(normalized_limit + 1, max_limit)
 
     normalized_min_magnitude = DEFAULT_MIN_MAGNITUDE if min_magnitude is None else float(min_magnitude)
     normalized_orderby = str(orderby or "time").strip().lower()
@@ -198,7 +201,7 @@ def fetch_live_earthquakes(
         "endtime": _format_usgs_time(end_dt),
         "minmagnitude": normalized_min_magnitude,
         "orderby": normalized_orderby,
-        "limit": normalized_limit,
+        "limit": probe_limit,
     }
     bounds = {
         "minlatitude": _coerce_optional_float(min_latitude, "min_latitude"),
@@ -218,9 +221,12 @@ def fetch_live_earthquakes(
         features = []
 
     rows = [row for feature in features if isinstance(feature, dict) for row in [_normalize_event(feature)] if row]
+    upstream_returned_count = len(rows)
+    confirmed_truncated = upstream_returned_count > normalized_limit
+    if confirmed_truncated:
+        rows = rows[:normalized_limit]
     live_watermark = max((str(row["timestamp"]) for row in rows if row.get("timestamp")), default=None)
-
-    return {
+    payload = {
         "request_id": request_id,
         "capability_id": "live_earthquake_events",
         "pack_id": "earthquakes",
@@ -239,8 +245,8 @@ def fetch_live_earthquakes(
         },
         "sort": [{"field": normalized_orderby.replace("-asc", ""), "direction": "asc" if normalized_orderby.endswith("-asc") else "desc"}],
         "limit": normalized_limit,
-        "row_count": len(rows),
-        "truncated": len(rows) >= normalized_limit,
+        "row_count": upstream_returned_count if confirmed_truncated else len(rows),
+        "truncated": confirmed_truncated,
         "rows": rows,
         "provenance": {
             "upstream": "USGS FDSN Event Web Service",
@@ -259,3 +265,13 @@ def fetch_live_earthquakes(
             }
         ],
     }
+    if not confirmed_truncated and probe_limit == normalized_limit and len(rows) >= normalized_limit:
+        payload["warnings"].append(
+            {
+                "code": "upstream_limit_ambiguous",
+                "message": "Upstream limit reached at the configured maximum, so additional matching rows may exist even though truncation could not be confirmed exactly.",
+            }
+        )
+    if confirmed_truncated:
+        return apply_row_count_cap_to_payload(payload, cap_reason="live_wrapper_limit")
+    return payload

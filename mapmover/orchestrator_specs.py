@@ -26,7 +26,7 @@ class OrchestratorSpec:
 EXPLORE_ORCHESTRATOR_SPEC = OrchestratorSpec(
     lane_id="explore",
     orchestrator_class="ExploreOrchestrator",
-    prompt_provider="order_taker.interpret_request",
+    prompt_provider="ExploreOrchestrator.build_system_prompt",
     preload_provider="explore.preprocess_explore_request",
     model_policy="explore_fast_haiku_default",
     helper_policy="runtime_shared_helpers_standard",
@@ -42,7 +42,7 @@ EXPLORE_ORCHESTRATOR_SPEC = OrchestratorSpec(
 RESEARCH_ORCHESTRATOR_SPEC = OrchestratorSpec(
     lane_id="research",
     orchestrator_class="ResearchOrchestrator",
-    prompt_provider="research.build_research_system_prompt",
+    prompt_provider="ResearchOrchestrator.build_system_prompt",
     preload_provider="research.corpus_manifest_and_memory",
     model_policy="research_deep_sonnet_opus_default",
     helper_policy="runtime_shared_helpers_plus_research_tools",

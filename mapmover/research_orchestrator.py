@@ -17,7 +17,9 @@ from mapmover.runtime.orchestrator_policy import (
     RESEARCH_HEARTBEAT_POLICY,
     build_heartbeat_event,
 )
+from mapmover.runtime.prompt_runtime import build_cached_system_prompt_blocks
 from mapmover.runtime.warning_policy import DEFAULT_DISPLAY_WARNING_POLICY
+from mapmover.research_prompt import build_research_system_prompt
 
 
 class ResearchOrchestrator:
@@ -46,6 +48,12 @@ class ResearchOrchestrator:
 
     def display_warning_policy(self):
         return DEFAULT_DISPLAY_WARNING_POLICY
+
+    def build_system_prompt(self, corpus_manifest: dict) -> str:
+        return build_research_system_prompt(corpus_manifest)
+
+    def build_system_prompt_blocks(self, prompt_text: str) -> list[dict]:
+        return build_cached_system_prompt_blocks(prompt_text)
 
     def retry_policy(self):
         return DEFAULT_RESEARCH_RETRY_POLICY
@@ -79,6 +87,8 @@ class ResearchOrchestrator:
             load_source_metadata_func=load_source_metadata,
             display_warning_policy=self.display_warning_policy(),
             retry_policy=self.retry_policy(),
+            system_prompt_builder=self.build_system_prompt,
+            system_prompt_block_builder=self.build_system_prompt_blocks,
         )
 
     async def run_with_progress(
@@ -108,4 +118,6 @@ class ResearchOrchestrator:
             load_source_metadata_func=load_source_metadata,
             display_warning_policy=self.display_warning_policy(),
             retry_policy=self.retry_policy(),
+            system_prompt_builder=self.build_system_prompt,
+            system_prompt_block_builder=self.build_system_prompt_blocks,
         )

@@ -21,6 +21,8 @@ from mapmover.runtime.orchestrator_policy import (
     EXPLORE_HEARTBEAT_POLICY,
     build_heartbeat_event,
 )
+from mapmover.runtime.order_taker_prompt import build_system_prompt as build_explore_system_prompt
+from mapmover.runtime.prompt_runtime import build_cached_system_prompt_blocks
 from mapmover.runtime.warning_policy import DEFAULT_DISPLAY_WARNING_POLICY, DEFAULT_METRIC_WARNING_POLICY
 from mapmover.order_taker import interpret_request
 from mapmover.postprocessor import get_display_items, postprocess_order
@@ -81,6 +83,8 @@ class ExploreOrchestrator:
             usage_recorder=usage_recorder,
             catalog_surface=catalog_surface,
             interpret_request_func=interpret_request,
+            system_prompt_builder=self.build_system_prompt,
+            system_prompt_block_builder=self.build_system_prompt_blocks,
         )
 
     async def interpret_with_progress(
@@ -100,6 +104,8 @@ class ExploreOrchestrator:
             catalog_surface=catalog_surface,
             progress_bus_cls=ProgressBus,
             interpret_request_func=interpret_request,
+            system_prompt_builder=self.build_system_prompt,
+            system_prompt_block_builder=self.build_system_prompt_blocks,
         )
 
     def finalize_order(
@@ -126,6 +132,12 @@ class ExploreOrchestrator:
 
     def metric_warning_policy(self):
         return DEFAULT_METRIC_WARNING_POLICY
+
+    def build_system_prompt(self, catalog: dict, conversions: dict) -> str:
+        return build_explore_system_prompt(catalog, conversions)
+
+    def build_system_prompt_blocks(self, prompt_text: str) -> list[dict]:
+        return build_cached_system_prompt_blocks(prompt_text)
 
     def display_warning_policy(self):
         return DEFAULT_DISPLAY_WARNING_POLICY

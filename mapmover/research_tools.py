@@ -21,8 +21,7 @@ from mapmover.geometry_handlers import get_selection_geometries
 from mapmover.runtime.result_cap import apply_row_count_cap_to_payload
 from mapmover.runtime.warning_policy import DEFAULT_DISPLAY_WARNING_POLICY
 from mapmover.runtime.warning_primitives import (
-    build_interrupted_display_warning_payload,
-    evaluate_display_warning_gate,
+    interrupt_display_payload_if_needed,
 )
 from mapmover.session_cache import session_manager
 
@@ -1418,16 +1417,14 @@ def _build_display_subset(result: dict, artifact: dict, tool_input: dict) -> dic
     query_default_limit = None if explicit_limit is not None else (warning_policy.hard_cap + 1)
     query_result = _query_rows_duckdb(rows, tool_input, default_limit=query_default_limit, maximum_limit=None)
     row_count = int(query_result.get("row_count", 0) or 0)
-    display_warning, should_interrupt = evaluate_display_warning_gate(
+    interrupted_payload = interrupt_display_payload_if_needed(
         row_count,
         policy=warning_policy,
         force_large_display=force_large_display,
+        artifact_id=artifact.get("artifact_id"),
     )
-    if explicit_limit is None and should_interrupt:
-        return build_interrupted_display_warning_payload(
-            display_warning or {},
-            artifact_id=artifact.get("artifact_id"),
-        )
+    if explicit_limit is None and interrupted_payload is not None:
+        return interrupted_payload
     matched_rows = query_result.get("rows") or []
     feature_lookup = _feature_lookup_from_result(result)
     return _build_research_map_payload(
@@ -1525,16 +1522,14 @@ def execute_research_tool(
                     return query_result
                 row_count = int(query_result.get("row_count", 0) or 0)
                 force_large_display = bool(tool_input.get("_force_large_display"))
-                display_warning, should_interrupt = evaluate_display_warning_gate(
+                interrupted_payload = interrupt_display_payload_if_needed(
                     row_count,
                     policy=display_warning_policy,
                     force_large_display=force_large_display,
+                    artifact_id=artifact.get("artifact_id"),
                 )
-                if explicit_limit is None and should_interrupt:
-                    return build_interrupted_display_warning_payload(
-                        display_warning or {},
-                        artifact_id=artifact.get("artifact_id"),
-                    )
+                if explicit_limit is None and interrupted_payload is not None:
+                    return interrupted_payload
                 matched_rows = query_result.get("rows") or []
                 return _build_research_map_payload(
                     matched_rows,

@@ -55,6 +55,8 @@ async def run_research_orchestrator_call(
     load_source_metadata_func,
     display_warning_policy,
     retry_policy,
+    system_prompt_builder,
+    system_prompt_block_builder,
 ) -> dict:
     result = await run_catalog_scoped_to_thread(
         catalog_surface=catalog_surface,
@@ -68,6 +70,8 @@ async def run_research_orchestrator_call(
         rescue_usage_recorder=rescue_usage_recorder,
         display_warning_policy=display_warning_policy,
         retry_policy=retry_policy,
+        system_prompt_builder=system_prompt_builder,
+        system_prompt_block_builder=system_prompt_block_builder,
     )
     return apply_research_runtime_result_cap(
         result,
@@ -90,6 +94,8 @@ async def run_research_orchestrator_with_progress(
     load_source_metadata_func,
     display_warning_policy,
     retry_policy,
+    system_prompt_builder,
+    system_prompt_block_builder,
 ) -> tuple[object, asyncio.Task]:
     bus, raw_task = await run_catalog_scoped_to_thread_with_progress(
         catalog_surface=catalog_surface,
@@ -104,6 +110,8 @@ async def run_research_orchestrator_with_progress(
         rescue_usage_recorder=rescue_usage_recorder,
         display_warning_policy=display_warning_policy,
         retry_policy=retry_policy,
+        system_prompt_builder=system_prompt_builder,
+        system_prompt_block_builder=system_prompt_block_builder,
     )
 
     async def capped_result_task():

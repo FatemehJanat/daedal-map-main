@@ -19,7 +19,6 @@ from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log
 from mapmover.data_loading import fetch_geometries_by_loc_ids, load_source_metadata, load_source_reference
 from mapmover.explore.chat_route_runtime import (
     anonymous_budget_rejection_payload,
-    build_llm_usage_recorder,
     execute_confirmed_order_http,
     execute_confirmed_order_stream,
     prepare_explore_chat_route_context,
@@ -48,6 +47,7 @@ from mapmover.explore.explore_response_adapter import (
     build_overlay_toggle_response,
 )
 from mapmover.runtime.warning_primitives import build_metric_warning_result
+from mapmover.runtime.chat_route_support import build_usage_recorder
 from mapmover.routes.chat_shared import (
     _chat_log_timing,
     _confirmed_order_rate_limit,
@@ -137,9 +137,11 @@ async def chat_endpoint(req: Request):
                 status_code=rejection_status or 429,
                 headers=rejection_headers or {},
             )
-        usage_recorder = build_llm_usage_recorder(
+        usage_recorder = build_usage_recorder(
+            surface="explorer",
+            call_kind="order_taker",
             session_id=route_context.session_id,
-            trace_id=trace_id,
+            request_id=trace_id,
             caller_ctx=route_context.caller_ctx,
         )
         # Run the synchronous LLM call in a thread so we do not block the
@@ -164,7 +166,7 @@ async def chat_endpoint(req: Request):
 
         t_postprocess_start = time.perf_counter()
         response_tag, final_result, chat_result = build_explore_final_result(
-            result,
+            result=result,
             query=query,
             hints=hints,
             auth_user=route_context.auth_user,
@@ -308,7 +310,9 @@ async def chat_stream_endpoint(req: Request):
             if rejection_payload is not None:
                 yield encode_sse(stage_payload("complete", result=rejection_payload))
                 return
-            usage_recorder = build_llm_usage_recorder(
+            usage_recorder = build_usage_recorder(
+                surface="explorer",
+                call_kind="order_taker",
                 session_id=route_context.session_id,
                 caller_ctx=route_context.caller_ctx,
             )

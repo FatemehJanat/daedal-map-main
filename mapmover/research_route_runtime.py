@@ -17,9 +17,7 @@ from mapmover.logging_analytics import hash_ip_for_analytics, log_conversation
 from mapmover.runtime.chat_route_context import build_base_chat_route_context
 from mapmover.runtime.chat_route_support import (
     anonymous_budget_rejection_payload,
-    build_usage_recorder,
 )
-from mapmover.runtime.sse import progress_payload
 
 
 @dataclass
@@ -84,25 +82,6 @@ async def prepare_research_chat_route_context(
     )
 
 
-def build_research_usage_recorders(*, route_context: ResearchChatRouteContext):
-    return (
-        build_usage_recorder(
-            surface="research",
-            call_kind="research_main",
-            session_id=route_context.session_id,
-            request_id=route_context.request_id,
-            caller_ctx=route_context.caller_ctx,
-        ),
-        build_usage_recorder(
-            surface="research",
-            call_kind="research_rescue",
-            session_id=route_context.session_id,
-            request_id=route_context.request_id,
-            caller_ctx=route_context.caller_ctx,
-        ),
-    )
-
-
 async def settle_and_log_research_turn(
     *,
     route_context: ResearchChatRouteContext,
@@ -125,5 +104,3 @@ async def settle_and_log_research_turn(
         ip_hash=hash_ip_for_analytics(route_context.client_ip),
         user_agent=user_agent,
     )
-def progress_event_payload(event) -> dict:
-    return progress_payload(event)

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -14,11 +13,13 @@ from mapmover import logger, session_manager
 from mapmover.catalog_surface import catalog_surface_scope
 from mapmover.corpus_registry import corpus_registry
 from mapmover.data_loading import load_source_metadata
+from mapmover.explore.confirmed_order_delta_runtime import (
+    shape_confirmed_order_delta_response,
+)
 from mapmover.explore.explore_confirmed_order import execute_confirmed_order_with_session_cache
 from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log_conversation
 from mapmover.order_executor import execute_order
 from mapmover.routes.chat_shared import (
-    _catalog_surface_for_request,
     _chat_log_timing,
     _chat_trace_id,
     _confirmed_order_rate_limit,
@@ -31,9 +32,10 @@ from mapmover.runtime.chat_route_context import build_base_chat_route_context
 from mapmover.routes.disasters.helpers import msgpack_response
 from mapmover.runtime.chat_route_support import (
     anonymous_budget_rejection_payload,
-    build_usage_recorder,
 )
-from mapmover.runtime.result_cap import apply_cap_info_to_payload
+from mapmover.runtime.confirmed_order_response_runtime import (
+    build_confirmed_order_response_payload,
+)
 from mapmover.runtime.warning_primitives import (
     build_display_warning_result,
     evaluate_display_warning_gate,
@@ -102,113 +104,7 @@ async def prepare_explore_chat_route_context(
             cache=cache,
         ),
         None,
-    )
-
-
-def _shape_confirmed_order_delta_response(result: dict, cache) -> dict | None:
-    is_events = result.get("type") == "events"
-    is_geometry = result.get("data_type") == "geometry"
-    event_type_to_overlay = {
-        "earthquake": "earthquakes",
-        "volcano": "volcanoes",
-        "tsunami": "tsunamis",
-        "hurricane": "hurricanes",
-        "wildfire": "wildfires",
-        "tornado": "tornadoes",
-        "flood": "floods",
-        "drought": "drought",
-        "landslide": "landslides",
-    }
-    event_type = result.get("event_type", "")
-    source_id = event_type_to_overlay.get(event_type, event_type) if is_events else result.get("metric_key", "data")
-    geojson = result["geojson"]
-    features = geojson.get("features", [])
-    original_count = len(features)
-
-    if is_events:
-        new_features = cache.filter_events(features)
-        delta_count = len(new_features)
-        filtered_geojson = {"type": "FeatureCollection", "features": new_features}
-        filtered_year_data = None
-    elif is_geometry:
-        new_features = cache.filter_geometry_features(features)
-        delta_count = len(new_features)
-        filtered_geojson = {"type": "FeatureCollection", "features": new_features}
-        filtered_year_data = None
-    elif result.get("multi_year") and result.get("year_data"):
-        year_data = result["year_data"]
-        filtered_year_data = cache.filter_year_data(year_data)
-
-        new_loc_ids = set()
-        for loc_data in filtered_year_data.values():
-            new_loc_ids.update(loc_data.keys())
-
-        new_features = [
-            feature
-            for feature in features
-            if (feature.get("properties", {}).get("loc_id") or feature.get("id")) in new_loc_ids
-        ]
-        delta_count = len(new_features)
-        filtered_geojson = {"type": "FeatureCollection", "features": new_features}
-    else:
-        new_features = features
-        delta_count = original_count
-        filtered_geojson = geojson
-        filtered_year_data = None
-
-    if delta_count == 0 and original_count > 0:
-        logger.debug("Dedup: all %s features already sent, returning already_loaded", original_count)
-        return {
-            "type": "already_loaded",
-            "message": f"This data ({original_count} features) is already loaded on your map.",
-            "summary": result.get("summary", ""),
-        }
-
-    response = {
-        "type": result.get("type", "data"),
-        "data_type": result.get("data_type"),
-        "source_id": result.get("source_id"),
-        "available_geo_levels": result.get("available_geo_levels", []),
-        "geojson": filtered_geojson,
-        "summary": result.get("summary", ""),
-        "count": result.get("count", delta_count),
-        "sources": result.get("sources", []),
-    }
-    cap_info = result.get("cap_info") if isinstance(result.get("cap_info"), dict) else None
-    if cap_info:
-        response["truncated"] = bool(result.get("truncated") or cap_info.get("cap_hit"))
-        if result.get("available_count") is not None:
-            response["available_count"] = result.get("available_count")
-        if result.get("returned_count") is not None:
-            response["returned_count"] = result.get("returned_count")
-        response = apply_cap_info_to_payload(response, cap_info)
-
-    if is_events:
-        response["event_type"] = result.get("event_type")
-        response["time_range"] = result.get("time_range")
-    if is_geometry:
-        geo_level = result.get("geographic_level") or result.get("overlay_type", "zcta")
-        response["overlay_type"] = geo_level
-        response["geographic_level"] = geo_level
-    if result.get("multi_year"):
-        response["multi_year"] = True
-        response["year_range"] = result["year_range"]
-        response["metric_key"] = result.get("metric_key")
-        response["available_metrics"] = result.get("available_metrics", [])
-        response["metric_year_ranges"] = result.get("metric_year_ranges", {})
-        response["year_data"] = filtered_year_data if filtered_year_data else {}
-
-    if is_events and new_features:
-        cache.register_sent_events(new_features, source_id)
-    elif is_geometry and new_features:
-        geo_source_id = result.get("source_id") or "geometry_zcta"
-        cache.register_sent_geometry(new_features, geo_source_id)
-    elif filtered_year_data:
-        cache.register_sent_year_data(filtered_year_data)
-
-    if delta_count < original_count:
-        logger.info("Delta sent: %s/%s features (%s deduped)", delta_count, original_count, original_count - delta_count)
-    return response
+)
 
 
 def execute_confirmed_order_http(
@@ -321,7 +217,7 @@ def execute_confirmed_order_http(
             logger.info("Force refetch requested - clearing session cache for this data")
             route_context.cache.clear()
 
-        response_payload = _shape_confirmed_order_delta_response(result, route_context.cache)
+        response_payload = shape_confirmed_order_delta_response(result, route_context.cache)
         if response_payload is None:
             response_payload = result
         corpus_registry.register_order_result(
@@ -391,23 +287,12 @@ def execute_confirmed_order_stream(
         result.get("type"),
         result.get("source_id"),
     )
-    response = {
-        "type": result.get("type", "data"),
-        "data_type": result.get("data_type"),
-        "source_id": result.get("source_id"),
-        "available_geo_levels": result.get("available_geo_levels", []),
-        "geojson": result["geojson"],
-        "summary": result["summary"],
-        "count": result["count"],
-        "sources": result.get("sources", []),
-    }
-    if result.get("multi_year"):
-        response["multi_year"] = True
-        response["year_data"] = result["year_data"]
-        response["year_range"] = result["year_range"]
-        response["metric_key"] = result.get("metric_key")
-        response["available_metrics"] = result.get("available_metrics", [])
-        response["metric_year_ranges"] = result.get("metric_year_ranges", {})
+    response = build_confirmed_order_response_payload(
+        result,
+        geojson=result["geojson"],
+        count=result["count"],
+        year_data=result.get("year_data"),
+    )
 
     corpus_registry.register_order_result(
         session_id=route_context.session_id,
@@ -426,11 +311,3 @@ def execute_confirmed_order_stream(
         user_agent=(req.headers.get("user-agent") or "")[:300] or None,
     )
     return response
-def build_llm_usage_recorder(*, session_id: str, trace_id: str | None = None, caller_ctx: dict):
-    return build_usage_recorder(
-        surface="explorer",
-        call_kind="order_taker",
-        session_id=session_id,
-        request_id=trace_id,
-        caller_ctx=caller_ctx,
-    )
