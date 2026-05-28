@@ -8,6 +8,7 @@
 
 import { CONFIG } from './config.js';
 import { fetchMsgpack } from './utils/fetch.js';
+import { getCurrentProfile } from './auth.js';
 
 // localStorage key for persisting overlay selections
 const STORAGE_KEY = 'countymap_activeOverlays';
@@ -49,7 +50,25 @@ const MODEL_OVERRIDES = {
   'drought': 'polygon'
 };
 
+const OPS_FEED_TO_OVERLAY_IDS = {
+  earthquakes: ['earthquakes'],
+  volcanoes: ['volcanoes'],
+  tsunamis: ['tsunamis'],
+  weather: [
+    'temperature',
+    'humidity',
+    'snow-depth',
+    'precipitation',
+    'cloud-cover',
+    'pressure',
+    'solar-radiation',
+    'soil-temp',
+    'soil-moisture'
+  ]
+};
+
 // Categories built dynamically from catalog
+let ALL_CATEGORIES = [];
 let CATEGORIES = [];
 let OVERLAYS = [];
 
@@ -146,9 +165,9 @@ function buildCategoriesFromTree(overlayTree) {
 /**
  * Flatten overlays for lookup.
  */
-function getAllOverlays() {
+function getAllOverlaysFromCategories(categories) {
   const overlays = [];
-  for (const cat of CATEGORIES) {
+  for (const cat of categories) {
     if (cat.isCategory) {
       overlays.push(...cat.overlays);
     } else if (cat.overlay) {
@@ -156,6 +175,75 @@ function getAllOverlays() {
     }
   }
   return overlays;
+}
+
+function getCurrentOverlayLaneMode() {
+  if (document.body.classList.contains('chat-mode-ops')) return 'ops';
+  if (document.body.classList.contains('chat-mode-research')) return 'research';
+  return 'explore';
+}
+
+function getAllowedOpsOverlayIds() {
+  const profile = getCurrentProfile();
+  const opsFeeds = Array.isArray(profile?.ops_feeds) ? profile.ops_feeds : [];
+  const allowed = new Set();
+  for (const feed of opsFeeds) {
+    const overlayIds = OPS_FEED_TO_OVERLAY_IDS[feed] || [];
+    for (const overlayId of overlayIds) {
+      allowed.add(overlayId);
+    }
+  }
+  return allowed;
+}
+
+function cloneVisibleCategories(categories) {
+  return categories.map((cat) => {
+    if (cat.isCategory) {
+      return {
+        ...cat,
+        overlays: [...cat.overlays]
+      };
+    }
+    if (cat.overlay) {
+      return {
+        ...cat,
+        overlay: { ...cat.overlay }
+      };
+    }
+    return { ...cat };
+  });
+}
+
+function filterCategoriesForCurrentMode(categories) {
+  const cloned = cloneVisibleCategories(categories);
+  if (getCurrentOverlayLaneMode() !== 'ops') {
+    return cloned;
+  }
+
+  const allowedOverlayIds = getAllowedOpsOverlayIds();
+  if (!allowedOverlayIds.size) {
+    return [];
+  }
+
+  const visibleCategories = [];
+  for (const category of cloned) {
+    if (category.isCategory) {
+      const overlays = category.overlays.filter((overlay) => allowedOverlayIds.has(overlay.id));
+      if (overlays.length) {
+        visibleCategories.push({
+          ...category,
+          overlays
+        });
+      }
+      continue;
+    }
+
+    if (category.overlay && allowedOverlayIds.has(category.overlay.id)) {
+      visibleCategories.push(category);
+    }
+  }
+
+  return visibleCategories;
 }
 
 // Dependencies (set via setDependencies)
@@ -204,14 +292,15 @@ export const OverlaySelector = {
       const overlayTree = response.overlay_tree || {};
 
       // Build categories from tree
-      CATEGORIES = buildCategoriesFromTree(overlayTree);
-      OVERLAYS = getAllOverlays();
+      ALL_CATEGORIES = buildCategoriesFromTree(overlayTree);
+      CATEGORIES = filterCategoriesForCurrentMode(ALL_CATEGORIES);
+      OVERLAYS = getAllOverlaysFromCategories(CATEGORIES);
 
       console.log('OverlaySelector: Loaded', CATEGORIES.length, 'categories,', OVERLAYS.length, 'overlays from catalog');
     } catch (err) {
       console.error('OverlaySelector: Failed to load from API, using fallback', err);
       // Fallback to minimal hardcoded categories
-      CATEGORIES = [
+      ALL_CATEGORIES = [
         {
           id: 'demographics',
           label: 'Demographics',
@@ -232,7 +321,8 @@ export const OverlaySelector = {
           ]
         }
       ];
-      OVERLAYS = getAllOverlays();
+      CATEGORIES = filterCategoriesForCurrentMode(ALL_CATEGORIES);
+      OVERLAYS = getAllOverlaysFromCategories(CATEGORIES);
     }
 
     // Try to restore from localStorage, fall back to defaults
@@ -585,6 +675,39 @@ export const OverlaySelector = {
    */
   getOverlayConfig(overlayId) {
     return OVERLAYS.find(o => o.id === overlayId) || null;
+  },
+
+  refreshVisibility() {
+    if (!ALL_CATEGORIES.length) return;
+
+    CATEGORIES = filterCategoriesForCurrentMode(ALL_CATEGORIES);
+    OVERLAYS = getAllOverlaysFromCategories(CATEGORIES);
+
+    const visibleOverlayIds = new Set(OVERLAYS.map((overlay) => overlay.id));
+    const removed = [];
+    for (const overlayId of Array.from(this.activeOverlays)) {
+      if (!visibleOverlayIds.has(overlayId)) {
+        this.activeOverlays.delete(overlayId);
+        removed.push(overlayId);
+      }
+    }
+
+    const nextCategoryExpanded = {};
+    for (const category of CATEGORIES) {
+      if (category.isCategory) {
+        nextCategoryExpanded[category.id] = this.categoryExpanded[category.id] ?? category.expanded ?? false;
+      }
+    }
+    this.categoryExpanded = nextCategoryExpanded;
+
+    if (this.initialized) {
+      this._buildUI();
+      this._setupEvents();
+      for (const overlayId of removed) {
+        this._notifyListeners(overlayId, false);
+      }
+      this._saveState();
+    }
   },
 
   /**

@@ -367,6 +367,7 @@ export const ChatManager = {
           }
           this.updateCatalogSurfaceAccess();
           this.updateComposerState();
+          OverlaySelector?.refreshVisibility?.();
         } catch (error) {
           console.warn('Could not refresh chat state after auth change:', error);
         }
@@ -559,7 +560,7 @@ export const ChatManager = {
   },
 
   applyModeUiState() {
-    return applyModeUiStateImpl(this, { researchModeToggle });
+    return applyModeUiStateImpl(this, { researchModeToggle, OverlaySelector });
   },
 
   updateComposerState() {
