@@ -9,6 +9,7 @@ from typing import Callable
 from .foundation_helpers import load_country_crosswalk
 from .runtime.source_hints import (
     build_pack_family_preference_guidance,
+    build_query_matched_metric_guidance,
     build_reference_summary,
     build_source_routing_guidance,
     get_routing_hints,
@@ -304,6 +305,14 @@ def build_tier3_context(
             if routing_lines:
                 msg += "\n\nROUTING GUIDANCE:\n"
                 for line in routing_lines:
+                    msg += f"- {line}\n"
+            matched_metric_lines = build_query_matched_metric_guidance(
+                metadata,
+                hints.get("original_query"),
+            )
+            if matched_metric_lines:
+                msg += "\nQUERY-MATCHED METRIC GUIDANCE:\n"
+                for line in matched_metric_lines:
                     msg += f"- {line}\n"
             pack_family_lines = build_pack_family_preference_guidance(
                 detected_source,

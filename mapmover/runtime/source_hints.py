@@ -67,6 +67,23 @@ def get_supported_geography_summary(metadata: dict | None) -> str:
     return "see source metadata"
 
 
+def get_metric_alias_matches(metadata: dict | None, query: str | None) -> list[tuple[str, str]]:
+    routing_hints = get_routing_hints(metadata)
+    metric_aliases = routing_hints.get("metric_aliases") or {}
+    query_lower = str(query or "").strip().lower()
+    if not isinstance(metric_aliases, dict) or not query_lower:
+        return []
+
+    matches: list[tuple[str, str]] = []
+    for alias, metric_name in metric_aliases.items():
+        alias_text = str(alias or "").strip().lower()
+        metric_text = str(metric_name or "").strip()
+        if alias_text and metric_text and alias_text in query_lower:
+            matches.append((alias_text, metric_text))
+    matches.sort(key=lambda item: len(item[0]), reverse=True)
+    return matches
+
+
 def build_scenario_routing_lines(scenario_defaults: dict | None) -> list[str]:
     if not isinstance(scenario_defaults, dict):
         return []
@@ -158,6 +175,36 @@ def build_source_routing_guidance(metadata: dict | None, source_id: str) -> list
         lines.append(
             'If this detected location source already clearly matches the user query, do not switch to type="chat" just to describe the source. Queries such as "show all fab labs in the United States", "show all public Prusa spaces on the map", or "map all fab labs globally" should return a real order with region and filters when needed.'
         )
+
+    return lines
+
+
+def build_query_matched_metric_guidance(metadata: dict | None, query: str | None) -> list[str]:
+    query_text = str(query or "").strip()
+    if not query_text:
+        return []
+
+    routing_hints = get_routing_hints(metadata)
+    lines: list[str] = []
+
+    metric_matches = get_metric_alias_matches(metadata, query_text)
+    if metric_matches:
+        alias_text, metric_name = metric_matches[0]
+        lines.append(
+            f'The user query already contains the metric phrase "{alias_text}". Return type="order" and set metric="{metric_name}" unless the user explicitly asks for a different metric.'
+        )
+        lines.append(
+            "Do not switch to chat or ask a follow-up just to restate the matching metric when the request already includes a clear time range, geography, or comparison."
+        )
+
+    if routing_hints.get("prefer_order_for_analytics"):
+        default_metric = get_single_metric_default(metadata)
+        broad_aliases = get_hint_alias_terms(metadata, "broad_topic_aliases", "query_aliases")
+        query_lower = query_text.lower()
+        if default_metric and any(alias in query_lower for alias in broad_aliases):
+            lines.append(
+                f'This query matches the source topic closely enough to default to metric="{default_metric}". Prefer type="order" instead of chat when the user is asking to show, compare, trend, rank, or map the data.'
+            )
 
     return lines
 
