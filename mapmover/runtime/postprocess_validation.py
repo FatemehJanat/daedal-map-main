@@ -36,6 +36,7 @@ def validate_item(
     """Validate one postprocessed order item against catalog and metadata."""
     source_id = item.get("source_id")
     metric = item.get("metric")
+    query = str(((item.get("_hints") or {}).get("original_query")) or "").lower()
 
     if item.get("type") == "derived_result":
         item["_valid"] = True
@@ -92,7 +93,6 @@ def validate_item(
     normalize_item_filters_func(item, catalog_source)
     normalize_location_shape_metric_func(item, catalog_source)
     metric = item.get("metric")
-    query = str(((item.get("_hints") or {}).get("original_query")) or "").lower()
     apply_disaster_semantic_filters_func(item, catalog_source, query)
 
     if (
@@ -240,6 +240,17 @@ def validate_item(
             item["metric_label"] = name
 
         clamp_item_years_to_metric_func(item, metadata, metric)
+
+    if not item.get("sort") and metric:
+        row_count = metadata.get("row_count") if isinstance(metadata, dict) else None
+        geojson_shape = str((metadata or {}).get("geojson_shape") or "").strip().lower()
+        if (
+            isinstance(row_count, int)
+            and row_count >= 50000
+            and geojson_shape in {"building_shape", "geometry_shape"}
+            and any(term in query for term in ("tallest", "highest", "lowest", "top ", "most "))
+        ):
+            item["sort"] = {"by": metric, "order": "desc", "limit": 100}
 
     item["_valid"] = True
     return item

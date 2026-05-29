@@ -359,7 +359,7 @@ def _build_metadata_unsupported_metric_clarify(user_query: str, metadata: dict) 
             unsupported_label = normalized
             break
 
-    lines = [f"{source_name} does not include {unsupported_label}."]
+    lines = [f"{source_name} does not include {unsupported_label}. It is not currently available in this pack."]
     if metric_lines:
         lines.append("Available metrics for this source include:")
         lines.extend(f"- {name}" for name in metric_lines)
@@ -385,6 +385,25 @@ def _query_looks_multi_source_comparison(user_query: str) -> bool:
         " related to ",
     )
     padded = f" {query_lower} "
+    return any(term in padded for term in comparison_terms)
+
+
+def _query_looks_same_source_comparison(user_query: str) -> bool:
+    query_lower = str(user_query or "").strip().lower()
+    if not query_lower:
+        return False
+    padded = f" {query_lower} "
+    comparison_terms = (
+        " compare ",
+        " compared ",
+        " against ",
+        " versus ",
+        " vs ",
+        " alongside ",
+        " more ",
+        " less ",
+        " than ",
+    )
     return any(term in padded for term in comparison_terms)
 
 
@@ -422,6 +441,16 @@ def _select_metadata_guided_metric(user_query: str, metadata: dict) -> str:
     return ""
 
 
+def _select_metadata_guided_metrics(user_query: str, metadata: dict) -> list[str]:
+    alias_matches = get_metric_alias_matches(metadata, user_query)
+    metrics: list[str] = []
+    for _, metric_name in alias_matches:
+        metric_text = str(metric_name or "").strip()
+        if metric_text and metric_text not in metrics:
+            metrics.append(metric_text)
+    return metrics
+
+
 def _build_metadata_guided_order(user_query: str, hints: dict | None) -> dict | None:
     if not hints or not isinstance(hints, dict):
         return None
@@ -442,48 +471,59 @@ def _build_metadata_guided_order(user_query: str, hints: dict | None) -> dict | 
     wants_event_view = query_prefers_event_source(user_query)
     supports_view_mode_clarify = "view_mode" in (routing_hints.get("clarify_path_dimensions") or [])
 
-    metric = _select_metadata_guided_metric(user_query, metadata)
+    metrics = _select_metadata_guided_metrics(user_query, metadata)
+    metric = metrics[0] if metrics else _select_metadata_guided_metric(user_query, metadata)
     if not metric and not (wants_event_view and supports_view_mode_clarify):
         return None
 
-    item = {
-        "source_id": source_id,
-        "pack_id": str(metadata.get("pack_id") or detected_source.get("pack_id") or "").strip(),
-        "_hints": {"original_query": user_query},
-    }
-    if metric:
-        item["metric"] = metric
-
     location = hints.get("location") or {}
     iso3 = str(location.get("iso3") or "").strip()
-    if iso3:
-        item["region"] = iso3
 
     time_hints = hints.get("time") or {}
     year_start = time_hints.get("year_start")
     year_end = time_hints.get("year_end")
-    if year_start and year_end:
-        item["year_start"] = year_start
-        item["year_end"] = year_end
-    elif year_start:
-        item["year"] = year_start
 
-    metric_info = (metadata.get("metrics") or {}).get(metric) or {}
-    metric_name = str(metric_info.get("name") or metric or metadata.get("source_name") or source_id).strip()
+    def build_item(metric_name: str) -> dict:
+        item = {
+            "source_id": source_id,
+            "pack_id": str(metadata.get("pack_id") or detected_source.get("pack_id") or "").strip(),
+            "_hints": {"original_query": user_query},
+        }
+        if metric_name:
+            item["metric"] = metric_name
+        if iso3:
+            item["region"] = iso3
+        if year_start and year_end:
+            item["year_start"] = year_start
+            item["year_end"] = year_end
+        elif year_start:
+            item["year"] = year_start
+        return item
+
+    items = [build_item(metric)]
+    if _query_looks_same_source_comparison(user_query) and len(metrics) >= 2:
+        items = [build_item(metric_name) for metric_name in metrics[:2]]
+
     source_name = str(metadata.get("source_name") or source_id).strip()
-    summary = f"{metric_name} from {source_name}"
-    if item.get("year_start") and item.get("year_end"):
-        summary += f", {item['year_start']}-{item['year_end']}"
-    elif item.get("year"):
-        summary += f" for {item['year']}"
-    if item.get("region"):
-        summary += f" in {item['region']}"
+    metric_names = []
+    for item in items:
+        metric_key = str(item.get("metric") or "").strip()
+        metric_info = (metadata.get("metrics") or {}).get(metric_key) or {}
+        metric_names.append(str(metric_info.get("name") or metric_key or source_name).strip())
+    metric_summary = " vs ".join(metric_names)
+    summary = f"{metric_summary} from {source_name}"
+    if items[0].get("year_start") and items[0].get("year_end"):
+        summary += f", {items[0]['year_start']}-{items[0]['year_end']}"
+    elif items[0].get("year"):
+        summary += f" for {items[0]['year']}"
+    if items[0].get("region"):
+        summary += f" in {items[0]['region']}"
 
     return {
         "type": "order",
         "order": {
             "summary": summary,
-            "items": [item],
+            "items": items,
         },
         "summary": summary,
     }

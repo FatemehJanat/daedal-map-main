@@ -67,6 +67,52 @@ def get_supported_geography_summary(metadata: dict | None) -> str:
     return "see source metadata"
 
 
+def get_geo_level_aliases(metadata: dict | None) -> dict[str, str]:
+    routing_hints = get_routing_hints(metadata)
+    aliases = routing_hints.get("geo_level_aliases") or {}
+    if not isinstance(aliases, dict):
+        return {}
+    normalized: dict[str, str] = {}
+    for alias, target in aliases.items():
+        alias_text = str(alias or "").strip().lower().replace("-", "_").replace(" ", "_")
+        target_text = str(target or "").strip().lower().replace("-", "_").replace(" ", "_")
+        if alias_text and target_text:
+            normalized[alias_text] = target_text
+    return normalized
+
+
+def normalize_requested_geo_level_for_source(requested_geo_level: str | None, metadata: dict | None) -> str | None:
+    if not requested_geo_level:
+        return None
+
+    requested = str(requested_geo_level).strip().lower().replace("-", "_").replace(" ", "_")
+    if not requested:
+        return None
+
+    aliases = get_geo_level_aliases(metadata)
+    if requested in aliases:
+        return aliases[requested]
+
+    if requested in aliases.values():
+        return requested
+
+    admin_to_friendly = {
+        "admin_2": "county",
+        "admin_3": "tract",
+        "admin_4": "blockgroup",
+        "admin_5": "block",
+    }
+    friendly = admin_to_friendly.get(requested)
+    if friendly and friendly in aliases.values():
+        return friendly
+
+    reverse_aliases = {value: key for key, value in aliases.items()}
+    if requested in reverse_aliases:
+        return aliases.get(reverse_aliases[requested], requested)
+
+    return requested
+
+
 def get_metric_alias_matches(metadata: dict | None, query: str | None) -> list[tuple[str, str]]:
     routing_hints = get_routing_hints(metadata)
     metric_aliases = routing_hints.get("metric_aliases") or {}

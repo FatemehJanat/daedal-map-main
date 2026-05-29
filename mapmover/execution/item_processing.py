@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from mapmover.runtime.source_hints import normalize_requested_geo_level_for_source
+
 
 def process_metric_items(
     *,
@@ -158,7 +160,8 @@ def process_metric_items(
         t_after_region_filter = executor_log_func(trace_id, "region_filtered", t_after_time_filter, f"item={idx}/{len(items)} source={source_id} rows={len(df)}")
 
         if requested_geo_level and "geo_level" in df.columns:
-            df = df[df["geo_level"] == requested_geo_level]
+            source_geo_level = normalize_requested_geo_level_for_source(requested_geo_level, metadata)
+            df = df[df["geo_level"] == source_geo_level]
 
         df = apply_dataframe_filters_func(df, filters)
         t_after_filter = executor_log_func(trace_id, "field_filters_applied", t_after_region_filter, f"item={idx}/{len(items)} source={source_id} rows={len(df)}")
