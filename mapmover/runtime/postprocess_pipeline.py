@@ -1,6 +1,25 @@
 """Shared pre-validation postprocess pipeline helpers."""
 
 
+def _coerce_coverage_year(value):
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+
+    text = str(value).strip()
+    if not text:
+        return None
+    if len(text) >= 4 and text[:4].isdigit():
+        return int(text[:4])
+    try:
+        return int(float(text))
+    except (TypeError, ValueError):
+        return None
+
+
 def inject_original_query_hints(items: list, original_query: str) -> None:
     """Copy the original query into item-level hints when the LLM omitted it."""
     if not original_query:
@@ -34,6 +53,48 @@ def apply_preprocessor_time_hints(
                     if temp.get("start") and temp.get("end"):
                         item["year_start"] = temp["start"]
                         item["year_end"] = temp["end"]
+
+
+def apply_default_time_windows(
+    items: list,
+    load_source_metadata,
+    *,
+    default_year_span: int = 10,
+) -> None:
+    """Apply a bounded shared default when an otherwise valid item has no time filters."""
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if item.get("year") is not None or item.get("year_start") or item.get("year_end"):
+            continue
+        if item.get("date_start") or item.get("date_end"):
+            continue
+
+        source_id = item.get("source_id")
+        if not source_id:
+            continue
+
+        metadata = load_source_metadata(source_id) or {}
+        temporal = metadata.get("temporal_coverage", {}) if isinstance(metadata, dict) else {}
+        available_start = _coerce_coverage_year(temporal.get("start"))
+        available_end = _coerce_coverage_year(temporal.get("end"))
+
+        if available_end is None:
+            continue
+
+        default_end = available_end
+        default_start = max(available_end - (default_year_span - 1), available_start or available_end)
+        if default_start > default_end:
+            continue
+
+        item["year_start"] = default_start
+        item["year_end"] = default_end
+        item["_defaulted_time_range"] = {
+            "year_start": default_start,
+            "year_end": default_end,
+            "available_start": available_start,
+            "available_end": available_end,
+        }
 
 
 def run_pre_validation_pipeline(

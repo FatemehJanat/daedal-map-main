@@ -7,7 +7,15 @@ import json
 from mapmover.aggregation_system import validate_aggregation_policy
 from mapmover.data_loading import load_catalog, load_source_metadata
 from mapmover.runtime.order_taker_prompt import get_source_visibility_mode
-from mapmover.runtime.source_hints import get_supported_geography_summary, get_unsupported_metric_aliases
+from mapmover.runtime.query_intent_primitives import query_prefers_event_source
+from mapmover.runtime.source_hints import (
+    get_hint_alias_terms,
+    get_metric_alias_matches,
+    get_routing_hints,
+    get_single_metric_default,
+    get_supported_geography_summary,
+    get_unsupported_metric_aliases,
+)
 
 
 def validate_order_item(item: dict) -> dict:
@@ -360,6 +368,127 @@ def _build_metadata_unsupported_metric_clarify(user_query: str, metadata: dict) 
     return {"type": "clarify", "message": "\n\n".join([lines[0], "\n".join(lines[1:])])}
 
 
+def _query_looks_multi_source_comparison(user_query: str) -> bool:
+    query_lower = str(user_query or "").strip().lower()
+    if not query_lower:
+        return False
+    comparison_terms = (
+        " compare ",
+        " compared ",
+        " against ",
+        " versus ",
+        " vs ",
+        " alongside ",
+        " correlation ",
+        " correlated ",
+        " relationship ",
+        " related to ",
+    )
+    padded = f" {query_lower} "
+    return any(term in padded for term in comparison_terms)
+
+
+def _distinct_candidate_pack_count(hints: dict | None) -> int:
+    candidates = (((hints or {}).get("candidates") or {}).get("sources") or {}).get("candidates") or []
+    packs: set[str] = set()
+    for candidate in candidates[:5]:
+        try:
+            confidence = float(candidate.get("confidence") or 0.0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        if confidence < 0.35:
+            continue
+        pack_id = str(candidate.get("pack_id") or candidate.get("source_id") or "").strip()
+        if pack_id:
+            packs.add(pack_id)
+    return len(packs)
+
+
+def _select_metadata_guided_metric(user_query: str, metadata: dict) -> str:
+    alias_matches = get_metric_alias_matches(metadata, user_query)
+    if alias_matches:
+        return str(alias_matches[0][1] or "").strip()
+
+    routing_hints = get_routing_hints(metadata)
+    if not routing_hints.get("prefer_order_for_analytics"):
+        return ""
+    default_metric = get_single_metric_default(metadata)
+    if not default_metric:
+        return ""
+    broad_aliases = get_hint_alias_terms(metadata, "broad_topic_aliases", "query_aliases")
+    query_lower = str(user_query or "").strip().lower()
+    if any(alias in query_lower for alias in broad_aliases):
+        return default_metric
+    return ""
+
+
+def _build_metadata_guided_order(user_query: str, hints: dict | None) -> dict | None:
+    if not hints or not isinstance(hints, dict):
+        return None
+
+    if _query_looks_multi_source_comparison(user_query) and _distinct_candidate_pack_count(hints) > 1:
+        return None
+
+    detected_source = hints.get("detected_source") or {}
+    source_id = str(detected_source.get("source_id") or "").strip()
+    if not source_id:
+        return None
+
+    metadata = load_source_metadata(source_id) or {}
+    if not metadata:
+        return None
+
+    routing_hints = get_routing_hints(metadata)
+    wants_event_view = query_prefers_event_source(user_query)
+    supports_view_mode_clarify = "view_mode" in (routing_hints.get("clarify_path_dimensions") or [])
+
+    metric = _select_metadata_guided_metric(user_query, metadata)
+    if not metric and not (wants_event_view and supports_view_mode_clarify):
+        return None
+
+    item = {
+        "source_id": source_id,
+        "pack_id": str(metadata.get("pack_id") or detected_source.get("pack_id") or "").strip(),
+        "_hints": {"original_query": user_query},
+    }
+    if metric:
+        item["metric"] = metric
+
+    location = hints.get("location") or {}
+    iso3 = str(location.get("iso3") or "").strip()
+    if iso3:
+        item["region"] = iso3
+
+    time_hints = hints.get("time") or {}
+    year_start = time_hints.get("year_start")
+    year_end = time_hints.get("year_end")
+    if year_start and year_end:
+        item["year_start"] = year_start
+        item["year_end"] = year_end
+    elif year_start:
+        item["year"] = year_start
+
+    metric_info = (metadata.get("metrics") or {}).get(metric) or {}
+    metric_name = str(metric_info.get("name") or metric or metadata.get("source_name") or source_id).strip()
+    source_name = str(metadata.get("source_name") or source_id).strip()
+    summary = f"{metric_name} from {source_name}"
+    if item.get("year_start") and item.get("year_end"):
+        summary += f", {item['year_start']}-{item['year_end']}"
+    elif item.get("year"):
+        summary += f" for {item['year']}"
+    if item.get("region"):
+        summary += f" in {item['region']}"
+
+    return {
+        "type": "order",
+        "order": {
+            "summary": summary,
+            "items": [item],
+        },
+        "summary": summary,
+    }
+
+
 def _apply_metadata_guided_response_normalization(result: dict, *, user_query: str, hints: dict | None) -> dict:
     if not isinstance(result, dict) or result.get("type") not in {"chat", "clarify"}:
         return result
@@ -374,6 +503,9 @@ def _apply_metadata_guided_response_normalization(result: dict, *, user_query: s
         return result
     if _matches_unsupported_metric_alias(user_query, metadata):
         return _build_metadata_unsupported_metric_clarify(user_query, metadata)
+    guided_order = _build_metadata_guided_order(user_query, hints)
+    if guided_order is not None:
+        return guided_order
     return result
 
 

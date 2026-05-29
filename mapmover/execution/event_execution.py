@@ -1,6 +1,38 @@
 import pandas as pd
 
 
+def _build_default_time_note(items: list) -> str | None:
+    defaulted_ranges = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        defaulted = item.get("_defaulted_time_range")
+        if isinstance(defaulted, dict):
+            defaulted_ranges.append(defaulted)
+
+    if not defaulted_ranges:
+        return None
+
+    first = defaulted_ranges[0]
+    same_ranges = all(
+        entry.get("year_start") == first.get("year_start")
+        and entry.get("year_end") == first.get("year_end")
+        and entry.get("available_start") == first.get("available_start")
+        and entry.get("available_end") == first.get("available_end")
+        for entry in defaulted_ranges[1:]
+    )
+
+    if same_ranges:
+        shown = f"{first.get('year_start')}-{first.get('year_end')}"
+        available_start = first.get("available_start")
+        available_end = first.get("available_end")
+        if available_start and available_end:
+            return f"Showing {shown} by default; data available for {available_start}-{available_end} if you want more history."
+        return f"Showing {shown} by default because no time range was specified."
+
+    return "Showing default 10-year windows for items without a time range. Ask for a broader period if you want more history."
+
+
 def detect_event_type(source_id: str, *, get_source_from_catalog_func, load_source_metadata_func, resolve_event_source_id_func) -> str:
     source = get_source_from_catalog_func(source_id)
     if source.get("event_type"):
@@ -312,7 +344,7 @@ def execute_event_order_impl(
         "url": metadata.get("source_url", ""),
     }]
 
-    return {
+    response = {
         "type": "events",
         "data_type": "events",
         "source_id": source_id,
@@ -323,3 +355,7 @@ def execute_event_order_impl(
         "count": len(features),
         "sources": source_info,
     }
+    default_time_note = _build_default_time_note(items)
+    if default_time_note:
+        response["data_note"] = default_time_note
+    return response

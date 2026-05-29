@@ -10,6 +10,38 @@ from mapmover.runtime.result_cap import apply_cap_info_to_payload
 from mapmover.runtime.retry_primitives import execute_event_retry_fallback
 
 
+def _build_default_time_note(items: list) -> str | None:
+    defaulted_ranges = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        defaulted = item.get("_defaulted_time_range")
+        if isinstance(defaulted, dict):
+            defaulted_ranges.append(defaulted)
+
+    if not defaulted_ranges:
+        return None
+
+    first = defaulted_ranges[0]
+    same_ranges = all(
+        entry.get("year_start") == first.get("year_start")
+        and entry.get("year_end") == first.get("year_end")
+        and entry.get("available_start") == first.get("available_start")
+        and entry.get("available_end") == first.get("available_end")
+        for entry in defaulted_ranges[1:]
+    )
+
+    if same_ranges:
+        shown = f"{first.get('year_start')}-{first.get('year_end')}"
+        available_start = first.get("available_start")
+        available_end = first.get("available_end")
+        if available_start and available_end:
+            return f"Showing {shown} by default; data available for {available_start}-{available_end} if you want more history."
+        return f"Showing {shown} by default because no time range was specified."
+
+    return "Showing default 10-year windows for items without a time range. Ask for a broader period if you want more history."
+
+
 def build_metrics_response(
     *,
     order: dict,
@@ -299,6 +331,10 @@ def build_metrics_response(
     }
     response = apply_cap_info_to_payload(response, cap_info)
 
+    default_time_note = _build_default_time_note(items)
+    if default_time_note:
+        response["data_note"] = default_time_note
+
     if response["count"] == 0:
         retry_result = execute_event_retry_fallback(
             order,
@@ -336,7 +372,9 @@ def build_metrics_response(
             if missing_years:
                 data_notes.append(f"Some years have no data: {sorted(missing_years)[:5]}{'...' if len(missing_years) > 5 else ''}")
         if data_notes:
-            response["data_note"] = " | ".join(data_notes)
+            prior_note = response.get("data_note")
+            joined_note = " | ".join(data_notes)
+            response["data_note"] = f"{prior_note} | {joined_note}" if prior_note else joined_note
 
     executor_log_func(trace_id, "complete", t_execute_start, f"features={len(features)} source={primary_source} response_type={response.get('type')}")
     return response
