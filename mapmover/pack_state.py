@@ -371,24 +371,25 @@ def build_active_catalog(full_catalog: dict, state: dict | None = None) -> dict:
     packs = full_catalog.get("packs", [])
 
     if state.get("catalog_mode") == "unmanaged_data_root":
-        active_sources = list(sources)
+        # In the public/published runtime, pack_id is the final publish gate.
+        # Standalone sources without a pack_id may still exist in the full catalog
+        # for internal QA or pre-pack work, but they are not part of the active
+        # published Explore surface.
+        active_sources = [dict(src) for src in sources if src.get("pack_id")]
         active_pack_ids = sorted({
             src.get("pack_id")
-            for src in sources
+            for src in active_sources
             if src.get("pack_id")
         })
     else:
         active_pack_ids = set(get_effective_active_pack_ids(full_catalog, state))
         active_sources = [
             dict(src) for src in sources
-            if not src.get("pack_id") or src.get("pack_id") in active_pack_ids
+            if src.get("pack_id") and src.get("pack_id") in active_pack_ids
         ]
         filtered_sources = []
         for src in active_sources:
             pack_id = src.get("pack_id")
-            if not pack_id:
-                filtered_sources.append(src)
-                continue
             entry = _find_installed_pack(pack_id, state)
             if not entry:
                 continue
