@@ -35,8 +35,8 @@ DEFAULT_METRIC_WARNING_POLICY = MetricWarningPolicy(
 
 
 DEFAULT_DISPLAY_WARNING_POLICY = DisplayWarningPolicy(
-    soft_cap=1000,
-    hard_cap=5000,
+    soft_cap=5000,
+    hard_cap=10000,
     lane="human_web_display",
     soft_narrowing=("choose a smaller area", "ask for a top 100 subset", "focus on one state or county"),
     hard_narrowing=("choose a smaller area", "ask for a top 100 subset", "focus on one state or county"),
