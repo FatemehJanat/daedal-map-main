@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from mapmover.runtime.filter_primitives import normalize_sort_spec
+
 
 def requested_limit_from_order(order: dict | None) -> int | None:
     if not isinstance(order, dict):
@@ -10,7 +12,7 @@ def requested_limit_from_order(order: dict | None) -> int | None:
     for item in items:
         if not isinstance(item, dict):
             continue
-        sort_spec = item.get("sort") or {}
+        sort_spec = normalize_sort_spec(item.get("sort")) or {}
         raw_limit = sort_spec.get("limit")
         try:
             limit = int(raw_limit)

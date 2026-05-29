@@ -163,7 +163,12 @@ def process_metric_items(
             source_geo_level = normalize_requested_geo_level_for_source(requested_geo_level, metadata)
             df = df[df["geo_level"] == source_geo_level]
 
-        df = apply_dataframe_filters_func(df, filters)
+        normalized_filters = filters
+        if isinstance(filters, dict) and filters and "geo_level" in filters:
+            normalized_filters = dict(filters)
+            normalized_filters["geo_level"] = normalize_requested_geo_level_for_source(filters.get("geo_level"), metadata)
+
+        df = apply_dataframe_filters_func(df, normalized_filters)
         t_after_filter = executor_log_func(trace_id, "field_filters_applied", t_after_region_filter, f"item={idx}/{len(items)} source={source_id} rows={len(df)}")
 
         if sort_spec and not multi_year_mode:

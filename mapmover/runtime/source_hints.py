@@ -81,6 +81,53 @@ def get_geo_level_aliases(metadata: dict | None) -> dict[str, str]:
     return normalized
 
 
+def get_country_geo_level_aliases(metadata: dict | None) -> dict[str, str]:
+    """Load country-owned geo-level names from crosswalk sub_admin_levels.
+
+    This is the canonical country-level naming seam. Source metadata
+    geo_level_aliases should only supplement this when a source uses a local
+    spelling or source-specific label that is not appropriate to store in the
+    country crosswalk.
+    """
+    if not isinstance(metadata, dict):
+        return {}
+
+    geographic_coverage = metadata.get("geographic_coverage") or {}
+    iso3 = str(geographic_coverage.get("country") or "").strip().upper()
+    if not iso3:
+        return {}
+
+    try:
+        from mapmover.foundation_helpers import load_country_crosswalk
+
+        crosswalk = load_country_crosswalk(iso3) or {}
+    except Exception:
+        return {}
+
+    sub_admin_levels = crosswalk.get("sub_admin_levels") or {}
+    if not isinstance(sub_admin_levels, dict):
+        return {}
+
+    aliases: dict[str, str] = {}
+    for admin_level, info in sub_admin_levels.items():
+        if not isinstance(info, dict):
+            continue
+        canonical_level = str(admin_level or "").strip().lower()
+        if not canonical_level:
+            continue
+
+        name = str(info.get("name") or "").strip().lower().replace("-", "_").replace(" ", "_")
+        if name:
+            aliases[name] = canonical_level
+
+        for alias in info.get("aliases") or []:
+            alias_text = str(alias or "").strip().lower().replace("-", "_").replace(" ", "_")
+            if alias_text:
+                aliases[alias_text] = canonical_level
+
+    return aliases
+
+
 def normalize_requested_geo_level_for_source(requested_geo_level: str | None, metadata: dict | None) -> str | None:
     if not requested_geo_level:
         return None
@@ -89,12 +136,12 @@ def normalize_requested_geo_level_for_source(requested_geo_level: str | None, me
     if not requested:
         return None
 
-    aliases = get_geo_level_aliases(metadata)
+    # Country crosswalk aliases are the canonical layer; source metadata can
+    # supplement them for source-local labels or spellings.
+    aliases = get_country_geo_level_aliases(metadata)
+    aliases.update(get_geo_level_aliases(metadata))
     if requested in aliases:
         return aliases[requested]
-
-    if requested in aliases.values():
-        return requested
 
     admin_to_friendly = {
         "admin_2": "county",
@@ -105,6 +152,9 @@ def normalize_requested_geo_level_for_source(requested_geo_level: str | None, me
     friendly = admin_to_friendly.get(requested)
     if friendly and friendly in aliases.values():
         return friendly
+
+    if requested in aliases.values():
+        return requested
 
     reverse_aliases = {value: key for key, value in aliases.items()}
     if requested in reverse_aliases:

@@ -254,9 +254,27 @@ def _resolve_metric_for_validation(metric: str, metrics: dict) -> tuple[str | No
 
 def validate_order(order: dict) -> dict:
     items = order.get("items", [])
+    expanded_items = []
+    for item in items:
+        if not isinstance(item, dict):
+            expanded_items.append(item)
+            continue
+        metric_value = item.get("metric")
+        if isinstance(metric_value, list):
+            metric_candidates = [str(metric).strip() for metric in metric_value if str(metric).strip()]
+            if not metric_candidates:
+                expanded_items.append(item)
+                continue
+            for metric_name in metric_candidates:
+                next_item = dict(item)
+                next_item["metric"] = metric_name
+                expanded_items.append(next_item)
+            continue
+        expanded_items.append(item)
+
     validated_items = []
     all_valid = True
-    for item in items:
+    for item in expanded_items:
         validated = validate_order_item(item)
         validated_items.append(validated)
         if not validated.get("_valid", False):
@@ -451,6 +469,53 @@ def _select_metadata_guided_metrics(user_query: str, metadata: dict) -> list[str
     return metrics
 
 
+def _iter_candidate_source_ids(hints: dict | None) -> list[str]:
+    if not hints or not isinstance(hints, dict):
+        return []
+    source_ids: list[str] = []
+
+    detected_source = hints.get("detected_source") or {}
+    detected_source_id = str(detected_source.get("source_id") or "").strip()
+    if detected_source_id:
+        source_ids.append(detected_source_id)
+
+    candidates = (((hints.get("candidates") or {}).get("sources") or {}).get("candidates") or [])
+    for candidate in candidates[:8]:
+        source_id = str((candidate or {}).get("source_id") or "").strip()
+        if source_id and source_id not in source_ids:
+            source_ids.append(source_id)
+    return source_ids
+
+
+def _select_metadata_guided_source(user_query: str, hints: dict | None) -> tuple[str, dict] | tuple[None, None]:
+    best_source_id = None
+    best_metadata = None
+    best_score = 0.0
+
+    for source_id in _iter_candidate_source_ids(hints):
+        metadata = load_source_metadata(source_id) or {}
+        if not metadata:
+            continue
+
+        alias_matches = _select_metadata_guided_metrics(user_query, metadata)
+        score = float(len(alias_matches) * 10)
+        if alias_matches:
+            score += get_routing_hints(metadata).get("query_priority", 0.0) or 0.0
+        else:
+            default_metric = _select_metadata_guided_metric(user_query, metadata)
+            if default_metric:
+                score += 1.0 + float(get_routing_hints(metadata).get("query_priority", 0.0) or 0.0)
+
+        if score > best_score:
+            best_source_id = source_id
+            best_metadata = metadata
+            best_score = score
+
+    if best_source_id and best_metadata and best_score > 0:
+        return best_source_id, best_metadata
+    return None, None
+
+
 def _build_metadata_guided_order(user_query: str, hints: dict | None) -> dict | None:
     if not hints or not isinstance(hints, dict):
         return None
@@ -460,11 +525,10 @@ def _build_metadata_guided_order(user_query: str, hints: dict | None) -> dict | 
 
     detected_source = hints.get("detected_source") or {}
     source_id = str(detected_source.get("source_id") or "").strip()
-    if not source_id:
-        return None
-
-    metadata = load_source_metadata(source_id) or {}
-    if not metadata:
+    metadata = load_source_metadata(source_id) or {} if source_id else {}
+    if not source_id or not metadata:
+        source_id, metadata = _select_metadata_guided_source(user_query, hints)
+    if not source_id or not metadata:
         return None
 
     routing_hints = get_routing_hints(metadata)
@@ -534,12 +598,12 @@ def _apply_metadata_guided_response_normalization(result: dict, *, user_query: s
         return result
     if not hints or not isinstance(hints, dict):
         return result
-    detected_source = hints.get("detected_source") or {}
-    source_id = detected_source.get("source_id")
-    if not source_id:
-        return result
-    metadata = load_source_metadata(source_id) or {}
-    if not metadata:
+    source_id, metadata = _select_metadata_guided_source(user_query, hints)
+    if not source_id or not metadata:
+        detected_source = hints.get("detected_source") or {}
+        source_id = detected_source.get("source_id")
+        metadata = load_source_metadata(source_id) or {} if source_id else {}
+    if not source_id or not metadata:
         return result
     if _matches_unsupported_metric_alias(user_query, metadata):
         return _build_metadata_unsupported_metric_clarify(user_query, metadata)
