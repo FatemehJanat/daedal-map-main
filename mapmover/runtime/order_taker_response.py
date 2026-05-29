@@ -441,6 +441,22 @@ def _distinct_candidate_pack_count(hints: dict | None) -> int:
     return len(packs)
 
 
+def _candidate_pack_count_for_guided_sources(user_query: str, hints: dict | None) -> int:
+    packs: set[str] = set()
+    for source_id in _iter_candidate_source_ids(hints):
+        metadata = load_source_metadata(source_id) or {}
+        if not metadata:
+            continue
+        metrics = _select_metadata_guided_metrics(user_query, metadata)
+        metric = metrics[0] if metrics else _select_metadata_guided_metric(user_query, metadata)
+        is_event_like = str(metadata.get("data_type") or "").strip().lower() == "events" or bool(metadata.get("significance_column"))
+        if metric or is_event_like:
+            pack_id = str(metadata.get("pack_id") or source_id).strip()
+            if pack_id:
+                packs.add(pack_id)
+    return len(packs)
+
+
 def _select_metadata_guided_metric(user_query: str, metadata: dict) -> str:
     alias_matches = get_metric_alias_matches(metadata, user_query)
     if alias_matches:
@@ -516,12 +532,105 @@ def _select_metadata_guided_source(user_query: str, hints: dict | None) -> tuple
     return None, None
 
 
+def _is_event_like_source(metadata: dict | None) -> bool:
+    if not isinstance(metadata, dict):
+        return False
+    data_type = str(metadata.get("data_type") or "").strip().lower()
+    return data_type == "events" or bool(metadata.get("significance_column"))
+
+
+def _build_metadata_guided_two_source_order(user_query: str, hints: dict | None) -> dict | None:
+    if not hints or not isinstance(hints, dict):
+        return None
+    if _candidate_pack_count_for_guided_sources(user_query, hints) > 2:
+        return None
+
+    location = hints.get("location") or {}
+    iso3 = str(location.get("iso3") or "").strip()
+    time_hints = hints.get("time") or {}
+    year_start = time_hints.get("year_start")
+    year_end = time_hints.get("year_end")
+
+    scored_candidates: list[tuple[float, str, dict, str]] = []
+    for source_id in _iter_candidate_source_ids(hints):
+        metadata = load_source_metadata(source_id) or {}
+        if not metadata:
+            continue
+        metrics = _select_metadata_guided_metrics(user_query, metadata)
+        metric = metrics[0] if metrics else _select_metadata_guided_metric(user_query, metadata)
+        if not metric and not _is_event_like_source(metadata):
+            continue
+        score = float(len(metrics) * 10)
+        if metric:
+            score += float(get_routing_hints(metadata).get("query_priority", 0.0) or 0.0)
+        else:
+            score += 0.5 + float(get_routing_hints(metadata).get("query_priority", 0.0) or 0.0)
+        scored_candidates.append((score, source_id, metadata, metric))
+
+    if len(scored_candidates) < 2:
+        return None
+
+    items: list[dict] = []
+    summaries: list[str] = []
+    used_packs: set[str] = set()
+    for _, source_id, metadata, metric in sorted(scored_candidates, key=lambda item: item[0], reverse=True):
+        pack_id = str(metadata.get("pack_id") or source_id).strip()
+        if pack_id in used_packs:
+            continue
+        item = {
+            "source_id": source_id,
+            "pack_id": pack_id,
+            "_hints": {"original_query": user_query},
+        }
+        if metric:
+            item["metric"] = metric
+        if iso3:
+            item["region"] = iso3
+        if year_start and year_end:
+            item["year_start"] = year_start
+            item["year_end"] = year_end
+        elif year_start:
+            item["year"] = year_start
+        items.append(item)
+
+        metric_info = (metadata.get("metrics") or {}).get(metric) or {}
+        label = str(metric_info.get("name") or metric or metadata.get("source_name") or source_id).strip()
+        summaries.append(label)
+        used_packs.add(pack_id)
+        if len(items) >= 2:
+            break
+
+    if len(items) < 2:
+        return None
+
+    summary = " vs ".join(summaries[:2])
+    if year_start and year_end:
+        summary += f", {year_start}-{year_end}"
+    elif year_start:
+        summary += f" for {year_start}"
+    if iso3:
+        summary += f" in {iso3}"
+
+    return {
+        "type": "order",
+        "order": {
+            "summary": summary,
+            "items": items,
+        },
+        "summary": summary,
+    }
+
+
 def _build_metadata_guided_order(user_query: str, hints: dict | None) -> dict | None:
     if not hints or not isinstance(hints, dict):
         return None
 
-    if _query_looks_multi_source_comparison(user_query) and _distinct_candidate_pack_count(hints) > 1:
-        return None
+    if _query_looks_multi_source_comparison(user_query):
+        if _distinct_candidate_pack_count(hints) > 2:
+            return None
+        two_source_order = _build_metadata_guided_two_source_order(user_query, hints)
+        if two_source_order is not None:
+            return two_source_order
 
     detected_source = hints.get("detected_source") or {}
     source_id = str(detected_source.get("source_id") or "").strip()
