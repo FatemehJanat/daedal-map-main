@@ -425,6 +425,20 @@ def _query_looks_same_source_comparison(user_query: str) -> bool:
     return any(term in padded for term in comparison_terms)
 
 
+def _query_looks_dual_metric_screen(user_query: str) -> bool:
+    query_lower = str(user_query or "").strip().lower()
+    if not query_lower:
+        return False
+    padded = f" {query_lower} "
+    has_conjunction = " and " in padded
+    high_low_terms = (
+        (" high ", " low "),
+        (" highest ", " lowest "),
+        (" more ", " less "),
+    )
+    return has_conjunction and any(left in padded and right in padded for left, right in high_low_terms)
+
+
 def _distinct_candidate_pack_count(hints: dict | None) -> int:
     candidates = (((hints or {}).get("candidates") or {}).get("sources") or {}).get("candidates") or []
     packs: set[str] = set()
@@ -674,7 +688,7 @@ def _build_metadata_guided_order(user_query: str, hints: dict | None) -> dict | 
         return item
 
     items = [build_item(metric)]
-    if _query_looks_same_source_comparison(user_query) and len(metrics) >= 2:
+    if (_query_looks_same_source_comparison(user_query) or _query_looks_dual_metric_screen(user_query)) and len(metrics) >= 2:
         items = [build_item(metric_name) for metric_name in metrics[:2]]
 
     source_name = str(metadata.get("source_name") or source_id).strip()
@@ -720,6 +734,35 @@ def _apply_metadata_guided_response_normalization(result: dict, *, user_query: s
     if guided_order is not None:
         return guided_order
     return result
+
+
+def _apply_metadata_guided_order_normalization(result: dict, *, user_query: str, hints: dict | None) -> dict:
+    if not isinstance(result, dict) or result.get("type") != "order":
+        return result
+    if not hints or not isinstance(hints, dict):
+        return result
+
+    order = result.get("order") or {}
+    items = order.get("items") or []
+    source_ids = {str(item.get("source_id") or "").strip() for item in items if isinstance(item, dict) and item.get("source_id")}
+
+    should_upgrade = False
+    if _query_looks_dual_metric_screen(user_query) and len(source_ids) < 2:
+        should_upgrade = True
+    elif _query_looks_multi_source_comparison(user_query) and len(source_ids) < 2:
+        should_upgrade = True
+
+    if not should_upgrade:
+        return result
+
+    guided_order = _build_metadata_guided_order(user_query, hints)
+    if not guided_order or guided_order.get("type") != "order":
+        return result
+
+    guided_items = ((guided_order.get("order") or {}).get("items") or [])
+    if len(guided_items) <= len(items):
+        return result
+    return guided_order
 
 
 def parse_llm_response(content: str, hints: dict = None, user_query: str = "") -> dict:
@@ -779,11 +822,12 @@ def parse_llm_response(content: str, hints: dict = None, user_query: str = "") -
             result = {"type": "clarify", "message": parsed_json.get("message", "Could you provide more details?")}
             return _apply_metadata_guided_response_normalization(result, user_query=user_query, hints=hints)
         order = validate_order(parsed_json)
-        return {
+        result = {
             "type": "order",
             "order": order,
             "summary": order.get("summary", "Data request"),
         }
+        return _apply_metadata_guided_order_normalization(result, user_query=user_query, hints=hints)
 
     if "?" in content and len(content) < 200:
         result = {"type": "clarify", "message": content}
