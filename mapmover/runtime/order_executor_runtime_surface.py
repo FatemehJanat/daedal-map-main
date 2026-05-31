@@ -107,14 +107,14 @@ def expand_runtime_region(
     region: str,
     *,
     expand_order_region_func,
-    resolve_us_county_slug_loc_id_func,
+    resolve_country_subdivision_slug_loc_id_func,
     load_conversions_func,
     load_iso_codes_func,
     load_usa_admin_func,
 ):
     return expand_order_region_func(
         region,
-        resolve_us_county_slug_loc_id_func=resolve_us_county_slug_loc_id_func,
+        resolve_country_subdivision_slug_loc_id_func=resolve_country_subdivision_slug_loc_id_func,
         load_conversions_func=load_conversions_func,
         load_iso_codes_func=load_iso_codes_func,
         load_usa_admin_func=load_usa_admin_func,

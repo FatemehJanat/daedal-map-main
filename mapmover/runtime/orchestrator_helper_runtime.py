@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from mapmover.foundation_helpers import load_runtime_explainer_helpers
+from mapmover.runtime.orchestrator_result_cap import cap_runtime_payload
 from mapmover.runtime.filter_primitives import normalize_sort_spec
 
 
@@ -47,3 +49,73 @@ def best_source_metadata(hints: dict, load_source_metadata_func) -> dict | None:
             metadata.setdefault("source_id", source_id)
             return metadata
     return None
+
+
+def resolve_result_source_id(result: dict) -> str:
+    if not isinstance(result, dict):
+        return ""
+    return str(
+        result.get("source_id")
+        or result.get("dataset")
+        or (((result.get("order") or {}).get("items") or [{}])[0].get("source_id"))
+        or ""
+    ).strip()
+
+
+def apply_runtime_result_cap_to_payload_result(
+    result: dict,
+    *,
+    confirmed_order: dict | None = None,
+    load_source_metadata_func=None,
+) -> dict:
+    if not isinstance(result, dict) or load_source_metadata_func is None:
+        return result
+    source_id = resolve_result_source_id(result)
+    if not source_id:
+        return result
+    requested_limit = requested_limit_from_order(confirmed_order)
+    payload, _cap_info = cap_runtime_payload(
+        result,
+        source_id=source_id,
+        load_source_metadata_func=load_source_metadata_func,
+        requested_limit=requested_limit,
+    )
+    return payload
+
+
+def maybe_build_explainer_chat_response(
+    *,
+    query: str,
+    hints: dict | None,
+    build_chat_response_func,
+    auth_user: dict | None = None,
+    load_source_metadata_func=None,
+    load_source_reference_func=None,
+) -> dict | None:
+    if load_source_metadata_func is None:
+        return None
+    helper = load_runtime_explainer_helpers()
+    build_explainer_response_func = helper["build_explainer_response"]
+
+    source_metadata = best_source_metadata(hints or {}, load_source_metadata_func)
+    if not source_metadata:
+        return None
+
+    source_reference = None
+    if load_source_reference_func is not None:
+        source_id = str(source_metadata.get("source_id") or "").strip()
+        if source_id:
+            source_reference = load_source_reference_func(source_id)
+
+    explainer = build_explainer_response_func(source_metadata, query, source_reference)
+    if not isinstance(explainer, dict):
+        return None
+
+    return build_chat_response_func(
+        explainer.get("text") or "I can describe that source, but I do not have a fuller summary yet.",
+        auth_user=auth_user,
+        source_id=explainer.get("source_id"),
+        pack_id=explainer.get("pack_id"),
+        explainer_sections=explainer.get("sections"),
+        stub_order=explainer.get("stub_order"),
+    )

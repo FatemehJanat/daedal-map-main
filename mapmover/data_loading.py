@@ -44,6 +44,7 @@ from .pack_state import build_active_catalog
 from .paths import CATALOG_PATH, COUNTRIES_DIR, DATA_ROOT, GEOMETRY_DIR, WIP_CATALOG_PATH
 from .duckdb_helpers import select_rows
 from .request_risk_gate import block_gate, safe_gate
+from .runtime.geography_reference import canonicalize_loc_id, translate_loc_id_to_geometry_id
 from .runtime_config import get_runtime_config
 
 logger = logging.getLogger("mapmover")
@@ -985,8 +986,6 @@ def fetch_geometries_by_loc_ids(loc_ids: list) -> dict:
 
     if not loc_ids:
         return {"type": "FeatureCollection", "features": []}
-
-    from .geometry_handlers import canonicalize_loc_id, translate_loc_id_to_geometry_id
 
     # Group loc_ids by country (first part before dash, or whole ID for country-level)
     country_loc_ids = {}

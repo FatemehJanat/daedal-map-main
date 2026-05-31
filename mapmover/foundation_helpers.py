@@ -42,6 +42,7 @@ FOUNDATION_HELPER_REGISTRY = {
         "usa/usa_admin.json",
     ],
     "country_crosswalks": "countries/{ISO3}/crosswalk.json",
+    "country_json_assets": "countries/{ISO3}/{filename}",
     "global_country_geometry": "geometry/global.csv",
     "world_factbook_static": "global/world_factbook_static/all_countries.parquet",
     "orchestrator_specs": "mapmover/orchestrator_specs.py",
@@ -73,6 +74,7 @@ FOUNDATION_HELPER_REGISTRY = {
 
 _REFERENCE_JSON_CACHE: dict[str, Any] = {}
 _COUNTRY_CROSSWALK_CACHE: dict[str, dict | None] = {}
+_COUNTRY_JSON_ASSET_CACHE: dict[tuple[str, str], Any] = {}
 _GLOBAL_COUNTRIES_CACHE = None
 _WORLD_FACTBOOK_STATIC_CACHE = None
 
@@ -172,6 +174,42 @@ def load_country_crosswalk(iso3: str) -> dict | None:
     except Exception as e:
         logger.warning(f"Failed to load crosswalk for {iso3}: {e}")
         _COUNTRY_CROSSWALK_CACHE[iso3] = None
+        return None
+
+
+def load_country_json_asset(iso3: str, filename: str) -> Any:
+    """Load a country-owned JSON asset from `countries/{ISO3}/`."""
+    iso3 = (iso3 or "").upper()
+    filename = str(filename or "").strip()
+    if not iso3 or not filename:
+        return None
+
+    cache_key = (iso3, filename)
+    if cache_key in _COUNTRY_JSON_ASSET_CACHE:
+        return _COUNTRY_JSON_ASSET_CACHE[cache_key]
+
+    asset_path = COUNTRIES_DIR / iso3 / filename
+    if not asset_path.exists():
+        if is_cloud_mode():
+            try:
+                from .data_loading import _fetch_json_from_s3
+
+                data = _fetch_json_from_s3(f"countries/{iso3}/{filename}")
+                _COUNTRY_JSON_ASSET_CACHE[cache_key] = data
+                return data
+            except Exception as e:
+                logger.warning("Failed to load country asset %s/%s from cloud storage: %s", iso3, filename, e)
+        _COUNTRY_JSON_ASSET_CACHE[cache_key] = None
+        return None
+
+    try:
+        with open(asset_path, "r", encoding="utf-8-sig") as f:
+            data = json.load(f)
+        _COUNTRY_JSON_ASSET_CACHE[cache_key] = data
+        return data
+    except Exception as e:
+        logger.warning("Failed to load country asset %s/%s: %s", iso3, filename, e)
+        _COUNTRY_JSON_ASSET_CACHE[cache_key] = None
         return None
 
 

@@ -25,7 +25,7 @@ import pandas as pd
 from pathlib import Path
 from . import GLOBAL_DIR
 from .duckdb_helpers import parquet_available, select_distinct_event_loc_ids
-from .geometry_handlers import translate_loc_id_to_geometry_id
+from .runtime.geography_reference import translate_loc_id_to_geometry_id
 
 # Metadata cache
 _DISASTER_METADATA = None

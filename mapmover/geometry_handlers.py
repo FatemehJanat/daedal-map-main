@@ -34,6 +34,12 @@ from .foundation_helpers import (
     load_reference_json,
     load_world_factbook_static_frame,
 )
+from .runtime.geography_reference import (
+    build_crosswalk_maps as _build_crosswalk_maps_impl,
+    canonicalize_loc_id as _canonicalize_loc_id_impl,
+    translate_geometry_id_to_local_id as _translate_geometry_id_to_local_id_impl,
+    translate_loc_id_to_geometry_id as _translate_loc_id_to_geometry_id_impl,
+)
 
 logger = logging.getLogger("mapmover")
 
@@ -63,88 +69,23 @@ def _load_crosswalk(iso3: str) -> dict | None:
 
 
 def canonicalize_loc_id(loc_id: str) -> str:
-    """Return runtime loc_ids in canonical form. Legacy formats are not normalized here."""
-    return loc_id
+    """Compatibility shim over the shared runtime geography helper layer."""
+    return _canonicalize_loc_id_impl(loc_id)
 
 
 def translate_loc_id_to_geometry_id(loc_id: str) -> str:
-    """
-    Translate a dataset loc_id into the geometry join id used by runtime geometry rows.
-
-    - admin_1 local ids can map to geoBoundaries G-IDs via `mappings`
-    - admin_2 USA FIPS bridge ids can map via `admin_2_fips`
-    - admin_3+ local ids stay local after canonicalization
-    """
-    canonical = canonicalize_loc_id(loc_id)
-    if not isinstance(canonical, str) or "-" not in canonical:
-        return canonical
-
-    iso3 = canonical.split("-", 1)[0]
-    crosswalk = _load_crosswalk(iso3)
-    local_to_geo, _ = _build_crosswalk_maps(crosswalk)
-    direct = local_to_geo.get(canonical)
-    if direct:
-        return direct
-
-    # Some USA disaster/admin2 files use 5-digit county FIPS inside
-    # `USA-{ST}-{SSCCC}` loc_ids, while the geometry crosswalk stores the
-    # county key as `USA-{ST}-{CCC}` because the state is already encoded by the
-    # state abbreviation segment. Bridge that format difference here so
-    # aggregate outputs can still join against geometry.
-    if iso3 == "USA":
-        parts = canonical.split("-")
-        if len(parts) == 3 and parts[2].isdigit() and len(parts[2]) > 3:
-            county_only = f"{parts[0]}-{parts[1]}-{parts[2][-3:]}"
-            bridged = local_to_geo.get(county_only)
-            if bridged:
-                return bridged
-
-    return canonical
+    """Compatibility shim over the shared runtime geography helper layer."""
+    return _translate_loc_id_to_geometry_id_impl(loc_id)
 
 
 def translate_geometry_id_to_local_id(loc_id: str) -> str:
-    """
-    Translate a geometry-side loc_id back to its preferred local/canonical id.
-
-    This is the reverse of translate_loc_id_to_geometry_id() and is especially
-    important for multi-level USA flows where an admin_2 geometry id (GeoBoundaries
-    county id) needs to scope deeper admin_3+ rows that are stored under the
-    canonical local county bridge id.
-    """
-    canonical = canonicalize_loc_id(loc_id)
-    if not isinstance(canonical, str) or "-" not in canonical:
-        return canonical
-
-    iso3 = canonical.split("-", 1)[0]
-    crosswalk = _load_crosswalk(iso3)
-    _, geo_to_local = _build_crosswalk_maps(crosswalk)
-    return geo_to_local.get(canonical, canonical)
+    """Compatibility shim over the shared runtime geography helper layer."""
+    return _translate_geometry_id_to_local_id_impl(loc_id)
 
 
 def _build_crosswalk_maps(crosswalk_data: dict | None) -> tuple[dict, dict]:
-    """
-    Build local->geo and geo->preferred-local maps from crosswalk data.
-
-    Includes:
-    - admin_1 `mappings`
-    - admin_2 FIPS bridge `admin_2_fips`
-    """
-    local_to_geo: dict[str, str] = {}
-    geo_to_local: dict[str, str] = {}
-    if not crosswalk_data:
-        return local_to_geo, geo_to_local
-
-    for local_loc_id, geo_loc_id in (crosswalk_data.get("mappings") or {}).items():
-        local_norm = canonicalize_loc_id(local_loc_id)
-        local_to_geo[local_norm] = geo_loc_id
-        geo_to_local.setdefault(geo_loc_id, local_norm)
-
-    for local_loc_id, geo_loc_id in (crosswalk_data.get("admin_2_fips") or {}).items():
-        local_norm = canonicalize_loc_id(local_loc_id)
-        local_to_geo[local_norm] = geo_loc_id
-        geo_to_local.setdefault(geo_loc_id, local_norm)
-
-    return local_to_geo, geo_to_local
+    """Compatibility shim over the shared runtime geography helper layer."""
+    return _build_crosswalk_maps_impl(crosswalk_data)
 
 
 def get_geometry_path():

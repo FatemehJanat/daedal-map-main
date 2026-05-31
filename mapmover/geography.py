@@ -3,11 +3,14 @@ Geography and regional grouping functions.
 Handles country codes, region lookups, and coordinate fallbacks.
 """
 
-import json
 import logging
 import pandas as pd
 from pathlib import Path
 from .foundation_helpers import load_reference_json
+from .runtime.geography_reference import (
+    load_conversions as load_conversions_impl,
+    load_iso_codes as load_iso_codes_impl,
+)
 
 # Base directory for file paths
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -27,14 +30,15 @@ logger = logging.getLogger("mapmover")
 def load_conversions():
     """Load conversions.json for regional groupings, country codes, etc."""
     global CONVERSIONS_DATA
-    conversions_path = BASE_DIR / "mapmover" / "conversions.json"
-    if conversions_path.exists():
-        try:
-            with open(conversions_path, 'r', encoding='utf-8') as f:
-                CONVERSIONS_DATA = json.load(f)
-                print(f"Loaded conversions.json with {len(CONVERSIONS_DATA.get('regional_groupings', {}))} regional groupings")
-        except Exception as e:
-            print(f"Warning: Failed to load conversions.json: {e}")
+    try:
+        CONVERSIONS_DATA = load_conversions_impl()
+        logger.debug(
+            "Loaded conversions.json with %d regional groupings",
+            len(CONVERSIONS_DATA.get("regional_groupings", {})),
+        )
+    except Exception as e:
+        logger.warning("Failed to load conversions.json: %s", e)
+        CONVERSIONS_DATA = {}
     return CONVERSIONS_DATA
 
 
@@ -51,10 +55,10 @@ def load_iso_codes():
     if _ISO_CODES_CACHE is not None:
         return _ISO_CODES_CACHE
 
-    data = load_reference_json("iso_codes.json")
+    data = load_iso_codes_impl()
     if isinstance(data, dict):
         _ISO_CODES_CACHE = data
-        logger.debug(f"Loaded iso_codes.json with {len(_ISO_CODES_CACHE.get('iso3_to_name', {}))} countries")
+        logger.debug("Loaded iso_codes.json with %d countries", len(_ISO_CODES_CACHE.get("iso3_to_name", {})))
     else:
         logger.warning("iso_codes.json not found")
         _ISO_CODES_CACHE = {}

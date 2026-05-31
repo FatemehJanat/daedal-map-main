@@ -13,14 +13,16 @@ from typing import Optional
 
 logger = logging.getLogger("mapmover")
 
-from ..geometry_handlers import (
+from .geography_reference import (
     canonicalize_loc_id,
+    translate_geometry_id_to_local_id,
+    translate_loc_id_to_geometry_id,
+)
+from ..geometry_handlers import (
     load_global_countries,
     load_country_parquet,
     load_geometry_rows_by_loc_ids,
     load_subcounty_geometry,
-    translate_geometry_id_to_local_id,
-    translate_loc_id_to_geometry_id,
     df_to_geojson,
 )
 
@@ -154,7 +156,7 @@ from .geography_reference import (
 from .order_geo_runtime import (
     derive_eurostat_geo_level,
     expand_order_region,
-    resolve_us_county_slug_loc_id,
+    resolve_country_subdivision_slug_loc_id,
 )
 from .order_execution_support import (
     build_runtime_source_path,
@@ -175,13 +177,12 @@ from .order_execution_policy import (
     executor_log,
     executor_trace_id,
 )
-_usa_county_slug_cache = {}
+_country_subdivision_slug_cache = {}
 
-def _resolve_us_county_slug_loc_id(region: str) -> Optional[str]:
-    return resolve_us_county_slug_loc_id(
+def _resolve_country_subdivision_slug_loc_id(region: str) -> Optional[str]:
+    return resolve_country_subdivision_slug_loc_id(
         region,
-        cache_dict=_usa_county_slug_cache,
-        load_country_parquet_func=load_country_parquet,
+        cache_dict=_country_subdivision_slug_cache,
     )
 
 def _load_catalog() -> dict:
@@ -275,7 +276,7 @@ def expand_region(region: str) -> set:
     return expand_runtime_region(
         region,
         expand_order_region_func=expand_order_region,
-        resolve_us_county_slug_loc_id_func=_resolve_us_county_slug_loc_id,
+        resolve_country_subdivision_slug_loc_id_func=_resolve_country_subdivision_slug_loc_id,
         load_conversions_func=load_conversions_impl,
         load_iso_codes_func=load_iso_codes_impl,
         load_usa_admin_func=load_usa_admin_impl,

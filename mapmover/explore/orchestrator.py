@@ -6,21 +6,23 @@ import asyncio
 
 from mapmover.explore.explore_followups import compact_followup_message
 from mapmover.explore.explore_request_context import apply_resolved_location_override
-from mapmover.explore.orchestrator_runtime import (
-    apply_explore_runtime_result_cap,
-    maybe_build_explore_explainer_response,
-    run_explore_interpret,
-    run_explore_interpret_with_progress,
-)
 from mapmover.explore.explore_runtime import (
     finalize_explore_order_result,
     preprocess_explore_request,
 )
 from mapmover.orchestrator_specs import EXPLORE_ORCHESTRATOR_SPEC, OrchestratorSpec
+from mapmover.runtime.orchestrator_helper_runtime import (
+    apply_runtime_result_cap_to_payload_result,
+    maybe_build_explainer_chat_response,
+)
 from mapmover.runtime.orchestrator_policy import (
     DEFAULT_EXPLORE_COMPLEXITY_POLICY,
     EXPLORE_HEARTBEAT_POLICY,
     build_heartbeat_event,
+)
+from mapmover.runtime.orchestrator_threading import (
+    run_catalog_scoped_to_thread,
+    run_catalog_scoped_to_thread_with_progress,
 )
 from mapmover.runtime.llm_policy import resolve_lane_llm_selection
 from mapmover.runtime.order_taker_prompt import build_system_prompt as build_explore_system_prompt
@@ -78,13 +80,13 @@ class ExploreOrchestrator:
         usage_recorder,
         catalog_surface: str | None,
     ) -> dict:
-        return await run_explore_interpret(
-            query=query,
+        return await run_catalog_scoped_to_thread(
+            catalog_surface=catalog_surface,
+            func=interpret_request,
+            user_query=query,
             chat_history=chat_history,
             hints=hints,
             usage_recorder=usage_recorder,
-            catalog_surface=catalog_surface,
-            interpret_request_func=interpret_request,
             system_prompt_builder=self.build_system_prompt,
             system_prompt_block_builder=self.build_system_prompt_blocks,
             llm_selection=self.llm_selection(),
@@ -99,14 +101,14 @@ class ExploreOrchestrator:
         usage_recorder,
         catalog_surface: str | None,
     ) -> tuple[ProgressBus, asyncio.Task]:
-        return await run_explore_interpret_with_progress(
-            query=query,
+        return await run_catalog_scoped_to_thread_with_progress(
+            catalog_surface=catalog_surface,
+            progress_bus_cls=ProgressBus,
+            func=interpret_request,
+            user_query=query,
             chat_history=chat_history,
             hints=hints,
             usage_recorder=usage_recorder,
-            catalog_surface=catalog_surface,
-            progress_bus_cls=ProgressBus,
-            interpret_request_func=interpret_request,
             system_prompt_builder=self.build_system_prompt,
             system_prompt_block_builder=self.build_system_prompt_blocks,
             llm_selection=self.llm_selection(),
@@ -172,7 +174,7 @@ class ExploreOrchestrator:
         load_source_metadata_func=None,
         load_source_reference_func=None,
     ) -> dict | None:
-        return maybe_build_explore_explainer_response(
+        return maybe_build_explainer_chat_response(
             query=query,
             hints=hints,
             build_chat_response_func=build_chat_response_func,
@@ -188,7 +190,7 @@ class ExploreOrchestrator:
         confirmed_order: dict | None = None,
         load_source_metadata_func=None,
     ) -> dict:
-        return apply_explore_runtime_result_cap(
+        return apply_runtime_result_cap_to_payload_result(
             result,
             confirmed_order=confirmed_order,
             load_source_metadata_func=load_source_metadata_func,

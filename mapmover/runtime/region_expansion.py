@@ -3,67 +3,10 @@
 from __future__ import annotations
 
 
-def normalize_county_slug(value: str) -> str:
-    text = str(value or "").strip().lower().replace("-", " ")
-    for suffix in (
-        " county",
-        " parish",
-        " borough",
-        " census area",
-        " municipality",
-        " city and borough",
-        " city",
-    ):
-        if text.endswith(suffix):
-            text = text[: -len(suffix)]
-            break
-    return " ".join(text.split())
-
-
-def resolve_us_county_slug_loc_id(
-    region: str,
-    *,
-    cache_dict: dict,
-    load_country_parquet_func,
-) -> str | None:
-    value = str(region or "").strip()
-    import re
-
-    match = re.fullmatch(r"USA-([A-Z]{2})-([A-Za-z0-9-]+)", value)
-    if not match:
-        return None
-
-    state_abbrev = match.group(1)
-    county_slug = match.group(2)
-    if county_slug.isdigit():
-        return None
-
-    cache_key = (state_abbrev, county_slug.lower())
-    if cache_key in cache_dict:
-        return cache_dict[cache_key]
-
-    counties_df = load_country_parquet_func("USA", admin_level=2)
-    if counties_df is None or counties_df.empty or "loc_id" not in counties_df.columns or "name" not in counties_df.columns:
-        cache_dict[cache_key] = None
-        return None
-
-    target = normalize_county_slug(county_slug)
-    subset = counties_df[counties_df["loc_id"].astype(str).str.startswith(f"USA-{state_abbrev}-", na=False)].copy()
-    if subset.empty:
-        cache_dict[cache_key] = None
-        return None
-
-    subset["_norm_name"] = subset["name"].map(normalize_county_slug)
-    exact = subset[subset["_norm_name"] == target]
-    loc_id = str(exact.iloc[0]["loc_id"]) if not exact.empty else None
-    cache_dict[cache_key] = loc_id
-    return loc_id
-
-
 def expand_region(
     region: str,
     *,
-    resolve_us_county_slug_loc_id_func,
+    resolve_country_subdivision_slug_loc_id_func,
     regional_groups: dict[str, set[str]],
     load_conversions_func,
     load_iso_codes_func,
@@ -73,9 +16,9 @@ def expand_region(
     if not region or region.lower() in ("global", "all", "world"):
         return set()
 
-    county_loc_id = resolve_us_county_slug_loc_id_func(region)
-    if county_loc_id:
-        return {county_loc_id}
+    subdivision_loc_id = resolve_country_subdivision_slug_loc_id_func(region)
+    if subdivision_loc_id:
+        return {subdivision_loc_id}
 
     normalized_region = str(region).strip().lower().replace("_", " ").replace("-", " ")
     if normalized_region in regional_groups:
