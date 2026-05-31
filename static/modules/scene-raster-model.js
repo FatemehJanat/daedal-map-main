@@ -85,6 +85,7 @@ export const SceneRasterModel = {
   isVisible: false,
   displayMode: 'scene',
   clipEntries: [],
+  clipBundleCache: new Map(),
 
   async load(sourceId, period) {
     const { fetchMsgpack } = await import('./utils/fetch.js');
@@ -220,6 +221,37 @@ export const SceneRasterModel = {
     return true;
   },
 
+  async loadClipsFromBundle(sourceId, period, locIds) {
+    const bundle = await this._loadClipBundle(sourceId, period);
+    if (!bundle) return false;
+
+    const clipMap = bundle?.clips_by_loc_id || {};
+    const requestedLocIds = Array.isArray(locIds) ? locIds.filter(Boolean).slice(0, 50) : [];
+    const clips = [];
+    for (const locId of requestedLocIds) {
+      const clip = clipMap[locId];
+      if (!clip || !clip.pixels) continue;
+      clips.push({
+        loc_id: locId,
+        level: clip.level,
+        period: clip.period || period,
+        pixels: clip.pixels,
+        width: clip.width,
+        height: clip.height,
+        bounds: clip.bounds,
+        nodata: clip.nodata,
+      });
+    }
+    if (!clips.length) return false;
+
+    return await this.loadClips(sourceId, {
+      source_id: bundle.source_id || sourceId,
+      period: bundle.period || period,
+      year: bundle.year,
+      clips,
+    });
+  },
+
   cleanup() {
     const map = MapAdapter?.map;
     if (map) {
@@ -235,6 +267,7 @@ export const SceneRasterModel = {
     this.sourceId = null;
     this.isVisible = false;
     this.displayMode = 'scene';
+    this.clipBundleCache.clear();
   },
 
   _ensureCanvas() {
@@ -401,5 +434,21 @@ export const SceneRasterModel = {
       }
     }
     this.clipEntries = [];
+  },
+
+  async _loadClipBundle(sourceId, period) {
+    const key = `${sourceId}::${period}`;
+    if (this.clipBundleCache.has(key)) {
+      return this.clipBundleCache.get(key);
+    }
+    const { fetchMsgpack } = await import('./utils/fetch.js');
+    try {
+      const bundle = await fetchMsgpack(`/api/raster/${encodeURIComponent(sourceId)}/clip-bundle/${encodeURIComponent(period)}`);
+      this.clipBundleCache.set(key, bundle);
+      return bundle;
+    } catch (err) {
+      console.warn('SceneRasterModel: clip bundle unavailable', sourceId, period, err);
+      return null;
+    }
   },
 };

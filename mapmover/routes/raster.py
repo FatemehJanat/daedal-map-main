@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 import msgpack
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Response
 from shapely.geometry import shape as shapely_shape
 
 from mapmover.data_loading import get_source_path, load_full_catalog, load_source_metadata
@@ -136,6 +136,40 @@ def _loc_id_clip_level(loc_id: str) -> str | None:
     }.get(segment_count)
 
 
+def _clip_bundle_relative_path(raster_relative_dir: str | None, period: str) -> str | None:
+    if not raster_relative_dir:
+        return None
+    base = raster_relative_dir.strip().rstrip("/")
+    if not base:
+        return None
+    return f"{base}/clip_bundles/{period}.msgpack"
+
+
+def _load_clip_bundle_bytes(source_id: str, catalog: dict | None, period: str) -> bytes | None:
+    raster_dir, raster_relative_dir = _raster_dirs_for_source(source_id, catalog)
+    relative_path = _clip_bundle_relative_path(raster_relative_dir, period)
+    if is_cloud_mode():
+        return _cloud_object_bytes(relative_path) if relative_path else None
+    if raster_dir is None:
+        return None
+    bundle_path = raster_dir / "clip_bundles" / f"{period}.msgpack"
+    if not bundle_path.exists():
+        return None
+    return bundle_path.read_bytes()
+
+
+def _load_clip_bundle_payload(source_id: str, catalog: dict | None, period: str) -> dict | None:
+    raw = _load_clip_bundle_bytes(source_id, catalog, period)
+    if not raw:
+        return None
+    try:
+        payload = msgpack.unpackb(raw, raw=False)
+    except Exception as exc:
+        logger.warning(f"Could not decode raster clip bundle for {source_id} {period}: {exc}")
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 async def _decode_msgpack_request(req: Request) -> dict:
     body_bytes = await req.body()
     return msgpack.unpackb(body_bytes, raw=False)
@@ -243,6 +277,23 @@ async def get_raster_scene(source_id: str, period: str):
         return msgpack_error("Failed to read raster data", 500)
 
 
+@router.get("/api/raster/{source_id}/clip-bundle/{period}")
+async def get_raster_clip_bundle(source_id: str, period: str):
+    """Return a prebuilt msgpack clip bundle for one scene period."""
+    catalog = _load_scene_catalog(source_id)
+    if catalog is None:
+        return msgpack_error(f"Raster scene catalog not found for {source_id}", 404)
+
+    scene = next((s for s in catalog.get("scenes", []) if s["period"] == period), None)
+    if scene is None:
+        return msgpack_error(f"Unknown period: {period}", 404)
+
+    raw_bundle = _load_clip_bundle_bytes(source_id, catalog, period)
+    if not raw_bundle:
+        return msgpack_error(f"Raster clip bundle not found for period: {period}", 404)
+    return Response(content=raw_bundle, media_type="application/msgpack")
+
+
 @router.post("/api/raster/{source_id}/clips")
 async def get_raster_clips(source_id: str, req: Request):
     """Return loc_id-specific raster clips for a given source and scene period."""
@@ -261,6 +312,34 @@ async def get_raster_clips(source_id: str, req: Request):
         scene = next((s for s in catalog.get("scenes", []) if s["period"] == period), None)
         if scene is None:
             return msgpack_error(f"Unknown period: {period}", 404)
+
+        bundle_payload = _load_clip_bundle_payload(source_id, catalog, period)
+        if bundle_payload:
+            clips_by_loc_id = bundle_payload.get("clips_by_loc_id") or {}
+            clips = []
+            for loc_id in loc_ids[:50]:
+                clip = clips_by_loc_id.get(loc_id)
+                if not isinstance(clip, dict):
+                    continue
+                clips.append({
+                    "loc_id": loc_id,
+                    "level": str(clip.get("level") or ""),
+                    "period": period,
+                    "pixels": clip.get("pixels") or b"",
+                    "width": int(clip.get("width") or 0),
+                    "height": int(clip.get("height") or 0),
+                    "bounds": clip.get("bounds") or {},
+                    "nodata": float(clip.get("nodata") or 0.0),
+                })
+
+            return msgpack_response({
+                "source_id": source_id,
+                "period": period,
+                "year": int(bundle_payload.get("year") or scene["year"]),
+                "clip_count": len(clips),
+                "clips": clips,
+            })
+
         raster_dir, raster_relative_dir = _raster_dirs_for_source(source_id, catalog)
 
         bounds_by_loc_id = _selection_bounds_by_loc_id(loc_ids)

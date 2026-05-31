@@ -172,23 +172,25 @@ export const RasterPanel = {
     }
     if (!period) return false;
 
-    let payload;
-    try {
-      payload = await postMsgpack(`/api/raster/${encodeURIComponent(_activeSourceId)}/clips`, {
-        period,
-        loc_ids: locIds
-      });
-    } catch (err) {
-      console.error('RasterPanel: failed to load raster clips', err);
-      return false;
-    }
-    if (!payload?.clips?.length) {
-      return false;
-    }
-
     _activePeriod = period;
     _updateActiveButton(period);
-    const ok = await SceneRasterModel.loadClips(_activeSourceId, payload);
+    let ok = await SceneRasterModel.loadClipsFromBundle(_activeSourceId, period, locIds);
+    if (!ok) {
+      let payload;
+      try {
+        payload = await postMsgpack(`/api/raster/${encodeURIComponent(_activeSourceId)}/clips`, {
+          period,
+          loc_ids: locIds
+        });
+      } catch (err) {
+        console.error('RasterPanel: failed to load raster clips', err);
+        return false;
+      }
+      if (!payload?.clips?.length) {
+        return false;
+      }
+      ok = await SceneRasterModel.loadClips(_activeSourceId, payload);
+    }
     if (!ok) return false;
     const panel = document.getElementById(PANEL_ID);
     if (panel) panel.style.display = 'block';
