@@ -81,7 +81,11 @@ export async function resendWithResearchDisplayForce(ctx, deps = {}) {
       { force_research_display: true },
       requestMode
     );
-    const endpoint = requestMode === 'research' ? '/chat/research/stream' : '/chat/stream';
+    const endpoint = requestMode === 'research'
+      ? '/chat/research/stream'
+      : requestMode === 'ops'
+        ? '/chat/ops/stream'
+        : '/chat/stream';
     const response = await sendStreamingRequest(payload, (stage, message, deltaText, rawEvent) => {
       if (stage === 'display' && rawEvent?.map_payload) {
         const mapPayload = ctx.decorateResearchDisplay(rawEvent.map_payload, {

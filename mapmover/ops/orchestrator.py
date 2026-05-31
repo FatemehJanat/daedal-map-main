@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from mapmover.ops_prompt import build_ops_system_prompt
+from mapmover.ops_orchestrator_runtime import run_ops_orchestrator_call
 from mapmover.ops_watch_runtime import preload_ops_watch_scope
 from mapmover.orchestrator_specs import OPS_ORCHESTRATOR_SPEC, OrchestratorSpec
 from mapmover.progress_bus import ProgressEvent
@@ -60,4 +61,31 @@ class OpsOrchestrator:
         return resolve_lane_llm_selection(
             self.spec.model_policy,
             override=override,
+        )
+
+    def build_client(self, llm_selection):
+        from mapmover.runtime.llm_policy import build_provider_client
+
+        return build_provider_client(llm_selection)
+
+    async def run(
+        self,
+        *,
+        query: str,
+        chat_history: list | None,
+        watch: dict,
+        effective_feeds: list[str],
+        usage_recorder,
+        catalog_surface: str | None,
+        cache,
+    ) -> dict:
+        return await run_ops_orchestrator_call(
+            query=query,
+            chat_history=chat_history,
+            watch=watch,
+            effective_feeds=effective_feeds,
+            usage_recorder=usage_recorder,
+            catalog_surface=catalog_surface,
+            ops_orchestrator=self,
+            cache=cache,
         )

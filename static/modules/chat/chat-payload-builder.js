@@ -246,6 +246,14 @@ export function buildPayload(ctx, query, resolvedLocation = null, extraOptions =
     loadedData: getLoadedDataList(),
     selectedAddress: ctx.addressContext,
     tutorialMode: { enabled: TutorialMode.enabled },
+    ...(modeOverride === 'ops'
+      ? {
+          watch_id: ctx.opsWatchId || ctx.getSessionIdForMode('ops'),
+          watch_context: {
+            label: 'Ops watch'
+          }
+        }
+      : {}),
     ...extraOptions
   };
 }

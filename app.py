@@ -52,6 +52,7 @@ from mapmover.routes.disasters.wildfires import router as wildfires_router
 from mapmover.routes.raster import router as raster_router
 from mapmover.routes.geometry import router as geometry_router
 from mapmover.routes.mcp import router as mcp_router
+from mapmover.routes.ops import router as ops_router
 from mapmover.routes.research import router as research_router
 from mapmover.routes.system import prewarm_public_pack_catalog, router as system_router
 from mapmover.routes.weather import router as weather_router
@@ -543,6 +544,7 @@ app.include_router(drought_router)
 app.include_router(wildfires_router)
 app.include_router(weather_router)
 app.include_router(chat_router)
+app.include_router(ops_router)
 app.include_router(research_router)
 
 

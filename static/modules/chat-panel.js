@@ -299,6 +299,7 @@ export const ChatManager = {
   pendingResearchRasterMode: null,
   researchMemory: null,
   selectedResearchCorpusId: '',
+  opsWatchId: '',
   researchCorpusOptions: [],
   latestResearchManifest: null,
   researchDisplayLayersByMode: { explore: [], research: [], ops: [] },
@@ -1299,6 +1300,7 @@ export const ChatManager = {
       this.researchDisplayLayersByMode = { explore: [], research: [], ops: [] };
       this.researchMemory = null;
       this.selectedResearchCorpusId = state.selectedResearchCorpusId || '';
+      this.opsWatchId = state.opsWatchId || '';
       this.history = [];
       return;
     }
@@ -1310,6 +1312,7 @@ export const ChatManager = {
     this.researchDisplayLayersByMode = { explore: [], research: [], ops: [] };
     this.researchMemory = null;
     this.selectedResearchCorpusId = '';
+    this.opsWatchId = '';
     this.history = [];
   },
 
@@ -1320,6 +1323,7 @@ export const ChatManager = {
     saveChatState({
       activeMode: this.mode,
       selectedResearchCorpusId: this.selectedResearchCorpusId,
+      opsWatchId: this.opsWatchId,
       catalogSurface: this.getEffectiveCatalogSurface()
     });
   },
@@ -1819,7 +1823,11 @@ export const ChatManager = {
       const payload = this.buildPayload(query, null, {}, requestMode);
 
       // Send via streaming API
-      const endpoint = requestMode === 'research' ? '/chat/research/stream' : '/chat/stream';
+      const endpoint = requestMode === 'research'
+        ? '/chat/research/stream'
+        : requestMode === 'ops'
+          ? '/chat/ops/stream'
+          : '/chat/stream';
       this.pendingResearchRasterMode = requestMode === 'research' && this.shouldAutoShowResearchRaster(query)
         ? 'selection'
         : null;
@@ -1862,6 +1870,9 @@ export const ChatManager = {
 
       if (!response) {
         throw new Error('No response received from server');
+      }
+      if (requestMode === 'ops' && response.watch_id) {
+        this.opsWatchId = response.watch_id;
       }
 
       const fallbackText = this.getResearchDisplayFallbackMessage(response);
