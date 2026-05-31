@@ -129,6 +129,7 @@
       <h2 id="sidebarModeTitle">Research Mode</h2>
       <div id="sidebarModeMount"></div>
       <div id="sidebarHeaderButtons">
+        <button id="tutorialToggleHeaderBtn" class="header-tutorial-btn" data-action="tutorial-toggle" type="button" aria-pressed="false" title="Toggle tutorial mode">Tutorial</button>
         <button id="authBtn" title="Open account or local setup">Account</button>
         <button id="closeSidebar" title="Close">&times;</button>
       </div>
@@ -143,7 +144,15 @@
       This map works best on desktop. Mobile experiences are currently limited.
     </div>
 
-    <div id="sidebarResearchMount"></div>
+    <div
+      id="sidebarResearchMount"
+      class="tutorial-region"
+      data-tutorial-lane="research"
+      data-tutorial-title="Research Workspace"
+      data-tutorial-body="Load a saved corpus or build one from packs, then ask analytical questions scoped to that bounded workspace. Loaded artifacts and corpus state live here while you work."
+    >
+      <button class="tutorial-region-tip" type="button">?</button>
+    </div>
 
     <div
       id="chatContainer"
@@ -171,6 +180,7 @@
       <div
         id="orderPanel"
         class="tutorial-region"
+        data-tutorial-lane="explore"
         data-tutorial-title="Order and Loaded Layers"
         data-tutorial-body="Review queued requests in Order, then switch to Loaded to manage the data layers already on the map."
       >
@@ -205,7 +215,15 @@
   <!-- Map Container -->
   <div id="mapContainer">
     <div id="map"></div>
-    <div id="mapModeMount" aria-label="Workflow mode switch"></div>
+    <div
+      id="mapModeMount"
+      class="tutorial-region"
+      data-tutorial-title="Workflow Mode"
+      data-tutorial-body="Switch between Explore for quick discovery, Research for analytical work in a bounded corpus, and Ops for monitoring. Your loaded data and account stay the same; the workspace, tools, and prompts adapt."
+      aria-label="Workflow mode switch"
+    >
+      <button class="tutorial-region-tip" type="button">?</button>
+    </div>
     <button id="fullscreenUiToggle" type="button" aria-pressed="false" title="Hide chat and map controls">Fullscreen</button>
     <div id="breadcrumb"></div>
     <div

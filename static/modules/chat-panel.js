@@ -1695,6 +1695,21 @@ export const ChatManager = {
     if (!query) return;
     if (this.modeRequestInFlight[requestMode]) return;
 
+    // Tutorial commands are a UX action, not a data query. Handle them in every
+    // lane regardless of workspace state (e.g. an empty Research workspace must
+    // still let the user toggle tutorial mode).
+    const earlyTutorialCommand = parseTutorialCommand(query);
+    if (earlyTutorialCommand) {
+      this.addMessage(query, 'user', { mode: requestMode });
+      input.value = '';
+      input.style.height = 'auto';
+      this.history.push({ role: 'user', content: query });
+      const result = TutorialMode.applyCommand(earlyTutorialCommand.action);
+      this.history.push({ role: 'assistant', content: result.message });
+      this.addMessage(result.message, 'assistant', { mode: requestMode });
+      return;
+    }
+
     if (requestMode === 'research') {
       try {
         const manifest = await this.refreshResearchManifest();
@@ -1743,15 +1758,6 @@ export const ChatManager = {
     this.addMessage(query, 'user', { mode: requestMode });
     input.value = '';
     input.style.height = 'auto';
-
-    const tutorialCommand = parseTutorialCommand(query);
-    if (tutorialCommand) {
-      this.history.push({ role: 'user', content: query });
-      const result = TutorialMode.applyCommand(tutorialCommand.action);
-      this.history.push({ role: 'assistant', content: result.message });
-      this.addMessage(result.message, 'assistant', { mode: requestMode });
-      return;
-    }
 
     if (requestMode === 'research') {
       const styleCommand = this.parseResearchStyleCommand(query);

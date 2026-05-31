@@ -53,6 +53,19 @@ body.tutorial-mode .tutorial-region.tutorial-region-open {
   z-index: 6000 !important;
 }
 
+/* ============================================================
+   Tutorial lane scoping
+   Regions default to data-tutorial-lane="all" (shown in every lane).
+   A region marked data-tutorial-lane="explore|research|ops" is hidden
+   unless body carries the matching chat-mode-<lane> class. The tutorial
+   module itself stays lane-agnostic; only the markup declares lane.
+   ============================================================ */
+body:not(.chat-mode-explore)  .tutorial-region[data-tutorial-lane="explore"],
+body:not(.chat-mode-research) .tutorial-region[data-tutorial-lane="research"],
+body:not(.chat-mode-ops)      .tutorial-region[data-tutorial-lane="ops"] {
+  display: none !important;
+}
+
 .tutorial-region-tip {
   display: none;
   position: absolute;

@@ -228,6 +228,29 @@ body.chat-mode-ops {
   background: #248a52;
 }
 
+.header-tutorial-btn {
+  background: rgba(16, 40, 58, 0.9);
+  border: 1px solid rgba(123, 231, 255, 0.3);
+  color: #d6f6ff;
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, border-color 0.2s, box-shadow 0.2s;
+}
+
+.header-tutorial-btn:hover {
+  background: rgba(20, 54, 76, 0.98);
+  border-color: rgba(123, 231, 255, 0.46);
+}
+
+.header-tutorial-btn.active {
+  background: rgba(255, 123, 26, 0.16);
+  border-color: rgba(255, 178, 77, 0.55);
+  box-shadow: 0 0 0 1px rgba(255, 178, 77, 0.18), 0 0 12px rgba(255, 123, 26, 0.12);
+  color: #ffe6c3;
+}
+
 #authBtn.logged-in {
   background: #22577a;
   border-color: #3a7ca5;

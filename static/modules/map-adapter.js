@@ -1130,14 +1130,29 @@ export const MapAdapter = {
   fitToBounds(geojson, options = {}) {
     if (!geojson || !geojson.features || geojson.features.length === 0) return;
 
-    // Fixed-center short-circuit: applies when any feature's own loc_id (single
-    // country focus) or parent_id (rendered as children of a country) matches
-    // a known wide/dateline-crossing country. Skips the bounds math entirely so
+    // Fixed-center short-circuit: applies when the geojson is genuinely
+    // focused on a single fixed-center country (e.g. all features are
+    // subdivisions of USA, or a single USA outline). Skips the bounds math so
     // antimeridian crossers like USA don't wrap to "show the whole world".
+    //
+    // Must be unanimous across features. A worldwide payload (e.g. all 256
+    // country outlines, including ATA / Antarctica with its polar fixed
+    // center) has varying country keys per feature, must fall through to
+    // bbox math instead of flying to whichever fixed-center country happens
+    // to appear first in the list.
+    const focusKeys = new Set();
     for (const feature of geojson.features) {
       const props = feature.properties || {};
-      const key = props.loc_id || props.parent_id || feature.id;
-      const fixed = key && this.countryFixedCenters[String(key)];
+      // Prefer parent_id (this feature is part of country X) over loc_id
+      // (this feature IS X). Single-country payloads have a consistent
+      // parent_id across all features; worldwide payloads vary per feature.
+      const key = props.parent_id || props.loc_id || feature.id;
+      if (key) focusKeys.add(String(key));
+      if (focusKeys.size > 1) break;
+    }
+    if (focusKeys.size === 1) {
+      const onlyKey = focusKeys.values().next().value;
+      const fixed = this.countryFixedCenters[onlyKey];
       if (fixed) {
         this.map.flyTo({
           center: fixed.center,

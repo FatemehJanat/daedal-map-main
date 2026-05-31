@@ -1494,6 +1494,12 @@ export const App = {
   renderStandardDataPayload(data, options = {}) {
     data = this.decorateMetricGeojsonWithAdminLevel(data);
 
+    // When restoring a saved view (lane switch), the camera was already restored
+    // via jumpTo in applyMapViewState. Skip all fit calls so the camera stays
+    // exactly where the user left it, instead of being overridden by a fresh
+    // bbox of whatever data layer is being re-rendered.
+    const skipFit = options.restoringViewState === true;
+
     // Check if we should merge with existing data (same source, multi-year)
     const shouldMerge = this.currentData &&
       this.currentData.data_type === 'metrics' &&
@@ -1644,7 +1650,7 @@ export const App = {
           };
           MapAdapter.loadResearchDisplayLayers?.([layer]);
           this.setupResearchDisplayInteractions?.();
-          if (data.fit !== false) {
+          if (data.fit !== false && !skipFit) {
             MapAdapter.fitToBounds(data.geojson);
           }
           console.log(`Ad-hoc geometry rendered: source=${data.source_id} level=${geometryType} features=${data.geojson.features.length}`);
@@ -1688,7 +1694,7 @@ export const App = {
       });
 
       // Fit map to event locations
-      MapAdapter.fitToEventBounds(data.geojson);
+      if (!skipFit) MapAdapter.fitToEventBounds(data.geojson);
 
       // Update summary display
       const summaryEl = document.getElementById('queryStatus');
@@ -1720,7 +1726,7 @@ export const App = {
       });
 
       // Fit map to storm locations
-      MapAdapter.fitToBounds(data.geojson);
+      if (!skipFit) MapAdapter.fitToBounds(data.geojson);
 
     } else if (data.multi_year && data.year_data && data.year_range) {
       // Multi-year mode: initialize time slider
@@ -1752,7 +1758,7 @@ export const App = {
         );
 
         // Fit map to the data, then apply initial admin level filter
-        MapAdapter.fitToBounds(data.geojson);
+        if (!skipFit) MapAdapter.fitToBounds(data.geojson);
       } else {
         TimeSlider.updateData(
           data.year_range,
@@ -1791,7 +1797,7 @@ export const App = {
           MapAdapter.updateSourceData(filteredGeojson);
         } else {
           MapAdapter.loadGeoJSON(filteredGeojson);
-          MapAdapter.fitToBounds(data.geojson);
+          if (!skipFit) MapAdapter.fitToBounds(data.geojson);
           const explicitLevelMatch = String(data.geographic_level || '').match(/^admin_(\d+)$/);
           const loadedAdminLevel = explicitLevelMatch ? parseInt(explicitLevelMatch[1], 10) : ViewportLoader.currentAdminLevel;
           ViewportLoader.holdOrderModeLevel?.(loadedAdminLevel, 1400);
