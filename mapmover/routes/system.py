@@ -54,7 +54,7 @@ def clear_release_marker_cache() -> None:
 
 
 def _admin_catalog_refresh_forbidden_response(req: Request) -> Response | None:
-    auth_user = get_authenticated_user(req)
+    auth_user = get_authenticated_user(req, force_refresh=True)
     if not auth_user:
         logger.warning(
             "Denied admin runtime action: anonymous caller ip=%s",
@@ -2511,6 +2511,8 @@ async def get_auth_me(req: Request):
             from supabase_client import SupabaseClient
             supa = SupabaseClient()
             context = supa.get_user_entitlement_context(user_id)
+            metadata = auth_user.get("user_metadata") if isinstance(auth_user.get("user_metadata"), dict) else {}
+            ops_feeds = metadata.get("ops_feeds") if isinstance(metadata.get("ops_feeds"), list) else []
             if context and not context.get("error"):
                 return msgpack_response({
                     "authenticated": True,
@@ -2523,6 +2525,7 @@ async def get_auth_me(req: Request):
                     "org_id": context.get("org_id"),
                     "user_packs": context.get("user_packs", []),
                     "org_packs": context.get("org_packs", []),
+                    "ops_feeds": ops_feeds,
                     "account_url": ACCOUNT_URL,
                 })
         except Exception as exc:
@@ -2536,6 +2539,7 @@ async def get_auth_me(req: Request):
         "plan_id": "free",
         "enabled_shells": ["simple"],
         "max_packs": 2,
+        "ops_feeds": (auth_user.get("user_metadata") or {}).get("ops_feeds", []),
     })
 
 

@@ -32,9 +32,11 @@ class BaseChatRouteContext:
 async def build_base_chat_route_context(
     req: Request,
     body: dict,
+    *,
+    force_auth_refresh: bool = False,
 ) -> tuple[BaseChatRouteContext | None, Response | None]:
     frontend_session_id = body.get("sessionId", "anonymous")
-    auth_user = await get_authenticated_user_async(req)
+    auth_user = await get_authenticated_user_async(req, force_refresh=force_auth_refresh)
     client_ip = get_client_ip(req)
     caller_ctx = classify_caller(
         auth_user=auth_user,

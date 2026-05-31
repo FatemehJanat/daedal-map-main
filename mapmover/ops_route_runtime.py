@@ -11,6 +11,7 @@ from fastapi.responses import Response
 
 from mapmover import session_manager
 from mapmover.paths import ACCOUNT_URL
+from mapmover.ops_orchestrator_runtime import build_ops_report
 from mapmover.runtime.chat_route_context import build_base_chat_route_context
 from mapmover.runtime.chat_route_support import anonymous_budget_rejection_payload
 
@@ -29,6 +30,13 @@ class OpsChatRouteContext:
     allowed_feeds: list[str]
     watch: dict
     effective_feeds: list[str]
+
+
+def snapshot_ops_report(*, cache, watch: dict, effective_feeds: list[str]) -> dict:
+    report = build_ops_report(watch=watch, effective_feeds=effective_feeds)
+    if cache is not None and isinstance(getattr(cache, "map_state", None), dict):
+        cache.map_state["ops_report"] = report
+    return report
 
 
 def ops_request_id(session_id: str, query: str) -> str:
@@ -113,7 +121,7 @@ async def prepare_ops_chat_route_context(
     *,
     query: str,
 ) -> tuple[OpsChatRouteContext | None, Response | None, dict | None, int | None, dict[str, str] | None]:
-    base_context, route_error = await build_base_chat_route_context(req, body)
+    base_context, route_error = await build_base_chat_route_context(req, body, force_auth_refresh=True)
     if route_error:
         return None, route_error, None, getattr(route_error, "status_code", 400), None
     assert base_context is not None
@@ -157,3 +165,10 @@ async def prepare_ops_chat_route_context(
         None,
         None,
     )
+
+
+async def prepare_ops_view_route_context(
+    req: Request,
+    body: dict,
+) -> tuple[OpsChatRouteContext | None, Response | None, dict | None, int | None, dict[str, str] | None]:
+    return await prepare_ops_chat_route_context(req, body, query="ops_view")

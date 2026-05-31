@@ -14,6 +14,7 @@ function normalizeAccountContext(value) {
     plan_id: String(value.plan_id || 'free').trim() || 'free',
     is_admin: value.is_admin === true,
     enabled_shells: Array.isArray(value.enabled_shells) ? value.enabled_shells : undefined,
+    ops_feeds: Array.isArray(value.ops_feeds) ? value.ops_feeds.map(item => String(item || '').trim()).filter(Boolean) : undefined,
     max_packs: Number.isFinite(Number(value.max_packs)) ? Number(value.max_packs) : undefined,
     org_id: value.org_id || null,
     account_url: String(value.account_url || '').trim() || undefined,

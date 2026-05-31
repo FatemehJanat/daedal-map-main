@@ -300,6 +300,7 @@ export const ChatManager = {
   researchMemory: null,
   selectedResearchCorpusId: '',
   opsWatchId: '',
+  latestOpsReport: null,
   researchCorpusOptions: [],
   latestResearchManifest: null,
   researchDisplayLayersByMode: { explore: [], research: [], ops: [] },
@@ -365,6 +366,9 @@ export const ChatManager = {
           await this.refreshResearchCorpusOptions();
           if (this.mode === 'research') {
             await this.refreshResearchManifest();
+          } else if (this.mode === 'ops') {
+            await refreshRuntimeSession({ forceSessionRefresh: true, forceProfileRefresh: true });
+            await this.refreshOpsReport();
           }
           this.updateCatalogSurfaceAccess();
           this.updateComposerState();
@@ -423,7 +427,7 @@ export const ChatManager = {
   },
 
   async switchChatMode(mode) {
-    return switchChatModeImpl(this, mode, { App, CHAT_MODES });
+    return switchChatModeImpl(this, mode, { App, CHAT_MODES, OverlaySelector });
   },
 
   async seedEmptyConversation(mode = this.mode) {
@@ -680,6 +684,38 @@ export const ChatManager = {
     this.latestResearchManifest = manifest || null;
     this.updateResearchCorpusStatus();
     return manifest;
+  },
+
+  async refreshOpsReport({ loadWatch = false } = {}) {
+    const endpoint = loadWatch ? '/api/ops/load-watch' : '/api/ops/report';
+    await refreshRuntimeSession({ forceSessionRefresh: true, forceProfileRefresh: true });
+    const payload = await postMsgpack(endpoint, {
+      sessionId: this.getSessionIdForMode('ops'),
+      watch_id: this.opsWatchId || this.getSessionIdForMode('ops'),
+      watch_context: {
+        label: 'Ops watch'
+      }
+    });
+    this.opsWatchId = payload?.watch_id || this.opsWatchId;
+    this.latestOpsReport = payload?.ops_report || null;
+    this.saveState();
+    OverlaySelector?.refreshVisibility?.();
+    return payload || null;
+  },
+
+  getOpsEmptyStateMessage() {
+    const profile = getCurrentProfile();
+    const opsFeeds = Array.isArray(profile?.ops_feeds) ? profile.ops_feeds : [];
+    if (isAuthBootPending()) {
+      return 'Checking account session...';
+    }
+    if (!isAuthenticated()) {
+      return 'Ops mode needs account-level feed setup first. Sign in and open account settings to choose feeds.';
+    }
+    if (opsFeeds.length === 0) {
+      return 'No Ops feeds are enabled for this account yet. Open account settings and use Choose your feeds first.';
+    }
+    return `Ops mode is ready with ${opsFeeds.length} enabled feed${opsFeeds.length === 1 ? '' : 's'}.`;
   },
 
   async refreshBrowserCorpusSummaries() {
@@ -1301,6 +1337,7 @@ export const ChatManager = {
       this.researchMemory = null;
       this.selectedResearchCorpusId = state.selectedResearchCorpusId || '';
       this.opsWatchId = state.opsWatchId || '';
+      this.latestOpsReport = null;
       this.history = [];
       return;
     }
@@ -1313,6 +1350,7 @@ export const ChatManager = {
     this.researchMemory = null;
     this.selectedResearchCorpusId = '';
     this.opsWatchId = '';
+    this.latestOpsReport = null;
     this.history = [];
   },
 
@@ -1873,6 +1911,9 @@ export const ChatManager = {
       }
       if (requestMode === 'ops' && response.watch_id) {
         this.opsWatchId = response.watch_id;
+      }
+      if (requestMode === 'ops' && response.ops_report) {
+        this.latestOpsReport = response.ops_report;
       }
 
       const fallbackText = this.getResearchDisplayFallbackMessage(response);

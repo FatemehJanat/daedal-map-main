@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 
 from mapmover.runtime.orchestrator_threading import run_catalog_scoped_to_thread
@@ -16,6 +17,42 @@ except ImportError:
 
 PRIVATE_ROOT = Path(__file__).resolve().parents[2] / "county-map-private"
 OPS_STATE_ROOT = PRIVATE_ROOT / "live" / "state"
+
+FEED_ALIASES = {
+    "earthquakes": ("earthquake", "earthquakes", "quake", "quakes", "seismic"),
+    "currency": ("currency", "currencies", "fx", "exchange rate", "exchange rates", "usd"),
+    "tsunamis": ("tsunami", "tsunamis", "runup", "runups"),
+    "volcanoes": ("volcano", "volcanoes", "eruption", "eruptions", "vei"),
+    "wildfires_us_nifc": ("wildfire", "wildfires", "fire", "fires", "nifc"),
+    "hurricanes_ibtracs_nrt": ("hurricane", "hurricanes", "storm", "storms", "cyclone", "typhoon", "ibtracs"),
+}
+
+DEEP_HISTORY_PATTERNS = (
+    r"\bchange\b",
+    r"\bchanged\b",
+    r"\bchanges\b",
+    r"\bhistory\b",
+    r"\bhistorical\b",
+    r"\btrend\b",
+    r"\btrends\b",
+    r"\btimeline\b",
+    r"\bsince\b",
+    r"\bprevious\b",
+    r"\bearlier\b",
+    r"\bbefore\b",
+    r"\bhow has\b",
+    r"\bwhat changed\b",
+    r"\blast\s+\d+",
+    r"\btoday\b",
+    r"\byesterday\b",
+    r"\bintensif",
+    r"\bworsen",
+    r"\bimprov",
+    r"\bgrow",
+    r"\bgrew\b",
+    r"\bdecrease\b",
+    r"\bincrease\b",
+)
 
 
 def _history_messages(chat_history: list | None, limit: int = 8) -> list[dict]:
@@ -167,43 +204,332 @@ def _snapshot_to_geojson(snapshot: dict) -> dict | None:
             "source": event.get("source"),
             "collector": collector,
         }
-        features.append({
-            "type": "Feature",
-            "geometry": {"type": "Point", "coordinates": [lon, lat]},
-            "properties": props,
-        })
+        features.append(
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [lon, lat]},
+                "properties": props,
+            }
+        )
     if not features:
         return None
     return {"type": "FeatureCollection", "features": features}
 
 
+def _sample_rows(rows: list[dict], fields: tuple[str, ...], limit: int) -> list[dict]:
+    sampled: list[dict] = []
+    for row in (rows or [])[:limit]:
+        if not isinstance(row, dict):
+            continue
+        sampled.append({field: row.get(field) for field in fields if field in row})
+    return sampled
+
+
+def _compact_payload_summary(collector: str, summary: dict, *, sample_limit: int = 3) -> dict:
+    if not isinstance(summary, dict):
+        return {}
+
+    if collector == "earthquakes":
+        return {
+            "event_count": summary.get("event_count"),
+            "max_magnitude": summary.get("max_magnitude"),
+            "top_events": _sample_rows(
+                summary.get("events") or [],
+                ("event_id", "timestamp", "place", "magnitude", "depth_km"),
+                sample_limit,
+            ),
+        }
+    if collector == "currency":
+        priority = {"USD": 0, "EUR": 1, "JPY": 2, "GBP": 3, "CNY": 4, "CAD": 5}
+        rates = sorted(
+            [row for row in (summary.get("rates") or []) if isinstance(row, dict)],
+            key=lambda row: (priority.get(str(row.get("currency_code") or "").upper(), 99), str(row.get("currency_code") or "")),
+        )
+        return {
+            "rate_count": summary.get("rate_count"),
+            "base_currency": summary.get("base_currency"),
+            "latest_snapshot_date": summary.get("latest_snapshot_date"),
+            "sample_rates": _sample_rows(
+                rates,
+                ("currency_code", "date", "local_per_usd", "source_id"),
+                max(sample_limit, 5),
+            ),
+        }
+    if collector == "tsunamis":
+        return {
+            "event_count": summary.get("event_count"),
+            "runup_count": summary.get("runup_count"),
+            "top_events": _sample_rows(
+                summary.get("events") or [],
+                ("event_id", "timestamp", "country", "location", "cause", "eq_magnitude", "max_water_height_m"),
+                sample_limit,
+            ),
+        }
+    if collector == "volcanoes":
+        return {
+            "event_count": summary.get("event_count"),
+            "ongoing_count": summary.get("ongoing_count"),
+            "top_events": _sample_rows(
+                summary.get("events") or [],
+                ("event_id", "timestamp", "volcano_name", "activity_type", "vei", "is_ongoing"),
+                sample_limit,
+            ),
+        }
+    if collector == "wildfires_us_nifc":
+        return {
+            "incident_count": summary.get("incident_count"),
+            "active_count": summary.get("active_count"),
+            "max_burned_acres": summary.get("max_burned_acres"),
+            "top_incidents": _sample_rows(
+                summary.get("incidents") or [],
+                ("event_id", "fire_name", "state", "county_name", "status", "burned_acres", "last_updated"),
+                sample_limit,
+            ),
+        }
+    if collector == "hurricanes_ibtracs_nrt":
+        return {
+            "storm_count": summary.get("storm_count"),
+            "position_count": summary.get("position_count"),
+            "top_storms": _sample_rows(
+                summary.get("storms") or [],
+                ("storm_id", "name", "year", "basin", "max_wind_kt", "max_category", "end_date"),
+                sample_limit,
+            ),
+        }
+    compact: dict = {}
+    for key in ("event_count", "incident_count", "storm_count", "position_count", "rate_count"):
+        if key in summary:
+            compact[key] = summary.get(key)
+    if not compact:
+        compact["keys"] = sorted(summary.keys())[:12]
+    return compact
+
+
+def _compact_feed_snapshot(feed: str, snapshot: dict | None, history_entries: list[dict]) -> dict:
+    if not isinstance(snapshot, dict):
+        return {
+            "feed": feed,
+            "collector_status": "missing",
+            "history_entry_count": len(history_entries),
+            "history_available": bool(history_entries),
+            "summary": {},
+        }
+    summary = snapshot.get("payload_summary") if isinstance(snapshot.get("payload_summary"), dict) else {}
+    return {
+        "feed": feed,
+        "collector_status": snapshot.get("collector_status"),
+        "fetched_at": snapshot.get("fetched_at"),
+        "last_checked_at": snapshot.get("last_checked_at"),
+        "last_changed_at": snapshot.get("last_changed_at"),
+        "expected_next_at": snapshot.get("expected_next_at"),
+        "payload_hash": snapshot.get("payload_hash"),
+        "previous_payload_hash": snapshot.get("previous_payload_hash"),
+        "changed_since_previous": snapshot.get("changed_since_previous"),
+        "history_entry_count": len(history_entries),
+        "history_available": bool(history_entries),
+        "summary": _compact_payload_summary(feed, summary),
+    }
+
+
+def _build_recent_change_entry(feed: str, snapshot: dict | None, history_entries: list[dict]) -> dict | None:
+    if not isinstance(snapshot, dict):
+        return None
+    if not history_entries and not snapshot.get("last_changed_at"):
+        return None
+    latest_history = history_entries[-1] if history_entries else {}
+    latest_summary = latest_history.get("payload_summary") if isinstance(latest_history, dict) else {}
+    return {
+        "feed": feed,
+        "collector_status": snapshot.get("collector_status"),
+        "last_changed_at": snapshot.get("last_changed_at"),
+        "payload_hash": snapshot.get("payload_hash"),
+        "previous_payload_hash": snapshot.get("previous_payload_hash"),
+        "history_entry_count": len(history_entries),
+        "latest_change": _compact_payload_summary(feed, latest_summary, sample_limit=2),
+    }
+
+
+def _build_headline_summary(feed_snapshots: list[dict]) -> str:
+    if not feed_snapshots:
+        return "No Ops feeds are active in this watch."
+    status_counts: dict[str, int] = {}
+    for item in feed_snapshots:
+        status = str(item.get("collector_status") or "unknown").strip() or "unknown"
+        status_counts[status] = status_counts.get(status, 0) + 1
+    ordered_status = ", ".join(f"{status}:{count}" for status, count in sorted(status_counts.items()))
+    notable_bits: list[str] = []
+    for item in feed_snapshots[:3]:
+        feed = str(item.get("feed") or "").strip()
+        summary = item.get("summary") if isinstance(item.get("summary"), dict) else {}
+        for key in ("event_count", "incident_count", "storm_count", "rate_count"):
+            if key in summary and summary.get(key) is not None:
+                notable_bits.append(f"{feed} {key}={summary.get(key)}")
+                break
+    if notable_bits:
+        return f"Active Ops report with {len(feed_snapshots)} feeds ({ordered_status}). " + "; ".join(notable_bits)
+    return f"Active Ops report with {len(feed_snapshots)} feeds ({ordered_status})."
+
+
+def _build_map_items(feed_snapshots: list[dict]) -> list[dict]:
+    items: list[dict] = []
+    for snapshot in feed_snapshots:
+        summary = snapshot.get("summary") if isinstance(snapshot.get("summary"), dict) else {}
+        top_key = None
+        for candidate in ("top_events", "top_incidents", "top_storms", "sample_rates"):
+            if summary.get(candidate):
+                top_key = candidate
+                break
+        items.append(
+            {
+                "feed": snapshot.get("feed"),
+                "collector_status": snapshot.get("collector_status"),
+                "summary_key": top_key,
+                "items": (summary.get(top_key) or [])[:3] if top_key else [],
+            }
+        )
+    return items
+
+
 def build_ops_report(*, watch: dict, effective_feeds: list[str]) -> dict:
-    snapshots = []
+    feed_snapshots: list[dict] = []
+    recent_change_index: list[dict] = []
     geojson = None
-    snapshot_hashes = {}
+    snapshot_hashes: dict[str, str] = {}
+
     for feed in effective_feeds:
         snapshot = load_current_state_snapshot(feed)
-        if snapshot:
-            snapshots.append(snapshot)
+        history_entries = load_current_state_history(feed)
+        if isinstance(snapshot, dict):
             payload_hash = str(snapshot.get("payload_hash") or "").strip()
             if payload_hash:
                 snapshot_hashes[feed] = payload_hash
             if geojson is None:
                 geojson = _snapshot_to_geojson(snapshot)
-        else:
-            snapshots.append({
-                "collector": feed,
-                "collector_status": "missing",
-                "payload_summary": {},
-                "schema_version": 1,
-            })
-    return {
-        "watch": watch,
+        feed_snapshot = _compact_feed_snapshot(feed, snapshot, history_entries)
+        feed_snapshots.append(feed_snapshot)
+        change_entry = _build_recent_change_entry(feed, snapshot, history_entries)
+        if change_entry:
+            recent_change_index.append(change_entry)
+
+    recent_change_index.sort(
+        key=lambda entry: str(entry.get("last_changed_at") or ""),
+        reverse=True,
+    )
+    report = {
+        "report_version": 1,
+        "watch_id": watch.get("watch_id"),
+        "generated_at": max((str(item.get("last_checked_at") or "") for item in feed_snapshots), default=None),
         "effective_feeds": effective_feeds,
-        "snapshot_count": len(snapshots),
         "snapshot_hashes": snapshot_hashes,
-        "snapshots": snapshots,
+        "headline_summary": _build_headline_summary(feed_snapshots),
+        "feed_snapshots": feed_snapshots,
+        "recent_change_index": recent_change_index[:6],
+        "map_items": _build_map_items(feed_snapshots),
         "geojson": geojson,
+    }
+    return report
+
+
+def _query_requests_deep_history(query: str, hints: dict | None = None) -> bool:
+    text = str(query or "").strip().lower()
+    if not text:
+        return False
+    if any(re.search(pattern, text) for pattern in DEEP_HISTORY_PATTERNS):
+        return True
+    time_hints = (hints or {}).get("time") if isinstance(hints, dict) else {}
+    if isinstance(time_hints, dict) and any(time_hints.get(key) for key in ("specific_year", "start_year", "end_year")):
+        return True
+    return False
+
+
+def _mentioned_feeds(query: str, effective_feeds: list[str]) -> list[str]:
+    text = str(query or "").strip().lower()
+    matched: list[str] = []
+    for feed in effective_feeds:
+        aliases = FEED_ALIASES.get(feed, ()) + (feed.replace("_", " "), feed)
+        for alias in aliases:
+            alias_text = str(alias or "").strip().lower()
+            if alias_text and alias_text in text:
+                matched.append(feed)
+                break
+    return matched
+
+
+def _select_deep_history_feeds(
+    *,
+    query: str,
+    effective_feeds: list[str],
+    report: dict,
+    hints: dict | None = None,
+    max_feeds: int = 2,
+) -> list[str]:
+    if not _query_requests_deep_history(query, hints=hints):
+        return []
+    explicit = _mentioned_feeds(query, effective_feeds)
+    if explicit:
+        return explicit[:max_feeds]
+    if len(effective_feeds) == 1:
+        return effective_feeds[:1]
+    recent = report.get("recent_change_index") if isinstance(report, dict) else []
+    chosen: list[str] = []
+    for entry in recent or []:
+        feed = str((entry or {}).get("feed") or "").strip()
+        if feed and feed in effective_feeds and feed not in chosen:
+            chosen.append(feed)
+        if len(chosen) >= max_feeds:
+            return chosen
+    return effective_feeds[:max_feeds]
+
+
+def _compact_history_entries(feed: str, entries: list[dict], *, limit: int = 6) -> list[dict]:
+    compact: list[dict] = []
+    for entry in entries[-limit:]:
+        if not isinstance(entry, dict):
+            continue
+        summary = entry.get("payload_summary") if isinstance(entry.get("payload_summary"), dict) else {}
+        compact.append(
+            {
+                "fetched_at": entry.get("fetched_at"),
+                "last_checked_at": entry.get("last_checked_at"),
+                "last_changed_at": entry.get("last_changed_at"),
+                "collector_status": entry.get("collector_status"),
+                "payload_hash": entry.get("payload_hash"),
+                "previous_payload_hash": entry.get("previous_payload_hash"),
+                "changed_since_previous": entry.get("changed_since_previous"),
+                "summary": _compact_payload_summary(feed, summary, sample_limit=2),
+            }
+        )
+    return compact
+
+
+def build_targeted_history_context(
+    *,
+    query: str,
+    effective_feeds: list[str],
+    report: dict,
+    hints: dict | None = None,
+) -> dict | None:
+    feeds = _select_deep_history_feeds(
+        query=query,
+        effective_feeds=effective_feeds,
+        report=report,
+        hints=hints,
+    )
+    if not feeds:
+        return None
+    feed_contexts: list[dict] = []
+    for feed in feeds:
+        entries = load_current_state_history(feed)
+        feed_contexts.append(
+            {
+                "feed": feed,
+                "history_entry_count": len(entries),
+                "entries": _compact_history_entries(feed, entries),
+            }
+        )
+    return {
+        "requested_by_query": True,
+        "feeds": feed_contexts,
     }
 
 
@@ -230,13 +556,22 @@ def run_ops_chat(
     if isinstance(getattr(cache, "map_state", None), dict):
         cache.map_state["ops_report"] = report
 
-    preloaded = ops_orchestrator.preprocess(query=query, watch_context={
-        "label": watch.get("label"),
-        "sources": effective_feeds,
-        "geography": watch.get("geography"),
-    })
+    preloaded = ops_orchestrator.preprocess(
+        query=query,
+        watch_context={
+            "label": watch.get("label"),
+            "sources": effective_feeds,
+            "geography": watch.get("geography"),
+        },
+    )
     hints = preloaded.get("hints") if isinstance(preloaded, dict) else {}
     watch_context = preloaded.get("watch_context") if isinstance(preloaded, dict) else {}
+    targeted_history = build_targeted_history_context(
+        query=query,
+        effective_feeds=effective_feeds,
+        report=report,
+        hints=hints,
+    )
     system_prompt = ops_orchestrator.build_system_prompt(watch_context=watch_context, hints=hints)
     system_blocks = ops_orchestrator.build_system_prompt_blocks(system_prompt)
     llm_selection = ops_orchestrator.llm_selection()
@@ -245,23 +580,40 @@ def run_ops_chat(
     messages = [
         {
             "role": "user",
-            "content": [{
-                "type": "text",
-                "text": "Active Ops watch JSON:\n" + json.dumps(watch_context, default=str, separators=(",", ":")),
-                "cache_control": {"type": "ephemeral"},
-            }],
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Active Ops watch JSON:\n" + json.dumps(watch_context, default=str, separators=(",", ":")),
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
         },
         {
             "role": "user",
-            "content": [{
-                "type": "text",
-                "text": "Current Ops report JSON:\n" + json.dumps(report, default=str, separators=(",", ":")),
-                "cache_control": {"type": "ephemeral"},
-            }],
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Compact Ops report JSON:\n" + json.dumps(report, default=str, separators=(",", ":")),
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
         },
-        *_history_messages(chat_history),
-        {"role": "user", "content": query},
     ]
+    if targeted_history:
+        messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Targeted feed history JSON:\n" + json.dumps(targeted_history, default=str, separators=(",", ":")),
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+            }
+        )
+    messages.extend(_history_messages(chat_history))
+    messages.append({"role": "user", "content": query})
 
     response = client.messages.create(
         model=llm_selection.model,
@@ -283,6 +635,8 @@ def run_ops_chat(
         "effective_feeds": effective_feeds,
         "ops_report": report,
     }
+    if targeted_history:
+        result["ops_targeted_history"] = targeted_history
     if report.get("geojson"):
         result["geojson"] = report["geojson"]
     return result

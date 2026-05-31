@@ -76,26 +76,32 @@ def _cache_user(token: str, user: Optional[Dict[str, Any]]) -> None:
     }
 
 
-def _try_cache_path(request: Request) -> tuple[bool, Optional[Dict[str, Any]], Optional[str], Optional[Dict[str, str]]]:
+def _try_cache_path(
+    request: Request,
+    *,
+    force_refresh: bool = False,
+) -> tuple[bool, Optional[Dict[str, Any]], Optional[str], Optional[Dict[str, str]]]:
     """Shared fast-path: per-request state cache, then per-token in-memory cache.
 
     Returns (resolved, user, token, config). When `resolved` is True, the caller
     should return `user` immediately. When False, the caller must verify against
     Supabase using `token` and `config`.
     """
-    cached_request_user = getattr(request.state, "authenticated_user_context", None)
-    if cached_request_user is not None:
-        return True, cached_request_user, None, None
+    if not force_refresh:
+        cached_request_user = getattr(request.state, "authenticated_user_context", None)
+        if cached_request_user is not None:
+            return True, cached_request_user, None, None
 
     token = _get_bearer_token(request)
     if not token:
         request.state.authenticated_user_context = None
         return True, None, None, None
 
-    cached = _get_cached_user(token)
-    if cached is not None:
-        request.state.authenticated_user_context = cached
-        return True, cached, None, None
+    if not force_refresh:
+        cached = _get_cached_user(token)
+        if cached is not None:
+            request.state.authenticated_user_context = cached
+            return True, cached, None, None
 
     config = _get_supabase_auth_config()
     if not config:
@@ -105,13 +111,13 @@ def _try_cache_path(request: Request) -> tuple[bool, Optional[Dict[str, Any]], O
     return False, None, token, config
 
 
-def get_authenticated_user(request: Request) -> Optional[Dict[str, Any]]:
+def get_authenticated_user(request: Request, *, force_refresh: bool = False) -> Optional[Dict[str, Any]]:
     """Sync entry point. Blocks the calling thread on cache miss.
 
     Use `get_authenticated_user_async` from async code paths to avoid blocking
     the event loop on Supabase verification.
     """
-    resolved, user, token, config = _try_cache_path(request)
+    resolved, user, token, config = _try_cache_path(request, force_refresh=force_refresh)
     if resolved:
         return user
 
@@ -139,13 +145,13 @@ def get_authenticated_user(request: Request) -> Optional[Dict[str, Any]]:
         return None
 
 
-async def get_authenticated_user_async(request: Request) -> Optional[Dict[str, Any]]:
+async def get_authenticated_user_async(request: Request, *, force_refresh: bool = False) -> Optional[Dict[str, Any]]:
     """Async entry point that does not block the event loop on cache miss.
 
     Identical contract to `get_authenticated_user`. The cache hit path is
     synchronous in-memory work; only the Supabase verification fetch is awaited.
     """
-    resolved, user, token, config = _try_cache_path(request)
+    resolved, user, token, config = _try_cache_path(request, force_refresh=force_refresh)
     if resolved:
         return user
 

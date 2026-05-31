@@ -70,14 +70,14 @@ function getAccountUrl() {
   return configured;
 }
 
-async function fetchProfile() {
+async function fetchProfile({ forceRefresh = false } = {}) {
   try {
     const token = currentSession?.access_token;
     const userId = currentSession?.user?.id || '';
     if (!token) { currentProfile = null; return; }
-    if (userId) {
+    if (userId && !forceRefresh) {
       const cached = await readAccountContextCache(userId);
-      if (cached) {
+      if (cached && Object.prototype.hasOwnProperty.call(cached, 'ops_feeds')) {
         currentProfile = cached;
         return;
       }
@@ -526,19 +526,22 @@ export function getAccessToken() {
   return currentSession?.access_token || null;
 }
 
-export async function refreshRuntimeSession() {
+export async function refreshRuntimeSession({ forceSessionRefresh = false, forceProfileRefresh = false } = {}) {
   if (!authClient || !authConfig?.enabled) {
     return null;
   }
   try {
-    const { data, error } = await authClient.auth.getSession();
+    const sessionResponse = forceSessionRefresh
+      ? await authClient.auth.refreshSession()
+      : await authClient.auth.getSession();
+    const { data, error } = sessionResponse;
     if (error) {
       throw error;
     }
     currentSession = data?.session || null;
     _lastAuthUserId = currentSession?.user?.id ?? null;
     clearLegacySharedCookies();
-    await fetchProfile();
+    await fetchProfile({ forceRefresh: forceProfileRefresh });
     updateDom();
     return currentSession;
   } catch (error) {

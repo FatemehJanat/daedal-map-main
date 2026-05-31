@@ -8,6 +8,7 @@ function normalizeChatMode(mode, chatModes = ['explore', 'research', 'ops']) {
 
 export async function switchChatMode(ctx, mode, deps = {}) {
   const App = deps.App || null;
+  const OverlaySelector = deps.OverlaySelector || null;
   const chatModes = deps.CHAT_MODES || ['explore', 'research', 'ops'];
   mode = normalizeChatMode(mode, chatModes);
   if (mode === ctx.mode) return;
@@ -22,6 +23,13 @@ export async function switchChatMode(ctx, mode, deps = {}) {
 
   if (mode === 'research') {
     await ctx.refreshResearchCorpusOptions();
+  } else if (mode === 'ops') {
+    try {
+      await ctx.refreshOpsReport({ loadWatch: true });
+      OverlaySelector?.refreshVisibility?.();
+    } catch (error) {
+      console.warn('Ops report refresh failed:', error);
+    }
   }
 
   if (ctx.history.length === 0 && !ctx.modeMessagesHtml[mode]) {
@@ -62,7 +70,22 @@ export async function seedEmptyConversation(ctx, mode = ctx.mode, deps = {}) {
   }
 
   if (mode === 'ops') {
-    ctx.addMessage('Ops mode shell ready. This is a placeholder workflow state for focused live monitoring UI, while chat still uses the current Explore lane underneath.', 'assistant', { mode: 'ops' });
+    try {
+      const payload = await ctx.refreshOpsReport({ loadWatch: true });
+      const effectiveFeeds = Array.isArray(payload?.effective_feeds) ? payload.effective_feeds : [];
+      if (effectiveFeeds.length > 0) {
+        ctx.addMessage(
+          `Ops mode ready. Active watch has ${effectiveFeeds.length} feed${effectiveFeeds.length === 1 ? '' : 's'}: ${effectiveFeeds.join(', ')}.`,
+          'assistant',
+          { mode: 'ops' }
+        );
+        return;
+      }
+      ctx.addMessage(payload?.warning || ctx.getOpsEmptyStateMessage(), 'assistant', { mode: 'ops' });
+    } catch (error) {
+      console.warn('Ops report check failed:', error);
+      ctx.addMessage('Ops mode is available, but I could not read the active watch yet.', 'assistant', { mode: 'ops' });
+    }
     return;
   }
 
@@ -71,6 +94,7 @@ export async function seedEmptyConversation(ctx, mode = ctx.mode, deps = {}) {
 
 export function applyModeUiState(ctx, deps = {}) {
   const researchModeToggle = deps.researchModeToggle || null;
+  const OverlaySelector = deps.OverlaySelector || null;
   if (researchModeToggle) {
     researchModeToggle.mode = ctx.mode;
     researchModeToggle.setSelectedCorpusId(ctx.selectedResearchCorpusId);
@@ -78,6 +102,7 @@ export function applyModeUiState(ctx, deps = {}) {
   }
   ctx.setActiveMessagePane(ctx.mode);
   ctx.updateResearchCorpusStatus();
+  OverlaySelector?.refreshVisibility?.();
   updateSidebarModeLayout(ctx);
   updateComposerState(ctx);
 }

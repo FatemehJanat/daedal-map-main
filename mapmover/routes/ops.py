@@ -7,7 +7,12 @@ from fastapi.responses import StreamingResponse
 
 from mapmover import logger
 from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log_conversation
-from mapmover.ops_route_runtime import prepare_ops_chat_route_context, setup_required_ops_message
+from mapmover.ops_route_runtime import (
+    prepare_ops_chat_route_context,
+    prepare_ops_view_route_context,
+    setup_required_ops_message,
+    snapshot_ops_report,
+)
 from mapmover.orchestrator_registry import get_orchestrator
 from mapmover.routes.chat_shared import decode_json_or_msgpack_body, decode_request_body
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
@@ -17,6 +22,73 @@ from mapmover.runtime.sse import SSE_HEADERS, encode_sse, stage_payload
 
 router = APIRouter()
 ops_orchestrator = get_orchestrator("ops")
+
+
+def _ops_report_payload(route_context) -> dict:
+    report = snapshot_ops_report(
+        cache=route_context.cache,
+        watch=route_context.watch,
+        effective_feeds=route_context.effective_feeds,
+    )
+    return {
+        "type": "ops_report",
+        "watch_id": route_context.watch.get("watch_id"),
+        "watch": route_context.watch,
+        "effective_feeds": route_context.effective_feeds,
+        "ops_report": report,
+    }
+
+
+@router.post("/api/ops/report")
+async def ops_report_endpoint(req: Request):
+    try:
+        body = await decode_request_body(req)
+        route_context, route_error, rejection_payload, rejection_status, rejection_headers = await prepare_ops_view_route_context(req, body)
+        if route_error:
+            return route_error
+        if rejection_payload is not None:
+            return msgpack_response(
+                rejection_payload,
+                status_code=rejection_status or 400,
+                headers=rejection_headers or {},
+            )
+        assert route_context is not None
+        payload = _ops_report_payload(route_context)
+        if not route_context.allowed_feeds:
+            payload["warning"] = setup_required_ops_message(route_context.auth_user)
+        return msgpack_response(payload)
+    except Exception as exc:
+        logger.exception("Ops report snapshot error")
+        return msgpack_error(str(exc), 500)
+
+
+@router.post("/api/ops/load-watch")
+async def ops_load_watch_endpoint(req: Request):
+    try:
+        body = await decode_request_body(req)
+        route_context, route_error, rejection_payload, rejection_status, rejection_headers = await prepare_ops_view_route_context(req, body)
+        if route_error:
+            return route_error
+        if rejection_payload is not None:
+            return msgpack_response(
+                rejection_payload,
+                status_code=rejection_status or 400,
+                headers=rejection_headers or {},
+            )
+        assert route_context is not None
+        payload = _ops_report_payload(route_context)
+        payload["type"] = "ops_watch_loaded"
+        payload["message"] = (
+            f'Loaded "{route_context.watch.get("label") or "Ops watch"}" with '
+            f"{len(route_context.effective_feeds)} feed"
+            f"{'' if len(route_context.effective_feeds) == 1 else 's'}."
+        )
+        if not route_context.allowed_feeds:
+            payload["warning"] = setup_required_ops_message(route_context.auth_user)
+        return msgpack_response(payload)
+    except Exception as exc:
+        logger.exception("Ops watch load error")
+        return msgpack_error(str(exc), 500)
 
 
 @router.post("/chat/ops")
