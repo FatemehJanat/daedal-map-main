@@ -143,6 +143,7 @@ async def chat_endpoint(req: Request):
             session_id=route_context.session_id,
             request_id=trace_id,
             caller_ctx=route_context.caller_ctx,
+            qa_suite_metadata=route_context.qa_suite_metadata,
         )
         # Run the synchronous LLM call in a thread so we do not block the
         # event loop for other concurrent requests on this worker.
@@ -315,6 +316,7 @@ async def chat_stream_endpoint(req: Request):
                 call_kind="order_taker",
                 session_id=route_context.session_id,
                 caller_ctx=route_context.caller_ctx,
+                qa_suite_metadata=route_context.qa_suite_metadata,
             )
             bus, llm_task = await explore_orchestrator.interpret_with_progress(
                 query=query,

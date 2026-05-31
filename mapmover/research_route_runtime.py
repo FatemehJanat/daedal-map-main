@@ -29,6 +29,7 @@ class ResearchChatRouteContext:
     session_id: str
     catalog_surface: str | None
     request_id: str
+    qa_suite_metadata: dict
 
 
 async def prepare_research_chat_route_context(
@@ -74,6 +75,7 @@ async def prepare_research_chat_route_context(
             session_id=base_context.session_id,
             catalog_surface=base_context.catalog_surface,
             request_id=request_id,
+            qa_suite_metadata=base_context.qa_suite_metadata,
         ),
         None,
         None,

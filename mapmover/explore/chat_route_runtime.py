@@ -54,6 +54,7 @@ class ExploreChatRouteContext:
     catalog_surface: str | None
     trace_id: str
     cache: Any
+    qa_suite_metadata: dict
 
 
 async def prepare_explore_chat_route_context(
@@ -102,6 +103,7 @@ async def prepare_explore_chat_route_context(
             catalog_surface=base_context.catalog_surface,
             trace_id=trace_id,
             cache=cache,
+            qa_suite_metadata=base_context.qa_suite_metadata,
         ),
         None,
 )

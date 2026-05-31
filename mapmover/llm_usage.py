@@ -32,6 +32,11 @@ _QA_OVERRIDE_LABEL_ENV = "LLM_USAGE_FORCE_QA_LABEL"
 _QA_HTTP_LABEL_HEADER = "x-county-map-qa-label"
 _QA_RUNNER_USER_ENV = "QA_RUNNER_USER_ID"
 
+_QA_HTTP_SUITE_HEADER = "x-county-map-qa-suite"
+_QA_HTTP_RUN_ID_HEADER = "x-county-map-qa-run-id"
+_QA_SUITE_ENV = "LLM_USAGE_FORCE_QA_SUITE"
+_QA_RUN_ID_ENV = "LLM_USAGE_FORCE_QA_RUN_ID"
+
 
 def _qa_override_classification(ip_hash: Optional[str]) -> Optional[dict]:
     """If LLM_USAGE_FORCE_QA_USER_ID is set, return a qa_suite classification.
@@ -66,6 +71,40 @@ def extract_qa_http_label(headers: Any) -> Optional[str]:
         raw = ""
     label = str(raw or "").strip()
     return label or None
+
+
+def extract_qa_suite_metadata(headers: Any) -> dict:
+    """Return suite-attribution metadata for a chat request.
+
+    Reads `X-County-Map-QA-Suite` and `X-County-Map-QA-Run-Id` from request
+    headers when present; falls back to the in-process env vars
+    `LLM_USAGE_FORCE_QA_SUITE` and `LLM_USAGE_FORCE_QA_RUN_ID` for QA paths
+    that bypass HTTP entirely.
+
+    Returned dict is suitable for `LLMUsageRecorder.add_metadata(**kwargs)`.
+    Empty dict when nothing is set, which is the normal path for real users.
+    """
+    suite = ""
+    run_id = ""
+    if headers is not None:
+        try:
+            suite = str(headers.get(_QA_HTTP_SUITE_HEADER, "") or "").strip()
+        except Exception:
+            suite = ""
+        try:
+            run_id = str(headers.get(_QA_HTTP_RUN_ID_HEADER, "") or "").strip()
+        except Exception:
+            run_id = ""
+    if not suite:
+        suite = (os.getenv(_QA_SUITE_ENV) or "").strip()
+    if not run_id:
+        run_id = (os.getenv(_QA_RUN_ID_ENV) or "").strip()
+    out: dict = {}
+    if suite:
+        out["qa_suite_name"] = suite
+    if run_id:
+        out["qa_suite_run_id"] = run_id
+    return out
 
 
 _PROFILE_CACHE: dict[str, tuple[float, dict | None]] = {}

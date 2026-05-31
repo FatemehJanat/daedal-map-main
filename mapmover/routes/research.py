@@ -292,6 +292,7 @@ async def research_chat_endpoint(req: Request):
             session_id=route_context.session_id,
             request_id=route_context.request_id,
             caller_ctx=route_context.caller_ctx,
+            qa_suite_metadata=route_context.qa_suite_metadata,
         )
         try:
             result = await research_orchestrator.run(
@@ -347,6 +348,7 @@ async def research_chat_stream_endpoint(req: Request):
                 session_id=route_context.session_id,
                 request_id=route_context.request_id,
                 caller_ctx=route_context.caller_ctx,
+                qa_suite_metadata=route_context.qa_suite_metadata,
             )
 
             yield encode_sse(stage_payload("corpus", message="Reading Research workspace..."), dumps=json_dumps_safe)

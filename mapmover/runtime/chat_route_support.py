@@ -27,6 +27,7 @@ def build_usage_recorder(
     session_id: str,
     caller_ctx: dict,
     request_id: str | None = None,
+    qa_suite_metadata: dict | None = None,
 ) -> LLMUsageRecorder:
     recorder_kwargs = {
         "surface": surface,
@@ -36,7 +37,10 @@ def build_usage_recorder(
     }
     if request_id:
         recorder_kwargs["request_id"] = request_id
-    return LLMUsageRecorder(**recorder_kwargs)
+    recorder = LLMUsageRecorder(**recorder_kwargs)
+    if qa_suite_metadata:
+        recorder.add_metadata(**qa_suite_metadata)
+    return recorder
 
 
 def build_usage_recorders(
@@ -46,6 +50,7 @@ def build_usage_recorders(
     session_id: str,
     caller_ctx: dict,
     request_id: str | None = None,
+    qa_suite_metadata: dict | None = None,
 ) -> tuple[LLMUsageRecorder, ...]:
     return tuple(
         build_usage_recorder(
@@ -54,6 +59,7 @@ def build_usage_recorders(
             session_id=session_id,
             caller_ctx=caller_ctx,
             request_id=request_id,
+            qa_suite_metadata=qa_suite_metadata,
         )
         for call_kind in call_kinds
     )

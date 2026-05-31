@@ -867,7 +867,7 @@ class SupabaseClient:
 
         Returns dict with:
             user_id, email, plan_id, is_admin, org_id, org_ids,
-            enabled_shells, max_packs, user_packs, org_packs, org_plan_id
+            enabled_shells, max_packs, user_packs, org_packs
         """
         try:
             result = self.client.rpc("get_user_entitlement_context", {"p_user_id": user_id}).execute()
@@ -887,16 +887,11 @@ class SupabaseClient:
             plan = self.get_plan(plan_id) or {}
             memberships = self.get_user_memberships(user_id)
             org_ids = []
-            org_plan_id = None
-            org_packs = []
 
             for membership in memberships:
                 org_id = membership.get("org_id")
                 if org_id and org_id not in org_ids:
                     org_ids.append(org_id)
-                org = membership.get("orgs") if isinstance(membership.get("orgs"), dict) else None
-                if org_plan_id is None and org and org.get("plan_id"):
-                    org_plan_id = org.get("plan_id")
 
             user_pack_rows = self.get_user_pack_entitlements(user_id)
             user_packs = sorted({
@@ -930,7 +925,6 @@ class SupabaseClient:
                 "max_packs": max_packs,
                 "user_packs": user_packs,
                 "org_packs": org_packs,
-                "org_plan_id": org_plan_id,
                 "fallback_used": True,
             }
         except Exception as fallback_error:
