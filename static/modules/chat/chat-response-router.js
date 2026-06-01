@@ -20,13 +20,13 @@ export function routeMapResponse(ctx, response, options = {}, deps = {}) {
       } else {
         ctx.setResearchDisplayLayersForMode('research', validLayers);
       }
-      App.displayMapPayload?.(response, { origin, order: options.order });
+      App.displayMapPayload?.(response, { origin, order: options.order, restoringViewState: options.restoringViewState });
       return true;
     }
   }
 
   if (response.action === 'remove' && response.data_type) {
-    App.displayMapPayload?.(response, { origin, order: options.order });
+    App.displayMapPayload?.(response, { origin, order: options.order, restoringViewState: options.restoringViewState });
     return true;
   }
 
@@ -38,7 +38,7 @@ export function routeMapResponse(ctx, response, options = {}, deps = {}) {
         ctx.setResearchDisplayForMode('research', response);
       }
     }
-    App.displayMapPayload?.(response, { origin, order: options.order });
+    App.displayMapPayload?.(response, { origin, order: options.order, restoringViewState: options.restoringViewState });
     return true;
   }
 

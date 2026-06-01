@@ -645,8 +645,7 @@ body.map-ui-fullscreen #tutorialTimelineRegion {
   z-index: 1000;
 }
 
-body.chat-mode-research #overlaySelectorRegion,
-body.chat-mode-ops #overlaySelectorRegion {
+body.chat-mode-research #overlaySelectorRegion {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;

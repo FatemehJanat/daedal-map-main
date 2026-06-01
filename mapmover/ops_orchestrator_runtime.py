@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import csv
 import json
 import os
 import re
+from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 
+from mapmover.geometry_handlers import get_selection_geometries
 from mapmover.runtime.orchestrator_threading import run_catalog_scoped_to_thread
 
 try:
@@ -17,6 +21,8 @@ except ImportError:
 
 PRIVATE_ROOT = Path(__file__).resolve().parents[2] / "county-map-private"
 OPS_STATE_ROOT = PRIVATE_ROOT / "live" / "state"
+REFERENCE_ROOT = Path(__file__).resolve().parent / "reference"
+CURRENCY_MAP_PATH = REFERENCE_ROOT / "country_currency_map.csv"
 
 FEED_ALIASES = {
     "earthquakes": ("earthquake", "earthquakes", "quake", "quakes", "seismic"),
@@ -225,6 +231,186 @@ def _sample_rows(rows: list[dict], fields: tuple[str, ...], limit: int) -> list[
     return sampled
 
 
+def _parse_date_token(value) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    normalized = text.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        try:
+            parsed = datetime.strptime(text, "%Y-%m-%d")
+        except ValueError:
+            return None
+        return parsed.replace(tzinfo=timezone.utc)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _datetime_to_ms(value: datetime | None) -> int | None:
+    if value is None:
+        return None
+    return int(value.timestamp() * 1000)
+
+
+@lru_cache(maxsize=1)
+def _load_country_currency_map() -> list[dict]:
+    rows: list[dict] = []
+    if not CURRENCY_MAP_PATH.exists():
+        return rows
+    try:
+        with open(CURRENCY_MAP_PATH, "r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            for row in reader:
+                if not isinstance(row, dict):
+                    continue
+                loc_id = str(row.get("loc_id") or "").strip()
+                currency_code = str(row.get("currency_code") or "").strip().upper()
+                if not loc_id or not currency_code:
+                    continue
+                rows.append(
+                    {
+                        "loc_id": loc_id,
+                        "currency_code": currency_code,
+                        "start_date": str(row.get("start_date") or "").strip(),
+                        "end_date": str(row.get("end_date") or "").strip(),
+                    }
+                )
+    except Exception:
+        return []
+    return rows
+
+
+def _currency_mapping_matches(mapping: dict, snapshot_date: datetime | None) -> bool:
+    if not isinstance(mapping, dict):
+        return False
+    if snapshot_date is None:
+        return True
+    start_dt = _parse_date_token(mapping.get("start_date"))
+    end_dt = _parse_date_token(mapping.get("end_date"))
+    if start_dt and snapshot_date < start_dt:
+        return False
+    if end_dt and snapshot_date > end_dt:
+        return False
+    return True
+
+
+def _build_currency_display_payload(snapshot: dict | None) -> dict | None:
+    if not isinstance(snapshot, dict):
+        return None
+    summary = snapshot.get("payload_summary") if isinstance(snapshot.get("payload_summary"), dict) else {}
+    rates = summary.get("rates") if isinstance(summary.get("rates"), list) else []
+    latest_snapshot_date = _parse_date_token(summary.get("latest_snapshot_date"))
+    latest_snapshot_ms = _datetime_to_ms(latest_snapshot_date)
+    if not rates or latest_snapshot_ms is None:
+        return None
+
+    latest_by_code: dict[str, dict] = {}
+    for rate in rates:
+        if not isinstance(rate, dict):
+            continue
+        code = str(rate.get("currency_code") or "").strip().upper()
+        if not code:
+            continue
+        latest_by_code[code] = rate
+
+    loc_ids: list[str] = []
+    rows_by_loc_id: dict[str, dict] = {}
+    for mapping in _load_country_currency_map():
+        if not _currency_mapping_matches(mapping, latest_snapshot_date):
+            continue
+        loc_id = str(mapping.get("loc_id") or "").strip()
+        code = str(mapping.get("currency_code") or "").strip().upper()
+        rate = latest_by_code.get(code)
+        if not loc_id or rate is None:
+            continue
+        rows_by_loc_id[loc_id] = {
+            "loc_id": loc_id,
+            "local_per_usd": rate.get("local_per_usd"),
+            "currency_code": code,
+            "date": rate.get("date"),
+            "source_id": rate.get("source_id"),
+        }
+        loc_ids.append(loc_id)
+
+    if not rows_by_loc_id:
+        return None
+
+    selection_geojson = get_selection_geometries(loc_ids) or {}
+    features = []
+    year_bucket: dict[str, dict] = {}
+    for feature in selection_geojson.get("features") or []:
+        if not isinstance(feature, dict):
+            continue
+        props = dict(feature.get("properties") or {})
+        loc_id = str(props.get("loc_id") or "").strip()
+        row = rows_by_loc_id.get(loc_id)
+        if row is None:
+            continue
+        metric_props = {
+            **props,
+            "local_per_usd": row.get("local_per_usd"),
+            "currency_code": row.get("currency_code"),
+            "date": row.get("date"),
+            "source_id": row.get("source_id"),
+        }
+        features.append(
+            {
+                "type": "Feature",
+                "geometry": feature.get("geometry"),
+                "properties": metric_props,
+            }
+        )
+        year_bucket[loc_id] = {
+            "local_per_usd": row.get("local_per_usd"),
+            "currency_code": row.get("currency_code"),
+            "date": row.get("date"),
+            "source_id": row.get("source_id"),
+        }
+
+    if not features:
+        return None
+
+    time_key = str(latest_snapshot_ms)
+    year_range = {
+        "min": latest_snapshot_ms,
+        "max": latest_snapshot_ms,
+        "available_years": [latest_snapshot_ms],
+    }
+    return {
+        "type": "data",
+        "data_type": "metrics",
+        "source_id": "currency_live_ops",
+        "dataset_name": "Ops Currency Snapshot",
+        "source_name": "Live currency snapshot",
+        "geographic_level": "admin_0",
+        "summary": f"Showing latest FX snapshot for {len(features)} countries.",
+        "count": len(features),
+        "fit": False,
+        "multi_year": True,
+        "metric_key": "local_per_usd",
+        "available_metrics": ["local_per_usd"],
+        "metric_year_ranges": {"local_per_usd": dict(year_range)},
+        "year_range": year_range,
+        "year_data": {time_key: year_bucket},
+        "loc_ids": sorted(year_bucket.keys()),
+        "geojson": {
+            "type": "FeatureCollection",
+            "features": features,
+        },
+    }
+
+
+def _build_display_payloads(snapshots_by_feed: dict[str, dict]) -> list[dict]:
+    payloads: list[dict] = []
+    currency_payload = _build_currency_display_payload(snapshots_by_feed.get("currency"))
+    if currency_payload:
+        payloads.append(currency_payload)
+    return payloads
+
+
 def _compact_payload_summary(collector: str, summary: dict, *, sample_limit: int = 3) -> dict:
     if not isinstance(summary, dict):
         return {}
@@ -395,11 +581,13 @@ def build_ops_report(*, watch: dict, effective_feeds: list[str]) -> dict:
     recent_change_index: list[dict] = []
     geojson = None
     snapshot_hashes: dict[str, str] = {}
+    snapshots_by_feed: dict[str, dict] = {}
 
     for feed in effective_feeds:
         snapshot = load_current_state_snapshot(feed)
         history_entries = load_current_state_history(feed)
         if isinstance(snapshot, dict):
+            snapshots_by_feed[feed] = snapshot
             payload_hash = str(snapshot.get("payload_hash") or "").strip()
             if payload_hash:
                 snapshot_hashes[feed] = payload_hash
@@ -426,6 +614,7 @@ def build_ops_report(*, watch: dict, effective_feeds: list[str]) -> dict:
         "recent_change_index": recent_change_index[:6],
         "map_items": _build_map_items(feed_snapshots),
         "geojson": geojson,
+        "display_payloads": _build_display_payloads(snapshots_by_feed),
     }
     return report
 
@@ -635,6 +824,8 @@ def run_ops_chat(
         "effective_feeds": effective_feeds,
         "ops_report": report,
     }
+    if report.get("display_payloads"):
+        result["display_payloads"] = report.get("display_payloads")
     if targeted_history:
         result["ops_targeted_history"] = targeted_history
     if report.get("geojson"):

@@ -53,6 +53,7 @@ import * as SavedOrders from './order/saved.js';
 import { ensureRuntimeAccessToken, getAccessToken, getCurrentProfile, getCurrentUser, getSupabaseClient, isAuthBootPending, isAuthenticated, onAuthChanged, refreshRuntimeSession, waitForAuthBoot } from './auth.js';
 import { TutorialMode, parseTutorialCommand } from './tutorial-mode.js';
 import { ResearchModeToggle } from './research/mode.js';
+import { getAllOpsManagedOverlayIds, getOpsOverlayIdsForFeeds } from './overlay-selector.js';
 import {
   isMixedResearchRasterRequest as isMixedResearchRasterRequestImpl,
   shouldAutoShowResearchRaster as shouldAutoShowResearchRasterImpl,
@@ -698,9 +699,61 @@ export const ChatManager = {
     });
     this.opsWatchId = payload?.watch_id || this.opsWatchId;
     this.latestOpsReport = payload?.ops_report || null;
+    this.syncOpsFeedOverlays(payload);
+    this.renderOpsDisplayPayloads(payload);
     this.saveState();
     OverlaySelector?.refreshVisibility?.();
     return payload || null;
+  },
+
+  syncOpsFeedOverlays(payload = null) {
+    if (!OverlaySelector || this.mode !== 'ops') {
+      return;
+    }
+    const feeds = Array.isArray(payload?.effective_feeds)
+      ? payload.effective_feeds
+      : (Array.isArray(this.latestOpsReport?.effective_feeds) ? this.latestOpsReport.effective_feeds : []);
+    const desired = new Set(getOpsOverlayIdsForFeeds(feeds));
+    const managed = getAllOpsManagedOverlayIds();
+    const active = new Set(OverlaySelector.getActiveOverlays?.() || []);
+
+    for (const overlayId of managed) {
+      const shouldBeActive = desired.has(overlayId);
+      const isActive = active.has(overlayId);
+      if (shouldBeActive === isActive) {
+        continue;
+      }
+      OverlaySelector.toggle(overlayId);
+    }
+  },
+
+  renderOpsDisplayPayloads(payload = null) {
+    if (this.mode !== 'ops') {
+      return;
+    }
+    const report = payload?.ops_report || this.latestOpsReport;
+    const displayPayloads = Array.isArray(payload?.display_payloads)
+      ? payload.display_payloads
+      : (Array.isArray(report?.display_payloads) ? report.display_payloads : []);
+    const signature = JSON.stringify(
+      displayPayloads.map((item) => ({
+        source_id: item?.source_id,
+        count: item?.count,
+        metric_key: item?.metric_key,
+        loc_ids: Array.isArray(item?.loc_ids) ? item.loc_ids : [],
+        year_keys: item?.year_data ? Object.keys(item.year_data) : []
+      }))
+    );
+    if (signature && signature === this._lastOpsDisplaySig) {
+      return;
+    }
+    this._lastOpsDisplaySig = signature;
+    for (const display of displayPayloads) {
+      if (!display?.geojson?.features?.length) {
+        continue;
+      }
+      this.routeMapResponse(display, { origin: 'ops', restoringViewState: true });
+    }
   },
 
   getOpsEmptyStateMessage() {
@@ -1914,6 +1967,8 @@ export const ChatManager = {
       }
       if (requestMode === 'ops' && response.ops_report) {
         this.latestOpsReport = response.ops_report;
+        this.syncOpsFeedOverlays(response);
+        this.renderOpsDisplayPayloads(response);
       }
 
       const fallbackText = this.getResearchDisplayFallbackMessage(response);

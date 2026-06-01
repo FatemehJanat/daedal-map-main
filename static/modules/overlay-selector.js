@@ -53,7 +53,9 @@ const MODEL_OVERRIDES = {
 const OPS_FEED_TO_OVERLAY_IDS = {
   earthquakes: ['earthquakes'],
   volcanoes: ['volcanoes'],
+  hurricanes_ibtracs_nrt: ['hurricanes'],
   tsunamis: ['tsunamis'],
+  wildfires_us_nifc: ['wildfires'],
   weather: [
     'temperature',
     'humidity',
@@ -71,6 +73,27 @@ const OPS_FEED_TO_OVERLAY_IDS = {
 let ALL_CATEGORIES = [];
 let CATEGORIES = [];
 let OVERLAYS = [];
+
+export function getOpsOverlayIdsForFeeds(feeds = []) {
+  const overlayIds = new Set();
+  for (const feed of feeds || []) {
+    const ids = OPS_FEED_TO_OVERLAY_IDS[String(feed || '').trim()] || [];
+    for (const overlayId of ids) {
+      overlayIds.add(overlayId);
+    }
+  }
+  return Array.from(overlayIds);
+}
+
+export function getAllOpsManagedOverlayIds() {
+  const overlayIds = new Set();
+  for (const ids of Object.values(OPS_FEED_TO_OVERLAY_IDS)) {
+    for (const overlayId of ids || []) {
+      overlayIds.add(overlayId);
+    }
+  }
+  return Array.from(overlayIds);
+}
 
 /**
  * Build CATEGORIES from overlay_tree fetched from API.
