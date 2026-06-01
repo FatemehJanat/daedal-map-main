@@ -25,7 +25,7 @@ def normalize_item_filters(
 
     reserved = {
         "type", "source_id", "pack_id", "metric", "metric_label", "region", "year", "year_start", "year_end",
-        "mode", "event_file", "filters", "sort", "limit", "summary", "all_sources", "load_scope",
+        "geo_level", "mode", "event_file", "filters", "sort", "limit", "summary", "all_sources", "load_scope",
         "aggregate_use_rolling", "aggregate_window_years", "aggregate_rollup_level", "aggregate_all_years",
     }
 

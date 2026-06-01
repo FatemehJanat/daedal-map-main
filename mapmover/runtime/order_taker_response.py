@@ -11,10 +11,14 @@ from mapmover.runtime.query_intent_primitives import query_prefers_event_source
 from mapmover.runtime.source_hints import (
     get_hint_alias_terms,
     get_metric_alias_matches,
+    get_query_alias_matches,
     get_routing_hints,
     get_single_metric_default,
     get_supported_geography_summary,
     get_unsupported_metric_aliases,
+    infer_requested_geo_level_from_query,
+    select_pack_family_source_for_query as select_pack_family_source_for_query_impl,
+    select_query_guided_metric,
 )
 
 
@@ -27,6 +31,8 @@ def validate_order_item(item: dict) -> dict:
     source_id = item.get("source_id")
     metric = item.get("metric")
     year = item.get("year")
+    user_query = str(((item.get("_hints") or {}).get("original_query")) or item.get("summary") or "").strip()
+    pack_id = str(item.get("pack_id") or "").strip()
 
     if not source_id:
         if item.get("pack_id"):
@@ -43,7 +49,14 @@ def validate_order_item(item: dict) -> dict:
             item["_error"] = "Missing source_id"
             return item
 
-    metadata = load_source_metadata(source_id)
+    preferred_metadata = None
+    if pack_id and user_query:
+        preferred_source_id, preferred_metadata = _select_pack_family_source_for_query(pack_id, user_query)
+        if preferred_source_id:
+            source_id = preferred_source_id
+            item["source_id"] = preferred_source_id
+
+    metadata = preferred_metadata or load_source_metadata(source_id)
     if not metadata:
         item["_valid"] = False
         item["_error"] = f"Unknown source: {source_id}"
@@ -52,6 +65,16 @@ def validate_order_item(item: dict) -> dict:
         item["_valid"] = False
         item["_error"] = f"Source '{source_id}' is not published in live mode"
         return item
+
+    if user_query:
+        inferred_metric_candidates = _select_metadata_guided_metrics(user_query, metadata)
+        inferred_metric = inferred_metric_candidates[0] if inferred_metric_candidates else _select_metadata_guided_metric(user_query, metadata)
+        if inferred_metric:
+            item["metric"] = inferred_metric
+            metric = inferred_metric
+        inferred_geo_level = infer_requested_geo_level_from_query(user_query, metadata)
+        if inferred_geo_level:
+            item["geo_level"] = inferred_geo_level
 
     metrics = metadata.get("metrics", {})
     if metric in ("*", "all", "all_metrics"):
@@ -472,21 +495,7 @@ def _candidate_pack_count_for_guided_sources(user_query: str, hints: dict | None
 
 
 def _select_metadata_guided_metric(user_query: str, metadata: dict) -> str:
-    alias_matches = get_metric_alias_matches(metadata, user_query)
-    if alias_matches:
-        return str(alias_matches[0][1] or "").strip()
-
-    routing_hints = get_routing_hints(metadata)
-    if not routing_hints.get("prefer_order_for_analytics"):
-        return ""
-    default_metric = get_single_metric_default(metadata)
-    if not default_metric:
-        return ""
-    broad_aliases = get_hint_alias_terms(metadata, "broad_topic_aliases", "query_aliases")
-    query_lower = str(user_query or "").strip().lower()
-    if any(alias in query_lower for alias in broad_aliases):
-        return default_metric
-    return ""
+    return select_query_guided_metric(user_query, metadata)
 
 
 def _select_metadata_guided_metrics(user_query: str, metadata: dict) -> list[str]:
@@ -517,17 +526,41 @@ def _iter_candidate_source_ids(hints: dict | None) -> list[str]:
     return source_ids
 
 
+def _iter_pack_family_source_ids(hints: dict | None) -> list[str]:
+    if not hints or not isinstance(hints, dict):
+        return []
+    detected_source = hints.get("detected_source") or {}
+    pack_id = str(detected_source.get("pack_id") or "").strip()
+    if not pack_id:
+        return []
+    catalog = load_catalog() or {}
+    source_ids: list[str] = []
+    for src in catalog.get("sources", []):
+        if str(src.get("pack_id") or "").strip() != pack_id:
+            continue
+        source_id = str(src.get("source_id") or "").strip()
+        if source_id and source_id not in source_ids:
+            source_ids.append(source_id)
+    return source_ids
+
+
 def _select_metadata_guided_source(user_query: str, hints: dict | None) -> tuple[str, dict] | tuple[None, None]:
     best_source_id = None
     best_metadata = None
     best_score = 0.0
 
-    for source_id in _iter_candidate_source_ids(hints):
+    candidate_source_ids = _iter_candidate_source_ids(hints)
+    for source_id in _iter_pack_family_source_ids(hints):
+        if source_id not in candidate_source_ids:
+            candidate_source_ids.append(source_id)
+
+    for source_id in candidate_source_ids:
         metadata = load_source_metadata(source_id) or {}
         if not metadata:
             continue
 
         alias_matches = _select_metadata_guided_metrics(user_query, metadata)
+        query_alias_matches = get_query_alias_matches(metadata, user_query)
         score = float(len(alias_matches) * 10)
         if alias_matches:
             score += get_routing_hints(metadata).get("query_priority", 0.0) or 0.0
@@ -535,6 +568,8 @@ def _select_metadata_guided_source(user_query: str, hints: dict | None) -> tuple
             default_metric = _select_metadata_guided_metric(user_query, metadata)
             if default_metric:
                 score += 1.0 + float(get_routing_hints(metadata).get("query_priority", 0.0) or 0.0)
+        if query_alias_matches:
+            score += float(len(query_alias_matches) * 2)
 
         if score > best_score:
             best_source_id = source_id
@@ -542,6 +577,20 @@ def _select_metadata_guided_source(user_query: str, hints: dict | None) -> tuple
             best_score = score
 
     if best_source_id and best_metadata and best_score > 0:
+        return best_source_id, best_metadata
+    return None, None
+
+
+def _select_pack_family_source_for_query(pack_id: str, user_query: str) -> tuple[str | None, dict | None]:
+    if not pack_id or not user_query:
+        return None, None
+    best_source_id, best_metadata, _ = select_pack_family_source_for_query_impl(
+        pack_id,
+        user_query,
+        catalog=load_catalog() or {},
+        load_source_metadata_func=load_source_metadata,
+    )
+    if best_source_id and best_metadata:
         return best_source_id, best_metadata
     return None, None
 
@@ -596,6 +645,9 @@ def _build_metadata_guided_two_source_order(user_query: str, hints: dict | None)
             "pack_id": pack_id,
             "_hints": {"original_query": user_query},
         }
+        inferred_geo_level = infer_requested_geo_level_from_query(user_query, metadata)
+        if inferred_geo_level:
+            item["geo_level"] = inferred_geo_level
         if metric:
             item["metric"] = metric
         if iso3:
@@ -676,6 +728,9 @@ def _build_metadata_guided_order(user_query: str, hints: dict | None) -> dict | 
             "pack_id": str(metadata.get("pack_id") or detected_source.get("pack_id") or "").strip(),
             "_hints": {"original_query": user_query},
         }
+        inferred_geo_level = infer_requested_geo_level_from_query(user_query, metadata)
+        if inferred_geo_level:
+            item["geo_level"] = inferred_geo_level
         if metric_name:
             item["metric"] = metric_name
         if iso3:
@@ -716,11 +771,75 @@ def _build_metadata_guided_order(user_query: str, hints: dict | None) -> dict | 
     }
 
 
+def _build_query_override_order(user_query: str, items: list[dict]) -> dict | None:
+    if not user_query or not items:
+        return None
+    first_item = next((item for item in items if isinstance(item, dict)), None)
+    if not first_item:
+        return None
+
+    source_id = str(first_item.get("source_id") or "").strip()
+    pack_id = str(first_item.get("pack_id") or "").strip()
+    region = first_item.get("region")
+    year = first_item.get("year")
+    year_start = first_item.get("year_start")
+    year_end = first_item.get("year_end")
+
+    metadata = None
+    if pack_id:
+        source_id, metadata = _select_pack_family_source_for_query(pack_id, user_query)
+    if (not source_id or not metadata) and first_item.get("source_id"):
+        source_id = str(first_item.get("source_id") or "").strip()
+        metadata = load_source_metadata(source_id) or {}
+    if not source_id or not metadata:
+        return None
+
+    metrics = _select_metadata_guided_metrics(user_query, metadata)
+    metric = metrics[0] if metrics else _select_metadata_guided_metric(user_query, metadata)
+    inferred_geo_level = infer_requested_geo_level_from_query(user_query, metadata)
+    if not metric and not inferred_geo_level:
+        return None
+
+    def build_item(metric_name: str | None) -> dict:
+        item = {
+            "source_id": source_id,
+            "pack_id": str(metadata.get("pack_id") or pack_id or "").strip(),
+            "_hints": {"original_query": user_query},
+        }
+        if metric_name:
+            item["metric"] = metric_name
+        if inferred_geo_level:
+            item["geo_level"] = inferred_geo_level
+        if region:
+            item["region"] = region
+        if year_start and year_end:
+            item["year_start"] = year_start
+            item["year_end"] = year_end
+        elif year:
+            item["year"] = year
+        return item
+
+    order_items = [build_item(metric)]
+    if (_query_looks_same_source_comparison(user_query) or _query_looks_dual_metric_screen(user_query)) and len(metrics) >= 2:
+        order_items = [build_item(metric_name) for metric_name in metrics[:2]]
+
+    summary = str(first_item.get("summary") or "").strip() or str(user_query).strip()
+    return {
+        "type": "order",
+        "order": {
+            "summary": summary,
+            "items": order_items,
+        },
+        "summary": summary,
+    }
+
+
 def _apply_metadata_guided_response_normalization(result: dict, *, user_query: str, hints: dict | None) -> dict:
     if not isinstance(result, dict) or result.get("type") not in {"chat", "clarify"}:
         return result
     if not hints or not isinstance(hints, dict):
         return result
+    items = (((result.get("order") or {}) if isinstance(result.get("order"), dict) else {}).get("items") or [])
     source_id, metadata = _select_metadata_guided_source(user_query, hints)
     if not source_id or not metadata:
         detected_source = hints.get("detected_source") or {}
@@ -731,6 +850,8 @@ def _apply_metadata_guided_response_normalization(result: dict, *, user_query: s
     if _matches_unsupported_metric_alias(user_query, metadata):
         return _build_metadata_unsupported_metric_clarify(user_query, metadata)
     guided_order = _build_metadata_guided_order(user_query, hints)
+    if guided_order is None:
+        guided_order = _build_query_override_order(user_query, items)
     if guided_order is not None:
         return guided_order
     return result
@@ -744,7 +865,72 @@ def _apply_metadata_guided_order_normalization(result: dict, *, user_query: str,
 
     order = result.get("order") or {}
     items = order.get("items") or []
+    selected_source_id, selected_metadata = _select_metadata_guided_source(user_query, hints)
+    guided_order = _build_metadata_guided_order(user_query, hints)
+    guided_items = ((guided_order.get("order") or {}).get("items") or []) if isinstance(guided_order, dict) else []
+
+    updated_items = []
+    enriched_items = False
+    inferred_levels_present = False
+    should_override_single_metric = len([item for item in items if isinstance(item, dict)]) == 1
+    for item in items:
+        if not isinstance(item, dict):
+            updated_items.append(item)
+            continue
+        source_id = str(item.get("source_id") or "").strip()
+        metadata = selected_metadata if source_id and source_id == selected_source_id else (load_source_metadata(source_id) or {} if source_id else {})
+        inferred_geo_level = infer_requested_geo_level_from_query(user_query, metadata)
+        current_geo_level = str(item.get("geo_level") or "").strip()
+        guided_metric = _select_metadata_guided_metric(user_query, metadata) if should_override_single_metric else ""
+        current_metric = str(item.get("metric") or "").strip()
+
+        if (
+            guided_metric
+            and current_metric
+            and guided_metric != current_metric
+        ) or (inferred_geo_level and inferred_geo_level != current_geo_level):
+            updated_item = dict(item)
+            if guided_metric and current_metric and guided_metric != current_metric:
+                updated_item["metric"] = guided_metric
+            if inferred_geo_level and inferred_geo_level != current_geo_level:
+                updated_item["geo_level"] = inferred_geo_level
+            updated_items.append(updated_item)
+            enriched_items = True
+            inferred_levels_present = True
+            continue
+        if inferred_geo_level:
+            inferred_levels_present = True
+        updated_items.append(item)
+
+    if enriched_items:
+        order["items"] = updated_items
+        result["order"] = order
+        items = updated_items
+
     source_ids = {str(item.get("source_id") or "").strip() for item in items if isinstance(item, dict) and item.get("source_id")}
+    current_metrics = [str(item.get("metric") or "").strip() for item in items if isinstance(item, dict) and item.get("metric")]
+    guided_sources = {str(item.get("source_id") or "").strip() for item in guided_items if isinstance(item, dict) and item.get("source_id")}
+    guided_metrics = [str(item.get("metric") or "").strip() for item in guided_items if isinstance(item, dict) and item.get("metric")]
+    guided_geo_levels = [str(item.get("geo_level") or "").strip() for item in guided_items if isinstance(item, dict) and item.get("geo_level")]
+    guided_metric_matches = get_metric_alias_matches(selected_metadata, user_query) if isinstance(selected_metadata, dict) else []
+
+    should_prefer_guided = False
+    if guided_items:
+        if selected_source_id and source_ids and selected_source_id not in source_ids:
+            should_prefer_guided = True
+        elif guided_sources and guided_sources != source_ids:
+            should_prefer_guided = True
+        elif guided_metrics and guided_metrics != current_metrics:
+            should_prefer_guided = True
+        elif inferred_levels_present and guided_geo_levels:
+            current_geo_levels = [str(item.get("geo_level") or "").strip() for item in items if isinstance(item, dict)]
+            if guided_geo_levels != current_geo_levels:
+                should_prefer_guided = True
+        elif guided_metric_matches:
+            should_prefer_guided = True
+
+    if should_prefer_guided and guided_order and guided_order.get("type") == "order":
+        return guided_order
 
     should_upgrade = False
     if _query_looks_dual_metric_screen(user_query) and len(source_ids) < 2:
@@ -755,7 +941,6 @@ def _apply_metadata_guided_order_normalization(result: dict, *, user_query: str,
     if not should_upgrade:
         return result
 
-    guided_order = _build_metadata_guided_order(user_query, hints)
     if not guided_order or guided_order.get("type") != "order":
         return result
 

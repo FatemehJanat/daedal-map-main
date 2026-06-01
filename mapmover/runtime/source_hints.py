@@ -3,6 +3,67 @@
 from __future__ import annotations
 
 
+_IRREGULAR_GEO_PLURALS = {
+    "county": "counties",
+    "city": "cities",
+}
+
+
+def _normalize_geo_alias_text(value: str) -> str:
+    return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _pluralize_geo_token(token: str) -> str:
+    text = str(token or "").strip().lower()
+    if not text:
+        return ""
+    if text in _IRREGULAR_GEO_PLURALS:
+        return _IRREGULAR_GEO_PLURALS[text]
+    if text.endswith("s"):
+        return text
+    if text.endswith("y") and len(text) > 1 and text[-2] not in "aeiou":
+        return text[:-1] + "ies"
+    return text + "s"
+
+
+def _expand_geo_alias_variants(value: str) -> list[str]:
+    normalized = _normalize_geo_alias_text(value)
+    if not normalized:
+        return []
+
+    variants: list[str] = []
+
+    def _add(text: str) -> None:
+        if text and text not in variants:
+            variants.append(text)
+
+    _add(normalized)
+
+    spaced = normalized.replace("_", " ")
+    if spaced != normalized:
+        _add(spaced.replace(" ", "_"))
+
+    parts = [part for part in normalized.split("_") if part]
+    if parts:
+        plural_last = parts[:-1] + [_pluralize_geo_token(parts[-1])]
+        _add("_".join(plural_last))
+
+        singular_last = parts[-1]
+        if singular_last in _IRREGULAR_GEO_PLURALS.values():
+            reverse = {v: k for k, v in _IRREGULAR_GEO_PLURALS.items()}
+            singular_last = reverse.get(singular_last, singular_last)
+            _add("_".join(parts[:-1] + [singular_last]))
+
+    if normalized == "blockgroup":
+        _add("block_group")
+        _add("block_groups")
+    if normalized == "block_group":
+        _add("blockgroup")
+        _add("blockgroups")
+
+    return variants
+
+
 def get_routing_hints(metadata: dict | None) -> dict:
     if not isinstance(metadata, dict):
         return {}
@@ -74,9 +135,10 @@ def get_geo_level_aliases(metadata: dict | None) -> dict[str, str]:
         return {}
     normalized: dict[str, str] = {}
     for alias, target in aliases.items():
-        alias_text = str(alias or "").strip().lower().replace("-", "_").replace(" ", "_")
-        target_text = str(target or "").strip().lower().replace("-", "_").replace(" ", "_")
-        if alias_text and target_text:
+        target_text = _normalize_geo_alias_text(target)
+        if not target_text:
+            continue
+        for alias_text in _expand_geo_alias_variants(alias):
             normalized[alias_text] = target_text
     return normalized
 
@@ -112,20 +174,45 @@ def get_country_geo_level_aliases(metadata: dict | None) -> dict[str, str]:
     for admin_level, info in sub_admin_levels.items():
         if not isinstance(info, dict):
             continue
-        canonical_level = str(admin_level or "").strip().lower()
+        canonical_level = _normalize_geo_alias_text(admin_level)
         if not canonical_level:
             continue
 
-        name = str(info.get("name") or "").strip().lower().replace("-", "_").replace(" ", "_")
-        if name:
-            aliases[name] = canonical_level
+        for field_name in ("name", "display_name", "canonical_dataset_label"):
+            for alias_text in _expand_geo_alias_variants(info.get(field_name) or ""):
+                aliases[alias_text] = canonical_level
 
         for alias in info.get("aliases") or []:
-            alias_text = str(alias or "").strip().lower().replace("-", "_").replace(" ", "_")
-            if alias_text:
+            for alias_text in _expand_geo_alias_variants(alias):
                 aliases[alias_text] = canonical_level
 
     return aliases
+
+
+def infer_requested_geo_level_from_query(query: str | None, metadata: dict | None) -> str | None:
+    """Infer a canonical runtime geo level from query text using shared aliases."""
+    query_text = _normalize_geo_alias_text(query or "")
+    if not query_text:
+        return None
+
+    aliases = get_country_geo_level_aliases(metadata)
+    aliases.update(get_geo_level_aliases(metadata))
+    if not aliases:
+        return None
+
+    best_match: tuple[int, str] | None = None
+    padded_query = f"_{query_text}_"
+    for alias_text, target_level in aliases.items():
+        normalized_alias = _normalize_geo_alias_text(alias_text)
+        if not normalized_alias:
+            continue
+        if f"_{normalized_alias}_" not in padded_query:
+            continue
+        score = len(normalized_alias)
+        if best_match is None or score > best_match[0]:
+            best_match = (score, target_level)
+
+    return best_match[1] if best_match else None
 
 
 def normalize_requested_geo_level_for_source(requested_geo_level: str | None, metadata: dict | None) -> str | None:
@@ -178,6 +265,84 @@ def get_metric_alias_matches(metadata: dict | None, query: str | None) -> list[t
             matches.append((alias_text, metric_text))
     matches.sort(key=lambda item: len(item[0]), reverse=True)
     return matches
+
+
+def get_query_alias_matches(metadata: dict | None, query: str | None) -> list[str]:
+    query_lower = str(query or "").strip().lower()
+    if not query_lower:
+        return []
+
+    matches: list[str] = []
+    for alias in get_hint_alias_terms(metadata, "query_aliases", "broad_topic_aliases"):
+        if alias and alias in query_lower and alias not in matches:
+            matches.append(alias)
+    matches.sort(key=len, reverse=True)
+    return matches
+
+
+def select_query_guided_metric(query: str | None, metadata: dict | None) -> str:
+    alias_matches = get_metric_alias_matches(metadata, query)
+    if alias_matches:
+        return str(alias_matches[0][1] or "").strip()
+
+    routing_hints = get_routing_hints(metadata)
+    if not routing_hints.get("prefer_order_for_analytics"):
+        return ""
+    default_metric = get_single_metric_default(metadata)
+    if not default_metric:
+        return ""
+    broad_aliases = get_hint_alias_terms(metadata, "broad_topic_aliases", "query_aliases")
+    query_lower = str(query or "").strip().lower()
+    if any(alias in query_lower for alias in broad_aliases):
+        return str(default_metric).strip()
+    return ""
+
+
+def select_pack_family_source_for_query(
+    pack_id: str,
+    query: str | None,
+    *,
+    catalog: dict | None,
+    load_source_metadata_func,
+) -> tuple[str | None, dict | None, str]:
+    if not pack_id or not query:
+        return None, None, ""
+
+    best_source_id = None
+    best_metadata = None
+    best_metric = ""
+    best_score = 0.0
+
+    for src in (catalog or {}).get("sources", []):
+        if str(src.get("pack_id") or "").strip() != pack_id:
+            continue
+        source_id = str(src.get("source_id") or "").strip()
+        if not source_id:
+            continue
+        metadata = load_source_metadata_func(source_id) or {}
+        if not metadata:
+            continue
+
+        metric = select_query_guided_metric(query, metadata)
+        query_alias_matches = get_query_alias_matches(metadata, query)
+        score = 0.0
+        if metric:
+            score += 10.0
+        if query_alias_matches:
+            score += float(len(query_alias_matches) * 2)
+        score += float(get_routing_hints(metadata).get("query_priority", 0.0) or 0.0)
+        if infer_requested_geo_level_from_query(query, metadata):
+            score += 1.0
+
+        if score > best_score:
+            best_source_id = source_id
+            best_metadata = metadata
+            best_metric = metric
+            best_score = score
+
+    if best_source_id and best_score > 0:
+        return best_source_id, best_metadata, best_metric
+    return None, None, ""
 
 
 def build_scenario_routing_lines(scenario_defaults: dict | None) -> list[str]:

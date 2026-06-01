@@ -77,6 +77,24 @@ def normalize_geo_level(value) -> Optional[str]:
     text = str(value).strip().lower().replace("-", "_").replace(" ", "_")
     if text in {"country", "admin_0"}:
         return "admin_0"
+    friendly_levels = {
+        "state": "admin_1",
+        "states": "admin_1",
+        "province": "admin_1",
+        "provinces": "admin_1",
+        "county": "admin_2",
+        "counties": "admin_2",
+        "tract": "admin_3",
+        "tracts": "admin_3",
+        "blockgroup": "admin_4",
+        "blockgroups": "admin_4",
+        "block_group": "admin_4",
+        "block_groups": "admin_4",
+        "block": "admin_5",
+        "blocks": "admin_5",
+    }
+    if text in friendly_levels:
+        return friendly_levels[text]
     if text.startswith("admin_") and text[6:].isdigit():
         return text
     return None

@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from .source_hints import get_single_metric_default
+from .source_hints import (
+    get_single_metric_default,
+    infer_requested_geo_level_from_query,
+    select_pack_family_source_for_query,
+    select_query_guided_metric,
+)
 
 
 def validate_item(
@@ -90,6 +95,33 @@ def validate_item(
         source_pack_id = str(catalog_source.get("pack_id") or "").strip()
         if source_pack_id:
             item["pack_id"] = source_pack_id
+    pack_id = str(item.get("pack_id") or "").strip()
+    if pack_id and query:
+        preferred_source_id, preferred_metadata, preferred_metric = select_pack_family_source_for_query(
+            pack_id,
+            query,
+            catalog=catalog,
+            load_source_metadata_func=load_source_metadata_func,
+        )
+        if preferred_source_id and preferred_source_id != source_id:
+            item["source_id"] = preferred_source_id
+            item["_resolved_from_pack"] = True
+            source_id = preferred_source_id
+            catalog_source = get_catalog_source_func(catalog, source_id)
+            if catalog_source and not item.get("pack_id"):
+                source_pack_id = str(catalog_source.get("pack_id") or "").strip()
+                if source_pack_id:
+                    item["pack_id"] = source_pack_id
+        metadata = preferred_metadata or load_source_metadata_func(source_id)
+        inferred_metric = preferred_metric or select_query_guided_metric(query, metadata)
+        if inferred_metric and not metric:
+            item["metric"] = inferred_metric
+            metric = inferred_metric
+        inferred_geo_level = infer_requested_geo_level_from_query(query, metadata)
+        if inferred_geo_level:
+            item["geo_level"] = inferred_geo_level
+    else:
+        metadata = None
     normalize_item_filters_func(item, catalog_source)
     normalize_location_shape_metric_func(item, catalog_source)
     metric = item.get("metric")
@@ -135,7 +167,7 @@ def validate_item(
         item["_valid"] = True
         return item
 
-    metadata = load_source_metadata_func(source_id)
+    metadata = metadata or load_source_metadata_func(source_id)
     expand_filter_value_aliases_func(item, metadata)
 
     if source_requires_metric_func(item, catalog_source) and not metric:
