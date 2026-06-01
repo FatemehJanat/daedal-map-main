@@ -752,6 +752,22 @@ def build_ops_report(*, watch: dict, effective_feeds: list[str]) -> dict:
     return report
 
 
+def _build_prompt_safe_ops_report(report: dict | None) -> dict:
+    if not isinstance(report, dict):
+        return {}
+    return {
+        "report_version": report.get("report_version"),
+        "watch_id": report.get("watch_id"),
+        "generated_at": report.get("generated_at"),
+        "effective_feeds": report.get("effective_feeds") or [],
+        "snapshot_hashes": report.get("snapshot_hashes") or {},
+        "headline_summary": report.get("headline_summary"),
+        "feed_snapshots": report.get("feed_snapshots") or [],
+        "recent_change_index": report.get("recent_change_index") or [],
+        "map_items": report.get("map_items") or [],
+    }
+
+
 def _query_requests_deep_history(query: str, hints: dict | None = None) -> bool:
     text = str(query or "").strip().lower()
     if not text:
@@ -895,6 +911,7 @@ def run_ops_chat(
         report=report,
         hints=hints,
     )
+    prompt_safe_report = _build_prompt_safe_ops_report(report)
     system_prompt = ops_orchestrator.build_system_prompt(watch_context=watch_context, hints=hints)
     system_blocks = ops_orchestrator.build_system_prompt_blocks(system_prompt)
     llm_selection = ops_orchestrator.llm_selection()
@@ -916,7 +933,7 @@ def run_ops_chat(
             "content": [
                 {
                     "type": "text",
-                    "text": "Compact Ops report JSON:\n" + json.dumps(report, default=str, separators=(",", ":")),
+                    "text": "Compact Ops report JSON:\n" + json.dumps(prompt_safe_report, default=str, separators=(",", ":")),
                     "cache_control": {"type": "ephemeral"},
                 }
             ],

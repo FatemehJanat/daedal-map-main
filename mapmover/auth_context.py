@@ -9,6 +9,7 @@ This is intentionally lightweight:
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from typing import Any, Dict, Optional
@@ -21,6 +22,7 @@ from . import logger
 
 
 _async_client: Optional[httpx.AsyncClient] = None
+_async_client_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
 def _get_async_client() -> httpx.AsyncClient:
@@ -29,9 +31,11 @@ def _get_async_client() -> httpx.AsyncClient:
     Reusing one client keeps TLS sessions warm across requests, which matters
     when many authenticated requests miss the in-memory cache simultaneously.
     """
-    global _async_client
-    if _async_client is None:
+    global _async_client, _async_client_loop
+    current_loop = asyncio.get_running_loop()
+    if _async_client is None or _async_client_loop is not current_loop:
         _async_client = httpx.AsyncClient(timeout=httpx.Timeout(5.0))
+        _async_client_loop = current_loop
     return _async_client
 
 
