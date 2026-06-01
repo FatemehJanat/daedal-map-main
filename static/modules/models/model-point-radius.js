@@ -568,6 +568,7 @@ export const PointRadiusModel = {
 
     // Use type-specific layer IDs for click handlers
     const circleLayerId = this._layerId('circle', eventType);
+    const glowLayerId = this._layerId('circle-glow', eventType);
     const fillLayerId = this._layerId('circle-fill', eventType);
 
     // Store handler reference per type for cleanup
@@ -576,6 +577,11 @@ export const PointRadiusModel = {
     // Register click handler on circle layer
     if (MapAdapter.map.getLayer(circleLayerId)) {
       MapAdapter.map.on('click', circleLayerId, clickHandler);
+    }
+
+    // Register click handler on the glow layer too so small dots are easier to click.
+    if (MapAdapter.map.getLayer(glowLayerId)) {
+      MapAdapter.map.on('click', glowLayerId, clickHandler);
     }
 
     // Also handle clicks on polygon fill layer (for wildfires with perimeters)
@@ -590,8 +596,10 @@ export const PointRadiusModel = {
         const layersToCheck = [];
         for (const type of this.activeTypes) {
           const circleId = this._layerId('circle', type);
+          const glowId = this._layerId('circle-glow', type);
           const fillId = this._layerId('circle-fill', type);
           if (MapAdapter.map.getLayer(circleId)) layersToCheck.push(circleId);
+          if (MapAdapter.map.getLayer(glowId)) layersToCheck.push(glowId);
           if (MapAdapter.map.getLayer(fillId)) layersToCheck.push(fillId);
         }
 
@@ -629,6 +637,29 @@ export const PointRadiusModel = {
         }
       });
       MapAdapter.map.on('mouseleave', circleLayerId, () => {
+        if (!MapAdapter.popupLocked) {
+          MapAdapter.hidePopup();
+        }
+      });
+    }
+
+    if (MapAdapter.map.getLayer(glowLayerId)) {
+      MapAdapter.map.on('mouseenter', glowLayerId, () => {
+        MapAdapter.map.getCanvas().style.cursor = 'pointer';
+      });
+      MapAdapter.map.on('mouseleave', glowLayerId, () => {
+        MapAdapter.map.getCanvas().style.cursor = '';
+      });
+
+      MapAdapter.map.on('mousemove', glowLayerId, (e) => {
+        if (TimeSlider?.isPlaying) return;
+        if (e.features.length > 0 && !MapAdapter.popupLocked) {
+          const props = e.features[0].properties;
+          const html = DisasterPopup.buildHoverHtml(props, eventType);
+          MapAdapter.showPopup([e.lngLat.lng, e.lngLat.lat], html);
+        }
+      });
+      MapAdapter.map.on('mouseleave', glowLayerId, () => {
         if (!MapAdapter.popupLocked) {
           MapAdapter.hidePopup();
         }
@@ -2029,8 +2060,10 @@ export const PointRadiusModel = {
     const handler = this.clickHandlers.get(eventType);
     if (handler) {
       const circleLayerId = this._layerId('circle', eventType);
+      const glowLayerId = this._layerId('circle-glow', eventType);
       const fillLayerId = this._layerId('circle-fill', eventType);
       map.off('click', circleLayerId, handler);
+      map.off('click', glowLayerId, handler);
       map.off('click', fillLayerId, handler);
       this.clickHandlers.delete(eventType);
     }

@@ -245,6 +245,7 @@ export function buildPayload(ctx, query, resolvedLocation = null, extraOptions =
     savedOrderNames: SavedOrders?.getNames?.() || [],
     loadedData: getLoadedDataList(),
     selectedAddress: ctx.addressContext,
+    selectedPopup: MapAdapter?.getSelectedPopupContext?.() || null,
     tutorialMode: { enabled: TutorialMode.enabled },
     ...(modeOverride === 'ops'
       ? {

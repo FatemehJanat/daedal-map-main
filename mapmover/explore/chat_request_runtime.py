@@ -16,6 +16,7 @@ def prepare_explore_request(
     build_show_borders_response_func,
     build_drilldown_response_func,
     fetch_geometries_by_loc_ids_func,
+    apply_selected_popup_override_func,
 ) -> dict:
     request_context = extract_chat_request_context_func(body)
     query = request_context["query"]
@@ -27,6 +28,7 @@ def prepare_explore_request(
     time_state = request_context["time_state"]
     saved_order_names = request_context["saved_order_names"]
     loaded_data = request_context["loaded_data"]
+    selected_popup = request_context.get("selected_popup")
 
     if not query:
         return {
@@ -47,7 +49,10 @@ def prepare_explore_request(
             time_state=time_state,
             loaded_data=loaded_data,
             resolved_location=resolved_location,
+            selected_popup=selected_popup,
         )
+        if selected_popup:
+            hints = apply_selected_popup_override_func(hints, selected_popup)
 
     shortcut_payload = maybe_build_shortcut_payload_func(
         hints=hints,

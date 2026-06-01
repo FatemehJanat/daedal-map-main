@@ -222,6 +222,152 @@ def _snapshot_to_geojson(snapshot: dict) -> dict | None:
     return {"type": "FeatureCollection", "features": features}
 
 
+def _build_point_event_display_payload(
+    snapshot: dict | None,
+    *,
+    collector: str,
+    event_type: str,
+    label: str,
+) -> dict | None:
+    if not isinstance(snapshot, dict):
+        return None
+    summary = snapshot.get("payload_summary") if isinstance(snapshot.get("payload_summary"), dict) else {}
+    rows = summary.get("events") if isinstance(summary.get("events"), list) else None
+    if not rows:
+        return None
+
+    features: list[dict] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        try:
+            lon = float(row.get("longitude"))
+            lat = float(row.get("latitude"))
+        except (TypeError, ValueError):
+            continue
+        props = dict(row)
+        props.setdefault("collector", collector)
+        if collector == "volcanoes":
+            props.setdefault("VEI", row.get("vei"))
+        if collector == "wildfires_us_nifc":
+            acres = row.get("burned_acres")
+            try:
+                props.setdefault("area_km2", float(acres) * 0.00404686)
+            except (TypeError, ValueError):
+                pass
+        features.append(
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [lon, lat]},
+                "properties": props,
+            }
+        )
+
+    if not features:
+        return None
+
+    count = len(features)
+    return {
+        "type": "events",
+        "data_type": "events",
+        "event_type": event_type,
+        "source_id": f"{collector}_live_ops",
+        "snapshot_hash": snapshot.get("payload_hash"),
+        "dataset_name": label,
+        "source_name": label,
+        "summary": f"Showing latest {label.lower()} snapshot ({count} items).",
+        "count": count,
+        "fit": False,
+        "geojson": {
+            "type": "FeatureCollection",
+            "features": features,
+        },
+    }
+
+
+def _build_hurricane_display_payload(snapshot: dict | None) -> dict | None:
+    if not isinstance(snapshot, dict):
+        return None
+    summary = snapshot.get("payload_summary") if isinstance(snapshot.get("payload_summary"), dict) else {}
+    storms = summary.get("storms") if isinstance(summary.get("storms"), list) else []
+    positions = summary.get("positions") if isinstance(summary.get("positions"), list) else []
+    if not storms or not positions:
+        return None
+
+    storm_lookup: dict[str, dict] = {}
+    for storm in storms:
+        if not isinstance(storm, dict):
+            continue
+        storm_id = str(storm.get("storm_id") or "").strip()
+        if storm_id:
+            storm_lookup[storm_id] = storm
+
+    positions_by_storm: dict[str, list[dict]] = {}
+    for row in positions:
+        if not isinstance(row, dict):
+            continue
+        storm_id = str(row.get("storm_id") or "").strip()
+        if not storm_id:
+            continue
+        try:
+            lon = float(row.get("longitude"))
+            lat = float(row.get("latitude"))
+        except (TypeError, ValueError):
+            continue
+        normalized = dict(row)
+        normalized["_lon"] = lon
+        normalized["_lat"] = lat
+        positions_by_storm.setdefault(storm_id, []).append(normalized)
+
+    features: list[dict] = []
+    for storm_id, rows in positions_by_storm.items():
+        ordered = sorted(rows, key=lambda row: str(row.get("timestamp") or ""))
+        coords = [[row["_lon"], row["_lat"]] for row in ordered]
+        if len(coords) < 2:
+            continue
+        storm = storm_lookup.get(storm_id, {})
+        props = {
+            "storm_id": storm_id,
+            "name": storm.get("name"),
+            "year": storm.get("year"),
+            "basin": storm.get("basin"),
+            "nature": storm.get("nature"),
+            "start_date": storm.get("start_date"),
+            "end_date": storm.get("end_date"),
+            "max_wind_kt": storm.get("max_wind_kt"),
+            "max_category": storm.get("max_category"),
+            "category": storm.get("max_category"),
+            "num_positions": len(coords),
+            "collector": "hurricanes_ibtracs_nrt",
+        }
+        features.append(
+            {
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": coords},
+                "properties": props,
+            }
+        )
+
+    if not features:
+        return None
+
+    return {
+        "type": "data",
+        "data_type": "events",
+        "source_id": "ibtracs_live_ops",
+        "snapshot_hash": snapshot.get("payload_hash"),
+        "dataset_name": "Ops Hurricane Snapshot",
+        "source_name": "Live hurricane snapshot",
+        "summary": f"Showing latest hurricane tracks for {len(features)} storms.",
+        "count": len(features),
+        "fit": False,
+        "geojson": {
+            "type": "FeatureCollection",
+            "features": features,
+        },
+    }
+
+
 def _sample_rows(rows: list[dict], fields: tuple[str, ...], limit: int) -> list[dict]:
     sampled: list[dict] = []
     for row in (rows or [])[:limit]:
@@ -333,6 +479,7 @@ def _build_currency_display_payload(snapshot: dict | None) -> dict | None:
         "type": "data",
         "data_type": "metrics",
         "source_id": "currency_live_ops",
+        "snapshot_hash": snapshot.get("payload_hash"),
         "dataset_name": "Ops Currency Snapshot",
         "source_name": "Live currency snapshot",
         "geographic_level": "admin_0",
@@ -351,6 +498,41 @@ def _build_currency_display_payload(snapshot: dict | None) -> dict | None:
 
 def _build_display_payloads(snapshots_by_feed: dict[str, dict]) -> list[dict]:
     payloads: list[dict] = []
+    earthquakes_payload = _build_point_event_display_payload(
+        snapshots_by_feed.get("earthquakes"),
+        collector="earthquakes",
+        event_type="earthquake",
+        label="Ops Earthquake Snapshot",
+    )
+    if earthquakes_payload:
+        payloads.append(earthquakes_payload)
+    tsunami_payload = _build_point_event_display_payload(
+        snapshots_by_feed.get("tsunamis"),
+        collector="tsunamis",
+        event_type="tsunami",
+        label="Ops Tsunami Snapshot",
+    )
+    if tsunami_payload:
+        payloads.append(tsunami_payload)
+    volcano_payload = _build_point_event_display_payload(
+        snapshots_by_feed.get("volcanoes"),
+        collector="volcanoes",
+        event_type="volcano",
+        label="Ops Volcano Snapshot",
+    )
+    if volcano_payload:
+        payloads.append(volcano_payload)
+    wildfire_payload = _build_point_event_display_payload(
+        snapshots_by_feed.get("wildfires_us_nifc"),
+        collector="wildfires_us_nifc",
+        event_type="wildfire",
+        label="Ops Wildfire Snapshot",
+    )
+    if wildfire_payload:
+        payloads.append(wildfire_payload)
+    hurricane_payload = _build_hurricane_display_payload(snapshots_by_feed.get("hurricanes_ibtracs_nrt"))
+    if hurricane_payload:
+        payloads.append(hurricane_payload)
     currency_payload = _build_currency_display_payload(snapshots_by_feed.get("currency"))
     if currency_payload:
         payloads.append(currency_payload)
@@ -409,11 +591,12 @@ def _compact_payload_summary(collector: str, summary: dict, *, sample_limit: int
         }
     if collector == "wildfires_us_nifc":
         return {
+            "event_count": summary.get("event_count"),
             "incident_count": summary.get("incident_count"),
             "active_count": summary.get("active_count"),
             "max_burned_acres": summary.get("max_burned_acres"),
-            "top_incidents": _sample_rows(
-                summary.get("incidents") or [],
+            "top_events": _sample_rows(
+                summary.get("events") or [],
                 ("event_id", "fire_name", "state", "county_name", "status", "burned_acres", "last_updated"),
                 sample_limit,
             ),
@@ -507,7 +690,7 @@ def _build_map_items(feed_snapshots: list[dict]) -> list[dict]:
     for snapshot in feed_snapshots:
         summary = snapshot.get("summary") if isinstance(snapshot.get("summary"), dict) else {}
         top_key = None
-        for candidate in ("top_events", "top_incidents", "top_storms", "sample_rates"):
+        for candidate in ("top_events", "top_storms", "sample_rates"):
             if summary.get(candidate):
                 top_key = candidate
                 break
@@ -677,6 +860,7 @@ def run_ops_chat(
     ops_orchestrator,
     usage_recorder,
     cache,
+    selected_popup: dict | None = None,
 ) -> dict:
     if not effective_feeds:
         return {
@@ -747,6 +931,19 @@ def run_ops_chat(
                 ],
             }
         )
+    if isinstance(selected_popup, dict):
+        messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Selected popup JSON:\n" + json.dumps(selected_popup, default=str, separators=(",", ":")),
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+            }
+        )
     messages.extend(_history_messages(chat_history))
     messages.append({"role": "user", "content": query})
 
@@ -789,6 +986,7 @@ async def run_ops_orchestrator_call(
     catalog_surface: str | None,
     ops_orchestrator,
     cache,
+    selected_popup: dict | None = None,
 ) -> dict:
     return await run_catalog_scoped_to_thread(
         catalog_surface=catalog_surface,
@@ -800,4 +998,5 @@ async def run_ops_orchestrator_call(
         ops_orchestrator=ops_orchestrator,
         usage_recorder=usage_recorder,
         cache=cache,
+        selected_popup=selected_popup,
     )

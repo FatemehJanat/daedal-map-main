@@ -15,6 +15,7 @@ def preprocess_explore_request(
     time_state,
     loaded_data,
     resolved_location,
+    selected_popup,
     preprocess_query_func,
     apply_resolved_location_override_func,
 ) -> dict:
@@ -27,6 +28,7 @@ def preprocess_explore_request(
         saved_order_names=saved_order_names,
         time_state=time_state,
         loaded_data=loaded_data,
+        selected_popup=selected_popup,
     )
     hints["original_query"] = query
     return apply_resolved_location_override_func(hints, resolved_location)

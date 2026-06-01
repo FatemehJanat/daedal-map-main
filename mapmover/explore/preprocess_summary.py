@@ -13,6 +13,7 @@ def build_preprocessor_summary(
     time_state: dict | None = None,
     saved_order_names: list | None = None,
     loaded_data: list | None = None,
+    selected_popup: dict | None = None,
     format_filter_description_func=None,
 ) -> str | None:
     summary_parts = []
@@ -103,5 +104,15 @@ def build_preprocessor_summary(
             else:
                 loaded_strs.append(f"{src}: {region} ({years})")
         summary_parts.append(f"LOADED_DATA: {'; '.join(loaded_strs)}")
+
+    if selected_popup:
+        popup_kind = selected_popup.get("kind") or "popup"
+        popup_name = selected_popup.get("name") or selected_popup.get("event_id") or selected_popup.get("loc_id") or "selected item"
+        popup_event_type = selected_popup.get("event_type")
+        popup_bits = [f"POPUP: {popup_kind}"]
+        if popup_event_type:
+            popup_bits.append(f"type={popup_event_type}")
+        popup_bits.append(f"item={popup_name}")
+        summary_parts.append(" ".join(popup_bits))
 
     return "; ".join(summary_parts) if summary_parts else None

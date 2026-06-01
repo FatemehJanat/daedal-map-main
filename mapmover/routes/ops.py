@@ -139,6 +139,7 @@ async def ops_chat_endpoint(req: Request):
                 usage_recorder=usage_recorder,
                 catalog_surface=route_context.catalog_surface,
                 cache=route_context.cache,
+                selected_popup=body.get("selectedPopup"),
             )
         finally:
             usage_recorder.flush()
@@ -207,6 +208,7 @@ async def ops_chat_stream_endpoint(req: Request):
                     usage_recorder=usage_recorder,
                     catalog_surface=route_context.catalog_surface,
                     cache=route_context.cache,
+                    selected_popup=body.get("selectedPopup"),
                 )
             finally:
                 usage_recorder.flush()

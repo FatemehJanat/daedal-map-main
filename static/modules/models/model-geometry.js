@@ -315,6 +315,10 @@ export const GeometryModel = {
           const html = this.buildPopupHtml(props, geometryType);
           MapAdapter.showPopup(coords, html);
           MapAdapter.popupLocked = true;
+          MapAdapter.setSelectedPopupContext?.({
+            kind: 'geometry',
+            properties: props
+          });
         }
       }
     };

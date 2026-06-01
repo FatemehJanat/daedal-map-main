@@ -47,6 +47,7 @@ export const MapAdapter = {
   currentFocusLngLat: null,
   popupFocusOverride: null,
   lockedPopupLocationInfo: null,
+  selectedPopupContext: null,
   researchDisplayLayerIds: [],
   mapClickHandlerBound: false,
   baseLayerHandlerRefs: {
@@ -743,6 +744,77 @@ export const MapAdapter = {
     this.updateFocalColors();
   },
 
+  _sanitizePopupValue(value) {
+    if (value == null) return null;
+    if (typeof value === 'number' || typeof value === 'boolean') return value;
+    const text = String(value).trim();
+    if (!text) return null;
+    return text.length > 240 ? `${text.slice(0, 237).trimEnd()}...` : text;
+  },
+
+  _sanitizePopupProperties(properties = {}, maxKeys = 40) {
+    const out = {};
+    let count = 0;
+    for (const [key, value] of Object.entries(properties || {})) {
+      if (count >= maxKeys) break;
+      if (value == null) continue;
+      if (Array.isArray(value) || typeof value === 'function') continue;
+      if (typeof value === 'object') continue;
+      const sanitized = this._sanitizePopupValue(value);
+      if (sanitized == null) continue;
+      out[key] = sanitized;
+      count += 1;
+    }
+    return out;
+  },
+
+  _sanitizeLocationInfo(locationInfo = {}, maxKeys = 20) {
+    const out = {};
+    let count = 0;
+    for (const [key, value] of Object.entries(locationInfo || {})) {
+      if (count >= maxKeys) break;
+      if (value == null) continue;
+      if (Array.isArray(value) || typeof value === 'function') continue;
+      if (typeof value === 'object') continue;
+      const sanitized = this._sanitizePopupValue(value);
+      if (sanitized == null) continue;
+      out[key] = sanitized;
+      count += 1;
+    }
+    return out;
+  },
+
+  setSelectedPopupContext({ kind = 'popup', eventType = null, properties = null, locationInfo = null } = {}) {
+    const sanitizedProperties = this._sanitizePopupProperties(properties || {});
+    const locId = sanitizedProperties.loc_id || null;
+    this.selectedPopupContext = {
+      kind,
+      event_type: eventType || sanitizedProperties.event_type || null,
+      event_id: sanitizedProperties.event_id || null,
+      loc_id: locId,
+      name: sanitizedProperties.name || sanitizedProperties.title || sanitizedProperties.country_name || null,
+      country_name: sanitizedProperties.country_name || null,
+      iso3: sanitizedProperties.iso3 || sanitizedProperties.country_code || sanitizedProperties.iso_a3 || null,
+      selected_at: new Date().toISOString(),
+      properties: sanitizedProperties,
+      location_info: this._sanitizeLocationInfo(locationInfo || {})
+    };
+  },
+
+  updateSelectedPopupLocationInfo(locationInfo = null) {
+    if (!this.selectedPopupContext || !locationInfo) return;
+    this.selectedPopupContext = {
+      ...this.selectedPopupContext,
+      location_info: this._sanitizeLocationInfo(locationInfo || {}),
+      selected_at: new Date().toISOString()
+    };
+  },
+
+  getSelectedPopupContext() {
+    if (!this.selectedPopupContext) return null;
+    return JSON.parse(JSON.stringify(this.selectedPopupContext));
+  },
+
   clearPopupFocusOverride(reason = 'unknown') {
     if (!this.popupFocusOverride) return;
     this.popupFocusOverride = null;
@@ -831,6 +903,10 @@ export const MapAdapter = {
           const popupProperties = App?.getPopupProperties ? App.getPopupProperties(feature) : feature.properties;
           this.popupLocked = true;
           this.setPopupFocusOverride(popupProperties);
+          this.setSelectedPopupContext({
+            kind: 'geometry',
+            properties: popupProperties
+          });
           // Show basic popup immediately
           App?.handleFeatureHover(feature, e.lngLat);
           // Fetch enriched data and update popup
@@ -839,6 +915,7 @@ export const MapAdapter = {
             const locationInfo = await LocationInfoCache.fetch(locId);
             if (locationInfo && this.popupLocked) {
               this.lockedPopupLocationInfo = locationInfo;
+              this.updateSelectedPopupLocationInfo(locationInfo);
               // Update popup with enriched data
               const popupHtml = PopupBuilder?.build(popupProperties, App?.currentData, locationInfo);
               this.showPopup([e.lngLat.lng, e.lngLat.lat], popupHtml);
@@ -991,6 +1068,7 @@ export const MapAdapter = {
     this.popup.remove();
     this.popupLocked = false;
     this.lockedPopupLocationInfo = null;
+    this.selectedPopupContext = null;
     this.clearPopupFocusOverride('hidePopup');
     this.resetVisualFocus();
     setTimeout(() => {

@@ -1474,6 +1474,23 @@ export const App = {
     this.renderStandardDataPayload(payload, options);
   },
 
+  clearOpsDirectDisplayState(options = {}) {
+    const resetMetrics = options.resetMetrics !== false;
+    MapAdapter.clearHurricaneLayer?.();
+    MapAdapter.clearHurricaneTrack?.();
+    MapAdapter.clearEventLayer?.();
+    MapAdapter.clearNavigationLayer?.();
+    MapAdapter.clearResearchDisplayLayers?.();
+    this.clearResearchDisplayInteractions?.();
+    if (resetMetrics) {
+      TimeSlider.reset?.();
+      ChoroplethManager.reset?.();
+      this.currentData = null;
+      this.activeMetricOrderContext = null;
+      this.clearMetricPrefetch?.();
+    }
+  },
+
   renderResearchDisplayLayers(displays = []) {
     const validDisplays = (displays || []).filter(display => display?.geojson?.features?.length);
     MapAdapter.clearParentOutline?.();
@@ -1518,14 +1535,16 @@ export const App = {
     // This prevents viewport API from overwriting our ordered data
     ViewportLoader.orderMode = true;
 
-    // Clear any existing layers first
-    MapAdapter.clearHurricaneLayer();
-    MapAdapter.clearHurricaneTrack();
-    MapAdapter.clearEventLayer();
-    // The corpus-load focus overlay (e.g. the USA outline drawn when a Research
-    // corpus is first activated) is a navigation layer. Any new data payload
-    // supersedes that focus context, so clear it before rendering.
-    MapAdapter.clearNavigationLayer?.();
+    if (!options.preserveExistingRuntimeLayers) {
+      // Clear any existing layers first
+      MapAdapter.clearHurricaneLayer();
+      MapAdapter.clearHurricaneTrack();
+      MapAdapter.clearEventLayer();
+      // The corpus-load focus overlay (e.g. the USA outline drawn when a Research
+      // corpus is first activated) is a navigation layer. Any new data payload
+      // supersedes that focus context, so clear it before rendering.
+      MapAdapter.clearNavigationLayer?.();
+    }
 
     // Handle removal orders first (works for all data types)
     // Removal payloads are minimal - just identifiers, not full data
@@ -1712,8 +1731,8 @@ export const App = {
       data.metric_key === 'storm_count' ||
       (data.geojson?.features?.[0]?.properties?.storm_id);
 
-    if (isHurricaneData && data.geojson?.features?.[0]?.geometry?.type === 'Point') {
-      // Hurricane point data - use special hurricane layer with click drill-down
+    if (isHurricaneData && data.geojson?.features?.length) {
+      // Hurricane point or track data - use shared hurricane layer path
       console.log('Hurricane data detected, using hurricane layer');
 
       TimeSlider.reset();
@@ -2080,9 +2099,14 @@ export const App = {
       const popupProperties = this.getPopupProperties(feature);
       MapAdapter.popupLocked = true;
       MapAdapter.setPopupFocusOverride?.(popupProperties);
+      MapAdapter.setSelectedPopupContext?.({
+        kind: 'geometry',
+        properties: popupProperties
+      });
       this.handleFeatureHover(feature, e.lngLat);
       const locationInfo = popupProperties?.loc_id ? await LocationInfoCache.fetch(popupProperties.loc_id) : null;
       if (MapAdapter.popupLocked) {
+        MapAdapter.updateSelectedPopupLocationInfo?.(locationInfo || {});
         const popupHtml = PopupBuilder.build(popupProperties, this.currentData, locationInfo || {});
         MapAdapter.showPopup([e.lngLat.lng, e.lngLat.lat], popupHtml);
         MapAdapter.setupPopupTabHandlers?.();

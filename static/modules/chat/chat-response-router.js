@@ -25,7 +25,8 @@ export function routeMapResponse(ctx, response, options = {}, deps = {}) {
         order: options.order,
         restoringViewState: options.restoringViewState,
         skipAdminLevelFilter: options.skipAdminLevelFilter,
-        skipOrderModeLevelHold: options.skipOrderModeLevelHold
+        skipOrderModeLevelHold: options.skipOrderModeLevelHold,
+        preserveExistingRuntimeLayers: options.preserveExistingRuntimeLayers
       });
       return true;
     }
@@ -37,7 +38,8 @@ export function routeMapResponse(ctx, response, options = {}, deps = {}) {
       order: options.order,
       restoringViewState: options.restoringViewState,
       skipAdminLevelFilter: options.skipAdminLevelFilter,
-      skipOrderModeLevelHold: options.skipOrderModeLevelHold
+      skipOrderModeLevelHold: options.skipOrderModeLevelHold,
+      preserveExistingRuntimeLayers: options.preserveExistingRuntimeLayers
     });
     return true;
   }
@@ -55,7 +57,8 @@ export function routeMapResponse(ctx, response, options = {}, deps = {}) {
       order: options.order,
       restoringViewState: options.restoringViewState,
       skipAdminLevelFilter: options.skipAdminLevelFilter,
-      skipOrderModeLevelHold: options.skipOrderModeLevelHold
+      skipOrderModeLevelHold: options.skipOrderModeLevelHold,
+      preserveExistingRuntimeLayers: options.preserveExistingRuntimeLayers
     });
     return true;
   }

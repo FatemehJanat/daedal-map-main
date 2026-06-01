@@ -1795,6 +1795,11 @@ const DisasterPopup = {
     if (MapAdapter) {
       MapAdapter.showPopup(lngLat, html);
       MapAdapter.popupLocked = true;
+      MapAdapter.setSelectedPopupContext?.({
+        kind: 'event',
+        eventType,
+        properties: props
+      });
     }
 
     // Setup button handlers after popup is in DOM

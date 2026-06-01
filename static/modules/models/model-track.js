@@ -28,6 +28,7 @@ export const TrackModel = {
 
   // Click handler reference for cleanup
   clickHandler: null,
+  emptyClickHandler: null,
 
   // Drill-down callback for popup sequence button
   _drillDownCallback: null,
@@ -207,6 +208,7 @@ export const TrackModel = {
       }
     };
     map.on('click', CONFIG.layers.hurricaneCircle + '-lines', this.clickHandler);
+    map.on('click', CONFIG.layers.hurricaneCircle + '-glow', this.clickHandler);
 
     // Hover cursor for lines
     map.on('mouseenter', CONFIG.layers.hurricaneCircle + '-lines', () => {
@@ -228,6 +230,24 @@ export const TrackModel = {
         MapAdapter.showPopup([e.lngLat.lng, e.lngLat.lat], html);
       }
     });
+    map.on('mouseenter', CONFIG.layers.hurricaneCircle + '-glow', () => {
+      map.getCanvas().style.cursor = 'pointer';
+    });
+    map.on('mouseleave', CONFIG.layers.hurricaneCircle + '-glow', () => {
+      map.getCanvas().style.cursor = '';
+      if (!MapAdapter.popupLocked) {
+        MapAdapter.hidePopup();
+      }
+    });
+    map.on('mousemove', CONFIG.layers.hurricaneCircle + '-glow', (e) => {
+      if (TimeSlider?.isPlaying) return;
+      if (e.features.length > 0 && !MapAdapter.popupLocked) {
+        const props = e.features[0].properties;
+        const html = DisasterPopup.buildHoverHtml(props, 'hurricane');
+        MapAdapter.showPopup([e.lngLat.lng, e.lngLat.lat], html);
+      }
+    });
+    this._ensureEmptyClickHandler(map);
   },
 
   /**
@@ -303,6 +323,7 @@ export const TrackModel = {
       }
     };
     map.on('click', CONFIG.layers.hurricaneCircle, this.clickHandler);
+    map.on('click', CONFIG.layers.hurricaneCircle + '-glow', this.clickHandler);
 
     // Hover cursor
     map.on('mouseenter', CONFIG.layers.hurricaneCircle, () => {
@@ -324,6 +345,43 @@ export const TrackModel = {
         MapAdapter.showPopup([e.lngLat.lng, e.lngLat.lat], html);
       }
     });
+    map.on('mouseenter', CONFIG.layers.hurricaneCircle + '-glow', () => {
+      map.getCanvas().style.cursor = 'pointer';
+    });
+    map.on('mouseleave', CONFIG.layers.hurricaneCircle + '-glow', () => {
+      map.getCanvas().style.cursor = '';
+      if (!MapAdapter.popupLocked) {
+        MapAdapter.hidePopup();
+      }
+    });
+    map.on('mousemove', CONFIG.layers.hurricaneCircle + '-glow', (e) => {
+      if (TimeSlider?.isPlaying) return;
+      if (e.features.length > 0 && !MapAdapter.popupLocked) {
+        const props = e.features[0].properties;
+        const html = DisasterPopup.buildHoverHtml(props, 'hurricane');
+        MapAdapter.showPopup([e.lngLat.lng, e.lngLat.lat], html);
+      }
+    });
+    this._ensureEmptyClickHandler(map);
+  },
+
+  _ensureEmptyClickHandler(map) {
+    if (this.emptyClickHandler) return;
+    this.emptyClickHandler = (e) => {
+      if (!MapAdapter?.popupLocked) return;
+      const layersToCheck = [
+        CONFIG.layers.hurricaneCircle,
+        CONFIG.layers.hurricaneCircle + '-glow',
+        CONFIG.layers.hurricaneCircle + '-lines'
+      ].filter((layerId) => map.getLayer(layerId));
+      if (!layersToCheck.length) return;
+      const features = map.queryRenderedFeatures(e.point, { layers: layersToCheck });
+      if (!features.length) {
+        MapAdapter.popupLocked = false;
+        MapAdapter.hidePopup();
+      }
+    };
+    map.on('click', this.emptyClickHandler);
   },
 
   /**
@@ -498,8 +556,13 @@ export const TrackModel = {
     // Remove click handlers (for both points and lines)
     if (this.clickHandler) {
       map.off('click', CONFIG.layers.hurricaneCircle, this.clickHandler);
+      map.off('click', CONFIG.layers.hurricaneCircle + '-glow', this.clickHandler);
       map.off('click', CONFIG.layers.hurricaneCircle + '-lines', this.clickHandler);
       this.clickHandler = null;
+    }
+    if (this.emptyClickHandler) {
+      map.off('click', this.emptyClickHandler);
+      this.emptyClickHandler = null;
     }
 
     // Remove layers (both point and line variants)

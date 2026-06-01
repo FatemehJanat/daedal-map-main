@@ -34,6 +34,7 @@ from mapmover.explore.explore_followups import (
     build_show_borders_response,
 )
 from mapmover.explore.explore_request_context import (
+    apply_selected_popup_override,
     extract_chat_request_context,
 )
 from mapmover.explore.explore_response_adapter import (
@@ -100,6 +101,7 @@ async def chat_endpoint(req: Request):
             build_show_borders_response_func=build_show_borders_response,
             build_drilldown_response_func=build_drilldown_response,
             fetch_geometries_by_loc_ids_func=fetch_geometries_by_loc_ids,
+            apply_selected_popup_override_func=apply_selected_popup_override,
         )
         request_context = prepared_request["request_context"]
         query = prepared_request["query"]
@@ -279,6 +281,7 @@ async def chat_stream_endpoint(req: Request):
                 build_show_borders_response_func=build_show_borders_response,
                 build_drilldown_response_func=build_drilldown_response,
                 fetch_geometries_by_loc_ids_func=fetch_geometries_by_loc_ids,
+                apply_selected_popup_override_func=apply_selected_popup_override,
             )
             request_context = prepared_request["request_context"]
             query = prepared_request["query"]

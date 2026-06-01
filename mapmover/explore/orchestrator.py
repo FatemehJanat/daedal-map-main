@@ -57,6 +57,7 @@ class ExploreOrchestrator:
         time_state,
         loaded_data,
         resolved_location,
+        selected_popup=None,
     ) -> dict:
         return preprocess_explore_request(
             query=query,
@@ -67,6 +68,7 @@ class ExploreOrchestrator:
             time_state=time_state,
             loaded_data=loaded_data,
             resolved_location=resolved_location,
+            selected_popup=selected_popup,
             preprocess_query_func=preprocess_query,
             apply_resolved_location_override_func=apply_resolved_location_override,
         )

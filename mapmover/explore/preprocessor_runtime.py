@@ -307,6 +307,7 @@ def preprocess_query(
     saved_order_names: list = None,
     time_state: dict = None,
     loaded_data: list = None,
+    selected_popup: dict = None,
 ) -> dict:
     """Extract shared hints and attach the Explore-facing summary layer."""
     preprocessor_state = build_preprocessor_signal_bundle(
@@ -354,6 +355,7 @@ def preprocess_query(
         time_state=time_state,
         saved_order_names=saved_order_names,
         loaded_data=loaded_data,
+        selected_popup=selected_popup,
         format_filter_description_func=format_filter_description,
     )
     return hints

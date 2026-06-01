@@ -53,7 +53,6 @@ import * as SavedOrders from './order/saved.js';
 import { ensureRuntimeAccessToken, getAccessToken, getCurrentProfile, getCurrentUser, getSupabaseClient, isAuthBootPending, isAuthenticated, onAuthChanged, refreshRuntimeSession, waitForAuthBoot } from './auth.js';
 import { TutorialMode, parseTutorialCommand } from './tutorial-mode.js';
 import { ResearchModeToggle } from './research/mode.js';
-import { getAllOpsManagedOverlayIds, getOpsOverlayIdsForFeeds } from './overlay-selector.js';
 import {
   isMixedResearchRasterRequest as isMixedResearchRasterRequestImpl,
   shouldAutoShowResearchRaster as shouldAutoShowResearchRasterImpl,
@@ -699,38 +698,10 @@ export const ChatManager = {
     });
     this.opsWatchId = payload?.watch_id || this.opsWatchId;
     this.latestOpsReport = payload?.ops_report || null;
-    this.syncOpsFeedOverlays(payload);
     this.renderOpsDisplayPayloads(payload);
     this.saveState();
     OverlaySelector?.refreshVisibility?.();
     return payload || null;
-  },
-
-  syncOpsFeedOverlays(payload = null) {
-    if (!OverlaySelector || this.mode !== 'ops') {
-      return;
-    }
-    const feeds = Array.isArray(payload?.effective_feeds)
-      ? payload.effective_feeds
-      : (Array.isArray(this.latestOpsReport?.effective_feeds) ? this.latestOpsReport.effective_feeds : []);
-    const desired = new Set(getOpsOverlayIdsForFeeds(feeds));
-    const managed = getAllOpsManagedOverlayIds();
-    const active = new Set(OverlaySelector.getActiveOverlays?.() || []);
-    OverlayController?.setTimelineAutoShowSuppressed?.(true, { hide: true });
-    try {
-      for (const overlayId of managed) {
-        const shouldBeActive = desired.has(overlayId);
-        const isActive = active.has(overlayId);
-        if (shouldBeActive === isActive) {
-          continue;
-        }
-        OverlaySelector.toggle(overlayId);
-      }
-    } finally {
-      OverlayController?.setTimelineAutoShowSuppressed?.(false);
-      document.getElementById('tutorialTimelineRegion')?.classList?.remove('timeline-region-active');
-      window.TimeSlider?.hide?.();
-    }
   },
 
   renderOpsDisplayPayloads(payload = null) {
@@ -744,6 +715,7 @@ export const ChatManager = {
     const signature = JSON.stringify(
       displayPayloads.map((item) => ({
         source_id: item?.source_id,
+        snapshot_hash: item?.snapshot_hash,
         count: item?.count,
         metric_key: item?.metric_key,
         loc_ids: Array.isArray(item?.loc_ids) ? item.loc_ids : [],
@@ -754,17 +726,23 @@ export const ChatManager = {
       return;
     }
     this._lastOpsDisplaySig = signature;
-    for (const display of displayPayloads) {
+    const orderedDisplays = [
+      ...displayPayloads.filter((display) => display?.data_type !== 'metrics'),
+      ...displayPayloads.filter((display) => display?.data_type === 'metrics')
+    ];
+    App?.clearOpsDirectDisplayState?.({ resetMetrics: true });
+    orderedDisplays.forEach((display, index) => {
       if (!display?.geojson?.features?.length) {
-        continue;
+        return;
       }
       this.routeMapResponse(display, {
         origin: 'ops',
         restoringViewState: true,
         skipAdminLevelFilter: true,
-        skipOrderModeLevelHold: true
+        skipOrderModeLevelHold: true,
+        preserveExistingRuntimeLayers: index > 0
       });
-    }
+    });
     document.getElementById('tutorialTimelineRegion')?.classList?.remove('timeline-region-active');
     window.TimeSlider?.hide?.();
   },
@@ -1980,7 +1958,6 @@ export const ChatManager = {
       }
       if (requestMode === 'ops' && response.ops_report) {
         this.latestOpsReport = response.ops_report;
-        this.syncOpsFeedOverlays(response);
         this.renderOpsDisplayPayloads(response);
       }
 
