@@ -2070,16 +2070,17 @@ def get_selection_geometries(loc_ids: list):
         sub_level_ids = [lid for lid in country_loc_ids if lid != iso3]
         deep_level_ids = []
         regular_sub_level_ids = []
-        crosswalk = _load_crosswalk(iso3) or {}
-        sub_admin_levels = crosswalk.get("sub_admin_levels") or {}
-        for lid in sub_level_ids:
-            parts = str(lid).split("-")
-            segment_count = len(parts)
-            admin_level = segment_count - 1
-            if segment_count >= 4 and f"admin_{admin_level}" in sub_admin_levels:
-                deep_level_ids.append(lid)
-            else:
-                regular_sub_level_ids.append(lid)
+        if sub_level_ids:
+            crosswalk = _load_crosswalk(iso3) or {}
+            sub_admin_levels = crosswalk.get("sub_admin_levels") or {}
+            for lid in sub_level_ids:
+                parts = str(lid).split("-")
+                segment_count = len(parts)
+                admin_level = segment_count - 1
+                if segment_count >= 4 and f"admin_{admin_level}" in sub_admin_levels:
+                    deep_level_ids.append(lid)
+                else:
+                    regular_sub_level_ids.append(lid)
 
         # Fetch country-level from global.csv
         if country_level_ids:

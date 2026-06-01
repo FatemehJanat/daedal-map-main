@@ -728,6 +728,8 @@ export const ChatManager = {
       }
     } finally {
       OverlayController?.setTimelineAutoShowSuppressed?.(false);
+      document.getElementById('tutorialTimelineRegion')?.classList?.remove('timeline-region-active');
+      window.TimeSlider?.hide?.();
     }
   },
 
@@ -763,6 +765,8 @@ export const ChatManager = {
         skipOrderModeLevelHold: true
       });
     }
+    document.getElementById('tutorialTimelineRegion')?.classList?.remove('timeline-region-active');
+    window.TimeSlider?.hide?.();
   },
 
   getOpsEmptyStateMessage() {

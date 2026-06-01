@@ -215,8 +215,23 @@ def load_catalog():
             logger.debug(f"Loaded catalog.json from S3 with {len(raw_catalog.get('sources', []))} sources")
             return active_catalog
         except Exception as e:
-            _catalog_missing_time = now
             logger.warning(f"catalog.json S3 fetch failed: {e}")
+            local_catalog_path = get_catalog_path()
+            if local_catalog_path and local_catalog_path.exists():
+                try:
+                    with open(local_catalog_path, 'r', encoding='utf-8-sig') as f:
+                        raw_catalog = json.load(f)
+                    _catalog_cache = raw_catalog
+                    _catalog_cache_time = now
+                    active_catalog = build_active_catalog(raw_catalog)
+                    logger.debug(
+                        "Loaded catalog.json from local disk fallback with %d sources",
+                        len(raw_catalog.get('sources', [])),
+                    )
+                    return active_catalog
+                except Exception as local_error:
+                    logger.warning(f"catalog.json local fallback failed: {local_error}")
+            _catalog_missing_time = now
             return {"sources": [], "total_sources": 0}
 
     # Local mode: read from disk
@@ -461,8 +476,22 @@ def load_full_catalog():
             logger.debug(f"Loaded wip_catalog.json from S3 with {len(raw_catalog.get('sources', []))} sources")
             return raw_catalog
         except Exception as e:
+            logger.warning(f"wip_catalog.json S3 fetch failed, falling back to local/runtime catalogs: {e}")
+            local_wip_path = get_wip_catalog_path()
+            if local_wip_path and local_wip_path.exists():
+                try:
+                    with open(local_wip_path, "r", encoding="utf-8-sig") as f:
+                        raw_catalog = json.load(f)
+                    _full_catalog_cache = raw_catalog
+                    _full_catalog_cache_time = now
+                    logger.debug(
+                        "Loaded wip_catalog.json from local disk fallback with %d sources",
+                        len(raw_catalog.get('sources', [])),
+                    )
+                    return raw_catalog
+                except Exception as local_error:
+                    logger.warning(f"wip_catalog.json local fallback failed: {local_error}")
             _full_catalog_missing_time = now
-            logger.warning(f"wip_catalog.json S3 fetch failed, falling back to catalog.json: {e}")
             override = get_catalog_surface_override()
             if override == "wip":
                 token = None

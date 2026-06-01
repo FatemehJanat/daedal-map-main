@@ -6,7 +6,7 @@ import csv
 import json
 import os
 import re
-from datetime import datetime, timezone
+from datetime import timezone
 from functools import lru_cache
 from pathlib import Path
 
@@ -231,30 +231,6 @@ def _sample_rows(rows: list[dict], fields: tuple[str, ...], limit: int) -> list[
     return sampled
 
 
-def _parse_date_token(value) -> datetime | None:
-    text = str(value or "").strip()
-    if not text:
-        return None
-    normalized = text.replace("Z", "+00:00")
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError:
-        try:
-            parsed = datetime.strptime(text, "%Y-%m-%d")
-        except ValueError:
-            return None
-        return parsed.replace(tzinfo=timezone.utc)
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
-
-
-def _datetime_to_ms(value: datetime | None) -> int | None:
-    if value is None:
-        return None
-    return int(value.timestamp() * 1000)
-
-
 @lru_cache(maxsize=1)
 def _load_country_currency_map() -> list[dict]:
     rows: list[dict] = []
@@ -274,8 +250,6 @@ def _load_country_currency_map() -> list[dict]:
                     {
                         "loc_id": loc_id,
                         "currency_code": currency_code,
-                        "start_date": str(row.get("start_date") or "").strip(),
-                        "end_date": str(row.get("end_date") or "").strip(),
                     }
                 )
     except Exception:
@@ -283,28 +257,12 @@ def _load_country_currency_map() -> list[dict]:
     return rows
 
 
-def _currency_mapping_matches(mapping: dict, snapshot_date: datetime | None) -> bool:
-    if not isinstance(mapping, dict):
-        return False
-    if snapshot_date is None:
-        return True
-    start_dt = _parse_date_token(mapping.get("start_date"))
-    end_dt = _parse_date_token(mapping.get("end_date"))
-    if start_dt and snapshot_date < start_dt:
-        return False
-    if end_dt and snapshot_date > end_dt:
-        return False
-    return True
-
-
 def _build_currency_display_payload(snapshot: dict | None) -> dict | None:
     if not isinstance(snapshot, dict):
         return None
     summary = snapshot.get("payload_summary") if isinstance(snapshot.get("payload_summary"), dict) else {}
     rates = summary.get("rates") if isinstance(summary.get("rates"), list) else []
-    latest_snapshot_date = _parse_date_token(summary.get("latest_snapshot_date"))
-    latest_snapshot_ms = _datetime_to_ms(latest_snapshot_date)
-    if not rates or latest_snapshot_ms is None:
+    if not rates:
         return None
 
     latest_by_code: dict[str, dict] = {}
@@ -319,8 +277,6 @@ def _build_currency_display_payload(snapshot: dict | None) -> dict | None:
     loc_ids: list[str] = []
     rows_by_loc_id: dict[str, dict] = {}
     for mapping in _load_country_currency_map():
-        if not _currency_mapping_matches(mapping, latest_snapshot_date):
-            continue
         loc_id = str(mapping.get("loc_id") or "").strip()
         code = str(mapping.get("currency_code") or "").strip().upper()
         rate = latest_by_code.get(code)
@@ -373,12 +329,6 @@ def _build_currency_display_payload(snapshot: dict | None) -> dict | None:
     if not features:
         return None
 
-    time_key = str(latest_snapshot_ms)
-    year_range = {
-        "min": latest_snapshot_ms,
-        "max": latest_snapshot_ms,
-        "available_years": [latest_snapshot_ms],
-    }
     return {
         "type": "data",
         "data_type": "metrics",
@@ -389,12 +339,8 @@ def _build_currency_display_payload(snapshot: dict | None) -> dict | None:
         "summary": f"Showing latest FX snapshot for {len(features)} countries.",
         "count": len(features),
         "fit": False,
-        "multi_year": True,
         "metric_key": "local_per_usd",
         "available_metrics": ["local_per_usd"],
-        "metric_year_ranges": {"local_per_usd": dict(year_range)},
-        "year_range": year_range,
-        "year_data": {time_key: year_bucket},
         "loc_ids": sorted(year_bucket.keys()),
         "geojson": {
             "type": "FeatureCollection",
