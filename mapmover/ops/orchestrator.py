@@ -78,6 +78,7 @@ class OpsOrchestrator:
         usage_recorder,
         catalog_surface: str | None,
         cache,
+        selected_popup: dict | None = None,
     ) -> dict:
         return await run_ops_orchestrator_call(
             query=query,
@@ -88,4 +89,5 @@ class OpsOrchestrator:
             catalog_surface=catalog_surface,
             ops_orchestrator=self,
             cache=cache,
+            selected_popup=selected_popup,
         )

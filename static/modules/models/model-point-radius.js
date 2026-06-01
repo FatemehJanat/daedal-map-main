@@ -570,6 +570,7 @@ export const PointRadiusModel = {
     const circleLayerId = this._layerId('circle', eventType);
     const glowLayerId = this._layerId('circle-glow', eventType);
     const fillLayerId = this._layerId('circle-fill', eventType);
+    const hitLayerId = this._layerId('circle-hit', eventType);
 
     // Store handler reference per type for cleanup
     this.clickHandlers.set(eventType, clickHandler);
@@ -582,6 +583,10 @@ export const PointRadiusModel = {
     // Register click handler on the glow layer too so small dots are easier to click.
     if (MapAdapter.map.getLayer(glowLayerId)) {
       MapAdapter.map.on('click', glowLayerId, clickHandler);
+    }
+
+    if (MapAdapter.map.getLayer(hitLayerId)) {
+      MapAdapter.map.on('click', hitLayerId, clickHandler);
     }
 
     // Also handle clicks on polygon fill layer (for wildfires with perimeters)
@@ -598,9 +603,11 @@ export const PointRadiusModel = {
           const circleId = this._layerId('circle', type);
           const glowId = this._layerId('circle-glow', type);
           const fillId = this._layerId('circle-fill', type);
+          const hitId = this._layerId('circle-hit', type);
           if (MapAdapter.map.getLayer(circleId)) layersToCheck.push(circleId);
           if (MapAdapter.map.getLayer(glowId)) layersToCheck.push(glowId);
           if (MapAdapter.map.getLayer(fillId)) layersToCheck.push(fillId);
+          if (MapAdapter.map.getLayer(hitId)) layersToCheck.push(hitId);
         }
 
         if (layersToCheck.length > 0) {
@@ -660,6 +667,29 @@ export const PointRadiusModel = {
         }
       });
       MapAdapter.map.on('mouseleave', glowLayerId, () => {
+        if (!MapAdapter.popupLocked) {
+          MapAdapter.hidePopup();
+        }
+      });
+    }
+
+    if (MapAdapter.map.getLayer(hitLayerId)) {
+      MapAdapter.map.on('mouseenter', hitLayerId, () => {
+        MapAdapter.map.getCanvas().style.cursor = 'pointer';
+      });
+      MapAdapter.map.on('mouseleave', hitLayerId, () => {
+        MapAdapter.map.getCanvas().style.cursor = '';
+      });
+
+      MapAdapter.map.on('mousemove', hitLayerId, (e) => {
+        if (TimeSlider?.isPlaying) return;
+        if (e.features.length > 0 && !MapAdapter.popupLocked) {
+          const props = e.features[0].properties;
+          const html = DisasterPopup.buildHoverHtml(props, eventType);
+          MapAdapter.showPopup([e.lngLat.lng, e.lngLat.lat], html);
+        }
+      });
+      MapAdapter.map.on('mouseleave', hitLayerId, () => {
         if (!MapAdapter.popupLocked) {
           MapAdapter.hidePopup();
         }
@@ -1457,6 +1487,21 @@ export const PointRadiusModel = {
       }
     });
 
+    map.addLayer({
+      id: this._layerId('circle-hit', eventType),
+      type: 'circle',
+      source: sourceId,
+      filter: pointFilter,
+      layout: {
+        'circle-sort-key': sortKey
+      },
+      paint: {
+        'circle-radius': ['max', 12, sizeBoostExpr(['*', sizeExpr, 2.8])],
+        'circle-color': '#ff6600',
+        'circle-opacity': 0.01
+      }
+    });
+
     // Main fire circle (points only)
     map.addLayer({
       id: this._layerId('circle', eventType),
@@ -2062,9 +2107,11 @@ export const PointRadiusModel = {
       const circleLayerId = this._layerId('circle', eventType);
       const glowLayerId = this._layerId('circle-glow', eventType);
       const fillLayerId = this._layerId('circle-fill', eventType);
+      const hitLayerId = this._layerId('circle-hit', eventType);
       map.off('click', circleLayerId, handler);
       map.off('click', glowLayerId, handler);
       map.off('click', fillLayerId, handler);
+      map.off('click', hitLayerId, handler);
       this.clickHandlers.delete(eventType);
     }
 
@@ -2072,6 +2119,7 @@ export const PointRadiusModel = {
     const layerIds = [
       this._layerId('circle', eventType),
       this._layerId('circle-glow', eventType),
+      this._layerId('circle-hit', eventType),
       this._layerId('circle-fill', eventType),     // Wildfire polygon fill
       this._layerId('circle-stroke', eventType),   // Wildfire polygon stroke
       this._layerId('circle-sequence', eventType), // Green sequence highlight

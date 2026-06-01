@@ -428,9 +428,13 @@ def _build_currency_display_payload(snapshot: dict | None) -> dict | None:
         rate = latest_by_code.get(code)
         if not loc_id or rate is None:
             continue
+        try:
+            local_per_usd = float(rate.get("local_per_usd"))
+        except (TypeError, ValueError):
+            continue
         rows_by_loc_id[loc_id] = {
             "loc_id": loc_id,
-            "local_per_usd": rate.get("local_per_usd"),
+            "local_per_usd": local_per_usd,
             "currency_code": code,
             "date": rate.get("date"),
             "source_id": rate.get("source_id"),

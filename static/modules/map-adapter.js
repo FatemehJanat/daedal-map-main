@@ -1026,7 +1026,9 @@ export const MapAdapter = {
       this.map.on('click', (e) => {
         // Check if click was on any interactive feature (choropleth or event layer)
         // We need to check multiple layers to avoid interfering with event click handlers
-        const fillFeatures = this.map.queryRenderedFeatures(e.point, { layers: [fillLayer] });
+        const fillFeatures = this.map.getLayer(fillLayer)
+          ? this.map.queryRenderedFeatures(e.point, { layers: [fillLayer] })
+          : [];
         const selectionFeatures = this.map.getLayer(CONFIG.layers.selectionFill)
           ? this.map.queryRenderedFeatures(e.point, { layers: [CONFIG.layers.selectionFill] })
           : [];

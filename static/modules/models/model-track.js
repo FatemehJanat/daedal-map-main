@@ -147,6 +147,22 @@ export const TrackModel = {
       }
     });
 
+    map.addLayer({
+      id: CONFIG.layers.hurricaneCircle + '-lines-hit',
+      type: 'line',
+      source: CONFIG.layers.hurricaneSource,
+      paint: {
+        'line-color': '#ffffff',
+        'line-width': [
+          'interpolate', ['linear'], ['zoom'],
+          2, 10,
+          5, 16,
+          8, 24
+        ],
+        'line-opacity': 0.01
+      }
+    }, CONFIG.layers.hurricaneCircle + '-lines');
+
     // Add glow effect for lines
     map.addLayer({
       id: CONFIG.layers.hurricaneCircle + '-glow',
@@ -208,6 +224,7 @@ export const TrackModel = {
       }
     };
     map.on('click', CONFIG.layers.hurricaneCircle + '-lines', this.clickHandler);
+    map.on('click', CONFIG.layers.hurricaneCircle + '-lines-hit', this.clickHandler);
     map.on('click', CONFIG.layers.hurricaneCircle + '-glow', this.clickHandler);
 
     // Hover cursor for lines
@@ -247,6 +264,23 @@ export const TrackModel = {
         MapAdapter.showPopup([e.lngLat.lng, e.lngLat.lat], html);
       }
     });
+    map.on('mouseenter', CONFIG.layers.hurricaneCircle + '-lines-hit', () => {
+      map.getCanvas().style.cursor = 'pointer';
+    });
+    map.on('mouseleave', CONFIG.layers.hurricaneCircle + '-lines-hit', () => {
+      map.getCanvas().style.cursor = '';
+      if (!MapAdapter.popupLocked) {
+        MapAdapter.hidePopup();
+      }
+    });
+    map.on('mousemove', CONFIG.layers.hurricaneCircle + '-lines-hit', (e) => {
+      if (TimeSlider?.isPlaying) return;
+      if (e.features.length > 0 && !MapAdapter.popupLocked) {
+        const props = e.features[0].properties;
+        const html = DisasterPopup.buildHoverHtml(props, 'hurricane');
+        MapAdapter.showPopup([e.lngLat.lng, e.lngLat.lat], html);
+      }
+    });
     this._ensureEmptyClickHandler(map);
   },
 
@@ -265,6 +299,17 @@ export const TrackModel = {
         'circle-color': categoryColorExpr,
         'circle-opacity': 0.3,
         'circle-blur': 1
+      }
+    });
+
+    map.addLayer({
+      id: CONFIG.layers.hurricaneCircle + '-hit',
+      type: 'circle',
+      source: CONFIG.layers.hurricaneSource,
+      paint: {
+        'circle-radius': 18,
+        'circle-color': '#ffffff',
+        'circle-opacity': 0.01
       }
     });
 
@@ -323,6 +368,7 @@ export const TrackModel = {
       }
     };
     map.on('click', CONFIG.layers.hurricaneCircle, this.clickHandler);
+    map.on('click', CONFIG.layers.hurricaneCircle + '-hit', this.clickHandler);
     map.on('click', CONFIG.layers.hurricaneCircle + '-glow', this.clickHandler);
 
     // Hover cursor
@@ -362,6 +408,23 @@ export const TrackModel = {
         MapAdapter.showPopup([e.lngLat.lng, e.lngLat.lat], html);
       }
     });
+    map.on('mouseenter', CONFIG.layers.hurricaneCircle + '-hit', () => {
+      map.getCanvas().style.cursor = 'pointer';
+    });
+    map.on('mouseleave', CONFIG.layers.hurricaneCircle + '-hit', () => {
+      map.getCanvas().style.cursor = '';
+      if (!MapAdapter.popupLocked) {
+        MapAdapter.hidePopup();
+      }
+    });
+    map.on('mousemove', CONFIG.layers.hurricaneCircle + '-hit', (e) => {
+      if (TimeSlider?.isPlaying) return;
+      if (e.features.length > 0 && !MapAdapter.popupLocked) {
+        const props = e.features[0].properties;
+        const html = DisasterPopup.buildHoverHtml(props, 'hurricane');
+        MapAdapter.showPopup([e.lngLat.lng, e.lngLat.lat], html);
+      }
+    });
     this._ensureEmptyClickHandler(map);
   },
 
@@ -371,8 +434,10 @@ export const TrackModel = {
       if (!MapAdapter?.popupLocked) return;
       const layersToCheck = [
         CONFIG.layers.hurricaneCircle,
+        CONFIG.layers.hurricaneCircle + '-hit',
         CONFIG.layers.hurricaneCircle + '-glow',
-        CONFIG.layers.hurricaneCircle + '-lines'
+        CONFIG.layers.hurricaneCircle + '-lines',
+        CONFIG.layers.hurricaneCircle + '-lines-hit'
       ].filter((layerId) => map.getLayer(layerId));
       if (!layersToCheck.length) return;
       const features = map.queryRenderedFeatures(e.point, { layers: layersToCheck });
@@ -556,8 +621,10 @@ export const TrackModel = {
     // Remove click handlers (for both points and lines)
     if (this.clickHandler) {
       map.off('click', CONFIG.layers.hurricaneCircle, this.clickHandler);
+      map.off('click', CONFIG.layers.hurricaneCircle + '-hit', this.clickHandler);
       map.off('click', CONFIG.layers.hurricaneCircle + '-glow', this.clickHandler);
       map.off('click', CONFIG.layers.hurricaneCircle + '-lines', this.clickHandler);
+      map.off('click', CONFIG.layers.hurricaneCircle + '-lines-hit', this.clickHandler);
       this.clickHandler = null;
     }
     if (this.emptyClickHandler) {
@@ -569,8 +636,10 @@ export const TrackModel = {
     const layersToRemove = [
       CONFIG.layers.hurricaneLabel,
       CONFIG.layers.hurricaneCircle,
+      CONFIG.layers.hurricaneCircle + '-hit',
       CONFIG.layers.hurricaneCircle + '-glow',
-      CONFIG.layers.hurricaneCircle + '-lines'
+      CONFIG.layers.hurricaneCircle + '-lines',
+      CONFIG.layers.hurricaneCircle + '-lines-hit'
     ];
 
     for (const layerId of layersToRemove) {

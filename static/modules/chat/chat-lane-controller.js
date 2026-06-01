@@ -6,6 +6,12 @@ function normalizeChatMode(mode, chatModes = ['explore', 'research', 'ops']) {
   return chatModes.includes(mode) ? mode : 'explore';
 }
 
+function paneHasMessages(pane) {
+  if (!pane) return false;
+  if (pane.querySelector('.chat-message')) return true;
+  return String(pane.textContent || '').trim().length > 0;
+}
+
 export async function switchChatMode(ctx, mode, deps = {}) {
   const App = deps.App || null;
   const OverlaySelector = deps.OverlaySelector || null;
@@ -32,7 +38,9 @@ export async function switchChatMode(ctx, mode, deps = {}) {
     }
   }
 
-  if (ctx.history.length === 0 && !ctx.modeMessagesHtml[mode]) {
+  const pane = ctx.messagePanes?.[mode] || null;
+  const hasStoredHtml = String(ctx.modeMessagesHtml?.[mode] || '').trim().length > 0;
+  if (ctx.history.length === 0 && !hasStoredHtml && !paneHasMessages(pane)) {
     await seedEmptyConversation(ctx, mode, deps);
   }
 
@@ -43,7 +51,7 @@ export async function switchChatMode(ctx, mode, deps = {}) {
 export async function seedEmptyConversation(ctx, mode = ctx.mode, deps = {}) {
   const welcomeMessage = deps.WELCOME_MESSAGE || '';
   const pane = ctx.messagePanes?.[mode];
-  if (pane && pane.childElementCount > 0) return;
+  if (paneHasMessages(pane)) return;
 
   if (mode === 'research') {
     try {

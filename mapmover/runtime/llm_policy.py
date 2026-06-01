@@ -22,12 +22,14 @@ class LLMSelection:
 _DEFAULT_SELECTIONS: dict[str, tuple[str, str, float]] = {
     "explore_fast_haiku_default": ("anthropic", "claude-haiku-4-5-20251001", 0.0),
     "research_deep_sonnet_opus_default": ("anthropic", "claude-sonnet-4-6", 0.1),
+    "ops_fast_haiku_default": ("anthropic", "claude-haiku-4-5-20251001", 0.0),
     "ops_balanced_sonnet_default": ("anthropic", "claude-sonnet-4-6", 0.1),
 }
 
 _ENV_PREFIX_BY_POLICY: dict[str, str] = {
     "explore_fast_haiku_default": "EXPLORE",
     "research_deep_sonnet_opus_default": "RESEARCH",
+    "ops_fast_haiku_default": "OPS",
     "ops_balanced_sonnet_default": "OPS",
 }
 
