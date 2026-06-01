@@ -1792,15 +1792,22 @@ export const App = {
       ChoroplethManager.reset();
 
       if (data.geojson && data.geojson.type === 'FeatureCollection') {
-        const filteredGeojson = this.filterGeojsonByAdminLevel(data.geojson, ViewportLoader.currentAdminLevel);
+        const explicitLevelMatch = String(data.geographic_level || '').match(/^admin_(\d+)$/);
+        const loadedAdminLevel = explicitLevelMatch ? parseInt(explicitLevelMatch[1], 10) : ViewportLoader.currentAdminLevel;
+        const displayGeojson = options.skipAdminLevelFilter
+          ? data.geojson
+          : (() => {
+              const filteredGeojson = this.filterGeojsonByAdminLevel(data.geojson, loadedAdminLevel);
+              return filteredGeojson?.features?.length ? filteredGeojson : data.geojson;
+            })();
         if (options.lazyLoad) {
-          MapAdapter.updateSourceData(filteredGeojson);
+          MapAdapter.updateSourceData(displayGeojson);
         } else {
-          MapAdapter.loadGeoJSON(filteredGeojson);
+          MapAdapter.loadGeoJSON(displayGeojson);
           if (!skipFit) MapAdapter.fitToBounds(data.geojson);
-          const explicitLevelMatch = String(data.geographic_level || '').match(/^admin_(\d+)$/);
-          const loadedAdminLevel = explicitLevelMatch ? parseInt(explicitLevelMatch[1], 10) : ViewportLoader.currentAdminLevel;
-          ViewportLoader.holdOrderModeLevel?.(loadedAdminLevel, 1400);
+          if (!options.skipOrderModeLevelHold) {
+            ViewportLoader.holdOrderModeLevel?.(loadedAdminLevel, 1400);
+          }
         }
 
         if (ChatManager?.mode !== 'research' && data.data_type === 'metrics' && OverlaySelector && !OverlaySelector.isActive('demographics')) {

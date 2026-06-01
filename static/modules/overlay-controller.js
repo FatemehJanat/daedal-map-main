@@ -611,6 +611,21 @@ export const OverlayController = {
   // Startup/runtime mode flags
   initialized: false,
   exploreRuntimeEnabled: false,
+  suppressTimelineAutoShow: false,
+
+  setTimelineAutoShowSuppressed(suppressed, options = {}) {
+    this.suppressTimelineAutoShow = Boolean(suppressed);
+    if (this.suppressTimelineAutoShow && options.hide && TimeSlider?.hide) {
+      TimeSlider.hide();
+    }
+  },
+
+  showTimelineIfAllowed() {
+    if (this.suppressTimelineAutoShow) {
+      return;
+    }
+    TimeSlider?.show?.();
+  },
 
   /**
    * Initialize the overlay controller.
@@ -1272,7 +1287,7 @@ export const OverlayController = {
         }
       }
       if (Object.keys(yearRangeCache).length > 0) {
-        TimeSlider.show();
+        this.showTimelineIfAllowed();
       }
     }
 
@@ -1643,7 +1658,7 @@ export const OverlayController = {
           granularity: 'timestamp',
           available: null
         });
-        TimeSlider.show();
+        this.showTimelineIfAllowed();
 
         // Position slider at start of loaded data
         const yearData = cachedData.years[year];
@@ -1771,7 +1786,7 @@ export const OverlayController = {
           granularity: 'yearly',
           available: null
         });
-        TimeSlider.show();
+        this.showTimelineIfAllowed();
         console.log(`OverlayController: TimeSlider range ${minYear}-${maxYear}, loaded past 30 days`);
       }
 

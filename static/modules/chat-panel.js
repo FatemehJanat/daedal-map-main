@@ -716,14 +716,18 @@ export const ChatManager = {
     const desired = new Set(getOpsOverlayIdsForFeeds(feeds));
     const managed = getAllOpsManagedOverlayIds();
     const active = new Set(OverlaySelector.getActiveOverlays?.() || []);
-
-    for (const overlayId of managed) {
-      const shouldBeActive = desired.has(overlayId);
-      const isActive = active.has(overlayId);
-      if (shouldBeActive === isActive) {
-        continue;
+    OverlayController?.setTimelineAutoShowSuppressed?.(true, { hide: true });
+    try {
+      for (const overlayId of managed) {
+        const shouldBeActive = desired.has(overlayId);
+        const isActive = active.has(overlayId);
+        if (shouldBeActive === isActive) {
+          continue;
+        }
+        OverlaySelector.toggle(overlayId);
       }
-      OverlaySelector.toggle(overlayId);
+    } finally {
+      OverlayController?.setTimelineAutoShowSuppressed?.(false);
     }
   },
 
@@ -752,7 +756,12 @@ export const ChatManager = {
       if (!display?.geojson?.features?.length) {
         continue;
       }
-      this.routeMapResponse(display, { origin: 'ops', restoringViewState: true });
+      this.routeMapResponse(display, {
+        origin: 'ops',
+        restoringViewState: true,
+        skipAdminLevelFilter: true,
+        skipOrderModeLevelHold: true
+      });
     }
   },
 
