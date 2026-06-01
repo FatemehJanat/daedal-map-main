@@ -362,6 +362,8 @@ export const MapAdapter = {
           CONFIG.colors.fillOpacity
         ];
 
+    const overlayAnchorId = this.getSharedOverlayAnchorLayerId();
+
     // Add fill layer
     this.map.addLayer({
       id: CONFIG.layers.fill,
@@ -371,7 +373,7 @@ export const MapAdapter = {
         'fill-color': fillColor,
         'fill-opacity': fillOpacity
       }
-    });
+    }, overlayAnchorId || undefined);
 
     // Determine stroke color based on focal coloring
     const strokeColor = debugMode
@@ -399,7 +401,7 @@ export const MapAdapter = {
         ],
         'line-opacity': this.getFocalStrokeOpacityExpression()
       }
-    });
+    }, overlayAnchorId || undefined);
 
     // Rebind base-layer interactions whenever regions-fill is recreated.
     this.setupEventHandlers();
@@ -835,6 +837,27 @@ export const MapAdapter = {
     if (this.map.getSource(CONFIG.layers.source)) {
       this.map.removeSource(CONFIG.layers.source);
     }
+  },
+
+  getSharedOverlayAnchorLayerId() {
+    if (!this.map?.getStyle?.()) return null;
+    const styleLayers = this.map.getStyle().layers || [];
+    const overlayPatterns = [
+      /^selection-/,
+      /^hurricane-/,
+      /-geometry-(fill|stroke|label)$/,
+      /-(circle|circle-glow|circle-fill|circle-stroke|label|radius-outer|radius-inner|connections|wavefront|wavefront-glow)$/,
+      /^event-/,
+      /^wind-radii/
+    ];
+    for (const layer of styleLayers) {
+      const id = String(layer?.id || '');
+      if (!id || id === CONFIG.layers.fill || id === CONFIG.layers.stroke) continue;
+      if (overlayPatterns.some((pattern) => pattern.test(id))) {
+        return id;
+      }
+    }
+    return null;
   },
 
   /**
@@ -1635,6 +1658,9 @@ export const MapAdapter = {
    * Clear the navigation layer
    */
   clearNavigationLayer() {
+    if (!this.map) {
+      return;
+    }
     if (this.map.getLayer(CONFIG.layers.selectionFill)) {
       this.map.removeLayer(CONFIG.layers.selectionFill);
     }
@@ -1714,6 +1740,10 @@ export const MapAdapter = {
   },
 
   clearResearchDisplayLayers() {
+    if (!this.map) {
+      this.researchDisplayLayerIds = [];
+      return;
+    }
     for (const layer of this.researchDisplayLayerIds || []) {
       if (layer?.strokeId && this.map.getLayer(layer.strokeId)) {
         this.map.removeLayer(layer.strokeId);

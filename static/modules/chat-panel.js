@@ -367,7 +367,7 @@ export const ChatManager = {
           if (this.mode === 'research') {
             await this.refreshResearchManifest();
           } else if (this.mode === 'ops') {
-            await refreshRuntimeSession({ forceSessionRefresh: true, forceProfileRefresh: true });
+            await refreshRuntimeSession({ forceProfileRefresh: true });
             await this.refreshOpsReport();
           }
           this.updateCatalogSurfaceAccess();
@@ -688,7 +688,7 @@ export const ChatManager = {
 
   async refreshOpsReport({ loadWatch = false } = {}) {
     const endpoint = loadWatch ? '/api/ops/load-watch' : '/api/ops/report';
-    await refreshRuntimeSession({ forceSessionRefresh: true, forceProfileRefresh: true });
+    await refreshRuntimeSession({ forceProfileRefresh: true });
     const payload = await postMsgpack(endpoint, {
       sessionId: this.getSessionIdForMode('ops'),
       watch_id: this.opsWatchId || this.getSessionIdForMode('ops'),

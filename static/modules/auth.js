@@ -25,6 +25,7 @@ let initPromise = null;
 let authBootPending = false;
 let authBootSettled = false;
 let authBootWaiters = [];
+let runtimeSessionRefreshPromise = null;
 
 function isLocalLikeHost(hostname) {
   const value = String(hostname || '').trim().toLowerCase();
@@ -530,24 +531,39 @@ export async function refreshRuntimeSession({ forceSessionRefresh = false, force
   if (!authClient || !authConfig?.enabled) {
     return null;
   }
-  try {
-    const sessionResponse = forceSessionRefresh
-      ? await authClient.auth.refreshSession()
-      : await authClient.auth.getSession();
-    const { data, error } = sessionResponse;
-    if (error) {
-      throw error;
-    }
-    currentSession = data?.session || null;
-    _lastAuthUserId = currentSession?.user?.id ?? null;
-    clearLegacySharedCookies();
-    await fetchProfile({ forceRefresh: forceProfileRefresh });
-    updateDom();
-    return currentSession;
-  } catch (error) {
-    console.warn('[Auth] Runtime session refresh failed:', error?.message || error);
-    return null;
+  if (runtimeSessionRefreshPromise) {
+    return await runtimeSessionRefreshPromise;
   }
+  runtimeSessionRefreshPromise = (async () => {
+    try {
+      const current = await authClient.auth.getSession();
+      const currentError = current?.error;
+      if (currentError) {
+        throw currentError;
+      }
+      let session = current?.data?.session || null;
+      if (forceSessionRefresh && session?.refresh_token) {
+        const refreshed = await authClient.auth.refreshSession();
+        const refreshError = refreshed?.error;
+        if (refreshError) {
+          throw refreshError;
+        }
+        session = refreshed?.data?.session || session;
+      }
+      currentSession = session;
+      _lastAuthUserId = currentSession?.user?.id ?? null;
+      clearLegacySharedCookies();
+      await fetchProfile({ forceRefresh: forceProfileRefresh });
+      updateDom();
+      return currentSession;
+    } catch (error) {
+      console.warn('[Auth] Runtime session refresh failed:', error?.message || error);
+      return null;
+    } finally {
+      runtimeSessionRefreshPromise = null;
+    }
+  })();
+  return await runtimeSessionRefreshPromise;
 }
 
 export async function ensureRuntimeAccessToken() {
