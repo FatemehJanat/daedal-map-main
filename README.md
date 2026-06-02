@@ -6,6 +6,18 @@ Public surfaces:
 - App: `https://app.daedalmap.com`
 - Website/docs: `https://daedalmap.com`
 
+There are now two valid ways to approach DaedalMap locally:
+
+- `GitHub/self-host path`
+  - use this repo directly
+  - best for developers, custom data work, and users who want to control setup
+- `Downloadable launcher path`
+  - curated wrapper + engine artifact + pack install flow
+  - best for users who want the same runtime with less setup friction
+
+These should stay the same product at the runtime/contract level, but they do
+not need identical UI on every surface.
+
 If you are using this public GitHub repo as a self-host/local runtime, the practical setup contract right now is:
 - a local data location (`DATA_ROOT`, unless you use the default app-data path)
 - an LLM API key (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`)
@@ -29,6 +41,50 @@ DaedalMap itself is built around three ideas:
 - ask in plain language instead of assembling GIS workflows first
 - keep the map as the primary interface, not an afterthought
 - separate runtime delivery from maintained data-pack delivery
+
+This repo is therefore best read as:
+
+- the open runtime engine
+- the self-host/developer entry point
+- the source of truth for the downloadable engine snapshot users install through
+  the launcher
+
+It is not the hosted account, billing, or admin surface. Those product surfaces
+are separate from the public runtime and may evolve faster than the
+downloadable runtime UI.
+
+## Choosing A Local Path
+
+If you are deciding between this repo and the downloadable launcher, use this
+rule of thumb:
+
+- use the GitHub repo when you want:
+  - code access
+  - self-host setup
+  - custom data or custom pack work
+  - runtime-level experimentation
+- use the downloadable launcher when you want:
+  - a curated install/update path
+  - a local Research-oriented runtime with less setup work
+  - pack installs and local runtime management without treating Git as the main UX
+
+The goal is that both paths converge on the same core runtime behavior even if
+their setup UX differs.
+
+## GitHub Vs Downloadable
+
+If you are browsing this repository, treat it as the developer and self-host
+entry point.
+
+If you want a more guided local install path, use the downloadable launcher
+when it is available through release/distribution channels.
+
+In other words:
+
+- GitHub checkout = source, self-host, customization, local development
+- downloadable launcher = curated local install and runtime management
+
+Both paths are intended to lead to the same DaedalMap runtime family.
 
 ## Data Coverage
 

@@ -6,11 +6,9 @@ from pathlib import Path
 
 import msgpack
 from fastapi import APIRouter, Request, Response
-from shapely.geometry import shape as shapely_shape
 
 from mapmover.data_loading import get_source_path, load_full_catalog, load_source_metadata
 from mapmover.duckdb_helpers import is_cloud_mode
-from mapmover.geometry_handlers import get_selection_geometries
 from mapmover.logging_analytics import logger
 from mapmover.paths import COUNTRIES_DIR
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
@@ -126,16 +124,6 @@ def _raster_dirs_for_source(source_id: str, catalog: dict | None) -> tuple[Path 
     return local_dir, relative_dir or None
 
 
-def _loc_id_clip_level(loc_id: str) -> str | None:
-    segment_count = str(loc_id or "").count("-")
-    return {
-        2: "county",
-        3: "tract",
-        4: "blockgroup",
-        5: "block",
-    }.get(segment_count)
-
-
 def _clip_bundle_relative_path(raster_relative_dir: str | None, period: str) -> str | None:
     if not raster_relative_dir:
         return None
@@ -173,28 +161,6 @@ def _load_clip_bundle_payload(source_id: str, catalog: dict | None, period: str)
 async def _decode_msgpack_request(req: Request) -> dict:
     body_bytes = await req.body()
     return msgpack.unpackb(body_bytes, raw=False)
-
-
-def _selection_bounds_by_loc_id(loc_ids: list[str]) -> dict[str, dict]:
-    geojson = get_selection_geometries(loc_ids) or {}
-    feature_map = {}
-    for feature in (geojson.get("features") or []):
-        props = feature.get("properties") or {}
-        loc_id = props.get("loc_id")
-        geometry = feature.get("geometry")
-        if not loc_id or not geometry:
-            continue
-        try:
-            minx, miny, maxx, maxy = shapely_shape(geometry).bounds
-        except Exception:
-            continue
-        feature_map[str(loc_id)] = {
-            "west": float(minx),
-            "south": float(miny),
-            "east": float(maxx),
-            "north": float(maxy),
-        }
-    return feature_map
 
 
 @router.get("/api/raster/resolve/{source_id}")
@@ -314,74 +280,35 @@ async def get_raster_clips(source_id: str, req: Request):
             return msgpack_error(f"Unknown period: {period}", 404)
 
         bundle_payload = _load_clip_bundle_payload(source_id, catalog, period)
-        if bundle_payload:
-            clips_by_loc_id = bundle_payload.get("clips_by_loc_id") or {}
-            clips = []
-            for loc_id in loc_ids[:50]:
-                clip = clips_by_loc_id.get(loc_id)
-                if not isinstance(clip, dict):
-                    continue
-                clips.append({
-                    "loc_id": loc_id,
-                    "level": str(clip.get("level") or ""),
-                    "period": period,
-                    "pixels": clip.get("pixels") or b"",
-                    "width": int(clip.get("width") or 0),
-                    "height": int(clip.get("height") or 0),
-                    "bounds": clip.get("bounds") or {},
-                    "nodata": float(clip.get("nodata") or 0.0),
-                })
+        if not bundle_payload:
+            return msgpack_error(
+                f"Raster clip bundle not found for period: {period}. "
+                "This runtime now depends on published clip bundles rather than legacy per-clip TIFFs.",
+                404,
+            )
 
-            return msgpack_response({
-                "source_id": source_id,
-                "period": period,
-                "year": int(bundle_payload.get("year") or scene["year"]),
-                "clip_count": len(clips),
-                "clips": clips,
-            })
-
-        raster_dir, raster_relative_dir = _raster_dirs_for_source(source_id, catalog)
-
-        bounds_by_loc_id = _selection_bounds_by_loc_id(loc_ids)
+        clips_by_loc_id = bundle_payload.get("clips_by_loc_id") or {}
         clips = []
         for loc_id in loc_ids[:50]:
-            level = _loc_id_clip_level(loc_id)
-            if not level:
-                continue
-            bounds = bounds_by_loc_id.get(loc_id)
-            if not bounds:
-                continue
-            relative_path = f"{raster_relative_dir}/locid_clips/{level}/{period}/{loc_id}.tif"
-            try:
-                tifffile = _require_tifffile()
-                if is_cloud_mode():
-                    raw_tif = _cloud_object_bytes(relative_path)
-                    if raw_tif is None:
-                        continue
-                    data = tifffile.imread(io.BytesIO(raw_tif))
-                else:
-                    tif_path = raster_dir / "locid_clips" / level / period / f"{loc_id}.tif"
-                    if not tif_path.exists():
-                        continue
-                    data = tifffile.imread(str(tif_path))
-            except Exception:
+            clip = clips_by_loc_id.get(loc_id)
+            if not isinstance(clip, dict):
                 continue
 
             clips.append({
                 "loc_id": loc_id,
-                "level": level,
+                "level": str(clip.get("level") or ""),
                 "period": period,
-                "pixels": data.astype("float32").tobytes(),
-                "width": int(data.shape[1]),
-                "height": int(data.shape[0]),
-                "bounds": bounds,
-                "nodata": 0.0,
+                "pixels": clip.get("pixels") or b"",
+                "width": int(clip.get("width") or 0),
+                "height": int(clip.get("height") or 0),
+                "bounds": clip.get("bounds") or {},
+                "nodata": float(clip.get("nodata") or 0.0),
             })
 
         return msgpack_response({
             "source_id": source_id,
             "period": period,
-            "year": int(scene["year"]),
+            "year": int(bundle_payload.get("year") or scene["year"]),
             "clip_count": len(clips),
             "clips": clips,
         })

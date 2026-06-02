@@ -26,10 +26,43 @@ let authBootPending = false;
 let authBootSettled = false;
 let authBootWaiters = [];
 let runtimeSessionRefreshPromise = null;
+let localWrapperSyncPromise = null;
 
 function isLocalLikeHost(hostname) {
   const value = String(hostname || '').trim().toLowerCase();
   return value === 'localhost' || value === '127.0.0.1' || value === '0.0.0.0';
+}
+
+async function syncLocalWrapperAuthState() {
+  if (!isLocalLikeHost(window.location.hostname)) {
+    return;
+  }
+  if (localWrapperSyncPromise) {
+    return await localWrapperSyncPromise;
+  }
+  localWrapperSyncPromise = (async () => {
+    try {
+      const payload = {
+        authenticated: isAuthenticated(),
+        mode: isAuthenticated() ? 'hosted_account' : 'guest',
+        user_id: currentSession?.user?.id || null,
+        email: currentSession?.user?.email || null,
+        plan_id: currentProfile?.plan_id || (isAuthenticated() ? 'free' : null),
+        account_url: getAccountUrl(),
+        balance_micro_usd: currentProfile?.balance_micro_usd ?? null,
+      };
+      await fetch('/api/local-wrapper/auth-state', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    } catch (error) {
+      console.warn('[Auth] Local wrapper auth-state sync failed:', error?.message || error);
+    } finally {
+      localWrapperSyncPromise = null;
+    }
+  })();
+  return await localWrapperSyncPromise;
 }
 
 function getLocalLinkedSiteBase() {
@@ -40,35 +73,16 @@ function getLocalLinkedSiteBase() {
 function getSiteBase() {
   const configured = String(authConfig?.site_url || '').trim().replace(/\/$/, '');
   const localLinked = getLocalLinkedSiteBase();
-  if (!configured) return localLinked || window.location.origin;
-  if (!localLinked) return configured;
-  try {
-    const configuredUrl = new URL(configured, window.location.origin);
-    if (!isLocalLikeHost(configuredUrl.hostname)) {
-      return localLinked;
-    }
-  } catch (_) {
-    return localLinked;
-  }
-  return configured;
+  if (configured) return configured;
+  return localLinked || window.location.origin;
 }
 
 function getAccountUrl() {
   const configured = String(currentProfile?.account_url || authConfig?.account_url || '/settings').trim() || '/settings';
   const localLinked = getLocalLinkedSiteBase();
-  if (!localLinked) return configured;
-  try {
-    const configuredUrl = new URL(configured, window.location.origin);
-    if (!isLocalLikeHost(configuredUrl.hostname)) {
-      return `${localLinked}/account`;
-    }
-  } catch (_) {
-    if (configured.startsWith('/')) {
-      return configured;
-    }
-    return `${localLinked}/account`;
-  }
-  return configured;
+  if (configured) return configured;
+  if (!localLinked) return '/settings';
+  return `${localLinked}/account`;
 }
 
 async function fetchProfile({ forceRefresh = false } = {}) {
@@ -441,6 +455,7 @@ export const AuthManager = {
           _lastAuthUserId = currentSession?.user?.id ?? null;
           clearLegacySharedCookies();
           await fetchProfile();
+          await syncLocalWrapperAuthState();
           updateDom();
         }
         authClient.auth.onAuthStateChange(async (_event, session) => {
@@ -450,6 +465,7 @@ export const AuthManager = {
           currentSession = session;
           clearLegacySharedCookies();
           await fetchProfile();
+          await syncLocalWrapperAuthState();
           updateDom();
           if (userChanged && (_event === 'SIGNED_IN' || _event === 'SIGNED_OUT')) {
             emitAuthChanged();
@@ -467,6 +483,7 @@ export const AuthManager = {
       }
 
       initialized = true;
+      await syncLocalWrapperAuthState();
       updateDom();
       markAuthBootSettled();
       emitAuthChanged();

@@ -35,6 +35,7 @@ _public_pack_list_cache: dict[bool, dict[str, object]] = {
     True: {"value": None, "cached_at": 0.0},
 }
 _public_pack_detail_cache: dict[tuple[str, bool], dict[str, object]] = {}
+_LOCAL_WRAPPER_AUTH_STATE_NAME = "local_wrapper_auth_state.json"
 
 
 def _utc_now_iso() -> str:
@@ -129,6 +130,30 @@ def _is_loopback_host(value: str) -> bool:
         return ipaddress.ip_address(host).is_loopback
     except ValueError:
         return False
+
+
+def _local_wrapper_auth_state_path() -> Path:
+    from mapmover.paths import STATE_DIR, ensure_dir
+
+    ensure_dir(STATE_DIR)
+    return STATE_DIR / _LOCAL_WRAPPER_AUTH_STATE_NAME
+
+
+def _local_wrapper_state_allowed(request: Request) -> bool:
+    from mapmover.paths import INSTALL_MODE, RUNTIME_MODE
+
+    access_mode = str(os.getenv("DAEDALMAP_ACCESS_MODE", "")).strip().lower()
+    host = ""
+    try:
+        host = str(request.client.host if request.client else "").strip()
+    except Exception:
+        host = ""
+    return (
+        str(INSTALL_MODE).strip().lower() == "local"
+        and str(RUNTIME_MODE).strip().lower() == "local"
+        and access_mode == "local_wrapper"
+        and _is_loopback_host(host)
+    )
 
 
 def _hosted_pack_surface_locked() -> bool:
@@ -2526,6 +2551,7 @@ async def get_auth_me(req: Request):
                     "user_packs": context.get("user_packs", []),
                     "org_packs": context.get("org_packs", []),
                     "ops_feeds": ops_feeds,
+                    "balance_micro_usd": context.get("balance_micro_usd"),
                     "account_url": ACCOUNT_URL,
                 })
         except Exception as exc:
@@ -2541,6 +2567,50 @@ async def get_auth_me(req: Request):
         "max_packs": 2,
         "ops_feeds": (auth_user.get("user_metadata") or {}).get("ops_feeds", []),
     })
+
+
+@router.get("/api/local-wrapper/auth-state")
+async def get_local_wrapper_auth_state(request: Request):
+    """Return the last browser-synced auth snapshot for the local wrapper."""
+    if not _local_wrapper_state_allowed(request):
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    path = _local_wrapper_auth_state_path()
+    if not path.exists():
+        return JSONResponse({"authenticated": False, "mode": "guest", "updated_at": None})
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("Local wrapper auth-state read failed: %s", exc)
+        return JSONResponse({"authenticated": False, "mode": "unknown", "updated_at": None})
+    if not isinstance(data, dict):
+        return JSONResponse({"authenticated": False, "mode": "unknown", "updated_at": None})
+    return JSONResponse(data)
+
+
+@router.post("/api/local-wrapper/auth-state")
+async def post_local_wrapper_auth_state(request: Request):
+    """Persist browser auth/account state for the local launcher UI."""
+    if not _local_wrapper_state_allowed(request):
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    body = await decode_request_body(request)
+    if not isinstance(body, dict):
+        body = {}
+    sanitized = {
+        "authenticated": bool(body.get("authenticated")),
+        "mode": str(body.get("mode") or "").strip() or ("authenticated" if body.get("authenticated") else "guest"),
+        "user_id": str(body.get("user_id") or "").strip() or None,
+        "email": str(body.get("email") or "").strip() or None,
+        "plan_id": str(body.get("plan_id") or "").strip() or None,
+        "account_url": str(body.get("account_url") or "").strip() or None,
+        "balance_micro_usd": int(body.get("balance_micro_usd") or 0) if str(body.get("balance_micro_usd") or "").strip() else None,
+        "updated_at": _utc_now_iso(),
+    }
+    try:
+        _local_wrapper_auth_state_path().write_text(json.dumps(sanitized, indent=2), encoding="utf-8")
+    except Exception as exc:
+        logger.warning("Local wrapper auth-state write failed: %s", exc)
+        return JSONResponse({"error": "Could not persist auth state"}, status_code=500)
+    return JSONResponse({"ok": True, "updated_at": sanitized["updated_at"]})
 
 
 @router.post("/api/orders/queue")
