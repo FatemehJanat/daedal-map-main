@@ -2592,7 +2592,14 @@ async def post_local_wrapper_auth_state(request: Request):
     """Persist browser auth/account state for the local launcher UI."""
     if not _local_wrapper_state_allowed(request):
         return JSONResponse({"error": "Not found"}, status_code=404)
-    body = await decode_request_body(request)
+    content_type = str(request.headers.get("content-type") or "").lower()
+    if "application/json" in content_type:
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+    else:
+        body = await decode_request_body(request)
     if not isinstance(body, dict):
         body = {}
     sanitized = {
