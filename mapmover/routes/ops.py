@@ -13,6 +13,7 @@ from mapmover.ops_route_runtime import (
     setup_required_ops_message,
     snapshot_ops_report,
 )
+from mapmover.ops_ticker import build_cached_aurora_payload, build_cached_ticker_payload
 from mapmover.orchestrator_registry import get_orchestrator
 from mapmover.routes.chat_shared import decode_json_or_msgpack_body, decode_request_body
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
@@ -37,6 +38,34 @@ def _ops_report_payload(route_context) -> dict:
         "effective_feeds": route_context.effective_feeds,
         "ops_report": report,
     }
+
+
+@router.get("/api/ops/ticker")
+async def ops_ticker_endpoint(req: Request):
+    """Live announcement ticker items (space weather, etc.). Public, read-only.
+
+    Open in all modes - the ticker is a standalone announcement bar, not tied to
+    a watch or the chat ops_report.
+    """
+    try:
+        return msgpack_response(build_cached_ticker_payload())
+    except Exception as exc:
+        logger.exception("Ops ticker error")
+        return msgpack_error(str(exc), 500)
+
+
+@router.get("/api/ops/aurora")
+async def ops_aurora_endpoint(req: Request):
+    """Current OVATION aurora forecast band for the map overlay. Public, read-only.
+
+    Returns the renderable cells [[lon, lat, probability], ...] plus the forecast
+    times, straight from the noaa_aurora live snapshot.
+    """
+    try:
+        return msgpack_response(build_cached_aurora_payload())
+    except Exception as exc:
+        logger.exception("Ops aurora error")
+        return msgpack_error(str(exc), 500)
 
 
 @router.post("/api/ops/report")

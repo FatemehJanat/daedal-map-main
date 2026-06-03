@@ -19,6 +19,8 @@ import { HurricaneHandler, setDependencies as setHurricaneDeps } from './hurrica
 import { OverlaySelector, setDependencies as setOverlayDeps } from './overlay-selector.js';
 import { ModelRegistry } from './models/model-registry.js';
 import { OverlayController, setDependencies as setOverlayControllerDeps } from './overlay-controller.js';
+import { TickerController } from './ticker-controller.js';
+import { AuroraOverlay } from './overlay-aurora.js';
 import { DisasterPopup, setDependencies as setDisasterPopupDeps } from './disaster-popup.js';
 import { GeometryModel, setDependencies as setGeometryDeps } from './models/model-geometry.js';
 import { AuthManager } from './auth.js';
@@ -578,6 +580,7 @@ export const App = {
     ResizeManager.init();
     SidebarResizer.init();
     TutorialMode.init();
+    TickerController.init();
 
     // Initialize TimeSlider early (UI setup only, no data)
     // This ensures the slider is visible and listener system is ready
@@ -597,6 +600,9 @@ export const App = {
 
     // Initialize map
     await MapAdapter.init();
+
+    // Live aurora overlay (toggleable, all modes; needs the map to exist).
+    AuroraOverlay.init({ MapAdapter });
 
     this.activateLaneMapView(startupMode, { force: true });
     if (startupMode === 'research') {
