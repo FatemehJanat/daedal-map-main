@@ -403,6 +403,7 @@ def _nws_conditions_item(snap: dict, summary: dict) -> dict | None:
         issued=snap.get("upstream_issued_at") or "",
         item_id="nws-conditions",
         lead=True,
+        url="https://api.weather.gov/alerts/active",
     )
 
 
@@ -423,6 +424,7 @@ def nws_alerts_ticker_adapter(snap: dict) -> "list[dict]":
             issued=alert.get("issued_at") or snap.get("upstream_issued_at") or "",
             item_id=alert.get("alert_id"),
             point=alert.get("point"),
+            url=alert.get("alert_id") if str(alert.get("alert_id") or "").startswith("http") else "",
         )
         if item:
             items.append(item)

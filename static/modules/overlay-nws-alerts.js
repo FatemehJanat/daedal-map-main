@@ -156,7 +156,7 @@ export const NwsAlertsOverlay = {
     };
     this._mouseenterHandler = () => { map.getCanvas().style.cursor = 'pointer'; };
     this._mouseleaveHandler = () => { map.getCanvas().style.cursor = ''; };
-    for (const layerId of [FILL_ID, POINT_ID]) {
+    for (const layerId of [FILL_ID, LINE_ID, POINT_ID]) {
       map.on('click', layerId, this._popupHandler);
       map.on('mouseenter', layerId, this._mouseenterHandler);
       map.on('mouseleave', layerId, this._mouseleaveHandler);
@@ -166,7 +166,7 @@ export const NwsAlertsOverlay = {
 
   _unbindPopup(map) {
     if (!this._clickBound || !map) return;
-    for (const layerId of [FILL_ID, POINT_ID]) {
+    for (const layerId of [FILL_ID, LINE_ID, POINT_ID]) {
       if (this._popupHandler) map.off('click', layerId, this._popupHandler);
       if (this._mouseenterHandler) map.off('mouseenter', layerId, this._mouseenterHandler);
       if (this._mouseleaveHandler) map.off('mouseleave', layerId, this._mouseleaveHandler);

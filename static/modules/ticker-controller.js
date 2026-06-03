@@ -40,10 +40,9 @@ export const TickerController = {
     this._injectStyles();
     this._mount(parent);
     this.initialized = true;
-    // The ticker is a persistent display surface (chrome), not a per-feed
-    // overlay - it is on by default in every mode. Chat can show/hide it like
-    // any other control surface (window.TickerController.show()/hide()).
-    this.setEnabled(true);
+    // Lane UI owns when the ticker is visible. Start hidden so Explore and
+    // Research do not flash it during boot before mode state is applied.
+    this.setEnabled(false);
     console.log('TickerController initialized');
   },
 
@@ -67,7 +66,8 @@ export const TickerController = {
         display: inline-block; padding-left: 100%;
         animation: opsTickerScroll 80s linear infinite;
       }
-      #opsTicker:hover .ticker-track { animation-play-state: paused; }
+      #opsTicker:hover .ticker-track,
+      #opsTicker.paused .ticker-track { animation-play-state: paused; }
       #opsTicker .ticker-item { display: inline-block; margin: 0 26px; }
       #opsTicker .ticker-item .src {
         color: #7f8798; text-transform: uppercase; font-size: 11px; margin-right: 7px;
@@ -95,6 +95,8 @@ export const TickerController = {
     bar.appendChild(track);
     parent.appendChild(bar);
     bar.addEventListener('click', (e) => this._onItemClick(e));
+    bar.addEventListener('mouseenter', () => bar.classList.add('paused'));
+    bar.addEventListener('mouseleave', () => bar.classList.remove('paused'));
     this.bar = bar;
     this.track = track;
   },
@@ -102,6 +104,10 @@ export const TickerController = {
   _onItemClick(e) {
     const el = e.target.closest('.ticker-item');
     if (!el) return;
+    if (el.dataset.url) {
+      window.open(el.dataset.url, '_blank', 'noopener');
+      return;
+    }
     const lon = parseFloat(el.dataset.lon);
     const lat = parseFloat(el.dataset.lat);
     const map = MapAdapter?.map;
@@ -109,10 +115,6 @@ export const TickerController = {
       // Located feed: center the event; keep the current zoom.
       map.panTo([lon, lat]);
       return;
-    }
-    if (el.dataset.url) {
-      // Non-located feed (e.g. space weather): open the source agency page.
-      window.open(el.dataset.url, '_blank', 'noopener');
     }
   },
 

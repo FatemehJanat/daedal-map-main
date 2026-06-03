@@ -2210,6 +2210,30 @@ export const OverlayController = {
       if (overlayId === 'demographics') continue;
       if (!dataCache[overlayId]) continue;
 
+      const endpoint = OVERLAY_ENDPOINTS[overlayId];
+      if (!endpoint) continue;
+
+      // Projection/style switches can leave the map in an in-between state
+      // where a source still exists but its custom layers were dropped. Force a
+      // visual rebuild from cache instead of relying on model.update/setData.
+      const model = ModelRegistry?.getModelForType(endpoint.eventType);
+      if (model) {
+        if (model.clearType) {
+          model.clearType(endpoint.eventType);
+        } else if (model.clear) {
+          model.clear();
+        }
+      }
+
+      // Split-render event types own a secondary polygon model on top of the
+      // point/event model. Clear that too so the cached render fully rebuilds.
+      if (endpoint.eventType === 'wildfire' || endpoint.eventType === 'flood') {
+        const polygonModel = ModelRegistry?.getModel('polygon');
+        if (polygonModel?.clearType) {
+          polygonModel.clearType(endpoint.eventType);
+        }
+      }
+
       // Use current time slider state to render
       if (useLifecycleFiltering && TimeSlider?.currentTime) {
         this.renderFilteredData(overlayId, TimeSlider.currentTime, { useTimestamp: true });
