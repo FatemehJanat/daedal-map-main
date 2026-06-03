@@ -111,6 +111,9 @@ export function applyModeUiState(ctx, deps = {}) {
   ctx.setActiveMessagePane(ctx.mode);
   ctx.updateResearchCorpusStatus();
   OverlaySelector?.refreshVisibility?.();
+  if (ctx.mode === 'ops') {
+    OverlaySelector?.expand?.();
+  }
   updateSidebarModeLayout(ctx);
   updateComposerState(ctx);
 }

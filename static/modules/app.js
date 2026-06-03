@@ -838,7 +838,7 @@ export const App = {
       if (restored.timeSlider) {
         this.applyTimeSliderState(restored.timeSlider);
       } else if (!dataPayload) {
-        TimeSlider.hide?.();
+        TimeSlider.show?.();
       }
       if (!dataPayload && restored.timeSlider && OverlayController?.rerenderFromCache) {
         OverlayController.rerenderFromCache();
