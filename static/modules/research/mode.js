@@ -6,6 +6,8 @@ import { postMsgpack } from '../utils/fetch.js';
 import { getApiUrl } from '../chat/api.js';
 
 export class ResearchModeToggle {
+  static SHOW_CATALOG_SURFACE_CONTROLS = false;
+
   constructor({
     container,
     getSessionId,
@@ -192,7 +194,7 @@ export class ResearchModeToggle {
       btn.title = isActive ? `${this.getModeTitle(mode)} active` : `Switch to ${this.getModeTitle(mode)}`;
     }
     if (this.controls.surfaceWrap) {
-      const showSurfaceControls = this.canUseCatalogSurface;
+      const showSurfaceControls = ResearchModeToggle.SHOW_CATALOG_SURFACE_CONTROLS && this.canUseCatalogSurface;
       this.controls.surfaceWrap.hidden = !showSurfaceControls;
       this.controls.surfaceWrap.classList.toggle('hidden', !showSurfaceControls);
     }

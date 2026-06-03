@@ -122,6 +122,10 @@ export function applyModeUiState(ctx, deps = {}) {
     const inOps = ctx.mode === 'ops';
     overlayController.setTimelineAutoShowSuppressed(inOps, { hide: inOps });
   }
+  const tickerController = window.TickerController || null;
+  if (tickerController?.setEnabled) {
+    tickerController.setEnabled(ctx.mode === 'ops');
+  }
   updateSidebarModeLayout(ctx);
   updateComposerState(ctx);
 }
