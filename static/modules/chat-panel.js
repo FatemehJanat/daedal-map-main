@@ -359,6 +359,16 @@ export const ChatManager = {
     // Initialize order panel and tracker
     this.initOrderPanel();
 
+    if (this.mode === 'ops') {
+      Promise.resolve().then(async () => {
+        try {
+          await this.refreshOpsReport({ loadWatch: true });
+        } catch (error) {
+          console.warn('Could not refresh Ops state on init:', error);
+        }
+      });
+    }
+
     onAuthChanged((event) => {
       Promise.resolve().then(async () => {
         const authState = Boolean(event?.detail?.isAuthenticated);
@@ -686,9 +696,45 @@ export const ChatManager = {
     return manifest;
   },
 
-  async refreshOpsReport({ loadWatch = false } = {}) {
+  isOpsRefreshCommand(query) {
+    const normalized = String(query || '').trim().toLowerCase();
+    return normalized === 'refresh feeds'
+      || normalized === 'update feeds'
+      || normalized === 'refresh ops feeds'
+      || normalized === 'update ops feeds'
+      || normalized === 'reload feeds'
+      || normalized === 'sync feeds';
+  },
+
+  async handleOpsRefreshCommand(query) {
+    const requestMode = this.mode;
+    this.addMessage(query, 'user', { mode: requestMode });
+    this.history.push({ role: 'user', content: query });
+    this.modeHistories[requestMode] = this.history;
+
+    let reply = 'Ops feeds refreshed.';
+    try {
+      const payload = await this.refreshOpsReport({ loadWatch: true, forceSessionRefresh: true });
+      const effectiveFeeds = Array.isArray(payload?.effective_feeds) ? payload.effective_feeds : [];
+      if (effectiveFeeds.length > 0) {
+        reply = `Ops feeds refreshed. Active watch now has ${effectiveFeeds.length} feed${effectiveFeeds.length === 1 ? '' : 's'}: ${effectiveFeeds.join(', ')}.`;
+      } else {
+        reply = payload?.warning || this.getOpsEmptyStateMessage();
+      }
+    } catch (error) {
+      console.warn('Ops feed refresh failed:', error);
+      reply = 'I could not refresh your Ops feeds right now. Please try again.';
+    }
+
+    this.history.push({ role: 'assistant', content: reply });
+    this.modeHistories[requestMode] = this.history;
+    this.addMessage(reply, 'assistant', { mode: requestMode });
+    this.saveState();
+  },
+
+  async refreshOpsReport({ loadWatch = false, forceSessionRefresh = false } = {}) {
     const endpoint = loadWatch ? '/api/ops/load-watch' : '/api/ops/report';
-    await refreshRuntimeSession({ forceProfileRefresh: true });
+    await refreshRuntimeSession({ forceSessionRefresh, forceProfileRefresh: true });
     const payload = await postMsgpack(endpoint, {
       sessionId: this.getSessionIdForMode('ops'),
       watch_id: this.opsWatchId || this.getSessionIdForMode('ops'),
@@ -1812,6 +1858,13 @@ export const ChatManager = {
     if (query.toLowerCase() === 'recover') {
       input.value = '';
       this.handleRecoveryChoice('recover');
+      return;
+    }
+
+    if (requestMode === 'ops' && this.isOpsRefreshCommand(query)) {
+      input.value = '';
+      input.style.height = 'auto';
+      await this.handleOpsRefreshCommand(query);
       return;
     }
 
