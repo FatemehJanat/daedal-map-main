@@ -13,7 +13,11 @@ from mapmover.ops_route_runtime import (
     setup_required_ops_message,
     snapshot_ops_report,
 )
-from mapmover.ops_ticker import build_cached_aurora_payload, build_cached_ticker_payload
+from mapmover.ops_ticker import (
+    build_cached_aurora_payload,
+    build_cached_nws_alerts_payload,
+    build_cached_ticker_payload,
+)
 from mapmover.orchestrator_registry import get_orchestrator
 from mapmover.routes.chat_shared import decode_json_or_msgpack_body, decode_request_body
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
@@ -65,6 +69,20 @@ async def ops_aurora_endpoint(req: Request):
         return msgpack_response(build_cached_aurora_payload())
     except Exception as exc:
         logger.exception("Ops aurora error")
+        return msgpack_error(str(exc), 500)
+
+
+@router.get("/api/ops/nws-alerts")
+async def ops_nws_alerts_endpoint(req: Request):
+    """NWS active alerts as a GeoJSON overlay. Public, read-only.
+
+    Each alert renders as its exact warning polygon when the feed provided one,
+    else the highlighted affected county polygons, else a pin at the centroid.
+    """
+    try:
+        return msgpack_response(build_cached_nws_alerts_payload())
+    except Exception as exc:
+        logger.exception("Ops NWS alerts error")
         return msgpack_error(str(exc), 500)
 
 

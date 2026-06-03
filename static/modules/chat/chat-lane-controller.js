@@ -114,6 +114,14 @@ export function applyModeUiState(ctx, deps = {}) {
   if (ctx.mode === 'ops') {
     OverlaySelector?.expand?.();
   }
+  // Ops mode is "what's happening now" - there is no historical time window, so
+  // enabling an overlay should not pop the time slider / animation bar. Suppress
+  // (and hide) it in Ops; allow it again in Explore/Research.
+  const overlayController = window.OverlayController || null;
+  if (overlayController?.setTimelineAutoShowSuppressed) {
+    const inOps = ctx.mode === 'ops';
+    overlayController.setTimelineAutoShowSuppressed(inOps, { hide: inOps });
+  }
   updateSidebarModeLayout(ctx);
   updateComposerState(ctx);
 }

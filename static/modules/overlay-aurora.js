@@ -1,11 +1,12 @@
 /**
  * Aurora Overlay - live OVATION aurora forecast on the map.
  *
- * A self-contained, toggleable overlay (like the ticker / animation controllers)
- * that draws the current aurora oval as a heatmap on the shared MapLibre map.
- * Available in all modes. Data: GET /api/ops/aurora (msgpack) ->
- * { cells: [[lon, lat, probability], ...], forecast_time, max_probability }.
+ * Draws the current aurora oval as a heatmap on the shared MapLibre map. Driven
+ * by the shared Overlays panel: the "Aurora" overlay routes through
+ * OverlayController.handleOverlayChange -> setEnabled(). This module owns only
+ * the map layer + polling, not its own toggle button.
  *
+ * Data: GET /api/ops/aurora (msgpack) -> { cells: [[lon, lat, probability], ...] }.
  * Note: OVATION longitudes are 0-360; we convert >180 to negative so the band
  * lands in the correct hemisphere. Heatmap is screen-space, so it renders best
  * in flat (mercator) view.
@@ -13,7 +14,6 @@
 
 import { fetchMsgpack } from './utils/fetch.js';
 
-const STORAGE_KEY = 'auroraOverlayEnabled';
 const POLL_INTERVAL_MS = 5 * 60_000;
 const SRC_ID = 'aurora-src';
 const LAYER_ID = 'aurora-heat';
@@ -23,74 +23,24 @@ let MapAdapter = null;
 export const AuroraOverlay = {
   initialized: false,
   enabled: false,
-  toggle: null,
   pollTimer: null,
   lastCells: null,
 
   init(deps = {}) {
     if (this.initialized) return;
     MapAdapter = deps.MapAdapter || MapAdapter;
-    const parent = document.getElementById('mapContainer');
-    if (!parent) {
-      console.warn('AuroraOverlay: #mapContainer not found, skipping');
-      return;
-    }
-    this._injectStyles();
-    this._mountToggle(parent);
-
     // A style reload (globe/satellite switch) drops custom layers; re-add ours.
     if (MapAdapter?.map) {
       MapAdapter.map.on('style.load', () => {
         if (this.enabled && this.lastCells) this._render(this.lastCells);
       });
     }
-
     this.initialized = true;
-    let stored = false;
-    try { stored = localStorage.getItem(STORAGE_KEY) === '1'; } catch (e) {}
-    this.setEnabled(stored, { persist: false });
     console.log('AuroraOverlay initialized');
   },
 
-  _injectStyles() {
-    if (document.getElementById('aurora-overlay-styles')) return;
-    const style = document.createElement('style');
-    style.id = 'aurora-overlay-styles';
-    style.textContent = `
-      #auroraToggle {
-        position: absolute; right: 10px; bottom: 78px; z-index: 46;
-        background: rgba(13, 20, 36, 0.92); color: #9aa4bf;
-        border: 1px solid #2a3a5e; border-radius: 14px; padding: 4px 12px;
-        cursor: pointer; font-family: monospace; font-size: 12px;
-      }
-      #auroraToggle:hover { color: #8cffc0; border-color: #8cffc0; }
-      #auroraToggle.on { color: #8cffc0; border-color: #8cffc0; }
-      #auroraToggle .dot {
-        display: inline-block; width: 7px; height: 7px; border-radius: 50%;
-        background: #555; margin-right: 6px; vertical-align: middle;
-      }
-      #auroraToggle.on .dot { background: #00ff88; box-shadow: 0 0 6px #00ff88; }
-    `;
-    document.head.appendChild(style);
-  },
-
-  _mountToggle(parent) {
-    const btn = document.createElement('button');
-    btn.id = 'auroraToggle';
-    btn.type = 'button';
-    btn.title = 'Toggle the live aurora forecast overlay';
-    btn.innerHTML = '<span class="dot"></span>Aurora';
-    btn.addEventListener('click', () => this.setEnabled(!this.enabled));
-    parent.appendChild(btn);
-    this.toggle = btn;
-  },
-
-  setEnabled(on, { persist = true } = {}) {
+  setEnabled(on) {
     this.enabled = Boolean(on);
-    this.toggle?.classList.toggle('on', this.enabled);
-    if (persist) {
-      try { localStorage.setItem(STORAGE_KEY, this.enabled ? '1' : '0'); } catch (e) {}
-    }
     if (this.enabled) {
       this._refresh();
       this._startPolling();

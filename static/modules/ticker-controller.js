@@ -1,18 +1,17 @@
 /**
- * Ticker Controller - standalone live announcement bar.
+ * Ticker Controller - live announcement bar.
  *
- * A self-contained, toggleable overlay (like the overlay/animation controllers)
- * that scrolls live announcements (space weather, etc.) along the bottom of the
- * map. Independent of chat mode - available in Explore, Research, and Ops.
+ * A scrolling announcement bar (space weather, etc.) along the bottom of the
+ * map. Driven by the shared Overlays panel: the "Space Weather Alerts" overlay
+ * routes through OverlayController.handleOverlayChange -> setEnabled(). This
+ * module owns only the bar DOM + polling, not its own toggle button.
  *
  * Data source: GET /api/ops/ticker (msgpack) -> { items: [{source, text,
- * severity, scale, issued}, ...] }. The ticker is read-only and best-effort;
- * if the endpoint is empty or fails, the bar simply shows nothing.
+ * severity, scale, issued}, ...] }. Read-only and best-effort.
  */
 
 import { fetchMsgpack } from './utils/fetch.js';
 
-const STORAGE_KEY = 'opsTickerEnabled';
 const POLL_INTERVAL_MS = 60_000;
 
 const SEVERITY_COLORS = {
@@ -28,7 +27,6 @@ export const TickerController = {
   enabled: false,
   bar: null,
   track: null,
-  toggle: null,
   pollTimer: null,
 
   init() {
@@ -41,13 +39,16 @@ export const TickerController = {
     this._injectStyles();
     this._mount(parent);
     this.initialized = true;
-
-    // Default off; restore the user's last choice.
-    let stored = false;
-    try { stored = localStorage.getItem(STORAGE_KEY) === '1'; } catch (e) {}
-    this.setEnabled(stored, { persist: false });
+    // The ticker is a persistent display surface (chrome), not a per-feed
+    // overlay - it is on by default in every mode. Chat can show/hide it like
+    // any other control surface (window.TickerController.show()/hide()).
+    this.setEnabled(true);
     console.log('TickerController initialized');
   },
+
+  // Friendly aliases for chat / programmatic control of this surface.
+  show() { this.setEnabled(true); },
+  hide() { this.setEnabled(false); },
 
   _injectStyles() {
     if (document.getElementById('ops-ticker-styles')) return;
@@ -75,19 +76,6 @@ export const TickerController = {
         background: rgba(255,255,255,0.08); font-size: 11px;
       }
       #opsTicker .ticker-empty { color: #7f8798; margin-left: 16px; }
-      #opsTickerToggle {
-        position: absolute; right: 10px; bottom: 42px; z-index: 46;
-        background: rgba(13, 20, 36, 0.92); color: #9aa4bf;
-        border: 1px solid #2a3a5e; border-radius: 14px; padding: 4px 12px;
-        cursor: pointer; font-family: monospace; font-size: 12px;
-      }
-      #opsTickerToggle:hover { color: #00d4ff; border-color: #00d4ff; }
-      #opsTickerToggle.on { color: #00d4ff; border-color: #00d4ff; }
-      #opsTickerToggle .dot {
-        display: inline-block; width: 7px; height: 7px; border-radius: 50%;
-        background: #555; margin-right: 6px; vertical-align: middle;
-      }
-      #opsTickerToggle.on .dot { background: #00ff88; box-shadow: 0 0 6px #00ff88; }
       @keyframes opsTickerScroll {
         from { transform: translateX(0); }
         to { transform: translateX(-50%); }
@@ -97,33 +85,19 @@ export const TickerController = {
   },
 
   _mount(parent) {
-    const toggle = document.createElement('button');
-    toggle.id = 'opsTickerToggle';
-    toggle.type = 'button';
-    toggle.title = 'Toggle the live announcement ticker';
-    toggle.innerHTML = '<span class="dot"></span>Alerts';
-    toggle.addEventListener('click', () => this.setEnabled(!this.enabled));
-    parent.appendChild(toggle);
-
     const bar = document.createElement('div');
     bar.id = 'opsTicker';
     const track = document.createElement('div');
     track.className = 'ticker-track';
     bar.appendChild(track);
     parent.appendChild(bar);
-
-    this.toggle = toggle;
     this.bar = bar;
     this.track = track;
   },
 
-  setEnabled(on, { persist = true } = {}) {
+  setEnabled(on) {
     this.enabled = Boolean(on);
     this.bar?.classList.toggle('on', this.enabled);
-    this.toggle?.classList.toggle('on', this.enabled);
-    if (persist) {
-      try { localStorage.setItem(STORAGE_KEY, this.enabled ? '1' : '0'); } catch (e) {}
-    }
     if (this.enabled) {
       this._refresh();
       this._startPolling();
@@ -157,12 +131,10 @@ export const TickerController = {
 
   _render(items) {
     if (!this.track) return;
-
     if (!items.length) {
       this.track.innerHTML = '<span class="ticker-empty">No active announcements</span>';
       return;
     }
-
     const html = items.map(it => this._itemHtml(it)).join('');
     // Duplicate the row so the -50% scroll loops seamlessly.
     this.track.innerHTML = html + html;
@@ -182,5 +154,9 @@ export const TickerController = {
     return div.innerHTML;
   }
 };
+
+// Expose globally so chat / other control code can show/hide this surface,
+// the same way window.OverlaySelector and window.OverlayController are exposed.
+window.TickerController = TickerController;
 
 export default TickerController;

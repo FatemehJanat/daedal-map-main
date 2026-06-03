@@ -87,6 +87,8 @@ import {
 import { fetchMsgpack } from './utils/fetch.js';
 import { WeatherGridModel, setDependencies as setWeatherGridDeps } from './models/model-weather-grid.js';
 import { GeometryModel } from './models/model-geometry.js';
+import { AuroraOverlay } from './overlay-aurora.js';
+import { NwsAlertsOverlay } from './overlay-nws-alerts.js';
 
 // Dependencies set via setDependencies
 let MapAdapter = null;
@@ -1517,6 +1519,17 @@ export const OverlayController = {
    */
   async handleOverlayChange(overlayId, isActive) {
     console.log(`OverlayController: ${overlayId} ${isActive ? 'ON' : 'OFF'}`);
+
+    // Live forecast/observation overlays are driven by their own modules
+    // (no catalog data, no TimeSlider). Route and stop here.
+    if (overlayId === 'aurora') {
+      AuroraOverlay.setEnabled(isActive);
+      return;
+    }
+    if (overlayId === 'nws_alerts') {
+      NwsAlertsOverlay.setEnabled(isActive);
+      return;
+    }
 
     // Demographics controls choropleth visibility AND loads countries
     // Note: Can coexist with geometry overlays (separate layer systems)

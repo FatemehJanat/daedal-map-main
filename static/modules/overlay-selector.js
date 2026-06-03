@@ -182,6 +182,24 @@ function buildCategoriesFromTree(overlayTree) {
     ]
   });
 
+  // Live overlays - real-time forecast/observation map layers (not catalog
+  // packs). Driven by OverlayController -> live overlay modules. Marked
+  // alwaysVisible so they stay available in every mode (including Ops).
+  // NOTE: the announcement ticker is intentionally NOT here - it is a display
+  // surface (chrome) that aggregates many feeds, not a single-feed overlay.
+  categories.push({
+    id: 'live',
+    label: 'Live',
+    icon: 'L',
+    isCategory: true,
+    expanded: false,
+    alwaysVisible: true,
+    overlays: [
+      { id: 'nws_alerts', label: 'US Weather Alerts', description: 'Live NWS warnings', default: false, locked: false, model: 'nws_alerts', icon: '!', hasYearFilter: false, live: true },
+      { id: 'aurora', label: 'Aurora', description: 'Live aurora forecast', default: false, locked: false, model: 'aurora', icon: 'A', hasYearFilter: false, live: true }
+    ]
+  });
+
   return categories;
 }
 
@@ -244,12 +262,16 @@ function filterCategoriesForCurrentMode(categories) {
   }
 
   const allowedOverlayIds = getAllowedOpsOverlayIds();
-  if (!allowedOverlayIds.size) {
-    return [];
-  }
 
   const visibleCategories = [];
   for (const category of cloned) {
+    // alwaysVisible categories (e.g. Live announcements/forecasts) show in
+    // every mode, independent of the Ops watch's allowed feeds.
+    if (category.alwaysVisible) {
+      visibleCategories.push(category);
+      continue;
+    }
+
     if (category.isCategory) {
       const overlays = category.overlays.filter((overlay) => allowedOverlayIds.has(overlay.id));
       if (overlays.length) {

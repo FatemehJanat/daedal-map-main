@@ -21,6 +21,7 @@ import { ModelRegistry } from './models/model-registry.js';
 import { OverlayController, setDependencies as setOverlayControllerDeps } from './overlay-controller.js';
 import { TickerController } from './ticker-controller.js';
 import { AuroraOverlay } from './overlay-aurora.js';
+import { NwsAlertsOverlay } from './overlay-nws-alerts.js';
 import { DisasterPopup, setDependencies as setDisasterPopupDeps } from './disaster-popup.js';
 import { GeometryModel, setDependencies as setGeometryDeps } from './models/model-geometry.js';
 import { AuthManager } from './auth.js';
@@ -601,8 +602,9 @@ export const App = {
     // Initialize map
     await MapAdapter.init();
 
-    // Live aurora overlay (toggleable, all modes; needs the map to exist).
+    // Live overlays (toggleable, all modes; need the map to exist).
     AuroraOverlay.init({ MapAdapter });
+    NwsAlertsOverlay.init({ MapAdapter });
 
     this.activateLaneMapView(startupMode, { force: true });
     if (startupMode === 'research') {
