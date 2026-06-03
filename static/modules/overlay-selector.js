@@ -182,6 +182,21 @@ function buildCategoriesFromTree(overlayTree) {
     ]
   });
 
+  // Metrics overlays - the shared choropleth (global.csv country fills, etc.).
+  // The toggle controls choropleth visibility, so dense global layers like the
+  // currency choropleth can be hidden to see point/area feeds underneath.
+  categories.push({
+    id: 'metrics',
+    label: 'Metrics',
+    icon: 'M',
+    isCategory: true,
+    expanded: false,
+    alwaysVisible: true,
+    overlays: [
+      { id: 'currency', label: 'Currency', description: 'Global currency choropleth', default: true, locked: false, model: 'choropleth', icon: '$', hasYearFilter: false }
+    ]
+  });
+
   // Live overlays - real-time forecast/observation map layers (not catalog
   // packs). Driven by OverlayController -> live overlay modules. Marked
   // alwaysVisible so they stay available in every mode (including Ops).

@@ -165,18 +165,22 @@ def make_ticker_item(
     issued: object = "",
     item_id: str | None = None,
     lead: bool = False,
+    point: object = None,
+    url: str = "",
 ) -> dict | None:
     """Build a normalized ticker item, or None if the text is empty.
 
     Adapters should use this so every item has a consistent shape and a valid
-    severity (anything unknown falls back to "info").
+    severity (anything unknown falls back to "info"). On click: a `point`
+    [lon, lat] pans the map to that location; otherwise a `url` opens the source
+    agency page in a new tab.
     """
     clean_text = " ".join(str(text or "").split())
     if not clean_text:
         return None
     if severity not in _SEVERITY_RANK:
         severity = "info"
-    return {
+    item = {
         "id": str(item_id or f"{source}:{clean_text}"),
         "source": str(source or ""),
         "text": clean_text,
@@ -185,6 +189,11 @@ def make_ticker_item(
         "issued": str(issued or ""),
         "lead": bool(lead),
     }
+    if isinstance(point, (list, tuple)) and len(point) >= 2:
+        item["point"] = [round(float(point[0]), 4), round(float(point[1]), 4)]
+    if url:
+        item["url"] = str(url)
+    return item
 
 
 def _order_items(items: "list[dict]") -> "list[dict]":
@@ -198,7 +207,11 @@ def _order_items(items: "list[dict]") -> "list[dict]":
     for it in items:
         if not it or not it.get("text"):
             continue
-        key = (it.get("source"), it.get("text"))
+        key = (
+            it.get("source"),
+            it.get("id") or "",
+            it.get("text"),
+        )
         if key in seen:
             continue
         seen.add(key)
@@ -320,7 +333,12 @@ def _swpc_conditions_item(snap: dict, summary: dict) -> dict | None:
         issued=snap.get("upstream_issued_at") or "",
         item_id="swpc-conditions",
         lead=True,
+        url=_SWPC_SOURCE_URL,
     )
+
+
+# Source agency page for space-weather alerts (no per-alert SWPC page exists).
+_SWPC_SOURCE_URL = "https://www.swpc.noaa.gov/products/alerts-watches-and-warnings"
 
 
 def swpc_ticker_adapter(snap: dict) -> "list[dict]":
@@ -337,6 +355,7 @@ def swpc_ticker_adapter(snap: dict) -> "list[dict]":
             scale=alert.get("noaa_scale") or "",
             issued=alert.get("issued_utc"),
             item_id=alert.get("alert_id"),
+            url=_SWPC_SOURCE_URL,
         )
         if item:
             items.append(item)
@@ -401,8 +420,9 @@ def nws_alerts_ticker_adapter(snap: dict) -> "list[dict]":
             source="NWS",
             text=text,
             severity=_NWS_SEVERITY.get(alert.get("severity"), "info"),
-            issued=alert.get("onset"),
+            issued=alert.get("issued_at") or snap.get("upstream_issued_at") or "",
             item_id=alert.get("alert_id"),
+            point=alert.get("point"),
         )
         if item:
             items.append(item)
@@ -511,19 +531,23 @@ def _assemble_nws_alerts_geojson(summary: dict) -> dict:
             "area": alert.get("area"),
             "expires": alert.get("expires"),
         }
+        # Area geometry: the exact warning polygon, or the affected counties.
         geom = alert.get("geometry")
         if isinstance(geom, dict):
             features.append({"type": "Feature", "geometry": geom, "properties": {**props, "display": "polygon"}})
-            continue
-        polys = [county_geoms[lid] for lid in _nws_alert_loc_ids(alert.get("same")) if county_geoms.get(lid)]
-        if polys:
-            for poly in polys:
-                features.append({"type": "Feature", "geometry": poly, "properties": {**props, "display": "county"}})
-        elif alert.get("point"):
+        else:
+            for lid in _nws_alert_loc_ids(alert.get("same")):
+                poly = county_geoms.get(lid)
+                if poly:
+                    features.append({"type": "Feature", "geometry": poly, "properties": {**props, "display": "county"}})
+        # ALWAYS add a center marker so every alert has a clear single target,
+        # not just a spread of highlighted areas (helps the eye and the click).
+        point = alert.get("point")
+        if point:
             features.append({
                 "type": "Feature",
-                "geometry": {"type": "Point", "coordinates": alert["point"]},
-                "properties": {**props, "display": "pin"},
+                "geometry": {"type": "Point", "coordinates": point},
+                "properties": {**props, "display": "marker"},
             })
     return {"type": "FeatureCollection", "features": features, "count": len(features)}
 

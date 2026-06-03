@@ -11,6 +11,7 @@
  */
 
 import { fetchMsgpack } from './utils/fetch.js';
+import { MapAdapter } from './map-adapter.js';
 
 const POLL_INTERVAL_MS = 60_000;
 
@@ -76,6 +77,8 @@ export const TickerController = {
         background: rgba(255,255,255,0.08); font-size: 11px;
       }
       #opsTicker .ticker-empty { color: #7f8798; margin-left: 16px; }
+      #opsTicker .ticker-item.clickable { cursor: pointer; }
+      #opsTicker .ticker-item.clickable:hover { text-decoration: underline; }
       @keyframes opsTickerScroll {
         from { transform: translateX(0); }
         to { transform: translateX(-50%); }
@@ -91,8 +94,26 @@ export const TickerController = {
     track.className = 'ticker-track';
     bar.appendChild(track);
     parent.appendChild(bar);
+    bar.addEventListener('click', (e) => this._onItemClick(e));
     this.bar = bar;
     this.track = track;
+  },
+
+  _onItemClick(e) {
+    const el = e.target.closest('.ticker-item');
+    if (!el) return;
+    const lon = parseFloat(el.dataset.lon);
+    const lat = parseFloat(el.dataset.lat);
+    const map = MapAdapter?.map;
+    if (map && Number.isFinite(lon) && Number.isFinite(lat)) {
+      // Located feed: center the event; keep the current zoom.
+      map.panTo([lon, lat]);
+      return;
+    }
+    if (el.dataset.url) {
+      // Non-located feed (e.g. space weather): open the source agency page.
+      window.open(el.dataset.url, '_blank', 'noopener');
+    }
   },
 
   setEnabled(on) {
@@ -145,7 +166,17 @@ export const TickerController = {
     const src = this._escape(it.source || '');
     const text = this._escape(it.text || '');
     const scale = it.scale ? `<span class="scale" style="color:${color}">${this._escape(it.scale)}</span>` : '';
-    return `<span class="ticker-item" style="color:${color}"><span class="src">${src}</span>${text}${scale}</span>`;
+    let cls = 'ticker-item';
+    let attrs = '';
+    const p = it.point;
+    if (Array.isArray(p) && p.length >= 2 && Number.isFinite(Number(p[0])) && Number.isFinite(Number(p[1]))) {
+      cls += ' clickable';
+      attrs = ` data-lon="${Number(p[0])}" data-lat="${Number(p[1])}" title="Click to locate on map"`;
+    } else if (it.url) {
+      cls += ' clickable';
+      attrs = ` data-url="${this._escape(it.url)}" title="Click for more info (source agency)"`;
+    }
+    return `<span class="${cls}" style="color:${color}"${attrs}><span class="src">${src}</span>${text}${scale}</span>`;
   },
 
   _escape(value) {

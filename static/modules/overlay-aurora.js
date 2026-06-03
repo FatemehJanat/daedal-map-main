@@ -35,6 +35,10 @@ export const AuroraOverlay = {
         if (this.enabled && this.lastCells) this._render(this.lastCells);
       });
     }
+    // Re-assert after a globe/mercator projection toggle (may not fire style.load).
+    window.addEventListener('map-overlays-reassert', () => {
+      if (this.enabled && this.lastCells) this._render(this.lastCells);
+    });
     this.initialized = true;
     console.log('AuroraOverlay initialized');
   },

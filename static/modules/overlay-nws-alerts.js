@@ -47,9 +47,17 @@ export const NwsAlertsOverlay = {
     MapAdapter = deps.MapAdapter || MapAdapter;
     if (MapAdapter?.map) {
       MapAdapter.map.on('style.load', () => {
-        if (this.enabled && this.lastData) this._render(this.lastData);
+        if (!this.enabled || !this.lastData) return;
+        this._clickBound = false;
+        this._render(this.lastData);
       });
     }
+    // Re-assert after a globe/mercator projection toggle (may not fire style.load).
+    window.addEventListener('map-overlays-reassert', () => {
+      if (!this.enabled || !this.lastData) return;
+      this._clickBound = false;
+      this._render(this.lastData);
+    });
     this.initialized = true;
     console.log('NwsAlertsOverlay initialized');
   },
@@ -114,11 +122,13 @@ export const NwsAlertsOverlay = {
       id: POINT_ID, type: 'circle', source: SRC_ID,
       filter: ['==', ['geometry-type'], 'Point'],
       paint: {
-        'circle-radius': 6,
+        // A clear target dot per alert, white-ringed so it pops over the
+        // currency choropleth and the highlighted areas.
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 1, 4, 4, 6, 8, 9],
         'circle-color': SEVERITY_COLOR,
-        'circle-stroke-color': '#0d1424',
-        'circle-stroke-width': 1.5,
-        'circle-opacity': 0.9
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': 2,
+        'circle-opacity': 1
       }
     });
     this._bindPopup(map);
@@ -138,6 +148,7 @@ export const NwsAlertsOverlay = {
         <div style="color:#666">${esc(p.severity)}</div>
         ${p.area ? `<div style="margin-top:4px">${esc(p.area)}</div>` : ''}
         ${p.expires ? `<div style="color:#888;margin-top:4px">Expires: ${esc(p.expires)}</div>` : ''}
+        ${(typeof p.alert_id === 'string' && /^https?:/.test(p.alert_id)) ? `<div style="margin-top:6px"><a href="${esc(p.alert_id)}" target="_blank" rel="noopener" style="color:#4dd2ff">More info (NWS) &rsaquo;</a></div>` : ''}
       </div>`;
       if (this._popup) this._popup.remove();
       this._popup = new maplibre.Popup({ closeButton: true })

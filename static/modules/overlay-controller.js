@@ -1533,9 +1533,13 @@ export const OverlayController = {
 
     // Demographics controls choropleth visibility AND loads countries
     // Note: Can coexist with geometry overlays (separate layer systems)
-    if (overlayId === 'demographics') {
-      if (isActive) {
-        // Load countries if choropleth layers don't exist yet
+    // Metric choropleth toggles (demographics, currency) share one choropleth
+    // layer. Toggling one off must not hide another that is still on, so
+    // visibility tracks whether ANY metric overlay is active.
+    if (overlayId === 'demographics' || overlayId === 'currency') {
+      // Demographics loads the country geometry on first activate; currency
+      // rides the same shared choropleth (already loaded in Ops).
+      if (overlayId === 'demographics' && isActive) {
         const choroplethLayerExists = MapAdapter?.map?.getLayer('regions-fill');
         if (!choroplethLayerExists) {
           const App = window.App;
@@ -1544,13 +1548,12 @@ export const OverlayController = {
             await App.loadCountries();
           }
         }
-        if (MapAdapter) {
-          MapAdapter.setChoroplethVisible(true);
-        }
-      } else {
-        if (MapAdapter) {
-          MapAdapter.setChoroplethVisible(false);
-        }
+      }
+      const anyMetricActive =
+        OverlaySelector?.isActive?.('demographics') === true ||
+        OverlaySelector?.isActive?.('currency') === true;
+      if (MapAdapter) {
+        MapAdapter.setChoroplethVisible(anyMetricActive);
       }
       return;
     }

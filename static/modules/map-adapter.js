@@ -99,6 +99,17 @@ export const MapAdapter = {
     this.map.on('zoomend', () => ViewportLoader?.onZoomEnd());
     this.map.on('moveend', () => ViewportLoader?.onMoveEnd());
 
+    // Persistent style-reload handler: any base-map/projection reload (globe <->
+    // mercator, satellite <-> dark) drops custom layers, so re-render all
+    // overlays from cache afterward. The base map is the only thing that should
+    // change on those toggles - everything on top stays. (Live overlays re-add
+    // themselves via their own 'style.load' listeners.)
+    this.map.on('style.load', () => {
+      if (OverlayController?.rerenderFromCache) {
+        OverlayController.rerenderFromCache();
+      }
+    });
+
     return new Promise((resolve) => {
       this.map.on('load', () => {
         console.log('Map loaded');
@@ -252,6 +263,15 @@ export const MapAdapter = {
     } else {
       this.disableGlobe();
     }
+    // A projection switch can drop custom layers in some renderers; re-assert
+    // overlays once the map settles so only the base map changes, not what's on
+    // top. ('style.load' covers reload-style toggles; this covers projection-only
+    // toggles that may not fire it.) Re-rendering when nothing was dropped is a
+    // harmless no-op (sources just get the same data back).
+    this.map.once('idle', () => {
+      if (OverlayController?.rerenderFromCache) OverlayController.rerenderFromCache();
+      window.dispatchEvent(new CustomEvent('map-overlays-reassert'));
+    });
   },
 
   // Track satellite mode state
@@ -297,18 +317,13 @@ export const MapAdapter = {
 
     this.map.setStyle(style);
 
-    // Re-apply projection and overlays after style loads
+    // Re-apply projection after style loads. Overlay re-render is handled by the
+    // persistent 'style.load' listener set up in init(), so it covers this and
+    // the globe/mercator toggle uniformly.
     this.map.once('style.load', () => {
-      // Restore globe if it was enabled
       if (wasGlobeEnabled) {
         this.enableGlobe();
       }
-
-      // Re-render overlays from cache (don't reload data)
-      if (OverlayController) {
-        OverlayController.rerenderFromCache();
-      }
-
       console.log(`Satellite mode: ${enabled ? 'ON' : 'OFF'}`);
     });
   },
