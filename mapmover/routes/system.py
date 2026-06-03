@@ -7,6 +7,8 @@ import json
 import os
 import threading
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -218,6 +220,123 @@ def _hosted_auth_enabled() -> bool:
 def _is_localish_url(url: str) -> bool:
     host = _configured_host(url)
     return host in {"", "localhost", "127.0.0.1", "::1"}
+
+
+def _downloadable_public_base_url() -> str:
+    explicit = str(os.getenv("DAEDALMAP_PUBLIC_BASE_URL", "")).strip().rstrip("/")
+    if explicit:
+        return explicit
+    shared = str(os.getenv("S3_PUBLIC_BASE_URL", "")).strip().rstrip("/")
+    if shared:
+        return shared
+    engine_url = str(os.getenv("DAEDALMAP_ENGINE_CURRENT_URL", "")).strip()
+    if engine_url and "/downloadable/engine/" in engine_url:
+        return engine_url.split("/downloadable/engine/", 1)[0].rstrip("/")
+    return "https://global-map-data.s3.amazonaws.com"
+
+
+def _read_public_json(url: str) -> dict:
+    request = urllib.request.Request(
+        str(url).strip(),
+        headers={"User-Agent": "DaedalMapRuntime/0.1 (+http://127.0.0.1:7000)"},
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        data = json.loads(response.read().decode("utf-8"))
+    return data if isinstance(data, dict) else {}
+
+
+def _downloadable_pack_store_entry(entry: dict, public_base: str) -> dict:
+    pack_id = str(entry.get("pack_id") or "").strip()
+    if not pack_id:
+        return {}
+
+    normalized = dict(entry)
+    current_url = str(entry.get("current_manifest_url") or f"{public_base}/downloadable/packs/{pack_id}/stable/current.json").strip()
+    version_url = ""
+    try:
+        current = _read_public_json(current_url)
+        version_url = str(current.get("version_manifest_url") or "").strip()
+        if version_url:
+            version = _read_public_json(version_url)
+        else:
+            version = {}
+    except Exception:
+        current = {}
+        version = {}
+
+    artifact = version.get("artifact") if isinstance(version.get("artifact"), dict) else {}
+    size_bytes = int(artifact.get("size_bytes") or 0) if str(artifact.get("size_bytes") or "").strip() else 0
+    files = version.get("files") if isinstance(version.get("files"), list) else []
+    installed_size_bytes = 0
+    for item in files:
+        if not isinstance(item, dict):
+            continue
+        raw_size = item.get("size_bytes")
+        if raw_size in (None, ""):
+            raw_size = item.get("size")
+        try:
+            installed_size_bytes += int(raw_size or 0)
+        except (TypeError, ValueError):
+            continue
+    normalized.update(
+        {
+            "current_manifest_url": current_url,
+            "version_manifest_url": version_url or str(entry.get("version_manifest_url") or "").strip(),
+            "current_version": str(version.get("version") or current.get("current_version") or entry.get("current_version") or "").strip(),
+            "source_name": str(version.get("source_name") or current.get("source_name") or entry.get("source_name") or pack_id).strip(),
+            "description": str(version.get("description") or current.get("description") or entry.get("description") or "").strip(),
+            "notes": list(version.get("notes") or current.get("notes") or entry.get("notes") or []),
+            "download_url": str(artifact.get("download_url") or "").strip(),
+            "size_bytes": size_bytes,
+            "size_mb": round(size_bytes / (1024 * 1024), 2) if size_bytes > 0 else 0.0,
+            "installed_size_bytes": installed_size_bytes,
+            "installed_size_mb": round(installed_size_bytes / (1024 * 1024), 2) if installed_size_bytes > 0 else 0.0,
+        }
+    )
+    return normalized
+
+
+def _read_runtime_config_payload(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _derive_storage_root_from_paths(paths_payload: dict) -> str:
+    if not isinstance(paths_payload, dict):
+        return ""
+    for key in ("data_root", "packs_root", "config_dir", "state_dir"):
+        raw = str(paths_payload.get(key) or "").strip()
+        if raw:
+            try:
+                return str(Path(raw).resolve().parent)
+            except Exception:
+                return str(Path(raw).parent)
+    return ""
+
+
+def _build_runtime_storage_payload(storage_root: Path, runtime_config_path: Path) -> dict:
+    root = Path(storage_root)
+    return {
+        "install_mode": "local",
+        "runtime_mode": "local",
+        "paths": {
+            "config_dir": str(root / "config"),
+            "state_dir": str(root / "state"),
+            "cache_dir": str(root / "cache"),
+            "log_dir": str(root / "logs"),
+            "data_root": str(root / "data"),
+            "packs_root": str(root / "packs"),
+            "runtime_config_path": str(runtime_config_path),
+        },
+        "local_wrapper": {
+            "storage_root": str(root),
+        },
+    }
 
 
 def _require_local_or_admin(req: Request):
@@ -2193,6 +2312,169 @@ async def install_runtime_pack_ref(req: Request):
         return msgpack_error(str(exc), 500)
 
 
+@router.get("/api/local-wrapper/packs/status")
+async def get_local_wrapper_pack_status(req: Request):
+    """Return local installed/active pack state for the localhost settings store."""
+    _context, error = _require_local_or_admin(req)
+    if error:
+        return error
+
+    from mapmover.pack_state import load_pack_state
+
+    try:
+        state = load_pack_state()
+        return JSONResponse({
+            "ok": True,
+            "installed_packs": state.get("installed_packs", []),
+            "active_pack_ids": state.get("active_pack_ids", []),
+            "catalog_mode": state.get("catalog_mode", "managed_packs"),
+            "updated_at": state.get("updated_at"),
+        })
+    except Exception as exc:
+        logger.error(f"Error reading local wrapper pack status: {exc}")
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+
+
+@router.get("/api/local-wrapper/packs/store")
+async def get_local_wrapper_pack_store(req: Request):
+    """Proxy the public downloadable pack index so localhost browser UI avoids CORS issues."""
+    _context, error = _require_local_or_admin(req)
+    if error:
+        return error
+
+    public_base = _downloadable_public_base_url()
+    index_url = f"{public_base}/downloadable/packs/index.json"
+    try:
+        index_data = _read_public_json(index_url)
+        packs = index_data.get("packs")
+        enriched = []
+        for pack in packs if isinstance(packs, list) else []:
+            if not isinstance(pack, dict):
+                continue
+            record = _downloadable_pack_store_entry(pack, public_base)
+            if record:
+                enriched.append(record)
+        return JSONResponse({
+            "ok": True,
+            "public_base_url": public_base,
+            "index_url": index_url,
+            "packs": enriched,
+        })
+    except urllib.error.URLError as exc:
+        logger.error(f"Error reading local wrapper public pack index: {exc}")
+        return JSONResponse({"ok": False, "error": f"Could not fetch pack store index: {exc}"}, status_code=502)
+    except Exception as exc:
+        logger.error(f"Error reading local wrapper public pack store: {exc}")
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+
+
+@router.post("/api/local-wrapper/packs/install")
+async def install_local_wrapper_pack(req: Request):
+    """Install a downloadable pack into the local runtime from the public pack lane."""
+    _context, error = _require_local_or_admin(req)
+    if error:
+        return error
+
+    from mapmover.pack_manager import install_pack_from_manifest_ref
+
+    try:
+        body = await decode_request_body(req)
+        pack_id = str(body.get("pack_id") or "").strip()
+        activate = bool(body.get("activate", True))
+        replace_existing = bool(body.get("replace_existing", True))
+        if not pack_id:
+            return JSONResponse({"ok": False, "error": "pack_id is required"}, status_code=400)
+
+        public_base = _downloadable_public_base_url()
+        manifest_ref = f"{public_base}/downloadable/packs/{pack_id}/stable/current.json"
+        result = install_pack_from_manifest_ref(
+            manifest_ref,
+            activate=activate,
+            replace_existing=replace_existing,
+        )
+        clear_metadata_cache()
+        clear_public_pack_catalog_cache()
+        initialize_catalog()
+        logger.info(
+            "Local wrapper pack installed from public manifest ref: user_id=%s pack_id=%s activate=%s",
+            (get_authenticated_user(req) or {}).get("id"),
+            pack_id,
+            activate,
+        )
+        return JSONResponse({"ok": True, "pack_id": pack_id, **result})
+    except Exception as exc:
+        logger.error(f"Error installing local wrapper pack: {exc}")
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+
+
+@router.get("/api/local-wrapper/storage-config")
+async def get_local_wrapper_storage_config(req: Request):
+    """Return the current runtime storage roots plus the configured next-launch storage root."""
+    _context, error = _require_local_or_admin(req)
+    if error:
+        return error
+
+    from mapmover.paths import CONFIG_DIR, DATA_ROOT, LOGS_DIR, PACKS_ROOT, RUNTIME_CONFIG_PATH, STATE_DIR
+
+    payload = _read_runtime_config_payload(RUNTIME_CONFIG_PATH)
+    configured_root = ""
+    local_wrapper = payload.get("local_wrapper") if isinstance(payload.get("local_wrapper"), dict) else {}
+    configured_root = str(local_wrapper.get("storage_root") or "").strip()
+    if not configured_root:
+        configured_root = _derive_storage_root_from_paths(payload.get("paths") if isinstance(payload.get("paths"), dict) else {})
+    current_root = str(DATA_ROOT.parent)
+    return JSONResponse(
+        {
+            "ok": True,
+            "runtime_config_path": str(RUNTIME_CONFIG_PATH),
+            "current_storage_root": current_root,
+            "configured_storage_root": configured_root or current_root,
+            "restart_required": bool(configured_root and configured_root != current_root),
+            "paths": {
+                "config_dir": str(CONFIG_DIR),
+                "state_dir": str(STATE_DIR),
+                "log_dir": str(LOGS_DIR),
+                "data_root": str(DATA_ROOT),
+                "packs_root": str(PACKS_ROOT),
+            },
+        }
+    )
+
+
+@router.post("/api/local-wrapper/storage-config")
+async def post_local_wrapper_storage_config(req: Request):
+    """Update the configured local storage root for the next launcher/runtime start."""
+    _context, error = _require_local_or_admin(req)
+    if error:
+        return error
+
+    from mapmover.paths import DATA_ROOT, RUNTIME_CONFIG_PATH
+
+    try:
+        body = await decode_request_body(req)
+        storage_root_text = str(body.get("storage_root") or "").strip()
+        if not storage_root_text:
+            return JSONResponse({"ok": False, "error": "storage_root is required"}, status_code=400)
+        storage_root = Path(storage_root_text).expanduser()
+        storage_root.mkdir(parents=True, exist_ok=True)
+        payload = _build_runtime_storage_payload(storage_root, RUNTIME_CONFIG_PATH)
+        RUNTIME_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        RUNTIME_CONFIG_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        current_root = str(DATA_ROOT.parent)
+        return JSONResponse(
+            {
+                "ok": True,
+                "configured_storage_root": str(storage_root),
+                "current_storage_root": current_root,
+                "restart_required": str(storage_root) != current_root,
+                "message": "Saved new storage root for the next runtime launch. Existing packs and data remain in the old location for now; new downloads and future runtime use will follow the new location.",
+            }
+        )
+    except Exception as exc:
+        logger.error(f"Error writing local wrapper storage config: {exc}")
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+
+
 @router.post("/api/admin/catalog/refresh")
 async def admin_catalog_refresh(req: Request):
     """
@@ -2366,12 +2648,10 @@ async def serve_index():
 
 @router.get("/settings", response_class=HTMLResponse)
 async def serve_settings_page(request: Request):
-    """Serve local runtime setup guidance, or redirect to hosted account settings."""
-    from mapmover.paths import CONFIG_DIR, DATA_ROOT, PACKS_ROOT, SETTINGS_PATH, SITE_URL
+    """Serve the local browser settings hub for launcher-driven runtime use."""
+    from mapmover.paths import CONFIG_DIR, DATA_ROOT, LOGS_DIR, PACKS_ROOT, RUNTIME_CONFIG_PATH, SETTINGS_PATH, SITE_URL, STATE_DIR
     from mapmover.runtime_config import get_runtime_config
 
-    if _hosted_auth_enabled() and not _is_localish_url(SITE_URL):
-        return RedirectResponse(url=f"{SITE_URL}/account", status_code=302)
     runtime_mode = str(get_runtime_config().get("mode", "") or os.getenv("RUNTIME_MODE", "")).strip().lower()
     if runtime_mode and runtime_mode != "local":
         return HTMLResponse("<h1>Not Found</h1>", status_code=404)
@@ -2383,39 +2663,130 @@ async def serve_settings_page(request: Request):
         if llm_ready
         else "Set OPENAI_API_KEY or ANTHROPIC_API_KEY in .env before using chat."
     )
+    downloadable_public_base = _downloadable_public_base_url()
+    pack_store_index_url = f"{downloadable_public_base}/downloadable/packs/index.json"
+    hosted_account_url = f"{SITE_URL}/account" if SITE_URL and not _is_localish_url(SITE_URL) else ""
+    hosted_research_url = f"{hosted_account_url}?tab=research" if hosted_account_url else ""
+    hosted_self_host_url = f"{hosted_account_url}?tab=self-host" if hosted_account_url else ""
+    hosted_packs_url = f"{SITE_URL}/packs" if SITE_URL and not _is_localish_url(SITE_URL) else ""
 
     html = f"""
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Local Setup - DaedalMap</title>
+        <title>DaedalMap Settings</title>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
+            :root {{
+                --bg: #07111a;
+                --panel: #112131;
+                --panel-strong: #15283a;
+                --line: rgba(147, 197, 253, 0.14);
+                --line-strong: rgba(127, 231, 255, 0.34);
+                --text: #e7f1fb;
+                --muted: #b7cadb;
+                --cyan: #9be7ff;
+                --amber: #f3c96a;
+                --green: #86efac;
+                --yellow: #fbbf24;
+                --shadow: 0 18px 46px rgba(0, 0, 0, 0.28);
+            }}
+            * {{ box-sizing: border-box; }}
             body {{
-                font-family: Arial, sans-serif;
-                background: #0f1724;
-                color: #e5eef8;
+                font-family: "Segoe UI", Arial, sans-serif;
+                background: radial-gradient(circle at top, #173247 0%, #0b1622 55%, #060d15 100%);
+                color: var(--text);
                 margin: 0;
-                padding: 32px 18px 48px;
+                padding: 32px 18px 56px;
             }}
             .shell {{
-                max-width: 820px;
+                max-width: 1060px;
                 margin: 0 auto;
             }}
-            .card {{
-                background: #152235;
-                border: 1px solid rgba(147, 197, 253, 0.12);
-                border-radius: 14px;
-                padding: 22px 24px;
-                margin-top: 18px;
+            .page-hero h1 {{
+                margin: 0 0 10px;
+                font-size: 34px;
             }}
-            h1, h2 {{
+            .page-hero-head {{
+                display: flex;
+                align-items: flex-start;
+                justify-content: space-between;
+                gap: 16px;
+            }}
+            .subtitle {{
+                margin: 0 0 18px;
+                max-width: 820px;
+                line-height: 1.7;
+                color: var(--muted);
+                font-size: 16px;
+            }}
+            .page-connection-status {{
+                display: inline-flex;
+                gap: 10px;
+                align-items: center;
+                color: var(--muted);
+                font-size: 14px;
+                white-space: nowrap;
+                padding-top: 8px;
+            }}
+            .settings-card {{
+                width: 100%;
+                background: transparent;
+            }}
+            .settings-tabs {{
+                display: flex;
+                flex-wrap: wrap;
+                gap: 10px;
+                margin-bottom: 18px;
+            }}
+            .settings-tab {{
+                font: inherit;
+                border: 1px solid var(--line);
+                background: #0d1b29;
+                color: var(--muted);
+                border-radius: 10px;
+                padding: 10px 14px;
+                cursor: pointer;
+            }}
+            .settings-tab.is-active {{
+                background: rgba(127, 231, 255, .14);
+                border-color: var(--line-strong);
+                color: var(--text);
+            }}
+            .settings-panel.hidden {{
+                display: none !important;
+            }}
+            .settings-grid {{
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 16px;
+            }}
+            .settings-panel-card {{
+                background: var(--panel-strong);
+                border: 1px solid var(--line);
+                border-radius: 12px;
+                padding: 22px;
+                box-shadow: var(--shadow);
+                min-width: 0;
+            }}
+            .settings-panel-card.span-2 {{
+                grid-column: 1 / -1;
+            }}
+            .settings-eyebrow {{
+                margin: 0 0 8px;
+                font-size: 11px;
+                letter-spacing: .12em;
+                text-transform: uppercase;
+                color: var(--amber);
+            }}
+            h2 {{
                 margin: 0 0 12px;
+                font-size: 24px;
             }}
             p, li {{
-                line-height: 1.6;
-                color: #bfd0e4;
+                line-height: 1.65;
+                color: var(--muted);
             }}
             ul {{
                 margin: 10px 0 0 18px;
@@ -2428,51 +2799,1045 @@ async def serve_settings_page(request: Request):
                 color: #f8fafc;
             }}
             .status-ok {{
-                color: #86efac;
+                color: var(--green);
                 font-weight: 700;
             }}
             .status-warn {{
-                color: #fbbf24;
+                color: var(--yellow);
                 font-weight: 700;
             }}
-            a {{
-                color: #7dd3fc;
+            .settings-actions {{
+                display: flex;
+                flex-wrap: wrap;
+                gap: 10px;
+                margin-top: 16px;
+            }}
+            .btn-primary, .btn-secondary {{
+                display: inline-block;
+                border-radius: 8px;
+                padding: 10px 16px;
+                font-size: 13px;
+                font-weight: 600;
+                text-decoration: none;
+                border: 1px solid transparent;
+            }}
+            .btn-primary {{
+                background: rgba(127, 231, 255, .16);
+                border-color: rgba(127, 231, 255, .34);
+                color: var(--cyan);
+            }}
+            .btn-primary:hover {{
+                background: rgba(127, 231, 255, .24);
+            }}
+            .btn-secondary {{
+                background: transparent;
+                border-color: var(--line);
+                color: var(--muted);
+            }}
+            .btn-secondary:hover {{
+                color: var(--text);
+                border-color: rgba(147, 197, 253, 0.26);
+            }}
+            .settings-row {{
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 16px;
+                padding: 11px 0;
+                border-bottom: 1px solid var(--line);
+            }}
+            .settings-row:last-child {{
+                border-bottom: 0;
+            }}
+            .settings-label {{
+                color: var(--muted);
+                font-size: 14px;
+            }}
+            .settings-value {{
+                color: var(--text);
+                font-size: 14px;
+                font-weight: 600;
+                text-align: right;
+            }}
+            .store-status {{
+                margin: 0 0 12px;
+                color: var(--muted);
+            }}
+            .two-col-layout {{
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 16px;
+            }}
+            .two-col-panel {{
+                min-width: 0;
+            }}
+            .account-note {{
+                color: var(--muted);
+            }}
+            .account-input {{
+                width: 100%;
+                border-radius: 10px;
+                border: 1px solid var(--line);
+                background: rgba(8, 18, 29, .9);
+                color: var(--text);
+                padding: 12px 14px;
+                font: inherit;
+                margin-bottom: 10px;
+            }}
+            .account-label-block {{
+                display: block;
+                margin-bottom: 8px;
+                color: var(--muted);
+                font-size: 13px;
+                font-weight: 600;
+            }}
+            .account-corpus-builder {{
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+            }}
+            .corpus-pack-list {{
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+                max-height: 640px;
+                overflow: auto;
+                padding-right: 4px;
+                margin-bottom: 4px;
+            }}
+            .corpus-pack-card {{
+                display: flex;
+                gap: 12px;
+                align-items: flex-start;
+                border: 1px solid rgba(255,255,255,.06);
+                border-radius: 10px;
+                padding: 12px;
+                background: rgba(255,255,255,.02);
+            }}
+            .corpus-pack-checkbox {{
+                margin-top: 3px;
+                flex-shrink: 0;
+            }}
+            .corpus-pack-body {{
+                flex: 1;
+                min-width: 0;
+            }}
+            .corpus-pack-title {{
+                font-weight: 700;
+                color: var(--text);
+                margin-bottom: 6px;
+            }}
+            .corpus-pack-meta, .corpus-pack-desc, .saved-corpus-submeta, .saved-corpus-desc {{
+                color: var(--muted);
+                font-size: 13px;
+                line-height: 1.55;
+            }}
+            .account-corpus-actions {{
+                display: flex;
+                flex-wrap: wrap;
+                gap: 10px;
+                margin-top: 8px;
+            }}
+            .saved-corpora-list {{
+                display: grid;
+                gap: 10px;
+            }}
+            .saved-corpus-card {{
+                display: grid;
+                grid-template-columns: minmax(0, 1fr) 180px;
+                gap: 12px;
+                align-items: start;
+                border: 1px solid rgba(255,255,255,.06);
+                border-radius: 10px;
+                padding: 12px;
+                background: rgba(255,255,255,.02);
+            }}
+            .saved-corpus-name {{
+                font-weight: 700;
+                color: var(--text);
+                margin-bottom: 6px;
+            }}
+            .saved-corpus-actions {{
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+            }}
+            .saved-corpus-badge {{
+                display: inline-flex;
+                align-items: center;
+                border-radius: 999px;
+                padding: 3px 8px;
+                font-size: 11px;
+                font-weight: 700;
+                letter-spacing: .04em;
+                text-transform: uppercase;
+                color: var(--muted);
+                border: 1px solid var(--line);
+                background: rgba(255,255,255,.04);
+                margin-bottom: 8px;
+            }}
+            .saved-corpus-badge.active {{
+                color: var(--green);
+                border-color: rgba(134,239,172,.28);
+                background: rgba(134,239,172,.10);
+            }}
+            .saved-corpus-badge.local {{
+                color: var(--cyan);
+                border-color: rgba(127,231,255,.25);
+                background: rgba(127,231,255,.08);
+            }}
+            .section {{
+                margin-bottom: 18px;
+            }}
+            .section p.description {{
+                color: var(--muted);
+                font-size: 0.9rem;
+                margin-bottom: 1rem;
+            }}
+            .connection-status {{
+                display: inline-flex;
+                gap: 10px;
+                align-items: center;
+                color: var(--muted);
+                font-size: 14px;
+            }}
+            .status-indicator {{
+                width: 10px;
+                height: 10px;
+                border-radius: 999px;
+                display: inline-block;
+            }}
+            .status-online {{ background: #4ecca3; }}
+            .status-offline {{ background: #e94560; }}
+            .status-warn-dot {{ background: #f9a825; }}
+            .pack-grid {{
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+                gap: 1rem;
+            }}
+            .pack-card {{
+                border: 1px solid var(--line);
+                border-radius: 12px;
+                padding: 1rem;
+                background: rgba(255,255,255,.02);
+                transition: border-color 0.2s ease, transform 0.2s ease;
+            }}
+            .pack-card:hover {{
+                border-color: rgba(127,231,255,.34);
+                transform: translateY(-1px);
+            }}
+            .pack-card.installed {{
+                border-color: #4ecca3;
+                background: rgba(78,204,163,.09);
+            }}
+            .pack-card.complete {{
+                border-color: #4ecca3;
+            }}
+            .pack-card.incomplete {{
+                border-color: #f9a825;
+                opacity: 0.95;
+            }}
+            .pack-header {{
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-start;
+                margin-bottom: 0.75rem;
+            }}
+            .pack-name {{
+                font-size: 1rem;
+                font-weight: 600;
+                color: var(--text);
+            }}
+            .pack-tier {{
+                display: inline-flex;
+                align-items: center;
+                font-size: 0.7rem;
+                padding: 0.2rem 0.5rem;
+                border-radius: 4px;
+                text-transform: uppercase;
+                font-weight: 700;
+            }}
+            .tier-official {{
+                background: #4ecca3;
+                color: #091520;
+            }}
+            .tier-community {{
+                background: #f9a825;
+                color: #091520;
+            }}
+            .tier-personal {{
+                background: #506070;
+                color: #eef4fb;
+            }}
+            .tier-ready {{
+                background: rgba(134,239,172,.12);
+                color: var(--green);
+                border: 1px solid rgba(134,239,172,.25);
+            }}
+            .tier-active {{
+                color: var(--cyan);
+                border-color: rgba(127,231,255,.25);
+                background: rgba(127,231,255,.08);
+                border: 1px solid rgba(127,231,255,.25);
+            }}
+            .pack-meta {{
+                font-size: 13px;
+                color: var(--muted);
+                margin-bottom: 0.5rem;
+            }}
+            .pack-meta span {{
+                margin-right: 1rem;
+            }}
+            .pack-description {{
+                font-size: 0.85rem;
+                color: var(--muted);
+                margin-bottom: 0.75rem;
+                line-height: 1.4;
+            }}
+            .pack-tags {{
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0.25rem;
+                margin-bottom: 0.75rem;
+            }}
+            .tag {{
+                font-size: 0.7rem;
+                background: #0f3460;
+                color: #9be7ff;
+                padding: 0.2rem 0.5rem;
+                border-radius: 3px;
+            }}
+            .pack-actions {{
+                display: flex;
+                gap: 0.5rem;
+                flex-wrap: wrap;
+            }}
+            .btn-installed {{
+                background: #2e4a2e;
+                color: #4ecca3;
+                cursor: default;
+            }}
+            .empty-state, .loading {{
+                text-align: center;
+                padding: 2rem;
+                color: #8ea2b5;
+            }}
+            @media (max-width: 900px) {{
+                .settings-grid {{
+                    grid-template-columns: minmax(0, 1fr);
+                }}
+                .settings-panel-card.span-2 {{
+                    grid-column: auto;
+                }}
+                .two-col-layout {{
+                    grid-template-columns: minmax(0, 1fr);
+                }}
+                .saved-corpus-card {{
+                    grid-template-columns: minmax(0, 1fr);
+                }}
             }}
         </style>
     </head>
     <body>
         <div class="shell">
-            <h1>Local Runtime Setup</h1>
-            <p>This self-host runtime does not require a hosted DaedalMap account. For a usable local setup, configure your LLM key and point the runtime at local data.</p>
+            <section class="page-hero">
+                <div class="page-hero-head">
+                    <div>
+                        <h1>DaedalMap Settings</h1>
+                    </div>
+                    <div id="pageConnectionStatus" class="page-connection-status">
+                        <span class="status-indicator status-warn-dot"></span>
+                        Checking connection...
+                    </div>
+                </div>
+                <p class="subtitle">The launcher gets you into the local runtime. After that, this browser settings surface should feel like the main control panel, with the same tabbed pattern as the hosted account page.</p>
+            </section>
 
-            <div class="card">
-                <h2>Required Settings</h2>
-                <ul>
-                    <li><code>OPENAI_API_KEY</code> or <code>ANTHROPIC_API_KEY</code>: <span class="{"status-ok" if llm_ready else "status-warn"}">{llm_status}</span></li>
-                    <li><code>DATA_ROOT</code>: point this at your local data tree if you are not using the default app-data location</li>
-                </ul>
-                <p>{llm_note}</p>
-            </div>
+            <section class="settings-card">
+                <nav class="settings-tabs" id="settingsTabNav" role="tablist">
+                    <button class="settings-tab is-active" data-tab="settings" role="tab" aria-selected="true">Settings</button>
+                    <button class="settings-tab" data-tab="research" role="tab" aria-selected="false">Research</button>
+                    <button class="settings-tab" data-tab="library" role="tab" aria-selected="false">Library</button>
+                    <button class="settings-tab" data-tab="llm" role="tab" aria-selected="false">LLM Setup</button>
+                    <button class="settings-tab" data-tab="self-host" role="tab" aria-selected="false">Self Host</button>
+                    <button class="settings-tab" data-tab="runtime" role="tab" aria-selected="false">Runtime</button>
+                </nav>
 
-            <div class="card">
-                <h2>Current Runtime Paths</h2>
-                <ul>
-                    <li><code>DATA_ROOT</code>: {DATA_ROOT}</li>
-                    <li><code>PACKS_ROOT</code>: {PACKS_ROOT}</li>
-                    <li><code>CONFIG_DIR</code>: {CONFIG_DIR}</li>
-                    <li><code>SETTINGS_PATH</code>: {SETTINGS_PATH}</li>
-                </ul>
-            </div>
+                <div class="settings-panel" id="tabPanel-settings" role="tabpanel">
+                    <div class="settings-grid">
+                        <article class="settings-panel-card">
+                            <p class="settings-eyebrow">App</p>
+                            <h2>Local Runtime</h2>
+                            <p>Go back to the running local app, then switch modes or keep working in Explore and Research.</p>
+                            <div class="settings-actions">
+                                <a href="/" class="btn-primary">Open Local App</a>
+                            </div>
+                        </article>
+                        <article class="settings-panel-card">
+                            <p class="settings-eyebrow">Account</p>
+                            <h2>Hosted account</h2>
+                            <p>Hosted account, credits, and billing stay optional. Use them when you want DaedalMap-managed account behavior over your local runtime.</p>
+                            <div class="settings-actions">
+                                {f'<a href="{hosted_account_url}" class="btn-primary">Open Hosted Account</a>' if hosted_account_url else '<span>Hosted account not configured.</span>'}
+                            </div>
+                        </article>
+                        <article class="settings-panel-card">
+                            <p class="settings-eyebrow">Storage</p>
+                            <h2>Local storage root</h2>
+                            <p>Choose where local data, packs, cache, state, and logs should live. The launcher has the native folder picker; this page can save a manual path for the next launch.</p>
+                            <label class="account-label-block" for="storageRootInput">Storage root path</label>
+                            <input id="storageRootInput" class="account-input" type="text" placeholder="C:\\DaedalMapData">
+                            <div class="settings-actions">
+                                <button type="button" class="btn-secondary" id="reloadStorageConfigBtn">Reload</button>
+                                <button type="button" class="btn-primary" id="saveStorageConfigBtn">Save For Next Launch</button>
+                            </div>
+                            <p id="storageConfigStatus" class="account-note">Loading storage settings...</p>
+                        </article>
+                        <article class="settings-panel-card span-2">
+                            <p class="settings-eyebrow">Current State</p>
+                            <h2>Local runtime paths</h2>
+                            <div class="settings-row"><span class="settings-label">Storage root</span><span class="settings-value"><code id="storageRootCurrentValue">{DATA_ROOT.parent}</code></span></div>
+                            <div class="settings-row"><span class="settings-label">Next-launch root</span><span class="settings-value"><code id="storageRootNextValue">{DATA_ROOT.parent}</code></span></div>
+                            <div class="settings-row"><span class="settings-label">DATA_ROOT</span><span class="settings-value"><code>{DATA_ROOT}</code></span></div>
+                            <div class="settings-row"><span class="settings-label">PACKS_ROOT</span><span class="settings-value"><code>{PACKS_ROOT}</code></span></div>
+                            <div class="settings-row"><span class="settings-label">CONFIG_DIR</span><span class="settings-value"><code>{CONFIG_DIR}</code></span></div>
+                            <div class="settings-row"><span class="settings-label">STATE_DIR</span><span class="settings-value"><code>{STATE_DIR}</code></span></div>
+                            <div class="settings-row"><span class="settings-label">LOGS_DIR</span><span class="settings-value"><code>{LOGS_DIR}</code></span></div>
+                            <div class="settings-row"><span class="settings-label">SETTINGS_PATH</span><span class="settings-value"><code>{SETTINGS_PATH}</code></span></div>
+                            <div class="settings-row"><span class="settings-label">RUNTIME_CONFIG_PATH</span><span class="settings-value"><code>{RUNTIME_CONFIG_PATH}</code></span></div>
+                        </article>
+                    </div>
+                </div>
 
-            <div class="card">
-                <h2>Notes</h2>
-                <ul>
-                    <li>Hosted account, billing, and admin controls are optional and are not required for self-host/local use.</li>
-                    <li>Pack download/install flow is still being built. For now, local data should come from your existing data tree under <code>DATA_ROOT</code>.</li>
-                    <li>See <a href="/">the app</a> to return to the map runtime.</li>
-                </ul>
-            </div>
+                <div class="settings-panel hidden" id="tabPanel-research" role="tabpanel">
+                    <div class="settings-panel-card">
+                        <div class="two-col-layout">
+                            <div class="two-col-panel">
+                                <h2>Build a corpus</h2>
+                                <p class="account-note">Select installed packs to include, name it, then save. This mirrors the hosted corpus-builder layout, but it only uses packs you have already downloaded into the local runtime.</p>
+                                <div class="account-corpus-builder">
+                                    <label class="account-label-block" for="localCorpusName">Corpus name</label>
+                                    <input id="localCorpusName" class="account-input" type="text" maxlength="120" placeholder="Enter name here">
+                                    <div id="localCorpusValidation" class="account-note">Choose one or more installed packs to begin.</div>
+                                    <div id="localCorpusPackList" class="corpus-pack-list">
+                                        <p class="account-note">Loading installed packs...</p>
+                                    </div>
+                                    <div class="account-corpus-actions">
+                                        <button class="btn-secondary" type="button" id="refreshResearchPacksBtn">Refresh packs</button>
+                                        <button class="btn-primary" type="button" id="saveLocalCorpusBtn">Save corpus</button>
+                                        <a href="/" class="btn-secondary">Open Local App</a>
+                                    </div>
+                                    <div id="localCorpusBuilderStatus" class="account-note"></div>
+                                </div>
+                            </div>
+                            <div class="two-col-panel">
+                                <h2>Saved local corpora</h2>
+                                <p class="account-note">These local corpora stay on this device. Mark one active, then use Research mode in the local runtime.</p>
+                                <div id="savedLocalCorporaList" class="saved-corpora-list">
+                                    <p class="account-note">No saved local corpora yet.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="settings-panel hidden" id="tabPanel-library" role="tabpanel">
+                    <div class="settings-panel-card">
+                        <div class="section">
+                            <h2>Pack Store</h2>
+                            <p class="description">Download curated DaedalMap packs from the public catalog, then manage what is installed locally for this runtime.</p>
+                        </div>
+                        <div class="section">
+                            <h2>Available Catalog</h2>
+                            <p class="description">Packs available from the shared catalog. Installed packs are stored under <code>{PACKS_ROOT}</code>. Each card should tell you the download size before you install it.</p>
+                            <div id="libraryAvailablePacks" class="pack-grid">
+                                <div class="empty-state">Loading downloadable pack catalog...</div>
+                            </div>
+                        </div>
+                        <div class="section">
+                            <h2>Installed Local Packs</h2>
+                            <p class="description">Managed packs currently present in your local runtime. Cyan means active in the local app.</p>
+                            <div id="libraryLocalPacks" class="pack-grid">
+                                <div class="loading">Loading local packs...</div>
+                            </div>
+                        </div>
+                        <div class="settings-actions">
+                            <button type="button" class="btn-secondary" id="refreshLibraryStoreBtn">Refresh Store</button>
+                            {f'<a href="{hosted_packs_url}" class="btn-secondary">Open Hosted Pack Library</a>' if hosted_packs_url else ''}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="settings-panel hidden" id="tabPanel-llm" role="tabpanel">
+                    <div class="settings-grid">
+                        <article class="settings-panel-card">
+                            <p class="settings-eyebrow">LLM Setup</p>
+                            <h2>Provider keys</h2>
+                            <ul>
+                                <li><code>OPENAI_API_KEY</code> or <code>ANTHROPIC_API_KEY</code>: <span class="{"status-ok" if llm_ready else "status-warn"}">{llm_status}</span></li>
+                                <li><code>DATA_ROOT</code>: point this at your local data tree if you are not using the default app-data location</li>
+                            </ul>
+                            <p>{llm_note}</p>
+                        </article>
+                        <article class="settings-panel-card">
+                            <p class="settings-eyebrow">Modes</p>
+                            <h2>Hosted and local options</h2>
+                            <p>Bring your own API key for local use, or connect a hosted DaedalMap account when you want credits and managed account behavior.</p>
+                            <div class="settings-actions">
+                                {f'<a href="{hosted_account_url}" class="btn-secondary">Open Hosted Account</a>' if hosted_account_url else ''}
+                            </div>
+                        </article>
+                    </div>
+                </div>
+
+                <div class="settings-panel hidden" id="tabPanel-self-host" role="tabpanel">
+                    <div class="settings-grid">
+                        <article class="settings-panel-card">
+                            <p class="settings-eyebrow">Self Host</p>
+                            <h2>Local extension path</h2>
+                            <p>Custom packs, local models, and deeper self-host guidance should live here in browser form, not inside the launcher shell.</p>
+                            <div class="settings-actions">
+                                {f'<a href="{hosted_self_host_url}" class="btn-primary">Open Self Host Guidance</a>' if hosted_self_host_url else '<span>Hosted self-host guidance not configured.</span>'}
+                            </div>
+                        </article>
+                        <article class="settings-panel-card">
+                            <p class="settings-eyebrow">Principle</p>
+                            <h2>Shared contracts</h2>
+                            <p>Mirror the hosted account-page structure where it helps orientation, but keep the local runtime focused on running well from local files.</p>
+                        </article>
+                    </div>
+                </div>
+
+                <div class="settings-panel hidden" id="tabPanel-runtime" role="tabpanel">
+                    <div class="settings-grid">
+                        <article class="settings-panel-card">
+                            <p class="settings-eyebrow">Runtime</p>
+                            <h2>Return to the app</h2>
+                            <p>Most runtime behavior belongs in the actual local browser app once you are launched.</p>
+                            <div class="settings-actions">
+                                <a href="/" class="btn-primary">Open Local App</a>
+                            </div>
+                        </article>
+                        <article class="settings-panel-card">
+                            <p class="settings-eyebrow">Notes</p>
+                            <h2>Local-only behavior</h2>
+                            <p>Hosted account, billing, and admin controls remain optional and are not required for local or self-hosted runtime use.</p>
+                        </article>
+                    </div>
+                </div>
+            </section>
         </div>
+
+        <script>
+            (function() {{
+                const nav = document.getElementById('settingsTabNav');
+                const settingsConfig = {{
+                    packStoreUrl: "/api/local-wrapper/packs/store",
+                    localPackStatusUrl: "/api/local-wrapper/packs/status",
+                    localPackInstallUrl: "/api/local-wrapper/packs/install",
+                    storageConfigUrl: "/api/local-wrapper/storage-config",
+                }};
+                let libraryStoreLoaded = false;
+                let localLibraryEntries = [];
+                let localInstalledPacks = [];
+                let localActivePackIds = new Set();
+                let localSelectedResearchPackIds = new Set();
+                const localCorpusStorageKey = 'daedalmap.local.research.corpora.v1';
+                const localActiveCorpusKey = 'daedalmap.local.research.active_corpus.v1';
+
+                function escapeHtml(value) {{
+                    return String(value || '')
+                        .replace(/&/g, '&amp;')
+                        .replace(/</g, '&lt;')
+                        .replace(/>/g, '&gt;')
+                        .replace(/"/g, '&quot;')
+                        .replace(/'/g, '&#39;');
+                }}
+
+                function formatBytes(bytes) {{
+                    const value = Number(bytes || 0);
+                    if (!value || value <= 0) return 'Unknown size';
+                    if (value < 1024) return value + ' B';
+                    if (value < 1024 * 1024) return (value / 1024).toFixed(1) + ' KB';
+                    if (value < 1024 * 1024 * 1024) return (value / (1024 * 1024)).toFixed(1) + ' MB';
+                    return (value / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+                }}
+
+                function localCorpusStoreRead() {{
+                    try {{
+                        const raw = window.localStorage.getItem(localCorpusStorageKey);
+                        const parsed = raw ? JSON.parse(raw) : [];
+                        return Array.isArray(parsed) ? parsed : [];
+                    }} catch (_error) {{
+                        return [];
+                    }}
+                }}
+
+                function localCorpusStoreWrite(items) {{
+                    window.localStorage.setItem(localCorpusStorageKey, JSON.stringify(Array.isArray(items) ? items : []));
+                }}
+
+                function getActiveLocalCorpusId() {{
+                    return String(window.localStorage.getItem(localActiveCorpusKey) || '').trim();
+                }}
+
+                function setActiveLocalCorpusId(corpusId) {{
+                    const normalized = String(corpusId || '').trim();
+                    if (normalized) {{
+                        window.localStorage.setItem(localActiveCorpusKey, normalized);
+                    }} else {{
+                        window.localStorage.removeItem(localActiveCorpusKey);
+                    }}
+                }}
+
+                function getInstalledResearchPacks() {{
+                    return localLibraryEntries.filter(function(entry) {{
+                        return !!entry.installed;
+                    }});
+                }}
+
+                function formatResearchPackMeta(entry) {{
+                    const sourceCount = Number(entry?.source_count || 0);
+                    const version = String(entry?.current_version || entry?.installed_version || '').trim();
+                    const sizeText = Number(entry?.size_bytes || 0) > 0 ? ('download ' + formatBytes(entry.size_bytes)) : '';
+                    const installedSizeText = Number(entry?.installed_size_bytes || 0) > 0 ? ('installs to about ' + formatBytes(entry.installed_size_bytes)) : '';
+                    const tags = Array.isArray(entry?.tags) ? entry.tags.filter(Boolean).slice(0, 4) : [];
+                    const meta = [];
+                    if (sourceCount > 0) {{
+                        meta.push(sourceCount + ' source' + (sourceCount === 1 ? '' : 's'));
+                    }}
+                    if (version) {{
+                        meta.push('v' + version);
+                    }}
+                    if (sizeText) {{
+                        meta.push(sizeText);
+                    }}
+                    if (installedSizeText) {{
+                        meta.push(installedSizeText);
+                    }}
+                    if (tags.length) {{
+                        meta.push(tags.join(', '));
+                    }}
+                    return meta.join(' | ');
+                }}
+
+                function renderResearchPackCards() {{
+                    const packList = document.getElementById('localCorpusPackList');
+                    if (!packList) return;
+                    const installed = getInstalledResearchPacks();
+                    if (!installed.length) {{
+                        packList.innerHTML = '<p class="account-note">Install one or more downloadable packs in Library first. Research corpora only use packs already present in this local runtime.</p>';
+                        updateLocalCorpusValidation();
+                        return;
+                    }}
+                    packList.innerHTML = installed.map(function(entry) {{
+                        const packId = String(entry?.pack_id || '').trim();
+                        const checked = localSelectedResearchPackIds.has(packId) ? ' checked' : '';
+                        const title = escapeHtml(String(entry?.source_name || packId).trim() || packId);
+                        const meta = escapeHtml(formatResearchPackMeta(entry) || 'Installed local pack');
+                        const desc = escapeHtml(String(entry?.description || '').trim() || 'No description yet.');
+                        return '<div class="corpus-pack-card">'
+                            + '<input type="checkbox" class="corpus-pack-checkbox" value="' + escapeHtml(packId) + '"' + checked + ' data-research-pack-id="' + escapeHtml(packId) + '">'
+                            + '<div class="corpus-pack-body">'
+                            + '<div class="corpus-pack-title">' + title + '</div>'
+                            + '<div class="corpus-pack-meta">' + meta + '</div>'
+                            + '<div class="corpus-pack-desc">' + desc + '</div>'
+                            + '</div></div>';
+                    }}).join('');
+                    packList.querySelectorAll('[data-research-pack-id]').forEach(function(input) {{
+                        input.addEventListener('change', function() {{
+                            const packId = String(input.getAttribute('data-research-pack-id') || '').trim();
+                            if (!packId) return;
+                            if (input.checked) localSelectedResearchPackIds.add(packId);
+                            else localSelectedResearchPackIds.delete(packId);
+                            updateLocalCorpusValidation();
+                        }});
+                    }});
+                    updateLocalCorpusValidation();
+                }}
+
+                function updateLocalCorpusValidation() {{
+                    const validationEl = document.getElementById('localCorpusValidation');
+                    if (!validationEl) return false;
+                    const selected = Array.from(localSelectedResearchPackIds);
+                    if (!selected.length) {{
+                        validationEl.textContent = 'Choose one or more installed packs to begin.';
+                        return false;
+                    }}
+                    const summaries = getInstalledResearchPacks().filter(function(entry) {{
+                        return localSelectedResearchPackIds.has(String(entry?.pack_id || '').trim());
+                    }});
+                    const sourceCount = summaries.reduce(function(sum, entry) {{
+                        return sum + Number(entry?.source_count || 0);
+                    }}, 0);
+                    validationEl.textContent = 'Looks good: ' + selected.length + ' pack' + (selected.length === 1 ? '' : 's')
+                        + ' selected' + (sourceCount > 0 ? ' | ' + sourceCount + ' sources' : '') + '.';
+                    return true;
+                }}
+
+                function renderSavedLocalCorpora() {{
+                    const listEl = document.getElementById('savedLocalCorporaList');
+                    if (!listEl) return;
+                    const corpora = localCorpusStoreRead();
+                    const activeId = getActiveLocalCorpusId();
+                    if (!corpora.length) {{
+                        listEl.innerHTML = '<p class="account-note">No saved local corpora yet.</p>';
+                        return;
+                    }}
+                    listEl.innerHTML = corpora.map(function(corpus) {{
+                        const active = String(corpus?.id || '').trim() === activeId;
+                        const packCount = Array.isArray(corpus?.pack_ids) ? corpus.pack_ids.length : 0;
+                        const updated = corpus?.updated_at ? new Date(corpus.updated_at).toLocaleString() : '';
+                        const badgeClass = active ? 'active' : 'local';
+                        const badgeText = active ? 'Active locally' : 'Saved locally';
+                        return '<div class="saved-corpus-card">'
+                            + '<div>'
+                            + '<div class="saved-corpus-badge ' + badgeClass + '">' + escapeHtml(badgeText) + '</div>'
+                            + '<div class="saved-corpus-name">' + escapeHtml(String(corpus?.name || 'Unnamed corpus')) + '</div>'
+                            + '<div class="saved-corpus-submeta">' + packCount + ' pack' + (packCount === 1 ? '' : 's') + ' selected</div>'
+                            + (updated ? '<div class="saved-corpus-submeta">Updated: ' + escapeHtml(updated) + '</div>' : '')
+                            + (Array.isArray(corpus?.pack_ids) && corpus.pack_ids.length
+                                ? '<div class="saved-corpus-desc">' + escapeHtml(corpus.pack_ids.join(', ')) + '</div>'
+                                : '')
+                            + '</div>'
+                            + '<div class="saved-corpus-actions">'
+                            + '<button type="button" class="btn-secondary" data-activate-corpus-id="' + escapeHtml(String(corpus?.id || '')) + '">Use In Research</button>'
+                            + '<button type="button" class="btn-secondary" data-delete-corpus-id="' + escapeHtml(String(corpus?.id || '')) + '">Delete</button>'
+                            + '</div></div>';
+                    }}).join('');
+                    listEl.querySelectorAll('[data-activate-corpus-id]').forEach(function(button) {{
+                        button.addEventListener('click', function() {{
+                            const corpusId = String(button.getAttribute('data-activate-corpus-id') || '').trim();
+                            setActiveLocalCorpusId(corpusId);
+                            const statusEl = document.getElementById('localCorpusBuilderStatus');
+                            if (statusEl) {{
+                                const corpus = localCorpusStoreRead().find(function(item) {{ return String(item?.id || '').trim() === corpusId; }});
+                                statusEl.textContent = corpus ? 'Marked "' + String(corpus.name || 'corpus') + '" active for local Research mode.' : 'Marked corpus active.';
+                            }}
+                            renderSavedLocalCorpora();
+                        }});
+                    }});
+                    listEl.querySelectorAll('[data-delete-corpus-id]').forEach(function(button) {{
+                        button.addEventListener('click', function() {{
+                            const corpusId = String(button.getAttribute('data-delete-corpus-id') || '').trim();
+                            const next = localCorpusStoreRead().filter(function(item) {{
+                                return String(item?.id || '').trim() !== corpusId;
+                            }});
+                            localCorpusStoreWrite(next);
+                            if (getActiveLocalCorpusId() === corpusId) {{
+                                setActiveLocalCorpusId('');
+                            }}
+                            renderSavedLocalCorpora();
+                        }});
+                    }});
+                }}
+
+                async function loadStorageConfig() {{
+                    const inputEl = document.getElementById('storageRootInput');
+                    const statusEl = document.getElementById('storageConfigStatus');
+                    const currentEl = document.getElementById('storageRootCurrentValue');
+                    const nextEl = document.getElementById('storageRootNextValue');
+                    if (!inputEl || !statusEl || !currentEl || !nextEl) return;
+                    statusEl.textContent = 'Loading storage settings...';
+                    try {{
+                        const response = await fetch(settingsConfig.storageConfigUrl, {{ credentials: 'same-origin' }});
+                        const payload = await response.json();
+                        if (!response.ok || payload?.ok === false) {{
+                            throw new Error(payload?.error || ('Storage config HTTP ' + response.status));
+                        }}
+                        const currentRoot = String(payload?.current_storage_root || '').trim();
+                        const nextRoot = String(payload?.configured_storage_root || currentRoot).trim();
+                        inputEl.value = nextRoot;
+                        currentEl.textContent = currentRoot || 'unknown';
+                        nextEl.textContent = nextRoot || currentRoot || 'unknown';
+                        statusEl.textContent = payload?.restart_required
+                            ? 'A different storage root is saved for the next launch. Restart the local runtime to use it. Existing packs and data remain in the old location for now; new downloads and future runtime use will follow the new location.'
+                            : 'Launcher and runtime are using the same storage root. Existing data is not moved automatically if you change it later.';
+                    }} catch (error) {{
+                        statusEl.textContent = error?.message || 'Could not load storage settings.';
+                    }}
+                }}
+
+                async function saveStorageConfig() {{
+                    const inputEl = document.getElementById('storageRootInput');
+                    const statusEl = document.getElementById('storageConfigStatus');
+                    if (!inputEl || !statusEl) return;
+                    const storageRoot = String(inputEl.value || '').trim();
+                    if (!storageRoot) {{
+                        statusEl.textContent = 'Enter a storage root path first.';
+                        return;
+                    }}
+                    statusEl.textContent = 'Saving storage root...';
+                    try {{
+                        const response = await fetch(settingsConfig.storageConfigUrl, {{
+                            method: 'POST',
+                            headers: {{ 'Content-Type': 'application/json' }},
+                            body: JSON.stringify({{ storage_root: storageRoot }}),
+                            credentials: 'same-origin',
+                        }});
+                        const payload = await response.json();
+                        if (!response.ok || payload?.ok === false) {{
+                            throw new Error(payload?.error || ('Storage save HTTP ' + response.status));
+                        }}
+                        await loadStorageConfig();
+                        statusEl.textContent = payload?.message || 'Saved new storage root for the next launch. Existing packs and data remain in the old location for now; new downloads and future runtime use will follow the new location.';
+                    }} catch (error) {{
+                        statusEl.textContent = error?.message || 'Could not save storage settings.';
+                    }}
+                }}
+
+                function saveLocalCorpus() {{
+                    const nameInput = document.getElementById('localCorpusName');
+                    const statusEl = document.getElementById('localCorpusBuilderStatus');
+                    const name = String(nameInput?.value || '').trim();
+                    if (!statusEl) return;
+                    if (!name) {{
+                        statusEl.textContent = 'Please enter a corpus name.';
+                        return;
+                    }}
+                    if (!updateLocalCorpusValidation()) {{
+                        statusEl.textContent = 'Choose at least one installed pack.';
+                        return;
+                    }}
+                    const packIds = Array.from(localSelectedResearchPackIds).sort();
+                    const corpora = localCorpusStoreRead();
+                    const existing = corpora.find(function(item) {{
+                        return String(item?.name || '').trim().toLowerCase() === name.toLowerCase();
+                    }});
+                    const nextRecord = {{
+                        id: existing?.id || ('local-' + Date.now()),
+                        name: name,
+                        pack_ids: packIds,
+                        updated_at: new Date().toISOString(),
+                    }};
+                    const next = corpora.filter(function(item) {{
+                        return String(item?.id || '').trim() !== String(nextRecord.id).trim();
+                    }});
+                    next.unshift(nextRecord);
+                    localCorpusStoreWrite(next);
+                    setActiveLocalCorpusId(nextRecord.id);
+                    if (nameInput) nameInput.value = '';
+                    localSelectedResearchPackIds = new Set();
+                    renderResearchPackCards();
+                    renderSavedLocalCorpora();
+                    statusEl.textContent = 'Saved "' + name + '" locally and marked it active for Research mode.';
+                }}
+
+                function renderLibraryView() {{
+                    const connectionEl = document.getElementById('libraryConnectionStatus');
+                    const availableEl = document.getElementById('libraryAvailablePacks');
+                    const localEl = document.getElementById('libraryLocalPacks');
+                    if (!connectionEl || !availableEl || !localEl) return;
+
+                    connectionEl.innerHTML = '<span class="status-indicator status-online"></span> Connected to downloadable pack catalog';
+
+                    if (!localLibraryEntries.length) {{
+                        availableEl.innerHTML = '<div class="empty-state">No downloadable packs found.</div>';
+                    }} else {{
+                        availableEl.innerHTML = localLibraryEntries.map(function(entry) {{
+                            const packId = String(entry?.pack_id || '').trim();
+                            const title = escapeHtml(String(entry?.source_name || packId).trim() || packId);
+                            const desc = escapeHtml(String(entry?.description || '').trim() || '');
+                            const installed = !!entry.installed;
+                            const version = String(entry?.current_version || '').trim();
+                            const sourceCount = Number(entry?.source_count || 0);
+                            const sizeText = Number(entry?.size_bytes || 0) > 0 ? formatBytes(entry.size_bytes) : 'Unknown size';
+                            const installedSizeText = Number(entry?.installed_size_bytes || 0) > 0 ? formatBytes(entry.installed_size_bytes) : 'Unknown install size';
+                            const tags = Array.isArray(entry?.tags) ? entry.tags.filter(Boolean).slice(0, 4) : [];
+                            return '<div class="pack-card ' + (installed ? 'installed' : '') + '">'
+                                + '<div class="pack-header">'
+                                + '<span class="pack-name">' + title + '</span>'
+                                + '<span class="pack-tier ' + (installed ? 'tier-ready' : 'tier-official') + '">' + (installed ? 'Installed' : 'Downloadable') + '</span>'
+                                + '</div>'
+                                + '<div class="pack-meta">'
+                                + (sourceCount > 0 ? '<span>' + sourceCount + ' source' + (sourceCount === 1 ? '' : 's') + '</span>' : '')
+                                + (version ? '<span>v' + escapeHtml(version) + '</span>' : '')
+                                + '<span>Download: ' + escapeHtml(sizeText) + '</span>'
+                                + '<span>Installs to: ' + escapeHtml(installedSizeText) + '</span>'
+                                + '</div>'
+                                + '<div class="pack-description">' + (desc || 'No description yet.') + '</div>'
+                                + (tags.length ? '<div class="pack-tags">' + tags.map(function(tag) {{ return '<span class="tag">' + escapeHtml(String(tag)) + '</span>'; }}).join('') + '</div>' : '')
+                                + '<div class="pack-actions">'
+                                + (installed
+                                    ? '<button class="btn-installed" type="button" disabled>Installed</button><button class="btn-secondary" type="button" data-install-pack-id="' + escapeHtml(packId) + '">Reinstall</button>'
+                                    : '<button class="btn-primary" type="button" data-install-pack-id="' + escapeHtml(packId) + '">Install</button>')
+                                + '</div></div>';
+                        }}).join('');
+                    }}
+
+                    const installedEntries = localLibraryEntries.filter(function(entry) {{ return !!entry.installed; }});
+                    const orphanInstalled = localInstalledPacks.filter(function(installed) {{
+                        const packId = String(installed?.pack_id || '').trim();
+                        return packId && !installedEntries.some(function(entry) {{ return String(entry?.pack_id || '').trim() === packId; }});
+                    }}).map(function(installed) {{
+                        const packId = String(installed?.pack_id || '').trim();
+                        return {{
+                            pack_id: packId,
+                            source_name: packId,
+                            description: '',
+                            installed: true,
+                            active: localActivePackIds.has(packId),
+                            installed_version: String(installed?.version || '').trim(),
+                            current_version: '',
+                            source_count: 0,
+                            tags: [],
+                        }};
+                    }});
+                    const localEntries = installedEntries.concat(orphanInstalled);
+                    if (!localEntries.length) {{
+                        localEl.innerHTML = '<div class="empty-state">No local packs installed yet. Install one from the catalog above.</div>';
+                    }} else {{
+                        localEl.innerHTML = localEntries.map(function(entry) {{
+                            const packId = String(entry?.pack_id || '').trim();
+                            const title = escapeHtml(String(entry?.source_name || packId).trim() || packId);
+                            const desc = escapeHtml(String(entry?.description || '').trim() || 'Installed local pack');
+                            const active = !!entry.active;
+                            const installedVersion = String(entry?.installed_version || entry?.current_version || '').trim();
+                            const sourceCount = Number(entry?.source_count || 0);
+                            const sizeText = Number(entry?.size_bytes || 0) > 0 ? formatBytes(entry.size_bytes) : '';
+                            const installedSizeText = Number(entry?.installed_size_bytes || 0) > 0 ? formatBytes(entry.installed_size_bytes) : '';
+                            return '<div class="pack-card ' + (active ? 'complete' : 'installed') + '">'
+                                + '<div class="pack-header">'
+                                + '<span class="pack-name">' + title + '</span>'
+                                + '<span class="pack-tier ' + (active ? 'tier-active' : 'tier-ready') + '">' + (active ? 'Active' : 'Installed') + '</span>'
+                                + '</div>'
+                                + '<div class="pack-meta">'
+                                + (sourceCount > 0 ? '<span>' + sourceCount + ' source' + (sourceCount === 1 ? '' : 's') + '</span>' : '')
+                                + (installedVersion ? '<span>v' + escapeHtml(installedVersion) + '</span>' : '')
+                                + (sizeText ? '<span>Download: ' + escapeHtml(sizeText) + '</span>' : '')
+                                + (installedSizeText ? '<span>Installs to: ' + escapeHtml(installedSizeText) + '</span>' : '')
+                                + '<span><code>' + escapeHtml(packId) + '</code></span>'
+                                + '</div>'
+                                + '<div class="pack-description">' + desc + '</div>'
+                                + '<div class="pack-actions"><button class="btn-secondary" type="button" data-install-pack-id="' + escapeHtml(packId) + '">Reinstall / Activate</button></div>'
+                                + '</div>';
+                        }}).join('');
+                    }}
+
+                    document.querySelectorAll('[data-install-pack-id]').forEach(function(button) {{
+                        button.addEventListener('click', function() {{
+                            installLibraryPack(String(button.getAttribute('data-install-pack-id') || ''));
+                        }});
+                    }});
+                }}
+
+                async function loadLibraryStore(force) {{
+                    const connectionEl = document.getElementById('pageConnectionStatus');
+                    const availableEl = document.getElementById('libraryAvailablePacks');
+                    const localEl = document.getElementById('libraryLocalPacks');
+                    if (!connectionEl || !availableEl || !localEl) return;
+                    if (libraryStoreLoaded && !force) return;
+                    connectionEl.innerHTML = '<span class="status-indicator status-warn-dot"></span> Connecting to downloadable pack catalog...';
+                    availableEl.innerHTML = '<div class="loading">Loading downloadable pack catalog...</div>';
+                    localEl.innerHTML = '<div class="loading">Loading local pack state...</div>';
+                    try {{
+                        const [indexResp, localResp] = await Promise.all([
+                            fetch(settingsConfig.packStoreUrl, {{ credentials: 'same-origin' }}),
+                            fetch(settingsConfig.localPackStatusUrl, {{ credentials: 'same-origin' }}),
+                        ]);
+                        if (!indexResp.ok) throw new Error('Pack index HTTP ' + indexResp.status);
+                        if (!localResp.ok) throw new Error('Local pack status HTTP ' + localResp.status);
+                        const indexData = await indexResp.json();
+                        const localData = await localResp.json();
+                        if (indexData?.ok === false) throw new Error(indexData?.error || 'Pack store unavailable.');
+                        const entries = Array.isArray(indexData?.packs) ? indexData.packs : [];
+                        const installedPacks = Array.isArray(localData?.installed_packs) ? localData.installed_packs : [];
+                        const activeIds = new Set(Array.isArray(localData?.active_pack_ids) ? localData.active_pack_ids.map(String) : []);
+                        const installedById = new Map(installedPacks.map(function(entry) {{
+                            return [String(entry?.pack_id || '').trim(), entry];
+                        }}));
+                        localInstalledPacks = installedPacks;
+                        localActivePackIds = activeIds;
+                        localLibraryEntries = entries.map(function(entry) {{
+                            const packId = String(entry?.pack_id || '').trim();
+                            const installed = installedById.get(packId) || null;
+                            return Object.assign({{}}, entry, {{
+                                pack_id: packId,
+                                installed: !!installed,
+                                active: activeIds.has(packId),
+                                installed_version: installed ? String(installed.version || '').trim() : '',
+                            }});
+                        }});
+                        renderLibraryView();
+                        renderResearchPackCards();
+                        renderSavedLocalCorpora();
+                        libraryStoreLoaded = true;
+                    }} catch (error) {{
+                        connectionEl.innerHTML = '<span class="status-indicator status-offline"></span> ' + escapeHtml(error?.message || 'Could not load downloadable pack store.');
+                        availableEl.innerHTML = '<div class="empty-state">Could not connect to the downloadable pack catalog.</div>';
+                        localEl.innerHTML = '<div class="empty-state">Local pack state unavailable.</div>';
+                    }}
+                }}
+
+                async function installLibraryPack(packId) {{
+                    const connectionEl = document.getElementById('pageConnectionStatus');
+                    if (!packId || !connectionEl) return;
+                    connectionEl.innerHTML = '<span class="status-indicator status-warn-dot"></span> Installing ' + escapeHtml(packId) + '...';
+                    try {{
+                        const response = await fetch(settingsConfig.localPackInstallUrl, {{
+                            method: 'POST',
+                            headers: {{ 'Content-Type': 'application/json' }},
+                            body: JSON.stringify({{ pack_id: packId, activate: true, replace_existing: true }}),
+                            credentials: 'same-origin',
+                        }});
+                        const payload = await response.json();
+                        if (!response.ok || payload?.ok === false) {{
+                            throw new Error(payload?.error || ('Install failed with HTTP ' + response.status));
+                        }}
+                        libraryStoreLoaded = false;
+                        connectionEl.innerHTML = '<span class="status-indicator status-warn-dot"></span> Installed ' + escapeHtml(packId) + '. Refreshing local state...';
+                        await loadLibraryStore(true);
+                    }} catch (error) {{
+                        connectionEl.innerHTML = '<span class="status-indicator status-offline"></span> ' + escapeHtml(error?.message || ('Could not install ' + packId + '.'));
+                    }}
+                }}
+
+                if (!nav) return;
+                function switchTab(tabId) {{
+                    const normalized = String(tabId || '').trim().toLowerCase();
+                    if (!normalized) return;
+                    document.querySelectorAll('.settings-tab').forEach(function(btn) {{
+                        const active = String(btn.dataset.tab || '').trim().toLowerCase() === normalized;
+                        btn.classList.toggle('is-active', active);
+                        btn.setAttribute('aria-selected', active ? 'true' : 'false');
+                    }});
+                    document.querySelectorAll('.settings-panel').forEach(function(panel) {{
+                        panel.classList.toggle('hidden', panel.id !== 'tabPanel-' + normalized);
+                    }});
+                    const params = new URLSearchParams(window.location.search);
+                    params.set('tab', normalized);
+                    const nextUrl = window.location.pathname + '?' + params.toString();
+                    window.history.replaceState(null, '', nextUrl);
+                    if (normalized === 'library') {{
+                        loadLibraryStore(false);
+                    }}
+                    if (normalized === 'research') {{
+                        loadLibraryStore(false);
+                        renderSavedLocalCorpora();
+                    }}
+                }}
+                nav.addEventListener('click', function(event) {{
+                    const btn = event.target.closest('.settings-tab');
+                    if (!btn) return;
+                    switchTab(btn.dataset.tab || 'settings');
+                }});
+                document.getElementById('refreshLibraryStoreBtn')?.addEventListener('click', function() {{
+                    libraryStoreLoaded = false;
+                    loadLibraryStore(true);
+                }});
+                document.getElementById('refreshResearchPacksBtn')?.addEventListener('click', function() {{
+                    libraryStoreLoaded = false;
+                    loadLibraryStore(true);
+                }});
+                document.getElementById('reloadStorageConfigBtn')?.addEventListener('click', loadStorageConfig);
+                document.getElementById('saveStorageConfigBtn')?.addEventListener('click', saveStorageConfig);
+                document.getElementById('saveLocalCorpusBtn')?.addEventListener('click', saveLocalCorpus);
+                const params = new URLSearchParams(window.location.search);
+                renderSavedLocalCorpora();
+                loadStorageConfig();
+                switchTab(params.get('tab') || 'settings');
+            }})();
+        </script>
     </body>
     </html>
     """
