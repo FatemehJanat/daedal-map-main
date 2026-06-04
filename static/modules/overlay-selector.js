@@ -54,11 +54,14 @@ const MODEL_OVERRIDES = {
 };
 
 const OPS_FEED_TO_OVERLAY_IDS = {
+  currency: ['currency'],
   earthquakes: ['earthquakes'],
   volcanoes: ['volcanoes'],
   hurricanes_ibtracs_nrt: ['hurricanes'],
   tsunamis: ['tsunamis'],
   wildfires_us_nifc: ['wildfires'],
+  noaa_aurora: ['aurora'],
+  usa_nws_alerts: ['nws_alerts'],
   weather: [
     'temperature',
     'humidity',
@@ -76,6 +79,22 @@ const OPS_FEED_TO_OVERLAY_IDS = {
 let ALL_CATEGORIES = [];
 let CATEGORIES = [];
 let OVERLAYS = [];
+let opsEffectiveFeeds = [];
+
+function normalizeFeedNames(values) {
+  const out = [];
+  for (const value of values || []) {
+    const text = String(value || '').trim();
+    if (text && !out.includes(text)) {
+      out.push(text);
+    }
+  }
+  return out;
+}
+
+export function setOpsEffectiveFeeds(feeds = []) {
+  opsEffectiveFeeds = normalizeFeedNames(feeds);
+}
 
 export function getOpsOverlayIdsForFeeds(feeds = []) {
   const overlayIds = new Set();
@@ -195,7 +214,7 @@ function buildCategoriesFromTree(overlayTree) {
     { id: 'solar-radiation', label: 'Solar Radiation', description: 'Surface solar radiation', default: false, locked: false, model: 'weather-grid', icon: 'S', hasYearFilter: true, variable: 'solar_radiation' },
     { id: 'soil-temp', label: 'Soil Temperature', description: 'Surface soil temp', default: false, locked: false, model: 'weather-grid', icon: 'G', hasYearFilter: true, variable: 'soil_temp_c' },
     { id: 'soil-moisture', label: 'Soil Moisture', description: 'Surface soil moisture', default: false, locked: false, model: 'weather-grid', icon: 'M', hasYearFilter: true, variable: 'soil_moisture' },
-    { id: 'aurora', label: 'Aurora', description: 'Live aurora forecast', default: false, locked: false, model: 'aurora', icon: 'A', hasYearFilter: false, live: true, alwaysVisible: true }
+    { id: 'aurora', label: 'Aurora', description: 'Live aurora forecast', default: false, locked: false, model: 'aurora', icon: 'A', hasYearFilter: false, live: true }
   ];
   const climateCategory = categories.find((cat) => cat.id === 'climate' && cat.isCategory);
   if (climateCategory) {
@@ -237,7 +256,6 @@ function buildCategoriesFromTree(overlayTree) {
       icon: 'M',
       isCategory: true,
       expanded: false,
-      alwaysVisible: true,
       overlays: metricOverlays
     });
   }
@@ -252,7 +270,7 @@ function buildCategoriesFromTree(overlayTree) {
     isCategory: true,
     expanded: false,
     overlays: [
-      { id: 'nws_alerts', label: 'US Weather Alerts', description: 'Live NWS warnings', default: false, locked: false, model: 'nws_alerts', icon: '!', hasYearFilter: false, live: true, alwaysVisible: true }
+      { id: 'nws_alerts', label: 'US Weather Alerts', description: 'Live NWS warnings', default: false, locked: false, model: 'nws_alerts', icon: '!', hasYearFilter: false, live: true }
     ]
   });
 
@@ -328,7 +346,8 @@ function getCurrentOverlayLaneMode() {
 
 function getAllowedOpsOverlayIds() {
   const profile = getCurrentProfile();
-  const opsFeeds = Array.isArray(profile?.ops_feeds) ? profile.ops_feeds : [];
+  const profileFeeds = Array.isArray(profile?.ops_feeds) ? profile.ops_feeds : [];
+  const opsFeeds = opsEffectiveFeeds.length ? opsEffectiveFeeds : profileFeeds;
   const allowed = new Set();
   for (const feed of opsFeeds) {
     const overlayIds = OPS_FEED_TO_OVERLAY_IDS[feed] || [];
@@ -367,13 +386,6 @@ function filterCategoriesForCurrentMode(categories) {
 
   const visibleCategories = [];
   for (const category of cloned) {
-    // alwaysVisible categories show in every mode, independent of the Ops
-    // watch's allowed feeds.
-    if (category.alwaysVisible) {
-      visibleCategories.push(category);
-      continue;
-    }
-
     if (category.isCategory) {
       const overlays = category.overlays.filter((overlay) => overlay.alwaysVisible || allowedOverlayIds.has(overlay.id));
       if (overlays.length) {
