@@ -2,6 +2,8 @@
  * Lane switching and chat-mode UI helpers.
  */
 
+import { writeLane } from '../routing/app-route-state.js';
+
 function normalizeChatMode(mode, chatModes = ['explore', 'research', 'ops']) {
   return chatModes.includes(mode) ? mode : 'explore';
 }
@@ -23,6 +25,9 @@ export async function switchChatMode(ctx, mode, deps = {}) {
   ctx.modeHistories[ctx.mode] = ctx.history;
 
   ctx.mode = mode;
+  // Reflect the lane in the URL (pushState). No-op when triggered by popstate
+  // since the browser already changed the URL, so back/forward does not loop.
+  writeLane(mode);
   ctx.history = ctx.modeHistories[mode] || [];
   applyModeUiState(ctx, deps);
   App?.activateLaneMapView?.(mode);

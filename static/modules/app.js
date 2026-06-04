@@ -30,6 +30,7 @@ import { RasterPanel } from './raster-panel.js';
 import { setDependencies as setSceneRasterDeps } from './scene-raster-model.js';
 import { loadPublicPackCatalog } from './shared/catalog-cache.js';
 import { restoreChatState } from './chat/session.js';
+import { getInitialLane, normalizeBootUrl, onRouteChange } from './routing/app-route-state.js';
 
 const CHAT_MAP_LANES = ['explore', 'research', 'ops'];
 const DISPLAY_GEOMETRY_TYPES = new Set(['zcta', 'tribal', 'watershed', 'park']);
@@ -53,9 +54,9 @@ const DISPLAY_SOURCE_EVENT_TYPE_HINTS = [
 ];
 
 function getStartupChatMode() {
+  // Precedence: URL lane > saved activeMode > default (app-route-state).
   const restored = restoreChatState();
-  const mode = String(restored?.activeMode || '').trim().toLowerCase();
-  return CHAT_MAP_LANES.includes(mode) ? mode : 'explore';
+  return getInitialLane(restored?.activeMode);
 }
 
 function normalizeChatMapLane(lane) {
@@ -605,6 +606,9 @@ export const App = {
     }
 
     const startupMode = getStartupChatMode();
+    // Reflect the resolved lane in the URL so it matches the active lane
+    // (replaceState, no history entry). Keeps '/' as the shell for Explore.
+    normalizeBootUrl(startupMode);
     const researchStartup = startupMode === 'research';
     await OverlaySelector.init({ restoreState: !researchStartup });
     OverlayController.init({ enableExploreRuntime: !researchStartup });
@@ -617,6 +621,19 @@ export const App = {
     NwsAlertsOverlay.init({ MapAdapter });
 
     this.activateLaneMapView(startupMode, { force: true });
+
+    // Back/forward navigation: re-activate the lane from the URL. switchChatMode
+    // early-returns when the mode is unchanged, and writeLane no-ops on popstate
+    // (the URL already changed), so this does not loop.
+    if (!this._routeListenerBound) {
+      this._routeListenerBound = true;
+      onRouteChange((lane) => {
+        Promise.resolve(ChatManager.switchChatMode?.(lane)).catch((error) => {
+          console.warn('Route-driven lane switch failed:', error);
+        });
+      });
+    }
+
     if (startupMode === 'research') {
       Promise.resolve(ChatManager.refreshResearchCorpusOptions?.()).catch((error) => {
         console.warn('Could not refresh Research corpus options after map init:', error);

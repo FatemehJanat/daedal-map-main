@@ -1714,7 +1714,8 @@ async def debug_geometry(req: Request):
     import traceback
     import pandas as pd
     from mapmover.paths import DATA_ROOT, GEOMETRY_DIR
-    from mapmover.geometry_handlers import load_global_countries, get_geometry_path
+    from mapmover.foundation_helpers import load_global_countries_frame
+    from mapmover.geometry_handlers import get_geometry_path
 
     result = {
         "DATA_ROOT": str(DATA_ROOT),
@@ -1733,7 +1734,7 @@ async def debug_geometry(req: Request):
         result["get_geometry_path_error"] = str(e)
 
     try:
-        df = load_global_countries()
+        df = load_global_countries_frame()
         if df is None:
             result["load_global_countries"] = None
         else:
@@ -2627,9 +2628,8 @@ async def admin_runtime_soft_refresh(req: Request):
     return msgpack_response(payload)
 
 
-@router.get("/", response_class=HTMLResponse)
-async def serve_index():
-    """Serve the frontend HTML shell with cache-busting version stamps on static assets."""
+def _render_app_shell() -> str:
+    """Build the frontend HTML shell with cache-busting version stamps on static assets."""
     template_path = BASE_DIR / "templates" / "index.html"
     static_dir = BASE_DIR / "static"
 
@@ -2644,6 +2644,24 @@ async def serve_index():
     html = html.replace('href="/static/styles/map.css"', f'href="/static/styles/map.css?v={_v("styles/map.css")}"')
     html = html.replace('href="/static/styles/chat.css"', f'href="/static/styles/chat.css?v={_v("styles/chat.css")}"')
     return html
+
+
+@router.get("/", response_class=HTMLResponse)
+async def serve_index():
+    """Serve the frontend HTML shell."""
+    return _render_app_shell()
+
+
+@router.get("/explore", response_class=HTMLResponse)
+@router.get("/ops", response_class=HTMLResponse)
+@router.get("/research", response_class=HTMLResponse)
+async def serve_lane_shell():
+    """Serve the same SPA shell for lane deep-links (/explore, /ops, /research).
+
+    The client reads the active lane from the URL path. Unlike the marketing
+    routes in app.py, these must NOT redirect to the www site -- they are the
+    app itself, just entered directly at a lane."""
+    return _render_app_shell()
 
 
 @router.get("/settings", response_class=HTMLResponse)

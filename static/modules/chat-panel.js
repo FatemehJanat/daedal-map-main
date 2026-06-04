@@ -37,6 +37,7 @@ import {
   updateComposerState as updateComposerStateImpl,
   updateSidebarModeLayout as updateSidebarModeLayoutImpl
 } from './chat/chat-lane-controller.js';
+import { getInitialLane } from './routing/app-route-state.js';
 import {
   applyFilterUpdate as applyFilterUpdateImpl,
   handleResponse as handleResponseImpl,
@@ -53,6 +54,7 @@ import * as SavedOrders from './order/saved.js';
 import { ensureRuntimeAccessToken, getAccessToken, getCurrentProfile, getCurrentUser, getSupabaseClient, isAuthBootPending, isAuthenticated, onAuthChanged, refreshRuntimeSession, waitForAuthBoot } from './auth.js';
 import { TutorialMode, parseTutorialCommand } from './tutorial-mode.js';
 import { ResearchModeToggle } from './research/mode.js';
+import { setOpsEffectiveFeeds as setOverlaySelectorOpsEffectiveFeeds } from './overlay-selector.js';
 import {
   isMixedResearchRasterRequest as isMixedResearchRasterRequestImpl,
   shouldAutoShowResearchRaster as shouldAutoShowResearchRasterImpl,
@@ -364,6 +366,9 @@ export const ChatManager = {
     onAuthChanged((event) => {
       Promise.resolve().then(async () => {
         const authState = Boolean(event?.detail?.isAuthenticated);
+        if (!authState) {
+          setOverlaySelectorOpsEffectiveFeeds([]);
+        }
         try {
           await this.refreshResearchCorpusOptions();
           if (this.mode === 'research') {
@@ -740,6 +745,7 @@ export const ChatManager = {
     this.opsWatchId = payload?.watch_id || this.opsWatchId;
     this.latestOpsPayload = payload || null;
     this.latestOpsReport = payload?.ops_report || null;
+    setOverlaySelectorOpsEffectiveFeeds(Array.isArray(payload?.effective_feeds) ? payload.effective_feeds : []);
     OverlayController?.setOpsSnapshotPayloads?.(
       Array.isArray(payload?.display_payloads)
         ? payload.display_payloads
@@ -1410,7 +1416,8 @@ export const ChatManager = {
   restoreState() {
     const state = restoreChatState();
     if (state) {
-      this.mode = normalizeChatMode(state.activeMode);
+      // Precedence: URL lane > saved activeMode > default (app-route-state).
+      this.mode = getInitialLane(state.activeMode);
       this.catalogSurface = this.normalizeCatalogSurface(state.catalogSurface);
       this.modeHistories = { explore: [], research: [], ops: [] };
       this.modeMessagesHtml = { explore: '', research: '', ops: '' };
@@ -1423,7 +1430,7 @@ export const ChatManager = {
       return;
     }
 
-    this.mode = 'explore';
+    this.mode = getInitialLane(null);
     this.catalogSurface = 'published';
     this.modeHistories = { explore: [], research: [], ops: [] };
     this.modeMessagesHtml = { explore: '', research: '', ops: '' };
