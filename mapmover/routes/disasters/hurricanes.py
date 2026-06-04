@@ -404,8 +404,18 @@ async def get_storm_tracks_geojson(
                 storm_first_rows[storm_id] = group.iloc[0]
 
         features = []
+        missing_metadata_ids = []
         for storm_id, coords in coords_by_storm.items():
-            storm = storm_first_rows[storm_id] if storms_df is None else storms_df.loc[storm_id]
+            if storms_df is None:
+                storm = storm_first_rows[storm_id]
+            else:
+                if storm_id not in storms_df.index:
+                    missing_metadata_ids.append(storm_id)
+                    storm = storm_first_rows.get(storm_id)
+                    if storm is None:
+                        continue
+                else:
+                    storm = storms_df.loc[storm_id]
             features.append(
                 {
                     "type": "Feature",
@@ -424,6 +434,14 @@ async def get_storm_tracks_geojson(
                         "made_landfall": bool(storm.get("made_landfall", False)),
                     },
                 }
+            )
+
+        if missing_metadata_ids:
+            sample_ids = ", ".join(missing_metadata_ids[:5])
+            logger.warning(
+                "Storm tracks missing metadata rows for %d storms; using position-row fallback where available. Sample storm_ids=%s",
+                len(missing_metadata_ids),
+                sample_ids,
             )
 
         logger.info(

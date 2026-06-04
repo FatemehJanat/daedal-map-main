@@ -135,13 +135,17 @@ export const TrackModel = {
       id: CONFIG.layers.hurricaneCircle + '-lines',
       type: 'line',
       source: CONFIG.layers.hurricaneSource,
+      layout: {
+        'line-cap': 'round',
+        'line-join': 'round'
+      },
       paint: {
         'line-color': categoryColorExpr,
         'line-width': [
           'interpolate', ['linear'], ['zoom'],
-          2, 1.5,
-          5, 3,
-          8, 4
+          2, 2,
+          5, 4,
+          8, 5.5
         ],
         'line-opacity': ['*', 0.8, lifecycleOpacity]
       }
@@ -151,15 +155,19 @@ export const TrackModel = {
       id: CONFIG.layers.hurricaneCircle + '-lines-hit',
       type: 'line',
       source: CONFIG.layers.hurricaneSource,
+      layout: {
+        'line-cap': 'round',
+        'line-join': 'round'
+      },
       paint: {
-        'line-color': '#ffffff',
+        'line-color': 'rgba(255,255,255,0.001)',
         'line-width': [
           'interpolate', ['linear'], ['zoom'],
-          2, 10,
-          5, 16,
-          8, 24
+          2, 18,
+          5, 28,
+          8, 40
         ],
-        'line-opacity': 0.01
+        'line-opacity': 1
       }
     }, CONFIG.layers.hurricaneCircle + '-lines');
 
@@ -168,6 +176,10 @@ export const TrackModel = {
       id: CONFIG.layers.hurricaneCircle + '-glow',
       type: 'line',
       source: CONFIG.layers.hurricaneSource,
+      layout: {
+        'line-cap': 'round',
+        'line-join': 'round'
+      },
       paint: {
         'line-color': categoryColorExpr,
         'line-width': [

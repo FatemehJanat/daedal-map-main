@@ -13,6 +13,61 @@ import { CONFIG } from '../config.js';
 import { DisasterPopup } from '../disaster-popup.js';
 import { fetchMsgpack } from '../utils/fetch.js';
 
+const DISASTER_ICON_SVGS = {
+  earthquake: `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+      <path d="M4 13 L9 9 L11 13 L15 8 L20 11" fill="none" stroke="#f8fbff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M6 18 L9 15 L11 18 L14 14 L18 17" fill="none" stroke="#f8fbff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="0.88"/>
+    </svg>
+  `,
+  volcano: `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+      <path d="M5 18 L10.5 10.5 L13.2 13.4 L15.2 10.2 L19 18 Z" fill="#f8fbff" opacity="0.94"/>
+      <path d="M11.3 8.1 C10 6.7 10.4 5.1 12 4 C12.4 5.1 13.6 5.7 14.1 6.8 C14.6 7.9 14 9 12.8 9.8" fill="none" stroke="#f8fbff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  `,
+  tsunami: `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+      <path d="M4 15 C7 10, 11 10, 14 15 C15.5 17.4, 18.1 17.6, 20 16" fill="none" stroke="#f8fbff" stroke-width="2.5" stroke-linecap="round"/>
+      <path d="M4 19 C6.7 16, 9.8 16.4, 12.4 18.8" fill="none" stroke="#f8fbff" stroke-width="2.1" stroke-linecap="round" opacity="0.9"/>
+    </svg>
+  `,
+  wildfire: `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+      <path d="M12 3 C14.2 6.4 17.2 8.7 17.2 12.4 C17.2 16.1 14.9 19 12 19 C9.1 19 6.8 16.6 6.8 13.3 C6.8 10.8 8.1 8.8 10.2 6.9 C10.6 8.6 11.7 9.5 12.8 10.7 C13.5 8.4 13 5.9 12 3 Z" fill="#f8fbff"/>
+    </svg>
+  `,
+  flood: `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+      <path d="M5 12 C7.3 9.4, 10 9.1, 12.2 11.8 C14 14.1, 16.3 14.2, 19 12.2" fill="none" stroke="#f8fbff" stroke-width="2.6" stroke-linecap="round"/>
+      <path d="M5 17 C7.3 14.7, 10 14.5, 12.2 17 C14 19, 16.3 19, 19 17.2" fill="none" stroke="#f8fbff" stroke-width="2.2" stroke-linecap="round" opacity="0.92"/>
+    </svg>
+  `,
+  tornado: `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+      <path d="M4 7 H20" fill="none" stroke="#f8fbff" stroke-width="2.3" stroke-linecap="round"/>
+      <path d="M6 10 H18" fill="none" stroke="#f8fbff" stroke-width="2.3" stroke-linecap="round" opacity="0.96"/>
+      <path d="M8 13 H15" fill="none" stroke="#f8fbff" stroke-width="2.3" stroke-linecap="round" opacity="0.92"/>
+      <path d="M10 16 H13" fill="none" stroke="#f8fbff" stroke-width="2.1" stroke-linecap="round" opacity="0.9"/>
+      <path d="M11.5 18.2 L12 21" fill="none" stroke="#f8fbff" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+  `,
+  landslide: `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+      <path d="M5 18 L11 10 L19 10" fill="none" stroke="#f8fbff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="11.8" cy="13.5" r="1.5" fill="#f8fbff"/>
+      <circle cx="15" cy="15.7" r="1.8" fill="#f8fbff" opacity="0.94"/>
+      <circle cx="18" cy="18.2" r="1.3" fill="#f8fbff" opacity="0.88"/>
+    </svg>
+  `
+};
+
+const DISASTER_ICON_SCALE = 1.5;
+const DISASTER_ICON_TYPE_SCALE = {
+  volcano: 1.25,
+  tsunami: 1.08
+};
+
 // Dependencies set via setDependencies
 let MapAdapter = null;
 let TimeSlider = null;
@@ -31,6 +86,7 @@ export const PointRadiusModel = {
   // Click handler references for cleanup (per event type)
   clickHandlers: new Map(),  // eventType -> handler
   _mapClickHandler: null,
+  iconLoadPromises: new Map(),
 
   // Selected event tracking
   selectedEventId: null,
@@ -69,6 +125,219 @@ export const PointRadiusModel = {
       default:
         return ['coalesce', ['get', 'year'], 0];
     }
+  },
+
+  _layerUsesDisasterIcon(eventType) {
+    return Boolean(DISASTER_ICON_SVGS[eventType]);
+  },
+
+  _baseCircleOpacity(baseOpacity, eventType) {
+    return this._layerUsesDisasterIcon(eventType) ? 0 : baseOpacity;
+  },
+
+  _baseCircleStrokeWidth(baseWidth, eventType) {
+    return this._layerUsesDisasterIcon(eventType) ? 0 : baseWidth;
+  },
+
+  _iconLayerId(eventType) {
+    return this._layerId('icon', eventType);
+  },
+
+  _iconImageId(eventType) {
+    return `disaster-icon-${eventType}`;
+  },
+
+  _iconScaleForType(eventType) {
+    return DISASTER_ICON_TYPE_SCALE[eventType] || 1;
+  },
+
+  _pointFilterForType(eventType) {
+    if (eventType === 'wildfire' || eventType === 'flood') {
+      return ['==', ['geometry-type'], 'Point'];
+    }
+    return ['==', ['geometry-type'], 'Point'];
+  },
+
+  _iconColorExprForType(eventType) {
+    switch (eventType) {
+      case 'earthquake':
+        return [
+          'interpolate', ['linear'], ['get', 'magnitude'],
+          3.0, CONFIG.earthquakeColors.minor,
+          4.0, CONFIG.earthquakeColors.light,
+          5.0, CONFIG.earthquakeColors.moderate,
+          6.0, CONFIG.earthquakeColors.strong,
+          7.0, CONFIG.earthquakeColors.major
+        ];
+      case 'volcano': {
+        const hasValidVEI = ['all', ['has', 'VEI'], ['!=', ['get', 'VEI'], null]];
+        return [
+          'case',
+          hasValidVEI, [
+            'interpolate', ['linear'], ['get', 'VEI'],
+            0, '#ffffcc',
+            1, '#ffeda0',
+            2, '#fed976',
+            3, '#feb24c',
+            4, '#fd8d3c',
+            5, '#f03b20',
+            6, '#bd0026',
+            7, '#800026'
+          ],
+          '#44ff44'
+        ];
+      }
+      case 'tsunami': {
+        const isSourceExpr = ['coalesce', ['get', 'is_source'], false];
+        return [
+          'case',
+          ['==', isSourceExpr, true], '#1e88e5',
+          '#42a5f5'
+        ];
+      }
+      case 'wildfire':
+        return [
+          'interpolate', ['linear'],
+          ['log10', ['max', 10, ['coalesce', ['get', 'area_km2'], 100]]],
+          2, '#ff8800',
+          3, '#ff4400',
+          4, '#cc0000',
+          4.5, '#880000'
+        ];
+      case 'flood':
+        return [
+          'interpolate', ['linear'],
+          ['log10', ['max', 1, ['coalesce', ['get', 'duration_days'], 7]]],
+          0, '#66b3ff',
+          1, '#3399ff',
+          1.5, '#0066cc',
+          2, '#003366'
+        ];
+      case 'tornado': {
+        const scaleNumExpr = [
+          'to-number',
+          ['slice', ['coalesce', ['get', 'tornado_scale'], 'EF0'], -1],
+          0
+        ];
+        return [
+          'interpolate', ['linear'], scaleNumExpr,
+          0, '#98fb98',
+          1, '#32cd32',
+          2, '#ffd700',
+          3, '#ff8c00',
+          4, '#ff4500',
+          5, '#8b0000'
+        ];
+      }
+      case 'landslide':
+        return [
+          'interpolate', ['linear'],
+          ['coalesce', ['get', 'intensity'], 1],
+          1, '#cd853f',
+          2, '#a0522d',
+          3, '#8b4513',
+          4, '#654321',
+          5, '#3d2314'
+        ];
+      default:
+        return '#f8fbff';
+    }
+  },
+
+  _ensureDisasterIcon(eventType) {
+    const map = MapAdapter?.map;
+    if (!map || !this._layerUsesDisasterIcon(eventType)) {
+      return Promise.resolve(false);
+    }
+
+    const imageId = this._iconImageId(eventType);
+    if (map.hasImage(imageId)) {
+      return Promise.resolve(true);
+    }
+    if (this.iconLoadPromises.has(imageId)) {
+      return this.iconLoadPromises.get(imageId);
+    }
+
+    const svg = String(DISASTER_ICON_SVGS[eventType] || '').trim();
+    if (!svg) {
+      return Promise.resolve(false);
+    }
+
+    const promise = new Promise((resolve, reject) => {
+      const img = new Image(24, 24);
+      img.onload = () => {
+        try {
+          if (!map.hasImage(imageId)) {
+            map.addImage(imageId, img, { pixelRatio: 2, sdf: true });
+          }
+          resolve(true);
+        } catch (error) {
+          reject(error);
+        } finally {
+          this.iconLoadPromises.delete(imageId);
+        }
+      };
+      img.onerror = (error) => {
+        this.iconLoadPromises.delete(imageId);
+        reject(error);
+      };
+      img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    });
+
+    this.iconLoadPromises.set(imageId, promise);
+    return promise;
+  },
+
+  _addDisasterIconLayer(eventType, iconSizeExpr, opacityExpr, filter = null) {
+    const map = MapAdapter?.map;
+    if (!map || !this._layerUsesDisasterIcon(eventType)) return;
+    const sourceId = this._layerId('source', eventType);
+    const layerId = this._iconLayerId(eventType);
+    const imageId = this._iconImageId(eventType);
+    if (!map.getSource(sourceId) || map.getLayer(layerId) || !map.hasImage(imageId)) return;
+
+    map.addLayer({
+      id: layerId,
+      type: 'symbol',
+      source: sourceId,
+      filter: filter || this._pointFilterForType(eventType),
+      layout: {
+        'icon-image': imageId,
+        'icon-size': ['*', DISASTER_ICON_SCALE, this._iconScaleForType(eventType), iconSizeExpr],
+        'icon-allow-overlap': true,
+        'icon-ignore-placement': true,
+        'icon-anchor': 'center'
+      },
+      paint: {
+        'icon-opacity': opacityExpr,
+        'icon-color': this._iconColorExprForType(eventType)
+      }
+    });
+
+    const clickHandler = this.clickHandlers.get(eventType);
+    if (clickHandler) {
+      map.on('click', layerId, clickHandler);
+    }
+
+    map.on('mouseenter', layerId, () => {
+      map.getCanvas().style.cursor = 'pointer';
+    });
+    map.on('mouseleave', layerId, () => {
+      map.getCanvas().style.cursor = '';
+    });
+    map.on('mousemove', layerId, (e) => {
+      if (TimeSlider?.isPlaying) return;
+      if (e.features.length > 0 && !MapAdapter.popupLocked) {
+        const props = e.features[0].properties;
+        const html = DisasterPopup.buildHoverHtml(props, eventType);
+        MapAdapter.showPopup([e.lngLat.lng, e.lngLat.lat], html);
+      }
+    });
+    map.on('mouseleave', layerId, () => {
+      if (!MapAdapter.popupLocked) {
+        MapAdapter.hidePopup();
+      }
+    });
   },
 
   // Legacy single-type property for backwards compatibility
@@ -145,6 +414,41 @@ export const PointRadiusModel = {
       this._addLandslideLayer(eventType, options);
     } else {
       this._addGenericEventLayer(eventType, options);
+    }
+
+    if (this._layerUsesDisasterIcon(eventType)) {
+      this._ensureDisasterIcon(eventType).then(() => {
+        if (!this.activeTypes.has(eventType)) return;
+        const sourceStillExists = Boolean(MapAdapter?.map?.getSource(sourceId));
+        if (!sourceStillExists) return;
+        switch (eventType) {
+          case 'earthquake':
+            this._addEarthquakeIconLayer(eventType);
+            break;
+          case 'volcano':
+            this._addVolcanoIconLayer(eventType);
+            break;
+          case 'tsunami':
+            this._addTsunamiIconLayer(eventType);
+            break;
+          case 'wildfire':
+            this._addWildfireIconLayer(eventType);
+            break;
+          case 'flood':
+            this._addFloodIconLayer(eventType);
+            break;
+          case 'tornado':
+            this._addTornadoIconLayer(eventType);
+            break;
+          case 'landslide':
+            this._addLandslideIconLayer(eventType);
+            break;
+          default:
+            break;
+        }
+      }).catch((error) => {
+        console.warn(`PointRadiusModel: Could not load ${eventType} icon`, error);
+      });
     }
 
     // Setup click handler - shows unified popup on click
@@ -571,6 +875,7 @@ export const PointRadiusModel = {
     const glowLayerId = this._layerId('circle-glow', eventType);
     const fillLayerId = this._layerId('circle-fill', eventType);
     const hitLayerId = this._layerId('circle-hit', eventType);
+    const iconLayerId = this._iconLayerId(eventType);
 
     // Store handler reference per type for cleanup
     this.clickHandlers.set(eventType, clickHandler);
@@ -589,6 +894,10 @@ export const PointRadiusModel = {
       MapAdapter.map.on('click', hitLayerId, clickHandler);
     }
 
+    if (MapAdapter.map.getLayer(iconLayerId)) {
+      MapAdapter.map.on('click', iconLayerId, clickHandler);
+    }
+
     // Also handle clicks on polygon fill layer (for wildfires with perimeters)
     if (MapAdapter.map.getLayer(fillLayerId)) {
       MapAdapter.map.on('click', fillLayerId, clickHandler);
@@ -604,10 +913,12 @@ export const PointRadiusModel = {
           const glowId = this._layerId('circle-glow', type);
           const fillId = this._layerId('circle-fill', type);
           const hitId = this._layerId('circle-hit', type);
+          const iconId = this._iconLayerId(type);
           if (MapAdapter.map.getLayer(circleId)) layersToCheck.push(circleId);
           if (MapAdapter.map.getLayer(glowId)) layersToCheck.push(glowId);
           if (MapAdapter.map.getLayer(fillId)) layersToCheck.push(fillId);
           if (MapAdapter.map.getLayer(hitId)) layersToCheck.push(hitId);
+          if (MapAdapter.map.getLayer(iconId)) layersToCheck.push(iconId);
         }
 
         if (layersToCheck.length > 0) {
@@ -690,6 +1001,29 @@ export const PointRadiusModel = {
         }
       });
       MapAdapter.map.on('mouseleave', hitLayerId, () => {
+        if (!MapAdapter.popupLocked) {
+          MapAdapter.hidePopup();
+        }
+      });
+    }
+
+    if (MapAdapter.map.getLayer(iconLayerId)) {
+      MapAdapter.map.on('mouseenter', iconLayerId, () => {
+        MapAdapter.map.getCanvas().style.cursor = 'pointer';
+      });
+      MapAdapter.map.on('mouseleave', iconLayerId, () => {
+        MapAdapter.map.getCanvas().style.cursor = '';
+      });
+
+      MapAdapter.map.on('mousemove', iconLayerId, (e) => {
+        if (TimeSlider?.isPlaying) return;
+        if (e.features.length > 0 && !MapAdapter.popupLocked) {
+          const props = e.features[0].properties;
+          const html = DisasterPopup.buildHoverHtml(props, eventType);
+          MapAdapter.showPopup([e.lngLat.lng, e.lngLat.lat], html);
+        }
+      });
+      MapAdapter.map.on('mouseleave', iconLayerId, () => {
         if (!MapAdapter.popupLocked) {
           MapAdapter.hidePopup();
         }
@@ -939,11 +1273,25 @@ export const PointRadiusModel = {
       paint: {
         'circle-radius': sizeBoostExpr(epicenterSize),
         'circle-color': colorExpr,
-        'circle-opacity': opacityExpr(0.9),  // Fade with recency, cap at 1.0
+        'circle-opacity': opacityExpr(this._baseCircleOpacity(0.9, eventType)),  // Fade with recency, cap at 1.0
         'circle-stroke-color': '#222222',
-        'circle-stroke-width': 1
+        'circle-stroke-width': this._baseCircleStrokeWidth(1, eventType)
       }
     });
+  },
+
+  _addEarthquakeIconLayer(eventType) {
+    const recencyExpr = ['coalesce', ['get', '_recency'], 1.0];
+    const lifecycleOpacity = ['coalesce', ['get', '_opacity'], 1.0];
+    const iconSizeExpr = [
+      'interpolate', ['linear'], ['get', 'magnitude'],
+      3.0, 0.72,
+      5.0, 0.92,
+      7.0, 1.2,
+      8.0, 1.36
+    ];
+    const iconOpacity = ['min', 1.0, ['*', 0.95, ['*', recencyExpr, lifecycleOpacity]]];
+    this._addDisasterIconLayer(eventType, iconSizeExpr, iconOpacity);
   },
 
   /**
@@ -1133,11 +1481,25 @@ export const PointRadiusModel = {
       paint: {
         'circle-radius': sizeBoostExpr(epicenterSize),
         'circle-color': colorExpr,
-        'circle-opacity': opacityExpr(0.85),
+        'circle-opacity': opacityExpr(this._baseCircleOpacity(0.85, eventType)),
         'circle-stroke-color': '#333333',
-        'circle-stroke-width': 1
+        'circle-stroke-width': this._baseCircleStrokeWidth(1, eventType)
       }
     });
+  },
+
+  _addVolcanoIconLayer(eventType) {
+    const recencyExpr = ['coalesce', ['get', '_recency'], 1.0];
+    const lifecycleOpacity = ['coalesce', ['get', '_opacity'], 1.0];
+    const iconSizeExpr = [
+      'interpolate', ['linear'], ['coalesce', ['get', 'VEI'], 1],
+      0, 0.58,
+      2, 0.74,
+      4, 1.03,
+      6, 1.22
+    ];
+    const iconOpacity = ['min', 1.0, ['*', 0.96, ['*', recencyExpr, lifecycleOpacity]]];
+    this._addDisasterIconLayer(eventType, iconSizeExpr, iconOpacity);
   },
 
   /**
@@ -1163,13 +1525,13 @@ export const PointRadiusModel = {
     ];
     const sizeBoostExpr = (baseSize) => ['*', baseSize, ['max', 1.0, recencyExpr]];
 
-    // Colors: Source = cyan, Runup = teal/green
+      // Colors: Source = deep blue-cyan, Runup = ocean blue
     // Use coalesce to handle boolean or truthy check
     const isSourceExpr = ['coalesce', ['get', 'is_source'], false];
     const colorExpr = [
       'case',
-      ['==', isSourceExpr, true], '#00bcd4',  // Cyan for source
-      '#26a69a'  // Teal-green for runups
+      ['==', isSourceExpr, true], '#1e88e5',  // Strong blue for source
+      '#42a5f5'  // Lighter ocean blue for runups
     ];
 
     // Size based on runup_count (for sources) or water_height_m (for runups)
@@ -1363,8 +1725,8 @@ export const PointRadiusModel = {
       paint: {
         'circle-radius': sizeBoostExpr(['+', sizeExpr, 4]),
         'circle-color': colorExpr,
-        'circle-opacity': opacityExpr(0.3),
-        'circle-blur': 1
+        'circle-opacity': opacityExpr(0.14),
+        'circle-blur': 0.65
       }
     });
 
@@ -1380,19 +1742,47 @@ export const PointRadiusModel = {
       paint: {
         'circle-radius': sizeBoostExpr(sizeExpr),
         'circle-color': colorExpr,
-        'circle-opacity': opacityExpr(0.9),
+        'circle-opacity': opacityExpr(this._baseCircleOpacity(0.9, eventType)),
         'circle-stroke-color': [
           'case',
-          ['==', isSourceExpr, true], '#004d40',  // Dark teal stroke for source
-          '#006064'  // Slightly different for runups
+          ['==', isSourceExpr, true], '#0d47a1',  // Dark blue stroke for source
+          '#1565c0'  // Slightly lighter blue for runups
         ],
         'circle-stroke-width': [
           'case',
-          ['==', isSourceExpr, true], 2,  // Thicker stroke for source
-          1
+          ['==', isSourceExpr, true], this._baseCircleStrokeWidth(2, eventType),  // Thicker stroke for source
+          this._baseCircleStrokeWidth(1, eventType)
         ]
       }
     });
+  },
+
+  _addTsunamiIconLayer(eventType) {
+    const recencyExpr = ['coalesce', ['get', '_recency'], 1.0];
+    const lifecycleOpacity = ['coalesce', ['get', '_opacity'], 1.0];
+    const isSourceExpr = ['coalesce', ['get', 'is_source'], false];
+    const iconSizeExpr = [
+      'case',
+      ['==', isSourceExpr, true],
+      [
+        'interpolate', ['linear'],
+        ['log10', ['max', 1, ['coalesce', ['get', 'runup_count'], 1]]],
+        0, 0.74,
+        1, 0.9,
+        2, 1.12,
+        3.7, 1.34
+      ],
+      [
+        'interpolate', ['linear'],
+        ['coalesce', ['get', 'water_height_m'], 1],
+        0, 0.64,
+        5, 0.8,
+        10, 1.0,
+        20, 1.22
+      ]
+    ];
+    const iconOpacity = ['min', 1.0, ['*', 0.95, ['*', recencyExpr, lifecycleOpacity]]];
+    this._addDisasterIconLayer(eventType, iconSizeExpr, iconOpacity, ['==', ['geometry-type'], 'Point']);
   },
 
   /**
@@ -1514,11 +1904,26 @@ export const PointRadiusModel = {
       paint: {
         'circle-radius': sizeBoostExpr(sizeExpr),
         'circle-color': colorExpr,
-        'circle-opacity': opacityExpr(0.85),
+        'circle-opacity': opacityExpr(this._baseCircleOpacity(0.85, eventType)),
         'circle-stroke-color': '#ffcc00',
-        'circle-stroke-width': 1.5
+        'circle-stroke-width': this._baseCircleStrokeWidth(1.5, eventType)
       }
     });
+  },
+
+  _addWildfireIconLayer(eventType) {
+    const recencyExpr = ['coalesce', ['get', '_recency'], 1.0];
+    const lifecycleOpacity = ['coalesce', ['get', '_opacity'], 1.0];
+    const iconSizeExpr = [
+      'interpolate', ['linear'],
+      ['log10', ['max', 10, ['coalesce', ['get', 'area_km2'], 100]]],
+      2, 0.76,
+      3, 0.96,
+      4, 1.2,
+      4.5, 1.38
+    ];
+    const iconOpacity = ['min', 1.0, ['*', 0.96, ['*', recencyExpr, lifecycleOpacity]]];
+    this._addDisasterIconLayer(eventType, iconSizeExpr, iconOpacity, ['==', ['geometry-type'], 'Point']);
   },
 
   /**
@@ -1588,11 +1993,26 @@ export const PointRadiusModel = {
       paint: {
         'circle-radius': sizeBoostExpr(sizeExpr),
         'circle-color': colorExpr,
-        'circle-opacity': opacityExpr(0.75),
+        'circle-opacity': opacityExpr(this._baseCircleOpacity(0.75, eventType)),
         'circle-stroke-color': '#003366',
-        'circle-stroke-width': 1.5
+        'circle-stroke-width': this._baseCircleStrokeWidth(1.5, eventType)
       }
     });
+  },
+
+  _addFloodIconLayer(eventType) {
+    const recencyExpr = ['coalesce', ['get', '_recency'], 1.0];
+    const lifecycleOpacity = ['coalesce', ['get', '_opacity'], 1.0];
+    const iconSizeExpr = [
+      'interpolate', ['linear'],
+      ['log10', ['max', 1, ['coalesce', ['get', 'duration_days'], 7]]],
+      0, 0.7,
+      1, 0.9,
+      1.5, 1.12,
+      2, 1.28
+    ];
+    const iconOpacity = ['min', 1.0, ['*', 0.95, ['*', recencyExpr, lifecycleOpacity]]];
+    this._addDisasterIconLayer(eventType, iconSizeExpr, iconOpacity, ['==', ['geometry-type'], 'Point']);
   },
 
   /**
@@ -1734,11 +2154,32 @@ export const PointRadiusModel = {
       paint: {
         'circle-radius': sizeBoostExpr(sizeExpr),
         'circle-color': colorExpr,
-        'circle-opacity': opacityExpr(0.9),
+        'circle-opacity': opacityExpr(this._baseCircleOpacity(0.9, eventType)),
         'circle-stroke-color': '#222222',
-        'circle-stroke-width': 1
+        'circle-stroke-width': this._baseCircleStrokeWidth(1, eventType)
       }
     });
+  },
+
+  _addTornadoIconLayer(eventType) {
+    const recencyExpr = ['coalesce', ['get', '_recency'], 1.0];
+    const lifecycleOpacity = ['coalesce', ['get', '_opacity'], 1.0];
+    const scaleNumExpr = [
+      'to-number',
+      ['slice', ['coalesce', ['get', 'tornado_scale'], 'EF0'], -1],
+      0
+    ];
+    const iconSizeExpr = [
+      'interpolate', ['linear'], scaleNumExpr,
+      0, 0.68,
+      1, 0.82,
+      2, 0.98,
+      3, 1.12,
+      4, 1.28,
+      5, 1.44
+    ];
+    const iconOpacity = ['min', 1.0, ['*', 0.97, ['*', recencyExpr, lifecycleOpacity]]];
+    this._addDisasterIconLayer(eventType, iconSizeExpr, iconOpacity);
   },
 
   /**
@@ -1808,11 +2249,27 @@ export const PointRadiusModel = {
       paint: {
         'circle-radius': sizeBoostExpr(sizeExpr),
         'circle-color': colorExpr,
-        'circle-opacity': opacityExpr(0.9),
+        'circle-opacity': opacityExpr(this._baseCircleOpacity(0.9, eventType)),
         'circle-stroke-color': '#222222',
-        'circle-stroke-width': 1
+        'circle-stroke-width': this._baseCircleStrokeWidth(1, eventType)
       }
     });
+  },
+
+  _addLandslideIconLayer(eventType) {
+    const recencyExpr = ['coalesce', ['get', '_recency'], 1.0];
+    const lifecycleOpacity = ['coalesce', ['get', '_opacity'], 1.0];
+    const iconSizeExpr = [
+      'interpolate', ['linear'],
+      ['coalesce', ['get', 'intensity'], 1],
+      1, 0.72,
+      2, 0.88,
+      3, 1.04,
+      4, 1.22,
+      5, 1.36
+    ];
+    const iconOpacity = ['min', 1.0, ['*', 0.95, ['*', recencyExpr, lifecycleOpacity]]];
+    this._addDisasterIconLayer(eventType, iconSizeExpr, iconOpacity);
   },
 
   /**
@@ -2108,10 +2565,12 @@ export const PointRadiusModel = {
       const glowLayerId = this._layerId('circle-glow', eventType);
       const fillLayerId = this._layerId('circle-fill', eventType);
       const hitLayerId = this._layerId('circle-hit', eventType);
+      const iconLayerId = this._iconLayerId(eventType);
       map.off('click', circleLayerId, handler);
       map.off('click', glowLayerId, handler);
       map.off('click', fillLayerId, handler);
       map.off('click', hitLayerId, handler);
+      map.off('click', iconLayerId, handler);
       this.clickHandlers.delete(eventType);
     }
 
@@ -2120,6 +2579,7 @@ export const PointRadiusModel = {
       this._layerId('circle', eventType),
       this._layerId('circle-glow', eventType),
       this._layerId('circle-hit', eventType),
+      this._iconLayerId(eventType),
       this._layerId('circle-fill', eventType),     // Wildfire polygon fill
       this._layerId('circle-stroke', eventType),   // Wildfire polygon stroke
       this._layerId('circle-sequence', eventType), // Green sequence highlight

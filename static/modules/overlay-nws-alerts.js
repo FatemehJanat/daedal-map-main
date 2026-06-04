@@ -18,6 +18,7 @@ const SRC_ID = 'nws-alerts-src';
 const FILL_ID = 'nws-alerts-fill';
 const LINE_ID = 'nws-alerts-line';
 const POINT_ID = 'nws-alerts-point';
+const PIN_IMAGE_PREFIX = 'nws-alert-pin';
 
 // NWS severity -> color (data-driven paint).
 const SEVERITY_COLOR = [
@@ -28,6 +29,14 @@ const SEVERITY_COLOR = [
   'Minor', '#4dd2ff',
   '#9aa4bf'
 ];
+
+const PIN_SEVERITY_COLORS = {
+  Extreme: '#ff3b3b',
+  Severe: '#ff8c00',
+  Moderate: '#ffd24a',
+  Minor: '#4dd2ff',
+  Default: '#9aa4bf'
+};
 
 let MapAdapter = null;
 
@@ -41,6 +50,7 @@ export const NwsAlertsOverlay = {
   _popupHandler: null,
   _mouseenterHandler: null,
   _mouseleaveHandler: null,
+  _pinLoadPromise: null,
 
   init(deps = {}) {
     if (this.initialized) return;
@@ -97,13 +107,14 @@ export const NwsAlertsOverlay = {
     }
   },
 
-  _render(fc) {
+  async _render(fc) {
     const map = MapAdapter?.map;
     if (!map) return;
     if (!map.isStyleLoaded()) {
       map.once('load', () => this._render(fc));
       return;
     }
+    await this._ensurePinImages(map);
     const source = map.getSource(SRC_ID);
     if (source) {
       source.setData(fc);
@@ -119,19 +130,72 @@ export const NwsAlertsOverlay = {
       paint: { 'line-color': SEVERITY_COLOR, 'line-width': 1.5, 'line-opacity': 0.9 }
     });
     map.addLayer({
-      id: POINT_ID, type: 'circle', source: SRC_ID,
+      id: POINT_ID, type: 'symbol', source: SRC_ID,
       filter: ['==', ['geometry-type'], 'Point'],
+      layout: {
+        'icon-image': [
+          'match', ['get', 'severity'],
+          'Extreme', `${PIN_IMAGE_PREFIX}-Extreme`,
+          'Severe', `${PIN_IMAGE_PREFIX}-Severe`,
+          'Moderate', `${PIN_IMAGE_PREFIX}-Moderate`,
+          'Minor', `${PIN_IMAGE_PREFIX}-Minor`,
+          `${PIN_IMAGE_PREFIX}-Default`
+        ],
+        'icon-size': ['interpolate', ['linear'], ['zoom'], 1, 0.72, 4, 0.82, 8, 0.95],
+        'icon-anchor': 'bottom',
+        'icon-allow-overlap': true,
+        'icon-ignore-placement': true
+      },
       paint: {
-        // A clear target dot per alert, white-ringed so it pops over the
-        // currency choropleth and the highlighted areas.
-        'circle-radius': ['interpolate', ['linear'], ['zoom'], 1, 4, 4, 6, 8, 9],
-        'circle-color': SEVERITY_COLOR,
-        'circle-stroke-color': '#ffffff',
-        'circle-stroke-width': 2,
-        'circle-opacity': 1
+        'icon-opacity': 1
       }
     });
     this._bindPopup(map);
+  },
+
+  async _ensurePinImages(map) {
+    if (!map) return;
+    const keys = ['Extreme', 'Severe', 'Moderate', 'Minor', 'Default'];
+    const missing = keys.filter((key) => !map.hasImage(`${PIN_IMAGE_PREFIX}-${key}`));
+    if (missing.length === 0) return;
+    if (this._pinLoadPromise) {
+      await this._pinLoadPromise;
+      return;
+    }
+
+    this._pinLoadPromise = Promise.all(missing.map((key) => this._loadPinImage(map, key, PIN_SEVERITY_COLORS[key])))
+      .finally(() => {
+        this._pinLoadPromise = null;
+      });
+    await this._pinLoadPromise;
+  },
+
+  _pinSvg(color) {
+    return `
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 40">
+        <path d="M14 1.5 C7.1 1.5 1.5 7.1 1.5 14 C1.5 24.2 12.4 34.6 13.2 35.3 C13.7 35.8 14.4 35.8 14.8 35.3 C15.6 34.6 26.5 24.2 26.5 14 C26.5 7.1 20.9 1.5 14 1.5 Z" fill="${color}" stroke="#ffffff" stroke-width="2"/>
+        <circle cx="14" cy="14" r="4.2" fill="#ffffff" opacity="0.92"/>
+      </svg>
+    `.trim();
+  },
+
+  _loadPinImage(map, key, color) {
+    return new Promise((resolve, reject) => {
+      const img = new Image(28, 40);
+      img.onload = () => {
+        try {
+          const imageId = `${PIN_IMAGE_PREFIX}-${key}`;
+          if (!map.hasImage(imageId)) {
+            map.addImage(imageId, img, { pixelRatio: 2 });
+          }
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      };
+      img.onerror = reject;
+      img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(this._pinSvg(color))}`;
+    });
   },
 
   _bindPopup(map) {
