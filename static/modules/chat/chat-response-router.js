@@ -357,13 +357,13 @@ export function handleResponse(ctx, response, deps = {}) {
       ctx.pendingResearchDisplayWarning = null;
       ctx.applySupplementalChatActions(response);
       if (response.geojson && response.geojson.features && response.geojson.features.length > 0) {
-        add(response.summary || response.message || 'Found data for you.', 'assistant');
+        add(response.message || response.summary || 'Found data for you.', 'assistant');
         if (response.event_type) {
           ingestEventsToOverlay?.(response);
         }
         App?.displayMapPayload(response);
       } else {
-        add(response.summary || response.message || 'Could you be more specific?', 'assistant');
+        add(response.message || response.summary || 'Could you be more specific?', 'assistant');
       }
       break;
   }

@@ -622,8 +622,28 @@ def _compact_payload_summary(collector: str, summary: dict, *, sample_limit: int
                 sample_limit,
             ),
         }
+    if collector == "noaa_swpc":
+        return {
+            "alert_count": summary.get("alert_count"),
+            "active_scales": summary.get("active_scales"),
+            "alerts": _sample_rows(
+                summary.get("alerts") or [],
+                ("alert_id", "issued_utc", "alert_type", "noaa_scale", "summary"),
+                sample_limit,
+            ),
+        }
+    if collector == "noaa_aurora":
+        return {
+            "forecast_time": summary.get("forecast_time"),
+            "aurora_visible": summary.get("aurora_visible"),
+            "max_probability": summary.get("max_probability"),
+            "visible_cell_count": summary.get("visible_cell_count"),
+            "strong_cell_count": summary.get("strong_cell_count"),
+            "north_boundary_lat": summary.get("north_boundary_lat"),
+            "south_boundary_lat": summary.get("south_boundary_lat"),
+        }
     compact: dict = {}
-    for key in ("event_count", "incident_count", "storm_count", "position_count", "rate_count"):
+    for key in ("event_count", "incident_count", "storm_count", "position_count", "rate_count", "alert_count"):
         if key in summary:
             compact[key] = summary.get(key)
     if not compact:
@@ -890,11 +910,100 @@ def _active_count_for_feed(feed: str, summary: dict, query_text: str) -> tuple[i
     if feed == "currency":
         value = summary.get("rate_count")
         return (int(value), "currency rates") if value is not None else (None, None)
+    if feed == "noaa_swpc":
+        value = summary.get("alert_count")
+        return (int(value), "space weather alerts") if value is not None else (None, None)
+    if feed == "noaa_aurora":
+        value = summary.get("visible_cell_count")
+        return (int(value), "aurora forecast cells") if value is not None else (None, None)
     for key in ("active_count", "ongoing_count", "storm_count", "event_count", "incident_count", "rate_count"):
         value = summary.get(key)
         if value is not None:
             return int(value), _feed_display_name(feed)
     return None, None
+
+
+def _severity_rank(scale: str) -> tuple[int, int]:
+    text = str(scale or "").strip().upper()
+    if len(text) < 2:
+        return (-1, -1)
+    family_order = {"G": 3, "S": 2, "R": 1}
+    try:
+        level = int(text[1:])
+    except ValueError:
+        level = -1
+    return (family_order.get(text[:1], 0), level)
+
+
+def _try_warning_severity_answer(*, effective_feeds: list[str], report: dict) -> str | None:
+    if "noaa_swpc" not in effective_feeds:
+        return None
+    snapshot = _report_snapshot_by_feed(report).get("noaa_swpc") or {}
+    summary = snapshot.get("summary") if isinstance(snapshot.get("summary"), dict) else {}
+    active_scales = [str(value or "").strip().upper() for value in (summary.get("active_scales") or []) if str(value or "").strip()]
+    if not active_scales:
+        alert_count = summary.get("alert_count")
+        if alert_count == 0:
+            return "There are no active space weather alerts in the current watch."
+        return None
+    top_scale = max(active_scales, key=_severity_rank)
+    alerts = [item for item in (summary.get("alerts") or []) if isinstance(item, dict)]
+    matching = [item for item in alerts if str(item.get("noaa_scale") or "").strip().upper() == top_scale]
+    top_summary = str((matching[0] or {}).get("summary") or "").strip() if matching else ""
+    freshness = _feed_status_time(snapshot)
+    if top_summary and freshness:
+        return f"The highest active space weather warning is {top_scale}. {top_summary}. Last update: {freshness}."
+    if top_summary:
+        return f"The highest active space weather warning is {top_scale}. {top_summary}."
+    if freshness:
+        return f"The highest active space weather warning in the current watch is {top_scale}. Last update: {freshness}."
+    return f"The highest active space weather warning in the current watch is {top_scale}."
+
+
+def _format_lat_band(north_boundary: object, south_boundary: object) -> str | None:
+    try:
+        north = float(north_boundary) if north_boundary is not None else None
+    except (TypeError, ValueError):
+        north = None
+    try:
+        south = float(south_boundary) if south_boundary is not None else None
+    except (TypeError, ValueError):
+        south = None
+    parts: list[str] = []
+    if north is not None:
+        parts.append(f"north of about {abs(north):.0f}N")
+    if south is not None:
+        parts.append(f"south of about {abs(south):.0f}S")
+    if not parts:
+        return None
+    return " and ".join(parts)
+
+
+def _try_aurora_visibility_answer(*, effective_feeds: list[str], report: dict) -> str | None:
+    if "noaa_aurora" not in effective_feeds:
+        return None
+    snapshot = _report_snapshot_by_feed(report).get("noaa_aurora") or {}
+    summary = snapshot.get("summary") if isinstance(snapshot.get("summary"), dict) else {}
+    if not summary:
+        return None
+    visible = bool(summary.get("aurora_visible"))
+    max_probability = summary.get("max_probability")
+    band = _format_lat_band(summary.get("north_boundary_lat"), summary.get("south_boundary_lat"))
+    forecast_time = str(summary.get("forecast_time") or "").strip()
+    if not visible:
+        if forecast_time:
+            return f"The current aurora forecast does not show a visible band right now. Forecast time: {forecast_time}."
+        return "The current aurora forecast does not show a visible band right now."
+    probability_text = ""
+    if max_probability not in (None, ""):
+        probability_text = f" with peak probability around {max_probability}%"
+    if band and forecast_time:
+        return f"The aurora is currently forecast to be visible {band}{probability_text}. Forecast time: {forecast_time}."
+    if band:
+        return f"The aurora is currently forecast to be visible {band}{probability_text}."
+    if forecast_time:
+        return f"The aurora is currently forecast to be visible{probability_text}. Forecast time: {forecast_time}."
+    return f"The aurora is currently forecast to be visible{probability_text}."
 
 
 def _try_direct_ops_answer(*, query: str, report: dict, watch: dict, effective_feeds: list[str]) -> str | None:
@@ -907,6 +1016,30 @@ def _try_direct_ops_answer(*, query: str, report: dict, watch: dict, effective_f
         return f"Active watch has {len(effective_feeds)} feeds: {', '.join(effective_feeds)}."
     if re.search(r"\bhow many feeds\b", lower):
         return f"Active watch has {len(effective_feeds)} feeds."
+
+    if (
+        ("highest severity" in lower or "most severe" in lower)
+        and ("warning" in lower or "warnings" in lower or "alert" in lower or "alerts" in lower)
+    ):
+        warning_answer = _try_warning_severity_answer(
+            effective_feeds=effective_feeds,
+            report=report,
+        )
+        if warning_answer:
+            return warning_answer
+
+    generic_aurora_query = (
+        "aurora" in lower
+        and ("where" in lower or "see" in lower or "visible" in lower)
+        and not re.search(r"\b(here|near me|my area|from here|from my|in my area)\b", lower)
+    )
+    if generic_aurora_query:
+        aurora_answer = _try_aurora_visibility_answer(
+            effective_feeds=effective_feeds,
+            report=report,
+        )
+        if aurora_answer:
+            return aurora_answer
 
     if not _is_count_query(text):
         return None

@@ -61,7 +61,11 @@ async def research_corpus_endpoint(req: Request):
         frontend_session_id = body.get("sessionId", "anonymous")
         auth_user = await get_authenticated_user_async(req)
         session_id = build_session_cache_key(frontend_session_id, auth_user)
-        return msgpack_response(_annotate_manifest_saved_corpus_state(corpus_registry.manifest(session_id)))
+        manifest = _annotate_manifest_saved_corpus_state(corpus_registry.manifest(session_id))
+        focus_geojson = _build_research_focus_geojson(session_id)
+        if focus_geojson:
+            manifest["focus_geojson"] = focus_geojson
+        return msgpack_response(manifest)
     except Exception as exc:
         logger.exception("Research corpus snapshot error")
         return msgpack_error(str(exc), 500)

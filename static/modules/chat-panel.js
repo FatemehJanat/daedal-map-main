@@ -684,6 +684,9 @@ export const ChatManager = {
     }
     const manifest = await researchModeToggle.snapshotCorpus();
     this.latestResearchManifest = manifest || null;
+    if (this.mode === 'research' && manifest?.focus_geojson?.features?.length && (manifest?.artifact_count || 0) > 0) {
+      App?.focusResearchGeojson?.(manifest.focus_geojson);
+    }
     this.updateResearchCorpusStatus();
     return manifest;
   },
@@ -994,6 +997,9 @@ export const ChatManager = {
       const saved = manifest?.saved_corpus || null;
       const artifactCount = Number(manifest?.artifact_count || 0);
       if (saved?.id === selectedId && artifactCount > 0 && !manifest?.stale_artifacts) {
+        if (manifest?.focus_geojson?.features?.length) {
+          App?.focusResearchGeojson?.(manifest.focus_geojson);
+        }
         const selected = this.getSelectedResearchCorpusOption();
         this.addMessage(
           `Research already has "${selected?.name || saved?.name || 'this corpus'}" loaded with ${artifactCount} artifact${artifactCount === 1 ? '' : 's'}.`,

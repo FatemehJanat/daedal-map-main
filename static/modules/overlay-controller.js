@@ -638,6 +638,7 @@ export const OverlayController = {
     const sourceId = String(payload?.source_id || '').trim();
     const eventType = String(payload?.event_type || '').trim();
     if (sourceId === 'ibtracs_live_ops' || eventType === 'hurricane') return 'hurricanes';
+    if (sourceId === 'currency_live_ops') return 'currency';
     if (eventType === 'earthquake') return 'earthquakes';
     if (eventType === 'tsunami') return 'tsunamis';
     if (eventType === 'volcano') return 'volcanoes';
@@ -650,6 +651,7 @@ export const OverlayController = {
 
   _isOpsSnapshotManagedOverlay(overlayId) {
     return [
+      'currency',
       'earthquakes',
       'hurricanes',
       'tsunamis',
@@ -684,7 +686,25 @@ export const OverlayController = {
   renderOpsSnapshotOverlay(overlayId) {
     const payload = this.opsSnapshotPayloads.get(overlayId);
     const endpoint = OVERLAY_ENDPOINTS[overlayId];
-    if (!payload?.geojson?.features?.length || !endpoint) {
+    if (!payload?.geojson?.features?.length) {
+      return false;
+    }
+
+    if (payload?.data_type === 'metrics' || overlayId === 'currency') {
+      const App = window.App || null;
+      if (!App?.displayMapPayload) {
+        return false;
+      }
+      App.displayMapPayload(payload, {
+        origin: 'ops',
+        preserveExistingRuntimeLayers: true
+      });
+      App.syncMetricOverlayVisibility?.();
+      console.log(`OverlayController: Rendered Ops snapshot overlay ${overlayId} (${payload.geojson.features.length} features)`);
+      return true;
+    }
+
+    if (!endpoint) {
       return false;
     }
 
@@ -1987,6 +2007,15 @@ export const OverlayController = {
    * @param {string} overlayId - Overlay ID
    */
   hideOverlay(overlayId) {
+    if (overlayId === 'currency' || overlayId === 'demographics') {
+      const anyMetricActive =
+        OverlaySelector?.isActive?.('demographics') === true ||
+        OverlaySelector?.isActive?.('currency') === true;
+      MapAdapter?.setChoroplethVisible?.(anyMetricActive);
+      console.log(`OverlayController: Hidden ${overlayId} (choropleth visibility updated)`);
+      return;
+    }
+
     const endpoint = OVERLAY_ENDPOINTS[overlayId];
     if (!endpoint) return;
 

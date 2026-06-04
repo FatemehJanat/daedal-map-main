@@ -104,6 +104,7 @@ export function getAllOpsManagedOverlayIds() {
  */
 function buildCategoriesFromTree(overlayTree) {
   const categories = [];
+  const metricOverlays = [];
 
   for (const [categoryId, categoryData] of Object.entries(overlayTree)) {
     const icon = OVERLAY_ICONS[categoryId] || categoryId[0].toUpperCase();
@@ -112,12 +113,16 @@ function buildCategoriesFromTree(overlayTree) {
     if (categoryData.children) {
       // Category with sub-overlays (like disasters)
       const overlays = [];
+      let allChildrenAreChoropleths = true;
 
       for (const [overlayId, overlayData] of Object.entries(categoryData.children)) {
         // Get data_type from first source
         const firstSource = overlayData.sources?.[0];
         const dataType = firstSource?.data_type || 'events';
         const model = MODEL_OVERRIDES[overlayId] || DATA_TYPE_TO_MODEL[dataType] || 'point-radius';
+        if (model !== 'choropleth') {
+          allChildrenAreChoropleths = false;
+        }
 
         overlays.push({
           id: overlayId,
@@ -130,6 +135,11 @@ function buildCategoriesFromTree(overlayTree) {
           hasYearFilter: dataType === 'events',
           sources: overlayData.sources || []
         });
+      }
+
+      if (allChildrenAreChoropleths && overlays.length) {
+        metricOverlays.push(...overlays);
+        continue;
       }
 
       categories.push({
@@ -146,21 +156,29 @@ function buildCategoriesFromTree(overlayTree) {
       const dataType = firstSource?.data_type || 'metrics';
       const model = DATA_TYPE_TO_MODEL[dataType] || 'choropleth';
 
+      const overlay = {
+        id: categoryId,
+        label: categoryData.label || categoryId.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+        description: `${categoryData.sources?.length || 0} source(s)`,
+        default: false,
+        locked: false,
+        model: model,
+        icon: OVERLAY_ICONS[categoryId] || categoryId[0].toUpperCase(),
+        hasYearFilter: dataType === 'events',
+        sources: categoryData.sources || []
+      };
+
+      if (model === 'choropleth') {
+        metricOverlays.push(overlay);
+        continue;
+      }
+
       categories.push({
         id: categoryId,
         label: categoryData.label || categoryId.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
         icon: icon,
         isCategory: false,
-        overlay: {
-          id: categoryId,
-          label: categoryData.label || categoryId.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
-          description: `${categoryData.sources?.length || 0} source(s)`,
-          default: false,
-          locked: false,
-          model: model,
-          hasYearFilter: dataType === 'events',
-          sources: categoryData.sources || []
-        }
+        overlay
       });
     }
   }
@@ -201,17 +219,28 @@ function buildCategoriesFromTree(overlayTree) {
   // Metrics overlays - the shared choropleth (global.csv country fills, etc.).
   // The toggle controls choropleth visibility, so dense global layers like the
   // currency choropleth can be hidden to see point/area feeds underneath.
-  categories.push({
-    id: 'metrics',
-    label: 'Metrics',
-    icon: 'M',
-    isCategory: true,
-    expanded: false,
-    alwaysVisible: true,
-    overlays: [
-      { id: 'currency', label: 'Currency', description: 'Global currency choropleth', default: true, locked: false, model: 'choropleth', icon: '$', hasYearFilter: false }
-    ]
+  metricOverlays.push({
+    id: 'currency',
+    label: 'Currency',
+    description: 'Global currency choropleth',
+    default: true,
+    locked: false,
+    model: 'choropleth',
+    icon: '$',
+    hasYearFilter: false
   });
+
+  if (metricOverlays.length) {
+    categories.push({
+      id: 'metrics',
+      label: 'Metrics',
+      icon: 'M',
+      isCategory: true,
+      expanded: false,
+      alwaysVisible: true,
+      overlays: metricOverlays
+    });
+  }
 
   // USA overlays - operational overlays tied to US-only alert/coverage areas.
   // NOTE: the announcement ticker is intentionally NOT here - it is a display
@@ -423,11 +452,16 @@ export const OverlaySelector = {
       // Fallback to minimal hardcoded categories
       ALL_CATEGORIES = [
         {
-          id: 'demographics',
-          label: 'Demographics',
-          icon: 'D',
-          isCategory: false,
-          overlay: { id: 'demographics', label: 'Demographics', description: 'Choropleth data', default: false, locked: false, model: 'choropleth', hasYearFilter: false }
+          id: 'metrics',
+          label: 'Metrics',
+          icon: 'M',
+          isCategory: true,
+          expanded: false,
+          alwaysVisible: true,
+          overlays: [
+            { id: 'demographics', label: 'Demographics', description: 'Choropleth data', default: false, locked: false, model: 'choropleth', icon: 'D', hasYearFilter: false },
+            { id: 'currency', label: 'Currency', description: 'Global currency choropleth', default: true, locked: false, model: 'choropleth', icon: '$', hasYearFilter: false }
+          ]
         },
         {
           id: 'disasters',

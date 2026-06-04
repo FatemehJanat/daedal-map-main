@@ -77,16 +77,17 @@ function getLocalLinkedSiteBase() {
 function getSiteBase() {
   const configured = String(authConfig?.site_url || '').trim().replace(/\/$/, '');
   const localLinked = getLocalLinkedSiteBase();
+  if (localLinked) return localLinked;
   if (configured) return configured;
-  return localLinked || window.location.origin;
+  return window.location.origin;
 }
 
 function getAccountUrl() {
   const configured = String(currentProfile?.account_url || authConfig?.account_url || '/settings').trim() || '/settings';
   const localLinked = getLocalLinkedSiteBase();
+  if (localLinked) return `${localLinked}/account`;
   if (configured) return configured;
-  if (!localLinked) return '/settings';
-  return `${localLinked}/account`;
+  return '/settings';
 }
 
 async function fetchProfile({ forceRefresh = false } = {}) {
