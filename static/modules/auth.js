@@ -33,8 +33,12 @@ function isLocalLikeHost(hostname) {
   return value === 'localhost' || value === '127.0.0.1' || value === '0.0.0.0';
 }
 
+function isLocalWrapperEnabled() {
+  return Boolean(authConfig?.local_wrapper_enabled);
+}
+
 async function syncLocalWrapperAuthState() {
-  if (!isLocalLikeHost(window.location.hostname)) {
+  if (!isLocalLikeHost(window.location.hostname) || !isLocalWrapperEnabled()) {
     return;
   }
   if (localWrapperSyncPromise) {
@@ -474,7 +478,7 @@ export const AuthManager = {
       }
       } catch (error) {
         console.warn('[Auth] Disabled:', error.message);
-        authConfig = { enabled: false, supabase_url: '', supabase_anon_key: '' };
+        authConfig = { enabled: false, supabase_url: '', supabase_anon_key: '', local_wrapper_enabled: false };
       }
 
       const btn = document.getElementById('authBtn');

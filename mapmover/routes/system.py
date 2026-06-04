@@ -3860,15 +3860,21 @@ async def get_admin_levels():
 @router.get("/api/auth/config")
 async def get_auth_config():
     """Return safe public auth configuration for the frontend."""
-    from mapmover.paths import ACCOUNT_URL, SITE_URL
+    from mapmover.paths import ACCOUNT_URL, INSTALL_MODE, RUNTIME_MODE, SITE_URL
 
     enabled = _hosted_auth_enabled()
+    local_wrapper_enabled = (
+        str(INSTALL_MODE).strip().lower() == "local"
+        and str(RUNTIME_MODE).strip().lower() == "local"
+        and str(os.getenv("DAEDALMAP_ACCESS_MODE", "")).strip().lower() == "local_wrapper"
+    )
     return {
         "enabled": enabled,
         "supabase_url": os.getenv("SUPABASE_URL", ""),
         "supabase_anon_key": os.getenv("SUPABASE_ANON_KEY", ""),
         "site_url": SITE_URL,
         "account_url": ACCOUNT_URL if enabled else "/settings",
+        "local_wrapper_enabled": local_wrapper_enabled,
     }
 
 
