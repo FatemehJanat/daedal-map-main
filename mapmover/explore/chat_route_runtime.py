@@ -18,7 +18,6 @@ from mapmover.explore.confirmed_order_delta_runtime import (
 )
 from mapmover.explore.explore_confirmed_order import execute_confirmed_order_with_session_cache
 from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log_conversation
-from mapmover.order_executor import execute_order
 from mapmover.routes.chat_shared import (
     _chat_log_timing,
     _chat_trace_id,
@@ -36,6 +35,7 @@ from mapmover.runtime.chat_route_support import (
 from mapmover.runtime.confirmed_order_response_runtime import (
     build_confirmed_order_response_payload,
 )
+from mapmover.runtime.order_executor_runtime import execute_order
 from mapmover.runtime.warning_primitives import (
     build_display_warning_result,
     evaluate_display_warning_gate,

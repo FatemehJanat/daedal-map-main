@@ -14,7 +14,7 @@ from typing import Optional
 
 from ..data_loading import get_source_path, load_catalog, load_source_metadata
 from .preprocess_summary import build_preprocessor_summary
-from ..foundation_helpers import load_reference_json
+from ..foundation_helpers import load_reference_dict
 from ..paths import GEOMETRY_DIR as GEOM_DIR
 from ..runtime.candidate_scoring import (
     adjust_scores_with_context as adjust_scores_with_context_impl,
@@ -96,38 +96,25 @@ CONVERSIONS_PATH = Path(__file__).parent / "conversions.json"
 REFERENCE_DIR = Path(__file__).parent / "reference"
 GEOMETRY_DIR = GEOM_DIR
 
-_CONVERSIONS_CACHE = None
-
 
 def _load_topics() -> dict:
     return load_topics_impl(load_catalog=load_catalog, logger=logger)
 
 
 def _load_disaster_overlays() -> dict:
-    return load_disaster_overlays_impl(load_reference_json=load_reference_json, logger=logger)
+    return load_disaster_overlays_impl(load_reference_json=load_reference_dict, logger=logger)
 
 
 def load_conversions() -> dict:
-    """Load conversions.json for region resolution. Cached after first load."""
-    global _CONVERSIONS_CACHE
-    if _CONVERSIONS_CACHE is not None:
-        return _CONVERSIONS_CACHE
-
+    """Load conversions.json through the shared runtime loader path."""
     from ..runtime.geography_reference import load_conversions as load_conversions_impl
 
-    _CONVERSIONS_CACHE = load_conversions_impl()
-    if _CONVERSIONS_CACHE:
-        logger.debug("Cached conversions.json")
-        return _CONVERSIONS_CACHE
-
-    _CONVERSIONS_CACHE = {}
-    return {}
+    return load_conversions_impl() or {}
 
 
 def load_reference_file(filepath: Path) -> Optional[dict]:
     """Compatibility shim to the shared runtime foundation helper loader."""
-    data = load_reference_json(filepath)
-    return data if isinstance(data, dict) else None
+    return load_reference_dict(filepath)
 
 
 def search_locations_globally(name: str, admin_level: int = None, limit_countries: list = None) -> list:
@@ -175,12 +162,8 @@ def extract_topics(query: str) -> list:
     return extract_topics_impl(query, load_topics=_load_topics)
 
 
-def _get_region_aliases() -> dict:
-    return get_region_aliases_impl(load_conversions=load_conversions)
-
-
 def resolve_regions(query: str) -> list:
-    return resolve_regions_impl(query, load_conversions=load_conversions, get_region_aliases_func=_get_region_aliases)
+    return resolve_regions_impl(query, get_region_aliases_func=get_region_aliases_impl)
 
 
 def detect_time_patterns(query: str) -> dict:

@@ -15,11 +15,11 @@ logger = logging.getLogger("mapmover")
 
 from .geography_reference import (
     canonicalize_loc_id,
+    resolve_country_subdivision_slug_loc_id,
     translate_geometry_id_to_local_id,
     translate_loc_id_to_geometry_id,
 )
 from ..geometry_handlers import (
-    load_global_countries,
     load_country_parquet,
     load_geometry_rows_by_loc_ids,
     load_subcounty_geometry,
@@ -31,6 +31,7 @@ from ..data_loading import load_source_metadata
 from ..source_time_contract import available_years_for_range, metadata_metric_year_range
 from ..aggregation_system import build_aggregation_spec, apply_temporal_aggregation
 from ..foundation_helpers import load_runtime_result_cap_helpers
+from ..foundation_helpers import load_global_countries_frame
 from ..duckdb_helpers import (
     can_query_event_source,
     is_cloud_mode,
@@ -154,9 +155,7 @@ from .geography_reference import (
     load_usa_admin as load_usa_admin_impl,
 )
 from .order_geo_runtime import (
-    derive_eurostat_geo_level,
     expand_order_region,
-    resolve_country_subdivision_slug_loc_id,
 )
 from .order_execution_support import (
     build_runtime_source_path,
@@ -178,12 +177,6 @@ from .order_execution_policy import (
     executor_trace_id,
 )
 _country_subdivision_slug_cache = {}
-
-def _resolve_country_subdivision_slug_loc_id(region: str) -> Optional[str]:
-    return resolve_country_subdivision_slug_loc_id(
-        region,
-        cache_dict=_country_subdivision_slug_cache,
-    )
 
 def _load_catalog() -> dict:
     return load_runtime_catalog()
@@ -276,7 +269,10 @@ def expand_region(region: str) -> set:
     return expand_runtime_region(
         region,
         expand_order_region_func=expand_order_region,
-        resolve_country_subdivision_slug_loc_id_func=_resolve_country_subdivision_slug_loc_id,
+        resolve_country_subdivision_slug_loc_id_func=lambda region: resolve_country_subdivision_slug_loc_id(
+            region,
+            cache_dict=_country_subdivision_slug_cache,
+        ),
         load_conversions_func=load_conversions_impl,
         load_iso_codes_func=load_iso_codes_impl,
         load_usa_admin_func=load_usa_admin_impl,
@@ -523,7 +519,6 @@ def execute_order(order: dict) -> dict:
                 load_disaster_aggregate_data_func=_load_disaster_aggregate_data,
                 load_source_data_func=load_source_data,
             ),
-            derive_eurostat_geo_level_func=derive_eurostat_geo_level,
             load_fx_with_aggregation_func=lambda source_id, item, metadata: load_fx_with_aggregation_impl(
                 source_id,
                 item,
@@ -576,7 +571,7 @@ def execute_order(order: dict) -> dict:
                 logger=logging.getLogger(__name__),
                 filter_regions=filter_regions,
             ),
-            load_global_countries_func=load_global_countries,
+            load_global_countries_func=load_global_countries_frame,
             load_subcounty_geometry_func=load_subcounty_geometry,
             load_geometry_rows_by_loc_ids_func=load_geometry_rows_by_loc_ids,
             load_country_parquet_func=load_country_parquet,

@@ -4,6 +4,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from mapmover.runtime.orchestrator_policy import (
+    DEFAULT_OPS_RETRY_POLICY,
+    DEFAULT_RESEARCH_RETRY_POLICY,
+    EXPLORE_HEARTBEAT_POLICY,
+    OPS_HEARTBEAT_POLICY,
+    RESEARCH_HEARTBEAT_POLICY,
+)
+from mapmover.runtime.warning_policy import DEFAULT_DISPLAY_WARNING_POLICY
+
 
 @dataclass(frozen=True)
 class OrchestratorSpec:
@@ -21,6 +30,9 @@ class OrchestratorSpec:
     warning_policy: str
     retry_policy: str
     display_policy: str
+    heartbeat_policy_obj: object | None = None
+    display_warning_policy_obj: object | None = None
+    retry_policy_obj: object | None = None
 
 
 EXPLORE_ORCHESTRATOR_SPEC = OrchestratorSpec(
@@ -36,6 +48,8 @@ EXPLORE_ORCHESTRATOR_SPEC = OrchestratorSpec(
     warning_policy="explore_execute_when_feasible",
     retry_policy="explore_event_aggregate_fallback",
     display_policy="map_first",
+    heartbeat_policy_obj=EXPLORE_HEARTBEAT_POLICY,
+    display_warning_policy_obj=DEFAULT_DISPLAY_WARNING_POLICY,
 )
 
 
@@ -52,6 +66,9 @@ RESEARCH_ORCHESTRATOR_SPEC = OrchestratorSpec(
     warning_policy="research_analysis_and_display_warning",
     retry_policy="research_tool_guardrail_and_rescue",
     display_policy="analysis_first_map_capable",
+    heartbeat_policy_obj=RESEARCH_HEARTBEAT_POLICY,
+    display_warning_policy_obj=DEFAULT_DISPLAY_WARNING_POLICY,
+    retry_policy_obj=DEFAULT_RESEARCH_RETRY_POLICY,
 )
 
 
@@ -68,6 +85,9 @@ OPS_ORCHESTRATOR_SPEC = OrchestratorSpec(
     warning_policy="ops_direct_triage_warning",
     retry_policy="ops_live_refresh_retry",
     display_policy="watch_first",
+    heartbeat_policy_obj=OPS_HEARTBEAT_POLICY,
+    display_warning_policy_obj=DEFAULT_DISPLAY_WARNING_POLICY,
+    retry_policy_obj=DEFAULT_OPS_RETRY_POLICY,
 )
 
 

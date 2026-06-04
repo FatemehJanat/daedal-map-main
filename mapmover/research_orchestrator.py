@@ -9,32 +9,18 @@ from mapmover.progress_bus import ProgressBus, ProgressEvent
 from mapmover.research_lane_runtime import run_research_chat
 from mapmover.research_orchestrator_runtime import (
     apply_research_runtime_result_cap,
-    run_research_orchestrator_call,
-    run_research_orchestrator_with_progress,
+    run_research_orchestrator_sync,
+    wrap_research_capped_result_task,
 )
-from mapmover.runtime.orchestrator_policy import (
-    DEFAULT_RESEARCH_RETRY_POLICY,
-    RESEARCH_HEARTBEAT_POLICY,
-    build_heartbeat_event,
-)
-from mapmover.runtime.llm_policy import resolve_lane_llm_selection
-from mapmover.runtime.prompt_runtime import build_cached_system_prompt_blocks
-from mapmover.runtime.warning_policy import DEFAULT_DISPLAY_WARNING_POLICY
+from mapmover.runtime.orchestrator_base import BaseOrchestrator
 from mapmover.research_prompt import build_research_system_prompt
 
 
-class ResearchOrchestrator:
+class ResearchOrchestrator(BaseOrchestrator):
     """Behavior-preserving Research workflow wrapper."""
 
     def __init__(self, spec: OrchestratorSpec = RESEARCH_ORCHESTRATOR_SPEC):
-        self.spec = spec
-
-    def heartbeat(self, idle_count: int) -> ProgressEvent:
-        return build_heartbeat_event(
-            idle_count=idle_count,
-            policy=self.heartbeat_policy(),
-            progress_event_cls=ProgressEvent,
-        )
+        super().__init__(spec)
 
     def apply_runtime_result_cap(
         self,
@@ -47,20 +33,8 @@ class ResearchOrchestrator:
             load_source_metadata_func=load_source_metadata_func,
         )
 
-    def display_warning_policy(self):
-        return DEFAULT_DISPLAY_WARNING_POLICY
-
     def build_system_prompt(self, corpus_manifest: dict) -> str:
         return build_research_system_prompt(corpus_manifest)
-
-    def build_system_prompt_blocks(self, prompt_text: str) -> list[dict]:
-        return build_cached_system_prompt_blocks(prompt_text)
-
-    def retry_policy(self):
-        return DEFAULT_RESEARCH_RETRY_POLICY
-
-    def heartbeat_policy(self):
-        return RESEARCH_HEARTBEAT_POLICY
 
     async def run(
         self,
@@ -75,7 +49,11 @@ class ResearchOrchestrator:
         catalog_surface: str | None,
     ) -> dict:
         from mapmover.data_loading import load_source_metadata
-        return await run_research_orchestrator_call(
+        return await self.run_catalog_scoped_thread(
+            catalog_surface=catalog_surface,
+            func=run_research_orchestrator_sync,
+            load_source_metadata_func=load_source_metadata,
+            run_research_chat_func=run_research_chat,
             session_id=session_id,
             query=query,
             chat_history=chat_history,
@@ -83,9 +61,6 @@ class ResearchOrchestrator:
             force_large_display=force_large_display,
             usage_recorder=usage_recorder,
             rescue_usage_recorder=rescue_usage_recorder,
-            catalog_surface=catalog_surface,
-            run_research_chat_func=run_research_chat,
-            load_source_metadata_func=load_source_metadata,
             display_warning_policy=self.display_warning_policy(),
             retry_policy=self.retry_policy(),
             system_prompt_builder=self.build_system_prompt,
@@ -106,7 +81,11 @@ class ResearchOrchestrator:
         catalog_surface: str | None,
     ) -> tuple[ProgressBus, asyncio.Task]:
         from mapmover.data_loading import load_source_metadata
-        return await run_research_orchestrator_with_progress(
+        bus, raw_task = await self.run_catalog_scoped_thread_with_progress(
+            catalog_surface=catalog_surface,
+            progress_bus_cls=ProgressBus,
+            run_research_chat_func=run_research_chat,
+            func=run_research_chat,
             session_id=session_id,
             query=query,
             chat_history=chat_history,
@@ -114,19 +93,13 @@ class ResearchOrchestrator:
             force_large_display=force_large_display,
             usage_recorder=usage_recorder,
             rescue_usage_recorder=rescue_usage_recorder,
-            catalog_surface=catalog_surface,
-            progress_bus_cls=ProgressBus,
-            run_research_chat_func=run_research_chat,
-            load_source_metadata_func=load_source_metadata,
             display_warning_policy=self.display_warning_policy(),
             retry_policy=self.retry_policy(),
             system_prompt_builder=self.build_system_prompt,
             system_prompt_block_builder=self.build_system_prompt_blocks,
             llm_selection=self.llm_selection(),
         )
-
-    def llm_selection(self, override: dict | None = None):
-        return resolve_lane_llm_selection(
-            self.spec.model_policy,
-            override=override,
+        return bus, wrap_research_capped_result_task(
+            raw_task=raw_task,
+            load_source_metadata_func=load_source_metadata,
         )

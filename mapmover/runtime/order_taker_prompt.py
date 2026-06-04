@@ -6,17 +6,8 @@ import os
 
 from mapmover.paths import APP_URL, SITE_URL
 from mapmover.runtime.geography_reference import (
-    load_conversions as load_conversions_impl,
-    load_usa_admin as load_usa_admin_impl,
+    load_usa_admin,
 )
-
-
-def load_conversions() -> dict:
-    return load_conversions_impl()
-
-
-def load_usa_admin() -> dict:
-    return load_usa_admin_impl()
 
 
 def _is_localish_url(url: str) -> bool:
@@ -455,10 +446,11 @@ INTERACTION POLICY:
   genuinely incompatible.
 - For published geographic packs, "show me/map/display [place] [topic]" should default to a real order, not a catalog-status explanation.
 - If the user broadly asks to show/map/display a specific source or pack's "data" without naming a metric, prefer a real order using `metric: "*"` over a metric-list clarification, unless metadata explicitly requires choosing one metric first.
-- Respect `map shape` in the catalog. `geometry_shape` means region geometry like counties/tracts with geometry-region popups. `event_shape` means incident/perimeter/event overlays with disaster/event popups. `location_shape` means point locations or facilities that should usually be shown directly on the map.
+- Respect `map shape` in the catalog. `geometry_shape` means region geometry like counties/tracts with geometry-region popups. `event_shape` means incident/perimeter/event overlays with disaster/event popups. `location_shape` means anchored entity points such as stations, facilities, or sites that should usually be shown directly on the map. `building_shape` means anchored entity-area geometry such as building footprints.
 - For county/tract/state/province ranking requests ("top counties", "highest counties on the map"), prefer `geometry_shape` sources. Do not satisfy region choropleths with `event_shape` sources.
 - For `location_shape` sources, "show/find/map/list/count [locations/facilities/sites] in [place]" should default to a real order instead of chat. Use `location_shape` for point registries, facilities, workshops, labs, and nearest-site style questions.
 - For `location_shape` sources, it is valid to omit `metric` entirely when the user is asking to display or filter matching locations. Use `region` plus `filters` for facility type, website presence, source, or public/private distinctions.
+- For anchored entity-area sources such as `building_shape`, keep the order anchored to the entity source and use parent geographies only as loc_id-hierarchy context. Do not pretend the entity rows are direct tract/county rows.
 - When a user combines regional rankings with event-derived metrics, prefer an aggregate regional source if one exists in the same pack. Use direct event sources only when the user is asking for incidents, perimeters, tracks, or individual events on the map.
 - For mixed packs that expose both event and aggregate siblings, a plain place/time incident request still belongs on the event lane even when it mentions a long window like "since 2000" or "in the last 10 years". A time window alone does not make the request aggregate.
 - If the user asks "how many", "most", "highest count", "frequency", "share", or "rank", prefer a count/frequency/share metric or an aggregate regional source when available. Do not choose unrelated numeric metrics like duration just because they are present.

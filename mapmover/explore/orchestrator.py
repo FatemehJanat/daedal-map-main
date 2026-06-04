@@ -11,40 +11,27 @@ from mapmover.explore.explore_runtime import (
     preprocess_explore_request,
 )
 from mapmover.orchestrator_specs import EXPLORE_ORCHESTRATOR_SPEC, OrchestratorSpec
+from mapmover.runtime.orchestrator_base import BaseOrchestrator
 from mapmover.runtime.orchestrator_helper_runtime import (
     apply_runtime_result_cap_to_payload_result,
     maybe_build_explainer_chat_response,
 )
 from mapmover.runtime.orchestrator_policy import (
     DEFAULT_EXPLORE_COMPLEXITY_POLICY,
-    EXPLORE_HEARTBEAT_POLICY,
-    build_heartbeat_event,
 )
-from mapmover.runtime.orchestrator_threading import (
-    run_catalog_scoped_to_thread,
-    run_catalog_scoped_to_thread_with_progress,
-)
-from mapmover.runtime.llm_policy import resolve_lane_llm_selection
+from mapmover.runtime.postprocess_contracts import get_display_items
+from mapmover.runtime.postprocess_runtime import run_postprocess_order as postprocess_order
 from mapmover.runtime.order_taker_prompt import build_system_prompt as build_explore_system_prompt
-from mapmover.runtime.prompt_runtime import build_cached_system_prompt_blocks
-from mapmover.runtime.warning_policy import DEFAULT_DISPLAY_WARNING_POLICY, DEFAULT_METRIC_WARNING_POLICY
+from mapmover.runtime.warning_policy import DEFAULT_METRIC_WARNING_POLICY
 from mapmover.order_taker import interpret_request
-from mapmover.postprocessor import get_display_items, postprocess_order
-from mapmover.preprocessor import preprocess_query
+from mapmover.explore.preprocessor_runtime import preprocess_query
 from mapmover.progress_bus import ProgressBus, ProgressEvent
 
-class ExploreOrchestrator:
+class ExploreOrchestrator(BaseOrchestrator):
     """Behavior-preserving Explore workflow wrapper."""
 
     def __init__(self, spec: OrchestratorSpec = EXPLORE_ORCHESTRATOR_SPEC):
-        self.spec = spec
-
-    def heartbeat(self, idle_count: int) -> ProgressEvent:
-        return build_heartbeat_event(
-            idle_count=idle_count,
-            policy=self.heartbeat_policy(),
-            progress_event_cls=ProgressEvent,
-        )
+        super().__init__(spec)
 
     def preprocess(
         self,
@@ -82,7 +69,7 @@ class ExploreOrchestrator:
         usage_recorder,
         catalog_surface: str | None,
     ) -> dict:
-        return await run_catalog_scoped_to_thread(
+        return await self.run_catalog_scoped_thread(
             catalog_surface=catalog_surface,
             func=interpret_request,
             user_query=query,
@@ -103,7 +90,7 @@ class ExploreOrchestrator:
         usage_recorder,
         catalog_surface: str | None,
     ) -> tuple[ProgressBus, asyncio.Task]:
-        return await run_catalog_scoped_to_thread_with_progress(
+        return await self.run_catalog_scoped_thread_with_progress(
             catalog_surface=catalog_surface,
             progress_bus_cls=ProgressBus,
             func=interpret_request,
@@ -147,21 +134,6 @@ class ExploreOrchestrator:
 
     def build_system_prompt(self, catalog: dict, conversions: dict) -> str:
         return build_explore_system_prompt(catalog, conversions)
-
-    def build_system_prompt_blocks(self, prompt_text: str) -> list[dict]:
-        return build_cached_system_prompt_blocks(prompt_text)
-
-    def llm_selection(self, override: dict | None = None):
-        return resolve_lane_llm_selection(
-            self.spec.model_policy,
-            override=override,
-        )
-
-    def display_warning_policy(self):
-        return DEFAULT_DISPLAY_WARNING_POLICY
-
-    def heartbeat_policy(self):
-        return EXPLORE_HEARTBEAT_POLICY
 
     def compact_followup(self, message: str) -> str:
         return compact_followup_message(message)

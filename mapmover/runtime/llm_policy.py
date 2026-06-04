@@ -131,3 +131,24 @@ def build_provider_client(selection: LLMSelection):
 
         return Anthropic()
     raise ValueError(f"Unsupported LLM provider: {selection.provider}")
+
+
+def build_provider_runtime_context(
+    *,
+    model_policy: str | None = None,
+    selection: LLMSelection | None = None,
+    override: Mapping[str, Any] | None = None,
+    env: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """Return the normalized provider runtime context for one lane call."""
+    resolved = selection or resolve_lane_llm_selection(
+        str(model_policy or "").strip(),
+        override=override,
+        env=env,
+    )
+    return {
+        "llm_selection": resolved,
+        "client": build_provider_client(resolved),
+        "model": resolved.model,
+        "temperature": resolved.temperature,
+    }

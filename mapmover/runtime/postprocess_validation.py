@@ -7,6 +7,8 @@ from .source_hints import (
     infer_requested_geo_level_from_query,
     select_pack_family_source_for_query,
     select_query_guided_metric,
+    source_geometry_kind,
+    source_geometry_subkind,
 )
 
 
@@ -275,11 +277,15 @@ def validate_item(
 
     if not item.get("sort") and metric:
         row_count = metadata.get("row_count") if isinstance(metadata, dict) else None
-        geojson_shape = str((metadata or {}).get("geojson_shape") or "").strip().lower()
+        geometry_kind = source_geometry_kind(metadata)
+        geometry_subkind = source_geometry_subkind(metadata)
         if (
             isinstance(row_count, int)
             and row_count >= 50000
-            and geojson_shape in {"building_shape", "geometry_shape"}
+            and (
+                geometry_kind == "admin"
+                or (geometry_kind == "entity" and geometry_subkind == "area")
+            )
             and any(term in query for term in ("tallest", "highest", "lowest", "top ", "most "))
         ):
             item["sort"] = {"by": metric, "order": "desc", "limit": 100}

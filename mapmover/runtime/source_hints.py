@@ -2,11 +2,36 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 
 _IRREGULAR_GEO_PLURALS = {
     "county": "counties",
     "city": "cities",
 }
+
+_DEFAULT_RUNTIME_LEVEL_NAMES = {
+    "admin_0": "country",
+    "admin_1": "state",
+    "admin_2": "county",
+    "admin_3": "tract",
+    "admin_4": "blockgroup",
+    "admin_5": "block",
+}
+
+
+@dataclass(frozen=True)
+class ResolvedGeoContract:
+    requested_token: str
+    runtime_level: str | None
+    country_level_name: str | None
+    source_anchor_runtime_level: str | None
+    geometry_kind: str
+    geometry_subkind: str | None
+    hierarchy_relation: str
+    source_level_value: str | None
+    source_filter_field: str
+    filter_strategy: str
 
 
 def _normalize_geo_alias_text(value: str) -> str:
@@ -62,6 +87,33 @@ def _expand_geo_alias_variants(value: str) -> list[str]:
         _add("blockgroups")
 
     return variants
+
+
+def _normalize_runtime_geo_level(value: str | None) -> str | None:
+    text = _normalize_geo_alias_text(value or "")
+    if text.startswith("admin_") and text[6:].isdigit():
+        return text
+    return None
+
+
+def _fallback_runtime_level_from_friendly(value: str | None) -> str | None:
+    normalized = _normalize_geo_alias_text(value or "")
+    if not normalized:
+        return None
+    for runtime_level, friendly_name in _DEFAULT_RUNTIME_LEVEL_NAMES.items():
+        if normalized == friendly_name:
+            return runtime_level
+    return None
+
+
+def _runtime_level_number(value: str | None) -> int | None:
+    runtime_level = _normalize_runtime_geo_level(value)
+    if runtime_level is None:
+        return None
+    try:
+        return int(runtime_level.split("_", 1)[1])
+    except (IndexError, TypeError, ValueError):
+        return None
 
 
 def get_routing_hints(metadata: dict | None) -> dict:
@@ -189,6 +241,317 @@ def get_country_geo_level_aliases(metadata: dict | None) -> dict[str, str]:
     return aliases
 
 
+def get_country_runtime_level_names(metadata: dict | None) -> dict[str, str]:
+    """Return canonical runtime-level -> country-local display name mapping."""
+    names = dict(_DEFAULT_RUNTIME_LEVEL_NAMES)
+    if not isinstance(metadata, dict):
+        return names
+
+    geographic_coverage = metadata.get("geographic_coverage") or {}
+    iso3 = str(geographic_coverage.get("country") or "").strip().upper()
+    if not iso3:
+        return names
+
+    try:
+        from mapmover.foundation_helpers import load_country_crosswalk
+
+        crosswalk = load_country_crosswalk(iso3) or {}
+    except Exception:
+        return names
+
+    sub_admin_levels = crosswalk.get("sub_admin_levels") or {}
+    if not isinstance(sub_admin_levels, dict):
+        return names
+
+    for admin_level, info in sub_admin_levels.items():
+        runtime_level = _normalize_runtime_geo_level(admin_level)
+        if runtime_level is None or not isinstance(info, dict):
+            continue
+        for field_name in ("canonical_dataset_label", "display_name", "name"):
+            candidate = _normalize_geo_alias_text(info.get(field_name) or "")
+            if candidate:
+                names[runtime_level] = candidate
+                break
+    return names
+
+
+def get_source_anchor_runtime_level(metadata: dict | None) -> str | None:
+    if not isinstance(metadata, dict):
+        return None
+
+    geographic_level = metadata.get("geographic_level")
+    if isinstance(geographic_level, list):
+        runtime_levels = [
+            _normalize_runtime_geo_level(level)
+            for level in geographic_level
+        ]
+        runtime_levels = [level for level in runtime_levels if level]
+        if runtime_levels:
+            return max(runtime_levels, key=lambda level: _runtime_level_number(level) or -1)
+    else:
+        runtime_level = _normalize_runtime_geo_level(geographic_level)
+        if runtime_level:
+            return runtime_level
+
+    admin_levels = metadata.get("admin_levels")
+    if isinstance(admin_levels, list):
+        numbers: list[int] = []
+        for level in admin_levels:
+            try:
+                numbers.append(int(level))
+            except (TypeError, ValueError):
+                continue
+        if numbers:
+            return f"admin_{max(numbers)}"
+
+    coverage = metadata.get("geographic_coverage") or {}
+    coverage_levels = coverage.get("admin_levels")
+    if isinstance(coverage_levels, list):
+        numbers = []
+        for level in coverage_levels:
+            try:
+                numbers.append(int(level))
+            except (TypeError, ValueError):
+                continue
+        if numbers:
+            return f"admin_{max(numbers)}"
+
+    return None
+
+
+def _metadata_supported_runtime_levels(metadata: dict | None) -> set[str]:
+    if not isinstance(metadata, dict):
+        return set()
+
+    values = metadata.get("geographic_level")
+    if isinstance(values, list):
+        levels = {
+            _normalize_runtime_geo_level(value)
+            for value in values
+        }
+        return {level for level in levels if level}
+
+    level = _normalize_runtime_geo_level(values)
+    return {level} if level else set()
+
+
+def infer_geometry_kind(metadata: dict | None) -> tuple[str, str | None]:
+    if not isinstance(metadata, dict):
+        return "admin", None
+
+    data_type = metadata.get("data_type")
+    if isinstance(data_type, list):
+        data_types = {str(value or "").strip().lower() for value in data_type if str(value or "").strip()}
+    else:
+        data_types = {str(data_type or "").strip().lower()} if str(data_type or "").strip() else set()
+
+    geojson_shape = str(metadata.get("geojson_shape") or "").strip().lower()
+
+    if "events" in data_types:
+        if "track" in geojson_shape:
+            return "event", "track"
+        if "point" in geojson_shape or geojson_shape == "location_shape":
+            return "event", "point"
+        if "line" in geojson_shape:
+            return "event", "line"
+        return "event", "area" if geojson_shape else None
+
+    if geojson_shape == "building_shape":
+        return "entity", "area"
+    if geojson_shape == "location_shape":
+        return "entity", "point"
+    if "geometry" in data_types and geojson_shape and geojson_shape not in {"area", "polygon"}:
+        if "point" in geojson_shape:
+            return "entity", "point"
+        return "entity", "area"
+
+    return "admin", None
+
+
+def source_geometry_kind(metadata: dict | None) -> str:
+    return infer_geometry_kind(metadata)[0]
+
+
+def source_geometry_subkind(metadata: dict | None) -> str | None:
+    return infer_geometry_kind(metadata)[1]
+
+
+def derive_source_geo_level_from_loc_id(loc_id: str, metadata: dict | None) -> str | None:
+    """Infer a canonical runtime geo level from source-native loc_id shape.
+
+    This is intentionally metadata-gated. Runtime should only infer a synthetic
+    geo level when the source family is known to encode a stable hierarchy in
+    its loc_id format and does not already expose an explicit geo_level column.
+    """
+    if not loc_id or not isinstance(metadata, dict):
+        return None
+
+    source_id = str(metadata.get("source_id") or "").strip().lower()
+    source_name = str(metadata.get("source_name") or "").strip().lower()
+    keywords = {
+        str(value or "").strip().lower()
+        for value in (metadata.get("keywords") or [])
+        if str(value or "").strip()
+    }
+    supported_levels = _metadata_supported_runtime_levels(metadata)
+
+    is_eurostat_family = (
+        source_id == "eurostat"
+        or "eurostat" in source_name
+        or "nuts" in keywords
+    )
+    if not is_eurostat_family:
+        return None
+
+    text = str(loc_id).strip()
+    derived_level = None
+    if "-" not in text:
+        derived_level = "admin_0" if len(text) == 3 else None
+    else:
+        suffix = text.split("-", 1)[1]
+        code_len = len(suffix)
+        if code_len == 3:
+            derived_level = "admin_1"
+        elif code_len == 4:
+            derived_level = "admin_2"
+        elif code_len == 5:
+            derived_level = "admin_3"
+
+    if derived_level and (not supported_levels or derived_level in supported_levels):
+        return derived_level
+    return None
+
+
+def build_source_runtime_geo_contract_map(metadata: dict | None) -> dict[str, dict[str, str]]:
+    """Map canonical runtime levels to source-row filter semantics.
+
+    Each value has:
+    - `source_level_value`: the row value the source expects
+    - `source_filter_field`: usually `geo_level`, but may be `loc_id`
+    - `filter_strategy`: `equals` or `prefix`
+    - `hierarchy_relation`: `exact`, `descendant`, or `ancestor`
+    """
+    source_aliases = get_geo_level_aliases(metadata)
+    country_aliases = get_country_geo_level_aliases(metadata)
+    source_anchor_runtime_level = get_source_anchor_runtime_level(metadata)
+    source_anchor_number = _runtime_level_number(source_anchor_runtime_level)
+    contracts: dict[str, dict[str, str]] = {}
+
+    for alias_text, target_text in source_aliases.items():
+        runtime_level = _normalize_runtime_geo_level(target_text)
+        if runtime_level is None:
+            runtime_level = country_aliases.get(target_text)
+        if runtime_level is None:
+            runtime_level = country_aliases.get(alias_text)
+        if runtime_level is None:
+            runtime_level = _fallback_runtime_level_from_friendly(alias_text)
+        if runtime_level is None:
+            continue
+
+        filter_field = "geo_level"
+        filter_strategy = "equals"
+        source_level_value = target_text
+        hierarchy_relation = "exact"
+        if target_text == "loc_id":
+            filter_field = "loc_id"
+            filter_strategy = "prefix"
+            source_level_value = None
+            requested_number = _runtime_level_number(runtime_level)
+            if requested_number is not None and source_anchor_number is not None:
+                if source_anchor_number > requested_number:
+                    hierarchy_relation = "descendant"
+                elif source_anchor_number < requested_number:
+                    hierarchy_relation = "ancestor"
+
+        existing = contracts.get(runtime_level)
+        if (
+            existing
+            and existing.get("source_filter_field") == "geo_level"
+            and filter_field != "geo_level"
+        ):
+            continue
+        contracts[runtime_level] = {
+            "source_level_value": source_level_value or "",
+            "source_filter_field": filter_field,
+            "filter_strategy": filter_strategy,
+            "hierarchy_relation": hierarchy_relation,
+        }
+
+    return contracts
+
+
+def resolve_geo_contract(requested_geo_level: str | None, metadata: dict | None) -> ResolvedGeoContract:
+    """Resolve one request-level geography token against country + source hints."""
+    requested_token = _normalize_geo_alias_text(requested_geo_level or "")
+    if not requested_token:
+        return ResolvedGeoContract(
+            requested_token="",
+            runtime_level=None,
+            country_level_name=None,
+            source_anchor_runtime_level=get_source_anchor_runtime_level(metadata),
+            geometry_kind=infer_geometry_kind(metadata)[0],
+            geometry_subkind=infer_geometry_kind(metadata)[1],
+            hierarchy_relation="unknown",
+            source_level_value=None,
+            source_filter_field="geo_level",
+            filter_strategy="equals",
+        )
+
+    country_aliases = get_country_geo_level_aliases(metadata)
+    runtime_level = _normalize_runtime_geo_level(requested_token)
+    if runtime_level is None:
+        runtime_level = country_aliases.get(requested_token)
+    if runtime_level is None:
+        source_aliases = get_geo_level_aliases(metadata)
+        target_text = source_aliases.get(requested_token)
+        runtime_level = _normalize_runtime_geo_level(target_text)
+        if runtime_level is None and target_text:
+            runtime_level = country_aliases.get(target_text)
+    if runtime_level is None:
+        runtime_level = _fallback_runtime_level_from_friendly(requested_token)
+
+    runtime_names = get_country_runtime_level_names(metadata)
+    source_runtime_map = build_source_runtime_geo_contract_map(metadata)
+    source_anchor_runtime_level = get_source_anchor_runtime_level(metadata)
+    geometry_kind, geometry_subkind = infer_geometry_kind(metadata)
+    source_anchor_number = _runtime_level_number(source_anchor_runtime_level)
+    requested_number = _runtime_level_number(runtime_level)
+    source_contract = source_runtime_map.get(runtime_level or "", {})
+
+    source_level_value = str(source_contract.get("source_level_value") or "").strip() or None
+    source_filter_field = str(source_contract.get("source_filter_field") or "geo_level").strip() or "geo_level"
+    filter_strategy = str(source_contract.get("filter_strategy") or "equals").strip() or "equals"
+    hierarchy_relation = str(source_contract.get("hierarchy_relation") or "exact").strip() or "exact"
+
+    if not source_contract and requested_number is not None and source_anchor_number is not None:
+        if source_anchor_number > requested_number:
+            source_filter_field = "loc_id"
+            filter_strategy = "prefix"
+            hierarchy_relation = "descendant"
+            source_level_value = None
+        elif source_anchor_number < requested_number:
+            hierarchy_relation = "ancestor"
+            source_level_value = None
+
+    if source_level_value is None and runtime_level and source_filter_field == "geo_level":
+        fallback_name = runtime_names.get(runtime_level)
+        if fallback_name:
+            source_level_value = fallback_name
+
+    return ResolvedGeoContract(
+        requested_token=requested_token,
+        runtime_level=runtime_level,
+        country_level_name=runtime_names.get(runtime_level) if runtime_level else None,
+        source_anchor_runtime_level=source_anchor_runtime_level,
+        geometry_kind=geometry_kind,
+        geometry_subkind=geometry_subkind,
+        hierarchy_relation=hierarchy_relation,
+        source_level_value=source_level_value,
+        source_filter_field=source_filter_field,
+        filter_strategy=filter_strategy,
+    )
+
+
 def infer_requested_geo_level_from_query(query: str | None, metadata: dict | None) -> str | None:
     """Infer a canonical runtime geo level from query text using shared aliases."""
     query_text = _normalize_geo_alias_text(query or "")
@@ -216,38 +579,8 @@ def infer_requested_geo_level_from_query(query: str | None, metadata: dict | Non
 
 
 def normalize_requested_geo_level_for_source(requested_geo_level: str | None, metadata: dict | None) -> str | None:
-    if not requested_geo_level:
-        return None
-
-    requested = str(requested_geo_level).strip().lower().replace("-", "_").replace(" ", "_")
-    if not requested:
-        return None
-
-    # Country crosswalk aliases are the canonical layer; source metadata can
-    # supplement them for source-local labels or spellings.
-    aliases = get_country_geo_level_aliases(metadata)
-    aliases.update(get_geo_level_aliases(metadata))
-    if requested in aliases:
-        return aliases[requested]
-
-    admin_to_friendly = {
-        "admin_2": "county",
-        "admin_3": "tract",
-        "admin_4": "blockgroup",
-        "admin_5": "block",
-    }
-    friendly = admin_to_friendly.get(requested)
-    if friendly and friendly in aliases.values():
-        return friendly
-
-    if requested in aliases.values():
-        return requested
-
-    reverse_aliases = {value: key for key, value in aliases.items()}
-    if requested in reverse_aliases:
-        return aliases.get(reverse_aliases[requested], requested)
-
-    return requested
+    contract = resolve_geo_contract(requested_geo_level, metadata)
+    return contract.source_level_value or contract.runtime_level
 
 
 def get_metric_alias_matches(metadata: dict | None, query: str | None) -> list[tuple[str, str]]:
@@ -376,6 +709,8 @@ def build_scenario_routing_lines(scenario_defaults: dict | None) -> list[str]:
 
 def build_source_routing_guidance(metadata: dict | None, source_id: str) -> list[str]:
     routing_hints = get_routing_hints(metadata)
+    geometry_kind, geometry_subkind = infer_geometry_kind(metadata)
+    source_anchor_runtime_level = get_source_anchor_runtime_level(metadata)
     if not source_id:
         source_id = str((metadata or {}).get("source_id") or "").strip()
     pack_id = str((metadata or {}).get("pack_id") or "").strip()
@@ -400,6 +735,24 @@ def build_source_routing_guidance(metadata: dict | None, source_id: str) -> list
         lines.append(
             'For broad topic/goal queries without a specific metric, respond with type="clarify" and ask the user which metric they want using human-readable metric names.'
         )
+
+    if geometry_kind == "entity":
+        if geometry_subkind == "point":
+            lines.append(
+                'For anchored entity-point sources ("show/find/map/list/count [locations/facilities/sites/stations] in X"), prefer type="order" anchored to this source instead of chat. It is valid to omit metric entirely when the goal is to show or filter matching entity points.'
+            )
+        elif geometry_subkind == "area":
+            lines.append(
+                "For anchored entity-area sources such as buildings, parcels, or sites, keep the order anchored to the entity source and bridge downward through the loc_id hierarchy for parent geographies instead of treating county/tract/blockgroup requests as direct same-level entity rows."
+            )
+        else:
+            lines.append(
+                "For anchored entity sources, preserve the entity layer semantics instead of rewriting them as admin geometry."
+            )
+        if source_anchor_runtime_level:
+            lines.append(
+                f"This source is anchored at {source_anchor_runtime_level}; higher-level geography requests should usually filter descendants through loc_id hierarchy rather than forcing a same-level geo_level equality."
+            )
 
     filter_advice = str(routing_hints.get("filter_advice") or "").strip()
     if filter_advice:
@@ -429,7 +782,7 @@ def build_source_routing_guidance(metadata: dict | None, source_id: str) -> list
                 + "."
             )
 
-    if str((metadata or {}).get("geojson_shape", "")).strip().lower() == "location_shape":
+    if geometry_kind == "entity" and geometry_subkind == "point":
         lines.append(
             'For point-location registry queries ("show/find/map/list/count locations in X"), prefer type="order" anchored to this source. Use loc_id for country filters and facility_type/source/website when the query names a facility class or asks for websites/public spaces. It is valid to omit metric entirely for location listings and filtered point maps.'
         )

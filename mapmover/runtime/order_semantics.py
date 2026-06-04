@@ -6,6 +6,7 @@ import re
 from mapmover.data_loading import load_catalog
 from mapmover.foundation_helpers import load_reference_json
 from mapmover.paths import DATA_ROOT
+from mapmover.runtime.source_hints import source_geometry_kind, source_geometry_subkind
 
 EVENT_DISPLAY_PATTERNS = [
     "show me", "show the", "display", "map of", "map the",
@@ -136,7 +137,7 @@ def _source_geojson_shape(catalog_source: dict | None) -> str:
 
 
 def _source_is_location_shape(catalog_source: dict | None) -> bool:
-    return _source_geojson_shape(catalog_source) == "location_shape"
+    return source_geometry_kind(catalog_source) == "entity" and source_geometry_subkind(catalog_source) == "point"
 
 
 def _resolve_aggregate_admin2_dir(source_path: str) -> Path:
@@ -176,7 +177,7 @@ def _source_has_aggregate_files(catalog_source: dict | None) -> bool:
 
 
 def _source_supports_aggregate_mode(catalog_source: dict | None) -> bool:
-    if _source_is_location_shape(catalog_source):
+    if source_geometry_kind(catalog_source) == "entity":
         return False
     data_type = (catalog_source or {}).get("data_type")
     if isinstance(data_type, list):

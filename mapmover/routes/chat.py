@@ -9,10 +9,11 @@ from fastapi.responses import Response, StreamingResponse
 from mapmover.auth_context import get_authenticated_user
 from mapmover import logger
 from mapmover.corpus_registry import corpus_registry
-from mapmover.order_executor import execute_geometry_overlay, execute_order
+from mapmover.runtime.order_executor_runtime import execute_geometry_overlay, execute_order
 from mapmover.order_taker import interpret_request
-from mapmover.postprocessor import get_display_items, postprocess_order
-from mapmover.preprocessor import preprocess_query
+from mapmover.runtime.postprocess_contracts import get_display_items
+from mapmover.runtime.postprocess_runtime import run_postprocess_order as postprocess_order
+from mapmover.explore.preprocessor_runtime import preprocess_query
 from mapmover.progress_bus import ProgressBus, ProgressEvent
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
 from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log_conversation

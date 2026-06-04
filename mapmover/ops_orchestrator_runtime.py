@@ -11,7 +11,6 @@ from functools import lru_cache
 from pathlib import Path
 
 from mapmover.geometry_handlers import get_selection_geometries
-from mapmover.runtime.orchestrator_threading import run_catalog_scoped_to_thread
 
 try:
     import boto3
@@ -1848,9 +1847,10 @@ def run_ops_chat(
     )
     prompt_safe_report = _build_prompt_safe_ops_report(report)
     system_prompt = ops_orchestrator.build_system_prompt(watch_context=watch_context, hints=hints)
-    system_blocks = ops_orchestrator.build_system_prompt_blocks(system_prompt)
-    llm_selection = ops_orchestrator.llm_selection()
-    client = ops_orchestrator.build_client(llm_selection)
+    llm_runtime = ops_orchestrator.build_llm_runtime_context(system_prompt)
+    system_blocks = llm_runtime["system_blocks"]
+    llm_selection = llm_runtime["llm_selection"]
+    client = llm_runtime["client"]
 
     messages = [
         {
@@ -1930,29 +1930,3 @@ def run_ops_chat(
     if report.get("geojson"):
         result["geojson"] = report["geojson"]
     return result
-
-
-async def run_ops_orchestrator_call(
-    *,
-    query: str,
-    chat_history: list | None,
-    watch: dict,
-    effective_feeds: list[str],
-    usage_recorder,
-    catalog_surface: str | None,
-    ops_orchestrator,
-    cache,
-    selected_popup: dict | None = None,
-) -> dict:
-    return await run_catalog_scoped_to_thread(
-        catalog_surface=catalog_surface,
-        func=run_ops_chat,
-        query=query,
-        chat_history=chat_history,
-        watch=watch,
-        effective_feeds=effective_feeds,
-        ops_orchestrator=ops_orchestrator,
-        usage_recorder=usage_recorder,
-        cache=cache,
-        selected_popup=selected_popup,
-    )

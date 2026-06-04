@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from mapmover.request_risk_gate import block_gate, warn_gate
+from mapmover.runtime.result_cap import apply_cap_info_to_payload, build_cap_info_from_counts
 from mapmover.runtime.warning_policy import (
     DEFAULT_DISPLAY_WARNING_POLICY,
     DEFAULT_METRIC_WARNING_POLICY,
@@ -145,13 +146,23 @@ def build_interrupted_display_warning_payload(
 ) -> dict:
     """Build the shared interrupted payload used below final lane responses."""
     warning = warning or {}
-    return {
-        "rows": list(rows or []),
-        "row_count": warning.get("row_count"),
+    row_values = list(rows or [])
+    available_rows = int(warning.get("row_count") or 0)
+    payload = {
+        "rows": row_values,
+        "row_count": available_rows,
         "truncated": bool(truncated),
         "display_warning": warning,
+        "available_count": available_rows,
+        "returned_count": len(row_values),
         **extra_fields,
     }
+    cap_info = build_cap_info_from_counts(
+        returned_rows=len(row_values),
+        available_rows=available_rows,
+        cap_reason="display_warning_gate",
+    )
+    return apply_cap_info_to_payload(payload, cap_info)
 
 
 def interrupt_display_payload_if_needed(
@@ -187,14 +198,23 @@ def build_display_warning_result(
 ) -> dict:
     """Build the shared display-warning response payload."""
     warning = warning or {}
-    return {
+    row_count = int(warning.get("row_count") or 0)
+    payload = {
         "type": "display_warning",
         "message": warning.get("message"),
         "warning_level": warning.get("level"),
-        "row_count": warning.get("row_count"),
+        "row_count": row_count,
         "soft_cap": warning.get("soft_cap"),
         "hard_cap": warning.get("hard_cap"),
         "override_allowed": bool(override_allowed),
         "gate": warning.get("gate"),
+        "available_count": row_count,
+        "returned_count": 0,
         **extra_fields,
     }
+    cap_info = build_cap_info_from_counts(
+        returned_rows=0,
+        available_rows=row_count,
+        cap_reason="display_warning_gate",
+    )
+    return apply_cap_info_to_payload(payload, cap_info)

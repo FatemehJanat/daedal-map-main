@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pandas as pd
 
-from mapmover.runtime.source_hints import normalize_requested_geo_level_for_source
+from mapmover.runtime.source_hints import (
+    derive_source_geo_level_from_loc_id,
+    resolve_geo_contract,
+    source_geometry_kind,
+    source_geometry_subkind,
+)
 
 
 def process_metric_items(
@@ -35,7 +40,6 @@ def process_metric_items(
     normalize_geo_level_func,
     normalize_sort_spec_func,
     load_order_item_dataframe_func,
-    derive_eurostat_geo_level_func,
     load_fx_with_aggregation_func,
     find_metric_column_func,
     check_sparse_year_func,
@@ -82,9 +86,11 @@ def process_metric_items(
             continue
         t_after_load = executor_log_func(trace_id, "item_loaded", t_item_start, f"item={idx}/{len(items)} source={source_id} rows={len(df)} cols={len(df.columns)}")
 
-        if source_id == "eurostat" and "geo_level" not in df.columns and "loc_id" in df.columns:
-            df = df.copy()
-            df["geo_level"] = df["loc_id"].map(derive_eurostat_geo_level_func)
+        if "geo_level" not in df.columns and "loc_id" in df.columns:
+            derived_geo_levels = df["loc_id"].map(lambda value: derive_source_geo_level_from_loc_id(value, metadata))
+            if derived_geo_levels.notna().any():
+                df = df.copy()
+                df["geo_level"] = derived_geo_levels
 
         if source_id == "fx_usd_historical":
             fx_df, trace = load_fx_with_aggregation_func(source_id, item, metadata)
@@ -159,14 +165,30 @@ def process_metric_items(
                 df = df[mask]
         t_after_region_filter = executor_log_func(trace_id, "region_filtered", t_after_time_filter, f"item={idx}/{len(items)} source={source_id} rows={len(df)}")
 
-        if requested_geo_level and "geo_level" in df.columns:
-            source_geo_level = normalize_requested_geo_level_for_source(requested_geo_level, metadata)
-            df = df[df["geo_level"] == source_geo_level]
+        if requested_geo_level:
+            geo_contract = resolve_geo_contract(requested_geo_level, metadata)
+            if (
+                geo_contract.hierarchy_relation == "exact"
+                and geo_contract.source_filter_field == "geo_level"
+                and geo_contract.filter_strategy == "equals"
+                and "geo_level" in df.columns
+                and geo_contract.source_level_value
+            ):
+                df = df[df["geo_level"] == geo_contract.source_level_value]
 
         normalized_filters = filters
         if isinstance(filters, dict) and filters and "geo_level" in filters:
+            filter_contract = resolve_geo_contract(filters.get("geo_level"), metadata)
             normalized_filters = dict(filters)
-            normalized_filters["geo_level"] = normalize_requested_geo_level_for_source(filters.get("geo_level"), metadata)
+            if (
+                filter_contract.hierarchy_relation == "exact"
+                and filter_contract.source_filter_field == "geo_level"
+                and filter_contract.filter_strategy == "equals"
+                and filter_contract.source_level_value
+            ):
+                normalized_filters["geo_level"] = filter_contract.source_level_value
+            else:
+                normalized_filters.pop("geo_level", None)
 
         df = apply_dataframe_filters_func(df, normalized_filters)
         t_after_filter = executor_log_func(trace_id, "field_filters_applied", t_after_region_filter, f"item={idx}/{len(items)} source={source_id} rows={len(df)}")
@@ -198,7 +220,7 @@ def process_metric_items(
                 f"item={idx}/{len(items)} source={source_id} rows={len(df)} cap_hit={bool(item_cap_info)}",
             )
 
-        if str(metadata.get("geojson_shape", "")).strip().lower() == "location_shape":
+        if source_geometry_kind(metadata) == "entity" and source_geometry_subkind(metadata) == "point":
             lat_col, lon_col = get_coordinate_columns_func(df)
             if lat_col and lon_col:
                 for _, row in df.iterrows():

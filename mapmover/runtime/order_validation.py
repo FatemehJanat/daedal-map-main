@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from .source_hints import source_geometry_kind, source_geometry_subkind
+
 
 def execution_requires_metric(item: dict, source_info: dict | None) -> bool:
     if item.get("type") in {"derived", "derived_result"}:
         return False
     if item.get("mode") == "events":
         return False
-    if str((source_info or {}).get("geojson_shape") or "").strip().lower() == "location_shape":
+    if source_geometry_kind(source_info) == "entity" and source_geometry_subkind(source_info) == "point":
         return False
 
     data_type = (source_info or {}).get("data_type", "metrics")

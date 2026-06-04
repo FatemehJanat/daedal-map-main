@@ -35,10 +35,10 @@ from .foundation_helpers import (
     load_world_factbook_static_frame,
 )
 from .runtime.geography_reference import (
-    build_crosswalk_maps as _build_crosswalk_maps_impl,
-    canonicalize_loc_id as _canonicalize_loc_id_impl,
-    translate_geometry_id_to_local_id as _translate_geometry_id_to_local_id_impl,
-    translate_loc_id_to_geometry_id as _translate_loc_id_to_geometry_id_impl,
+    build_crosswalk_maps,
+    canonicalize_loc_id,
+    translate_geometry_id_to_local_id,
+    translate_loc_id_to_geometry_id,
 )
 
 logger = logging.getLogger("mapmover")
@@ -63,52 +63,11 @@ def _parquet_accessible(path: Path) -> bool:
         return False
 
 
-def _load_crosswalk(iso3: str) -> dict | None:
-    """Compatibility shim over the shared foundation helper layer."""
-    return load_country_crosswalk(iso3)
-
-
-def canonicalize_loc_id(loc_id: str) -> str:
-    """Compatibility shim over the shared runtime geography helper layer."""
-    return _canonicalize_loc_id_impl(loc_id)
-
-
-def translate_loc_id_to_geometry_id(loc_id: str) -> str:
-    """Compatibility shim over the shared runtime geography helper layer."""
-    return _translate_loc_id_to_geometry_id_impl(loc_id)
-
-
-def translate_geometry_id_to_local_id(loc_id: str) -> str:
-    """Compatibility shim over the shared runtime geography helper layer."""
-    return _translate_geometry_id_to_local_id_impl(loc_id)
-
-
-def _build_crosswalk_maps(crosswalk_data: dict | None) -> tuple[dict, dict]:
-    """Compatibility shim over the shared runtime geography helper layer."""
-    return _build_crosswalk_maps_impl(crosswalk_data)
-
-
 def get_geometry_path():
     """Get the geometry folder path using centralized path resolution."""
     if GEOMETRY_DIR.exists():
         return GEOMETRY_DIR
     return None
-
-
-def load_global_countries():
-    """
-    Load global.csv (all countries, admin_0 only) from backup path.
-    Returns DataFrame or None if file doesn't exist.
-    """
-    return load_global_countries_frame()
-
-
-def load_world_factbook_static():
-    """
-    Load world_factbook_static/all_countries.parquet for lightweight country popup enrichment.
-    Returns DataFrame or None if unavailable.
-    """
-    return load_world_factbook_static_frame()
 
 
 def load_country_parquet(iso3: str, admin_level: int = None):
@@ -181,7 +140,7 @@ def load_country_parquet(iso3: str, admin_level: int = None):
         parquet_file = country_geom_file
         logger.debug(f"Using country-specific geometry: {country_geom_file}")
     elif crosswalk_file.exists() and _parquet_accessible(global_geom_file):
-        crosswalk_data = _load_crosswalk(iso3)
+        crosswalk_data = load_country_crosswalk(iso3)
         parquet_file = global_geom_file
         logger.debug(f"Using crosswalk + geoBoundaries geometry: {crosswalk_file}")
     elif _parquet_accessible(global_geom_file):
@@ -217,7 +176,7 @@ def load_country_parquet(iso3: str, admin_level: int = None):
         # If crosswalk exists, add reverse mapping for lookup
         # This allows data with local loc_ids to find GADM geometry
         if crosswalk_data:
-            _, reverse_map = _build_crosswalk_maps(crosswalk_data)
+            _, reverse_map = build_crosswalk_maps(crosswalk_data)
             # Add local_loc_id column for joining
             df['local_loc_id'] = df['loc_id'].map(reverse_map)
             logger.debug(f"Applied crosswalk: {len(reverse_map)} mappings")
@@ -272,7 +231,7 @@ def load_country_parquet_viewport(iso3: str, admin_level: int, bbox: tuple):
     if _parquet_accessible(country_geom_file):
         parquet_file = country_geom_file
     elif crosswalk_file.exists() and _parquet_accessible(global_geom_file):
-        crosswalk_data = _load_crosswalk(iso3)
+        crosswalk_data = load_country_crosswalk(iso3)
         parquet_file = global_geom_file
     elif _parquet_accessible(global_geom_file):
         parquet_file = global_geom_file
@@ -328,7 +287,7 @@ def load_country_parquet_viewport(iso3: str, admin_level: int, bbox: tuple):
             df = pd.read_parquet(parquet_file, filters=filters)
 
         if crosswalk_data and not df.empty:
-            _, reverse_map = _build_crosswalk_maps(crosswalk_data)
+            _, reverse_map = build_crosswalk_maps(crosswalk_data)
             df['local_loc_id'] = df['loc_id'].map(reverse_map)
 
         return df
@@ -347,7 +306,7 @@ def _resolve_geometry_source(iso3: str):
         return country_geom_file, None
 
     if crosswalk_file.exists() and _parquet_accessible(global_geom_file):
-        crosswalk_data = _load_crosswalk(iso3)
+        crosswalk_data = load_country_crosswalk(iso3)
         return global_geom_file, crosswalk_data
 
     if _parquet_accessible(global_geom_file):
@@ -369,8 +328,8 @@ def load_geometry_rows_by_loc_ids(iso3: str, loc_ids: list[str]):
         return pd.DataFrame()
 
     county_geom_file = DATA_ROOT / "countries" / iso3 / "geometry" / "county.parquet"
-    crosswalk_data = _load_crosswalk(iso3) or {}
-    local_to_geo, geo_to_local = _build_crosswalk_maps(crosswalk_data)
+    crosswalk_data = load_country_crosswalk(iso3) or {}
+    local_to_geo, geo_to_local = build_crosswalk_maps(crosswalk_data)
     requested_set = set(requested_ids)
 
     # USA county geometry is stored under the local county id family
@@ -427,7 +386,7 @@ def load_geometry_rows_by_loc_ids(iso3: str, loc_ids: list[str]):
     reverse_map = None
 
     if crosswalk_data:
-        local_to_geo, reverse_map = _build_crosswalk_maps(crosswalk_data)
+        local_to_geo, reverse_map = build_crosswalk_maps(crosswalk_data)
         query_ids = [local_to_geo.get(loc_id, loc_id) for loc_id in requested_ids]
 
     try:
@@ -481,7 +440,7 @@ def _load_subcounty_rows_by_loc_ids(iso3: str, loc_ids: list[str]):
     if not requested_ids:
         return pd.DataFrame()
 
-    crosswalk = _load_crosswalk(iso3) or {}
+    crosswalk = load_country_crosswalk(iso3) or {}
     sub_admin_levels = crosswalk.get("sub_admin_levels") or {}
     if not sub_admin_levels:
         return pd.DataFrame()
@@ -568,7 +527,7 @@ def load_country_bounds():
 
     _country_bounds_cache = {}
 
-    df = load_global_countries()
+    df = load_global_countries_frame()
     if df is None:
         return _country_bounds_cache
 
@@ -628,7 +587,7 @@ def get_geometry_index(parent_loc_id: str | None = None, admin_level: int | None
     else:
         target_level = admin_level if admin_level is not None else 0
         if target_level == 0:
-            df = load_global_countries()
+            df = load_global_countries_frame()
         elif target_level >= 3 and bbox is not None:
             countries = get_countries_in_bbox(*bbox)
             frames = []
@@ -771,7 +730,7 @@ def _find_containing_row(df, lon: float, lat: float):
 
 def _resolve_deepest_point_match(iso3: str, lon: float, lat: float, admin1_row=None, admin2_row=None):
     """Attempt admin_3+ point resolution where country-specific deep geometry exists."""
-    crosswalk = _load_crosswalk(iso3) or {}
+    crosswalk = load_country_crosswalk(iso3) or {}
     sub_admin_levels = crosswalk.get("sub_admin_levels", {})
     if not sub_admin_levels:
         return None
@@ -833,7 +792,7 @@ def resolve_point_to_location(lon: float, lat: float, include_geometry: bool = T
     lon = float(lon)
     lat = float(lat)
 
-    country_df = load_global_countries()
+    country_df = load_global_countries_frame()
     if country_df is None or country_df.empty:
         return {"error": "No global geometry available"}
 
@@ -1015,7 +974,7 @@ def get_countries_geometry(debug: bool = False):
 
     If debug=True, calculates coverage info on-the-fly from parquet files.
     """
-    df = load_global_countries()
+    df = load_global_countries_frame()
 
     if df is None:
         return {
@@ -1236,7 +1195,7 @@ def get_location_info(loc_id: str):
 
     # For country level, check global.csv first
     if len(parts) == 1:
-        df = load_global_countries()
+        df = load_global_countries_frame()
         if df is not None:
             location = df[df["loc_id"] == loc_id]
             if len(location) > 0:
@@ -1271,7 +1230,7 @@ def get_location_info(loc_id: str):
                 result["memberships"] = _get_country_memberships(iso3)
 
                 # Add a few lightweight static country facts for navigation popups
-                static_df = load_world_factbook_static()
+                static_df = load_world_factbook_static_frame()
                 if static_df is not None:
                     static_row = static_df[static_df["loc_id"] == loc_id]
                     if len(static_row) > 0:
@@ -1459,7 +1418,7 @@ def load_subcounty_geometry(iso3: str, admin_level: int, state_abbrev: str = Non
     """
     countries_dir = DATA_ROOT / "countries" / iso3
 
-    crosswalk = _load_crosswalk(iso3)
+    crosswalk = load_country_crosswalk(iso3)
     sub_admin_levels = (crosswalk or {}).get("sub_admin_levels", {})
     level_config = sub_admin_levels.get(f"admin_{admin_level}")
 
@@ -1613,7 +1572,7 @@ def _get_parent_hierarchy(df, parent_id: str, iso3: str) -> list:
         # Check if it's the country level
         if current_id == iso3:
             # Get country name from global.csv
-            global_df = load_global_countries()
+            global_df = load_global_countries_frame()
             if global_df is not None:
                 country_row = global_df[global_df["loc_id"] == iso3]
                 if len(country_row) > 0:
@@ -1730,7 +1689,7 @@ def _get_crosswalk_reverse(iso3: str) -> dict:
     if iso3 in _crosswalk_reverse_cache:
         return _crosswalk_reverse_cache[iso3]
 
-    cw = _load_crosswalk(iso3)
+    cw = load_country_crosswalk(iso3)
     if not cw:
         _crosswalk_reverse_cache[iso3] = {}
         return {}
@@ -1855,7 +1814,7 @@ def get_viewport_geometry(admin_level: int, bbox: tuple, debug: bool = False):
 
     # For level 0 (countries), just return from global.csv
     if admin_level == 0:
-        df = load_global_countries()
+        df = load_global_countries_frame()
         if df is None:
             return {"type": "FeatureCollection", "features": []}
 
@@ -2027,7 +1986,7 @@ def prewarm_geometry() -> None:
 
     t0 = _time.monotonic()
     try:
-        df = load_global_countries()
+        df = load_global_countries_frame()
         elapsed = _time.monotonic() - t0
         if df is not None and not df.empty:
             logger.info("prewarm geometry global CSV: %d rows in %.1fs", len(df), elapsed)
@@ -2071,7 +2030,7 @@ def get_selection_geometries(loc_ids: list):
         deep_level_ids = []
         regular_sub_level_ids = []
         if sub_level_ids:
-            crosswalk = _load_crosswalk(iso3) or {}
+            crosswalk = load_country_crosswalk(iso3) or {}
             sub_admin_levels = crosswalk.get("sub_admin_levels") or {}
             for lid in sub_level_ids:
                 parts = str(lid).split("-")
@@ -2084,7 +2043,7 @@ def get_selection_geometries(loc_ids: list):
 
         # Fetch country-level from global.csv
         if country_level_ids:
-            global_df = load_global_countries()
+            global_df = load_global_countries_frame()
             if global_df is not None:
                 country_rows = global_df[global_df["loc_id"].isin(country_level_ids)]
                 if len(country_rows) > 0:

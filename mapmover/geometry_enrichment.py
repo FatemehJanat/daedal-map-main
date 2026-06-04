@@ -10,7 +10,7 @@ import pandas as pd
 from pathlib import Path
 
 from .foundation_helpers import load_reference_json
-from .geography import get_fallback_coordinates, load_conversions, CONVERSIONS_DATA, get_iso_codes
+from .geography import get_fallback_coordinates, get_iso_codes
 
 # Base directory for file paths
 BASE_DIR = Path(__file__).resolve().parent.parent

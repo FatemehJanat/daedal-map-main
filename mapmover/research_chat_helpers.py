@@ -176,8 +176,13 @@ def _fallback_display_message(display: dict | None) -> str | None:
     if feature_count <= 0:
         return None
     source_id = str(display.get("source_id") or "").strip()
-    if source_id == "fairfax_buildings":
+    source_lower = source_id.lower()
+    if "building" in source_lower:
         noun = "building footprint"
+    elif "parcel" in source_lower:
+        noun = "parcel"
+    elif "station" in source_lower or "buoy" in source_lower or "facility" in source_lower:
+        noun = "entity point"
     elif "lst" in source_id or "raster" in source_id:
         noun = "raster area"
     else:

@@ -156,6 +156,12 @@ def load_reference_json(relative_path: str | Path) -> Any:
         return None
 
 
+def load_reference_dict(relative_path: str | Path) -> dict | None:
+    """Load a reference helper asset and return it only when it is a dict."""
+    data = load_reference_json(relative_path)
+    return data if isinstance(data, dict) else None
+
+
 def get_foundation_helper_registry() -> dict[str, Any]:
     """Return the declared runtime-owned helper assets."""
     return FOUNDATION_HELPER_REGISTRY

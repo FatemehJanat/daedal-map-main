@@ -35,7 +35,7 @@ from mapmover.research_runtime import (
 from mapmover.research_tools import RESEARCH_TOOL_DEFINITIONS, execute_research_tool
 from mapmover.runtime.orchestrator_policy import DEFAULT_RESEARCH_RETRY_POLICY
 from mapmover.runtime.llm_policy import (
-    build_provider_client,
+    build_provider_runtime_context,
     resolve_lane_llm_selection,
 )
 from mapmover.runtime.prompt_runtime import build_cached_system_prompt_blocks
@@ -111,9 +111,12 @@ def run_research_chat(
             "corpus": manifest,
         }
 
-    llm_selection = llm_selection or resolve_lane_llm_selection("research_deep_sonnet_opus_default")
-    model = llm_selection.model
-    temperature = llm_selection.temperature
+    llm_runtime = build_provider_runtime_context(
+        selection=llm_selection or resolve_lane_llm_selection("research_deep_sonnet_opus_default")
+    )
+    llm_selection = llm_runtime["llm_selection"]
+    model = llm_runtime["model"]
+    temperature = llm_runtime["temperature"]
     system_prompt = system_prompt_builder(manifest)
     research_hints = preprocess_research_query(query, manifest)
     hint_context = build_research_hint_context(research_hints)
@@ -129,7 +132,7 @@ def run_research_chat(
         history_messages_func=_history_messages,
     )
 
-    client = build_provider_client(llm_selection)
+    client = llm_runtime["client"]
     usage_recorder, owns_main = ensure_recorder(
         usage_recorder,
         surface="research",

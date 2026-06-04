@@ -10,14 +10,15 @@ from dotenv import load_dotenv
 from .constants import CHAT_HISTORY_LLM_LIMIT
 from .data_loading import load_catalog
 from .llm_tools import execute_tool, format_tool_result_for_llm, format_tools_for_provider
-from .preprocessor import build_tier3_context, build_tier4_context
 from .progress_bus import ProgressEvent
+from .runtime.preprocessor_context_runtime import build_tier3_context, build_tier4_context
 from .runtime.llm_policy import (
-    build_provider_client,
+    build_provider_runtime_context,
     resolve_lane_llm_selection,
 )
+from .runtime.geography_reference import load_conversions
 from .runtime.prompt_runtime import build_cached_system_prompt_blocks
-from .runtime.order_taker_prompt import build_system_prompt, load_conversions
+from .runtime.order_taker_prompt import build_system_prompt
 from .runtime.order_taker_response import parse_llm_response
 
 
@@ -77,8 +78,11 @@ def interpret_request(
 
     messages.append({"role": "user", "content": user_query})
 
-    llm_selection = llm_selection or resolve_lane_llm_selection("explore_fast_haiku_default")
-    client = build_provider_client(llm_selection)
+    llm_runtime = build_provider_runtime_context(
+        selection=llm_selection or resolve_lane_llm_selection("explore_fast_haiku_default")
+    )
+    llm_selection = llm_runtime["llm_selection"]
+    client = llm_runtime["client"]
     system_content = ""
     chat_messages = []
     for msg in messages:

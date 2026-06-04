@@ -15,11 +15,8 @@ from .runtime.geography_reference import (
 # Base directory for file paths
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Global conversions data cache
-CONVERSIONS_DATA = {}
-
-# Cache for ISO codes from reference/iso_codes.json
-_ISO_CODES_CACHE = None
+# Compatibility alias backed by the shared runtime loader.
+CONVERSIONS_DATA = load_conversions_impl() or {}
 
 # Cache for populated places capitals lookup
 _CAPITALS_CACHE = None
@@ -28,10 +25,10 @@ logger = logging.getLogger("mapmover")
 
 
 def load_conversions():
-    """Load conversions.json for regional groupings, country codes, etc."""
+    """Load conversions.json through the shared runtime loader path."""
     global CONVERSIONS_DATA
     try:
-        CONVERSIONS_DATA = load_conversions_impl()
+        CONVERSIONS_DATA = load_conversions_impl() or {}
         logger.debug(
             "Loaded conversions.json with %d regional groupings",
             len(CONVERSIONS_DATA.get("regional_groupings", {})),
@@ -43,34 +40,25 @@ def load_conversions():
 
 
 def get_conversions_data():
-    """Get the conversions data, loading if necessary."""
-    if not CONVERSIONS_DATA:
-        load_conversions()
+    """Get conversions data through the shared runtime loader path."""
+    global CONVERSIONS_DATA
+    CONVERSIONS_DATA = load_conversions_impl() or {}
     return CONVERSIONS_DATA
 
 
 def load_iso_codes():
-    """Load ISO codes from reference/iso_codes.json."""
-    global _ISO_CODES_CACHE
-    if _ISO_CODES_CACHE is not None:
-        return _ISO_CODES_CACHE
-
+    """Load ISO codes through the shared runtime loader path."""
     data = load_iso_codes_impl()
     if isinstance(data, dict):
-        _ISO_CODES_CACHE = data
-        logger.debug("Loaded iso_codes.json with %d countries", len(_ISO_CODES_CACHE.get("iso3_to_name", {})))
-    else:
-        logger.warning("iso_codes.json not found")
-        _ISO_CODES_CACHE = {}
-
-    return _ISO_CODES_CACHE
+        logger.debug("Loaded iso_codes.json with %d countries", len(data.get("iso3_to_name", {})))
+        return data
+    logger.warning("iso_codes.json not found")
+    return {}
 
 
 def get_iso_codes():
-    """Get ISO codes data, loading if necessary."""
-    if _ISO_CODES_CACHE is None:
-        load_iso_codes()
-    return _ISO_CODES_CACHE
+    """Get ISO codes through the shared runtime loader path."""
+    return load_iso_codes()
 
 
 def get_countries_in_region(region_name, query=None, dataset=None):
@@ -83,12 +71,11 @@ def get_countries_in_region(region_name, query=None, dataset=None):
         query: Optional - the user query for logging purposes
         dataset: Optional - the dataset being queried for logging purposes
     """
-    if not CONVERSIONS_DATA:
-        load_conversions()
+    conversions = get_conversions_data()
 
     # Check aliases first (e.g., "Europe" -> "WHO_European_Region")
-    aliases = CONVERSIONS_DATA.get('region_aliases', {})
-    groupings = CONVERSIONS_DATA.get('regional_groupings', {})
+    aliases = conversions.get('region_aliases', {})
+    groupings = conversions.get('regional_groupings', {})
 
     logger.debug(f"Looking up region: '{region_name}'")
 
@@ -145,10 +132,7 @@ def get_limited_geometry_countries():
     Get list of country codes that have limited or no polygon geometry.
     These countries may display as points instead of polygons.
     """
-    if not CONVERSIONS_DATA:
-        load_conversions()
-
-    limited_geom = CONVERSIONS_DATA.get('limited_geometry_countries', {})
+    limited_geom = get_conversions_data().get('limited_geometry_countries', {})
     # The fallback_coordinates dict keys are the country codes (only 3 truly missing)
     return set(limited_geom.get('fallback_coordinates', {}).keys())
 
@@ -207,10 +191,7 @@ def get_fallback_coordinates(country_code, log_missing=True):
             return (cap['lat'], cap['lon'])
 
     # 2. Fall back to conversions.json (only 3 countries: COK, NIU, NRU)
-    if not CONVERSIONS_DATA:
-        load_conversions()
-
-    limited_geom = CONVERSIONS_DATA.get('limited_geometry_countries', {})
+    limited_geom = get_conversions_data().get('limited_geometry_countries', {})
     coords_data = limited_geom.get('fallback_coordinates', {})
 
     if country_code in coords_data:
@@ -241,13 +222,11 @@ def get_region_patterns():
     Build region pattern dictionary dynamically from conversions.json.
     Returns dict mapping lowercase patterns to normalized region names.
     """
-    if not CONVERSIONS_DATA:
-        load_conversions()
-
+    conversions = get_conversions_data()
     patterns = {}
 
     # Add patterns from regional_groupings
-    groupings = CONVERSIONS_DATA.get('regional_groupings', {})
+    groupings = conversions.get('regional_groupings', {})
     for group_name in groupings.keys():
         # Convert "WHO_European_Region" to "Europe", "European_Union" to "EU", etc.
         normalized = group_name.replace('_', ' ')
@@ -261,7 +240,7 @@ def get_region_patterns():
             patterns[normalized.lower()] = normalized
 
     # Add patterns from region_aliases
-    aliases = CONVERSIONS_DATA.get('region_aliases', {})
+    aliases = conversions.get('region_aliases', {})
     for alias, target in aliases.items():
         patterns[alias.lower()] = alias  # Use the alias as the display name
         # Also add variant without spaces
@@ -286,11 +265,9 @@ def get_supported_regions_text():
     Generate human-readable list of supported regions for LLM prompt.
     Reads from conversions.json dynamically.
     """
-    if not CONVERSIONS_DATA:
-        load_conversions()
-
-    groupings = CONVERSIONS_DATA.get('regional_groupings', {})
-    aliases = CONVERSIONS_DATA.get('region_aliases', {})
+    conversions = get_conversions_data()
+    groupings = conversions.get('regional_groupings', {})
+    aliases = conversions.get('region_aliases', {})
 
     # Categorize regions
     who_regions = []
@@ -326,7 +303,3 @@ def get_supported_regions_text():
         lines.append(f"- Sub-regions: {', '.join(sorted(set(sub_regions)))}")
 
     return "\n".join(lines)
-
-
-# Load conversions at module import
-load_conversions()

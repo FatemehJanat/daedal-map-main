@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..data_loading import get_source_path, load_catalog, load_source_metadata
-from ..foundation_helpers import load_reference_json
+from ..foundation_helpers import load_reference_dict
 from ..paths import COUNTRIES_DIR, GEOMETRY_DIR
 from ..preprocessor_context import (
     build_tier3_context as build_tier3_context_impl,
@@ -29,8 +29,7 @@ REFERENCE_DIR = Path(__file__).resolve().parent.parent / "reference"
 
 
 def load_reference_file(filepath: Path) -> Optional[dict]:
-    data = load_reference_json(filepath)
-    return data if isinstance(data, dict) else None
+    return load_reference_dict(filepath)
 
 
 def get_countries_in_viewport(bounds: dict) -> list:

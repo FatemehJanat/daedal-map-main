@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from mapmover.runtime.source_hints import source_geometry_kind, source_geometry_subkind
+
 
 def resolve_aggregate_admin2_dir(source_path: str | Path, *, data_root: Path | None = None) -> Path:
     """Resolve the canonical admin2 aggregate directory for a source path."""
@@ -42,7 +44,7 @@ def source_geojson_shape(catalog_source: dict | None) -> str:
 
 
 def source_is_location_shape(catalog_source: dict | None) -> bool:
-    return source_geojson_shape(catalog_source) == "location_shape"
+    return source_geometry_kind(catalog_source) == "entity" and source_geometry_subkind(catalog_source) == "point"
 
 
 def source_has_aggregate_files(
@@ -105,7 +107,7 @@ def source_supports_aggregate_mode(
     *,
     source_has_aggregate_files_func,
 ) -> bool:
-    if source_is_location_shape(catalog_source):
+    if source_geometry_kind(catalog_source) == "entity":
         return False
     data_type = (catalog_source or {}).get("data_type")
     if isinstance(data_type, list):

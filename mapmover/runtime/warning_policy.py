@@ -41,8 +41,3 @@ DEFAULT_DISPLAY_WARNING_POLICY = DisplayWarningPolicy(
     soft_narrowing=("choose a smaller area", "ask for a top 100 subset", "focus on one state or county"),
     hard_narrowing=("choose a smaller area", "ask for a top 100 subset", "focus on one state or county"),
 )
-
-# Compatibility alias during the policy-cleanup phase.
-# Research should use the same browser/display safety policy unless a future
-# workflow-specific guard is explicitly split out under a different name.
-RESEARCH_DISPLAY_WARNING_POLICY = DEFAULT_DISPLAY_WARNING_POLICY

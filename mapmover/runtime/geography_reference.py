@@ -222,20 +222,3 @@ def resolve_us_county_slug_loc_id(
     """Compatibility wrapper for the shared country subdivision slug resolver."""
     return resolve_country_subdivision_slug_loc_id(region, cache_dict=cache_dict)
 
-
-def derive_eurostat_geo_level(loc_id: str) -> str | None:
-    """Infer NUTS admin level from a Eurostat-style loc_id shape."""
-    if not loc_id:
-        return None
-    text = str(loc_id).strip()
-    if "-" not in text:
-        return "admin_0" if len(text) == 3 else None
-    suffix = text.split("-", 1)[1]
-    code_len = len(suffix)
-    if code_len == 3:
-        return "admin_1"
-    if code_len == 4:
-        return "admin_2"
-    if code_len == 5:
-        return "admin_3"
-    return None

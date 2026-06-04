@@ -15,31 +15,23 @@ Uses:
   - conversions.json for regional groupings (EU, G20, ASEAN, etc.)
 """
 
-import json
 import pandas as pd
 from pathlib import Path
 from typing import Optional, Dict, List, Any, Union
 
 from .duckdb_helpers import duckdb_available, select_columns_from_parquet
 from .paths import GEOMETRY_DIR
+from .runtime.geography_reference import load_conversions as load_conversions_impl
 
 # Paths
 SCRIPT_DIR = Path(__file__).parent
 GEOMETRY_PATH = GEOMETRY_DIR
-CONVERSIONS_FILE = SCRIPT_DIR / "conversions.json"
-
-# Cache
-_conversions_cache = None
 _geometry_cache = {}  # iso3 -> DataFrame
 
 
 def load_conversions():
-    """Load conversions.json (cached)."""
-    global _conversions_cache
-    if _conversions_cache is None:
-        with open(CONVERSIONS_FILE, 'r', encoding='utf-8') as f:
-            _conversions_cache = json.load(f)
-    return _conversions_cache
+    """Load conversions.json through the shared runtime cache."""
+    return load_conversions_impl() or {}
 
 
 def load_geometry(iso3: str) -> Optional[pd.DataFrame]:
@@ -440,8 +432,7 @@ class DataCascade:
 
 def clear_cache():
     """Clear all cached data."""
-    global _conversions_cache, _geometry_cache
-    _conversions_cache = None
+    global _geometry_cache
     _geometry_cache = {}
 
 

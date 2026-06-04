@@ -7,6 +7,8 @@ import re
 from pathlib import Path
 from typing import Callable, Optional
 
+from .runtime.geography_reference import load_conversions as load_conversions_impl
+
 
 _COUNTRY_INDEX_CACHE = {}
 _REGION_ALIASES_CACHE = None
@@ -159,13 +161,13 @@ def extract_topics(query: str, *, load_topics: Callable[[], dict]) -> list:
     return matched_topics
 
 
-def get_region_aliases(*, load_conversions: Callable[[], dict]) -> dict:
+def get_region_aliases() -> dict:
     """Load region aliases from conversions.json."""
     global _REGION_ALIASES_CACHE
     if _REGION_ALIASES_CACHE is not None:
         return _REGION_ALIASES_CACHE
 
-    conversions = load_conversions()
+    conversions = load_conversions_impl() or {}
     regions = conversions.get("regions", {})
     aliases = {}
     for region_key, region_data in regions.items():
@@ -205,14 +207,15 @@ def get_region_aliases(*, load_conversions: Callable[[], dict]) -> dict:
     return _REGION_ALIASES_CACHE
 
 
-def resolve_regions(query: str, *, load_conversions: Callable[[], dict], get_region_aliases_func: Callable[[], dict]) -> list:
+def resolve_regions(query: str, *, get_region_aliases_func: Callable[[], dict] | None = None) -> list:
     """Detect region mentions in query and resolve to grouping names."""
     query_lower = query.lower()
-    conversions = load_conversions()
+    conversions = load_conversions_impl() or {}
     groupings = conversions.get("regional_groupings", {})
     resolved = []
+    alias_loader = get_region_aliases_func or get_region_aliases
 
-    for alias, grouping_name in get_region_aliases_func().items():
+    for alias, grouping_name in alias_loader().items():
         pattern = r"\b" + re.escape(alias) + r"\b"
         if re.search(pattern, query_lower) and grouping_name in groupings:
             group_data = groupings[grouping_name]

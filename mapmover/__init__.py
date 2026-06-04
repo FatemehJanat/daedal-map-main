@@ -123,6 +123,10 @@ from .pack_downloader import (
     stage_pack_artifact,
 )
 
+from .foundation_helpers import (
+    load_global_countries_frame as load_global_countries,
+)
+
 from .geometry_enrichment import (
     get_geometry_lookup,
     get_country_coordinates,
@@ -142,7 +146,6 @@ from .geometry_handlers import (
     get_location_places,
     get_location_info,
     load_country_parquet,
-    load_global_countries,
     clear_cache,
 )
 
