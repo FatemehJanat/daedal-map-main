@@ -1042,6 +1042,204 @@ def _focus_timestamp(feed: str, props: dict) -> str | None:
     return None
 
 
+def _category_rank(value: object) -> float:
+    text = str(value or "").strip().upper()
+    ranks = {
+        "TD": 0.0,
+        "TS": 1.0,
+        "CAT1": 2.0,
+        "CAT2": 3.0,
+        "CAT3": 4.0,
+        "CAT4": 5.0,
+        "CAT5": 6.0,
+    }
+    return ranks.get(text, -1.0)
+
+
+def _coords_text(lat: object, lon: object) -> str | None:
+    try:
+        lat_value = float(lat)
+        lon_value = float(lon)
+    except (TypeError, ValueError):
+        return None
+    lat_dir = "N" if lat_value >= 0 else "S"
+    lon_dir = "E" if lon_value >= 0 else "W"
+    return f"{abs(lat_value):.1f}{lat_dir}, {abs(lon_value):.1f}{lon_dir}"
+
+
+def _selected_popup_feed(selected_popup: dict | None, effective_feeds: list[str]) -> str | None:
+    if not isinstance(selected_popup, dict):
+        return None
+    props = selected_popup.get("properties") if isinstance(selected_popup.get("properties"), dict) else {}
+    event_type = str(selected_popup.get("event_type") or props.get("event_type") or "").strip().lower()
+    if event_type in {"hurricane", "storm", "cyclone", "typhoon"} and "hurricanes_ibtracs_nrt" in effective_feeds:
+        return "hurricanes_ibtracs_nrt"
+    if str(props.get("storm_id") or "").strip() and "hurricanes_ibtracs_nrt" in effective_feeds:
+        return "hurricanes_ibtracs_nrt"
+    return None
+
+
+def _selected_storm_identity(selected_popup: dict | None) -> tuple[str | None, str | None]:
+    if not isinstance(selected_popup, dict):
+        return None, None
+    props = selected_popup.get("properties") if isinstance(selected_popup.get("properties"), dict) else {}
+    storm_id = str(
+        props.get("storm_id")
+        or selected_popup.get("event_id")
+        or ""
+    ).strip()
+    storm_name = str(
+        props.get("name")
+        or selected_popup.get("name")
+        or ""
+    ).strip()
+    return storm_id or None, storm_name or None
+
+
+def _latest_position_for_storm(rows: list[dict], storm_id: str | None) -> dict | None:
+    if not storm_id:
+        return None
+    matching = [
+        row for row in rows
+        if isinstance(row, dict) and str(row.get("storm_id") or "").strip() == storm_id
+    ]
+    if not matching:
+        return None
+    return max(matching, key=lambda row: str(row.get("timestamp") or ""))
+
+
+def _build_selected_hurricane_history_answer(selected_popup: dict | None) -> str | None:
+    storm_id, storm_name = _selected_storm_identity(selected_popup)
+    if not storm_id and not storm_name:
+        return None
+
+    entries = load_current_state_history("hurricanes_ibtracs_nrt")
+    label = storm_name or storm_id or "the selected storm"
+    if not entries:
+        return (
+            f"I know which storm is selected ({label}), but there is no retained Ops hurricane history "
+            "available yet in this environment, so I cannot compare the last few days."
+        )
+
+    timeline: list[dict] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        summary = entry.get("payload_summary") if isinstance(entry.get("payload_summary"), dict) else {}
+        storms = summary.get("storms") if isinstance(summary.get("storms"), list) else []
+        positions = summary.get("positions") if isinstance(summary.get("positions"), list) else []
+        matched_storm = None
+        if storm_id:
+            for storm in storms:
+                if not isinstance(storm, dict):
+                    continue
+                if str(storm.get("storm_id") or "").strip() == storm_id:
+                    matched_storm = storm
+                    break
+        if matched_storm is None and storm_name:
+            for storm in storms:
+                if not isinstance(storm, dict):
+                    continue
+                if str(storm.get("name") or "").strip().lower() == storm_name.lower():
+                    matched_storm = storm
+                    break
+        if matched_storm is None:
+            continue
+        resolved_storm_id = str(matched_storm.get("storm_id") or storm_id or "").strip() or None
+        timeline.append(
+            {
+                "published_at": entry.get("published_at") or entry.get("last_changed_at") or entry.get("upstream_issued_at"),
+                "storm": matched_storm,
+                "position": _latest_position_for_storm(positions, resolved_storm_id),
+            }
+        )
+
+    if not timeline:
+        return (
+            f"I know which storm is selected ({label}), but it is not present in the retained Ops hurricane "
+            "history window yet, so I cannot compare its recent changes."
+        )
+
+    ordered = sorted(timeline, key=lambda item: str(item.get("published_at") or ""))
+    earliest = ordered[0]
+    latest = ordered[-1]
+
+    early_storm = earliest.get("storm") if isinstance(earliest.get("storm"), dict) else {}
+    latest_storm = latest.get("storm") if isinstance(latest.get("storm"), dict) else {}
+    early_position = earliest.get("position") if isinstance(earliest.get("position"), dict) else {}
+    latest_position = latest.get("position") if isinstance(latest.get("position"), dict) else {}
+
+    early_name = str(early_storm.get("name") or storm_name or storm_id or "Selected storm").strip()
+    early_category = early_position.get("category") or early_storm.get("max_category")
+    latest_category = latest_position.get("category") or latest_storm.get("max_category")
+    early_wind = early_position.get("wind_kt") or early_storm.get("max_wind_kt")
+    latest_wind = latest_position.get("wind_kt") or latest_storm.get("max_wind_kt")
+    early_time = _format_ops_timestamp(
+        early_position.get("timestamp") or early_storm.get("end_date") or earliest.get("published_at")
+    )
+    latest_time = _format_ops_timestamp(
+        latest_position.get("timestamp") or latest_storm.get("end_date") or latest.get("published_at")
+    )
+
+    sentences: list[str] = [
+        f"{early_name} appears in {len(ordered)} retained Ops hurricane snapshots over the last 72 hours."
+    ]
+
+    change_bits: list[str] = []
+    if early_category not in (None, "") and latest_category not in (None, ""):
+        if str(early_category) == str(latest_category):
+            change_bits.append(f"it remained at {latest_category}")
+        elif _category_rank(latest_category) > _category_rank(early_category):
+            change_bits.append(f"it strengthened from {early_category} to {latest_category}")
+        elif _category_rank(latest_category) < _category_rank(early_category):
+            change_bits.append(f"it weakened from {early_category} to {latest_category}")
+        else:
+            change_bits.append(f"its classification changed from {early_category} to {latest_category}")
+
+    try:
+        if early_wind not in (None, "") and latest_wind not in (None, ""):
+            early_wind_value = float(early_wind)
+            latest_wind_value = float(latest_wind)
+            wind_delta = latest_wind_value - early_wind_value
+            if abs(wind_delta) < 0.5:
+                change_bits.append(f"winds stayed near {latest_wind_value:.0f} kt")
+            elif wind_delta > 0:
+                change_bits.append(f"winds increased from {early_wind_value:.0f} kt to {latest_wind_value:.0f} kt")
+            else:
+                change_bits.append(f"winds decreased from {early_wind_value:.0f} kt to {latest_wind_value:.0f} kt")
+    except (TypeError, ValueError):
+        pass
+
+    if change_bits:
+        sentences.append("Over that window, " + " and ".join(change_bits) + ".")
+
+    if early_time and latest_time:
+        sentences.append(f"Window compared: {early_time} to {latest_time}.")
+
+    latest_coords = _coords_text(latest_position.get("latitude"), latest_position.get("longitude"))
+    latest_basin = str(latest_storm.get("basin") or "").strip()
+    if latest_coords and latest_basin:
+        sentences.append(f"Latest retained position is near {latest_coords} in basin {latest_basin}.")
+    elif latest_coords:
+        sentences.append(f"Latest retained position is near {latest_coords}.")
+
+    return " ".join(sentences)
+
+
+def _try_selected_history_answer(
+    *,
+    query: str,
+    selected_popup: dict | None,
+    effective_feeds: list[str],
+) -> str | None:
+    if not _query_requests_deep_history(query):
+        return None
+    selected_feed = _selected_popup_feed(selected_popup, effective_feeds)
+    if selected_feed != "hurricanes_ibtracs_nrt":
+        return None
+    return _build_selected_hurricane_history_answer(selected_popup)
+
+
 def _select_focus_candidate(
     *,
     feed: str,
@@ -1596,6 +1794,26 @@ def run_ops_chat(
         watch=watch,
         effective_feeds=effective_feeds,
     )
+    selected_history_answer = _try_selected_history_answer(
+        query=query,
+        selected_popup=selected_popup,
+        effective_feeds=effective_feeds,
+    )
+    if selected_history_answer:
+        result = {
+            "type": "chat",
+            "message": selected_history_answer,
+            "summary": f"Ops watch: {watch.get('label') or 'Watch'} | feeds: {', '.join(effective_feeds)}",
+            "watch_id": watch.get("watch_id"),
+            "watch_context": watch,
+            "effective_feeds": effective_feeds,
+            "ops_report": report,
+        }
+        if report.get("display_payloads"):
+            result["display_payloads"] = report.get("display_payloads")
+        if report.get("geojson"):
+            result["geojson"] = report["geojson"]
+        return result
     if direct_answer:
         result = {
             "type": "chat",
