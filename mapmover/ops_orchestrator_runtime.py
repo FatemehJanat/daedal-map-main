@@ -33,6 +33,13 @@ FEED_ALIASES = {
     "hurricanes_ibtracs_nrt": ("hurricane", "hurricanes", "storm", "storms", "cyclone", "typhoon", "ibtracs"),
 }
 
+COUNT_QUERY_PATTERNS = (
+    r"\bhow many\b",
+    r"\bnumber of\b",
+    r"\bcount of\b",
+    r"\bcount\b",
+)
+
 DEEP_HISTORY_PATTERNS = (
     r"\bchange\b",
     r"\bchanged\b",
@@ -819,6 +826,108 @@ def _select_deep_history_feeds(
     return effective_feeds[:max_feeds]
 
 
+def _report_snapshot_by_feed(report: dict | None) -> dict[str, dict]:
+    snapshots: dict[str, dict] = {}
+    for item in (report or {}).get("feed_snapshots") or []:
+        if not isinstance(item, dict):
+            continue
+        feed = str(item.get("feed") or "").strip()
+        if feed:
+            snapshots[feed] = item
+    return snapshots
+
+
+def _is_count_query(query: str) -> bool:
+    text = str(query or "").strip().lower()
+    if not text:
+        return False
+    return any(re.search(pattern, text) for pattern in COUNT_QUERY_PATTERNS)
+
+
+def _feed_display_name(feed: str) -> str:
+    names = {
+        "wildfires_us_nifc": "wildfires",
+        "hurricanes_ibtracs_nrt": "storms",
+        "earthquakes": "earthquakes",
+        "tsunamis": "tsunamis",
+        "volcanoes": "volcanoes",
+        "currency": "currencies",
+        "noaa_aurora": "aurora forecast cells",
+        "noaa_swpc": "space weather alerts",
+    }
+    return names.get(feed, feed.replace("_", " "))
+
+
+def _feed_status_time(snapshot: dict) -> str | None:
+    for key in ("last_changed_at", "fetched_at", "last_checked_at"):
+        value = str(snapshot.get(key) or "").strip()
+        if value:
+            return value
+    return None
+
+
+def _active_count_for_feed(feed: str, summary: dict, query_text: str) -> tuple[int | None, str | None]:
+    if not isinstance(summary, dict):
+        return None, None
+    if feed == "wildfires_us_nifc":
+        value = summary.get("active_count")
+        return (int(value), "active wildfires") if value is not None else (None, None)
+    if feed == "hurricanes_ibtracs_nrt":
+        value = summary.get("storm_count")
+        return (int(value), "active storms") if value is not None else (None, None)
+    if feed == "volcanoes":
+        value = summary.get("ongoing_count")
+        if value is not None:
+            return int(value), "ongoing volcano events"
+        value = summary.get("event_count")
+        return (int(value), "volcano events") if value is not None else (None, None)
+    if feed == "earthquakes":
+        value = summary.get("event_count")
+        return (int(value), "earthquakes") if value is not None else (None, None)
+    if feed == "tsunamis":
+        value = summary.get("event_count")
+        return (int(value), "tsunami events") if value is not None else (None, None)
+    if feed == "currency":
+        value = summary.get("rate_count")
+        return (int(value), "currency rates") if value is not None else (None, None)
+    for key in ("active_count", "ongoing_count", "storm_count", "event_count", "incident_count", "rate_count"):
+        value = summary.get(key)
+        if value is not None:
+            return int(value), _feed_display_name(feed)
+    return None, None
+
+
+def _try_direct_ops_answer(*, query: str, report: dict, watch: dict, effective_feeds: list[str]) -> str | None:
+    text = str(query or "").strip()
+    lower = text.lower()
+    if not text:
+        return None
+
+    if "what feeds" in lower and "active" in lower:
+        return f"Active watch has {len(effective_feeds)} feeds: {', '.join(effective_feeds)}."
+    if re.search(r"\bhow many feeds\b", lower):
+        return f"Active watch has {len(effective_feeds)} feeds."
+
+    if not _is_count_query(text):
+        return None
+
+    mentioned = _mentioned_feeds(text, effective_feeds)
+    if len(mentioned) != 1:
+        return None
+
+    feed = mentioned[0]
+    snapshot = _report_snapshot_by_feed(report).get(feed) or {}
+    summary = snapshot.get("summary") if isinstance(snapshot.get("summary"), dict) else {}
+    count, noun = _active_count_for_feed(feed, summary, lower)
+    if count is None or not noun:
+        return None
+
+    freshness = _feed_status_time(snapshot)
+    if freshness:
+        return f"There are {count} {noun} in the current watch. Last update: {freshness}."
+    return f"There are {count} {noun} in the current watch."
+
+
 def _compact_history_entries(feed: str, entries: list[dict], *, limit: int = 6) -> list[dict]:
     compact: list[dict] = []
     for entry in entries[-limit:]:
@@ -894,6 +1003,28 @@ def run_ops_chat(
     report = build_ops_report(watch=watch, effective_feeds=effective_feeds)
     if isinstance(getattr(cache, "map_state", None), dict):
         cache.map_state["ops_report"] = report
+
+    direct_answer = _try_direct_ops_answer(
+        query=query,
+        report=report,
+        watch=watch,
+        effective_feeds=effective_feeds,
+    )
+    if direct_answer:
+        result = {
+            "type": "chat",
+            "message": direct_answer,
+            "summary": f"Ops watch: {watch.get('label') or 'Watch'} | feeds: {', '.join(effective_feeds)}",
+            "watch_id": watch.get("watch_id"),
+            "watch_context": watch,
+            "effective_feeds": effective_feeds,
+            "ops_report": report,
+        }
+        if report.get("display_payloads"):
+            result["display_payloads"] = report.get("display_payloads")
+        if report.get("geojson"):
+            result["geojson"] = report["geojson"]
+        return result
 
     preloaded = ops_orchestrator.preprocess(
         query=query,

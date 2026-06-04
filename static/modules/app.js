@@ -441,6 +441,15 @@ export const App = {
     }
   },
 
+  syncMetricOverlayVisibility() {
+    const overlaySelector = window.OverlaySelector || null;
+    const anyMetricActive = Boolean(
+      overlaySelector?.isActive?.('demographics')
+      || overlaySelector?.isActive?.('currency')
+    );
+    MapAdapter?.setChoroplethVisible?.(anyMetricActive);
+  },
+
   async ensureMetricLevelLoaded(level, options = {}) {
     const context = this.activeMetricOrderContext;
     if (!context) return false;
@@ -582,6 +591,7 @@ export const App = {
     SidebarResizer.init();
     TutorialMode.init();
     TickerController.init();
+    TickerController.setEnabled(ChatManager?.mode === 'ops');
 
     // Initialize TimeSlider early (UI setup only, no data)
     // This ensures the slider is visible and listener system is ready
@@ -614,7 +624,14 @@ export const App = {
       Promise.resolve(ChatManager.refreshResearchManifest?.()).catch((error) => {
         console.warn('Could not refresh Research manifest after map init:', error);
       });
+    } else if (startupMode === 'ops') {
+      Promise.resolve(ChatManager.refreshOpsReport?.({ loadWatch: true })).catch((error) => {
+        console.warn('Could not refresh Ops state after map init:', error);
+      });
     }
+    Promise.resolve(ChatManager.seedEmptyConversation?.(startupMode)).catch((error) => {
+      console.warn(`Could not seed ${startupMode} conversation after map init:`, error);
+    });
 
     // Replay any overlays that were restored from localStorage before the map was ready.
     // OverlaySelector.init() restores saved state before MapAdapter.init() runs, so any
@@ -624,6 +641,9 @@ export const App = {
         OverlayController.handleOverlayChange(overlayId, true);
       }
     }
+
+    ChatManager.applyModeUiState?.();
+    this.syncMetricOverlayVisibility();
 
     // Shift the map's logical center to account for the sidebar width.
     // The map container covers the full viewport but the sidebar overlays it on the left,
@@ -1764,7 +1784,7 @@ export const App = {
       // Auto-enable demographics overlay for demographic data from chat orders
       // This ensures viewport-based admin level filtering works
       const OverlaySelector = window.OverlaySelector;
-      if (ChatManager?.mode !== 'research' && OverlaySelector && !OverlaySelector.isActive('demographics')) {
+      if (ChatManager?.mode === 'explore' && OverlaySelector && !OverlaySelector.isActive('demographics')) {
         console.log('Auto-enabling demographics overlay for chat order data');
         OverlaySelector.setActive('demographics', true);
       }
@@ -1812,6 +1832,7 @@ export const App = {
           TimeSlider.setAdminLevelFilter(displayLevel);
         }
       }, 100);
+      this.syncMetricOverlayVisibility();
 
     } else {
       // Single-year mode: hide time slider, display normally
@@ -1837,10 +1858,13 @@ export const App = {
           }
         }
 
-        if (ChatManager?.mode !== 'research' && data.data_type === 'metrics' && OverlaySelector && !OverlaySelector.isActive('demographics')) {
+        if (ChatManager?.mode === 'explore' && data.data_type === 'metrics' && OverlaySelector && !OverlaySelector.isActive('demographics')) {
           console.log('Auto-enabling demographics overlay for chat order data');
           OverlaySelector.setActive('demographics', true);
         }
+      }
+      if (data.data_type === 'metrics') {
+        this.syncMetricOverlayVisibility();
       }
     }
 
