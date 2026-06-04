@@ -55,8 +55,10 @@ export async function seedEmptyConversation(ctx, mode = ctx.mode, deps = {}) {
 
   if (mode === 'research') {
     try {
-      await ctx.refreshResearchCorpusOptions();
-      const manifest = await ctx.refreshResearchManifest();
+      if (!Array.isArray(ctx.researchCorpusOptions) || ctx.researchCorpusOptions.length === 0) {
+        await ctx.refreshResearchCorpusOptions();
+      }
+      const manifest = ctx.latestResearchManifest || await ctx.refreshResearchManifest();
       if ((manifest?.artifact_count || 0) > 0 && !manifest?.stale_artifacts) {
         ctx.addMessage(`Research mode ready. Active corpus: ${manifest.artifact_count} loaded artifact${manifest.artifact_count === 1 ? '' : 's'}.`, 'assistant', { mode: 'research' });
         return;
@@ -79,7 +81,9 @@ export async function seedEmptyConversation(ctx, mode = ctx.mode, deps = {}) {
 
   if (mode === 'ops') {
     try {
-      const payload = await ctx.refreshOpsReport({ loadWatch: true });
+      const payload = ctx.latestOpsPayload
+        ? ctx.latestOpsPayload
+        : await ctx.refreshOpsReport({ loadWatch: true });
       const effectiveFeeds = Array.isArray(payload?.effective_feeds) ? payload.effective_feeds : [];
       if (effectiveFeeds.length > 0) {
         ctx.addMessage(
@@ -103,6 +107,7 @@ export async function seedEmptyConversation(ctx, mode = ctx.mode, deps = {}) {
 export function applyModeUiState(ctx, deps = {}) {
   const researchModeToggle = deps.researchModeToggle || null;
   const OverlaySelector = deps.OverlaySelector || null;
+  updateSidebarModeLayout(ctx);
   if (researchModeToggle) {
     researchModeToggle.mode = ctx.mode;
     researchModeToggle.setSelectedCorpusId(ctx.selectedResearchCorpusId);
@@ -110,7 +115,7 @@ export function applyModeUiState(ctx, deps = {}) {
   }
   ctx.setActiveMessagePane(ctx.mode);
   ctx.updateResearchCorpusStatus();
-  OverlaySelector?.refreshVisibility?.();
+  OverlaySelector?.syncToCurrentMode?.();
   if (ctx.mode === 'ops') {
     OverlaySelector?.expand?.();
   }
@@ -126,7 +131,6 @@ export function applyModeUiState(ctx, deps = {}) {
   if (tickerController?.setEnabled) {
     tickerController.setEnabled(ctx.mode === 'ops');
   }
-  updateSidebarModeLayout(ctx);
   updateComposerState(ctx);
 }
 

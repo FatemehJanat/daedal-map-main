@@ -10,8 +10,8 @@ import { CONFIG } from './config.js';
 import { fetchMsgpack } from './utils/fetch.js';
 import { getCurrentProfile } from './auth.js';
 
-// localStorage key for persisting overlay selections
-const STORAGE_KEY = 'countymap_activeOverlays';
+// localStorage key prefix for persisting lane-specific overlay selections
+const STORAGE_KEY_PREFIX = 'countymap_activeOverlays';
 
 // Model mapping based on data_type
 const DATA_TYPE_TO_MODEL = {
@@ -26,6 +26,7 @@ const OVERLAY_ICONS = {
   'demographics': 'D',
   'disasters': '!',
   'climate': 'C',
+  'usa': 'U',
   'earthquakes': 'E',
   'volcanoes': 'V',
   'hurricanes': 'H',
@@ -41,7 +42,9 @@ const OVERLAY_ICONS = {
   'fema': 'F',
   'desinventar': 'I',
   'reliefweb': 'R',
-  'event_areas': 'A'
+  'event_areas': 'A',
+  'aurora': 'A',
+  'nws_alerts': '!'
 };
 
 // Special model overrides (some overlays need specific models)
@@ -162,25 +165,38 @@ function buildCategoriesFromTree(overlayTree) {
     }
   }
 
-  // Add climate overlays (hardcoded for now since they're weather variables, not in catalog)
-  categories.push({
-    id: 'climate',
-    label: 'Climate',
-    icon: 'C',
-    isCategory: true,
-    expanded: false,
-    overlays: [
-      { id: 'temperature', label: 'Temperature', description: 'Global temperature', default: false, locked: false, model: 'weather-grid', icon: '*', hasYearFilter: true, variable: 'temp_c' },
-      { id: 'humidity', label: 'Humidity', description: 'Relative humidity', default: false, locked: false, model: 'weather-grid', icon: '%', hasYearFilter: true, variable: 'humidity' },
-      { id: 'snow-depth', label: 'Snow Depth', description: 'Snow depth', default: false, locked: false, model: 'weather-grid', icon: '#', hasYearFilter: true, variable: 'snow_depth_m' },
-      { id: 'precipitation', label: 'Precipitation', description: 'Rainfall', default: false, locked: false, model: 'weather-grid', icon: ',', hasYearFilter: true, variable: 'precipitation_mm' },
-      { id: 'cloud-cover', label: 'Cloud Cover', description: 'Cloud coverage', default: false, locked: false, model: 'weather-grid', icon: 'o', hasYearFilter: true, variable: 'cloud_cover_pct' },
-      { id: 'pressure', label: 'Pressure', description: 'Sea level pressure', default: false, locked: false, model: 'weather-grid', icon: 'P', hasYearFilter: true, variable: 'pressure_hpa' },
-      { id: 'solar-radiation', label: 'Solar Radiation', description: 'Surface solar radiation', default: false, locked: false, model: 'weather-grid', icon: 'S', hasYearFilter: true, variable: 'solar_radiation' },
-      { id: 'soil-temp', label: 'Soil Temperature', description: 'Surface soil temp', default: false, locked: false, model: 'weather-grid', icon: 'G', hasYearFilter: true, variable: 'soil_temp_c' },
-      { id: 'soil-moisture', label: 'Soil Moisture', description: 'Surface soil moisture', default: false, locked: false, model: 'weather-grid', icon: 'M', hasYearFilter: true, variable: 'soil_moisture' }
-    ]
-  });
+  // Add or extend climate overlays. Some catalogs now provide a Climate
+  // category, so merge instead of blindly appending a duplicate section.
+  const hardcodedClimateOverlays = [
+    { id: 'temperature', label: 'Temperature', description: 'Global temperature', default: false, locked: false, model: 'weather-grid', icon: '*', hasYearFilter: true, variable: 'temp_c' },
+    { id: 'humidity', label: 'Humidity', description: 'Relative humidity', default: false, locked: false, model: 'weather-grid', icon: '%', hasYearFilter: true, variable: 'humidity' },
+    { id: 'snow-depth', label: 'Snow Depth', description: 'Snow depth', default: false, locked: false, model: 'weather-grid', icon: '#', hasYearFilter: true, variable: 'snow_depth_m' },
+    { id: 'precipitation', label: 'Precipitation', description: 'Rainfall', default: false, locked: false, model: 'weather-grid', icon: ',', hasYearFilter: true, variable: 'precipitation_mm' },
+    { id: 'cloud-cover', label: 'Cloud Cover', description: 'Cloud coverage', default: false, locked: false, model: 'weather-grid', icon: 'o', hasYearFilter: true, variable: 'cloud_cover_pct' },
+    { id: 'pressure', label: 'Pressure', description: 'Sea level pressure', default: false, locked: false, model: 'weather-grid', icon: 'P', hasYearFilter: true, variable: 'pressure_hpa' },
+    { id: 'solar-radiation', label: 'Solar Radiation', description: 'Surface solar radiation', default: false, locked: false, model: 'weather-grid', icon: 'S', hasYearFilter: true, variable: 'solar_radiation' },
+    { id: 'soil-temp', label: 'Soil Temperature', description: 'Surface soil temp', default: false, locked: false, model: 'weather-grid', icon: 'G', hasYearFilter: true, variable: 'soil_temp_c' },
+    { id: 'soil-moisture', label: 'Soil Moisture', description: 'Surface soil moisture', default: false, locked: false, model: 'weather-grid', icon: 'M', hasYearFilter: true, variable: 'soil_moisture' },
+    { id: 'aurora', label: 'Aurora', description: 'Live aurora forecast', default: false, locked: false, model: 'aurora', icon: 'A', hasYearFilter: false, live: true, alwaysVisible: true }
+  ];
+  const climateCategory = categories.find((cat) => cat.id === 'climate' && cat.isCategory);
+  if (climateCategory) {
+    const existingOverlayIds = new Set((climateCategory.overlays || []).map((overlay) => overlay.id));
+    for (const overlay of hardcodedClimateOverlays) {
+      if (!existingOverlayIds.has(overlay.id)) {
+        climateCategory.overlays.push(overlay);
+      }
+    }
+  } else {
+    categories.push({
+      id: 'climate',
+      label: 'Climate',
+      icon: 'C',
+      isCategory: true,
+      expanded: false,
+      overlays: hardcodedClimateOverlays
+    });
+  }
 
   // Metrics overlays - the shared choropleth (global.csv country fills, etc.).
   // The toggle controls choropleth visibility, so dense global layers like the
@@ -197,25 +213,67 @@ function buildCategoriesFromTree(overlayTree) {
     ]
   });
 
-  // Live overlays - real-time forecast/observation map layers (not catalog
-  // packs). Driven by OverlayController -> live overlay modules. Marked
-  // alwaysVisible so they stay available in every mode (including Ops).
+  // USA overlays - operational overlays tied to US-only alert/coverage areas.
   // NOTE: the announcement ticker is intentionally NOT here - it is a display
   // surface (chrome) that aggregates many feeds, not a single-feed overlay.
   categories.push({
-    id: 'live',
-    label: 'Live',
-    icon: 'L',
+    id: 'usa',
+    label: 'USA',
+    icon: 'U',
     isCategory: true,
     expanded: false,
-    alwaysVisible: true,
     overlays: [
-      { id: 'nws_alerts', label: 'US Weather Alerts', description: 'Live NWS warnings', default: false, locked: false, model: 'nws_alerts', icon: '!', hasYearFilter: false, live: true },
-      { id: 'aurora', label: 'Aurora', description: 'Live aurora forecast', default: false, locked: false, model: 'aurora', icon: 'A', hasYearFilter: false, live: true }
+      { id: 'nws_alerts', label: 'US Weather Alerts', description: 'Live NWS warnings', default: false, locked: false, model: 'nws_alerts', icon: '!', hasYearFilter: false, live: true, alwaysVisible: true }
     ]
   });
 
-  return categories;
+  return dedupeCategories(categories);
+}
+
+function dedupeCategories(categories) {
+  const merged = new Map();
+
+  for (const category of categories || []) {
+    if (!category || !category.id) continue;
+
+    if (!merged.has(category.id)) {
+      if (category.isCategory) {
+        merged.set(category.id, {
+          ...category,
+          overlays: [...(category.overlays || [])]
+        });
+      } else if (category.overlay) {
+        merged.set(category.id, {
+          ...category,
+          overlay: { ...category.overlay }
+        });
+      } else {
+        merged.set(category.id, { ...category });
+      }
+      continue;
+    }
+
+    const existing = merged.get(category.id);
+    if (existing.isCategory && category.isCategory) {
+      const seenOverlayIds = new Set((existing.overlays || []).map((overlay) => overlay.id));
+      for (const overlay of category.overlays || []) {
+        if (!seenOverlayIds.has(overlay.id)) {
+          existing.overlays.push(overlay);
+          seenOverlayIds.add(overlay.id);
+        }
+      }
+      existing.label = existing.label || category.label;
+      existing.icon = existing.icon || category.icon;
+      existing.expanded = existing.expanded || category.expanded;
+      continue;
+    }
+
+    if (!existing.isCategory && !category.isCategory && category.overlay && !existing.overlay) {
+      existing.overlay = { ...category.overlay };
+    }
+  }
+
+  return Array.from(merged.values());
 }
 
 /**
@@ -280,15 +338,15 @@ function filterCategoriesForCurrentMode(categories) {
 
   const visibleCategories = [];
   for (const category of cloned) {
-    // alwaysVisible categories (e.g. Live announcements/forecasts) show in
-    // every mode, independent of the Ops watch's allowed feeds.
+    // alwaysVisible categories show in every mode, independent of the Ops
+    // watch's allowed feeds.
     if (category.alwaysVisible) {
       visibleCategories.push(category);
       continue;
     }
 
     if (category.isCategory) {
-      const overlays = category.overlays.filter((overlay) => allowedOverlayIds.has(overlay.id));
+      const overlays = category.overlays.filter((overlay) => overlay.alwaysVisible || allowedOverlayIds.has(overlay.id));
       if (overlays.length) {
         visibleCategories.push({
           ...category,
@@ -318,6 +376,8 @@ export function setDependencies(deps) {
 export const OverlaySelector = {
   // State
   activeOverlays: new Set(),
+  laneOverlayStates: new Map(),
+  currentLaneMode: 'explore',
   expanded: true,  // Default expanded
   categoryExpanded: {},  // Track which categories are expanded
   initialized: false,
@@ -336,6 +396,7 @@ export const OverlaySelector = {
    */
   async init(options = {}) {
     const restoreState = options.restoreState !== false;
+    this.currentLaneMode = getCurrentOverlayLaneMode();
     // Find container first
     this.container = document.getElementById('overlaySelector');
     if (!this.container) {
@@ -386,7 +447,7 @@ export const OverlaySelector = {
     }
 
     // Try to restore from localStorage, fall back to defaults
-    if (restoreState && !this._restoreState()) {
+    if (restoreState && !this._restoreState(this.currentLaneMode)) {
       // Set default overlays if no saved state
       for (const overlay of OVERLAYS) {
         if (overlay.default) {
@@ -396,6 +457,7 @@ export const OverlaySelector = {
     } else if (!restoreState) {
       this.activeOverlays.clear();
     }
+    this._rememberCurrentLaneState();
 
     // Initialize category expanded state
     for (const cat of CATEGORIES) {
@@ -424,8 +486,13 @@ export const OverlaySelector = {
     // Header (clickable to expand/collapse)
     this.header = document.createElement('div');
     this.header.className = 'overlay-header';
+    const modeLabel = this.currentLaneMode === 'ops'
+      ? 'Ops Overlays'
+      : this.currentLaneMode === 'research'
+        ? 'Research Overlays'
+        : 'Explore Overlays';
     this.header.innerHTML = `
-      <span class="overlay-title">Overlays</span>
+      <span class="overlay-title">${modeLabel}</span>
       <span class="overlay-toggle">${this.expanded ? '-' : '+'}</span>
     `;
     this.container.appendChild(this.header);
@@ -593,6 +660,7 @@ export const OverlaySelector = {
       } else {
         this.activeOverlays.delete(overlayId);
       }
+      this._rememberCurrentLaneState();
 
       console.log('Overlay toggled:', overlayId, checkbox.checked);
       console.log('Active overlays:', Array.from(this.activeOverlays));
@@ -638,6 +706,7 @@ export const OverlaySelector = {
         this._notifyListeners(overlay.id, active);
       }
     }
+    this._rememberCurrentLaneState();
 
     // Update category checkbox (clear indeterminate)
     const catCheckbox = this.list.querySelector(`input[data-category-id="${categoryId}"]`);
@@ -693,6 +762,7 @@ export const OverlaySelector = {
     } else {
       this.activeOverlays.add(overlayId);
     }
+    this._rememberCurrentLaneState();
 
     // Update checkbox
     const checkbox = this.list?.querySelector(`input[data-overlay-id="${overlayId}"]`);
@@ -740,6 +810,7 @@ export const OverlaySelector = {
   refreshVisibility() {
     if (!ALL_CATEGORIES.length) return;
 
+    this.currentLaneMode = getCurrentOverlayLaneMode();
     CATEGORIES = filterCategoriesForCurrentMode(ALL_CATEGORIES);
     OVERLAYS = getAllOverlaysFromCategories(CATEGORIES);
 
@@ -759,6 +830,7 @@ export const OverlaySelector = {
       }
     }
     this.categoryExpanded = nextCategoryExpanded;
+    this._rememberCurrentLaneState();
 
     if (this.initialized) {
       this._buildUI();
@@ -767,6 +839,34 @@ export const OverlaySelector = {
         this._notifyListeners(overlayId, false);
       }
       this._saveState();
+    }
+  },
+
+  syncToCurrentMode() {
+    const nextMode = getCurrentOverlayLaneMode();
+    const previousOverlays = new Set(this.activeOverlays);
+    this._rememberCurrentLaneState();
+    this.currentLaneMode = nextMode;
+    if (!this._restoreState(nextMode)) {
+      for (const overlay of OVERLAYS) {
+        if (overlay.default) {
+          this.activeOverlays.add(overlay.id);
+        }
+      }
+      this._rememberCurrentLaneState();
+    }
+    this.refreshVisibility();
+
+    const nextOverlays = new Set(this.activeOverlays);
+    for (const overlayId of previousOverlays) {
+      if (!nextOverlays.has(overlayId)) {
+        this._notifyListeners(overlayId, false);
+      }
+    }
+    for (const overlayId of nextOverlays) {
+      if (!previousOverlays.has(overlayId)) {
+        this._notifyListeners(overlayId, true);
+      }
     }
   },
 
@@ -843,6 +943,7 @@ export const OverlaySelector = {
     } else {
       this.activeOverlays.delete(overlayId);
     }
+    this._rememberCurrentLaneState();
 
     // Update checkbox
     const checkbox = this.list?.querySelector(`input[data-overlay-id="${overlayId}"]`);
@@ -857,6 +958,14 @@ export const OverlaySelector = {
     this._saveState();
   },
 
+  _storageKey(mode = this.currentLaneMode) {
+    return `${STORAGE_KEY_PREFIX}_${mode}`;
+  },
+
+  _rememberCurrentLaneState() {
+    this.laneOverlayStates.set(this.currentLaneMode, Array.from(this.activeOverlays));
+  },
+
   /**
    * Save active overlays to localStorage.
    * @private
@@ -864,7 +973,8 @@ export const OverlaySelector = {
   _saveState() {
     try {
       const data = Array.from(this.activeOverlays);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      this.laneOverlayStates.set(this.currentLaneMode, data);
+      localStorage.setItem(this._storageKey(), JSON.stringify(data));
     } catch (e) {
       // localStorage not available or full
       console.warn('OverlaySelector: Could not save state to localStorage', e);
@@ -876,21 +986,20 @@ export const OverlaySelector = {
    * @private
    * @returns {boolean} True if state was restored, false otherwise
    */
-  _restoreState() {
+  _restoreState(mode = this.currentLaneMode) {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const data = JSON.parse(saved);
-        if (Array.isArray(data)) {
-          // Validate that saved overlay IDs still exist
-          for (const id of data) {
-            if (OVERLAYS.find(o => o.id === id)) {
-              this.activeOverlays.add(id);
-            }
+      this.activeOverlays.clear();
+      const cached = this.laneOverlayStates.get(mode);
+      const raw = cached || JSON.parse(localStorage.getItem(this._storageKey(mode)) || 'null');
+      if (Array.isArray(raw)) {
+        for (const id of raw) {
+          if (OVERLAYS.find(o => o.id === id)) {
+            this.activeOverlays.add(id);
           }
-          console.log('OverlaySelector: Restored state from localStorage:', data);
-          return true;
         }
+        this.laneOverlayStates.set(mode, Array.from(this.activeOverlays));
+        console.log('OverlaySelector: Restored state for lane', mode, Array.from(this.activeOverlays));
+        return true;
       }
     } catch (e) {
       console.warn('OverlaySelector: Could not restore state from localStorage', e);
@@ -904,10 +1013,13 @@ export const OverlaySelector = {
    */
   clearState() {
     try {
-      localStorage.removeItem(STORAGE_KEY);
+      for (const mode of ['explore', 'research', 'ops']) {
+        localStorage.removeItem(this._storageKey(mode));
+      }
     } catch (e) {
       // Ignore
     }
+    this.laneOverlayStates.clear();
 
     // Clear current state
     const previousOverlays = Array.from(this.activeOverlays);
@@ -919,6 +1031,7 @@ export const OverlaySelector = {
         this.activeOverlays.add(overlay.id);
       }
     }
+    this._rememberCurrentLaneState();
 
     // Rebuild UI to reflect reset state
     if (this.list) {

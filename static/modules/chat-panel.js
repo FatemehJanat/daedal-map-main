@@ -301,6 +301,7 @@ export const ChatManager = {
   selectedResearchCorpusId: '',
   opsWatchId: '',
   latestOpsReport: null,
+  latestOpsPayload: null,
   researchCorpusOptions: [],
   latestResearchManifest: null,
   researchDisplayLayersByMode: { explore: [], research: [], ops: [] },
@@ -346,9 +347,11 @@ export const ChatManager = {
     this.initModeToggle();
     this.updateCatalogSurfaceAccess();
     App?.activateLaneMapView?.(this.mode, { force: true });
-    Promise.resolve(this.seedEmptyConversation(this.mode)).catch((error) => {
-      console.warn('Could not seed initial conversation:', error);
-    });
+    if (this.mode === 'explore') {
+      Promise.resolve(this.seedEmptyConversation(this.mode)).catch((error) => {
+        console.warn('Could not seed initial conversation:', error);
+      });
+    }
     this.syncSidebarToggleVisibility();
     this.updateSidebarModeLayout();
     this.updateComposerState();
@@ -358,17 +361,6 @@ export const ChatManager = {
 
     // Initialize order panel and tracker
     this.initOrderPanel();
-
-    if (this.mode === 'ops') {
-      Promise.resolve().then(async () => {
-        try {
-          await this.refreshOpsReport({ loadWatch: true });
-        } catch (error) {
-          console.warn('Could not refresh Ops state on init:', error);
-        }
-      });
-    }
-
     onAuthChanged((event) => {
       Promise.resolve().then(async () => {
         const authState = Boolean(event?.detail?.isAuthenticated);
@@ -743,7 +735,13 @@ export const ChatManager = {
       }
     });
     this.opsWatchId = payload?.watch_id || this.opsWatchId;
+    this.latestOpsPayload = payload || null;
     this.latestOpsReport = payload?.ops_report || null;
+    OverlayController?.setOpsSnapshotPayloads?.(
+      Array.isArray(payload?.display_payloads)
+        ? payload.display_payloads
+        : (Array.isArray(this.latestOpsReport?.display_payloads) ? this.latestOpsReport.display_payloads : [])
+    );
     this.renderOpsDisplayPayloads(payload);
     this.saveState();
     OverlaySelector?.refreshVisibility?.();
@@ -772,23 +770,7 @@ export const ChatManager = {
       return;
     }
     this._lastOpsDisplaySig = signature;
-    const orderedDisplays = [
-      ...displayPayloads.filter((display) => display?.data_type !== 'metrics'),
-      ...displayPayloads.filter((display) => display?.data_type === 'metrics')
-    ];
-    App?.clearOpsDirectDisplayState?.({ resetMetrics: true });
-    orderedDisplays.forEach((display, index) => {
-      if (!display?.geojson?.features?.length) {
-        return;
-      }
-      this.routeMapResponse(display, {
-        origin: 'ops',
-        restoringViewState: true,
-        skipAdminLevelFilter: true,
-        skipOrderModeLevelHold: true,
-        preserveExistingRuntimeLayers: index > 0
-      });
-    });
+    OverlayController?.setOpsSnapshotPayloads?.(displayPayloads);
     document.getElementById('tutorialTimelineRegion')?.classList?.remove('timeline-region-active');
     window.TimeSlider?.hide?.();
   },

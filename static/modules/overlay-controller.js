@@ -609,6 +609,7 @@ export const OverlayController = {
   // Pending geometry data to render when geography overlay is enabled
   // Format: { geojson, geometryType, options }
   pendingGeometry: null,
+  opsSnapshotPayloads: new Map(),
 
   // Startup/runtime mode flags
   initialized: false,
@@ -627,6 +628,77 @@ export const OverlayController = {
       return;
     }
     TimeSlider?.show?.();
+  },
+
+  _isOpsMode() {
+    return document.body.classList.contains('chat-mode-ops');
+  },
+
+  _opsOverlayIdForPayload(payload) {
+    const sourceId = String(payload?.source_id || '').trim();
+    const eventType = String(payload?.event_type || '').trim();
+    if (sourceId === 'ibtracs_live_ops' || eventType === 'hurricane') return 'hurricanes';
+    if (eventType === 'earthquake') return 'earthquakes';
+    if (eventType === 'tsunami') return 'tsunamis';
+    if (eventType === 'volcano') return 'volcanoes';
+    if (eventType === 'wildfire') return 'wildfires';
+    if (eventType === 'tornado') return 'tornadoes';
+    if (eventType === 'flood') return 'floods';
+    if (eventType === 'landslide') return 'landslides';
+    return null;
+  },
+
+  _isOpsSnapshotManagedOverlay(overlayId) {
+    return [
+      'earthquakes',
+      'hurricanes',
+      'tsunamis',
+      'volcanoes',
+      'wildfires',
+      'tornadoes',
+      'floods',
+      'landslides'
+    ].includes(overlayId);
+  },
+
+  setOpsSnapshotPayloads(displayPayloads = []) {
+    this.opsSnapshotPayloads.clear();
+    for (const payload of displayPayloads || []) {
+      const overlayId = this._opsOverlayIdForPayload(payload);
+      if (!overlayId || !payload?.geojson?.features?.length) continue;
+      this.opsSnapshotPayloads.set(overlayId, payload);
+    }
+
+    if (!this._isOpsMode()) {
+      return;
+    }
+
+    const activeOverlays = OverlaySelector?.getActiveOverlays?.() || [];
+    for (const overlayId of activeOverlays) {
+      if (this.opsSnapshotPayloads.has(overlayId)) {
+        this.renderOpsSnapshotOverlay(overlayId);
+      }
+    }
+  },
+
+  renderOpsSnapshotOverlay(overlayId) {
+    const payload = this.opsSnapshotPayloads.get(overlayId);
+    const endpoint = OVERLAY_ENDPOINTS[overlayId];
+    if (!payload?.geojson?.features?.length || !endpoint) {
+      return false;
+    }
+
+    TimeSlider?.hide?.();
+    this._cleanupOverlayAnimations(overlayId);
+
+    const rendered = ModelRegistry?.render(payload.geojson, endpoint.eventType, {
+      onEventClick: (props) => this.handleEventClick(overlayId, props)
+    });
+    if (rendered) {
+      console.log(`OverlayController: Rendered Ops snapshot overlay ${overlayId} (${payload.geojson.features.length} features)`);
+      return true;
+    }
+    return false;
   },
 
   /**
@@ -1282,13 +1354,15 @@ export const OverlayController = {
     this.recalculateTimeRange();
 
     if (TimeSlider) {
-      if (TimeSlider.scales?.find(s => s.id === 'primary')) {
+      if (this.suppressTimelineAutoShow) {
+        TimeSlider.hide?.();
+      } else if (TimeSlider.scales?.find(s => s.id === 'primary')) {
         TimeSlider.setActiveScale('primary');
         if (viewState?.timestamp != null && TimeSlider.setTime) {
           TimeSlider.setTime(viewState.timestamp, 'api');
         }
       }
-      if (Object.keys(yearRangeCache).length > 0) {
+      if (!this.suppressTimelineAutoShow && Object.keys(yearRangeCache).length > 0) {
         this.showTimelineIfAllowed();
       }
     }
@@ -1531,6 +1605,21 @@ export const OverlayController = {
       return;
     }
 
+    if (this._isOpsMode() && this.opsSnapshotPayloads.has(overlayId)) {
+      if (isActive) {
+        this.renderOpsSnapshotOverlay(overlayId);
+      } else {
+        this.hideOverlay(overlayId);
+      }
+      return;
+    }
+    if (this._isOpsMode() && this._isOpsSnapshotManagedOverlay(overlayId)) {
+      if (!isActive) {
+        this.hideOverlay(overlayId);
+      }
+      return;
+    }
+
     // Demographics controls choropleth visibility AND loads countries
     // Note: Can coexist with geometry overlays (separate layer systems)
     // Metric choropleth toggles (demographics, currency) share one choropleth
@@ -1665,7 +1754,7 @@ export const OverlayController = {
       );
 
       // Set TimeSlider to default range (2000-present, data exists back to 1940 via chat)
-      if (TimeSlider) {
+      if (TimeSlider && !this.suppressTimelineAutoShow) {
         const minDate = new Date(Date.UTC(2000, 0, 1));  // Jan 1, 2000 (default view)
         const maxDate = new Date();  // Now
         TimeSlider.setTimeRange({
@@ -1782,7 +1871,7 @@ export const OverlayController = {
       }
 
       // Initialize TimeSlider for this overlay
-      if (endpoint.yearField && TimeSlider) {
+      if (endpoint.yearField && TimeSlider && !this.suppressTimelineAutoShow) {
         const currentYear = new Date().getFullYear();
         const minYear = 2000;
         const maxYear = currentYear;

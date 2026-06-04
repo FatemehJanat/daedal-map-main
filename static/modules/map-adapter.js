@@ -68,6 +68,15 @@ export const MapAdapter = {
       doubleClickZoom: false  // Disable default double-click zoom
     });
 
+    // Add a compass-only navigation control so accidental rotation can be
+    // reset easily. MapLibre rotates the compass with map bearing and clicking
+    // it snaps the map back to north.
+    this.map.addControl(new maplibregl.NavigationControl({
+      showCompass: true,
+      showZoom: false,
+      visualizePitch: false
+    }), 'top-left');
+
     // Create popup instance - compact sizing, no fixed width
     this.popup = new maplibregl.Popup({
       closeButton: true,
