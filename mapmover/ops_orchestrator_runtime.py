@@ -6,7 +6,7 @@ import csv
 import json
 import os
 import re
-from datetime import timezone
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 
@@ -1018,11 +1018,27 @@ def _focus_metric_text(feed: str, props: dict) -> str | None:
     return None
 
 
+def _format_ops_timestamp(value: object) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    normalized = text.replace("Z", "+00:00") if text.endswith("Z") else text
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return text
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    else:
+        parsed = parsed.astimezone(timezone.utc)
+    return parsed.strftime("%b %d, %Y %H:%M UTC")
+
+
 def _focus_timestamp(feed: str, props: dict) -> str | None:
     for key in ("last_updated", "timestamp", "end_date", "start_date"):
-        value = str(props.get(key) or "").strip()
-        if value:
-            return value
+        formatted = _format_ops_timestamp(props.get(key))
+        if formatted:
+            return formatted
     return None
 
 
@@ -1207,9 +1223,9 @@ def _feed_display_name(feed: str) -> str:
 
 def _feed_status_time(snapshot: dict) -> str | None:
     for key in ("last_changed_at", "fetched_at", "last_checked_at"):
-        value = str(snapshot.get(key) or "").strip()
-        if value:
-            return value
+        formatted = _format_ops_timestamp(snapshot.get(key))
+        if formatted:
+            return formatted
     return None
 
 
@@ -1316,7 +1332,7 @@ def _try_aurora_visibility_answer(*, effective_feeds: list[str], report: dict) -
     visible = bool(summary.get("aurora_visible"))
     max_probability = summary.get("max_probability")
     band = _format_lat_band(summary.get("north_boundary_lat"), summary.get("south_boundary_lat"))
-    forecast_time = str(summary.get("forecast_time") or "").strip()
+    forecast_time = _format_ops_timestamp(summary.get("forecast_time")) or str(summary.get("forecast_time") or "").strip()
     if not visible:
         if forecast_time:
             return f"The current aurora forecast does not show a visible band right now. Forecast time: {forecast_time}."
