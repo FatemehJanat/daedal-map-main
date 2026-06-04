@@ -1876,9 +1876,12 @@ export const App = {
       (Array.isArray(data.scene_periods) && data.scene_periods.length > 0) ||
       (Array.isArray(data.raster_clip_levels) && data.raster_clip_levels.length > 0)
     );
-    if (data.data_type === 'metrics' && hasRasterCapability && String(data.source_id || '').trim()) {
+    const origin = String(options.origin || '').trim().toLowerCase();
+    const explicitRasterRequest = Boolean(data?.raster && typeof data.raster === 'object' && data.raster.visibility === 'show');
+    const allowAutoRasterPanel = origin !== 'research' || explicitRasterRequest;
+    if (data.data_type === 'metrics' && hasRasterCapability && String(data.source_id || '').trim() && allowAutoRasterPanel) {
       RasterPanel.init(String(data.source_id || '').trim());
-    } else if (!hasRasterCapability) {
+    } else if (!hasRasterCapability || origin === 'research') {
       RasterPanel.hide?.();
     }
 

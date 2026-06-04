@@ -1043,7 +1043,7 @@ def _build_research_focus_geojson(session_id: str) -> dict | None:
         per_artifact.append((level, entities))
 
     if not per_artifact:
-        return None
+        return _build_research_focus_geojson_from_loaded_results(session_id)
 
     corpus_lowest = min(level for level, _ in per_artifact)
     union: list[str] = []
@@ -1062,4 +1062,50 @@ def _build_research_focus_geojson(session_id: str) -> dict | None:
     geojson = get_selection_geometries(union)
     if ((geojson or {}).get("features") or []):
         return geojson
+    return _build_research_focus_geojson_from_loaded_results(session_id)
+
+
+def _focus_candidates_from_loc_id(loc_id: str) -> list[tuple[str, int]]:
+    text = str(loc_id or "").strip()
+    if not text:
+        return []
+    candidates: list[tuple[str, int]] = [(text, 1)]
+    parts = text.split("-")
+    if len(parts) >= 3 and len(parts[1]) == 2 and parts[2].isdigit():
+        candidates.append(("-".join(parts[:3]), 25))
+    if len(parts) >= 2 and len(parts[1]) == 2:
+        candidates.append(("-".join(parts[:2]), 10))
+    return candidates
+
+
+def _candidate_sort_key(item: tuple[str, int]) -> tuple[int, int, int, str]:
+    candidate, weight = item
+    parts = candidate.split("-")
+    return (-weight, len(parts), len(candidate), candidate)
+
+
+def _build_research_focus_geojson_from_loaded_results(session_id: str) -> dict | None:
+    cache = session_manager.get(session_id)
+    if cache is None:
+        return None
+
+    candidate_weights: dict[str, int] = {}
+    for result in cache.export_results().values():
+        geojson = (result or {}).get("geojson") or {}
+        features = geojson.get("features") or []
+        for feature in features[:1000]:
+            props = feature.get("properties") or {}
+            loc_id = str(props.get("loc_id") or "").strip()
+            if not loc_id:
+                continue
+            for candidate, weight in _focus_candidates_from_loc_id(loc_id):
+                candidate_weights[candidate] = candidate_weights.get(candidate, 0) + weight
+
+    if not candidate_weights:
+        return None
+
+    for candidate, _weight in sorted(candidate_weights.items(), key=_candidate_sort_key):
+        geojson = get_selection_geometries([candidate]) or {}
+        if (geojson.get("features") or []):
+            return geojson
     return None

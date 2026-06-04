@@ -1049,6 +1049,9 @@ export const ChatManager = {
         }
       }
       this.setResearchDisplayForMode('research', null);
+      if (this.mode === 'research') {
+        App?.enterResearchCanvasMode?.();
+      }
       if (response?.focus_geojson?.features?.length) {
         App?.focusResearchGeojson?.(response.focus_geojson);
       }
