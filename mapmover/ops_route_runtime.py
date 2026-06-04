@@ -14,6 +14,7 @@ from mapmover.paths import ACCOUNT_URL
 from mapmover.ops_orchestrator_runtime import build_ops_report
 from mapmover.runtime.chat_route_context import build_base_chat_route_context
 from mapmover.runtime.chat_route_support import anonymous_budget_rejection_payload
+from mapmover.routes.chat_shared import human_chat_rate_limit_response
 
 
 @dataclass
@@ -127,6 +128,16 @@ async def prepare_ops_chat_route_context(
     assert base_context is not None
     request_id = ops_request_id(base_context.session_id, query)
     req.state.analytics_request_id = request_id
+
+    rate_limit_response = human_chat_rate_limit_response(
+        lane="ops",
+        user_id=(base_context.auth_user or {}).get("id"),
+        client_ip=base_context.client_ip,
+        caller_ctx=base_context.caller_ctx,
+        request_id=request_id,
+    )
+    if rate_limit_response:
+        return None, rate_limit_response, None, getattr(rate_limit_response, "status_code", 429), None
 
     rejection_payload, rejection_status, rejection_headers = anonymous_budget_rejection_payload(base_context.caller_ctx)
     if rejection_payload is not None:

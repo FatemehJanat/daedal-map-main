@@ -19,7 +19,7 @@ from mapmover.ops_ticker import (
     build_cached_ticker_payload,
 )
 from mapmover.orchestrator_registry import get_orchestrator
-from mapmover.routes.chat_shared import decode_json_or_msgpack_body, decode_request_body
+from mapmover.routes.chat_shared import build_chat_error_payload, build_provider_error_payload, decode_json_or_msgpack_body, decode_request_body
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
 from mapmover.runtime.chat_route_support import build_usage_recorder
 from mapmover.runtime.sse import SSE_HEADERS, encode_sse, stage_payload
@@ -203,7 +203,22 @@ async def ops_chat_endpoint(req: Request):
     except Exception as exc:
         logger.exception("Ops chat error")
         log_app_error(type(exc).__name__, str(exc), surface="human_app", path="/chat/ops")
-        return msgpack_response({"type": "error", "message": "Ops mode encountered an error. Please try again."}, status_code=500)
+        return msgpack_response(
+            build_provider_error_payload(
+                exc,
+                lane="ops",
+                request_id=getattr(getattr(req, "state", None), "analytics_request_id", None),
+            )
+            or build_chat_error_payload(
+                lane="ops",
+                message="Ops mode hit an internal error.",
+                error_code="ops_internal_error",
+                request_id=getattr(getattr(req, "state", None), "analytics_request_id", None),
+                stage="route",
+                retry_hint="Retry the watch question. If it keeps failing, ask about one feed at a time."
+            ),
+            status_code=500,
+        )
 
 
 @router.post("/chat/ops/stream")
@@ -263,6 +278,24 @@ async def ops_chat_stream_endpoint(req: Request):
         except Exception as exc:
             logger.exception("Ops streaming chat error")
             log_app_error(type(exc).__name__, str(exc), surface="human_app", path="/chat/ops/stream")
-            yield encode_sse(stage_payload("complete", result={"type": "error", "message": "Ops mode encountered an error. Please try again."}))
+            yield encode_sse(
+                stage_payload(
+                    "complete",
+                    result=build_provider_error_payload(
+                        exc,
+                        lane="ops",
+                        request_id=getattr(getattr(req, "state", None), "analytics_request_id", None),
+                        stage="llm_call",
+                    )
+                    or build_chat_error_payload(
+                        lane="ops",
+                        message="Ops mode hit an internal error.",
+                        error_code="ops_internal_error",
+                        request_id=getattr(getattr(req, "state", None), "analytics_request_id", None),
+                        stage="stream_route",
+                        retry_hint="Retry the watch question. If it keeps failing, ask about one feed at a time."
+                    ),
+                )
+            )
 
     return StreamingResponse(generate_events(), media_type="text/event-stream", headers=SSE_HEADERS)

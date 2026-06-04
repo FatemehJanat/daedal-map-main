@@ -25,8 +25,8 @@ from mapmover.routes.chat_shared import (
     _confirmed_order_rate_limit,
     _confirmed_order_user_error,
     _maybe_attach_memory_relief,
-    _rate_limited_message,
     _set_chat_analytics,
+    human_chat_rate_limit_response,
 )
 from mapmover.runtime.chat_route_context import build_base_chat_route_context
 from mapmover.routes.disasters.helpers import msgpack_response
@@ -40,7 +40,6 @@ from mapmover.runtime.warning_primitives import (
     build_display_warning_result,
     evaluate_display_warning_gate,
 )
-from mapmover.security import rate_limiter
 
 
 @dataclass
@@ -67,22 +66,14 @@ async def prepare_explore_chat_route_context(
     if route_error:
         return None, route_error
     assert base_context is not None
-    caller_kind = base_context.caller_ctx.get("caller_kind")
-    if caller_kind not in {"qa_suite", "qa_http_suite"}:
-        if base_context.user_id:
-            allowed, retry_after = rate_limiter.check(f"chat:user:{base_context.user_id}", limit=60, window_seconds=60)
-            if not allowed:
-                return None, _rate_limited_message(
-                    "Too many chat requests. Please slow down and try again shortly.",
-                    retry_after,
-                )
-        else:
-            allowed, retry_after = rate_limiter.check(f"chat:ip:{base_context.client_ip}", limit=20, window_seconds=60)
-            if not allowed:
-                return None, _rate_limited_message(
-                    "Too many anonymous chat requests. Please wait a moment and try again.",
-                    retry_after,
-                )
+    rate_limit_response = human_chat_rate_limit_response(
+        lane="explore",
+        user_id=base_context.user_id,
+        client_ip=base_context.client_ip,
+        caller_ctx=base_context.caller_ctx,
+    )
+    if rate_limit_response:
+        return None, rate_limit_response
 
     query_preview = body.get("query", "") or "[confirmed_order]"
     trace_id = _chat_trace_id(base_context.session_id, query_preview)

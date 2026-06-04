@@ -84,6 +84,30 @@ export function applyFilterUpdate(ctx, response, deps = {}) {
   OverlayController.reloadOverlay?.(overlay);
 }
 
+function formatChatError(response) {
+  const parts = [];
+  const message = String(response?.message || '').trim();
+  const retryHint = String(response?.retry_hint || '').trim();
+  const errorCode = String(response?.error_code || '').trim();
+  const requestId = String(response?.request_id || '').trim();
+
+  if (message) {
+    parts.push(message);
+  } else {
+    parts.push('An error occurred.');
+  }
+  if (retryHint) {
+    parts.push(`Next step: ${retryHint}`);
+  }
+  if (errorCode) {
+    parts.push(`Code: ${errorCode}`);
+  }
+  if (requestId) {
+    parts.push(`Request id: ${requestId}`);
+  }
+  return parts.join('\n\n');
+}
+
 export function handleResponse(ctx, response, deps = {}) {
   const {
     App = null,
@@ -348,7 +372,7 @@ export function handleResponse(ctx, response, deps = {}) {
       break;
 
     case 'error':
-      add(response.message || 'An error occurred. Please try again.', 'assistant');
+      add(formatChatError(response), 'assistant');
       break;
 
     case 'chat':

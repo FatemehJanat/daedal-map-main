@@ -50,6 +50,8 @@ from mapmover.runtime.warning_primitives import build_metric_warning_result
 from mapmover.runtime.chat_route_support import build_usage_recorder
 from mapmover.orchestrator_registry import get_orchestrator
 from mapmover.routes.chat_shared import (
+    build_chat_error_payload,
+    build_provider_error_payload,
     _chat_log_timing,
     _confirmed_order_rate_limit,
     _maybe_attach_memory_relief,
@@ -214,10 +216,24 @@ async def chat_endpoint(req: Request):
             surface="human_app",
             path="/chat",
         )
+        provider_payload = build_provider_error_payload(
+            e,
+            lane="explore",
+            request_id=trace_id,
+        )
         return msgpack_response(
             {
-                "type": "error",
-                "message": "Sorry, I encountered an error. Please try again.",
+                **(
+                    provider_payload
+                    or build_chat_error_payload(
+                        lane="explore",
+                        message="Explore mode hit an internal error.",
+                        error_code="explore_internal_error",
+                        request_id=trace_id,
+                        stage="route",
+                        retry_hint="Retry the question. If it keeps failing, simplify the request or switch to a narrower area."
+                    )
+                ),
                 "geojson": {"type": "FeatureCollection", "features": []},
             },
             status_code=500,

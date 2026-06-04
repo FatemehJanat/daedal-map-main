@@ -40,6 +40,52 @@ COUNT_QUERY_PATTERNS = (
     r"\bcount\b",
 )
 
+MAP_FOCUS_PATTERNS = (
+    r"\bshow me\b",
+    r"\btake me to\b",
+    r"\bzoom to\b",
+    r"\bgo to\b",
+    r"\blocate\b",
+    r"\bwhere is\b",
+)
+
+SUPERLATIVE_PATTERNS = (
+    r"\bbiggest\b",
+    r"\blargest\b",
+    r"\bworst\b",
+    r"\bstrongest\b",
+    r"\bhighest\b",
+    r"\bmost severe\b",
+)
+
+FEED_FOCUS_SPECS = {
+    "wildfires_us_nifc": {
+        "metric_keys": ("burned_acres", "area_km2"),
+        "label": "wildfire",
+        "id_keys": ("event_id", "incident_id", "fire_name"),
+    },
+    "earthquakes": {
+        "metric_keys": ("magnitude",),
+        "label": "earthquake",
+        "id_keys": ("event_id",),
+    },
+    "tsunamis": {
+        "metric_keys": ("max_water_height_m", "runup_m", "eq_magnitude"),
+        "label": "tsunami event",
+        "id_keys": ("event_id",),
+    },
+    "volcanoes": {
+        "metric_keys": ("VEI", "vei"),
+        "label": "volcano event",
+        "id_keys": ("event_id", "volcano_name"),
+    },
+    "hurricanes_ibtracs_nrt": {
+        "metric_keys": ("max_category", "category", "max_wind_kt"),
+        "label": "storm",
+        "id_keys": ("storm_id", "name"),
+    },
+}
+
 DEEP_HISTORY_PATTERNS = (
     r"\bchange\b",
     r"\bchanged\b",
@@ -550,6 +596,45 @@ def _build_display_payloads(snapshots_by_feed: dict[str, dict]) -> list[dict]:
     return payloads
 
 
+def _build_ops_payload_for_feed(feed: str) -> dict | None:
+    snapshot = load_current_state_snapshot(feed)
+    if not isinstance(snapshot, dict):
+        return None
+    if feed == "earthquakes":
+        return _build_point_event_display_payload(
+            snapshot,
+            collector="earthquakes",
+            event_type="earthquake",
+            label="Ops Earthquake Snapshot",
+        )
+    if feed == "tsunamis":
+        return _build_point_event_display_payload(
+            snapshot,
+            collector="tsunamis",
+            event_type="tsunami",
+            label="Ops Tsunami Snapshot",
+        )
+    if feed == "volcanoes":
+        return _build_point_event_display_payload(
+            snapshot,
+            collector="volcanoes",
+            event_type="volcano",
+            label="Ops Volcano Snapshot",
+        )
+    if feed == "wildfires_us_nifc":
+        return _build_point_event_display_payload(
+            snapshot,
+            collector="wildfires_us_nifc",
+            event_type="wildfire",
+            label="Ops Wildfire Snapshot",
+        )
+    if feed == "hurricanes_ibtracs_nrt":
+        return _build_hurricane_display_payload(snapshot)
+    if feed == "currency":
+        return _build_currency_display_payload(snapshot)
+    return None
+
+
 def _compact_payload_summary(collector: str, summary: dict, *, sample_limit: int = 3) -> dict:
     if not isinstance(summary, dict):
         return {}
@@ -820,6 +905,248 @@ def _mentioned_feeds(query: str, effective_feeds: list[str]) -> list[str]:
     return matched
 
 
+def _query_requests_map_focus(query: str) -> bool:
+    text = str(query or "").strip().lower()
+    if not text:
+        return False
+    return any(re.search(pattern, text) for pattern in MAP_FOCUS_PATTERNS)
+
+
+def _query_requests_superlative(query: str) -> bool:
+    text = str(query or "").strip().lower()
+    if not text:
+        return False
+    return any(re.search(pattern, text) for pattern in SUPERLATIVE_PATTERNS)
+
+
+def _recent_feed_from_history(chat_history: list | None, effective_feeds: list[str]) -> str | None:
+    for message in reversed(chat_history or []):
+        if str((message or {}).get("role") or "").strip().lower() != "user":
+            continue
+        content = str((message or {}).get("content") or "").strip()
+        mentioned = _mentioned_feeds(content, effective_feeds)
+        if len(mentioned) == 1:
+            return mentioned[0]
+    return None
+
+
+def _report_display_payload_by_feed(report: dict | None) -> dict[str, dict]:
+    payloads: dict[str, dict] = {}
+    for payload in (report or {}).get("display_payloads") or []:
+        if not isinstance(payload, dict):
+            continue
+        source_id = str(payload.get("source_id") or "").strip()
+        if source_id == "currency_live_ops":
+            payloads["currency"] = payload
+        elif source_id == "ibtracs_live_ops":
+            payloads["hurricanes_ibtracs_nrt"] = payload
+        elif source_id.endswith("_live_ops"):
+            payloads[source_id[:-9]] = payload
+    return payloads
+
+
+def _feature_numeric_value(feature: dict, keys: tuple[str, ...]) -> float | None:
+    props = feature.get("properties") if isinstance(feature.get("properties"), dict) else {}
+    for key in keys:
+        value = props.get(key)
+        if value in (None, ""):
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _focus_feature_name(feed: str, props: dict) -> str:
+    if feed == "wildfires_us_nifc":
+        return str(props.get("fire_name") or props.get("event_id") or "Unnamed wildfire").strip()
+    if feed == "earthquakes":
+        return str(props.get("place") or props.get("event_id") or "Unnamed earthquake").strip()
+    if feed == "tsunamis":
+        return str(props.get("location") or props.get("country") or props.get("event_id") or "Unnamed tsunami").strip()
+    if feed == "volcanoes":
+        return str(props.get("volcano_name") or props.get("event_id") or "Unnamed volcano").strip()
+    if feed == "hurricanes_ibtracs_nrt":
+        return str(props.get("name") or props.get("storm_id") or "Unnamed storm").strip()
+    return str(props.get("event_id") or props.get("storm_id") or "Unnamed event").strip()
+
+
+def _focus_feature_location(feed: str, props: dict) -> str | None:
+    if feed == "wildfires_us_nifc":
+        county = str(props.get("county_name") or "").strip()
+        state = str(props.get("state") or "").strip()
+        if county and state:
+            return f"{county}, {state}"
+        return county or state or None
+    if feed == "tsunamis":
+        location = str(props.get("location") or "").strip()
+        country = str(props.get("country") or "").strip()
+        if location and country and location.lower() not in country.lower():
+            return f"{location}, {country}"
+        return location or country or None
+    if feed == "hurricanes_ibtracs_nrt":
+        basin = str(props.get("basin") or "").strip()
+        return basin or None
+    return None
+
+
+def _focus_metric_text(feed: str, props: dict) -> str | None:
+    if feed == "wildfires_us_nifc":
+        try:
+            return f"{int(float(props.get('burned_acres'))):,} acres burned"
+        except (TypeError, ValueError):
+            return None
+    if feed == "earthquakes":
+        value = props.get("magnitude")
+        return f"magnitude {value}" if value not in (None, "") else None
+    if feed == "tsunamis":
+        value = props.get("max_water_height_m")
+        return f"{value} m max water height" if value not in (None, "") else None
+    if feed == "volcanoes":
+        value = props.get("VEI") if props.get("VEI") not in (None, "") else props.get("vei")
+        return f"VEI {value}" if value not in (None, "") else None
+    if feed == "hurricanes_ibtracs_nrt":
+        category = props.get("max_category") if props.get("max_category") not in (None, "") else props.get("category")
+        wind = props.get("max_wind_kt")
+        if category not in (None, "") and wind not in (None, ""):
+            return f"Category {category}, {wind} kt"
+        if category not in (None, ""):
+            return f"Category {category}"
+        if wind not in (None, ""):
+            return f"{wind} kt"
+    return None
+
+
+def _focus_timestamp(feed: str, props: dict) -> str | None:
+    for key in ("last_updated", "timestamp", "end_date", "start_date"):
+        value = str(props.get(key) or "").strip()
+        if value:
+            return value
+    return None
+
+
+def _select_focus_candidate(
+    *,
+    feed: str,
+    report: dict,
+) -> tuple[dict, dict, float] | tuple[None, None, None]:
+    spec = FEED_FOCUS_SPECS.get(feed)
+    if not spec:
+        return None, None, None
+    payload = _report_display_payload_by_feed(report).get(feed) or _build_ops_payload_for_feed(feed)
+    if not isinstance(payload, dict):
+        return None, None, None
+    features = (payload.get("geojson") or {}).get("features") if isinstance(payload.get("geojson"), dict) else None
+    if not isinstance(features, list):
+        return None, None, None
+    best_feature = None
+    best_value = None
+    for feature in features:
+        if not isinstance(feature, dict):
+            continue
+        value = _feature_numeric_value(feature, spec["metric_keys"])
+        if value is None:
+            continue
+        if best_value is None or value > best_value:
+            best_feature = feature
+            best_value = value
+    if best_feature is None or best_value is None:
+        return None, None, None
+    return payload, best_feature, float(best_value)
+
+
+def _focus_identifier(feed: str, feature: dict) -> dict:
+    props = feature.get("properties") if isinstance(feature.get("properties"), dict) else {}
+    spec = FEED_FOCUS_SPECS.get(feed) or {}
+    for key in spec.get("id_keys", ()):
+        value = str(props.get(key) or "").strip()
+        if value:
+            return {"key": key, "value": value}
+    return {}
+
+
+def _store_ops_focus_target(cache, *, feed: str, payload: dict, feature: dict) -> None:
+    if not isinstance(getattr(cache, "map_state", None), dict):
+        return
+    cache.map_state["ops_focus_target"] = {
+        "feed": feed,
+        "source_id": payload.get("source_id"),
+        "identifier": _focus_identifier(feed, feature),
+        "feature": feature,
+    }
+
+
+def _resolve_cached_focus_target(*, cache, report: dict, effective_feeds: list[str]) -> tuple[str, dict, dict] | tuple[None, None, None]:
+    map_state = cache.map_state if isinstance(getattr(cache, "map_state", None), dict) else {}
+    stored = map_state.get("ops_focus_target") if isinstance(map_state, dict) else None
+    if not isinstance(stored, dict):
+        return None, None, None
+    feed = str(stored.get("feed") or "").strip()
+    if not feed or feed not in effective_feeds:
+        return None, None, None
+    payload = _report_display_payload_by_feed(report).get(feed) or _build_ops_payload_for_feed(feed)
+    if not isinstance(payload, dict):
+        fallback_feature = stored.get("feature")
+        if isinstance(fallback_feature, dict):
+            return feed, {
+                "type": stored.get("source_id") == "ibtracs_live_ops" and "data" or "events",
+                "data_type": "events",
+                "event_type": FEED_FOCUS_SPECS.get(feed, {}).get("label"),
+                "source_id": stored.get("source_id"),
+                "geojson": {"type": "FeatureCollection", "features": [fallback_feature]},
+            }, fallback_feature
+        return None, None, None
+    features = (payload.get("geojson") or {}).get("features") if isinstance(payload.get("geojson"), dict) else []
+    identifier = stored.get("identifier") if isinstance(stored.get("identifier"), dict) else {}
+    key = str(identifier.get("key") or "").strip()
+    value = str(identifier.get("value") or "").strip()
+    if key and value:
+        for feature in features or []:
+            props = feature.get("properties") if isinstance(feature.get("properties"), dict) else {}
+            if str(props.get(key) or "").strip() == value:
+                return feed, payload, feature
+    fallback_feature = stored.get("feature")
+    if isinstance(fallback_feature, dict):
+        return feed, payload, fallback_feature
+    return None, None, None
+
+
+def _build_focus_chat_message(*, feed: str, feature: dict) -> str:
+    props = feature.get("properties") if isinstance(feature.get("properties"), dict) else {}
+    label = FEED_FOCUS_SPECS.get(feed, {}).get("label") or "event"
+    name = _focus_feature_name(feed, props)
+    location = _focus_feature_location(feed, props)
+    metric = _focus_metric_text(feed, props)
+    timestamp = _focus_timestamp(feed, props)
+    pieces = [f"The largest active {label} is {name}"]
+    if location:
+        pieces[-1] += f" in {location}"
+    if metric:
+        pieces[-1] += f", with {metric}"
+    pieces[-1] += "."
+    if timestamp:
+        pieces.append(f"Last updated {timestamp}.")
+    return " ".join(pieces)
+
+
+def _build_focus_map_result(*, feed: str, payload: dict, feature: dict, watch: dict, effective_feeds: list[str], message: str | None = None) -> dict:
+    subset_payload = dict(payload)
+    subset_payload["geojson"] = {
+        "type": "FeatureCollection",
+        "features": [feature],
+    }
+    subset_payload["count"] = 1
+    subset_payload["fit"] = True
+    summary = message or _build_focus_chat_message(feed=feed, feature=feature)
+    subset_payload["summary"] = summary
+    subset_payload["message"] = summary
+    subset_payload["watch_id"] = watch.get("watch_id")
+    subset_payload["watch_context"] = watch
+    subset_payload["effective_feeds"] = effective_feeds
+    return subset_payload
+
+
 def _select_deep_history_feeds(
     *,
     query: str,
@@ -1006,6 +1333,92 @@ def _try_aurora_visibility_answer(*, effective_feeds: list[str], report: dict) -
     return f"The aurora is currently forecast to be visible{probability_text}."
 
 
+def _focus_feed_from_query(
+    *,
+    query: str,
+    chat_history: list | None,
+    effective_feeds: list[str],
+    cache,
+) -> str | None:
+    mentioned = _mentioned_feeds(query, effective_feeds)
+    if len(mentioned) == 1:
+        return mentioned[0]
+    recent_feed = _recent_feed_from_history(chat_history, effective_feeds)
+    if recent_feed:
+        return recent_feed
+    cached_feed, _payload, _feature = _resolve_cached_focus_target(
+        cache=cache,
+        report={"display_payloads": []},
+        effective_feeds=effective_feeds,
+    )
+    return cached_feed
+
+
+def _try_focus_result(
+    *,
+    query: str,
+    report: dict,
+    watch: dict,
+    effective_feeds: list[str],
+    chat_history: list | None,
+    cache,
+) -> dict | None:
+    lower = str(query or "").strip().lower()
+    if not lower:
+        return None
+
+    show_only = _query_requests_map_focus(lower) and not _query_requests_superlative(lower)
+    if show_only:
+        cached_feed, cached_payload, cached_feature = _resolve_cached_focus_target(
+            cache=cache,
+            report=report,
+            effective_feeds=effective_feeds,
+        )
+        if cached_feed and cached_payload and cached_feature:
+            return _build_focus_map_result(
+                feed=cached_feed,
+                payload=cached_payload,
+                feature=cached_feature,
+                watch=watch,
+                effective_feeds=effective_feeds,
+                message=f"Showing {_focus_feature_name(cached_feed, cached_feature.get('properties') or {})}.",
+            )
+
+    if not _query_requests_superlative(lower):
+        return None
+
+    feed = _focus_feed_from_query(
+        query=lower,
+        chat_history=chat_history,
+        effective_feeds=effective_feeds,
+        cache=cache,
+    )
+    if not feed:
+        return None
+
+    payload, feature, _score = _select_focus_candidate(feed=feed, report=report)
+    if not payload or not feature:
+        return None
+
+    _store_ops_focus_target(cache, feed=feed, payload=payload, feature=feature)
+    focus_message = _build_focus_chat_message(feed=feed, feature=feature)
+
+    if _query_requests_map_focus(lower):
+        return _build_focus_map_result(
+            feed=feed,
+            payload=payload,
+            feature=feature,
+            watch=watch,
+            effective_feeds=effective_feeds,
+            message=focus_message,
+        )
+
+    return {
+        "type": "chat",
+        "message": focus_message,
+    }
+
+
 def _try_direct_ops_answer(*, query: str, report: dict, watch: dict, effective_feeds: list[str]) -> str | None:
     text = str(query or "").strip()
     lower = text.lower()
@@ -1136,6 +1549,30 @@ def run_ops_chat(
     report = build_ops_report(watch=watch, effective_feeds=effective_feeds)
     if isinstance(getattr(cache, "map_state", None), dict):
         cache.map_state["ops_report"] = report
+
+    focus_result = _try_focus_result(
+        query=query,
+        report=report,
+        watch=watch,
+        effective_feeds=effective_feeds,
+        chat_history=chat_history,
+        cache=cache,
+    )
+    if focus_result:
+        focus_result.setdefault("watch_id", watch.get("watch_id"))
+        focus_result.setdefault("watch_context", watch)
+        focus_result.setdefault("effective_feeds", effective_feeds)
+        focus_result["ops_report"] = report
+        if report.get("display_payloads") and "display_payloads" not in focus_result:
+            focus_result["display_payloads"] = report.get("display_payloads")
+        if report.get("geojson") and "geojson" not in focus_result:
+            focus_result["geojson"] = report["geojson"]
+        if focus_result.get("type") == "chat":
+            focus_result.setdefault(
+                "summary",
+                f"Ops watch: {watch.get('label') or 'Watch'} | feeds: {', '.join(effective_feeds)}",
+            )
+        return focus_result
 
     direct_answer = _try_direct_ops_answer(
         query=query,

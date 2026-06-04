@@ -42,12 +42,14 @@ from mapmover.research_route_runtime import (
 from mapmover.orchestrator_registry import get_orchestrator
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
 from mapmover.routes.chat_shared import (
+    build_chat_error_payload,
+    build_provider_error_payload,
     _catalog_surface_for_request,
     decode_json_or_msgpack_body,
     decode_request_body,
 )
 from mapmover.runtime.chat_route_support import build_usage_recorders
-from mapmover.runtime.sse import SSE_HEADERS, encode_sse, stage_payload
+from mapmover.runtime.sse import SSE_HEADERS, encode_sse, progress_payload, stage_payload
 
 
 router = APIRouter()
@@ -322,7 +324,22 @@ async def research_chat_endpoint(req: Request):
     except Exception as exc:
         logger.exception("Research chat error")
         log_app_error(type(exc).__name__, str(exc), surface="human_app", path="/chat/research")
-        return msgpack_response({"type": "error", "message": "Research mode encountered an error. Please try again."}, status_code=500)
+        return msgpack_response(
+            build_provider_error_payload(
+                exc,
+                lane="research",
+                request_id=getattr(getattr(req, "state", None), "analytics_request_id", None),
+            )
+            or build_chat_error_payload(
+                lane="research",
+                message="Research mode hit an internal error.",
+                error_code="research_internal_error",
+                request_id=getattr(getattr(req, "state", None), "analytics_request_id", None),
+                stage="route",
+                retry_hint="Retry the question. If it keeps failing, reload the corpus or narrow the request."
+            ),
+            status_code=500,
+        )
 
 
 @router.post("/chat/research/stream")
@@ -396,7 +413,22 @@ async def research_chat_stream_endpoint(req: Request):
         except Exception as exc:
             logger.exception("Research chat stream error")
             log_app_error(type(exc).__name__, str(exc), surface="human_app", path="/chat/research/stream")
-            error_result = {"type": "error", "message": "Research mode encountered an error. Please try again."}
+            error_result = build_chat_error_payload(
+                lane="research",
+                message="Research mode hit an internal error.",
+                error_code="research_internal_error",
+                request_id=getattr(getattr(req, "state", None), "analytics_request_id", None),
+                stage="stream_route",
+                retry_hint="Retry the question. If it keeps failing, reload the corpus or narrow the request."
+            )
+            provider_error = build_provider_error_payload(
+                exc,
+                lane="research",
+                request_id=getattr(getattr(req, "state", None), "analytics_request_id", None),
+                stage="llm_call",
+            )
+            if provider_error:
+                error_result = provider_error
             yield encode_sse(stage_payload("complete", result=error_result), dumps=json_dumps_safe)
 
     return StreamingResponse(

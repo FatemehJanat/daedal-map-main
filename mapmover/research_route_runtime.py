@@ -14,6 +14,7 @@ from mapmover.account_credit import (
     settle_research_charge,
 )
 from mapmover.logging_analytics import hash_ip_for_analytics, log_conversation
+from mapmover.routes.chat_shared import human_chat_rate_limit_response
 from mapmover.runtime.chat_route_context import build_base_chat_route_context
 from mapmover.runtime.chat_route_support import (
     anonymous_budget_rejection_payload,
@@ -51,6 +52,16 @@ async def prepare_research_chat_route_context(
     assert base_context is not None
     request_id = request_id_func(base_context.session_id, query)
     req.state.analytics_request_id = request_id
+
+    rate_limit_response = human_chat_rate_limit_response(
+        lane="research",
+        user_id=(base_context.auth_user or {}).get("id"),
+        client_ip=base_context.client_ip,
+        caller_ctx=base_context.caller_ctx,
+        request_id=request_id,
+    )
+    if rate_limit_response:
+        return None, rate_limit_response, None, getattr(rate_limit_response, "status_code", 429), None
 
     rejection_payload, rejection_status, rejection_headers = anonymous_budget_rejection_payload(base_context.caller_ctx)
     if rejection_payload is not None:
