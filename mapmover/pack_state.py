@@ -84,8 +84,12 @@ def _build_overlay_tree_for_sources(sources: list[dict]) -> dict:
         )
         leaf["sources"].append({
             "source_id": source.get("source_id"),
+            "pack_id": source.get("pack_id"),
             "scope": source.get("scope"),
             "data_type": source.get("data_type"),
+            "default_load": source.get("default_load"),
+            "default_question": source.get("default_question"),
+            "default_response": source.get("default_response"),
         })
 
     return tree

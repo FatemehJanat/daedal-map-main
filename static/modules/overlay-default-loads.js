@@ -116,6 +116,7 @@ function getPackDefaultLoadAction(packId) {
 function buildPresetOrderFromPackDefaults(packIds, fallbackSummary = '') {
   const items = [];
   let summary = '';
+  const loadedPackIds = [];
   for (const packId of packIds) {
     const action = getPackDefaultLoadAction(packId);
     const orderItems = Array.isArray(action?.order?.items) ? cloneJsonSafe(action.order.items) : [];
@@ -123,6 +124,7 @@ function buildPresetOrderFromPackDefaults(packIds, fallbackSummary = '') {
       continue;
     }
     items.push(...orderItems);
+    loadedPackIds.push(packId);
     if (!summary && action?.order?.summary) {
       summary = String(action.order.summary).trim();
     }
@@ -132,7 +134,9 @@ function buildPresetOrderFromPackDefaults(packIds, fallbackSummary = '') {
   }
   return {
     items,
-    summary: summary || fallbackSummary
+    summary: summary || fallbackSummary,
+    _resolvedPackIds: loadedPackIds,
+    _requestedPackCount: Array.isArray(packIds) ? packIds.length : loadedPackIds.length
   };
 }
 
