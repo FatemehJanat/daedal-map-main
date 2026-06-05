@@ -38,6 +38,7 @@ from mapmover.runtime.confirmed_order_response_runtime import (
 from mapmover.runtime.order_executor_runtime import execute_order
 from mapmover.runtime.warning_primitives import (
     build_display_warning_result,
+    estimate_display_feature_count,
     evaluate_display_warning_gate,
 )
 
@@ -152,8 +153,7 @@ def execute_confirmed_order_http(
             source_id=result.get("source_id"),
         )
 
-        cap_info = result.get("cap_info") if isinstance(result.get("cap_info"), dict) else None
-        available_rows = int((cap_info or {}).get("available_rows") or 0)
+        available_rows = estimate_display_feature_count(result)
         display_warning, should_interrupt = evaluate_display_warning_gate(
             available_rows,
             policy=explore_orchestrator.display_warning_policy(),

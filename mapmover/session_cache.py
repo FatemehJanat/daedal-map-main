@@ -13,7 +13,7 @@ Key concept: the backend session cache = the frontend cache.
 When we send data, we register it. When user clears, we remove it.
 
 Dedup keys:
-- Data: (loc_id, year, metric) - three-part key, one cell in the spreadsheet
+- Data: (loc_id, time_key, metric) - three-part key, one cell in the spreadsheet
 - Events: event_id - whole event is all-or-nothing
 
 Usage:
@@ -22,11 +22,11 @@ Usage:
     cache = session_manager.get_or_create(session_id)
 
     # Filter response before sending (post-fetch dedup)
-    filtered_year_data = cache.filter_year_data(year_data)
+    filtered_time_data = cache.filter_time_data(time_data)
     filtered_events = cache.filter_events(features)
 
     # Register what was actually sent
-    cache.register_sent_year_data(filtered_year_data)  # auto-registers per metric
+    cache.register_sent_time_data(filtered_time_data)  # auto-registers per metric
     cache.register_sent_events(filtered_events, source_id="earthquakes")
 
     # Clear a source (user clicked X in Loaded tab)
@@ -61,7 +61,7 @@ class SessionCache:
         self.inventory = CacheInventory(name=f"session_{session_id}")
 
         # Sent data keys - tracks exactly what cells/events were sent to frontend
-        # For data: "{loc_id}:{year}:{metric}" (one cell in the spreadsheet)
+        # For data: "{loc_id}:{time_key}:{metric}" (one cell in the spreadsheet)
         # For events: "{event_id}" (whole event is all-or-nothing)
         self._sent_all: set = set()  # flat set for O(1) dedup checks
         self._sent_by_source: Dict[str, set] = {}  # source_id -> keys (for clearing)
@@ -148,17 +148,17 @@ class SessionCache:
                 self._sent_all.add(event_id)
                 source_set.add(event_id)
 
-    def register_sent_year_data(self, year_data: dict):
+    def register_sent_time_data(self, time_data: dict):
         """
-        Register year_data cells that were sent to the frontend.
-        year_data format: {year: {loc_id: {metric: value, ...}, ...}, ...}
+        Register time_data cells that were sent to the frontend.
+        time_data format: {time_key: {loc_id: {metric: value, ...}, ...}, ...}
         Keys are three-part: "loc_id:year:metric" (one cell in the spreadsheet).
         Each metric is registered as its own source (clearing = deleting a column).
         """
-        for year_str, loc_data in year_data.items():
+        for time_key, loc_data in time_data.items():
             for loc_id, metrics in loc_data.items():
                 for metric in metrics.keys():
-                    key = f"{loc_id}:{year_str}:{metric}"
+                    key = f"{loc_id}:{time_key}:{metric}"
                     self._sent_all.add(key)
                     source_set = self._sent_by_source.setdefault(metric, set())
                     source_set.add(key)
@@ -167,27 +167,34 @@ class SessionCache:
         """Check if an event was already sent."""
         return event_id in self._sent_all
 
-    def is_cell_sent(self, loc_id: str, year, metric: str) -> bool:
-        """Check if a specific (loc_id, year, metric) cell was already sent."""
-        return f"{loc_id}:{year}:{metric}" in self._sent_all
+    def is_cell_sent(self, loc_id: str, time_key, metric: str) -> bool:
+        """Check if a specific (loc_id, time_key, metric) cell was already sent."""
+        return f"{loc_id}:{time_key}:{metric}" in self._sent_all
 
-    def filter_year_data(self, year_data: dict) -> dict:
+    def filter_time_data(self, time_data: dict) -> dict:
         """
-        Filter year_data to only include cells not yet sent.
-        Returns filtered year_data with only new cells.
+        Filter time_data to only include cells not yet sent.
+        Returns filtered time_data with only new cells.
         """
         filtered = {}
-        for year_str, loc_data in year_data.items():
+        for time_key, loc_data in time_data.items():
             for loc_id, metrics in loc_data.items():
                 new_metrics = {}
                 for metric, value in metrics.items():
-                    if f"{loc_id}:{year_str}:{metric}" not in self._sent_all:
+                    if f"{loc_id}:{time_key}:{metric}" not in self._sent_all:
                         new_metrics[metric] = value
                 if new_metrics:
-                    if year_str not in filtered:
-                        filtered[year_str] = {}
-                    filtered[year_str][loc_id] = new_metrics
+                    if time_key not in filtered:
+                        filtered[time_key] = {}
+                    filtered[time_key][loc_id] = new_metrics
         return filtered
+
+    # TEMPORARY MIRRORS: remove after remaining year_* callers are migrated.
+    def register_sent_year_data(self, year_data: dict):
+        self.register_sent_time_data(year_data)
+
+    def filter_year_data(self, year_data: dict) -> dict:
+        return self.filter_time_data(year_data)
 
     def filter_events(self, features: list) -> list:
         """

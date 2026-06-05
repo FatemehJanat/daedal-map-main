@@ -1,6 +1,26 @@
 """Shared pre-validation postprocess pipeline helpers."""
 
 
+def promote_filter_time_granularity(items: list) -> None:
+    """Lift legacy filter-scoped time_granularity onto the item itself."""
+    for item in items:
+        if not isinstance(item, dict) or item.get("time_granularity"):
+            continue
+        filters = item.get("filters")
+        if not isinstance(filters, dict):
+            continue
+        granularity = str(filters.get("time_granularity") or "").strip().lower()
+        if not granularity:
+            continue
+        item["time_granularity"] = granularity
+        next_filters = dict(filters)
+        next_filters.pop("time_granularity", None)
+        if next_filters:
+            item["filters"] = next_filters
+        else:
+            item.pop("filters", None)
+
+
 def _coerce_coverage_year(value):
     if value is None or isinstance(value, bool):
         return None
@@ -39,9 +59,19 @@ def apply_preprocessor_time_hints(
     load_source_metadata,
 ) -> None:
     """Apply preprocessor-derived time ranges when the LLM left years blank."""
+    hinted_granularity = str(time_hints.get("time_granularity") or "").strip().lower()
     if not time_hints.get("is_time_series"):
+        for item in items:
+            if (
+                isinstance(item, dict)
+                and hinted_granularity
+                and not item.get("time_granularity")
+            ):
+                item["time_granularity"] = hinted_granularity
         return
     for item in items:
+        if hinted_granularity and not item.get("time_granularity"):
+            item["time_granularity"] = hinted_granularity
         if item.get("year") is None and not item.get("year_start") and not item.get("year_end"):
             if time_hints.get("year_start") and time_hints.get("year_end"):
                 item["year_start"] = time_hints["year_start"]

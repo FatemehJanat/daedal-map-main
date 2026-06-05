@@ -30,7 +30,7 @@ export const ChoroplethManager = {
   legendMax: null,
 
   /**
-   * Convert timestamp to year (for looking up data keyed by year)
+   * Convert timestamp to year when the temporal payload is keyed by coarse years.
    */
   timestampToYear(ts) {
     if (Math.abs(ts) < 50000) return ts;  // Already a year
@@ -56,7 +56,7 @@ export const ChoroplethManager = {
   /**
    * Initialize choropleth with data range
    */
-  init(metric, yearData, availableYears) {
+  init(metric, timeData, availableTimes) {
     this.metric = metric;
 
     // Cache DOM elements
@@ -66,20 +66,20 @@ export const ChoroplethManager = {
     this.legendMin = document.getElementById('legendMin');
     this.legendMax = document.getElementById('legendMax');
 
-    // Detect if yearData keys are years or timestamps
+    // Detect if timeData keys are coarse years or timestamps.
     // Check first key to determine format
-    const dataKeys = Object.keys(yearData);
+    const dataKeys = Object.keys(timeData);
     const firstKey = dataKeys.length > 0 ? dataKeys[0] : null;
     const dataUsesYears = firstKey && Math.abs(Number(firstKey)) < 50000;
 
-    // Calculate global min/max across ALL years for consistent scaling
+    // Calculate global min/max across all available times for consistent scaling.
     let allValues = [];
-    for (const time of availableYears) {
-      // Convert timestamp to year if data uses year keys
+    for (const time of availableTimes) {
+      // Convert timestamp to year only when the payload is actually keyed by year.
       const key = dataUsesYears ? this.timestampToYear(time) : time;
-      const yearValues = yearData[key] || {};
-      for (const locId in yearValues) {
-        const val = yearValues[locId][metric];
+      const timeValues = timeData[key] || {};
+      for (const locId in timeValues) {
+        const val = timeValues[locId][metric];
         if (val != null && !isNaN(val)) {
           allValues.push(val);
         }

@@ -146,6 +146,11 @@ def _requested_catalog_surface() -> str:
     return "wip" if _use_wip_catalog_for_local_runtime() else "published"
 
 
+def _allow_local_source_fallback() -> bool:
+    """Allow local source file fallback only for deliberate WIP/dev surfaces."""
+    return _requested_catalog_surface() == "wip"
+
+
 def _fetch_json_from_s3(relative_path: str) -> dict:
     """Fetch a JSON file directly from S3 into memory. Cloud mode only."""
     import boto3 as _boto3
@@ -765,6 +770,17 @@ def load_source_metadata(source_id: str):
             return metadata
         except Exception as e:
             logger.error(f"Error loading metadata for {source_id} from S3: {e}")
+            source_folder = get_source_path(source_id)
+            metadata_path = source_folder / "metadata.json" if source_folder else None
+            if _allow_local_source_fallback() and metadata_path and metadata_path.exists():
+                try:
+                    with open(metadata_path, 'r', encoding='utf-8-sig') as f:
+                        metadata = json.load(f)
+                    _metadata_cache[source_id] = metadata
+                    logger.warning(f"Loaded metadata for {source_id} from local fallback: {metadata_path}")
+                    return metadata
+                except Exception as local_error:
+                    logger.error(f"Error loading local fallback metadata for {source_id}: {local_error}")
             return None
 
     source_folder = get_source_path(source_id)
@@ -811,6 +827,16 @@ def load_source_reference(source_id: str):
             return data if isinstance(data, dict) else None
         except Exception as e:
             logger.error(f"Error loading reference for {source_id} from S3: {e}")
+            source_folder = get_source_path(source_id)
+            reference_path = source_folder / "reference.json" if source_folder else None
+            if _allow_local_source_fallback() and reference_path and reference_path.exists():
+                try:
+                    with open(reference_path, 'r', encoding='utf-8-sig') as f:
+                        data = json.load(f)
+                    logger.warning(f"Loaded reference for {source_id} from local fallback: {reference_path}")
+                    return data if isinstance(data, dict) else None
+                except Exception as local_error:
+                    logger.error(f"Error loading local fallback reference for {source_id}: {local_error}")
             return None
 
     source_folder = get_source_path(source_id)

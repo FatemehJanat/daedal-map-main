@@ -9,6 +9,7 @@ import {
   yearRangeCache
 } from './overlay-cache.js';
 import { GeometryModel } from './models/model-geometry.js';
+import { mergeTemporalMetricPayload } from './temporal-payload.js';
 
 function getGeometryFeatureKey(feature) {
   const props = feature?.properties || {};
@@ -100,7 +101,7 @@ export function getCacheStats(overlayEndpoints) {
     totals: {
       features: 0,
       bytes: 0,
-      yearsLoaded: 0,
+      timesLoaded: 0,
       overlaysActive: 0
     }
   };
@@ -122,7 +123,7 @@ export function getCacheStats(overlayEndpoints) {
       stats.overlays[overlayId] = {
         features: features.length,
         sizeMB: (overlaySize.bytes / (1024 * 1024)).toFixed(2),
-        yearsLoaded: years.length,
+        timesLoaded: years.length,
         years,
         yearRange: years.length > 0 ? `${years[0]}-${years[years.length - 1]}` : 'none',
         ranges,
@@ -133,7 +134,7 @@ export function getCacheStats(overlayEndpoints) {
 
       stats.totals.features += features.length;
       stats.totals.bytes += overlaySize.bytes;
-      stats.totals.yearsLoaded += years.length;
+      stats.totals.timesLoaded += years.length;
       stats.totals.overlaysActive++;
     }
   }
@@ -142,34 +143,34 @@ export function getCacheStats(overlayEndpoints) {
     const cached = metricCache[sourceId];
     const features = cached?.geojson?.features || [];
     const overlaySize = sizeInfo.perOverlay[sourceId] || { features: 0, bytes: 0 };
-    const yearRange = cached?.year_range;
+    const timeRange = cached?.time_range || cached?.year_range;
     const isGeometry = cached?.dataType === 'geometry';
 
     if (features.length > 0) {
-      const years = yearRange?.available_years || [];
+      const times = timeRange?.available || timeRange?.available_years || [];
       stats.overlays[sourceId] = {
         features: features.length,
         sizeMB: (overlaySize.bytes / (1024 * 1024)).toFixed(2),
-        yearsLoaded: years.length,
-        years,
-        yearRange: isGeometry ? 'n/a' : (yearRange ? `${yearRange.min}-${yearRange.max}` : 'none'),
+        timesLoaded: times.length,
+        years: times,
+        yearRange: isGeometry ? 'n/a' : (timeRange ? `${timeRange.min}-${timeRange.max}` : 'none'),
         dataType: cached?.dataType || 'metrics'
       };
 
       stats.totals.features += features.length;
       stats.totals.bytes += overlaySize.bytes;
-      stats.totals.yearsLoaded += years.length;
+      stats.totals.timesLoaded += times.length;
       stats.totals.overlaysActive++;
     }
   }
 
   stats.totals.sizeMB = (stats.totals.bytes / (1024 * 1024)).toFixed(2);
   console.table(stats.overlays);
-  console.log(`Total: ${stats.totals.features} features across ${stats.totals.yearsLoaded} year-loads (${stats.totals.sizeMB} MB)`);
+  console.log(`Total: ${stats.totals.features} features across ${stats.totals.timesLoaded} time-loads (${stats.totals.sizeMB} MB)`);
   return stats;
 }
 
-export function ingestMetricData(sourceId, geojson, yearData = null, yearRange = null) {
+export function ingestMetricData(sourceId, geojson, timeData = null, timeRange = null) {
   if (!geojson?.features) {
     console.warn(`OverlayController: Cannot ingest metrics - invalid data for source: ${sourceId}`);
     return;
@@ -186,29 +187,16 @@ export function ingestMetricData(sourceId, geojson, yearData = null, yearRange =
       return !locId || !existingLocIds.has(locId);
     });
 
-    const mergedYearData = { ...(existing.year_data || {}) };
-    for (const [yearKey, locData] of Object.entries(yearData || {})) {
-      if (!mergedYearData[yearKey]) {
-        mergedYearData[yearKey] = {};
+    const mergedTemporal = mergeTemporalMetricPayload(
+      {
+        time_data: existing.time_data || existing.year_data || {},
+        time_range: existing.time_range || existing.year_range || null
+      },
+      {
+        time_data: timeData || {},
+        time_range: timeRange || null
       }
-      for (const [locId, metrics] of Object.entries(locData || {})) {
-        if (!mergedYearData[yearKey][locId]) {
-          mergedYearData[yearKey][locId] = {};
-        }
-        Object.assign(mergedYearData[yearKey][locId], metrics || {});
-      }
-    }
-
-    let mergedYearRange = existing.year_range || null;
-    if (yearRange) {
-      const existingYears = existing.year_range?.available_years || [];
-      const incomingYears = yearRange.available_years || [];
-      mergedYearRange = {
-        min: Math.min(existing.year_range?.min ?? yearRange.min, yearRange.min),
-        max: Math.max(existing.year_range?.max ?? yearRange.max, yearRange.max),
-        available_years: [...new Set([...existingYears, ...incomingYears])].sort((a, b) => a - b)
-      };
-    }
+    );
 
     metricCache[sourceId] = {
       ...existing,
@@ -216,15 +204,33 @@ export function ingestMetricData(sourceId, geojson, yearData = null, yearRange =
         type: 'FeatureCollection',
         features: existingFeatures.concat(newFeatures)
       },
-      year_data: mergedYearData,
-      year_range: mergedYearRange,
+      time_data: mergedTemporal?.timeData || {},
+      time_range: mergedTemporal?.timeRange || null,
+      // TEMPORARY MIRROR: remove these after all cache consumers switch to time_*.
+      year_data: mergedTemporal?.timeData || {},
+      year_range: mergedTemporal?.timeRange
+        ? {
+            min: mergedTemporal.timeRange.min,
+            max: mergedTemporal.timeRange.max,
+            available_years: mergedTemporal.timeRange.available
+          }
+        : null,
       loadedAt: Date.now()
     };
   } else {
     metricCache[sourceId] = {
       geojson,
-      year_data: yearData || {},
-      year_range: yearRange,
+      time_data: timeData || {},
+      time_range: timeRange || null,
+      // TEMPORARY MIRROR: remove these after all cache consumers switch to time_*.
+      year_data: timeData || {},
+      year_range: timeRange
+        ? {
+            min: timeRange.min,
+            max: timeRange.max,
+            available_years: timeRange.available || timeRange.available_years || []
+          }
+        : null,
       loadedAt: Date.now()
     };
   }
@@ -267,6 +273,8 @@ export function renderGeometryData(sourceId, geojson, geometryType = 'zcta', opt
   } else {
     metricCache[sourceId] = {
       geojson,
+      time_data: {},
+      time_range: null,
       year_data: {},
       year_range: null,
       dataType: 'geometry',
@@ -390,11 +398,12 @@ export function removeMetricData(sourceId, criteria) {
   const { loc_ids, years, metric } = criteria;
   let removedCount = 0;
 
-  if (cached.year_data && metric) {
+  const timeData = cached.time_data || cached.year_data || null;
+  if (timeData && metric) {
     const locIdSet = loc_ids?.length > 0 ? new Set(loc_ids) : null;
     const yearSet = years?.length > 0 ? new Set(years.map(String)) : null;
 
-    for (const [yearStr, locData] of Object.entries(cached.year_data)) {
+    for (const [yearStr, locData] of Object.entries(timeData)) {
       if (yearSet && !yearSet.has(yearStr)) continue;
 
       for (const [locId, metrics] of Object.entries(locData)) {
@@ -419,14 +428,14 @@ export function removeMetricData(sourceId, criteria) {
   }
 
   cached.loadedAt = Date.now();
-  const hasYearData = cached.year_data && Object.keys(cached.year_data).length > 0;
+  const hasTimeData = timeData && Object.keys(timeData).length > 0;
   const hasFeatures = cached.geojson?.features?.length > 0;
 
-  if (!hasYearData && !hasFeatures) {
+  if (!hasTimeData && !hasFeatures) {
     delete metricCache[sourceId];
   }
 
   window.dispatchEvent(new CustomEvent('overlayCacheUpdated'));
   console.log(`OverlayController: Metric removal complete - removed ${removedCount} cells`);
-  return { removed: removedCount, remaining: hasYearData ? Object.keys(cached.year_data).length : 0 };
+  return { removed: removedCount, remaining: hasTimeData ? Object.keys(timeData).length : 0 };
 }

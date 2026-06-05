@@ -5,8 +5,10 @@
 // Cache for loaded overlay data (full unfiltered datasets)
 export const dataCache = {};
 
-// Cache for metrics/choropleth data from order system
-// sourceId -> { geojson, year_data, year_range, loadedAt }
+// Cache for metrics/choropleth data from order system.
+// Canonical temporal shape is time_data/time_range. Legacy year_* mirrors may
+// still appear during the migration but should be removed in a cleanup pass.
+// sourceId -> { geojson, time_data, time_range, loadedAt }
 export const metricCache = {};
 
 // Track which time ranges have been loaded per overlay
@@ -81,8 +83,9 @@ export function calculateCacheSize() {
   for (const sourceId of Object.keys(metricCache)) {
     const cached = metricCache[sourceId];
     const features = cached?.geojson?.features || [];
-    if (features.length > 0 || cached?.year_data) {
-      const dataToSize = { features, year_data: cached?.year_data || {} };
+    const timeData = cached?.time_data || cached?.year_data || {};
+    if (features.length > 0 || Object.keys(timeData).length > 0) {
+      const dataToSize = { features, time_data: timeData };
       const bytes = new Blob([JSON.stringify(dataToSize)]).size;
       perOverlay[sourceId] = { features: features.length, bytes, type: 'metrics' };
       totalFeatures += features.length;

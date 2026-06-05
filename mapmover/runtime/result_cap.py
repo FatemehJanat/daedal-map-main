@@ -3,9 +3,8 @@
 Every order-execution path (event, metrics, aggregate, location_shape, layered)
 should run its rendered DataFrame through `apply_runtime_result_cap` before
 handing it to the response builder. The helper enforces a row cap, returns a
-structured `cap_info` block when the cap is hit, and lets the order-taker
-prompt and the frontend see the same truncation signal that Research mode
-already gets.
+structured `cap_info` block when the cap is hit. This helper is a technical
+truncation guard, not the broad user-facing display-warning gate.
 
 See: county-map-private/docs/future/runtime_and_lane_unification_plan.md
 section "Recently Identified Shared Helper Gaps" for the migration order and
@@ -54,7 +53,8 @@ def apply_runtime_result_cap(
       - `runtime.max_render_cap` from source metadata (default 5000)
 
     `cap_info` is None when the cap was not hit. When the cap is hit it is a
-    dict with: `cap_hit, returned_rows, available_rows, cap_value, cap_reason`.
+    dict with: `cap_hit, returned_rows, available_rows, cap_value, cap_reason,
+    cap_kind`.
 
     The DataFrame is sliced via `.head(cap_value)` so callers should sort
     before calling if order matters. If `df` is None or has no `__len__`, the
@@ -96,6 +96,7 @@ def apply_runtime_result_cap(
         "available_rows": available_rows,
         "cap_value": cap_value,
         "cap_reason": cap_reason,
+        "cap_kind": "technical_truncation",
     }
     return df_capped, cap_info
 
@@ -136,6 +137,7 @@ def build_cap_info_from_counts(
     available_rows: int,
     cap_value: int | None = None,
     cap_reason: str = "requested_limit",
+    cap_kind: str = "technical_truncation",
 ) -> Optional[dict]:
     """Build normalized cap info from explicit row counts.
 
@@ -154,6 +156,7 @@ def build_cap_info_from_counts(
         "available_rows": available_rows,
         "cap_value": int(cap_value),
         "cap_reason": cap_reason,
+        "cap_kind": str(cap_kind or "technical_truncation"),
     }
 
 

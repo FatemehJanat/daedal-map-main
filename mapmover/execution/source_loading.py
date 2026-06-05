@@ -5,6 +5,17 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import os
+
+from mapmover.catalog_surface import get_catalog_surface_override
+
+
+def _allow_local_source_fallback() -> bool:
+    override = get_catalog_surface_override()
+    if override in {"published", "wip"}:
+        return override == "wip"
+    raw = str(os.environ.get("USE_WIP_CATALOG", "")).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
 
 
 def get_source_path(
@@ -104,8 +115,13 @@ def load_source_data(
 
         last_df = pd.DataFrame()
         for parquet_path in parquet_candidates:
-            uri = path_to_uri_func(parquet_path)
-            logger.info(f"[S3] load_source_data({source_id}): trying uri={uri} year={year} prefix={loc_id_prefix}")
+            if _allow_local_source_fallback() and parquet_path.exists():
+                logger.info(
+                    f"[S3->LOCAL] load_source_data({source_id}): using local fallback={parquet_path} year={year} prefix={loc_id_prefix}"
+                )
+            else:
+                uri = path_to_uri_func(parquet_path)
+                logger.info(f"[S3] load_source_data({source_id}): trying uri={uri} year={year} prefix={loc_id_prefix}")
             df = select_rows_func(
                 parquet_path,
                 exact_filters=exact_filters or None,

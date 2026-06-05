@@ -15,7 +15,7 @@ def normalize_item_filters(
     if not filterable_fields:
         source_id = item.get("source_id")
         metadata = load_source_metadata_func(source_id) if source_id else {}
-        filterable_fields = metadata.get("filterable_fields") or []
+        filterable_fields = (metadata or {}).get("filterable_fields") or []
     if not isinstance(filterable_fields, list) or not filterable_fields:
         return
 
@@ -25,6 +25,7 @@ def normalize_item_filters(
 
     reserved = {
         "type", "source_id", "pack_id", "metric", "metric_label", "region", "year", "year_start", "year_end",
+        "date_start", "date_end", "time_granularity", "aggregation", "aggregation_axis", "missing_policy", "weight_metric", "week_anchor",
         "geo_level", "mode", "event_file", "filters", "sort", "limit", "summary", "all_sources", "load_scope",
         "aggregate_use_rolling", "aggregate_window_years", "aggregate_rollup_level", "aggregate_all_years",
     }

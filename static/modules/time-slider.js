@@ -148,6 +148,8 @@ export const TimeSlider = {
   _inEventMode: false,     // True when animating specific event (vs world view)
   _previousSpeedSlider: null, // Saved speed when entering event mode
   playTimeout: null,       // For new stepsPerFrame-based playback
+  discretePlaybackCarry: 0,
+  discretePlaybackDirection: 1,
 
   // Time range bounds - constrain playback/stepping to subset of full range
   sliderTrackContainer: null,  // DOM container holding slider and trim handles
@@ -696,6 +698,10 @@ export const TimeSlider = {
       return `${Math.abs(year)} BCE`;
     }
 
+    if (!this.useTimestamps) {
+      return year.toString();
+    }
+
     // Get current speed to determine display granularity
     const hoursPerSecond = this.stepsPerFrame * 6 * TIME_SYSTEM.MAX_FPS;
 
@@ -981,7 +987,7 @@ export const TimeSlider = {
 
   /**
    * Initialize time slider with time range data
-   * @param {Object} timeRange - {min, max, available_years|available, granularity?, useTimestamps?}
+   * @param {Object} timeRange - {min, max, available, granularity?, useTimestamps?}
    * @param {Object} timeData - {time: {loc_id: {metric: value}}}
    * @param {Object} baseGeojson - Base geometry
    * @param {string} metricKey - Metric to display
@@ -1008,7 +1014,8 @@ export const TimeSlider = {
     this.originalMinTime = this.minTime;
     this.originalMaxTime = this.maxTime;
 
-    // Support both old (available_years) and new (available) property names
+    // TEMPORARY MIRROR: support available_years only while older producers are
+    // still being migrated to canonical available.
     // Normalize each time value to timestamp
     const rawTimes = timeRange.available || timeRange.available_years || [];
     this.availableTimes = rawTimes.map(t => this.normalizeToTimestamp(t));
@@ -1016,6 +1023,9 @@ export const TimeSlider = {
     this.sortedTimes = [...this.availableTimes].sort((a, b) => a - b);
     this.currentTime = this.maxTime;  // Start at latest time (already normalized)
     this.playSpeed = 1;
+    const timeSpanMs = Math.max(0, this.maxTime - this.minTime);
+    const suggestedSpeed = this.suggestSpeedForRange(timeSpanMs);
+    this.setSpeedFromSlider(suggestedSpeed);
 
     // Pre-compute gap-filled data (carry forward last known values)
     this.timeDataFilled = this.buildFilledTimeData();
@@ -1098,7 +1108,7 @@ export const TimeSlider = {
 
   /**
    * Merge refreshed or lazily-loaded data into the active slider state without a full reset.
-   * @param {Object} timeRange - {min, max, available_years|available, granularity?, useTimestamps?}
+   * @param {Object} timeRange - {min, max, available, granularity?, useTimestamps?}
    * @param {Object} timeData - {time: {loc_id: {metric: value}}}
    * @param {Object} baseGeojson - Base geometry
    * @param {string[]} availableMetrics - Explicit list of metrics from order (optional)
@@ -1123,6 +1133,8 @@ export const TimeSlider = {
     this.originalMinTime = this.minTime;
     this.originalMaxTime = this.maxTime;
 
+    // TEMPORARY MIRROR: support available_years only while older producers are
+    // still being migrated to canonical available.
     const rawTimes = timeRange.available || timeRange.available_years || [];
     this.availableTimes = rawTimes.map(t => this.normalizeToTimestamp(t));
     this.sortedTimes = [...this.availableTimes].sort((a, b) => a - b);
@@ -1398,6 +1410,40 @@ export const TimeSlider = {
     return this.sortedTimes[this.sortedTimes.length - 1] || this.maxTime;
   },
 
+  advanceDiscreteTime(fromTime, targetStepMs, direction = 1) {
+    if (!this.sortedTimes.length) {
+      return fromTime;
+    }
+
+    const currentIndex = this.timeToIndex(fromTime);
+    const baseStepMs = this.stepMs || this.calculateStepMs(this.granularity || 'yearly');
+    const effectiveDirection = direction >= 0 ? 1 : -1;
+    if (this.discretePlaybackDirection !== effectiveDirection) {
+      this.discretePlaybackCarry = 0;
+      this.discretePlaybackDirection = effectiveDirection;
+    }
+
+    const stepFraction = targetStepMs / Math.max(1, baseStepMs);
+    this.discretePlaybackCarry += stepFraction;
+    const frameSteps = Math.floor(this.discretePlaybackCarry);
+    if (frameSteps <= 0) {
+      return fromTime;
+    }
+    this.discretePlaybackCarry -= frameSteps;
+
+    const signedSteps = effectiveDirection * frameSteps;
+    let nextIndex = currentIndex + signedSteps;
+
+    if (this.loopEnabled) {
+      const count = this.sortedTimes.length;
+      nextIndex = ((nextIndex % count) + count) % count;
+    } else {
+      nextIndex = Math.max(0, Math.min(this.sortedTimes.length - 1, nextIndex));
+    }
+
+    return this.indexToTime(nextIndex);
+  },
+
   /**
    * Get step size based on current speed.
    * Returns milliseconds matching what the speed label shows.
@@ -1443,6 +1489,16 @@ export const TimeSlider = {
    * Respects time range bounds if set
    */
   stepToNext() {
+    if (!this.useTimestamps) {
+      const effectiveMax = this.boundMaxTime !== null ? this.boundMaxTime : this.maxTime;
+      let nextTime = this.getNextAvailableTime(this.currentTime);
+      if (nextTime > effectiveMax) {
+        nextTime = effectiveMax;
+      }
+      this.setTime(nextTime);
+      return;
+    }
+
     const stepMs = this.getSpeedBasedStep();
     let nextTime = this.currentTime + stepMs;
 
@@ -1462,6 +1518,16 @@ export const TimeSlider = {
    * Respects time range bounds if set
    */
   stepToPrev() {
+    if (!this.useTimestamps) {
+      const effectiveMin = this.boundMinTime !== null ? this.boundMinTime : this.minTime;
+      let prevTime = this.getPrevAvailableTime(this.currentTime);
+      if (prevTime < effectiveMin) {
+        prevTime = effectiveMin;
+      }
+      this.setTime(prevTime);
+      return;
+    }
+
     const stepMs = this.getSpeedBasedStep();
     let prevTime = this.currentTime - stepMs;
 
@@ -2162,12 +2228,53 @@ export const TimeSlider = {
     }
 
     this.isPlaying = true;
+    this.discretePlaybackCarry = 0;
+    this.discretePlaybackDirection = this.playDirection >= 0 ? 1 : -1;
     this.updateButtonStates();
 
     // Use unified speed system if speed slider is available
     const useUnifiedSpeed = this.speedSlider !== null;
 
     if (useUnifiedSpeed) {
+      if (!this.useTimestamps) {
+        const interval = this.getPlaybackInterval();
+        const tick = () => {
+          if (!this.isPlaying) return;
+
+          const effectiveMin = this.boundMinTime !== null ? this.boundMinTime : this.minTime;
+          const effectiveMax = this.boundMaxTime !== null ? this.boundMaxTime : this.maxTime;
+
+          let nextTime;
+          if (this.playDirection === 1) {
+            nextTime = this.getNextAvailableTime(this.currentTime);
+            if (nextTime <= this.currentTime || nextTime > effectiveMax) {
+              if (this.loopEnabled) {
+                nextTime = effectiveMin;
+              } else {
+                this.pause();
+                return;
+              }
+            }
+          } else {
+            nextTime = this.getPrevAvailableTime(this.currentTime);
+            if (nextTime >= this.currentTime || nextTime < effectiveMin) {
+              if (this.loopEnabled) {
+                nextTime = effectiveMax;
+              } else {
+                this.pause();
+                return;
+              }
+            }
+          }
+
+          this.setTime(nextTime, 'playback');
+          this.playTimeout = setTimeout(tick, interval);
+        };
+
+        tick();
+        return;
+      }
+
       // Phase 7: Unified speed control using stepsPerFrame
       const tick = () => {
         if (!this.isPlaying) return;
@@ -2181,7 +2288,9 @@ export const TimeSlider = {
         const effectiveMax = this.boundMaxTime !== null ? this.boundMaxTime : this.maxTime;
 
         let nextTime;
-        if (this.playDirection === 1) {
+        if (this.useIndexedScale) {
+          nextTime = this.advanceDiscreteTime(this.currentTime, stepMs, this.playDirection);
+        } else if (this.playDirection === 1) {
           nextTime = this.currentTime + stepMs;
           // Check for end (use effective max)
           if (nextTime > effectiveMax) {
@@ -2289,10 +2398,15 @@ export const TimeSlider = {
   pause() {
     this.isPlaying = false;
     this.playSpeed = 1;
+    this.discretePlaybackCarry = 0;
 
     if (this.playInterval) {
       clearInterval(this.playInterval);
       this.playInterval = null;
+    }
+    if (this.playTimeout) {
+      clearTimeout(this.playTimeout);
+      this.playTimeout = null;
     }
 
     this.updateButtonStates();

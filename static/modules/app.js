@@ -30,6 +30,7 @@ import { RasterPanel } from './raster-panel.js';
 import { setDependencies as setSceneRasterDeps } from './scene-raster-model.js';
 import { loadPublicPackCatalog } from './shared/catalog-cache.js';
 import { getInitialLane, normalizeBootUrl, onRouteChange, parseRouteIntent, setLaneTitle } from './routing/app-route-state.js';
+import { getTemporalMetricPayload, hasTemporalMetricPayload, mergeTemporalMetricPayload } from './temporal-payload.js';
 
 const CHAT_MAP_LANES = ['explore', 'research', 'ops'];
 const DISPLAY_GEOMETRY_TYPES = new Set(['zcta', 'tribal', 'watershed', 'park']);
@@ -214,31 +215,7 @@ export const App = {
       ...newFeatures
     ];
 
-    const mergedYearData = { ...(existing.year_data || {}) };
-    for (const [year, locData] of Object.entries(incoming.year_data || {})) {
-      if (!mergedYearData[year]) {
-        mergedYearData[year] = {};
-      }
-      for (const [locId, metrics] of Object.entries(locData || {})) {
-        if (!mergedYearData[year][locId]) {
-          mergedYearData[year][locId] = {};
-        }
-        Object.assign(mergedYearData[year][locId], metrics || {});
-      }
-    }
-
-    const mergedYearRange = (existing.year_range || incoming.year_range)
-      ? {
-          min: Math.min(existing.year_range?.min ?? incoming.year_range?.min ?? Infinity, incoming.year_range?.min ?? Infinity),
-          max: Math.max(existing.year_range?.max ?? incoming.year_range?.max ?? -Infinity, incoming.year_range?.max ?? -Infinity),
-          available_years: [
-            ...new Set([
-              ...(existing.year_range?.available_years || []),
-              ...(incoming.year_range?.available_years || [])
-            ])
-          ].sort((a, b) => a - b)
-        }
-      : null;
+    const mergedTemporal = mergeTemporalMetricPayload(existing, incoming);
 
     const mergedMetrics = [
       ...new Set([
@@ -247,9 +224,9 @@ export const App = {
       ])
     ];
 
-    const mergedMetricYearRanges = {
-      ...(existing.metric_year_ranges || {}),
-      ...(incoming.metric_year_ranges || {})
+    const mergedMetricRanges = mergedTemporal?.metricTimeRanges || {
+      ...(existing.metric_time_ranges || existing.metric_year_ranges || {}),
+      ...(incoming.metric_time_ranges || incoming.metric_year_ranges || {})
     };
 
     const mergedLevels = [
@@ -268,10 +245,19 @@ export const App = {
       ...existing,
       ...incoming,
       geojson: { type: 'FeatureCollection', features: mergedFeatures },
-      year_data: mergedYearData,
-      year_range: mergedYearRange,
+      time_data: mergedTemporal?.timeData || incoming.time_data || existing.time_data || null,
+      time_range: mergedTemporal?.timeRange || incoming.time_range || existing.time_range || null,
+      year_data: mergedTemporal?.timeData || incoming.year_data || existing.year_data || null,
+      year_range: mergedTemporal?.timeRange
+        ? {
+            min: mergedTemporal.timeRange.min,
+            max: mergedTemporal.timeRange.max,
+            available_years: mergedTemporal.timeRange.available
+          }
+        : (incoming.year_range || existing.year_range || null),
       available_metrics: mergedMetrics,
-      metric_year_ranges: mergedMetricYearRanges,
+      metric_time_ranges: mergedMetricRanges,
+      metric_year_ranges: mergedMetricRanges,
       available_geo_levels: mergedLevels,
       count: mergedFeatures.length
     };
@@ -424,7 +410,7 @@ export const App = {
   applyOrderModeLevelFilter(level) {
     if (!this.currentData || this.currentData.data_type !== 'metrics') return;
 
-    if (this.currentData.multi_year && TimeSlider?.baseGeojson) {
+    if (hasTemporalMetricPayload(this.currentData) && TimeSlider?.baseGeojson) {
       TimeSlider.setAdminLevelFilter(level);
       return;
     }
@@ -538,11 +524,12 @@ export const App = {
 
   ingestLazyMetricData(data, order, options = {}) {
     if (data?.source_id) {
+      const temporalPayload = getTemporalMetricPayload(data);
       OverlayController?.ingestMetricData(
         data.source_id,
         data.geojson,
-        data.year_data,
-        data.year_range
+        temporalPayload?.timeData || null,
+        temporalPayload?.timeRange || null
       );
     }
 
@@ -1827,6 +1814,7 @@ export const App = {
       data.dataset_name?.toLowerCase().includes('storm') ||
       data.metric_key === 'storm_count' ||
       (data.geojson?.features?.[0]?.properties?.storm_id);
+    const temporalPayload = getTemporalMetricPayload(data);
 
     if (isHurricaneData && data.geojson?.features?.length) {
       // Hurricane point or track data - use shared hurricane layer path
@@ -1844,11 +1832,12 @@ export const App = {
       // Fit map to storm locations
       if (!skipFit) MapAdapter.fitToBounds(data.geojson);
 
-    } else if (data.multi_year && data.year_data && data.year_range) {
-      // Multi-year mode: initialize time slider
-      console.log('Multi-year data detected, initializing time slider');
-      console.log(`Year range: ${data.year_range.min} - ${data.year_range.max}`);
-      console.log('DEBUG app.js: metric_year_ranges from response:', data.metric_year_ranges);
+    } else if (temporalPayload) {
+      // Temporal metric mode: initialize time slider from payload presence,
+      // not from legacy multi_year naming.
+      console.log('Temporal metric data detected, initializing time slider');
+      console.log(`Time range: ${temporalPayload.timeRange.min} - ${temporalPayload.timeRange.max}`);
+      console.log('DEBUG app.js: metric ranges from response:', temporalPayload.metricTimeRanges);
 
       // Auto-enable demographics overlay for demographic data from chat orders
       // This ensures viewport-based admin level filtering works
@@ -1865,23 +1854,23 @@ export const App = {
 
         // Initialize time slider with the data
         TimeSlider.init(
-          data.year_range,
-          data.year_data,
+          temporalPayload.timeRange,
+          temporalPayload.timeData,
           data.geojson,
-          data.metric_key,
-          data.available_metrics,  // Explicit list of metrics from order
-          data.metric_year_ranges  // Per-metric year ranges for slider adjustment
+          temporalPayload.metricKey,
+          temporalPayload.availableMetrics,
+          temporalPayload.metricTimeRanges
         );
 
         // Fit map to the data, then apply initial admin level filter
         if (!skipFit) MapAdapter.fitToBounds(data.geojson);
       } else {
         TimeSlider.updateData(
-          data.year_range,
-          data.year_data,
+          temporalPayload.timeRange,
+          temporalPayload.timeData,
           data.geojson,
-          data.available_metrics,
-          data.metric_year_ranges
+          temporalPayload.availableMetrics,
+          temporalPayload.metricTimeRanges
         );
       }
 

@@ -202,7 +202,7 @@ def _rows_to_temporal_result(
     dimension_columns: list[str] | None = None,
 ) -> dict:
     features_by_loc: dict[str, dict] = {}
-    year_data: dict[str, dict] = {}
+    time_data: dict[str, dict] = {}
     metric_ids = list((metadata.get("metrics") or {}).keys())
     dimension_columns = [str(column).strip() for column in (dimension_columns or []) if str(column).strip()]
     if not metric_ids:
@@ -249,7 +249,16 @@ def _rows_to_temporal_result(
                 metric_values[column_name] = row.get(column_name)
         if not metric_values:
             continue
-        year_data.setdefault(time_key, {})[loc_id] = metric_values
+        time_data.setdefault(time_key, {})[loc_id] = metric_values
+
+    sorted_time_keys = sorted(time_data.keys(), key=lambda token: (len(str(token)), str(token)))
+    time_range = {
+        "min": sorted_time_keys[0] if sorted_time_keys else None,
+        "max": sorted_time_keys[-1] if sorted_time_keys else None,
+        "available": sorted_time_keys,
+        "granularity": "yearly",
+        "useTimestamps": False,
+    }
 
     return {
         "type": "data",
@@ -262,10 +271,14 @@ def _rows_to_temporal_result(
             "type": "FeatureCollection",
             "features": list(features_by_loc.values()),
         },
-        "year_data": year_data,
+        "time_data": time_data,
+        "time_range": time_range,
+        # TEMPORARY MIRRORS: remove after all consumers switch to canonical time_*.
+        "year_data": time_data,
         "multi_year": True,
-        "year_range": sorted(year_data.keys()),
+        "year_range": sorted_time_keys,
         "available_metrics": metric_ids,
+        "metric_time_ranges": build_metric_year_ranges(metadata),
         "metric_year_ranges": build_metric_year_ranges(metadata),
         "summary": _source_summary_text(source_id, metadata, len(rows)),
         "count": len(rows),

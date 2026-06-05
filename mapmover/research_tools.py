@@ -1248,11 +1248,11 @@ def _build_research_map_payload(
                 continue
             feature_by_loc_id[str(lid)] = _jsonable(feature)
 
-    # Build year_data for time-varying data families. year_data is keyed by the
+    # Build time_data for time-varying data families. time_data is keyed by the
     # time value as a string, then by loc_id, with the full per-row metric bundle
     # as the value (so the popup can show every metric per year, not just the
     # primary).
-    year_data: dict[str, dict[str, dict]] = {}
+    time_data: dict[str, dict[str, dict]] = {}
     years_seen: list[str] = []
     has_time_axis = False
     for loc_id in loc_id_order:
@@ -1269,7 +1269,7 @@ def _build_research_map_payload(
                 if normalized_time_value is None:
                     continue
             time_key = str(normalized_time_value)
-            bucket = year_data.setdefault(time_key, {})
+            bucket = time_data.setdefault(time_key, {})
             metrics_dict = {
                 k: v for k, v in row.items()
                 if k not in _NON_VALUE_FIELD_KEYS and k != time_field
@@ -1340,10 +1340,10 @@ def _build_research_map_payload(
                 numeric_years = []
                 break
 
-        # Collect every metric key that appears in year_data so the slider's
+        # Collect every metric key that appears in time_data so the slider's
         # metric-picker UI sees the full set.
         metric_keys_seen: set[str] = set()
-        for loc_bucket in year_data.values():
+        for loc_bucket in time_data.values():
             for metrics_dict in loc_bucket.values():
                 for k, v in (metrics_dict or {}).items():
                     if isinstance(v, (int, float)) and not isinstance(v, bool):
@@ -1366,7 +1366,28 @@ def _build_research_map_payload(
                 fallback_available_years=numeric_years,
             )
 
-        payload["year_data"] = year_data
+        canonical_time_range = None
+        if numeric_years:
+            canonical_time_range = {
+                "min": numeric_years[0],
+                "max": numeric_years[-1],
+                "available": numeric_years,
+                "granularity": "yearly" if use_yearly_keys else None,
+                "useTimestamps": False if use_yearly_keys else None,
+            }
+        else:
+            canonical_time_range = {
+                "min": years_sorted[0],
+                "max": years_sorted[-1],
+                "available": years_sorted,
+                "granularity": "yearly" if use_yearly_keys else None,
+                "useTimestamps": False if use_yearly_keys else None,
+            }
+
+        payload["time_data"] = time_data
+        payload["time_range"] = canonical_time_range
+        # TEMPORARY MIRRORS: remove after all consumers switch to canonical time_*.
+        payload["year_data"] = time_data
         payload["years"] = years_sorted
         payload["time_field"] = "year" if use_yearly_keys else time_field
         payload["multi_year"] = len(years_sorted) > 1
@@ -1389,6 +1410,7 @@ def _build_research_map_payload(
         payload["metric"] = primary_metric
         payload["metric_key"] = primary_metric
         payload["available_metrics"] = available_metrics
+        payload["metric_time_ranges"] = metric_year_ranges
         payload["metric_year_ranges"] = metric_year_ranges
         if artifact.get("scene_periods"):
             payload["scene_periods"] = _jsonable(artifact.get("scene_periods"))

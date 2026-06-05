@@ -2660,11 +2660,11 @@ export const OverlayController = {
    * Called by the chat system when a metrics order completes.
    * @param {string} sourceId - Source ID (e.g., 'owid_co2', 'census_population')
    * @param {Object} geojson - GeoJSON FeatureCollection from the order result
-   * @param {Object} yearData - Optional year_data for multi-year results
-   * @param {Object} yearRange - Optional year range metadata {min, max, available_years}
+   * @param {Object} timeData - Optional temporal cell map keyed by time
+   * @param {Object} timeRange - Optional temporal metadata {min, max, available, granularity}
    */
-  ingestMetricData(sourceId, geojson, yearData = null, yearRange = null) {
-    ingestOverlayMetricData(sourceId, geojson, yearData, yearRange);
+  ingestMetricData(sourceId, geojson, timeData = null, timeRange = null) {
+    ingestOverlayMetricData(sourceId, geojson, timeData, timeRange);
   },
 
   /**

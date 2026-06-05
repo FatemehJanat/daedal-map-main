@@ -45,30 +45,31 @@ def expand_wildcard_metrics(
             continue
 
         metrics = metadata.get("metrics", {})
-        for metric_key in metrics:
-            new_item = {
-                "source_id": source_id,
-                "metric": metric_key,
-                "region": item.get("region"),
-            }
+        single_metric_default = str(
+            (((metadata.get("routing_hints") or {}).get("single_metric_default")) or "")
+        ).strip()
+        metric_keys = [single_metric_default] if single_metric_default in metrics else list(metrics.keys())
+
+        for metric_key in metric_keys:
+            new_item = dict(item)
+            new_item["source_id"] = source_id
+            new_item["metric"] = metric_key
+            new_item.pop("_error", None)
+            new_item.pop("_valid", None)
 
             metric_min_year, metric_max_year = metadata_metric_year_range_func(metadata, metric_key)
-            if metric_min_year is not None and metric_max_year is not None:
+            has_explicit_time = bool(
+                new_item.get("year") is not None or new_item.get("year_start") or new_item.get("year_end")
+            )
+            if not has_explicit_time and metric_min_year is not None and metric_max_year is not None:
                 new_item["year_start"] = metric_min_year
                 new_item["year_end"] = metric_max_year
-            else:
-                if item.get("year"):
-                    new_item["year"] = item.get("year")
-                if item.get("year_start"):
-                    new_item["year_start"] = item.get("year_start")
-                if item.get("year_end"):
-                    new_item["year_end"] = item.get("year_end")
 
             new_item = {k: v for k, v in new_item.items() if v is not None}
             expanded.append(new_item)
 
         logging.getLogger(__name__).info(
-            f"Expanded wildcard metric for {source_id}: {len(metrics)} metrics"
+            f"Expanded wildcard metric for {source_id}: {len(metric_keys)} metrics"
         )
 
     return expanded

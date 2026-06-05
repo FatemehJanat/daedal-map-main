@@ -47,7 +47,7 @@ def build_metrics_response(
     order: dict,
     items: list,
     summary: str,
-    multi_year_mode: bool,
+    temporal_mode: bool,
     geo_levels: set,
     requested_geo_levels: set,
     sources_used: dict,
@@ -61,6 +61,8 @@ def build_metrics_response(
     requested_year_start,
     requested_year_end,
     all_years: set,
+    temporal_granularity: str,
+    temporal_use_timestamps: bool,
     metric_key,
     all_metrics: list,
     metric_year_ranges: dict,
@@ -251,7 +253,7 @@ def build_metrics_response(
         geom_lookup = geometry_df.set_index("loc_id")[["name", "geometry"]].to_dict("index")
         t_after_geom_lookup = executor_log_func(trace_id, "geometry_lookup_built", t_geom_lookup, f"entries={len(geom_lookup)}")
 
-        if multi_year_mode:
+        if temporal_mode:
             for loc_id in geom_lookup.keys():
                 geom_data = geom_lookup.get(loc_id)
                 if not geom_data:
@@ -296,7 +298,7 @@ def build_metrics_response(
                     "geometry": geom,
                     "properties": properties,
                 })
-        executor_log_func(trace_id, "features_built", t_after_geom_lookup, f"features={len(features)} multi_year={multi_year_mode}")
+        executor_log_func(trace_id, "features_built", t_after_geom_lookup, f"features={len(features)} temporal={temporal_mode}")
     else:
         executor_log_func(trace_id, "geometry_lookup_skipped", t_execute_start, "no_geometry_rows")
 
@@ -311,7 +313,7 @@ def build_metrics_response(
     ]
     primary_source = list(sources_used.keys())[0] if sources_used else None
     response_data_type = "geometry" if primary_level in special_geometry_levels else "metrics"
-    data_feature_count = len(year_data or {}) if multi_year_mode else len(boxes or {})
+    data_feature_count = len(year_data or {}) if temporal_mode else len(boxes or {})
 
     response = {
         "type": "data",
@@ -347,11 +349,24 @@ def build_metrics_response(
         if retry_result:
             return retry_result
 
-    if multi_year_mode and year_data:
+    if temporal_mode and year_data:
         sorted_years = sorted(all_years)
         actual_min = sorted_years[0] if sorted_years else 0
         actual_max = sorted_years[-1] if sorted_years else 0
+        is_bucketed_yearly = not bool(temporal_use_timestamps) and (temporal_granularity or "yearly") == "yearly"
 
+        canonical_time_range = {
+            "min": actual_min,
+            "max": actual_max,
+            "available": sorted_years,
+            "granularity": temporal_granularity or "yearly",
+            "useTimestamps": bool(temporal_use_timestamps),
+        }
+
+        # TEMPORARY MIRROR: keep legacy year_* fields only while frontend and
+        # auxiliary tools are still finishing the time_* migration.
+        response["time_data"] = year_data
+        response["time_range"] = canonical_time_range
         response["multi_year"] = True
         response["year_data"] = year_data
         response["year_range"] = {
@@ -361,16 +376,18 @@ def build_metrics_response(
         }
         response["metric_key"] = metric_key
         response["available_metrics"] = all_metrics
+        response["metric_time_ranges"] = metric_year_ranges
         response["metric_year_ranges"] = metric_year_ranges
 
         data_notes = []
         if requested_year_start and requested_year_end:
-            if actual_min != requested_year_start or actual_max != requested_year_end:
-                data_notes.append(f"Note: Data available for {actual_min}-{actual_max} (requested {requested_year_start}-{requested_year_end})")
-            expected_years = set(range(actual_min, actual_max + 1))
-            missing_years = expected_years - all_years
-            if missing_years:
-                data_notes.append(f"Some years have no data: {sorted(missing_years)[:5]}{'...' if len(missing_years) > 5 else ''}")
+            if is_bucketed_yearly:
+                if actual_min != requested_year_start or actual_max != requested_year_end:
+                    data_notes.append(f"Note: Data available for {actual_min}-{actual_max} (requested {requested_year_start}-{requested_year_end})")
+                expected_years = set(range(actual_min, actual_max + 1))
+                missing_years = expected_years - all_years
+                if missing_years:
+                    data_notes.append(f"Some years have no data: {sorted(missing_years)[:5]}{'...' if len(missing_years) > 5 else ''}")
         if data_notes:
             prior_note = response.get("data_note")
             joined_note = " | ".join(data_notes)

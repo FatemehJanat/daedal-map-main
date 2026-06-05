@@ -12,6 +12,19 @@ from .source_hints import (
 )
 
 
+def _currency_granularity_source_id(item: dict) -> str | None:
+    if str(item.get("pack_id") or "").strip() != "currency":
+        return None
+    granularity = str(item.get("time_granularity") or "").strip().lower()
+    if granularity == "weekly":
+        return "fx_usd_historical_weekly"
+    if granularity == "monthly":
+        return "fx_usd_historical_monthly"
+    if granularity == "daily":
+        return "fx_usd_historical"
+    return None
+
+
 def validate_item(
     item: dict,
     catalog: dict,
@@ -41,6 +54,8 @@ def validate_item(
     clamp_item_years_to_metric_func,
 ) -> dict:
     """Validate one postprocessed order item against catalog and metadata."""
+    item.pop("_error", None)
+    item.pop("_valid", None)
     source_id = item.get("source_id")
     metric = item.get("metric")
     query = str(((item.get("_hints") or {}).get("original_query")) or "").lower()
@@ -98,6 +113,12 @@ def validate_item(
         if source_pack_id:
             item["pack_id"] = source_pack_id
     pack_id = str(item.get("pack_id") or "").strip()
+    explicit_currency_source = _currency_granularity_source_id(item)
+    if explicit_currency_source and explicit_currency_source != source_id:
+        item["source_id"] = explicit_currency_source
+        item["_resolved_from_pack"] = True
+        source_id = explicit_currency_source
+        catalog_source = get_catalog_source_func(catalog, source_id)
     if pack_id and query:
         preferred_source_id, preferred_metadata, preferred_metric = select_pack_family_source_for_query(
             pack_id,
@@ -105,6 +126,8 @@ def validate_item(
             catalog=catalog,
             load_source_metadata_func=load_source_metadata_func,
         )
+        if explicit_currency_source:
+            preferred_source_id = explicit_currency_source
         if preferred_source_id and preferred_source_id != source_id:
             item["source_id"] = preferred_source_id
             item["_resolved_from_pack"] = True
@@ -166,6 +189,7 @@ def validate_item(
         return validate_item_func(item, catalog)
 
     if item.get("mode") == "events":
+        item.pop("_error", None)
         item["_valid"] = True
         return item
 
@@ -192,6 +216,7 @@ def validate_item(
             return item
 
     if not metadata:
+        item.pop("_error", None)
         item["_valid"] = True
         return item
 
@@ -202,6 +227,7 @@ def validate_item(
 
     if metric and metric not in metrics and metric in aggregate_metric_cols:
         item["metric_label"] = format_metric_label_func(metric)
+        item.pop("_error", None)
         item["_valid"] = True
         return item
 
@@ -230,6 +256,7 @@ def validate_item(
                 if aggregate_exact_match:
                     item["metric"] = aggregate_exact_match
                     item["metric_label"] = format_metric_label_func(aggregate_exact_match)
+                    item.pop("_error", None)
                     item["_valid"] = True
                     return item
 
@@ -290,6 +317,7 @@ def validate_item(
         ):
             item["sort"] = {"by": metric, "order": "desc", "limit": 100}
 
+    item.pop("_error", None)
     item["_valid"] = True
     return item
 

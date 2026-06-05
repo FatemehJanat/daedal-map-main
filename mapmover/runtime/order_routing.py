@@ -3,6 +3,19 @@
 from __future__ import annotations
 
 
+def _currency_granularity_source_id(item: dict) -> str | None:
+    if str(item.get("pack_id") or "").strip() != "currency":
+        return None
+    granularity = str(item.get("time_granularity") or "").strip().lower()
+    if granularity == "weekly":
+        return "fx_usd_historical_weekly"
+    if granularity == "monthly":
+        return "fx_usd_historical_monthly"
+    if granularity == "daily":
+        return "fx_usd_historical"
+    return None
+
+
 def resolve_source_for_item(item: dict, catalog: dict, *, resolve_pack_source_func) -> str | None:
     """Resolve the correct source_id for an order item."""
     pack_id = item.get("pack_id")
@@ -36,6 +49,11 @@ def normalize_order_items(
         item = dict(item)
         source_id = str(item.get("source_id") or "").strip()
         pack_id = item.get("pack_id")
+        currency_source_id = _currency_granularity_source_id(item)
+        if currency_source_id:
+            item["source_id"] = currency_source_id
+            resolved.append(item)
+            continue
         if pack_id and source_id:
             src = catalog_sources.get(source_id)
             if src and src.get("pack_id") == pack_id:

@@ -284,6 +284,8 @@ TIME_PATTERNS = {
     "single_year": [
         r"\bin\s+(\d{4})\b",
         r"\bfor\s+(\d{4})\b",
+        r"\bover\s+(\d{4})\b",
+        r"\bduring\s+(\d{4})\b",
         r"\b(\d{4})\s+data\b",
     ],
 }
@@ -291,8 +293,24 @@ TIME_PATTERNS = {
 
 def detect_time_patterns(query: str) -> dict:
     """Detect time-related patterns in query."""
-    result = {"is_time_series": False, "year_start": None, "year_end": None, "pattern_type": None}
+    result = {
+        "is_time_series": False,
+        "year_start": None,
+        "year_end": None,
+        "pattern_type": None,
+        "time_granularity": None,
+    }
     query_lower = query.lower()
+
+    if re.search(r"\bdaily\b|\bday by day\b", query_lower):
+        result["time_granularity"] = "daily"
+    elif re.search(r"\bweekly\b|\bweek by week\b", query_lower):
+        result["time_granularity"] = "weekly"
+    elif re.search(r"\bmonthly\b|\bmonth by month\b", query_lower):
+        result["time_granularity"] = "monthly"
+    elif re.search(r"\byearly\b|\bannual(?:ly)?\b|\byear by year\b", query_lower):
+        result["time_granularity"] = "yearly"
+
     for pattern in TIME_PATTERNS["year_range"]:
         match = re.search(pattern, query_lower)
         if match:
@@ -336,6 +354,7 @@ def detect_time_patterns(query: str) -> dict:
         if match:
             year = int(match.group(1))
             if 1900 < year < 2100:
+                result["is_time_series"] = True
                 result["year_start"] = year
                 result["year_end"] = year
                 result["pattern_type"] = "single_year"

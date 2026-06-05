@@ -23,9 +23,12 @@ from mapmover.runtime.source_hints import (
 
 
 def validate_order_item(item: dict) -> dict:
+    item.pop("_error", None)
+    item.pop("_valid", None)
     _normalize_item_year_fields(item)
     load_scope = str(item.get("load_scope") or "").strip().lower()
     if item.get("pack_id") and (load_scope in {"pack", "all_sources", "full_pack"} or item.get("all_sources") is True):
+        item.pop("_error", None)
         item["_valid"] = True
         return item
     source_id = item.get("source_id")
@@ -148,6 +151,7 @@ def validate_order_item(item: dict) -> dict:
         unit = metric_info.get("unit", "")
         item["metric_label"] = f"{name} ({unit})" if unit and unit != "unknown" else name
 
+    item.pop("_error", None)
     item["_valid"] = True
     return item
 

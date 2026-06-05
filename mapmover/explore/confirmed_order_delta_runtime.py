@@ -34,7 +34,7 @@ def shape_confirmed_order_delta_response(result: dict, cache) -> dict | None:
     features = geojson.get("features", [])
     original_count = len(features)
 
-    new_features, filtered_geojson, filtered_year_data = _filter_confirmed_order_payload(
+    new_features, filtered_geojson, filtered_time_data = _filter_confirmed_order_payload(
         result=result,
         cache=cache,
         features=features,
@@ -56,13 +56,13 @@ def shape_confirmed_order_delta_response(result: dict, cache) -> dict | None:
         result,
         geojson=filtered_geojson,
         count=delta_count,
-        year_data=filtered_year_data,
+        year_data=filtered_time_data,
     )
     _register_confirmed_order_delta(
         result=result,
         cache=cache,
         new_features=new_features,
-        filtered_year_data=filtered_year_data,
+        filtered_time_data=filtered_time_data,
         source_id=source_id,
         is_events=is_events,
         is_geometry=is_geometry,
@@ -93,12 +93,12 @@ def _filter_confirmed_order_payload(
     if is_geometry:
         new_features = cache.filter_geometry_features(features)
         return new_features, {"type": "FeatureCollection", "features": new_features}, None
-    if result.get("multi_year") and result.get("year_data"):
-        year_data = result["year_data"]
-        filtered_year_data = cache.filter_year_data(year_data)
+    temporal_data = result.get("time_data") or result.get("year_data")
+    if result.get("multi_year") and temporal_data:
+        filtered_time_data = cache.filter_time_data(temporal_data)
         new_loc_ids = {
             loc_id
-            for loc_data in filtered_year_data.values()
+            for loc_data in filtered_time_data.values()
             for loc_id in loc_data.keys()
         }
         new_features = [
@@ -109,7 +109,7 @@ def _filter_confirmed_order_payload(
         return (
             new_features,
             {"type": "FeatureCollection", "features": new_features},
-            filtered_year_data,
+            filtered_time_data,
         )
     return features, geojson, None
 
@@ -119,7 +119,7 @@ def _register_confirmed_order_delta(
     result: dict,
     cache,
     new_features: list,
-    filtered_year_data: dict | None,
+    filtered_time_data: dict | None,
     source_id,
     is_events: bool,
     is_geometry: bool,
@@ -131,5 +131,5 @@ def _register_confirmed_order_delta(
         geo_source_id = result.get("source_id") or "geometry_zcta"
         cache.register_sent_geometry(new_features, geo_source_id)
         return
-    if filtered_year_data:
-        cache.register_sent_year_data(filtered_year_data)
+    if filtered_time_data:
+        cache.register_sent_time_data(filtered_time_data)

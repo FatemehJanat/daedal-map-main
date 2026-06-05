@@ -69,6 +69,7 @@ from mapmover.runtime.postprocess_pipeline import (
     apply_preprocessor_time_hints,
     build_validation_summary,
     inject_original_query_hints,
+    promote_filter_time_granularity,
     run_pre_validation_pipeline,
     split_derived_specs,
     validate_regular_items,
@@ -250,6 +251,7 @@ def run_postprocess_order(
         )
 
     inject_original_query_hints(items, original_query)
+    promote_filter_time_granularity(items)
 
     time_hints = hints.get("time", {}) if hints else {}
     apply_preprocessor_time_hints(items, time_hints, load_source_metadata)

@@ -12,6 +12,45 @@ from mapmover.runtime.warning_policy import (
 )
 
 
+def estimate_display_feature_count(payload: dict | None) -> int:
+    """Estimate how many map features would be visible in one frame.
+
+    This is the canonical broad-display measure for Explore warning gates.
+    It should reflect what the user would see at once, not the total number of
+    temporal rows or backend matches across all time slices.
+    """
+    if not isinstance(payload, dict):
+        return 0
+
+    geojson = payload.get("geojson")
+    if isinstance(geojson, dict):
+        features = geojson.get("features")
+        if isinstance(features, list):
+            return len(features)
+
+    time_data = payload.get("time_data") or payload.get("year_data") or {}
+    if isinstance(time_data, dict) and time_data:
+        max_frame = 0
+        for frame in time_data.values():
+            if isinstance(frame, dict):
+                max_frame = max(max_frame, len(frame))
+        if max_frame > 0:
+            return max_frame
+
+    rows = payload.get("rows")
+    if isinstance(rows, list):
+        return len(rows)
+
+    for key in ("row_count", "count", "available_count"):
+        try:
+            value = int(payload.get(key) or 0)
+        except (TypeError, ValueError):
+            value = 0
+        if value > 0:
+            return value
+    return 0
+
+
 def build_metric_warning(
     metric_count: int,
     policy: MetricWarningPolicy = DEFAULT_METRIC_WARNING_POLICY,
@@ -161,6 +200,7 @@ def build_interrupted_display_warning_payload(
         returned_rows=len(row_values),
         available_rows=available_rows,
         cap_reason="display_warning_gate",
+        cap_kind="display_warning",
     )
     return apply_cap_info_to_payload(payload, cap_info)
 
@@ -216,5 +256,6 @@ def build_display_warning_result(
         returned_rows=0,
         available_rows=row_count,
         cap_reason="display_warning_gate",
+        cap_kind="display_warning",
     )
     return apply_cap_info_to_payload(payload, cap_info)

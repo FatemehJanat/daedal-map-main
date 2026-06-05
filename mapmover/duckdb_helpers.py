@@ -20,6 +20,7 @@ from typing import Iterable, Optional
 import pandas as pd
 
 from .runtime_config import get_runtime_config
+from .catalog_surface import get_catalog_surface_override
 
 try:
     import duckdb
@@ -68,6 +69,14 @@ def is_cloud_mode() -> bool:
     return str(get_runtime_config().get("runtime_mode", "local")).strip().lower() == "cloud"
 
 
+def _allow_local_source_fallback() -> bool:
+    override = get_catalog_surface_override()
+    if override in {"published", "wip"}:
+        return override == "wip"
+    raw = str(os.environ.get("USE_WIP_CATALOG", "")).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _get_s3_endpoint() -> str:
     """Return the R2/S3 endpoint without https:// prefix (as DuckDB expects)."""
     cloud_cfg = get_runtime_config().get("cloud", {})
@@ -87,6 +96,9 @@ def _get_data_root() -> Path:
 def path_to_uri(local_path: Path) -> str:
     """Convert a local data path to an s3:// URI in cloud mode, or a local path string in local mode."""
     if not is_cloud_mode():
+        return str(local_path)
+
+    if _allow_local_source_fallback() and local_path.exists():
         return str(local_path)
 
     cloud_cfg = get_runtime_config().get("cloud", {})
@@ -111,7 +123,7 @@ def parquet_available(path: Path) -> bool:
     In local mode, checks if the file exists on disk.
     """
     if is_cloud_mode():
-        return True
+        return path.exists() or True
     return path.exists()
 
 

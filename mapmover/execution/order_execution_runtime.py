@@ -55,7 +55,7 @@ def execute_order_impl(
     if routed_result is not None:
         return routed_result
 
-    multi_year_mode = any(item.get("year_start") and item.get("year_end") for item in items)
+    temporal_mode = any(item.get("year_start") and item.get("year_end") for item in items)
 
     metadata_state = collect_source_metadata_func(
         items=items,
@@ -73,8 +73,8 @@ def execute_order_impl(
         f"sources={len(sources_used)} geo_levels={normalized_geo_levels}",
     )
 
-    year_data = {} if multi_year_mode else None
-    boxes = {} if not multi_year_mode else None
+    year_data = {}
+    boxes = {}
     all_years = set()
     metric_key = None
     all_metrics = []
@@ -91,7 +91,7 @@ def execute_order_impl(
     item_state = process_metric_items_func(
         order=order,
         items=items,
-        multi_year_mode=multi_year_mode,
+        temporal_mode=temporal_mode,
         aggregate_item_cache=aggregate_item_cache,
         year_data=year_data,
         boxes=boxes,
@@ -114,7 +114,10 @@ def execute_order_impl(
 
     year_data = item_state["year_data"]
     boxes = item_state["boxes"]
+    temporal_mode = item_state["temporal_mode"]
     all_years = item_state["all_years"]
+    temporal_granularity = item_state["temporal_granularity"]
+    temporal_use_timestamps = item_state["temporal_use_timestamps"]
     metric_key = item_state["metric_key"]
     all_metrics = item_state["all_metrics"]
     metric_year_ranges = item_state["metric_year_ranges"]
@@ -132,14 +135,14 @@ def execute_order_impl(
         trace_id,
         "data_boxes_ready",
         t_execute_start,
-        f"multi_year={multi_year_mode} boxes={len(boxes or {})} years={len(year_data or {})}",
+        f"temporal={temporal_mode} boxes={len(boxes or {})} times={len(year_data or {})}",
     )
 
     response = build_metrics_response_func(
         order=order,
         items=items,
         summary=summary,
-        multi_year_mode=multi_year_mode,
+        temporal_mode=temporal_mode,
         geo_levels=geo_levels,
         requested_geo_levels=requested_geo_levels,
         sources_used=sources_used,
@@ -153,6 +156,8 @@ def execute_order_impl(
         requested_year_start=requested_year_start,
         requested_year_end=requested_year_end,
         all_years=all_years,
+        temporal_granularity=temporal_granularity,
+        temporal_use_timestamps=temporal_use_timestamps,
         metric_key=metric_key,
         all_metrics=all_metrics,
         metric_year_ranges=metric_year_ranges,

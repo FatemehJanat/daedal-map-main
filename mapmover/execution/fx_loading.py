@@ -93,7 +93,7 @@ def load_fx_with_aggregation(
             "mode": "empty_after_filter",
             "resolved_source_id": runtime_source_id,
         }
-        return pd.DataFrame(columns=["loc_id", "year", "source", "local_per_usd"]), trace
+        return pd.DataFrame(columns=["loc_id", "timestamp", "date", "time_granularity", "source", "local_per_usd"]), trace
 
     aggregated = apply_temporal_aggregation_func(
         fx,
@@ -109,36 +109,23 @@ def load_fx_with_aggregation(
             "mode": "empty_after_aggregation",
             "resolved_source_id": runtime_source_id,
         }
-        return pd.DataFrame(columns=["loc_id", "year", "source", "local_per_usd"]), trace
+        return pd.DataFrame(columns=["loc_id", "timestamp", "date", "time_granularity", "source", "local_per_usd"]), trace
 
-    aggregated["year"] = pd.to_datetime(aggregated["date"], errors="coerce").dt.year
-    aggregated = aggregated.dropna(subset=["year"])
-    aggregated["year"] = aggregated["year"].astype(int)
+    timestamps = pd.to_datetime(aggregated["date"], errors="coerce", utc=True)
+    aggregated = aggregated.loc[timestamps.notna()].copy()
+    aggregated["timestamp"] = (timestamps.loc[timestamps.notna()].astype("int64") // 1_000_000).astype("int64")
+    aggregated["time_granularity"] = requested_granularity or "daily"
+    aggregated["source"] = source_id
 
-    yearly_method = "last" if spec.method == "last" else "mean"
-    if yearly_method == "last":
-        yearly = (
-            aggregated.sort_values(["loc_id", "year", "date"])
-            .groupby(["loc_id", "year"], as_index=False)
-            .tail(1)[["loc_id", "year", "local_per_usd"]]
-            .reset_index(drop=True)
-        )
-    else:
-        yearly = (
-            aggregated.groupby(["loc_id", "year"], as_index=False)
-            .agg(local_per_usd=("local_per_usd", "mean"))
-        )
-
-    yearly["source"] = source_id
     trace["applied"] = {
         "path": str(published_path),
         "mode": "published_temporal_aggregation",
         "resolved_source_id": runtime_source_id,
         "requested_granularity": spec.time_granularity,
         "requested_method": spec.method,
-        "coerced_output": "yearly_for_runtime",
+        "coerced_output": "native_temporal_runtime",
         "input_rows": int(len(fx)),
         "post_agg_rows": int(len(aggregated)),
-        "yearly_rows": int(len(yearly)),
+        "temporal_rows": int(len(aggregated)),
     }
-    return yearly[["loc_id", "year", "source", "local_per_usd"]], trace
+    return aggregated[["loc_id", "timestamp", "date", "time_granularity", "source", "local_per_usd"]], trace

@@ -10,13 +10,38 @@ from mapmover.runtime.source_hints import (
     source_geometry_kind,
     source_geometry_subkind,
 )
+from mapmover.source_time_contract import coerce_temporal_key, resolve_temporal_axis
+
+
+def _temporal_years_for_filter(df: pd.DataFrame, temporal_field: str, temporal_granularity: str | None) -> pd.Series:
+    series = df[temporal_field]
+    normalized_granularity = str(temporal_granularity or "").strip().lower()
+    if (
+        temporal_field == "timestamp"
+        and normalized_granularity in {"timestamp", "daily", "weekly", "monthly"}
+        and pd.api.types.is_numeric_dtype(series)
+    ):
+        return pd.to_datetime(series, errors="coerce", utc=True, unit="ms").dt.year
+    return pd.to_datetime(series, errors="coerce", utc=True).dt.year
+
+
+def _normalize_runtime_value(value):
+    if pd.isna(value):
+        return None
+    if hasattr(value, "item"):
+        value = value.item()
+    if isinstance(value, pd.Timestamp):
+        if value.tzinfo is not None:
+            value = value.tz_convert("UTC")
+        return value.isoformat()
+    return value
 
 
 def process_metric_items(
     *,
     order: dict,
     items: list,
-    multi_year_mode: bool,
+    temporal_mode: bool,
     aggregate_item_cache: dict,
     year_data,
     boxes,
@@ -56,6 +81,9 @@ def process_metric_items(
     merge_cap_info_func=None,
 ) -> dict:
     """Process all metric items and populate the executor data structures."""
+    temporal_mode_active = temporal_mode
+    temporal_granularity = None
+    temporal_use_timestamps = False
     cap_infos = []
     for idx, item in enumerate(items, start=1):
         source_id = item.get("source_id")
@@ -86,17 +114,37 @@ def process_metric_items(
             continue
         t_after_load = executor_log_func(trace_id, "item_loaded", t_item_start, f"item={idx}/{len(items)} source={source_id} rows={len(df)} cols={len(df.columns)}")
 
+        temporal_field, source_temporal_granularity, source_uses_timestamps = resolve_temporal_axis(
+            metadata,
+            list(df.columns),
+        )
+        if temporal_granularity is None and source_temporal_granularity:
+            temporal_granularity = source_temporal_granularity
+            temporal_use_timestamps = source_uses_timestamps
+
         if "geo_level" not in df.columns and "loc_id" in df.columns:
             derived_geo_levels = df["loc_id"].map(lambda value: derive_source_geo_level_from_loc_id(value, metadata))
             if derived_geo_levels.notna().any():
                 df = df.copy()
                 df["geo_level"] = derived_geo_levels
 
-        if source_id == "fx_usd_historical":
+        if source_id in {"fx_usd_historical", "fx_usd_historical_weekly", "fx_usd_historical_monthly"}:
             fx_df, trace = load_fx_with_aggregation_func(source_id, item, metadata)
             aggregation_trace.append(trace)
             if fx_df is not None:
                 df = fx_df
+                effective_granularity = str(
+                    ((trace.get("applied") or {}).get("requested_granularity"))
+                    or (trace.get("spec") or {}).get("time_granularity")
+                    or ""
+                ).strip().lower()
+                if effective_granularity:
+                    temporal_granularity = effective_granularity
+                    temporal_use_timestamps = effective_granularity in {"timestamp", "daily", "weekly", "monthly"}
+                    if "timestamp" in df.columns:
+                        temporal_field = "timestamp"
+                    elif "date" in df.columns:
+                        temporal_field = "date"
         t_after_fx = executor_log_func(trace_id, "item_aggregation_applied", t_after_load, f"item={idx}/{len(items)} source={source_id} rows={len(df)}")
 
         if metric:
@@ -126,11 +174,28 @@ def process_metric_items(
                         "available_years": available_years_for_range_func(metric_min_year, metric_max_year),
                     }
 
+        if (
+            not temporal_mode_active
+            and temporal_field
+            and (
+                year is None
+                or temporal_use_timestamps
+                or (temporal_granularity and temporal_granularity != "yearly")
+            )
+        ):
+            temporal_mode_active = True
+
         if year_start and year_end and "year" in df.columns:
             df = df[(df["year"] >= year_start) & (df["year"] <= year_end)]
+        elif year_start and year_end and temporal_field and temporal_field in df.columns:
+            temporal_years = _temporal_years_for_filter(df, temporal_field, temporal_granularity)
+            df = df[(temporal_years >= year_start) & (temporal_years <= year_end)]
         elif year and "year" in df.columns:
             df = df[df["year"] == year]
-        elif "year" in df.columns:
+        elif year and temporal_field and temporal_field in df.columns:
+            temporal_years = _temporal_years_for_filter(df, temporal_field, temporal_granularity)
+            df = df[temporal_years == year]
+        elif "year" in df.columns and not temporal_mode_active:
             if metric_col and metric_col in df.columns:
                 years_with_data = df[df[metric_col].notna()]["year"].unique()
                 if len(years_with_data) > 0:
@@ -193,7 +258,7 @@ def process_metric_items(
         df = apply_dataframe_filters_func(df, normalized_filters)
         t_after_filter = executor_log_func(trace_id, "field_filters_applied", t_after_region_filter, f"item={idx}/{len(items)} source={source_id} rows={len(df)}")
 
-        if sort_spec and not multi_year_mode:
+        if sort_spec and not temporal_mode_active:
             sort_col = sort_spec.get("by")
             if sort_col:
                 matched_col = find_metric_column_func(df, sort_col, metadata=metadata)
@@ -204,7 +269,7 @@ def process_metric_items(
                         df = df.head(sort_spec["limit"])
         t_after_sort = executor_log_func(trace_id, "sort_applied", t_after_filter, f"item={idx}/{len(items)} source={source_id} rows={len(df)}")
 
-        if apply_runtime_result_cap_func is not None:
+        if apply_runtime_result_cap_func is not None and not temporal_mode_active:
             requested_limit = sort_spec.get("limit") if isinstance(sort_spec, dict) else None
             df, item_cap_info = apply_runtime_result_cap_func(
                 df,
@@ -235,11 +300,9 @@ def process_metric_items(
                             continue
                         val = row.get(col)
                         if pd.notna(val):
-                            if hasattr(val, "item"):
-                                val = val.item()
-                            if isinstance(val, pd.Timestamp):
-                                val = val.isoformat()
-                            properties[col] = val
+                            normalized_val = _normalize_runtime_value(val)
+                            if normalized_val is not None:
+                                properties[col] = normalized_val
 
                     location_features.append({
                         "type": "Feature",
@@ -265,34 +328,42 @@ def process_metric_items(
 
             val = row.get(metric_col)
             if pd.notna(val):
-                if hasattr(val, "item"):
-                    val = val.item()
+                val = _normalize_runtime_value(val)
+                if val is None:
+                    continue
 
-                if multi_year_mode:
-                    row_year = int(row.get("year")) if "year" in df.columns else 0
-                    all_years.add(row_year)
+                if temporal_mode_active:
+                    raw_time_value = row.get(temporal_field) if temporal_field and temporal_field in df.columns else row.get("year")
+                    time_key = coerce_temporal_key(raw_time_value, temporal_granularity or "yearly")
+                    if time_key is None:
+                        continue
+                    all_years.add(time_key)
                     row_geo_level = row.get("geo_level") if "geo_level" in df.columns else requested_geo_level
                     if row_geo_level:
                         loc_level_map[geom_loc_id] = row_geo_level
 
-                    if row_year not in year_data:
-                        year_data[row_year] = {}
-                    if geom_loc_id not in year_data[row_year]:
-                        year_data[row_year][geom_loc_id] = {}
+                    if time_key not in year_data:
+                        year_data[time_key] = {}
+                    if geom_loc_id not in year_data[time_key]:
+                        year_data[time_key][geom_loc_id] = {}
 
-                    year_data[row_year][geom_loc_id][label] = val
+                    year_data[time_key][geom_loc_id][label] = val
                 else:
                     if geom_loc_id not in boxes:
-                        box = {"year": row.get("year")} if "year" in df.columns else {}
+                        box = {"year": _normalize_runtime_value(row.get("year"))} if "year" in df.columns else {}
+                        if temporal_field and temporal_field in df.columns and temporal_field != "year":
+                            temporal_val = _normalize_runtime_value(row.get(temporal_field))
+                            if temporal_val is not None:
+                                box[temporal_field] = temporal_val
                         if "geo_level" in df.columns:
-                            box["_geo_level"] = row.get("geo_level")
+                            box["_geo_level"] = _normalize_runtime_value(row.get("geo_level"))
                         elif requested_geo_level:
                             box["_geo_level"] = requested_geo_level
                         boxes[geom_loc_id] = box
 
                     boxes[geom_loc_id][label] = val
         tracked_rows = len(df)
-        box_count = len(year_data) if multi_year_mode and year_data is not None else len(boxes or {})
+        box_count = len(year_data) if temporal_mode_active and year_data is not None else len(boxes or {})
         executor_log_func(trace_id, "item_values_applied", t_after_sort, f"item={idx}/{len(items)} source={source_id} metric={label} rows={tracked_rows} box_count={box_count}")
 
     derived_specs = order.get("derived_specs", [])
@@ -318,7 +389,10 @@ def process_metric_items(
     return {
         "year_data": year_data,
         "boxes": boxes,
+        "temporal_mode": temporal_mode_active,
         "all_years": all_years,
+        "temporal_granularity": temporal_granularity or "yearly",
+        "temporal_use_timestamps": temporal_use_timestamps,
         "metric_key": metric_key,
         "all_metrics": all_metrics,
         "metric_year_ranges": metric_year_ranges,

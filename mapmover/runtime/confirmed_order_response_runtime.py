@@ -32,10 +32,16 @@ def build_confirmed_order_response_payload(
         response["overlay_type"] = geo_level
         response["geographic_level"] = geo_level
     if result.get("multi_year"):
+        # TEMPORARY MIRROR: confirmed-order responses should expose canonical
+        # time_* fields now. Legacy year_* aliases remain only for the cleanup
+        # pass after all consumers move over.
+        response["time_range"] = result.get("time_range") or result.get("year_range")
+        response["time_data"] = year_data if year_data else result.get("time_data", {})
         response["multi_year"] = True
         response["year_range"] = result["year_range"]
         response["metric_key"] = result.get("metric_key")
         response["available_metrics"] = result.get("available_metrics", [])
+        response["metric_time_ranges"] = result.get("metric_time_ranges") or result.get("metric_year_ranges", {})
         response["metric_year_ranges"] = result.get("metric_year_ranges", {})
         response["year_data"] = year_data if year_data else {}
     return response
