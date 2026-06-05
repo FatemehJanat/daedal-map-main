@@ -1,5 +1,6 @@
 import {
   getOpsOverlayIdsForFeeds,
+  isOpsFeedAllowed,
   getOverlayCatalogEntriesByPackId,
   getOverlayCatalogEntryBySourceId,
   getPackDefaultOverride,
@@ -292,11 +293,22 @@ export function resolveDefaultLoadAction({ lane = 'explore', overlayId = '', pac
   if (normalizedPackId) {
     const metadataAction = getPackDefaultLoadAction(normalizedPackId);
     if (metadataAction) {
-      return metadataAction;
+      return {
+        ...metadataAction,
+        entity: {
+          packId: normalizedPackId
+        }
+      };
     }
     const order = buildPackDefaultLoadOrder(normalizedPackId);
     if (order) {
-      return { type: 'confirmed_order', order };
+      return {
+        type: 'confirmed_order',
+        order,
+        entity: {
+          packId: normalizedPackId
+        }
+      };
     }
   }
 
@@ -308,11 +320,23 @@ export function resolveDefaultLoadAction({ lane = 'explore', overlayId = '', pac
       || getSourceDefaultOverride(normalizedSourceId);
     const metadataAction = getSourceDefaultLoadAction(sourceEntry);
     if (metadataAction) {
-      return metadataAction;
+      return {
+        ...metadataAction,
+        entity: {
+          sourceId: normalizedSourceId,
+          packId: String(sourceEntry?.pack_id || normalizedPackId || '').trim()
+        }
+      };
     }
     const order = buildSourceDefaultLoadOrder(normalizedSourceId);
     if (order) {
-      return { type: 'confirmed_order', order };
+      return {
+        type: 'confirmed_order',
+        order,
+        entity: {
+          sourceId: normalizedSourceId
+        }
+      };
     }
   }
 
@@ -322,29 +346,41 @@ export function resolveDefaultLoadAction({ lane = 'explore', overlayId = '', pac
     if (order) {
       return {
         type: 'confirmed_order',
-        order
+        order,
+        entity: {
+          packId: normalizedOverlayId
+        }
       };
     }
   }
 
   const normalizedFeedId = String(feedId || '').trim();
   if (normalizedLane === 'ops' && normalizedFeedId) {
+    if (!isOpsFeedAllowed(normalizedFeedId)) {
+      return null;
+    }
     const overlayIds = getOpsOverlayIdsForFeeds([normalizedFeedId]);
     if (overlayIds.length) {
       return {
         type: 'overlay_activation',
-        overlayIds
+        overlayIds,
+        entity: {
+          feedId: normalizedFeedId
+        }
       };
     }
   }
 
   if (normalizedLane === 'ops' && normalizedOverlayId) {
     const mappedFeedId = OVERLAY_TO_FEED[normalizedOverlayId];
-    if (mappedFeedId) {
+    if (mappedFeedId && isOpsFeedAllowed(mappedFeedId)) {
       return {
         type: 'overlay_activation',
         overlayIds: [normalizedOverlayId],
-        feedId: mappedFeedId
+        feedId: mappedFeedId,
+        entity: {
+          feedId: mappedFeedId
+        }
       };
     }
   }

@@ -268,6 +268,28 @@ function joinLabelsForMessage(labels = []) {
   return `${clean.slice(0, -1).join(', ')}, and ${clean[clean.length - 1]}`;
 }
 
+function inferSingleEntityRouteParams(order = null, response = null) {
+  const items = Array.isArray(order?.items) ? order.items.filter(Boolean) : [];
+  if (!items.length) {
+    return null;
+  }
+
+  const packIds = new Set(items.map((item) => String(item?.pack_id || '').trim()).filter(Boolean));
+  const sourceIds = new Set(items.map((item) => String(item?.source_id || '').trim()).filter(Boolean));
+
+  const responsePackId = String(response?.pack_id || response?.layer_pack_id || '').trim();
+  const responseSourceId = String(response?.source_id || response?.layer_source_id || '').trim();
+  if (responsePackId) packIds.add(responsePackId);
+  if (responseSourceId) sourceIds.add(responseSourceId);
+
+  const packId = packIds.size === 1 ? Array.from(packIds)[0] : '';
+  const sourceId = sourceIds.size === 1 ? Array.from(sourceIds)[0] : '';
+  if (!packId && !sourceId) {
+    return null;
+  }
+  return { packId, sourceId };
+}
+
 /**
  * Route metrics order results to OverlayController for cache ingestion.
  * @param {Object} response - API response with data_type 'metrics'
@@ -640,27 +662,41 @@ export const ChatManager = {
     });
     if (!action) return false;
     const result = await this.executeDefaultLoadAction(action, options);
-    if (result) this.reflectLoadedEntity(lane, params);
+    if (result) {
+      this.reflectLoadedEntity(lane, {
+        ...params,
+        ...(action.entity || {})
+      });
+    }
     return result;
   },
 
-  // Make an app pack/source load a distinct, identifiable analytics signal:
-  // stamp the pack_id/source_id into the page title + URL (so GA tells an app
-  // *load* apart from a www pack-page *visit*) and fire a pack_load event for
-  // clean counting. Single-entity loads only -- a multi-pack preset has no one
+  // Make an app pack/source/feed load a distinct, identifiable analytics
+  // signal: stamp the entity id into the page title + URL (so GA tells an app
+  // *load* apart from a www page *visit*) and fire a specific event for clean
+  // counting. Single-entity loads only -- a multi-pack preset has no one
   // identity, so it is skipped.
   reflectLoadedEntity(lane, params = {}) {
     const sourceId = String(params.sourceId || '').trim();
     const packId = String(params.packId || '').trim();
-    if (!sourceId && !packId) return;
+    const feedId = String(params.feedId || '').trim();
+    if (!sourceId && !packId && !feedId) return;
     try {
-      setLaneTitle(lane, sourceId || packId);
-      writeEntityParam(lane, sourceId ? { sourceId } : { packId });
-      window.gtag?.('event', 'pack_load', {
-        pack_id: packId || null,
-        source_id: sourceId || null,
-        lane,
-      });
+      const entityId = sourceId || feedId || packId;
+      setLaneTitle(lane, entityId);
+      writeEntityParam(lane, sourceId ? { sourceId } : feedId ? { feedId } : { packId });
+      if (feedId) {
+        window.gtag?.('event', 'feed_load', {
+          feed_id: feedId,
+          lane,
+        });
+      } else {
+        window.gtag?.('event', 'pack_load', {
+          pack_id: packId || null,
+          source_id: sourceId || null,
+          lane,
+        });
+      }
     } catch (err) {
       console.warn('reflectLoadedEntity failed', err);
     }
@@ -1578,6 +1614,10 @@ export const ChatManager = {
       if (!options.suppressResultMessage) {
         this.addMessage(data.message || 'This data is already loaded on your map.', 'assistant');
       }
+      const entityParams = inferSingleEntityRouteParams(order, data);
+      if (entityParams) {
+        this.reflectLoadedEntity('explore', entityParams);
+      }
       if (orderPanel.switchTab) orderPanel.switchTab('loaded');
       // The data is in cache but may have been hidden or cleared from the map
       // (e.g. choropleth layers hidden on a lane/state change). Re-render from
@@ -1661,6 +1701,10 @@ export const ChatManager = {
 
       // Track loaded data for LLM context
       registerLoadedData(order, data);
+      const entityParams = inferSingleEntityRouteParams(order, data);
+      if (entityParams) {
+        this.reflectLoadedEntity('explore', entityParams);
+      }
 
       if (!(dataType === 'events' && resolveOverlayIdForOrderResult(data, order))) {
         App?.displayMapPayload(data, { order });

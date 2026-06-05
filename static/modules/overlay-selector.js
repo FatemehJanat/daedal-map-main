@@ -134,6 +134,15 @@ export function getOpsOverlayIdsForFeeds(feeds = []) {
   return Array.from(overlayIds);
 }
 
+export function isOpsFeedAllowed(feedId) {
+  const normalizedFeedId = String(feedId || '').trim();
+  if (!normalizedFeedId) return false;
+  const overlayIds = getOpsOverlayIdsForFeeds([normalizedFeedId]);
+  if (!overlayIds.length) return false;
+  const allowedOverlayIds = getAllowedOpsOverlayIds();
+  return overlayIds.some((overlayId) => allowedOverlayIds.has(overlayId));
+}
+
 export function getAllOpsManagedOverlayIds() {
   const overlayIds = new Set();
   for (const ids of Object.values(OPS_FEED_TO_OVERLAY_IDS)) {

@@ -14,6 +14,7 @@
 
 const LANES = ['explore', 'research', 'ops'];
 const DEFAULT_LANE = 'explore';
+const ROUTE_INTENT_PARAMS = ['pack', 'source', 'feed', 'q'];
 
 const LANE_TITLES = {
   explore: 'Explore - DaedalMap',
@@ -55,15 +56,17 @@ export function setLaneTitle(lane, entityId) {
  * both are given (the more specific intent). No-op when the URL already matches
  * (e.g. a deep-link entry that already carries the param).
  * @param {string} lane
- * @param {{packId?: string, sourceId?: string}} [entity]
+ * @param {{packId?: string, sourceId?: string, feedId?: string}} [entity]
  */
-export function writeEntityParam(lane, { packId = '', sourceId = '' } = {}) {
+export function writeEntityParam(lane, { packId = '', sourceId = '', feedId = '' } = {}) {
   if (typeof window === 'undefined') return;
   const target = '/' + (normalizeLane(lane) || DEFAULT_LANE);
   const pack = String(packId || '').trim();
   const source = String(sourceId || '').trim();
+  const feed = String(feedId || '').trim();
   const params = new URLSearchParams();
   if (source) params.set('source', source);
+  else if (feed) params.set('feed', feed);
   else if (pack) params.set('pack', pack);
   const qs = params.toString();
   const nextSearch = qs ? `?${qs}` : '';
@@ -77,7 +80,7 @@ export function writeEntityParam(lane, { packId = '', sourceId = '' } = {}) {
  * the lane from the first path segment; the remaining fields are placeholders
  * the later phases fill in.
  * @param {Location} [loc]
- * @returns {{lane: string|null, pack_id: string|null, source_id: string|null,
+ * @returns {{lane: string|null, pack_id: string|null, source_id: string|null, feed_id: string|null,
  *   prefill_query: string|null, requires_auth: boolean, invalid_reason: string|null}}
  */
 export function parseRouteIntent(loc = window.location) {
@@ -118,11 +121,18 @@ export function getInitialLane(_savedLane) {
  * @param {string} lane
  * @param {{replace?: boolean}} [opts]
  */
-export function writeLane(lane, { replace = false } = {}) {
+export function writeLane(lane, { replace = false, preserveQuery = false } = {}) {
   const target = '/' + (normalizeLane(lane) || DEFAULT_LANE);
   const current = (window.location.pathname || '/').replace(/\/+$/, '') || '/';
-  if (current === target) return;
-  const url = target + window.location.search + window.location.hash;
+  const params = new URLSearchParams(window.location.search || '');
+  if (!preserveQuery) {
+    for (const key of ROUTE_INTENT_PARAMS) {
+      params.delete(key);
+    }
+  }
+  const nextSearch = params.toString();
+  const url = target + (nextSearch ? `?${nextSearch}` : '') + window.location.hash;
+  if (current === target && (window.location.search || '') === (nextSearch ? `?${nextSearch}` : '')) return;
   if (replace) {
     window.history.replaceState({ lane }, '', url);
   } else {
@@ -142,7 +152,7 @@ export function normalizeBootUrl(resolvedLane) {
   const intent = parseRouteIntent();
   if (intent.lane) return; // URL already carries a valid lane; leave it
   const lane = normalizeLane(resolvedLane) || DEFAULT_LANE;
-  writeLane(lane, { replace: true });
+  writeLane(lane, { replace: true, preserveQuery: true });
 }
 
 /**
