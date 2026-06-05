@@ -2,6 +2,8 @@ import {
   getOpsOverlayIdsForFeeds,
   getOverlayCatalogEntriesByPackId,
   getOverlayCatalogEntryBySourceId,
+  getPackDefaultOverride,
+  getSourceDefaultOverride,
   resolveOverlayIdFromPackId,
   resolveOverlayIdFromSourceId
 } from './overlay-selector.js';
@@ -132,7 +134,8 @@ function buildOverlayRangeLoadAction(defaultLoad, sourceEntry) {
     params: defaultLoad.params && typeof defaultLoad.params === 'object'
       ? cloneJsonSafe(defaultLoad.params)
       : null,
-    message: String(sourceEntry?.default_response || '').trim()
+    message: String(sourceEntry?.default_response || '').trim(),
+    question: String(sourceEntry?.default_question || '').trim()
   };
 }
 
@@ -150,11 +153,21 @@ function getSourceDefaultLoadAction(sourceEntry) {
   return {
     type: 'confirmed_order',
     order: defaultLoad,
-    message: String(sourceEntry.default_response || '').trim()
+    message: String(sourceEntry.default_response || '').trim(),
+    question: String(sourceEntry.default_question || '').trim()
   };
 }
 
 function getPackDefaultLoadAction(packId) {
+  // Pack-level override wins: authored in the pack metadata.json and delivered
+  // via /api/catalog/overlays pack_defaults. It has the same shape as a source
+  // default, so reuse the same builder.
+  const packOverride = getPackDefaultOverride(packId);
+  if (packOverride) {
+    const action = getSourceDefaultLoadAction(packOverride);
+    if (action) return action;
+  }
+  // Fallback: the first member source's own default (the always-there floor).
   const entries = getOverlayCatalogEntriesByPackId(packId);
   for (const entry of entries) {
     const action = getSourceDefaultLoadAction(entry);
@@ -289,7 +302,11 @@ export function resolveDefaultLoadAction({ lane = 'explore', overlayId = '', pac
 
   const normalizedSourceId = String(sourceId || '').trim();
   if (normalizedLane === 'explore' && normalizedSourceId) {
-    const metadataAction = getSourceDefaultLoadAction(getOverlayCatalogEntryBySourceId(normalizedSourceId));
+    // Overlay catalog first (sources with an overlay), then the source_defaults
+    // map (covers sources with no overlay slot, e.g. metrics aggregates).
+    const sourceEntry = getOverlayCatalogEntryBySourceId(normalizedSourceId)
+      || getSourceDefaultOverride(normalizedSourceId);
+    const metadataAction = getSourceDefaultLoadAction(sourceEntry);
     if (metadataAction) {
       return metadataAction;
     }

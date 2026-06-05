@@ -79,6 +79,12 @@ const OPS_FEED_TO_OVERLAY_IDS = {
 let ALL_CATEGORIES = [];
 let CATEGORIES = [];
 let OVERLAYS = [];
+// Pack-level default overrides (pack_id -> {default_load, default_question,
+// default_response}) from /api/catalog/overlays. Override wins over source defaults.
+let PACK_DEFAULTS = {};
+// Source-level defaults (source_id -> {default_load, default_question,
+// default_response}) for ?source= deep-links, including sources with no overlay.
+let SOURCE_DEFAULTS = {};
 let opsEffectiveFeeds = [];
 const laneTrayPromotions = new Map();
 
@@ -178,6 +184,23 @@ export function getOverlayCatalogEntriesByPackId(packId) {
     }
   }
   return matches;
+}
+
+// Pack-level default override authored in the pack metadata.json. Returns
+// { default_load, default_question, default_response } or null.
+export function getPackDefaultOverride(packId) {
+  const normalizedPackId = String(packId || '').trim();
+  if (!normalizedPackId) return null;
+  return PACK_DEFAULTS[normalizedPackId] || null;
+}
+
+// Source-level default. Reachable even for sources with no overlay slot (e.g.
+// metrics aggregates), unlike getOverlayCatalogEntryBySourceId. Returns
+// { default_load, default_question, default_response } or null.
+export function getSourceDefaultOverride(sourceId) {
+  const normalizedSourceId = String(sourceId || '').trim();
+  if (!normalizedSourceId) return null;
+  return SOURCE_DEFAULTS[normalizedSourceId] || null;
 }
 
 function getDefaultOverlayIdsForMode(mode) {
@@ -545,6 +568,8 @@ export const OverlaySelector = {
       // Fetch overlay tree from API
       const response = await fetchMsgpack('/api/catalog/overlays');
       const overlayTree = response.overlay_tree || {};
+      PACK_DEFAULTS = response.pack_defaults || {};
+      SOURCE_DEFAULTS = response.source_defaults || {};
 
       // Build categories from tree
       ALL_CATEGORIES = buildCategoriesFromTree(overlayTree);

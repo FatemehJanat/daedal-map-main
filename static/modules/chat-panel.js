@@ -218,11 +218,19 @@ function ingestEventsToOverlay(response, order = null) {
   }
 
   // Build range metadata from response if available
+  const singleOrderItem = Array.isArray(order?.items) && order.items.length === 1
+    ? order.items[0]
+    : null;
   const rangeMeta = (response.time_range && response.time_range.min && response.time_range.max)
     ? { start: response.time_range.min, end: response.time_range.max }
     : (response.year_range && response.year_range.length === 2)
       ? { start: new Date(response.year_range[0], 0, 1).getTime(),
           end: new Date(response.year_range[1], 11, 31).getTime() }
+      : (singleOrderItem?.year_start && singleOrderItem?.year_end)
+        ? {
+            start: new Date(singleOrderItem.year_start, 0, 1).getTime(),
+            end: new Date(singleOrderItem.year_end, 11, 31).getTime()
+          }
       : null;
 
   OverlayController.ingestOrderResult(overlayId, response.geojson, rangeMeta, response);
@@ -274,10 +282,10 @@ function ingestMetricsToCache(response) {
     return;
   }
 
-  // Build year range metadata
-  const yearRange = response.year_range || null;
+  const timeData = response.time_data || response.year_data || null;
+  const timeRange = response.time_range || response.year_range || null;
 
-  OverlayController.ingestMetricData(sourceId, response.geojson, response.year_data, yearRange);
+  OverlayController.ingestMetricData(sourceId, response.geojson, timeData, timeRange);
 }
 
 /**
@@ -512,8 +520,17 @@ export const ChatManager = {
     }
 
     if (action.type === 'confirmed_order' && action.order) {
-      if (options.message) {
-        this.addMessage(options.message, 'assistant', { mode: options.mode || this.mode });
+      // Surface the curated default question + response as a synthetic chat
+      // exchange (question as the user turn, default_response as the assistant
+      // turn) so a deep-link/preset load teaches the phrasing and explains the
+      // data, instead of falling through to the generic "Loaded N locations".
+      const curatedResponse = options.message || action.message;
+      const showCurated = !options.suppressResultMessage && Boolean(curatedResponse);
+      if (showCurated) {
+        if (action.question) {
+          this.addMessage(action.question, 'user', { mode: options.mode || this.mode });
+        }
+        this.addMessage(curatedResponse, 'assistant', { mode: options.mode || this.mode });
       }
       const items = Array.isArray(action.order.items) ? action.order.items : [];
       const requestedCount = Number(action.order._requestedPackCount) || items.length;
@@ -522,7 +539,8 @@ export const ChatManager = {
         await this.executeOrder(action.order, {
           skipLog: options.skipLog || false,
           syntheticSource: options.syntheticSource || 'default_load',
-          suppressResultMessage: Boolean(options.suppressResultMessage)
+          // Curated response already shown above -> suppress the generic result.
+          suppressResultMessage: showCurated || Boolean(options.suppressResultMessage)
         });
         return true;
       }
@@ -583,8 +601,12 @@ export const ChatManager = {
         { params: action.params || null }
       );
 
-      if (loaded && options.message) {
-        this.addMessage(options.message, 'assistant', { mode: options.mode || this.mode });
+      const rangeMessage = options.message || action.message;
+      if (loaded && rangeMessage && !options.suppressResultMessage) {
+        if (action.question) {
+          this.addMessage(action.question, 'user', { mode: options.mode || this.mode });
+        }
+        this.addMessage(rangeMessage, 'assistant', { mode: options.mode || this.mode });
       }
       return Boolean(loaded);
     }
@@ -1532,6 +1554,12 @@ export const ChatManager = {
         this.addMessage(data.message || 'This data is already loaded on your map.', 'assistant');
       }
       if (orderPanel.switchTab) orderPanel.switchTab('loaded');
+      // The data is in cache but may have been hidden or cleared from the map
+      // (e.g. choropleth layers hidden on a lane/state change). Re-render from
+      // cache and re-sync visibility so "already loaded" actually re-displays it
+      // instead of leaving a dead message with nothing on screen.
+      window.OverlayController?.rerenderFromCache?.();
+      window.App?.syncMetricOverlayVisibility?.();
     } else if (data.type === 'error') {
       if (!options.suppressResultMessage) {
         this.addMessage(data.message || 'Failed to load data.', 'assistant');

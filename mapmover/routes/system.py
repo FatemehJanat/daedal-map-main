@@ -1075,6 +1075,9 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
         source_size = _source_size_contract(s)
         subsources.append({
             "source_id": s.get("source_id"),
+            # Presence signals the pack page to show a per-source "View on map"
+            # button (-> /explore?source=<id>); only authored sources get one.
+            "default_question": s.get("default_question"),
             "source_name": _best_source_text(
                 sref_source.get("source_name"),
                 smeta.get("source_name"),
@@ -2013,11 +2016,40 @@ async def get_catalog_overlays(req: Request):
                 if s.get("pack_id") == "geometry_global"
             ]
 
+    # Pack-level default override: authored in the pack's metadata.json and
+    # carried onto catalog `packs[]`. The override wins over a member source's
+    # default for ?pack= loads. Keyed by pack_id; only packs that authored one.
+    pack_defaults = {
+        str(pack.get("pack_id")): {
+            "default_load": pack.get("default_load"),
+            "default_question": pack.get("default_question"),
+            "default_response": pack.get("default_response"),
+        }
+        for pack in catalog.get("packs", [])
+        if pack.get("pack_id") and pack.get("default_load")
+    }
+
+    # Source-level defaults keyed by source_id, for ?source= deep-links. The
+    # overlay tree only carries defaults for sources that have an overlay; this
+    # map covers all sources with a default (e.g. metrics aggregates with no
+    # overlay slot), so the override is reachable regardless of overlay.
+    source_defaults = {
+        str(src.get("source_id")): {
+            "default_load": src.get("default_load"),
+            "default_question": src.get("default_question"),
+            "default_response": src.get("default_response"),
+        }
+        for src in all_sources
+        if src.get("source_id") and src.get("default_load")
+    }
+
     return msgpack_response(
         {
             "sources": filtered_sources,
             "overlay_tree": build_overlay_tree_for_sources(all_sources),
             "overlay_count": len(filtered_sources),
+            "pack_defaults": pack_defaults,
+            "source_defaults": source_defaults,
         }
     )
 
