@@ -9,9 +9,9 @@
 import { CONFIG } from './config.js';
 import { fetchMsgpack } from './utils/fetch.js';
 import { getCurrentProfile } from './auth.js';
-
-// localStorage key prefix for persisting lane-specific overlay selections
-const STORAGE_KEY_PREFIX = 'countymap_activeOverlays';
+import { getExploreDefaultOverlayIds } from './explore/default-overlays.js';
+import { getResearchDefaultOverlayIds } from './research/default-overlays.js';
+import { getOpsDefaultOverlayIds, getOpsPublicDefaultOverlayIds } from './ops/default-overlays.js';
 
 // Model mapping based on data_type
 const DATA_TYPE_TO_MODEL = {
@@ -80,6 +80,27 @@ let ALL_CATEGORIES = [];
 let CATEGORIES = [];
 let OVERLAYS = [];
 let opsEffectiveFeeds = [];
+const laneTrayPromotions = new Map();
+
+function deriveOverlaySourceIds(sources = []) {
+  return Array.from(new Set(
+    (Array.isArray(sources) ? sources : [])
+      .map((source) => String(source?.source_id || '').trim())
+      .filter(Boolean)
+  ));
+}
+
+function deriveOverlayPackIds(overlayId, sources = []) {
+  const packIds = new Set(
+    (Array.isArray(sources) ? sources : [])
+      .map((source) => String(source?.pack_id || '').trim())
+      .filter(Boolean)
+  );
+  if (overlayId) {
+    packIds.add(String(overlayId).trim());
+  }
+  return Array.from(packIds).filter(Boolean);
+}
 
 function normalizeFeedNames(values) {
   const out = [];
@@ -117,6 +138,55 @@ export function getAllOpsManagedOverlayIds() {
   return Array.from(overlayIds);
 }
 
+export function resolveOverlayIdFromSourceId(sourceId) {
+  const normalizedSourceId = String(sourceId || '').trim();
+  if (!normalizedSourceId) return '';
+  const match = OVERLAYS.find((overlay) => Array.isArray(overlay?.sourceIds) && overlay.sourceIds.includes(normalizedSourceId));
+  return match?.id || '';
+}
+
+export function resolveOverlayIdFromPackId(packId) {
+  const normalizedPackId = String(packId || '').trim();
+  if (!normalizedPackId) return '';
+  const match = OVERLAYS.find((overlay) => Array.isArray(overlay?.packIds) && overlay.packIds.includes(normalizedPackId));
+  return match?.id || '';
+}
+
+export function getOverlayCatalogEntryBySourceId(sourceId) {
+  const normalizedSourceId = String(sourceId || '').trim();
+  if (!normalizedSourceId) return null;
+  for (const overlay of OVERLAYS) {
+    const sources = Array.isArray(overlay?.sources) ? overlay.sources : [];
+    const match = sources.find((source) => String(source?.source_id || '').trim() === normalizedSourceId);
+    if (match) {
+      return match;
+    }
+  }
+  return null;
+}
+
+export function getOverlayCatalogEntriesByPackId(packId) {
+  const normalizedPackId = String(packId || '').trim();
+  if (!normalizedPackId) return [];
+  const matches = [];
+  for (const overlay of OVERLAYS) {
+    const sources = Array.isArray(overlay?.sources) ? overlay.sources : [];
+    for (const source of sources) {
+      if (String(source?.pack_id || '').trim() === normalizedPackId) {
+        matches.push(source);
+      }
+    }
+  }
+  return matches;
+}
+
+function getDefaultOverlayIdsForMode(mode) {
+  if (mode === 'explore') return [...getExploreDefaultOverlayIds()];
+  if (mode === 'research') return [...getResearchDefaultOverlayIds()];
+  if (mode === 'ops') return [...getOpsDefaultOverlayIds()];
+  return [];
+}
+
 /**
  * Build CATEGORIES from overlay_tree fetched from API.
  * @param {Object} overlayTree - The overlay_tree from catalog
@@ -152,7 +222,9 @@ function buildCategoriesFromTree(overlayTree) {
           model: model,
           icon: OVERLAY_ICONS[overlayId] || overlayId[0].toUpperCase(),
           hasYearFilter: dataType === 'events',
-          sources: overlayData.sources || []
+          sources: overlayData.sources || [],
+          sourceIds: deriveOverlaySourceIds(overlayData.sources),
+          packIds: deriveOverlayPackIds(overlayId, overlayData.sources)
         });
       }
 
@@ -184,7 +256,9 @@ function buildCategoriesFromTree(overlayTree) {
         model: model,
         icon: OVERLAY_ICONS[categoryId] || categoryId[0].toUpperCase(),
         hasYearFilter: dataType === 'events',
-        sources: categoryData.sources || []
+        sources: categoryData.sources || [],
+        sourceIds: deriveOverlaySourceIds(categoryData.sources),
+        packIds: deriveOverlayPackIds(categoryId, categoryData.sources)
       };
 
       if (model === 'choropleth') {
@@ -242,7 +316,7 @@ function buildCategoriesFromTree(overlayTree) {
     id: 'currency',
     label: 'Currency',
     description: 'Global currency choropleth',
-    default: true,
+    default: false,
     locked: false,
     model: 'choropleth',
     icon: '$',
@@ -344,10 +418,17 @@ function getCurrentOverlayLaneMode() {
   return 'explore';
 }
 
+function getPromotedOverlayIdsForMode(mode = getCurrentOverlayLaneMode()) {
+  return laneTrayPromotions.get(mode) || new Set();
+}
+
 function getAllowedOpsOverlayIds() {
   const profile = getCurrentProfile();
   const profileFeeds = Array.isArray(profile?.ops_feeds) ? profile.ops_feeds : [];
   const opsFeeds = opsEffectiveFeeds.length ? opsEffectiveFeeds : profileFeeds;
+  if (!opsFeeds.length) {
+    return new Set(getOpsPublicDefaultOverlayIds());
+  }
   const allowed = new Set();
   for (const feed of opsFeeds) {
     const overlayIds = OPS_FEED_TO_OVERLAY_IDS[feed] || [];
@@ -383,11 +464,12 @@ function filterCategoriesForCurrentMode(categories) {
   }
 
   const allowedOverlayIds = getAllowedOpsOverlayIds();
+  const promotedOverlayIds = getPromotedOverlayIdsForMode();
 
   const visibleCategories = [];
   for (const category of cloned) {
     if (category.isCategory) {
-      const overlays = category.overlays.filter((overlay) => overlay.alwaysVisible || allowedOverlayIds.has(overlay.id));
+      const overlays = category.overlays.filter((overlay) => overlay.alwaysVisible || allowedOverlayIds.has(overlay.id) || promotedOverlayIds.has(overlay.id));
       if (overlays.length) {
         visibleCategories.push({
           ...category,
@@ -397,7 +479,7 @@ function filterCategoriesForCurrentMode(categories) {
       continue;
     }
 
-    if (category.overlay && allowedOverlayIds.has(category.overlay.id)) {
+    if (category.overlay && (allowedOverlayIds.has(category.overlay.id) || promotedOverlayIds.has(category.overlay.id))) {
       visibleCategories.push(category);
     }
   }
@@ -430,6 +512,17 @@ export const OverlaySelector = {
 
   // Change listeners
   listeners: [],
+
+  applyLaneDefaults(mode = this.currentLaneMode) {
+    this.activeOverlays.clear();
+    const defaultIds = new Set(getDefaultOverlayIdsForMode(mode));
+    for (const overlay of OVERLAYS) {
+      if (defaultIds.has(overlay.id)) {
+        this.activeOverlays.add(overlay.id);
+      }
+    }
+    this._rememberCurrentLaneState();
+  },
 
   /**
    * Initialize the overlay selector UI.
@@ -492,16 +585,14 @@ export const OverlaySelector = {
       OVERLAYS = getAllOverlaysFromCategories(CATEGORIES);
     }
 
-    // Try to restore from localStorage, fall back to defaults
+    // Restore only in-memory lane state from the current runtime session.
+    // Persistent browser restore is intentionally disabled; defaults or URL/
+    // account-backed state should be authoritative on a fresh visit.
     if (restoreState && !this._restoreState(this.currentLaneMode)) {
-      // Set default overlays if no saved state
-      for (const overlay of OVERLAYS) {
-        if (overlay.default) {
-          this.activeOverlays.add(overlay.id);
-        }
-      }
+      this.applyLaneDefaults(this.currentLaneMode);
     } else if (!restoreState) {
       this.activeOverlays.clear();
+      this.applyLaneDefaults(this.currentLaneMode);
     }
     this._rememberCurrentLaneState();
 
@@ -717,7 +808,7 @@ export const OverlaySelector = {
       // Notify listeners
       this._notifyListeners(overlayId, checkbox.checked);
 
-      // Persist to localStorage
+      // Persist current-session lane state
       this._saveState();
     });
   },
@@ -764,7 +855,7 @@ export const OverlaySelector = {
     console.log('Category toggled:', categoryId, active);
     console.log('Active overlays:', Array.from(this.activeOverlays));
 
-    // Persist to localStorage
+    // Persist current-session lane state
     this._saveState();
   },
 
@@ -822,7 +913,7 @@ export const OverlaySelector = {
     // Notify listeners
     this._notifyListeners(overlayId, this.activeOverlays.has(overlayId));
 
-    // Persist to localStorage
+    // Persist current-session lane state
     this._saveState();
   },
 
@@ -894,12 +985,7 @@ export const OverlaySelector = {
     this._rememberCurrentLaneState();
     this.currentLaneMode = nextMode;
     if (!this._restoreState(nextMode)) {
-      for (const overlay of OVERLAYS) {
-        if (overlay.default) {
-          this.activeOverlays.add(overlay.id);
-        }
-      }
-      this._rememberCurrentLaneState();
+      this.applyLaneDefaults(nextMode);
     }
     this.refreshVisibility();
 
@@ -922,6 +1008,21 @@ export const OverlaySelector = {
    */
   addListener(callback) {
     this.listeners.push(callback);
+  },
+
+  promoteOverlay(overlayId, mode = this.currentLaneMode) {
+    const normalizedMode = String(mode || this.currentLaneMode || 'explore').trim().toLowerCase() || 'explore';
+    let promoted = laneTrayPromotions.get(normalizedMode);
+    if (!promoted) {
+      promoted = new Set();
+      laneTrayPromotions.set(normalizedMode, promoted);
+    }
+    const hadOverlay = promoted.has(overlayId);
+    promoted.add(overlayId);
+    if (!hadOverlay && normalizedMode === this.currentLaneMode) {
+      this.refreshVisibility();
+    }
+    return !hadOverlay;
   },
 
   /**
@@ -1000,12 +1101,8 @@ export const OverlaySelector = {
     // Update category checkbox
     this._updateCategoryCheckbox(overlayId);
 
-    // Persist to localStorage
+    // Persist current-session lane state
     this._saveState();
-  },
-
-  _storageKey(mode = this.currentLaneMode) {
-    return `${STORAGE_KEY_PREFIX}_${mode}`;
   },
 
   _rememberCurrentLaneState() {
@@ -1013,58 +1110,40 @@ export const OverlaySelector = {
   },
 
   /**
-   * Save active overlays to localStorage.
+   * Save active overlays in memory for the current runtime session only.
    * @private
    */
   _saveState() {
-    try {
-      const data = Array.from(this.activeOverlays);
-      this.laneOverlayStates.set(this.currentLaneMode, data);
-      localStorage.setItem(this._storageKey(), JSON.stringify(data));
-    } catch (e) {
-      // localStorage not available or full
-      console.warn('OverlaySelector: Could not save state to localStorage', e);
-    }
+    const data = Array.from(this.activeOverlays);
+    this.laneOverlayStates.set(this.currentLaneMode, data);
   },
 
   /**
-   * Restore active overlays from localStorage.
+   * Restore active overlays from in-memory lane state only.
    * @private
    * @returns {boolean} True if state was restored, false otherwise
    */
   _restoreState(mode = this.currentLaneMode) {
-    try {
-      this.activeOverlays.clear();
-      const cached = this.laneOverlayStates.get(mode);
-      const raw = cached || JSON.parse(localStorage.getItem(this._storageKey(mode)) || 'null');
-      if (Array.isArray(raw)) {
-        for (const id of raw) {
-          if (OVERLAYS.find(o => o.id === id)) {
-            this.activeOverlays.add(id);
-          }
+    this.activeOverlays.clear();
+    const raw = this.laneOverlayStates.get(mode);
+    if (Array.isArray(raw)) {
+      for (const id of raw) {
+        if (OVERLAYS.find(o => o.id === id)) {
+          this.activeOverlays.add(id);
         }
-        this.laneOverlayStates.set(mode, Array.from(this.activeOverlays));
-        console.log('OverlaySelector: Restored state for lane', mode, Array.from(this.activeOverlays));
-        return true;
       }
-    } catch (e) {
-      console.warn('OverlaySelector: Could not restore state from localStorage', e);
+      this.laneOverlayStates.set(mode, Array.from(this.activeOverlays));
+      console.log('OverlaySelector: Restored in-memory state for lane', mode, Array.from(this.activeOverlays));
+      return true;
     }
     return false;
   },
 
   /**
-   * Clear saved state and reset to defaults.
+   * Clear current-session lane state and reset to defaults.
    * Called by New Chat button.
    */
   clearState() {
-    try {
-      for (const mode of ['explore', 'research', 'ops']) {
-        localStorage.removeItem(this._storageKey(mode));
-      }
-    } catch (e) {
-      // Ignore
-    }
     this.laneOverlayStates.clear();
 
     // Clear current state
@@ -1072,12 +1151,7 @@ export const OverlaySelector = {
     this.activeOverlays.clear();
 
     // Reset to defaults
-    for (const overlay of OVERLAYS) {
-      if (overlay.default) {
-        this.activeOverlays.add(overlay.id);
-      }
-    }
-    this._rememberCurrentLaneState();
+    this.applyLaneDefaults(this.currentLaneMode);
 
     // Rebuild UI to reflect reset state
     if (this.list) {

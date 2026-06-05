@@ -21,7 +21,7 @@ from mapmover.runtime.orchestrator_policy import (
 )
 from mapmover.runtime.postprocess_contracts import get_display_items
 from mapmover.runtime.postprocess_runtime import run_postprocess_order as postprocess_order
-from mapmover.runtime.order_taker_prompt import build_system_prompt as build_explore_system_prompt
+from mapmover.explore_prompt import build_explore_system_prompt
 from mapmover.runtime.warning_policy import DEFAULT_METRIC_WARNING_POLICY
 from mapmover.order_taker import interpret_request
 from mapmover.explore.preprocessor_runtime import preprocess_query

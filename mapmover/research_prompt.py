@@ -1,5 +1,7 @@
 """Research mode system prompt."""
 
+from mapmover.runtime.prompt_composer import compose_lane_system_prompt
+
 
 RESEARCH_SYSTEM_PROMPT = """You are County Map Research, an analytical assistant for reasoning over the user's active corpus.
 
@@ -98,4 +100,7 @@ def build_research_system_prompt(corpus_manifest: dict) -> str:
         corpus_note = f"\n\nActive corpus has {artifact_count} artifact(s). Their manifest is provided in the conversation."
     else:
         corpus_note = "\n\nNo active corpus artifacts are loaded."
-    return RESEARCH_SYSTEM_PROMPT + corpus_note
+    return compose_lane_system_prompt(
+        lane_prompt=RESEARCH_SYSTEM_PROMPT,
+        turn_context_blocks=[corpus_note],
+    )

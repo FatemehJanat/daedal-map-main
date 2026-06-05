@@ -2,7 +2,7 @@
  * Lane switching and chat-mode UI helpers.
  */
 
-import { writeLane } from '../routing/app-route-state.js';
+import { writeLane, setLaneTitle } from '../routing/app-route-state.js';
 
 function normalizeChatMode(mode, chatModes = ['explore', 'research', 'ops']) {
   return chatModes.includes(mode) ? mode : 'explore';
@@ -28,6 +28,7 @@ export async function switchChatMode(ctx, mode, deps = {}) {
   // Reflect the lane in the URL (pushState). No-op when triggered by popstate
   // since the browser already changed the URL, so back/forward does not loop.
   writeLane(mode);
+  setLaneTitle(mode);
   ctx.history = ctx.modeHistories[mode] || [];
   applyModeUiState(ctx, deps);
   App?.activateLaneMapView?.(mode);
@@ -54,7 +55,9 @@ export async function switchChatMode(ctx, mode, deps = {}) {
 }
 
 export async function seedEmptyConversation(ctx, mode = ctx.mode, deps = {}) {
-  const welcomeMessage = deps.WELCOME_MESSAGE || '';
+  const buildExploreWelcomeMessage = deps.buildExploreWelcomeMessage || (() => '');
+  const buildResearchWelcomeMessage = deps.buildResearchWelcomeMessage || ((_manifest, fallback) => fallback || '');
+  const buildOpsWelcomeMessage = deps.buildOpsWelcomeMessage || ((payload, fallback) => payload?.warning || fallback || '');
   const pane = ctx.messagePanes?.[mode];
   if (paneHasMessages(pane)) return;
 
@@ -64,19 +67,11 @@ export async function seedEmptyConversation(ctx, mode = ctx.mode, deps = {}) {
         await ctx.refreshResearchCorpusOptions();
       }
       const manifest = ctx.latestResearchManifest || await ctx.refreshResearchManifest();
-      if ((manifest?.artifact_count || 0) > 0 && !manifest?.stale_artifacts) {
-        ctx.addMessage(`Research mode ready. Active corpus: ${manifest.artifact_count} loaded artifact${manifest.artifact_count === 1 ? '' : 's'}.`, 'assistant', { mode: 'research' });
-        return;
-      }
-      if (manifest?.saved_corpus) {
-        const saved = manifest.saved_corpus;
-        const message = manifest?.stale_artifacts
-          ? `Research workspace found an out-of-date local session for "${saved.name}". Click Load Data to refresh it.`
-          : `Research workspace ready. "${saved.name}" is selected. Click Load Data to activate it for this session.`;
-        ctx.addMessage(message, 'assistant', { mode: 'research' });
-        return;
-      }
-      ctx.addMessage(ctx.getResearchEmptyStateMessage(), 'assistant', { mode: 'research' });
+      ctx.addMessage(
+        buildResearchWelcomeMessage(manifest, ctx.getResearchEmptyStateMessage()),
+        'assistant',
+        { mode: 'research' }
+      );
     } catch (error) {
       console.warn('Research corpus manifest check failed:', error);
       ctx.addMessage('Research mode is available, but I could not read the active corpus yet.', 'assistant', { mode: 'research' });
@@ -89,16 +84,11 @@ export async function seedEmptyConversation(ctx, mode = ctx.mode, deps = {}) {
       const payload = ctx.latestOpsPayload
         ? ctx.latestOpsPayload
         : await ctx.refreshOpsReport({ loadWatch: true });
-      const effectiveFeeds = Array.isArray(payload?.effective_feeds) ? payload.effective_feeds : [];
-      if (effectiveFeeds.length > 0) {
-        ctx.addMessage(
-          `Ops mode ready. Active watch has ${effectiveFeeds.length} feed${effectiveFeeds.length === 1 ? '' : 's'}: ${effectiveFeeds.join(', ')}.`,
-          'assistant',
-          { mode: 'ops' }
-        );
-        return;
-      }
-      ctx.addMessage(payload?.warning || ctx.getOpsEmptyStateMessage(), 'assistant', { mode: 'ops' });
+      ctx.addMessage(
+        buildOpsWelcomeMessage(payload, ctx.getOpsEmptyStateMessage()),
+        'assistant',
+        { mode: 'ops' }
+      );
     } catch (error) {
       console.warn('Ops report check failed:', error);
       ctx.addMessage('Ops mode is available, but I could not read the active watch yet.', 'assistant', { mode: 'ops' });
@@ -106,7 +96,7 @@ export async function seedEmptyConversation(ctx, mode = ctx.mode, deps = {}) {
     return;
   }
 
-  ctx.addMessage(welcomeMessage, 'assistant', { html: true, mode: 'explore' });
+  ctx.addMessage(buildExploreWelcomeMessage(), 'assistant', { html: true, mode: 'explore' });
 }
 
 export function applyModeUiState(ctx, deps = {}) {

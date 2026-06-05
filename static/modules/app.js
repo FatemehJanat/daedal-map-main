@@ -29,8 +29,7 @@ import { TutorialMode } from './tutorial-mode.js';
 import { RasterPanel } from './raster-panel.js';
 import { setDependencies as setSceneRasterDeps } from './scene-raster-model.js';
 import { loadPublicPackCatalog } from './shared/catalog-cache.js';
-import { restoreChatState } from './chat/session.js';
-import { getInitialLane, normalizeBootUrl, onRouteChange } from './routing/app-route-state.js';
+import { getInitialLane, normalizeBootUrl, onRouteChange, parseRouteIntent, setLaneTitle } from './routing/app-route-state.js';
 
 const CHAT_MAP_LANES = ['explore', 'research', 'ops'];
 const DISPLAY_GEOMETRY_TYPES = new Set(['zcta', 'tribal', 'watershed', 'park']);
@@ -54,9 +53,7 @@ const DISPLAY_SOURCE_EVENT_TYPE_HINTS = [
 ];
 
 function getStartupChatMode() {
-  // Precedence: URL lane > saved activeMode > default (app-route-state).
-  const restored = restoreChatState();
-  return getInitialLane(restored?.activeMode);
+  return getInitialLane(null);
 }
 
 function normalizeChatMapLane(lane) {
@@ -609,6 +606,7 @@ export const App = {
     // Reflect the resolved lane in the URL so it matches the active lane
     // (replaceState, no history entry). Keeps '/' as the shell for Explore.
     normalizeBootUrl(startupMode);
+    setLaneTitle(startupMode);
     const researchStartup = startupMode === 'research';
     await OverlaySelector.init({ restoreState: !researchStartup });
     OverlayController.init({ enableExploreRuntime: !researchStartup });
@@ -650,12 +648,47 @@ export const App = {
       console.warn(`Could not seed ${startupMode} conversation after map init:`, error);
     });
 
-    // Replay any overlays that were restored from localStorage before the map was ready.
-    // OverlaySelector.init() restores saved state before MapAdapter.init() runs, so any
-    // active overlays fire into a map that doesn't exist yet. Re-trigger them now.
+    // Replay any overlays that were made active before the map was ready.
+    // OverlaySelector may already hold current-session lane state or default
+    // overlays before MapAdapter.init() runs, so re-trigger them now.
     if (!researchStartup) {
       for (const overlayId of OverlaySelector.activeOverlays) {
-        OverlayController.handleOverlayChange(overlayId, true);
+        OverlayController.handleOverlayChange(overlayId, true, { allowDefaultLoad: false });
+      }
+    }
+
+    // Declarative deep-links now resolve through the same default-load preset
+    // mechanism as welcome buttons and starter overlay first-toggle.
+    const routeIntent = parseRouteIntent();
+    if (startupMode === 'explore') {
+      if (routeIntent.pack_id) {
+        const handled = await ChatManager.runDefaultLoad(
+          { packId: routeIntent.pack_id },
+          { mode: 'explore', syntheticSource: 'route_deep_link' }
+        );
+        if (!handled) {
+          console.warn('[DeepLink] No default load preset for pack:', routeIntent.pack_id);
+        }
+      } else if (routeIntent.source_id) {
+        const packEntry = await this.findPublicPackCatalogEntryBySourceId(routeIntent.source_id);
+        const handled = await ChatManager.runDefaultLoad(
+          {
+            sourceId: routeIntent.source_id,
+            packId: packEntry?.pack_id || ''
+          },
+          { mode: 'explore', syntheticSource: 'route_deep_link' }
+        );
+        if (!handled) {
+          console.warn('[DeepLink] No default load preset for source:', routeIntent.source_id);
+        }
+      }
+    } else if (startupMode === 'ops' && routeIntent.feed_id) {
+      const handled = await ChatManager.runDefaultLoad(
+        { feedId: routeIntent.feed_id },
+        { mode: 'ops', syntheticSource: 'route_deep_link' }
+      );
+      if (!handled) {
+        console.warn('[DeepLink] No default live load preset for feed:', routeIntent.feed_id);
       }
     }
 
@@ -1165,6 +1198,25 @@ export const App = {
     return this.getPublicPackCatalog().find((pack) => pack && pack.pack_id === normalizedPackId) || null;
   },
 
+  async findPublicPackCatalogEntryBySourceId(sourceId) {
+    const normalizedSourceId = String(sourceId || '').trim();
+    if (!normalizedSourceId) return null;
+
+    let packs = this.getPublicPackCatalog();
+    if (!packs.length) {
+      packs = await this.preloadPublicPackCatalog();
+    }
+
+    for (const pack of packs || []) {
+      const sources = Array.isArray(pack?.sources) ? pack.sources : [];
+      if (sources.some((source) => String(source?.source_id || '').trim() === normalizedSourceId)) {
+        return pack;
+      }
+    }
+
+    return null;
+  },
+
   setupMobileExperienceNotice() {
     const noticeEl = document.getElementById('mobileMapNotice');
     if (!noticeEl) return;
@@ -1637,7 +1689,7 @@ export const App = {
           if (match) geometryType = match[1];
         }
         const overlayId = geometryTypeToOverlayId[geometryType] || 'zip_codes';
-        OverlayController.handleOverlayChange(overlayId, true);
+        OverlayController.handleOverlayChange(overlayId, true, { allowDefaultLoad: false });
       }
 
       // Update summary display
@@ -1700,7 +1752,7 @@ export const App = {
           if (OverlaySelector && !OverlaySelector.isActive(knownOverlayId)) {
             OverlaySelector.setActive(knownOverlayId, true);
           }
-          OverlayController.handleOverlayChange(knownOverlayId, true);
+          OverlayController.handleOverlayChange(knownOverlayId, true, { allowDefaultLoad: false });
           console.log(`Geometry queued for render as type: ${geometryType}`);
         } else {
           // Ad-hoc geometry overlay (OZ tracts, designation lists, etc.):

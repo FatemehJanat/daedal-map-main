@@ -15,6 +15,12 @@
 const LANES = ['explore', 'research', 'ops'];
 const DEFAULT_LANE = 'explore';
 
+const LANE_TITLES = {
+  explore: 'Explore - DaedalMap',
+  research: 'Research - DaedalMap',
+  ops: 'Ops - DaedalMap',
+};
+
 /**
  * Normalize an arbitrary value to a known lane, or '' if it is not one.
  * @param {string} value
@@ -23,6 +29,16 @@ const DEFAULT_LANE = 'explore';
 export function normalizeLane(value) {
   const v = String(value || '').trim().toLowerCase();
   return LANES.includes(v) ? v : '';
+}
+
+/**
+ * Set document.title to match the active lane so analytics (GA pageTitle /
+ * Realtime) and the browser tab distinguish lanes, not just the URL path.
+ * @param {string} lane
+ */
+export function setLaneTitle(lane) {
+  if (typeof document === 'undefined') return;
+  document.title = LANE_TITLES[normalizeLane(lane) || DEFAULT_LANE] || document.title;
 }
 
 /**
@@ -36,25 +52,31 @@ export function normalizeLane(value) {
 export function parseRouteIntent(loc = window.location) {
   const segment = String(loc.pathname || '/').replace(/^\/+/, '').split('/')[0];
   const lane = normalizeLane(segment);
+  const params = new URLSearchParams(loc.search || '');
+  const pick = (key) => {
+    const v = String(params.get(key) || '').trim();
+    return v || null;
+  };
   return {
     lane: lane || null,
-    pack_id: null,        // Phase 2: read from ?pack=
-    source_id: null,      // Phase 2: read from ?source=
-    prefill_query: null,  // Phase 2: read from ?q= (display-only)
-    requires_auth: false, // resolved by the auth layer, not here
+    pack_id: pick('pack'),         // Explore deep link: ?pack=<pack_id>
+    source_id: pick('source'),     // optional ?source=<source_id>
+    feed_id: pick('feed'),         // Ops deep link: ?feed=<collector_name>
+    prefill_query: pick('q'),      // display-only: ?q=<text> (never auto-sent)
+    requires_auth: false,          // resolved by the auth layer, not here
     invalid_reason: segment && !lane ? 'unknown_path_segment' : null,
   };
 }
 
 /**
- * Initial lane on boot. Precedence: URL > saved state > default. Does not touch
- * browser history.
- * @param {string} [savedLane]
+ * Initial lane on boot. Precedence: URL > default. Does not touch browser
+ * history.
+ * @param {string} [_savedLane]
  * @returns {string}
  */
-export function getInitialLane(savedLane) {
+export function getInitialLane(_savedLane) {
   const intent = parseRouteIntent();
-  return intent.lane || normalizeLane(savedLane) || DEFAULT_LANE;
+  return intent.lane || DEFAULT_LANE;
 }
 
 /**

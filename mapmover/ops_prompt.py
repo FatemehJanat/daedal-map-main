@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from mapmover.ops_preprocessor import build_ops_hint_context
+from mapmover.runtime.prompt_composer import compose_lane_system_prompt
 
 
 OPS_SYSTEM_PROMPT = """You are County Map Ops, a focused operational assistant for live monitoring, triage, and concise situation reporting.
@@ -46,7 +47,7 @@ Do not pretend a full Ops live tool loop exists if the current runtime only prov
 def build_ops_system_prompt(watch_context: dict | None = None, hints: dict | None = None) -> str:
     """Build the Ops system prompt for one turn."""
     watch_context = watch_context if isinstance(watch_context, dict) else {}
-    parts = [OPS_SYSTEM_PROMPT]
+    turn_context_blocks = []
 
     label = str(watch_context.get("label") or watch_context.get("focus") or "").strip()
     sources = [str(value).strip() for value in (watch_context.get("sources") or []) if str(value).strip()]
@@ -56,10 +57,13 @@ def build_ops_system_prompt(watch_context: dict | None = None, hints: dict | Non
             scope_lines.append(f"- Focus: {label}")
         if sources:
             scope_lines.append(f"- Sources: {', '.join(sources[:10])}")
-        parts.append("\n".join(scope_lines))
+        turn_context_blocks.append("\n".join(scope_lines))
 
     hint_context = build_ops_hint_context(hints)
     if hint_context:
-        parts.append("Turn hints:\n" + hint_context)
+        turn_context_blocks.append("Turn hints:\n" + hint_context)
 
-    return "\n\n".join(part for part in parts if part).strip()
+    return compose_lane_system_prompt(
+        lane_prompt=OPS_SYSTEM_PROMPT,
+        turn_context_blocks=turn_context_blocks,
+    )

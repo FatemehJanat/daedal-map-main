@@ -1,6 +1,9 @@
 /**
  * Chat Session Manager
- * Handles session ID lifecycle and minimal UI state persistence via localStorage.
+ * Handles session ID lifecycle.
+ * Persistent browser restore of lane/map UI state is intentionally disabled:
+ * authoritative view state now comes from URL intent or account-backed defaults,
+ * not hidden browser-saved state.
  * Reusable across map app and admin dashboard.
  */
 
@@ -9,15 +12,8 @@ import { getSessionMaxAgeMs, getStorageNamespace, isAuthenticated } from '../aut
 // Storage keys
 const SESSION_ID_KEY = 'countymap_session_id';
 const SESSION_TIMESTAMP_KEY = 'countymap_session_timestamp';
-const CHAT_HISTORY_KEY = 'countymap_chat_history';
-const CHAT_MESSAGES_KEY = 'countymap_chat_messages';
-
 function namespacedKey(baseKey) {
   return `${baseKey}:${getStorageNamespace()}`;
-}
-
-function normalizeActiveMode(mode) {
-  return mode === 'research' || mode === 'ops' ? mode : 'explore';
 }
 
 /**
@@ -63,61 +59,22 @@ export function resetSessionId() {
 }
 
 /**
- * Save minimal chat UI state to localStorage.
- * We intentionally do not persist chat transcripts across refresh.
+ * Browser-persistent chat UI state is intentionally disabled.
  */
-export function saveChatState(historyOrState, messagesHtml) {
-  try {
-    const legacyPayload = Array.isArray(historyOrState);
-    const payload = legacyPayload
-      ? {
-          version: 3,
-          activeMode: 'explore',
-          selectedResearchCorpusId: null
-        }
-      : {
-          version: 3,
-          activeMode: normalizeActiveMode(historyOrState?.activeMode),
-          selectedResearchCorpusId: historyOrState?.selectedResearchCorpusId || null
-        };
-
-    localStorage.setItem(namespacedKey(CHAT_HISTORY_KEY), JSON.stringify(payload));
-    localStorage.removeItem(namespacedKey(CHAT_MESSAGES_KEY));
-  } catch (e) {
-    console.warn('[Session] Could not save chat state:', e.message);
-  }
+export function saveChatState() {
+  return;
 }
 
 /**
- * Restore minimal chat UI state from localStorage.
+ * Browser-persistent chat UI restore is intentionally disabled.
  */
 export function restoreChatState() {
-  try {
-    const historyJson = localStorage.getItem(namespacedKey(CHAT_HISTORY_KEY));
-    if (historyJson) {
-      const parsed = JSON.parse(historyJson);
-      const activeMode = normalizeActiveMode(parsed?.activeMode);
-      console.log('[Session] Restored chat mode:', activeMode);
-      return {
-        activeMode,
-        selectedResearchCorpusId: parsed?.selectedResearchCorpusId || null,
-        history: [],
-        messagesHtml: '',
-        modeHistories: { explore: [], research: [], ops: [] },
-        modeMessagesHtml: { explore: '', research: '', ops: '' },
-        researchMemory: null,
-      };
-    }
-  } catch (e) {
-    console.warn('[Session] Could not restore chat state:', e.message);
-  }
   return null;
 }
 
 /**
- * Clear all chat state from localStorage.
+ * Clear all persisted chat UI state.
  */
 export function clearChatStorage() {
-  localStorage.removeItem(namespacedKey(CHAT_HISTORY_KEY));
-  localStorage.removeItem(namespacedKey(CHAT_MESSAGES_KEY));
+  return;
 }

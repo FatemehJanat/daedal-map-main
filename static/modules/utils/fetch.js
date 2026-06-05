@@ -5,7 +5,7 @@
  * MessagePack library loaded via CDN, available as window.MessagePack
  */
 
-import { getAccessToken, getStorageNamespace } from '../auth.js';
+import { getAccessToken } from '../auth.js';
 
 // Get MessagePack from global scope (loaded via CDN)
 const msgpack = window.MessagePack || {};
@@ -13,28 +13,6 @@ let activeRequestCount = 0;
 let loadingIndicatorTimer = null;
 const activeLoadingLabels = [];
 const activeAbortControllers = new Set();
-
-// localStorage key for tracking API calls for session recovery
-const API_CALLS_KEY = 'countymap_api_calls';
-
-// localStorage key for tracking executed orders for session recovery
-const ORDERS_KEY = 'countymap_executed_orders';
-
-// API paths that should be tracked for recovery (data endpoints)
-const TRACKED_API_PATTERNS = [
-  '/api/earthquakes/',
-  '/api/storms/',
-  '/api/volcanoes/',
-  '/api/wildfires/',
-  '/api/tornadoes/',
-  '/api/tsunamis/',
-  '/api/floods/',
-  '/api/climate/'
-];
-
-function namespacedKey(baseKey) {
-  return `${baseKey}:${getStorageNamespace()}`;
-}
 
 function buildAuthHeaders() {
   const token = getAccessToken();
@@ -127,65 +105,8 @@ export function cancelActiveRequests() {
   }
 }
 
-/**
- * Check if a URL should be tracked for session recovery.
- */
-function shouldTrackCall(url) {
-  return TRACKED_API_PATTERNS.some(pattern => url.includes(pattern));
-}
-
-/**
- * Log an API call to localStorage for session recovery.
- * Recovery replay is currently disabled as part of chat/session simplification.
- */
-function logApiCall(url) {
-  void url;
-}
-
-/**
- * Get all logged API calls for session recovery.
- */
-export function getApiCallsForRecovery() {
-  return [];
-}
-
-/**
- * Clear logged API calls (called by New Chat).
- */
-export function clearApiCalls() {
-  try {
-    localStorage.removeItem(namespacedKey(API_CALLS_KEY));
-  } catch (e) {
-    // Ignore
-  }
-}
-
-/**
- * Log an executed order for session recovery.
- * Stores only the order (request) data, not the response.
- * @param {Object} order - The order that was executed
- */
 export function logExecutedOrder(order) {
   void order;
-}
-
-/**
- * Get all logged executed orders for session recovery.
- * @returns {Array} Array of {order, summary, timestamp} records
- */
-export function getExecutedOrdersForRecovery() {
-  return [];
-}
-
-/**
- * Clear logged executed orders (called by New Chat).
- */
-export function clearExecutedOrders() {
-  try {
-    localStorage.removeItem(namespacedKey(ORDERS_KEY));
-  } catch (e) {
-    // Ignore
-  }
 }
 
 /**
@@ -195,11 +116,6 @@ export function clearExecutedOrders() {
  * @returns {Promise<any>} Decoded response data
  */
 export async function fetchMsgpack(url, options = {}) {
-  // Log data API calls for session recovery
-  if (shouldTrackCall(url)) {
-    logApiCall(url);
-  }
-
   const loadingLabel = inferLoadingLabel(url, options);
   const requestController = new AbortController();
   activeAbortControllers.add(requestController);

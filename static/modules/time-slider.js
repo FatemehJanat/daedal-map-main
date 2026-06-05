@@ -306,9 +306,6 @@ export const TimeSlider = {
     // Load timezone setting for live mode
     this.loadLiveTimezone();
 
-    // Load saved slider settings (trim, speed)
-    this.loadSliderSettings();
-
     if (!this.container || !this.slider) {
       console.warn('TimeSlider: DOM elements not found');
       return;
@@ -780,9 +777,6 @@ export const TimeSlider = {
     if (this.speedLabel) {
       this.speedLabel.textContent = TIME_SYSTEM.getSpeedLabel(this.stepsPerFrame);
     }
-
-    // Save to localStorage
-    this.saveSliderSettings();
 
     console.log(`TimeSlider: Speed set to ${TIME_SYSTEM.getSpeedLabel(this.stepsPerFrame)} (${this.stepsPerFrame.toFixed(2)} steps/frame)`);
   },
@@ -1293,8 +1287,6 @@ export const TimeSlider = {
       const upper = this.boundMaxTime !== null ? this.formatTimeLabel(this.boundMaxTime) : 'end';
       console.log(`Trim bounds set: ${lower} to ${upper}`);
 
-      // Save trim bounds to localStorage for session recovery
-      this.saveSliderSettings();
     };
 
     // Mouse events for lower handle
@@ -1364,7 +1356,6 @@ export const TimeSlider = {
     this.boundMinTime = min != null ? this.normalizeToTimestamp(min) : null;
     this.boundMaxTime = max != null ? this.normalizeToTimestamp(max) : null;
     this.updateTrimHandlePositions();
-    this.saveSliderSettings();
     console.log(`[TimeSlider] Trim bounds set: ${min} - ${max}`);
   },
 
@@ -2534,65 +2525,6 @@ export const TimeSlider = {
       }
     } catch (e) {
       // localStorage not available
-    }
-  },
-
-  /**
-   * Save slider settings (trim bounds, speed) to localStorage
-   */
-  saveSliderSettings() {
-    try {
-      const settings = {
-        boundMinTime: this.boundMinTime,
-        boundMaxTime: this.boundMaxTime,
-        speedSliderValue: this.speedSliderValue
-      };
-      localStorage.setItem('countymap_slider_settings', JSON.stringify(settings));
-    } catch (e) {
-      // localStorage not available
-    }
-  },
-
-  /**
-   * Load slider settings from localStorage
-   */
-  loadSliderSettings() {
-    try {
-      const saved = localStorage.getItem('countymap_slider_settings');
-      if (saved) {
-        const settings = JSON.parse(saved);
-
-        // Restore speed
-        if (settings.speedSliderValue !== undefined) {
-          this.setSpeedFromSlider(settings.speedSliderValue);
-          if (this.speedSlider) {
-            this.speedSlider.value = settings.speedSliderValue;
-          }
-        }
-
-        // Restore trim bounds (will be applied after data loads in init())
-        if (settings.boundMinTime !== null && settings.boundMinTime !== undefined) {
-          this._pendingBoundMinTime = settings.boundMinTime;
-        }
-        if (settings.boundMaxTime !== null && settings.boundMaxTime !== undefined) {
-          this._pendingBoundMaxTime = settings.boundMaxTime;
-        }
-
-        console.log('[TimeSlider] Restored settings:', settings);
-      }
-    } catch (e) {
-      // localStorage not available or invalid data
-    }
-  },
-
-  /**
-   * Clear slider settings from localStorage (called by New Chat)
-   */
-  clearSliderSettings() {
-    try {
-      localStorage.removeItem('countymap_slider_settings');
-    } catch (e) {
-      // Ignore
     }
   },
 

@@ -610,6 +610,7 @@ export const OverlayController = {
   // Format: { geojson, geometryType, options }
   pendingGeometry: null,
   opsSnapshotPayloads: new Map(),
+  defaultLoadExecutor: null,
 
   // Startup/runtime mode flags
   initialized: false,
@@ -628,6 +629,18 @@ export const OverlayController = {
       return;
     }
     TimeSlider?.show?.();
+  },
+
+  setDefaultLoadExecutor(executor) {
+    this.defaultLoadExecutor = typeof executor === 'function' ? executor : null;
+  },
+
+  hasCachedOverlayData(overlayId) {
+    if (!overlayId) return false;
+    if (dataCache[overlayId]?.features?.length) return true;
+    if (dataCache[overlayId]?.years && Object.keys(dataCache[overlayId].years).length) return true;
+    if (this.opsSnapshotPayloads.has(overlayId)) return true;
+    return false;
   },
 
   _isOpsMode() {
@@ -1611,7 +1624,7 @@ export const OverlayController = {
    * @param {string} overlayId - Overlay ID (e.g., 'earthquakes')
    * @param {boolean} isActive - Whether overlay is now active
    */
-  async handleOverlayChange(overlayId, isActive) {
+  async handleOverlayChange(overlayId, isActive, options = {}) {
     console.log(`OverlayController: ${overlayId} ${isActive ? 'ON' : 'OFF'}`);
 
     // Live forecast/observation overlays are driven by their own modules
@@ -1736,6 +1749,19 @@ export const OverlayController = {
     }
 
     if (isActive) {
+      if (
+        this.defaultLoadExecutor &&
+        !this._isOpsMode() &&
+        options.allowDefaultLoad !== false &&
+        !this.hasCachedOverlayData(overlayId)
+      ) {
+        const handledByDefaultLoad = await this.defaultLoadExecutor(overlayId, {
+          lane: OverlaySelector?.currentLaneMode || 'explore'
+        });
+        if (handledByDefaultLoad) {
+          return;
+        }
+      }
       await this.loadOverlay(overlayId);
     } else {
       this.hideOverlay(overlayId);

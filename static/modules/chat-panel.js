@@ -4,14 +4,13 @@
  */
 
 import { CONFIG } from './config.js';
-import { postMsgpack, getApiCallsForRecovery, clearApiCalls, logExecutedOrder, getExecutedOrdersForRecovery, clearExecutedOrders } from './utils/fetch.js';
+import { postMsgpack, logExecutedOrder } from './utils/fetch.js';
 
 // Reusable modules
 import {
   getOrCreateSessionId,
   resetSessionId,
   saveChatState,
-  restoreChatState,
   clearChatStorage
 } from './chat/session.js';
 
@@ -66,6 +65,10 @@ import {
   parseResearchRasterCommand as parseResearchRasterCommandImpl,
   getResearchDisplayFallbackMessage as getResearchDisplayFallbackMessageImpl
 } from './research/research-chat-commands.js';
+import { buildExploreWelcomeMessage } from './explore/welcome.js';
+import { buildResearchWelcomeMessage } from './research/welcome.js';
+import { buildOpsWelcomeMessage } from './ops/welcome.js';
+import { resolveDefaultLoadAction, resolveOverlayIdForOrderResult } from './overlay-default-loads.js';
 import {
   getBrowserCorpusStorageSummary,
   listBrowserCorpusSummaries,
@@ -90,31 +93,7 @@ export function setDependencies(deps) {
   OverlaySelector = deps.OverlaySelector;
 }
 
-// Welcome message shown on first load and new chat
-const WELCOME_MESSAGE =
-  'Welcome! Ask me anything about global data -- earthquakes, hurricanes, ' +
-  'climate indicators, and more. Enable the Demographics overlay to zoom through ' +
-  'the countries, states, and territories.<br><br>' +
-  'To explore datasets, type a question in natural language. ' +
-  'Type "help" or "how do you work?" anytime for a full guide.<br><br>' +
-  '<div class="welcome-action-row">' +
-  '<button class="chat-action-btn" data-action="preload-disasters-2020">Load disasters 2020-2025</button> ' +
-  '<button id="tutorialToggleBtn" class="chat-action-btn tutorial-toggle-btn" data-action="tutorial-toggle" type="button" aria-pressed="false">Tutorial Off</button>' +
-  '</div>';
-
 // Map event_type from API responses to overlay IDs
-const EVENT_TYPE_TO_OVERLAY = {
-  earthquake: 'earthquakes',
-  volcano: 'volcanoes',
-  tsunami: 'tsunamis',
-  hurricane: 'hurricanes',
-  wildfire: 'wildfires',
-  tornado: 'tornadoes',
-  flood: 'floods',
-  drought: 'drought',
-  landslide: 'landslides'
-};
-
 const CHAT_MODES = ['explore', 'research', 'ops'];
 
 function normalizeChatMode(mode) {
@@ -223,15 +202,19 @@ export function clearLoadedDataList() {
  * Route event-type order results to OverlayController for cache ingestion.
  * @param {Object} response - API response with data_type 'events'
  */
-function ingestEventsToOverlay(response) {
+function ingestEventsToOverlay(response, order = null) {
   if (!OverlayController?.ingestOrderResult) return;
   if (!response?.geojson?.features) return;
 
-  // Use source_id from response, fall back to event_type mapping for legacy support
-  const overlayId = response.source_id || EVENT_TYPE_TO_OVERLAY[response.event_type];
+  const overlayId = resolveOverlayIdForOrderResult(response, order);
   if (!overlayId) {
     console.warn('ingestEventsToOverlay: No overlayId for response', response.source_id, response.event_type);
-    return;
+    return '';
+  }
+
+  OverlaySelector?.promoteOverlay?.(overlayId);
+  if (OverlaySelector && !OverlaySelector.isActive(overlayId)) {
+    OverlaySelector.setActive(overlayId, true);
   }
 
   // Build range metadata from response if available
@@ -243,6 +226,15 @@ function ingestEventsToOverlay(response) {
       : null;
 
   OverlayController.ingestOrderResult(overlayId, response.geojson, rangeMeta);
+  return overlayId;
+}
+
+function renderUnifiedOverlayEventResult(response, order = null) {
+  const overlayId = ingestEventsToOverlay(response, order);
+  if (overlayId && response?.geojson?.features?.length) {
+    MapAdapter?.fitToBounds?.(response.geojson);
+  }
+  return Boolean(overlayId);
 }
 
 /**
@@ -341,7 +333,8 @@ export const ChatManager = {
     };
     this.initMessagePanes();
 
-    // Restore minimal chat UI state from localStorage
+    // Initialize lane/UI state from URL/defaults. Persistent browser restore of
+    // chat/map state is intentionally disabled.
     this.restoreState();
     this.syncAllMessagePanes();
     this.setActiveMessagePane(this.mode);
@@ -363,6 +356,12 @@ export const ChatManager = {
 
     // Initialize order panel and tracker
     this.initOrderPanel();
+    OverlayController?.setDefaultLoadExecutor?.(async (overlayId, context = {}) => {
+      return this.runDefaultLoad(
+        { overlayId },
+        { mode: context.lane || this.mode, syntheticSource: 'overlay_default_load' }
+      );
+    });
     onAuthChanged((event) => {
       Promise.resolve().then(async () => {
         const authState = Boolean(event?.detail?.isAuthenticated);
@@ -438,7 +437,84 @@ export const ChatManager = {
   },
 
   async seedEmptyConversation(mode = this.mode) {
-    return seedEmptyConversationImpl(this, mode, { WELCOME_MESSAGE });
+    return seedEmptyConversationImpl(this, mode, {
+      buildExploreWelcomeMessage,
+      buildResearchWelcomeMessage,
+      buildOpsWelcomeMessage
+    });
+  },
+
+  async executeDefaultLoadAction(action, options = {}) {
+    if (!action || typeof action !== 'object') return false;
+
+    if (action.type === 'confirmed_order' && action.order) {
+      if (options.message) {
+        this.addMessage(options.message, 'assistant', { mode: options.mode || this.mode });
+      }
+      await this.executeOrder(action.order, {
+        skipLog: options.skipLog || false,
+        syntheticSource: options.syntheticSource || 'default_load'
+      });
+      return true;
+    }
+
+    if (action.type === 'overlay_activation' && Array.isArray(action.overlayIds)) {
+      for (const overlayId of action.overlayIds) {
+        OverlaySelector?.promoteOverlay?.(overlayId, options.mode || this.mode);
+        if (OverlaySelector && !OverlaySelector.isActive(overlayId)) {
+          OverlaySelector.setActive(overlayId, true);
+        }
+        await OverlayController?.handleOverlayChange?.(overlayId, true, { allowDefaultLoad: false });
+      }
+      if (options.message) {
+        this.addMessage(options.message, 'assistant', { mode: options.mode || this.mode });
+      }
+      return true;
+    }
+
+    return false;
+  },
+
+  async runDefaultLoad(params = {}, options = {}) {
+    const action = resolveDefaultLoadAction({
+      lane: options.mode || this.mode,
+      overlayId: params.overlayId,
+      packId: params.packId,
+      sourceId: params.sourceId,
+      feedId: params.feedId,
+      presetId: params.presetId
+    });
+    if (!action) return false;
+    return this.executeDefaultLoadAction(action, options);
+  },
+
+  async handlePresetButton(btn) {
+    btn.disabled = true;
+    const originalText = btn.textContent;
+    btn.innerHTML = '<span class="btn-spinner"></span> Loading...';
+    try {
+      const handled = await this.runDefaultLoad(
+        {
+          presetId: btn.dataset.presetId,
+          packId: btn.dataset.packId,
+          sourceId: btn.dataset.sourceId,
+          feedId: btn.dataset.feedId,
+          overlayId: btn.dataset.overlayId
+        },
+        {
+          mode: btn.dataset.mode || this.mode,
+          skipLog: false,
+          syntheticSource: 'welcome_preset'
+        }
+      );
+      btn.textContent = handled ? 'Loaded' : 'Unavailable';
+    } catch (error) {
+      console.error('Preset action failed:', error);
+      btn.textContent = originalText;
+      btn.disabled = false;
+      return;
+    }
+    btn.disabled = false;
   },
 
   initMessagePanes() {
@@ -1330,7 +1406,10 @@ export const ChatManager = {
       let sawAdditiveLayer = false;
       let sawRemoval = false;
       for (const result of data.results) {
-        App?.displayMapPayload(result, { order });
+        const handledByOverlay = result?.data_type === 'events' && renderUnifiedOverlayEventResult(result, order);
+        if (!handledByOverlay) {
+          App?.displayMapPayload(result, { order });
+        }
         if (result?.action === 'remove') {
           sawRemoval = true;
         } else {
@@ -1351,7 +1430,7 @@ export const ChatManager = {
       if (dataType === 'events') {
         const message = data.summary || `Showing ${data.count} ${data.event_type || 'event'} events`;
         this.addMessage(message, 'assistant');
-        ingestEventsToOverlay(data);
+        renderUnifiedOverlayEventResult(data, order);
       } else if (dataType === 'metrics') {
         const message = data.data_note || `Loaded ${data.count || data.geojson.features?.length || 0} locations`;
         this.addMessage(message, 'assistant');
@@ -1374,8 +1453,11 @@ export const ChatManager = {
       // Track loaded data for LLM context
       registerLoadedData(order, data);
 
-      App?.displayMapPayload(data, { order });
+      if (!(dataType === 'events' && resolveOverlayIdForOrderResult(data, order))) {
+        App?.displayMapPayload(data, { order });
+      }
     }
+    return data;
   },
 
   /**
@@ -1411,25 +1493,9 @@ export const ChatManager = {
   },
 
   /**
-   * Restore chat state from localStorage.
+   * Initialize chat state from URL/defaults.
    */
   restoreState() {
-    const state = restoreChatState();
-    if (state) {
-      // Precedence: URL lane > saved activeMode > default (app-route-state).
-      this.mode = getInitialLane(state.activeMode);
-      this.catalogSurface = this.normalizeCatalogSurface(state.catalogSurface);
-      this.modeHistories = { explore: [], research: [], ops: [] };
-      this.modeMessagesHtml = { explore: '', research: '', ops: '' };
-      this.researchDisplayLayersByMode = { explore: [], research: [], ops: [] };
-      this.researchMemory = null;
-      this.selectedResearchCorpusId = state.selectedResearchCorpusId || '';
-      this.opsWatchId = state.opsWatchId || '';
-      this.latestOpsReport = null;
-      this.history = [];
-      return;
-    }
-
     this.mode = getInitialLane(null);
     this.catalogSurface = 'published';
     this.modeHistories = { explore: [], research: [], ops: [] };
@@ -1443,15 +1509,10 @@ export const ChatManager = {
   },
 
   /**
-   * Save current chat state to localStorage.
+   * Persist explicit chat state if enabled.
    */
   saveState() {
-    saveChatState({
-      activeMode: this.mode,
-      selectedResearchCorpusId: this.selectedResearchCorpusId,
-      opsWatchId: this.opsWatchId,
-      catalogSurface: this.getEffectiveCatalogSurface()
-    });
+    saveChatState();
   },
 
   normalizeCatalogSurface(surface) {
@@ -1536,10 +1597,7 @@ export const ChatManager = {
 
     // Clear map-specific state
     if (window.OverlaySelector?.clearState) window.OverlaySelector.clearState();
-    if (window.TimeSlider?.clearSliderSettings) window.TimeSlider.clearSliderSettings();
     if (window.App?.clearMapViewSettings) window.App.clearMapViewSettings();
-    clearApiCalls();
-    clearExecutedOrders();
     clearLoadedDataList();  // Clear loaded data tracker
 
     // Reset session
@@ -1559,155 +1617,6 @@ export const ChatManager = {
     console.log('[Session] Session cleared, new session:', this.sessionId);
     await this.seedEmptyConversation(this.mode);
     return this.sessionId;
-  },
-
-  /**
-   * Show recovery prompt for map data.
-   * @param {number} overlayCount - Number of overlay API calls to recover
-   * @param {number} orderCount - Number of executed orders to recover
-   */
-  showRecoveryPrompt(overlayCount, orderCount = 0) {
-    const { messages } = this.elements;
-    if (!messages) return;
-
-    // Build summary of what can be recovered
-    const parts = [];
-    if (orderCount > 0) {
-      parts.push(`${orderCount} data order${orderCount === 1 ? '' : 's'}`);
-    }
-    if (overlayCount > 0) {
-      parts.push(`${overlayCount} overlay request${overlayCount === 1 ? '' : 's'}`);
-    }
-    const dataSummary = parts.join(' and ');
-
-    const div = document.createElement('div');
-    div.className = 'chat-message assistant recovery-prompt';
-    div.innerHTML = `
-      <strong>Welcome Back</strong><br><br>
-      Your previous session: <b>${dataSummary}</b><br><br>
-      Click <b>Recover Data</b> to reload your map data, or refresh the page to start fresh.
-      <div class="recovery-buttons" style="margin-top: 12px;">
-        <button class="recovery-btn recover" data-action="recover">Recover Data</button>
-      </div>
-    `;
-
-    messages.appendChild(div);
-    div.querySelector('[data-action="recover"]').addEventListener('click', () => {
-      this.handleRecoveryChoice('recover');
-    });
-    messages.scrollTop = messages.scrollHeight;
-  },
-
-  /**
-   * Handle user's recovery choice.
-   */
-  async handleRecoveryChoice(choice) {
-    const { messages } = this.elements;
-
-    // Remove the recovery prompt
-    const prompt = messages.querySelector('.recovery-prompt');
-    if (prompt) prompt.remove();
-
-    if (choice === 'recover') {
-      const apiCalls = getApiCallsForRecovery();
-      const executedOrders = getExecutedOrdersForRecovery();
-
-      if (apiCalls.length === 0 && executedOrders.length === 0) {
-        this.addMessage('No data to recover.', 'assistant');
-        return;
-      }
-
-      let totalRecovered = 0;
-      let totalFailed = 0;
-
-      // 1. Recover executed orders (metrics data)
-      if (executedOrders.length > 0) {
-        this.addMessage(`Recovering ${executedOrders.length} data order${executedOrders.length === 1 ? '' : 's'}...`, 'assistant');
-
-        for (const record of executedOrders) {
-          try {
-            // Re-execute the order with skipLog and force to bypass dedup
-            await this.executeOrder(record.order, { skipLog: true, force: true });
-            totalRecovered++;
-          } catch (e) {
-            console.warn('[Session] Failed to recover order:', record.summary, e.message);
-            totalFailed++;
-          }
-        }
-      }
-
-      // 2. Recover overlay API calls (disaster data)
-      if (apiCalls.length > 0) {
-        // Parse URLs to extract overlay IDs and years
-        const overlayYears = new Map();
-        for (const url of apiCalls) {
-          const yearMatch = url.match(/[?&]year=(\d+)/);
-          if (!yearMatch) continue;
-          const year = parseInt(yearMatch[1], 10);
-
-          let overlayId = null;
-          if (url.includes('/api/earthquakes/')) overlayId = 'earthquakes';
-          else if (url.includes('/api/storms/')) overlayId = 'hurricanes';
-          else if (url.includes('/api/volcanoes/')) overlayId = 'volcanoes';
-          else if (url.includes('/api/wildfires/')) overlayId = 'wildfires';
-          else if (url.includes('/api/tornadoes/')) overlayId = 'tornadoes';
-          else if (url.includes('/api/tsunamis/')) overlayId = 'tsunamis';
-          else if (url.includes('/api/floods/')) overlayId = 'floods';
-
-          if (overlayId) {
-            if (!overlayYears.has(overlayId)) overlayYears.set(overlayId, new Set());
-            overlayYears.get(overlayId).add(year);
-          }
-        }
-
-        let overlayLoads = 0;
-        for (const years of overlayYears.values()) overlayLoads += years.size;
-
-        if (overlayLoads > 0) {
-          this.addMessage(`Recovering ${overlayLoads} overlay data set${overlayLoads === 1 ? '' : 's'}...`, 'assistant');
-
-          try {
-            const loadPromises = [];
-            for (const [overlayId, years] of overlayYears) {
-              for (const year of years) {
-                if (OverlayController?.loadYearAndRender) {
-                  loadPromises.push(
-                    OverlayController.loadYearAndRender(overlayId, year).catch(e => {
-                      console.warn('[Session] Failed to load:', overlayId, year, e.message);
-                      return null;
-                    })
-                  );
-                }
-              }
-            }
-
-            const results = await Promise.all(loadPromises);
-            totalRecovered += results.filter(r => r !== null).length;
-            totalFailed += results.filter(r => r === null).length;
-
-            if (window.OverlayController?.recalculateTimeRange) {
-              window.OverlayController.recalculateTimeRange();
-            }
-            if (window.TimeSlider?.refreshDisplay) {
-              window.TimeSlider.refreshDisplay();
-            }
-          } catch (e) {
-            console.error('[Session] Overlay recovery failed:', e);
-            totalFailed++;
-          }
-        }
-      }
-
-      // Final summary
-      if (totalFailed === 0) {
-        this.addMessage(`Recovery complete. Restored ${totalRecovered} data set${totalRecovered === 1 ? '' : 's'}.`, 'assistant');
-      } else {
-        this.addMessage(`Recovery complete. Restored ${totalRecovered}, failed ${totalFailed}.`, 'assistant');
-      }
-    } else {
-      await this.clearSession();
-      this.addMessage(WELCOME_MESSAGE, 'assistant', { html: true, mode: 'explore' });
-    }
   },
 
   /**
@@ -1752,67 +1661,13 @@ export const ChatManager = {
       const btn = e.target.closest('[data-action]');
       if (!btn) return;
       const action = btn.dataset.action;
-      if (action === 'preload-disasters-2020') {
-        await this.handlePreloadDisasters2020(btn);
+      if (action === 'run-preset' || action === 'preload-disasters-2020') {
+        await this.handlePresetButton(btn);
       } else if (action === 'tutorial-toggle') {
         e.preventDefault();
         TutorialMode.applyCommand('toggle');
       }
     });
-  },
-
-  /**
-   * Handle the "Load disasters 2020-2025" preload button.
-   * Makes one ranged API call per disaster type and caches the results in the browser.
-   */
-  async handlePreloadDisasters2020(btn) {
-    btn.disabled = true;
-    btn.innerHTML = '<span class="btn-spinner"></span> Loading...';
-    try {
-      const disasterIds = ['earthquakes', 'hurricanes', 'volcanoes', 'wildfires', 'tsunamis', 'tornadoes'];
-      const startMs = new Date(Date.UTC(2020, 0, 1)).getTime();
-      const endMs = new Date(Date.UTC(2025, 11, 31, 23, 59, 59)).getTime();
-
-      // Move trim handles to 2020-2025 (overall range stays at default 2000-present)
-      window.TimeSlider?.setTrimBounds(2020, 2025);
-
-      // Preload first so enabling overlays reuses the warmed browser cache
-      // instead of triggering an extra "past 30 days" fetch per overlay.
-      const summary = await window.OverlayController?.preloadDisasters2020to2025((done, total, id) => {
-        btn.innerHTML = `<span class="btn-spinner"></span> Loading ${id}... (${done}/${total})`;
-      });
-
-      // Enable overlays after preload so they render from cache.
-      for (const id of disasterIds) {
-        if (!window.OverlaySelector?.isActive(id)) {
-          window.OverlaySelector?.toggle(id);
-        }
-      }
-
-      // Preload fills the cache before overlays are enabled, which means the normal
-      // overlay activation path may skip its first-time slider initialization.
-      // Seed the slider explicitly, then force a cache-based render so Explore
-      // immediately shows the loaded disaster window.
-      if (window.TimeSlider) {
-        window.TimeSlider.setTimeRange({
-          min: startMs,
-          max: endMs,
-          granularity: 'timestamp',
-          available: null,
-          replace: true
-        });
-        window.TimeSlider.show?.();
-        window.TimeSlider.setTime?.(startMs, 'api');
-      }
-      window.OverlayController?.rerenderFromCache?.();
-
-      const loaded = summary ? Object.values(summary).filter(r => r.loaded).length : 0;
-      btn.textContent = `Loaded (${loaded}/6 datasets)`;
-    } catch (e) {
-      console.error('Preload failed:', e);
-      btn.textContent = 'Load disasters 2020-2025';
-      btn.disabled = false;
-    }
   },
 
   /**
@@ -1850,13 +1705,6 @@ export const ChatManager = {
       } catch (error) {
         console.warn('Research manifest refresh failed before submit:', error);
       }
-    }
-
-    // Check for "recover" command
-    if (query.toLowerCase() === 'recover') {
-      input.value = '';
-      this.handleRecoveryChoice('recover');
-      return;
     }
 
     if (requestMode === 'ops' && this.isOpsRefreshCommand(query)) {

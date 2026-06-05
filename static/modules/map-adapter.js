@@ -1369,6 +1369,11 @@ export const MapAdapter = {
    * @returns {Object} {center, zoom, bounds, adminLevel}
    */
   getView() {
+    if (!this.map) {
+      // Map not initialized yet (e.g. a chat query submitted before the map
+      // finished loading). Return a safe default instead of throwing.
+      return { center: { lat: 0, lng: 0 }, zoom: 2, bounds: null, adminLevel: ViewportLoader?.currentAdminLevel || 0 };
+    }
     const bounds = this.map.getBounds();
     return {
       center: this.map.getCenter(),

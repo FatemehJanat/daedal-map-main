@@ -18,7 +18,6 @@ import {
   getOrCreateSessionId,
   resetSessionId,
   saveChatState,
-  restoreChatState,
   clearChatStorage
 } from './session.js';
 
@@ -161,23 +160,6 @@ export class ChatCore {
   }
 
   /**
-   * Restore previous chat state from localStorage.
-   * @returns {boolean} True if state was restored
-   */
-  restore() {
-    const state = restoreChatState();
-    if (state) {
-      this.history = state.history;
-      if (state.messagesHtml && this.container) {
-        this.container.innerHTML = state.messagesHtml;
-        this.container.scrollTop = this.container.scrollHeight;
-      }
-      return true;
-    }
-    return false;
-  }
-
-  /**
    * Clear session - reset to fresh state.
    * Clears history, UI, localStorage, and backend session.
    * @returns {string} New session ID
@@ -205,11 +187,10 @@ export class ChatCore {
   }
 
   /**
-   * Save current state to localStorage.
+   * Persist explicit chat state if enabled.
    */
   saveChatState() {
-    const messagesHtml = this.container ? this.container.innerHTML : '';
-    saveChatState(this.history, messagesHtml);
+    saveChatState();
   }
 
   /**

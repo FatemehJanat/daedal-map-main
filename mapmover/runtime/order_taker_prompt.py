@@ -118,7 +118,7 @@ def get_source_visibility_mode() -> str:
     return selected
 
 
-def build_system_prompt(catalog: dict, conversions: dict) -> str:
+def build_system_prompt_body(catalog: dict, conversions: dict) -> str:
     source_visibility_mode = get_source_visibility_mode()
     all_sources = catalog["sources"]
     published_sources = [src for src in all_sources if src.get("pack_id")]
@@ -609,3 +609,8 @@ CLARIFYING QUESTIONS - BE SPECIFIC:
 - Example: "Which metric would you like? Population, GDP, births, or I can get them all?"
 - NEVER show internal column names (like co2_per_capita) - always use human-readable names only
 """
+
+
+def build_system_prompt(catalog: dict, conversions: dict) -> str:
+    """Backward-compatible order-taker prompt body entrypoint."""
+    return build_system_prompt_body(catalog, conversions)

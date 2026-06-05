@@ -18,7 +18,7 @@ from .runtime.llm_policy import (
 )
 from .runtime.geography_reference import load_conversions
 from .runtime.prompt_runtime import build_cached_system_prompt_blocks
-from .runtime.order_taker_prompt import build_system_prompt
+from .explore_prompt import build_explore_system_prompt
 from .runtime.order_taker_response import parse_llm_response
 
 
@@ -40,7 +40,7 @@ def interpret_request(
     hints: dict = None,
     progress=None,
     usage_recorder=None,
-    system_prompt_builder=build_system_prompt,
+    system_prompt_builder=build_explore_system_prompt,
     system_prompt_block_builder=build_cached_system_prompt_blocks,
     llm_selection=None,
 ) -> dict:
