@@ -11,6 +11,7 @@
 
 import { TrackAnimator, MultiTrackAnimator, setDependencies as setTrackAnimatorDeps } from './track-animator.js';
 import EventAnimator, { AnimationMode, setDependencies as setEventAnimatorDeps } from './event-animator.js';
+import { resolveOverlayIdFromPackId, resolveOverlayIdFromSourceId } from './overlay-selector.js';
 import { TIME_SYSTEM } from './time-slider.js';
 import {
   calculateCacheSize,
@@ -1620,6 +1621,45 @@ export const OverlayController = {
   },
 
   /**
+   * Load an explicit time range for an overlay and render from cache.
+   * Used by metadata-driven default loads that should use the native overlay
+   * endpoint instead of a confirmed-order response path.
+   * @param {string} overlayId - Overlay ID
+   * @param {number} startMs - Start timestamp in milliseconds
+   * @param {number} endMs - End timestamp in milliseconds
+   * @param {object} options - Optional request overrides
+   * @param {object|null} options.params - Query parameter overrides
+   * @returns {Promise<boolean>}
+   */
+  async loadOverlayRange(overlayId, startMs, endMs, options = {}) {
+    const endpointBase = OVERLAY_ENDPOINTS[overlayId];
+    if (!endpointBase) return false;
+
+    const endpoint = options.params
+      ? {
+          ...endpointBase,
+          params: {
+            ...(endpointBase.params || {}),
+            ...options.params
+          }
+        }
+      : endpointBase;
+
+    const loaded = await loadRangeData(overlayId, startMs, endMs, endpoint);
+    const hasCachedData = Boolean(dataCache[overlayId]?.features?.length);
+
+    if (hasCachedData) {
+      this.recalculateTimeRange();
+      this.showTimelineIfAllowed();
+      if (OverlaySelector?.isActive?.(overlayId)) {
+        this.renderCurrentData(overlayId);
+      }
+    }
+
+    return Boolean(loaded || hasCachedData);
+  },
+
+  /**
    * Handle overlay toggle event.
    * @param {string} overlayId - Overlay ID (e.g., 'earthquakes')
    * @param {boolean} isActive - Whether overlay is now active
@@ -2531,9 +2571,23 @@ export const OverlayController = {
    * @param {Object} geojson - GeoJSON FeatureCollection from the order result
    * @param {Object} rangeMeta - Optional range metadata {start, end} in ms
    */
-  ingestOrderResult(overlayId, geojson, rangeMeta = null) {
+  ingestOrderResult(overlayId, geojson, rangeMeta = null, responseMeta = null) {
     if (!geojson?.features || !OVERLAY_ENDPOINTS[overlayId]) {
       console.warn(`OverlayController: Cannot ingest - invalid data or unknown overlay: ${overlayId}`);
+      return;
+    }
+
+    const expectedOverlayId =
+      resolveOverlayIdFromSourceId(responseMeta?.source_id || responseMeta?.layer_source_id || '')
+      || resolveOverlayIdFromPackId(responseMeta?.pack_id || responseMeta?.layer_pack_id || '');
+    if (expectedOverlayId && expectedOverlayId !== overlayId) {
+      console.warn(
+        `OverlayController: Rejecting cross-overlay ingest for ${overlayId}; payload belongs to ${expectedOverlayId}`,
+        {
+          source_id: responseMeta?.source_id || responseMeta?.layer_source_id || null,
+          pack_id: responseMeta?.pack_id || responseMeta?.layer_pack_id || null
+        }
+      );
       return;
     }
 
@@ -2574,9 +2628,18 @@ export const OverlayController = {
       }
       const startYear = new Date(rangeMeta.start).getFullYear();
       const endYear = new Date(rangeMeta.end).getFullYear();
+      if (!yearRangeCache[overlayId]) {
+        yearRangeCache[overlayId] = { min: startYear, max: endYear, available: [] };
+      }
+      yearRangeCache[overlayId].min = Math.min(yearRangeCache[overlayId].min, startYear);
+      yearRangeCache[overlayId].max = Math.max(yearRangeCache[overlayId].max, endYear);
       for (let y = startYear; y <= endYear; y++) {
         loadedYears[overlayId].add(y);
+        if (!yearRangeCache[overlayId].available.includes(y)) {
+          yearRangeCache[overlayId].available.push(y);
+        }
       }
+      yearRangeCache[overlayId].available.sort((a, b) => a - b);
     }
 
     // Update cache size
@@ -2586,6 +2649,8 @@ export const OverlayController = {
     // Re-render if overlay is active
     const activeOverlays = OverlaySelector?.getActiveOverlays() || [];
     if (activeOverlays.includes(overlayId)) {
+      this.recalculateTimeRange();
+      this.showTimelineIfAllowed();
       this.renderCurrentData(overlayId);
     }
   },

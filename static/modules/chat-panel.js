@@ -225,7 +225,7 @@ function ingestEventsToOverlay(response, order = null) {
           end: new Date(response.year_range[1], 11, 31).getTime() }
       : null;
 
-  OverlayController.ingestOrderResult(overlayId, response.geojson, rangeMeta);
+  OverlayController.ingestOrderResult(overlayId, response.geojson, rangeMeta, response);
   return overlayId;
 }
 
@@ -235,6 +235,29 @@ function renderUnifiedOverlayEventResult(response, order = null) {
     MapAdapter?.fitToBounds?.(response.geojson);
   }
   return Boolean(overlayId);
+}
+
+function formatDefaultLoadItemLabel(item) {
+  const raw = String(item?.pack_id || item?.source_id || 'dataset').trim();
+  if (!raw) return 'dataset';
+  return raw.replace(/_/g, ' ');
+}
+
+function formatDefaultLoadActionLabel(action) {
+  if (action?.label) {
+    return String(action.label).trim().replace(/_/g, ' ');
+  }
+  if (action?.overlayId) {
+    return String(action.overlayId).trim().replace(/_/g, ' ');
+  }
+  return formatDefaultLoadItemLabel(action);
+}
+
+function joinLabelsForMessage(labels = []) {
+  const clean = labels.filter(Boolean);
+  if (clean.length <= 1) return clean[0] || 'datasets';
+  if (clean.length === 2) return `${clean[0]} and ${clean[1]}`;
+  return `${clean.slice(0, -1).join(', ')}, and ${clean[clean.length - 1]}`;
 }
 
 /**
@@ -447,15 +470,123 @@ export const ChatManager = {
   async executeDefaultLoadAction(action, options = {}) {
     if (!action || typeof action !== 'object') return false;
 
+    if (action.type === 'multi_default_load' && Array.isArray(action.actions)) {
+      const actions = action.actions.filter(Boolean);
+      const requestedCount = Number(action._requestedPackCount) || actions.length;
+      let successCount = 0;
+      const loadedLabels = [];
+
+      for (let index = 0; index < actions.length; index += 1) {
+        const childAction = actions[index];
+        options.onProgress?.({
+          index: index + 1,
+          total: requestedCount,
+          label: formatDefaultLoadActionLabel(childAction)
+        });
+        try {
+          const childResult = await this.executeDefaultLoadAction(childAction, {
+            ...options,
+            onProgress: null,
+            suppressResultMessage: true
+          });
+          if (childResult && (typeof childResult !== 'object' || childResult.ok !== false)) {
+            successCount += 1;
+            loadedLabels.push(formatDefaultLoadActionLabel(childAction));
+          }
+        } catch (error) {
+          console.warn('Default load action failed:', childAction?.label || childAction, error);
+        }
+      }
+
+      if (successCount > 0 && !options.suppressResultMessage) {
+        const labelText = joinLabelsForMessage(loadedLabels);
+        const summaryText = successCount === requestedCount
+          ? `Loaded ${successCount} defaults: ${labelText}.`
+          : `Loaded ${successCount}/${requestedCount} defaults: ${labelText}.`;
+        this.addMessage(summaryText, 'assistant', { mode: options.mode || this.mode });
+      }
+
+      return successCount > 0
+        ? { ok: true, successCount, total: requestedCount }
+        : false;
+    }
+
     if (action.type === 'confirmed_order' && action.order) {
       if (options.message) {
         this.addMessage(options.message, 'assistant', { mode: options.mode || this.mode });
       }
-      await this.executeOrder(action.order, {
-        skipLog: options.skipLog || false,
-        syntheticSource: options.syntheticSource || 'default_load'
-      });
-      return true;
+      const items = Array.isArray(action.order.items) ? action.order.items : [];
+      const requestedCount = Number(action.order._requestedPackCount) || items.length;
+      const shouldRunSequentially = Boolean(options.onProgress) && items.length > 1;
+      if (!shouldRunSequentially) {
+        await this.executeOrder(action.order, {
+          skipLog: options.skipLog || false,
+          syntheticSource: options.syntheticSource || 'default_load',
+          suppressResultMessage: Boolean(options.suppressResultMessage)
+        });
+        return true;
+      }
+
+      let successCount = 0;
+      const loadedLabels = [];
+      for (let index = 0; index < items.length; index += 1) {
+        const item = items[index];
+        options.onProgress?.({
+          index: index + 1,
+          total: requestedCount,
+          label: formatDefaultLoadItemLabel(item)
+        });
+        try {
+          await this.executeOrder(
+            {
+              ...action.order,
+              items: [item],
+              summary: action.order.summary
+            },
+            {
+              skipLog: options.skipLog || false,
+              syntheticSource: options.syntheticSource || 'default_load',
+              suppressResultMessage: true
+            }
+          );
+          successCount += 1;
+          loadedLabels.push(formatDefaultLoadItemLabel(item));
+        } catch (error) {
+          console.warn('Default load item failed:', item?.pack_id || item?.source_id || item, error);
+        }
+      }
+      if (successCount > 0 && !options.suppressResultMessage) {
+        const labelText = joinLabelsForMessage(loadedLabels);
+        const summaryText = successCount === requestedCount
+          ? `Loaded ${successCount} defaults: ${labelText}.`
+          : `Loaded ${successCount}/${requestedCount} defaults: ${labelText}.`;
+        this.addMessage(summaryText, 'assistant', { mode: options.mode || this.mode });
+      }
+      return successCount > 0
+        ? { ok: true, successCount, total: requestedCount }
+        : false;
+    }
+
+    if (action.type === 'overlay_range_load' && action.overlayId) {
+      const overlayId = String(action.overlayId || '').trim();
+      if (!overlayId) return false;
+
+      OverlaySelector?.promoteOverlay?.(overlayId, options.mode || this.mode);
+      if (OverlaySelector && !OverlaySelector.isActive(overlayId)) {
+        OverlaySelector.setActive(overlayId, true);
+      }
+
+      const loaded = await OverlayController?.loadOverlayRange?.(
+        overlayId,
+        action.startMs,
+        action.endMs,
+        { params: action.params || null }
+      );
+
+      if (loaded && options.message) {
+        this.addMessage(options.message, 'assistant', { mode: options.mode || this.mode });
+      }
+      return Boolean(loaded);
     }
 
     if (action.type === 'overlay_activation' && Array.isArray(action.overlayIds)) {
@@ -504,10 +635,19 @@ export const ChatManager = {
         {
           mode: btn.dataset.mode || this.mode,
           skipLog: false,
-          syntheticSource: 'welcome_preset'
+          syntheticSource: 'welcome_preset',
+          onProgress: ({ index, total, label }) => {
+            btn.textContent = `Loading ${index}/${total} ${label}`;
+          }
         }
       );
-      btn.textContent = handled ? 'Loaded' : 'Unavailable';
+      if (handled && typeof handled === 'object' && handled.ok) {
+        btn.textContent = handled.successCount === handled.total
+          ? 'Loaded'
+          : `Loaded ${handled.successCount}/${handled.total}`;
+      } else {
+        btn.textContent = handled ? 'Loaded' : 'Unavailable';
+      }
     } catch (error) {
       console.error('Preset action failed:', error);
       btn.textContent = originalText;
@@ -1388,15 +1528,21 @@ export const ChatManager = {
     });
 
     if (data.type === 'already_loaded') {
-      this.addMessage(data.message || 'This data is already loaded on your map.', 'assistant');
+      if (!options.suppressResultMessage) {
+        this.addMessage(data.message || 'This data is already loaded on your map.', 'assistant');
+      }
       if (orderPanel.switchTab) orderPanel.switchTab('loaded');
     } else if (data.type === 'error') {
-      this.addMessage(data.message || 'Failed to load data.', 'assistant');
+      if (!options.suppressResultMessage) {
+        this.addMessage(data.message || 'Failed to load data.', 'assistant');
+      }
       throw new Error(data.message || 'Order execution failed');
     } else if (data.action === 'remove') {
       // Handle removal orders (no geojson, just identifiers)
       const message = data.summary || `Removed ${data.count || 0} ${data.data_type || 'items'}`;
-      this.addMessage(message, 'assistant');
+      if (!options.suppressResultMessage) {
+        this.addMessage(message, 'assistant');
+      }
       App?.displayMapPayload(data, { order });
       unregisterLoadedData(order);  // Track removal for LLM context
       if (orderPanel.switchTab) orderPanel.switchTab('loaded');
@@ -1421,7 +1567,9 @@ export const ChatManager = {
         unregisterLoadedData(order);
       }
       const message = data.summary || `Rendered ${data.layer_count || data.results.length || 0} map layers`;
-      this.addMessage(message, 'assistant');
+      if (!options.suppressResultMessage) {
+        this.addMessage(message, 'assistant');
+      }
       if (orderPanel.switchTab) orderPanel.switchTab('loaded');
     } else if (data.geojson) {
       // Route by data_type for cache ingestion
@@ -1429,20 +1577,28 @@ export const ChatManager = {
 
       if (dataType === 'events') {
         const message = data.summary || `Showing ${data.count} ${data.event_type || 'event'} events`;
-        this.addMessage(message, 'assistant');
+        if (!options.suppressResultMessage) {
+          this.addMessage(message, 'assistant');
+        }
         renderUnifiedOverlayEventResult(data, order);
       } else if (dataType === 'metrics') {
         const message = data.data_note || `Loaded ${data.count || data.geojson.features?.length || 0} locations`;
-        this.addMessage(message, 'assistant');
+        if (!options.suppressResultMessage) {
+          this.addMessage(message, 'assistant');
+        }
         ingestMetricsToCache(data);
       } else if (dataType === 'geometry') {
         const message = data.summary || `Showing ${data.count || data.geojson.features?.length || 0} ${data.geographic_level || data.overlay_type || 'geometry'} areas`;
-        this.addMessage(message, 'assistant');
+        if (!options.suppressResultMessage) {
+          this.addMessage(message, 'assistant');
+        }
         renderGeometryOrder(data);
       } else {
         // Fallback for unknown data_type
         const message = data.summary || data.data_note || `Loaded ${data.count || 0} items`;
-        this.addMessage(message, 'assistant');
+        if (!options.suppressResultMessage) {
+          this.addMessage(message, 'assistant');
+        }
       }
 
       // Log order for session recovery (skip during recovery to avoid duplicates)

@@ -90,8 +90,58 @@ function buildConfirmedOrderFromDefaultLoad(defaultLoad, fallbackSummary = '') {
   };
 }
 
+function resolveOverlayRangeYears(defaultLoad) {
+  if (!defaultLoad || typeof defaultLoad !== 'object') return null;
+
+  const explicitStartYear = Number(defaultLoad.year_start);
+  const explicitEndYear = Number(defaultLoad.year_end);
+  if (Number.isFinite(explicitStartYear) && Number.isFinite(explicitEndYear)) {
+    return {
+      startYear: Math.trunc(explicitStartYear),
+      endYear: Math.trunc(explicitEndYear)
+    };
+  }
+
+  const relativeYears = Number(defaultLoad.relative_years);
+  if (!Number.isFinite(relativeYears) || relativeYears <= 0) {
+    return null;
+  }
+
+  const endYear = getCurrentUtcYear();
+  const startYear = Math.max(1900, endYear - Math.trunc(relativeYears) + 1);
+  return { startYear, endYear };
+}
+
+function buildOverlayRangeLoadAction(defaultLoad, sourceEntry) {
+  if (!defaultLoad || typeof defaultLoad !== 'object') return null;
+  if (String(defaultLoad.kind || defaultLoad.type || '').trim() !== 'overlay_range_load') {
+    return null;
+  }
+
+  const overlayId = String(defaultLoad.overlay_id || '').trim();
+  if (!overlayId) return null;
+
+  const years = resolveOverlayRangeYears(defaultLoad);
+  if (!years) return null;
+
+  return {
+    type: 'overlay_range_load',
+    overlayId,
+    startMs: Date.UTC(years.startYear, 0, 1, 0, 0, 0, 0),
+    endMs: Date.UTC(years.endYear, 11, 31, 23, 59, 59, 999),
+    params: defaultLoad.params && typeof defaultLoad.params === 'object'
+      ? cloneJsonSafe(defaultLoad.params)
+      : null,
+    message: String(sourceEntry?.default_response || '').trim()
+  };
+}
+
 function getSourceDefaultLoadAction(sourceEntry) {
   if (!sourceEntry || typeof sourceEntry !== 'object') return null;
+  const overlayRangeAction = buildOverlayRangeLoadAction(sourceEntry.default_load, sourceEntry);
+  if (overlayRangeAction) {
+    return overlayRangeAction;
+  }
   const defaultLoad = buildConfirmedOrderFromDefaultLoad(
     sourceEntry.default_load,
     sourceEntry.default_response || sourceEntry.default_question || ''
@@ -113,28 +163,27 @@ function getPackDefaultLoadAction(packId) {
   return null;
 }
 
-function buildPresetOrderFromPackDefaults(packIds, fallbackSummary = '') {
-  const items = [];
-  let summary = '';
+function buildPresetActionFromPackDefaults(packIds, fallbackSummary = '') {
+  const actions = [];
   const loadedPackIds = [];
   for (const packId of packIds) {
     const action = getPackDefaultLoadAction(packId);
-    const orderItems = Array.isArray(action?.order?.items) ? cloneJsonSafe(action.order.items) : [];
-    if (!orderItems.length) {
+    if (!action) {
       continue;
     }
-    items.push(...orderItems);
+    actions.push({
+      ...cloneJsonSafe(action),
+      label: packId
+    });
     loadedPackIds.push(packId);
-    if (!summary && action?.order?.summary) {
-      summary = String(action.order.summary).trim();
-    }
   }
-  if (!items.length) {
+  if (!actions.length) {
     return null;
   }
   return {
-    items,
-    summary: summary || fallbackSummary,
+    type: 'multi_default_load',
+    actions,
+    summary: fallbackSummary,
     _resolvedPackIds: loadedPackIds,
     _requestedPackCount: Array.isArray(packIds) ? packIds.length : loadedPackIds.length
   };
@@ -144,7 +193,13 @@ export function resolveOverlayIdForOrderResult(response, order = null) {
   const directOverlayId = String(response?.overlay_id || '').trim();
   if (directOverlayId) return directOverlayId;
 
-  const packId = String(response?.pack_id || order?.pack_id || order?.items?.[0]?.pack_id || '').trim();
+  const isSingleItemOrder = Array.isArray(order?.items) && order.items.length === 1;
+  const packId = String(
+    response?.pack_id
+      || response?.layer_pack_id
+      || (isSingleItemOrder ? (order?.pack_id || order?.items?.[0]?.pack_id) : '')
+      || ''
+  ).trim();
   const overlayIdFromPack = resolveOverlayIdFromPackId(packId);
   if (overlayIdFromPack) {
     return overlayIdFromPack;
@@ -153,7 +208,12 @@ export function resolveOverlayIdForOrderResult(response, order = null) {
     return packId;
   }
 
-  const responseSourceId = String(response?.source_id || order?.source_id || order?.items?.[0]?.source_id || '').trim();
+  const responseSourceId = String(
+    response?.source_id
+      || response?.layer_source_id
+      || (isSingleItemOrder ? (order?.source_id || order?.items?.[0]?.source_id) : '')
+      || ''
+  ).trim();
   const overlayIdFromSource = resolveOverlayIdFromSourceId(responseSourceId);
   if (overlayIdFromSource) {
     return overlayIdFromSource;
@@ -208,17 +268,11 @@ export function resolveDefaultLoadAction({ lane = 'explore', overlayId = '', pac
   const normalizedLane = String(lane || 'explore').trim().toLowerCase();
   const normalizedPresetId = String(presetId || '').trim();
   if (normalizedPresetId === 'explore:disasters_2020_2025') {
-    const presetOrder = buildPresetOrderFromPackDefaults(
+    const presetAction = buildPresetActionFromPackDefaults(
       ['earthquakes', 'hurricanes', 'volcanoes', 'wildfires', 'tsunamis', 'tornadoes'],
       'Loading disaster defaults'
     );
-    if (presetOrder) {
-      return {
-        type: 'confirmed_order',
-        order: presetOrder
-      };
-    }
-    return null;
+    return presetAction || null;
   }
 
   const normalizedPackId = String(packId || '').trim();

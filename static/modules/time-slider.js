@@ -458,6 +458,11 @@ export const TimeSlider = {
       }
     }
 
+    // Keep trim-handle UI and bound labels in sync with the new range even when
+    // no pending bounds are being restored. Without this, the visible selector
+    // handles can still show an older range until the user interacts with them.
+    this.updateTrimHandlePositions();
+
     // Apply pending trim bounds from session recovery (only once)
     if (this._pendingBoundMinTime !== undefined || this._pendingBoundMaxTime !== undefined) {
       // Validate bounds are within the current time range
