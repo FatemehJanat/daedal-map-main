@@ -36,7 +36,7 @@ import {
   updateComposerState as updateComposerStateImpl,
   updateSidebarModeLayout as updateSidebarModeLayoutImpl
 } from './chat/chat-lane-controller.js';
-import { getInitialLane } from './routing/app-route-state.js';
+import { getInitialLane, setLaneTitle, writeEntityParam } from './routing/app-route-state.js';
 import {
   applyFilterUpdate as applyFilterUpdateImpl,
   handleResponse as handleResponseImpl,
@@ -629,8 +629,9 @@ export const ChatManager = {
   },
 
   async runDefaultLoad(params = {}, options = {}) {
+    const lane = options.mode || this.mode;
     const action = resolveDefaultLoadAction({
-      lane: options.mode || this.mode,
+      lane,
       overlayId: params.overlayId,
       packId: params.packId,
       sourceId: params.sourceId,
@@ -638,7 +639,31 @@ export const ChatManager = {
       presetId: params.presetId
     });
     if (!action) return false;
-    return this.executeDefaultLoadAction(action, options);
+    const result = await this.executeDefaultLoadAction(action, options);
+    if (result) this.reflectLoadedEntity(lane, params);
+    return result;
+  },
+
+  // Make an app pack/source load a distinct, identifiable analytics signal:
+  // stamp the pack_id/source_id into the page title + URL (so GA tells an app
+  // *load* apart from a www pack-page *visit*) and fire a pack_load event for
+  // clean counting. Single-entity loads only -- a multi-pack preset has no one
+  // identity, so it is skipped.
+  reflectLoadedEntity(lane, params = {}) {
+    const sourceId = String(params.sourceId || '').trim();
+    const packId = String(params.packId || '').trim();
+    if (!sourceId && !packId) return;
+    try {
+      setLaneTitle(lane, sourceId || packId);
+      writeEntityParam(lane, sourceId ? { sourceId } : { packId });
+      window.gtag?.('event', 'pack_load', {
+        pack_id: packId || null,
+        source_id: sourceId || null,
+        lane,
+      });
+    } catch (err) {
+      console.warn('reflectLoadedEntity failed', err);
+    }
   },
 
   async handlePresetButton(btn) {

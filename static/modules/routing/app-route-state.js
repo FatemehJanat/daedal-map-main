@@ -33,12 +33,43 @@ export function normalizeLane(value) {
 
 /**
  * Set document.title to match the active lane so analytics (GA pageTitle /
- * Realtime) and the browser tab distinguish lanes, not just the URL path.
+ * Realtime) and the browser tab distinguish lanes, not just the URL path. Pass a
+ * pack_id / source_id to identify the loaded entity, e.g.
+ * "earthquakes - Explore - DaedalMap" -- this is how GA tells an app pack *load*
+ * apart from a www pack-page *visit* ("Earthquakes Data Pack - DaedalMap").
  * @param {string} lane
+ * @param {string} [entityId] raw pack_id or source_id
  */
-export function setLaneTitle(lane) {
+export function setLaneTitle(lane, entityId) {
   if (typeof document === 'undefined') return;
-  document.title = LANE_TITLES[normalizeLane(lane) || DEFAULT_LANE] || document.title;
+  const base = LANE_TITLES[normalizeLane(lane) || DEFAULT_LANE] || document.title;
+  const id = String(entityId || '').trim();
+  document.title = id ? `${id} - ${base}` : base;
+}
+
+/**
+ * Reflect the loaded pack/source in the URL so GA sees a distinct pageview
+ * (`/explore?pack=earthquakes`) and the link is shareable. Uses replaceState so
+ * loading a pack does not spam browser history; the history change still fires a
+ * GA page_view that captures the new path + title. Source wins over pack when
+ * both are given (the more specific intent). No-op when the URL already matches
+ * (e.g. a deep-link entry that already carries the param).
+ * @param {string} lane
+ * @param {{packId?: string, sourceId?: string}} [entity]
+ */
+export function writeEntityParam(lane, { packId = '', sourceId = '' } = {}) {
+  if (typeof window === 'undefined') return;
+  const target = '/' + (normalizeLane(lane) || DEFAULT_LANE);
+  const pack = String(packId || '').trim();
+  const source = String(sourceId || '').trim();
+  const params = new URLSearchParams();
+  if (source) params.set('source', source);
+  else if (pack) params.set('pack', pack);
+  const qs = params.toString();
+  const nextSearch = qs ? `?${qs}` : '';
+  const currentPath = (window.location.pathname || '/').replace(/\/+$/, '') || '/';
+  if (currentPath === target && (window.location.search || '') === nextSearch) return;
+  window.history.replaceState({ lane }, '', target + nextSearch + (window.location.hash || ''));
 }
 
 /**
