@@ -102,9 +102,45 @@ export function setDependencies(deps) {
 
 // Map event_type from API responses to overlay IDs
 const CHAT_MODES = ['explore', 'research', 'ops'];
+const DISPLAY_COLOR_MAP = {
+  red: '#ef4444',
+  blue: '#3b82f6',
+  green: '#10b981',
+  orange: '#f59e0b',
+  yellow: '#eab308',
+  purple: '#8b5cf6',
+  pink: '#ec4899',
+  cyan: '#06b6d4',
+  teal: '#14b8a6'
+};
 
 function normalizeChatMode(mode) {
   return CHAT_MODES.includes(mode) ? mode : 'explore';
+}
+
+function extractRequestedDisplayColor(text) {
+  const normalized = String(text || '').trim().toLowerCase();
+  if (!normalized) return null;
+  const match = normalized.match(/\b(?:in|as)\s+(red|blue|green|orange|yellow|purple|pink|cyan|teal)\b/);
+  if (!match) return null;
+  return DISPLAY_COLOR_MAP[match[1]] || null;
+}
+
+function inferRequestedMetricColor(order, data = null) {
+  const items = Array.isArray(order?.items) ? order.items : [];
+  if (!items.length) return null;
+
+  const targetSourceId = String(data?.source_id || '').trim();
+  const matchingItem = items.find((item) => {
+    if (!targetSourceId) return true;
+    return String(item?.source_id || '').trim() === targetSourceId;
+  }) || items[0];
+
+  const hintedQuery = String((matchingItem?._hints || {}).original_query || '').trim();
+  const directColor = extractRequestedDisplayColor(hintedQuery);
+  if (directColor) return directColor;
+
+  return extractRequestedDisplayColor(order?.summary || '');
 }
 
 // =============================================================================
@@ -1785,6 +1821,12 @@ export const ChatManager = {
         const handledByOverlay = result?.data_type === 'events' && renderUnifiedOverlayEventResult(result, order);
         if (!handledByOverlay) {
           App?.displayMapPayload(result, { order });
+          if (result?.data_type === 'metrics') {
+            const requestedColor = inferRequestedMetricColor(order, result);
+            if (requestedColor) {
+              App?.applyMetricChoroplethStyle?.(requestedColor);
+            }
+          }
         }
         if (result?.action === 'remove') {
           sawRemoval = true;
@@ -1845,6 +1887,12 @@ export const ChatManager = {
 
       if (!(dataType === 'events' && resolveOverlayIdForOrderResult(data, order))) {
         App?.displayMapPayload(data, { order });
+        if (dataType === 'metrics') {
+          const requestedColor = inferRequestedMetricColor(order, data);
+          if (requestedColor) {
+            App?.applyMetricChoroplethStyle?.(requestedColor);
+          }
+        }
       }
     }
     return data;
@@ -2422,17 +2470,6 @@ export const ChatManager = {
   },
 
   parseLayeredMetricRequest(query) {
-    const colorMap = {
-      red: '#ef4444',
-      blue: '#3b82f6',
-      green: '#10b981',
-      orange: '#f59e0b',
-      yellow: '#eab308',
-      purple: '#8b5cf6',
-      pink: '#ec4899',
-      cyan: '#06b6d4',
-      teal: '#14b8a6'
-    };
     const normalized = String(query || '').trim();
     if (!normalized || !/\band\b/i.test(normalized)) return null;
     const segments = normalized.split(/\s+\band\b\s+/i).map((part) => part.trim()).filter(Boolean);
@@ -2448,7 +2485,7 @@ export const ChatManager = {
       const colorMatch = segment.match(/\b(?:in|as)\s+(red|blue|green|orange|yellow|purple|pink|cyan|teal)\b/i);
       if (!colorMatch) return null;
       const colorName = String(colorMatch[1] || '').toLowerCase();
-      const colorHex = colorMap[colorName];
+      const colorHex = DISPLAY_COLOR_MAP[colorName];
       if (!colorHex) return null;
       let clauseQuery = segment.replace(/\b(?:in|as)\s+(red|blue|green|orange|yellow|purple|pink|cyan|teal)\b/ig, '').trim();
       clauseQuery = clauseQuery.replace(/[,.]+$/g, '').trim();

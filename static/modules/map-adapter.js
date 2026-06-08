@@ -53,6 +53,7 @@ export const MapAdapter = {
   researchDisplayLayerIds: [],
   metricDisplayLayerIds: [],
   metricDisplaySourceIds: [],
+  metricDisplayHandlerRefs: [],
   mapClickHandlerBound: false,
   baseLayerHandlerRefs: {
     click: null,
@@ -871,6 +872,19 @@ export const MapAdapter = {
 
   clearMetricDisplayLayers() {
     if (!this.map) return;
+    for (const handlerSet of this.metricDisplayHandlerRefs) {
+      const layerId = handlerSet?.layerId;
+      if (!layerId) continue;
+      if (handlerSet.mousemove) {
+        this.map.off('mousemove', layerId, handlerSet.mousemove);
+      }
+      if (handlerSet.mouseleave) {
+        this.map.off('mouseleave', layerId, handlerSet.mouseleave);
+      }
+      if (handlerSet.click) {
+        this.map.off('click', layerId, handlerSet.click);
+      }
+    }
     for (const layerId of this.metricDisplayLayerIds) {
       if (this.map.getLayer(layerId)) {
         this.map.removeLayer(layerId);
@@ -883,6 +897,7 @@ export const MapAdapter = {
     }
     this.metricDisplayLayerIds = [];
     this.metricDisplaySourceIds = [];
+    this.metricDisplayHandlerRefs = [];
   },
 
   getSharedOverlayAnchorLayerId() {
@@ -1003,7 +1018,55 @@ export const MapAdapter = {
 
       this.metricDisplaySourceIds.push(sourceId);
       this.metricDisplayLayerIds.push(layerId);
+      this.bindMetricDisplayInteractions(layerId);
     });
+  },
+
+  bindMetricDisplayInteractions(layerId) {
+    if (!this.map || !layerId || !this.map.getLayer(layerId)) return;
+
+    const mousemove = (e) => {
+      if (!e.features?.length || this.popupLocked) return;
+      this.map.getCanvas().style.cursor = 'pointer';
+      const feature = e.features[0];
+      App?.handleFeatureHover?.(feature, e.lngLat);
+    };
+
+    const mouseleave = () => {
+      if (!this.map) return;
+      this.map.getCanvas().style.cursor = '';
+      if (!this.popupLocked) {
+        this.hidePopup?.();
+      }
+    };
+
+    const click = async (e) => {
+      if (!e.features?.length) return;
+      const feature = e.features[0];
+      const popupProperties = App?.getPopupProperties ? App.getPopupProperties(feature) : feature.properties;
+      this.popupLocked = true;
+      this.setPopupFocusOverride(popupProperties);
+      this.setSelectedPopupContext({
+        kind: 'geometry',
+        properties: popupProperties
+      });
+      App?.handleFeatureHover?.(feature, e.lngLat);
+      const locId = popupProperties?.loc_id;
+      if (!locId) return;
+      const locationInfo = await LocationInfoCache.fetch(locId);
+      if (locationInfo && this.popupLocked) {
+        this.lockedPopupLocationInfo = locationInfo;
+        this.updateSelectedPopupLocationInfo(locationInfo);
+        const popupHtml = PopupBuilder?.build(popupProperties, App?.currentData, locationInfo);
+        this.showPopup([e.lngLat.lng, e.lngLat.lat], popupHtml);
+        this.setupPopupTabHandlers?.();
+      }
+    };
+
+    this.map.on('mousemove', layerId, mousemove);
+    this.map.on('mouseleave', layerId, mouseleave);
+    this.map.on('click', layerId, click);
+    this.metricDisplayHandlerRefs.push({ layerId, mousemove, mouseleave, click });
   },
 
   /**

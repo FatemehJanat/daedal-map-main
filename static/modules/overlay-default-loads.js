@@ -345,7 +345,7 @@ export function resolveDefaultLoadAction({ lane = 'explore', overlayId = '', pac
   const normalizedPresetId = String(presetId || '').trim();
   if (normalizedPresetId === 'explore:disasters_2020_2025') {
     const presetAction = buildPresetActionFromPackDefaults(
-      ['earthquakes', 'hurricanes', 'volcanoes', 'wildfires', 'tsunamis', 'tornadoes'],
+      ['earthquakes', 'hurricanes', 'volcanoes', 'wildfires', 'tsunamis', 'tornadoes', 'floods'],
       'Loading disaster defaults'
     );
     return presetAction || null;
