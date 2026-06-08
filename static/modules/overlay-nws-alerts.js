@@ -72,15 +72,27 @@ export const NwsAlertsOverlay = {
     console.log('NwsAlertsOverlay initialized');
   },
 
-  setEnabled(on) {
+  async setEnabled(on) {
     this.enabled = Boolean(on);
     if (this.enabled) {
-      this._refresh();
+      await this._refresh();
       this._startPolling();
     } else {
       this._stopPolling();
       this._removeLayers();
     }
+  },
+
+  getActiveAlertCount() {
+    const features = this.lastData?.features;
+    if (!Array.isArray(features) || !features.length) return 0;
+    const alertIds = new Set();
+    for (const feature of features) {
+      const props = feature?.properties;
+      const alertId = String(props?.alert_id || '').trim();
+      if (alertId) alertIds.add(alertId);
+    }
+    return alertIds.size;
   },
 
   _startPolling() {

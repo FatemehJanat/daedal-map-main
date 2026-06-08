@@ -970,7 +970,15 @@ export const OverlaySelector = {
 
       // Notify if state changed
       if (wasActive !== active) {
-        this._notifyListeners(overlay.id, active);
+        this._notifyListeners(overlay.id, active, {
+          categoryBatch: {
+            categoryId,
+            active,
+            overlayIds: category.overlays
+              .filter((item) => !item.locked && !item.placeholder)
+              .map((item) => item.id),
+          }
+        });
       }
     }
     this._rememberCurrentLaneState();
@@ -1174,10 +1182,10 @@ export const OverlaySelector = {
    * Notify all listeners of an overlay change.
    * @private
    */
-  _notifyListeners(overlayId, isActive) {
+  _notifyListeners(overlayId, isActive, options = {}) {
     for (const listener of this.listeners) {
       try {
-        listener(overlayId, isActive);
+        listener(overlayId, isActive, options);
       } catch (err) {
         console.error('OverlaySelector listener error:', err);
       }

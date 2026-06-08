@@ -166,10 +166,30 @@ function formatCountText(count, singular, plural = '') {
 
 function emitOverlayStatusMessage(overlayId, isActive, options = {}) {
   if (options.suppressStatusMessage) return;
+  if (options.categoryBatch) return;
   const text = buildOverlayStatusMessage(overlayId, isActive);
   if (!text || !ChatManager?.addMessage) return;
   ChatManager.addMessage(text, 'assistant', {
     mode: OverlaySelector?.currentLaneMode || 'explore'
+  });
+}
+
+function emitCategoryBatchStatusMessage(categoryBatch = {}) {
+  const overlayIds = (Array.isArray(categoryBatch.overlayIds) ? categoryBatch.overlayIds : [])
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+  if (!overlayIds.length || !ChatManager?.addMessage) return;
+  const mode = OverlaySelector?.currentLaneMode || 'explore';
+  const messages = overlayIds.map((overlayId) => {
+    if (categoryBatch.active && mode === 'ops' && typeof OverlayController?.buildOpsFeedSummaryMessage === 'function') {
+      return OverlayController.buildOpsFeedSummaryMessage(overlayId, [overlayId]);
+    }
+    return buildOverlayStatusMessage(overlayId, Boolean(categoryBatch.active));
+  }).filter(Boolean);
+  if (!messages.length) return;
+  const message = messages.join(' ');
+  ChatManager.addMessage(message, 'assistant', {
+    mode
   });
 }
 
@@ -740,7 +760,7 @@ export const OverlayController = {
     if (!normalizedOverlayId) return null;
 
     if (normalizedOverlayId === 'nws_alerts') {
-      const count = NwsAlertsOverlay?.lastData?.features?.length;
+      const count = NwsAlertsOverlay?.getActiveAlertCount?.();
       return Number.isFinite(count) ? count : null;
     }
 
@@ -898,8 +918,15 @@ export const OverlayController = {
     }
 
     // Listen for overlay toggle events
-    OverlaySelector.addListener((overlayId, isActive) => {
-      this.handleOverlayChange(overlayId, isActive);
+    OverlaySelector.addListener((overlayId, isActive, options = {}) => {
+      this.handleOverlayChange(overlayId, isActive, options);
+      const batch = options?.categoryBatch;
+      if (batch && Array.isArray(batch.overlayIds)) {
+        const lastOverlayId = batch.overlayIds[batch.overlayIds.length - 1];
+        if (overlayId === lastOverlayId) {
+          emitCategoryBatchStatusMessage(batch);
+        }
+      }
     });
 
     // Listen for TimeSlider changes (decoupled via listener pattern)
@@ -1816,13 +1843,13 @@ export const OverlayController = {
     // Live forecast/observation overlays are driven by their own modules
     // (no catalog data, no TimeSlider). Route and stop here.
     if (overlayId === 'aurora') {
-      AuroraOverlay.setEnabled(isActive);
+      await AuroraOverlay.setEnabled(isActive);
       refreshTickerForOverlayState();
       emitOverlayStatusMessage(overlayId, isActive, options);
       return;
     }
     if (overlayId === 'nws_alerts') {
-      NwsAlertsOverlay.setEnabled(isActive);
+      await NwsAlertsOverlay.setEnabled(isActive);
       refreshTickerForOverlayState();
       emitOverlayStatusMessage(overlayId, isActive, options);
       return;

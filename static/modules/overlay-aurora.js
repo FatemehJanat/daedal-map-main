@@ -43,10 +43,10 @@ export const AuroraOverlay = {
     console.log('AuroraOverlay initialized');
   },
 
-  setEnabled(on) {
+  async setEnabled(on) {
     this.enabled = Boolean(on);
     if (this.enabled) {
-      this._refresh();
+      await this._refresh();
       this._startPolling();
     } else {
       this._stopPolling();

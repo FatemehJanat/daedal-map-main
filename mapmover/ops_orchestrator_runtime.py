@@ -6,7 +6,10 @@ import csv
 import json
 import os
 import re
-from datetime import datetime, timezone
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 
@@ -17,11 +20,22 @@ try:
 except ImportError:
     boto3 = None
 
+try:
+    import requests
+except ImportError:
+    requests = None
+
 
 PRIVATE_ROOT = Path(__file__).resolve().parents[2] / "county-map-private"
 OPS_STATE_ROOT = PRIVATE_ROOT / "live" / "state"
 REFERENCE_ROOT = Path(__file__).resolve().parent / "reference"
 CURRENCY_MAP_PATH = REFERENCE_ROOT / "country_currency_map.csv"
+LIVE_STATE_SNAPSHOT_TTL_SECONDS = 60.0
+LIVE_STATE_HISTORY_TTL_SECONDS = 60.0
+_LIVE_STATE_CACHE: dict[tuple[str, str], tuple[float, object]] = {}
+_LIVE_STATE_CACHE_LOCK = threading.Lock()
+_LIVE_STATE_STATUS: dict[tuple[str, str], str] = {}
+_LIVE_STATE_STATUS_LOCK = threading.Lock()
 
 FEED_ALIASES = {
     "earthquakes": ("earthquake", "earthquakes", "quake", "quakes", "seismic"),
@@ -30,6 +44,9 @@ FEED_ALIASES = {
     "volcanoes": ("volcano", "volcanoes", "eruption", "eruptions", "vei"),
     "wildfires_us_nifc": ("wildfire", "wildfires", "fire", "fires", "nifc"),
     "hurricanes_ibtracs_nrt": ("hurricane", "hurricanes", "storm", "storms", "cyclone", "typhoon", "ibtracs"),
+    "usa_nws_alerts": ("nws", "nws alerts", "weather alert", "weather alerts", "warning", "warnings", "alert", "alerts"),
+    "noaa_swpc": ("space weather", "space weather alerts", "geomagnetic", "solar storm", "radio blackout"),
+    "noaa_aurora": ("aurora", "aurora forecast", "northern lights"),
 }
 
 COUNT_QUERY_PATTERNS = (
@@ -41,9 +58,17 @@ COUNT_QUERY_PATTERNS = (
 
 MAP_FOCUS_PATTERNS = (
     r"\bshow me\b",
+    r"\bshow them\b",
+    r"\bshow those\b",
+    r"\bshow it\b",
     r"\btake me to\b",
     r"\bzoom to\b",
     r"\bgo to\b",
+    r"\bmap them\b",
+    r"\bmap those\b",
+    r"\bmap it\b",
+    r"\bput them on the map\b",
+    r"\bput those on the map\b",
     r"\blocate\b",
     r"\bwhere is\b",
 )
@@ -101,6 +126,7 @@ DEEP_HISTORY_PATTERNS = (
     r"\bhow has\b",
     r"\bwhat changed\b",
     r"\blast\s+\d+",
+    r"\bpast\s+\d+",
     r"\btoday\b",
     r"\byesterday\b",
     r"\bintensif",
@@ -199,40 +225,159 @@ def _read_jsonl_object(relative_key: str) -> list[dict]:
     return entries
 
 
+def _site_live_state_base_url() -> str:
+    value = (
+        str(os.environ.get("SITE_URL", "") or "").strip()
+        or str(os.environ.get("CLOUD_URL", "") or "").strip()
+    ).rstrip("/")
+    return value
+
+
+def _live_state_cache_ttl(kind: str) -> float:
+    if kind == "history":
+        return LIVE_STATE_HISTORY_TTL_SECONDS
+    return LIVE_STATE_SNAPSHOT_TTL_SECONDS
+
+
+def _get_live_state_cache(collector: str, kind: str) -> object | None:
+    key = (collector, kind)
+    now = time.monotonic()
+    with _LIVE_STATE_CACHE_LOCK:
+        record = _LIVE_STATE_CACHE.get(key)
+        if not record:
+            return None
+        cached_at, payload = record
+        if now - cached_at > _live_state_cache_ttl(kind):
+            _LIVE_STATE_CACHE.pop(key, None)
+            return None
+        return payload
+
+
+def _set_live_state_cache(collector: str, kind: str, payload: object) -> None:
+    key = (collector, kind)
+    with _LIVE_STATE_CACHE_LOCK:
+        _LIVE_STATE_CACHE[key] = (time.monotonic(), payload)
+
+
+def _set_live_state_status(collector: str, kind: str, status: str) -> None:
+    key = (collector, kind)
+    with _LIVE_STATE_STATUS_LOCK:
+        _LIVE_STATE_STATUS[key] = status
+
+
+def _get_live_state_status(collector: str, kind: str) -> str:
+    key = (collector, kind)
+    with _LIVE_STATE_STATUS_LOCK:
+        return str(_LIVE_STATE_STATUS.get(key) or "").strip()
+
+
+def _cloud_live_state_expected() -> bool:
+    return bool(_object_store_bucket() and str(os.environ.get("AWS_ACCESS_KEY_ID", "") or "").strip() and str(os.environ.get("AWS_SECRET_ACCESS_KEY", "") or "").strip())
+
+
+def _fetch_live_state_via_site(collector_name: str, kind: str) -> dict | list | None:
+    if requests is None:
+        return None
+    base_url = _site_live_state_base_url()
+    collector = str(collector_name or "").strip()
+    if not base_url or not collector or kind not in {"snapshot", "history"}:
+        return None
+    try:
+        response = requests.get(
+            f"{base_url}/api/internal/live-state/{collector}/{kind}",
+            timeout=4,
+        )
+        if response.status_code >= 300:
+            return None
+        payload = response.json()
+    except Exception:
+        return None
+    if kind == "snapshot":
+        return payload if isinstance(payload, dict) else None
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    return None
+
+
 def load_current_state_snapshot(collector_name: str) -> dict | None:
     collector = str(collector_name or "").strip()
     if not collector:
         return None
+    cached = _get_live_state_cache(collector, "snapshot")
+    if isinstance(cached, dict):
+        _set_live_state_status(collector, "snapshot", "cache")
+        return cached
+    snapshot = _read_json_object(f"{collector}/snapshot.json")
+    if isinstance(snapshot, dict):
+        _set_live_state_cache(collector, "snapshot", snapshot)
+        _set_live_state_status(collector, "snapshot", "cloud")
+        return snapshot
+    snapshot = _fetch_live_state_via_site(collector, "snapshot")
+    if isinstance(snapshot, dict):
+        _set_live_state_cache(collector, "snapshot", snapshot)
+        _set_live_state_status(collector, "snapshot", "site_fallback")
+        return snapshot
     snapshot_path = OPS_STATE_ROOT / collector / "snapshot.json"
     if snapshot_path.exists():
         try:
-            return json.loads(snapshot_path.read_text(encoding="utf-8"))
+            snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            if isinstance(snapshot, dict):
+                _set_live_state_cache(collector, "snapshot", snapshot)
+                _set_live_state_status(collector, "snapshot", "local_fallback")
+                return snapshot
         except Exception:
             pass
-    return _read_json_object(f"{collector}/snapshot.json")
+    _set_live_state_status(
+        collector,
+        "snapshot",
+        "cloud_unavailable" if _cloud_live_state_expected() else "cloud_not_configured",
+    )
+    return None
 
 
 def load_current_state_history(collector_name: str, limit: int | None = None) -> list[dict]:
     collector = str(collector_name or "").strip()
     if not collector:
         return []
-    history_path = OPS_STATE_ROOT / collector / "history.jsonl"
-    entries: list[dict] = []
-    if history_path.exists():
-        try:
-            with open(history_path, "r", encoding="utf-8") as handle:
-                for line in handle:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        entries.append(json.loads(line))
-                    except Exception:
-                        continue
-        except Exception:
-            entries = []
+    cached = _get_live_state_cache(collector, "history")
+    if isinstance(cached, list):
+        _set_live_state_status(collector, "history", "cache")
+        entries = cached
     else:
         entries = _read_jsonl_object(f"{collector}/history.jsonl")
+        if isinstance(entries, list) and entries:
+            _set_live_state_status(collector, "history", "cloud")
+        else:
+            entries = _fetch_live_state_via_site(collector, "history")
+            if isinstance(entries, list) and entries:
+                _set_live_state_status(collector, "history", "site_fallback")
+    if not isinstance(entries, list) or not entries:
+        history_path = OPS_STATE_ROOT / collector / "history.jsonl"
+        local_entries: list[dict] = []
+        if history_path.exists():
+            try:
+                with open(history_path, "r", encoding="utf-8") as handle:
+                    for line in handle:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            local_entries.append(json.loads(line))
+                        except Exception:
+                            continue
+            except Exception:
+                local_entries = []
+        entries = local_entries
+        if entries:
+            _set_live_state_status(collector, "history", "local_fallback")
+    if isinstance(entries, list) and entries:
+        _set_live_state_cache(collector, "history", entries)
+    else:
+        _set_live_state_status(
+            collector,
+            "history",
+            "cloud_unavailable" if _cloud_live_state_expected() else "cloud_not_configured",
+        )
     if limit is not None and limit >= 0:
         return entries[-limit:]
     return entries
@@ -737,11 +882,17 @@ def _compact_payload_summary(collector: str, summary: dict, *, sample_limit: int
 
 def _compact_feed_snapshot(feed: str, snapshot: dict | None, history_entries: list[dict]) -> dict:
     if not isinstance(snapshot, dict):
+        snapshot_status = _get_live_state_status(feed, "snapshot")
+        history_status = _get_live_state_status(feed, "history")
         return {
             "feed": feed,
-            "collector_status": "missing",
+            "collector_status": snapshot_status or "missing",
             "history_entry_count": len(history_entries),
             "history_available": bool(history_entries),
+            "live_state_status": {
+                "snapshot": snapshot_status or "missing",
+                "history": history_status or "missing",
+            },
             "summary": {},
         }
     summary = snapshot.get("payload_summary") if isinstance(snapshot.get("payload_summary"), dict) else {}
@@ -757,6 +908,10 @@ def _compact_feed_snapshot(feed: str, snapshot: dict | None, history_entries: li
         "changed_since_previous": snapshot.get("changed_since_previous"),
         "history_entry_count": len(history_entries),
         "history_available": bool(history_entries),
+        "live_state_status": {
+            "snapshot": _get_live_state_status(feed, "snapshot") or "unknown",
+            "history": _get_live_state_status(feed, "history") or "unknown",
+        },
         "summary": _compact_payload_summary(feed, summary),
     }
 
@@ -820,16 +975,37 @@ def _build_map_items(feed_snapshots: list[dict]) -> list[dict]:
     return items
 
 
-def build_ops_report(*, watch: dict, effective_feeds: list[str]) -> dict:
+def build_ops_report(
+    *,
+    watch: dict,
+    effective_feeds: list[str],
+    history_feeds: list[str] | None = None,
+) -> dict:
     feed_snapshots: list[dict] = []
     recent_change_index: list[dict] = []
     geojson = None
     snapshot_hashes: dict[str, str] = {}
     snapshots_by_feed: dict[str, dict] = {}
+    history_feed_set = {str(feed or "").strip() for feed in (history_feeds or []) if str(feed or "").strip()}
+    state_by_feed: dict[str, tuple[dict | None, list[dict]]] = {}
+
+    def _load_feed_state(feed: str) -> tuple[dict | None, list[dict]]:
+        snapshot = load_current_state_snapshot(feed)
+        history_entries = load_current_state_history(feed) if feed in history_feed_set else []
+        return snapshot, history_entries
+
+    max_workers = max(1, min(len(effective_feeds), 8))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_map = {executor.submit(_load_feed_state, feed): feed for feed in effective_feeds}
+        for future in as_completed(future_map):
+            feed = future_map[future]
+            try:
+                state_by_feed[feed] = future.result()
+            except Exception:
+                state_by_feed[feed] = (None, [])
 
     for feed in effective_feeds:
-        snapshot = load_current_state_snapshot(feed)
-        history_entries = load_current_state_history(feed)
+        snapshot, history_entries = state_by_feed.get(feed, (None, []))
         if isinstance(snapshot, dict):
             snapshots_by_feed[feed] = snapshot
             payload_hash = str(snapshot.get("payload_hash") or "").strip()
@@ -863,6 +1039,19 @@ def build_ops_report(*, watch: dict, effective_feeds: list[str]) -> dict:
     return report
 
 
+def _query_requests_broad_recent_changes(query: str) -> bool:
+    text = str(query or "").strip().lower()
+    if not text:
+        return False
+    if "what changed" in text or "what's changed" in text or "whats changed" in text:
+        return True
+    if "changed recently" in text or "recent changes" in text:
+        return True
+    if "recently changed" in text:
+        return True
+    return False
+
+
 def _build_prompt_safe_ops_report(report: dict | None) -> dict:
     if not isinstance(report, dict):
         return {}
@@ -889,6 +1078,68 @@ def _query_requests_deep_history(query: str, hints: dict | None = None) -> bool:
     if isinstance(time_hints, dict) and any(time_hints.get(key) for key in ("specific_year", "start_year", "end_year")):
         return True
     return False
+
+
+def _parse_iso_datetime(value: object) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    normalized = text.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _history_observed_at(entry: dict | None) -> datetime | None:
+    if not isinstance(entry, dict):
+        return None
+    for key in ("published_at", "last_changed_at", "fetched_at", "last_checked_at", "upstream_issued_at"):
+        parsed = _parse_iso_datetime(entry.get(key))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _extract_history_window(query: str, hints: dict | None = None) -> tuple[datetime | None, str | None]:
+    text = str(query or "").strip().lower()
+    if not text:
+        return None, None
+    now = datetime.now(timezone.utc)
+
+    hours_match = re.search(r"\b(?:last|past)\s+(\d{1,3})\s+hours?\b", text)
+    if hours_match:
+        hours = max(1, int(hours_match.group(1)))
+        return now.replace(microsecond=0) - timedelta(hours=hours), f"the last {hours} hour{'s' if hours != 1 else ''}"
+
+    days_match = re.search(r"\b(?:last|past)\s+(\d{1,3})\s+days?\b", text)
+    if days_match:
+        days = max(1, int(days_match.group(1)))
+        return now.replace(microsecond=0) - timedelta(days=days), f"the last {days} day{'s' if days != 1 else ''}"
+
+    if re.search(r"\btoday\b", text):
+        cutoff = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        return cutoff, "today"
+
+    if re.search(r"\byesterday\b", text):
+        cutoff = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
+        return cutoff, "yesterday and today"
+
+    time_hints = (hints or {}).get("time") if isinstance(hints, dict) else {}
+    start_year = time_hints.get("start_year") if isinstance(time_hints, dict) else None
+    end_year = time_hints.get("end_year") if isinstance(time_hints, dict) else None
+    if isinstance(start_year, int):
+        start_dt = datetime(start_year, 1, 1, tzinfo=timezone.utc)
+        label = f"since {start_year}"
+        if isinstance(end_year, int) and end_year >= start_year:
+            start_dt = datetime(start_year, 1, 1, tzinfo=timezone.utc)
+            label = f"{start_year}-{end_year}"
+        return start_dt, label
+
+    return None, None
 
 
 def _mentioned_feeds(query: str, effective_feeds: list[str]) -> list[str]:
@@ -1290,6 +1541,27 @@ def _store_ops_focus_target(cache, *, feed: str, payload: dict, feature: dict) -
     }
 
 
+def _store_ops_history_payload(cache, *, feed: str, payload: dict) -> None:
+    if not isinstance(getattr(cache, "map_state", None), dict):
+        return
+    cache.map_state["ops_history_payload"] = {
+        "feed": feed,
+        "payload": payload,
+    }
+
+
+def _resolve_cached_history_payload(*, cache, effective_feeds: list[str]) -> tuple[str, dict] | tuple[None, None]:
+    map_state = cache.map_state if isinstance(getattr(cache, "map_state", None), dict) else {}
+    stored = map_state.get("ops_history_payload") if isinstance(map_state, dict) else None
+    if not isinstance(stored, dict):
+        return None, None
+    feed = str(stored.get("feed") or "").strip()
+    payload = stored.get("payload")
+    if not feed or feed not in effective_feeds or not isinstance(payload, dict):
+        return None, None
+    return feed, payload
+
+
 def _resolve_cached_focus_target(*, cache, report: dict, effective_feeds: list[str]) -> tuple[str, dict, dict] | tuple[None, None, None]:
     map_state = cache.map_state if isinstance(getattr(cache, "map_state", None), dict) else {}
     stored = map_state.get("ops_focus_target") if isinstance(map_state, dict) else None
@@ -1404,6 +1676,36 @@ def _is_count_query(query: str) -> bool:
     return any(re.search(pattern, text) for pattern in COUNT_QUERY_PATTERNS)
 
 
+def _query_explicitly_requests_current_snapshot(query: str) -> bool:
+    text = str(query or "").strip().lower()
+    if not text:
+        return False
+    current_patterns = (
+        r"\bcurrent\b",
+        r"\bright now\b",
+        r"\bactive now\b",
+        r"\bcurrently\b",
+        r"\bcurrent watch\b",
+        r"\bcurrent snapshot\b",
+        r"\bnow\b",
+    )
+    return any(re.search(pattern, text) for pattern in current_patterns)
+
+
+def _feed_prefers_history_by_default(feed: str) -> bool:
+    return feed in {
+        "earthquakes",
+        "tsunamis",
+        "volcanoes",
+        "wildfires_us_nifc",
+        "hurricanes_ibtracs_nrt",
+        "usa_nws_alerts",
+        "noaa_swpc",
+        "noaa_aurora",
+        "currency",
+    }
+
+
 def _feed_display_name(feed: str) -> str:
     names = {
         "wildfires_us_nifc": "wildfires",
@@ -1412,6 +1714,7 @@ def _feed_display_name(feed: str) -> str:
         "tsunamis": "tsunamis",
         "volcanoes": "volcanoes",
         "currency": "currencies",
+        "usa_nws_alerts": "NWS alerts",
         "noaa_aurora": "aurora forecast cells",
         "noaa_swpc": "space weather alerts",
     }
@@ -1424,6 +1727,201 @@ def _feed_status_time(snapshot: dict) -> str | None:
         if formatted:
             return formatted
     return None
+
+
+def _feed_history_id_set(feed: str, summary: dict) -> set[str]:
+    if not isinstance(summary, dict):
+        return set()
+    rows = []
+    id_keys: tuple[str, ...] = ()
+    if feed == "earthquakes":
+        rows = summary.get("events") or []
+        id_keys = ("event_id",)
+    elif feed == "tsunamis":
+        rows = summary.get("events") or []
+        id_keys = ("event_id",)
+    elif feed == "volcanoes":
+        rows = summary.get("events") or []
+        id_keys = ("event_id",)
+    elif feed == "wildfires_us_nifc":
+        rows = summary.get("events") or []
+        id_keys = ("event_id",)
+    elif feed == "hurricanes_ibtracs_nrt":
+        rows = summary.get("storms") or []
+        id_keys = ("storm_id",)
+    elif feed == "currency":
+        rows = summary.get("rates") or []
+        id_keys = ("currency_code",)
+    elif feed == "noaa_swpc":
+        rows = summary.get("alerts") or []
+        id_keys = ("alert_id",)
+    elif feed == "usa_nws_alerts":
+        rows = summary.get("alerts") or []
+        id_keys = ("alert_id",)
+
+    ids: set[str] = set()
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        for key in id_keys:
+            value = str(row.get(key) or "").strip()
+            if value:
+                ids.add(value)
+                break
+    return ids
+
+
+def _history_count_noun(feed: str) -> str:
+    nouns = {
+        "earthquakes": "earthquakes",
+        "tsunamis": "tsunami events",
+        "volcanoes": "volcano events",
+        "wildfires_us_nifc": "wildfires",
+        "hurricanes_ibtracs_nrt": "storms",
+        "currency": "currency rates",
+        "noaa_swpc": "space weather alerts",
+        "usa_nws_alerts": "NWS alerts",
+        "noaa_aurora": "aurora forecast cells",
+    }
+    return nouns.get(feed, _feed_display_name(feed))
+
+
+def _history_entries_in_window(
+    *,
+    snapshot: dict,
+    history_entries: list[dict],
+    query: str,
+    hints: dict | None = None,
+) -> tuple[list[dict], str | None]:
+    cutoff, window_label = _extract_history_window(query, hints=hints)
+    if cutoff is None:
+        return [], None
+    timeline: list[dict] = []
+    if isinstance(snapshot, dict):
+        timeline.append(snapshot)
+    timeline.extend(entry for entry in history_entries if isinstance(entry, dict))
+    in_window: list[dict] = []
+    for entry in timeline:
+        observed_at = _history_observed_at(entry)
+        if observed_at is None or observed_at < cutoff:
+            continue
+        in_window.append(entry)
+    return in_window, window_label
+
+
+def _build_history_event_payload(*, feed: str, in_window: list[dict], window_label: str | None) -> dict | None:
+    if feed not in {"earthquakes", "tsunamis", "volcanoes", "wildfires_us_nifc"}:
+        return None
+    features: list[dict] = []
+    seen_ids: set[str] = set()
+    for entry in in_window:
+        summary = entry.get("payload_summary") if isinstance(entry.get("payload_summary"), dict) else {}
+        rows = summary.get("events") if isinstance(summary.get("events"), list) else []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            try:
+                lon = float(row.get("longitude"))
+                lat = float(row.get("latitude"))
+            except (TypeError, ValueError):
+                continue
+            identifier = str(row.get("event_id") or row.get("id") or "").strip()
+            if not identifier:
+                identifier = f"{feed}:{row.get('timestamp')}:{row.get('place') or row.get('location') or lat}:{lon}"
+            if identifier in seen_ids:
+                continue
+            seen_ids.add(identifier)
+            props = dict(row)
+            props.setdefault("collector", feed)
+            if feed == "volcanoes":
+                props.setdefault("VEI", row.get("vei"))
+            if feed == "wildfires_us_nifc":
+                acres = row.get("burned_acres")
+                try:
+                    props.setdefault("area_km2", float(acres) * 0.00404686)
+                except (TypeError, ValueError):
+                    pass
+            features.append(
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [lon, lat]},
+                    "properties": props,
+                }
+            )
+    if not features:
+        return None
+    title = f"Ops {feed.replace('_', ' ').title()} History"
+    label = window_label or "the retained window"
+    return {
+        "type": "events",
+        "data_type": "events",
+        "event_type": FEED_FOCUS_SPECS.get(feed, {}).get("label") or _feed_display_name(feed),
+        "source_id": f"{feed}_history_ops",
+        "dataset_name": title,
+        "source_name": title,
+        "summary": f"Showing {len(features)} retained {_history_count_noun(feed)} from {label}.",
+        "count": len(features),
+        "fit": True,
+        "geojson": {
+            "type": "FeatureCollection",
+            "features": features,
+        },
+    }
+
+
+def _build_history_count_answer(*, feed: str, snapshot: dict, history_entries: list[dict], query: str, hints: dict | None = None) -> str | None:
+    cutoff, _ = _extract_history_window(query, hints=hints)
+    in_window, window_label = _history_entries_in_window(
+        snapshot=snapshot,
+        history_entries=history_entries,
+        query=query,
+        hints=hints,
+    )
+    if window_label is None:
+        return None
+
+    noun = _history_count_noun(feed)
+    if not in_window:
+        available_count = len(history_entries)
+        if available_count == 0:
+            history_status = _get_live_state_status(feed, "history")
+            if history_status == "cloud_unavailable":
+                return f"I could not read cloud Ops history for {noun}, so I cannot answer for {window_label} right now."
+            if history_status == "cloud_not_configured":
+                return f"Cloud Ops history is not configured in this runtime for {noun}, so I cannot answer for {window_label}."
+            return f"I do not have retained Ops history for {noun} in this environment yet, so I cannot answer for {window_label}."
+        return f"I do not have any retained {noun} history entries covering {window_label}."
+
+    unique_ids: set[str] = set()
+    peak_count: int | None = None
+    newest_time: datetime | None = None
+    oldest_time: datetime | None = None
+    for entry in in_window:
+        summary = entry.get("payload_summary") if isinstance(entry.get("payload_summary"), dict) else {}
+        unique_ids.update(_feed_history_id_set(feed, summary))
+        count_value, _ = _active_count_for_feed(feed, summary, query.lower())
+        if count_value is not None:
+            peak_count = count_value if peak_count is None else max(peak_count, count_value)
+        observed_at = _history_observed_at(entry)
+        if observed_at is not None:
+            newest_time = observed_at if newest_time is None or observed_at > newest_time else newest_time
+            oldest_time = observed_at if oldest_time is None or observed_at < oldest_time else oldest_time
+
+    if unique_ids:
+        count = len(unique_ids)
+        message = f"There {'was' if count == 1 else 'were'} {count} {noun} seen in retained Ops history over {window_label}."
+    elif peak_count is not None:
+        message = f"The peak retained count for {noun} over {window_label} was {peak_count}."
+    else:
+        return f"I found retained history for {noun} over {window_label}, but not a stable count field to summarize it yet."
+
+    if oldest_time and newest_time:
+        retained_span = newest_time - oldest_time
+        if cutoff is not None and retained_span < (datetime.now(timezone.utc) - cutoff):
+            message += f" Available retained window here is {oldest_time.strftime('%b %d, %Y %H:%M UTC')} to {newest_time.strftime('%b %d, %Y %H:%M UTC')}."
+        else:
+            message += f" Latest update: {newest_time.strftime('%b %d, %Y %H:%M UTC')}."
+    return message
 
 
 def _active_count_for_feed(feed: str, summary: dict, query_text: str) -> tuple[int | None, str | None]:
@@ -1453,6 +1951,9 @@ def _active_count_for_feed(feed: str, summary: dict, query_text: str) -> tuple[i
     if feed == "noaa_swpc":
         value = summary.get("alert_count")
         return (int(value), "space weather alerts") if value is not None else (None, None)
+    if feed == "usa_nws_alerts":
+        value = summary.get("alert_count")
+        return (int(value), "NWS alerts") if value is not None else (None, None)
     if feed == "noaa_aurora":
         value = summary.get("visible_cell_count")
         return (int(value), "aurora forecast cells") if value is not None else (None, None)
@@ -1582,6 +2083,15 @@ def _try_focus_result(
 
     show_only = _query_requests_map_focus(lower) and not _query_requests_superlative(lower)
     if show_only:
+        history_feed, history_payload = _resolve_cached_history_payload(
+            cache=cache,
+            effective_feeds=effective_feeds,
+        )
+        history_features = (history_payload.get("geojson") or {}).get("features") if isinstance((history_payload or {}).get("geojson"), dict) else []
+        if history_feed and isinstance(history_features, list) and history_features:
+            payload = dict(history_payload)
+            payload["fit"] = True
+            return payload
         cached_feed, cached_payload, cached_feature = _resolve_cached_focus_target(
             cache=cache,
             report=report,
@@ -1632,7 +2142,7 @@ def _try_focus_result(
     }
 
 
-def _try_direct_ops_answer(*, query: str, report: dict, watch: dict, effective_feeds: list[str]) -> str | None:
+def _try_direct_ops_answer(*, query: str, report: dict, watch: dict, effective_feeds: list[str], hints: dict | None = None, cache=None) -> str | None:
     text = str(query or "").strip()
     lower = text.lower()
     if not text:
@@ -1677,6 +2187,34 @@ def _try_direct_ops_answer(*, query: str, report: dict, watch: dict, effective_f
     feed = mentioned[0]
     snapshot = _report_snapshot_by_feed(report).get(feed) or {}
     summary = snapshot.get("summary") if isinstance(snapshot.get("summary"), dict) else {}
+
+    prefers_history = _feed_prefers_history_by_default(feed) and not _query_explicitly_requests_current_snapshot(text)
+    if prefers_history or _query_requests_deep_history(text, hints=hints):
+        history_entries = load_current_state_history(feed)
+        live_snapshot = load_current_state_snapshot(feed) or {}
+        history_answer = _build_history_count_answer(
+            feed=feed,
+            snapshot=live_snapshot,
+            history_entries=history_entries,
+            query=text,
+            hints=hints,
+        )
+        in_window, window_label = _history_entries_in_window(
+            snapshot=live_snapshot,
+            history_entries=history_entries,
+            query=text,
+            hints=hints,
+        )
+        history_payload = _build_history_event_payload(
+            feed=feed,
+            in_window=in_window,
+            window_label=window_label,
+        )
+        if history_payload:
+            _store_ops_history_payload(cache, feed=feed, payload=history_payload)
+        if history_answer:
+            return history_answer
+
     count, noun = _active_count_for_feed(feed, summary, lower)
     if count is None or not noun:
         return None
@@ -1759,7 +2297,23 @@ def run_ops_chat(
             "effective_feeds": [],
         }
 
-    report = build_ops_report(watch=watch, effective_feeds=effective_feeds)
+    preloaded = ops_orchestrator.preprocess(
+        query=query,
+        watch_context={
+            "label": watch.get("label"),
+            "sources": effective_feeds,
+            "geography": watch.get("geography"),
+        },
+    )
+    hints = preloaded.get("hints") if isinstance(preloaded, dict) else {}
+    watch_context = preloaded.get("watch_context") if isinstance(preloaded, dict) else {}
+    report_history_feeds = effective_feeds if _query_requests_broad_recent_changes(query) else []
+
+    report = build_ops_report(
+        watch=watch,
+        effective_feeds=effective_feeds,
+        history_feeds=report_history_feeds,
+    )
     if isinstance(getattr(cache, "map_state", None), dict):
         cache.map_state["ops_report"] = report
 
@@ -1792,6 +2346,8 @@ def run_ops_chat(
         report=report,
         watch=watch,
         effective_feeds=effective_feeds,
+        hints=hints,
+        cache=cache,
     )
     selected_history_answer = _try_selected_history_answer(
         query=query,
@@ -1829,16 +2385,6 @@ def run_ops_chat(
             result["geojson"] = report["geojson"]
         return result
 
-    preloaded = ops_orchestrator.preprocess(
-        query=query,
-        watch_context={
-            "label": watch.get("label"),
-            "sources": effective_feeds,
-            "geography": watch.get("geography"),
-        },
-    )
-    hints = preloaded.get("hints") if isinstance(preloaded, dict) else {}
-    watch_context = preloaded.get("watch_context") if isinstance(preloaded, dict) else {}
     targeted_history = build_targeted_history_context(
         query=query,
         effective_feeds=effective_feeds,
