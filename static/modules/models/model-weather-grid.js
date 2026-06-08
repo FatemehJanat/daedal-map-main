@@ -29,6 +29,40 @@ const DISPLAY_LAT_MAX = 89.9;
 const DISPLAY_LAT_MIN = -89.9;
 const DISPLAY_LON_MIN = -180;
 
+const WEATHER_GRID_LAYER_STYLE = {
+  temperature: {
+    opacity: 0.58,
+    saturation: 0.18,
+    contrast: 0.08,
+    brightnessMin: 0.04,
+    brightnessMax: 0.96
+  },
+  precipitation: {
+    opacity: 0.52,
+    saturation: 0.1,
+    contrast: 0.06,
+    brightnessMin: 0.06,
+    brightnessMax: 0.98
+  },
+  'cloud-cover': {
+    opacity: 0.46,
+    saturation: -0.08,
+    contrast: 0.05,
+    brightnessMin: 0.1,
+    brightnessMax: 0.94
+  }
+};
+
+function getLayerStyle(overlayId) {
+  return WEATHER_GRID_LAYER_STYLE[overlayId] || {
+    opacity: 0.62,
+    saturation: 0,
+    contrast: 0,
+    brightnessMin: 0,
+    brightnessMax: 1
+  };
+}
+
 /**
  * Generate unique source/layer IDs for an overlay.
  * @param {string} overlayId - Overlay identifier (temperature, humidity, snow-depth)
@@ -359,7 +393,11 @@ class WeatherGridInstance {
         type: 'raster',
         source: this.ids.source,
         paint: {
-          'raster-opacity': 0.7,
+          'raster-opacity': getLayerStyle(this.overlayId).opacity,
+          'raster-saturation': getLayerStyle(this.overlayId).saturation,
+          'raster-contrast': getLayerStyle(this.overlayId).contrast,
+          'raster-brightness-min': getLayerStyle(this.overlayId).brightnessMin,
+          'raster-brightness-max': getLayerStyle(this.overlayId).brightnessMax,
           'raster-fade-duration': 0
         }
       }, labelLayerId);

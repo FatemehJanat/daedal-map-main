@@ -222,6 +222,96 @@ async function exchangeHandoffCodeSession(client, code) {
   }
 }
 
+function openSiteWithHiddenHandoff(targetUrl, handoffCode, targetBlank = false) {
+  if (!handoffCode || !targetUrl) return false;
+  const handoffName = `dm_handoff:${handoffCode}`;
+  if (targetBlank) {
+    const popup = window.open('', '_blank');
+    if (!popup) return false;
+    try {
+      popup.name = handoffName;
+      popup.opener = null;
+      popup.location.replace(targetUrl);
+      return true;
+    } catch (_) {
+      try {
+        popup.close();
+      } catch (_) {}
+      return false;
+    }
+  }
+  window.name = handoffName;
+  window.location.href = targetUrl;
+  return true;
+}
+
+async function createSecureSiteHandoff(targetUrl) {
+  const siteBase = getSiteBase();
+  const accessToken = currentSession?.access_token;
+  const refreshToken = currentSession?.refresh_token;
+  if (!siteBase || !accessToken || !refreshToken) return null;
+
+  try {
+    const response = await fetch(`${siteBase}/api/auth/handoff/create`, {
+      method: 'POST',
+      mode: 'cors',
+      credentials: 'omit',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`
+      },
+      body: JSON.stringify({
+        return_to: targetUrl,
+        refresh_token: refreshToken
+      })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload?.handoff_code || !payload?.return_to) {
+      throw new Error(payload?.error || `HTTP ${response.status}`);
+    }
+    return {
+      handoffCode: payload.handoff_code,
+      returnTo: payload.return_to
+    };
+  } catch (error) {
+    console.warn('[Auth] Secure site handoff failed:', error?.message || error);
+    return null;
+  }
+}
+
+async function navigateToHostedAccount(targetUrl, options = {}) {
+  const destination = String(targetUrl || '').trim();
+  if (!destination) return false;
+  try {
+    const dest = new URL(destination, window.location.origin);
+    if (dest.origin === window.location.origin) {
+      if (options.targetBlank) {
+        window.open(dest.toString(), '_blank', 'noopener');
+      } else {
+        window.location.href = dest.toString();
+      }
+      return true;
+    }
+    const handoff = await createSecureSiteHandoff(dest.toString());
+    if (handoff && openSiteWithHiddenHandoff(handoff.returnTo, handoff.handoffCode, options.targetBlank === true)) {
+      return true;
+    }
+    if (options.targetBlank) {
+      window.open(dest.toString(), '_blank', 'noopener');
+    } else {
+      window.location.href = dest.toString();
+    }
+    return true;
+  } catch (_) {
+    if (options.targetBlank) {
+      window.open(destination, '_blank', 'noopener');
+    } else {
+      window.location.href = destination;
+    }
+    return true;
+  }
+}
+
 async function importHandoffCodeSession(client) {
   const code = readWindowNameHandoffCode() || readHashHandoffCode();
   if (!code) return null;
@@ -397,7 +487,14 @@ function updateDom() {
     btn.textContent = 'Account';
     btn.disabled = false;
     btn.classList.add('logged-in');
-    status.innerHTML = `Signed in as ${email}. <a href="${accountUrl}" target="_blank" rel="noopener">Open account settings</a>`;
+    status.innerHTML = `Signed in as ${email}. <a href="${accountUrl}" target="_blank" rel="noopener" data-secure-account-link="1">Open account settings</a>`;
+    const accountLink = status.querySelector('[data-secure-account-link]');
+    if (accountLink) {
+      accountLink.addEventListener('click', async (event) => {
+        event.preventDefault();
+        await navigateToHostedAccount(accountUrl, { targetBlank: true });
+      });
+    }
   } else {
     btn.textContent = 'Sign In';
     btn.disabled = false;
@@ -412,13 +509,11 @@ async function handleAuthClick() {
     return;
   }
   if (isAuthenticated()) {
-    window.location.href = getAccountUrl();
+    await navigateToHostedAccount(getAccountUrl(), { targetBlank: true });
     return;
   }
-  const returnTo = encodeURIComponent(window.location.href);
-  // Signed-out users enter through the private account route so .com can
-  // drive login and then hand the session back to the app.
-  window.location.href = `${getSiteBase()}/account?return=${returnTo}`;
+  const targetUrl = `${getSiteBase()}/account?return=${encodeURIComponent(window.location.href)}`;
+  window.open(targetUrl, '_blank', 'noopener');
 }
 
 export const AuthManager = {

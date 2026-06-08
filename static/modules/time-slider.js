@@ -350,7 +350,7 @@ export const TimeSlider = {
     this.initSpeedSlider();
 
     this.sliderInitialized = true;
-    this.show();
+    this.hide();
     console.log('TimeSlider: Initialized with range', this.minTime, '-', this.maxTime);
   },
 

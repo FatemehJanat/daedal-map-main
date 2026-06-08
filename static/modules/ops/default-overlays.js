@@ -5,8 +5,7 @@ const OPS_PUBLIC_DEFAULT_OVERLAY_IDS = [
   'tsunamis',
   'volcanoes',
   'aurora',
-  'currency',
-  'nws_alerts'
+  'currency'
 ];
 
 export function getOpsPublicDefaultOverlayIds() {

@@ -75,6 +75,13 @@ function cloneSerializable(value) {
   }
 }
 
+function hideStartupChrome() {
+  TimeSlider?.hide?.();
+  TickerController?.hide?.();
+  ChoroplethManager?.hide?.();
+  RasterPanel?.hide?.();
+}
+
 // ============================================================================
 // APP - Main application controller
 // ============================================================================
@@ -427,10 +434,11 @@ export const App = {
 
   syncMetricOverlayVisibility() {
     const overlaySelector = window.OverlaySelector || null;
-    const anyMetricActive = Boolean(
-      overlaySelector?.isActive?.('demographics')
-      || overlaySelector?.isActive?.('currency')
-    );
+    const activeOverlays = overlaySelector?.getActiveOverlays?.() || [];
+    const anyMetricActive = activeOverlays.some((overlayId) => {
+      const config = overlaySelector?.getOverlayConfig?.(overlayId);
+      return config?.model === 'choropleth';
+    });
     MapAdapter?.setChoroplethVisible?.(anyMetricActive);
   },
 
@@ -555,7 +563,7 @@ export const App = {
     setHurricaneDeps({ TimeSlider, MapAdapter });
     setOverlayDeps({ MapAdapter, ModelRegistry });
     ModelRegistry.setDependencies({ MapAdapter, TimeSlider });
-    setOverlayControllerDeps({ MapAdapter, ModelRegistry, OverlaySelector, TimeSlider });
+    setOverlayControllerDeps({ MapAdapter, ModelRegistry, OverlaySelector, TimeSlider, ChatManager });
     setDisasterPopupDeps({ MapAdapter });
     setGeometryDeps({ MapAdapter });
     setSceneRasterDeps({ MapAdapter });
@@ -579,8 +587,8 @@ export const App = {
     TickerController.setEnabled(ChatManager?.mode === 'ops');
 
     // Initialize TimeSlider early (UI setup only, no data)
-    // This ensures the slider is visible and listener system is ready
-    // before overlays are enabled
+    // This ensures the slider listener system is ready before overlays are
+    // enabled, while staying hidden until lane-specific UI reveals it.
     TimeSlider.initSlider();
     if (!this._popupTimeChangeListener) {
       this._popupTimeChangeListener = () => {
@@ -588,6 +596,7 @@ export const App = {
       };
       TimeSlider.addChangeListener(this._popupTimeChangeListener);
     }
+    hideStartupChrome();
 
     const startupMode = getStartupChatMode();
     // Reflect the resolved lane in the URL so it matches the active lane
@@ -606,6 +615,8 @@ export const App = {
     NwsAlertsOverlay.init({ MapAdapter });
 
     this.activateLaneMapView(startupMode, { force: true });
+    hideStartupChrome();
+    ChatManager.applyModeUiState?.();
 
     // Back/forward navigation: re-activate the lane from the URL. switchChatMode
     // early-returns when the mode is unchanged, and writeLane no-ops on popstate
@@ -627,25 +638,30 @@ export const App = {
         console.warn('Could not refresh Research manifest after map init:', error);
       });
     } else if (startupMode === 'ops') {
-      Promise.resolve(ChatManager.refreshOpsReport?.({ loadWatch: true })).catch((error) => {
+      try {
+        await ChatManager.refreshOpsReport?.({ loadWatch: true });
+      } catch (error) {
         console.warn('Could not refresh Ops state after map init:', error);
-      });
+      }
     }
-    Promise.resolve(ChatManager.seedEmptyConversation?.(startupMode)).catch((error) => {
+    try {
+      await ChatManager.seedEmptyConversation?.(startupMode);
+    } catch (error) {
       console.warn(`Could not seed ${startupMode} conversation after map init:`, error);
-    });
+    }
 
     // Replay any overlays that were made active before the map was ready.
     // OverlaySelector may already hold current-session lane state or default
     // overlays before MapAdapter.init() runs, so re-trigger them now.
     if (!researchStartup) {
       for (const overlayId of OverlaySelector.activeOverlays) {
-        OverlayController.handleOverlayChange(overlayId, true, { allowDefaultLoad: false });
+        OverlayController.handleOverlayChange(overlayId, true, { allowDefaultLoad: false, suppressStatusMessage: true });
       }
     }
 
-    // Declarative deep-links now resolve through the same default-load preset
-    // mechanism as welcome buttons and starter overlay first-toggle.
+    // Declarative deep-links are additive entry adjustments. First establish the
+    // base lane state (public defaults for anon, account defaults/watch for
+    // signed-in), then widen that session with the route intent.
     const routeIntent = parseRouteIntent();
     if (startupMode === 'explore') {
       if (routeIntent.pack_id) {
@@ -711,7 +727,12 @@ export const App = {
     // onMoveEnd fires during MapAdapter.init() but onViewportChange only loads on level
     // *changes* - since currentAdminLevel starts at 0 and world zoom maps to 0, no
     // load is ever triggered. Kick it manually here after overlay state is set.
-    if (!researchStartup && OverlaySelector.getActiveOverlays().includes('demographics')) {
+    //
+    // Skip this when an Explore deep link (?pack= / ?source=) drove startup: the
+    // preset above already loaded that entity's data into the shared choropleth,
+    // and force-loading the world-countries view here would overwrite/cover it.
+    const hasExploreDeepLink = !!(routeIntent.pack_id || routeIntent.source_id);
+    if (!researchStartup && !hasExploreDeepLink && OverlaySelector.getActiveOverlays().includes('demographics')) {
       ViewportLoader.load(ViewportLoader.currentAdminLevel);
     }
 
@@ -1676,7 +1697,10 @@ export const App = {
           if (match) geometryType = match[1];
         }
         const overlayId = geometryTypeToOverlayId[geometryType] || 'zip_codes';
-        OverlayController.handleOverlayChange(overlayId, true, { allowDefaultLoad: false });
+        OverlayController.handleOverlayChange(overlayId, true, {
+          allowDefaultLoad: false,
+          suppressStatusMessage: true
+        });
       }
 
       // Update summary display
@@ -1739,7 +1763,10 @@ export const App = {
           if (OverlaySelector && !OverlaySelector.isActive(knownOverlayId)) {
             OverlaySelector.setActive(knownOverlayId, true);
           }
-          OverlayController.handleOverlayChange(knownOverlayId, true, { allowDefaultLoad: false });
+          OverlayController.handleOverlayChange(knownOverlayId, true, {
+            allowDefaultLoad: false,
+            suppressStatusMessage: true
+          });
           console.log(`Geometry queued for render as type: ${geometryType}`);
         } else {
           // Ad-hoc geometry overlay (OZ tracts, designation lists, etc.):

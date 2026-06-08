@@ -1,6 +1,6 @@
 export function buildExploreWelcomeMessage() {
   return (
-    'Welcome! Explore starts with a simple mixed view: earthquakes for live event motion, ' +
+    'Welcome! Explore starts with a small starter tray: earthquakes for live event motion, ' +
     'demographics for choropleth comparison, and temperature for climate graphics.<br><br>' +
     'Ask me anything about global data -- earthquakes, hurricanes, climate indicators, ' +
     'and more. To explore datasets, type a question in natural language. ' +

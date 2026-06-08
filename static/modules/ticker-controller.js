@@ -12,6 +12,7 @@
 
 import { fetchMsgpack } from './utils/fetch.js';
 import { MapAdapter } from './map-adapter.js';
+import { getOpsOverlayIdsForFeeds, getShownOverlayIdsForMode } from './overlay-selector.js';
 
 const POLL_INTERVAL_MS = 60_000;
 
@@ -29,6 +30,7 @@ export const TickerController = {
   bar: null,
   track: null,
   pollTimer: null,
+  lastItems: [],
 
   init() {
     if (this.initialized) return;
@@ -63,12 +65,15 @@ export const TickerController = {
       }
       #opsTicker.on { display: block; }
       #opsTicker .ticker-track {
-        display: inline-block; padding-left: 100%;
+        display: inline-flex;
+        width: max-content;
         animation: opsTickerScroll 80s linear infinite;
+        will-change: transform;
       }
       #opsTicker:hover .ticker-track,
       #opsTicker.paused .ticker-track { animation-play-state: paused; }
       #opsTicker .ticker-item { display: inline-block; margin: 0 26px; }
+      #opsTicker .ticker-segment { display: inline-flex; flex: 0 0 auto; }
       #opsTicker .ticker-item .src {
         color: #7f8798; text-transform: uppercase; font-size: 11px; margin-right: 7px;
       }
@@ -146,10 +151,31 @@ export const TickerController = {
     try {
       const data = await fetchMsgpack('/api/ops/ticker');
       const items = Array.isArray(data?.items) ? data.items : [];
-      this._render(items);
+      this.lastItems = items;
+      this._render(this._filterItemsByFeedVisibility(items));
     } catch (err) {
       console.warn('TickerController: refresh failed', err);
     }
+  },
+
+  refreshVisibility() {
+    if (!this.enabled) return;
+    this._render(this._filterItemsByFeedVisibility(this.lastItems || []));
+  },
+
+  _filterItemsByFeedVisibility(items) {
+    return (items || []).filter((item) => {
+      return this._isFeedVisible(String(item?.feed || '').trim());
+    });
+  },
+
+  _isFeedVisible(feedId) {
+    const normalizedFeedId = String(feedId || '').trim();
+    if (!normalizedFeedId) return true;
+    const overlayIds = getOpsOverlayIdsForFeeds([normalizedFeedId]);
+    if (!overlayIds.length) return true;
+    const shownOverlayIds = new Set(getShownOverlayIdsForMode('ops'));
+    return overlayIds.some((overlayId) => shownOverlayIds.has(overlayId));
   },
 
   _render(items) {
@@ -159,8 +185,8 @@ export const TickerController = {
       return;
     }
     const html = items.map(it => this._itemHtml(it)).join('');
-    // Duplicate the row so the -50% scroll loops seamlessly.
-    this.track.innerHTML = html + html;
+    // Two identical halves let the -50% transform loop seamlessly.
+    this.track.innerHTML = `<span class="ticker-segment">${html}</span><span class="ticker-segment">${html}</span>`;
   },
 
   _itemHtml(it) {

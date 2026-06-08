@@ -7,6 +7,17 @@ function normalizeAccountContext(value) {
   if (!value || typeof value !== 'object') return null;
   const userId = String(value.user_id || '').trim();
   if (!userId) return null;
+  const normalizeLaneOverlayMap = (candidate) => {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return undefined;
+    const lanes = ['explore', 'research', 'ops'];
+    const out = {};
+    for (const lane of lanes) {
+      if (Array.isArray(candidate[lane])) {
+        out[lane] = candidate[lane].map(item => String(item || '').trim()).filter(Boolean);
+      }
+    }
+    return Object.keys(out).length ? out : undefined;
+  };
   return {
     authenticated: value.authenticated !== false,
     user_id: userId,
@@ -15,6 +26,8 @@ function normalizeAccountContext(value) {
     is_admin: value.is_admin === true,
     enabled_shells: Array.isArray(value.enabled_shells) ? value.enabled_shells : undefined,
     ops_feeds: Array.isArray(value.ops_feeds) ? value.ops_feeds.map(item => String(item || '').trim()).filter(Boolean) : undefined,
+    default_shown_by_lane: normalizeLaneOverlayMap(value.default_shown_by_lane),
+    default_enabled_by_lane: normalizeLaneOverlayMap(value.default_enabled_by_lane),
     max_packs: Number.isFinite(Number(value.max_packs)) ? Number(value.max_packs) : undefined,
     org_id: value.org_id || null,
     account_url: String(value.account_url || '').trim() || undefined,

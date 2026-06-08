@@ -96,12 +96,14 @@ let MapAdapter = null;
 let ModelRegistry = null;
 let OverlaySelector = null;
 let TimeSlider = null;
+let ChatManager = null;
 
 export function setDependencies(deps) {
   MapAdapter = deps.MapAdapter;
   ModelRegistry = deps.ModelRegistry;
   OverlaySelector = deps.OverlaySelector;
   TimeSlider = deps.TimeSlider;
+  ChatManager = deps.ChatManager || null;
 
   // Wire dependencies to TrackAnimator
   setTrackAnimatorDeps({
@@ -122,6 +124,62 @@ export function setDependencies(deps) {
   setWeatherGridDeps({
     MapAdapter: deps.MapAdapter
   });
+}
+
+function formatOverlayStatusLabel(overlayId) {
+  return String(overlayId || '')
+    .trim()
+    .replace(/[-_]/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function getLoadedOverlayCount(overlayId) {
+  const featureCount = dataCache[overlayId]?.features?.length;
+  if (Number.isFinite(featureCount)) {
+    return featureCount;
+  }
+  return null;
+}
+
+function buildOverlayStatusMessage(overlayId, isActive) {
+  const label = formatOverlayStatusLabel(overlayId) || 'Overlay';
+  if (!isActive) {
+    return `${label} overlay hidden now.`;
+  }
+  const loadedCount = getLoadedOverlayCount(overlayId);
+  if (Number.isFinite(loadedCount) && loadedCount >= 0) {
+    return `${label} overlay active now. Loaded ${loadedCount.toLocaleString()} records.`;
+  }
+  return `${label} overlay active now.`;
+}
+
+function formatCountText(count, singular, plural = '') {
+  const safeCount = Number(count);
+  if (!Number.isFinite(safeCount) || safeCount < 0) {
+    return '';
+  }
+  const noun = safeCount === 1
+    ? singular
+    : (plural || `${singular}s`);
+  return `${safeCount.toLocaleString()} ${noun}`;
+}
+
+function emitOverlayStatusMessage(overlayId, isActive, options = {}) {
+  if (options.suppressStatusMessage) return;
+  const text = buildOverlayStatusMessage(overlayId, isActive);
+  if (!text || !ChatManager?.addMessage) return;
+  ChatManager.addMessage(text, 'assistant', {
+    mode: OverlaySelector?.currentLaneMode || 'explore'
+  });
+}
+
+function refreshTickerForOverlayState() {
+  window.TickerController?.refreshVisibility?.();
+}
+
+function isSharedMetricOverlay(overlayId) {
+  const config = OverlaySelector?.getOverlayConfig?.(overlayId);
+  return config?.model === 'choropleth';
 }
 
 /**
@@ -675,6 +733,94 @@ export const OverlayController = {
       'floods',
       'landslides'
     ].includes(overlayId);
+  },
+
+  getOverlayFeatureCount(overlayId) {
+    const normalizedOverlayId = String(overlayId || '').trim();
+    if (!normalizedOverlayId) return null;
+
+    if (normalizedOverlayId === 'nws_alerts') {
+      const count = NwsAlertsOverlay?.lastData?.features?.length;
+      return Number.isFinite(count) ? count : null;
+    }
+
+    if (normalizedOverlayId === 'aurora') {
+      const count = AuroraOverlay?.lastCells?.length;
+      return Number.isFinite(count) ? count : null;
+    }
+
+    const snapshotCount = this.opsSnapshotPayloads.get(normalizedOverlayId)?.geojson?.features?.length;
+    if (Number.isFinite(snapshotCount)) {
+      return snapshotCount;
+    }
+
+    return getLoadedOverlayCount(normalizedOverlayId);
+  },
+
+  buildOpsFeedSummaryMessage(feedId, overlayIds = []) {
+    const normalizedFeedId = String(feedId || '').trim();
+    const normalizedOverlayIds = (Array.isArray(overlayIds) ? overlayIds : [])
+      .map((value) => String(value || '').trim())
+      .filter(Boolean);
+    const primaryOverlayId = normalizedOverlayIds[0] || '';
+    const featureCount = this.getOverlayFeatureCount(primaryOverlayId);
+
+    switch (primaryOverlayId) {
+      case 'earthquakes': {
+        const countText = formatCountText(featureCount, 'earthquake');
+        return countText
+          ? `There ${featureCount === 1 ? 'is' : 'are'} ${countText} active now in the current earthquake snapshot.`
+          : 'Earthquakes feed active now. Current earthquake snapshot is on the map.';
+      }
+      case 'hurricanes': {
+        const countText = formatCountText(featureCount, 'hurricane track');
+        return countText
+          ? `There ${featureCount === 1 ? 'is' : 'are'} ${countText} active now in the current hurricane snapshot.`
+          : 'Hurricanes feed active now. Current hurricane snapshot is on the map.';
+      }
+      case 'wildfires': {
+        const countText = formatCountText(featureCount, 'wildfire');
+        return countText
+          ? `There ${featureCount === 1 ? 'is' : 'are'} ${countText} active now in the current wildfire snapshot.`
+          : 'Wildfires feed active now. Current wildfire snapshot is on the map.';
+      }
+      case 'tsunamis': {
+        const countText = formatCountText(featureCount, 'tsunami event');
+        return countText
+          ? `There ${featureCount === 1 ? 'is' : 'are'} ${countText} active now in the current tsunami snapshot.`
+          : 'Tsunamis feed active now. Current tsunami snapshot is on the map.';
+      }
+      case 'volcanoes': {
+        const countText = formatCountText(featureCount, 'volcanic event');
+        return countText
+          ? `There ${featureCount === 1 ? 'is' : 'are'} ${countText} active now in the current volcano snapshot.`
+          : 'Volcanoes feed active now. Current volcano snapshot is on the map.';
+      }
+      case 'nws_alerts': {
+        const countText = formatCountText(featureCount, 'active NWS alert');
+        return countText
+          ? `There ${featureCount === 1 ? 'is' : 'are'} ${countText} right now.`
+          : 'NWS alerts feed active now. Current alerts are on the map.';
+      }
+      case 'currency': {
+        const countText = formatCountText(featureCount, 'exchange-rate marker');
+        return countText
+          ? `Currency feed active now. Tracking ${countText} in the current snapshot.`
+          : 'Currency feed active now. Current exchange-rate snapshot is on the map.';
+      }
+      case 'aurora': {
+        return Number.isFinite(featureCount) && featureCount > 0
+          ? `Aurora feed active now. Current forecast is on the map across ${featureCount.toLocaleString()} forecast cells.`
+          : 'Aurora feed active now. Current forecast is on the map.';
+      }
+      default: {
+        const label = formatOverlayStatusLabel(primaryOverlayId || normalizedFeedId || 'feed');
+        const countText = formatCountText(featureCount, 'item');
+        return countText
+          ? `${label} feed active now. Current snapshot includes ${countText}.`
+          : `${label} feed active now. Current snapshot is on the map.`;
+      }
+    }
   },
 
   setOpsSnapshotPayloads(displayPayloads = []) {
@@ -1671,10 +1817,14 @@ export const OverlayController = {
     // (no catalog data, no TimeSlider). Route and stop here.
     if (overlayId === 'aurora') {
       AuroraOverlay.setEnabled(isActive);
+      refreshTickerForOverlayState();
+      emitOverlayStatusMessage(overlayId, isActive, options);
       return;
     }
     if (overlayId === 'nws_alerts') {
       NwsAlertsOverlay.setEnabled(isActive);
+      refreshTickerForOverlayState();
+      emitOverlayStatusMessage(overlayId, isActive, options);
       return;
     }
 
@@ -1684,11 +1834,13 @@ export const OverlayController = {
       } else {
         this.hideOverlay(overlayId);
       }
+      emitOverlayStatusMessage(overlayId, isActive, options);
       return;
     }
     if (this._isOpsMode() && this._isOpsSnapshotManagedOverlay(overlayId)) {
       if (!isActive) {
         this.hideOverlay(overlayId);
+        emitOverlayStatusMessage(overlayId, false, options);
       }
       return;
     }
@@ -1698,9 +1850,9 @@ export const OverlayController = {
     // Metric choropleth toggles (demographics, currency) share one choropleth
     // layer. Toggling one off must not hide another that is still on, so
     // visibility tracks whether ANY metric overlay is active.
-    if (overlayId === 'demographics' || overlayId === 'currency') {
+    if (isSharedMetricOverlay(overlayId)) {
       // Demographics loads the country geometry on first activate; currency
-      // rides the same shared choropleth (already loaded in Ops).
+      // and other choropleth overlays ride the same shared choropleth layer.
       if (overlayId === 'demographics' && isActive) {
         const choroplethLayerExists = MapAdapter?.map?.getLayer('regions-fill');
         if (!choroplethLayerExists) {
@@ -1711,12 +1863,13 @@ export const OverlayController = {
           }
         }
       }
-      const anyMetricActive =
-        OverlaySelector?.isActive?.('demographics') === true ||
-        OverlaySelector?.isActive?.('currency') === true;
+      const activeOverlays = OverlaySelector?.getActiveOverlays?.() || [];
+      const anyMetricActive = activeOverlays.some((id) => isSharedMetricOverlay(id));
       if (MapAdapter) {
         MapAdapter.setChoroplethVisible(anyMetricActive);
       }
+      refreshTickerForOverlayState();
+      emitOverlayStatusMessage(overlayId, isActive, options);
       return;
     }
 
@@ -1774,6 +1927,8 @@ export const OverlayController = {
           console.log(`OverlayController: Geography layers hidden`);
         }
       }
+      refreshTickerForOverlayState();
+      emitOverlayStatusMessage(overlayId, isActive, options);
       return;
     }
 
@@ -1785,13 +1940,14 @@ export const OverlayController = {
       } else {
         this.clearWeatherGridOverlay(overlayId);
       }
+      refreshTickerForOverlayState();
+      emitOverlayStatusMessage(overlayId, isActive, options);
       return;
     }
 
     if (isActive) {
       if (
         this.defaultLoadExecutor &&
-        !this._isOpsMode() &&
         options.allowDefaultLoad !== false &&
         !this.hasCachedOverlayData(overlayId)
       ) {
@@ -1799,12 +1955,18 @@ export const OverlayController = {
           lane: OverlaySelector?.currentLaneMode || 'explore'
         });
         if (handledByDefaultLoad) {
+          refreshTickerForOverlayState();
+          emitOverlayStatusMessage(overlayId, true, options);
           return;
         }
       }
       await this.loadOverlay(overlayId);
+      refreshTickerForOverlayState();
+      emitOverlayStatusMessage(overlayId, true, options);
     } else {
       this.hideOverlay(overlayId);
+      refreshTickerForOverlayState();
+      emitOverlayStatusMessage(overlayId, false, options);
     }
   },
 
@@ -1854,7 +2016,7 @@ export const OverlayController = {
         // Position slider at start of loaded data
         const yearData = cachedData.years[year];
         if (yearData?.timestamps?.length > 0) {
-          TimeSlider.setTime(yearData.timestamps[0]);
+          TimeSlider.setTime(yearData.timestamps[yearData.timestamps.length - 1]);
         }
       }
 
@@ -2073,10 +2235,9 @@ export const OverlayController = {
    * @param {string} overlayId - Overlay ID
    */
   hideOverlay(overlayId) {
-    if (overlayId === 'currency' || overlayId === 'demographics') {
-      const anyMetricActive =
-        OverlaySelector?.isActive?.('demographics') === true ||
-        OverlaySelector?.isActive?.('currency') === true;
+    if (isSharedMetricOverlay(overlayId)) {
+      const activeOverlays = OverlaySelector?.getActiveOverlays?.() || [];
+      const anyMetricActive = activeOverlays.some((id) => isSharedMetricOverlay(id));
       MapAdapter?.setChoroplethVisible?.(anyMetricActive);
       console.log(`OverlayController: Hidden ${overlayId} (choropleth visibility updated)`);
       return;

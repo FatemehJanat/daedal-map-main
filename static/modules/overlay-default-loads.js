@@ -356,9 +356,6 @@ export function resolveDefaultLoadAction({ lane = 'explore', overlayId = '', pac
 
   const normalizedFeedId = String(feedId || '').trim();
   if (normalizedLane === 'ops' && normalizedFeedId) {
-    if (!isOpsFeedAllowed(normalizedFeedId)) {
-      return null;
-    }
     const overlayIds = getOpsOverlayIdsForFeeds([normalizedFeedId]);
     if (overlayIds.length) {
       return {
@@ -380,6 +377,16 @@ export function resolveDefaultLoadAction({ lane = 'explore', overlayId = '', pac
         feedId: mappedFeedId,
         entity: {
           feedId: mappedFeedId
+        }
+      };
+    }
+
+    const contextualPackAction = getPackDefaultLoadAction(normalizedOverlayId);
+    if (contextualPackAction) {
+      return {
+        ...contextualPackAction,
+        entity: {
+          packId: normalizedOverlayId
         }
       };
     }

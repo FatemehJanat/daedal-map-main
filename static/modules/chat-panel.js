@@ -53,7 +53,12 @@ import * as SavedOrders from './order/saved.js';
 import { ensureRuntimeAccessToken, getAccessToken, getCurrentProfile, getCurrentUser, getSupabaseClient, isAuthBootPending, isAuthenticated, onAuthChanged, refreshRuntimeSession, waitForAuthBoot } from './auth.js';
 import { TutorialMode, parseTutorialCommand } from './tutorial-mode.js';
 import { ResearchModeToggle } from './research/mode.js';
-import { setOpsEffectiveFeeds as setOverlaySelectorOpsEffectiveFeeds } from './overlay-selector.js';
+import {
+  getOpsOverlayIdsForFeeds,
+  resolveOverlayIdFromPackId,
+  resolveOverlayIdFromSourceId,
+  setOpsEffectiveFeeds as setOverlaySelectorOpsEffectiveFeeds
+} from './overlay-selector.js';
 import {
   isMixedResearchRasterRequest as isMixedResearchRasterRequestImpl,
   shouldAutoShowResearchRaster as shouldAutoShowResearchRasterImpl,
@@ -212,7 +217,7 @@ function ingestEventsToOverlay(response, order = null) {
     return '';
   }
 
-  OverlaySelector?.promoteOverlay?.(overlayId);
+  OverlaySelector?.showOverlay?.(overlayId);
   if (OverlaySelector && !OverlaySelector.isActive(overlayId)) {
     OverlaySelector.setActive(overlayId, true);
   }
@@ -308,6 +313,31 @@ function ingestMetricsToCache(response) {
   const timeRange = response.time_range || response.year_range || null;
 
   OverlayController.ingestMetricData(sourceId, response.geojson, timeData, timeRange);
+}
+
+function resolveOverlayIdForDefaultEntity(params = {}) {
+  const overlayId = String(params.overlayId || '').trim();
+  if (overlayId) return overlayId;
+
+  const sourceId = String(params.sourceId || '').trim();
+  if (sourceId) {
+    const fromSource = resolveOverlayIdFromSourceId(sourceId);
+    if (fromSource) return fromSource;
+  }
+
+  const feedId = String(params.feedId || '').trim();
+  if (feedId) {
+    const feedOverlayIds = getOpsOverlayIdsForFeeds([feedId]);
+    if (feedOverlayIds.length === 1) return feedOverlayIds[0];
+  }
+
+  const packId = String(params.packId || '').trim();
+  if (packId) {
+    const fromPack = resolveOverlayIdFromPackId(packId);
+    if (fromPack) return fromPack;
+  }
+
+  return '';
 }
 
 /**
@@ -557,14 +587,33 @@ export const ChatManager = {
       const items = Array.isArray(action.order.items) ? action.order.items : [];
       const requestedCount = Number(action.order._requestedPackCount) || items.length;
       const shouldRunSequentially = Boolean(options.onProgress) && items.length > 1;
+      const requestMode = options.mode || this.mode;
+      const resolvedOverlayId = resolveOverlayIdForDefaultEntity({
+        ...options,
+        ...(action.entity || {})
+      });
+
+      const ensureResolvedOverlayVisible = () => {
+        if (!resolvedOverlayId) return;
+        OverlaySelector?.showOverlay?.(resolvedOverlayId, requestMode);
+        if (OverlaySelector && !OverlaySelector.isActive(resolvedOverlayId)) {
+          OverlaySelector.setActive(resolvedOverlayId, true);
+        }
+        window.App?.syncMetricOverlayVisibility?.();
+      };
+
       if (!shouldRunSequentially) {
-        await this.executeOrder(action.order, {
+        const result = await this.executeOrder(action.order, {
+          mode: requestMode,
           skipLog: options.skipLog || false,
           syntheticSource: options.syntheticSource || 'default_load',
           // Curated response already shown above -> suppress the generic result.
-          suppressResultMessage: showCurated || Boolean(options.suppressResultMessage)
+          suppressResultMessage: showCurated || Boolean(options.suppressResultMessage),
+          force: options.force || false,
+          forceLargeDisplay: options.forceLargeDisplay || false
         });
-        return true;
+        ensureResolvedOverlayVisible();
+        return Boolean(result);
       }
 
       let successCount = 0;
@@ -584,9 +633,12 @@ export const ChatManager = {
               summary: action.order.summary
             },
             {
+              mode: requestMode,
               skipLog: options.skipLog || false,
               syntheticSource: options.syntheticSource || 'default_load',
-              suppressResultMessage: true
+              suppressResultMessage: true,
+              force: options.force || false,
+              forceLargeDisplay: options.forceLargeDisplay || false
             }
           );
           successCount += 1;
@@ -602,6 +654,9 @@ export const ChatManager = {
           : `Loaded ${successCount}/${requestedCount} defaults: ${labelText}.`;
         this.addMessage(summaryText, 'assistant', { mode: options.mode || this.mode });
       }
+      if (successCount > 0) {
+        ensureResolvedOverlayVisible();
+      }
       return successCount > 0
         ? { ok: true, successCount, total: requestedCount }
         : false;
@@ -611,7 +666,7 @@ export const ChatManager = {
       const overlayId = String(action.overlayId || '').trim();
       if (!overlayId) return false;
 
-      OverlaySelector?.promoteOverlay?.(overlayId, options.mode || this.mode);
+      OverlaySelector?.showOverlay?.(overlayId, options.mode || this.mode);
       if (OverlaySelector && !OverlaySelector.isActive(overlayId)) {
         OverlaySelector.setActive(overlayId, true);
       }
@@ -635,14 +690,22 @@ export const ChatManager = {
 
     if (action.type === 'overlay_activation' && Array.isArray(action.overlayIds)) {
       for (const overlayId of action.overlayIds) {
-        OverlaySelector?.promoteOverlay?.(overlayId, options.mode || this.mode);
+        OverlaySelector?.showOverlay?.(overlayId, options.mode || this.mode);
         if (OverlaySelector && !OverlaySelector.isActive(overlayId)) {
           OverlaySelector.setActive(overlayId, true);
         }
-        await OverlayController?.handleOverlayChange?.(overlayId, true, { allowDefaultLoad: false });
+        await OverlayController?.handleOverlayChange?.(overlayId, true, {
+          allowDefaultLoad: false,
+          suppressStatusMessage: true
+        });
       }
-      if (options.message) {
-        this.addMessage(options.message, 'assistant', { mode: options.mode || this.mode });
+      const summaryMessage = options.message
+        || OverlayController?.buildOpsFeedSummaryMessage?.(
+          action.entity?.feedId || action.feedId || options.feedId || '',
+          action.overlayIds
+        );
+      if (summaryMessage) {
+        this.addMessage(summaryMessage, 'assistant', { mode: options.mode || this.mode });
       }
       return true;
     }
@@ -1564,7 +1627,8 @@ export const ChatManager = {
    * @param {Object} order - The order to execute
     * @param {Object} options - Options {skipLog: boolean, force: boolean, forceLargeDisplay: boolean}
      */
-    async executeOrder(order, options = {}) {
+  async executeOrder(order, options = {}) {
+    const requestMode = options.mode || this.mode || 'explore';
     const apiUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL)
       ? `${API_BASE_URL}/chat`
       : '/chat';
@@ -1596,7 +1660,7 @@ export const ChatManager = {
 
     const data = await postMsgpack(apiUrl, {
         confirmed_order: order,
-        sessionId: this.getSessionIdForMode('explore'),
+        sessionId: this.getSessionIdForMode(requestMode),
         catalog_surface: this.getEffectiveCatalogSurface(),
         force: options.force || false,  // Bypass dedup for recovery
         force_large_display: options.forceLargeDisplay || false
