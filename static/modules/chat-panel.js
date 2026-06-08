@@ -394,6 +394,7 @@ export const ChatManager = {
   addressContext: null,
   addressMarker: null,
   googleMapsLoader: null,
+  recentAssistantMessages: new Map(),
 
   /**
    * Initialize chat manager
@@ -2768,6 +2769,23 @@ export const ChatManager = {
    */
   addMessage(text, type, options = {}) {
     const targetMode = options.mode || this.mode;
+    const normalizedText = String(text || '').trim();
+    if (type === 'assistant' && normalizedText) {
+      const recent = this.recentAssistantMessages.get(targetMode) || null;
+      const now = Date.now();
+      if (
+        recent
+        && recent.text === normalizedText
+        && Number.isFinite(recent.at)
+        && now - recent.at <= 3000
+      ) {
+        return this.messagePanes?.[targetMode]?.lastElementChild || null;
+      }
+      this.recentAssistantMessages.set(targetMode, {
+        text: normalizedText,
+        at: now
+      });
+    }
     const renderOptions = { ...options };
     delete renderOptions.mode;
     const targetMessages = this.messagePanes?.[targetMode] || this.elements.messages;
