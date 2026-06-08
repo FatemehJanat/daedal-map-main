@@ -1499,6 +1499,17 @@ def _select_focus_candidate(
     if not spec:
         return None, None, None
     payload = _report_display_payload_by_feed(report).get(feed) or _build_ops_payload_for_feed(feed)
+    return _select_focus_candidate_from_payload(feed=feed, payload=payload)
+
+
+def _select_focus_candidate_from_payload(
+    *,
+    feed: str,
+    payload: dict | None,
+) -> tuple[dict, dict, float] | tuple[None, None, None]:
+    spec = FEED_FOCUS_SPECS.get(feed)
+    if not spec or not isinstance(payload, dict):
+        return None, None, None
     if not isinstance(payload, dict):
         return None, None, None
     features = (payload.get("geojson") or {}).get("features") if isinstance(payload.get("geojson"), dict) else None
@@ -1615,6 +1626,24 @@ def _build_focus_chat_message(*, feed: str, feature: dict) -> str:
     return " ".join(pieces)
 
 
+def _build_history_focus_chat_message(*, feed: str, feature: dict) -> str:
+    props = feature.get("properties") if isinstance(feature.get("properties"), dict) else {}
+    label = FEED_FOCUS_SPECS.get(feed, {}).get("label") or "event"
+    name = _focus_feature_name(feed, props)
+    location = _focus_feature_location(feed, props)
+    metric = _focus_metric_text(feed, props)
+    timestamp = _focus_timestamp(feed, props)
+    pieces = [f"The largest retained {label} in that window is {name}"]
+    if location:
+        pieces[-1] += f" in {location}"
+    if metric:
+        pieces[-1] += f", with {metric}"
+    pieces[-1] += "."
+    if timestamp:
+        pieces.append(f"Observed {timestamp}.")
+    return " ".join(pieces)
+
+
 def _build_focus_map_result(*, feed: str, payload: dict, feature: dict, watch: dict, effective_feeds: list[str], message: str | None = None) -> dict:
     subset_payload = dict(payload)
     subset_payload["geojson"] = {
@@ -1630,6 +1659,31 @@ def _build_focus_map_result(*, feed: str, payload: dict, feature: dict, watch: d
     subset_payload["watch_context"] = watch
     subset_payload["effective_feeds"] = effective_feeds
     return subset_payload
+
+
+def _load_history_focus_payload(
+    *,
+    feed: str,
+    query: str,
+    hints: dict | None = None,
+    cache=None,
+) -> dict | None:
+    live_snapshot = load_current_state_snapshot(feed) or {}
+    history_entries = load_current_state_history(feed)
+    in_window, window_label = _history_entries_in_window(
+        snapshot=live_snapshot,
+        history_entries=history_entries,
+        query=query,
+        hints=hints,
+    )
+    history_payload = _build_history_event_payload(
+        feed=feed,
+        in_window=in_window,
+        window_label=window_label,
+    )
+    if history_payload:
+        _store_ops_history_payload(cache, feed=feed, payload=history_payload)
+    return history_payload
 
 
 def _select_deep_history_feeds(
@@ -2076,6 +2130,7 @@ def _try_focus_result(
     effective_feeds: list[str],
     chat_history: list | None,
     cache,
+    hints: dict | None = None,
 ) -> dict | None:
     lower = str(query or "").strip().lower()
     if not lower:
@@ -2118,6 +2173,54 @@ def _try_focus_result(
     )
     if not feed:
         return None
+
+    history_feed, history_payload = _resolve_cached_history_payload(
+        cache=cache,
+        effective_feeds=effective_feeds,
+    )
+    if history_feed == feed:
+        payload, feature, _score = _select_focus_candidate_from_payload(feed=feed, payload=history_payload)
+        if payload and feature:
+            _store_ops_focus_target(cache, feed=feed, payload=payload, feature=feature)
+            focus_message = _build_history_focus_chat_message(feed=feed, feature=feature)
+            if _query_requests_map_focus(lower):
+                return _build_focus_map_result(
+                    feed=feed,
+                    payload=payload,
+                    feature=feature,
+                    watch=watch,
+                    effective_feeds=effective_feeds,
+                    message=focus_message,
+                )
+            return {
+                "type": "chat",
+                "message": focus_message,
+            }
+
+    if _query_requests_deep_history(lower, hints=hints):
+        history_payload = _load_history_focus_payload(
+            feed=feed,
+            query=query,
+            hints=hints,
+            cache=cache,
+        )
+        payload, feature, _score = _select_focus_candidate_from_payload(feed=feed, payload=history_payload)
+        if payload and feature:
+            _store_ops_focus_target(cache, feed=feed, payload=payload, feature=feature)
+            focus_message = _build_history_focus_chat_message(feed=feed, feature=feature)
+            if _query_requests_map_focus(lower):
+                return _build_focus_map_result(
+                    feed=feed,
+                    payload=payload,
+                    feature=feature,
+                    watch=watch,
+                    effective_feeds=effective_feeds,
+                    message=focus_message,
+                )
+            return {
+                "type": "chat",
+                "message": focus_message,
+            }
 
     payload, feature, _score = _select_focus_candidate(feed=feed, report=report)
     if not payload or not feature:
@@ -2324,6 +2427,7 @@ def run_ops_chat(
         effective_feeds=effective_feeds,
         chat_history=chat_history,
         cache=cache,
+        hints=hints,
     )
     if focus_result:
         focus_result.setdefault("watch_id", watch.get("watch_id"))

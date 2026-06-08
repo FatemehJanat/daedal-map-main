@@ -164,6 +164,30 @@ function formatCountText(count, singular, plural = '') {
   return `${safeCount.toLocaleString()} ${noun}`;
 }
 
+const STATUS_MESSAGE_DEDUPE_TTL_MS = 1500;
+const recentStatusMessages = new Map();
+
+function shouldSuppressDuplicateStatusMessage(mode, text) {
+  const normalizedMode = String(mode || 'explore').trim().toLowerCase() || 'explore';
+  const normalizedText = String(text || '').trim();
+  if (!normalizedText) {
+    return true;
+  }
+  const now = Date.now();
+  const recentKey = `${normalizedMode}::${normalizedText}`;
+  for (const [key, lastAt] of recentStatusMessages.entries()) {
+    if (now - lastAt > STATUS_MESSAGE_DEDUPE_TTL_MS) {
+      recentStatusMessages.delete(key);
+    }
+  }
+  const lastAt = recentStatusMessages.get(recentKey);
+  if (Number.isFinite(lastAt) && now - lastAt <= STATUS_MESSAGE_DEDUPE_TTL_MS) {
+    return true;
+  }
+  recentStatusMessages.set(recentKey, now);
+  return false;
+}
+
 function emitOverlayStatusMessage(overlayId, isActive, options = {}) {
   if (options.suppressStatusMessage) return;
   if (options.categoryBatch) return;
@@ -180,6 +204,7 @@ function emitOverlayStatusMessage(overlayId, isActive, options = {}) {
     text = buildOverlayStatusMessage(overlayId, isActive);
   }
   if (!text || !ChatManager?.addMessage) return;
+  if (shouldSuppressDuplicateStatusMessage(mode, text)) return;
   ChatManager.addMessage(text, 'assistant', {
     mode
   });
@@ -199,6 +224,7 @@ function emitCategoryBatchStatusMessage(categoryBatch = {}) {
   }).filter(Boolean);
   if (!messages.length) return;
   const message = messages.join(' ');
+  if (shouldSuppressDuplicateStatusMessage(mode, message)) return;
   ChatManager.addMessage(message, 'assistant', {
     mode
   });
