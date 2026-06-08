@@ -246,7 +246,7 @@ function renderUnifiedOverlayEventResult(response, order = null) {
   const overlayId = ingestEventsToOverlay(response, order);
   if (overlayId && response?.geojson?.features?.length) {
     MapAdapter?.fitToBounds?.(response.geojson);
-    focusEventResultTime(response, overlayId);
+    focusEventResultTime(response, overlayId, order);
   }
   return Boolean(overlayId);
 }
@@ -283,14 +283,31 @@ function getRepresentativeEventTimestamp(response = {}) {
   return null;
 }
 
-function focusEventResultTime(response, overlayId) {
+function getOrderEventTimestamp(order = null) {
+  const item = Array.isArray(order?.items) && order.items.length === 1 ? order.items[0] : null;
+  const filters = item?.filters || {};
+  const endTs = toEventTimestamp(filters.date_end);
+  if (Number.isFinite(endTs)) {
+    return endTs;
+  }
+  const startTs = toEventTimestamp(filters.date_start);
+  if (Number.isFinite(startTs)) {
+    return startTs;
+  }
+  return null;
+}
+
+function focusEventResultTime(response, overlayId, order = null) {
   const timeSlider = window.TimeSlider || null;
+  const overlayController = window.OverlayController || null;
   if (!overlayId || !timeSlider?.setTime) return;
   const features = Array.isArray(response?.geojson?.features) ? response.geojson.features : [];
   if (!features.length || features.length > 25) return;
-  const timestamp = getRepresentativeEventTimestamp(response);
+  const timestamp = getRepresentativeEventTimestamp(response) || getOrderEventTimestamp(order);
   if (!Number.isFinite(timestamp)) return;
   timeSlider.setTime(timestamp, 'api');
+  overlayController?.showTimelineIfAllowed?.();
+  overlayController?.renderFilteredData?.(overlayId, timestamp, { useTimestamp: true });
 }
 
 function formatDefaultLoadItemLabel(item) {
