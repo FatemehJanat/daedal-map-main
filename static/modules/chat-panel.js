@@ -246,8 +246,51 @@ function renderUnifiedOverlayEventResult(response, order = null) {
   const overlayId = ingestEventsToOverlay(response, order);
   if (overlayId && response?.geojson?.features?.length) {
     MapAdapter?.fitToBounds?.(response.geojson);
+    focusEventResultTime(response, overlayId);
   }
   return Boolean(overlayId);
+}
+
+function toEventTimestamp(value) {
+  if (value == null || value === '') return null;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value > 1e12 ? value : null;
+  }
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getRepresentativeEventTimestamp(response = {}) {
+  const features = Array.isArray(response?.geojson?.features) ? response.geojson.features : [];
+  if (features.length === 1) {
+    const props = features[0]?.properties || {};
+    return (
+      toEventTimestamp(props.timestamp)
+      || toEventTimestamp(props.time)
+      || toEventTimestamp(props.date)
+      || null
+    );
+  }
+
+  const range = response?.time_range || null;
+  if (range?.min && range?.max) {
+    const spanMs = Number(range.max) - Number(range.min);
+    if (Number.isFinite(spanMs) && spanMs >= 0 && spanMs <= 14 * 24 * 60 * 60 * 1000) {
+      return Number(range.max);
+    }
+  }
+
+  return null;
+}
+
+function focusEventResultTime(response, overlayId) {
+  const timeSlider = window.TimeSlider || null;
+  if (!overlayId || !timeSlider?.setTime) return;
+  const features = Array.isArray(response?.geojson?.features) ? response.geojson.features : [];
+  if (!features.length || features.length > 25) return;
+  const timestamp = getRepresentativeEventTimestamp(response);
+  if (!Number.isFinite(timestamp)) return;
+  timeSlider.setTime(timestamp, 'api');
 }
 
 function formatDefaultLoadItemLabel(item) {

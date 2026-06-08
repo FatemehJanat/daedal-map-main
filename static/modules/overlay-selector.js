@@ -1111,7 +1111,10 @@ export const OverlaySelector = {
       this._buildUI();
       this._setupEvents();
       for (const overlayId of removed) {
-        this._notifyListeners(overlayId, false);
+        this._notifyListeners(overlayId, false, {
+          suppressStatusMessage: true,
+          systemTransition: true
+        });
       }
       this._saveState();
     }
@@ -1130,12 +1133,18 @@ export const OverlaySelector = {
     const nextOverlays = new Set(this.activeOverlays);
     for (const overlayId of previousOverlays) {
       if (!nextOverlays.has(overlayId)) {
-        this._notifyListeners(overlayId, false);
+        this._notifyListeners(overlayId, false, {
+          suppressStatusMessage: true,
+          systemTransition: true
+        });
       }
     }
     for (const overlayId of nextOverlays) {
       if (!previousOverlays.has(overlayId)) {
-        this._notifyListeners(overlayId, true);
+        this._notifyListeners(overlayId, true, {
+          suppressStatusMessage: true,
+          systemTransition: true
+        });
       }
     }
   },
