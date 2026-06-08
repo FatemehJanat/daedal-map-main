@@ -30,6 +30,40 @@ DERIVED_PATTERNS = {
     ],
 }
 
+COMPARISON_PATTERNS = {
+    "volatility": [
+        r"\bvolatility\b",
+        r"\bvolatile\b",
+        r"\bbiggest swings?\b",
+        r"\bsharpest (?:moves|move)\b",
+        r"\bmost volatile\b",
+    ],
+    "improvement": [
+        r"\bimprovement\b",
+        r"\bimprove(?:d|ment|s)?\b",
+        r"\bprogress\b",
+        r"\bbiggest gains?\b",
+        r"\bmade the biggest progress\b",
+        r"\breducing\b",
+    ],
+    "decline": [
+        r"\bdecline\b",
+        r"\bdeclines\b",
+        r"\bdeteriorat(?:e|ed|ing|ion)\b",
+        r"\bgot worse\b",
+        r"\bworsen(?:ed|ing)?\b",
+        r"\bbiggest drops?\b",
+    ],
+    "change": [
+        r"\bchange\b",
+        r"\bchanged\b",
+        r"\bgrowth\b",
+        r"\bincrease\b",
+        r"\bdecrease\b",
+        r"\bover time\b",
+    ],
+}
+
 FILTER_READ_PATTERNS = [
     r"what.*(magnitude|power|size|strength|category|scale).*(?:displayed|showing|on|visible)",
     r"what.*filters?",
@@ -78,6 +112,30 @@ SHOW_BORDERS_PATTERNS = [
 def detect_derived_intent(query: str) -> Optional[dict]:
     """Detect if query is asking for derived/calculated fields."""
     query_lower = query.lower()
+
+    for comparison_type, patterns in COMPARISON_PATTERNS.items():
+        for pattern in patterns:
+            match = re.search(pattern, query_lower)
+            if not match:
+                continue
+
+            result = {"type": comparison_type, "match": match.group(0), "family": "comparison"}
+
+            since_match = re.search(r"\bsince\s+(19|20)\d{2}\b", query_lower)
+            if since_match:
+                year_match = re.search(r"(19|20)\d{2}", since_match.group(0))
+                if year_match:
+                    result["start_year"] = int(year_match.group(0))
+
+            last_years_match = re.search(r"\bover\s+the\s+last\s+(\d{1,3})\s+years?\b", query_lower)
+            if last_years_match:
+                result["window_years"] = int(last_years_match.group(1))
+
+            recent_match = re.search(r"\brecent(?:ly)?\b", query_lower)
+            if recent_match:
+                result["recent"] = True
+
+            return result
 
     for derived_type, patterns in DERIVED_PATTERNS.items():
         for pattern in patterns:

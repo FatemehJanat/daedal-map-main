@@ -235,7 +235,11 @@ def _collect_items(feeds: "tuple[str, ...]", snapshot_getter: "Callable[[str], d
         if not snap:
             continue
         try:
-            items.extend(adapter(snap) or [])
+            adapted = adapter(snap) or []
+            for item in adapted:
+                if isinstance(item, dict) and not item.get("feed"):
+                    item["feed"] = feed
+            items.extend(adapted)
         except Exception as exc:
             logger.warning("ticker: adapter failed for %s: %s", feed, exc)
     return _order_items(items)

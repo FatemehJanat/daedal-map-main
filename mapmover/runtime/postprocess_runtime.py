@@ -56,6 +56,8 @@ from mapmover.runtime.population_resolution import (
 )
 from mapmover.runtime.postprocess_contracts import build_processed_order_result
 from mapmover.runtime.postprocess_normalization import (
+    apply_comparison_defaults as apply_comparison_defaults_impl,
+    build_comparison_derived_spec as build_comparison_derived_spec_impl,
     clamp_item_years_to_metric as clamp_item_years_to_metric_impl,
     expand_filter_value_aliases as expand_filter_value_aliases_impl,
     format_metric_label as format_metric_label_impl,
@@ -306,6 +308,18 @@ def run_postprocess_order(
         expand_all_derived_fields,
     )
     regular_items, derived_specs = split_derived_specs(expanded_items)
+    derived_intent = (hints or {}).get("derived_intent") if hints else None
+    if derived_intent:
+        for item in regular_items:
+            item["_comparison_derived_intent"] = derived_intent
+            source_id = item.get("source_id")
+            if not source_id:
+                continue
+            apply_comparison_defaults_impl(
+                item,
+                load_source_metadata(source_id) or {},
+                derived_intent,
+            )
     validated_items, errors, valid_count = validate_regular_items(
         regular_items,
         catalog,
@@ -315,6 +329,20 @@ def run_postprocess_order(
         ),
         validate_item,
     )
+    if derived_intent:
+        for item in validated_items:
+            if not item.get("_valid"):
+                continue
+            source_id = item.get("source_id")
+            if not source_id:
+                continue
+            spec = build_comparison_derived_spec_impl(
+                item,
+                load_source_metadata(source_id) or {},
+            )
+            if spec:
+                derived_specs.append(spec)
+                order["summary"] = spec.get("label") or order.get("summary")
     summary = build_validation_summary(validated_items, errors, valid_count)
 
     metric_warning = build_metric_warning(metric_count, policy=metric_warning_policy)

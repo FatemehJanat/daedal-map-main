@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Callable
 
 from .foundation_helpers import load_country_crosswalk
+from .paths import DATA_ROOT
 from .runtime.source_hints import (
     build_pack_family_preference_guidance,
     build_query_matched_metric_guidance,
@@ -284,10 +285,8 @@ def build_tier3_context(
                 source_path = get_source_path(source_id)
                 ref_path = source_path / "reference.json"
                 if ref_path.exists():
-                    import json as ref_json
-
                     with open(ref_path, encoding="utf-8") as f:
-                        ref_data = ref_json.load(f)
+                        ref_data = json.load(f)
                     summary = build_reference_summary(ref_data)
                     if summary:
                         reference_context = "\n" + summary
@@ -298,6 +297,18 @@ def build_tier3_context(
             msg += f"\nYears: {year_range}. Total metrics: {len(metrics)}."
             if reference_context:
                 msg += reference_context
+            pack_id = str((metadata or {}).get("pack_id") or "").strip()
+            if pack_id:
+                try:
+                    pack_ref_path = DATA_ROOT / "packs" / pack_id / "reference.json"
+                    if pack_ref_path.exists():
+                        with open(pack_ref_path, encoding="utf-8") as f:
+                            pack_ref_data = json.load(f)
+                        pack_summary = build_reference_summary(pack_ref_data)
+                        if pack_summary:
+                            msg += "\n" + pack_summary
+                except Exception:
+                    pass
             msg += "\n\nALL METRICS (use column name in JSON 'metric' field, human name when talking to user):\n"
             for col, human in metrics_mapping.items():
                 msg += f'  "{col}": {human}\n'

@@ -48,7 +48,15 @@ def build_preprocessor_summary(
         summary_parts.append(f"Reference lookup: {hints['reference_lookup']['type']}")
 
     if hints.get("derived_intent"):
-        summary_parts.append(f"Derived calculation: {hints['derived_intent']['type']}")
+        derived = hints["derived_intent"]
+        derived_parts = [str(derived.get("type") or "derived")]
+        if derived.get("start_year"):
+            derived_parts.append(f"since {derived['start_year']}")
+        elif derived.get("window_years"):
+            derived_parts.append(f"last {derived['window_years']} years")
+        elif derived.get("recent"):
+            derived_parts.append("recent")
+        summary_parts.append(f"Derived calculation: {' '.join(derived_parts)}")
 
     if hints.get("tutorial_mode"):
         summary_parts.append(f"TUTORIAL_MODE: {hints['tutorial_mode']['action']}")

@@ -5,6 +5,19 @@ from __future__ import annotations
 import json
 
 
+def _coerce_temporal_year(value) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    text = str(value).strip()
+    if len(text) >= 4 and text[:4].isdigit():
+        return int(text[:4])
+    return None
+
+
 def normalize_item_filters(
     item: dict,
     catalog_source: dict | None,
@@ -219,3 +232,101 @@ def normalize_source_declared_scope(
     if not region or region == canonical_region or region in aliases:
         item["region"] = canonical_region
     return item
+
+
+def apply_comparison_defaults(
+    item: dict,
+    metadata: dict | None,
+    derived_intent: dict | None,
+) -> None:
+    if not isinstance(item, dict) or not isinstance(metadata, dict) or not isinstance(derived_intent, dict):
+        return
+
+    if str(derived_intent.get("family") or "").strip().lower() != "comparison":
+        return
+
+    comparison_hints = metadata.get("comparison_hints")
+    if not isinstance(comparison_hints, dict):
+        return
+
+    intent_type = str(derived_intent.get("type") or "").strip().lower()
+    supported_modes = {
+        str(mode).strip().lower()
+        for mode in (comparison_hints.get("supported_modes") or [])
+        if str(mode).strip()
+    }
+    if intent_type and supported_modes and intent_type not in supported_modes:
+        return
+
+    default_metric = str(comparison_hints.get("default_comparison_metric") or "").strip()
+    if default_metric and not item.get("metric"):
+        item["metric"] = default_metric
+
+    has_explicit_time = item.get("year") is not None or item.get("year_start") or item.get("year_end")
+    only_defaulted_time = bool(item.get("_defaulted_time_range")) and not item.get("_time_hint_applied")
+    if has_explicit_time and not only_defaulted_time:
+        item["_comparison_intent"] = intent_type
+        return
+
+    default_window = comparison_hints.get("default_window") or {}
+    start_year = derived_intent.get("start_year") or default_window.get("start_year")
+    end_year = derived_intent.get("end_year")
+    if not end_year:
+        temporal = metadata.get("temporal_coverage") or {}
+        end_year = _coerce_temporal_year(temporal.get("end"))
+
+    if start_year and end_year and int(start_year) <= int(end_year):
+        item["year_start"] = int(start_year)
+        item["year_end"] = int(end_year)
+
+    item["_comparison_intent"] = intent_type
+
+
+def build_comparison_derived_spec(
+    item: dict,
+    metadata: dict | None,
+) -> dict | None:
+    if not isinstance(item, dict) or not isinstance(metadata, dict):
+        return None
+
+    comparison_hints = metadata.get("comparison_hints")
+    if not isinstance(comparison_hints, dict):
+        return None
+
+    intent_type = str(item.get("_comparison_intent") or "").strip().lower()
+    if intent_type not in {"improvement", "decline", "change", "volatility"}:
+        return None
+
+    metric_key = str(item.get("metric") or "").strip()
+    if not metric_key:
+        return None
+
+    year_start = item.get("year_start")
+    year_end = item.get("year_end")
+    if not isinstance(year_start, int) or not isinstance(year_end, int) or year_start >= year_end:
+        return None
+
+    metric_hints = (comparison_hints.get("metrics") or {}).get(metric_key) or {}
+    better_direction = str(metric_hints.get("better_direction") or "").strip().lower()
+    metric_name = str((((metadata.get("metrics") or {}).get(metric_key) or {}).get("name")) or metric_key).strip()
+
+    if intent_type == "improvement":
+        label = f"Improvement in {metric_name} since {year_start}"
+    elif intent_type == "decline":
+        label = f"Decline in {metric_name} since {year_start}"
+    elif intent_type == "volatility":
+        label = f"Change magnitude in {metric_name} since {year_start}"
+    else:
+        label = f"Change in {metric_name} since {year_start}"
+
+    return {
+        "type": "derived_result",
+        "calculation": "time_delta",
+        "intent": intent_type,
+        "metric": metric_key,
+        "metric_candidates": [metric_key, metric_name],
+        "start_year": year_start,
+        "end_year": year_end,
+        "better_direction": better_direction,
+        "label": label,
+    }

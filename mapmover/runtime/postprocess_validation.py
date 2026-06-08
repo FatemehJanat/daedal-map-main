@@ -12,6 +12,19 @@ from .source_hints import (
 )
 
 
+def _coerce_year_hint(value) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    text = str(value).strip()
+    if len(text) >= 4 and text[:4].isdigit():
+        return int(text[:4])
+    return None
+
+
 def _currency_granularity_source_id(item: dict) -> str | None:
     if str(item.get("pack_id") or "").strip() != "currency":
         return None
@@ -71,6 +84,38 @@ def validate_item(
 
     if not source_id and item.get("pack_id"):
         resolved_source = resolve_pack_source_func(catalog, item.get("pack_id"), item.get("region"), item)
+        if not resolved_source and query:
+            pack_metadata = get_catalog_pack_func(catalog, item.get("pack_id"))
+            comparison_hints = (pack_metadata or {}).get("comparison_hints") or {}
+            comparison_intent = item.get("_comparison_derived_intent")
+            if isinstance(comparison_hints, dict):
+                source_intent_defaults = comparison_hints.get("source_intent_defaults") or {}
+                if isinstance(comparison_intent, dict) and isinstance(source_intent_defaults, dict):
+                    intent_key = str(comparison_intent.get("type") or "").strip().lower()
+                    intent_source = str(source_intent_defaults.get(intent_key) or "").strip()
+                    if intent_source:
+                        resolved_source = intent_source
+                if not resolved_source and isinstance(comparison_intent, dict):
+                    default_comparison_source = str(comparison_hints.get("default_comparison_source") or "").strip()
+                    if default_comparison_source:
+                        resolved_source = default_comparison_source
+            goal_source_defaults = comparison_hints.get("goal_source_defaults") or {}
+            if isinstance(goal_source_defaults, dict):
+                for topic, topic_source_id in goal_source_defaults.items():
+                    topic_text = str(topic or "").strip().lower()
+                    source_text = str(topic_source_id or "").strip()
+                    if topic_text and source_text and topic_text in query:
+                        resolved_source = source_text
+                        break
+        if not resolved_source and query:
+            resolved_source, _, inferred_metric = select_pack_family_source_for_query(
+                str(item.get("pack_id") or "").strip(),
+                query,
+                catalog=catalog,
+                load_source_metadata_func=load_source_metadata_func,
+            )
+            if inferred_metric and not item.get("metric"):
+                item["metric"] = inferred_metric
         if resolved_source:
             item["source_id"] = resolved_source
             item["_resolved_from_pack"] = True
@@ -120,6 +165,7 @@ def validate_item(
         source_id = explicit_currency_source
         catalog_source = get_catalog_source_func(catalog, source_id)
     if pack_id and query:
+        pack_routing_allowed = bool(item.get("_resolved_from_pack"))
         preferred_source_id, preferred_metadata, preferred_metric = select_pack_family_source_for_query(
             pack_id,
             query,
@@ -128,16 +174,31 @@ def validate_item(
         )
         if explicit_currency_source:
             preferred_source_id = explicit_currency_source
-        if preferred_source_id and preferred_source_id != source_id:
+        if pack_routing_allowed and preferred_source_id and preferred_source_id != source_id:
             item["source_id"] = preferred_source_id
             item["_resolved_from_pack"] = True
             source_id = preferred_source_id
             catalog_source = get_catalog_source_func(catalog, source_id)
+            preferred_metadata = preferred_metadata or load_source_metadata_func(source_id)
+            metric = item.get("metric")
+            preferred_metrics = (preferred_metadata or {}).get("metrics") or {}
+            if metric and metric not in preferred_metrics:
+                item.pop("metric", None)
+                metric = ""
+            if item.get("_comparison_intent") and not metric:
+                comparison_hints = (preferred_metadata or {}).get("comparison_hints") or {}
+                comparison_metric = str(comparison_hints.get("default_comparison_metric") or "").strip()
+                if comparison_metric:
+                    item["metric"] = comparison_metric
+                    metric = comparison_metric
             if catalog_source and not item.get("pack_id"):
                 source_pack_id = str(catalog_source.get("pack_id") or "").strip()
                 if source_pack_id:
                     item["pack_id"] = source_pack_id
-        metadata = preferred_metadata or load_source_metadata_func(source_id)
+        if preferred_source_id and preferred_source_id == source_id and preferred_metadata:
+            metadata = preferred_metadata
+        else:
+            metadata = load_source_metadata_func(source_id)
         inferred_metric = preferred_metric or select_query_guided_metric(query, metadata)
         if inferred_metric and not metric:
             item["metric"] = inferred_metric
@@ -195,6 +256,27 @@ def validate_item(
 
     metadata = metadata or load_source_metadata_func(source_id)
     expand_filter_value_aliases_func(item, metadata)
+    comparison_intent = item.get("_comparison_derived_intent")
+    comparison_hints = metadata.get("comparison_hints") or {}
+    if isinstance(comparison_intent, dict) and isinstance(comparison_hints, dict):
+        item["_comparison_intent"] = str(comparison_intent.get("type") or "").strip().lower()
+        if not metric:
+            comparison_metric = str(comparison_hints.get("default_comparison_metric") or "").strip()
+            if comparison_metric:
+                item["metric"] = comparison_metric
+                metric = comparison_metric
+        has_explicit_time = item.get("year") is not None or item.get("year_start") or item.get("year_end")
+        only_defaulted_time = bool(item.get("_defaulted_time_range")) and not item.get("_time_hint_applied")
+        if (not has_explicit_time) or only_defaulted_time:
+            default_window = comparison_hints.get("default_window") or {}
+            start_year = _coerce_year_hint(comparison_intent.get("start_year")) or _coerce_year_hint(default_window.get("start_year"))
+            end_year = _coerce_year_hint(comparison_intent.get("end_year"))
+            if end_year is None:
+                temporal = metadata.get("temporal_coverage") or {}
+                end_year = _coerce_year_hint(temporal.get("end"))
+            if start_year is not None and end_year is not None and start_year <= end_year:
+                item["year_start"] = start_year
+                item["year_end"] = end_year
 
     if source_requires_metric_func(item, catalog_source) and not metric:
         default_metric = get_single_metric_default(metadata)

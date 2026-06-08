@@ -123,6 +123,13 @@ def get_routing_hints(metadata: dict | None) -> dict:
     return routing_hints if isinstance(routing_hints, dict) else {}
 
 
+def get_comparison_hints(metadata: dict | None) -> dict:
+    if not isinstance(metadata, dict):
+        return {}
+    comparison_hints = metadata.get("comparison_hints")
+    return comparison_hints if isinstance(comparison_hints, dict) else {}
+
+
 def get_hint_alias_terms(metadata: dict | None, *fields: str) -> list[str]:
     routing_hints = get_routing_hints(metadata)
     aliases: list[str] = []
@@ -658,13 +665,17 @@ def select_pack_family_source_for_query(
 
         metric = select_query_guided_metric(query, metadata)
         query_alias_matches = get_query_alias_matches(metadata, query)
+        inferred_geo_level = infer_requested_geo_level_from_query(query, metadata)
+        has_query_signal = bool(metric or query_alias_matches or inferred_geo_level)
+        if not has_query_signal:
+            continue
         score = 0.0
         if metric:
             score += 10.0
         if query_alias_matches:
             score += float(len(query_alias_matches) * 2)
         score += float(get_routing_hints(metadata).get("query_priority", 0.0) or 0.0)
-        if infer_requested_geo_level_from_query(query, metadata):
+        if inferred_geo_level:
             score += 1.0
 
         if score > best_score:
@@ -707,8 +718,66 @@ def build_scenario_routing_lines(scenario_defaults: dict | None) -> list[str]:
     return lines
 
 
+def build_comparison_routing_lines(comparison_hints: dict | None) -> list[str]:
+    if not isinstance(comparison_hints, dict) or not comparison_hints:
+        return []
+
+    lines: list[str] = []
+    supported_modes = [
+        str(mode).strip()
+        for mode in (comparison_hints.get("supported_modes") or [])
+        if str(mode).strip()
+    ]
+    default_metric = str(comparison_hints.get("default_comparison_metric") or "").strip()
+    default_window = comparison_hints.get("default_window") or {}
+    default_start_year = default_window.get("start_year")
+    clarify_on_broad = bool(comparison_hints.get("clarify_on_broad_comparison"))
+
+    if default_metric:
+        if supported_modes:
+            mode_text = ", ".join(supported_modes[:4])
+            lines.append(
+                f'For over-time comparison asks that clearly match this source, default to metric="{default_metric}" and comparison modes [{mode_text}] unless the user names a different supported metric.'
+            )
+        else:
+            lines.append(
+                f'For over-time comparison asks that clearly match this source, default to metric="{default_metric}" unless the user names a different supported metric.'
+            )
+
+    if default_start_year:
+        lines.append(
+            f"For broad change/improvement asks with no baseline year, use {default_start_year} as the default comparison start year unless the user specifies another time window."
+        )
+
+    metrics = comparison_hints.get("metrics") or {}
+    if isinstance(metrics, dict) and default_metric and isinstance(metrics.get(default_metric), dict):
+        metric_hint = metrics.get(default_metric) or {}
+        better_direction = str(metric_hint.get("better_direction") or "").strip().lower()
+        label = str(metric_hint.get("label_for_improvement") or "").strip()
+        if better_direction == "down":
+            lines.append(
+                f'For metric="{default_metric}", treat improvement as a decrease'
+                + (f" because it represents {label}" if label else "")
+                + "."
+            )
+        elif better_direction == "up":
+            lines.append(
+                f'For metric="{default_metric}", treat improvement as an increase'
+                + (f" because it represents {label}" if label else "")
+                + "."
+            )
+
+    if clarify_on_broad:
+        lines.append(
+            "If the user asks for improvement/decline/change without enough topic detail and multiple metrics are materially valid, prefer a grounded clarify instead of silently choosing a different metric family."
+        )
+
+    return lines
+
+
 def build_source_routing_guidance(metadata: dict | None, source_id: str) -> list[str]:
     routing_hints = get_routing_hints(metadata)
+    comparison_hints = get_comparison_hints(metadata)
     geometry_kind, geometry_subkind = infer_geometry_kind(metadata)
     source_anchor_runtime_level = get_source_anchor_runtime_level(metadata)
     if not source_id:
@@ -765,6 +834,7 @@ def build_source_routing_guidance(metadata: dict | None, source_id: str) -> list
             f"If the user asks for an unsupported metric such as {examples}, clarify honestly using the supported metrics above and accurately mention the supported geography ({get_supported_geography_summary(metadata)})."
         )
 
+    lines.extend(build_comparison_routing_lines(comparison_hints))
     lines.extend(build_scenario_routing_lines(routing_hints.get("scenario_metric_defaults")))
 
     metric_aliases = routing_hints.get("metric_aliases") or {}
@@ -869,21 +939,20 @@ def build_reference_summary(reference_data: dict | None) -> str:
     if not isinstance(reference_data, dict) or not reference_data:
         return ""
 
+    parts: list[str] = []
+
     goal = reference_data.get("goal")
     if isinstance(goal, dict):
         name = str(goal.get("name") or "").strip()
         description = str(goal.get("description") or "").strip()
-        parts = []
         if name:
             parts.append(f"Goal: {name}")
         if description:
             parts.append(f"Description: {description}")
-        return "\n".join(parts)
 
     about = reference_data.get("about")
     dataset = reference_data.get("this_dataset")
     if isinstance(about, dict) or isinstance(dataset, dict):
-        parts = []
         if isinstance(about, dict):
             name = str(about.get("name") or "").strip()
             publisher = str(about.get("publisher") or "").strip()
@@ -898,6 +967,84 @@ def build_reference_summary(reference_data: dict | None) -> str:
             focus = str(dataset.get("focus") or "").strip()
             if focus:
                 parts.append(f"Dataset focus: {focus}")
-        return "\n".join(parts)
 
-    return ""
+    pack = reference_data.get("pack")
+    if isinstance(pack, dict):
+        pack_name = str(pack.get("name") or "").strip()
+        pack_description = str(pack.get("description") or "").strip()
+        if pack_name:
+            parts.append(f"Pack: {pack_name}")
+        if pack_description:
+            parts.append(f"Pack description: {pack_description}")
+
+    comparison_language_hints = reference_data.get("comparison_language_hints") or {}
+    if isinstance(comparison_language_hints, dict) and comparison_language_hints:
+        improvement_aliases = comparison_language_hints.get("improvement_aliases") or []
+        decline_aliases = comparison_language_hints.get("decline_aliases") or []
+        volatility_aliases = comparison_language_hints.get("volatility_aliases") or []
+        if improvement_aliases:
+            parts.append(
+                "Comparison language: improvement terms include "
+                + ", ".join(str(alias).strip() for alias in improvement_aliases[:5] if str(alias).strip())
+                + "."
+            )
+        if decline_aliases:
+            parts.append(
+                "Decline terms include "
+                + ", ".join(str(alias).strip() for alias in decline_aliases[:5] if str(alias).strip())
+                + "."
+            )
+        if volatility_aliases:
+            parts.append(
+                "Volatility terms include "
+                + ", ".join(str(alias).strip() for alias in volatility_aliases[:5] if str(alias).strip())
+                + "."
+            )
+
+    comparison_metric_families = reference_data.get("comparison_metric_families") or {}
+    if isinstance(comparison_metric_families, dict) and comparison_metric_families:
+        family_bits = []
+        for family_name, family_metrics in list(comparison_metric_families.items())[:4]:
+            if isinstance(family_metrics, list) and family_metrics:
+                family_bits.append(
+                    f'{str(family_name).strip()} -> {", ".join(str(metric).strip() for metric in family_metrics[:3] if str(metric).strip())}'
+                )
+        if family_bits:
+            parts.append("Comparison families: " + "; ".join(family_bits) + ".")
+
+    comparison_preference_hints = reference_data.get("comparison_preference_hints") or {}
+    if isinstance(comparison_preference_hints, dict) and comparison_preference_hints:
+        default_family = str(comparison_preference_hints.get("default_improvement_family") or "").strip()
+        default_metric = str(comparison_preference_hints.get("default_improvement_metric") or "").strip()
+        if default_family or default_metric:
+            preference_bits = []
+            if default_family:
+                preference_bits.append(f"default improvement family = {default_family}")
+            if default_metric:
+                preference_bits.append(f'default improvement metric = "{default_metric}"')
+            parts.append("Comparison preference: " + "; ".join(preference_bits) + ".")
+
+    comparison_clarify_hints = reference_data.get("comparison_clarify_hints") or {}
+    if isinstance(comparison_clarify_hints, dict) and comparison_clarify_hints:
+        clarify_summary = str(comparison_clarify_hints.get("summary") or "").strip()
+        if clarify_summary:
+            parts.append(f"Comparison clarify guidance: {clarify_summary}")
+
+    comparison_examples = reference_data.get("comparison_examples") or []
+    if isinstance(comparison_examples, list) and comparison_examples:
+        cleaned_examples = [str(example).strip() for example in comparison_examples if str(example).strip()]
+        if cleaned_examples:
+            parts.append("Comparison examples: " + " | ".join(cleaned_examples[:3]))
+
+    qualifier_hints = reference_data.get("qualifier_hints") or {}
+    if isinstance(qualifier_hints, dict) and qualifier_hints:
+        qualifier_bits = []
+        for qualifier, meaning in list(qualifier_hints.items())[:6]:
+            qualifier_text = str(qualifier).strip()
+            meaning_text = str(meaning).strip()
+            if qualifier_text and meaning_text:
+                qualifier_bits.append(f"{qualifier_text} -> {meaning_text}")
+        if qualifier_bits:
+            parts.append("Qualifier guidance: " + "; ".join(qualifier_bits) + ".")
+
+    return "\n".join(parts)

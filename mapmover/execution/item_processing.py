@@ -367,7 +367,7 @@ def process_metric_items(
         executor_log_func(trace_id, "item_values_applied", t_after_sort, f"item={idx}/{len(items)} source={source_id} metric={label} rows={tracked_rows} box_count={box_count}")
 
     derived_specs = order.get("derived_specs", [])
-    if derived_specs and boxes:
+    if derived_specs and (boxes or year_data):
         calc_year = None
         if items:
             calc_year = items[0].get("year")
@@ -375,9 +375,14 @@ def process_metric_items(
             first_box = next(iter(boxes.values()))
             calc_year = first_box.get("year")
 
-        derivation_warnings = apply_derived_fields_func(boxes, derived_specs, calc_year)
+        derivation_state = apply_derived_fields_func(boxes, derived_specs, calc_year, year_data=year_data)
+        derivation_warnings = derivation_state.get("warnings") or []
         if derivation_warnings:
             print(f"Derivation warnings: {derivation_warnings[:5]}")
+        if derivation_state.get("produced_comparison_boxes"):
+            temporal_mode_active = False
+            year_data = {}
+            all_years = set()
 
     merged_cap_info = None
     if cap_infos:
