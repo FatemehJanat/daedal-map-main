@@ -14,7 +14,7 @@
 
 const LANES = ['explore', 'research', 'ops'];
 const DEFAULT_LANE = 'explore';
-const ROUTE_INTENT_PARAMS = ['pack', 'source', 'feed', 'q'];
+const ROUTE_INTENT_PARAMS = ['pack', 'source', 'feed', 'event_id', 'q'];
 
 const LANE_TITLES = {
   explore: 'Explore - DaedalMap',
@@ -56,18 +56,20 @@ export function setLaneTitle(lane, entityId) {
  * both are given (the more specific intent). No-op when the URL already matches
  * (e.g. a deep-link entry that already carries the param).
  * @param {string} lane
- * @param {{packId?: string, sourceId?: string, feedId?: string}} [entity]
+ * @param {{packId?: string, sourceId?: string, feedId?: string, eventId?: string}} [entity]
  */
-export function writeEntityParam(lane, { packId = '', sourceId = '', feedId = '' } = {}) {
+export function writeEntityParam(lane, { packId = '', sourceId = '', feedId = '', eventId = '' } = {}) {
   if (typeof window === 'undefined') return;
   const target = '/' + (normalizeLane(lane) || DEFAULT_LANE);
   const pack = String(packId || '').trim();
   const source = String(sourceId || '').trim();
   const feed = String(feedId || '').trim();
+  const event = String(eventId || '').trim();
   const params = new URLSearchParams();
   if (source) params.set('source', source);
   else if (feed) params.set('feed', feed);
   else if (pack) params.set('pack', pack);
+  if (event) params.set('event_id', event);
   const qs = params.toString();
   const nextSearch = qs ? `?${qs}` : '';
   const currentPath = (window.location.pathname || '/').replace(/\/+$/, '') || '/';
@@ -80,7 +82,7 @@ export function writeEntityParam(lane, { packId = '', sourceId = '', feedId = ''
  * the lane from the first path segment; the remaining fields are placeholders
  * the later phases fill in.
  * @param {Location} [loc]
- * @returns {{lane: string|null, pack_id: string|null, source_id: string|null, feed_id: string|null,
+ * @returns {{lane: string|null, pack_id: string|null, source_id: string|null, feed_id: string|null, event_id: string|null,
  *   prefill_query: string|null, requires_auth: boolean, invalid_reason: string|null}}
  */
 export function parseRouteIntent(loc = window.location) {
@@ -96,6 +98,7 @@ export function parseRouteIntent(loc = window.location) {
     pack_id: pick('pack'),         // Explore deep link: ?pack=<pack_id>
     source_id: pick('source'),     // optional ?source=<source_id>
     feed_id: pick('feed'),         // Ops deep link: ?feed=<collector_name>
+    event_id: pick('event_id'),    // Exact event deep link: ?event_id=<stable_event_id>
     prefill_query: pick('q'),      // display-only: ?q=<text> (never auto-sent)
     requires_auth: false,          // resolved by the auth layer, not here
     invalid_reason: segment && !lane ? 'unknown_path_segment' : null,

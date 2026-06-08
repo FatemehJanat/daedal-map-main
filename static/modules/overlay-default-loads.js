@@ -278,7 +278,69 @@ export function buildSourceDefaultLoadOrder(sourceId) {
   return null;
 }
 
-export function resolveDefaultLoadAction({ lane = 'explore', overlayId = '', packId = '', sourceId = '', feedId = '', presetId = '' } = {}) {
+function resolveEventSourceId({ packId = '', sourceId = '' } = {}) {
+  const normalizedSourceId = String(sourceId || '').trim();
+  if (normalizedSourceId) return normalizedSourceId;
+
+  const normalizedPackId = String(packId || '').trim();
+  if (!normalizedPackId) return '';
+
+  const entries = getOverlayCatalogEntriesByPackId(normalizedPackId);
+  if (!entries.length) return '';
+
+  const preferredEntry = entries.find((entry) => {
+    const candidateSourceId = String(entry?.source_id || '').trim();
+    return String(entry?.data_type || '').trim() === 'events'
+      && candidateSourceId.endsWith('_events');
+  }) || entries.find((entry) => String(entry?.source_id || '').trim().endsWith('_events'))
+    || entries.find((entry) => String(entry?.data_type || '').trim() === 'events')
+    || entries[0];
+
+  return String(preferredEntry?.source_id || '').trim();
+}
+
+function buildExactEventLoadAction({ lane = 'explore', packId = '', sourceId = '', eventId = '' } = {}) {
+  const normalizedLane = String(lane || 'explore').trim().toLowerCase();
+  const normalizedEventId = String(eventId || '').trim();
+  if (normalizedLane !== 'explore' || !normalizedEventId) {
+    return null;
+  }
+
+  const normalizedPackId = String(packId || '').trim();
+  const normalizedSourceId = resolveEventSourceId({ packId: normalizedPackId, sourceId });
+  if (!normalizedSourceId) {
+    return null;
+  }
+
+  const fallbackPackId = normalizedPackId
+    || String(getOverlayCatalogEntryBySourceId(normalizedSourceId)?.pack_id || '').trim()
+    || resolveOverlayIdFromSourceId(normalizedSourceId);
+  if (!fallbackPackId) {
+    return null;
+  }
+
+  return {
+    type: 'confirmed_order',
+    order: {
+      items: [{
+        pack_id: fallbackPackId,
+        source_id: normalizedSourceId,
+        mode: 'events',
+        filters: {
+          event_id: normalizedEventId
+        }
+      }],
+      summary: `Showing ${fallbackPackId} event ${normalizedEventId}`
+    },
+    entity: {
+      packId: fallbackPackId,
+      sourceId: normalizedSourceId,
+      eventId: normalizedEventId
+    }
+  };
+}
+
+export function resolveDefaultLoadAction({ lane = 'explore', overlayId = '', packId = '', sourceId = '', feedId = '', presetId = '', eventId = '' } = {}) {
   const normalizedLane = String(lane || 'explore').trim().toLowerCase();
   const normalizedPresetId = String(presetId || '').trim();
   if (normalizedPresetId === 'explore:disasters_2020_2025') {
@@ -287,6 +349,16 @@ export function resolveDefaultLoadAction({ lane = 'explore', overlayId = '', pac
       'Loading disaster defaults'
     );
     return presetAction || null;
+  }
+
+  const exactEventAction = buildExactEventLoadAction({
+    lane: normalizedLane,
+    packId,
+    sourceId,
+    eventId
+  });
+  if (exactEventAction) {
+    return exactEventAction;
   }
 
   const normalizedPackId = String(packId || '').trim();

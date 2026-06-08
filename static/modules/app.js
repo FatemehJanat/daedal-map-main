@@ -618,13 +618,72 @@ export const App = {
     hideStartupChrome();
     ChatManager.applyModeUiState?.();
 
+    const applyRouteIntentLoad = async (lane, routeIntent) => {
+      if (lane === 'explore') {
+        if (routeIntent.event_id && (routeIntent.pack_id || routeIntent.source_id)) {
+          const eventPackId = routeIntent.pack_id
+            || (await this.findPublicPackCatalogEntryBySourceId(routeIntent.source_id))?.pack_id
+            || '';
+          const handled = await ChatManager.runDefaultLoad(
+            {
+              packId: eventPackId,
+              sourceId: routeIntent.source_id || '',
+              eventId: routeIntent.event_id
+            },
+            { mode: 'explore', syntheticSource: 'route_deep_link' }
+          );
+          if (!handled) {
+            console.warn('[DeepLink] No exact-event route for:', routeIntent.pack_id || routeIntent.source_id, routeIntent.event_id);
+          }
+          return;
+        }
+        if (routeIntent.pack_id) {
+          const handled = await ChatManager.runDefaultLoad(
+            { packId: routeIntent.pack_id },
+            { mode: 'explore', syntheticSource: 'route_deep_link' }
+          );
+          if (!handled) {
+            console.warn('[DeepLink] No default load preset for pack:', routeIntent.pack_id);
+          }
+          return;
+        }
+        if (routeIntent.source_id) {
+          const packEntry = await this.findPublicPackCatalogEntryBySourceId(routeIntent.source_id);
+          const handled = await ChatManager.runDefaultLoad(
+            {
+              sourceId: routeIntent.source_id,
+              packId: packEntry?.pack_id || ''
+            },
+            { mode: 'explore', syntheticSource: 'route_deep_link' }
+          );
+          if (!handled) {
+            console.warn('[DeepLink] No default load preset for source:', routeIntent.source_id);
+          }
+        }
+        return;
+      }
+
+      if (lane === 'ops' && routeIntent.feed_id) {
+        const handled = await ChatManager.runDefaultLoad(
+          { feedId: routeIntent.feed_id },
+          { mode: 'ops', syntheticSource: 'route_deep_link' }
+        );
+        if (!handled) {
+          console.warn('[DeepLink] No default live load preset for feed:', routeIntent.feed_id);
+        }
+      }
+    };
+
     // Back/forward navigation: re-activate the lane from the URL. switchChatMode
     // early-returns when the mode is unchanged, and writeLane no-ops on popstate
     // (the URL already changed), so this does not loop.
     if (!this._routeListenerBound) {
       this._routeListenerBound = true;
-      onRouteChange((lane) => {
-        Promise.resolve(ChatManager.switchChatMode?.(lane)).catch((error) => {
+      onRouteChange((lane, routeIntent) => {
+        Promise.resolve((async () => {
+          await ChatManager.switchChatMode?.(lane);
+          await applyRouteIntentLoad(lane, routeIntent || {});
+        })()).catch((error) => {
           console.warn('Route-driven lane switch failed:', error);
         });
       });
@@ -663,37 +722,7 @@ export const App = {
     // base lane state (public defaults for anon, account defaults/watch for
     // signed-in), then widen that session with the route intent.
     const routeIntent = parseRouteIntent();
-    if (startupMode === 'explore') {
-      if (routeIntent.pack_id) {
-        const handled = await ChatManager.runDefaultLoad(
-          { packId: routeIntent.pack_id },
-          { mode: 'explore', syntheticSource: 'route_deep_link' }
-        );
-        if (!handled) {
-          console.warn('[DeepLink] No default load preset for pack:', routeIntent.pack_id);
-        }
-      } else if (routeIntent.source_id) {
-        const packEntry = await this.findPublicPackCatalogEntryBySourceId(routeIntent.source_id);
-        const handled = await ChatManager.runDefaultLoad(
-          {
-            sourceId: routeIntent.source_id,
-            packId: packEntry?.pack_id || ''
-          },
-          { mode: 'explore', syntheticSource: 'route_deep_link' }
-        );
-        if (!handled) {
-          console.warn('[DeepLink] No default load preset for source:', routeIntent.source_id);
-        }
-      }
-    } else if (startupMode === 'ops' && routeIntent.feed_id) {
-      const handled = await ChatManager.runDefaultLoad(
-        { feedId: routeIntent.feed_id },
-        { mode: 'ops', syntheticSource: 'route_deep_link' }
-      );
-      if (!handled) {
-        console.warn('[DeepLink] No default live load preset for feed:', routeIntent.feed_id);
-      }
-    }
+    await applyRouteIntentLoad(startupMode, routeIntent);
 
     ChatManager.applyModeUiState?.();
     this.syncMetricOverlayVisibility();
@@ -731,7 +760,7 @@ export const App = {
     // Skip this when an Explore deep link (?pack= / ?source=) drove startup: the
     // preset above already loaded that entity's data into the shared choropleth,
     // and force-loading the world-countries view here would overwrite/cover it.
-    const hasExploreDeepLink = !!(routeIntent.pack_id || routeIntent.source_id);
+    const hasExploreDeepLink = !!(routeIntent.pack_id || routeIntent.source_id || routeIntent.event_id);
     if (!researchStartup && !hasExploreDeepLink && OverlaySelector.getActiveOverlays().includes('demographics')) {
       ViewportLoader.load(ViewportLoader.currentAdminLevel);
     }

@@ -782,7 +782,8 @@ export const ChatManager = {
       packId: params.packId,
       sourceId: params.sourceId,
       feedId: params.feedId,
-      presetId: params.presetId
+      presetId: params.presetId,
+      eventId: params.eventId
     });
     if (!action) return false;
     const result = await this.executeDefaultLoadAction(action, options);
@@ -804,11 +805,15 @@ export const ChatManager = {
     const sourceId = String(params.sourceId || '').trim();
     const packId = String(params.packId || '').trim();
     const feedId = String(params.feedId || '').trim();
+    const eventId = String(params.eventId || '').trim();
     if (!sourceId && !packId && !feedId) return;
     try {
       const entityId = sourceId || feedId || packId;
       setLaneTitle(lane, entityId);
-      writeEntityParam(lane, sourceId ? { sourceId } : feedId ? { feedId } : { packId });
+      writeEntityParam(
+        lane,
+        sourceId ? { sourceId, eventId } : feedId ? { feedId } : { packId, eventId }
+      );
       if (feedId) {
         window.gtag?.('event', 'feed_load', {
           feed_id: feedId,
