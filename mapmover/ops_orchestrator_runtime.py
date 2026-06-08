@@ -73,6 +73,27 @@ MAP_FOCUS_PATTERNS = (
     r"\bwhere is\b",
 )
 
+SINGULAR_FOCUS_PATTERNS = (
+    r"\bshow it\b",
+    r"\bshow that\b",
+    r"\bshow this\b",
+    r"\bmap it\b",
+    r"\bmap that\b",
+    r"\bmap this\b",
+    r"\bshow the biggest\b",
+    r"\bshow the largest\b",
+    r"\bshow the strongest\b",
+    r"\bshow the worst\b",
+    r"\bshow the highest\b",
+    r"\bshow the one\b",
+    r"\bmap the biggest\b",
+    r"\bmap the largest\b",
+    r"\bmap the strongest\b",
+    r"\bmap the worst\b",
+    r"\bmap the highest\b",
+    r"\bmap the one\b",
+)
+
 SUPERLATIVE_PATTERNS = (
     r"\bbiggest\b",
     r"\blargest\b",
@@ -1162,6 +1183,13 @@ def _query_requests_map_focus(query: str) -> bool:
     return any(re.search(pattern, text) for pattern in MAP_FOCUS_PATTERNS)
 
 
+def _query_requests_singular_focus(query: str) -> bool:
+    text = str(query or "").strip().lower()
+    if not text:
+        return False
+    return any(re.search(pattern, text) for pattern in SINGULAR_FOCUS_PATTERNS)
+
+
 def _query_requests_superlative(query: str) -> bool:
     text = str(query or "").strip().lower()
     if not text:
@@ -2138,6 +2166,21 @@ def _try_focus_result(
 
     show_only = _query_requests_map_focus(lower) and not _query_requests_superlative(lower)
     if show_only:
+        singular_focus = _query_requests_singular_focus(lower)
+        cached_feed, cached_payload, cached_feature = _resolve_cached_focus_target(
+            cache=cache,
+            report=report,
+            effective_feeds=effective_feeds,
+        )
+        if singular_focus and cached_feed and cached_payload and cached_feature:
+            return _build_focus_map_result(
+                feed=cached_feed,
+                payload=cached_payload,
+                feature=cached_feature,
+                watch=watch,
+                effective_feeds=effective_feeds,
+                message=f"Showing {_focus_feature_name(cached_feed, cached_feature.get('properties') or {})}.",
+            )
         history_feed, history_payload = _resolve_cached_history_payload(
             cache=cache,
             effective_feeds=effective_feeds,
@@ -2147,11 +2190,6 @@ def _try_focus_result(
             payload = dict(history_payload)
             payload["fit"] = True
             return payload
-        cached_feed, cached_payload, cached_feature = _resolve_cached_focus_target(
-            cache=cache,
-            report=report,
-            effective_feeds=effective_feeds,
-        )
         if cached_feed and cached_payload and cached_feature:
             return _build_focus_map_result(
                 feed=cached_feed,
