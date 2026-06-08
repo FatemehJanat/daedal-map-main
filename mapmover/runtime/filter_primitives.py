@@ -5,6 +5,46 @@ from __future__ import annotations
 import pandas as pd
 
 
+def resolve_exact_id_filter_field(
+    requested_field: str,
+    available_cols,
+    *,
+    metadata: dict | None = None,
+    event_type: str = "",
+):
+    """Resolve generic exact-id filters to the source's native id column."""
+    field = str(requested_field or "").strip()
+    if not field:
+        return field
+
+    available = set(available_cols or [])
+    if field in available:
+        return field
+
+    if field != "event_id":
+        return field
+
+    metadata = metadata or {}
+    routing_hints = metadata.get("routing_hints") if isinstance(metadata.get("routing_hints"), dict) else {}
+    declared = str(
+        metadata.get("exact_id_field")
+        or routing_hints.get("exact_id_field")
+        or ""
+    ).strip()
+    if declared and declared in available:
+        return declared
+
+    normalized_event_type = str(event_type or metadata.get("event_type") or "").strip().lower()
+    candidates = []
+    if normalized_event_type:
+        candidates.append(f"{normalized_event_type}_id")
+    candidates.extend(["storm_id", "fire_id", "id"])
+    for candidate in candidates:
+        if candidate in available:
+            return candidate
+    return field
+
+
 def normalize_sort_spec(sort_spec):
     """Coerce LLM-generated sort payloads into a consistent dict shape."""
     if not sort_spec:

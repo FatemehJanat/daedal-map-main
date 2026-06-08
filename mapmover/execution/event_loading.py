@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from mapmover.runtime.filter_primitives import resolve_exact_id_filter_field
+
 
 def resolve_event_source_id(
     source_id: str,
@@ -205,7 +207,13 @@ def load_event_data_duckdb(
             where_clauses.append("(" + " OR ".join(region_parts) + ")")
 
     for field, value in filters.items():
-        append_duckdb_filter_clause_func(where_clauses, params, available_cols, field, value)
+        resolved_field = resolve_exact_id_filter_field(
+            field,
+            available_cols,
+            metadata=metadata,
+            event_type=str(metadata.get("event_type") or ""),
+        )
+        append_duckdb_filter_clause_func(where_clauses, params, available_cols, resolved_field, value)
 
     sql = "SELECT * FROM read_parquet(?)"
     if where_clauses:

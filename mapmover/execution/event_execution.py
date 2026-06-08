@@ -1,5 +1,7 @@
 import pandas as pd
 
+from mapmover.runtime.filter_primitives import resolve_exact_id_filter_field
+
 
 def _build_default_time_note(items: list) -> str | None:
     defaulted_ranges = []
@@ -249,16 +251,22 @@ def execute_event_order_impl(
                 df = df[df["_country"].isin(country_codes)]
 
         for field, value in filters.items():
-            if field.endswith("_min"):
-                col = field[:-4]
+            resolved_field = resolve_exact_id_filter_field(
+                field,
+                df.columns,
+                metadata=metadata,
+                event_type=event_type,
+            )
+            if resolved_field.endswith("_min"):
+                col = resolved_field[:-4]
                 if col in df.columns:
                     df = df[df[col] >= value]
-            elif field.endswith("_max"):
-                col = field[:-4]
+            elif resolved_field.endswith("_max"):
+                col = resolved_field[:-4]
                 if col in df.columns:
                     df = df[df[col] <= value]
-            elif field in df.columns:
-                df = df[df[field] == value]
+            elif resolved_field in df.columns:
+                df = df[df[resolved_field] == value]
 
         print(f"  After filters: {len(df)} events")
 
