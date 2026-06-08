@@ -167,10 +167,21 @@ function formatCountText(count, singular, plural = '') {
 function emitOverlayStatusMessage(overlayId, isActive, options = {}) {
   if (options.suppressStatusMessage) return;
   if (options.categoryBatch) return;
-  const text = buildOverlayStatusMessage(overlayId, isActive);
+  const mode = OverlaySelector?.currentLaneMode || 'explore';
+  let text = null;
+  if (
+    isActive &&
+    mode === 'ops' &&
+    typeof OverlayController?.buildOpsFeedSummaryMessage === 'function'
+  ) {
+    text = OverlayController.buildOpsFeedSummaryMessage(overlayId, [overlayId]);
+  }
+  if (!text) {
+    text = buildOverlayStatusMessage(overlayId, isActive);
+  }
   if (!text || !ChatManager?.addMessage) return;
   ChatManager.addMessage(text, 'assistant', {
-    mode: OverlaySelector?.currentLaneMode || 'explore'
+    mode
   });
 }
 
@@ -777,13 +788,32 @@ export const OverlayController = {
     return getLoadedOverlayCount(normalizedOverlayId);
   },
 
+  getOpsSnapshotCount(overlayId) {
+    const normalizedOverlayId = String(overlayId || '').trim();
+    if (!normalizedOverlayId) return null;
+    const payload = this.opsSnapshotPayloads.get(normalizedOverlayId);
+    if (!payload || typeof payload !== 'object') return null;
+
+    const directCount = payload.count;
+    if (Number.isFinite(directCount)) {
+      return directCount;
+    }
+
+    const geojsonCount = payload?.geojson?.features?.length;
+    if (Number.isFinite(geojsonCount)) {
+      return geojsonCount;
+    }
+
+    return null;
+  },
+
   buildOpsFeedSummaryMessage(feedId, overlayIds = []) {
     const normalizedFeedId = String(feedId || '').trim();
     const normalizedOverlayIds = (Array.isArray(overlayIds) ? overlayIds : [])
       .map((value) => String(value || '').trim())
       .filter(Boolean);
     const primaryOverlayId = normalizedOverlayIds[0] || '';
-    const featureCount = this.getOverlayFeatureCount(primaryOverlayId);
+    const featureCount = this.getOpsSnapshotCount(primaryOverlayId) ?? this.getOverlayFeatureCount(primaryOverlayId);
 
     switch (primaryOverlayId) {
       case 'earthquakes': {
@@ -847,7 +877,7 @@ export const OverlayController = {
     this.opsSnapshotPayloads.clear();
     for (const payload of displayPayloads || []) {
       const overlayId = this._opsOverlayIdForPayload(payload);
-      if (!overlayId || !payload?.geojson?.features?.length) continue;
+      if (!overlayId) continue;
       this.opsSnapshotPayloads.set(overlayId, payload);
     }
 
@@ -1855,16 +1885,27 @@ export const OverlayController = {
       return;
     }
 
-    if (this._isOpsMode() && this.opsSnapshotPayloads.has(overlayId)) {
-      if (isActive) {
-        this.renderOpsSnapshotOverlay(overlayId);
-      } else {
-        this.hideOverlay(overlayId);
-      }
-      emitOverlayStatusMessage(overlayId, isActive, options);
-      return;
-    }
     if (this._isOpsMode() && this._isOpsSnapshotManagedOverlay(overlayId)) {
+      if (isActive && this.opsSnapshotPayloads.has(overlayId)) {
+        this.renderOpsSnapshotOverlay(overlayId);
+        emitOverlayStatusMessage(overlayId, true, options);
+        return;
+      }
+      if (
+        isActive &&
+        this.defaultLoadExecutor &&
+        options.allowDefaultLoad !== false &&
+        !this.hasCachedOverlayData(overlayId)
+      ) {
+        const handledByDefaultLoad = await this.defaultLoadExecutor(overlayId, {
+          lane: OverlaySelector?.currentLaneMode || 'explore'
+        });
+        if (handledByDefaultLoad) {
+          refreshTickerForOverlayState();
+          emitOverlayStatusMessage(overlayId, true, options);
+          return;
+        }
+      }
       if (!isActive) {
         this.hideOverlay(overlayId);
         emitOverlayStatusMessage(overlayId, false, options);
