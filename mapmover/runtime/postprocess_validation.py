@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .source_hints import (
+    get_routing_hints,
     get_single_metric_default,
     infer_requested_geo_level_from_query,
     select_pack_family_source_for_query,
@@ -36,6 +37,66 @@ def _currency_granularity_source_id(item: dict) -> str | None:
     if granularity == "daily":
         return "fx_usd_historical"
     return None
+
+
+def _apply_nri_highest_risk_filter(item: dict, metadata: dict | None, query: str, metric: str | None) -> None:
+    if not isinstance(metadata, dict) or not metric:
+        return
+    routing_hints = get_routing_hints(metadata)
+    if str(routing_hints.get("family_role") or "").strip() != "hazard_member_of_nri_pack":
+        return
+    query_lower = str(query or "").strip().lower()
+    if not query_lower:
+        return
+    if not any(token in query_lower for token in ("highest risk", "highest-risk", "top 10%", "top 10 percent")):
+        return
+    default_metric = get_single_metric_default(metadata)
+    if default_metric and str(metric).strip() != str(default_metric).strip():
+        return
+
+    filters = item.get("filters")
+    if not isinstance(filters, dict):
+        filters = {}
+        item["filters"] = filters
+
+    existing = filters.get(metric)
+    if existing is None:
+        filters[metric] = {"min": 90}
+        return
+    if isinstance(existing, dict):
+        try:
+            current_min = float(existing.get("min")) if existing.get("min") is not None else None
+        except (TypeError, ValueError):
+            current_min = None
+        if current_min is None or current_min < 90:
+            existing["min"] = 90
+
+
+def _normalize_nri_highest_risk_metric(item: dict, metadata: dict | None, query: str, metric: str | None) -> str | None:
+    if not isinstance(metadata, dict):
+        return metric
+    routing_hints = get_routing_hints(metadata)
+    if str(routing_hints.get("family_role") or "").strip() != "hazard_member_of_nri_pack":
+        return metric
+
+    query_lower = str(query or "").strip().lower()
+    if not any(token in query_lower for token in ("highest risk", "highest-risk", "top 10%", "top 10 percent")):
+        return metric
+
+    default_metric = get_single_metric_default(metadata)
+    if not default_metric:
+        return metric
+
+    metric_text = str(metric or "").strip()
+    if not metric_text:
+        item["metric"] = default_metric
+        return default_metric
+
+    if metric_text in {"risk_value", "risk_score"}:
+        item["metric"] = default_metric
+        return default_metric
+
+    return metric
 
 
 def validate_item(
@@ -374,6 +435,7 @@ def validate_item(
             return item
 
     if metric:
+        metric = _normalize_nri_highest_risk_metric(item, metadata, query, metric)
         metric_info = metrics.get(metric, {})
         name = metric_info.get("name", metric)
         unit = metric_info.get("unit", "")
@@ -383,6 +445,7 @@ def validate_item(
             item["metric_label"] = name
 
         clamp_item_years_to_metric_func(item, metadata, metric)
+        _apply_nri_highest_risk_filter(item, metadata, query, metric)
 
     if not item.get("sort") and metric:
         row_count = metadata.get("row_count") if isinstance(metadata, dict) else None

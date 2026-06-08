@@ -121,15 +121,30 @@ export function handleResponse(ctx, response, deps = {}) {
   } = deps;
 
   const targetMode = response?._requestMode || ctx.mode;
+  const suppressAssistantMessage = response?._suppressAssistantMessage === true;
   if (targetMode === 'research' || ctx.mode === 'research') {
     ctx.enforceResearchUiBoundaries();
   }
-  const add = (text, type = 'assistant', options = {}) => ctx.addMessage(text, type, { ...options, mode: targetMode });
+  const add = (text, type = 'assistant', options = {}) => {
+    if (suppressAssistantMessage && type === 'assistant') {
+      return document.createElement('div');
+    }
+    return ctx.addMessage(text, type, { ...options, mode: targetMode });
+  };
   switch (response.type) {
     case 'order':
       ctx.pendingMetricOrder = null;
-      add('Added to your order. Click "Display on Map" when ready.', 'assistant');
-      orderPanel.setOrder(response.order, response.summary, response.full_order || response.order);
+      if (targetMode === 'explore' && !ctx.isExploreOrderTakerEnabled?.()) {
+        Promise.resolve(
+          ctx.executeOrder?.(response.full_order || response.order, { mode: targetMode })
+        ).catch((error) => {
+          console.error('Auto-execute explore order failed:', error);
+          add('Sorry, I could not display that on the map.', 'assistant');
+        });
+      } else {
+        add('Added to your order. Click "Display on Map" when ready.', 'assistant');
+        orderPanel.setOrder(response.order, response.summary, response.full_order || response.order);
+      }
       break;
 
     case 'already_loaded':

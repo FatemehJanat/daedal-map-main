@@ -17,7 +17,7 @@ from copy import deepcopy
 from typing import Any, Optional, Tuple
 
 
-DEFAULT_RENDER_CAP = 1000
+DEFAULT_RENDER_CAP = 5000
 MAX_RENDER_CAP = 5000
 
 

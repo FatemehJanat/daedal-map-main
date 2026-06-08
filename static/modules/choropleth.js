@@ -21,6 +21,7 @@ export const ChoroplethManager = {
   minValue: null,
   maxValue: null,
   colorScale: null,
+  paletteBaseColor: null,
 
   // DOM elements
   legend: null,
@@ -51,6 +52,144 @@ export const ChoroplethManager = {
            lower.includes('rate') ||
            lower.endsWith('_pct') ||
            lower.endsWith('_percent');
+  },
+
+  parseHexColor(color) {
+    const normalized = String(color || '').trim().toLowerCase();
+    const match = normalized.match(/^#?([0-9a-f]{6})$/i);
+    if (!match) return null;
+    const hex = match[1];
+    return {
+      r: parseInt(hex.slice(0, 2), 16),
+      g: parseInt(hex.slice(2, 4), 16),
+      b: parseInt(hex.slice(4, 6), 16)
+    };
+  },
+
+  mixRgb(a, b, t) {
+    return {
+      r: Math.round(a.r + (b.r - a.r) * t),
+      g: Math.round(a.g + (b.g - a.g) * t),
+      b: Math.round(a.b + (b.b - a.b) * t)
+    };
+  },
+
+  formatRgb(color) {
+    return `rgb(${color.r}, ${color.g}, ${color.b})`;
+  },
+
+  getColorStops() {
+    if (!this.paletteBaseColor) {
+      return [
+        { t: 0.0, color: 'rgb(48, 18, 59)' },
+        { t: 0.2, color: 'rgb(70, 131, 193)' },
+        { t: 0.4, color: 'rgb(86, 199, 165)' },
+        { t: 0.6, color: 'rgb(190, 220, 60)' },
+        { t: 0.8, color: 'rgb(249, 140, 42)' },
+        { t: 1.0, color: 'rgb(217, 33, 32)' }
+      ];
+    }
+
+    const base = this.parseHexColor(this.paletteBaseColor);
+    if (!base) {
+      return this.getDefaultColorStops();
+    }
+
+    const dark = this.mixRgb(base, { r: 20, g: 24, b: 38 }, 0.82);
+    const low = this.mixRgb(base, { r: 255, g: 255, b: 255 }, 0.55);
+    const mid = this.mixRgb(base, { r: 255, g: 255, b: 255 }, 0.28);
+    const high = this.mixRgb(base, { r: 255, g: 255, b: 255 }, 0.08);
+    const peak = this.mixRgb(base, { r: 255, g: 255, b: 255 }, 0.0);
+    const outline = this.mixRgb(base, { r: 0, g: 0, b: 0 }, 0.2);
+
+    return [
+      { t: 0.0, color: this.formatRgb(dark) },
+      { t: 0.2, color: this.formatRgb(low) },
+      { t: 0.4, color: this.formatRgb(mid) },
+      { t: 0.6, color: this.formatRgb(high) },
+      { t: 0.8, color: this.formatRgb(peak) },
+      { t: 1.0, color: this.formatRgb(outline) }
+    ];
+  },
+
+  getDefaultColorStops() {
+    return [
+      { t: 0.0, color: 'rgb(48, 18, 59)' },
+      { t: 0.2, color: 'rgb(70, 131, 193)' },
+      { t: 0.4, color: 'rgb(86, 199, 165)' },
+      { t: 0.6, color: 'rgb(190, 220, 60)' },
+      { t: 0.8, color: 'rgb(249, 140, 42)' },
+      { t: 1.0, color: 'rgb(217, 33, 32)' }
+    ];
+  },
+
+  getColorStopsForBaseColor(baseColor = null) {
+    const previous = this.paletteBaseColor;
+    this.paletteBaseColor = this.parseHexColor(baseColor) ? String(baseColor).trim().toLowerCase() : null;
+    const stops = this.getColorStops().map((stop) => ({ ...stop }));
+    this.paletteBaseColor = previous;
+    return stops;
+  },
+
+  getMetricRangeFromGeojson(metric, geojson) {
+    const features = Array.isArray(geojson?.features) ? geojson.features : [];
+    const values = features
+      .map((feature) => feature?.properties?.[metric])
+      .filter((value) => value != null && !isNaN(value));
+    if (!values.length) {
+      return this.isPercentageMetric(metric)
+        ? { min: 0, max: 100 }
+        : { min: 0, max: 100 };
+    }
+    if (this.isPercentageMetric(metric)) {
+      return { min: 0, max: 100 };
+    }
+    return {
+      min: Math.min(...values),
+      max: Math.max(...values)
+    };
+  },
+
+  buildInterpolateExpressionForRange(metric, min, max, options = {}) {
+    const colorStops = this.getColorStopsForBaseColor(options.baseColor || null);
+    const hoverColor = options.hoverColor || '#ffffff';
+
+    if (min === max) {
+      return [
+        'case',
+        ['boolean', ['feature-state', 'hover'], false],
+        hoverColor,
+        ['has', metric],
+        colorStops[3]?.color || colorStops[0]?.color || '#cccccc',
+        '#cccccc'
+      ];
+    }
+
+    const stops = colorStops.map((stop) => [
+      min + (max - min) * stop.t,
+      stop.color
+    ]);
+    const interpolateExpr = ['interpolate', ['linear'], ['get', metric]];
+    for (const [value, color] of stops) {
+      interpolateExpr.push(value, color);
+    }
+    return [
+      'case',
+      ['boolean', ['feature-state', 'hover'], false],
+      hoverColor,
+      ['has', metric],
+      interpolateExpr,
+      '#cccccc'
+    ];
+  },
+
+  buildInterpolateExpressionForGeojson(metric, geojson, options = {}) {
+    const range = this.getMetricRangeFromGeojson(metric, geojson);
+    return this.buildInterpolateExpressionForRange(metric, range.min, range.max, options);
+  },
+
+  setPaletteBaseColor(color) {
+    this.paletteBaseColor = this.parseHexColor(color) ? String(color).trim().toLowerCase() : null;
   },
 
   /**
@@ -130,14 +269,10 @@ export const ChoroplethManager = {
 
       // Turbo-inspired color stops (blue -> cyan -> green -> yellow -> orange -> red)
       // High contrast on dark backgrounds, intuitive (cool to warm)
-      const colors = [
-        { t: 0.0, r: 48, g: 18, b: 59 },     // Deep blue-purple
-        { t: 0.2, r: 70, g: 131, b: 193 },   // Light blue
-        { t: 0.4, r: 86, g: 199, b: 165 },   // Cyan-teal
-        { t: 0.6, r: 190, g: 220, b: 60 },   // Yellow-green
-        { t: 0.8, r: 249, g: 140, b: 42 },   // Orange
-        { t: 1.0, r: 217, g: 33, b: 32 }     // Red
-      ];
+      const colors = this.getColorStops().map((stop) => {
+        const rgb = stop.color.match(/\d+/g)?.map(Number) || [204, 204, 204];
+        return { t: stop.t, r: rgb[0], g: rgb[1], b: rgb[2] };
+      });
 
       // Find the two colors to interpolate between
       let c1 = colors[0], c2 = colors[1];
@@ -168,8 +303,7 @@ export const ChoroplethManager = {
     this.legendTitle.textContent = displayName;
 
     // Create gradient background (turbo palette)
-    this.legendGradient.style.background =
-      'linear-gradient(to right, rgb(48,18,59), rgb(70,131,193), rgb(86,199,165), rgb(190,220,60), rgb(249,140,42), rgb(217,33,32))';
+    this.legendGradient.style.background = `linear-gradient(to right, ${this.getColorStops().map((stop) => stop.color).join(', ')})`;
 
     // Format min/max values
     this.legendMin.textContent = this.formatValue(this.minValue);
@@ -236,8 +370,7 @@ export const ChoroplethManager = {
       this.legendTitle.textContent = displayName;
     }
     if (this.legendGradient) {
-      this.legendGradient.style.background =
-        'linear-gradient(to right, rgb(48,18,59), rgb(70,131,193), rgb(86,199,165), rgb(190,220,60), rgb(249,140,42), rgb(217,33,32))';
+      this.legendGradient.style.background = `linear-gradient(to right, ${this.getColorStops().map((stop) => stop.color).join(', ')})`;
     }
     if (this.legendMin) this.legendMin.textContent = this.formatValue(this.minValue);
     if (this.legendMax) this.legendMax.textContent = this.formatValue(this.maxValue);
@@ -279,14 +412,10 @@ export const ChoroplethManager = {
 
     // Turbo color stops at normalized positions (0 to 1)
     // We interpolate in the actual value domain [min, max]
-    const stops = [
-      [min, 'rgb(48, 18, 59)'],                                   // 0.0 - Deep blue-purple
-      [min + (max - min) * 0.2, 'rgb(70, 131, 193)'],             // 0.2 - Light blue
-      [min + (max - min) * 0.4, 'rgb(86, 199, 165)'],             // 0.4 - Cyan-teal
-      [min + (max - min) * 0.6, 'rgb(190, 220, 60)'],             // 0.6 - Yellow-green
-      [min + (max - min) * 0.8, 'rgb(249, 140, 42)'],             // 0.8 - Orange
-      [max, 'rgb(217, 33, 32)']                                    // 1.0 - Red
-    ];
+    const stops = this.getColorStops().map((stop) => [
+      min + (max - min) * stop.t,
+      stop.color
+    ]);
 
     // Build interpolate expression
     const interpolateExpr = ['interpolate', ['linear'], ['get', metric]];
@@ -322,5 +451,39 @@ export const ChoroplethManager = {
     this.metric = null;
     this.minValue = null;
     this.maxValue = null;
+    this.paletteBaseColor = null;
+  },
+
+  initFromGeojson(metric, geojson) {
+    const features = Array.isArray(geojson?.features) ? geojson.features : [];
+    const values = features
+      .map((feature) => feature?.properties?.[metric])
+      .filter((value) => value != null && !isNaN(value));
+
+    this.metric = metric;
+    this.legend = document.getElementById('choroplethLegend');
+    this.legendTitle = document.getElementById('legendTitle');
+    this.legendGradient = document.getElementById('legendGradient');
+    this.legendMin = document.getElementById('legendMin');
+    this.legendMax = document.getElementById('legendMax');
+
+    if (values.length > 0) {
+      this.minValue = Math.min(...values);
+      this.maxValue = Math.max(...values);
+    } else {
+      this.minValue = 0;
+      this.maxValue = 100;
+    }
+
+    if (this.isPercentageMetric(metric)) {
+      this.minValue = 0;
+      this.maxValue = 100;
+    }
+
+    this.colorScale = this.createScale(this.minValue, this.maxValue);
+    this.createLegend(metric);
+    if (this.legend) {
+      this.legend.classList.add('visible');
+    }
   }
 };

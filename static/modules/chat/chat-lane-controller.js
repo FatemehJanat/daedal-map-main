@@ -144,7 +144,9 @@ export function syncSidebarToggleVisibility(ctx) {
 
 export function updateSidebarModeLayout(ctx) {
   const { orderPanel, resizeOrder, form } = ctx.elements;
-  const hideOrderTaker = ctx.mode === 'research' || ctx.mode === 'ops';
+  const hideOrderTaker = ctx.mode === 'research'
+    || ctx.mode === 'ops'
+    || (ctx.mode === 'explore' && !ctx.isExploreOrderTakerEnabled?.());
   const container = document.getElementById('chatContainer');
   document.body.classList.toggle('chat-mode-research', ctx.mode === 'research');
   document.body.classList.toggle('chat-mode-ops', ctx.mode === 'ops');
@@ -171,7 +173,9 @@ export function updateSidebarModeLayout(ctx) {
 }
 
 export function enforceResearchUiBoundaries(ctx) {
-  const hideOrderTaker = ctx.mode === 'research' || ctx.mode === 'ops';
+  const hideOrderTaker = ctx.mode === 'research'
+    || ctx.mode === 'ops'
+    || (ctx.mode === 'explore' && !ctx.isExploreOrderTakerEnabled?.());
   const { orderPanel, resizeOrder } = ctx.elements;
   const container = document.getElementById('chatContainer');
   document.body.classList.toggle('chat-mode-research', ctx.mode === 'research');

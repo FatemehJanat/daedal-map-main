@@ -114,6 +114,13 @@ export const PopupBuilder = {
 
     lines.push(`<strong>${name}${stateAbbr ? ', ' + stateAbbr : ''}</strong>`);
 
+    const combinedMetricData = properties?._combined_metric_data || null;
+    if (combinedMetricData?.sections?.length) {
+      lines.push(this.buildCombinedMetricContent(combinedMetricData));
+      lines.push('<em style="font-size: 10px; color: rgba(230, 243, 255, 0.62);">Zoom in for more</em>');
+      return lines.join('<br>');
+    }
+
     // Check if we have actual data fields (from a chat query)
     // Pass fromQuery=true when sourceData is present to include ALL numeric fields
     const hasSourceData = sourceData !== null;
@@ -220,6 +227,48 @@ export const PopupBuilder = {
     lines.push('<em style="font-size: 10px; color: rgba(230, 243, 255, 0.62);">Zoom in for more</em>');
 
     return lines.join('<br>');
+  },
+
+  buildCombinedMetricContent(combinedMetricData = null) {
+    const sections = Array.isArray(combinedMetricData?.sections) ? combinedMetricData.sections : [];
+    if (!sections.length) return '';
+
+    const blocks = sections.map((section) => {
+      const metrics = Array.isArray(section.available_metrics) && section.available_metrics.length
+        ? section.available_metrics
+        : [section.metric_key].filter(Boolean);
+      const headerBits = [];
+      if (section.match_kind === 'ancestor' && section.matched_loc_id) {
+        headerBits.push(`from ${section.matched_loc_id}`);
+      }
+      if (section.geographic_level) {
+        headerBits.push(String(section.geographic_level).replace(/_/g, ' '));
+      }
+      const colorSwatch = section.color
+        ? `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${section.color};margin-right:6px;vertical-align:middle;"></span>`
+        : '';
+      let html = '<div class="popup-metric-section">';
+      html += `<div style="font-size:11px;font-weight:700;color:rgba(230,243,255,0.94);margin-top:4px;">${colorSwatch}${section.source_name || section.source_id || 'Metric layer'}</div>`;
+      if (headerBits.length) {
+        html += `<div style="font-size:10px;color:rgba(230,243,255,0.62);margin-bottom:2px;">${headerBits.join(' | ')}</div>`;
+      }
+      for (const metric of metrics.slice(0, 6)) {
+        const value = section.properties?.[metric];
+        const fieldName = this.cleanFieldName(metric);
+        const isActive = ChoroplethManager?.metric && metric === ChoroplethManager.metric;
+        if (value == null || value === '') {
+          html += `<div style="color:rgba(230,243,255,0.68);">${fieldName}: N/A</div>`;
+        } else if (isActive) {
+          html += `<div style="font-weight:700;">${fieldName}: ${this.formatValue(metric, value)}</div>`;
+        } else {
+          html += `<div>${fieldName}: ${this.formatValue(metric, value)}</div>`;
+        }
+      }
+      html += '</div>';
+      return html;
+    });
+
+    return blocks.join('');
   },
 
   buildDisplayName(properties = {}) {

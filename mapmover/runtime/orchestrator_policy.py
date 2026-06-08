@@ -84,9 +84,9 @@ DEFAULT_OPS_RETRY_POLICY = OpsRefreshRetryPolicy(
 DEFAULT_EXPLORE_COMPLEXITY_POLICY = ExploreComplexityPolicy(
     max_distinct_sources=2,
     handoff_message=(
-        "Research mode is better suited to this question because it combines more than "
-        "two sources. Explore works best for one-source requests and straightforward "
-        "two-source overlays."
+        "Try simplifying the question so Explore can stay focused on one source or a "
+        "straightforward two-source overlay. If you want the broader multi-source "
+        "version, switch to Research mode."
     ),
 )
 

@@ -15,6 +15,7 @@ let NavigationManager = null;
 let App = null;
 let PopupBuilder = null;
 let OverlayController = null;
+let ChoroplethManager = null;
 
 export function setDependencies(deps) {
   ViewportLoader = deps.ViewportLoader;
@@ -22,6 +23,7 @@ export function setDependencies(deps) {
   App = deps.App;
   PopupBuilder = deps.PopupBuilder;
   OverlayController = deps.OverlayController;
+  ChoroplethManager = deps.ChoroplethManager;
 }
 
 // ============================================================================
@@ -49,6 +51,8 @@ export const MapAdapter = {
   lockedPopupLocationInfo: null,
   selectedPopupContext: null,
   researchDisplayLayerIds: [],
+  metricDisplayLayerIds: [],
+  metricDisplaySourceIds: [],
   mapClickHandlerBound: false,
   baseLayerHandlerRefs: {
     click: null,
@@ -386,7 +390,8 @@ export const MapAdapter = {
           CONFIG.colors.fillOpacity
         ];
 
-    const overlayAnchorId = this.getSharedOverlayAnchorLayerId();
+    const baseAnchorId = this.map.getLayer(CONFIG.layers.fill) ? CONFIG.layers.fill : null;
+    const overlayAnchorId = baseAnchorId || this.getSharedOverlayAnchorLayerId();
 
     // Add fill layer
     this.map.addLayer({
@@ -852,6 +857,7 @@ export const MapAdapter = {
    * Clear all layers and sources
    */
   clearLayers() {
+    this.clearMetricDisplayLayers();
     if (this.map.getLayer(CONFIG.layers.fill)) {
       this.map.removeLayer(CONFIG.layers.fill);
     }
@@ -861,6 +867,22 @@ export const MapAdapter = {
     if (this.map.getSource(CONFIG.layers.source)) {
       this.map.removeSource(CONFIG.layers.source);
     }
+  },
+
+  clearMetricDisplayLayers() {
+    if (!this.map) return;
+    for (const layerId of this.metricDisplayLayerIds) {
+      if (this.map.getLayer(layerId)) {
+        this.map.removeLayer(layerId);
+      }
+    }
+    for (const sourceId of this.metricDisplaySourceIds) {
+      if (this.map.getSource(sourceId)) {
+        this.map.removeSource(sourceId);
+      }
+    }
+    this.metricDisplayLayerIds = [];
+    this.metricDisplaySourceIds = [];
   },
 
   getSharedOverlayAnchorLayerId() {
@@ -912,6 +934,11 @@ export const MapAdapter = {
         this.map.setLayoutProperty(layerId, 'visibility', visibility);
       }
     }
+    for (const layerId of this.metricDisplayLayerIds) {
+      if (this.map.getLayer(layerId)) {
+        this.map.setLayoutProperty(layerId, 'visibility', visibility);
+      }
+    }
 
     // Also toggle choropleth legend (use class, not inline style)
     const legend = document.getElementById('choroplethLegend');
@@ -924,6 +951,59 @@ export const MapAdapter = {
     }
 
     console.log(`MapAdapter: Choropleth layers ${visible ? 'shown' : 'hidden'}`);
+  },
+
+  renderMetricDisplayLayers(displays = [], options = {}) {
+    if (!this.map) return;
+    this.clearMetricDisplayLayers();
+
+    const currentDisplayId = String(options.currentDisplayId || '').trim();
+    const overlayDisplays = (Array.isArray(displays) ? displays : [])
+      .filter((display) => display?.geojson?.features?.length)
+      .filter((display) => String(display.display_id || '').trim() !== currentDisplayId);
+
+    if (!overlayDisplays.length) return;
+
+    const overlayAnchorId = this.getSharedOverlayAnchorLayerId();
+    overlayDisplays.forEach((display, index) => {
+      const sourceId = `metric-display-source-${index}`;
+      const layerId = `metric-display-fill-${index}`;
+      const layerGeojson = {
+        type: 'FeatureCollection',
+        features: display.geojson.features.map((feature, featureIndex) => ({
+          ...feature,
+          id: feature.id ?? featureIndex
+        }))
+      };
+      const colorExpression = ChoroplethManager?.buildInterpolateExpressionForGeojson
+        ? ChoroplethManager.buildInterpolateExpressionForGeojson(display.metric_key, layerGeojson, {
+            baseColor: display.color || null
+          })
+        : ['case', ['has', display.metric_key], display.color || '#3b82f6', '#cccccc'];
+
+      this.map.addSource(sourceId, {
+        type: 'geojson',
+        data: layerGeojson,
+        generateId: true
+      });
+      this.map.addLayer({
+        id: layerId,
+        type: 'fill',
+        source: sourceId,
+        paint: {
+          'fill-color': colorExpression,
+          'fill-opacity': [
+            'case',
+            ['boolean', ['feature-state', 'hover'], false],
+            Math.min((display.opacity || 0.56) + 0.16, 0.92),
+            display.opacity || 0.56
+          ]
+        }
+      }, overlayAnchorId || undefined);
+
+      this.metricDisplaySourceIds.push(sourceId);
+      this.metricDisplayLayerIds.push(layerId);
+    });
   },
 
   /**

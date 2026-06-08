@@ -65,11 +65,13 @@ import {
   decorateResearchResponse as decorateResearchResponseImpl,
   decorateResearchDisplay as decorateResearchDisplayImpl,
   getResearchRasterSourceHint as getResearchRasterSourceHintImpl,
-  parseResearchLegendCommand as parseResearchLegendCommandImpl,
-  parseResearchStyleCommand as parseResearchStyleCommandImpl,
   parseResearchRasterCommand as parseResearchRasterCommandImpl,
   getResearchDisplayFallbackMessage as getResearchDisplayFallbackMessageImpl
 } from './research/research-chat-commands.js';
+import {
+  parseDisplayLegendCommand as parseDisplayLegendCommandImpl,
+  parseDisplayStyleCommand as parseDisplayStyleCommandImpl
+} from './chat/chat-display-commands.js';
 import { buildExploreWelcomeMessage } from './explore/welcome.js';
 import { buildResearchWelcomeMessage } from './research/welcome.js';
 import { buildOpsWelcomeMessage } from './ops/welcome.js';
@@ -428,6 +430,7 @@ let researchModeToggle = null;
 export const ChatManager = {
   history: [],
   mode: 'explore',
+  exploreOrderTakerEnabled: false,
   catalogSurface: 'published',
   canUseWipCatalog: false,
   modeHistories: { explore: [], research: [], ops: [] },
@@ -987,6 +990,10 @@ export const ChatManager = {
   getResearchDisplayForMode(mode = this.mode) {
     const displays = this.getResearchDisplayLayersForMode(mode);
     return displays.length ? displays[displays.length - 1] : null;
+  },
+
+  getDisplayForMode(mode = this.mode) {
+    return this.getResearchDisplayForMode(mode);
   },
 
   getResearchDisplayMemoryForMode(mode = this.mode) {
@@ -2127,32 +2134,35 @@ export const ChatManager = {
     input.value = '';
     input.style.height = 'auto';
 
+    const styleCommand = this.parseDisplayStyleCommand(query, requestMode);
+    if (styleCommand) {
+      this.history.push({ role: 'user', content: query });
+      this.modeHistories[requestMode] = this.history;
+      if (styleCommand.styleUpdates) {
+        App?.updateDisplayStyleForMode?.(requestMode, styleCommand.styleUpdates);
+      }
+      if (styleCommand.choroplethStyleUpdates?.paletteBaseColor) {
+        App?.applyMetricChoroplethStyle?.(styleCommand.choroplethStyleUpdates.paletteBaseColor);
+      }
+      this.history.push({ role: 'assistant', content: styleCommand.reply });
+      this.modeHistories[requestMode] = this.history;
+      this.addMessage(styleCommand.reply, 'assistant', { mode: requestMode });
+      this.saveState();
+      return;
+    }
+
+    const legendCommand = this.parseDisplayLegendCommand(query, requestMode);
+    if (legendCommand) {
+      this.history.push({ role: 'user', content: query });
+      this.modeHistories[requestMode] = this.history;
+      this.history.push({ role: 'assistant', content: legendCommand.reply });
+      this.modeHistories[requestMode] = this.history;
+      this.addMessage(legendCommand.reply, 'assistant', { mode: requestMode });
+      this.saveState();
+      return;
+    }
+
     if (requestMode === 'research') {
-      const styleCommand = this.parseResearchStyleCommand(query);
-      if (styleCommand) {
-        this.history.push({ role: 'user', content: query });
-        this.modeHistories[requestMode] = this.history;
-        if (styleCommand.styleUpdates) {
-          App?.updateResearchDisplayStyle?.(styleCommand.styleUpdates);
-        }
-        this.history.push({ role: 'assistant', content: styleCommand.reply });
-        this.modeHistories[requestMode] = this.history;
-        this.addMessage(styleCommand.reply, 'assistant', { mode: requestMode });
-        this.saveState();
-        return;
-      }
-
-      const legendCommand = this.parseResearchLegendCommand(query);
-      if (legendCommand) {
-        this.history.push({ role: 'user', content: query });
-        this.modeHistories[requestMode] = this.history;
-        this.history.push({ role: 'assistant', content: legendCommand.reply });
-        this.modeHistories[requestMode] = this.history;
-        this.addMessage(legendCommand.reply, 'assistant', { mode: requestMode });
-        this.saveState();
-        return;
-      }
-
       const rasterCommand = this.parseResearchRasterCommand(query);
       if (rasterCommand) {
         this.history.push({ role: 'user', content: query });
@@ -2166,6 +2176,29 @@ export const ChatManager = {
         this.saveState();
         return;
       }
+    }
+
+    const layeredMetricRequest = requestMode === 'explore'
+      ? this.parseLayeredMetricRequest(query)
+      : null;
+    if (layeredMetricRequest) {
+      this.history.push({ role: 'user', content: query });
+      this.modeHistories[requestMode] = this.history;
+      this.modeRequestInFlight[requestMode] = true;
+      this.updateComposerState();
+      const indicator = this.showTypingIndicator(true, requestMode);
+      try {
+        await this.executeLayeredMetricRequest(layeredMetricRequest, requestMode, indicator);
+      } catch (error) {
+        console.error('Layered metric request error:', error);
+        this.addMessage('Sorry, something went wrong while loading the layered metric view.', 'assistant', { mode: requestMode });
+      } finally {
+        indicator.remove();
+        this.modeRequestInFlight[requestMode] = false;
+        this.updateComposerState();
+        input.focus();
+      }
+      return;
     }
 
     // Track last query for potential re-send (metric warning)
@@ -2376,12 +2409,112 @@ export const ChatManager = {
     return getResearchRasterSourceHintImpl(this, mode);
   },
 
+  parseDisplayLegendCommand(query, mode = this.mode) {
+    return parseDisplayLegendCommandImpl(this, query, { mode }, { App });
+  },
+
+  parseDisplayStyleCommand(query, mode = this.mode) {
+    return parseDisplayStyleCommandImpl(this, query, { mode, App });
+  },
+
+  isExploreOrderTakerEnabled() {
+    return this.exploreOrderTakerEnabled === true;
+  },
+
+  parseLayeredMetricRequest(query) {
+    const colorMap = {
+      red: '#ef4444',
+      blue: '#3b82f6',
+      green: '#10b981',
+      orange: '#f59e0b',
+      yellow: '#eab308',
+      purple: '#8b5cf6',
+      pink: '#ec4899',
+      cyan: '#06b6d4',
+      teal: '#14b8a6'
+    };
+    const normalized = String(query || '').trim();
+    if (!normalized || !/\band\b/i.test(normalized)) return null;
+    const segments = normalized.split(/\s+\band\b\s+/i).map((part) => part.trim()).filter(Boolean);
+    if (segments.length < 2) return null;
+    const actionMatch = segments[0].match(/^(show me|show|display|map|load|find)\b/i);
+    const actionPrefix = actionMatch ? actionMatch[1] : 'show me';
+    const sharedModifierMatch = segments[0].match(/^(?:show me|show|display|map|load|find)\s+((?:top\s+\d{1,2}(?:\s*%|\s+percent)\s+)?(?:highest|lowest)\s+risk)\b/i);
+    const sharedModifier = sharedModifierMatch ? String(sharedModifierMatch[1] || '').trim() : '';
+    const clauses = [];
+
+    for (let index = 0; index < segments.length; index++) {
+      const segment = segments[index];
+      const colorMatch = segment.match(/\b(?:in|as)\s+(red|blue|green|orange|yellow|purple|pink|cyan|teal)\b/i);
+      if (!colorMatch) return null;
+      const colorName = String(colorMatch[1] || '').toLowerCase();
+      const colorHex = colorMap[colorName];
+      if (!colorHex) return null;
+      let clauseQuery = segment.replace(/\b(?:in|as)\s+(red|blue|green|orange|yellow|purple|pink|cyan|teal)\b/ig, '').trim();
+      clauseQuery = clauseQuery.replace(/[,.]+$/g, '').trim();
+      if (!clauseQuery) return null;
+      if (index > 0 && !/^(show me|show|display|map|load|find)\b/i.test(clauseQuery)) {
+        if (
+          sharedModifier
+          && !/\b(highest|lowest)\s+risk\b/i.test(clauseQuery)
+          && !/\btop\s+\d{1,2}(?:\s*%|\s+percent)\b/i.test(clauseQuery)
+        ) {
+          clauseQuery = `${actionPrefix} ${sharedModifier} ${clauseQuery}`;
+        } else {
+          clauseQuery = `${actionPrefix} ${clauseQuery}`;
+        }
+      }
+      clauses.push({
+        query: clauseQuery,
+        colorHex,
+        colorName
+      });
+    }
+
+    return clauses.length >= 2 ? { clauses, originalQuery: normalized } : null;
+  },
+
+  async executeLayeredMetricRequest(layeredRequest, requestMode, indicator) {
+    const endpoint = '/chat';
+    const summaries = [];
+
+    for (let index = 0; index < layeredRequest.clauses.length; index++) {
+      const clause = layeredRequest.clauses[index];
+      indicator.updateStage('thinking', `Loading ${clause.query}...`);
+      const payload = this.buildPayload(clause.query, null, {}, requestMode);
+      const response = await sendChatRequest(payload, endpoint);
+      if (!response) continue;
+
+      const batchableTypes = new Set(['data', 'order_response', 'already_loaded', 'mixed_order']);
+      if (!batchableTypes.has(String(response.type || '').trim())) {
+        this.handleResponse({ ...response, _requestMode: requestMode });
+        return;
+      }
+
+      this.handleResponse({
+        ...response,
+        _requestMode: requestMode,
+        _suppressAssistantMessage: true
+      });
+      App?.applyMetricChoroplethStyle?.(clause.colorHex);
+      summaries.push(`${clause.query} in ${clause.colorName}`);
+    }
+
+    const reply = summaries.length
+      ? `Showing ${summaries.join('; ')}.`
+      : 'I could not build the layered metric view from that request.';
+    this.history.push({ role: 'assistant', content: reply });
+    this.modeHistories[requestMode] = this.history;
+    this.addMessage(reply, 'assistant', { mode: requestMode });
+    this.saveState();
+  },
+
   parseResearchLegendCommand(query) {
-    return parseResearchLegendCommandImpl(this, query, { App });
+    return this.parseDisplayLegendCommand(query, 'research');
   },
 
   parseResearchStyleCommand(query) {
-    return parseResearchStyleCommandImpl(this, query);
+    return this.parseDisplayStyleCommand(query, 'research');
   },
 
   parseResearchRasterCommand(query) {

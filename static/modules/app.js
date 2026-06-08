@@ -31,6 +31,7 @@ import { setDependencies as setSceneRasterDeps } from './scene-raster-model.js';
 import { loadPublicPackCatalog } from './shared/catalog-cache.js';
 import { getInitialLane, normalizeBootUrl, onRouteChange, parseRouteIntent, setLaneTitle } from './routing/app-route-state.js';
 import { getTemporalMetricPayload, hasTemporalMetricPayload, mergeTemporalMetricPayload } from './temporal-payload.js';
+import { MetricDisplayRegistry } from './metric-display-registry.js';
 
 const CHAT_MAP_LANES = ['explore', 'research', 'ops'];
 const DISPLAY_GEOMETRY_TYPES = new Set(['zcta', 'tribal', 'watershed', 'park']);
@@ -59,6 +60,17 @@ function getStartupChatMode() {
 
 function normalizeChatMapLane(lane) {
   return CHAT_MAP_LANES.includes(lane) ? lane : 'explore';
+}
+
+function buildCurrentLocIdAncestors(locId) {
+  const normalized = String(locId || '').trim();
+  if (!normalized) return [];
+  const parts = normalized.split('-').filter(Boolean);
+  const result = [];
+  for (let i = parts.length; i >= 1; i--) {
+    result.push(parts.slice(0, i).join('-'));
+  }
+  return result;
 }
 
 function cloneSerializable(value) {
@@ -553,7 +565,7 @@ export const App = {
 
     // Wire up circular dependencies
     setViewportDeps({ MapAdapter, NavigationManager, App, TimeSlider });
-    setMapDeps({ ViewportLoader, NavigationManager, App, PopupBuilder, OverlayController });
+    setMapDeps({ ViewportLoader, NavigationManager, App, PopupBuilder, OverlayController, ChoroplethManager });
     setNavDeps({ MapAdapter, ViewportLoader, App });
     setPopupDeps({ App, ChoroplethManager });
     setChatDeps({ MapAdapter, App, SelectionManager, OverlayController, OverlaySelector });
@@ -592,6 +604,7 @@ export const App = {
     TimeSlider.initSlider();
     if (!this._popupTimeChangeListener) {
       this._popupTimeChangeListener = () => {
+        this.syncMetricDisplayRegistryForCurrentState();
         MapAdapter.refreshLockedPopup?.();
       };
       TimeSlider.addChangeListener(this._popupTimeChangeListener);
@@ -995,6 +1008,7 @@ export const App = {
     this.currentData = null;
     this.currentResearchDisplay = null;
     this.currentResearchLayerOptions = null;
+    MetricDisplayRegistry.clearLane(ChatManager?.mode || this.currentCanvasMode || 'explore');
   },
 
   saveActiveMapViewState() {
@@ -1127,16 +1141,204 @@ export const App = {
     return this.buildResearchDisplayMemory(this.currentResearchDisplay);
   },
 
+  getCurrentDisplayLegend(mode = ChatManager?.mode || this.currentCanvasMode || 'explore') {
+    const display = ChatManager?.getDisplayForMode?.(mode) || this.currentResearchDisplay;
+    return this.buildResearchBuildingLegend(display);
+  },
+
   getCurrentResearchBuildingLegend() {
-    return this.buildResearchBuildingLegend(this.currentResearchDisplay);
+    return this.getCurrentDisplayLegend('research');
   },
 
   getCurrentResearchDisplayLayers() {
     return ChatManager?.getResearchDisplayLayersForMode?.('research') || [];
   },
 
-  updateResearchDisplayStyle(styleUpdates = {}) {
-    const currentLayers = this.getCurrentResearchDisplayLayers();
+  getActiveMetricKey() {
+    if (TimeSlider?.metricKey) {
+      return TimeSlider.metricKey;
+    }
+    if (this.currentData?.metric_key) {
+      return this.currentData.metric_key;
+    }
+    const availableMetrics = Array.isArray(this.currentData?.available_metrics)
+      ? this.currentData.available_metrics.filter(Boolean)
+      : [];
+    return availableMetrics.length ? availableMetrics[0] : null;
+  },
+
+  getCurrentMetricDisplayState() {
+    if (this.currentData?.data_type !== 'metrics') {
+      return null;
+    }
+    const metricKey = this.getActiveMetricKey();
+    if (!metricKey) {
+      return null;
+    }
+    return {
+      source_id: this.currentData.source_id || null,
+      source_name: this.currentData.source_name || this.currentData.dataset_name || null,
+      metric_key: metricKey,
+      available_metrics: Array.isArray(this.currentData.available_metrics) ? [...this.currentData.available_metrics] : []
+    };
+  },
+
+  getMetricDisplayColor(sourceId, metricKey, geographicLevel, lane = ChatManager?.mode || this.currentCanvasMode || 'explore') {
+    const displays = MetricDisplayRegistry.getLaneDisplays(lane);
+    const match = displays.find((display) =>
+      String(display.source_id || '') === String(sourceId || '') &&
+      String(display.metric_key || '') === String(metricKey || '') &&
+      String(display.geographic_level || '') === String(geographicLevel || '')
+    );
+    return match?.color || null;
+  },
+
+  upsertMetricDisplayRegistry(payload, options = {}) {
+    if (!payload || payload.data_type !== 'metrics' || !payload.geojson?.features?.length) {
+      return null;
+    }
+    const lane = normalizeChatMapLane(options.lane || options.origin || ChatManager?.mode || this.currentCanvasMode || 'explore');
+    const metricKey = options.metricKey || payload.metric_key || (Array.isArray(payload.available_metrics) ? payload.available_metrics[0] : null);
+    const geographicLevel = payload.geographic_level || null;
+    const color = options.color != null
+      ? options.color
+      : this.getMetricDisplayColor(payload.source_id, metricKey, geographicLevel, lane);
+    return MetricDisplayRegistry.upsertFromPayload(lane, {
+      ...payload,
+      metric_key: metricKey
+    }, {
+      color,
+      opacity: options.opacity,
+      visibility: options.visibility,
+      timeKey: options.timeKey
+    });
+  },
+
+  getCurrentMetricDisplayId() {
+    if (this.currentData?.data_type !== 'metrics') return '';
+    const metricKey = this.getActiveMetricKey();
+    if (!metricKey) return '';
+    return [
+      String(this.currentData.source_id || '').trim(),
+      String(metricKey || '').trim(),
+      String(this.currentData.geographic_level || '').trim()
+    ].join('|');
+  },
+
+  renderMetricDisplayRegistryLayers(lane = ChatManager?.mode || this.currentCanvasMode || 'explore') {
+    const normalizedLane = normalizeChatMapLane(lane);
+    const displays = MetricDisplayRegistry.getLaneDisplays(normalizedLane);
+    MapAdapter?.renderMetricDisplayLayers?.(displays, {
+      currentDisplayId: this.getCurrentMetricDisplayId()
+    });
+  },
+
+  syncMetricDisplayRegistryForCurrentState(lane = ChatManager?.mode || this.currentCanvasMode || 'explore') {
+    if (this.currentData?.data_type !== 'metrics') {
+      return null;
+    }
+
+    const normalizedLane = normalizeChatMapLane(lane);
+    const metricKey = this.getActiveMetricKey();
+    if (!metricKey) {
+      return null;
+    }
+
+    if (hasTemporalMetricPayload(this.currentData) && TimeSlider?.baseGeojson && TimeSlider?.buildTimeGeojson) {
+      const geojson = TimeSlider.buildTimeGeojson(TimeSlider.currentTime);
+      const display = this.upsertMetricDisplayRegistry({
+        ...this.currentData,
+        geojson,
+        metric_key: metricKey
+      }, {
+        lane: normalizedLane,
+        metricKey,
+        timeKey: TimeSlider.currentTime
+      });
+      this.renderMetricDisplayRegistryLayers(normalizedLane);
+      return display;
+    }
+
+    const explicitLevelMatch = String(this.currentData?.geographic_level || '').match(/^admin_(\d+)$/);
+    const loadedAdminLevel = explicitLevelMatch ? parseInt(explicitLevelMatch[1], 10) : ViewportLoader.currentAdminLevel;
+    const displayGeojson = this.filterGeojsonByAdminLevel(this.currentData.geojson, loadedAdminLevel);
+    const nextGeojson = displayGeojson?.features?.length ? displayGeojson : this.currentData.geojson;
+    const display = this.upsertMetricDisplayRegistry({
+      ...this.currentData,
+      geojson: nextGeojson,
+      metric_key: metricKey
+    }, {
+      lane: normalizedLane,
+      metricKey
+    });
+    this.renderMetricDisplayRegistryLayers(normalizedLane);
+    return display;
+  },
+
+  resolveMetricPopupSections(locId, lane = ChatManager?.mode || this.currentCanvasMode || 'explore') {
+    return MetricDisplayRegistry.resolvePopupSections(lane, locId);
+  },
+
+  buildCombinedMetricPopupData(featureProps = {}, lane = ChatManager?.mode || this.currentCanvasMode || 'explore') {
+    const locId = String(featureProps?.loc_id || '').trim();
+    if (!locId) {
+      return null;
+    }
+    const sections = this.resolveMetricPopupSections(locId, lane);
+    if (!sections.length) {
+      return null;
+    }
+    return {
+      lane: normalizeChatMapLane(lane),
+      clicked_loc_id: locId,
+      ancestry: buildCurrentLocIdAncestors(locId),
+      sections
+    };
+  },
+
+  applyMetricChoroplethStyle(baseColor, options = {}) {
+    if (this.currentData?.data_type !== 'metrics') {
+      return false;
+    }
+    const metricKey = options.metricKey || this.getActiveMetricKey();
+    if (!metricKey) {
+      return false;
+    }
+
+    const isTemporalMetric = Boolean(TimeSlider?.metricKey && TimeSlider?.baseGeojson);
+    ChoroplethManager.setPaletteBaseColor(baseColor);
+
+    if (isTemporalMetric) {
+      const geojson = TimeSlider.buildTimeGeojson(TimeSlider.currentTime);
+      const values = geojson.features
+        .map((feature) => feature.properties?.[metricKey])
+        .filter((value) => value != null && !isNaN(value));
+      ChoroplethManager.updateScaleForValues(values, metricKey);
+      ChoroplethManager.update(geojson, metricKey);
+      this.syncMetricDisplayRegistryForCurrentState();
+      return true;
+    }
+
+    const explicitLevelMatch = String(this.currentData?.geographic_level || '').match(/^admin_(\d+)$/);
+    const loadedAdminLevel = explicitLevelMatch ? parseInt(explicitLevelMatch[1], 10) : ViewportLoader.currentAdminLevel;
+    const displayGeojson = this.filterGeojsonByAdminLevel(this.currentData.geojson, loadedAdminLevel);
+    const nextGeojson = displayGeojson?.features?.length ? displayGeojson : this.currentData.geojson;
+    ChoroplethManager.initFromGeojson(metricKey, nextGeojson);
+    ChoroplethManager.update(nextGeojson, metricKey);
+    const normalizedLane = normalizeChatMapLane(ChatManager?.mode || this.currentCanvasMode || 'explore');
+    MetricDisplayRegistry.setDisplayColor(
+      normalizedLane,
+      this.currentData?.source_id,
+      metricKey,
+      this.currentData?.geographic_level || null,
+      baseColor
+    );
+    this.syncMetricDisplayRegistryForCurrentState();
+    return true;
+  },
+
+  updateDisplayStyleForMode(mode = ChatManager?.mode || this.currentCanvasMode || 'explore', styleUpdates = {}) {
+    const currentLayers = ChatManager?.getResearchDisplayLayersForMode?.(mode) || [];
     if (!currentLayers.length) {
       return false;
     }
@@ -1154,12 +1356,19 @@ export const App = {
       }
     };
     const nextLayers = [...currentLayers.slice(0, -1), mergedDisplay];
-    this.currentResearchDisplay = mergedDisplay;
-    ChatManager?.setResearchDisplayLayersForMode?.('research', nextLayers);
-    this.currentResearchLayerOptions = this.getResearchLayerOptions(mergedDisplay);
-    this.renderResearchDisplayLayers(nextLayers);
-    this.setupResearchDisplayInteractions();
+    ChatManager?.setResearchDisplayLayersForMode?.(mode, nextLayers);
+    const activeMode = ChatManager?.mode || this.currentCanvasMode || 'explore';
+    if (mode === activeMode) {
+      this.currentResearchDisplay = mergedDisplay;
+      this.currentResearchLayerOptions = this.getResearchLayerOptions(mergedDisplay);
+      this.renderResearchDisplayLayers(nextLayers);
+      this.setupResearchDisplayInteractions();
+    }
     return true;
+  },
+
+  updateResearchDisplayStyle(styleUpdates = {}) {
+    return this.updateDisplayStyleForMode('research', styleUpdates);
   },
 
   applySidebarPadding() {
@@ -1416,6 +1625,7 @@ export const App = {
       const result = await fetchMsgpack(url);
 
       if (result.geojson && result.geojson.features.length > 0) {
+        MetricDisplayRegistry.clearLane(ChatManager?.mode || this.currentCanvasMode || 'explore');
         this.currentData = {
           geojson: result.geojson,
           dataset_name: 'World Countries',
@@ -1449,8 +1659,11 @@ export const App = {
   getPopupProperties(feature) {
     const featureProps = feature?.properties || {};
     const locId = featureProps.loc_id;
+    const combinedMetricData = this.buildCombinedMetricPopupData(featureProps);
     if (!locId || !this.currentData?.geojson?.features) {
-      return featureProps;
+      return combinedMetricData
+        ? { ...featureProps, _combined_metric_data: combinedMetricData }
+        : featureProps;
     }
 
     const sourceFeature = this.currentData.geojson.features.find((candidate) => {
@@ -1459,13 +1672,19 @@ export const App = {
     });
 
     if (!sourceFeature?.properties) {
-      return featureProps;
+      return combinedMetricData
+        ? { ...featureProps, _combined_metric_data: combinedMetricData }
+        : featureProps;
     }
 
-    return {
+    const merged = {
       ...sourceFeature.properties,
       ...featureProps
     };
+    if (combinedMetricData) {
+      merged._combined_metric_data = combinedMetricData;
+    }
+    return merged;
   },
 
   /**
@@ -1743,6 +1962,8 @@ export const App = {
     if (data.data_type !== 'metrics') {
       this.activeMetricOrderContext = null;
       this.clearMetricPrefetch();
+      MetricDisplayRegistry.clearLane(ChatManager?.mode || this.currentCanvasMode || 'explore');
+      MapAdapter.clearMetricDisplayLayers?.();
     }
 
     // Check if this is geometry overlay data (ZCTA, tribal, watersheds, etc.)
@@ -1976,10 +2197,22 @@ export const App = {
           console.log('Auto-enabling demographics overlay for chat order data');
           OverlaySelector.setActive('demographics', true);
         }
+
+        if (data.data_type === 'metrics') {
+          const metricKey = data.metric_key || (Array.isArray(data.available_metrics) ? data.available_metrics[0] : null);
+          if (metricKey) {
+            ChoroplethManager.initFromGeojson(metricKey, displayGeojson);
+            ChoroplethManager.update(displayGeojson, metricKey);
+          }
+        }
       }
       if (data.data_type === 'metrics') {
         this.syncMetricOverlayVisibility();
       }
+    }
+
+    if (data.data_type === 'metrics') {
+      this.syncMetricDisplayRegistryForCurrentState(options.origin);
     }
 
     if (data.data_type === 'metrics' && options.order) {
@@ -2077,6 +2310,7 @@ export const App = {
     this.clearMetricPrefetch();
     this.currentResearchDisplay = null;
     this.currentResearchLayerOptions = null;
+    MetricDisplayRegistry.clearLane('research');
 
     TimeSlider.hide?.();
     ChoroplethManager.reset?.();
@@ -2117,6 +2351,7 @@ export const App = {
     this.clearMetricPrefetch();
     this.currentResearchDisplay = null;
     this.currentResearchLayerOptions = null;
+    MetricDisplayRegistry.clearLane('ops');
 
     MapAdapter.clearParentOutline?.();
     MapAdapter.clearCityOverlay?.();
