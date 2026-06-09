@@ -264,17 +264,26 @@ function ingestEventsToOverlay(response, order = null) {
   const singleOrderItem = Array.isArray(order?.items) && order.items.length === 1
     ? order.items[0]
     : null;
-  const rangeMeta = (response.time_range && response.time_range.min && response.time_range.max)
+  const requestedRangeMeta = (singleOrderItem?.year_start && singleOrderItem?.year_end)
+    ? {
+        start: new Date(singleOrderItem.year_start, 0, 1).getTime(),
+        end: new Date(singleOrderItem.year_end, 11, 31).getTime()
+      }
+    : null;
+
+  const responseRangeMeta = (response.time_range && response.time_range.min && response.time_range.max)
     ? { start: response.time_range.min, end: response.time_range.max }
     : (response.year_range && response.year_range.length === 2)
-      ? { start: new Date(response.year_range[0], 0, 1).getTime(),
-          end: new Date(response.year_range[1], 11, 31).getTime() }
-      : (singleOrderItem?.year_start && singleOrderItem?.year_end)
-        ? {
-            start: new Date(singleOrderItem.year_start, 0, 1).getTime(),
-            end: new Date(singleOrderItem.year_end, 11, 31).getTime()
-          }
+      ? {
+          start: new Date(response.year_range[0], 0, 1).getTime(),
+          end: new Date(response.year_range[1], 11, 31).getTime()
+        }
       : null;
+
+  // For preset/default event orders, cache coverage should follow the requested
+  // time window, not only the years that happened to return data. Otherwise the
+  // playback path thinks empty tail years were never loaded and auto-fetches them.
+  const rangeMeta = requestedRangeMeta || responseRangeMeta;
 
   OverlayController.ingestOrderResult(overlayId, response.geojson, rangeMeta, response);
   return overlayId;

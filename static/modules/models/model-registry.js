@@ -147,19 +147,27 @@ export const ModelRegistry = {
    */
   render(geojson, eventType, options = {}) {
     // For wildfire/flood, check geometry type and use polygon model if available
-    if ((eventType === 'wildfire' || eventType === 'flood') && geojson?.features?.length > 0) {
-      const hasPolygons = geojson.features.some(f => {
+    if (eventType === 'wildfire' || eventType === 'flood') {
+      const features = Array.isArray(geojson?.features) ? geojson.features : [];
+      if (!features.length) {
+        models['polygon'].clearType?.(eventType);
+        models['point-radius'].clearType?.(eventType);
+        console.log(`ModelRegistry: Cleared ${eventType} split render (no features)`);
+        return true;
+      }
+
+      const hasPolygons = features.some(f => {
         const geoType = f.geometry?.type;
         return geoType === 'Polygon' || geoType === 'MultiPolygon';
       });
 
       if (hasPolygons) {
         // Separate polygons from points
-        const polygonFeatures = geojson.features.filter(f => {
+        const polygonFeatures = features.filter(f => {
           const geoType = f.geometry?.type;
           return geoType === 'Polygon' || geoType === 'MultiPolygon';
         });
-        const pointFeatures = geojson.features.filter(f => {
+        const pointFeatures = features.filter(f => {
           const geoType = f.geometry?.type;
           return geoType === 'Point';
         });
@@ -168,17 +176,24 @@ export const ModelRegistry = {
         if (polygonFeatures.length > 0) {
           const polygonGeoJson = { type: 'FeatureCollection', features: polygonFeatures };
           models['polygon'].render(polygonGeoJson, eventType, options);
+        } else {
+          models['polygon'].clearType?.(eventType);
         }
 
         // Render remaining points with point-radius model (fallback for events without geometry)
         if (pointFeatures.length > 0) {
           const pointGeoJson = { type: 'FeatureCollection', features: pointFeatures };
           models['point-radius'].render(pointGeoJson, eventType, options);
+        } else {
+          models['point-radius'].clearType?.(eventType);
         }
 
         console.log(`ModelRegistry: ${eventType} split render - ${polygonFeatures.length} polygons, ${pointFeatures.length} points`);
         return true;
       }
+
+      // No polygon geometries in this frame: make sure stale polygon layers are removed.
+      models['polygon'].clearType?.(eventType);
     }
 
     // Default: use model from TYPE_TO_MODEL mapping
