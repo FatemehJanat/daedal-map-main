@@ -118,6 +118,95 @@ function normalizeChatMode(mode) {
   return CHAT_MODES.includes(mode) ? mode : 'explore';
 }
 
+function isLocalHelpCommand(query) {
+  const normalized = String(query || '').trim().toLowerCase();
+  if (!normalized) return false;
+  return [
+    'help',
+    '?',
+    'how do you work',
+    'how does this work',
+    'what can you do',
+    'what can i do',
+    'what can i ask',
+    'how do i use this',
+    'how do i use it'
+  ].includes(normalized);
+}
+
+function buildLocalHelpMessage(mode = 'explore') {
+  const normalizedMode = normalizeChatMode(mode);
+  if (normalizedMode === 'ops') {
+    return `I'm Ops mode, your live feeds assistant.
+
+Here's what I can do:
+
+LIVE FEEDS
+Show which feeds are active right now
+Summarize what changed recently across your feeds
+Report the biggest current live event from the active watch
+
+COMMON REQUESTS
+"What is active right now?"
+"What changed recently?"
+"Show the biggest live event"
+"Refresh feeds"
+
+START HERE
+Ask about earthquakes, alerts, storms, volcanoes, wildfires, tsunamis, aurora, or currency.
+Or open account settings to change which feeds Ops watches.`;
+  }
+
+  if (normalizedMode === 'research') {
+    return `I'm Research mode, your corpus-based analysis assistant.
+
+Here's what I can do:
+
+RESEARCH WORKSPACE
+Load saved corpora and work across multiple curated packs
+Compare sources, metrics, and regions with more context than Explore
+Keep longer-form research state while you inspect the map
+
+COMMON REQUESTS
+"Load my saved corpus"
+"Compare these sources"
+"Show this as a research layer"
+"What does this corpus contain?"
+
+START HERE
+Select a saved corpus, load it into Research, then ask broader comparison or synthesis questions.`;
+  }
+
+  return `I'm County Map Explore, your discovery and map-routing assistant. I help you find and visualize data on interactive maps.
+
+Here's what I can do:
+
+DISCOVER DATA
+Browse published data packs (wildfires, earthquakes, hurricanes, floods, SDGs, World Factbook, population, economics, and more)
+Find what metrics and time ranges are available for any source
+Learn about data coverage by country or region
+
+MAP & VISUALIZE
+Show you data on interactive county/regional choropleths
+Display disaster events, perimeters, and tracks
+Overlay multiple compatible layers (e.g., wildfire exposure + population)
+Navigate to specific locations and zoom in/out
+
+COMMON REQUESTS
+"What data do you have for [country]?" - I'll list available sources
+"Show me [metric] in [place]" - I'll map it for you
+"What's in the [pack name] pack?" - I'll describe the contents
+"Which counties had the most [disasters]?" - I'll rank them
+"Compare [metric] across [region]" - I'll visualize the comparison
+
+START HERE
+Ask me about a specific country, region, or topic
+Tell me what kind of data interests you (climate, disasters, economics, health, etc.)
+Or browse the full pack library: https://www.daedalmap.com/packs
+
+What would you like to explore?`;
+}
+
 function extractRequestedDisplayColor(text) {
   const normalized = String(text || '').trim().toLowerCase();
   if (!normalized) return null;
@@ -2139,6 +2228,18 @@ export const ChatManager = {
       const result = TutorialMode.applyCommand(earlyTutorialCommand.action);
       this.history.push({ role: 'assistant', content: result.message });
       this.addMessage(result.message, 'assistant', { mode: requestMode });
+      return;
+    }
+
+    if (isLocalHelpCommand(query)) {
+      const reply = buildLocalHelpMessage(requestMode);
+      this.addMessage(query, 'user', { mode: requestMode });
+      input.value = '';
+      input.style.height = 'auto';
+      this.history.push({ role: 'user', content: query });
+      this.history.push({ role: 'assistant', content: reply });
+      this.addMessage(reply, 'assistant', { mode: requestMode });
+      this.saveState();
       return;
     }
 
