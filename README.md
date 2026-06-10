@@ -1,5 +1,23 @@
 # DaedalMap
 
+## Use it as a hosted MCP server (no setup)
+
+Most callers do not need to run anything - DaedalMap is a live remote MCP server
+(and HTTP API) for geographic data:
+
+- MCP endpoint: `https://app.daedalmap.com/mcp` (streamable HTTP)
+- Start with `get_catalog`, then `get_pack` for a pack's metrics and a
+  first-query example
+- Free packs: currency (FX rates), volcanoes, hurricanes, floods, tornadoes,
+  UN SDG, World Factbook, WorldPop
+- Paid via x402 on Base mainnet USDC: earthquakes, tsunamis (call unpaid first -
+  the server returns the exact price before any charge)
+- Agent docs: `https://daedalmap.com/docs/for-agents`
+
+The rest of this README is the self-host / local-runtime path.
+
+---
+
 DaedalMap is a map-first geographic query engine. This repository is the open app/runtime for developers who want to run it locally, self-host it, point it at their own data, or extend it with compatible geographic datasets.
 
 Public surfaces:
