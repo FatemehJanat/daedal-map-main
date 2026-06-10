@@ -12,6 +12,7 @@ from mapmover.api_query_shared import build_api_error_response
 
 
 REGION_ID_RE = re.compile(r"^[A-Z0-9][A-Z0-9_]{0,29}$")
+PLAIN_YEAR_RE = re.compile(r"^-?\d{1,6}$")
 
 
 def format_query_time_value(value: Any) -> Any:
@@ -31,6 +32,23 @@ def parse_temporal_filter_value(raw_value: Any) -> str:
     if not normalized:
         raise ValueError("blank")
     return normalized
+
+
+def is_plain_year_token(raw_value: Any) -> bool:
+    if isinstance(raw_value, bool) or raw_value is None:
+        return False
+    if isinstance(raw_value, int):
+        return True
+    text = str(raw_value).strip()
+    return bool(text and PLAIN_YEAR_RE.match(text))
+
+
+def format_year_start(year: int) -> str:
+    return f"{int(year):04d}-01-01T00:00:00"
+
+
+def format_year_end(year: int) -> str:
+    return f"{int(year):04d}-12-31T23:59:59"
 
 
 def env_int(name: str, default: int, *, minimum: int = 0) -> int:
@@ -271,6 +289,13 @@ def parse_time_filter(
 
     if is_temporal_time_field(spec):
         if exact_value is not None:
+            if is_plain_year_token(exact_value):
+                year_value = int(str(exact_value).strip())
+                normalized_time["start"] = format_year_start(year_value)
+                normalized_time["end"] = format_year_end(year_value)
+                compare_filters.append((spec.time_field, ">=", normalized_time["start"]))
+                compare_filters.append((spec.time_field, "<=", normalized_time["end"]))
+                return normalized_time, exact_filters, compare_filters
             coerced_value = parse_temporal_filter_value(exact_value)
             exact_filters[spec.time_field] = coerced_value
             normalized_time["value"] = coerced_value
@@ -279,11 +304,17 @@ def parse_time_filter(
         coerced_start = None
         coerced_end = None
         if start_value is not None:
-            coerced_start = parse_temporal_filter_value(start_value)
+            if is_plain_year_token(start_value):
+                coerced_start = format_year_start(int(str(start_value).strip()))
+            else:
+                coerced_start = parse_temporal_filter_value(start_value)
             normalized_time["start"] = coerced_start
             compare_filters.append((spec.time_field, ">=", coerced_start))
         if end_value is not None:
-            coerced_end = parse_temporal_filter_value(end_value)
+            if is_plain_year_token(end_value):
+                coerced_end = format_year_end(int(str(end_value).strip()))
+            else:
+                coerced_end = parse_temporal_filter_value(end_value)
             normalized_time["end"] = coerced_end
             compare_filters.append((spec.time_field, "<=", coerced_end))
         if coerced_start is not None and coerced_end is not None and coerced_start > coerced_end:

@@ -48,6 +48,7 @@ from mapmover.api_query_runtime import (
     get_api_source_spec,
     get_api_source_time_bounds,
     normalize_time_granularity,
+    resolve_effective_time_spec,
     resolve_pack_source_for_query,
 )
 from mapmover.geography import get_country_names_from_codes
@@ -251,6 +252,8 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
     req.state.analytics_pack_id = spec.pack_id
     if resolved_from_pack:
         req.state.analytics_pack_id = pack_id or spec.pack_id
+
+    spec = resolve_effective_time_spec(spec, time_filter if isinstance(time_filter, dict) else None)
 
     if normalized_requested_granularity:
         source_granularity = normalize_time_granularity(spec.time_granularity)

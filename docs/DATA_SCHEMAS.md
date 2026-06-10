@@ -158,6 +158,11 @@ Examples:
 Common file name:
 - `links.parquet`
 
+Runtime note:
+- linked-disaster UI flows should resolve the target event back through canonical `loc_id`
+- the shared link table is the source of truth for cross-hazard relationships
+- hazard-native helpers like tsunami runups or hurricane positions can still exist, but they should hang off the resolved parent event rather than bypassing the shared link identity
+
 ### 5. Progression Data
 
 Some hazards change over time and need a time-sequenced geometry layer.

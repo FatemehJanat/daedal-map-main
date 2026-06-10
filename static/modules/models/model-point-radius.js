@@ -2821,6 +2821,17 @@ export const PointRadiusModel = {
     }
   },
 
+  _notifyRelatedChain(data) {
+    const count = Math.max(0, (data?.features?.length || 1) - 1);
+    console.log(`PointRadiusModel: Loaded linked disaster chain with ${count} related events`);
+
+    if (this.relatedChainCallback) {
+      this.relatedChainCallback(data);
+    } else {
+      console.warn('PointRadiusModel: No related chain callback registered');
+    }
+  },
+
   /**
    * Register callback for volcano-triggered earthquakes.
    * @param {Function} callback - Callback function
@@ -2835,6 +2846,10 @@ export const PointRadiusModel = {
    */
   onNearbyVolcanoes(callback) {
     this.nearbyVolcanoesCallback = callback;
+  },
+
+  onRelatedChain(callback) {
+    this.relatedChainCallback = callback;
   },
 
   /**
@@ -4501,6 +4516,57 @@ export const PointRadiusModel = {
         }
       } catch (err) {
         console.error('Error fetching related events:', err);
+      }
+    });
+
+    document.addEventListener('disaster-related-click', async (e) => {
+      const { eventId, eventType, locId } = e.detail || {};
+      const resolvedLocId = String(locId || '').trim();
+
+      if (!resolvedLocId) {
+        console.warn('Related disaster click skipped: missing loc_id', { eventId, eventType });
+        return;
+      }
+
+      try {
+        const data = await fetchMsgpack(`/api/events/by-loc/${encodeURIComponent(resolvedLocId)}`);
+        const feature = Array.isArray(data?.features) ? data.features[0] : null;
+        const props = feature?.properties || null;
+        const targetType = props?.event_type || data?.event_type || eventType;
+        const targetEventId = props?.event_id || eventId;
+
+        if (!props || !targetType || !targetEventId) {
+          console.warn('Related disaster click could not resolve a target event', { resolvedLocId, eventType, eventId, data });
+          return;
+        }
+
+        if (window.DisasterPopup) {
+          window.DisasterPopup.hide();
+        }
+
+        await this.handleSequence(targetEventId, targetType, props);
+      } catch (err) {
+        console.error('Error opening related disaster:', err);
+      }
+    });
+
+    document.addEventListener('disaster-related-chain-request', async (e) => {
+      const { eventType, props } = e.detail || {};
+      const resolvedLocId = String(props?.loc_id || '').trim();
+      if (!resolvedLocId) {
+        console.warn('Related chain request skipped: missing loc_id', { eventType, props });
+        return;
+      }
+
+      try {
+        const data = await fetchMsgpack(`/api/events/chain/${encodeURIComponent(resolvedLocId)}?depth=2`);
+        if (Array.isArray(data?.features) && data.features.length > 1) {
+          this._notifyRelatedChain(data);
+        } else {
+          console.warn('Related chain returned no linked events', { resolvedLocId, data });
+        }
+      } catch (err) {
+        console.error('Error fetching related disaster chain:', err);
       }
     });
 

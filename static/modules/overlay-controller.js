@@ -1080,6 +1080,13 @@ export const OverlayController = {
       console.log('OverlayController: Registered tsunami runups animation listener');
     }
 
+    if (model.onRelatedChain) {
+      model.onRelatedChain((data) => {
+        this.handleRelatedChain(data);
+      });
+      console.log('OverlayController: Registered linked disaster chain listener');
+    }
+
     // Wildfire -> Animation: when user clicks "View fire progression"
     if (model.onFireAnimation) {
       model.onFireAnimation((data) => {
@@ -1311,6 +1318,103 @@ export const OverlayController = {
    */
   handleTsunamiRunups(data) {
     runTsunamiRunups(this, data, { EventAnimator, MapAdapter, TimeSlider, dataCache, yearRangeCache });
+  },
+
+  handleRelatedChain(data) {
+    const sourceFeature = data?.source;
+    const rawFeatures = Array.isArray(data?.features) ? data.features : [];
+    const rawLinks = Array.isArray(data?.links) ? data.links : [];
+    if (!sourceFeature || rawFeatures.length < 2) {
+      console.warn('OverlayController: Related chain missing source or related features');
+      return;
+    }
+
+    const returnViewState = this.captureViewState();
+    const overlaysToRestore = (OverlaySelector?.getActiveOverlays?.() || []).filter(id => id !== 'demographics' && OVERLAY_ENDPOINTS[id]);
+
+    const typeColors = {
+      earthquake: '#ff6b6b',
+      tsunami: '#4dd0e1',
+      volcano: '#feb24c',
+      hurricane: '#9c27b0',
+      tornado: '#32cd32',
+      wildfire: '#ff6600',
+      flood: '#0066cc',
+      landslide: '#8b4513',
+      generic: '#90caf9'
+    };
+
+    const sourceTimestampRaw = sourceFeature.properties?.timestamp;
+    const parsedSourceTime = sourceTimestampRaw ? new Date(sourceTimestampRaw).getTime() : NaN;
+    const baseTime = Number.isNaN(parsedSourceTime) ? Date.now() : parsedSourceTime;
+
+    const normalizedFeatures = rawFeatures.map((feature, index) => {
+      const props = { ...(feature.properties || {}) };
+      const eventType = props.event_type || 'generic';
+      const isSource = props.loc_id === sourceFeature.properties?.loc_id || index === 0;
+      const parsedDepth = Number(props.chain_depth);
+      const depth = Number.isFinite(parsedDepth) ? parsedDepth : (isSource ? 0 : 1);
+      const rawTime = props.timestamp ? new Date(props.timestamp).getTime() : NaN;
+      const effectiveTime = Number.isNaN(rawTime) ? (baseTime + depth * 12 * 60 * 60 * 1000) : rawTime;
+      props.chain_color = isSource ? '#ffffff' : (typeColors[eventType] || typeColors.generic);
+      props.chain_radius = isSource ? 10 : 7;
+      props.chain_width = isSource ? 2.4 : 1.8;
+      props.initial_view_radius_km = isSource ? 260 : (props.initial_view_radius_km ?? 0);
+      props.felt_radius_km = props.felt_radius_km ?? 0;
+      props.damage_radius_km = props.damage_radius_km ?? 0;
+      props.timestamp = props.timestamp || sourceFeature.properties?.timestamp || null;
+      props.chain_timestamp = new Date(effectiveTime).toISOString();
+      props.event_id = props.event_id || props.loc_id;
+      return {
+        ...feature,
+        properties: props
+      };
+    });
+
+    const featureByLocId = new Map(
+      normalizedFeatures
+        .filter(feature => feature?.properties?.loc_id)
+        .map(feature => [feature.properties.loc_id, feature])
+    );
+
+    const chainLinks = rawLinks
+      .map(link => {
+        const parentFeature = featureByLocId.get(link.parent_loc_id);
+        const childFeature = featureByLocId.get(link.child_loc_id);
+        if (!parentFeature || !childFeature) {
+          return null;
+        }
+        return {
+          parent_event_id: link.parent_event_id || parentFeature.properties?.event_id,
+          child_event_id: link.child_event_id || childFeature.properties?.event_id,
+          link_type: link.link_type,
+          direction: link.direction
+        };
+      })
+      .filter(Boolean);
+
+    const sourceEventId = sourceFeature.properties?.event_id || sourceFeature.properties?.loc_id;
+    const sourceLabel = sourceFeature.properties?.event_type || 'event';
+
+    if (EventAnimator.getIsActive()) {
+      EventAnimator.stop();
+    }
+
+    EventAnimator.start({
+      id: `chain-${String(sourceEventId).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 20)}`,
+      label: `${sourceLabel} chain`,
+      mode: AnimationMode.CHAIN,
+      events: normalizedFeatures,
+      mainshock: normalizedFeatures[0],
+      chainLinks,
+      eventType: 'generic_event',
+      timeField: 'chain_timestamp',
+      granularity: '12h',
+      renderer: 'point-radius',
+      onExit: () => {
+        this.restoreViewState(returnViewState, overlaysToRestore);
+      }
+    });
   },
 
   /**

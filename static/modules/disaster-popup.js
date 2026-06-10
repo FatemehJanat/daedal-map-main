@@ -768,6 +768,9 @@ const DisasterPopup = {
         statusHtml = `<div class="related-empty popup-load-summary">${count.toLocaleString()} linked disasters found for this event.</div>`;
         actionHtml = `
           <div class="popup-actions">
+            <button class="popup-btn btn-sequence" data-action="view-chain">
+              View Chain
+            </button>
             <button class="popup-btn btn-related" data-action="load-related">
               Load Related Disasters
             </button>
@@ -1684,6 +1687,16 @@ const DisasterPopup = {
     const tutorialHelp = this.buildPopupTutorialHelp(props, eventType);
 
     let relatedList = '';
+    const relatedCount = relatedData?.related?.length ?? 0;
+    const chainActionHtml = relatedCount > 0
+      ? `
+        <div class="popup-actions">
+          <button class="popup-btn btn-sequence" data-action="view-chain">
+            View Chain
+          </button>
+        </div>
+      `
+      : '';
 
     if (relatedData && relatedData.related && relatedData.related.length > 0) {
       relatedList = relatedData.related.map(rel => {
@@ -1692,7 +1705,7 @@ const DisasterPopup = {
         const relTitle = this.getTitle(rel, rel.event_type);
         const linkType = rel.link_type || 'linked';
 
-        return `<div class="related-item" data-id="${rel.event_id}" data-type="${rel.event_type}">
+        return `<div class="related-item" data-id="${rel.event_id}" data-type="${rel.event_type}" data-loc-id="${rel.loc_id || ''}">
           <span class="related-icon" style="background: ${relColor}">${relIcon}</span>
           <div class="related-info">
             <div class="related-title">${relTitle}</div>
@@ -1725,6 +1738,7 @@ const DisasterPopup = {
         </div>
 
         <div class="related-chain-label">Disaster Chain:</div>
+        ${chainActionHtml}
 
         <div class="related-list">
           ${relatedList}
@@ -1849,7 +1863,8 @@ const DisasterPopup = {
         e.stopPropagation();
         const id = item.dataset.id;
         const type = item.dataset.type;
-        this.handleRelatedClick(id, type);
+        const locId = item.dataset.locId || '';
+        this.handleRelatedClick(id, type, locId);
       });
     });
 
@@ -1882,6 +1897,9 @@ const DisasterPopup = {
         break;
       case 'related':
         this.showRelated();
+        break;
+      case 'view-chain':
+        this.loadRelatedChain();
         break;
       case 'load-related':
         this.loadRelated();
@@ -1973,6 +1991,11 @@ const DisasterPopup = {
     this.updatePopupContent(html);
   },
 
+  loadRelatedChain() {
+    this.triggerRelatedChainHandler();
+    this.hide();
+  },
+
   /**
    * Update popup content without closing
    */
@@ -2018,15 +2041,29 @@ const DisasterPopup = {
     }));
   },
 
+  triggerRelatedChainHandler() {
+    const props = this.currentEvent;
+    const eventType = this.currentType;
+
+    document.dispatchEvent(new CustomEvent('disaster-related-chain-request', {
+      detail: {
+        eventId: props.event_id,
+        eventType: eventType,
+        props: props
+      }
+    }));
+  },
+
   /**
    * Handle click on related item
    */
-  handleRelatedClick(eventId, eventType) {
+  handleRelatedClick(eventId, eventType, locId = '') {
     // Dispatch event for handling
     document.dispatchEvent(new CustomEvent('disaster-related-click', {
       detail: {
         eventId: eventId,
-        eventType: eventType
+        eventType: eventType,
+        locId: locId
       }
     }));
   },

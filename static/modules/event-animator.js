@@ -45,6 +45,7 @@ export const AnimationMode = {
   POLYGON: 'polygon',            // Areas change over time (wildfires)
   RADIAL: 'radial',              // Source -> destinations by distance (tsunamis)
   EARTHQUAKE: 'earthquake',      // Circle growth + spiderweb connections + radii
+  CHAIN: 'chain',                // Generic linked-disaster spiderweb chain
   TORNADO_SEQUENCE: 'tornado'    // Track lines appearing in sequence
 };
 
@@ -213,6 +214,7 @@ export const EventAnimator = {
   _eqRelatedEvents: [],         // Related events (volcanoes, tsunamis)
   _eqAnimationLoopId: null,     // requestAnimationFrame ID for circle growth
   _eqLastFrameTime: null,       // Last animation frame timestamp
+  _chainLinks: [],              // Generic chain edges
 
   // Tornado sequence state (tornado mode only)
   _tornadoAllFeatures: [],      // All track/point/connection features
@@ -318,9 +320,10 @@ export const EventAnimator = {
     }
 
     // Earthquake mode: setup layers, viewport bounds, circle growth animation
-    if (this.mode === AnimationMode.EARTHQUAKE) {
+    if (this.mode === AnimationMode.EARTHQUAKE || this.mode === AnimationMode.CHAIN) {
       this._eqMainshock = options.mainshock;
       this._eqRelatedEvents = options.relatedEvents || [];
+      this._chainLinks = options.chainLinks || [];
       this._setupEarthquakeLayers();
       this._calculateEarthquakeBounds();
       this._startEarthquakeAnimationLoop();
@@ -413,6 +416,7 @@ export const EventAnimator = {
     this._eqFinalBounds = null;
     this._eqLastViewportProgress = -1;
     this._eqRelatedEvents = [];
+    this._chainLinks = [];
 
     // Reset tornado state
     this._tornadoAllFeatures = [];
@@ -449,7 +453,7 @@ export const EventAnimator = {
     }
 
     // Update earthquake viewport based on time progress
-    if (this.mode === AnimationMode.EARTHQUAKE) {
+    if (this.mode === AnimationMode.EARTHQUAKE || this.mode === AnimationMode.CHAIN) {
       const timeRange = this.timestamps[this.timestamps.length - 1] - this.timestamps[0];
       const progress = timeRange > 0
         ? Math.max(0, Math.min(1, (this.timestamps[index] - this.timestamps[0]) / timeRange))
@@ -987,6 +991,7 @@ export const EventAnimator = {
         break;
 
       case AnimationMode.EARTHQUAKE:
+      case AnimationMode.CHAIN:
         // Earthquake mode: renders directly to its own layers
         this._renderEarthquakeAtTime(timestamp);
         return;  // Skip default rendering - earthquake mode handles its own layers
@@ -1717,7 +1722,9 @@ export const EventAnimator = {
     if (!this._eqMainshock) return;
 
     const mainCoords = this._eqMainshock.geometry.coordinates;
-    const feltRadiusKm = this._eqMainshock.properties.felt_radius_km || 200;
+    const feltRadiusKm = this._eqMainshock.properties.initial_view_radius_km
+      ?? this._eqMainshock.properties.felt_radius_km
+      ?? 200;
 
     // Initial bounds: felt radius (outer radius)
     this._eqInitialBounds = this._boundsFromCenterRadius(mainCoords, feltRadiusKm);
@@ -1736,7 +1743,7 @@ export const EventAnimator = {
         eventCoords[0] += (lngDiff > 0 ? -360 : 360);
       }
 
-      const eventFeltKm = event.properties?.felt_radius_km || 30;
+      const eventFeltKm = event.properties?.felt_radius_km ?? 30;
       const eventBounds = this._boundsFromCenterRadius(eventCoords, eventFeltKm);
       this._eqFinalBounds.extend(eventBounds.getNorthEast());
       this._eqFinalBounds.extend(eventBounds.getSouthWest());
@@ -1829,7 +1836,7 @@ export const EventAnimator = {
     this._eqLastFrameTime = performance.now();
 
     const animate = (timestamp) => {
-      if (!this.isActive || this.mode !== AnimationMode.EARTHQUAKE) return;
+      if (!this.isActive || (this.mode !== AnimationMode.EARTHQUAKE && this.mode !== AnimationMode.CHAIN)) return;
 
       const deltaTime = timestamp - this._eqLastFrameTime;
       this._eqLastFrameTime = timestamp;
@@ -1929,8 +1936,8 @@ export const EventAnimator = {
 
       const isMainshock = eventId === mainshockId;
       const magnitude = props?.magnitude || 4;
-      const baseRadius = this._eqMagnitudeToRadius(magnitude);
-      const color = this._eqMagnitudeToColor(magnitude);
+      const baseRadius = props?.chain_radius ?? this._eqMagnitudeToRadius(magnitude);
+      const color = props?.chain_color || this._eqMagnitudeToColor(magnitude);
       const opacity = Math.min(1, scale * 1.5);
 
       // Pulse effect for mainshock
@@ -1938,8 +1945,8 @@ export const EventAnimator = {
       const pulseRadius = baseRadius + 10 + Math.sin(pulsePhase * Math.PI * 2) * 5;
       const pulseOpacity = 0.8 - pulsePhase * 0.6;
 
-      const feltRadiusKm = props?.felt_radius_km || 0;
-      const damageRadiusKm = props?.damage_radius_km || 0;
+      const feltRadiusKm = props?.felt_radius_km ?? 0;
+      const damageRadiusKm = props?.damage_radius_km ?? 0;
 
       features.push({
         type: 'Feature',
@@ -1991,6 +1998,65 @@ export const EventAnimator = {
     // Get current animation time
     const currentTime = this.timestamps[this.currentIndex] || mainTime;
 
+    if (this.mode === AnimationMode.CHAIN && this._chainLinks.length > 0) {
+      const featureById = new Map();
+      for (const event of this.events) {
+        const eventId = event?.properties?.event_id;
+        if (eventId) {
+          featureById.set(eventId, event);
+        }
+      }
+
+      for (const link of this._chainLinks) {
+        const parent = featureById.get(link?.parent_event_id);
+        const child = featureById.get(link?.child_event_id);
+        if (!parent || !child) continue;
+
+        const parentCoords = [...parent.geometry.coordinates];
+        let childCoords = [...child.geometry.coordinates];
+        const childProps = child.properties || {};
+        const childTime = new Date(childProps?.[timeField] || childProps?.timestamp).getTime();
+        const sourceTime = new Date(parent.properties?.[timeField] || parent.properties?.timestamp).getTime();
+        const timelineStart = Number.isNaN(sourceTime) ? mainTime : sourceTime;
+        const timelineEnd = Number.isNaN(childTime) ? timelineStart : childTime;
+        const timeRange = timelineEnd - timelineStart;
+        const elapsed = currentTime - timelineStart;
+
+        let lineProgress = 0;
+        if (timeRange > 0) {
+          lineProgress = Math.max(0, Math.min(1, elapsed / timeRange));
+        } else if (elapsed >= 0) {
+          lineProgress = 1;
+        }
+        if (lineProgress <= 0) continue;
+
+        const lngDiff = childCoords[0] - parentCoords[0];
+        if (Math.abs(lngDiff) > 180) {
+          childCoords[0] += (lngDiff > 0 ? -360 : 360);
+        }
+
+        const currentEndCoords = [
+          parentCoords[0] + (childCoords[0] - parentCoords[0]) * lineProgress,
+          parentCoords[1] + (childCoords[1] - parentCoords[1]) * lineProgress
+        ];
+
+        lines.push({
+          type: 'Feature',
+          geometry: {
+            type: 'LineString',
+            coordinates: [parentCoords, currentEndCoords]
+          },
+          properties: {
+            color: childProps.chain_color || '#90caf9',
+            opacity: Math.min(0.7, lineProgress * 0.8),
+            width: childProps.chain_width || 2
+          }
+        });
+      }
+
+      return lines;
+    }
+
     for (const event of this.events) {
       const eventId = event.properties?.event_id;
       if (eventId === mainId) continue;
@@ -2017,7 +2083,7 @@ export const EventAnimator = {
       if (lineProgress > 0) {
         let eventCoords = [...event.geometry.coordinates];
         const magnitude = event.properties?.magnitude || 4;
-        const color = this._eqMagnitudeToColor(magnitude);
+        const color = event.properties?.chain_color || this._eqMagnitudeToColor(magnitude);
 
         // Handle date line crossing
         const lngDiff = eventCoords[0] - mainCoords[0];
@@ -2033,7 +2099,7 @@ export const EventAnimator = {
 
         // Opacity fades in as line draws, then stays visible
         const lineOpacity = Math.min(0.6, lineProgress * 0.7);
-        const lineWidth = 1 + (magnitude - 3) * 0.3;
+        const lineWidth = event.properties?.chain_width || (1 + (magnitude - 3) * 0.3);
 
         lines.push({
           type: 'Feature',

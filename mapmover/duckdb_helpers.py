@@ -591,11 +591,11 @@ def select_rows(
     return run_df(sql, params)
 
 
-def select_linked_loc_ids(
+def select_linked_values(
     links_path: Path,
     *,
     source_column: str,
-    source_loc_id: str,
+    source_value: str,
     target_column: str,
     link_type: str | None = None,
 ) -> list[str]:
@@ -612,13 +612,30 @@ def select_linked_loc_ids(
         f"FROM read_parquet(?) "
         f"WHERE {quote_ident(source_column)} = ?"
     )
-    params: list = [uri, source_loc_id]
+    params: list = [uri, source_value]
     if link_type is not None and "link_type" in available_cols:
         sql += ' AND "link_type" = ?'
         params.append(link_type)
     sql += f" ORDER BY {quote_ident(target_column)}"
     rows = run_rows(sql, params)
     return [row[0] for row in rows if row and row[0] is not None]
+
+
+def select_linked_loc_ids(
+    links_path: Path,
+    *,
+    source_column: str,
+    source_loc_id: str,
+    target_column: str,
+    link_type: str | None = None,
+) -> list[str]:
+    return select_linked_values(
+        links_path,
+        source_column=source_column,
+        source_value=source_loc_id,
+        target_column=target_column,
+        link_type=link_type,
+    )
 
 
 def select_peak_positions_by_storm_ids(positions_path: Path, storm_ids: Iterable[str]) -> pd.DataFrame:

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
+import json
 from pathlib import Path
 from typing import Any
+import re
+
+import pandas as pd
 
 from .data_loading import get_source_path, load_catalog, load_source_metadata
 from .duckdb_helpers import parquet_available, parquet_columns, path_to_uri, quote_ident, run_df
@@ -117,8 +121,8 @@ SUPPORTED_DYNAMIC_SOURCES: dict[str, dict[str, Any]] = {
         "parquet_name": "events.parquet",
         "query_mode": "single_source_events",
         "location_field": "loc_id",
-        "time_field": "year",
-        "time_granularity": "yearly",
+        "time_field": "timestamp",
+        "time_granularity": "timestamp",
         "default_limit": 100,
         "max_limit": 500,
     },
@@ -172,6 +176,77 @@ del _sdg_i
 API_SOURCE_SPECS: dict[str, ApiSourceSpec] = {
     CURRENCY_SOURCE_SPEC.source_id: CURRENCY_SOURCE_SPEC,
 }
+
+MIXED_TEMPORAL_TRANSITION_YEARS: dict[str, int | None] = {}
+PLAIN_YEAR_RE = re.compile(r"^-?\d{1,6}$")
+
+
+def _coerce_year_token(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if value == int(value) else None
+    text = str(value).strip()
+    if not text:
+        return None
+    if PLAIN_YEAR_RE.match(text):
+        try:
+            return int(text)
+        except ValueError:
+            return None
+    if len(text) >= 4 and text[:4].lstrip("-").isdigit():
+        try:
+            return int(text[:4])
+        except ValueError:
+            return None
+    return None
+
+
+def _extract_requested_year_bounds(time_filter: dict[str, Any] | None) -> tuple[int | None, int | None]:
+    if not isinstance(time_filter, dict):
+        return None, None
+    exact_value = time_filter.get("value")
+    start_value = time_filter.get("start")
+    end_value = time_filter.get("end")
+    if exact_value is None and "year" in time_filter:
+        exact_value = time_filter.get("year")
+    if start_value is None and "year_start" in time_filter:
+        start_value = time_filter.get("year_start")
+    if end_value is None and "year_end" in time_filter:
+        end_value = time_filter.get("year_end")
+    if exact_value is not None:
+        exact_year = _coerce_year_token(exact_value)
+        return exact_year, exact_year
+    return _coerce_year_token(start_value), _coerce_year_token(end_value)
+
+
+def _compute_contiguous_timestamp_suffix_start(parquet_path: Path) -> int | None:
+    try:
+        df = pd.read_parquet(parquet_path, columns=["year", "timestamp"])
+    except Exception:
+        return None
+    if df.empty or "year" not in df.columns or "timestamp" not in df.columns:
+        return None
+    years = pd.to_numeric(df["year"], errors="coerce")
+    timestamps = pd.to_datetime(df["timestamp"], errors="coerce")
+    coverage = pd.DataFrame({"year": years, "has_timestamp": timestamps.notna()}).dropna(subset=["year"])
+    if coverage.empty:
+        return None
+    grouped = coverage.groupby("year")["has_timestamp"].agg(["count", "sum"])
+    full_years = sorted(int(idx) for idx, row in grouped.iterrows() if int(row["count"]) == int(row["sum"]))
+    if not full_years:
+        return None
+    suffix_start = full_years[-1]
+    previous = full_years[-1]
+    for year in reversed(full_years[:-1]):
+        if year == previous - 1:
+            suffix_start = year
+            previous = year
+            continue
+        break
+    return int(suffix_start)
 
 
 def _build_metric_specs_from_metadata(metadata: dict[str, Any] | None) -> dict[str, ApiMetricSpec]:
@@ -308,6 +383,86 @@ def get_api_source_spec(source_id: str) -> ApiSourceSpec | None:
     if built is not None:
         API_SOURCE_SPECS[normalized_source_id] = built
     return built
+
+
+def get_mixed_temporal_transition_year(spec: ApiSourceSpec) -> int | None:
+    cached = MIXED_TEMPORAL_TRANSITION_YEARS.get(spec.source_id, None)
+    if spec.source_id in MIXED_TEMPORAL_TRANSITION_YEARS:
+        return cached
+
+    if normalize_time_granularity(spec.time_granularity) != "yearly":
+        MIXED_TEMPORAL_TRANSITION_YEARS[spec.source_id] = None
+        return None
+
+    metadata = load_source_metadata(spec.metadata_source_id or spec.source_id) or {}
+    if not metadata:
+        local_metadata_path = (
+            DATA_ROOT
+            / "global"
+            / "disasters"
+            / spec.pack_id
+            / "sources"
+            / (spec.metadata_source_id or spec.source_id)
+            / "metadata.json"
+        )
+        if local_metadata_path.exists():
+            try:
+                metadata = json.loads(local_metadata_path.read_text(encoding="utf-8"))
+            except Exception:
+                metadata = {}
+    temporal_precision = metadata.get("temporal_precision") if isinstance(metadata.get("temporal_precision"), dict) else {}
+    timestamp_coverage = temporal_precision.get("timestamp_coverage") if isinstance(temporal_precision, dict) else {}
+    metadata_transition_year = _coerce_year_token(
+        timestamp_coverage.get("complete_from_year") if isinstance(timestamp_coverage, dict) else None
+    )
+    if metadata_transition_year is not None:
+        MIXED_TEMPORAL_TRANSITION_YEARS[spec.source_id] = metadata_transition_year
+        return metadata_transition_year
+
+    parquet_path = get_source_parquet_path(spec)
+    try:
+        available_cols = parquet_columns(parquet_path)
+    except Exception:
+        MIXED_TEMPORAL_TRANSITION_YEARS[spec.source_id] = None
+        return None
+    if "year" not in available_cols or "timestamp" not in available_cols:
+        MIXED_TEMPORAL_TRANSITION_YEARS[spec.source_id] = None
+        return None
+
+    try:
+        transition_year = _compute_contiguous_timestamp_suffix_start(parquet_path)
+    except Exception:
+        transition_year = None
+    MIXED_TEMPORAL_TRANSITION_YEARS[spec.source_id] = transition_year
+    return transition_year
+
+
+def resolve_effective_time_spec(spec: ApiSourceSpec, time_filter: dict[str, Any] | None) -> ApiSourceSpec:
+    if normalize_time_granularity(spec.time_granularity) != "yearly":
+        return spec
+
+    requested_granularity = normalize_time_granularity(
+        time_filter.get("granularity") if isinstance(time_filter, dict) else None
+    )
+    if requested_granularity == "yearly":
+        return spec
+
+    transition_year = get_mixed_temporal_transition_year(spec)
+    if transition_year is None:
+        return spec
+
+    requested_start_year, requested_end_year = _extract_requested_year_bounds(time_filter)
+    if requested_start_year is None and requested_end_year is None:
+        return spec
+
+    lower_bound_year = requested_start_year if requested_start_year is not None else requested_end_year
+    upper_bound_year = requested_end_year if requested_end_year is not None else requested_start_year
+    if lower_bound_year is None or upper_bound_year is None:
+        return spec
+    if lower_bound_year < transition_year or upper_bound_year < transition_year:
+        return spec
+
+    return replace(spec, time_field="timestamp", time_granularity="timestamp")
 
 
 def get_pack_source_ids(pack_id: str) -> list[str]:
@@ -497,6 +652,16 @@ def get_source_parquet_path(spec: ApiSourceSpec) -> Path:
         metadata_primary_path = metadata_source_dir / spec.parquet_name
         if metadata_primary_path.exists():
             return metadata_primary_path
+
+    disaster_source_path = DATA_ROOT / "global" / "disasters" / spec.pack_id / "sources" / spec.source_id / spec.parquet_name
+    if disaster_source_path.exists():
+        return disaster_source_path
+    if spec.metadata_source_id and spec.metadata_source_id != spec.source_id:
+        disaster_metadata_path = (
+            DATA_ROOT / "global" / "disasters" / spec.pack_id / "sources" / spec.metadata_source_id / spec.parquet_name
+        )
+        if disaster_metadata_path.exists():
+            return disaster_metadata_path
 
     # API sources may execute from a pack-shaped folder before local catalog.json
     # is present. Prefer a direct pack fallback over assuming source_id == folder.

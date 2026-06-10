@@ -9,9 +9,11 @@ from mapmover.duckdb_helpers import (
     make_cache_key,
     make_preload_cache_key,
     parquet_available,
+    parquet_columns,
     select_filtered_event_rows,
     select_filtered_event_rows_cached,
     select_linked_loc_ids,
+    select_linked_values,
     select_rows_by_exact_value,
 )
 from mapmover.logging_analytics import logger
@@ -401,27 +403,43 @@ async def get_related_earthquakes_for_tsunami(event_id: str):
 
         event_row = tsunami_df.iloc[0]
         source_loc_id = event_row.get("loc_id")
-        if not source_loc_id:
+        source_event_id = event_row.get("event_id") or event_id
+        if not source_loc_id and not source_event_id:
             return msgpack_response({"event_id": event_id, "related_earthquakes": [], "count": 0})
 
-        target_loc_ids = select_linked_loc_ids(
-            links_path,
-            source_column="child_loc_id",
-            source_loc_id=source_loc_id,
-            target_column="parent_loc_id",
-            link_type="triggered",
-        )
-        if not target_loc_ids:
+        link_columns = parquet_columns(links_path)
+        target_event_ids: list[str] = []
+        target_loc_ids: list[str] = []
+        if "child_event_id" in link_columns and "parent_event_id" in link_columns and source_event_id:
+            target_event_ids = select_linked_values(
+                links_path,
+                source_column="child_event_id",
+                source_value=source_event_id,
+                target_column="parent_event_id",
+                link_type="triggered",
+            )
+        if not target_event_ids and source_loc_id:
+            target_loc_ids = select_linked_loc_ids(
+                links_path,
+                source_column="child_loc_id",
+                source_loc_id=source_loc_id,
+                target_column="parent_loc_id",
+                link_type="triggered",
+            )
+        if not target_event_ids and not target_loc_ids:
             return msgpack_response({"event_id": event_id, "related_earthquakes": [], "count": 0})
 
         eq_df = select_filtered_event_rows(
             eq_path,
-            in_filters={"loc_id": target_loc_ids},
+            in_filters={"event_id": target_event_ids} if target_event_ids else {"loc_id": target_loc_ids},
             order_by_desc="magnitude",
         )
         if eq_df.empty and not duckdb_available():
             eq_df = pd.read_parquet(eq_path)
-            eq_df = eq_df[eq_df["loc_id"].isin(target_loc_ids)]
+            if target_event_ids and "event_id" in eq_df.columns:
+                eq_df = eq_df[eq_df["event_id"].isin(target_event_ids)]
+            else:
+                eq_df = eq_df[eq_df["loc_id"].isin(target_loc_ids)]
 
         related = []
         for _, row in eq_df.iterrows():
