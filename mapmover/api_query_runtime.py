@@ -568,15 +568,24 @@ def resolve_pack_sources_for_metrics(pack_id: str, metrics: list[str]) -> dict[s
             "unknown_metrics": normalized_metrics,
         }
     per_source_metadata: dict[str, dict[str, Any]] = {}
+    per_source_metric_keys: dict[str, set[str]] = {}
     metric_to_sources: dict[str, list[str]] = {}
     for source_id in candidate_sources:
         metadata = load_source_metadata(source_id) or {}
         per_source_metadata[source_id] = metadata
-        metrics_map = metadata.get("metrics") if isinstance(metadata.get("metrics"), dict) else {}
-        for metric_id in metrics_map.keys():
-            metric_key = str(metric_id).strip()
-            if not metric_key:
-                continue
+        # Use the resolved source spec's metrics, which include synthetic metrics
+        # such as event_count injected for event sources. Reading raw
+        # metadata["metrics"] here misses them, so a pack-path query for
+        # event_count was wrongly rejected as metric_not_available even though
+        # the source-path validate_metrics accepts it.
+        spec = get_api_source_spec(source_id)
+        if spec is not None and spec.metrics:
+            metric_keys = {str(key).strip() for key in spec.metrics.keys() if str(key).strip()}
+        else:
+            metrics_map = metadata.get("metrics") if isinstance(metadata.get("metrics"), dict) else {}
+            metric_keys = {str(key).strip() for key in metrics_map.keys() if str(key).strip()}
+        per_source_metric_keys[source_id] = metric_keys
+        for metric_key in metric_keys:
             metric_to_sources.setdefault(metric_key, []).append(source_id)
 
     unknown_metrics = [metric for metric in normalized_metrics if metric not in metric_to_sources]
@@ -594,9 +603,10 @@ def resolve_pack_sources_for_metrics(pack_id: str, metrics: list[str]) -> dict[s
     source_scores: list[tuple[float, str]] = []
     for source_id in candidate_sources:
         metadata = per_source_metadata.get(source_id) or {}
-        metrics_map = metadata.get("metrics") if isinstance(metadata.get("metrics"), dict) else {}
-        if any(metric not in metrics_map for metric in normalized_metrics):
+        metric_keys = per_source_metric_keys.get(source_id, set())
+        if any(metric not in metric_keys for metric in normalized_metrics):
             continue
+        metrics_map = metadata.get("metrics") if isinstance(metadata.get("metrics"), dict) else {}
         score = 0.0
         for metric in normalized_metrics:
             metric_info = metrics_map.get(metric)
