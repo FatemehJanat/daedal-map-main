@@ -48,6 +48,7 @@ from mapmover.api_query_runtime import (
     get_api_source_columns,
     get_api_source_spec,
     get_api_source_time_bounds,
+    is_temporal_time_field,
     normalize_time_granularity,
     resolve_effective_time_spec,
     resolve_pack_source_for_query,

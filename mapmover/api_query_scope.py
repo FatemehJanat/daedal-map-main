@@ -355,8 +355,19 @@ def parse_time_filter(
             raise ValueError("start_after_end")
         return normalized_time, exact_filters, compare_filters
 
+    # Year-mode (non-temporal) sources. Inputs may be plain years (2000) OR full
+    # date strings (2000-01-01) when an agent reuses one query shape across packs;
+    # coerce both to a year rather than raw int() (which raised an uncaught
+    # ValueError -> 500 on date strings for mixed year/timestamp sources).
+    def _coerce_year(raw: Any) -> int | None:
+        if is_plain_year_token(raw):
+            return int(str(raw).strip())
+        return coerce_scope_year(raw)
+
     if exact_value is not None:
-        coerced_value = int(exact_value)
+        coerced_value = _coerce_year(exact_value)
+        if coerced_value is None:
+            raise ValueError("invalid_time_value")
         exact_filters[spec.time_field] = coerced_value
         normalized_time["value"] = coerced_value
         return normalized_time, exact_filters, compare_filters
@@ -364,11 +375,15 @@ def parse_time_filter(
     coerced_start = None
     coerced_end = None
     if start_value is not None:
-        coerced_start = int(start_value)
+        coerced_start = _coerce_year(start_value)
+        if coerced_start is None:
+            raise ValueError("invalid_time_value")
         normalized_time["start"] = coerced_start
         compare_filters.append((spec.time_field, ">=", coerced_start))
     if end_value is not None:
-        coerced_end = int(end_value)
+        coerced_end = _coerce_year(end_value)
+        if coerced_end is None:
+            raise ValueError("invalid_time_value")
         normalized_time["end"] = coerced_end
         compare_filters.append((spec.time_field, "<=", coerced_end))
     if coerced_start is not None and coerced_end is not None and coerced_start > coerced_end:
