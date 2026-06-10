@@ -1,15 +1,22 @@
 from __future__ import annotations
 
 # Single source of truth for pack pricing classification.
-# Add new packs here when they are published. Keep in sync with
-# PACK_SERVER_PROFILES in routes/mcp.py (which has the full profile).
+# Default is PAID: any pack NOT in FREE_PACK_IDS is treated as paid by
+# pack_requires_commercial_access(). So every FREE pack MUST be listed here, in
+# the same commit as its PACK_SERVER_PROFILES entry in routes/mcp.py.
+# Full free<->paid switch checklist (enforcement, advertised pricing, license,
+# public docs, and catalog surfaces):
+# county-map-private/docs/future/API/mcp_publishing.md section 15.
 FREE_PACK_IDS: frozenset[str] = frozenset(
     {
         "currency",
+        "floods",
         "hurricanes",
+        "tornadoes",
         "un_sdg",
         "volcanoes",
         "world_factbook",
+        "worldpop",
     }
 )
 

@@ -141,6 +141,34 @@ PACK_SERVER_PROFILES = {
             ],
         },
     },
+    "floods": {
+        "name": "com.daedalmap/floods",
+        "title": "DaedalMap Flood Events",
+        "description": "Global large flood events from 1985 to present from the Dartmouth Flood Observatory Global Flood Records (CC0 public domain), including flood extent polygons, fatalities, displaced, severity, main cause, and a flood impact index, plus MODIS satellite-mapped extents from the Global Flood Database. Free - no payment required.",
+        "pricing": "free",
+        "registry_meta": {
+            "categories": ["hazard", "geospatial", "data"],
+            "highlights": [
+                "Global flood event records 1985-present with extent polygons",
+                "Free MCP access for flood counts, fatalities, displaced, and severity",
+                "Country and region lookups tied to DaedalMap loc_id geography",
+            ],
+        },
+    },
+    "tornadoes": {
+        "name": "com.daedalmap/tornadoes",
+        "title": "DaedalMap Tornado Events",
+        "description": "United States tornado events from 1950 to present from the NOAA Storm Prediction Center, including track paths, EF/Fujita intensity ratings, casualties, and damage estimates. Free - no payment required.",
+        "pricing": "free",
+        "registry_meta": {
+            "categories": ["hazard", "geospatial", "data"],
+            "highlights": [
+                "US tornado event records 1950-present with track paths and intensity",
+                "Free MCP access for tornado counts, casualties, and damage estimates",
+                "State and region lookups tied to DaedalMap loc_id geography",
+            ],
+        },
+    },
 }
 
 PACK_TOOL_ALLOWLIST: dict[str, set[str]] = {
@@ -152,6 +180,8 @@ PACK_TOOL_ALLOWLIST: dict[str, set[str]] = {
     "un_sdg": {"get_catalog", "get_pack", "query_dataset"},
     "world_factbook": {"get_catalog", "get_pack", "query_dataset"},
     "worldpop": {"get_catalog", "get_pack", "query_dataset"},
+    "floods": {"get_catalog", "get_pack", "query_dataset"},
+    "tornadoes": {"get_catalog", "get_pack", "query_dataset"},
 }
 
 PACK_PROMPT_ALLOWLIST: dict[str, set[str]] = {
@@ -160,6 +190,8 @@ PACK_PROMPT_ALLOWLIST: dict[str, set[str]] = {
     "tsunamis": {"count_disaster_events"},
     "volcanoes": {"count_disaster_events"},
     "hurricanes": {"count_disaster_events"},
+    "floods": {"count_disaster_events"},
+    "tornadoes": {"count_disaster_events"},
 }
 
 PACK_RESOURCE_COMMON_URIS = {
@@ -1149,6 +1181,38 @@ async def _execute_live_volcano_tool(arguments: dict[str, Any], rpc_request_id: 
     return _jsonrpc_response(_tool_result(result), rpc_request_id)
 
 
+# Registry attribution: each MCP registry publishes a per-source tagged endpoint
+# URL (e.g. https://app.daedalmap.com/mcp?registry=glama). The tag is read here
+# and stamped into analytics so we can see which registry drives MCP traffic.
+# The allowlist keeps the analytics dimension bounded; unknown tags fold to
+# "other". Add a slug here before handing a registry its tagged URL.
+MCP_SOURCE_REGISTRIES = {
+    "glama",
+    "pulsemcp",
+    "smithery",
+    "mcpso",
+    "mcpregistry",
+    "nothumansearch",
+    "mcpay",
+    "402index",
+    "awesome",
+    "github",
+    "site",
+    "direct",
+}
+
+
+def _source_registry_from_request(request: Request) -> str | None:
+    raw = (
+        request.query_params.get("registry")
+        or request.query_params.get("via")
+        or ""
+    ).strip().lower()
+    if not raw:
+        return None
+    return raw if raw in MCP_SOURCE_REGISTRIES else "other"
+
+
 @router.get("/mcp")
 @router.get("/mcp/{pack_id}")
 async def mcp_endpoint_info(pack_id: str | None = None):
@@ -1172,9 +1236,11 @@ async def mcp_endpoint_info(pack_id: str | None = None):
 @router.post("/mcp/{pack_id}")
 async def mcp_endpoint(request: Request, pack_id: str | None = None):
     normalized_pack_id = _normalize_pack_id(pack_id)
+    source_registry = _source_registry_from_request(request)
     request.state.analytics_metadata = {
         "surface": "agent_api_mcp",
         "mcp_facade_pack_id": normalized_pack_id or "umbrella",
+        **({"mcp_source_registry": source_registry} if source_registry else {}),
     }
     if pack_id and not normalized_pack_id:
         return JSONResponse({"error": "Pack MCP facade not found"}, status_code=404)

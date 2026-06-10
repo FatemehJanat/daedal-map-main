@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import date, datetime, timezone
 import hashlib
 import json
 import os
@@ -61,6 +62,25 @@ router = APIRouter()
 
 def _get_request_ip(request: Request) -> str | None:
     return get_client_ip(request)
+
+
+def _coerce_temporal_bound_value(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, date):
+        parsed = datetime(value.year, value.month, value.day)
+    else:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        normalized = text[:-1] + "+00:00" if text.endswith("Z") else text
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -> Response:
@@ -205,6 +225,27 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
                 400,
                 details={"supported_granularities": pack_resolution.get("supported_granularities") or []},
                 retry_hint="Choose one of the supported granularities for this pack.",
+                pack_id=pack_id,
+                source_id="unknown",
+            )
+        if resolution == "unknown_pack_sources":
+            return error_response(
+                request_id,
+                "unknown_source",
+                f"Pack '{pack_id}' does not have a published API-ready execution source.",
+                404,
+                retry_hint="Choose a different published pack, or query a published source_id directly.",
+                pack_id=pack_id,
+                source_id="unknown",
+            )
+        if resolution == "ambiguous_default_source":
+            return error_response(
+                request_id,
+                "multi_source_not_supported",
+                f"Pack '{pack_id}' needs metrics or a specific source_id to choose the right execution source.",
+                400,
+                details={"required_sources": pack_resolution.get("required_sources") or []},
+                retry_hint="Provide metrics, or query a specific source_id from this pack.",
                 pack_id=pack_id,
                 source_id="unknown",
             )
@@ -615,7 +656,14 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
         if available_start is not None and available_end is not None:
             requested_start = normalized_time.get("value", normalized_time.get("start"))
             requested_end = normalized_time.get("value", normalized_time.get("end"))
-            if requested_start is not None and requested_start < available_start:
+            requested_start_cmp = _coerce_temporal_bound_value(requested_start)
+            requested_end_cmp = _coerce_temporal_bound_value(requested_end)
+            available_start_cmp = _coerce_temporal_bound_value(available_start)
+            available_end_cmp = _coerce_temporal_bound_value(available_end)
+            if requested_start is not None and (
+                (requested_start_cmp is not None and available_start_cmp is not None and requested_start_cmp < available_start_cmp)
+                or (requested_start_cmp is None or available_start_cmp is None) and requested_start < available_start
+            ):
                 return error_response(
                     request_id,
                     "time_range_out_of_bounds",
@@ -631,7 +679,10 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
                     pack_id=spec.pack_id,
                     source_id=source_id,
                 )
-            if requested_end is not None and requested_end > available_end:
+            if requested_end is not None and (
+                (requested_end_cmp is not None and available_end_cmp is not None and requested_end_cmp > available_end_cmp)
+                or (requested_end_cmp is None or available_end_cmp is None) and requested_end > available_end
+            ):
                 return error_response(
                     request_id,
                     "time_range_out_of_bounds",

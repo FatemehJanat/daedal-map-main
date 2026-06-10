@@ -9,10 +9,40 @@ from fastapi.responses import JSONResponse
 
 from mapmover.api_query_runtime import is_temporal_time_field
 from mapmover.api_query_shared import build_api_error_response
+from mapmover.runtime.api_contract_normalization import (
+    normalize_machine_metrics,
+    normalize_machine_region_ids,
+)
 
 
-REGION_ID_RE = re.compile(r"^[A-Z0-9][A-Z0-9_]{0,29}$")
 PLAIN_YEAR_RE = re.compile(r"^-?\d{1,6}$")
+
+
+def _build_query_scope_warning(scope: dict[str, Any], message: str) -> dict[str, Any]:
+    estimated_work_score = int(scope.get("estimated_work_score") or 0)
+    scope_class = str(scope.get("scope_class") or "").strip() or "broad"
+    suggestions = scope.get("pricing_guidance") or query_scope_suggestions(scope)
+    return {
+        "level": "hard_cap",
+        "measure": "query_scope",
+        "scope_class": scope_class,
+        "estimated_work_score": estimated_work_score,
+        "message": message,
+        "suggested_narrowing": list(suggestions) if isinstance(suggestions, list) else [],
+    }
+
+
+def _build_query_scope_cap_info(scope: dict[str, Any]) -> dict[str, Any]:
+    estimated_work_score = max(1, int(scope.get("estimated_work_score") or 0))
+    return {
+        "cap_hit": True,
+        "returned_rows": 0,
+        "available_rows": estimated_work_score,
+        "cap_value": 0,
+        "cap_reason": "query_scope_gate",
+        "cap_kind": "display_warning",
+        "measure": "query_scope",
+    }
 
 
 def format_query_time_value(value: Any) -> Any:
@@ -253,6 +283,8 @@ def query_scope_rejection(scope: dict[str, Any]) -> dict[str, Any] | None:
     else:
         return None
 
+    display_warning = _build_query_scope_warning(scope, reason)
+    cap_info = _build_query_scope_cap_info(scope)
     return {
         "code": "query_too_broad",
         "message": reason,
@@ -260,6 +292,8 @@ def query_scope_rejection(scope: dict[str, Any]) -> dict[str, Any] | None:
             "scope_class": scope.get("scope_class"),
             "estimated_work_score": scope.get("estimated_work_score"),
             "suggestions": scope.get("pricing_guidance") or query_scope_suggestions(scope),
+            "display_warning": display_warning,
+            "cap_info": cap_info,
         },
         "retry_hint": "Narrow the request by time, geography, or aggregation before retrying.",
     }
@@ -348,22 +382,24 @@ def validate_metrics(
     *,
     request_id: str | None,
 ) -> tuple[list[str] | None, JSONResponse | None]:
-    if not isinstance(metrics, list) or not metrics:
+    if metrics is not None and not isinstance(metrics, list):
         return None, build_api_error_response(
             request_id,
             "metric_not_available",
             "At least one valid metric is required.",
             400,
+            details={"available_metrics": sorted(spec.metrics)},
             retry_hint="Choose one or more published metrics for this source.",
         )
 
-    normalized_metrics = [str(metric).strip() for metric in metrics if str(metric).strip()]
-    if not normalized_metrics:
+    normalized_metrics, metrics_error, metrics_details = normalize_machine_metrics(spec, metrics)
+    if metrics_error:
         return None, build_api_error_response(
             request_id,
             "metric_not_available",
-            "At least one valid metric is required.",
+            metrics_error,
             400,
+            details=metrics_details,
             retry_hint="Choose one or more published metrics for this source.",
         )
 
@@ -374,6 +410,7 @@ def validate_metrics(
                 "metric_not_available",
                 f"Metric '{metric}' is not available for source '{spec.source_id}'.",
                 400,
+                details={"unknown_metric": metric, "available_metrics": sorted(spec.metrics)},
                 retry_hint="Choose a metric listed for this source in the catalog.",
             )
 
@@ -390,18 +427,4 @@ def validate_metrics(
 
 
 def normalize_region_ids(region_ids: Any) -> tuple[list[str] | None, str | None]:
-    if region_ids and (not isinstance(region_ids, list) or any(not str(value).strip() for value in region_ids)):
-        return None, "region_ids must be a non-empty list of ids."
-
-    normalized_region_ids: list[str] = []
-    seen_region_ids: set[str] = set()
-    for value in region_ids or []:
-        normalized_value = str(value).strip().upper()
-        if not normalized_value:
-            continue
-        if not REGION_ID_RE.match(normalized_value):
-            return None, f"region_id '{value}' contains invalid characters."
-        if normalized_value not in seen_region_ids:
-            seen_region_ids.add(normalized_value)
-            normalized_region_ids.append(normalized_value)
-    return normalized_region_ids, None
+    return normalize_machine_region_ids(region_ids)

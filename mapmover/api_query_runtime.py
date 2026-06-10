@@ -116,6 +116,16 @@ SUPPORTED_DYNAMIC_SOURCES: dict[str, dict[str, Any]] = {
         "default_limit": DEFAULT_LIMIT,
         "max_limit": MAX_LIMIT,
     },
+    "worldpop": {
+        "pack_id": "worldpop",
+        "parquet_name": "population.parquet",
+        "query_mode": "single_source",
+        "location_field": "loc_id",
+        "time_field": "timestamp",
+        "time_granularity": "yearly",
+        "default_limit": 200,
+        "max_limit": 5000,
+    },
     "earthquakes_events": {
         "pack_id": "earthquakes",
         "parquet_name": "events.parquet",
@@ -155,6 +165,26 @@ SUPPORTED_DYNAMIC_SOURCES: dict[str, dict[str, Any]] = {
         "time_granularity": "timestamp",
         "default_limit": 100,
         "max_limit": 1000,
+    },
+    "floods": {
+        "pack_id": "floods",
+        "parquet_name": "events.parquet",
+        "query_mode": "single_source_events",
+        "location_field": "loc_id",
+        "time_field": "timestamp",
+        "time_granularity": "timestamp",
+        "default_limit": 100,
+        "max_limit": 500,
+    },
+    "tornadoes": {
+        "pack_id": "tornadoes",
+        "parquet_name": "events.parquet",
+        "query_mode": "single_source_events",
+        "location_field": "loc_id",
+        "time_field": "timestamp",
+        "time_granularity": "timestamp",
+        "default_limit": 100,
+        "max_limit": 500,
     },
 }
 
@@ -355,6 +385,9 @@ def _build_dynamic_source_spec(source_id: str) -> ApiSourceSpec | None:
 
 
 def is_temporal_time_field(spec: ApiSourceSpec) -> bool:
+    time_field = str(spec.time_field or "").strip().lower()
+    if time_field in {"timestamp", "datetime", "date"}:
+        return True
     return str(spec.time_granularity or "").strip().lower() in {
         "date",
         "daily",
@@ -479,6 +512,14 @@ def get_pack_source_ids(pack_id: str) -> list[str]:
     return sorted(set(source_ids))
 
 
+def _get_api_ready_pack_source_ids(pack_id: str) -> list[str]:
+    return [
+        source_id
+        for source_id in get_pack_source_ids(pack_id)
+        if get_api_source_spec(source_id) is not None
+    ]
+
+
 def normalize_time_granularity(value: str | None) -> str | None:
     normalized = str(value or "").strip().lower()
     if not normalized:
@@ -515,7 +556,17 @@ def resolve_pack_sources_for_metrics(pack_id: str, metrics: list[str]) -> dict[s
             "unknown_metrics": normalized_metrics,
         }
 
-    candidate_sources = get_pack_source_ids(normalized_pack_id)
+    candidate_sources = _get_api_ready_pack_source_ids(normalized_pack_id)
+    if not candidate_sources:
+        return {
+            "pack_id": normalized_pack_id,
+            "requested_metrics": normalized_metrics,
+            "resolution": "unknown_pack_sources",
+            "selected_source_id": None,
+            "required_sources": [],
+            "metrics_by_source": {},
+            "unknown_metrics": normalized_metrics,
+        }
     per_source_metadata: dict[str, dict[str, Any]] = {}
     metric_to_sources: dict[str, list[str]] = {}
     for source_id in candidate_sources:
@@ -594,12 +645,137 @@ def resolve_pack_sources_for_metrics(pack_id: str, metrics: list[str]) -> dict[s
     }
 
 
+def _resolve_default_pack_source(
+    pack_id: str,
+    *,
+    requested_granularity: str | None = None,
+) -> dict[str, Any]:
+    normalized_pack_id = str(pack_id or "").strip()
+    normalized_granularity = normalize_time_granularity(requested_granularity)
+
+    if normalized_pack_id == "currency":
+        granularity_to_source = {
+            "daily": "fx_usd_historical",
+            "weekly": "fx_usd_historical_weekly",
+            "monthly": "fx_usd_historical_monthly",
+        }
+        selected_source_id = granularity_to_source.get(normalized_granularity or "daily")
+        spec = get_api_source_spec(selected_source_id) if selected_source_id else None
+        if spec is None:
+            return {
+                "pack_id": normalized_pack_id,
+                "requested_metrics": [],
+                "resolution": "unsupported_granularity",
+                "selected_source_id": None,
+                "required_sources": [],
+                "metrics_by_source": {},
+                "unknown_metrics": [],
+                "requested_granularity": normalized_granularity,
+                "supported_granularities": sorted(granularity_to_source.keys()),
+            }
+        return {
+            "pack_id": normalized_pack_id,
+            "requested_metrics": [],
+            "resolution": "default_source",
+            "selected_source_id": selected_source_id,
+            "required_sources": [selected_source_id],
+            "metrics_by_source": {selected_source_id: []},
+            "unknown_metrics": [],
+            "requested_granularity": normalized_granularity,
+            "supported_granularities": sorted(granularity_to_source.keys()),
+        }
+
+    candidate_sources = _get_api_ready_pack_source_ids(normalized_pack_id)
+    if not candidate_sources:
+        return {
+            "pack_id": normalized_pack_id,
+            "requested_metrics": [],
+            "resolution": "unknown_pack_sources",
+            "selected_source_id": None,
+            "required_sources": [],
+            "metrics_by_source": {},
+            "unknown_metrics": [],
+            "requested_granularity": normalized_granularity,
+        }
+
+    if len(candidate_sources) == 1:
+        selected_source_id = candidate_sources[0]
+        return {
+            "pack_id": normalized_pack_id,
+            "requested_metrics": [],
+            "resolution": "default_source",
+            "selected_source_id": selected_source_id,
+            "required_sources": [selected_source_id],
+            "metrics_by_source": {selected_source_id: []},
+            "unknown_metrics": [],
+            "requested_granularity": normalized_granularity,
+        }
+
+    ranked_sources: list[tuple[int, str]] = []
+    for source_id in candidate_sources:
+        spec = get_api_source_spec(source_id)
+        if spec is None:
+            continue
+        score = {
+            "single_source_events": 40,
+            "single_source": 30,
+            "single_source_static": 20,
+        }.get(str(spec.query_mode or "").strip(), 0)
+        ranked_sources.append((score, source_id))
+
+    ranked_sources.sort(key=lambda item: (-item[0], item[1]))
+    if not ranked_sources:
+        return {
+            "pack_id": normalized_pack_id,
+            "requested_metrics": [],
+            "resolution": "unknown_pack_sources",
+            "selected_source_id": None,
+            "required_sources": [],
+            "metrics_by_source": {},
+            "unknown_metrics": [],
+            "requested_granularity": normalized_granularity,
+        }
+
+    best_score = ranked_sources[0][0]
+    best_sources = [source_id for score, source_id in ranked_sources if score == best_score]
+    if len(best_sources) != 1:
+        return {
+            "pack_id": normalized_pack_id,
+            "requested_metrics": [],
+            "resolution": "ambiguous_default_source",
+            "selected_source_id": None,
+            "required_sources": sorted(best_sources),
+            "metrics_by_source": {},
+            "unknown_metrics": [],
+            "requested_granularity": normalized_granularity,
+        }
+
+    selected_source_id = best_sources[0]
+    return {
+        "pack_id": normalized_pack_id,
+        "requested_metrics": [],
+        "resolution": "default_source",
+        "selected_source_id": selected_source_id,
+        "required_sources": [selected_source_id],
+        "metrics_by_source": {selected_source_id: []},
+        "unknown_metrics": [],
+        "requested_granularity": normalized_granularity,
+    }
+
+
 def resolve_pack_source_for_query(
     pack_id: str,
     metrics: list[str],
     *,
     requested_granularity: str | None = None,
 ) -> dict[str, Any]:
+    normalized_metrics = [str(metric).strip() for metric in (metrics or []) if str(metric).strip()]
+    if not normalized_metrics:
+        return _resolve_default_pack_source(
+            pack_id,
+            requested_granularity=requested_granularity,
+        )
+
     base = resolve_pack_sources_for_metrics(pack_id, metrics)
     if base.get("resolution") != "single_source":
         base["requested_granularity"] = normalize_time_granularity(requested_granularity)
