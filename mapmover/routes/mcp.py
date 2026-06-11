@@ -128,9 +128,13 @@ PACK_SERVER_PROFILES = {
         },
     },
     "worldpop": {
-        "name": "com.daedalmap/worldpop",
-        "title": "DaedalMap WorldPop Population Estimates",
-        "description": "WorldPop population estimates and density-ready geography from 2000 to 2030 across country and sub-national levels. Source: WorldPop (CC-BY 4.0). Paid via x402 on Base mainnet USDC. Small queries stay cheap; very broad scans cost more or need narrower filters. Call unpaid first to see the exact price before committing.",
+        # Registry-facing name is `population` (the searchable noun) even though the
+        # facade key/path stays `worldpop`; the dict key drives all data/scoping, so
+        # only the generated server.json name/title/description change. See
+        # mcp_distribution_summary.md "population facade" note.
+        "name": "com.daedalmap/population",
+        "title": "DaedalMap Population Estimates",
+        "description": "Global population estimates from WorldPop, 2000-2030, at country and sub-national admin levels. Source: WorldPop (CC-BY 4.0). Paid via x402 on Base mainnet USDC. Small queries stay cheap; very broad scans cost more or need narrower filters. Call unpaid first to see the exact price before committing.",
         "pricing": "paid_x402_base_usdc",
         "registry_meta": {
             "categories": ["demographic", "data", "geospatial"],
