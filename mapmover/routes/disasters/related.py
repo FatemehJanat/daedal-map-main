@@ -76,6 +76,9 @@ EXACT_EVENT_ID_RULES = [
     {"regex": re.compile(r"^(?:dfo|gfd)-\d+$", re.IGNORECASE), "packs": ("floods",), "strict": True},
     {"regex": re.compile(r"^\d{7}[ns]\d{5}$", re.IGNORECASE), "packs": ("hurricanes",), "strict": True},
     {"regex": re.compile(r"^can-\d+$", re.IGNORECASE), "packs": ("tornadoes",), "strict": True},
+    {"regex": re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE), "packs": ("wildfires",), "strict": True},
+    {"regex": re.compile(r"^[A-Z]{2}\d{17,20}$", re.IGNORECASE), "packs": ("wildfires",), "strict": True},
+    {"regex": re.compile(r"^[A-Z]{2}(?:-[A-Z]{2})?-\d{4}-[A-Za-z0-9-]+$", re.IGNORECASE), "packs": ("wildfires",), "strict": True},
     {"regex": re.compile(r"(?:-torn-|tornado)", re.IGNORECASE), "packs": ("tornadoes",), "strict": True},
     {"regex": re.compile(r"^(?:us|ak|at|av|ci|hv|mb|nc|nm|nn|pr|pt|se|tx|uu|uw)[a-z0-9._-]{3,}$", re.IGNORECASE), "packs": ("earthquakes",), "strict": True},
     {"regex": re.compile(r"^(?:iscgem|iscgemsup|rusms|noaa-sig|gcmtc|gcmtb|official|cent|ld|eqh|cdmg|aacse|ismpkansas|ok|snm|wes|flag|ew|ott)", re.IGNORECASE), "packs": ("earthquakes",), "strict": True},
@@ -88,7 +91,6 @@ def _classify_exact_event_identifier(identifier_value: str) -> tuple[list[str], 
     if not normalized:
         return [], False
 
-    matched_packs: list[str] = []
     for rule in EXACT_EVENT_ID_RULES:
         if rule["regex"].search(normalized):
             return list(rule["packs"]), bool(rule["strict"])
@@ -96,7 +98,7 @@ def _classify_exact_event_identifier(identifier_value: str) -> tuple[list[str], 
     if normalized.isdigit():
         return ["tornadoes", "wildfires"], False
 
-    return [], False
+    return ["wildfires"], False
 
 
 def _infer_exact_event_pack_hints(identifier_value: str) -> list[str]:

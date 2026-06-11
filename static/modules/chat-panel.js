@@ -696,6 +696,28 @@ function inferSingleEntityRouteParams(order = null, response = null) {
   return { packId, sourceId };
 }
 
+function restoreSingleEntityDisplay(order = null, response = null, mode = 'explore') {
+  const entityParams = inferSingleEntityRouteParams(order, response);
+  const overlayId = resolveOverlayIdForDefaultEntity(entityParams || {});
+  if (overlayId) {
+    OverlaySelector?.showOverlay?.(overlayId, mode);
+    if (OverlaySelector && !OverlaySelector.isActive(overlayId)) {
+      OverlaySelector.setActive(overlayId, true);
+    }
+    window.App?.syncMetricOverlayVisibility?.();
+  }
+
+  window.OverlayController?.rerenderFromCache?.();
+  window.App?.syncMetricOverlayVisibility?.();
+
+  if (isExactEventOrder(order)) {
+    applyExactEventFocusState(order, response);
+    scheduleExactEventFocusRefresh(order, response);
+  }
+
+  return entityParams;
+}
+
 /**
  * Route metrics order results to OverlayController for cache ingestion.
  * @param {Object} response - API response with data_type 'metrics'
@@ -2400,20 +2422,11 @@ export const ChatManager = {
       if (!options.suppressResultMessage) {
         this.addMessage(data.message || 'This data is already loaded on your map.', 'assistant');
       }
-      const entityParams = inferSingleEntityRouteParams(order, data);
+      const entityParams = restoreSingleEntityDisplay(order, data, requestMode);
       if (entityParams) {
         this.reflectLoadedEntity('explore', entityParams);
       }
       if (orderPanel.switchTab) orderPanel.switchTab('loaded');
-      // The data is in cache but may have been hidden or cleared from the map
-      // (e.g. choropleth layers hidden on a lane/state change). Re-render from
-      // cache and re-sync visibility so "already loaded" actually re-displays it
-      // instead of leaving a dead message with nothing on screen.
-      window.OverlayController?.rerenderFromCache?.();
-      window.App?.syncMetricOverlayVisibility?.();
-      if (options.exactEventFocus) {
-        applyExactEventFocusState(order, data);
-      }
     } else if (data.type === 'error') {
       if (!options.suppressResultMessage) {
         this.addMessage(data.message || 'Failed to load data.', 'assistant');
