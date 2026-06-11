@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import pandas as pd
-from fastapi import APIRouter
+import re
+import json
+from pathlib import Path
+from fastapi import APIRouter, Query
 
 from mapmover import logger
-from mapmover.duckdb_helpers import duckdb_available, parquet_available, select_rows
+from mapmover.data_loading import get_source_path, load_source_metadata
+from mapmover.duckdb_helpers import duckdb_available, is_cloud_mode, parquet_available, select_rows
 from mapmover.paths import GLOBAL_DIR
 from mapmover.runtime_config import get_runtime_config
 from mapmover.storage_mode import get_runtime_mode
+from mapmover.execution.event_loading import resolve_event_parquet_path_for_source
 
 from .helpers import msgpack_error, msgpack_response
 from .earthquakes import get_earthquake_property_builders
@@ -51,6 +56,275 @@ EVENT_TABLES = {
 }
 
 MAX_CHAIN_DEPTH = 2
+EXACT_EVENT_SOURCE_REGISTRY = [
+    {"pack_id": "earthquakes", "source_id": "earthquakes_events", "event_type": "earthquake", "id_fields": ("event_id",), "metadata_source_id": "earthquakes_events"},
+    {"pack_id": "hurricanes", "source_id": "hurricanes", "event_type": "hurricane", "id_fields": ("storm_id", "event_id"), "parquet_path": GLOBAL_DIR / "disasters/hurricanes/events.parquet"},
+    {"pack_id": "volcanoes", "source_id": "volcanoes_events", "event_type": "volcano", "id_fields": ("event_id",), "metadata_source_id": "volcanoes_events"},
+    {"pack_id": "wildfires", "source_id": "wildfires", "event_type": "wildfire", "id_fields": ("event_id",), "parquet_path": GLOBAL_DIR / "disasters/wildfires/events.parquet"},
+    {"pack_id": "tsunamis", "source_id": "tsunamis_events", "event_type": "tsunami", "id_fields": ("event_id",), "metadata_source_id": "tsunamis_events"},
+    {"pack_id": "tornadoes", "source_id": "tornadoes", "event_type": "tornado", "id_fields": ("event_id",), "parquet_path": GLOBAL_DIR / "disasters/tornadoes/events.parquet"},
+    {"pack_id": "floods", "source_id": "floods", "event_type": "flood", "id_fields": ("event_id",), "parquet_path": GLOBAL_DIR / "disasters/floods/events.parquet"},
+    {"pack_id": "landslides", "source_id": "landslides", "event_type": "landslide", "id_fields": ("event_id",), "parquet_path": GLOBAL_DIR / "disasters/landslides/events.parquet"},
+    {"pack_id": "drought", "source_id": "drought", "event_type": "drought", "id_fields": ("event_id",), "parquet_path": GLOBAL_DIR / "disasters/drought/events.parquet"},
+]
+LAT_FIELDS = ("lat", "latitude", "centroid_lat")
+LON_FIELDS = ("lon", "longitude", "centroid_lon")
+TIME_FIELDS = ("timestamp", "observed_at", "event_time", "start_time", "updated_at", "last_updated", "time", "date")
+EXACT_EVENT_ID_RULES = [
+    {"regex": re.compile(r"^ts\d{4,}$", re.IGNORECASE), "packs": ("tsunamis",), "strict": True},
+    {"regex": re.compile(r"^ve\d{4,}$", re.IGNORECASE), "packs": ("volcanoes",), "strict": True},
+    {"regex": re.compile(r"^(?:dfo|gfd)-\d+$", re.IGNORECASE), "packs": ("floods",), "strict": True},
+    {"regex": re.compile(r"^\d{7}[ns]\d{5}$", re.IGNORECASE), "packs": ("hurricanes",), "strict": True},
+    {"regex": re.compile(r"^can-\d+$", re.IGNORECASE), "packs": ("tornadoes",), "strict": True},
+    {"regex": re.compile(r"(?:-torn-|tornado)", re.IGNORECASE), "packs": ("tornadoes",), "strict": True},
+    {"regex": re.compile(r"^(?:us|ak|at|av|ci|hv|mb|nc|nm|nn|pr|pt|se|tx|uu|uw)[a-z0-9._-]{3,}$", re.IGNORECASE), "packs": ("earthquakes",), "strict": True},
+    {"regex": re.compile(r"^(?:iscgem|iscgemsup|rusms|noaa-sig|gcmtc|gcmtb|official|cent|ld|eqh|cdmg|aacse|ismpkansas|ok|snm|wes|flag|ew|ott)", re.IGNORECASE), "packs": ("earthquakes",), "strict": True},
+    {"regex": re.compile(r"(?:irwin|mtbs|-fire-)", re.IGNORECASE), "packs": ("wildfires",), "strict": True},
+]
+
+
+def _classify_exact_event_identifier(identifier_value: str) -> tuple[list[str], bool]:
+    normalized = str(identifier_value or "").strip()
+    if not normalized:
+        return [], False
+
+    matched_packs: list[str] = []
+    for rule in EXACT_EVENT_ID_RULES:
+        if rule["regex"].search(normalized):
+            return list(rule["packs"]), bool(rule["strict"])
+
+    if normalized.isdigit():
+        return ["tornadoes", "wildfires"], False
+
+    return [], False
+
+
+def _infer_exact_event_pack_hints(identifier_value: str) -> list[str]:
+    hints, _strict = _classify_exact_event_identifier(identifier_value)
+    return hints
+
+
+def _resolve_exact_event_parquet(source_id: str):
+    return resolve_event_parquet_path_for_source(
+        source_id,
+        "events",
+        get_source_path_func=get_source_path,
+        load_source_metadata_func=load_source_metadata,
+        is_cloud_mode_func=is_cloud_mode,
+    )
+
+
+def _resolve_exact_event_parquet_for_candidate(candidate: dict):
+    direct_path = candidate.get("parquet_path")
+    if direct_path:
+        return Path(direct_path), {}
+    return _resolve_exact_event_parquet(str(candidate.get("source_id") or ""))
+
+
+def _load_exact_event_metadata(candidate: dict) -> dict:
+    metadata_source_id = str(candidate.get("metadata_source_id") or "").strip()
+    if not metadata_source_id:
+        return {}
+    metadata = load_source_metadata(metadata_source_id)
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _find_first_present(row: dict, candidates: tuple[str, ...]):
+    for field in candidates:
+        value = row.get(field)
+        if value is not None and not pd.isna(value):
+            return value
+    return None
+
+
+def _parse_bbox_props(value) -> tuple[float, float, float, float] | None:
+    if value is None or pd.isna(value):
+        return None
+    parsed = value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            return None
+    if not isinstance(parsed, (list, tuple)) or len(parsed) != 4:
+        return None
+    try:
+        min_lon, min_lat, max_lon, max_lat = [float(v) for v in parsed]
+    except Exception:
+        return None
+    return min_lon, min_lat, max_lon, max_lat
+
+
+def _parse_track_coords(value) -> list[list[float]] | None:
+    if value is None or pd.isna(value):
+        return None
+    parsed = value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            return None
+    if not isinstance(parsed, list) or len(parsed) < 2:
+        return None
+    coords: list[list[float]] = []
+    for item in parsed:
+        if not isinstance(item, (list, tuple)) or len(item) < 2:
+            continue
+        try:
+            lon = float(item[0])
+            lat = float(item[1])
+        except Exception:
+            continue
+        coords.append([lon, lat])
+    return coords if len(coords) >= 2 else None
+
+
+def _build_exact_event_geometry(props: dict, event_type: str) -> dict | None:
+    lat = _find_first_present(props, LAT_FIELDS)
+    lon = _find_first_present(props, LON_FIELDS)
+    if lat is not None and lon is not None:
+        return {"type": "Point", "coordinates": [float(lon), float(lat)]}
+
+    bbox = _parse_bbox_props(props.get("bbox"))
+    if bbox is not None:
+        min_lon, min_lat, max_lon, max_lat = bbox
+        props.setdefault("bbox_min_lon", min_lon)
+        props.setdefault("bbox_min_lat", min_lat)
+        props.setdefault("bbox_max_lon", max_lon)
+        props.setdefault("bbox_max_lat", max_lat)
+        centroid_lon = (min_lon + max_lon) / 2.0
+        centroid_lat = (min_lat + max_lat) / 2.0
+        props.setdefault("centroid_lon", centroid_lon)
+        props.setdefault("centroid_lat", centroid_lat)
+        return {"type": "Point", "coordinates": [centroid_lon, centroid_lat]}
+
+    if event_type == "hurricane":
+        track_coords = _parse_track_coords(props.get("track_coords"))
+        if track_coords:
+            mid_index = max(0, len(track_coords) // 2)
+            centroid_lon = float(track_coords[mid_index][0])
+            centroid_lat = float(track_coords[mid_index][1])
+            props.setdefault("centroid_lon", centroid_lon)
+            props.setdefault("centroid_lat", centroid_lat)
+            return {"type": "Point", "coordinates": [centroid_lon, centroid_lat]}
+
+    return None
+
+
+def _build_exact_event_feature(row: dict, event_type: str, source_id: str, pack_id: str, identifier_field: str, metadata: dict | None = None) -> dict | None:
+    props = {}
+    for key, value in row.items():
+        if value is None or pd.isna(value):
+            continue
+        if hasattr(value, "item"):
+            value = value.item()
+        if isinstance(value, pd.Timestamp):
+            value = value.isoformat()
+        props[key] = value
+
+    exact_value = str(props.get(identifier_field) or "").strip()
+    if exact_value and "event_id" not in props:
+        props["event_id"] = exact_value
+    props["event_type"] = props.get("event_type") or event_type
+    geometry = _build_exact_event_geometry(props, event_type)
+    if geometry is None:
+        return None
+    metadata = metadata or {}
+    source_name = str(metadata.get("source_name", source_id))
+    source_url = str(metadata.get("source_url", ""))
+
+    return {
+        "type": "events",
+        "data_type": "events",
+        "source_id": source_id,
+        "pack_id": pack_id,
+        "event_type": event_type,
+        "geojson": {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": geometry,
+                    "properties": props,
+                }
+            ],
+        },
+        "count": 1,
+        "summary": f"Showing {pack_id} event {props.get('event_id') or exact_value}",
+        "sources": [{
+            "id": source_id,
+            "name": source_name,
+            "url": source_url,
+        }],
+    }
+
+
+def _query_exact_event(candidate: dict, identifier_field: str, identifier_value: str) -> pd.DataFrame:
+    parquet_path, _metadata = _resolve_exact_event_parquet_for_candidate(candidate)
+    variants = [identifier_value]
+    if isinstance(identifier_value, str):
+        lowered = identifier_value.lower()
+        uppered = identifier_value.upper()
+        for variant in (lowered, uppered):
+            if variant not in variants:
+                variants.append(variant)
+
+    for variant in variants:
+        df = select_rows(
+            parquet_path,
+            exact_filters={identifier_field: variant},
+        )
+        if not df.empty:
+            return df
+
+    return pd.DataFrame()
+
+
+def _resolve_exact_event_payload(identifier_value: str, pack_id: str | None = None) -> dict | None:
+    normalized_identifier = str(identifier_value or "").strip()
+    if not normalized_identifier:
+        return None
+
+    candidates = EXACT_EVENT_SOURCE_REGISTRY
+    if pack_id:
+        normalized_pack = str(pack_id).strip().lower()
+        candidates = [entry for entry in candidates if entry["pack_id"] == normalized_pack]
+    else:
+        hinted_packs, strict_hint = _classify_exact_event_identifier(normalized_identifier)
+        if hinted_packs:
+            hinted_set = set(hinted_packs)
+            if strict_hint:
+                candidates = [entry for entry in candidates if entry["pack_id"] in hinted_set]
+            else:
+                candidates = sorted(
+                    candidates,
+                    key=lambda entry: (0 if entry["pack_id"] in hinted_set else 1, hinted_packs.index(entry["pack_id"]) if entry["pack_id"] in hinted_set else 999)
+                )
+
+    for candidate in candidates:
+        source_id = candidate["source_id"]
+        event_type = candidate["event_type"]
+        metadata = _load_exact_event_metadata(candidate)
+        for identifier_field in candidate["id_fields"]:
+            try:
+                df = _query_exact_event(candidate, identifier_field, normalized_identifier)
+            except Exception as exc:
+                logger.warning("Exact event lookup failed for %s.%s=%s: %s", source_id, identifier_field, normalized_identifier, exc)
+                continue
+            if df.empty:
+                continue
+            row = df.head(1).iloc[0].to_dict()
+            payload = _build_exact_event_feature(
+                row,
+                event_type=event_type,
+                source_id=source_id,
+                pack_id=candidate["pack_id"],
+                identifier_field=identifier_field,
+                metadata=metadata,
+            )
+            if payload:
+                return payload
+    return None
 
 
 def _read_link_rows(links_path, column: str, loc_id: str) -> pd.DataFrame:
@@ -349,6 +623,24 @@ async def get_event_by_loc_id(loc_id: str):
         )
     except Exception as e:
         logger.error(f"Error resolving linked event {loc_id}: {e}")
+        return msgpack_error(str(e), 500)
+
+
+@router.get("/api/events/exact/{event_id:path}")
+async def get_event_by_exact_id(event_id: str, pack_id: str | None = Query(default=None)):
+    """Resolve one stable event id across canonical event sources."""
+    try:
+        if not event_id:
+            return msgpack_error("Missing event id", 400)
+
+        payload = _resolve_exact_event_payload(event_id, pack_id=pack_id)
+        if payload is None:
+            scope_text = f" in pack {pack_id}" if pack_id else ""
+            return msgpack_error(f"Event {event_id} was not found{scope_text}", 404)
+
+        return msgpack_response(payload)
+    except Exception as e:
+        logger.error(f"Error resolving exact event {event_id}: {e}")
         return msgpack_error(str(e), 500)
 
 

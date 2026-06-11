@@ -2009,6 +2009,33 @@ def _history_count_noun(feed: str) -> str:
     return nouns.get(feed, _feed_display_name(feed))
 
 
+def _feed_to_explore_pack(feed: str) -> str:
+    mapping = {
+        "earthquakes": "earthquakes",
+        "tsunamis": "tsunamis",
+        "volcanoes": "volcanoes",
+        "wildfires_us_nifc": "wildfires",
+        "hurricanes_ibtracs_nrt": "hurricanes",
+    }
+    return mapping.get(feed, "")
+
+
+def _build_exact_event_explore_handoff(feed: str, identifier_value: str) -> str:
+    pack_id = _feed_to_explore_pack(feed)
+    noun = _history_count_noun(feed)
+    identifier = str(identifier_value or "").strip()
+    if not pack_id or not identifier:
+        return (
+            f"I could not find that {noun} record in the retained Ops window. "
+            "Ops only keeps about 72 hours of live history; use Explore for the full historical record."
+        )
+    return (
+        f"I could not find that {noun} record in the retained Ops window. "
+        f"Ops only keeps about 72 hours of live history; try Explore for the full historical record: "
+        f"/explore?pack={pack_id}&event_id={identifier}"
+    )
+
+
 def _history_entries_in_window(
     *,
     snapshot: dict,
@@ -2652,7 +2679,10 @@ def _try_exact_event_result(
             effective_feeds=effective_feeds,
             message=f"Showing {_focus_feature_name(feed, matched_feature.get('properties') or {})}.",
         )
-    return None
+    return {
+        "type": "chat",
+        "message": _build_exact_event_explore_handoff(feed, identifier_value),
+    }
 
 
 def _try_direct_ops_answer(

@@ -1303,7 +1303,7 @@ export const TimeSlider = {
       const lower = this.boundMinTime !== null ? this.formatTimeLabel(this.boundMinTime) : 'start';
       const upper = this.boundMaxTime !== null ? this.formatTimeLabel(this.boundMaxTime) : 'end';
       console.log(`Trim bounds set: ${lower} to ${upper}`);
-
+      this._notifyChangeListeners('bounds');
     };
 
     // Mouse events for lower handle
@@ -1374,6 +1374,7 @@ export const TimeSlider = {
     this.boundMaxTime = max != null ? this.normalizeToTimestamp(max) : null;
     this.updateTrimHandlePositions();
     console.log(`[TimeSlider] Trim bounds set: ${min} - ${max}`);
+    this._notifyChangeListeners('bounds');
   },
 
   /**
@@ -1384,6 +1385,7 @@ export const TimeSlider = {
     this.boundMaxTime = null;
     this.updateTrimHandlePositions();
     console.log('Trim bounds cleared');
+    this._notifyChangeListeners('bounds');
   },
 
   /**
@@ -1690,6 +1692,17 @@ export const TimeSlider = {
         ChoroplethManager.updateScaleForValues(values, this.metricKey);
       }
     }
+  },
+
+  hasActiveTrimBounds() {
+    return this.boundMinTime !== null || this.boundMaxTime !== null;
+  },
+
+  getEffectiveBounds() {
+    return {
+      min: this.boundMinTime !== null ? this.boundMinTime : this.minTime,
+      max: this.boundMaxTime !== null ? this.boundMaxTime : this.maxTime
+    };
   },
 
   /**

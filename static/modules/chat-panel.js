@@ -4,7 +4,7 @@
  */
 
 import { CONFIG } from './config.js';
-import { postMsgpack, logExecutedOrder } from './utils/fetch.js';
+import { fetchMsgpack, postMsgpack, logExecutedOrder } from './utils/fetch.js';
 
 // Reusable modules
 import {
@@ -55,10 +55,13 @@ import { TutorialMode, parseTutorialCommand } from './tutorial-mode.js';
 import { ResearchModeToggle } from './research/mode.js';
 import {
   getOpsOverlayIdsForFeeds,
+  getOverlayCatalogEntriesByPackId,
+  getOverlayCatalogEntryBySourceId,
   resolveOverlayIdFromPackId,
   resolveOverlayIdFromSourceId,
   setOpsEffectiveFeeds as setOverlaySelectorOpsEffectiveFeeds
 } from './overlay-selector.js';
+import { ModelRegistry } from './models/model-registry.js';
 import {
   isMixedResearchRasterRequest as isMixedResearchRasterRequestImpl,
   shouldAutoShowResearchRaster as shouldAutoShowResearchRasterImpl,
@@ -207,6 +210,52 @@ Or browse the full pack library: https://www.daedalmap.com/packs
 What would you like to explore?`;
 }
 
+const EXACT_EVENT_QUERY_PREFIX = /\b(?:show|map|locate|focus on|zoom to|go to|open)\b/i;
+const EXACT_EVENT_ENTITY_HINTS = [
+  { tokens: ['earthquake', 'earthquakes', 'quake', 'quakes', 'seismic'], packId: 'earthquakes', feedId: 'earthquakes' },
+  { tokens: ['tsunami', 'tsunamis', 'runup', 'runups'], packId: 'tsunamis', feedId: 'tsunamis' },
+  { tokens: ['volcano', 'volcanoes', 'eruption', 'eruptions'], packId: 'volcanoes', feedId: 'volcanoes' },
+  { tokens: ['wildfire', 'wildfires', 'fire', 'fires', 'nifc'], packId: 'wildfires', feedId: 'wildfires_us_nifc' },
+  { tokens: ['hurricane', 'hurricanes', 'storm', 'storms', 'cyclone', 'typhoon', 'ibtracs'], packId: 'hurricanes', feedId: 'hurricanes_ibtracs_nrt' },
+  { tokens: ['flood', 'floods'], packId: 'floods', feedId: 'floods' },
+  { tokens: ['tornado', 'tornadoes', 'twister', 'twisters'], packId: 'tornadoes', feedId: 'tornadoes' }
+];
+function parseExactEventIntent(query) {
+  const text = String(query || '').trim();
+  if (!text) return null;
+
+  const lower = text.toLowerCase();
+  if (!EXACT_EVENT_QUERY_PREFIX.test(lower) && !/\b(?:event[_\s]?id|storm[_\s]?id|fire[_\s]?id)\b/i.test(text)) {
+    return null;
+  }
+
+  const compact = text
+    .replace(/\bon the map\b/ig, '')
+    .replace(/\bfor\s+[a-z_]+\b/ig, (match) => match)
+    .trim();
+
+  const explicitMatch = compact.match(/\b(?:event[_\s]?id|storm[_\s]?id|fire[_\s]?id|id)\b\s*[:=]?\s*([A-Za-z0-9._:-]{4,})\b/i);
+  const tailMatch = compact.match(/([A-Za-z0-9._:-]{4,})\s*$/);
+  const eventId = String(explicitMatch?.[1] || tailMatch?.[1] || '').trim();
+  if (!eventId) {
+    return null;
+  }
+
+  let hinted = null;
+  for (const candidate of EXACT_EVENT_ENTITY_HINTS) {
+    if (candidate.tokens.some((token) => lower.includes(token))) {
+      hinted = candidate;
+      break;
+    }
+  }
+
+  return {
+    eventId,
+    packId: hinted?.packId || '',
+    feedId: hinted?.feedId || ''
+  };
+}
+
 function extractRequestedDisplayColor(text) {
   const normalized = String(text || '').trim().toLowerCase();
   if (!normalized) return null;
@@ -322,6 +371,19 @@ export function getLoadedDataList() {
   return [...loadedDataList];
 }
 
+function parseExactEventPackReply(query) {
+  const lower = String(query || '').trim().toLowerCase();
+  if (!lower) {
+    return '';
+  }
+  for (const candidate of EXACT_EVENT_ENTITY_HINTS) {
+    if (candidate.tokens.some((token) => lower.includes(token))) {
+      return candidate.packId || '';
+    }
+  }
+  return '';
+}
+
 /**
  * Clear all loaded data (on session reset).
  */
@@ -381,10 +443,129 @@ function ingestEventsToOverlay(response, order = null) {
 function renderUnifiedOverlayEventResult(response, order = null) {
   const overlayId = ingestEventsToOverlay(response, order);
   if (overlayId && response?.geojson?.features?.length) {
-    MapAdapter?.fitToBounds?.(response.geojson);
+    if (!focusExactEventResult(response, { order, overlayId })) {
+      MapAdapter?.fitToBounds?.(response.geojson);
+    }
     focusEventResultTime(response, overlayId, order);
   }
   return Boolean(overlayId);
+}
+
+function getExactEventOverlayId(order = null, response = null) {
+  return (
+    resolveOverlayIdForOrderResult(response, order)
+    || resolveOverlayIdFromSourceId(String(order?.items?.[0]?.source_id || '').trim())
+    || resolveOverlayIdFromPackId(String(order?.items?.[0]?.pack_id || '').trim())
+    || ''
+  );
+}
+
+function applyExactEventFocusState(order = null, response = null) {
+  if (!isExactEventOrder(order)) {
+    return false;
+  }
+
+  const overlayId = getExactEventOverlayId(order, response);
+  if (!overlayId) {
+    return false;
+  }
+
+  const featureTargetId = String(
+    order?.items?.[0]?.filters?.event_id
+    || order?.items?.[0]?.filters?.storm_id
+    || ''
+  ).trim();
+  if (!featureTargetId) {
+    return false;
+  }
+
+  const cached = window.OverlayController?.getCachedData?.(overlayId);
+  const cachedFeatures = Array.isArray(cached?.features) ? cached.features : [];
+  const exactFeature = cachedFeatures.find((feature) => {
+    const props = feature?.properties || {};
+    const candidateId = String(props.event_id || props.storm_id || feature?.id || '').trim();
+    return candidateId === featureTargetId;
+  });
+  if (!exactFeature) {
+    return false;
+  }
+
+  const responseFeature = {
+    ...(response || {}),
+    geojson: {
+      type: 'FeatureCollection',
+      features: [exactFeature]
+    }
+  };
+  const eventType = String(
+    response?.event_type
+    || exactFeature?.properties?.event_type
+    || ''
+  ).trim();
+  const model = eventType ? ModelRegistry?.getModelForType?.(eventType) : null;
+  if (model && typeof model._selectEvent === 'function') {
+    model._selectEvent(featureTargetId, eventType);
+  }
+  focusExactEventResult(responseFeature, { order, overlayId });
+  focusEventResultTime(responseFeature, overlayId, order);
+  return true;
+}
+
+function scheduleExactEventFocusRefresh(order = null, response = null) {
+  if (!isExactEventOrder(order)) {
+    return;
+  }
+
+  const rerun = () => {
+    try {
+      applyExactEventFocusState(order, response);
+    } catch (error) {
+      console.warn('[ExactEvent] Focus refresh failed:', error);
+    }
+  };
+
+  if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+    window.requestAnimationFrame(() => {
+      rerun();
+      window.requestAnimationFrame(rerun);
+    });
+  }
+
+  if (typeof window !== 'undefined' && typeof window.setTimeout === 'function') {
+    window.setTimeout(rerun, 180);
+    window.setTimeout(rerun, 420);
+  }
+}
+
+function isExactEventOrder(order = null) {
+  const items = Array.isArray(order?.items) ? order.items : [];
+  if (items.length !== 1) return false;
+  const filters = items[0]?.filters || {};
+  return Boolean(String(filters?.event_id || filters?.storm_id || '').trim());
+}
+
+function focusExactEventResult(response, options = {}) {
+  if (!MapAdapter) return false;
+  const features = Array.isArray(response?.geojson?.features) ? response.geojson.features : [];
+  if (features.length !== 1) return false;
+  if (!isExactEventOrder(options.order)) return false;
+
+  const feature = features[0];
+  const geometry = feature?.geometry || null;
+  if (!geometry) return false;
+
+  if (geometry.type === 'Point') {
+    const coords = Array.isArray(geometry.coordinates) ? geometry.coordinates : null;
+    if (!coords || coords.length < 2) return false;
+    const lon = Number(coords[0]);
+    const lat = Number(coords[1]);
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) return false;
+    MapAdapter.flyTo([lon, lat], 8);
+    return true;
+  }
+
+  MapAdapter.fitToBounds(response.geojson, { maxZoom: 9 });
+  return true;
 }
 
 function toEventTimestamp(value) {
@@ -402,17 +583,29 @@ function getRepresentativeEventTimestamp(response = {}) {
     const props = features[0]?.properties || {};
     return (
       toEventTimestamp(props.timestamp)
+      || toEventTimestamp(props.observed_at)
+      || toEventTimestamp(props.event_time)
+      || toEventTimestamp(props.start_time)
+      || toEventTimestamp(props.updated_at)
+      || toEventTimestamp(props.last_updated)
       || toEventTimestamp(props.time)
       || toEventTimestamp(props.date)
+      || toEventTimestamp(response?.time_range?.max)
+      || toEventTimestamp(response?.time_range?.min)
       || null
     );
   }
 
   const range = response?.time_range || null;
   if (range?.min && range?.max) {
-    const spanMs = Number(range.max) - Number(range.min);
+    const minTs = toEventTimestamp(range.min);
+    const maxTs = toEventTimestamp(range.max);
+    if (!Number.isFinite(minTs) || !Number.isFinite(maxTs)) {
+      return null;
+    }
+    const spanMs = maxTs - minTs;
     if (Number.isFinite(spanMs) && spanMs >= 0 && spanMs <= 14 * 24 * 60 * 60 * 1000) {
-      return Number(range.max);
+      return maxTs;
     }
   }
 
@@ -444,6 +637,12 @@ function focusEventResultTime(response, overlayId, order = null) {
   timeSlider.setTime(timestamp, 'api');
   overlayController?.showTimelineIfAllowed?.();
   overlayController?.renderFilteredData?.(overlayId, timestamp, { useTimestamp: true });
+  if (typeof window !== 'undefined' && window.requestAnimationFrame) {
+    window.requestAnimationFrame(() => {
+      timeSlider.setTime(timestamp, 'api');
+      overlayController?.renderFilteredData?.(overlayId, timestamp, { useTimestamp: true });
+    });
+  }
 }
 
 function formatDefaultLoadItemLabel(item) {
@@ -583,6 +782,7 @@ export const ChatManager = {
     pendingMetricOrder: null,
     pendingDisplayOrder: null,
     pendingResearchDisplayWarning: null,
+    pendingExactEventIntent: null,
   sessionId: null,
   researchCorpusOptionsLoading: false,
   messagePanes: {},
@@ -592,6 +792,137 @@ export const ChatManager = {
   addressMarker: null,
   googleMapsLoader: null,
   recentAssistantMessages: new Map(),
+
+  resolveExactEventLoadParams(query, mode = this.mode) {
+    if (normalizeChatMode(mode) === 'explore' && this.pendingExactEventIntent) {
+      const followupPackId = parseExactEventPackReply(query);
+      if (followupPackId) {
+        const eventId = String(this.pendingExactEventIntent?.eventId || '').trim();
+        if (eventId) {
+          return {
+            packId: followupPackId,
+            eventId
+          };
+        }
+      }
+    }
+
+    const intent = parseExactEventIntent(query);
+    if (!intent) {
+      return null;
+    }
+
+    const lane = normalizeChatMode(mode);
+    if (lane === 'ops') {
+      const effectiveFeeds = Array.isArray(this.latestOpsReport?.effective_feeds)
+        ? this.latestOpsReport.effective_feeds.map((feed) => String(feed || '').trim()).filter(Boolean)
+        : [];
+      const hintedFeedId = String(intent.feedId || '').trim();
+      const feedId = hintedFeedId && effectiveFeeds.includes(hintedFeedId)
+        ? hintedFeedId
+        : (effectiveFeeds.length === 1 ? effectiveFeeds[0] : '');
+      if (!feedId) {
+        return null;
+      }
+      return {
+        feedId,
+        eventId: intent.eventId
+      };
+    }
+
+    if (lane !== 'explore') {
+      return null;
+    }
+
+    return {
+      packId: String(intent.packId || '').trim(),
+      eventId: intent.eventId
+    };
+  },
+
+  async loadExactEventByParams(params = {}, options = {}) {
+    const lane = normalizeChatMode(options.mode || this.mode);
+    const eventId = String(params?.eventId || '').trim();
+    const packId = String(params?.packId || '').trim();
+    if (!eventId || lane !== 'explore') {
+      return false;
+    }
+
+    const requestParams = new URLSearchParams();
+    if (packId) {
+      requestParams.set('pack_id', packId);
+    }
+    const url = `/api/events/exact/${encodeURIComponent(eventId)}${requestParams.toString() ? `?${requestParams.toString()}` : ''}`;
+
+    try {
+      const result = await fetchMsgpack(url);
+      const resolvedPackId = String(result?.pack_id || packId || '').trim();
+      const sourceId = String(result?.source_id || '').trim();
+      const exactIdKey = String(result?.event_type || '').trim() === 'hurricane' ? 'storm_id' : 'event_id';
+      const syntheticOrder = {
+        items: [{
+          pack_id: resolvedPackId,
+          source_id: sourceId,
+          mode: 'events',
+          filters: { [exactIdKey]: eventId }
+        }]
+      };
+      renderUnifiedOverlayEventResult(result, syntheticOrder);
+      applyExactEventFocusState(syntheticOrder, result);
+      scheduleExactEventFocusRefresh(syntheticOrder, result);
+      this.reflectLoadedEntity(lane, {
+        packId: resolvedPackId,
+        sourceId,
+        eventId
+      });
+      if (options.announce !== false) {
+        const message = String(
+          result?.summary
+          || result?.message
+          || `Showing ${resolvedPackId} event ${eventId}`
+        ).trim();
+        if (message) {
+          this.addMessage(message, 'assistant', { mode: lane });
+        }
+      }
+      return true;
+    } catch (error) {
+      this.pendingExactEventIntent = { eventId };
+      const forcedPackId = String(packId || '').trim();
+      if (options.announce !== false) {
+        const message = forcedPackId
+          ? `I could not find exact event ${eventId} in ${forcedPackId}.`
+          : `I could not find exact event ${eventId}. Reply with the disaster type only if you want me to force one pack.`;
+        this.addMessage(message, 'assistant', { mode: lane });
+      }
+      console.warn('Exact event resolver failed:', { eventId, packId: forcedPackId }, error);
+      return true;
+    }
+  },
+
+  async executeExactEventDirectLoad(query, mode = this.mode) {
+    const params = this.resolveExactEventLoadParams(query, mode);
+    if (!params?.eventId) {
+      return false;
+    }
+
+    const lane = normalizeChatMode(mode);
+    if (lane === 'explore') {
+      this.pendingExactEventIntent = null;
+      return this.loadExactEventByParams(
+        { eventId: params.eventId, packId: params.packId },
+        { mode: lane, announce: true }
+      );
+    }
+
+    const handled = await this.runDefaultLoad(params, {
+      mode: lane,
+      suppressResultMessage: false,
+      syntheticSource: 'exact_event_chat',
+      force: true
+    });
+    return Boolean(handled);
+  },
 
   /**
    * Initialize chat manager
@@ -808,7 +1139,8 @@ export const ChatManager = {
           // Curated response already shown above -> suppress the generic result.
           suppressResultMessage: showCurated || Boolean(options.suppressResultMessage),
           force: options.force || false,
-          forceLargeDisplay: options.forceLargeDisplay || false
+          forceLargeDisplay: options.forceLargeDisplay || false,
+          exactEventFocus: Boolean(action.entity?.eventId)
         });
         ensureResolvedOverlayVisible();
         return Boolean(result);
@@ -932,6 +1264,19 @@ export const ChatManager = {
   async runDefaultLoad(params = {}, options = {}) {
     const lane = options.mode || this.mode;
     await this.seedEmptyConversation(lane);
+    if (normalizeChatMode(lane) === 'explore' && params?.eventId) {
+      return this.loadExactEventByParams(
+        {
+          eventId: params.eventId,
+          packId: params.packId || '',
+          sourceId: params.sourceId || ''
+        },
+        {
+          mode: lane,
+          announce: options.suppressResultMessage !== true
+        }
+      );
+    }
     const action = resolveDefaultLoadAction({
       lane,
       overlayId: params.overlayId,
@@ -1000,7 +1345,22 @@ export const ChatManager = {
       _requestMode: 'ops',
       _suppressAssistantMessage: options.suppressResultMessage === true
     });
+    this.centerOpsFocusedEvent(response);
     return true;
+  },
+
+  centerOpsFocusedEvent(response) {
+    focusExactEventResult(response, {
+      order: {
+        items: [{
+          filters: {
+            event_id: response?.geojson?.features?.[0]?.properties?.event_id
+              || response?.geojson?.features?.[0]?.properties?.storm_id
+              || ''
+          }
+        }]
+      }
+    });
   },
 
   // Make an app pack/source/feed load a distinct, identifiable analytics
@@ -2045,6 +2405,9 @@ export const ChatManager = {
       // instead of leaving a dead message with nothing on screen.
       window.OverlayController?.rerenderFromCache?.();
       window.App?.syncMetricOverlayVisibility?.();
+      if (options.exactEventFocus) {
+        applyExactEventFocusState(order, data);
+      }
     } else if (data.type === 'error') {
       if (!options.suppressResultMessage) {
         this.addMessage(data.message || 'Failed to load data.', 'assistant');
@@ -2093,6 +2456,7 @@ export const ChatManager = {
     } else if (data.geojson) {
       // Route by data_type for cache ingestion
       const dataType = data.data_type || (data.type === 'events' ? 'events' : 'metrics');
+      const featureCount = Array.isArray(data.geojson?.features) ? data.geojson.features.length : 0;
 
       if (dataType === 'events') {
         const message = data.summary || `Showing ${data.count} ${data.event_type || 'event'} events`;
@@ -2100,6 +2464,9 @@ export const ChatManager = {
           this.addMessage(message, 'assistant');
         }
         renderUnifiedOverlayEventResult(data, order);
+        if (options.exactEventFocus) {
+          applyExactEventFocusState(order, data);
+        }
       } else if (dataType === 'metrics') {
         const message = data.data_note || `Loaded ${data.count || data.geojson.features?.length || 0} locations`;
         if (!options.suppressResultMessage) {
@@ -2125,11 +2492,13 @@ export const ChatManager = {
         logExecutedOrder(order);
       }
 
-      // Track loaded data for LLM context
-      registerLoadedData(order, data);
-      const entityParams = inferSingleEntityRouteParams(order, data);
-      if (entityParams) {
-        this.reflectLoadedEntity('explore', entityParams);
+      if (featureCount > 0) {
+        // Track loaded data for LLM context
+        registerLoadedData(order, data);
+        const entityParams = inferSingleEntityRouteParams(order, data);
+        if (entityParams) {
+          this.reflectLoadedEntity('explore', entityParams);
+        }
       }
 
       if (!(dataType === 'events' && resolveOverlayIdForOrderResult(data, order))) {
@@ -2436,10 +2805,37 @@ export const ChatManager = {
       return;
     }
 
+    let exactEventHandled = false;
+    const exactEventDirectParams = this.resolveExactEventLoadParams(query, requestMode);
+    if (exactEventDirectParams) {
+      this.addMessage(query, 'user', { mode: requestMode });
+      input.value = '';
+      input.style.height = 'auto';
+      this.history.push({ role: 'user', content: query });
+      this.modeHistories[requestMode] = this.history;
+
+      this.modeRequestInFlight[requestMode] = true;
+      this.updateComposerState();
+      try {
+        exactEventHandled = await this.executeExactEventDirectLoad(query, requestMode);
+      } finally {
+        this.modeRequestInFlight[requestMode] = false;
+        this.updateComposerState();
+      }
+      if (exactEventHandled) {
+        this.saveState();
+        return;
+      }
+      this.saveState();
+      return;
+    }
+
     // Add user message
-    this.addMessage(query, 'user', { mode: requestMode });
-    input.value = '';
-    input.style.height = 'auto';
+    if (!exactEventDirectParams) {
+      this.addMessage(query, 'user', { mode: requestMode });
+      input.value = '';
+      input.style.height = 'auto';
+    }
 
     const styleCommand = this.parseDisplayStyleCommand(query, requestMode);
     if (styleCommand) {
@@ -2522,8 +2918,10 @@ export const ChatManager = {
 
     try {
       // Build payload with map-specific context
-      this.history.push({ role: 'user', content: query });
-      this.modeHistories[requestMode] = this.history;
+      if (!exactEventDirectParams) {
+        this.history.push({ role: 'user', content: query });
+        this.modeHistories[requestMode] = this.history;
+      }
       const payload = this.buildPayload(query, null, {}, requestMode);
 
       // Send via streaming API

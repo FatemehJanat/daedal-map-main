@@ -12,7 +12,7 @@ def resolve_exact_id_filter_field(
     metadata: dict | None = None,
     event_type: str = "",
 ):
-    """Resolve generic exact-id filters to the source's native id column."""
+    """Resolve generic or native exact-id aliases to the source's id column."""
     field = str(requested_field or "").strip()
     if not field:
         return field
@@ -21,7 +21,7 @@ def resolve_exact_id_filter_field(
     if field in available:
         return field
 
-    if field != "event_id":
+    if field not in {"event_id", "storm_id", "fire_id", "id"}:
         return field
 
     metadata = metadata or {}
@@ -36,6 +36,8 @@ def resolve_exact_id_filter_field(
 
     normalized_event_type = str(event_type or metadata.get("event_type") or "").strip().lower()
     candidates = []
+    if "event_id" in available:
+        candidates.append("event_id")
     if normalized_event_type:
         candidates.append(f"{normalized_event_type}_id")
     candidates.extend(["storm_id", "fire_id", "id"])

@@ -696,6 +696,48 @@ function filterByLifecycle(features, currentMs, eventType) {
   }).filter(Boolean);
 }
 
+function filterByTemporalWindow(features, minMs, maxMs, eventType) {
+  const config = EVENT_LIFECYCLE[eventType];
+  if (!config) {
+    return features.map(f => ({
+      ...f,
+      properties: { ...f.properties, _opacity: 1.0, _phase: 'active', _radiusProgress: 1.0 }
+    }));
+  }
+
+  return features.map(f => {
+    let startMs, endMs;
+    try {
+      startMs = config.getStartMs(f);
+      endMs = config.getEndMs(f);
+    } catch (e) {
+      return null;
+    }
+
+    if (isNaN(startMs) || isNaN(endMs)) {
+      return null;
+    }
+
+    const fadeDuration = config.getFadeDuration?.(f) || config.fadeDuration || 0;
+    const visibleEndMs = endMs + fadeDuration;
+    const overlapsWindow = visibleEndMs >= minMs && startMs <= maxMs;
+    if (!overlapsWindow) {
+      return null;
+    }
+
+    return {
+      ...f,
+      properties: {
+        ...f.properties,
+        _opacity: 1.0,
+        _phase: 'active',
+        _radiusProgress: 1.0,
+        _animationProgress: 1.0
+      }
+    };
+  }).filter(Boolean);
+}
+
 /**
  * Ease out quadratic - starts fast, slows down
  */
@@ -1649,12 +1691,14 @@ export const OverlayController = {
 
     // Determine if this is a timestamp (for lifecycle filtering)
     const isTimestamp = Math.abs(time) >= 50000;
+    const forceRerender = source === 'bounds';
 
     if (useLifecycleFiltering && isTimestamp) {
       // NEW: Timestamp-based lifecycle filtering
       // Throttle updates to avoid excessive re-renders (render every ~6 hours of slider time)
       const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
-      if (this.lastTimeSliderTimestamp === null ||
+      if (forceRerender ||
+          this.lastTimeSliderTimestamp === null ||
           Math.abs(time - this.lastTimeSliderTimestamp) >= SIX_HOURS_MS) {
         this.lastTimeSliderTimestamp = time;
         this.onTimeChangeTimestamp(time);
@@ -1662,7 +1706,7 @@ export const OverlayController = {
     } else {
       // LEGACY: Year-based filtering
       const year = this.getYearFromTime(time);
-      if (year !== this.lastTimeSliderYear) {
+      if (forceRerender || year !== this.lastTimeSliderYear) {
         this.lastTimeSliderYear = year;
         this.onTimeChange(year);
       }
@@ -2375,21 +2419,34 @@ export const OverlayController = {
     const useTimestamp = options.useTimestamp && useLifecycleFiltering;
 
     if (useTimestamp && yearOrTimestamp) {
-      // NEW: Timestamp-based lifecycle filtering
-      // Hurricane tracks are progressively trimmed by filterByLifecycle based on _animationProgress
       const currentMs = yearOrTimestamp;
-      const filtered = filterByLifecycle(
-        cachedData.features,
-        currentMs,
-        endpoint.eventType
-      );
+      const hasTemporalBounds = Boolean(TimeSlider?.hasActiveTrimBounds?.());
+      const bounds = hasTemporalBounds ? TimeSlider.getEffectiveBounds?.() : null;
+      const filtered = hasTemporalBounds && Number.isFinite(bounds?.min) && Number.isFinite(bounds?.max)
+        ? filterByTemporalWindow(
+            cachedData.features,
+            bounds.min,
+            bounds.max,
+            endpoint.eventType
+          )
+        : filterByLifecycle(
+            cachedData.features,
+            currentMs,
+            endpoint.eventType
+          );
 
       filteredGeojson = {
         type: 'FeatureCollection',
         features: filtered
       };
-      const dateStr = new Date(currentMs).toISOString().split('T')[0];
-      console.log(`OverlayController: Lifecycle filtered ${cachedData.features.length} -> ${filtered.length} for ${dateStr}`);
+      if (hasTemporalBounds && Number.isFinite(bounds?.min) && Number.isFinite(bounds?.max)) {
+        const minStr = new Date(bounds.min).toISOString().split('T')[0];
+        const maxStr = new Date(bounds.max).toISOString().split('T')[0];
+        console.log(`OverlayController: Temporal window filtered ${cachedData.features.length} -> ${filtered.length} for ${minStr} to ${maxStr}`);
+      } else {
+        const dateStr = new Date(currentMs).toISOString().split('T')[0];
+        console.log(`OverlayController: Lifecycle filtered ${cachedData.features.length} -> ${filtered.length} for ${dateStr}`);
+      }
     } else if (endpoint.yearField && yearOrTimestamp) {
       // LEGACY: Year-based filtering
       const yearNum = parseInt(yearOrTimestamp);

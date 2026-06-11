@@ -55,10 +55,13 @@ from mapmover.api_query_runtime import (
 )
 from mapmover.geography import get_country_names_from_codes
 from mapmover.logging_analytics import hash_ip_for_analytics, log_api_query_event
+from mapmover.runtime.filter_primitives import resolve_exact_id_filter_field
 from mapmover.security import get_client_ip, rate_limiter
 
 
 router = APIRouter()
+
+EXACT_ID_ALIAS_FIELDS = {"event_id", "storm_id", "fire_id", "id"}
 
 
 def _get_request_ip(request: Request) -> str | None:
@@ -82,6 +85,27 @@ def _coerce_temporal_bound_value(value: Any) -> datetime | None:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _resolve_api_filter_field_alias(
+    spec,
+    field_name: str,
+    *,
+    available_columns: set[str],
+) -> str:
+    field = str(field_name or "").strip()
+    if not field:
+        return field
+    if field in spec.filterable_fields:
+        return field
+    if field not in EXACT_ID_ALIAS_FIELDS:
+        return field
+    return resolve_exact_id_filter_field(
+        field,
+        available_columns,
+        metadata={},
+        event_type=str(spec.pack_id or spec.source_id or ""),
+    )
 
 
 async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -> Response:
@@ -295,6 +319,8 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
     if resolved_from_pack:
         req.state.analytics_pack_id = pack_id or spec.pack_id
 
+    available_columns = get_api_source_columns(spec)
+
     spec = resolve_effective_time_spec(spec, time_filter if isinstance(time_filter, dict) else None)
 
     if normalized_requested_granularity:
@@ -481,7 +507,12 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
             )
         for field, value in equals_filters.items():
             field_name = str(field).strip()
-            if field_name not in spec.filterable_fields:
+            resolved_field_name = _resolve_api_filter_field_alias(
+                spec,
+                field_name,
+                available_columns=available_columns,
+            )
+            if resolved_field_name not in spec.filterable_fields and resolved_field_name not in available_columns:
                 available = sorted(spec.filterable_fields)
                 return error_response(
                     request_id,
@@ -492,7 +523,7 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
                     pack_id=spec.pack_id,
                     source_id=source_id,
                 )
-            exact_filters[field_name] = value
+            exact_filters[resolved_field_name] = value
 
     raw_compare_filters = filters.get("compare") or []
     if raw_compare_filters:
@@ -521,7 +552,12 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
             field_name = str(entry.get("field") or "").strip()
             op = str(entry.get("op") or "").strip()
             value = entry.get("value")
-            if field_name not in available_compare_fields:
+            resolved_field_name = _resolve_api_filter_field_alias(
+                spec,
+                field_name,
+                available_columns=available_columns,
+            )
+            if resolved_field_name not in available_compare_fields and resolved_field_name not in available_columns:
                 available = sorted(available_compare_fields)
                 return error_response(
                     request_id,
@@ -542,7 +578,7 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
                     pack_id=spec.pack_id,
                     source_id=source_id,
                 )
-            compare_filters.append((field_name, op, value))
+            compare_filters.append((resolved_field_name, op, value))
 
     requested_limit = payload.get("limit", spec.default_limit)
     try:

@@ -132,11 +132,17 @@ export const PointRadiusModel = {
   },
 
   _baseCircleOpacity(baseOpacity, eventType) {
-    return this._layerUsesDisasterIcon(eventType) ? 0 : baseOpacity;
+    if (!this._layerUsesDisasterIcon(eventType)) {
+      return baseOpacity;
+    }
+    return Math.max(0.32, baseOpacity * 0.48);
   },
 
   _baseCircleStrokeWidth(baseWidth, eventType) {
-    return this._layerUsesDisasterIcon(eventType) ? 0 : baseWidth;
+    if (!this._layerUsesDisasterIcon(eventType)) {
+      return baseWidth;
+    }
+    return Math.max(0.8, baseWidth * 0.7);
   },
 
   _iconLayerId(eventType) {
@@ -149,6 +155,18 @@ export const PointRadiusModel = {
 
   _iconScaleForType(eventType) {
     return DISASTER_ICON_TYPE_SCALE[eventType] || 1;
+  },
+
+  _iconZoomBoostExpr() {
+    return [
+      'interpolate', ['linear'], ['zoom'],
+      0, 1,
+      8, 1,
+      10, 1.08,
+      12, 1.22,
+      14, 1.38,
+      16, 1.58
+    ];
   },
 
   _pointFilterForType(eventType) {
@@ -303,7 +321,7 @@ export const PointRadiusModel = {
       filter: filter || this._pointFilterForType(eventType),
       layout: {
         'icon-image': imageId,
-        'icon-size': ['*', DISASTER_ICON_SCALE, this._iconScaleForType(eventType), iconSizeExpr],
+        'icon-size': ['*', DISASTER_ICON_SCALE, this._iconScaleForType(eventType), this._iconZoomBoostExpr(), iconSizeExpr],
         'icon-allow-overlap': true,
         'icon-ignore-placement': true,
         'icon-anchor': 'center'
