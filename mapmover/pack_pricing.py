@@ -11,12 +11,8 @@ FREE_PACK_IDS: frozenset[str] = frozenset(
     {
         "currency",
         "floods",
-        "hurricanes",
-        "tornadoes",
         "un_sdg",
         "volcanoes",
-        "world_factbook",
-        "worldpop",
     }
 )
 
@@ -24,5 +20,9 @@ PAID_PACK_IDS: frozenset[str] = frozenset(
     {
         "earthquakes",
         "tsunamis",
+        "hurricanes",
+        "tornadoes",
+        "world_factbook",
+        "worldpop",
     }
 )

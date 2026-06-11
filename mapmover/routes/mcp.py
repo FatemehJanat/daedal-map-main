@@ -88,13 +88,13 @@ PACK_SERVER_PROFILES = {
     "hurricanes": {
         "name": "com.daedalmap/hurricanes",
         "title": "DaedalMap Hurricane and Tropical Cyclone Data",
-        "description": "Global tropical cyclone tracks from IBTrACS, 1842-present. Wind, pressure, and paths. Free.",
-        "pricing": "free",
+        "description": "Global tropical cyclone tracks from IBTrACS, 1842-present. Wind, pressure, and paths. Paid via x402 on Base mainnet USDC. Small queries stay cheap; very broad scans cost more or need narrower filters. Call unpaid first to see the exact price before committing.",
+        "pricing": "paid_x402_base_usdc",
         "registry_meta": {
             "categories": ["hazard", "geospatial", "data"],
             "highlights": [
                 "Global tropical cyclone and hurricane track records",
-                "Free MCP access for hurricane and cyclone event queries",
+                "Paid MCP access for hurricane and cyclone event queries",
                 "Country and basin lookups tied to DaedalMap loc_id geography",
             ],
         },
@@ -116,13 +116,13 @@ PACK_SERVER_PROFILES = {
     "world_factbook": {
         "name": "com.daedalmap/world_factbook",
         "title": "DaedalMap CIA World Factbook",
-        "description": "CIA World Factbook country indicators for infrastructure, energy, demographics, and economy. Free.",
-        "pricing": "free",
+        "description": "CIA World Factbook country indicators for infrastructure, energy, demographics, and economy. Paid via x402 on Base mainnet USDC. Small queries stay cheap; very broad scans cost more or need narrower filters. Call unpaid first to see the exact price before committing.",
+        "pricing": "paid_x402_base_usdc",
         "registry_meta": {
             "categories": ["economic", "data", "geospatial"],
             "highlights": [
                 "111 CIA World Factbook indicators from 2002-2026 editions",
-                "Free MCP access for country infrastructure and economy metrics",
+                "Paid MCP access for country infrastructure and economy metrics",
                 "Country-level lookups tied to DaedalMap loc_id geography",
             ],
         },
@@ -130,13 +130,13 @@ PACK_SERVER_PROFILES = {
     "worldpop": {
         "name": "com.daedalmap/worldpop",
         "title": "DaedalMap WorldPop Population Estimates",
-        "description": "WorldPop population estimates and density-ready geography from 2000 to 2030 across country and sub-national levels. Free.",
-        "pricing": "free",
+        "description": "WorldPop population estimates and density-ready geography from 2000 to 2030 across country and sub-national levels. Source: WorldPop (CC-BY 4.0). Paid via x402 on Base mainnet USDC. Small queries stay cheap; very broad scans cost more or need narrower filters. Call unpaid first to see the exact price before committing.",
+        "pricing": "paid_x402_base_usdc",
         "registry_meta": {
             "categories": ["demographic", "data", "geospatial"],
             "highlights": [
                 "WorldPop population estimates across multiple admin levels",
-                "Free MCP access for country and sub-national population queries",
+                "Paid MCP access for country and sub-national population queries",
                 "Country and regional lookups tied to DaedalMap loc_id geography",
             ],
         },
@@ -158,13 +158,13 @@ PACK_SERVER_PROFILES = {
     "tornadoes": {
         "name": "com.daedalmap/tornadoes",
         "title": "DaedalMap Tornado Events",
-        "description": "United States tornado events from 1950 to present from the NOAA Storm Prediction Center, including track paths, EF/Fujita intensity ratings, casualties, and damage estimates. Free - no payment required.",
-        "pricing": "free",
+        "description": "United States tornado events from 1950 to present from the NOAA Storm Prediction Center, including track paths, EF/Fujita intensity ratings, casualties, and damage estimates. Paid via x402 on Base mainnet USDC. Small queries stay cheap; very broad scans cost more or need narrower filters. Call unpaid first to see the exact price before committing.",
+        "pricing": "paid_x402_base_usdc",
         "registry_meta": {
             "categories": ["hazard", "geospatial", "data"],
             "highlights": [
                 "US tornado event records 1950-present with track paths and intensity",
-                "Free MCP access for tornado counts, casualties, and damage estimates",
+                "Paid MCP access for tornado counts, casualties, and damage estimates",
                 "State and region lookups tied to DaedalMap loc_id geography",
             ],
         },
