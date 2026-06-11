@@ -4,6 +4,89 @@ from __future__ import annotations
 
 from mapmover.chat_budget import budget_rejection_payload, check_anonymous_chat_budget
 from mapmover.llm_usage import LLMUsageRecorder
+from mapmover.session_cache import session_manager
+
+
+_ANON_CHAT_TURN_LIMITS = {
+    "explore": 10,
+    "ops": 10,
+    "research": 3,
+}
+
+
+def _normalize_lane(lane: str | None) -> str:
+    value = str(lane or "").strip().lower()
+    if value in _ANON_CHAT_TURN_LIMITS:
+        return value
+    return "explore"
+
+
+def _anon_turn_limit_for_lane(lane: str | None) -> int:
+    return _ANON_CHAT_TURN_LIMITS[_normalize_lane(lane)]
+
+
+def build_chat_gate_log_metadata(payload: dict | None, *, gate_kind: str | None = None) -> dict | None:
+    if not payload:
+        return None
+    cta = payload.get("cta")
+    if not cta:
+        return None
+    metadata = {
+        "cta_sent": True,
+        "cta": cta,
+        "gate_kind": gate_kind or payload.get("error_code") or "unknown_gate",
+        "error_code": payload.get("error_code"),
+    }
+    for key in ("cta_url", "cta_label", "lane", "turn_limit", "turns_used", "retry_after_seconds", "cost_so_far_usd", "cap_usd"):
+        if payload.get(key) is not None:
+            metadata[key] = payload.get(key)
+    return metadata
+
+
+def anonymous_turn_limit_rejection_payload(
+    *,
+    session_id: str,
+    caller_ctx: dict,
+    lane: str,
+) -> tuple[dict | None, int | None, dict[str, str] | None]:
+    caller_kind = str((caller_ctx or {}).get("caller_kind") or "").strip().lower()
+    if caller_kind != "anonymous" or not session_id:
+        return None, None, None
+
+    normalized_lane = _normalize_lane(lane)
+    turn_limit = _anon_turn_limit_for_lane(normalized_lane)
+    cache = session_manager.get_or_create(session_id)
+    turns_used = cache.get_anon_chat_turn_count(normalized_lane)
+    if turns_used < turn_limit:
+        return None, None, None
+
+    lane_label = normalized_lane.capitalize()
+    return (
+        {
+            "type": "error",
+            "error_code": "anonymous_chat_turn_limit_reached",
+            "message": (
+                f"You've used all {turn_limit} free anonymous {lane_label} messages in this session. "
+                "Create a free account to continue."
+            ),
+            "cta": "sign_up",
+            "cta_url": "/login",
+            "cta_label": "Create account",
+            "lane": normalized_lane,
+            "turn_limit": turn_limit,
+            "turns_used": turns_used,
+        },
+        429,
+        {"Cache-Control": "no-store"},
+    )
+
+
+def register_anonymous_chat_turn(*, session_id: str, caller_ctx: dict, lane: str) -> None:
+    caller_kind = str((caller_ctx or {}).get("caller_kind") or "").strip().lower()
+    if caller_kind != "anonymous" or not session_id:
+        return
+    cache = session_manager.get_or_create(session_id)
+    cache.increment_anon_chat_turn_count(_normalize_lane(lane))
 
 
 def anonymous_budget_rejection_payload(caller_ctx: dict) -> tuple[dict | None, int | None, dict[str, str] | None]:

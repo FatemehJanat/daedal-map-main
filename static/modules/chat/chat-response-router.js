@@ -2,6 +2,8 @@
  * Chat response routing helpers.
  */
 
+import { getSiteBaseUrl } from '../auth.js';
+
 export function routeMapResponse(ctx, response, options = {}, deps = {}) {
   const App = deps.App || null;
   if (!response || !App) return false;
@@ -106,6 +108,32 @@ function formatChatError(response) {
     parts.push(`Request id: ${requestId}`);
   }
   return parts.join('\n\n');
+}
+
+function appendErrorCta(messageEl, response) {
+  if (!messageEl || !response || response.type !== 'error') return;
+  const cta = String(response.cta || '').trim().toLowerCase();
+  if (cta !== 'sign_up' && cta !== 'top_up') return;
+
+  const rawUrl = String(response.cta_url || '').trim();
+  const ctaUrl = rawUrl
+    ? (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')
+        ? rawUrl
+        : `${getSiteBaseUrl()}${rawUrl.startsWith('/') ? rawUrl : `/${rawUrl}`}`)
+    : (cta === 'top_up' ? `${getSiteBaseUrl()}/account` : `${getSiteBaseUrl()}/login`);
+  const ctaLabel = String(response.cta_label || '').trim()
+    || (cta === 'top_up' ? 'Open account' : 'Create account');
+
+  const container = document.createElement('div');
+  container.className = 'metric-warning-buttons';
+  const link = document.createElement('a');
+  link.className = 'chat-action-btn confirm';
+  link.href = ctaUrl;
+  link.target = '_blank';
+  link.rel = 'noopener';
+  link.textContent = ctaLabel;
+  container.appendChild(link);
+  messageEl.appendChild(container);
 }
 
 export function handleResponse(ctx, response, deps = {}) {
@@ -387,7 +415,7 @@ export function handleResponse(ctx, response, deps = {}) {
       break;
 
     case 'error':
-      add(formatChatError(response), 'assistant');
+      appendErrorCta(add(formatChatError(response), 'assistant'), response);
       break;
 
     case 'chat':

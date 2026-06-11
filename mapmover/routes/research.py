@@ -14,7 +14,7 @@ from mapmover.auth_context import build_session_cache_key, get_authenticated_use
 from mapmover.catalog_surface import catalog_surface_scope
 from mapmover.corpus_registry import corpus_registry
 from mapmover.data_loading import get_catalog_packs, get_pack_metadata, load_catalog
-from mapmover.logging_analytics import log_app_error
+from mapmover.logging_analytics import log_app_error, log_conversation
 from mapmover.research_chat_helpers import (
     _manifest_prompt_window_warning,
     _word_chunks,
@@ -49,7 +49,12 @@ from mapmover.routes.chat_shared import (
     decode_json_or_msgpack_body,
     decode_request_body,
 )
-from mapmover.runtime.chat_route_support import build_usage_recorders
+from mapmover.runtime.chat_route_support import (
+    anonymous_turn_limit_rejection_payload,
+    build_chat_gate_log_metadata,
+    build_usage_recorders,
+    register_anonymous_chat_turn,
+)
 from mapmover.runtime.sse import SSE_HEADERS, encode_sse, progress_payload, stage_payload
 
 
@@ -401,12 +406,50 @@ async def research_chat_endpoint(req: Request):
         if route_error:
             return route_error
         if rejection_payload is not None:
+            log_conversation(
+                route_context.frontend_session_id if route_context else body.get("sessionId", "anonymous"),
+                query,
+                rejection_payload.get("message", ""),
+                surface="research",
+                intent=rejection_payload.get("error_code") or "anonymous_budget_blocked",
+                metadata=build_chat_gate_log_metadata(
+                    rejection_payload,
+                    gate_kind="anonymous_daily_budget",
+                ),
+            )
             return msgpack_response(
                 rejection_payload,
                 status_code=rejection_status or 400,
                 headers=rejection_headers or {},
             )
         assert route_context is not None
+        turn_limit_payload, turn_limit_status, turn_limit_headers = anonymous_turn_limit_rejection_payload(
+            session_id=route_context.session_id,
+            caller_ctx=route_context.caller_ctx,
+            lane="research",
+        )
+        if turn_limit_payload is not None:
+            log_conversation(
+                route_context.frontend_session_id,
+                query,
+                turn_limit_payload.get("message", ""),
+                surface="research",
+                intent=turn_limit_payload.get("error_code") or "anonymous_turn_limit_reached",
+                metadata=build_chat_gate_log_metadata(
+                    turn_limit_payload,
+                    gate_kind="anonymous_turn_limit",
+                ),
+            )
+            return msgpack_response(
+                turn_limit_payload,
+                status_code=turn_limit_status or 429,
+                headers=turn_limit_headers or {},
+            )
+        register_anonymous_chat_turn(
+            session_id=route_context.session_id,
+            caller_ctx=route_context.caller_ctx,
+            lane="research",
+        )
         usage_recorder, rescue_usage_recorder = build_usage_recorders(
             surface="research",
             call_kinds=("research_main", "research_rescue"),
@@ -475,9 +518,45 @@ async def research_chat_stream_endpoint(req: Request):
             )
             if route_error or rejection_payload is not None:
                 payload = rejection_payload or {"type": "error", "message": "WIP catalog access is limited to admin accounts."}
+                if rejection_payload is not None and route_context is not None:
+                    log_conversation(
+                        route_context.frontend_session_id,
+                        query,
+                        rejection_payload.get("message", ""),
+                        surface="research",
+                        intent=rejection_payload.get("error_code") or "anonymous_budget_blocked",
+                        metadata=build_chat_gate_log_metadata(
+                            rejection_payload,
+                            gate_kind="anonymous_daily_budget",
+                        ),
+                    )
                 yield encode_sse(stage_payload("complete", result=payload))
                 return
             assert route_context is not None
+            turn_limit_payload, _turn_limit_status, _turn_limit_headers = anonymous_turn_limit_rejection_payload(
+                session_id=route_context.session_id,
+                caller_ctx=route_context.caller_ctx,
+                lane="research",
+            )
+            if turn_limit_payload is not None:
+                log_conversation(
+                    route_context.frontend_session_id,
+                    query,
+                    turn_limit_payload.get("message", ""),
+                    surface="research",
+                    intent=turn_limit_payload.get("error_code") or "anonymous_turn_limit_reached",
+                    metadata=build_chat_gate_log_metadata(
+                        turn_limit_payload,
+                        gate_kind="anonymous_turn_limit",
+                    ),
+                )
+                yield encode_sse(stage_payload("complete", result=turn_limit_payload))
+                return
+            register_anonymous_chat_turn(
+                session_id=route_context.session_id,
+                caller_ctx=route_context.caller_ctx,
+                lane="research",
+            )
             usage_recorder, rescue_usage_recorder = build_usage_recorders(
                 surface="research",
                 call_kinds=("research_main", "research_rescue"),

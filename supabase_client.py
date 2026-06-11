@@ -97,6 +97,8 @@ class SupabaseClient:
                 "dataset": dataset_selected,
                 "results_count": results_count
             }
+            if metadata:
+                message_entry["metadata"] = metadata
 
             if existing.data and len(existing.data) > 0:
                 # Update existing session - append to messages array

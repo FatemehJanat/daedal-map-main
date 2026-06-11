@@ -3042,7 +3042,11 @@ export const ChatManager = {
 
     } catch (error) {
       console.error('Chat error:', error);
-      this.addMessage('Sorry, something went wrong. Please try again.', 'assistant', { mode: requestMode });
+      if (error?.data?.type === 'error') {
+        this.handleResponse({ ...error.data, _requestMode: requestMode });
+      } else {
+        this.addMessage('Sorry, something went wrong. Please try again.', 'assistant', { mode: requestMode });
+      }
     } finally {
       this.pendingResearchRasterMode = null;
       if (!removedIndicatorForStream) {

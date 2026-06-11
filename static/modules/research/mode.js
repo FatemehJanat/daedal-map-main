@@ -4,6 +4,7 @@
 
 import { postMsgpack } from '../utils/fetch.js';
 import { getApiUrl } from '../chat/api.js';
+import { isSharedShellRoute } from '../routing/app-route-state.js';
 
 export class ResearchModeToggle {
   static SHOW_CATALOG_SURFACE_CONTROLS = false;
@@ -41,6 +42,7 @@ export class ResearchModeToggle {
     this.hasStaleArtifacts = false;
     this.optionsLoading = false;
     this.optionsLoadingLabel = 'Loading saved corpora...';
+    this.modeMount = null;
   }
 
   static MODES = ['explore', 'research', 'ops'];
@@ -49,6 +51,7 @@ export class ResearchModeToggle {
     if (!this.container) return;
 
     const mount = document.getElementById('mapModeMount') || document.getElementById('sidebarModeMount');
+    this.modeMount = mount;
     const corpusMount = document.getElementById('sidebarResearchMount');
     const wrap = document.createElement('div');
     wrap.className = 'chat-mode-toggle chat-mode-toggle--header';
@@ -171,6 +174,7 @@ export class ResearchModeToggle {
   }
 
   updateActive() {
+    this.updateRouteVisibility();
     const selectedValue = this.controls.select?.value || this.selectedCorpusId || '';
     const canLoad = Boolean(selectedValue);
     const alreadyLoaded = Boolean(
@@ -215,6 +219,14 @@ export class ResearchModeToggle {
         ? 'Loading...'
         : (alreadyLoaded ? 'Loaded' : 'Load Data');
     }
+  }
+
+  updateRouteVisibility() {
+    if (!this.modeMount) return;
+    const showModeSelector = isSharedShellRoute();
+    this.modeMount.hidden = !showModeSelector;
+    this.modeMount.setAttribute('aria-hidden', showModeSelector ? 'false' : 'true');
+    this.modeMount.classList.toggle('hidden', !showModeSelector);
   }
 
   getModeLabel(mode) {

@@ -21,7 +21,12 @@ from mapmover.ops_ticker import (
 from mapmover.orchestrator_registry import get_orchestrator
 from mapmover.routes.chat_shared import build_chat_error_payload, build_provider_error_payload, decode_json_or_msgpack_body, decode_request_body
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
-from mapmover.runtime.chat_route_support import build_usage_recorder
+from mapmover.runtime.chat_route_support import (
+    anonymous_turn_limit_rejection_payload,
+    build_chat_gate_log_metadata,
+    build_usage_recorder,
+    register_anonymous_chat_turn,
+)
 from mapmover.runtime.sse import SSE_HEADERS, encode_sse, stage_payload
 
 
@@ -94,6 +99,17 @@ async def ops_report_endpoint(req: Request):
         if route_error:
             return route_error
         if rejection_payload is not None:
+            log_conversation(
+                route_context.frontend_session_id if route_context else body.get("sessionId", "anonymous"),
+                query,
+                rejection_payload.get("message", ""),
+                surface="ops",
+                intent=rejection_payload.get("error_code") or "anonymous_budget_blocked",
+                metadata=build_chat_gate_log_metadata(
+                    rejection_payload,
+                    gate_kind="anonymous_daily_budget",
+                ),
+            )
             return msgpack_response(
                 rejection_payload,
                 status_code=rejection_status or 400,
@@ -168,6 +184,33 @@ async def ops_chat_endpoint(req: Request):
                 "effective_feeds": [],
             }
             return msgpack_response(payload)
+        turn_limit_payload, turn_limit_status, turn_limit_headers = anonymous_turn_limit_rejection_payload(
+            session_id=route_context.session_id,
+            caller_ctx=route_context.caller_ctx,
+            lane="ops",
+        )
+        if turn_limit_payload is not None:
+            log_conversation(
+                route_context.frontend_session_id,
+                query,
+                turn_limit_payload.get("message", ""),
+                surface="ops",
+                intent=turn_limit_payload.get("error_code") or "anonymous_turn_limit_reached",
+                metadata=build_chat_gate_log_metadata(
+                    turn_limit_payload,
+                    gate_kind="anonymous_turn_limit",
+                ),
+            )
+            return msgpack_response(
+                turn_limit_payload,
+                status_code=turn_limit_status or 429,
+                headers=turn_limit_headers or {},
+            )
+        register_anonymous_chat_turn(
+            session_id=route_context.session_id,
+            caller_ctx=route_context.caller_ctx,
+            lane="ops",
+        )
 
         usage_recorder = build_usage_recorder(
             surface="ops",
@@ -238,6 +281,18 @@ async def ops_chat_stream_endpoint(req: Request):
             )
             if route_error or rejection_payload is not None:
                 payload = rejection_payload or {"type": "error", "message": "Ops request could not be prepared."}
+                if rejection_payload is not None and route_context is not None:
+                    log_conversation(
+                        route_context.frontend_session_id,
+                        query,
+                        rejection_payload.get("message", ""),
+                        surface="ops",
+                        intent=rejection_payload.get("error_code") or "anonymous_budget_blocked",
+                        metadata=build_chat_gate_log_metadata(
+                            rejection_payload,
+                            gate_kind="anonymous_daily_budget",
+                        ),
+                    )
                 yield encode_sse(stage_payload("complete", result=payload))
                 return
             assert route_context is not None
@@ -250,6 +305,30 @@ async def ops_chat_stream_endpoint(req: Request):
                     "effective_feeds": [],
                 }))
                 return
+            turn_limit_payload, _turn_limit_status, _turn_limit_headers = anonymous_turn_limit_rejection_payload(
+                session_id=route_context.session_id,
+                caller_ctx=route_context.caller_ctx,
+                lane="ops",
+            )
+            if turn_limit_payload is not None:
+                log_conversation(
+                    route_context.frontend_session_id,
+                    query,
+                    turn_limit_payload.get("message", ""),
+                    surface="ops",
+                    intent=turn_limit_payload.get("error_code") or "anonymous_turn_limit_reached",
+                    metadata=build_chat_gate_log_metadata(
+                        turn_limit_payload,
+                        gate_kind="anonymous_turn_limit",
+                    ),
+                )
+                yield encode_sse(stage_payload("complete", result=turn_limit_payload))
+                return
+            register_anonymous_chat_turn(
+                session_id=route_context.session_id,
+                caller_ctx=route_context.caller_ctx,
+                lane="ops",
+            )
 
             usage_recorder = build_usage_recorder(
                 surface="ops",

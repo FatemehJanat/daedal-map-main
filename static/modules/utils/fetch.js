@@ -143,15 +143,20 @@ export async function fetchMsgpack(url, options = {}) {
 
     if (!response.ok) {
       let errorMsg = 'Request failed';
+      let errorPayload = null;
       try {
         const buffer = await response.arrayBuffer();
         const decoded = msgpack.decode(new Uint8Array(buffer));
-        errorMsg = decoded.error || errorMsg;
+        errorPayload = decoded;
+        errorMsg = decoded.message || decoded.error || errorMsg;
       } catch (e) {
         errorMsg = response.statusText;
       }
       const error = new Error(errorMsg);
       error.status = response.status;
+      if (errorPayload && typeof errorPayload === 'object') {
+        error.data = errorPayload;
+      }
       throw error;
     }
 

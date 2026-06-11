@@ -105,7 +105,11 @@ export class ChatCore {
       return response;
     } catch (error) {
       this.onError(error);
-      this.addMessage('Sorry, something went wrong. Please try again.', 'assistant');
+      if (error?.data?.type === 'error') {
+        this.addMessage(error.data.message || 'Request blocked.', 'assistant');
+      } else {
+        this.addMessage('Sorry, something went wrong. Please try again.', 'assistant');
+      }
       return null;
     } finally {
       indicator.remove();

@@ -75,6 +75,9 @@ class SessionCache:
         # Map state for recovery
         self.map_state: Dict = {}
 
+        # Anonymous lane turn counts for guest-session chat gating.
+        self.anon_chat_turn_counts: Dict[str, int] = {}
+
     def touch(self):
         """Update last activity timestamp."""
         self.last_activity = datetime.now()
@@ -313,6 +316,23 @@ class SessionCache:
         self._results.clear()
         self.chat_history.clear()
         self.map_state.clear()
+        self.anon_chat_turn_counts.clear()
+
+    def get_anon_chat_turn_count(self, lane: str) -> int:
+        """Return guest-session chat turns consumed for a given lane."""
+        key = str(lane or "").strip().lower() or "explore"
+        try:
+            return int(self.anon_chat_turn_counts.get(key) or 0)
+        except Exception:
+            return 0
+
+    def increment_anon_chat_turn_count(self, lane: str) -> int:
+        """Increment and return guest-session chat turns for a lane."""
+        key = str(lane or "").strip().lower() or "explore"
+        next_value = self.get_anon_chat_turn_count(key) + 1
+        self.anon_chat_turn_counts[key] = next_value
+        self.touch()
+        return next_value
 
     def get_status(self) -> Dict:
         """Get session status for recovery prompt."""

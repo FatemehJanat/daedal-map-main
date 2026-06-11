@@ -2,7 +2,7 @@
  * Lane switching and chat-mode UI helpers.
  */
 
-import { writeLane, setLaneTitle } from '../routing/app-route-state.js';
+import { isSharedShellRoute, writeLane, setLaneTitle } from '../routing/app-route-state.js';
 
 function normalizeChatMode(mode, chatModes = ['explore', 'research', 'ops']) {
   return chatModes.includes(mode) ? mode : 'explore';
@@ -30,9 +30,11 @@ export async function switchChatMode(ctx, mode, deps = {}) {
   ctx.modeHistories[ctx.mode] = ctx.history;
 
   ctx.mode = mode;
-  // Reflect the lane in the URL (pushState). No-op when triggered by popstate
-  // since the browser already changed the URL, so back/forward does not loop.
-  writeLane(mode);
+  // Keep the shared shell at '/' when the selector is used there; lane-specific
+  // URLs still remain stable when entered directly or shared as deep links.
+  if (!isSharedShellRoute()) {
+    writeLane(mode);
+  }
   setLaneTitle(mode);
   ctx.history = ctx.modeHistories[mode] || [];
   applyModeUiState(ctx, deps);

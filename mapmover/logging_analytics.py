@@ -414,6 +414,7 @@ def log_conversation(
     results_count: int = 0,
     ip_hash: str | None = None,
     user_agent: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     """Log a human-side chat or map interaction to conversation_sessions."""
     analytics_data = {
@@ -425,6 +426,7 @@ def log_conversation(
         "intent": intent,
         "dataset_selected": dataset_selected,
         "results_count": results_count,
+        "metadata": metadata or {},
     }
 
     if _local_logs_enabled:
@@ -448,6 +450,7 @@ def log_conversation(
             results_count=results_count,
             ip_hash=ip_hash,
             user_agent=user_agent,
+            metadata=metadata,
         )
 
 

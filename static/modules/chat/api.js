@@ -51,7 +51,30 @@ export async function sendStreamingRequest(payload, onProgress, path = '/chat/st
   });
 
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    let payload = null;
+    let message = `HTTP ${response.status}: ${response.statusText}`;
+    try {
+      const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+      if (contentType.includes('application/json') || contentType.includes('text/json')) {
+        payload = await response.json();
+      } else {
+        const text = await response.text();
+        if (text) {
+          payload = JSON.parse(text);
+        }
+      }
+      if (payload && typeof payload === 'object') {
+        message = payload.message || payload.error || message;
+      }
+    } catch (error) {
+      // Fall back to the default HTTP status message.
+    }
+    const err = new Error(message);
+    err.status = response.status;
+    if (payload && typeof payload === 'object') {
+      err.data = payload;
+    }
+    throw err;
   }
 
   const reader = response.body.getReader();

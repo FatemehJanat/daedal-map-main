@@ -612,8 +612,8 @@ export const App = {
     hideStartupChrome();
 
     const startupMode = getStartupChatMode();
-    // Reflect the resolved lane in the URL so it matches the active lane
-    // (replaceState, no history entry). Keeps '/' as the shell for Explore.
+    // Preserve explicit lane URLs on boot, but leave the shared '/' shell alone
+    // so it can host the cross-mode selector.
     normalizeBootUrl(startupMode);
     setLaneTitle(startupMode);
     const researchStartup = startupMode === 'research';

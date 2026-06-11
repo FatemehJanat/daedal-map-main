@@ -49,6 +49,11 @@ from mapmover.explore.explore_response_adapter import (
 )
 from mapmover.runtime.warning_primitives import build_metric_warning_result
 from mapmover.runtime.chat_route_support import build_usage_recorder
+from mapmover.runtime.chat_route_support import (
+    anonymous_turn_limit_rejection_payload,
+    build_chat_gate_log_metadata,
+    register_anonymous_chat_turn,
+)
 from mapmover.orchestrator_registry import get_orchestrator
 from mapmover.routes.chat_shared import (
     build_chat_error_payload,
@@ -129,6 +134,36 @@ async def chat_endpoint(req: Request):
             return msgpack_response(shortcut_payload)
 
         t_interpret_start = time.perf_counter()
+        rejection_payload, rejection_status, rejection_headers = anonymous_turn_limit_rejection_payload(
+            session_id=route_context.session_id,
+            caller_ctx=route_context.caller_ctx,
+            lane="explore",
+        )
+        if rejection_payload is not None:
+            _set_chat_analytics(
+                req,
+                lane="anonymous_turn_limit_blocked",
+                confirmed_order=False,
+                error_code=rejection_payload.get("error_code"),
+            )
+            log_conversation(
+                route_context.frontend_session_id,
+                query,
+                rejection_payload.get("message", ""),
+                surface="explorer",
+                intent=rejection_payload.get("error_code") or "anonymous_turn_limit_reached",
+                ip_hash=hash_ip_for_analytics(route_context.client_ip),
+                user_agent=(req.headers.get("user-agent") or "")[:300] or None,
+                metadata=build_chat_gate_log_metadata(
+                    rejection_payload,
+                    gate_kind="anonymous_turn_limit",
+                ),
+            )
+            return msgpack_response(
+                rejection_payload,
+                status_code=rejection_status or 429,
+                headers=rejection_headers or {},
+            )
         rejection_payload, rejection_status, rejection_headers = anonymous_budget_rejection_payload(route_context.caller_ctx)
         if rejection_payload is not None:
             _set_chat_analytics(
@@ -137,11 +172,29 @@ async def chat_endpoint(req: Request):
                 confirmed_order=False,
                 error_code=rejection_payload.get("error_code"),
             )
+            log_conversation(
+                route_context.frontend_session_id,
+                query,
+                rejection_payload.get("message", ""),
+                surface="explorer",
+                intent=rejection_payload.get("error_code") or "anonymous_budget_blocked",
+                ip_hash=hash_ip_for_analytics(route_context.client_ip),
+                user_agent=(req.headers.get("user-agent") or "")[:300] or None,
+                metadata=build_chat_gate_log_metadata(
+                    rejection_payload,
+                    gate_kind="anonymous_daily_budget",
+                ),
+            )
             return msgpack_response(
                 rejection_payload,
                 status_code=rejection_status or 429,
                 headers=rejection_headers or {},
             )
+        register_anonymous_chat_turn(
+            session_id=route_context.session_id,
+            caller_ctx=route_context.caller_ctx,
+            lane="explore",
+        )
         usage_recorder = build_usage_recorder(
             surface="explorer",
             call_kind="order_taker",
@@ -327,10 +380,49 @@ async def chat_stream_endpoint(req: Request):
             # the event loop. Pipe real progress events back through a
             # ProgressBus so the user sees actual tool calls instead of
             # "Understanding your intent..." sitting there for seconds.
-            rejection_payload, _rejection_status, _rejection_headers = anonymous_budget_rejection_payload(route_context.caller_ctx)
+            rejection_payload, _rejection_status, _rejection_headers = anonymous_turn_limit_rejection_payload(
+                session_id=route_context.session_id,
+                caller_ctx=route_context.caller_ctx,
+                lane="explore",
+            )
             if rejection_payload is not None:
+                log_conversation(
+                    route_context.frontend_session_id,
+                    query,
+                    rejection_payload.get("message", ""),
+                    surface="explorer",
+                    intent=rejection_payload.get("error_code") or "anonymous_turn_limit_reached",
+                    ip_hash=hash_ip_for_analytics(route_context.client_ip),
+                    user_agent=(req.headers.get("user-agent") or "")[:300] or None,
+                    metadata=build_chat_gate_log_metadata(
+                        rejection_payload,
+                        gate_kind="anonymous_turn_limit",
+                    ),
+                )
                 yield encode_sse(stage_payload("complete", result=rejection_payload))
                 return
+            rejection_payload, _rejection_status, _rejection_headers = anonymous_budget_rejection_payload(route_context.caller_ctx)
+            if rejection_payload is not None:
+                log_conversation(
+                    route_context.frontend_session_id,
+                    query,
+                    rejection_payload.get("message", ""),
+                    surface="explorer",
+                    intent=rejection_payload.get("error_code") or "anonymous_budget_blocked",
+                    ip_hash=hash_ip_for_analytics(route_context.client_ip),
+                    user_agent=(req.headers.get("user-agent") or "")[:300] or None,
+                    metadata=build_chat_gate_log_metadata(
+                        rejection_payload,
+                        gate_kind="anonymous_daily_budget",
+                    ),
+                )
+                yield encode_sse(stage_payload("complete", result=rejection_payload))
+                return
+            register_anonymous_chat_turn(
+                session_id=route_context.session_id,
+                caller_ctx=route_context.caller_ctx,
+                lane="explore",
+            )
             usage_recorder = build_usage_recorder(
                 surface="explorer",
                 call_kind="order_taker",

@@ -123,6 +123,17 @@ export function parseRouteIntent(loc = window.location) {
 }
 
 /**
+ * Returns true when the current app URL is the shared shell route rather than a
+ * lane-specific deep link. '/' and query-only variants remain the shared shell.
+ * @param {Location} [loc]
+ * @returns {boolean}
+ */
+export function isSharedShellRoute(loc = window.location) {
+  const intent = parseRouteIntent(loc);
+  return !intent.lane;
+}
+
+/**
  * Initial lane on boot. Precedence: URL > default. Does not touch browser
  * history.
  * @param {string} [_savedLane]
@@ -162,17 +173,17 @@ export function writeLane(lane, { replace = false, preserveQuery = false } = {})
 
 /**
  * Reflect the resolved boot lane in the URL without adding a history entry.
- * Root '/' is a doorway, not a destination: it always canonicalizes to the
- * resolved lane (/explore, /research, or /ops) so each lane has exactly one
- * URL -- which keeps per-lane analytics and share links clean. Uses
- * replaceState so the doorway does not pollute history.
+ * The shared shell now intentionally stays at '/', so boot normalization only
+ * preserves lane-specific entry URLs and leaves the shared shell untouched.
  * @param {string} resolvedLane
  */
 export function normalizeBootUrl(resolvedLane) {
   const intent = parseRouteIntent();
-  if (intent.lane) return; // URL already carries a valid lane; leave it
+  if (!intent.lane) return;
   const lane = normalizeLane(resolvedLane) || DEFAULT_LANE;
-  writeLane(lane, { replace: true, preserveQuery: true });
+  if (intent.lane !== lane) {
+    writeLane(lane, { replace: true, preserveQuery: true });
+  }
 }
 
 /**
