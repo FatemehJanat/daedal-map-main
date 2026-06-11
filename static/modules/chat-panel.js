@@ -225,7 +225,8 @@ function parseExactEventIntent(query) {
   if (!text) return null;
 
   const lower = text.toLowerCase();
-  if (!EXACT_EVENT_QUERY_PREFIX.test(lower) && !/\b(?:event[_\s]?id|storm[_\s]?id|fire[_\s]?id)\b/i.test(text)) {
+  const hasExplicitIdCue = /\b(?:event[_\s]?id|storm[_\s]?id|fire[_\s]?id)\b/i.test(text);
+  if (!EXACT_EVENT_QUERY_PREFIX.test(lower) && !hasExplicitIdCue) {
     return null;
   }
 
@@ -238,6 +239,11 @@ function parseExactEventIntent(query) {
   const tailMatch = compact.match(/([A-Za-z0-9._:-]{4,})\s*$/);
   const eventId = String(explicitMatch?.[1] || tailMatch?.[1] || '').trim();
   if (!eventId) {
+    return null;
+  }
+
+  const isNumericOnly = /^\d+$/.test(eventId);
+  if (isNumericOnly && !explicitMatch && !hasExplicitIdCue) {
     return null;
   }
 
