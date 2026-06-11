@@ -3912,11 +3912,25 @@ export const PointRadiusModel = {
     }
 
     const bounds = new maplibregl.LngLatBounds();
+    const pointCoords = [];
 
     for (const feature of geojson.features) {
       if (feature.geometry && feature.geometry.type === 'Point') {
-        bounds.extend(feature.geometry.coordinates);
+        const coords = feature.geometry.coordinates;
+        bounds.extend(coords);
+        if (Array.isArray(coords) && coords.length >= 2) {
+          const lon = Number(coords[0]);
+          const lat = Number(coords[1]);
+          if (Number.isFinite(lon) && Number.isFinite(lat)) {
+            pointCoords.push([lon, lat]);
+          }
+        }
       }
+    }
+
+    if (pointCoords.length === 1) {
+      MapAdapter.flyTo(pointCoords[0], 8);
+      return;
     }
 
     if (!bounds.isEmpty()) {
