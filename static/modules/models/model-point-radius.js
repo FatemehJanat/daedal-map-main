@@ -62,7 +62,7 @@ const DISASTER_ICON_SVGS = {
   `
 };
 
-const DISASTER_ICON_SCALE = 1.5;
+const DISASTER_ICON_SCALE = 1.4;
 const DISASTER_ICON_TYPE_SCALE = {
   volcano: 1.25,
   tsunami: 1.08
@@ -135,14 +135,14 @@ export const PointRadiusModel = {
     if (!this._layerUsesDisasterIcon(eventType)) {
       return baseOpacity;
     }
-    return Math.max(0.32, baseOpacity * 0.48);
+    return Math.max(0.14, baseOpacity * 0.2);
   },
 
   _baseCircleStrokeWidth(baseWidth, eventType) {
     if (!this._layerUsesDisasterIcon(eventType)) {
       return baseWidth;
     }
-    return Math.max(0.8, baseWidth * 0.7);
+    return Math.max(0.5, baseWidth * 0.45);
   },
 
   _iconLayerId(eventType) {
@@ -157,15 +157,18 @@ export const PointRadiusModel = {
     return DISASTER_ICON_TYPE_SCALE[eventType] || 1;
   },
 
-  _iconZoomBoostExpr() {
+  _buildIconSizeExpr(eventType, iconSizeExpr) {
+    const baseExpr = ['*', DISASTER_ICON_SCALE, this._iconScaleForType(eventType), iconSizeExpr];
     return [
       'interpolate', ['linear'], ['zoom'],
-      0, 1,
-      8, 1,
-      10, 1.08,
-      12, 1.22,
-      14, 1.38,
-      16, 1.58
+      0, ['*', baseExpr, 1],
+      4, ['*', baseExpr, 1.5],
+      5, ['*', baseExpr, 1.7],
+      8, ['*', baseExpr, 2],
+      10, ['*', baseExpr, 3.2],
+      12, ['*', baseExpr, 4.6],
+      14, ['*', baseExpr, 6],
+      16, ['*', baseExpr, 7.5]
     ];
   },
 
@@ -287,6 +290,7 @@ export const PointRadiusModel = {
         try {
           if (!map.hasImage(imageId)) {
             map.addImage(imageId, img, { pixelRatio: 2, sdf: true });
+            console.log(`PointRadiusModel: Added disaster icon image ${imageId}`);
           }
           resolve(true);
         } catch (error) {
@@ -321,16 +325,20 @@ export const PointRadiusModel = {
       filter: filter || this._pointFilterForType(eventType),
       layout: {
         'icon-image': imageId,
-        'icon-size': ['*', DISASTER_ICON_SCALE, this._iconScaleForType(eventType), this._iconZoomBoostExpr(), iconSizeExpr],
+        'icon-size': this._buildIconSizeExpr(eventType, iconSizeExpr),
         'icon-allow-overlap': true,
         'icon-ignore-placement': true,
         'icon-anchor': 'center'
       },
       paint: {
         'icon-opacity': opacityExpr,
-        'icon-color': this._iconColorExprForType(eventType)
+        'icon-color': this._iconColorExprForType(eventType),
+        'icon-halo-color': 'rgba(2, 8, 20, 0.92)',
+        'icon-halo-width': 2.2,
+        'icon-halo-blur': 0.6
       }
     });
+    console.log(`PointRadiusModel: Added disaster icon layer ${layerId}`);
 
     const clickHandler = this.clickHandlers.get(eventType);
     if (clickHandler) {
@@ -356,6 +364,57 @@ export const PointRadiusModel = {
         MapAdapter.hidePopup();
       }
     });
+  },
+
+  _ensureEventTypeIconLayer(eventType) {
+    if (!this._layerUsesDisasterIcon(eventType)) return Promise.resolve(false);
+
+    const addLayerForType = () => {
+      switch (eventType) {
+        case 'earthquake':
+          this._addEarthquakeIconLayer(eventType);
+          break;
+        case 'volcano':
+          this._addVolcanoIconLayer(eventType);
+          break;
+        case 'tsunami':
+          this._addTsunamiIconLayer(eventType);
+          break;
+        case 'wildfire':
+          this._addWildfireIconLayer(eventType);
+          break;
+        case 'flood':
+          this._addFloodIconLayer(eventType);
+          break;
+        case 'tornado':
+          this._addTornadoIconLayer(eventType);
+          break;
+        case 'landslide':
+          this._addLandslideIconLayer(eventType);
+          break;
+        default:
+          break;
+      }
+
+      const map = MapAdapter?.map;
+      const iconLayerId = this._iconLayerId(eventType);
+      if (map?.getLayer(iconLayerId)) {
+        map.setLayoutProperty(iconLayerId, 'visibility', 'visible');
+      }
+      return true;
+    };
+
+    return this._ensureDisasterIcon(eventType)
+      .then(() => {
+        if (!this.activeTypes.has(eventType)) return false;
+        const sourceStillExists = Boolean(MapAdapter?.map?.getSource(this._layerId('source', eventType)));
+        if (!sourceStillExists) return false;
+        return addLayerForType();
+      })
+      .catch((error) => {
+        console.warn(`PointRadiusModel: Could not load ${eventType} icon`, error);
+        return false;
+      });
   },
 
   // Legacy single-type property for backwards compatibility
@@ -401,7 +460,9 @@ export const PointRadiusModel = {
 
     if (existingSource) {
       // Source exists - just update data, don't recreate layers
+      this.activeTypes.add(eventType);
       existingSource.setData(geojson);
+      this._ensureEventTypeIconLayer(eventType);
       return true;
     }
 
@@ -434,40 +495,7 @@ export const PointRadiusModel = {
       this._addGenericEventLayer(eventType, options);
     }
 
-    if (this._layerUsesDisasterIcon(eventType)) {
-      this._ensureDisasterIcon(eventType).then(() => {
-        if (!this.activeTypes.has(eventType)) return;
-        const sourceStillExists = Boolean(MapAdapter?.map?.getSource(sourceId));
-        if (!sourceStillExists) return;
-        switch (eventType) {
-          case 'earthquake':
-            this._addEarthquakeIconLayer(eventType);
-            break;
-          case 'volcano':
-            this._addVolcanoIconLayer(eventType);
-            break;
-          case 'tsunami':
-            this._addTsunamiIconLayer(eventType);
-            break;
-          case 'wildfire':
-            this._addWildfireIconLayer(eventType);
-            break;
-          case 'flood':
-            this._addFloodIconLayer(eventType);
-            break;
-          case 'tornado':
-            this._addTornadoIconLayer(eventType);
-            break;
-          case 'landslide':
-            this._addLandslideIconLayer(eventType);
-            break;
-          default:
-            break;
-        }
-      }).catch((error) => {
-        console.warn(`PointRadiusModel: Could not load ${eventType} icon`, error);
-      });
-    }
+    this._ensureEventTypeIconLayer(eventType);
 
     // Setup click handler - shows unified popup on click
     const clickHandler = (e) => {
