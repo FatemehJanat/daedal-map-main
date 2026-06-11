@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import uuid
 from datetime import date, datetime
 from typing import Any
 
@@ -62,9 +63,9 @@ def build_api_error_response(
 def normalize_api_request_id(payload: dict[str, Any]) -> str | None:
     request_id = payload.get("request_id")
     if request_id is None:
-        return None
+        return f"api-{uuid.uuid4().hex[:12]}"
     request_id = str(request_id).strip()
-    return request_id or None
+    return request_id or f"api-{uuid.uuid4().hex[:12]}"
 
 
 def canonical_request_value(value: Any) -> Any:

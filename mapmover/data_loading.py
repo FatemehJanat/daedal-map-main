@@ -41,6 +41,7 @@ from copy import deepcopy
 from .catalog_surface import get_catalog_surface_override
 from .foundation_helpers import load_country_crosswalk
 from .pack_state import build_active_catalog
+from pack_registry_shared import pack_routing_hints
 from .paths import CATALOG_PATH, COUNTRIES_DIR, DATA_ROOT, GEOMETRY_DIR, WIP_CATALOG_PATH
 from .duckdb_helpers import select_rows
 from .request_risk_gate import block_gate, safe_gate
@@ -87,36 +88,73 @@ PACK_LOAD_MAX_ROW_COUNT = 2_000_000
 RETIRED_PACK_SOURCE_IDS = {
     "world_factbook_overlap",
 }
-PACK_MCP_ROUTING_HINTS: dict[str, dict[str, str]] = {
-    "currency": {
-        "preferred_tool": "get_fx_rates",
-    },
-    "earthquakes": {
-        "preferred_tool": "get_earthquake_events",
-        "live_fallback_tool": "get_live_earthquake_events",
-        "live_fallback_when": "Only when the caller explicitly asks for live/preliminary upstream data or needs time beyond canonical_available_through.",
-    },
-    "tsunamis": {
-        "preferred_tool": "get_tsunami_events",
-    },
-    "volcanoes": {
-        "preferred_tool": "get_volcanic_activity",
-        "live_fallback_tool": "get_live_volcano_events",
-        "live_fallback_when": "Only when the caller explicitly asks for live/preliminary upstream data or needs time beyond canonical_available_through.",
-    },
-    "hurricanes": {
-        "preferred_tool": "query_dataset",
-    },
-    "un_sdg": {
-        "preferred_tool": "query_dataset",
-    },
-    "world_factbook": {
-        "preferred_tool": "query_dataset",
-    },
-    "worldpop": {
-        "preferred_tool": "query_dataset",
-    },
-}
+PACK_MCP_ROUTING_HINTS: dict[str, dict[str, str]] = pack_routing_hints()
+
+
+def _free_pack_ids() -> frozenset[str]:
+    from .pack_pricing import FREE_PACK_IDS
+
+    return FREE_PACK_IDS
+
+
+def _paid_pack_ids() -> frozenset[str]:
+    from .pack_pricing import PAID_PACK_IDS
+
+    return PAID_PACK_IDS
+
+
+def _pack_is_paid(pack_id: str | None) -> bool:
+    return str(pack_id or "").strip() in _paid_pack_ids()
+
+
+def _hydrate_api_catalog_payload(payload: dict | None) -> dict:
+    if not isinstance(payload, dict):
+        return {"catalog_version": "1.0", "generated_at": None, "source_mode": "api_catalog", "pack_count": 0, "packs": []}
+
+    hydrated = deepcopy(payload)
+    packs = hydrated.get("packs")
+    if isinstance(packs, list):
+        normalized_packs: list[dict] = []
+        for pack in packs:
+            if not isinstance(pack, dict):
+                normalized_packs.append(pack)
+                continue
+            refreshed = deepcopy(pack)
+            refreshed["paid_data_calls"] = _pack_is_paid(refreshed.get("pack_id"))
+            normalized_packs.append(refreshed)
+        hydrated["packs"] = normalized_packs
+        hydrated["pack_count"] = len(normalized_packs)
+    return hydrated
+
+
+def _hydrate_api_guide_payload(payload: dict | None) -> dict:
+    if not isinstance(payload, dict):
+        return {}
+
+    hydrated = deepcopy(payload)
+    commercial_access = hydrated.get("commercial_access")
+    if not isinstance(commercial_access, dict):
+        commercial_access = {}
+    commercial_access["required_for_data_calls"] = False
+    commercial_access["required_for_some_data_calls"] = True
+    commercial_access["free_pack_ids"] = sorted(_free_pack_ids())
+    commercial_access["paid_pack_ids"] = sorted(_paid_pack_ids())
+    hydrated["commercial_access"] = commercial_access
+
+    current_live_scope = hydrated.get("current_live_scope")
+    if not isinstance(current_live_scope, dict):
+        current_live_scope = {}
+    catalog = load_api_catalog()
+    pack_ids = [
+        str(pack.get("pack_id") or "").strip()
+        for pack in (catalog.get("packs") or [])
+        if isinstance(pack, dict) and str(pack.get("pack_id") or "").strip()
+    ]
+    current_live_scope["agent_ready_packs"] = sorted(pack_ids)
+    current_live_scope["free_pack_ids"] = sorted(_free_pack_ids())
+    current_live_scope["paid_pack_ids"] = sorted(_paid_pack_ids())
+    hydrated["current_live_scope"] = current_live_scope
+    return hydrated
 
 
 def get_data_folder():
@@ -275,6 +313,7 @@ def load_api_catalog() -> dict:
         _api_catalog_missing_time = now
         return {"catalog_version": "1.0", "generated_at": None, "source_mode": "api_catalog", "pack_count": 0, "packs": []}
 
+    payload = _hydrate_api_catalog_payload(payload)
     _api_catalog_cache = payload
     _api_catalog_cache_time = now
     return payload
@@ -294,6 +333,7 @@ def load_api_guide() -> dict:
         _api_guide_missing_time = now
         return {}
 
+    payload = _hydrate_api_guide_payload(payload)
     _api_guide_cache = payload
     _api_guide_cache_time = now
     return payload
@@ -320,6 +360,8 @@ def load_api_pack_detail(pack_id: str) -> dict | None:
         return None
 
     payload = _hydrate_api_pack_detail_from_source_metadata(payload)
+    if isinstance(payload, dict):
+        payload["paid_data_calls"] = _pack_is_paid(pack_id)
 
     _api_pack_cache[pack_id] = payload
     _api_pack_cache_time[pack_id] = now

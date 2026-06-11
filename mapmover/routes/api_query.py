@@ -168,14 +168,6 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
         return response
 
     request_id = normalize_api_request_id(payload)
-    if not request_id:
-        return build_api_error_response(
-            None,
-            "invalid_request",
-            "request_id is required.",
-            400,
-            retry_hint="Include a stable request_id in the JSON body.",
-        )
     req.state.analytics_request_id = request_id
 
     source_id = str(payload.get("source_id") or "").strip()

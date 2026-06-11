@@ -25,6 +25,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
+from agent_surface_shared import render_app_llms_txt
 from mapmover import initialize_catalog, load_conversions, logger
 from mapmover.auth_context import get_authenticated_user, get_authenticated_user_async
 from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log_route_request_event
@@ -404,52 +405,7 @@ async def robots_txt():
 
 @app.get("/llms.txt", include_in_schema=False)
 async def llms_txt():
-    content = (
-        "# DaedalMap App\n\n"
-        "This host is the human-facing app at app.daedalmap.com.\n"
-        "If you are an agent, crawler, or developer bot, use the MCP server or agent docs instead of the app UI.\n\n"
-        "## MCP first\n"
-        "- Remote MCP server: https://app.daedalmap.com/mcp\n"
-        "- MCP server metadata: https://app.daedalmap.com/mcp/server.json\n"
-        "- Registry identity: com.daedalmap/county-map\n"
-        "- Current transport: streamable HTTP\n"
-        "- MCP wraps the same discovery and execution lane as the hosted API\n\n"
-        "## Agent lane\n"
-        "- Start here for docs: https://daedalmap.com/docs/for-agents\n"
-        "- Agent examples: https://daedalmap.com/docs/agent-examples\n"
-        "- loc_id guide: https://daedalmap.com/docs/loc-id\n"
-        "- Full machine-readable guide: https://daedalmap.com/llms-full.txt\n\n"
-        "## Live machine-facing endpoints\n"
-        "- GET https://app.daedalmap.com/mcp/server.json\n"
-        "- GET https://app.daedalmap.com/mcp\n"
-        "- POST https://app.daedalmap.com/mcp\n"
-        "- GET https://app.daedalmap.com/api/v1/guide\n"
-        "- GET https://app.daedalmap.com/api/v1/catalog\n"
-        "- GET https://app.daedalmap.com/api/v1/packs/{pack_id}\n"
-        "- POST https://app.daedalmap.com/api/v1/query/dataset\n\n"
-        "## Current hosted packs\n"
-        "As of 2026-05-19, the published packs are listed below. "
-        "Call GET https://app.daedalmap.com/api/v1/catalog for the live current pack index.\n"
-        "- currency\n"
-        "- earthquakes\n"
-        "- floods\n"
-        "- hurricanes\n"
-        "- tornadoes\n"
-        "- tsunamis\n"
-        "- un_sdg\n"
-        "- volcanoes\n"
-        "- world_factbook\n"
-        "- worldpop\n\n"
-        "## App UI\n"
-        "- Human-facing app: https://app.daedalmap.com\n"
-        "- Website and docs: https://daedalmap.com\n"
-        "- Source coverage: https://daedalmap.com/docs/source-map\n"
-        "- Data packs: https://daedalmap.com/packs\n"
-        "- GitHub (open runtime): https://github.com/xyver/daedal-map\n\n"
-        "## Crawlers and bots\n"
-        "Use the MCP server and agent API lane above. Keep requests narrow and respect rate limits; broad live scans may be rejected with guidance.\n"
-    )
-    return PlainTextResponse(content)
+    return PlainTextResponse(render_app_llms_txt())
 
 
 @app.get("/api/config/maps-key", include_in_schema=False)

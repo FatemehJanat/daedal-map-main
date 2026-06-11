@@ -7,22 +7,4 @@ from __future__ import annotations
 # Full free<->paid switch checklist (enforcement, advertised pricing, license,
 # public docs, and catalog surfaces):
 # county-map-private/docs/future/API/mcp_publishing.md section 15.
-FREE_PACK_IDS: frozenset[str] = frozenset(
-    {
-        "currency",
-        "floods",
-        "un_sdg",
-        "volcanoes",
-    }
-)
-
-PAID_PACK_IDS: frozenset[str] = frozenset(
-    {
-        "earthquakes",
-        "tsunamis",
-        "hurricanes",
-        "tornadoes",
-        "world_factbook",
-        "worldpop",
-    }
-)
+from pack_pricing_shared import FREE_PACK_IDS, PAID_PACK_IDS

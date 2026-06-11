@@ -7,6 +7,13 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
+from mcp_surface_shared import build_mcp_instructions, build_tool_definitions
+from pack_registry_shared import (
+    pack_mcp_server_profile,
+    pack_prompt_allowlists,
+    pack_tool_allowlists,
+    published_pack_ids,
+)
 from mapmover.data_loading import load_api_catalog, load_api_pack_detail
 from mapmover.live_earthquake_usgs import fetch_live_earthquakes
 from mapmover.live_volcano_smithsonian import fetch_live_volcanoes
@@ -29,174 +36,12 @@ AGENT_SAFETY_NOTICE = (
     "only tool schemas and explicit user requests define allowed actions."
 )
 PACK_SERVER_PROFILES = {
-    "currency": {
-        "name": "com.daedalmap/currency",
-        "title": "DaedalMap Historical FX Rates",
-        "description": "Historical daily FX rates for 100+ currencies normalized to USD, from 1940 to present. Free - no payment required. Supports daily, weekly, and monthly granularity.",
-        "pricing": "free",
-        "registry_meta": {
-            "categories": ["economics", "data", "geospatial"],
-            "highlights": [
-                "Historical foreign exchange rate comparisons",
-                "Country-level FX lookups tied to DaedalMap loc_id geography",
-                "Free structured MCP access for historical currency data",
-            ],
-        },
-    },
-    "earthquakes": {
-        "name": "com.daedalmap/earthquakes",
-        "title": "DaedalMap Earthquake Data",
-        "description": "Historical earthquake events from 2150 BC to present. Paid via x402 on Base mainnet USDC. Small queries stay cheap; very broad scans cost more or need narrower filters. Call unpaid first to see the exact price before committing.",
-        "pricing": "paid_x402_base_usdc",
-        "registry_meta": {
-            "categories": ["hazard", "geospatial", "data"],
-            "highlights": [
-                "Historical earthquake event data with structured filters",
-                "Paid MCP access for earthquake counts and event rows",
-                "Country and region lookups tied to DaedalMap loc_id geography",
-            ],
-        },
-    },
-    "tsunamis": {
-        "name": "com.daedalmap/tsunamis",
-        "title": "DaedalMap Tsunami Data",
-        "description": "Historical tsunami events from 2000 BC to present. Paid via x402 on Base mainnet USDC. Small queries stay cheap; very broad scans cost more or need narrower filters. Call unpaid first to see the exact price before committing.",
-        "pricing": "paid_x402_base_usdc",
-        "registry_meta": {
-            "categories": ["hazard", "geospatial", "data"],
-            "highlights": [
-                "Historical tsunami event data and wave-height metrics",
-                "Paid MCP access for tsunami counts and event rows",
-                "Country and coastal-region lookups tied to DaedalMap geography",
-            ],
-        },
-    },
-    "volcanoes": {
-        "name": "com.daedalmap/volcanoes",
-        "title": "DaedalMap Volcanic Activity",
-        "description": "Historical volcanic eruption records from Holocene to present, including VEI and location data. Free - no payment required.",
-        "pricing": "free",
-        "registry_meta": {
-            "categories": ["hazard", "geospatial", "data"],
-            "highlights": [
-                "Historical volcanic eruption records and VEI data",
-                "Free MCP access for volcanic activity queries",
-                "Country and region lookups tied to DaedalMap loc_id geography",
-            ],
-        },
-    },
-    "hurricanes": {
-        "name": "com.daedalmap/hurricanes",
-        "title": "DaedalMap Hurricane and Tropical Cyclone Data",
-        "description": "Global tropical cyclone tracks from IBTrACS, 1842-present. Wind, pressure, and paths. Paid via x402 on Base mainnet USDC. Small queries stay cheap; very broad scans cost more or need narrower filters. Call unpaid first to see the exact price before committing.",
-        "pricing": "paid_x402_base_usdc",
-        "registry_meta": {
-            "categories": ["hazard", "geospatial", "data"],
-            "highlights": [
-                "Global tropical cyclone and hurricane track records",
-                "Paid MCP access for hurricane and cyclone event queries",
-                "Country and basin lookups tied to DaedalMap loc_id geography",
-            ],
-        },
-    },
-    "un_sdg": {
-        "name": "com.daedalmap/un_sdg",
-        "title": "DaedalMap UN Sustainable Development Goals",
-        "description": "UN SDG country indicators across all 17 goals: poverty, health, education, climate. Free.",
-        "pricing": "free",
-        "registry_meta": {
-            "categories": ["development", "data", "geospatial"],
-            "highlights": [
-                "210 UN SDG indicators across all 17 goals",
-                "Free MCP access for development and social metrics",
-                "Country-level lookups tied to DaedalMap loc_id geography",
-            ],
-        },
-    },
-    "world_factbook": {
-        "name": "com.daedalmap/world_factbook",
-        "title": "DaedalMap CIA World Factbook",
-        "description": "CIA World Factbook country indicators for infrastructure, energy, demographics, and economy. Paid via x402 on Base mainnet USDC. Small queries stay cheap; very broad scans cost more or need narrower filters. Call unpaid first to see the exact price before committing.",
-        "pricing": "paid_x402_base_usdc",
-        "registry_meta": {
-            "categories": ["economic", "data", "geospatial"],
-            "highlights": [
-                "111 CIA World Factbook indicators from 2002-2026 editions",
-                "Paid MCP access for country infrastructure and economy metrics",
-                "Country-level lookups tied to DaedalMap loc_id geography",
-            ],
-        },
-    },
-    "worldpop": {
-        # Registry-facing name is `population` (the searchable noun) even though the
-        # facade key/path stays `worldpop`; the dict key drives all data/scoping, so
-        # only the generated server.json name/title/description change. See
-        # mcp_distribution_summary.md "population facade" note.
-        "name": "com.daedalmap/population",
-        "title": "DaedalMap Population Estimates",
-        "description": "Global population estimates from WorldPop, 2000-2030, at country and sub-national admin levels. Source: WorldPop (CC-BY 4.0). Paid via x402 on Base mainnet USDC. Small queries stay cheap; very broad scans cost more or need narrower filters. Call unpaid first to see the exact price before committing.",
-        "pricing": "paid_x402_base_usdc",
-        "registry_meta": {
-            "categories": ["demographic", "data", "geospatial"],
-            "highlights": [
-                "WorldPop population estimates across multiple admin levels",
-                "Paid MCP access for country and sub-national population queries",
-                "Country and regional lookups tied to DaedalMap loc_id geography",
-            ],
-        },
-    },
-    "floods": {
-        "name": "com.daedalmap/floods",
-        "title": "DaedalMap Flood Events",
-        "description": "Global large flood events from 1985 to present from the Dartmouth Flood Observatory Global Flood Records (CC0 public domain), including flood extent polygons, fatalities, displaced, severity, main cause, and a flood impact index, plus MODIS satellite-mapped extents from the Global Flood Database. Free - no payment required.",
-        "pricing": "free",
-        "registry_meta": {
-            "categories": ["hazard", "geospatial", "data"],
-            "highlights": [
-                "Global flood event records 1985-present with extent polygons",
-                "Free MCP access for flood counts, fatalities, displaced, and severity",
-                "Country and region lookups tied to DaedalMap loc_id geography",
-            ],
-        },
-    },
-    "tornadoes": {
-        "name": "com.daedalmap/tornadoes",
-        "title": "DaedalMap Tornado Events",
-        "description": "United States tornado events from 1950 to present from the NOAA Storm Prediction Center, including track paths, EF/Fujita intensity ratings, casualties, and damage estimates. Paid via x402 on Base mainnet USDC. Small queries stay cheap; very broad scans cost more or need narrower filters. Call unpaid first to see the exact price before committing.",
-        "pricing": "paid_x402_base_usdc",
-        "registry_meta": {
-            "categories": ["hazard", "geospatial", "data"],
-            "highlights": [
-                "US tornado event records 1950-present with track paths and intensity",
-                "Paid MCP access for tornado counts, casualties, and damage estimates",
-                "State and region lookups tied to DaedalMap loc_id geography",
-            ],
-        },
-    },
+    pack_id: pack_mcp_server_profile(pack_id)
+    for pack_id in published_pack_ids()
 }
 
-PACK_TOOL_ALLOWLIST: dict[str, set[str]] = {
-    "currency": {"get_catalog", "get_pack", "get_fx_rates"},
-    "earthquakes": {"get_catalog", "get_pack", "get_earthquake_events", "get_live_earthquake_events"},
-    "tsunamis": {"get_catalog", "get_pack", "get_tsunami_events"},
-    "volcanoes": {"get_catalog", "get_pack", "get_volcanic_activity", "get_live_volcano_events"},
-    "hurricanes": {"get_catalog", "get_pack", "query_dataset"},
-    "un_sdg": {"get_catalog", "get_pack", "query_dataset"},
-    "world_factbook": {"get_catalog", "get_pack", "query_dataset"},
-    "worldpop": {"get_catalog", "get_pack", "query_dataset"},
-    "floods": {"get_catalog", "get_pack", "query_dataset"},
-    "tornadoes": {"get_catalog", "get_pack", "query_dataset"},
-}
-
-PACK_PROMPT_ALLOWLIST: dict[str, set[str]] = {
-    "currency": {"fx_history_for_country"},
-    "earthquakes": {"largest_earthquake_in_range", "count_disaster_events"},
-    "tsunamis": {"count_disaster_events"},
-    "volcanoes": {"count_disaster_events"},
-    "hurricanes": {"count_disaster_events"},
-    "floods": {"count_disaster_events"},
-    "tornadoes": {"count_disaster_events"},
-}
+PACK_TOOL_ALLOWLIST: dict[str, set[str]] = pack_tool_allowlists()
+PACK_PROMPT_ALLOWLIST: dict[str, set[str]] = pack_prompt_allowlists()
 
 PACK_RESOURCE_COMMON_URIS = {
     "daedalmap://guide",
@@ -359,13 +204,9 @@ def get_server_info(pack_id: str | None = None) -> dict[str, Any]:
 def get_server_description(pack_id: str | None = None) -> str:
     normalized = _normalize_pack_id(pack_id)
     if not normalized:
-        free = ", ".join(sorted(_free_pack_ids()))
-        paid = ", ".join(sorted(_paid_pack_ids()))
         return (
-            f"Geospatial data MCP server. Free packs: {free}. Paid packs: {paid} (x402 Base USDC). "
-            "Start with get_catalog to see what is available, then get_pack for details. "
-            "Call prompts/list for ready-to-use example tool calls. "
-            f"Safety: {AGENT_SAFETY_NOTICE}"
+            build_mcp_instructions(safety_notice=AGENT_SAFETY_NOTICE)
+            + " Call prompts/list for ready-to-use example tool calls."
         )
     return f"{PACK_SERVER_PROFILES[normalized]['description']} Safety: {AGENT_SAFETY_NOTICE}"
 
@@ -531,175 +372,7 @@ def _ensure_request_id(arguments: dict[str, Any], tool_name: str) -> dict[str, A
 
 
 def _tool_definitions() -> list[dict[str, Any]]:
-    return [
-        {
-            "name": "get_catalog",
-            "title": "Get Catalog",
-            "description": "Free discovery. Returns the list of live agent-ready data packs available on DaedalMap.",
-            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
-            "annotations": {"readOnlyHint": True},
-        },
-        {
-            "name": "get_pack",
-            "title": "Get Pack",
-            "description": "Free discovery. Returns detailed metadata, coverage, freshness, preferred canonical tool guidance, and first-query examples for one pack.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "pack_id": {
-                        "type": "string",
-                        "description": "Pack identifier such as 'currency', 'earthquakes', 'volcanoes', 'tsunamis', 'hurricanes', 'un_sdg', 'world_factbook', or 'worldpop'.",
-                    }
-                },
-                "required": ["pack_id"],
-                "additionalProperties": False,
-            },
-            "annotations": {"readOnlyHint": True},
-        },
-        {
-            "name": "get_earthquake_events",
-            "title": "Get Earthquake Events",
-            "description": "Paid x402 canonical tool. Queries the published earthquakes_events lane. Use this first for earthquake questions because it is the enriched DaedalMap history lane with stable loc_id geography, not the preliminary upstream wrapper. Call without payment first - the server returns HTTP 402 with the exact USDC price before any charge. Small queries stay cheap; broad scans cost more or need narrower filters.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing and idempotency."},
-                    "metrics": {"type": "array", "items": {"type": "string"}, "description": "Metric ids to return, such as 'event_count' or event attributes like 'magnitude'."},
-                    "filters": {"type": "object", "description": "Structured filters including time ranges, region_ids, and compare clauses."},
-                    "sort": {"anyOf": [{"type": "array"}, {"type": "object"}], "description": "Optional sort instructions for row-returning queries."},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 500, "description": "Maximum number of rows to return. For top-N requests, include a narrow time range or region_ids before sorting."},
-                    "output": {"type": "object", "description": "Optional output controls such as response format hints."},
-                },
-                "required": ["metrics", "filters"],
-                "additionalProperties": False,
-            },
-            "annotations": {"readOnlyHint": True},
-        },
-        {
-            "name": "get_live_earthquake_events",
-            "title": "Get Live Earthquake Events",
-            "description": "Free live wrapper. Calls the USGS FDSN API for recent preliminary earthquake events normalized to DaedalMap event fields. Use this only when the caller explicitly wants live/preliminary upstream results or needs a very recent window not yet present in the published canonical earthquake lane. This is not the enriched canonical history lane.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing."},
-                    "hours": {"type": "integer", "minimum": 1, "maximum": 168, "description": "Recent lookback window in hours. Ignored when start_time is provided."},
-                    "start_time": {"type": "string", "description": "Optional inclusive ISO-8601 start datetime."},
-                    "end_time": {"type": "string", "description": "Optional exclusive-ish ISO-8601 end datetime. Defaults to now."},
-                    "min_magnitude": {"type": "number", "description": "Minimum earthquake magnitude. Defaults to 2.5."},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 500, "description": "Maximum live rows to return."},
-                    "orderby": {"type": "string", "enum": ["time", "time-asc", "magnitude", "magnitude-asc"], "description": "USGS result ordering."},
-                    "min_latitude": {"type": "number", "description": "Optional bounding box minimum latitude."},
-                    "max_latitude": {"type": "number", "description": "Optional bounding box maximum latitude."},
-                    "min_longitude": {"type": "number", "description": "Optional bounding box minimum longitude."},
-                    "max_longitude": {"type": "number", "description": "Optional bounding box maximum longitude."},
-                },
-                "additionalProperties": False,
-            },
-            "annotations": {"readOnlyHint": True},
-        },
-        {
-            "name": "get_volcanic_activity",
-            "title": "Get Volcanic Activity",
-            "description": "Free tool. Queries volcanoes_events for eruption records and volcanic activity metrics.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing and idempotency."},
-                    "metrics": {"type": "array", "items": {"type": "string"}, "description": "Metric ids to return, such as 'event_count', 'VEI', or eruption attributes."},
-                    "filters": {"type": "object", "description": "Structured filters including time ranges, region_ids, and compare clauses."},
-                    "sort": {"anyOf": [{"type": "array"}, {"type": "object"}], "description": "Optional sort instructions for row-returning queries."},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 500, "description": "Maximum number of rows to return. For top-N requests, include a narrow time range or region_ids before sorting."},
-                    "output": {"type": "object", "description": "Optional output controls such as response format hints."},
-                },
-                "required": ["metrics", "filters"],
-                "additionalProperties": False,
-            },
-            "annotations": {"readOnlyHint": True},
-        },
-        {
-            "name": "get_live_volcano_events",
-            "title": "Get Live Volcano Events",
-            "description": "Free live wrapper. Calls the Smithsonian/GVP WFS for recent preliminary volcanic eruption updates normalized to DaedalMap event fields. This is not the enriched canonical history lane.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing."},
-                    "days": {"type": "integer", "minimum": 1, "maximum": 730, "description": "Recent lookback window in days. Ignored when start_time is provided."},
-                    "start_time": {"type": "string", "description": "Optional inclusive ISO-8601 start datetime or date."},
-                    "end_time": {"type": "string", "description": "Optional inclusive ISO-8601 end datetime or date. Defaults to now."},
-                    "min_vei": {"type": "number", "description": "Optional minimum Volcanic Explosivity Index."},
-                    "ongoing_only": {"type": "boolean", "description": "When true, only return eruptions marked continuing by GVP."},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 500, "description": "Maximum live rows to return."},
-                    "orderby": {"type": "string", "enum": ["time", "time-asc", "vei", "vei-asc"], "description": "Result ordering."},
-                },
-                "additionalProperties": False,
-            },
-            "annotations": {"readOnlyHint": True},
-        },
-        {
-            "name": "get_tsunami_events",
-            "title": "Get Tsunami Events",
-            "description": "Paid x402 tool. Queries tsunamis_events. Call without payment first - the server returns HTTP 402 with the exact USDC price before any charge. Small queries stay cheap; broad scans cost more or need narrower filters.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing and idempotency."},
-                    "metrics": {"type": "array", "items": {"type": "string"}, "description": "Metric ids to return, such as 'event_count', 'max_water_height_m', or event attributes."},
-                    "filters": {"type": "object", "description": "Structured filters including time ranges, region_ids, and compare clauses."},
-                    "sort": {"anyOf": [{"type": "array"}, {"type": "object"}], "description": "Optional sort instructions for row-returning queries."},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 500, "description": "Maximum number of rows to return. For largest-wave or latest-event requests, include a narrow time range or region_ids before sorting."},
-                    "output": {"type": "object", "description": "Optional output controls such as response format hints."},
-                },
-                "required": ["metrics", "filters"],
-                "additionalProperties": False,
-            },
-            "annotations": {"readOnlyHint": True},
-        },
-        {
-            "name": "get_fx_rates",
-            "title": "Get FX Rates",
-            "description": "Free tool. Queries the currency pack using filters.region_ids plus filters.time.granularity to return daily, weekly, or monthly FX data.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing and idempotency."},
-                    "metrics": {"type": "array", "items": {"type": "string"}, "description": "Optional metric ids. Defaults to 'local_per_usd' for FX rate queries."},
-                    "filters": {"type": "object", "description": "Structured filters including region_ids with loc_id country codes, time range, and granularity."},
-                    "sort": {"anyOf": [{"type": "array"}, {"type": "object"}], "description": "Optional sort instructions for row-returning queries."},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "description": "Maximum number of rows to return for the requested granularity and time span."},
-                    "output": {"type": "object", "description": "Optional output controls such as response format hints."},
-                },
-                "required": ["filters"],
-                "additionalProperties": False,
-            },
-            "annotations": {"readOnlyHint": True},
-        },
-        {
-            "name": "query_dataset",
-            "title": "Query Dataset",
-            "description": "Generic structured query for direct source_id or pack_id access using the same contract as POST /api/v1/query/dataset. Free packs: "
-            + ", ".join(sorted(_free_pack_ids()))
-            + ". Paid packs: "
-            + ", ".join(sorted(_paid_pack_ids()))
-            + " (x402 Base USDC).",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing and idempotency."},
-                    "source_id": {"type": "string", "description": "Concrete source id such as 'earthquakes_events', 'volcanoes_events', 'hurricanes_events', or 'un_sdg/01'."},
-                    "pack_id": {"type": "string", "description": "Pack id such as 'currency', 'earthquakes', 'volcanoes', 'tsunamis', 'hurricanes', 'un_sdg', 'world_factbook', or 'worldpop'."},
-                    "metrics": {"type": "array", "items": {"type": "string"}, "description": "Metric ids to return. Use event_count for aggregate counts when supported."},
-                    "filters": {"type": "object", "description": "Structured filters including time, region_ids, and compare clauses."},
-                    "sort": {"anyOf": [{"type": "array"}, {"type": "object"}], "description": "Optional sort instructions for row-returning queries."},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 500, "description": "Maximum number of rows to return for the requested source or pack."},
-                    "output": {"type": "object", "description": "Optional output controls such as response format hints."},
-                },
-                "additionalProperties": False,
-            },
-            "annotations": {"readOnlyHint": True},
-        },
-    ]
+    return build_tool_definitions()
 
 
 def _prompt_definitions() -> list[dict[str, Any]]:

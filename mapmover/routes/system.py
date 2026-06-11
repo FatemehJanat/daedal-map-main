@@ -17,11 +17,13 @@ import msgpack
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
+from agent_surface_shared import agent_ai_plugin_description_for_model
 from mapmover.auth_context import build_session_cache_key, get_authenticated_user
 from mapmover.corpus_registry import corpus_registry
 from mapmover import ACCOUNT_URL, CacheSignature, clear_metadata_cache, initialize_catalog, logger, session_manager
 from mapmover.foundation_helpers import load_reference_json
 from mapmover.order_queue import order_queue
+from mapmover.runtime_config import get_runtime_config
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
 from mapmover.security import get_client_ip, is_https_request, rate_limiter
 
@@ -683,7 +685,6 @@ def _load_pack_source_docs(pack_sources: list[dict]) -> list[dict]:
 
 def _load_pack_reference(pack_id: str) -> dict:
     from mapmover.paths import DATA_ROOT
-    from mapmover.runtime_config import get_runtime_config
     from mapmover.data_loading import _fetch_json_from_s3
 
     pack_id = str(pack_id or "").strip()
@@ -1204,12 +1205,17 @@ def _build_v1_guide_payload() -> dict:
             "multi_year_multi_location",
         ],
         "commercial_access": {
-            "required_for_data_calls": True,
+            "required_for_data_calls": False,
+            "required_for_some_data_calls": True,
             "first_paid_candidate": "/api/v1/query/dataset",
             "modes": ["wallet_pay"],
+            "free_pack_ids": sorted(_free_pack_ids()),
+            "paid_pack_ids": sorted(_paid_pack_ids()),
         },
         "current_live_scope": {
             "agent_ready_packs": _current_agent_pack_ids(),
+            "free_pack_ids": sorted(_free_pack_ids()),
+            "paid_pack_ids": sorted(_paid_pack_ids()),
             "future_payment_modes": ["account_credit"],
         },
     }
@@ -1252,6 +1258,18 @@ def _pack_is_paid(pack_id: str | None) -> bool:
     from mapmover.routes.mcp import _paid_pack_ids
 
     return str(pack_id or "").strip() in _paid_pack_ids()
+
+
+def _free_pack_ids() -> frozenset[str]:
+    from mapmover.routes.mcp import _free_pack_ids as _mcp_free_pack_ids
+
+    return _mcp_free_pack_ids()
+
+
+def _paid_pack_ids() -> frozenset[str]:
+    from mapmover.routes.mcp import _paid_pack_ids as _mcp_paid_pack_ids
+
+    return _mcp_paid_pack_ids()
 
 
 def _normalize_mcp_facade_pack_id(pack_id: str | None) -> str | None:
@@ -1935,17 +1953,10 @@ async def get_ai_plugin_json():
             "Geographic data packs for disasters, FX rates, demographics, and global indicators. "
             "Free discovery. Free and paid execution lanes via HTTP API and MCP."
         ),
-        "description_for_model": (
-            "Query structured geographic data across disasters (earthquakes, tsunamis, volcanoes, "
-            "hurricanes, tornadoes, floods), FX rates, UN SDG indicators, World Factbook country "
-            "profiles, and WorldPop population estimates. "
-            "Start with GET /api/v1/catalog to discover packs, then GET /api/v1/packs/{pack_id} "
-            "for the full metric inventory and query rules, then POST /api/v1/query/dataset with "
-            "the structured body from quick_start.first_query_template. "
-            "All packs share a loc_id key (ISO3 for countries, hierarchical for sub-national) "
-            "enabling cross-pack joins on a single column with no geography normalization. "
-            "Free packs: currency, volcanoes, hurricanes, un_sdg, world_factbook, worldpop, "
-            "floods, tornadoes. Paid packs via x402 on Base USDC: earthquakes, tsunamis."
+        "description_for_model": agent_ai_plugin_description_for_model(
+            app_origin=app_url,
+            docs_origin="https://daedalmap.com",
+            include_examples=False,
         ),
         "auth": {"type": "none"},
         "api": {
