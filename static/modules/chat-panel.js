@@ -908,11 +908,30 @@ export const ChatManager = {
       return true;
     }
 
+    if (action.type === 'ops_event_focus' && action.feedId && action.eventId) {
+      const activated = await this.executeDefaultLoadAction(
+        {
+          type: 'overlay_activation',
+          overlayIds: getOpsOverlayIdsForFeeds([action.feedId]),
+          entity: { feedId: action.feedId }
+        },
+        {
+          ...options,
+          suppressResultMessage: true
+        }
+      );
+      if (!activated) {
+        return false;
+      }
+      return this.focusOpsEventById(action.feedId, action.eventId, options);
+    }
+
     return false;
   },
 
   async runDefaultLoad(params = {}, options = {}) {
     const lane = options.mode || this.mode;
+    await this.seedEmptyConversation(lane);
     const action = resolveDefaultLoadAction({
       lane,
       overlayId: params.overlayId,
@@ -933,6 +952,53 @@ export const ChatManager = {
     return result;
   },
 
+  async focusOpsEventById(feedId, eventId, options = {}) {
+    const normalizedFeedId = String(feedId || '').trim();
+    const normalizedEventId = String(eventId || '').trim();
+    if (!normalizedFeedId || !normalizedEventId) return false;
+
+    const query = `show event_id ${normalizedEventId} on map for ${normalizedFeedId}`;
+    const response = await postMsgpack('/chat/ops', {
+      query,
+      chatHistory: (this.modeHistories.ops || []).slice(-CONFIG.chatHistorySendLimit),
+      sessionId: this.getSessionIdForMode('ops'),
+      watch_id: this.opsWatchId || this.getSessionIdForMode('ops'),
+      watch_context: {
+        label: 'Ops watch'
+      },
+      selectedPopup: null
+    });
+
+    if (!response || response.type === 'error') {
+      return false;
+    }
+
+    if (response.watch_id) {
+      this.opsWatchId = response.watch_id;
+    }
+    if (response.ops_report) {
+      this.latestOpsReport = response.ops_report;
+      this.renderOpsDisplayPayloads(response);
+    }
+
+    const responseHistory = this.modeHistories.ops || [];
+    responseHistory.push({ role: 'user', content: query });
+    if (response.message || response.summary) {
+      responseHistory.push({ role: 'assistant', content: response.message || response.summary });
+    }
+    this.modeHistories.ops = responseHistory;
+    if (this.mode === 'ops') {
+      this.history = responseHistory;
+    }
+
+    this.handleResponse({
+      ...response,
+      _requestMode: 'ops',
+      _suppressAssistantMessage: options.suppressResultMessage === true
+    });
+    return true;
+  },
+
   // Make an app pack/source/feed load a distinct, identifiable analytics
   // signal: stamp the entity id into the page title + URL (so GA tells an app
   // *load* apart from a www page *visit*) and fire a specific event for clean
@@ -949,7 +1015,7 @@ export const ChatManager = {
       setLaneTitle(lane, entityId);
       writeEntityParam(
         lane,
-        sourceId ? { sourceId, eventId } : feedId ? { feedId } : { packId, eventId }
+        sourceId ? { sourceId, eventId } : feedId ? { feedId, eventId } : { packId, eventId }
       );
       if (feedId) {
         window.gtag?.('event', 'feed_load', {
@@ -1652,6 +1718,85 @@ export const ChatManager = {
         ? 'Research could not verify your runtime session. Reload the app or sign in again, then retry Load Data.'
         : (error.message || 'Could not load that saved corpus into Research.');
       this.addMessage(message, 'assistant', { mode: 'research' });
+    } finally {
+      indicator.remove();
+      researchModeToggle?.setCorpusLoading(false);
+      this.updateResearchCorpusStatus();
+      this.saveState();
+    }
+  },
+
+  async loadResearchUrlCorpus(packIds) {
+    const normalizedPackIds = [];
+    const seenPackIds = new Set();
+    for (const rawPackId of Array.isArray(packIds) ? packIds : []) {
+      const packId = String(rawPackId || '').trim();
+      if (!packId || seenPackIds.has(packId)) continue;
+      seenPackIds.add(packId);
+      normalizedPackIds.push(packId);
+    }
+    if (!normalizedPackIds.length) return false;
+
+    try {
+      const manifest = this.latestResearchManifest || await this.refreshResearchManifest();
+      const saved = manifest?.saved_corpus || null;
+      const artifactCount = Number(manifest?.artifact_count || 0);
+      const currentPackIds = Array.isArray(saved?.pack_ids) ? saved.pack_ids.map((value) => String(value || '').trim()).filter(Boolean) : [];
+      const samePackIds = currentPackIds.length === normalizedPackIds.length
+        && currentPackIds.every((value, index) => value === normalizedPackIds[index]);
+      if (samePackIds && artifactCount > 0 && !manifest?.stale_artifacts) {
+        if (manifest?.focus_geojson?.features?.length) {
+          App?.focusResearchGeojson?.(manifest.focus_geojson);
+        }
+        this.addMessage(
+          `Research already has this URL corpus loaded with ${artifactCount} artifact${artifactCount === 1 ? '' : 's'}.`,
+          'assistant',
+          { mode: 'research' }
+        );
+        this.updateResearchCorpusStatus();
+        return true;
+      }
+    } catch (manifestError) {
+      console.warn('Could not verify active Research URL corpus before loading:', manifestError);
+    }
+
+    const indicator = this.showTypingIndicator(true);
+    indicator.updateStage?.('thinking', 'Loading Research URL corpus...');
+    researchModeToggle?.setCorpusLoading(true);
+
+    try {
+      const response = await postMsgpack('/api/research/load-url-corpus', {
+        sessionId: this.getSessionIdForMode('research'),
+        packIds: normalizedPackIds
+      });
+      this.setResearchDisplayForMode('research', null);
+      if (this.mode === 'research') {
+        App?.enterResearchCanvasMode?.();
+      }
+      if (response?.focus_geojson?.features?.length) {
+        App?.focusResearchGeojson?.(response.focus_geojson);
+      }
+      this.latestResearchManifest = response?.corpus || null;
+      const saved = response?.corpus?.saved_corpus || null;
+      const packCount = Number(saved?.pack_count || normalizedPackIds.length || 0);
+      const sourceCount = Number(saved?.resolved_source_count || saved?.source_count || 0);
+      const artifactCount = Number(response?.corpus?.artifact_count || 0);
+      const extraSourcesText = sourceCount ? ` and ${sourceCount} source${sourceCount === 1 ? '' : 's'}` : '';
+      const baseLoadMessage = saved
+        ? `Loaded "${saved.name}" into Research from the URL. This workspace includes ${packCount} pack${packCount === 1 ? '' : 's'}${extraSourcesText} and ${artifactCount} hydrated artifact${artifactCount === 1 ? '' : 's'}.`
+        : (response?.message || 'Loaded the Research URL corpus.');
+      const loadWarning = String(response?.warning || '').trim();
+      this.addMessage(
+        loadWarning ? `${baseLoadMessage}\n\nNote: ${loadWarning}` : baseLoadMessage,
+        'assistant',
+        { mode: 'research' }
+      );
+      this.updateResearchCorpusStatus();
+      return true;
+    } catch (error) {
+      console.error('Research URL corpus load error:', error);
+      this.addMessage(error.message || 'Could not load that Research URL corpus.', 'assistant', { mode: 'research' });
+      return false;
     } finally {
       indicator.remove();
       researchModeToggle?.setCorpusLoading(false);

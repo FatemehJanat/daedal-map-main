@@ -9,9 +9,9 @@ export const CONFIG = {
   // =========================================================================
   // How many messages to keep in browser memory (unlimited session recall)
   chatHistoryStorageLimit: 100,
-  // How many messages to send to backend (must match backend CHAT_HISTORY_LLM_LIMIT)
-  // Higher = better context but more tokens. 12 keeps a longer running thread available.
-  chatHistorySendLimit: 12,
+  // How many messages to send to backend.
+  // 10 = about 5 turns of recent context without letting stale lane chatter dominate.
+  chatHistorySendLimit: 10,
   research: {
     recentHistorySendLimit: 10,
     compactionTriggerMessages: 16,

@@ -14,7 +14,7 @@
 
 const LANES = ['explore', 'research', 'ops'];
 const DEFAULT_LANE = 'explore';
-const ROUTE_INTENT_PARAMS = ['pack', 'source', 'feed', 'event_id', 'q'];
+const ROUTE_INTENT_PARAMS = ['pack', 'packs', 'source', 'feed', 'event_id', 'q'];
 
 const LANE_TITLES = {
   explore: 'Explore - DaedalMap',
@@ -82,7 +82,7 @@ export function writeEntityParam(lane, { packId = '', sourceId = '', feedId = ''
  * the lane from the first path segment; the remaining fields are placeholders
  * the later phases fill in.
  * @param {Location} [loc]
- * @returns {{lane: string|null, pack_id: string|null, source_id: string|null, feed_id: string|null, event_id: string|null,
+ * @returns {{lane: string|null, pack_id: string|null, pack_ids: string[], source_id: string|null, feed_id: string|null, event_id: string|null,
  *   prefill_query: string|null, requires_auth: boolean, invalid_reason: string|null}}
  */
 export function parseRouteIntent(loc = window.location) {
@@ -93,9 +93,21 @@ export function parseRouteIntent(loc = window.location) {
     const v = String(params.get(key) || '').trim();
     return v || null;
   };
+  const pickList = (key) => {
+    const values = [];
+    const seen = new Set();
+    for (const part of String(params.get(key) || '').split(',')) {
+      const value = String(part || '').trim();
+      if (!value || seen.has(value)) continue;
+      seen.add(value);
+      values.push(value);
+    }
+    return values;
+  };
   return {
     lane: lane || null,
     pack_id: pick('pack'),         // Explore deep link: ?pack=<pack_id>
+    pack_ids: pickList('packs'),   // Research deep link: ?packs=<pack_id_1>,<pack_id_2>
     source_id: pick('source'),     // optional ?source=<source_id>
     feed_id: pick('feed'),         // Ops deep link: ?feed=<collector_name>
     event_id: pick('event_id'),    // Exact event deep link: ?event_id=<stable_event_id>

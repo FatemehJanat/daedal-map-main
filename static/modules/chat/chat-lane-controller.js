@@ -14,6 +14,11 @@ function paneHasMessages(pane) {
   return String(pane.textContent || '').trim().length > 0;
 }
 
+function paneHasWelcomeMessage(pane) {
+  if (!pane) return false;
+  return Boolean(pane.querySelector('[data-welcome-message="true"]'));
+}
+
 export async function switchChatMode(ctx, mode, deps = {}) {
   const App = deps.App || null;
   const OverlaySelector = deps.OverlaySelector || null;
@@ -45,8 +50,7 @@ export async function switchChatMode(ctx, mode, deps = {}) {
   }
 
   const pane = ctx.messagePanes?.[mode] || null;
-  const hasStoredHtml = String(ctx.modeMessagesHtml?.[mode] || '').trim().length > 0;
-  if (ctx.history.length === 0 && !hasStoredHtml && !paneHasMessages(pane)) {
+  if (!paneHasWelcomeMessage(pane)) {
     await seedEmptyConversation(ctx, mode, deps);
   }
 
@@ -59,7 +63,13 @@ export async function seedEmptyConversation(ctx, mode = ctx.mode, deps = {}) {
   const buildResearchWelcomeMessage = deps.buildResearchWelcomeMessage || ((_manifest, fallback) => fallback || '');
   const buildOpsWelcomeMessage = deps.buildOpsWelcomeMessage || ((payload, fallback) => payload?.warning || fallback || '');
   const pane = ctx.messagePanes?.[mode];
-  if (paneHasMessages(pane)) return;
+  if (paneHasWelcomeMessage(pane)) return;
+  const welcomeOptions = {
+    mode,
+    prepend: paneHasMessages(pane),
+    className: 'chat-message--welcome',
+    dataset: { welcomeMessage: 'true', lane: mode }
+  };
 
   if (mode === 'research') {
     try {
@@ -70,11 +80,11 @@ export async function seedEmptyConversation(ctx, mode = ctx.mode, deps = {}) {
       ctx.addMessage(
         buildResearchWelcomeMessage(manifest, ctx.getResearchEmptyStateMessage()),
         'assistant',
-        { mode: 'research' }
+        welcomeOptions
       );
     } catch (error) {
       console.warn('Research corpus manifest check failed:', error);
-      ctx.addMessage('Research mode is available, but I could not read the active corpus yet.', 'assistant', { mode: 'research' });
+      ctx.addMessage('Research mode is available, but I could not read the active corpus yet.', 'assistant', welcomeOptions);
     }
     return;
   }
@@ -87,16 +97,16 @@ export async function seedEmptyConversation(ctx, mode = ctx.mode, deps = {}) {
       ctx.addMessage(
         buildOpsWelcomeMessage(payload, ctx.getOpsEmptyStateMessage()),
         'assistant',
-        { mode: 'ops' }
+        welcomeOptions
       );
     } catch (error) {
       console.warn('Ops report check failed:', error);
-      ctx.addMessage('Ops mode is available, but I could not read the active watch yet.', 'assistant', { mode: 'ops' });
+      ctx.addMessage('Ops mode is available, but I could not read the active watch yet.', 'assistant', welcomeOptions);
     }
     return;
   }
 
-  ctx.addMessage(buildExploreWelcomeMessage(), 'assistant', { html: true, mode: 'explore' });
+  ctx.addMessage(buildExploreWelcomeMessage(), 'assistant', { ...welcomeOptions, html: true });
 }
 
 export function applyModeUiState(ctx, deps = {}) {

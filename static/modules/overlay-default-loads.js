@@ -299,10 +299,30 @@ function resolveEventSourceId({ packId = '', sourceId = '' } = {}) {
   return String(preferredEntry?.source_id || '').trim();
 }
 
-function buildExactEventLoadAction({ lane = 'explore', packId = '', sourceId = '', eventId = '' } = {}) {
+function buildExactEventLoadAction({ lane = 'explore', packId = '', sourceId = '', feedId = '', eventId = '' } = {}) {
   const normalizedLane = String(lane || 'explore').trim().toLowerCase();
   const normalizedEventId = String(eventId || '').trim();
-  if (normalizedLane !== 'explore' || !normalizedEventId) {
+  if (!normalizedEventId) {
+    return null;
+  }
+
+  if (normalizedLane === 'ops') {
+    const normalizedFeedId = String(feedId || packId || sourceId || '').trim();
+    if (!normalizedFeedId) {
+      return null;
+    }
+    return {
+      type: 'ops_event_focus',
+      feedId: normalizedFeedId,
+      eventId: normalizedEventId,
+      entity: {
+        feedId: normalizedFeedId,
+        eventId: normalizedEventId
+      }
+    };
+  }
+
+  if (normalizedLane !== 'explore') {
     return null;
   }
 
@@ -355,6 +375,7 @@ export function resolveDefaultLoadAction({ lane = 'explore', overlayId = '', pac
     lane: normalizedLane,
     packId,
     sourceId,
+    feedId,
     eventId
   });
   if (exactEventAction) {

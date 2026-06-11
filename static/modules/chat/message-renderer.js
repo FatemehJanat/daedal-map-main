@@ -139,12 +139,21 @@ export function formatMessage(text) {
  * @param {HTMLElement} container - The messages container element
  * @param {string} text - Message text
  * @param {string} type - 'user' or 'assistant'
- * @param {Object} options - { html: boolean } - if html=true, text is inserted as raw HTML
+ * @param {Object} options - { html, className, dataset, prepend } helpers
  * @returns {HTMLElement} The created message div
  */
 export function addMessage(container, text, type, options = {}) {
   const div = document.createElement('div');
   div.className = `chat-message ${type}`;
+  if (options.className) {
+    div.className += ` ${String(options.className).trim()}`;
+  }
+  if (options.dataset && typeof options.dataset === 'object') {
+    for (const [key, value] of Object.entries(options.dataset)) {
+      if (value == null) continue;
+      div.dataset[key] = String(value);
+    }
+  }
 
   if (options.html) {
     div.innerHTML = text;
@@ -154,7 +163,11 @@ export function addMessage(container, text, type, options = {}) {
     div.textContent = text;
   }
 
-  container.appendChild(div);
+  if (options.prepend && container.firstChild) {
+    container.insertBefore(div, container.firstChild);
+  } else {
+    container.appendChild(div);
+  }
   container.scrollTop = container.scrollHeight;
 
   return div;

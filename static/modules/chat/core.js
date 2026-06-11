@@ -7,7 +7,7 @@
  * Usage:
  *   const chat = new ChatCore({
  *     messagesContainer: document.getElementById('chatMessages'),
- *     historyLimit: 8,
+ *     historyLimit: 10,
  *     getContext: () => ({ viewport, overlays, ... }),  // app-specific context
  *     onResponse: (response) => { ... },               // app-specific handler
  *     onError: (error) => { ... }                      // optional error handler
@@ -38,7 +38,7 @@ export class ChatCore {
   /**
    * @param {Object} config
    * @param {HTMLElement} config.messagesContainer - Chat messages DOM container
-   * @param {number} [config.historyLimit=8] - Max history entries to send to API
+   * @param {number} [config.historyLimit=10] - Max history entries to send to API
    * @param {Function} [config.getContext] - Returns app-specific context for API payload
    * @param {Function} [config.onResponse] - Handler for API responses
    * @param {Function} [config.onError] - Handler for errors
@@ -46,7 +46,7 @@ export class ChatCore {
    */
   constructor(config) {
     this.container = config.messagesContainer;
-    this.historyLimit = config.historyLimit || 8;
+    this.historyLimit = config.historyLimit || 10;
     this.getContext = config.getContext || (() => ({}));
     this.onResponse = config.onResponse || (() => {});
     this.onError = config.onError || ((err) => console.error('ChatCore error:', err));

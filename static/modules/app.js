@@ -678,11 +678,19 @@ export const App = {
 
       if (lane === 'ops' && routeIntent.feed_id) {
         const handled = await ChatManager.runDefaultLoad(
-          { feedId: routeIntent.feed_id },
+          { feedId: routeIntent.feed_id, eventId: routeIntent.event_id || '' },
           { mode: 'ops', syntheticSource: 'route_deep_link' }
         );
         if (!handled) {
-          console.warn('[DeepLink] No default live load preset for feed:', routeIntent.feed_id);
+          console.warn('[DeepLink] No default live load preset for feed:', routeIntent.feed_id, routeIntent.event_id || '');
+        }
+        return;
+      }
+
+      if (lane === 'research' && Array.isArray(routeIntent.pack_ids) && routeIntent.pack_ids.length) {
+        const handled = await ChatManager.loadResearchUrlCorpus?.(routeIntent.pack_ids);
+        if (!handled) {
+          console.warn('[DeepLink] Could not load Research URL corpus for packs:', routeIntent.pack_ids);
         }
       }
     };
