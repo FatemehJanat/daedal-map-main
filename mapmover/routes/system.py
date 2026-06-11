@@ -57,6 +57,17 @@ def clear_release_marker_cache() -> None:
 
 
 def _admin_catalog_refresh_forbidden_response(req: Request) -> Response | None:
+    # Trusted service-to-service path: the private dashboard/control plane calls
+    # this with the shared internal token (the same trust boundary that already
+    # lets it drive collectors). Accept it in place of an admin user session so
+    # the dashboard "Force catalog refresh" button works without a Supabase JWT.
+    import hmac
+    internal_token = os.getenv("CLOUD_INTERNAL_API_TOKEN", "").strip()
+    provided_token = (req.headers.get("x-internal-api-key") or "").strip()
+    if internal_token and provided_token and hmac.compare_digest(provided_token, internal_token):
+        logger.info("Admin catalog refresh authorized via internal token ip=%s", get_client_ip(req))
+        return None
+
     auth_user = get_authenticated_user(req, force_refresh=True)
     if not auth_user:
         logger.warning(
