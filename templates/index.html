@@ -80,9 +80,21 @@
     }
 
     window.DAEDALMAP_BOOT = (async () => {
-      const isLocalHost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+      // Owner/dev GA opt-out: skip GA on localhost, or on any browser that has
+      // visited with ?noga=1 (durable localStorage flag, IP-independent so it
+      // survives VPNs and dynamic home IPs). Visit with ?noga=0 to re-enable.
+      function dmGaSuppressed() {
+        try {
+          const p = new URLSearchParams(window.location.search);
+          if (p.get('noga') === '1') localStorage.setItem('dm_no_ga', '1');
+          if (p.get('noga') === '0') localStorage.removeItem('dm_no_ga');
+          if (localStorage.getItem('dm_no_ga') === '1') return true;
+        } catch (e) {}
+        const h = String(window.location.hostname || '').toLowerCase();
+        return ['localhost', '127.0.0.1', '0.0.0.0'].includes(h);
+      }
 
-      if (!isLocalHost) {
+      if (!dmGaSuppressed()) {
         await loadScriptWithFallback(
           'https://www.googletagmanager.com/gtag/js?id=G-NLHFVYWW9T',
           null
