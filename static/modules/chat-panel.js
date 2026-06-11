@@ -964,7 +964,8 @@ export const ChatManager = {
       sessionId: this.getSessionIdForMode('ops'),
       watch_id: this.opsWatchId || this.getSessionIdForMode('ops'),
       watch_context: {
-        label: 'Ops watch'
+        label: 'Ops watch',
+        sources: [normalizedFeedId]
       },
       selectedPopup: null
     });
@@ -978,7 +979,10 @@ export const ChatManager = {
     }
     if (response.ops_report) {
       this.latestOpsReport = response.ops_report;
-      this.renderOpsDisplayPayloads(response);
+      const hasFocusedGeojson = Boolean(response.geojson?.features?.length);
+      if (!hasFocusedGeojson) {
+        this.renderOpsDisplayPayloads(response);
+      }
     }
 
     const responseHistory = this.modeHistories.ops || [];

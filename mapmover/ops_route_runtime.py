@@ -62,6 +62,41 @@ def _account_ops_feeds(auth_user: dict | None) -> list[str]:
     return _normalize_feed_names(metadata.get("ops_feeds") or [])
 
 
+def _public_default_ops_feeds() -> list[str]:
+    return [
+        "currency",
+        "earthquakes",
+        "hurricanes_ibtracs_nrt",
+        "noaa_aurora",
+        "noaa_swpc",
+        "tsunamis",
+        "usa_nws_alerts",
+        "volcanoes",
+        "wildfires_us_nifc",
+    ]
+
+
+def _base_ops_feeds(auth_user: dict | None) -> list[str]:
+    account_feeds = _account_ops_feeds(auth_user)
+    if account_feeds:
+        return account_feeds
+    return _public_default_ops_feeds()
+
+
+def _requested_ops_feeds(body: dict) -> list[str]:
+    watch_context = body.get("watch_context") if isinstance(body.get("watch_context"), dict) else {}
+    return _normalize_feed_names(watch_context.get("sources") or [])
+
+
+def _merge_ops_feeds(*feed_lists) -> list[str]:
+    merged: list[str] = []
+    for values in feed_lists:
+        for feed in _normalize_feed_names(values or []):
+            if feed not in merged:
+                merged.append(feed)
+    return merged
+
+
 def _watch_from_cache(cache, watch_id: str | None) -> dict | None:
     if cache is None:
         return None
@@ -144,7 +179,9 @@ async def prepare_ops_chat_route_context(
         return None, None, rejection_payload, rejection_status, rejection_headers
 
     cache = session_manager.get_or_create(base_context.session_id)
-    allowed_feeds = _account_ops_feeds(base_context.auth_user)
+    base_feeds = _base_ops_feeds(base_context.auth_user)
+    requested_feeds = _requested_ops_feeds(body)
+    allowed_feeds = _merge_ops_feeds(base_feeds, requested_feeds)
     watch = load_or_create_ops_watch(
         cache=cache,
         session_id=base_context.session_id,
