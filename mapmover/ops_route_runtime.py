@@ -180,8 +180,7 @@ async def prepare_ops_chat_route_context(
 
     cache = session_manager.get_or_create(base_context.session_id)
     base_feeds = _base_ops_feeds(base_context.auth_user)
-    requested_feeds = _requested_ops_feeds(body)
-    allowed_feeds = _merge_ops_feeds(base_feeds, requested_feeds)
+    allowed_feeds = list(base_feeds)
     watch = load_or_create_ops_watch(
         cache=cache,
         session_id=base_context.session_id,

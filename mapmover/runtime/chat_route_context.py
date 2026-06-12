@@ -49,6 +49,12 @@ async def build_base_chat_route_context(
     # header above.
     raw_qa_metadata = extract_qa_suite_metadata(req.headers)
     qa_suite_metadata = raw_qa_metadata if caller_ctx.get("caller_kind") in _QA_CALLER_KINDS else {}
+    req.state.analytics_metadata = {
+        **(getattr(req.state, "analytics_metadata", {}) or {}),
+        "caller_kind": caller_ctx.get("caller_kind"),
+        "caller_label": caller_ctx.get("caller_label"),
+        **qa_suite_metadata,
+    }
     user_id = auth_user.get("id") if auth_user else None
     session_id = build_session_cache_key(frontend_session_id, auth_user)
     catalog_surface, surface_error = _catalog_surface_for_request(req, body, auth_user)

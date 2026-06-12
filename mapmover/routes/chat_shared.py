@@ -324,6 +324,7 @@ def _set_chat_analytics(
     if source_id:
         req.state.analytics_source_id = source_id
     req.state.analytics_metadata = {
+        **(getattr(req.state, "analytics_metadata", {}) or {}),
         "chat_lane": lane,
         "confirmed_order": confirmed_order,
         "request_key": request_key,

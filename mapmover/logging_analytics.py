@@ -69,7 +69,27 @@ _analytics_executor = ThreadPoolExecutor(
 )
 
 
+def _runtime_analytics_disabled() -> bool:
+    return str(os.getenv("QA_DISABLE_RUNTIME_ANALYTICS", "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _qa_suite_log_metadata() -> dict[str, Any]:
+    suite = str(os.getenv("LLM_USAGE_FORCE_QA_SUITE", "")).strip()
+    run_id = str(os.getenv("LLM_USAGE_FORCE_QA_RUN_ID", "")).strip()
+    label = str(os.getenv("LLM_USAGE_FORCE_QA_LABEL", "")).strip()
+    metadata: dict[str, Any] = {}
+    if suite:
+        metadata["qa_suite_name"] = suite
+    if run_id:
+        metadata["qa_suite_run_id"] = run_id
+    if label:
+        metadata["qa_caller_label"] = label
+    return metadata
+
+
 def _submit_background(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> None:
+    if _runtime_analytics_disabled():
+        return
     """Submit a callable to the analytics background pool, fire-and-forget.
 
     Errors raised inside the worker are swallowed and logged so they cannot
@@ -108,6 +128,8 @@ def _submit_background(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Non
 
 
 def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
+    if _runtime_analytics_disabled():
+        return
     if not _local_logs_enabled:
         return
     try:
@@ -204,6 +226,8 @@ def log_api_query_event(
     revenue_attributed_usdc_base_units: int | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> None:
+    if _runtime_analytics_disabled():
+        return
     event = {
         "timestamp": datetime.utcnow().isoformat(),
         "request_id": request_id,
@@ -298,6 +322,8 @@ def log_route_request_event(
     error_code: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> None:
+    if _runtime_analytics_disabled():
+        return
     event = {
         "timestamp": datetime.utcnow().isoformat(),
         "request_id": request_id,
@@ -389,6 +415,8 @@ def log_route_request_event(
 def get_supabase():
     """Get the Supabase client, initializing if needed."""
     global _supabase_client
+    if _runtime_analytics_disabled():
+        return None
     if _supabase_client is None:
         try:
             from supabase_client import get_supabase_client
@@ -417,6 +445,8 @@ def log_conversation(
     metadata: dict[str, Any] | None = None,
 ) -> None:
     """Log a human-side chat or map interaction to conversation_sessions."""
+    if _runtime_analytics_disabled():
+        return
     analytics_data = {
         "timestamp": datetime.utcnow().isoformat(),
         "session_id": session_id,
@@ -426,7 +456,10 @@ def log_conversation(
         "intent": intent,
         "dataset_selected": dataset_selected,
         "results_count": results_count,
-        "metadata": metadata or {},
+        "metadata": {
+            **_qa_suite_log_metadata(),
+            **(metadata or {}),
+        },
     }
 
     if _local_logs_enabled:
@@ -475,6 +508,8 @@ def log_llm_usage_event(
     metadata: dict[str, Any] | None = None,
 ) -> None:
     """Fire-and-forget chat-LLM usage event (one per user query, summed across tool loop)."""
+    if _runtime_analytics_disabled():
+        return
     logger.info(
         "llm_usage surface=%s call_kind=%s model=%s in=%s out=%s cache_c=%s cache_r=%s iters=%s latency_ms=%s caller=%s plan=%s",
         surface or "-",
@@ -527,6 +562,8 @@ def log_app_error(
     metadata: dict[str, Any] | None = None,
 ) -> None:
     """Log an application exception to error_logs. surface=human_app or agent_api."""
+    if _runtime_analytics_disabled():
+        return
     event = {
         "timestamp": datetime.utcnow().isoformat(),
         "surface": surface,
@@ -535,7 +572,10 @@ def log_app_error(
         "pack_id": pack_id,
         "error_type": error_type,
         "error_message": error_message[:500] if error_message else None,
-        "metadata": metadata or {},
+        "metadata": {
+            **_qa_suite_log_metadata(),
+            **(metadata or {}),
+        },
     }
     _append_jsonl(route_analytics_log_path, event)
 
@@ -560,6 +600,7 @@ def log_app_error(
                 "path": path,
                 "request_id": request_id,
                 "pack_id": pack_id,
+                **_qa_suite_log_metadata(),
                 **(metadata or {}),
             },
         )
@@ -578,6 +619,8 @@ def log_missing_geometry(country_names, query=None, dataset=None, region=None):
         region: The region filter used (optional)
     """
     if not country_names:
+        return
+    if _runtime_analytics_disabled():
         return
 
     # Log locally

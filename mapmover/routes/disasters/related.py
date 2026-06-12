@@ -9,7 +9,7 @@ from pathlib import Path
 from fastapi import APIRouter, Query
 
 from mapmover import logger
-from mapmover.data_loading import get_source_path, load_source_metadata
+from mapmover.data_loading import get_source_path, load_catalog, load_source_metadata
 from mapmover.duckdb_helpers import duckdb_available, is_cloud_mode, parquet_available, select_rows
 from mapmover.paths import GLOBAL_DIR
 from mapmover.runtime_config import get_runtime_config
@@ -56,17 +56,19 @@ EVENT_TABLES = {
 }
 
 MAX_CHAIN_DEPTH = 2
-EXACT_EVENT_SOURCE_REGISTRY = [
-    {"pack_id": "earthquakes", "source_id": "earthquakes_events", "event_type": "earthquake", "id_fields": ("event_id",), "metadata_source_id": "earthquakes_events"},
-    {"pack_id": "hurricanes", "source_id": "hurricanes", "event_type": "hurricane", "id_fields": ("storm_id", "event_id"), "parquet_path": GLOBAL_DIR / "disasters/hurricanes/events.parquet"},
-    {"pack_id": "volcanoes", "source_id": "volcanoes_events", "event_type": "volcano", "id_fields": ("event_id",), "metadata_source_id": "volcanoes_events"},
-    {"pack_id": "wildfires", "source_id": "wildfires", "event_type": "wildfire", "id_fields": ("event_id",), "parquet_path": GLOBAL_DIR / "disasters/wildfires/events.parquet"},
-    {"pack_id": "tsunamis", "source_id": "tsunamis_events", "event_type": "tsunami", "id_fields": ("event_id",), "metadata_source_id": "tsunamis_events"},
-    {"pack_id": "tornadoes", "source_id": "tornadoes", "event_type": "tornado", "id_fields": ("event_id",), "parquet_path": GLOBAL_DIR / "disasters/tornadoes/events.parquet"},
-    {"pack_id": "floods", "source_id": "floods", "event_type": "flood", "id_fields": ("event_id",), "parquet_path": GLOBAL_DIR / "disasters/floods/events.parquet"},
-    {"pack_id": "landslides", "source_id": "landslides", "event_type": "landslide", "id_fields": ("event_id",), "parquet_path": GLOBAL_DIR / "disasters/landslides/events.parquet"},
-    {"pack_id": "drought", "source_id": "drought", "event_type": "drought", "id_fields": ("event_id",), "parquet_path": GLOBAL_DIR / "disasters/drought/events.parquet"},
-]
+EXACT_EVENT_SOURCE_OVERRIDES = {
+    "earthquakes_events": {"id_fields": ("event_id",), "metadata_source_id": "earthquakes_events"},
+    "hurricanes": {
+        "id_fields": ("storm_id", "event_id"),
+        "parquet_path": GLOBAL_DIR / "disasters/hurricanes/events.parquet",
+    },
+    "volcanoes_events": {"id_fields": ("event_id",), "metadata_source_id": "volcanoes_events"},
+    "tsunamis_events": {"id_fields": ("event_id",), "metadata_source_id": "tsunamis_events"},
+    "tornadoes": {"id_fields": ("event_id",), "parquet_path": GLOBAL_DIR / "disasters/tornadoes/events.parquet"},
+    "floods": {"id_fields": ("event_id",), "parquet_path": GLOBAL_DIR / "disasters/floods/events.parquet"},
+    "landslides": {"id_fields": ("event_id",), "parquet_path": GLOBAL_DIR / "disasters/landslides/events.parquet"},
+    "drought": {"id_fields": ("event_id",), "parquet_path": GLOBAL_DIR / "disasters/drought/events.parquet"},
+}
 LAT_FIELDS = ("lat", "latitude", "centroid_lat")
 LON_FIELDS = ("lon", "longitude", "centroid_lon")
 TIME_FIELDS = ("timestamp", "observed_at", "event_time", "start_time", "updated_at", "last_updated", "time", "date")
@@ -104,6 +106,82 @@ def _classify_exact_event_identifier(identifier_value: str) -> tuple[list[str], 
 def _infer_exact_event_pack_hints(identifier_value: str) -> list[str]:
     hints, _strict = _classify_exact_event_identifier(identifier_value)
     return hints
+
+
+def _catalog_event_sources_for_pack(pack_id: str) -> list[dict]:
+    normalized_pack_id = str(pack_id or "").strip().lower()
+    if not normalized_pack_id:
+        return []
+
+    catalog = load_catalog() or {}
+    candidates: list[dict] = []
+    for source in catalog.get("sources", []):
+        if not isinstance(source, dict):
+            continue
+        if str(source.get("pack_id") or "").strip().lower() != normalized_pack_id:
+            continue
+        if str(source.get("data_type") or "").strip().lower() != "events":
+            continue
+
+        source_id = str(source.get("source_id") or "").strip()
+        if not source_id:
+            continue
+
+        override = EXACT_EVENT_SOURCE_OVERRIDES.get(source_id, {})
+        path_text = str(source.get("path") or "").strip()
+        path_parts = Path(path_text).parts if path_text else ()
+        normalized_path = path_text.replace("\\", "/")
+        event_type = str(
+            source.get("event_type")
+            or override.get("event_type")
+            or normalized_pack_id.rstrip("s")
+        ).strip().lower()
+
+        candidate = {
+            "pack_id": normalized_pack_id,
+            "source_id": source_id,
+            "event_type": event_type,
+            "id_fields": tuple(override.get("id_fields") or ("event_id",)),
+            "metadata_source_id": str(override.get("metadata_source_id") or source_id).strip(),
+            "_path_depth": len(path_parts) if path_parts else 999,
+            "_normalized_path": normalized_path,
+        }
+        if override.get("parquet_path"):
+            candidate["parquet_path"] = override["parquet_path"]
+        candidates.append(candidate)
+
+    candidates.sort(
+        key=lambda entry: (
+            0 if "/sources/" not in str(entry.get("_normalized_path") or "") else 1,
+            int(entry.get("_path_depth") or 999),
+            str(entry.get("source_id") or ""),
+        )
+    )
+    return candidates
+
+
+def _get_exact_event_candidates(pack_id: str | None = None) -> list[dict]:
+    if pack_id:
+        return _catalog_event_sources_for_pack(pack_id)
+
+    catalog = load_catalog() or {}
+    pack_ids: list[str] = []
+    seen_pack_ids: set[str] = set()
+    for source in catalog.get("sources", []):
+        if not isinstance(source, dict):
+            continue
+        if str(source.get("data_type") or "").strip().lower() != "events":
+            continue
+        candidate_pack_id = str(source.get("pack_id") or "").strip().lower()
+        if not candidate_pack_id or candidate_pack_id in seen_pack_ids:
+            continue
+        seen_pack_ids.add(candidate_pack_id)
+        pack_ids.append(candidate_pack_id)
+
+    candidates: list[dict] = []
+    for candidate_pack_id in pack_ids:
+        candidates.extend(_catalog_event_sources_for_pack(candidate_pack_id))
+    return candidates
 
 
 def _resolve_exact_event_parquet(source_id: str):
@@ -287,11 +365,11 @@ def _resolve_exact_event_payload(identifier_value: str, pack_id: str | None = No
     if not normalized_identifier:
         return None
 
-    candidates = EXACT_EVENT_SOURCE_REGISTRY
     if pack_id:
         normalized_pack = str(pack_id).strip().lower()
-        candidates = [entry for entry in candidates if entry["pack_id"] == normalized_pack]
+        candidates = _get_exact_event_candidates(normalized_pack)
     else:
+        candidates = _get_exact_event_candidates()
         hinted_packs, strict_hint = _classify_exact_event_identifier(normalized_identifier)
         if hinted_packs:
             hinted_set = set(hinted_packs)

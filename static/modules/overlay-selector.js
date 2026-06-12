@@ -513,6 +513,16 @@ function getCurrentOverlayLaneMode() {
   return 'explore';
 }
 
+export function applyOverlayCatalogResponse(response = {}) {
+  const overlayTree = response.overlay_tree || {};
+  PACK_DEFAULTS = response.pack_defaults || {};
+  SOURCE_DEFAULTS = response.source_defaults || {};
+  ALL_CATEGORIES = buildCategoriesFromTree(overlayTree);
+  CATEGORIES = filterCategoriesForCurrentMode(ALL_CATEGORIES);
+  ALL_OVERLAYS = getAllOverlaysFromCategories(ALL_CATEGORIES);
+  VISIBLE_OVERLAYS = getAllOverlaysFromCategories(CATEGORIES);
+}
+
 export function getAllowedOpsOverlayIds() {
   const profile = getCurrentProfile();
   const profileFeeds = Array.isArray(profile?.ops_feeds) ? profile.ops_feeds : [];
@@ -670,15 +680,7 @@ export const OverlaySelector = {
     try {
       // Fetch overlay tree from API
       const response = await fetchMsgpack('/api/catalog/overlays');
-      const overlayTree = response.overlay_tree || {};
-      PACK_DEFAULTS = response.pack_defaults || {};
-      SOURCE_DEFAULTS = response.source_defaults || {};
-
-      // Build categories from tree
-      ALL_CATEGORIES = buildCategoriesFromTree(overlayTree);
-      CATEGORIES = filterCategoriesForCurrentMode(ALL_CATEGORIES);
-      ALL_OVERLAYS = getAllOverlaysFromCategories(ALL_CATEGORIES);
-      VISIBLE_OVERLAYS = getAllOverlaysFromCategories(CATEGORIES);
+      applyOverlayCatalogResponse(response);
 
       console.log('OverlaySelector: Loaded', CATEGORIES.length, 'visible categories,', VISIBLE_OVERLAYS.length, 'visible overlays from catalog');
     } catch (err) {
