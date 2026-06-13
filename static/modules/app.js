@@ -631,112 +631,30 @@ export const App = {
     hideStartupChrome();
     ChatManager.applyModeUiState?.();
 
-    const shouldSuppressBaseRouteMessage = (lane, routeIntent) => {
-      if (!routeIntent?.event_id) {
-        return false;
-      }
-      if (lane === 'explore') {
-        return Boolean(routeIntent.pack_id || routeIntent.source_id);
-      }
-      if (lane === 'ops') {
-        return Boolean(routeIntent.feed_id);
-      }
-      return false;
-    };
-
-    const applyRouteIntentBaseLoad = async (lane, routeIntent) => {
-      const suppressBaseMessage = shouldSuppressBaseRouteMessage(lane, routeIntent);
-      if (lane === 'explore') {
-        if (routeIntent.pack_id) {
-          const handled = await ChatManager.runDefaultLoad(
-            { packId: routeIntent.pack_id },
-            {
-              mode: 'explore',
-              syntheticSource: 'route_deep_link',
-              suppressResultMessage: suppressBaseMessage
-            }
-          );
-          if (!handled) {
-            console.warn('[DeepLink] No default load preset for pack:', routeIntent.pack_id);
-          }
-          return;
-        }
-        if (routeIntent.source_id) {
-          const packEntry = await this.findPublicPackCatalogEntryBySourceId(routeIntent.source_id);
-          const handled = await ChatManager.runDefaultLoad(
-            {
-              sourceId: routeIntent.source_id,
-              packId: packEntry?.pack_id || ''
-            },
-            {
-              mode: 'explore',
-              syntheticSource: 'route_deep_link',
-              suppressResultMessage: suppressBaseMessage
-            }
-          );
-          if (!handled) {
-            console.warn('[DeepLink] No default load preset for source:', routeIntent.source_id);
-          }
-        }
-        return;
-      }
-
-      if (lane === 'ops' && routeIntent.feed_id) {
-        const handled = await ChatManager.runDefaultLoad(
-          { feedId: routeIntent.feed_id },
-          {
-            mode: 'ops',
-            syntheticSource: 'route_deep_link',
-            suppressResultMessage: suppressBaseMessage
-          }
-        );
-        if (!handled) {
-          console.warn('[DeepLink] No default live load preset for feed:', routeIntent.feed_id);
-        }
-        return;
-      }
-
-      if (lane === 'research' && Array.isArray(routeIntent.pack_ids) && routeIntent.pack_ids.length) {
-        const handled = await ChatManager.loadResearchUrlCorpus?.(routeIntent.pack_ids);
-        if (!handled) {
-          console.warn('[DeepLink] Could not load Research URL corpus for packs:', routeIntent.pack_ids);
-        }
-      }
-    };
-
-    const applyRouteIntentNarrowLoad = async (lane, routeIntent) => {
-      if (lane === 'explore' && routeIntent.event_id && (routeIntent.pack_id || routeIntent.source_id)) {
-        const eventPackId = routeIntent.pack_id
-          || (await this.findPublicPackCatalogEntryBySourceId(routeIntent.source_id))?.pack_id
-          || '';
-        const handled = await ChatManager.loadExactEventByParams(
-          {
-            packId: eventPackId,
-            sourceId: routeIntent.source_id || '',
-            eventId: routeIntent.event_id
-          },
-          { mode: 'explore', announce: true, syntheticSource: 'route_deep_link' }
-        );
-        if (!handled) {
-          console.warn('[DeepLink] No exact-event route for:', routeIntent.pack_id || routeIntent.source_id, routeIntent.event_id);
-        }
-        return;
-      }
-
-      if (lane === 'ops' && routeIntent.feed_id && routeIntent.event_id) {
-        const handled = await ChatManager.runDefaultLoad(
-          { feedId: routeIntent.feed_id, eventId: routeIntent.event_id },
-          { mode: 'ops', syntheticSource: 'route_deep_link' }
-        );
-        if (!handled) {
-          console.warn('[DeepLink] No exact-event route for feed:', routeIntent.feed_id, routeIntent.event_id);
-        }
-      }
-    };
-
     const applyRouteIntentLoad = async (lane, routeIntent) => {
-      await applyRouteIntentBaseLoad(lane, routeIntent);
-      await applyRouteIntentNarrowLoad(lane, routeIntent);
+      const handled = await ChatManager.applyRouteIntent?.(routeIntent || {}, {
+        mode: lane,
+        syntheticSource: 'route_deep_link'
+      });
+      if (!handled) {
+        const intentSummary = {
+          pack_id: routeIntent?.pack_id || null,
+          source_id: routeIntent?.source_id || null,
+          feed_id: routeIntent?.feed_id || null,
+          pack_ids: Array.isArray(routeIntent?.pack_ids) ? routeIntent.pack_ids : [],
+          event_id: routeIntent?.event_id || null
+        };
+        const hasIntent = Boolean(
+          intentSummary.pack_id
+          || intentSummary.source_id
+          || intentSummary.feed_id
+          || intentSummary.event_id
+          || intentSummary.pack_ids.length
+        );
+        if (hasIntent) {
+          console.warn('[DeepLink] Route intent did not resolve to a load:', intentSummary);
+        }
+      }
     };
 
     // Back/forward navigation: re-activate the lane from the URL. switchChatMode
@@ -747,9 +665,8 @@ export const App = {
       onRouteChange((lane, routeIntent) => {
         Promise.resolve((async () => {
           await ChatManager.switchChatMode?.(lane);
-          await applyRouteIntentBaseLoad(lane, routeIntent || {});
           await new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
-          await applyRouteIntentNarrowLoad(lane, routeIntent || {});
+          await applyRouteIntentLoad(lane, routeIntent || {});
         })()).catch((error) => {
           console.warn('Route-driven lane switch failed:', error);
         });
@@ -789,7 +706,7 @@ export const App = {
     // base lane state (public defaults for anon, account defaults/watch for
     // signed-in), then widen that session with the route intent.
     const routeIntent = parseRouteIntent();
-    await applyRouteIntentBaseLoad(startupMode, routeIntent);
+    await applyRouteIntentLoad(startupMode, routeIntent);
 
     ChatManager.applyModeUiState?.();
     this.syncMetricOverlayVisibility();
@@ -845,7 +762,6 @@ export const App = {
     console.log('Map Explorer ready');
     console.log('Press D to toggle debug mode (hierarchy depth colors)');
 
-    await applyRouteIntentNarrowLoad(startupMode, routeIntent);
   },
 
   ensureMapView(viewId, seedState = {}) {
@@ -1498,25 +1414,6 @@ export const App = {
     const normalizedPackId = String(packId || '').trim();
     if (!normalizedPackId) return null;
     return this.getPublicPackCatalog().find((pack) => pack && pack.pack_id === normalizedPackId) || null;
-  },
-
-  async findPublicPackCatalogEntryBySourceId(sourceId) {
-    const normalizedSourceId = String(sourceId || '').trim();
-    if (!normalizedSourceId) return null;
-
-    let packs = this.getPublicPackCatalog();
-    if (!packs.length) {
-      packs = await this.preloadPublicPackCatalog();
-    }
-
-    for (const pack of packs || []) {
-      const sources = Array.isArray(pack?.sources) ? pack.sources : [];
-      if (sources.some((source) => String(source?.source_id || '').trim() === normalizedSourceId)) {
-        return pack;
-      }
-    }
-
-    return null;
   },
 
   setupMobileExperienceNotice() {

@@ -1,10 +1,12 @@
 import {
+  getOpsFeedIdForOverlay,
   getOpsOverlayIdsForFeeds,
   isOpsFeedAllowed,
   getOverlayCatalogEntriesByPackId,
   getOverlayCatalogEntryBySourceId,
   getPackDefaultOverride,
   getSourceDefaultOverride,
+  resolvePackIdFromSourceId,
   resolveOverlayIdFromPackId,
   resolveOverlayIdFromSourceId
 } from './overlay-selector.js';
@@ -34,17 +36,6 @@ const SOURCE_TO_OVERLAY = {
   floods_events: 'floods',
   landslides_events: 'landslides',
   drought_events: 'drought'
-};
-
-const OVERLAY_TO_FEED = {
-  earthquakes: 'earthquakes',
-  hurricanes: 'hurricanes_ibtracs_nrt',
-  volcanoes: 'volcanoes',
-  wildfires: 'wildfires_us_nifc',
-  tsunamis: 'tsunamis',
-  aurora: 'noaa_aurora',
-  nws_alerts: 'usa_nws_alerts',
-  currency: 'currency'
 };
 
 function getCurrentUtcYear() {
@@ -159,36 +150,91 @@ function getSourceDefaultLoadAction(sourceEntry) {
   };
 }
 
-function getPackDefaultLoadAction(packId) {
-  // Pack-level override wins: authored in the pack metadata.json and delivered
-  // via /api/catalog/overlays pack_defaults. It has the same shape as a source
-  // default, so reuse the same builder.
-  const packOverride = getPackDefaultOverride(packId);
-  if (packOverride) {
-    const action = getSourceDefaultLoadAction(packOverride);
-    if (action) return action;
+function buildResolvedSourceDefaultLoadAction(sourceEntry, {
+  sourceId = '',
+  packId = '',
+  label = ''
+} = {}) {
+  const baseAction = getSourceDefaultLoadAction(sourceEntry);
+  if (!baseAction) return null;
+
+  const normalizedSourceId = String(sourceId || sourceEntry?.source_id || '').trim();
+  const normalizedPackId = String(packId || sourceEntry?.pack_id || '').trim();
+
+  return {
+    type: 'source_default_load',
+    sourceId: normalizedSourceId,
+    packId: normalizedPackId,
+    label: String(label || normalizedSourceId || normalizedPackId || '').trim(),
+    loadAction: {
+      ...baseAction,
+      entity: {
+        sourceId: normalizedSourceId,
+        packId: normalizedPackId
+      }
+    }
+  };
+}
+
+function buildSourceDefaultLoadAction(sourceId, packId = '') {
+  const normalizedSourceId = String(sourceId || '').trim();
+  if (!normalizedSourceId) return null;
+  const sourceEntry = getOverlayCatalogEntryBySourceId(normalizedSourceId)
+    || getSourceDefaultOverride(normalizedSourceId);
+  if (!sourceEntry) return null;
+  return buildResolvedSourceDefaultLoadAction(sourceEntry, {
+    sourceId: normalizedSourceId,
+    packId: String(packId || sourceEntry?.pack_id || '').trim(),
+    label: normalizedSourceId
+  });
+}
+
+function buildPackDefaultLoadAction(packId) {
+  const normalizedPackId = String(packId || '').trim();
+  if (!normalizedPackId) return null;
+
+  const packOverride = getPackDefaultOverride(normalizedPackId);
+  const packOverrideAction = packOverride
+    ? getSourceDefaultLoadAction(packOverride)
+    : null;
+
+  const childActions = getOverlayCatalogEntriesByPackId(normalizedPackId)
+    .map((entry) => buildResolvedSourceDefaultLoadAction(entry, {
+      sourceId: String(entry?.source_id || '').trim(),
+      packId: normalizedPackId,
+      label: String(entry?.source_id || '').trim()
+    }))
+    .filter(Boolean);
+
+  if (!packOverrideAction && !childActions.length) {
+    return null;
   }
-  // Fallback: the first member source's own default (the always-there floor).
-  const entries = getOverlayCatalogEntriesByPackId(packId);
-  for (const entry of entries) {
-    const action = getSourceDefaultLoadAction(entry);
-    if (action) return action;
-  }
-  return null;
+
+  return {
+    type: 'pack_default_load',
+    packId: normalizedPackId,
+    label: normalizedPackId,
+    packOverrideAction: packOverrideAction
+      ? {
+          ...packOverrideAction,
+          entity: {
+            packId: normalizedPackId
+          }
+        }
+      : null,
+    childActions
+  };
 }
 
 function buildPresetActionFromPackDefaults(packIds, fallbackSummary = '') {
   const actions = [];
   const loadedPackIds = [];
   for (const packId of packIds) {
-    const action = getPackDefaultLoadAction(packId);
+    const action = buildPackDefaultLoadAction(packId);
     if (!action) {
       continue;
     }
-    actions.push({
-      ...cloneJsonSafe(action),
-      label: packId
-    });
+    actions.push(cloneJsonSafe(action));
     loadedPackIds.push(packId);
   }
   if (!actions.length) {
@@ -258,12 +304,37 @@ export function resolveOverlayIdForOrderResult(response, order = null) {
   return '';
 }
 
+export function resolveOverlayIdForEntityParams(params = {}) {
+  const overlayId = String(params.overlayId || '').trim();
+  if (overlayId) return overlayId;
+
+  const sourceId = String(params.sourceId || '').trim();
+  if (sourceId) {
+    const fromSource = resolveOverlayIdFromSourceId(sourceId);
+    if (fromSource) return fromSource;
+  }
+
+  const feedId = String(params.feedId || '').trim();
+  if (feedId) {
+    const feedOverlayIds = getOpsOverlayIdsForFeeds([feedId]);
+    if (feedOverlayIds.length === 1) return feedOverlayIds[0];
+  }
+
+  const packId = String(params.packId || '').trim();
+  if (packId) {
+    const fromPack = resolveOverlayIdFromPackId(packId);
+    if (fromPack) return fromPack;
+  }
+
+  return '';
+}
+
 export function buildPackDefaultLoadOrder(packId) {
   const normalizedPackId = String(packId || '').trim();
   if (!normalizedPackId) return null;
-  const metadataAction = getPackDefaultLoadAction(normalizedPackId);
-  if (metadataAction?.order) {
-    return metadataAction.order;
+  const packAction = buildPackDefaultLoadAction(normalizedPackId);
+  if (packAction?.packOverrideAction?.order) {
+    return packAction.packOverrideAction.order;
   }
   return null;
 }
@@ -271,9 +342,9 @@ export function buildPackDefaultLoadOrder(packId) {
 export function buildSourceDefaultLoadOrder(sourceId) {
   const normalizedSourceId = String(sourceId || '').trim();
   if (!normalizedSourceId) return null;
-  const metadataAction = getSourceDefaultLoadAction(getOverlayCatalogEntryBySourceId(normalizedSourceId));
-  if (metadataAction?.order) {
-    return metadataAction.order;
+  const sourceAction = buildSourceDefaultLoadAction(normalizedSourceId);
+  if (sourceAction?.loadAction?.order) {
+    return sourceAction.loadAction.order;
   }
   return null;
 }
@@ -333,7 +404,7 @@ function buildExactEventLoadAction({ lane = 'explore', packId = '', sourceId = '
   }
 
   const fallbackPackId = normalizedPackId
-    || String(getOverlayCatalogEntryBySourceId(normalizedSourceId)?.pack_id || '').trim()
+    || resolvePackIdFromSourceId(normalizedSourceId)
     || resolveOverlayIdFromSourceId(normalizedSourceId);
   if (!fallbackPackId) {
     return null;
@@ -384,15 +455,8 @@ export function resolveDefaultLoadAction({ lane = 'explore', overlayId = '', pac
 
   const normalizedPackId = String(packId || '').trim();
   if (normalizedPackId) {
-    const metadataAction = getPackDefaultLoadAction(normalizedPackId);
-    if (metadataAction) {
-      return {
-        ...metadataAction,
-        entity: {
-          packId: normalizedPackId
-        }
-      };
-    }
+    const packAction = buildPackDefaultLoadAction(normalizedPackId);
+    if (packAction) return packAction;
     const order = buildPackDefaultLoadOrder(normalizedPackId);
     if (order) {
       return {
@@ -407,20 +471,8 @@ export function resolveDefaultLoadAction({ lane = 'explore', overlayId = '', pac
 
   const normalizedSourceId = String(sourceId || '').trim();
   if (normalizedLane === 'explore' && normalizedSourceId) {
-    // Overlay catalog first (sources with an overlay), then the source_defaults
-    // map (covers sources with no overlay slot, e.g. metrics aggregates).
-    const sourceEntry = getOverlayCatalogEntryBySourceId(normalizedSourceId)
-      || getSourceDefaultOverride(normalizedSourceId);
-    const metadataAction = getSourceDefaultLoadAction(sourceEntry);
-    if (metadataAction) {
-      return {
-        ...metadataAction,
-        entity: {
-          sourceId: normalizedSourceId,
-          packId: String(sourceEntry?.pack_id || normalizedPackId || '').trim()
-        }
-      };
-    }
+    const sourceAction = buildSourceDefaultLoadAction(normalizedSourceId, normalizedPackId);
+    if (sourceAction) return sourceAction;
     const order = buildSourceDefaultLoadOrder(normalizedSourceId);
     if (order) {
       return {
@@ -435,16 +487,8 @@ export function resolveDefaultLoadAction({ lane = 'explore', overlayId = '', pac
 
   const normalizedOverlayId = String(overlayId || '').trim();
   if (normalizedLane === 'explore' && normalizedOverlayId) {
-    const order = buildPackDefaultLoadOrder(normalizedOverlayId);
-    if (order) {
-      return {
-        type: 'confirmed_order',
-        order,
-        entity: {
-          packId: normalizedOverlayId
-        }
-      };
-    }
+    const packAction = buildPackDefaultLoadAction(normalizedOverlayId);
+    if (packAction) return packAction;
   }
 
   const normalizedFeedId = String(feedId || '').trim();
@@ -462,7 +506,7 @@ export function resolveDefaultLoadAction({ lane = 'explore', overlayId = '', pac
   }
 
   if (normalizedLane === 'ops' && normalizedOverlayId) {
-    const mappedFeedId = OVERLAY_TO_FEED[normalizedOverlayId];
+    const mappedFeedId = getOpsFeedIdForOverlay(normalizedOverlayId);
     if (mappedFeedId && isOpsFeedAllowed(mappedFeedId)) {
       return {
         type: 'overlay_activation',
@@ -474,14 +518,9 @@ export function resolveDefaultLoadAction({ lane = 'explore', overlayId = '', pac
       };
     }
 
-    const contextualPackAction = getPackDefaultLoadAction(normalizedOverlayId);
+    const contextualPackAction = buildPackDefaultLoadAction(normalizedOverlayId);
     if (contextualPackAction) {
-      return {
-        ...contextualPackAction,
-        entity: {
-          packId: normalizedOverlayId
-        }
-      };
+      return contextualPackAction;
     }
   }
 

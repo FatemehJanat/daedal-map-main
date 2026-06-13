@@ -146,6 +146,17 @@ export function getOpsOverlayIdsForFeeds(feeds = []) {
   return Array.from(overlayIds);
 }
 
+export function getOpsFeedIdForOverlay(overlayId) {
+  const normalizedOverlayId = String(overlayId || '').trim();
+  if (!normalizedOverlayId) return '';
+  for (const [feedId, overlayIds] of Object.entries(OPS_FEED_TO_OVERLAY_IDS)) {
+    if (Array.isArray(overlayIds) && overlayIds.includes(normalizedOverlayId)) {
+      return feedId;
+    }
+  }
+  return '';
+}
+
 export function isOpsFeedAllowed(feedId) {
   const normalizedFeedId = String(feedId || '').trim();
   if (!normalizedFeedId) return false;
@@ -190,6 +201,20 @@ export function getOverlayCatalogEntryBySourceId(sourceId) {
     }
   }
   return null;
+}
+
+export function resolvePackIdFromSourceId(sourceId) {
+  const normalizedSourceId = String(sourceId || '').trim();
+  if (!normalizedSourceId) return '';
+  const catalogEntry = getOverlayCatalogEntryBySourceId(normalizedSourceId);
+  if (catalogEntry?.pack_id) {
+    return String(catalogEntry.pack_id).trim();
+  }
+  const sourceDefault = getSourceDefaultOverride(normalizedSourceId);
+  if (sourceDefault?.pack_id) {
+    return String(sourceDefault.pack_id).trim();
+  }
+  return '';
 }
 
 export function getOverlayCatalogEntriesByPackId(packId) {

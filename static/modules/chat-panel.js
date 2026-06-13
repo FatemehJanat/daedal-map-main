@@ -55,10 +55,7 @@ import { TutorialMode, parseTutorialCommand } from './tutorial-mode.js';
 import { ResearchModeToggle } from './research/mode.js';
 import {
   getOpsOverlayIdsForFeeds,
-  getOverlayCatalogEntriesByPackId,
-  getOverlayCatalogEntryBySourceId,
-  resolveOverlayIdFromPackId,
-  resolveOverlayIdFromSourceId,
+  resolvePackIdFromSourceId,
   setOpsEffectiveFeeds as setOverlaySelectorOpsEffectiveFeeds
 } from './overlay-selector.js';
 import { ModelRegistry } from './models/model-registry.js';
@@ -78,7 +75,11 @@ import {
 import { buildExploreWelcomeMessage } from './explore/welcome.js';
 import { buildResearchWelcomeMessage } from './research/welcome.js';
 import { buildOpsWelcomeMessage } from './ops/welcome.js';
-import { resolveDefaultLoadAction, resolveOverlayIdForOrderResult } from './overlay-default-loads.js';
+import {
+  resolveDefaultLoadAction,
+  resolveOverlayIdForEntityParams,
+  resolveOverlayIdForOrderResult
+} from './overlay-default-loads.js';
 import {
   getBrowserCorpusStorageSummary,
   listBrowserCorpusSummaries,
@@ -460,8 +461,10 @@ function renderUnifiedOverlayEventResult(response, order = null) {
 function getExactEventOverlayId(order = null, response = null) {
   return (
     resolveOverlayIdForOrderResult(response, order)
-    || resolveOverlayIdFromSourceId(String(order?.items?.[0]?.source_id || '').trim())
-    || resolveOverlayIdFromPackId(String(order?.items?.[0]?.pack_id || '').trim())
+    || resolveOverlayIdForEntityParams({
+      sourceId: String(order?.items?.[0]?.source_id || '').trim(),
+      packId: String(order?.items?.[0]?.pack_id || '').trim()
+    })
     || ''
   );
 }
@@ -661,6 +664,12 @@ function formatDefaultLoadActionLabel(action) {
   if (action?.label) {
     return String(action.label).trim().replace(/_/g, ' ');
   }
+  if (action?.packId) {
+    return String(action.packId).trim().replace(/_/g, ' ');
+  }
+  if (action?.sourceId) {
+    return String(action.sourceId).trim().replace(/_/g, ' ');
+  }
   if (action?.overlayId) {
     return String(action.overlayId).trim().replace(/_/g, ' ');
   }
@@ -698,7 +707,7 @@ function inferSingleEntityRouteParams(order = null, response = null) {
 
 function restoreSingleEntityDisplay(order = null, response = null, mode = 'explore') {
   const entityParams = inferSingleEntityRouteParams(order, response);
-  const overlayId = resolveOverlayIdForDefaultEntity(entityParams || {});
+  const overlayId = resolveOverlayIdForEntityParams(entityParams || {});
   if (overlayId) {
     OverlaySelector?.showOverlay?.(overlayId, mode);
     if (OverlaySelector && !OverlaySelector.isActive(overlayId)) {
@@ -736,31 +745,6 @@ function ingestMetricsToCache(response) {
   const timeRange = response.time_range || response.year_range || null;
 
   OverlayController.ingestMetricData(sourceId, response.geojson, timeData, timeRange);
-}
-
-function resolveOverlayIdForDefaultEntity(params = {}) {
-  const overlayId = String(params.overlayId || '').trim();
-  if (overlayId) return overlayId;
-
-  const sourceId = String(params.sourceId || '').trim();
-  if (sourceId) {
-    const fromSource = resolveOverlayIdFromSourceId(sourceId);
-    if (fromSource) return fromSource;
-  }
-
-  const feedId = String(params.feedId || '').trim();
-  if (feedId) {
-    const feedOverlayIds = getOpsOverlayIdsForFeeds([feedId]);
-    if (feedOverlayIds.length === 1) return feedOverlayIds[0];
-  }
-
-  const packId = String(params.packId || '').trim();
-  if (packId) {
-    const fromPack = resolveOverlayIdFromPackId(packId);
-    if (fromPack) return fromPack;
-  }
-
-  return '';
 }
 
 /**
@@ -866,6 +850,46 @@ export const ChatManager = {
       packId: String(intent.packId || '').trim(),
       eventId: intent.eventId
     };
+  },
+
+  async applyRouteIntent(routeIntent = {}, options = {}) {
+    const lane = normalizeChatMode(options.mode || routeIntent?.lane || this.mode);
+    if (lane === 'research') {
+      const packIds = Array.isArray(routeIntent?.pack_ids) ? routeIntent.pack_ids : [];
+      if (!packIds.length) return false;
+      return Boolean(await this.loadResearchUrlCorpus?.(packIds));
+    }
+
+    const eventId = String(routeIntent?.event_id || '').trim();
+    const sourceId = String(routeIntent?.source_id || '').trim();
+    const feedId = String(routeIntent?.feed_id || '').trim();
+    const packId = String(routeIntent?.pack_id || '').trim()
+      || (sourceId ? resolvePackIdFromSourceId(sourceId) : '');
+
+    if (lane === 'explore' && !packId && !sourceId && !eventId) {
+      return false;
+    }
+    if (lane === 'ops' && !feedId && !eventId) {
+      return false;
+    }
+
+    const suppressResultMessage = Boolean(
+      eventId && ((lane === 'explore' && (packId || sourceId)) || (lane === 'ops' && feedId))
+    );
+
+    return this.runDefaultLoad(
+      {
+        packId,
+        sourceId,
+        feedId,
+        eventId
+      },
+      {
+        ...options,
+        mode: lane,
+        suppressResultMessage
+      }
+    );
   },
 
   async loadExactEventByParams(params = {}, options = {}) {
@@ -1087,6 +1111,73 @@ export const ChatManager = {
   async executeDefaultLoadAction(action, options = {}) {
     if (!action || typeof action !== 'object') return false;
 
+    if (action.type === 'source_default_load' && action.loadAction) {
+      return this.executeDefaultLoadAction(action.loadAction, {
+        ...options,
+        sourceId: action.sourceId || options.sourceId,
+        packId: action.packId || options.packId
+      });
+    }
+
+    if (action.type === 'pack_default_load') {
+      const packId = String(action.packId || options.packId || '').trim();
+      const childActions = Array.isArray(action.childActions) ? action.childActions.filter(Boolean) : [];
+      const packOverrideAction = action.packOverrideAction && typeof action.packOverrideAction === 'object'
+        ? action.packOverrideAction
+        : null;
+
+      if (packOverrideAction) {
+        return this.executeDefaultLoadAction(packOverrideAction, {
+          ...options,
+          packId: packId || options.packId
+        });
+      }
+
+      if (!childActions.length) {
+        return false;
+      }
+
+      let successCount = 0;
+      const loadedLabels = [];
+      for (let index = 0; index < childActions.length; index += 1) {
+        const childAction = childActions[index];
+        options.onProgress?.({
+          index: index + 1,
+          total: childActions.length,
+          label: formatDefaultLoadActionLabel(childAction)
+        });
+        try {
+          const childResult = await this.executeDefaultLoadAction(childAction, {
+            ...options,
+            onProgress: null,
+            suppressResultMessage: true,
+            packId: packId || options.packId
+          });
+          if (childResult && (typeof childResult !== 'object' || childResult.ok !== false)) {
+            successCount += 1;
+            loadedLabels.push(formatDefaultLoadActionLabel(childAction));
+          }
+        } catch (error) {
+          console.warn('Pack default source action failed:', childAction?.sourceId || childAction, error);
+        }
+      }
+
+      if (successCount > 0 && !options.suppressResultMessage) {
+        const labelText = joinLabelsForMessage(loadedLabels);
+        const summaryPrefix = packId
+          ? `Loaded ${packId.replace(/_/g, ' ')}`
+          : (successCount === childActions.length
+              ? `Loaded ${successCount} defaults`
+              : `Loaded ${successCount}/${childActions.length} defaults`);
+        const summaryText = `${summaryPrefix}: ${labelText}.`;
+        this.addMessage(summaryText, 'assistant', { mode: options.mode || this.mode });
+      }
+
+      return successCount > 0
+        ? { ok: true, successCount, total: childActions.length }
+        : false;
+    }
+
     if (action.type === 'multi_default_load' && Array.isArray(action.actions)) {
       const actions = action.actions.filter(Boolean);
       const requestedCount = Number(action._requestedPackCount) || actions.length;
@@ -1145,7 +1236,7 @@ export const ChatManager = {
       const requestedCount = Number(action.order._requestedPackCount) || items.length;
       const shouldRunSequentially = Boolean(options.onProgress) && items.length > 1;
       const requestMode = options.mode || this.mode;
-      const resolvedOverlayId = resolveOverlayIdForDefaultEntity({
+      const resolvedOverlayId = resolveOverlayIdForEntityParams({
         ...options,
         ...(action.entity || {})
       });
