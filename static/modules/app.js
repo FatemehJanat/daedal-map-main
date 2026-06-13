@@ -927,19 +927,26 @@ export const App = {
     return [load];
   },
 
-  captureCurrentTimeForShareState(lane) {
+  captureCurrentTimeForShareState(lane, options = {}) {
     const normalizedLane = normalizeChatMapLane(lane || ChatManager?.mode || this.currentCanvasMode);
     if (normalizedLane !== 'explore') return null;
     const timeSliderState = this.captureTimeSliderState();
     if (!timeSliderState) return null;
+    const currentTime = Number.isFinite(Number(timeSliderState.currentTime))
+      ? Number(timeSliderState.currentTime)
+      : null;
     const start = timeSliderState.boundMinTime != null
       ? new Date(timeSliderState.boundMinTime).toISOString()
       : '';
     const end = timeSliderState.boundMaxTime != null
       ? new Date(timeSliderState.boundMaxTime).toISOString()
       : '';
-    if (!start && !end) return null;
-    const time = { mode: 'range' };
+    if (currentTime == null && !start && !end) return null;
+    const preferRange = options?.timeMode === 'range';
+    const time = { mode: (currentTime != null && !preferRange) ? 'instant' : 'range' };
+    if (currentTime != null && time.mode === 'instant') {
+      time.at = new Date(currentTime).toISOString();
+    }
     if (start) time.start = start;
     if (end) time.end = end;
     return time;
@@ -970,7 +977,7 @@ export const App = {
       loads: this.captureCurrentLoadsForShareState(lane)
     };
     if (lane === 'explore') {
-      const time = this.captureCurrentTimeForShareState(lane);
+      const time = this.captureCurrentTimeForShareState(lane, options);
       if (time) shareState.time = time;
     } else if (lane === 'ops') {
       shareState.live = true;
@@ -1048,6 +1055,8 @@ export const App = {
 
   applyShareStateTime(timeState = null) {
     if (!timeState || !TimeSlider) return;
+    const timeMode = String(timeState.mode || '').trim().toLowerCase();
+    const atMs = timeState.at ? Date.parse(timeState.at) : null;
     const startMs = timeState.start ? Date.parse(timeState.start) : null;
     const endMs = timeState.end ? Date.parse(timeState.end) : null;
     if (Number.isFinite(startMs) || Number.isFinite(endMs)) {
@@ -1055,6 +1064,11 @@ export const App = {
         Number.isFinite(startMs) ? startMs : null,
         Number.isFinite(endMs) ? endMs : null
       );
+      TimeSlider.show?.();
+      TimeSlider.refreshDisplay?.();
+    }
+    if (timeMode === 'instant' && Number.isFinite(atMs)) {
+      TimeSlider.setTime?.(atMs, 'api');
       TimeSlider.show?.();
       TimeSlider.refreshDisplay?.();
     }

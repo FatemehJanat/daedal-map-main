@@ -14,7 +14,7 @@
 
 const LANES = ['explore', 'research', 'ops'];
 const DEFAULT_LANE = 'explore';
-const ROUTE_INTENT_PARAMS = ['pack', 'packs', 'source', 'feed', 'event_id', 'storm_id', 'q', 'state'];
+const ROUTE_INTENT_PARAMS = ['pack', 'packs', 'source', 'feed', 'event_id', 'storm_id', 'q', 'state', 'ov', 'bbox', 'c', 'z', 'br', 'pi', 'tm', 'tp', 't0', 't1', 'live', 'hw'];
 const SHARE_STATE_VERSION = 1;
 
 const LANE_TITLES = {
@@ -127,6 +127,36 @@ function normalizeCameraState(camera = null) {
   return Object.keys(result).length ? result : null;
 }
 
+function roundNumber(value, digits = 5) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  const scale = 10 ** digits;
+  return Math.round(numeric * scale) / scale;
+}
+
+function encodeNumberList(values = [], digits = 5) {
+  const parts = [];
+  for (const value of values || []) {
+    const rounded = roundNumber(value, digits);
+    if (!Number.isFinite(rounded)) return '';
+    parts.push(String(rounded));
+  }
+  return parts.join(',');
+}
+
+function decodeNumberList(value, expectedLength = 0) {
+  const parts = String(value || '').split(',').map((part) => Number(part.trim()));
+  if (expectedLength && parts.length !== expectedLength) return [];
+  if (!parts.length || parts.some((part) => !Number.isFinite(part))) return [];
+  return parts;
+}
+
+function decodeOptionalNumber(params, key) {
+  if (!params?.has?.(key)) return null;
+  const value = Number(params.get(key));
+  return Number.isFinite(value) ? value : null;
+}
+
 function normalizeLoadEntry(entry = null) {
   if (!entry || typeof entry !== 'object') return null;
   const kind = String(entry.kind || '').trim().toLowerCase();
@@ -174,9 +204,16 @@ export function normalizeShareState(raw = null) {
   };
   if (lane === 'explore' && raw.time && typeof raw.time === 'object') {
     const timeMode = String(raw.time.mode || '').trim().toLowerCase();
+    const start = String(raw.time.start || '').trim();
+    const end = String(raw.time.end || '').trim();
+    const at = String(raw.time.at || '').trim();
+    if (timeMode === 'instant' && (at || start || end)) {
+      normalized.time = { mode: 'instant' };
+      if (at) normalized.time.at = at;
+      if (start) normalized.time.start = start;
+      if (end) normalized.time.end = end;
+    }
     if (timeMode === 'range') {
-      const start = String(raw.time.start || '').trim();
-      const end = String(raw.time.end || '').trim();
       if (start || end) {
         normalized.time = { mode: 'range' };
         if (start) normalized.time.start = start;
@@ -222,13 +259,121 @@ export function decodeShareStateParam(value) {
   }
 }
 
+function isSimpleShareState(shareState) {
+  const normalized = normalizeShareState(shareState);
+  if (!normalized) return false;
+  return normalized.loads.length === 0 && !normalized.focus;
+}
+
+function encodeSimpleShareStateQuery(shareState) {
+  const normalized = normalizeShareState(shareState);
+  if (!normalized || !isSimpleShareState(normalized)) return '';
+  const params = new URLSearchParams();
+  if (normalized.overlays.length) {
+    params.set('ov', normalized.overlays.join(','));
+  }
+  if (Array.isArray(normalized.camera?.bbox) && normalized.camera.bbox.length === 4) {
+    const bbox = encodeNumberList(normalized.camera.bbox, 5);
+    if (bbox) params.set('bbox', bbox);
+  } else if (normalized.camera?.center) {
+    const center = encodeNumberList([normalized.camera.center.lng, normalized.camera.center.lat], 5);
+    if (center) params.set('c', center);
+  }
+  if (Number.isFinite(Number(normalized.camera?.zoom))) {
+    params.set('z', String(roundNumber(normalized.camera.zoom, 3)));
+  }
+  if (Number.isFinite(Number(normalized.camera?.bearing)) && Number(normalized.camera.bearing) !== 0) {
+    params.set('br', String(roundNumber(normalized.camera.bearing, 2)));
+  }
+  if (Number.isFinite(Number(normalized.camera?.pitch)) && Number(normalized.camera.pitch) !== 0) {
+    params.set('pi', String(roundNumber(normalized.camera.pitch, 2)));
+  }
+  if (normalized.lane === 'explore' && normalized.time?.mode === 'range') {
+    params.set('tm', 'range');
+    if (normalized.time.start) params.set('t0', normalized.time.start);
+    if (normalized.time.end) params.set('t1', normalized.time.end);
+  }
+  if (normalized.lane === 'explore' && normalized.time?.mode === 'instant') {
+    params.set('tm', 'instant');
+    if (normalized.time.at) params.set('tp', normalized.time.at);
+    if (normalized.time.start) params.set('t0', normalized.time.start);
+    if (normalized.time.end) params.set('t1', normalized.time.end);
+  }
+  if (normalized.lane === 'ops') {
+    params.set('live', normalized.live === false ? '0' : '1');
+    if (normalized.history_window) params.set('hw', normalized.history_window);
+  }
+  return params.toString();
+}
+
+function decodeSimpleShareState(params, lane) {
+  const normalizedLane = normalizeLane(lane);
+  if (!normalizedLane) return null;
+  const overlays = String(params.get('ov') || '')
+    .split(',')
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+  const bbox = decodeNumberList(params.get('bbox'), 4);
+  const center = decodeNumberList(params.get('c'), 2);
+  const zoom = decodeOptionalNumber(params, 'z');
+  const bearing = decodeOptionalNumber(params, 'br');
+  const pitch = decodeOptionalNumber(params, 'pi');
+  const hasSimpleState = overlays.length
+    || bbox.length === 4
+    || center.length === 2
+    || Number.isFinite(zoom)
+    || Number.isFinite(bearing)
+    || Number.isFinite(pitch)
+    || params.has('tm')
+    || params.has('tp')
+    || params.has('t0')
+    || params.has('t1')
+    || params.has('live')
+    || params.has('hw');
+  if (!hasSimpleState) return null;
+  const shareState = {
+    v: SHARE_STATE_VERSION,
+    lane: normalizedLane,
+    overlays,
+    loads: []
+  };
+  const camera = {};
+  if (bbox.length === 4) {
+    camera.bbox = bbox;
+  } else if (center.length === 2) {
+    camera.center = { lng: center[0], lat: center[1] };
+  }
+  if (Number.isFinite(zoom)) camera.zoom = zoom;
+  if (Number.isFinite(bearing)) camera.bearing = bearing;
+  if (Number.isFinite(pitch)) camera.pitch = pitch;
+  if (Object.keys(camera).length) shareState.camera = camera;
+  if (normalizedLane === 'explore' && (params.has('tm') || params.has('tp') || params.has('t0') || params.has('t1'))) {
+    const timeMode = String(params.get('tm') || '').trim().toLowerCase();
+    shareState.time = { mode: timeMode === 'instant' ? 'instant' : 'range' };
+    const at = String(params.get('tp') || '').trim();
+    const start = String(params.get('t0') || '').trim();
+    const end = String(params.get('t1') || '').trim();
+    if (at) shareState.time.at = at;
+    if (start) shareState.time.start = start;
+    if (end) shareState.time.end = end;
+  }
+  if (normalizedLane === 'ops') {
+    shareState.live = String(params.get('live') || '1') !== '0';
+    const historyWindow = String(params.get('hw') || '').trim();
+    if (historyWindow) shareState.history_window = historyWindow;
+  }
+  return normalizeShareState(shareState);
+}
+
 export function buildShareStateUrl(shareState, { absolute = false } = {}) {
   const normalized = normalizeShareState(shareState);
   if (!normalized) return '';
   const lane = normalized.lane || DEFAULT_LANE;
-  const encoded = encodeShareStateParam(normalized);
   const path = '/' + lane;
-  const url = `${path}?state=${encoded}`;
+  const simpleQuery = encodeSimpleShareStateQuery(normalized);
+  const encoded = simpleQuery ? '' : encodeShareStateParam(normalized);
+  const query = simpleQuery || (encoded ? `state=${encoded}` : '');
+  const url = query ? `${path}?${query}` : path;
   if (!absolute || typeof window === 'undefined') return url;
   return new URL(url, window.location.origin).toString();
 }
@@ -264,6 +409,7 @@ export function parseRouteIntent(loc = window.location) {
   const stormId = pick('storm_id');
   const normalizedExactId = genericEventId || stormId || null;
   const exactIdKey = genericEventId ? 'event_id' : (stormId ? 'storm_id' : null);
+  const shareStateFromQuery = decodeSimpleShareState(params, lane || DEFAULT_LANE);
   return {
     lane: lane || null,
     pack_id: pick('pack'),         // Explore deep link: ?pack=<pack_id>
@@ -273,7 +419,7 @@ export function parseRouteIntent(loc = window.location) {
     event_id: normalizedExactId,   // Exact event deep link: ?event_id=<stable_event_id> or native alias like ?storm_id=
     exact_id_key: exactIdKey,
     prefill_query: pick('q'),      // display-only: ?q=<text> (never auto-sent)
-    share_state: decodeShareStateParam(pick('state')),
+    share_state: decodeShareStateParam(pick('state')) || shareStateFromQuery,
     requires_auth: false,          // resolved by the auth layer, not here
     invalid_reason: segment && !lane ? 'unknown_path_segment' : null,
   };
