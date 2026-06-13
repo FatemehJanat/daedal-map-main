@@ -43,6 +43,18 @@ from mapmover.runtime.warning_primitives import (
 )
 
 
+def _confirmed_order_display_feature_count(result: dict) -> int:
+    if not isinstance(result, dict):
+        return 0
+    precap = result.get("_precap_display_feature_count")
+    try:
+        if precap is not None:
+            return int(precap)
+    except (TypeError, ValueError):
+        pass
+    return estimate_display_feature_count(result)
+
+
 @dataclass
 class ExploreChatRouteContext:
     frontend_session_id: str
@@ -153,7 +165,7 @@ def execute_confirmed_order_http(
             source_id=result.get("source_id"),
         )
 
-        available_rows = estimate_display_feature_count(result)
+        available_rows = _confirmed_order_display_feature_count(result)
         display_warning, should_interrupt = evaluate_display_warning_gate(
             available_rows,
             policy=explore_orchestrator.display_warning_policy(),
@@ -273,6 +285,18 @@ def execute_confirmed_order_stream(
         confirmed_order=body["confirmed_order"],
         load_source_metadata_func=load_source_metadata,
     )
+    available_rows = _confirmed_order_display_feature_count(result)
+    display_warning, should_interrupt = evaluate_display_warning_gate(
+        available_rows,
+        policy=explore_orchestrator.display_warning_policy(),
+        force_large_display=bool(body.get("force_large_display")),
+    )
+    if should_interrupt:
+        return build_display_warning_result(
+            display_warning,
+            pending_order=body["confirmed_order"],
+            summary=result.get("summary") or body["confirmed_order"].get("summary") or "Data request",
+        )
     logger.info(
         "Streaming confirmed_order request_key=%s reused=%s type=%s source=%s",
         request_key,

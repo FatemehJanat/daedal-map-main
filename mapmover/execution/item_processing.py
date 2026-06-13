@@ -37,6 +37,32 @@ def _normalize_runtime_value(value):
     return value
 
 
+def _build_geom_loc_series(df: pd.DataFrame, canonicalize_loc_id_func, translate_loc_id_to_geometry_id_func):
+    if "loc_id" not in df.columns or df.empty:
+        return pd.Series(dtype="object")
+    canonical_series = df["loc_id"].map(canonicalize_loc_id_func)
+    unique_loc_ids = [value for value in pd.unique(canonical_series.dropna()) if value]
+    geom_loc_map = {
+        loc_id: translate_loc_id_to_geometry_id_func(loc_id)
+        for loc_id in unique_loc_ids
+    }
+    return canonical_series.map(geom_loc_map)
+
+
+def _build_temporal_key_series(df: pd.DataFrame, temporal_field: str | None, temporal_granularity: str | None):
+    if df.empty:
+        return pd.Series(dtype="float64")
+    source_series = df[temporal_field] if temporal_field and temporal_field in df.columns else df.get("year")
+    if source_series is None:
+        return pd.Series(dtype="float64")
+    unique_values = pd.unique(source_series)
+    temporal_map = {
+        value: coerce_temporal_key(value, temporal_granularity or "yearly")
+        for value in unique_values
+    }
+    return source_series.map(temporal_map)
+
+
 def process_metric_items(
     *,
     order: dict,
@@ -319,49 +345,93 @@ def process_metric_items(
         if source_id and label not in metric_source_map:
             metric_source_map[label] = source_id
 
-        for _, row in df.iterrows():
-            raw_loc_id = row.get("loc_id")
-            loc_id = canonicalize_loc_id_func(raw_loc_id)
-            if not loc_id:
-                continue
-            geom_loc_id = translate_loc_id_to_geometry_id_func(loc_id)
+        geom_loc_series = _build_geom_loc_series(
+            df,
+            canonicalize_loc_id_func=canonicalize_loc_id_func,
+            translate_loc_id_to_geometry_id_func=translate_loc_id_to_geometry_id_func,
+        )
+        value_series = df[metric_col].map(_normalize_runtime_value) if metric_col in df.columns else pd.Series(dtype="object")
 
-            val = row.get(metric_col)
-            if pd.notna(val):
-                val = _normalize_runtime_value(val)
-                if val is None:
-                    continue
-
-                if temporal_mode_active:
-                    raw_time_value = row.get(temporal_field) if temporal_field and temporal_field in df.columns else row.get("year")
-                    time_key = coerce_temporal_key(raw_time_value, temporal_granularity or "yearly")
-                    if time_key is None:
-                        continue
+        if temporal_mode_active:
+            time_key_series = _build_temporal_key_series(df, temporal_field, temporal_granularity)
+            row_geo_level_series = (
+                df["geo_level"].map(_normalize_runtime_value)
+                if "geo_level" in df.columns
+                else pd.Series([requested_geo_level] * len(df), index=df.index, dtype="object")
+            )
+            frame = pd.DataFrame(
+                {
+                    "geom_loc_id": geom_loc_series,
+                    "time_key": time_key_series,
+                    "metric_value": value_series,
+                    "geo_level_value": row_geo_level_series,
+                },
+                index=df.index,
+            )
+            frame = frame[
+                frame["geom_loc_id"].notna()
+                & frame["time_key"].notna()
+                & frame["metric_value"].notna()
+            ]
+            if not frame.empty:
+                frame = frame.drop_duplicates(subset=["geom_loc_id", "time_key"], keep="last")
+                for row in frame.itertuples(index=False):
+                    geom_loc_id = row.geom_loc_id
+                    time_key = row.time_key
+                    val = row.metric_value
+                    row_geo_level = row.geo_level_value
                     all_years.add(time_key)
-                    row_geo_level = row.get("geo_level") if "geo_level" in df.columns else requested_geo_level
                     if row_geo_level:
                         loc_level_map[geom_loc_id] = row_geo_level
-
-                    if time_key not in year_data:
-                        year_data[time_key] = {}
-                    if geom_loc_id not in year_data[time_key]:
-                        year_data[time_key][geom_loc_id] = {}
-
-                    year_data[time_key][geom_loc_id][label] = val
-                else:
-                    if geom_loc_id not in boxes:
-                        box = {"year": _normalize_runtime_value(row.get("year"))} if "year" in df.columns else {}
-                        if temporal_field and temporal_field in df.columns and temporal_field != "year":
-                            temporal_val = _normalize_runtime_value(row.get(temporal_field))
-                            if temporal_val is not None:
-                                box[temporal_field] = temporal_val
-                        if "geo_level" in df.columns:
-                            box["_geo_level"] = _normalize_runtime_value(row.get("geo_level"))
-                        elif requested_geo_level:
-                            box["_geo_level"] = requested_geo_level
+                    year_bucket = year_data.setdefault(time_key, {})
+                    metric_bucket = year_bucket.setdefault(geom_loc_id, {})
+                    metric_bucket[label] = val
+        else:
+            year_series = (
+                df["year"].map(_normalize_runtime_value)
+                if "year" in df.columns
+                else pd.Series([None] * len(df), index=df.index, dtype="object")
+            )
+            temporal_value_series = (
+                df[temporal_field].map(_normalize_runtime_value)
+                if temporal_field and temporal_field in df.columns and temporal_field != "year"
+                else pd.Series([None] * len(df), index=df.index, dtype="object")
+            )
+            geo_level_series = (
+                df["geo_level"].map(_normalize_runtime_value)
+                if "geo_level" in df.columns
+                else pd.Series([requested_geo_level] * len(df), index=df.index, dtype="object")
+            )
+            frame = pd.DataFrame(
+                {
+                    "geom_loc_id": geom_loc_series,
+                    "metric_value": value_series,
+                    "year_value": year_series,
+                    "temporal_value": temporal_value_series,
+                    "geo_level_value": geo_level_series,
+                },
+                index=df.index,
+            )
+            frame = frame[
+                frame["geom_loc_id"].notna()
+                & frame["metric_value"].notna()
+            ]
+            if not frame.empty:
+                frame = frame.drop_duplicates(subset=["geom_loc_id"], keep="last")
+                for row in frame.itertuples(index=False):
+                    geom_loc_id = row.geom_loc_id
+                    val = row.metric_value
+                    box = boxes.get(geom_loc_id)
+                    if box is None:
+                        box = {}
+                        if row.year_value is not None:
+                            box["year"] = row.year_value
+                        if row.temporal_value is not None:
+                            box[temporal_field] = row.temporal_value
+                        if row.geo_level_value:
+                            box["_geo_level"] = row.geo_level_value
                         boxes[geom_loc_id] = box
-
-                    boxes[geom_loc_id][label] = val
+                    box[label] = val
         tracked_rows = len(df)
         box_count = len(year_data) if temporal_mode_active and year_data is not None else len(boxes or {})
         executor_log_func(trace_id, "item_values_applied", t_after_sort, f"item={idx}/{len(items)} source={source_id} metric={label} rows={tracked_rows} box_count={box_count}")

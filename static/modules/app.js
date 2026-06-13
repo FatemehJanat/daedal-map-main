@@ -29,7 +29,7 @@ import { TutorialMode } from './tutorial-mode.js';
 import { RasterPanel } from './raster-panel.js';
 import { setDependencies as setSceneRasterDeps } from './scene-raster-model.js';
 import { loadPublicPackCatalog } from './shared/catalog-cache.js';
-import { getInitialLane, normalizeBootUrl, onRouteChange, parseRouteIntent, setLaneTitle } from './routing/app-route-state.js';
+import { buildShareStateUrl, getInitialLane, normalizeBootUrl, onRouteChange, parseRouteIntent, setLaneTitle } from './routing/app-route-state.js';
 import { getTemporalMetricPayload, hasTemporalMetricPayload, mergeTemporalMetricPayload } from './temporal-payload.js';
 import { MetricDisplayRegistry } from './metric-display-registry.js';
 
@@ -85,6 +85,18 @@ function cloneSerializable(value) {
   } catch (e) {
     return value;
   }
+}
+
+function uniqueStrings(values = []) {
+  const result = [];
+  const seen = new Set();
+  for (const value of values || []) {
+    const normalized = String(value || '').trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
 }
 
 function hideStartupChrome() {
@@ -587,6 +599,7 @@ export const App = {
     this.setupMobileExperienceNotice();
     this.initializeMapViews();
     this.setupFullscreenToggle();
+    this.setupShareMapButton();
     this.setupLoadingIndicatorControls();
 
     // Initialize components
@@ -632,6 +645,13 @@ export const App = {
     ChatManager.applyModeUiState?.();
 
     const applyRouteIntentLoad = async (lane, routeIntent) => {
+      if (routeIntent?.share_state) {
+        const handledShareState = await this.applyShareState(routeIntent.share_state, { lane });
+        if (!handledShareState) {
+          console.warn('[ShareState] Route share state did not resolve to a load:', routeIntent.share_state);
+        }
+        return;
+      }
       const handled = await ChatManager.applyRouteIntent?.(routeIntent || {}, {
         mode: lane,
         syntheticSource: 'route_deep_link'
@@ -848,6 +868,272 @@ export const App = {
       camera,
       surfaceState: this.captureCurrentSurfaceState()
     };
+  },
+
+  captureCurrentCameraForShareState() {
+    if (!MapAdapter?.map) return null;
+    const view = MapAdapter.getView?.();
+    const bounds = MapAdapter.map.getBounds?.();
+    const camera = {};
+    if (view?.center) {
+      camera.center = {
+        lng: Number(view.center.lng),
+        lat: Number(view.center.lat)
+      };
+    }
+    if (bounds) {
+      camera.bbox = [
+        Number(bounds.getWest()),
+        Number(bounds.getSouth()),
+        Number(bounds.getEast()),
+        Number(bounds.getNorth())
+      ];
+    }
+    if (view?.zoom != null) camera.zoom = Number(view.zoom);
+    if (typeof MapAdapter.map.getBearing === 'function') {
+      camera.bearing = Number(MapAdapter.map.getBearing());
+    }
+    if (typeof MapAdapter.map.getPitch === 'function') {
+      camera.pitch = Number(MapAdapter.map.getPitch());
+    }
+    return Object.keys(camera).length ? camera : null;
+  },
+
+  captureCurrentLoadsForShareState(lane) {
+    const normalizedLane = normalizeChatMapLane(lane || ChatManager?.mode || this.currentCanvasMode);
+    if (normalizedLane === 'ops') {
+      const effectiveFeeds = Array.isArray(ChatManager?.latestOpsReport?.effective_feeds)
+        ? ChatManager.latestOpsReport.effective_feeds
+        : [];
+      return uniqueStrings(effectiveFeeds).map((feedId) => ({
+        kind: 'feed',
+        feed_id: feedId
+      }));
+    }
+
+    const sourceId = String(this.currentData?.source_id || '').trim();
+    if (!sourceId) return [];
+    const load = {
+      kind: 'source',
+      source_id: sourceId
+    };
+    const packId = String(this.currentData?.pack_id || '').trim();
+    if (packId) load.pack_id = packId;
+    const modeHint = String(this.currentData?.data_type || this.currentData?.type || '').trim().toLowerCase();
+    if (modeHint) load.mode = modeHint === 'data' ? 'metrics' : modeHint;
+    if (this.currentData?.filters && typeof this.currentData.filters === 'object' && !Array.isArray(this.currentData.filters)) {
+      load.filters = cloneSerializable(this.currentData.filters);
+    }
+    return [load];
+  },
+
+  captureCurrentTimeForShareState(lane) {
+    const normalizedLane = normalizeChatMapLane(lane || ChatManager?.mode || this.currentCanvasMode);
+    if (normalizedLane !== 'explore') return null;
+    const timeSliderState = this.captureTimeSliderState();
+    if (!timeSliderState) return null;
+    const start = timeSliderState.boundMinTime != null
+      ? new Date(timeSliderState.boundMinTime).toISOString()
+      : '';
+    const end = timeSliderState.boundMaxTime != null
+      ? new Date(timeSliderState.boundMaxTime).toISOString()
+      : '';
+    if (!start && !end) return null;
+    const time = { mode: 'range' };
+    if (start) time.start = start;
+    if (end) time.end = end;
+    return time;
+  },
+
+  captureCurrentFocusForShareState() {
+    const singleEventId = Array.isArray(this.currentData?.event_ids) && this.currentData.event_ids.length === 1
+      ? String(this.currentData.event_ids[0] || '').trim()
+      : '';
+    if (singleEventId) {
+      return {
+        type: 'event',
+        event_id: singleEventId,
+        source_id: String(this.currentData?.source_id || '').trim() || undefined
+      };
+    }
+    return null;
+  },
+
+  buildCurrentShareState(options = {}) {
+    const lane = normalizeChatMapLane(options.lane || ChatManager?.mode || this.currentCanvasMode);
+    const activeOverlays = uniqueStrings(OverlaySelector?.getActiveOverlays?.() || []);
+    const shareState = {
+      v: 1,
+      lane,
+      camera: this.captureCurrentCameraForShareState(),
+      overlays: activeOverlays,
+      loads: this.captureCurrentLoadsForShareState(lane)
+    };
+    if (lane === 'explore') {
+      const time = this.captureCurrentTimeForShareState(lane);
+      if (time) shareState.time = time;
+    } else if (lane === 'ops') {
+      shareState.live = true;
+      shareState.history_window = '72h';
+    }
+    const focus = this.captureCurrentFocusForShareState();
+    if (focus) shareState.focus = focus;
+    return shareState;
+  },
+
+  getCurrentShareUrl(options = {}) {
+    return buildShareStateUrl(this.buildCurrentShareState(options), options);
+  },
+
+  async copyTextToClipboard(text) {
+    const value = String(text || '');
+    if (!value) return false;
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+        return true;
+      }
+    } catch (error) {
+      console.warn('Clipboard write failed:', error);
+    }
+    try {
+      const textarea = document.createElement('textarea');
+      textarea.value = value;
+      textarea.setAttribute('readonly', 'readonly');
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      textarea.style.pointerEvents = 'none';
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      const copied = document.execCommand('copy');
+      document.body.removeChild(textarea);
+      return Boolean(copied);
+    } catch (error) {
+      console.warn('Legacy clipboard copy failed:', error);
+      return false;
+    }
+  },
+
+  formatShareResponseMessage(result = {}) {
+    const lane = normalizeChatMapLane(result.lane || ChatManager?.mode || this.currentCanvasMode);
+    const laneLabel = lane.charAt(0).toUpperCase() + lane.slice(1);
+    if (!result.url) {
+      return `Could not build a share link for the current ${laneLabel} view.`;
+    }
+    if (result.copied) {
+      return `Share link copied for the current ${laneLabel} view.\n${result.url}`;
+    }
+    return `Share link ready for the current ${laneLabel} view.\n${result.url}`;
+  },
+
+  async shareCurrentMap(options = {}) {
+    const lane = normalizeChatMapLane(options.lane || ChatManager?.mode || this.currentCanvasMode);
+    const url = this.getCurrentShareUrl({ ...options, lane, absolute: true });
+    const copied = options.copyToClipboard === false ? false : await this.copyTextToClipboard(url);
+    const result = { lane, url, copied };
+    result.message = this.formatShareResponseMessage(result);
+    return result;
+  },
+
+  async handleShareMapButtonClick() {
+    const result = await this.shareCurrentMap({
+      lane: ChatManager?.mode || this.currentCanvasMode,
+      copyToClipboard: true
+    });
+    if (result?.message && ChatManager?.addMessage) {
+      ChatManager.addMessage(result.message, 'assistant', { mode: result.lane });
+    }
+  },
+
+  applyShareStateTime(timeState = null) {
+    if (!timeState || !TimeSlider) return;
+    const startMs = timeState.start ? Date.parse(timeState.start) : null;
+    const endMs = timeState.end ? Date.parse(timeState.end) : null;
+    if (Number.isFinite(startMs) || Number.isFinite(endMs)) {
+      TimeSlider.setTrimBounds?.(
+        Number.isFinite(startMs) ? startMs : null,
+        Number.isFinite(endMs) ? endMs : null
+      );
+      TimeSlider.show?.();
+      TimeSlider.refreshDisplay?.();
+    }
+  },
+
+  applyShareStateCamera(camera = null) {
+    if (!camera || !MapAdapter?.map) return;
+    if (Array.isArray(camera.bbox) && camera.bbox.length === 4) {
+      MapAdapter.map.fitBounds(
+        [
+          [Number(camera.bbox[0]), Number(camera.bbox[1])],
+          [Number(camera.bbox[2]), Number(camera.bbox[3])]
+        ],
+        {
+          animate: false,
+          padding: MapAdapter.getFitBoundsPadding?.() || { top: 0, right: 0, bottom: 0, left: 0 },
+          maxZoom: Number.isFinite(Number(camera.zoom)) ? Number(camera.zoom) : undefined
+        }
+      );
+    }
+    if (camera.center && Number.isFinite(Number(camera.center.lng)) && Number.isFinite(Number(camera.center.lat))) {
+      MapAdapter.map.jumpTo({
+        center: [Number(camera.center.lng), Number(camera.center.lat)],
+        zoom: Number.isFinite(Number(camera.zoom)) ? Number(camera.zoom) : MapAdapter.map.getZoom(),
+        bearing: Number.isFinite(Number(camera.bearing)) ? Number(camera.bearing) : MapAdapter.map.getBearing(),
+        pitch: Number.isFinite(Number(camera.pitch)) ? Number(camera.pitch) : MapAdapter.map.getPitch()
+      });
+      return;
+    }
+    if (Number.isFinite(Number(camera.bearing)) || Number.isFinite(Number(camera.pitch)) || Number.isFinite(Number(camera.zoom))) {
+      MapAdapter.map.jumpTo({
+        center: MapAdapter.map.getCenter(),
+        zoom: Number.isFinite(Number(camera.zoom)) ? Number(camera.zoom) : MapAdapter.map.getZoom(),
+        bearing: Number.isFinite(Number(camera.bearing)) ? Number(camera.bearing) : MapAdapter.map.getBearing(),
+        pitch: Number.isFinite(Number(camera.pitch)) ? Number(camera.pitch) : MapAdapter.map.getPitch()
+      });
+    }
+  },
+
+  async reconcileShareStateOverlays(targetOverlayIds = [], lane = 'explore') {
+    const normalizedLane = normalizeChatMapLane(lane);
+    const targetSet = new Set(uniqueStrings(targetOverlayIds));
+    const active = uniqueStrings(OverlaySelector?.getActiveOverlays?.() || []);
+    for (const overlayId of active) {
+      if (targetSet.has(overlayId)) continue;
+      OverlaySelector?.setActive?.(overlayId, false);
+      await OverlayController?.handleOverlayChange?.(overlayId, false, {
+        allowDefaultLoad: false,
+        suppressStatusMessage: true,
+        systemTransition: true
+      });
+    }
+    for (const overlayId of targetSet) {
+      OverlaySelector?.showOverlay?.(overlayId, normalizedLane);
+      if (OverlaySelector && !OverlaySelector.isActive(overlayId)) {
+        OverlaySelector.setActive(overlayId, true);
+      }
+      await OverlayController?.handleOverlayChange?.(overlayId, true, {
+        allowDefaultLoad: false,
+        suppressStatusMessage: true,
+        systemTransition: true
+      });
+    }
+    this.syncMetricOverlayVisibility();
+  },
+
+  async applyShareState(shareState = null, options = {}) {
+    if (!shareState || typeof shareState !== 'object') return false;
+    const lane = normalizeChatMapLane(options.lane || shareState.lane || ChatManager?.mode || this.currentCanvasMode);
+    const handledLoads = await ChatManager.applyShareStateLoads?.(shareState, {
+      mode: lane,
+      syntheticSource: 'share_state'
+    });
+    await this.reconcileShareStateOverlays(shareState.overlays || [], lane);
+    if (lane === 'explore' && shareState.time) {
+      this.applyShareStateTime(shareState.time);
+    }
+    this.applyShareStateCamera(shareState.camera || null);
+    return Boolean(handledLoads || (shareState.camera || shareState.time || (shareState.overlays || []).length));
   },
 
   captureTimeSliderState() {
@@ -1372,6 +1658,14 @@ export const App = {
       this.setUiFullscreen(!this.uiFullscreen);
     });
     this.setUiFullscreen(false);
+  },
+
+  setupShareMapButton() {
+    const btn = document.getElementById('shareMapBtn');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      await this.handleShareMapButtonClick();
+    });
   },
 
   setupLoadingIndicatorControls() {

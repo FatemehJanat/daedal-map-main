@@ -249,12 +249,25 @@ def _get_source_path(source_id: str) -> Path:
     )
 
 
-def load_source_data(source_id: str, *, year: int | None = None, loc_id_prefix: str | None = None) -> tuple:
+def load_source_data(
+    source_id: str,
+    *,
+    year: int | None = None,
+    loc_id_prefix: str | None = None,
+    exact_filters: dict | None = None,
+    in_filters: dict | None = None,
+    compare_filters: list[tuple[str, str, object]] | None = None,
+    columns: list[str] | None = None,
+) -> tuple:
     return load_runtime_source_data(
         source_id,
         load_source_data_func=load_source_data_impl,
         year=year,
         loc_id_prefix=loc_id_prefix,
+        exact_filters=exact_filters,
+        in_filters=in_filters,
+        compare_filters=compare_filters,
+        columns=columns,
         get_source_path_func=_get_source_path,
         load_source_metadata_func=load_source_metadata,
         candidate_parquet_paths_func=candidate_parquet_paths_impl,
@@ -496,7 +509,7 @@ def execute_order(order: dict) -> dict:
             items=items,
             expand_region_func=expand_region,
             load_disaster_aggregate_data_func=_load_disaster_aggregate_data,
-            load_source_data_func=load_source_data,
+            load_source_metadata_func=load_source_metadata,
             logger=logger,
             trace_id=trace_id,
         ),

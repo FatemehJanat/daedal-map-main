@@ -1,11 +1,11 @@
 /**
  * App route state -- single authority for URL <-> lane mapping.
  *
- * Phase 1 scope: the active lane (explore / research / ops) lives in the URL
- * path. One SPA, warm runtime -- no reload on switch. This module is the only
- * place that reads window.location for routing or writes browser history, so
- * routing logic does not fragment across lane controllers, auth, and (later)
- * pack loaders.
+ * Phase 1/2 scope: the active lane (explore / research / ops) lives in the URL
+ * path with small route-intent params. Phase 3 adds a versioned full-share
+ * `state` payload. This module is the only place that reads window.location for
+ * routing or writes browser history, so routing logic does not fragment across
+ * lane controllers, auth, and pack/share loaders.
  *
  * Parses the URL once into a normalized RouteIntent; owns pushState /
  * replaceState and the popstate listener. Query params (?pack=, etc.) are
@@ -14,7 +14,8 @@
 
 const LANES = ['explore', 'research', 'ops'];
 const DEFAULT_LANE = 'explore';
-const ROUTE_INTENT_PARAMS = ['pack', 'packs', 'source', 'feed', 'event_id', 'storm_id', 'q'];
+const ROUTE_INTENT_PARAMS = ['pack', 'packs', 'source', 'feed', 'event_id', 'storm_id', 'q', 'state'];
+const SHARE_STATE_VERSION = 1;
 
 const LANE_TITLES = {
   explore: 'Explore - DaedalMap',
@@ -77,13 +78,168 @@ export function writeEntityParam(lane, { packId = '', sourceId = '', feedId = ''
   window.history.replaceState({ lane }, '', target + nextSearch + (window.location.hash || ''));
 }
 
+function bytesToBase64(bytes) {
+  let binary = '';
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function toBase64Url(value) {
+  return String(value || '').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function fromBase64Url(value) {
+  const normalized = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
+  const padding = normalized.length % 4;
+  return normalized + (padding ? '='.repeat(4 - padding) : '');
+}
+
+function normalizeCameraState(camera = null) {
+  if (!camera || typeof camera !== 'object') return null;
+  const result = {};
+  if (Array.isArray(camera.bbox) && camera.bbox.length === 4) {
+    result.bbox = camera.bbox.map((value) => Number(value));
+  } else if (
+    camera.center
+    && typeof camera.center === 'object'
+    && Number.isFinite(Number(camera.center.lng))
+    && Number.isFinite(Number(camera.center.lat))
+  ) {
+    result.center = {
+      lng: Number(camera.center.lng),
+      lat: Number(camera.center.lat)
+    };
+  }
+  if (Number.isFinite(Number(camera.zoom))) result.zoom = Number(camera.zoom);
+  if (Number.isFinite(Number(camera.bearing))) result.bearing = Number(camera.bearing);
+  if (Number.isFinite(Number(camera.pitch))) result.pitch = Number(camera.pitch);
+  return Object.keys(result).length ? result : null;
+}
+
+function normalizeLoadEntry(entry = null) {
+  if (!entry || typeof entry !== 'object') return null;
+  const kind = String(entry.kind || '').trim().toLowerCase();
+  if (kind === 'source') {
+    const sourceId = String(entry.source_id || '').trim();
+    if (!sourceId) return null;
+    const normalized = { kind: 'source', source_id: sourceId };
+    const packId = String(entry.pack_id || '').trim();
+    const mode = String(entry.mode || entry.data_type || '').trim();
+    if (packId) normalized.pack_id = packId;
+    if (mode) normalized.mode = mode;
+    if (entry.filters && typeof entry.filters === 'object' && !Array.isArray(entry.filters)) {
+      normalized.filters = entry.filters;
+    }
+    return normalized;
+  }
+  if (kind === 'feed') {
+    const feedId = String(entry.feed_id || '').trim();
+    if (!feedId) return null;
+    const normalized = { kind: 'feed', feed_id: feedId };
+    const historyWindow = String(entry.history_window || '').trim();
+    if (historyWindow) normalized.history_window = historyWindow;
+    if (entry.filters && typeof entry.filters === 'object' && !Array.isArray(entry.filters)) {
+      normalized.filters = entry.filters;
+    }
+    return normalized;
+  }
+  return null;
+}
+
+export function normalizeShareState(raw = null) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const lane = normalizeLane(raw.lane);
+  if (!lane) return null;
+  const normalized = {
+    v: Number(raw.v) || SHARE_STATE_VERSION,
+    lane,
+    camera: normalizeCameraState(raw.camera),
+    overlays: Array.isArray(raw.overlays)
+      ? raw.overlays.map((value) => String(value || '').trim()).filter(Boolean)
+      : [],
+    loads: Array.isArray(raw.loads)
+      ? raw.loads.map((entry) => normalizeLoadEntry(entry)).filter(Boolean)
+      : []
+  };
+  if (lane === 'explore' && raw.time && typeof raw.time === 'object') {
+    const timeMode = String(raw.time.mode || '').trim().toLowerCase();
+    if (timeMode === 'range') {
+      const start = String(raw.time.start || '').trim();
+      const end = String(raw.time.end || '').trim();
+      if (start || end) {
+        normalized.time = { mode: 'range' };
+        if (start) normalized.time.start = start;
+        if (end) normalized.time.end = end;
+      }
+    }
+  }
+  if (lane === 'ops') {
+    normalized.live = raw.live !== false;
+    const historyWindow = String(raw.history_window || '').trim();
+    normalized.history_window = historyWindow || '72h';
+  }
+  if (raw.focus && typeof raw.focus === 'object' && !Array.isArray(raw.focus)) {
+    const focusType = String(raw.focus.type || '').trim().toLowerCase();
+    if (focusType) {
+      normalized.focus = { type: focusType };
+      if (raw.focus.event_id) normalized.focus.event_id = String(raw.focus.event_id).trim();
+      if (raw.focus.loc_id) normalized.focus.loc_id = String(raw.focus.loc_id).trim();
+      if (raw.focus.source_id) normalized.focus.source_id = String(raw.focus.source_id).trim();
+      if (raw.focus.feed_id) normalized.focus.feed_id = String(raw.focus.feed_id).trim();
+    }
+  }
+  return normalized;
+}
+
+export function encodeShareStateParam(shareState) {
+  const normalized = normalizeShareState(shareState);
+  if (!normalized) return '';
+  const json = JSON.stringify(normalized);
+  const bytes = new TextEncoder().encode(json);
+  return toBase64Url(bytesToBase64(bytes));
+}
+
+export function decodeShareStateParam(value) {
+  const encoded = String(value || '').trim();
+  if (!encoded) return null;
+  try {
+    const bytes = base64ToBytes(fromBase64Url(encoded));
+    const json = new TextDecoder().decode(bytes);
+    return normalizeShareState(JSON.parse(json));
+  } catch (_error) {
+    return null;
+  }
+}
+
+export function buildShareStateUrl(shareState, { absolute = false } = {}) {
+  const normalized = normalizeShareState(shareState);
+  if (!normalized) return '';
+  const lane = normalized.lane || DEFAULT_LANE;
+  const encoded = encodeShareStateParam(normalized);
+  const path = '/' + lane;
+  const url = `${path}?state=${encoded}`;
+  if (!absolute || typeof window === 'undefined') return url;
+  return new URL(url, window.location.origin).toString();
+}
+
 /**
  * Parse the current URL into a normalized route intent. Phase 1 only resolves
  * the lane from the first path segment; the remaining fields are placeholders
  * the later phases fill in.
  * @param {Location} [loc]
  * @returns {{lane: string|null, pack_id: string|null, pack_ids: string[], source_id: string|null, feed_id: string|null, event_id: string|null, exact_id_key: string|null,
- *   prefill_query: string|null, requires_auth: boolean, invalid_reason: string|null}}
+ *   prefill_query: string|null, share_state: object|null, requires_auth: boolean, invalid_reason: string|null}}
  */
 export function parseRouteIntent(loc = window.location) {
   const segment = String(loc.pathname || '/').replace(/^\/+/, '').split('/')[0];
@@ -117,6 +273,7 @@ export function parseRouteIntent(loc = window.location) {
     event_id: normalizedExactId,   // Exact event deep link: ?event_id=<stable_event_id> or native alias like ?storm_id=
     exact_id_key: exactIdKey,
     prefill_query: pick('q'),      // display-only: ?q=<text> (never auto-sent)
+    share_state: decodeShareStateParam(pick('state')),
     requires_auth: false,          // resolved by the auth layer, not here
     invalid_reason: segment && !lane ? 'unknown_path_segment' : null,
   };

@@ -87,6 +87,10 @@ def load_source_data(
     *,
     year: int | None = None,
     loc_id_prefix: str | None = None,
+    exact_filters: dict | None = None,
+    in_filters: dict | None = None,
+    compare_filters: list[tuple[str, str, object]] | None = None,
+    columns: list[str] | None = None,
     get_source_path_func,
     load_source_metadata_func,
     candidate_parquet_paths_func,
@@ -101,10 +105,21 @@ def load_source_data(
     if metadata is None:
         raise ValueError(f"Could not load metadata for {source_id}")
 
-    exact_filters = {}
+    selected_columns = [str(value).strip() for value in (columns or []) if str(value).strip()]
+    metrics_section = metadata.get("metrics") if isinstance(metadata.get("metrics"), dict) else {}
+    selected_columns.extend(str(metric_id).strip() for metric_id in metrics_section.keys() if str(metric_id).strip())
+    selected_columns.extend(str(field).strip() for field in (exact_filters or {}).keys() if str(field).strip())
+    selected_columns.extend(str(field).strip() for field in (in_filters or {}).keys() if str(field).strip())
+    selected_columns.extend(str(field).strip() for field, _op, _value in (compare_filters or []) if str(field).strip())
+    selected_columns.extend(["loc_id", "geo_level", "year", "timestamp", "date", "time", "month", "week"])
+    selected_columns.extend(["lat", "latitude", "centroid_lat", "lon", "longitude", "centroid_lon"])
+    selected_columns.extend(["end_latitude", "end_longitude"])
+    selected_columns = list(dict.fromkeys(selected_columns))
+
+    resolved_exact_filters = dict(exact_filters or {})
     starts_with_filters = {}
     if year is not None:
-        exact_filters["year"] = year
+        resolved_exact_filters["year"] = year
     if loc_id_prefix:
         starts_with_filters["loc_id"] = loc_id_prefix
 
@@ -124,7 +139,10 @@ def load_source_data(
                 logger.info(f"[S3] load_source_data({source_id}): trying uri={uri} year={year} prefix={loc_id_prefix}")
             df = select_rows_func(
                 parquet_path,
-                exact_filters=exact_filters or None,
+                columns=selected_columns or None,
+                exact_filters=resolved_exact_filters or None,
+                in_filters=in_filters or None,
+                compare_filters=compare_filters or None,
                 starts_with_filters=starts_with_filters or None,
             )
             logger.info(f"[S3] load_source_data({source_id}): candidate={parquet_path.name} rows={len(df)}")
@@ -147,10 +165,13 @@ def load_source_data(
 
         df = select_rows_func(
             parquet_path,
-            exact_filters=exact_filters or None,
+            columns=selected_columns or None,
+            exact_filters=resolved_exact_filters or None,
+            in_filters=in_filters or None,
+            compare_filters=compare_filters or None,
             starts_with_filters=starts_with_filters or None,
         )
-        if df.empty and not exact_filters and not starts_with_filters:
-            df = pd.read_parquet(parquet_path)
+        if df.empty and not resolved_exact_filters and not starts_with_filters and not in_filters and not compare_filters:
+            df = pd.read_parquet(parquet_path, columns=selected_columns or None)
 
     return df, metadata

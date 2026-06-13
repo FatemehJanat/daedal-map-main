@@ -128,7 +128,7 @@ def parquet_available(path: Path) -> bool:
 
 
 def _configure_httpfs(con) -> None:
-    """Configure a DuckDB connection for object-storage access via httpfs."""
+    """Configure object-storage access via httpfs on an existing connection."""
     # Some local/dev environments cannot write to the default DuckDB home under
     # the user profile. Point extension storage at our writable runtime cache so
     # cloud-mode queries behave the same way in hosted and local QA.
@@ -159,10 +159,31 @@ def _configure_httpfs(con) -> None:
     # repeated HTTP HEAD+range requests for the same files on each new connection.
     con.execute("SET enable_http_metadata_cache=true")
     con.execute("SET http_keep_alive=true")
+
+
+def _configure_common_runtime_settings(con) -> None:
+    """Apply shared runtime safety settings to any DuckDB connection."""
     # Cap DuckDB's internal buffer pool so it doesn't grow unbounded under load.
     # Adjust DUCKDB_MEMORY_LIMIT env var to tune (default: 512MB).
     mem_limit = os.environ.get("DUCKDB_MEMORY_LIMIT", "512MB")
     con.execute(f"SET memory_limit='{mem_limit}'")
+
+
+def build_guarded_connection(
+    *,
+    database: str = ":memory:",
+    configure_cloud: bool | None = None,
+):
+    """Create a DuckDB connection with the shared runtime safety settings."""
+    if duckdb is None:
+        return None
+    con = duckdb.connect(database=database)
+    _configure_common_runtime_settings(con)
+    if configure_cloud is None:
+        configure_cloud = is_cloud_mode()
+    if configure_cloud:
+        _configure_httpfs(con)
+    return con
 
 
 # ---------------------------------------------------------------------------
@@ -203,10 +224,7 @@ _THREAD_CONNECTION_GENERATION_LOCK = threading.Lock()
 
 def _build_thread_connection():
     """Create and fully configure a DuckDB connection for the current thread."""
-    con = duckdb.connect()
-    if is_cloud_mode():
-        _configure_httpfs(con)
-    return con
+    return build_guarded_connection(database=":memory:")
 
 
 def _get_thread_connection():

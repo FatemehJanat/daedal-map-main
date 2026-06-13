@@ -5,6 +5,7 @@ from __future__ import annotations
 from mapmover.foundation_helpers import load_runtime_explainer_helpers
 from mapmover.runtime.orchestrator_result_cap import cap_runtime_payload
 from mapmover.runtime.filter_primitives import normalize_sort_spec
+from mapmover.runtime.warning_primitives import estimate_display_feature_count
 
 
 def requested_limit_from_order(order: dict | None) -> int | None:
@@ -73,6 +74,7 @@ def apply_runtime_result_cap_to_payload_result(
     source_id = resolve_result_source_id(result)
     if not source_id:
         return result
+    precap_display_feature_count = estimate_display_feature_count(result)
     requested_limit = requested_limit_from_order(confirmed_order)
     payload, _cap_info = cap_runtime_payload(
         result,
@@ -80,6 +82,8 @@ def apply_runtime_result_cap_to_payload_result(
         load_source_metadata_func=load_source_metadata_func,
         requested_limit=requested_limit,
     )
+    if isinstance(payload, dict):
+        payload["_precap_display_feature_count"] = int(precap_display_feature_count)
     return payload
 
 

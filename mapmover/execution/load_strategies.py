@@ -6,12 +6,79 @@ import re
 import time
 
 
+def _classify_pushdown_filters(filters: dict | None) -> tuple[dict, dict, list[tuple[str, str, object]]]:
+    """Translate generic order filters into the shared select_rows contract."""
+    exact_filters: dict = {}
+    in_filters: dict = {}
+    compare_filters: list[tuple[str, str, object]] = []
+
+    if not isinstance(filters, dict) or not filters:
+        return exact_filters, in_filters, compare_filters
+
+    for field, value in filters.items():
+        if field.endswith("_min"):
+            col = field[:-4]
+            if col and value is not None:
+                compare_filters.append((col, ">=", value))
+            continue
+        if field.endswith("_max"):
+            col = field[:-4]
+            if col and value is not None:
+                compare_filters.append((col, "<=", value))
+            continue
+
+        if isinstance(value, dict):
+            min_value = value.get("min")
+            max_value = value.get("max")
+            if min_value is not None:
+                compare_filters.append((field, ">=", min_value))
+            if max_value is not None:
+                compare_filters.append((field, "<=", max_value))
+
+            op = str(value.get("op") or "").strip().lower()
+            if op == "in":
+                candidates = [candidate for candidate in (value.get("values") or []) if candidate is not None]
+                if candidates:
+                    in_filters[field] = candidates
+            elif op in {"eq", "="} and "value" in value:
+                exact_filters[field] = value.get("value")
+            elif op in {"!=", "ne", ">", "gt", ">=", "gte", "<", "lt", "<=", "lte"} and "value" in value:
+                op_map = {
+                    "!=": "!=",
+                    "ne": "!=",
+                    ">": ">",
+                    "gt": ">",
+                    ">=": ">=",
+                    "gte": ">=",
+                    "<": "<",
+                    "lt": "<",
+                    "<=": "<=",
+                    "lte": "<=",
+                }
+                compare_filters.append((field, op_map[op], value.get("value")))
+            continue
+
+        if isinstance(value, (list, tuple, set)):
+            candidates = [candidate for candidate in value if candidate is not None]
+            if candidates:
+                in_filters[field] = candidates
+            continue
+
+        if isinstance(value, bool):
+            continue
+
+        if value is not None:
+            exact_filters[field] = value
+
+    return exact_filters, in_filters, compare_filters
+
+
 def collect_source_metadata(
     *,
     items: list,
     expand_region_func,
     load_disaster_aggregate_data_func,
-    load_source_data_func,
+    load_source_metadata_func,
     logger,
     trace_id: str,
 ) -> dict:
@@ -33,7 +100,7 @@ def collect_source_metadata(
                 if item.get("mode") == "aggregate":
                     aggregate_df, metadata = load_disaster_aggregate_data_func(source_id, item)
                     if aggregate_df is None:
-                        _, metadata = load_source_data_func(source_id)
+                        metadata = load_source_metadata_func(source_id)
                     else:
                         cache_key = (
                             source_id,
@@ -49,7 +116,9 @@ def collect_source_metadata(
                         )
                         aggregate_item_cache[cache_key] = (aggregate_df, dict(metadata or {}))
                 else:
-                    _, metadata = load_source_data_func(source_id)
+                    metadata = load_source_metadata_func(source_id)
+                if not metadata:
+                    raise ValueError(f"Could not load metadata for {source_id}")
                 sources_used[source_id] = metadata
                 geographic_level = metadata.get("geographic_level", "country")
                 if isinstance(geographic_level, list):
@@ -80,9 +149,42 @@ def load_order_item_dataframe(
     year_start = item.get("year_start")
     year_end = item.get("year_end")
     region = item.get("region")
+    filters = item.get("filters") or {}
+    metric = item.get("metric")
 
     pushdown_year = year if (year and not year_start and not year_end) else None
     pushdown_prefix = region if (region and re.match(r"^[A-Z]{2,3}(-[A-Z0-9]+)?$", region)) else None
+    exact_filters, in_filters, compare_filters = _classify_pushdown_filters(filters)
+    if pushdown_year is None:
+        if year_start is not None:
+            compare_filters.append(("year", ">=", year_start))
+        if year_end is not None:
+            compare_filters.append(("year", "<=", year_end))
+    requested_columns = [
+        "loc_id",
+        "geo_level",
+        "year",
+        "timestamp",
+        "date",
+        "time",
+        "month",
+        "week",
+        "lat",
+        "latitude",
+        "centroid_lat",
+        "lon",
+        "longitude",
+        "centroid_lon",
+        "end_latitude",
+        "end_longitude",
+    ]
+    if metric:
+        requested_columns.append(str(metric))
+    sort_spec = item.get("sort")
+    if isinstance(sort_spec, dict) and sort_spec.get("by"):
+        requested_columns.append(str(sort_spec.get("by")))
+    requested_columns.extend(str(field).strip() for field in filters.keys() if str(field).strip())
+    requested_columns = [value for value in dict.fromkeys(requested_columns) if value]
 
     if item.get("mode") == "aggregate":
         cache_key = (
@@ -102,7 +204,23 @@ def load_order_item_dataframe(
             return cached[0].copy(), dict(cached[1] or {})
         df, metadata = load_disaster_aggregate_data_func(item.get("source_id"), item)
         if df is None or metadata is None:
-            return load_source_data_func(item.get("source_id"), year=pushdown_year, loc_id_prefix=pushdown_prefix)
+            return load_source_data_func(
+                item.get("source_id"),
+                year=pushdown_year,
+                loc_id_prefix=pushdown_prefix,
+                exact_filters=exact_filters or None,
+                in_filters=in_filters or None,
+                compare_filters=compare_filters or None,
+                columns=requested_columns,
+            )
         return df, metadata
 
-    return load_source_data_func(item.get("source_id"), year=pushdown_year, loc_id_prefix=pushdown_prefix)
+    return load_source_data_func(
+        item.get("source_id"),
+        year=pushdown_year,
+        loc_id_prefix=pushdown_prefix,
+        exact_filters=exact_filters or None,
+        in_filters=in_filters or None,
+        compare_filters=compare_filters or None,
+        columns=requested_columns,
+    )

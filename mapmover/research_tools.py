@@ -7,6 +7,7 @@ JSON-serializable results for LLM context.
 from __future__ import annotations
 
 import math
+import os
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +16,13 @@ from mapmover.corpus_registry import corpus_registry
 from mapmover.data_loading import get_source_path, load_source_metadata, load_source_reference
 from mapmover.loc_id_join import apply_loc_id_subset_filter, unique_loc_ids_from_rows
 from mapmover.source_time_contract import build_metric_year_ranges
-from mapmover.duckdb_helpers import parquet_columns, path_to_uri, quote_ident, run_df
+from mapmover.duckdb_helpers import (
+    build_guarded_connection,
+    parquet_columns,
+    path_to_uri,
+    quote_ident,
+    run_df,
+)
 from mapmover.foundation_helpers import bridge_loc_id_family, get_foundation_helper_registry
 from mapmover.geometry_handlers import get_selection_geometries
 from mapmover.runtime.result_cap import apply_row_count_cap_to_payload
@@ -154,6 +161,12 @@ RESEARCH_TOOL_DEFINITIONS = [
         },
     },
 ]
+
+
+RESEARCH_TOOL_MAX_INPUT_ROWS = max(
+    1000,
+    int(os.environ.get("RESEARCH_TOOL_MAX_INPUT_ROWS", "200000")),
+)
 
 
 def _normalize_tool_input(tool_name: str, tool_input: Any) -> dict:
@@ -477,6 +490,42 @@ def _query_live_source_rows(
     })
 
 
+def _estimate_result_row_count(result: dict) -> int:
+    count = 0
+    geojson = result.get("geojson") if isinstance(result, dict) else None
+    if isinstance(geojson, dict):
+        features = geojson.get("features")
+        if isinstance(features, list):
+            count += len(features)
+    year_data = result.get("year_data") if isinstance(result, dict) else None
+    if isinstance(year_data, dict):
+        for loc_map in year_data.values():
+            if isinstance(loc_map, dict):
+                count += len(loc_map)
+    return count
+
+
+def _artifact_query_too_broad_payload(
+    artifact: dict,
+    *,
+    tool_name: str,
+    estimated_rows: int,
+) -> dict:
+    artifact_id = str(artifact.get("artifact_id") or "").strip() or None
+    return {
+        "error": "artifact_query_too_broad",
+        "tool_name": tool_name,
+        "artifact_id": artifact_id,
+        "row_count": int(estimated_rows),
+        "max_input_rows": RESEARCH_TOOL_MAX_INPUT_ROWS,
+        "message": (
+            f"This loaded artifact is too large to materialize directly in Research "
+            f"({estimated_rows:,} rows estimated, cap {RESEARCH_TOOL_MAX_INPUT_ROWS:,}). "
+            "Narrow the filters, use a smaller corpus, or query a live source-backed artifact instead."
+        ),
+    }
+
+
 def _rows_from_result(result: dict) -> list[dict]:
     rows = []
     feature_names = {}
@@ -760,6 +809,13 @@ def _query_artifact_subset_join(
         result = _get_cached_result(session_id, artifact.get("request_key"))
         if not result:
             return {"error": "artifact_data_unavailable", "artifact_id": artifact.get("artifact_id")}
+        estimated_rows = _estimate_result_row_count(result)
+        if estimated_rows > RESEARCH_TOOL_MAX_INPUT_ROWS:
+            return _artifact_query_too_broad_payload(
+                artifact,
+                tool_name="query_artifact_subset_join",
+                estimated_rows=estimated_rows,
+            )
         rows = _rows_from_result(result)
         query_result = _query_rows_duckdb(rows, joined_tool_input, default_limit=25, maximum_limit=1000)
 
@@ -791,7 +847,7 @@ def _query_rows_duckdb(
         return {"rows": [], "row_count": 0, "truncated": False}
 
     df = pd.DataFrame(rows)
-    con = duckdb.connect(database=":memory:")
+    con = build_guarded_connection(database=":memory:", configure_cloud=False)
     try:
         con.register("artifact_rows", df)
         where_parts = []
@@ -1433,10 +1489,26 @@ def _build_research_map_payload(
 
 
 def _build_display_subset(result: dict, artifact: dict, tool_input: dict) -> dict:
-    rows = _rows_from_result(result)
     explicit_limit = _normalize_optional_limit(tool_input.get("limit"), maximum=None)
     force_large_display = bool(tool_input.get("_force_large_display"))
     warning_policy = tool_input.get("_display_warning_policy") or DEFAULT_DISPLAY_WARNING_POLICY
+    estimated_rows = _estimate_result_row_count(result)
+    interrupted_payload = interrupt_display_payload_if_needed(
+        estimated_rows,
+        policy=warning_policy,
+        force_large_display=force_large_display,
+        artifact_id=artifact.get("artifact_id"),
+    )
+    if explicit_limit is None and interrupted_payload is not None:
+        return interrupted_payload
+    if estimated_rows > RESEARCH_TOOL_MAX_INPUT_ROWS:
+        return _artifact_query_too_broad_payload(
+            artifact,
+            tool_name="build_artifact_display_subset",
+            estimated_rows=estimated_rows,
+        )
+
+    rows = _rows_from_result(result)
     query_default_limit = None if explicit_limit is not None else (warning_policy.hard_cap + 1)
     query_result = _query_rows_duckdb(rows, tool_input, default_limit=query_default_limit, maximum_limit=None)
     row_count = int(query_result.get("row_count", 0) or 0)
@@ -1514,6 +1586,13 @@ def execute_research_tool(
             result = _get_cached_result(session_id, artifact.get("request_key"))
             if not result:
                 return {"error": "artifact_data_unavailable", "artifact_id": artifact_id}
+            estimated_rows = _estimate_result_row_count(result)
+            if estimated_rows > RESEARCH_TOOL_MAX_INPUT_ROWS:
+                return _artifact_query_too_broad_payload(
+                    artifact,
+                    tool_name="query_artifact_slice",
+                    estimated_rows=estimated_rows,
+                )
             rows = _rows_from_result(result)
             query_result = _query_rows_duckdb(rows, tool_input, default_limit=25, maximum_limit=1000)
             return {

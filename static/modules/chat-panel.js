@@ -138,6 +138,30 @@ function isLocalHelpCommand(query) {
   ].includes(normalized);
 }
 
+function isShareMapCommand(query) {
+  const normalized = String(query || '').trim().toLowerCase().replace(/[.!?]+$/g, '');
+  if (!normalized) return false;
+  if ([
+    'share',
+    'share map',
+    'share my map',
+    'share this map',
+    'i want to share',
+    'copy map url',
+    'copy share url',
+    'copy share link',
+    'give me a map url',
+    'give me a share url',
+    'give me a share link',
+    'make a share link',
+    'create a share link'
+  ].includes(normalized)) {
+    return true;
+  }
+  return /^(?:can you |could you |please )?(?:share|copy|create|make|give me)\b/.test(normalized)
+    && /\b(?:map|url|link)\b/.test(normalized);
+}
+
 function buildLocalHelpMessage(mode = 'explore') {
   const normalizedMode = normalizeChatMode(mode);
   if (normalizedMode === 'ops') {
@@ -892,6 +916,140 @@ export const ChatManager = {
     );
   },
 
+  async loadOpsFeedSet(feedIds = [], options = {}) {
+    const normalizedFeedIds = [];
+    const seen = new Set();
+    for (const rawFeedId of Array.isArray(feedIds) ? feedIds : []) {
+      const feedId = String(rawFeedId || '').trim();
+      if (!feedId || seen.has(feedId)) continue;
+      seen.add(feedId);
+      normalizedFeedIds.push(feedId);
+    }
+    if (!normalizedFeedIds.length) return false;
+
+    await refreshRuntimeSession({ forceProfileRefresh: true });
+    const payload = await postMsgpack('/api/ops/load-watch', {
+      sessionId: this.getSessionIdForMode('ops'),
+      watch_id: this.opsWatchId || this.getSessionIdForMode('ops'),
+      watch_context: {
+        label: options.label || 'Ops share view',
+        sources: normalizedFeedIds
+      }
+    });
+    this.opsWatchId = payload?.watch_id || this.opsWatchId;
+    this.latestOpsPayload = payload || null;
+    this.latestOpsReport = payload?.ops_report || null;
+    setOverlaySelectorOpsEffectiveFeeds(Array.isArray(payload?.effective_feeds) ? payload.effective_feeds : normalizedFeedIds);
+    OverlayController?.setOpsSnapshotPayloads?.(
+      Array.isArray(payload?.display_payloads)
+        ? payload.display_payloads
+        : (Array.isArray(this.latestOpsReport?.display_payloads) ? this.latestOpsReport.display_payloads : [])
+    );
+    this.renderOpsDisplayPayloads(payload);
+    this.saveState();
+    OverlaySelector?.refreshVisibility?.();
+    return payload || null;
+  },
+
+  async executeShareStateLoadEntry(entry = {}, options = {}) {
+    const lane = normalizeChatMode(options.mode || this.mode);
+    const kind = String(entry?.kind || '').trim().toLowerCase();
+    if (kind === 'feed') {
+      return false;
+    }
+    if (kind !== 'source') {
+      return false;
+    }
+
+    const sourceId = String(entry?.source_id || '').trim();
+    const packId = String(entry?.pack_id || '').trim() || resolvePackIdFromSourceId(sourceId);
+    const filters = entry?.filters && typeof entry.filters === 'object' && !Array.isArray(entry.filters)
+      ? { ...entry.filters }
+      : {};
+    const eventId = String(filters.event_id || filters.storm_id || '').trim();
+    if (eventId) {
+      return this.runDefaultLoad(
+        {
+          packId,
+          sourceId,
+          eventId
+        },
+        {
+          ...options,
+          mode: lane,
+          suppressResultMessage: true,
+          skipEntityReflection: true
+        }
+      );
+    }
+
+    if (!Object.keys(filters).length) {
+      return this.runDefaultLoad(
+        {
+          packId,
+          sourceId
+        },
+        {
+          ...options,
+          mode: lane,
+          suppressResultMessage: true,
+          skipEntityReflection: true
+        }
+      );
+    }
+
+    const modeHint = String(entry?.mode || '').trim().toLowerCase();
+    const item = {
+      source_id: sourceId,
+      pack_id: packId || undefined,
+      filters
+    };
+    if (modeHint === 'events' || modeHint === 'event' || modeHint === 'metrics' || modeHint === 'geometry') {
+      item.mode = modeHint === 'event' ? 'events' : modeHint;
+    }
+    await this.executeOrder(
+      {
+        items: [item],
+        summary: `Loading shared view for ${sourceId}`
+      },
+      {
+        ...options,
+        mode: lane,
+        syntheticSource: options.syntheticSource || 'share_state',
+        suppressResultMessage: true
+      }
+    );
+    return true;
+  },
+
+  async applyShareStateLoads(shareState = {}, options = {}) {
+    const lane = normalizeChatMode(options.mode || shareState?.lane || this.mode);
+    const loads = Array.isArray(shareState?.loads) ? shareState.loads : [];
+    const feedIds = loads
+      .filter((entry) => String(entry?.kind || '').trim().toLowerCase() === 'feed')
+      .map((entry) => String(entry?.feed_id || '').trim())
+      .filter(Boolean);
+
+    let handled = false;
+    if (lane === 'ops' && feedIds.length) {
+      await this.seedEmptyConversation(lane);
+      await this.loadOpsFeedSet(feedIds, { label: 'Ops share view' });
+      handled = true;
+    }
+
+    for (const entry of loads) {
+      if (String(entry?.kind || '').trim().toLowerCase() !== 'source') continue;
+      const result = await this.executeShareStateLoadEntry(entry, {
+        ...options,
+        mode: lane,
+        syntheticSource: options.syntheticSource || 'share_state'
+      });
+      handled = Boolean(result) || handled;
+    }
+
+    return handled;
+  },
+
   async loadExactEventByParams(params = {}, options = {}) {
     const lane = normalizeChatMode(options.mode || this.mode);
     const eventId = String(params?.eventId || '').trim();
@@ -922,11 +1080,13 @@ export const ChatManager = {
       renderUnifiedOverlayEventResult(result, syntheticOrder);
       applyExactEventFocusState(syntheticOrder, result);
       scheduleExactEventFocusRefresh(syntheticOrder, result);
-      this.reflectLoadedEntity(lane, {
-        packId: resolvedPackId,
-        sourceId,
-        eventId
-      });
+      if (options.skipEntityReflection !== true) {
+        this.reflectLoadedEntity(lane, {
+          packId: resolvedPackId,
+          sourceId,
+          eventId
+        });
+      }
       if (options.announce !== false) {
         const message = String(
           result?.summary
@@ -1407,7 +1567,7 @@ export const ChatManager = {
     });
     if (!action) return false;
     const result = await this.executeDefaultLoadAction(action, options);
-    if (result) {
+    if (result && options.skipEntityReflection !== true) {
       this.reflectLoadedEntity(lane, {
         ...params,
         ...(action.entity || {})
@@ -2866,6 +3026,24 @@ export const ChatManager = {
       input.style.height = 'auto';
       this.history.push({ role: 'user', content: query });
       this.history.push({ role: 'assistant', content: reply });
+      this.addMessage(reply, 'assistant', { mode: requestMode });
+      this.saveState();
+      return;
+    }
+
+    if (isShareMapCommand(query)) {
+      this.addMessage(query, 'user', { mode: requestMode });
+      input.value = '';
+      input.style.height = 'auto';
+      this.history.push({ role: 'user', content: query });
+      this.modeHistories[requestMode] = this.history;
+      const result = await App?.shareCurrentMap?.({
+        lane: requestMode,
+        copyToClipboard: true
+      });
+      const reply = result?.message || 'Could not build a share link for the current map view.';
+      this.history.push({ role: 'assistant', content: reply });
+      this.modeHistories[requestMode] = this.history;
       this.addMessage(reply, 'assistant', { mode: requestMode });
       this.saveState();
       return;

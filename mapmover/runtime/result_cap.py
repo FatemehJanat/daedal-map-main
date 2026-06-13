@@ -115,6 +115,7 @@ def merge_cap_info(*infos: Optional[dict]) -> Optional[dict]:
     returned_rows = 0
     cap_value = None
     cap_reason = "merged"
+    cap_kind = "technical_truncation"
     for info in hits:
         total_available += int(info.get("available_rows") or 0)
         returned_rows += int(info.get("returned_rows") or 0)
@@ -122,12 +123,16 @@ def merge_cap_info(*infos: Optional[dict]) -> Optional[dict]:
         if isinstance(candidate_cap, int) and (cap_value is None or candidate_cap < cap_value):
             cap_value = candidate_cap
             cap_reason = info.get("cap_reason") or cap_reason
+        candidate_kind = str(info.get("cap_kind") or "").strip()
+        if candidate_kind:
+            cap_kind = candidate_kind
     return {
         "cap_hit": True,
         "returned_rows": returned_rows,
         "available_rows": total_available,
         "cap_value": cap_value,
         "cap_reason": cap_reason,
+        "cap_kind": cap_kind,
     }
 
 
