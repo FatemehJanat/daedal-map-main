@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .country_geography import get_country_sub_admin_levels
+
 
 _IRREGULAR_GEO_PLURALS = {
     "county": "counties",
@@ -218,15 +220,8 @@ def get_country_geo_level_aliases(metadata: dict | None) -> dict[str, str]:
     if not iso3:
         return {}
 
-    try:
-        from mapmover.foundation_helpers import load_country_crosswalk
-
-        crosswalk = load_country_crosswalk(iso3) or {}
-    except Exception:
-        return {}
-
-    sub_admin_levels = crosswalk.get("sub_admin_levels") or {}
-    if not isinstance(sub_admin_levels, dict):
+    sub_admin_levels = get_country_sub_admin_levels(iso3)
+    if not sub_admin_levels:
         return {}
 
     aliases: dict[str, str] = {}
@@ -259,15 +254,8 @@ def get_country_runtime_level_names(metadata: dict | None) -> dict[str, str]:
     if not iso3:
         return names
 
-    try:
-        from mapmover.foundation_helpers import load_country_crosswalk
-
-        crosswalk = load_country_crosswalk(iso3) or {}
-    except Exception:
-        return names
-
-    sub_admin_levels = crosswalk.get("sub_admin_levels") or {}
-    if not isinstance(sub_admin_levels, dict):
+    sub_admin_levels = get_country_sub_admin_levels(iso3)
+    if not sub_admin_levels:
         return names
 
     for admin_level, info in sub_admin_levels.items():

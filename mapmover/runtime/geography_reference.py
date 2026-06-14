@@ -157,6 +157,39 @@ def normalize_county_slug(value: str) -> str:
     return normalize_subdivision_slug(value, strip_suffixes=USA_COUNTY_EQUIVALENT_SUFFIXES)
 
 
+def derive_eurostat_geo_level(loc_id: str | None) -> str | None:
+    """
+    Infer canonical admin level from a Eurostat/NUTS loc_id shape.
+
+    Format:
+    - `ISO3` -> admin_0
+    - `ISO3-NNN` (3-char NUTS) -> admin_1
+    - `ISO3-NNNN` (4-char NUTS) -> admin_2
+    - `ISO3-NNNNN` (5-char NUTS) -> admin_3
+
+    This keeps the shared runtime aware of Eurostat's fixed-length hierarchy
+    instead of scattering one-off NUTS logic into callers.
+    """
+    value = str(loc_id or "").strip().upper()
+    if not value:
+        return None
+    if re.fullmatch(r"[A-Z]{3}", value):
+        return "admin_0"
+
+    match = re.fullmatch(r"([A-Z]{3})-([A-Z0-9]+)", value)
+    if not match:
+        return None
+
+    nuts_code = match.group(2)
+    if len(nuts_code) == 3:
+        return "admin_1"
+    if len(nuts_code) == 4:
+        return "admin_2"
+    if len(nuts_code) == 5:
+        return "admin_3"
+    return None
+
+
 def _country_subdivision_lookup_candidates(region: str) -> list[str]:
     value = str(region or "").strip()
     if not value:
@@ -221,4 +254,3 @@ def resolve_us_county_slug_loc_id(
 ) -> str | None:
     """Compatibility wrapper for the shared country subdivision slug resolver."""
     return resolve_country_subdivision_slug_loc_id(region, cache_dict=cache_dict)
-

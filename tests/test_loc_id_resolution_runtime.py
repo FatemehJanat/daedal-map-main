@@ -1,0 +1,196 @@
+import unittest
+from unittest.mock import patch
+
+from mapmover.runtime.loc_id_resolution import (
+    resolve_admin_text_to_loc_id,
+    resolve_place_to_loc_id_stack,
+    resolve_place_to_point,
+    resolve_point_to_loc_id_stack,
+)
+
+
+class LocIdResolutionRuntimeTests(unittest.TestCase):
+    def test_direct_loc_id_passthrough_normalizes_geometry_family_to_local(self):
+        resolved = resolve_admin_text_to_loc_id("USA-G125186-G215213")
+        self.assertEqual(resolved["match_type"], "direct_loc_id")
+        self.assertEqual(resolved["deepest_resolved_loc_id"], "USA-VA-059")
+        self.assertEqual(resolved["deepest_resolved_admin_level"], "admin_2")
+        self.assertEqual(resolved["matches"]["admin_2"]["loc_id"], "USA-VA-059")
+
+    def test_direct_admin_name_uses_name_standardizer(self):
+        with patch(
+            "mapmover.runtime.loc_id_resolution._get_name_standardizer"
+        ) as get_standardizer:
+            standardizer = get_standardizer.return_value
+            standardizer.get_loc_id_from_name.side_effect = [None, "USA-VA", None]
+            resolved = resolve_admin_text_to_loc_id("Virginia", country_hint="USA")
+
+        self.assertEqual(resolved["match_type"], "direct_admin_name")
+        self.assertEqual(resolved["deepest_resolved_loc_id"], "USA-VA")
+        self.assertEqual(resolved["deepest_resolved_admin_level"], "admin_1")
+        self.assertEqual(resolved["matches"]["admin_1"]["method"], "name_lookup")
+
+    def test_zip_short_circuit_uses_us_crosswalk_and_stays_on_admin_spine(self):
+        with patch(
+            "mapmover.runtime.loc_id_resolution.usa_zip_lookup",
+            return_value={
+                "zcta": "22031",
+                "zcta_loc_id": "USA-Z-22031",
+                "county_loc_id": "USA-VA-059",
+                "county_name": "Fairfax County",
+                "state_abbrev": "VA",
+                "state_loc_id": "USA-VA",
+                "country_loc_id": "USA",
+                "all_counties": ["USA-VA-059"],
+                "county_count": 1,
+            },
+        ):
+            resolved = resolve_admin_text_to_loc_id("22031", country_hint="USA")
+
+        self.assertEqual(resolved["match_type"], "postal_code")
+        self.assertEqual(resolved["postal_system"], "usa_zip_crosswalk")
+        self.assertEqual(resolved["deepest_resolved_loc_id"], "USA-VA-059")
+        self.assertEqual(resolved["deepest_resolved_admin_level"], "admin_2")
+        self.assertEqual(resolved["matches"]["admin_0"]["loc_id"], "USA")
+        self.assertEqual(resolved["matches"]["admin_1"]["loc_id"], "USA-VA")
+        self.assertEqual(resolved["matches"]["admin_2"]["loc_id"], "USA-VA-059")
+        self.assertNotIn("zcta_loc_id", resolved)
+
+    def test_zip_crosswalk_miss_returns_clean_error(self):
+        with patch("mapmover.runtime.loc_id_resolution.usa_zip_lookup", return_value=None):
+            resolved = resolve_admin_text_to_loc_id("00000", country_hint="USA")
+
+        self.assertEqual(resolved["match_type"], "postal_code")
+        self.assertEqual(resolved["matches"], {})
+        self.assertEqual(resolved["error"], "no ZIP crosswalk match found")
+
+    def test_point_stack_normalizes_admin1_admin2_and_derives_deep_parents(self):
+        legacy_payload = {
+            "point": {"lon": -77.307, "lat": 38.845},
+            "country": {"loc_id": "USA", "name": "United States"},
+            "matched": {
+                "loc_id": "USA-VA-059-452400-1-2001",
+                "name": "Block 2001",
+                "admin_level": 5,
+                "iso3": "USA",
+            },
+            "stack": [
+                {"loc_id": "USA", "name": "United States", "admin_level": 0},
+                {"loc_id": "USA-G125186", "name": "Virginia", "admin_level": 1},
+                {"loc_id": "USA-G125186-G215213", "name": "Fairfax County", "admin_level": 2},
+                {"loc_id": "USA-VA-059-452400-1-2001", "name": "Block 2001", "admin_level": 5},
+            ],
+        }
+        with patch(
+            "mapmover.runtime.loc_id_resolution.legacy_resolve_point_to_location",
+            return_value=legacy_payload,
+        ):
+            resolved = resolve_point_to_loc_id_stack(-77.307, 38.845)
+
+        self.assertEqual(resolved["deepest_resolved_loc_id"], "USA-VA-059-452400-1-2001")
+        self.assertEqual(resolved["deepest_resolved_admin_level"], "admin_5")
+        self.assertEqual(resolved["matches"]["admin_1"]["loc_id"], "USA-VA")
+        self.assertEqual(resolved["matches"]["admin_2"]["loc_id"], "USA-VA-059")
+        self.assertEqual(resolved["matches"]["admin_3"]["loc_id"], "USA-VA-059-452400")
+        self.assertEqual(resolved["matches"]["admin_4"]["loc_id"], "USA-VA-059-452400-1")
+        self.assertEqual(resolved["matches"]["admin_5"]["loc_id"], "USA-VA-059-452400-1-2001")
+        self.assertEqual(resolved["matches"]["admin_3"]["method"], "derived_parent_chain")
+
+    def test_point_stack_passes_through_errors(self):
+        with patch(
+            "mapmover.runtime.loc_id_resolution.legacy_resolve_point_to_location",
+            return_value={"error": "No containing country found"},
+        ):
+            resolved = resolve_point_to_loc_id_stack(0, 0)
+        self.assertEqual(resolved["error"], "No containing country found")
+
+    def test_place_to_point_short_circuits_on_direct_admin_text(self):
+        resolved = resolve_place_to_point("Canada")
+        self.assertEqual(resolved["provider"], "direct_admin_text")
+        self.assertEqual(
+            resolved["direct_admin_match"]["deepest_resolved_loc_id"],
+            "CAN",
+        )
+
+    def test_place_to_point_normalizes_provider_payload(self):
+        payload = {
+            "formatted_address": "1600 Pennsylvania Ave NW, Washington, DC 20500, USA",
+            "place_id": "abc123",
+            "lat": 38.8977,
+            "lng": -77.0365,
+            "city": "Washington",
+            "state": "DC",
+            "postal_code": "20500",
+            "country": "United States",
+            "country_code": "US",
+        }
+        resolved = resolve_place_to_point(
+            "1600 Pennsylvania Ave NW",
+            resolved_place=payload,
+            provider="google",
+        )
+        self.assertEqual(resolved["provider"], "google")
+        self.assertEqual(
+            resolved["resolved_place"]["label"],
+            "1600 Pennsylvania Ave NW, Washington, DC 20500, USA",
+        )
+        self.assertEqual(resolved["resolved_place"]["lat"], 38.8977)
+        self.assertEqual(resolved["resolved_place"]["components"]["postal_code"], "20500")
+        self.assertEqual(resolved["resolved_place"]["components"]["country_code"], "US")
+
+    def test_place_to_loc_id_stack_uses_point_resolver_for_resolved_place(self):
+        payload = {
+            "formatted_address": "1600 Pennsylvania Ave NW, Washington, DC 20500, USA",
+            "place_id": "abc123",
+            "lat": 38.8977,
+            "lng": -77.0365,
+            "city": "Washington",
+            "state": "DC",
+            "postal_code": "20500",
+            "country": "United States",
+            "country_code": "US",
+        }
+        point_stack = {
+            "point": {"lon": -77.0365, "lat": 38.8977},
+            "matches": {
+                "admin_0": {"loc_id": "USA", "admin_level": 0},
+                "admin_1": {"loc_id": "USA-DC", "admin_level": 1},
+            },
+            "deepest_resolved_loc_id": "USA-DC",
+            "deepest_resolved_admin_level": "admin_1",
+            "should_persist_deepest_loc_id": True,
+        }
+        with patch(
+            "mapmover.runtime.loc_id_resolution.resolve_point_to_loc_id_stack",
+            return_value=point_stack,
+        ) as resolver:
+            resolved = resolve_place_to_loc_id_stack(
+                "1600 Pennsylvania Ave NW",
+                resolved_place=payload,
+                provider="google",
+            )
+        resolver.assert_called_once_with(-77.0365, 38.8977, include_geometry=False)
+        self.assertEqual(resolved["resolution_mode"], "place_payload")
+        self.assertEqual(resolved["provider"], "google")
+        self.assertEqual(resolved["deepest_resolved_loc_id"], "USA-DC")
+        self.assertEqual(resolved["resolved_place"]["place_id"], "abc123")
+
+    def test_place_to_loc_id_stack_prefers_direct_admin_text(self):
+        with patch(
+            "mapmover.runtime.loc_id_resolution.resolve_admin_text_to_loc_id",
+            return_value={
+                "query": "Virginia",
+                "match_type": "direct_admin_name",
+                "matches": {"admin_1": {"loc_id": "USA-VA", "admin_level": 1}},
+                "deepest_resolved_loc_id": "USA-VA",
+                "deepest_resolved_admin_level": "admin_1",
+                "should_persist_deepest_loc_id": True,
+            },
+        ):
+            resolved = resolve_place_to_loc_id_stack("Virginia", country_hint="USA")
+        self.assertEqual(resolved["resolution_mode"], "direct_admin_text")
+        self.assertEqual(resolved["deepest_resolved_loc_id"], "USA-VA")
+
+
+if __name__ == "__main__":
+    unittest.main()

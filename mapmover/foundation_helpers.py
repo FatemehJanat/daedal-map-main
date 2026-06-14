@@ -41,6 +41,7 @@ FOUNDATION_HELPER_REGISTRY = {
         "query_synonyms.json",
         "stopwords.json",
         "unit_conversions.json",
+        "water_body_codes.json",
         "usa/usa_admin.json",
     ],
     "country_crosswalks": "countries/{ISO3}/crosswalk.json",

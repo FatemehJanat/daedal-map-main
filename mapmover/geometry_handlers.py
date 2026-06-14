@@ -40,6 +40,12 @@ from .runtime.geography_reference import (
     translate_geometry_id_to_local_id,
     translate_loc_id_to_geometry_id,
 )
+from .runtime.country_geography import (
+    get_country_level_config,
+    get_country_sub_admin_levels,
+    get_country_supported_deep_admin_levels,
+)
+from .runtime.geometry_loader import resolve_country_geometry_source
 
 logger = logging.getLogger("mapmover")
 
@@ -121,32 +127,11 @@ def load_country_parquet(iso3: str, admin_level: int = None):
                 return filtered
         return None
 
-    # Priority 1: Country-specific geometry (matches data loc_ids like NUTS)
-    country_geom_file = DATA_ROOT / "countries" / iso3 / "geometry.parquet"
-    county_geom_file = DATA_ROOT / "countries" / iso3 / "geometry" / "county.parquet"
-    # Priority 2: Crosswalk file (for translating loc_ids)
-    crosswalk_file = DATA_ROOT / "countries" / iso3 / "crosswalk.json"
-    # Priority 3: Global geometry folder (GADM fallback)
-    global_geom_file = GEOMETRY_DIR / f"{iso3}.parquet"
+    resolved = resolve_country_geometry_source(iso3, admin_level=admin_level)
+    parquet_file = resolved["parquet_file"]
+    crosswalk_data = resolved["crosswalk"]
 
-    # Try country-specific first
-    parquet_file = None
-    crosswalk_data = None
-
-    if admin_level == 2 and _parquet_accessible(county_geom_file):
-        parquet_file = county_geom_file
-        logger.debug(f"Using county geometry: {county_geom_file}")
-    elif _parquet_accessible(country_geom_file):
-        parquet_file = country_geom_file
-        logger.debug(f"Using country-specific geometry: {country_geom_file}")
-    elif crosswalk_file.exists() and _parquet_accessible(global_geom_file):
-        crosswalk_data = load_country_crosswalk(iso3)
-        parquet_file = global_geom_file
-        logger.debug(f"Using crosswalk + geoBoundaries geometry: {crosswalk_file}")
-    elif _parquet_accessible(global_geom_file):
-        parquet_file = global_geom_file
-        logger.debug(f"Using global geometry fallback: {global_geom_file}")
-    else:
+    if parquet_file is None:
         logger.debug(f"No geometry file found for {iso3}")
         with _country_parquet_cache_lock:
             _country_parquet_inflight.discard(cache_key)
@@ -154,6 +139,7 @@ def load_country_parquet(iso3: str, admin_level: int = None):
         if waiter is not None:
             waiter.set()
         return None
+    logger.debug(f"Using {resolved['source_kind']} geometry: {parquet_file}")
 
     try:
         # Use predicate pushdown if admin_level specified
@@ -440,8 +426,7 @@ def _load_subcounty_rows_by_loc_ids(iso3: str, loc_ids: list[str]):
     if not requested_ids:
         return pd.DataFrame()
 
-    crosswalk = load_country_crosswalk(iso3) or {}
-    sub_admin_levels = crosswalk.get("sub_admin_levels") or {}
+    sub_admin_levels = get_country_sub_admin_levels(iso3)
     if not sub_admin_levels:
         return pd.DataFrame()
 
@@ -730,22 +715,7 @@ def _find_containing_row(df, lon: float, lat: float):
 
 def _resolve_deepest_point_match(iso3: str, lon: float, lat: float, admin1_row=None, admin2_row=None):
     """Attempt admin_3+ point resolution where country-specific deep geometry exists."""
-    crosswalk = load_country_crosswalk(iso3) or {}
-    sub_admin_levels = crosswalk.get("sub_admin_levels", {})
-    if not sub_admin_levels:
-        return None
-
-    deep_levels = []
-    for key in sub_admin_levels.keys():
-        if not key.startswith("admin_"):
-            continue
-        try:
-            level_value = int(key.split("_", 1)[1])
-        except ValueError:
-            continue
-        if level_value >= 3:
-            deep_levels.append(level_value)
-    deep_levels.sort()
+    deep_levels = get_country_supported_deep_admin_levels(iso3)
     if not deep_levels:
         return None
 
@@ -813,7 +783,12 @@ def resolve_point_to_location(lon: float, lat: float, include_geometry: bool = T
         admin2_df = load_country_parquet(iso3, admin_level=2)
     admin2_match = _find_containing_row(admin2_df, lon, lat)
 
-    deepest_row = admin2_match or admin1_match or country_match
+    if admin2_match is not None:
+        deepest_row = admin2_match
+    elif admin1_match is not None:
+        deepest_row = admin1_match
+    else:
+        deepest_row = country_match
     deep_match = _resolve_deepest_point_match(iso3, lon, lat, admin1_row=admin1_match, admin2_row=admin2_match)
     if deep_match is not None:
         deepest_row = deep_match
@@ -1418,9 +1393,7 @@ def load_subcounty_geometry(iso3: str, admin_level: int, state_abbrev: str = Non
     """
     countries_dir = DATA_ROOT / "countries" / iso3
 
-    crosswalk = load_country_crosswalk(iso3)
-    sub_admin_levels = (crosswalk or {}).get("sub_admin_levels", {})
-    level_config = sub_admin_levels.get(f"admin_{admin_level}")
+    level_config = get_country_level_config(iso3, admin_level)
 
     if not level_config:
         return None
@@ -1695,13 +1668,10 @@ def _get_crosswalk_reverse(iso3: str) -> dict:
         return {}
 
     try:
-        mappings = cw.get("mappings", {})
-        # mappings: "USA-NY" -> "USA-G109436"
-        # reverse:  "USA-G109436" -> "NY"
+        _, geo_to_local = build_crosswalk_maps(cw)
         reverse = {}
-        for local_loc_id, geo_loc_id in mappings.items():
-            # Extract the local abbreviation from "USA-NY" -> "NY"
-            parts = local_loc_id.split("-", 1)
+        for geo_loc_id, local_loc_id in geo_to_local.items():
+            parts = str(local_loc_id).split("-", 1)
             if len(parts) == 2:
                 reverse[geo_loc_id] = parts[1]
         _crosswalk_reverse_cache[iso3] = reverse
@@ -2030,8 +2000,7 @@ def get_selection_geometries(loc_ids: list):
         deep_level_ids = []
         regular_sub_level_ids = []
         if sub_level_ids:
-            crosswalk = load_country_crosswalk(iso3) or {}
-            sub_admin_levels = crosswalk.get("sub_admin_levels") or {}
+            sub_admin_levels = get_country_sub_admin_levels(iso3)
             for lid in sub_level_ids:
                 parts = str(lid).split("-")
                 segment_count = len(parts)

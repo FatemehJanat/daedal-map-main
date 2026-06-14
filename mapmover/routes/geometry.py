@@ -13,11 +13,11 @@ from mapmover.geometry_handlers import (
     get_location_children as get_location_children_handler,
     get_location_info,
     get_location_places as get_location_places_handler,
-    resolve_point_to_location as resolve_point_to_location_handler,
     get_selection_geometries as get_selection_geometries_handler,
     get_viewport_geometry as get_viewport_geometry_handler,
 )
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
+from mapmover.runtime.loc_id_resolution import resolve_point_to_loc_id_stack
 
 
 router = APIRouter()
@@ -150,7 +150,7 @@ async def resolve_point_endpoint(req: Request):
         if lon is None or lat is None:
             return msgpack_error("lon and lat are required", 400)
 
-        result = resolve_point_to_location_handler(lon, lat, include_geometry=True)
+        result = resolve_point_to_loc_id_stack(lon, lat, include_geometry=True)
         if result.get("error"):
             return msgpack_response(result, status_code=404)
         return msgpack_response(result)
@@ -174,7 +174,7 @@ async def resolve_point_json_endpoint(req: Request):
 
     include_geometry = bool(body.get("include_geometry", False))
     try:
-        result = resolve_point_to_location_handler(lon, lat, include_geometry=include_geometry)
+        result = resolve_point_to_loc_id_stack(lon, lat, include_geometry=include_geometry)
         if result.get("error"):
             return JSONResponse(result, status_code=404)
         return JSONResponse(result)

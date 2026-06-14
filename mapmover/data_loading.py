@@ -45,7 +45,12 @@ from pack_registry_shared import pack_routing_hints
 from .paths import CATALOG_PATH, COUNTRIES_DIR, DATA_ROOT, GEOMETRY_DIR, WIP_CATALOG_PATH
 from .duckdb_helpers import select_rows
 from .request_risk_gate import block_gate, safe_gate
-from .runtime.geography_reference import canonicalize_loc_id, translate_loc_id_to_geometry_id
+from .runtime.geometry_loader import resolve_country_geometry_source
+from .runtime.geography_reference import (
+    build_crosswalk_maps,
+    canonicalize_loc_id,
+    translate_loc_id_to_geometry_id,
+)
 from .runtime_config import get_runtime_config
 
 logger = logging.getLogger("mapmover")
@@ -1028,39 +1033,23 @@ def load_geometry_for_country(iso3: str):
     """
     import pandas as pd
 
-    countries_folder = get_countries_folder()
-    geometry_folder = get_geometry_folder()
+    resolved = resolve_country_geometry_source(iso3)
+    parquet_file = resolved["parquet_file"]
+    crosswalk = resolved["crosswalk"]
+    source_kind = resolved["source_kind"]
 
-    # Tier 1: Country-specific geometry (NUTS, ABS LGA, etc.)
-    if countries_folder:
-        country_geom_path = countries_folder / iso3 / "geometry.parquet"
-        if country_geom_path.exists():
-            try:
-                gdf = select_rows(country_geom_path)
-                if gdf.empty:
-                    gdf = pd.read_parquet(country_geom_path)
-                logger.debug(f"Loaded {len(gdf)} features from {country_geom_path}")
-                return gdf, None
-            except Exception as e:
-                logger.warning(f"Error loading {country_geom_path}: {e}")
-
-    # Tier 2: Load crosswalk if exists (for translating loc_ids)
-    crosswalk = load_country_crosswalk(iso3)
     if crosswalk:
         logger.debug(f"Loaded crosswalk for {iso3}: {len(crosswalk.get('mappings', {}))} mappings")
 
-    # Tier 3: GADM fallback geometry
-    if geometry_folder:
-        gadm_path = geometry_folder / f"{iso3}.parquet"
-        if gadm_path.exists():
-            try:
-                gdf = select_rows(gadm_path)
-                if gdf.empty:
-                    gdf = pd.read_parquet(gadm_path)
-                logger.debug(f"Loaded {len(gdf)} features from GADM {gadm_path}")
-                return gdf, crosswalk
-            except Exception as e:
-                logger.warning(f"Error loading {gadm_path}: {e}")
+    if parquet_file is not None:
+        try:
+            gdf = select_rows(parquet_file)
+            if gdf.empty:
+                gdf = pd.read_parquet(parquet_file)
+            logger.debug(f"Loaded {len(gdf)} features from {source_kind} geometry {parquet_file}")
+            return gdf, crosswalk
+        except Exception as e:
+            logger.warning(f"Error loading {parquet_file}: {e}")
 
     logger.warning(f"No geometry found for {iso3}")
     return None, crosswalk
@@ -1097,37 +1086,10 @@ def fetch_geometries_by_loc_ids(loc_ids: list) -> dict:
     all_features = []
 
     for country, lids in country_loc_ids.items():
-        countries_folder = get_countries_folder()
-        geometry_folder = get_geometry_folder()
-        country_geom_path = countries_folder / country / "geometry.parquet" if countries_folder else None
-        fallback_geom_path = geometry_folder / f"{country}.parquet" if geometry_folder else None
-
-        parquet_path = None
-        crosswalk = None
-        uses_crosswalk = False
-        _runtime_mode = str(get_runtime_config().get("runtime_mode", "local")).strip().lower()
-        if _runtime_mode == "cloud":
-            # In cloud mode, assume geometry paths exist; DuckDB will error if missing.
-            # Try country-specific geometry first, then GADM fallback.
-            if country_geom_path:
-                parquet_path = country_geom_path
-            elif fallback_geom_path:
-                parquet_path = fallback_geom_path
-            crosswalk = load_country_crosswalk(country)
-            if crosswalk and parquet_path != country_geom_path:
-                uses_crosswalk = True
-        elif country_geom_path and country_geom_path.exists():
-            parquet_path = country_geom_path
-        elif fallback_geom_path and fallback_geom_path.exists():
-            crosswalk = load_country_crosswalk(country)
-            if crosswalk:
-                parquet_path = fallback_geom_path
-                uses_crosswalk = True
-            else:
-                parquet_path = fallback_geom_path
-        if parquet_path is None and fallback_geom_path and fallback_geom_path.exists():
-            parquet_path = fallback_geom_path
-            crosswalk = None
+        resolved = resolve_country_geometry_source(country)
+        parquet_path = resolved["parquet_file"]
+        crosswalk = resolved["crosswalk"]
+        uses_crosswalk = bool(resolved["uses_crosswalk"])
 
         if parquet_path is None:
             logger.warning(f"No geometry found for {country}")
@@ -1150,10 +1112,7 @@ def fetch_geometries_by_loc_ids(loc_ids: list) -> dict:
             # Fall back to the old whole-file load path if the selective read fails.
             gdf, crosswalk = load_geometry_for_country(country)
         elif uses_crosswalk and crosswalk:
-            reverse_map = {}
-            for source_map in (crosswalk.get("mappings", {}), crosswalk.get("admin_2_fips", {})):
-                for local_loc_id, geo_loc_id in source_map.items():
-                    reverse_map.setdefault(geo_loc_id, canonicalize_loc_id(local_loc_id))
+            _, reverse_map = build_crosswalk_maps(crosswalk)
             gdf["local_loc_id"] = gdf["loc_id"].map(reverse_map)
 
         if gdf is None or len(gdf) == 0:
@@ -1198,7 +1157,7 @@ def fetch_geometries_by_loc_ids(loc_ids: list) -> dict:
 
             # If crosswalk exists and we still have unmatched loc_ids, try translation
             if crosswalk and remaining_lids:
-                mappings = crosswalk.get('mappings', {})
+                mappings, _ = build_crosswalk_maps(crosswalk)
                 for loc_id in list(remaining_lids):
                     gadm_id = mappings.get(loc_id)
                     if gadm_id:

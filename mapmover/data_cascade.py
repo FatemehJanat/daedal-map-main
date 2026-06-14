@@ -15,114 +15,33 @@ Uses:
   - conversions.json for regional groupings (EU, G20, ASEAN, etc.)
 """
 
-import pandas as pd
-from pathlib import Path
 from typing import Optional, Dict, List, Any, Union
 
-from .duckdb_helpers import duckdb_available, select_columns_from_parquet
-from .paths import GEOMETRY_DIR
 from .runtime.geography_reference import load_conversions as load_conversions_impl
-
-# Paths
-SCRIPT_DIR = Path(__file__).parent
-GEOMETRY_PATH = GEOMETRY_DIR
-_geometry_cache = {}  # iso3 -> DataFrame
+from .runtime.admin_hierarchy import (
+    get_ancestors as get_ancestors_impl,
+    get_children as get_children_impl,
+    get_parent_loc_id as get_parent_id_impl,
+)
 
 
 def load_conversions():
     """Load conversions.json through the shared runtime cache."""
     return load_conversions_impl() or {}
 
-
-def load_geometry(iso3: str) -> Optional[pd.DataFrame]:
-    """Load geometry parquet for a country (cached)."""
-    if iso3 in _geometry_cache:
-        return _geometry_cache[iso3]
-
-    parquet_file = GEOMETRY_PATH / f"{iso3}.parquet"
-    if not parquet_file.exists():
-        return None
-
-    columns = ["loc_id", "parent_id", "admin_level"]
-    if duckdb_available():
-        df = select_columns_from_parquet(parquet_file, columns)
-        if df.empty:
-            df = pd.read_parquet(parquet_file, columns=columns)
-    else:
-        df = pd.read_parquet(parquet_file, columns=columns)
-    _geometry_cache[iso3] = df
-    return df
-
-
 def get_parent_id(loc_id: str) -> Optional[str]:
-    """
-    Get parent_id for a location.
-
-    Examples:
-        USA-CA-037 -> USA-CA
-        USA-CA -> USA
-        USA -> None (countries have no parent)
-    """
-    if not loc_id or '-' not in loc_id:
-        return None
-
-    # Extract country code
-    parts = loc_id.split('-')
-    iso3 = parts[0]
-
-    # Load geometry and find parent
-    df = load_geometry(iso3)
-    if df is None:
-        # Fallback: simple string parsing
-        return '-'.join(parts[:-1]) if len(parts) > 1 else None
-
-    # Look up in geometry
-    match = df[df['loc_id'] == loc_id]
-    if len(match) > 0:
-        parent = match.iloc[0].get('parent_id')
-        return parent if parent and not pd.isna(parent) else None
-
-    return None
+    """Compatibility wrapper over the shared runtime admin hierarchy helper."""
+    return get_parent_id_impl(loc_id)
 
 
 def get_ancestors(loc_id: str) -> List[str]:
-    """
-    Get all ancestors of a location (parent, grandparent, etc).
-
-    Example:
-        USA-CA-037 -> ['USA-CA', 'USA']
-    """
-    ancestors = []
-    current = loc_id
-
-    while True:
-        parent = get_parent_id(current)
-        if parent is None or parent == '':
-            break
-        ancestors.append(parent)
-        current = parent
-
-    return ancestors
+    """Compatibility wrapper over the shared runtime admin hierarchy helper."""
+    return get_ancestors_impl(loc_id)
 
 
 def get_children(loc_id: str) -> List[str]:
-    """
-    Get direct children of a location.
-
-    Example:
-        USA -> ['USA-AL', 'USA-AK', 'USA-AZ', ...]
-        USA-CA -> ['USA-CA-001', 'USA-CA-003', ...]
-    """
-    # Extract country code
-    parts = loc_id.split('-')
-    iso3 = parts[0] if parts else loc_id
-
-    df = load_geometry(iso3)
-    if df is None:
-        return []
-
-    children = df[df['parent_id'] == loc_id]
-    return children['loc_id'].tolist()
+    """Compatibility wrapper over the shared runtime admin hierarchy helper."""
+    return get_children_impl(loc_id)
 
 
 def get_regional_grouping(group_name: str) -> Optional[Dict]:
