@@ -713,6 +713,33 @@ def _find_containing_row(df, lon: float, lat: float):
     return None
 
 
+def _find_containing_country_with_fallback(country_df, lon: float, lat: float):
+    """Resolve a containing country, falling back to the country bank's admin_0 row.
+
+    `global.csv` is the fast shared country layer, but it may occasionally miss
+    a coastal/island point if its simplified ADM0 outline drifted slightly from
+    the per-country geometry bank. In that case, use the global bbox shortlist
+    and check the country parquet's admin_0 geometry before declaring failure.
+    """
+    direct_match = _find_containing_row(country_df, lon, lat)
+    if direct_match is not None:
+        return direct_match
+
+    candidates = _filter_df_for_point(country_df, lon, lat)
+    if candidates.empty:
+        return None
+
+    for _, row in candidates.iterrows():
+        iso3 = str(row.get("loc_id") or "").strip()
+        if not iso3:
+            continue
+        admin0_df = load_country_parquet(iso3, admin_level=0)
+        admin0_match = _find_containing_row(admin0_df, lon, lat)
+        if admin0_match is not None:
+            return admin0_match
+    return None
+
+
 def _resolve_deepest_point_match(iso3: str, lon: float, lat: float, admin1_row=None, admin2_row=None):
     """Attempt admin_3+ point resolution where country-specific deep geometry exists."""
     deep_levels = get_country_supported_deep_admin_levels(iso3)
@@ -766,7 +793,7 @@ def resolve_point_to_location(lon: float, lat: float, include_geometry: bool = T
     if country_df is None or country_df.empty:
         return {"error": "No global geometry available"}
 
-    country_match = _find_containing_row(country_df, lon, lat)
+    country_match = _find_containing_country_with_fallback(country_df, lon, lat)
     if country_match is None:
         return {"error": "No containing country found", "point": {"lon": lon, "lat": lat}}
 

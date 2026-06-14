@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .country_geography import get_country_sub_admin_levels
+from .country_geography import (
+    get_country_overlap_levels,
+    get_country_sub_admin_levels,
+)
 
 
 _IRREGULAR_GEO_PLURALS = {
@@ -205,7 +208,7 @@ def get_geo_level_aliases(metadata: dict | None) -> dict[str, str]:
 
 
 def get_country_geo_level_aliases(metadata: dict | None) -> dict[str, str]:
-    """Load country-owned geo-level names from crosswalk sub_admin_levels.
+    """Load country-owned geo-level names from crosswalk overlap + sub-admin data.
 
     This is the canonical country-level naming seam. Source metadata
     geo_level_aliases should only supplement this when a source uses a local
@@ -221,10 +224,26 @@ def get_country_geo_level_aliases(metadata: dict | None) -> dict[str, str]:
         return {}
 
     sub_admin_levels = get_country_sub_admin_levels(iso3)
-    if not sub_admin_levels:
+    overlap_levels = get_country_overlap_levels(iso3)
+    if not sub_admin_levels and not overlap_levels:
         return {}
 
     aliases: dict[str, str] = {}
+    for admin_level, info in overlap_levels.items():
+        if not isinstance(info, dict):
+            continue
+        canonical_level = _normalize_geo_alias_text(admin_level)
+        if not canonical_level:
+            continue
+
+        for field_name in ("display_name", "canonical_dataset_label", "local_name"):
+            for alias_text in _expand_geo_alias_variants(info.get(field_name) or ""):
+                aliases[alias_text] = canonical_level
+
+        for alias in info.get("aliases") or []:
+            for alias_text in _expand_geo_alias_variants(alias):
+                aliases[alias_text] = canonical_level
+
     for admin_level, info in sub_admin_levels.items():
         if not isinstance(info, dict):
             continue
@@ -255,8 +274,19 @@ def get_country_runtime_level_names(metadata: dict | None) -> dict[str, str]:
         return names
 
     sub_admin_levels = get_country_sub_admin_levels(iso3)
-    if not sub_admin_levels:
+    overlap_levels = get_country_overlap_levels(iso3)
+    if not sub_admin_levels and not overlap_levels:
         return names
+
+    for admin_level, info in overlap_levels.items():
+        runtime_level = _normalize_runtime_geo_level(admin_level)
+        if runtime_level is None or not isinstance(info, dict):
+            continue
+        for field_name in ("display_name", "canonical_dataset_label", "local_name"):
+            candidate = _normalize_geo_alias_text(info.get(field_name) or "")
+            if candidate:
+                names[runtime_level] = candidate
+                break
 
     for admin_level, info in sub_admin_levels.items():
         runtime_level = _normalize_runtime_geo_level(admin_level)

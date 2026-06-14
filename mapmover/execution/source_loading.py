@@ -8,6 +8,7 @@ import pandas as pd
 import os
 
 from mapmover.catalog_surface import get_catalog_surface_override
+from mapmover.runtime.geography_reference import translate_loc_id_to_geometry_id
 
 
 def _allow_local_source_fallback() -> bool:
@@ -82,6 +83,32 @@ def candidate_parquet_paths(source_dir: Path, metadata: dict) -> list[Path]:
     return candidates
 
 
+def _loc_id_prefix_candidates(loc_id_prefix: str | None) -> list[str | None]:
+    """Return ordered namespace-aware prefix candidates for parquet pushdown.
+
+    Runtime queries often arrive in country-local loc_id form (`USA-CA`), while
+    some globally aggregated packs are stored directly on the canonical
+    GeoBoundaries spine (`USA-G123331`). Try the canonical geometry translation
+    first, then fall back to the original local prefix if different.
+    """
+    if loc_id_prefix is None:
+        return [None]
+
+    original = str(loc_id_prefix).strip()
+    if not original:
+        return [None]
+
+    candidates: list[str | None] = []
+    translated = translate_loc_id_to_geometry_id(original)
+    for candidate in (translated, original):
+        value = str(candidate).strip() if candidate is not None else ""
+        if not value:
+            continue
+        if value not in candidates:
+            candidates.append(value)
+    return candidates or [original]
+
+
 def load_source_data(
     source_id: str,
     *,
@@ -117,11 +144,9 @@ def load_source_data(
     selected_columns = list(dict.fromkeys(selected_columns))
 
     resolved_exact_filters = dict(exact_filters or {})
-    starts_with_filters = {}
     if year is not None:
         resolved_exact_filters["year"] = year
-    if loc_id_prefix:
-        starts_with_filters["loc_id"] = loc_id_prefix
+    prefix_candidates = _loc_id_prefix_candidates(loc_id_prefix)
 
     parquet_candidates = candidate_parquet_paths_func(source_dir, metadata)
     if is_cloud_mode_func():
@@ -130,25 +155,29 @@ def load_source_data(
 
         last_df = pd.DataFrame()
         for parquet_path in parquet_candidates:
-            if _allow_local_source_fallback() and parquet_path.exists():
-                logger.info(
-                    f"[S3->LOCAL] load_source_data({source_id}): using local fallback={parquet_path} year={year} prefix={loc_id_prefix}"
+            for prefix_candidate in prefix_candidates:
+                starts_with_filters = {"loc_id": prefix_candidate} if prefix_candidate else {}
+                if _allow_local_source_fallback() and parquet_path.exists():
+                    logger.info(
+                        f"[S3->LOCAL] load_source_data({source_id}): using local fallback={parquet_path} year={year} prefix={prefix_candidate}"
+                    )
+                else:
+                    uri = path_to_uri_func(parquet_path)
+                    logger.info(f"[S3] load_source_data({source_id}): trying uri={uri} year={year} prefix={prefix_candidate}")
+                df = select_rows_func(
+                    parquet_path,
+                    columns=selected_columns or None,
+                    exact_filters=resolved_exact_filters or None,
+                    in_filters=in_filters or None,
+                    compare_filters=compare_filters or None,
+                    starts_with_filters=starts_with_filters or None,
                 )
-            else:
-                uri = path_to_uri_func(parquet_path)
-                logger.info(f"[S3] load_source_data({source_id}): trying uri={uri} year={year} prefix={loc_id_prefix}")
-            df = select_rows_func(
-                parquet_path,
-                columns=selected_columns or None,
-                exact_filters=resolved_exact_filters or None,
-                in_filters=in_filters or None,
-                compare_filters=compare_filters or None,
-                starts_with_filters=starts_with_filters or None,
-            )
-            logger.info(f"[S3] load_source_data({source_id}): candidate={parquet_path.name} rows={len(df)}")
-            last_df = df
-            if not df.empty:
-                return df, metadata
+                logger.info(
+                    f"[S3] load_source_data({source_id}): candidate={parquet_path.name} prefix={prefix_candidate} rows={len(df)}"
+                )
+                last_df = df
+                if not df.empty:
+                    return df, metadata
         df = last_df
     else:
         parquet_files = list(source_dir.glob("*.parquet"))
@@ -163,14 +192,19 @@ def load_source_data(
         if parquet_path is None:
             parquet_path = parquet_files[0]
 
-        df = select_rows_func(
-            parquet_path,
-            columns=selected_columns or None,
-            exact_filters=resolved_exact_filters or None,
-            in_filters=in_filters or None,
-            compare_filters=compare_filters or None,
-            starts_with_filters=starts_with_filters or None,
-        )
+        df = pd.DataFrame()
+        for prefix_candidate in prefix_candidates:
+            starts_with_filters = {"loc_id": prefix_candidate} if prefix_candidate else {}
+            df = select_rows_func(
+                parquet_path,
+                columns=selected_columns or None,
+                exact_filters=resolved_exact_filters or None,
+                in_filters=in_filters or None,
+                compare_filters=compare_filters or None,
+                starts_with_filters=starts_with_filters or None,
+            )
+            if not df.empty:
+                break
         if df.empty and not resolved_exact_filters and not starts_with_filters and not in_filters and not compare_filters:
             df = pd.read_parquet(parquet_path, columns=selected_columns or None)
 
