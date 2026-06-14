@@ -1073,17 +1073,52 @@ def fetch_geometries_by_loc_ids(loc_ids: list) -> dict:
     if not loc_ids:
         return {"type": "FeatureCollection", "features": []}
 
-    # Group loc_ids by country (first part before dash, or whole ID for country-level)
+    from .runtime.marine_geometry import is_marine_loc_id, load_marine_geometry
+
+    all_features = []
+    canonical_lids = [canonicalize_loc_id(loc_id) for loc_id in loc_ids]
+
+    # Marine overlay loc_ids (EEZ-<ISO3>, X* water bodies) live in their own
+    # geometry banks, not the country/admin grouping. Resolve them first so a
+    # marine metrics source (e.g. ocean_sst) renders.
+    marine_lids = [lid for lid in canonical_lids if is_marine_loc_id(lid)]
+    if marine_lids:
+        try:
+            marine_gdf = load_marine_geometry(marine_lids)
+            for _, row in marine_gdf.iterrows():
+                geom = row.get("geometry")
+                if geom is None:
+                    continue
+                if hasattr(geom, "__geo_interface__"):
+                    geom_dict = geom.__geo_interface__
+                elif isinstance(geom, str):
+                    geom_dict = json_module.loads(geom)
+                else:
+                    continue
+                all_features.append({
+                    "type": "Feature",
+                    "geometry": geom_dict,
+                    "properties": {
+                        "loc_id": row.get("loc_id"),
+                        "name": row.get("name"),
+                        "admin_level": None,
+                        "parent_id": None,
+                    },
+                })
+        except Exception as exc:
+            logger.warning(f"Error loading marine geometry: {exc}")
+
+    # Group the remaining (admin/country) loc_ids by country (first part before
+    # dash, or whole ID for country-level).
     country_loc_ids = {}
-    for loc_id in loc_ids:
-        loc_id = canonicalize_loc_id(loc_id)
+    for loc_id in canonical_lids:
+        if is_marine_loc_id(loc_id):
+            continue
         parts = loc_id.split("-")
         country = parts[0] if parts else loc_id
         if country not in country_loc_ids:
             country_loc_ids[country] = []
         country_loc_ids[country].append(loc_id)
-
-    all_features = []
 
     for country, lids in country_loc_ids.items():
         resolved = resolve_country_geometry_source(country)

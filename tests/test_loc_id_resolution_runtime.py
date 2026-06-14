@@ -1,6 +1,8 @@
 import unittest
 from unittest.mock import patch
 
+import pandas as pd
+
 from mapmover.runtime.loc_id_resolution import (
     resolve_admin_text_to_loc_id,
     resolve_place_to_loc_id_stack,
@@ -29,6 +31,44 @@ class LocIdResolutionRuntimeTests(unittest.TestCase):
         self.assertEqual(resolved["deepest_resolved_loc_id"], "USA-VA")
         self.assertEqual(resolved["deepest_resolved_admin_level"], "admin_1")
         self.assertEqual(resolved["matches"]["admin_1"]["method"], "name_lookup")
+
+    def test_direct_admin_name_falls_back_to_country_geometry_for_county_suffixes(self):
+        with patch(
+            "mapmover.runtime.loc_id_resolution._get_name_standardizer"
+        ) as get_standardizer, patch(
+            "mapmover.runtime.loc_id_resolution.load_country_parquet"
+        ) as load_country_parquet:
+            standardizer = get_standardizer.return_value
+            standardizer.get_loc_id_from_name.return_value = None
+            load_country_parquet.return_value = pd.DataFrame(
+                [
+                    {"loc_id": "USA-VA-600", "name": "Fairfax", "name_local": None, "code": "600"},
+                ]
+            )
+            resolved = resolve_admin_text_to_loc_id("Fairfax County", country_hint="USA", admin_level_hint=2)
+
+        self.assertEqual(resolved["deepest_resolved_loc_id"], "USA-VA-600")
+        self.assertEqual(resolved["deepest_resolved_admin_level"], "admin_2")
+        self.assertEqual(resolved["matches"]["admin_2"]["method"], "geometry_name_lookup")
+
+    def test_direct_admin_name_falls_back_to_localized_geometry_aliases(self):
+        with patch(
+            "mapmover.runtime.loc_id_resolution._get_name_standardizer"
+        ) as get_standardizer, patch(
+            "mapmover.runtime.loc_id_resolution.load_country_parquet"
+        ) as load_country_parquet:
+            standardizer = get_standardizer.return_value
+            standardizer.get_loc_id_from_name.return_value = None
+            load_country_parquet.return_value = pd.DataFrame(
+                [
+                    {"loc_id": "DEU-G109260", "name": "Bayern", "name_local": None, "code": "DEU-BY"},
+                ]
+            )
+            resolved = resolve_admin_text_to_loc_id("Bavaria", country_hint="DEU", admin_level_hint=1)
+
+        self.assertEqual(resolved["deepest_resolved_loc_id"], "DEU-G109260")
+        self.assertEqual(resolved["deepest_resolved_admin_level"], "admin_1")
+        self.assertEqual(resolved["matches"]["admin_1"]["method"], "geometry_name_lookup")
 
     def test_zip_short_circuit_uses_us_crosswalk_and_stays_on_admin_spine(self):
         with patch(

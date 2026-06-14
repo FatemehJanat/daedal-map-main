@@ -3,7 +3,13 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from ..geometry_handlers import resolve_point_to_location as legacy_resolve_point_to_location
+import pandas as pd
+
+from ..geometry_handlers import (
+    load_country_parquet,
+    load_global_countries_frame,
+    resolve_point_to_location as legacy_resolve_point_to_location,
+)
 from ..name_standardizer import NameStandardizer
 from ..reference.usa.location_lookup import by_zip as usa_zip_lookup
 from .admin_hierarchy import get_parent_loc_id, infer_admin_level_from_loc_id
@@ -12,6 +18,27 @@ from .geography_reference import canonicalize_loc_id, translate_geometry_id_to_l
 _LOC_ID_RE = re.compile(r"^[A-Z]{3}(?:-[A-Z0-9]+)+$|^[A-Z]{3}$")
 _USA_ZIP_RE = re.compile(r"^\d{5}$")
 _NAME_STANDARDIZER: NameStandardizer | None = None
+_TEXT_COLLAPSE_RE = re.compile(r"[^a-z0-9]+")
+_ADMIN_TEXT_SUFFIX_RE = re.compile(
+    r"\b(county|parish|borough|municipality|municipio|district|region|province|state|prefecture|department|departement|oblast|county of)\b",
+    re.IGNORECASE,
+)
+_ADMIN_TEXT_ALIASES = {
+    "bavaria": "bayern",
+    "hesse": "hessen",
+    "lower saxony": "niedersachsen",
+    "north rhine westphalia": "nordrhein westfalen",
+    "north rhine-westphalia": "nordrhein westfalen",
+    "rhineland palatinate": "rheinland pfalz",
+    "saxony": "sachsen",
+    "saxony anhalt": "sachsen anhalt",
+    "saxony-anhalt": "sachsen anhalt",
+    "thuringia": "thuringen",
+    "baden wurttemberg": "baden wurttemberg",
+    "baden-wurttemberg": "baden wurttemberg",
+    "mecklenburg western pomerania": "mecklenburg vorpommern",
+    "mecklenburg-western pomerania": "mecklenburg vorpommern",
+}
 
 
 def _get_name_standardizer() -> NameStandardizer:
@@ -19,6 +46,88 @@ def _get_name_standardizer() -> NameStandardizer:
     if _NAME_STANDARDIZER is None:
         _NAME_STANDARDIZER = NameStandardizer()
     return _NAME_STANDARDIZER
+
+
+def _normalize_admin_text(value: Any) -> str:
+    try:
+        if value is None or pd.isna(value):
+            return ""
+    except Exception:
+        if value is None:
+            return ""
+    text = str(value).strip().lower()
+    if not text:
+        return ""
+    text = text.replace("&", " and ")
+    text = _ADMIN_TEXT_SUFFIX_RE.sub(" ", text)
+    text = text.replace("ü", "u").replace("ö", "o").replace("ä", "a").replace("ß", "ss")
+    text = _TEXT_COLLAPSE_RE.sub(" ", text)
+    text = " ".join(text.split())
+    return _ADMIN_TEXT_ALIASES.get(text, text)
+
+
+def _resolve_country_geometry_name(
+    query: str,
+    *,
+    country_hint: str,
+    admin_level: int,
+) -> dict[str, Any] | None:
+    df = load_country_parquet(str(country_hint or "").strip().upper(), admin_level=admin_level)
+    if df is None or df.empty:
+        return None
+
+    normalized_query = _normalize_admin_text(query)
+    if not normalized_query:
+        return None
+
+    candidates: list[tuple[str, str | None]] = []
+    for _, row in df.iterrows():
+        loc_id = str(row.get("loc_id") or "").strip()
+        if not loc_id:
+            continue
+        for field in ("name", "name_local", "iso_3166_2", "code"):
+            value = row.get(field)
+            normalized_value = _normalize_admin_text(value)
+            if normalized_value and normalized_value == normalized_query:
+                candidates.append((loc_id, row.get("name")))
+                break
+
+    if not candidates:
+        return None
+
+    loc_id, name = candidates[0]
+    return _build_match_entry(
+        loc_id,
+        admin_level=admin_level,
+        name=name,
+        method="geometry_name_lookup",
+        source_loc_id=loc_id,
+    )
+
+
+def _resolve_country_name_from_global_geometry(query: str) -> dict[str, Any] | None:
+    df = load_global_countries_frame()
+    if df is None or df.empty:
+        return None
+
+    normalized_query = _normalize_admin_text(query)
+    if not normalized_query:
+        return None
+
+    for _, row in df.iterrows():
+        loc_id = str(row.get("loc_id") or "").strip()
+        if not loc_id:
+            continue
+        name = row.get("name")
+        if _normalize_admin_text(name) == normalized_query:
+            return _build_match_entry(
+                loc_id,
+                admin_level=0,
+                name=name,
+                method="geometry_name_lookup",
+                source_loc_id=loc_id,
+            )
+    return None
 
 
 def _level_key(admin_level: int | None) -> str | None:
@@ -276,7 +385,26 @@ def resolve_admin_text_to_loc_id(
     for admin_level in level_order:
         resolved = standardizer.get_loc_id_from_name(value, country=country, admin_level=admin_level)
         if not resolved:
-            continue
+            fallback_entry = None
+            if admin_level == 0:
+                fallback_entry = _resolve_country_name_from_global_geometry(value)
+            elif country and admin_level in {1, 2}:
+                fallback_entry = _resolve_country_geometry_name(
+                    value,
+                    country_hint=country,
+                    admin_level=int(admin_level),
+                )
+            if fallback_entry is None:
+                continue
+            key = _level_key(fallback_entry.get("admin_level"))
+            return {
+                "query": value,
+                "match_type": "direct_admin_name",
+                "matches": {key: fallback_entry} if key else {},
+                "deepest_resolved_loc_id": fallback_entry.get("loc_id"),
+                "deepest_resolved_admin_level": key,
+                "should_persist_deepest_loc_id": True,
+            }
         local_loc_id = translate_geometry_id_to_local_id(resolved)
         resolved_level = infer_admin_level_from_loc_id(local_loc_id)
         key = _level_key(resolved_level)
