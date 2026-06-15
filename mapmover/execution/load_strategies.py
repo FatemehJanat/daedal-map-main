@@ -193,6 +193,33 @@ def load_order_item_dataframe(
                 _code = str(next(iter(_resolved))).strip()
                 if re.match(r"^[A-Z]{2,3}(-[A-Z0-9]+)?$", _code):
                     pushdown_prefix = _code
+
+    # Time-before-location for broad queries: when no specific location is being
+    # pushed down and the time range was auto-defaulted by the order-taker (not
+    # explicitly requested), drop the range so the latest year is loaded for ALL
+    # locations. Otherwise a wide default range (e.g. 10 years x ~300 monthly
+    # marine zones) overflows the row cap and truncates to an alphabetical slice
+    # of zones -- showing 44 regions instead of the whole world. A specific
+    # location (pushdown_prefix set) keeps its full range so "that place across a
+    # long time" still loads its whole series. An explicit user-requested range
+    # has no _defaulted_time_range marker and is always honored.
+    # See live_source_qa_checklist.md (time-before-location / cap-window trap).
+    if (
+        pushdown_prefix is None
+        and pushdown_year is None
+        and item.get("_defaulted_time_range")
+        and (year_start is not None or year_end is not None)
+    ):
+        # Collapse to the latest year of the defaulted range and push it down
+        # explicitly. Nulling the range is not enough: a range elsewhere flips
+        # the executor into temporal/animation mode, which suppresses the
+        # latest-year default, so we set the single-year pushdown directly.
+        latest_default_year = year_end if year_end is not None else year_start
+        year = latest_default_year
+        pushdown_year = latest_default_year
+        year_start = None
+        year_end = None
+
     exact_filters, in_filters, compare_filters = _classify_pushdown_filters(filters)
     if pushdown_year is None:
         if year_start is not None:
