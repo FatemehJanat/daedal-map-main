@@ -240,9 +240,19 @@ def process_metric_items(
         # Marine_zone sources (ocean_sst, ...) key on EEZ-* / X* loc_ids, so a
         # basin/sea name like "Mediterranean" must resolve to the water-body
         # code (XSM), not the land region_aliases grouping of coastal countries.
+        # The order-taker emits the location as either a singular `region` or a
+        # plural `regions` list; resolve both so neither phrasing is dropped.
         # See live_source_qa_checklist.md (marine region-name trap).
         _prefer_water_body = str((metadata or {}).get("geographic_level") or "").strip().lower() == "marine_zone"
-        region_codes = expand_region_func(region, prefer_water_body=_prefer_water_body)
+        _regions_to_resolve = []
+        if region:
+            _regions_to_resolve.append(region)
+        _plural_regions = item.get("regions")
+        if isinstance(_plural_regions, (list, tuple)):
+            _regions_to_resolve.extend(str(value) for value in _plural_regions if value)
+        region_codes = set()
+        for _region_value in _regions_to_resolve:
+            region_codes |= expand_region_func(_region_value, prefer_water_body=_prefer_water_body)
         if region_codes:
             all_region_codes.update(region_codes)
         if region_codes and "loc_id" in df.columns:

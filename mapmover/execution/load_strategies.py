@@ -152,6 +152,10 @@ def load_order_item_dataframe(
     year_start = item.get("year_start")
     year_end = item.get("year_end")
     region = item.get("region")
+    if not region:
+        _plural_regions = item.get("regions")
+        if isinstance(_plural_regions, (list, tuple)) and len(_plural_regions) == 1 and _plural_regions[0]:
+            region = str(_plural_regions[0])
     filters = item.get("filters") or {}
     metric = item.get("metric")
     source_id = item.get("source_id")
