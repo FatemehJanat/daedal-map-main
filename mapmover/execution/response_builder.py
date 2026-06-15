@@ -165,7 +165,17 @@ def build_metrics_response(
 
     geometry_df = None
 
-    if primary_level in special_geometry_levels:
+    if primary_level == "marine_zone":
+        # Marine overlay sources (EEZ-*, X* water bodies) load from the marine
+        # geometry banks via the shared resolver, not the country/admin grouping
+        # (their loc_ids do not split into ISO3 country codes).
+        from ..runtime.marine_geometry import load_marine_geometry
+        marine_geom = load_marine_geometry(list(loc_ids_to_check))
+        if marine_geom is not None and not marine_geom.empty:
+            keep_cols = [col for col in ["loc_id", "name", "geometry"] if col in marine_geom.columns]
+            geometry_df = marine_geom[keep_cols]
+
+    elif primary_level in special_geometry_levels:
         geometry_source = find_geometry_source_for_level_func(primary_level)
         if geometry_source:
             geometry_df = load_geometry_from_source_func(geometry_source, filter_regions=all_region_codes if all_region_codes else None)
