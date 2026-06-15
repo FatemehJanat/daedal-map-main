@@ -33,6 +33,7 @@ export function setDependencies(deps) {
 export const MapAdapter = {
   map: null,
   popup: null,
+  routeFocusToken: 0,
   hoveredFeatureId: null,
   popupLocked: false,  // When true, popup stays visible on mouseleave
   isShowingPopup: false,  // True while showing popup (prevents close event from unlocking)
@@ -1366,6 +1367,33 @@ export const MapAdapter = {
     });
   },
 
+  getRouteFocusPadding() {
+    const padding = this.getFitBoundsPadding();
+    const body = document.body;
+    const sidebar = document.getElementById('sidebar');
+    if (!sidebar || body?.classList?.contains('map-ui-fullscreen') || sidebar.classList.contains('collapsed')) {
+      return padding;
+    }
+    const rect = sidebar.getBoundingClientRect();
+    if (rect.width > 0) {
+      padding.left = Math.max(padding.left, Math.ceil(rect.width + 40));
+    }
+    return padding;
+  },
+
+  flyToRouteFocusPoint(center, options = {}) {
+    if (!this.map || !Array.isArray(center) || center.length !== 2) return;
+    const zoom = Number.isFinite(Number(options.zoom)) ? Number(options.zoom) : 7.5;
+    const padding = this.getRouteFocusPadding();
+    this.map.flyTo({
+      center,
+      zoom,
+      padding,
+      duration: 1500
+    });
+    this.setVisualFocus(center);
+  },
+
   // Fixed center points for countries with problematic bounding boxes
   // Fixed center+zoom for countries whose true bbox produces a bad fit, either
   // because they cross the antimeridian (naive bbox wraps the wrong way) or
@@ -1853,6 +1881,9 @@ export const MapAdapter = {
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
 
     this.clearRouteFocusPoint();
+    this.routeFocusToken += 1;
+    const routeFocusToken = this.routeFocusToken;
+    const eventType = String(focus?.event_type || '').trim().toLowerCase();
 
     const geojson = {
       type: 'FeatureCollection',
@@ -1860,7 +1891,8 @@ export const MapAdapter = {
         {
           type: 'Feature',
           properties: {
-            label: String(focus?.label || 'Focus').trim()
+            label: String(focus?.label || 'Focus').trim(),
+            event_type: eventType
           },
           geometry: {
             type: 'Point',
@@ -1889,19 +1921,68 @@ export const MapAdapter = {
       }
     });
 
-    this.map.addLayer({
-      id: CONFIG.layers.focusPointCore,
-      type: 'circle',
-      source: CONFIG.layers.focusPointSource,
-      paint: {
-        'circle-radius': 7,
-        'circle-color': '#ffd166',
-        'circle-opacity': 0.95,
-        'circle-stroke-width': 2,
-        'circle-stroke-color': '#ff4d00',
-        'circle-stroke-opacity': 0.95
+    const addFallbackCoreLayer = () => {
+      if (!this.map?.getSource(CONFIG.layers.focusPointSource) || this.map.getLayer(CONFIG.layers.focusPointCore)) {
+        return;
       }
-    });
+      this.map.addLayer({
+        id: CONFIG.layers.focusPointCore,
+        type: 'circle',
+        source: CONFIG.layers.focusPointSource,
+        paint: {
+          'circle-radius': 7,
+          'circle-color': '#ffd166',
+          'circle-opacity': 0.95,
+          'circle-stroke-width': 2,
+          'circle-stroke-color': '#ff4d00',
+          'circle-stroke-opacity': 0.95
+        }
+      });
+    };
+
+    const addDisasterIconLayer = () => {
+      if (!eventType || !PointRadiusModel._layerUsesDisasterIcon(eventType)) {
+        addFallbackCoreLayer();
+        return;
+      }
+      if (!this.map?.getSource(CONFIG.layers.focusPointSource) || this.map.getLayer(CONFIG.layers.focusPointIcon)) {
+        return;
+      }
+      this.map.addLayer({
+        id: CONFIG.layers.focusPointIcon,
+        type: 'symbol',
+        source: CONFIG.layers.focusPointSource,
+        layout: {
+          'icon-image': PointRadiusModel._iconImageId(eventType),
+          'icon-size': 1.45,
+          'icon-allow-overlap': true,
+          'icon-ignore-placement': true,
+          'icon-anchor': 'center'
+        },
+        paint: {
+          'icon-color': PointRadiusModel._iconColorExprForType(eventType),
+          'icon-opacity': 0.98,
+          'icon-halo-color': 'rgba(2, 8, 20, 0.92)',
+          'icon-halo-width': 2.4,
+          'icon-halo-blur': 0.6
+        }
+      });
+    };
+
+    if (eventType && PointRadiusModel._layerUsesDisasterIcon(eventType)) {
+      PointRadiusModel._ensureDisasterIcon(eventType)
+        .then(() => {
+          if (this.routeFocusToken !== routeFocusToken) return;
+          addDisasterIconLayer();
+        })
+        .catch((error) => {
+          console.warn('Failed to load route focus icon:', error);
+          if (this.routeFocusToken !== routeFocusToken) return;
+          addFallbackCoreLayer();
+        });
+    } else {
+      addFallbackCoreLayer();
+    }
 
     this.map.addLayer({
       id: CONFIG.layers.focusPointLabel,
@@ -1910,7 +1991,7 @@ export const MapAdapter = {
       layout: {
         'text-field': ['get', 'label'],
         'text-size': 12,
-        'text-offset': [0, 1.6],
+        'text-offset': [0, eventType ? 1.85 : 1.6],
         'text-anchor': 'top'
       },
       paint: {
@@ -1923,8 +2004,12 @@ export const MapAdapter = {
 
   clearRouteFocusPoint() {
     if (!this.map) return;
+    this.routeFocusToken += 1;
     if (this.map.getLayer(CONFIG.layers.focusPointLabel)) {
       this.map.removeLayer(CONFIG.layers.focusPointLabel);
+    }
+    if (this.map.getLayer(CONFIG.layers.focusPointIcon)) {
+      this.map.removeLayer(CONFIG.layers.focusPointIcon);
     }
     if (this.map.getLayer(CONFIG.layers.focusPointCore)) {
       this.map.removeLayer(CONFIG.layers.focusPointCore);

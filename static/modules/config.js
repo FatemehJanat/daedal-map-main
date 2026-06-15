@@ -110,6 +110,7 @@ export const CONFIG = {
     // Route/share focus marker
     focusPointSource: 'route-focus-point',
     focusPointHalo: 'route-focus-point-halo',
+    focusPointIcon: 'route-focus-point-icon',
     focusPointCore: 'route-focus-point-core',
     focusPointLabel: 'route-focus-point-label',
     // Hurricane/storm layer

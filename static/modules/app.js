@@ -62,6 +62,17 @@ function normalizeChatMapLane(lane) {
   return CHAT_MAP_LANES.includes(lane) ? lane : 'explore';
 }
 
+function inferFocusEventType(...values) {
+  for (const rawValue of values) {
+    const value = String(rawValue || '').trim().toLowerCase();
+    if (!value) continue;
+    for (const [token, eventType] of DISPLAY_SOURCE_EVENT_TYPE_HINTS) {
+      if (value.includes(token)) return eventType;
+    }
+  }
+  return '';
+}
+
 function buildCurrentLocIdAncestors(locId) {
   const normalized = String(locId || '').trim();
   if (!normalized) return [];
@@ -658,7 +669,10 @@ export const App = {
         syntheticSource: 'route_deep_link'
       });
       if (routeIntent?.focus) {
-        this.applyRouteFocus(routeIntent.focus);
+        this.applyRouteFocus(routeIntent.focus, {
+          feedId: routeIntent?.feed_id || null,
+          sourceId: routeIntent?.source_id || null
+        });
       } else {
         this.clearRouteFocus();
       }
@@ -1009,12 +1023,35 @@ export const App = {
     if (focus.loc_id) {
       normalizedFocus.loc_id = String(focus.loc_id).trim();
     }
+    const eventType = inferFocusEventType(
+      focus.event_type,
+      options.eventType,
+      focus.feed_id,
+      options.feedId,
+      focus.source_id,
+      options.sourceId,
+      focus.label
+    );
+    if (eventType) {
+      normalizedFocus.event_type = eventType;
+    }
+    const sourceId = String(focus.source_id || options.sourceId || '').trim();
+    if (sourceId) {
+      normalizedFocus.source_id = sourceId;
+    }
+    const feedId = String(focus.feed_id || options.feedId || '').trim();
+    if (feedId) {
+      normalizedFocus.feed_id = feedId;
+    }
     this.currentRouteFocus = normalizedFocus;
     MapAdapter.showRouteFocusPoint?.(normalizedFocus);
 
     if (!options.preserveCamera) {
       const zoom = Number.isFinite(Number(options.zoom)) ? Number(options.zoom) : 7.5;
-      MapAdapter.flyTo?.([lon, lat], zoom);
+      MapAdapter.flyToRouteFocusPoint?.([lon, lat], {
+        zoom,
+        focus: normalizedFocus
+      });
     }
     return true;
   },
