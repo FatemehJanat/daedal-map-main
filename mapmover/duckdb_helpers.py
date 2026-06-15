@@ -564,6 +564,7 @@ def select_rows(
     compare_filters: list[tuple[str, str, object]] | None = None,
     starts_with_filters: dict | None = None,
     order_by: str | None = None,
+    limit: int | None = None,
 ) -> pd.DataFrame:
     if duckdb is None or not parquet_available(parquet_path):
         return pd.DataFrame()
@@ -606,7 +607,63 @@ def select_rows(
         sql += " WHERE " + " AND ".join(where)
     if order_by and order_by in available_cols:
         sql += f" ORDER BY {quote_ident(order_by)} ASC NULLS LAST"
+    if limit is not None and int(limit) > 0:
+        sql += " LIMIT ?"
+        params.append(int(limit))
     return run_df(sql, params)
+
+
+def count_rows(
+    parquet_path: Path,
+    *,
+    exact_filters: dict | None = None,
+    in_filters: dict | None = None,
+    compare_filters: list[tuple[str, str, object]] | None = None,
+    starts_with_filters: dict | None = None,
+) -> int:
+    if duckdb is None or not parquet_available(parquet_path):
+        return 0
+
+    uri = path_to_uri(parquet_path)
+    available_cols = parquet_columns(parquet_path)
+    where: list[str] = []
+    params: list = [uri]
+
+    for col, value in (exact_filters or {}).items():
+        if col in available_cols and value is not None:
+            where.append(f"{quote_ident(col)} = ?")
+            params.append(value)
+
+    for col, values in (in_filters or {}).items():
+        values = [v for v in (values or []) if v is not None]
+        if col in available_cols and values:
+            placeholders = ", ".join("?" for _ in values)
+            where.append(f"{quote_ident(col)} IN ({placeholders})")
+            params.extend(values)
+
+    for col, op, value in (compare_filters or []):
+        if col not in available_cols or value is None:
+            continue
+        if op not in {"=", "!=", ">", ">=", "<", "<="}:
+            continue
+        where.append(f"{quote_ident(col)} {op} ?")
+        params.append(value)
+
+    for col, prefix in (starts_with_filters or {}).items():
+        if col in available_cols and prefix is not None:
+            where.append(f"starts_with({quote_ident(col)}, ?)")
+            params.append(prefix)
+
+    sql = "SELECT COUNT(*) FROM read_parquet(?)"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    rows = run_rows(sql, params)
+    if not rows:
+        return 0
+    try:
+        return int(rows[0][0] or 0)
+    except Exception:
+        return 0
 
 
 def select_linked_values(

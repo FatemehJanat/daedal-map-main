@@ -133,6 +133,7 @@ def process_metric_items(
         try:
             df, metadata = load_order_item_dataframe_func(
                 item=item,
+                temporal_mode=temporal_mode_active,
                 aggregate_item_cache=aggregate_item_cache,
             )
         except Exception as exc:
@@ -310,6 +311,10 @@ def process_metric_items(
                 t_after_sort,
                 f"item={idx}/{len(items)} source={source_id} rows={len(df)} cap_hit={bool(item_cap_info)}",
             )
+        elif temporal_mode_active and isinstance(metadata, dict):
+            item_cap_info = metadata.get("_runtime_prefilter_cap_info")
+            if isinstance(item_cap_info, dict) and item_cap_info.get("cap_hit"):
+                cap_infos.append(item_cap_info)
 
         if source_geometry_kind(metadata) == "entity" and source_geometry_subkind(metadata) == "point":
             lat_col, lon_col = get_coordinate_columns_func(df)

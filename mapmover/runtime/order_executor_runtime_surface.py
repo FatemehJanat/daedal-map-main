@@ -85,12 +85,15 @@ def load_runtime_source_data(
     in_filters=None,
     compare_filters=None,
     columns=None,
+    prefer_latest_year_when_unspecified=False,
+    requested_limit=None,
     get_source_path_func,
     load_source_metadata_func,
     candidate_parquet_paths_func,
     is_cloud_mode_func,
     path_to_uri_func,
     select_rows_func,
+    count_rows_func,
     logger,
 ):
     return load_source_data_func(
@@ -101,12 +104,15 @@ def load_runtime_source_data(
         in_filters=in_filters,
         compare_filters=compare_filters,
         columns=columns,
+        prefer_latest_year_when_unspecified=prefer_latest_year_when_unspecified,
+        requested_limit=requested_limit,
         get_source_path_func=get_source_path_func,
         load_source_metadata_func=load_source_metadata_func,
         candidate_parquet_paths_func=candidate_parquet_paths_func,
         is_cloud_mode_func=is_cloud_mode_func,
         path_to_uri_func=path_to_uri_func,
         select_rows_func=select_rows_func,
+        count_rows_func=count_rows_func,
         logger=logger,
     )
 

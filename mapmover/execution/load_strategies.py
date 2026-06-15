@@ -140,6 +140,7 @@ def collect_source_metadata(
 def load_order_item_dataframe(
     *,
     item: dict,
+    temporal_mode: bool,
     aggregate_item_cache: dict,
     load_disaster_aggregate_data_func,
     load_source_data_func,
@@ -212,6 +213,8 @@ def load_order_item_dataframe(
                 in_filters=in_filters or None,
                 compare_filters=compare_filters or None,
                 columns=requested_columns,
+                prefer_latest_year_when_unspecified=not temporal_mode and year is None and year_start is None and year_end is None,
+                requested_limit=None if sort_spec else item.get("limit"),
             )
         return df, metadata
 
@@ -223,4 +226,6 @@ def load_order_item_dataframe(
         in_filters=in_filters or None,
         compare_filters=compare_filters or None,
         columns=requested_columns,
+        prefer_latest_year_when_unspecified=not temporal_mode and year is None and year_start is None and year_end is None,
+        requested_limit=None if sort_spec else item.get("limit"),
     )

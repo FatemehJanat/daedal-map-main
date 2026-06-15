@@ -34,6 +34,7 @@ from ..foundation_helpers import load_runtime_result_cap_helpers
 from ..foundation_helpers import load_global_countries_frame
 from ..duckdb_helpers import (
     can_query_event_source,
+    count_rows,
     is_cloud_mode,
     parquet_columns,
     path_to_uri,
@@ -258,6 +259,8 @@ def load_source_data(
     in_filters: dict | None = None,
     compare_filters: list[tuple[str, str, object]] | None = None,
     columns: list[str] | None = None,
+    prefer_latest_year_when_unspecified: bool = False,
+    requested_limit: int | None = None,
 ) -> tuple:
     return load_runtime_source_data(
         source_id,
@@ -268,12 +271,15 @@ def load_source_data(
         in_filters=in_filters,
         compare_filters=compare_filters,
         columns=columns,
+        prefer_latest_year_when_unspecified=prefer_latest_year_when_unspecified,
+        requested_limit=requested_limit,
         get_source_path_func=_get_source_path,
         load_source_metadata_func=load_source_metadata,
         candidate_parquet_paths_func=candidate_parquet_paths_impl,
         is_cloud_mode_func=is_cloud_mode,
         path_to_uri_func=path_to_uri,
         select_rows_func=select_rows,
+        count_rows_func=count_rows,
         logger=logger,
     )
 

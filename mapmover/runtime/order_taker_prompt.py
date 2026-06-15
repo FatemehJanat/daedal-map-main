@@ -28,6 +28,18 @@ def _catalog_help_links_text() -> str:
     return "\n".join(lines)
 
 
+def _safe_lower_text(value) -> str:
+    return str(value or "").strip().lower()
+
+
+def _safe_topic_tags(source: dict) -> list[str]:
+    return [
+        str(tag).strip().lower()
+        for tag in (source.get("topic_tags") or [])
+        if str(tag or "").strip()
+    ]
+
+
 def build_regions_text(conversions: dict) -> str:
     groupings = conversions.get("regional_groupings", {})
     usa_admin = load_usa_admin()
@@ -244,8 +256,13 @@ def build_system_prompt_body(catalog: dict, conversions: dict) -> str:
 
     def format_source_group(sources, scope_label):
         lines = []
-        sdg_sources = [s for s in sources if any(tag.startswith('goal') for tag in s.get('topic_tags', []))]
-        factbook_sources = [s for s in sources if 'factbook' in s.get('category', '').lower() or any('factbook' in tag.lower() for tag in s.get('topic_tags', []))]
+        sdg_sources = [s for s in sources if any(tag.startswith('goal') for tag in _safe_topic_tags(s))]
+        factbook_sources = [
+            s
+            for s in sources
+            if 'factbook' in _safe_lower_text(s.get('category'))
+            or any('factbook' in tag for tag in _safe_topic_tags(s))
+        ]
         other_sources = [s for s in sources if s.get('source_id') and s not in sdg_sources and s not in factbook_sources]
 
         for src in other_sources:
@@ -263,7 +280,7 @@ def build_system_prompt_body(catalog: dict, conversions: dict) -> str:
 
         if sdg_sources:
             def get_goal_num(src):
-                for tag in src.get('topic_tags', []):
+                for tag in _safe_topic_tags(src):
                     if tag.startswith('goal'):
                         try:
                             return int(tag[4:])

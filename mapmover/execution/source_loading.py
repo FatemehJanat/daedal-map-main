@@ -9,6 +9,7 @@ import os
 
 from mapmover.catalog_surface import get_catalog_surface_override
 from mapmover.runtime.geography_reference import translate_loc_id_to_geometry_id
+from mapmover.runtime.result_cap import build_cap_info_from_counts
 
 
 def _allow_local_source_fallback() -> bool:
@@ -118,12 +119,15 @@ def load_source_data(
     in_filters: dict | None = None,
     compare_filters: list[tuple[str, str, object]] | None = None,
     columns: list[str] | None = None,
+    prefer_latest_year_when_unspecified: bool = False,
+    requested_limit: int | None = None,
     get_source_path_func,
     load_source_metadata_func,
     candidate_parquet_paths_func,
     is_cloud_mode_func,
     path_to_uri_func,
     select_rows_func,
+    count_rows_func,
     logger,
 ) -> tuple[pd.DataFrame, dict]:
     """Load parquet and metadata for a source with optional pushed-down filters."""
@@ -143,10 +147,43 @@ def load_source_data(
     selected_columns.extend(["end_latitude", "end_longitude"])
     selected_columns = list(dict.fromkeys(selected_columns))
 
+    metadata = dict(metadata or {})
     resolved_exact_filters = dict(exact_filters or {})
     if year is not None:
         resolved_exact_filters["year"] = year
+    elif prefer_latest_year_when_unspecified:
+        temporal = metadata.get("temporal_coverage") if isinstance(metadata.get("temporal_coverage"), dict) else {}
+        granularity = str(temporal.get("granularity") or temporal.get("frequency") or "").strip().lower()
+        if granularity in {"yearly", "annual", "year"}:
+            raw_end = temporal.get("end")
+            if raw_end is not None:
+                text = str(raw_end).strip()
+                if len(text) >= 4 and text[:4].isdigit():
+                    resolved_exact_filters.setdefault("year", int(text[:4]))
     prefix_candidates = _loc_id_prefix_candidates(loc_id_prefix)
+
+    runtime_block = metadata.get("runtime") if isinstance(metadata.get("runtime"), dict) else {}
+    try:
+        default_render_cap = int(runtime_block.get("default_render_cap") or 5000)
+    except (TypeError, ValueError):
+        default_render_cap = 5000
+    if default_render_cap <= 0:
+        default_render_cap = 5000
+    try:
+        max_render_cap = int(runtime_block.get("max_render_cap") or 5000)
+    except (TypeError, ValueError):
+        max_render_cap = 5000
+    if max_render_cap <= 0:
+        max_render_cap = 5000
+    pushdown_cap = min(default_render_cap, max_render_cap)
+    if requested_limit is not None:
+        try:
+            requested_limit_int = int(requested_limit)
+        except (TypeError, ValueError):
+            requested_limit_int = 0
+        if requested_limit_int > 0:
+            pushdown_cap = min(requested_limit_int, max_render_cap)
+    pushdown_limit = pushdown_cap + 1 if pushdown_cap > 0 else None
 
     parquet_candidates = candidate_parquet_paths_func(source_dir, metadata)
     if is_cloud_mode_func():
@@ -171,7 +208,23 @@ def load_source_data(
                     in_filters=in_filters or None,
                     compare_filters=compare_filters or None,
                     starts_with_filters=starts_with_filters or None,
+                    limit=pushdown_limit,
                 )
+                if pushdown_cap > 0 and len(df) > pushdown_cap:
+                    available_rows = count_rows_func(
+                        parquet_path,
+                        exact_filters=resolved_exact_filters or None,
+                        in_filters=in_filters or None,
+                        compare_filters=compare_filters or None,
+                        starts_with_filters=starts_with_filters or None,
+                    )
+                    df = df.head(pushdown_cap)
+                    metadata["_runtime_prefilter_cap_info"] = build_cap_info_from_counts(
+                        returned_rows=len(df),
+                        available_rows=max(available_rows, len(df) + 1),
+                        cap_value=pushdown_cap,
+                        cap_reason="runtime.default_render_cap",
+                    )
                 logger.info(
                     f"[S3] load_source_data({source_id}): candidate={parquet_path.name} prefix={prefix_candidate} rows={len(df)}"
                 )
@@ -202,7 +255,23 @@ def load_source_data(
                 in_filters=in_filters or None,
                 compare_filters=compare_filters or None,
                 starts_with_filters=starts_with_filters or None,
+                limit=pushdown_limit,
             )
+            if pushdown_cap > 0 and len(df) > pushdown_cap:
+                available_rows = count_rows_func(
+                    parquet_path,
+                    exact_filters=resolved_exact_filters or None,
+                    in_filters=in_filters or None,
+                    compare_filters=compare_filters or None,
+                    starts_with_filters=starts_with_filters or None,
+                )
+                df = df.head(pushdown_cap)
+                metadata["_runtime_prefilter_cap_info"] = build_cap_info_from_counts(
+                    returned_rows=len(df),
+                    available_rows=max(available_rows, len(df) + 1),
+                    cap_value=pushdown_cap,
+                    cap_reason="runtime.default_render_cap",
+                )
             if not df.empty:
                 break
         if df.empty and not resolved_exact_filters and not starts_with_filters and not in_filters and not compare_filters:

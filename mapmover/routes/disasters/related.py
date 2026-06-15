@@ -57,17 +57,33 @@ EVENT_TABLES = {
 
 MAX_CHAIN_DEPTH = 2
 EXACT_EVENT_SOURCE_OVERRIDES = {
-    "earthquakes_events": {"id_fields": ("event_id",), "metadata_source_id": "earthquakes_events"},
+    "earthquakes_events": {
+        "id_fields": ("event_id",),
+        "metadata_source_id": "earthquakes_events",
+        "parquet_path": GLOBAL_DIR / "disasters/earthquakes/events.parquet",
+    },
     "hurricanes": {
         "id_fields": ("storm_id", "event_id"),
         "parquet_path": GLOBAL_DIR / "disasters/hurricanes/events.parquet",
     },
-    "volcanoes_events": {"id_fields": ("event_id",), "metadata_source_id": "volcanoes_events"},
-    "tsunamis_events": {"id_fields": ("event_id",), "metadata_source_id": "tsunamis_events"},
+    "volcanoes_events": {
+        "id_fields": ("event_id",),
+        "metadata_source_id": "volcanoes_events",
+        "parquet_path": GLOBAL_DIR / "disasters/volcanoes/events.parquet",
+    },
+    "tsunamis_events": {
+        "id_fields": ("event_id",),
+        "metadata_source_id": "tsunamis_events",
+        "parquet_path": GLOBAL_DIR / "disasters/tsunamis/events.parquet",
+    },
     "tornadoes": {"id_fields": ("event_id",), "parquet_path": GLOBAL_DIR / "disasters/tornadoes/events.parquet"},
     "floods": {"id_fields": ("event_id",), "parquet_path": GLOBAL_DIR / "disasters/floods/events.parquet"},
     "landslides": {"id_fields": ("event_id",), "parquet_path": GLOBAL_DIR / "disasters/landslides/events.parquet"},
     "drought": {"id_fields": ("event_id",), "parquet_path": GLOBAL_DIR / "disasters/drought/events.parquet"},
+}
+EVENT_SEARCH_SOURCE_OVERRIDES = {
+    "hurricanes": {"name_fields": ("name",), "country_field": None},
+    "volcanoes_events": {"name_fields": ("volcano_name",), "country_field": "country"},
 }
 LAT_FIELDS = ("lat", "latitude", "centroid_lat")
 LON_FIELDS = ("lon", "longitude", "centroid_lon")
@@ -360,6 +376,204 @@ def _query_exact_event(candidate: dict, identifier_field: str, identifier_value:
     return pd.DataFrame()
 
 
+def _normalize_event_search_text(value: str) -> str:
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    text = re.sub(r"[^\w\s-]", " ", text)
+    text = re.sub(r"\bmount\b", "mt", text)
+    text = re.sub(r"\bsaint\b", "st", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _build_event_search_variants(query_text: str) -> list[str]:
+    normalized = _normalize_event_search_text(query_text)
+    if not normalized:
+        return []
+    variants: list[str] = [normalized]
+    removable_prefixes = (
+        "show me ",
+        "find ",
+        "get ",
+        "load ",
+        "open ",
+        "see ",
+        "watch ",
+        "monitor ",
+        "track ",
+        "the ",
+    )
+    changed = True
+    while changed:
+        changed = False
+        latest = variants[-1]
+        for prefix in removable_prefixes:
+            if latest.startswith(prefix):
+                next_variant = latest[len(prefix) :].strip()
+                if next_variant and next_variant not in variants:
+                    variants.append(next_variant)
+                    changed = True
+                    break
+
+    stop_tokens = {
+        "volcano",
+        "volcanoes",
+        "volcanos",
+        "eruption",
+        "eruptions",
+        "hurricane",
+        "hurricanes",
+        "storm",
+        "storms",
+        "cyclone",
+        "cyclones",
+        "typhoon",
+        "typhoons",
+        "event",
+        "events",
+        "show",
+        "me",
+        "the",
+        "in",
+        "at",
+        "for",
+        "us",
+        "usa",
+        "united",
+        "states",
+    }
+    trimmed_tokens = [
+        token
+        for token in variants[-1].split()
+        if token not in stop_tokens
+    ]
+    if trimmed_tokens:
+        trimmed = " ".join(trimmed_tokens).strip()
+        if trimmed and trimmed not in variants:
+            variants.append(trimmed)
+    if variants[-1].startswith("mt "):
+        no_mt = variants[-1][3:].strip()
+        if no_mt and no_mt not in variants:
+            variants.append(no_mt)
+    return variants
+
+
+def _name_search_overrides_for_candidate(candidate: dict) -> dict:
+    return EVENT_SEARCH_SOURCE_OVERRIDES.get(str(candidate.get("source_id") or "").strip(), {})
+
+
+def _search_named_event_candidates(
+    query_text: str,
+    *,
+    pack_id: str | None = None,
+    limit: int = 10,
+) -> list[dict]:
+    variants = _build_event_search_variants(query_text)
+    if not variants:
+        return []
+
+    candidates = _get_exact_event_candidates(str(pack_id).strip().lower() if pack_id else None)
+    results: list[dict] = []
+    seen_keys: set[tuple[str, str]] = set()
+
+    for candidate in candidates:
+        overrides = _name_search_overrides_for_candidate(candidate)
+        name_fields = tuple(overrides.get("name_fields") or ())
+        if not name_fields:
+            continue
+        id_fields = tuple(candidate.get("id_fields") or ("event_id",))
+        primary_id_field = str(id_fields[0] or "event_id").strip()
+
+        parquet_path, _metadata = _resolve_exact_event_parquet_for_candidate(candidate)
+        columns: list[str] = list(dict.fromkeys(
+            [primary_id_field, *name_fields, overrides.get("country_field"), "year", "timestamp"]
+        ))
+        columns = [column for column in columns if column]
+        try:
+            df = pd.read_parquet(parquet_path, columns=columns)
+        except Exception as exc:
+            logger.warning("Named event search failed for %s: %s", candidate.get("source_id"), exc)
+            continue
+        if df.empty:
+            continue
+
+        best_mask = None
+        for variant in variants:
+            variant_tokens = [token for token in variant.split() if token]
+            if not variant_tokens:
+                continue
+            current_mask = pd.Series(False, index=df.index)
+            for field in name_fields:
+                if field not in df.columns:
+                    continue
+                normalized_series = (
+                    df[field]
+                    .fillna("")
+                    .astype(str)
+                    .map(_normalize_event_search_text)
+                )
+                field_mask = normalized_series.apply(lambda text: all(token in text for token in variant_tokens))
+                current_mask = current_mask | field_mask
+            if bool(current_mask.any()):
+                best_mask = current_mask
+                break
+        if best_mask is None:
+            continue
+
+        matches = df.loc[best_mask].copy()
+        sort_columns = [column for column in ("timestamp", "year") if column in matches.columns]
+        if sort_columns:
+            matches = matches.sort_values(by=sort_columns, ascending=False, na_position="last")
+
+        for _, row in matches.head(limit).iterrows():
+            event_id = str(row.get(primary_id_field) or "").strip()
+            if not event_id:
+                continue
+            key = (str(candidate.get("source_id") or ""), event_id)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+
+            label = ""
+            for field in name_fields:
+                field_value = str(row.get(field) or "").strip()
+                if field_value:
+                    label = field_value
+                    break
+            if not label:
+                label = event_id
+
+            result = {
+                "pack_id": candidate.get("pack_id"),
+                "source_id": candidate.get("source_id"),
+                "event_type": candidate.get("event_type"),
+                "event_id": event_id,
+                "label": label,
+            }
+            country_field = overrides.get("country_field")
+            if country_field and row.get(country_field) is not None and not pd.isna(row.get(country_field)):
+                result["country"] = str(row.get(country_field)).strip()
+            if row.get("year") is not None and not pd.isna(row.get("year")):
+                result["year"] = int(row.get("year"))
+            if row.get("timestamp") is not None and not pd.isna(row.get("timestamp")):
+                result["timestamp"] = row.get("timestamp").isoformat()
+            results.append(result)
+            if len(results) >= limit:
+                return results
+
+    return results
+
+
+def search_named_event_candidates(
+    query_text: str,
+    *,
+    pack_id: str | None = None,
+    limit: int = 10,
+) -> list[dict]:
+    return _search_named_event_candidates(query_text, pack_id=pack_id, limit=limit)
+
+
 def _resolve_exact_event_payload(identifier_value: str, pack_id: str | None = None) -> dict | None:
     normalized_identifier = str(identifier_value or "").strip()
     if not normalized_identifier:
@@ -404,6 +618,16 @@ def _resolve_exact_event_payload(identifier_value: str, pack_id: str | None = No
             )
             if payload:
                 return payload
+    named_candidates = _search_named_event_candidates(
+        normalized_identifier,
+        pack_id=pack_id,
+        limit=5,
+    )
+    if len(named_candidates) == 1:
+        matched_event_id = str(named_candidates[0].get("event_id") or "").strip()
+        matched_pack_id = str(named_candidates[0].get("pack_id") or "").strip().lower() or None
+        if matched_event_id:
+            return _resolve_exact_event_payload(matched_event_id, pack_id=matched_pack_id)
     return None
 
 
@@ -721,6 +945,31 @@ async def get_event_by_exact_id(event_id: str, pack_id: str | None = Query(defau
         return msgpack_response(payload)
     except Exception as e:
         logger.error(f"Error resolving exact event {event_id}: {e}")
+        return msgpack_error(str(e), 500)
+
+
+@router.get("/api/events/search")
+async def search_events(q: str, pack_id: str | None = Query(default=None), limit: int = Query(default=10, ge=1, le=25)):
+    """Search deterministic event ids by source-specific stable names or labels."""
+    try:
+        if not str(q or "").strip():
+            return msgpack_error("Missing event search query", 400)
+
+        matches = _search_named_event_candidates(
+            q,
+            pack_id=pack_id,
+            limit=int(limit),
+        )
+        return msgpack_response(
+            {
+                "query": q,
+                "pack_id": pack_id,
+                "count": len(matches),
+                "matches": matches,
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error searching events for {q}: {e}")
         return msgpack_error(str(e), 500)
 
 

@@ -2,6 +2,60 @@
 
 from __future__ import annotations
 
+import re
+
+from mapmover.routes.disasters.related import search_named_event_candidates
+
+
+_EXACT_EVENT_MISS_RE = re.compile(r"\bcould not find exact event\b", re.IGNORECASE)
+
+
+def _event_search_pack_hint(query: str, hints: dict) -> str | None:
+    detected_source = hints.get("detected_source") if isinstance(hints, dict) else None
+    if isinstance(detected_source, dict):
+        pack_id = str(detected_source.get("pack_id") or "").strip().lower()
+        if pack_id:
+            return pack_id
+
+    query_text = str(query or "").lower()
+    if any(token in query_text for token in ("volcano", "volcanoes", "volcanos", "eruption", "eruptions")):
+        return "volcanoes"
+    if any(token in query_text for token in ("hurricane", "storm", "cyclone", "typhoon")):
+        return "hurricanes"
+    return None
+
+
+def maybe_build_named_event_search_response(
+    *,
+    result: dict,
+    query: str,
+    hints: dict,
+    build_chat_response_func,
+) -> dict | None:
+    message = str(result.get("message") or "").strip()
+    if not _EXACT_EVENT_MISS_RE.search(message):
+        return None
+
+    pack_hint = _event_search_pack_hint(query, hints)
+    matches = search_named_event_candidates(query, pack_id=pack_hint, limit=5)
+    if not matches:
+        return None
+
+    lines = ["I found named event matches you can open directly:"]
+    for match in matches[:5]:
+        label = str(match.get("label") or match.get("event_id") or "Unnamed event").strip()
+        event_id = str(match.get("event_id") or "").strip()
+        extras: list[str] = []
+        if match.get("country"):
+            extras.append(str(match["country"]).strip())
+        if match.get("year") is not None:
+            extras.append(str(match["year"]))
+        suffix = f" ({', '.join(extras)})" if extras else ""
+        lines.append(f"{label}: {event_id}{suffix}")
+
+    lines.append("Use the event id directly, or ask me to load one of those on the map.")
+    return build_chat_response_func("\n".join(lines), pack_id=pack_hint)
+
 
 def build_tutorial_mode_payload(hints: dict, tutorial_mode: dict | None) -> dict:
     action = hints["tutorial_mode"].get("action", "toggle")
@@ -88,6 +142,16 @@ def build_chat_payload(
     load_source_metadata_func,
     load_source_reference_func,
 ) -> tuple[dict, str]:
+    named_event_search_result = maybe_build_named_event_search_response(
+        result=result,
+        query=query,
+        hints=hints,
+        build_chat_response_func=build_chat_response_func,
+    )
+    if named_event_search_result is not None:
+        chat_result = named_event_search_result.get("message", "")
+        return named_event_search_result, chat_result
+
     explainer_result = maybe_build_explainer_response_func(
         query=query,
         hints=hints,

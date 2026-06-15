@@ -3,6 +3,67 @@
 from __future__ import annotations
 
 from mapmover.catalog_surface import catalog_surface_scope
+import re
+
+
+_EXACT_EVENT_MISS_RE = re.compile(
+    r"\bcould not find exact event\s+([A-Za-z0-9._:-]+)\s+in\s+([A-Za-z0-9_-]+)",
+    re.IGNORECASE,
+)
+
+
+def _normalize_history_text(value) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            if isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str) and text.strip():
+                    parts.append(text)
+            elif isinstance(item, str) and item.strip():
+                parts.append(item)
+        return " ".join(parts)
+    if isinstance(value, dict):
+        text = value.get("text")
+        if isinstance(text, str):
+            return text
+    return ""
+
+
+def _sanitize_chat_history(chat_history: list, query: str) -> list:
+    if not isinstance(chat_history, list) or not chat_history:
+        return chat_history or []
+
+    current_query = str(query or "").strip().lower()
+    if not current_query:
+        return chat_history
+
+    sanitized = list(chat_history)
+    while sanitized:
+        last_message = sanitized[-1]
+        if not isinstance(last_message, dict):
+            break
+        if str(last_message.get("role") or "").strip().lower() != "assistant":
+            break
+        assistant_text = _normalize_history_text(last_message.get("content")).strip()
+        match = _EXACT_EVENT_MISS_RE.search(assistant_text)
+        if not match:
+            break
+
+        missed_identifier = str(match.group(1) or "").strip().lower()
+        if not missed_identifier or missed_identifier in current_query:
+            break
+
+        sanitized.pop()
+        if sanitized:
+            previous_message = sanitized[-1]
+            if isinstance(previous_message, dict) and str(previous_message.get("role") or "").strip().lower() == "user":
+                sanitized.pop()
+        continue
+
+    return sanitized
 
 
 def prepare_explore_request(
@@ -20,7 +81,7 @@ def prepare_explore_request(
 ) -> dict:
     request_context = extract_chat_request_context_func(body)
     query = request_context["query"]
-    chat_history = request_context["chat_history"]
+    chat_history = _sanitize_chat_history(request_context["chat_history"], query)
     viewport = request_context["viewport"]
     resolved_location = request_context["resolved_location"]
     active_overlays = request_context["active_overlays"]

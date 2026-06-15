@@ -83,6 +83,10 @@ def apply_runtime_result_cap(
             cap_reason = "requested_limit" if requested_int <= max_cap else "runtime.max_render_cap"
 
     if available_rows <= cap_value:
+        if isinstance(source_metadata, dict):
+            prefilter_cap_info = source_metadata.get("_runtime_prefilter_cap_info")
+            if isinstance(prefilter_cap_info, dict) and prefilter_cap_info.get("cap_hit"):
+                return df, prefilter_cap_info
         return df, None
 
     try:
