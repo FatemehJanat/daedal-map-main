@@ -284,7 +284,7 @@ def load_source_data(
     )
 
 
-def expand_region(region: str) -> set:
+def expand_region(region: str, prefer_water_body: bool = False) -> set:
     return expand_runtime_region(
         region,
         expand_order_region_func=expand_order_region,
@@ -295,6 +295,7 @@ def expand_region(region: str) -> set:
         load_conversions_func=load_conversions_impl,
         load_iso_codes_func=load_iso_codes_impl,
         load_usa_admin_func=load_usa_admin_impl,
+        prefer_water_body=prefer_water_body,
     )
 
 
@@ -537,6 +538,8 @@ def execute_order(order: dict) -> dict:
                 **inner_kwargs,
                 load_disaster_aggregate_data_func=_load_disaster_aggregate_data,
                 load_source_data_func=load_source_data,
+                expand_region_func=expand_region,
+                load_source_metadata_func=load_source_metadata,
             ),
             load_fx_with_aggregation_func=lambda source_id, item, metadata: load_fx_with_aggregation_impl(
                 source_id,

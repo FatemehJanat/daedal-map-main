@@ -152,9 +152,24 @@ def load_source_data(
     if year is not None:
         resolved_exact_filters["year"] = year
     elif prefer_latest_year_when_unspecified:
+        # Time-before-location: when no year is requested, default to the latest
+        # year and push it down BEFORE the row cap, so a broad query loads all
+        # regions for the most recent year rather than an arbitrary cap-window
+        # slice of the full history (which, on a loc_id-sorted table, can miss
+        # whole zone families like the X* ocean basins entirely). This applies
+        # to every temporal granularity, not just yearly: a monthly/daily source
+        # (e.g. ocean_sst) must also collapse to its latest year first so the
+        # location filter that runs afterward sees the full zone set.
+        # See live_source_qa_checklist.md (time-before-location / cap-window trap).
         temporal = metadata.get("temporal_coverage") if isinstance(metadata.get("temporal_coverage"), dict) else {}
         granularity = str(temporal.get("granularity") or temporal.get("frequency") or "").strip().lower()
-        if granularity in {"yearly", "annual", "year"}:
+        # Any declared temporal granularity qualifies (yearly, monthly, daily,
+        # 6h, ...): a no-year query on a time-series source should collapse to
+        # the latest year first. Enumerating every granularity string is
+        # fragile -- auto-detected values include "6h", "6-hourly", etc. -- so
+        # gate on "this is a temporal source" (granularity declared and a
+        # year-extractable end) rather than a fixed whitelist.
+        if granularity:
             raw_end = temporal.get("end")
             if raw_end is not None:
                 text = str(raw_end).strip()

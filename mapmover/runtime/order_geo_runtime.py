@@ -17,6 +17,7 @@ def expand_order_region(
     load_conversions_func,
     load_iso_codes_func,
     load_usa_admin_func,
+    prefer_water_body: bool = False,
 ):
     from mapmover.runtime.region_expansion import expand_region as expand_region_impl
 
@@ -27,4 +28,5 @@ def expand_order_region(
         load_conversions_func=load_conversions_func,
         load_iso_codes_func=load_iso_codes_func,
         load_usa_admin_func=load_usa_admin_func,
+        prefer_water_body=prefer_water_body,
     )

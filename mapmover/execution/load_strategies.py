@@ -144,6 +144,8 @@ def load_order_item_dataframe(
     aggregate_item_cache: dict,
     load_disaster_aggregate_data_func,
     load_source_data_func,
+    expand_region_func=None,
+    load_source_metadata_func=None,
 ) -> tuple:
     """Load one order item's dataframe and metadata using the current strategy."""
     year = item.get("year")
@@ -152,9 +154,41 @@ def load_order_item_dataframe(
     region = item.get("region")
     filters = item.get("filters") or {}
     metric = item.get("metric")
+    source_id = item.get("source_id")
 
     pushdown_year = year if (year and not year_start and not year_end) else None
     pushdown_prefix = region if (region and re.match(r"^[A-Z]{2,3}(-[A-Z0-9]+)?$", region)) else None
+    # Filter location at the source for marine_zone sources: when a named basin/
+    # sea/EEZ region resolves to a single X*/EEZ-* loc_id, push it down to the
+    # parquet so the location filter is not lost to the row cap. The X* ocean
+    # basins sort past the cap window on a loc_id-sorted marine table, so without
+    # pushdown a Mediterranean (XSM) query over a year range would load only the
+    # first cap window of EEZ-A* zones and filter to zero. Scoped to marine
+    # because land/currency/event sources key on different loc_id spines and a
+    # speculative ISO3 pushdown there could mismatch the stored scheme.
+    # See live_source_qa_checklist.md (time-before-location / cap-window trap).
+    if (
+        pushdown_prefix is None
+        and region
+        and expand_region_func is not None
+        and load_source_metadata_func is not None
+        and source_id
+    ):
+        is_marine = False
+        try:
+            _meta = load_source_metadata_func(source_id) or {}
+            is_marine = str(_meta.get("geographic_level") or "").strip().lower() == "marine_zone"
+        except Exception:
+            is_marine = False
+        if is_marine:
+            try:
+                _resolved = expand_region_func(region, prefer_water_body=True)
+            except TypeError:
+                _resolved = expand_region_func(region)
+            if isinstance(_resolved, (set, list, tuple)) and len(_resolved) == 1:
+                _code = str(next(iter(_resolved))).strip()
+                if re.match(r"^[A-Z]{2,3}(-[A-Z0-9]+)?$", _code):
+                    pushdown_prefix = _code
     exact_filters, in_filters, compare_filters = _classify_pushdown_filters(filters)
     if pushdown_year is None:
         if year_start is not None:

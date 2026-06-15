@@ -237,7 +237,12 @@ def process_metric_items(
                 df = df[df["year"] == df["year"].max()]
         t_after_time_filter = executor_log_func(trace_id, "time_filtered", t_after_fx, f"item={idx}/{len(items)} source={source_id} rows={len(df)}")
 
-        region_codes = expand_region_func(region)
+        # Marine_zone sources (ocean_sst, ...) key on EEZ-* / X* loc_ids, so a
+        # basin/sea name like "Mediterranean" must resolve to the water-body
+        # code (XSM), not the land region_aliases grouping of coastal countries.
+        # See live_source_qa_checklist.md (marine region-name trap).
+        _prefer_water_body = str((metadata or {}).get("geographic_level") or "").strip().lower() == "marine_zone"
+        region_codes = expand_region_func(region, prefer_water_body=_prefer_water_body)
         if region_codes:
             all_region_codes.update(region_codes)
         if region_codes and "loc_id" in df.columns:

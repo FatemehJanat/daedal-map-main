@@ -125,6 +125,7 @@ def expand_runtime_region(
     load_conversions_func,
     load_iso_codes_func,
     load_usa_admin_func,
+    prefer_water_body: bool = False,
 ):
     return expand_order_region_func(
         region,
@@ -132,4 +133,5 @@ def expand_runtime_region(
         load_conversions_func=load_conversions_func,
         load_iso_codes_func=load_iso_codes_func,
         load_usa_admin_func=load_usa_admin_func,
+        prefer_water_body=prefer_water_body,
     )
