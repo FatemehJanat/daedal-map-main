@@ -14,7 +14,7 @@
 
 const LANES = ['explore', 'research', 'ops'];
 const DEFAULT_LANE = 'explore';
-const ROUTE_INTENT_PARAMS = ['pack', 'packs', 'source', 'feed', 'event_id', 'storm_id', 'q', 'state', 'ov', 'bbox', 'c', 'z', 'br', 'pi', 'tm', 'tp', 't0', 't1', 'live', 'hw'];
+const ROUTE_INTENT_PARAMS = ['pack', 'packs', 'source', 'feed', 'event_id', 'storm_id', 'focus', 'q', 'state', 'ov', 'bbox', 'c', 'z', 'br', 'pi', 'tm', 'tp', 't0', 't1', 'live', 'hw'];
 const SHARE_STATE_VERSION = 1;
 
 const LANE_TITLES = {
@@ -49,6 +49,19 @@ export function setLaneTitle(lane, entityId) {
   document.title = id ? `${id} - ${base}` : base;
 }
 
+function encodeFocusQueryParam(focus = null) {
+  const normalized = normalizeFocusState(focus);
+  if (!normalized) return '';
+  if (normalized.type === 'point') {
+    const encoded = encodeNumberList([normalized.lat, normalized.lon], 5);
+    return encoded ? `point:${encoded}` : '';
+  }
+  if (normalized.type === 'loc_id') {
+    return normalized.loc_id ? `loc_id:${normalized.loc_id}` : '';
+  }
+  return '';
+}
+
 /**
  * Reflect the loaded pack/source in the URL so GA sees a distinct pageview
  * (`/explore?pack=earthquakes`) and the link is shareable. Uses replaceState so
@@ -57,9 +70,9 @@ export function setLaneTitle(lane, entityId) {
  * both are given (the more specific intent). No-op when the URL already matches
  * (e.g. a deep-link entry that already carries the param).
  * @param {string} lane
- * @param {{packId?: string, sourceId?: string, feedId?: string, eventId?: string}} [entity]
+ * @param {{packId?: string, sourceId?: string, feedId?: string, eventId?: string, focus?: object}} [entity]
  */
-export function writeEntityParam(lane, { packId = '', sourceId = '', feedId = '', eventId = '' } = {}) {
+export function writeEntityParam(lane, { packId = '', sourceId = '', feedId = '', eventId = '', focus = null } = {}) {
   if (typeof window === 'undefined') return;
   const target = '/' + (normalizeLane(lane) || DEFAULT_LANE);
   const pack = String(packId || '').trim();
@@ -71,6 +84,8 @@ export function writeEntityParam(lane, { packId = '', sourceId = '', feedId = ''
   else if (feed) params.set('feed', feed);
   else if (pack) params.set('pack', pack);
   if (event) params.set('event_id', event);
+  const encodedFocus = encodeFocusQueryParam(focus);
+  if (encodedFocus) params.set('focus', encodedFocus);
   const qs = params.toString();
   const nextSearch = qs ? `?${qs}` : '';
   const currentPath = (window.location.pathname || '/').replace(/\/+$/, '') || '/';
@@ -187,6 +202,81 @@ function normalizeLoadEntry(entry = null) {
   return null;
 }
 
+function normalizeFocusState(rawFocus = null) {
+  if (!rawFocus || typeof rawFocus !== 'object' || Array.isArray(rawFocus)) return null;
+  const focusType = String(rawFocus.type || '').trim().toLowerCase();
+  if (!focusType) return null;
+
+  if (focusType === 'point') {
+    const lat = Number(rawFocus.lat);
+    const lon = Number(rawFocus.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    const normalized = {
+      type: 'point',
+      lat,
+      lon
+    };
+    const label = String(rawFocus.label || '').trim();
+    if (label) normalized.label = label;
+    const locId = String(rawFocus.loc_id || '').trim();
+    if (locId) normalized.loc_id = locId;
+    return normalized;
+  }
+
+  if (focusType === 'loc_id' || focusType === 'region') {
+    const locId = String(rawFocus.loc_id || '').trim();
+    if (!locId) return null;
+    return {
+      type: 'loc_id',
+      loc_id: locId
+    };
+  }
+
+  if (focusType === 'event') {
+    const eventId = String(rawFocus.event_id || '').trim();
+    if (!eventId) return null;
+    const normalized = {
+      type: 'event',
+      event_id: eventId
+    };
+    if (rawFocus.source_id) normalized.source_id = String(rawFocus.source_id).trim();
+    if (rawFocus.feed_id) normalized.feed_id = String(rawFocus.feed_id).trim();
+    if (rawFocus.loc_id) normalized.loc_id = String(rawFocus.loc_id).trim();
+    return normalized;
+  }
+
+  return null;
+}
+
+function parseFocusQueryParam(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) return null;
+  const separator = normalized.indexOf(':');
+  if (separator <= 0) return null;
+  const kind = normalized.slice(0, separator).trim().toLowerCase();
+  const payload = normalized.slice(separator + 1).trim();
+  if (!payload) return null;
+
+  if (kind === 'point') {
+    const coords = decodeNumberList(payload, 2);
+    if (coords.length !== 2) return null;
+    return normalizeFocusState({
+      type: 'point',
+      lat: coords[0],
+      lon: coords[1]
+    });
+  }
+
+  if (kind === 'loc_id' || kind === 'region') {
+    return normalizeFocusState({
+      type: 'loc_id',
+      loc_id: payload
+    });
+  }
+
+  return null;
+}
+
 export function normalizeShareState(raw = null) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const lane = normalizeLane(raw.lane);
@@ -227,14 +317,8 @@ export function normalizeShareState(raw = null) {
     normalized.history_window = historyWindow || '72h';
   }
   if (raw.focus && typeof raw.focus === 'object' && !Array.isArray(raw.focus)) {
-    const focusType = String(raw.focus.type || '').trim().toLowerCase();
-    if (focusType) {
-      normalized.focus = { type: focusType };
-      if (raw.focus.event_id) normalized.focus.event_id = String(raw.focus.event_id).trim();
-      if (raw.focus.loc_id) normalized.focus.loc_id = String(raw.focus.loc_id).trim();
-      if (raw.focus.source_id) normalized.focus.source_id = String(raw.focus.source_id).trim();
-      if (raw.focus.feed_id) normalized.focus.feed_id = String(raw.focus.feed_id).trim();
-    }
+    const focus = normalizeFocusState(raw.focus);
+    if (focus) normalized.focus = focus;
   }
   return normalized;
 }
@@ -384,7 +468,7 @@ export function buildShareStateUrl(shareState, { absolute = false } = {}) {
  * the later phases fill in.
  * @param {Location} [loc]
  * @returns {{lane: string|null, pack_id: string|null, pack_ids: string[], source_id: string|null, feed_id: string|null, event_id: string|null, exact_id_key: string|null,
- *   prefill_query: string|null, share_state: object|null, requires_auth: boolean, invalid_reason: string|null}}
+ *   focus: object|null, prefill_query: string|null, share_state: object|null, requires_auth: boolean, invalid_reason: string|null}}
  */
 export function parseRouteIntent(loc = window.location) {
   const segment = String(loc.pathname || '/').replace(/^\/+/, '').split('/')[0];
@@ -410,6 +494,7 @@ export function parseRouteIntent(loc = window.location) {
   const normalizedExactId = genericEventId || stormId || null;
   const exactIdKey = genericEventId ? 'event_id' : (stormId ? 'storm_id' : null);
   const shareStateFromQuery = decodeSimpleShareState(params, lane || DEFAULT_LANE);
+  const focusFromQuery = parseFocusQueryParam(pick('focus'));
   return {
     lane: lane || null,
     pack_id: pick('pack'),         // Explore deep link: ?pack=<pack_id>
@@ -418,6 +503,7 @@ export function parseRouteIntent(loc = window.location) {
     feed_id: pick('feed'),         // Ops deep link: ?feed=<collector_name>
     event_id: normalizedExactId,   // Exact event deep link: ?event_id=<stable_event_id> or native alias like ?storm_id=
     exact_id_key: exactIdKey,
+    focus: focusFromQuery,
     prefill_query: pick('q'),      // display-only: ?q=<text> (never auto-sent)
     share_state: decodeShareStateParam(pick('state')) || shareStateFromQuery,
     requires_auth: false,          // resolved by the auth layer, not here

@@ -1846,6 +1846,97 @@ export const MapAdapter = {
     }
   },
 
+  showRouteFocusPoint(focus = {}) {
+    if (!this.map) return;
+    const lat = Number(focus?.lat);
+    const lon = Number(focus?.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+    this.clearRouteFocusPoint();
+
+    const geojson = {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          properties: {
+            label: String(focus?.label || 'Focus').trim()
+          },
+          geometry: {
+            type: 'Point',
+            coordinates: [lon, lat]
+          }
+        }
+      ]
+    };
+
+    this.map.addSource(CONFIG.layers.focusPointSource, {
+      type: 'geojson',
+      data: geojson
+    });
+
+    this.map.addLayer({
+      id: CONFIG.layers.focusPointHalo,
+      type: 'circle',
+      source: CONFIG.layers.focusPointSource,
+      paint: {
+        'circle-radius': 18,
+        'circle-color': '#ff7a18',
+        'circle-opacity': 0.18,
+        'circle-stroke-width': 2,
+        'circle-stroke-color': '#ffd166',
+        'circle-stroke-opacity': 0.55
+      }
+    });
+
+    this.map.addLayer({
+      id: CONFIG.layers.focusPointCore,
+      type: 'circle',
+      source: CONFIG.layers.focusPointSource,
+      paint: {
+        'circle-radius': 7,
+        'circle-color': '#ffd166',
+        'circle-opacity': 0.95,
+        'circle-stroke-width': 2,
+        'circle-stroke-color': '#ff4d00',
+        'circle-stroke-opacity': 0.95
+      }
+    });
+
+    this.map.addLayer({
+      id: CONFIG.layers.focusPointLabel,
+      type: 'symbol',
+      source: CONFIG.layers.focusPointSource,
+      layout: {
+        'text-field': ['get', 'label'],
+        'text-size': 12,
+        'text-offset': [0, 1.6],
+        'text-anchor': 'top'
+      },
+      paint: {
+        'text-color': '#fff4d6',
+        'text-halo-color': '#1a0c02',
+        'text-halo-width': 1.4
+      }
+    });
+  },
+
+  clearRouteFocusPoint() {
+    if (!this.map) return;
+    if (this.map.getLayer(CONFIG.layers.focusPointLabel)) {
+      this.map.removeLayer(CONFIG.layers.focusPointLabel);
+    }
+    if (this.map.getLayer(CONFIG.layers.focusPointCore)) {
+      this.map.removeLayer(CONFIG.layers.focusPointCore);
+    }
+    if (this.map.getLayer(CONFIG.layers.focusPointHalo)) {
+      this.map.removeLayer(CONFIG.layers.focusPointHalo);
+    }
+    if (this.map.getSource(CONFIG.layers.focusPointSource)) {
+      this.map.removeSource(CONFIG.layers.focusPointSource);
+    }
+  },
+
   loadResearchDisplayLayers(layers = []) {
     this.clearResearchDisplayLayers();
     if (!Array.isArray(layers) || !layers.length) return;

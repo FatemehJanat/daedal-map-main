@@ -107,6 +107,11 @@ export const CONFIG = {
     selectionSource: 'selection-regions',
     selectionFill: 'selection-fill',
     selectionStroke: 'selection-stroke',
+    // Route/share focus marker
+    focusPointSource: 'route-focus-point',
+    focusPointHalo: 'route-focus-point-halo',
+    focusPointCore: 'route-focus-point-core',
+    focusPointLabel: 'route-focus-point-label',
     // Hurricane/storm layer
     hurricaneSource: 'hurricane-points',
     hurricaneCircle: 'hurricane-circle',

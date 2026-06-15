@@ -126,6 +126,7 @@ export const App = {
   publicPackCatalog: [],
   publicPackCatalogLoadedAt: 0,
   publicPackCatalogSource: '',
+  currentRouteFocus: null,
   mapViews: new Map(),
   uiFullscreen: false,
   laneMapBindings: {
@@ -656,13 +657,19 @@ export const App = {
         mode: lane,
         syntheticSource: 'route_deep_link'
       });
+      if (routeIntent?.focus) {
+        this.applyRouteFocus(routeIntent.focus);
+      } else {
+        this.clearRouteFocus();
+      }
       if (!handled) {
         const intentSummary = {
           pack_id: routeIntent?.pack_id || null,
           source_id: routeIntent?.source_id || null,
           feed_id: routeIntent?.feed_id || null,
           pack_ids: Array.isArray(routeIntent?.pack_ids) ? routeIntent.pack_ids : [],
-          event_id: routeIntent?.event_id || null
+          event_id: routeIntent?.event_id || null,
+          focus: routeIntent?.focus || null
         };
         const hasIntent = Boolean(
           intentSummary.pack_id
@@ -953,6 +960,9 @@ export const App = {
   },
 
   captureCurrentFocusForShareState() {
+    if (this.currentRouteFocus?.type === 'point') {
+      return cloneSerializable(this.currentRouteFocus);
+    }
     const singleEventId = Array.isArray(this.currentData?.event_ids) && this.currentData.event_ids.length === 1
       ? String(this.currentData.event_ids[0] || '').trim()
       : '';
@@ -964,6 +974,49 @@ export const App = {
       };
     }
     return null;
+  },
+
+  clearRouteFocus() {
+    this.currentRouteFocus = null;
+    MapAdapter.clearRouteFocusPoint?.();
+  },
+
+  applyRouteFocus(focus = null, options = {}) {
+    if (!focus || typeof focus !== 'object') {
+      this.clearRouteFocus();
+      return false;
+    }
+
+    const focusType = String(focus.type || '').trim().toLowerCase();
+    if (focusType !== 'point') {
+      this.clearRouteFocus();
+      return false;
+    }
+
+    const lat = Number(focus.lat);
+    const lon = Number(focus.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+      this.clearRouteFocus();
+      return false;
+    }
+
+    const normalizedFocus = {
+      type: 'point',
+      lat,
+      lon,
+      label: String(focus.label || '').trim() || 'Focus'
+    };
+    if (focus.loc_id) {
+      normalizedFocus.loc_id = String(focus.loc_id).trim();
+    }
+    this.currentRouteFocus = normalizedFocus;
+    MapAdapter.showRouteFocusPoint?.(normalizedFocus);
+
+    if (!options.preserveCamera) {
+      const zoom = Number.isFinite(Number(options.zoom)) ? Number(options.zoom) : 7.5;
+      MapAdapter.flyTo?.([lon, lat], zoom);
+    }
+    return true;
   },
 
   buildCurrentShareState(options = {}) {
@@ -1146,8 +1199,11 @@ export const App = {
     if (lane === 'explore' && shareState.time) {
       this.applyShareStateTime(shareState.time);
     }
+    this.applyRouteFocus(shareState.focus || null, {
+      preserveCamera: Boolean(shareState.camera)
+    });
     this.applyShareStateCamera(shareState.camera || null);
-    return Boolean(handledLoads || (shareState.camera || shareState.time || (shareState.overlays || []).length));
+    return Boolean(handledLoads || shareState.focus || (shareState.camera || shareState.time || (shareState.overlays || []).length));
   },
 
   captureTimeSliderState() {
@@ -2598,6 +2654,7 @@ export const App = {
     this.currentResearchDisplay = null;
     this.currentResearchLayerOptions = null;
     MapAdapter.clearResearchDisplayLayers?.();
+    this.clearRouteFocus();
   },
 
   enterOpsCanvasMode() {
@@ -2618,6 +2675,7 @@ export const App = {
     MapAdapter.clearCityOverlay?.();
     MapAdapter.clearNavigationLayer?.();
     MapAdapter.clearResearchDisplayLayers?.();
+    this.clearRouteFocus();
     this.clearResearchDisplayInteractions();
     ViewportLoader.orderMode = true;
   },
@@ -2635,6 +2693,7 @@ export const App = {
     }
     this.clearResearchDisplayInteractions();
     MapAdapter.clearResearchDisplayLayers?.();
+    this.clearRouteFocus();
   },
 
   getResearchLayerOptions(display) {

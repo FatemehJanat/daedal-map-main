@@ -906,7 +906,8 @@ export const ChatManager = {
         packId,
         sourceId,
         feedId,
-        eventId
+        eventId,
+        focus: routeIntent?.focus || null
       },
       {
         ...options,
@@ -1658,7 +1659,7 @@ export const ChatManager = {
       setLaneTitle(lane, entityId);
       writeEntityParam(
         lane,
-        sourceId ? { sourceId, eventId } : feedId ? { feedId, eventId } : { packId, eventId }
+        sourceId ? { sourceId, eventId, focus: params.focus || null } : feedId ? { feedId, eventId, focus: params.focus || null } : { packId, eventId, focus: params.focus || null }
       );
       if (feedId) {
         window.gtag?.('event', 'feed_load', {
