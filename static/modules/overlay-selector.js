@@ -381,6 +381,18 @@ function buildCategoriesFromTree(overlayTree) {
         packIds: deriveOverlayPackIds(categoryId, categoryData.sources)
       };
 
+      if (categoryId === 'climate') {
+        categories.push({
+          id: 'climate',
+          label: categoryData.label || 'Climate',
+          icon: icon,
+          isCategory: true,
+          expanded: false,
+          overlays: [overlay]
+        });
+        continue;
+      }
+
       if (model === 'choropleth') {
         metricOverlays.push(overlay);
         continue;
