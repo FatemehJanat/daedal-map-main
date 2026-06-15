@@ -14,7 +14,7 @@
 
 const LANES = ['explore', 'research', 'ops'];
 const DEFAULT_LANE = 'explore';
-const ROUTE_INTENT_PARAMS = ['pack', 'packs', 'source', 'feed', 'event_id', 'storm_id', 'focus', 'q', 'state', 'ov', 'bbox', 'c', 'z', 'br', 'pi', 'tm', 'tp', 't0', 't1', 'live', 'hw'];
+const ROUTE_INTENT_PARAMS = ['pack', 'packs', 'source', 'feed', 'event_id', 'storm_id', 'focus', 'q', 'msg', 'state', 'ov', 'bbox', 'c', 'z', 'br', 'pi', 'tm', 'tp', 't0', 't1', 'live', 'hw'];
 const SHARE_STATE_VERSION = 1;
 
 const LANE_TITLES = {
@@ -476,7 +476,7 @@ export function buildShareStateUrl(shareState, { absolute = false } = {}) {
  * the later phases fill in.
  * @param {Location} [loc]
  * @returns {{lane: string|null, pack_id: string|null, pack_ids: string[], source_id: string|null, feed_id: string|null, event_id: string|null, exact_id_key: string|null,
- *   focus: object|null, prefill_query: string|null, share_state: object|null, requires_auth: boolean, invalid_reason: string|null}}
+ *   focus: object|null, prefill_query: string|null, route_message: string|null, share_state: object|null, requires_auth: boolean, invalid_reason: string|null}}
  */
 export function parseRouteIntent(loc = window.location) {
   const segment = String(loc.pathname || '/').replace(/^\/+/, '').split('/')[0];
@@ -513,6 +513,7 @@ export function parseRouteIntent(loc = window.location) {
     exact_id_key: exactIdKey,
     focus: focusFromQuery,
     prefill_query: pick('q'),      // display-only: ?q=<text> (never auto-sent)
+    route_message: pick('msg'),    // display-only: ?msg=<text> (never executed)
     share_state: decodeShareStateParam(pick('state')) || shareStateFromQuery,
     requires_auth: false,          // resolved by the auth layer, not here
     invalid_reason: segment && !lane ? 'unknown_path_segment' : null,

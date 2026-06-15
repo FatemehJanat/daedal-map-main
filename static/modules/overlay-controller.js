@@ -344,6 +344,19 @@ const OVERLAY_ENDPOINTS = {
     isWeatherGrid: true,
     minYear: 1940,
     defaultMinYear: 2000
+  },
+  'ocean-sst-grid': {
+    baseUrl: '/api/climate/grid',
+    params: { source: 'ocean_sst', tier: 'monthly' },
+    climateGrid: {
+      variables: ['sst_c'],
+      variableOverlayMap: {
+        sst_c: 'ocean-sst-grid'
+      }
+    },
+    isWeatherGrid: true,
+    minYear: 1982,
+    defaultMinYear: 1982
   }
 };
 
@@ -2176,6 +2189,32 @@ export const OverlayController = {
           }
         }
       }
+      if (
+        overlayId !== 'demographics' &&
+        isActive &&
+        options.allowDefaultLoad !== false &&
+        !this.hasCachedOverlayData(overlayId)
+      ) {
+        let handledByDefaultLoad = false;
+        if (this.defaultLoadExecutor) {
+          handledByDefaultLoad = await this.defaultLoadExecutor(overlayId, {
+            lane: OverlaySelector?.currentLaneMode || 'explore'
+          });
+        } else if (ChatManager?.runDefaultLoad) {
+          handledByDefaultLoad = await ChatManager.runDefaultLoad(
+            { overlayId },
+            {
+              mode: OverlaySelector?.currentLaneMode || 'explore',
+              suppressResultMessage: true
+            }
+          );
+        }
+        if (handledByDefaultLoad) {
+          refreshTickerForOverlayState();
+          emitOverlayStatusMessage(overlayId, true, options);
+          return;
+        }
+      }
       const activeOverlays = OverlaySelector?.getActiveOverlays?.() || [];
       const anyMetricActive = activeOverlays.some((id) => isSharedMetricOverlay(id));
       if (MapAdapter) {
@@ -2994,6 +3033,12 @@ export const OverlayController = {
 
     console.log(`OverlayController: Reloading ${overlayId} with filters:`, this.getActiveFilters(overlayId));
 
+    const preservedRanges = Array.isArray(loadedRanges[overlayId])
+      ? loadedRanges[overlayId]
+        .filter((range) => range && !range.loading && Number.isFinite(range.start) && Number.isFinite(range.end))
+        .map((range) => ({ start: range.start, end: range.end }))
+      : [];
+
     // Clear cache for this overlay
     clearOverlayData(overlayId);
 
@@ -3001,6 +3046,15 @@ export const OverlayController = {
     const isActive = OverlaySelector?.getActiveOverlays()?.includes(overlayId);
     if (!isActive) {
       console.log(`OverlayController: ${overlayId} not active, skipping reload`);
+      return;
+    }
+
+    if (preservedRanges.length > 0) {
+      console.log(`OverlayController: Restoring ${overlayId} across ${preservedRanges.length} cached range(s)`);
+      for (const range of preservedRanges) {
+        await loadRangeData(overlayId, range.start, range.end, OVERLAY_ENDPOINTS[overlayId]);
+      }
+      this.renderCurrentData(overlayId);
       return;
     }
 

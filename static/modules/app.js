@@ -658,6 +658,11 @@ export const App = {
     ChatManager.applyModeUiState?.();
 
     const applyRouteIntentLoad = async (lane, routeIntent) => {
+      const routeMessage = String(routeIntent?.route_message || '').trim();
+      const emitRouteMessage = () => {
+        if (!routeMessage || !ChatManager?.addMessage) return;
+        ChatManager.addMessage(routeMessage, 'assistant', { mode: lane });
+      };
       const focusToken = routeIntent?.focus ? (this.pendingRouteFocusCameraToken + 1) : 0;
       this.pendingRouteFocusCameraToken = focusToken;
       if (routeIntent?.share_state) {
@@ -665,6 +670,7 @@ export const App = {
         if (!handledShareState) {
           console.warn('[ShareState] Route share state did not resolve to a load:', routeIntent.share_state);
         }
+        emitRouteMessage();
         return;
       }
       const handled = await ChatManager.applyRouteIntent?.(routeIntent || {}, {
@@ -717,6 +723,7 @@ export const App = {
           console.warn('[DeepLink] Route intent did not resolve to a load:', intentSummary);
         }
       }
+      emitRouteMessage();
     };
 
     // Back/forward navigation: re-activate the lane from the URL. switchChatMode
@@ -1223,6 +1230,80 @@ export const App = {
     }
   },
 
+  async loadShareStateOverlayDefaults(shareState = null, lane = 'explore') {
+    const normalizedLane = normalizeChatMapLane(lane);
+    if (normalizedLane !== 'explore' || !shareState || typeof shareState !== 'object') {
+      return false;
+    }
+
+    const overlayIds = uniqueStrings(shareState.overlays || []);
+    if (!overlayIds.length) {
+      return false;
+    }
+
+    const timeState = shareState.time && typeof shareState.time === 'object'
+      ? shareState.time
+      : null;
+    const startMs = timeState?.start ? Date.parse(timeState.start) : null;
+    const endMs = timeState?.end ? Date.parse(timeState.end) : null;
+    const atMs = timeState?.at ? Date.parse(timeState.at) : null;
+    const hasExplicitTemporalIntent =
+      Number.isFinite(startMs) || Number.isFinite(endMs) || Number.isFinite(atMs);
+
+    let handled = false;
+    for (const overlayId of overlayIds) {
+      if (OverlayController?.hasCachedOverlayData?.(overlayId)) {
+        handled = true;
+        continue;
+      }
+
+      let loaded = false;
+
+      if (hasExplicitTemporalIntent && OverlayController?.loadOverlayRange) {
+        let resolvedStartMs = Number.isFinite(startMs) ? startMs : null;
+        let resolvedEndMs = Number.isFinite(endMs) ? endMs : null;
+
+        if (!Number.isFinite(resolvedStartMs) && !Number.isFinite(resolvedEndMs) && Number.isFinite(atMs)) {
+          const atDate = new Date(atMs);
+          const year = atDate.getUTCFullYear();
+          resolvedStartMs = Date.UTC(year, 0, 1, 0, 0, 0, 0);
+          resolvedEndMs = Date.UTC(year, 11, 31, 23, 59, 59, 999);
+        } else {
+          if (!Number.isFinite(resolvedStartMs) && Number.isFinite(resolvedEndMs)) {
+            resolvedStartMs = resolvedEndMs;
+          }
+          if (!Number.isFinite(resolvedEndMs) && Number.isFinite(resolvedStartMs)) {
+            resolvedEndMs = resolvedStartMs;
+          }
+        }
+
+        if (Number.isFinite(resolvedStartMs) || Number.isFinite(resolvedEndMs)) {
+          loaded = await OverlayController.loadOverlayRange(
+            overlayId,
+            Number.isFinite(resolvedStartMs) ? resolvedStartMs : resolvedEndMs,
+            Number.isFinite(resolvedEndMs) ? resolvedEndMs : resolvedStartMs,
+            {}
+          );
+        }
+      }
+
+      if (!loaded && OverlayController?.handleOverlayChange) {
+        const overlayConfig = OverlaySelector?.getOverlayConfig?.(overlayId) || null;
+        const allowDefaultLoad = overlayConfig?.model === 'choropleth';
+        await OverlayController.handleOverlayChange(overlayId, true, {
+          allowDefaultLoad,
+          suppressStatusMessage: true,
+          systemTransition: true
+        });
+        loaded = Boolean(OverlayController?.hasCachedOverlayData?.(overlayId));
+      }
+
+      handled = Boolean(loaded) || handled;
+    }
+
+    return handled;
+  },
+
   async reconcileShareStateOverlays(targetOverlayIds = [], lane = 'explore') {
     const normalizedLane = normalizeChatMapLane(lane);
     const targetSet = new Set(uniqueStrings(targetOverlayIds));
@@ -1258,6 +1339,9 @@ export const App = {
       syntheticSource: 'share_state'
     });
     await this.reconcileShareStateOverlays(shareState.overlays || [], lane);
+    const handledOverlayDefaults = handledLoads
+      ? false
+      : await this.loadShareStateOverlayDefaults(shareState, lane);
     if (lane === 'explore' && shareState.time) {
       this.applyShareStateTime(shareState.time);
     }
@@ -1265,7 +1349,12 @@ export const App = {
       preserveCamera: Boolean(shareState.camera)
     });
     this.applyShareStateCamera(shareState.camera || null);
-    return Boolean(handledLoads || shareState.focus || (shareState.camera || shareState.time || (shareState.overlays || []).length));
+    return Boolean(
+      handledLoads
+      || handledOverlayDefaults
+      || shareState.focus
+      || (shareState.camera || shareState.time || (shareState.overlays || []).length)
+    );
   },
 
   captureTimeSliderState() {
