@@ -73,8 +73,8 @@ import {
   parseDisplayStyleCommand as parseDisplayStyleCommandImpl
 } from './chat/chat-display-commands.js';
 import { buildExploreWelcomeMessage } from './explore/welcome.js';
-import { buildResearchWelcomeMessage } from './research/welcome.js';
-import { buildOpsWelcomeMessage } from './ops/welcome.js';
+import { buildResearchFriendlyWelcomeMessage, buildResearchWelcomeMessage } from './research/welcome.js';
+import { buildOpsFriendlyWelcomeMessage, buildOpsWelcomeMessage } from './ops/welcome.js';
 import {
   resolveDefaultLoadAction,
   resolveOverlayIdForEntityParams,
@@ -1264,7 +1264,9 @@ export const ChatManager = {
   async seedEmptyConversation(mode = this.mode) {
     return seedEmptyConversationImpl(this, mode, {
       buildExploreWelcomeMessage,
+      buildResearchFriendlyWelcomeMessage,
       buildResearchWelcomeMessage,
+      buildOpsFriendlyWelcomeMessage,
       buildOpsWelcomeMessage
     });
   },
@@ -3955,7 +3957,7 @@ export const ChatManager = {
   addMessage(text, type, options = {}) {
     const targetMode = options.mode || this.mode;
     const normalizedText = String(text || '').trim();
-    if (type === 'assistant' && normalizedText) {
+    if (type === 'assistant' && normalizedText && options.skipAssistantDedup !== true) {
       const recent = this.recentAssistantMessages.get(targetMode) || null;
       const now = Date.now();
       if (
@@ -3973,6 +3975,7 @@ export const ChatManager = {
     }
     const renderOptions = { ...options };
     delete renderOptions.mode;
+    delete renderOptions.skipAssistantDedup;
     const targetMessages = this.messagePanes?.[targetMode] || this.elements.messages;
     const div = renderMessage(targetMessages, text, type, renderOptions);
     if (this.elements.messagesHost && targetMode === this.mode) {

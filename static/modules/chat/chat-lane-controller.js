@@ -16,13 +16,38 @@ function paneHasMessages(pane) {
 
 function paneHasWelcomeMessage(pane) {
   if (!pane) return false;
-  return Boolean(pane.querySelector('[data-welcome-message="true"]'));
+  return Boolean(
+    pane.querySelector('[data-welcome-kind="intro"]')
+    || pane.querySelector('[data-welcome-message="true"]')
+  );
+}
+
+function paneHasWelcomeStatus(pane) {
+  if (!pane) return false;
+  return Boolean(pane.querySelector('[data-welcome-kind="status"], [data-welcome-status="true"]'));
+}
+
+function clearWelcomeMessages(pane) {
+  if (!pane) return;
+  pane.querySelectorAll('[data-welcome-message="true"], [data-welcome-status="true"], [data-welcome-kind]').forEach((node) => {
+    node.remove();
+  });
+}
+
+function addAssistantMessageIfPresent(ctx, text, options = {}) {
+  const content = String(text || '').trim();
+  if (!content) return;
+  ctx.addMessage(content, 'assistant', {
+    ...options,
+    skipAssistantDedup: true
+  });
 }
 
 export async function switchChatMode(ctx, mode, deps = {}) {
   const App = deps.App || null;
   const OverlaySelector = deps.OverlaySelector || null;
   const chatModes = deps.CHAT_MODES || ['explore', 'research', 'ops'];
+  const sharedShell = isSharedShellRoute();
   mode = normalizeChatMode(mode, chatModes);
   if (mode === ctx.mode) return;
 
@@ -52,7 +77,15 @@ export async function switchChatMode(ctx, mode, deps = {}) {
   }
 
   const pane = ctx.messagePanes?.[mode] || null;
-  if (!paneHasWelcomeMessage(pane)) {
+  const laneHistory = Array.isArray(ctx.modeHistories?.[mode]) ? ctx.modeHistories[mode] : [];
+  const shouldReseedForSharedShell = sharedShell && laneHistory.length === 0;
+  if (shouldReseedForSharedShell) {
+    clearWelcomeMessages(pane);
+  }
+  if (
+    !paneHasWelcomeMessage(pane)
+    || (mode !== 'explore' && !paneHasWelcomeStatus(pane))
+  ) {
     await seedEmptyConversation(ctx, mode, deps);
   }
 
@@ -62,15 +95,22 @@ export async function switchChatMode(ctx, mode, deps = {}) {
 
 export async function seedEmptyConversation(ctx, mode = ctx.mode, deps = {}) {
   const buildExploreWelcomeMessage = deps.buildExploreWelcomeMessage || (() => '');
+  const buildResearchFriendlyWelcomeMessage = deps.buildResearchFriendlyWelcomeMessage || (() => '');
   const buildResearchWelcomeMessage = deps.buildResearchWelcomeMessage || ((_manifest, fallback) => fallback || '');
+  const buildOpsFriendlyWelcomeMessage = deps.buildOpsFriendlyWelcomeMessage || (() => '');
   const buildOpsWelcomeMessage = deps.buildOpsWelcomeMessage || ((payload, fallback) => payload?.warning || fallback || '');
   const pane = ctx.messagePanes?.[mode];
-  if (paneHasWelcomeMessage(pane)) return;
+  const hasIntro = paneHasWelcomeMessage(pane);
+  const hasStatus = paneHasWelcomeStatus(pane);
+  if (hasIntro && (mode === 'explore' || hasStatus)) return;
+  if (hasIntro || hasStatus) {
+    clearWelcomeMessages(pane);
+  }
   const welcomeOptions = {
     mode,
     prepend: paneHasMessages(pane),
     className: 'chat-message--welcome',
-    dataset: { welcomeMessage: 'true', lane: mode }
+    dataset: { welcomeMessage: 'true', welcomeKind: 'intro', lane: mode }
   };
 
   if (mode === 'research') {
@@ -79,10 +119,15 @@ export async function seedEmptyConversation(ctx, mode = ctx.mode, deps = {}) {
         await ctx.refreshResearchCorpusOptions();
       }
       const manifest = ctx.latestResearchManifest || await ctx.refreshResearchManifest();
-      ctx.addMessage(
+      addAssistantMessageIfPresent(
+        ctx,
+        buildResearchFriendlyWelcomeMessage(),
+        { ...welcomeOptions, html: true }
+      );
+      addAssistantMessageIfPresent(
+        ctx,
         buildResearchWelcomeMessage(manifest, ctx.getResearchEmptyStateMessage()),
-        'assistant',
-        welcomeOptions
+        { mode, className: 'chat-message--welcome', dataset: { welcomeStatus: 'true', welcomeKind: 'status', lane: mode }, html: true }
       );
     } catch (error) {
       console.warn('Research corpus manifest check failed:', error);
@@ -96,10 +141,15 @@ export async function seedEmptyConversation(ctx, mode = ctx.mode, deps = {}) {
       const payload = ctx.latestOpsPayload
         ? ctx.latestOpsPayload
         : await ctx.refreshOpsReport({ loadWatch: true });
-      ctx.addMessage(
+      addAssistantMessageIfPresent(
+        ctx,
+        buildOpsFriendlyWelcomeMessage(),
+        { ...welcomeOptions, html: true }
+      );
+      addAssistantMessageIfPresent(
+        ctx,
         buildOpsWelcomeMessage(payload, ctx.getOpsEmptyStateMessage()),
-        'assistant',
-        welcomeOptions
+        { mode, className: 'chat-message--welcome', dataset: { welcomeStatus: 'true', welcomeKind: 'status', lane: mode }, html: true }
       );
     } catch (error) {
       console.warn('Ops report check failed:', error);
