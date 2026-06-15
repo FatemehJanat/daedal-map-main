@@ -2878,6 +2878,20 @@ export const PointRadiusModel = {
     }
   },
 
+  _notifyVolcanoHistory(features, volcanoName, lat, lon, radiusKm = 20) {
+    console.log(`PointRadiusModel: Found ${features.length} historical eruptions near ${volcanoName}`);
+
+    if (this.volcanoHistoryCallback) {
+      this.volcanoHistoryCallback({
+        features,
+        volcanoName,
+        volcanoLat: lat,
+        volcanoLon: lon,
+        radiusKm
+      });
+    }
+  },
+
   /**
    * Register callback for volcano-triggered earthquakes.
    * @param {Function} callback - Callback function
@@ -2892,6 +2906,10 @@ export const PointRadiusModel = {
    */
   onNearbyVolcanoes(callback) {
     this.nearbyVolcanoesCallback = callback;
+  },
+
+  onVolcanoHistory(callback) {
+    this.volcanoHistoryCallback = callback;
   },
 
   onRelatedChain(callback) {
@@ -4576,6 +4594,74 @@ export const PointRadiusModel = {
         }
       } catch (err) {
         console.error('Error fetching related events:', err);
+      }
+    });
+
+    document.addEventListener('disaster-history-request', async (e) => {
+      const { eventId, eventType, props } = e.detail || {};
+      if (eventType !== 'volcano' || !props?.route_focus_anchor || !props?.latitude || !props?.longitude) {
+        return;
+      }
+
+      const cacheKey = `hist_${eventType}_${eventId || props.volcano_name || 'focus'}`;
+
+      try {
+        const historyRadiusKm = 20;
+        const url = `/api/events/nearby-volcanoes?lat=${props.latitude}&lon=${props.longitude}&radius_km=${historyRadiusKm}`;
+        const data = await fetchMsgpack(url);
+        const features = Array.isArray(data?.features) ? data.features : [];
+        const targetName = String(props.volcano_name || '').trim();
+        const normalizeName = (value) => String(value || '')
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, ' ')
+          .trim();
+        const normalizedTarget = normalizeName(targetName);
+        const matchedFeatures = normalizedTarget
+          ? features.filter((feature) => normalizeName(feature?.properties?.volcano_name) === normalizedTarget)
+          : features;
+        const events = (matchedFeatures.length ? matchedFeatures : features)
+          .map((feature) => ({ ...(feature?.properties || {}) }))
+          .filter((candidate) => String(candidate?.event_id || '').trim())
+          .sort((a, b) => {
+            const aYear = Number(a?.year);
+            const bYear = Number(b?.year);
+            if (Number.isFinite(aYear) && Number.isFinite(bYear) && aYear !== bYear) {
+              return bYear - aYear;
+            }
+            const aTime = a?.timestamp ? new Date(a.timestamp).getTime() : Number.NEGATIVE_INFINITY;
+            const bTime = b?.timestamp ? new Date(b.timestamp).getTime() : Number.NEGATIVE_INFINITY;
+            return bTime - aTime;
+          });
+
+        if (window.DisasterPopup) {
+          window.DisasterPopup.cachedData[cacheKey] = {
+            anchor_event: { ...props, history_context_key: cacheKey },
+            volcano_name: targetName || props.volcano_name || 'Volcano',
+            radius_km: historyRadiusKm,
+            events
+          };
+          if (window.DisasterPopup.state === 'HISTORY_CONFIRM') {
+            const html = window.DisasterPopup.buildHistoryPopup(
+              window.DisasterPopup.currentEvent,
+              window.DisasterPopup.currentType,
+              window.DisasterPopup.cachedData[cacheKey]
+            );
+            window.DisasterPopup.updatePopupContent(html);
+          }
+        }
+      } catch (err) {
+        console.error('Error fetching volcano history:', err);
+        if (window.DisasterPopup) {
+          window.DisasterPopup.cachedData[cacheKey] = { events: [] };
+          if (window.DisasterPopup.state === 'HISTORY_CONFIRM') {
+            const html = window.DisasterPopup.buildHistoryPopup(
+              window.DisasterPopup.currentEvent,
+              window.DisasterPopup.currentType,
+              window.DisasterPopup.cachedData[cacheKey]
+            );
+            window.DisasterPopup.updatePopupContent(html);
+          }
+        }
       }
     });
 

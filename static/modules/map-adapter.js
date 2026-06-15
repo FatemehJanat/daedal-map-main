@@ -5,6 +5,7 @@
 
 import { CONFIG } from './config.js';
 import { LocationInfoCache } from './cache.js';
+import { DisasterPopup } from './disaster-popup.js';
 import { PointRadiusModel } from './models/model-point-radius.js';
 import { TrackModel } from './models/model-track.js';
 import { fetchMsgpack } from './utils/fetch.js';
@@ -34,6 +35,7 @@ export const MapAdapter = {
   map: null,
   popup: null,
   routeFocusToken: 0,
+  routeFocusHandlerRefs: [],
   hoveredFeatureId: null,
   popupLocked: false,  // When true, popup stays visible on mouseleave
   isShowingPopup: false,  // True while showing popup (prevents close event from unlocking)
@@ -1367,28 +1369,12 @@ export const MapAdapter = {
     });
   },
 
-  getRouteFocusPadding() {
-    const padding = this.getFitBoundsPadding();
-    const body = document.body;
-    const sidebar = document.getElementById('sidebar');
-    if (!sidebar || body?.classList?.contains('map-ui-fullscreen') || sidebar.classList.contains('collapsed')) {
-      return padding;
-    }
-    const rect = sidebar.getBoundingClientRect();
-    if (rect.width > 0) {
-      padding.left = Math.max(padding.left, Math.ceil(rect.width + 40));
-    }
-    return padding;
-  },
-
   flyToRouteFocusPoint(center, options = {}) {
     if (!this.map || !Array.isArray(center) || center.length !== 2) return;
     const zoom = Number.isFinite(Number(options.zoom)) ? Number(options.zoom) : 7.5;
-    const padding = this.getRouteFocusPadding();
     this.map.flyTo({
       center,
       zoom,
-      padding,
       duration: 1500
     });
     this.setVisualFocus(center);
@@ -1892,7 +1878,10 @@ export const MapAdapter = {
           type: 'Feature',
           properties: {
             label: String(focus?.label || 'Focus').trim(),
-            event_type: eventType
+            event_type: eventType,
+            event_id: String(focus?.event_id || '').trim(),
+            source_id: String(focus?.source_id || '').trim(),
+            feed_id: String(focus?.feed_id || '').trim()
           },
           geometry: {
             type: 'Point',
@@ -1974,6 +1963,14 @@ export const MapAdapter = {
         .then(() => {
           if (this.routeFocusToken !== routeFocusToken) return;
           addDisasterIconLayer();
+          this._bindRouteFocusInteractions({
+            event_type: eventType,
+            event_id: String(focus?.event_id || '').trim(),
+            source_id: String(focus?.source_id || '').trim(),
+            feed_id: String(focus?.feed_id || '').trim(),
+            lat,
+            lon
+          });
         })
         .catch((error) => {
           console.warn('Failed to load route focus icon:', error);
@@ -1984,30 +1981,21 @@ export const MapAdapter = {
       addFallbackCoreLayer();
     }
 
-    this.map.addLayer({
-      id: CONFIG.layers.focusPointLabel,
-      type: 'symbol',
-      source: CONFIG.layers.focusPointSource,
-      layout: {
-        'text-field': ['get', 'label'],
-        'text-size': 12,
-        'text-offset': [0, eventType ? 1.85 : 1.6],
-        'text-anchor': 'top'
-      },
-      paint: {
-        'text-color': '#fff4d6',
-        'text-halo-color': '#1a0c02',
-        'text-halo-width': 1.4
-      }
+    this._bindRouteFocusInteractions({
+      event_type: eventType,
+      event_id: String(focus?.event_id || '').trim(),
+      source_id: String(focus?.source_id || '').trim(),
+      feed_id: String(focus?.feed_id || '').trim(),
+      lat,
+      lon
     });
+
   },
 
   clearRouteFocusPoint() {
     if (!this.map) return;
     this.routeFocusToken += 1;
-    if (this.map.getLayer(CONFIG.layers.focusPointLabel)) {
-      this.map.removeLayer(CONFIG.layers.focusPointLabel);
-    }
+    this._unbindRouteFocusInteractions();
     if (this.map.getLayer(CONFIG.layers.focusPointIcon)) {
       this.map.removeLayer(CONFIG.layers.focusPointIcon);
     }
@@ -2020,6 +2008,166 @@ export const MapAdapter = {
     if (this.map.getSource(CONFIG.layers.focusPointSource)) {
       this.map.removeSource(CONFIG.layers.focusPointSource);
     }
+  },
+
+  _resolveRouteFocusPopupTarget(focus = {}) {
+    const snapshotTarget = OverlayController?.resolveRouteFocusSnapshotTarget?.(focus);
+    if (snapshotTarget) {
+      return {
+        eventType: snapshotTarget.eventType,
+        props: snapshotTarget.props,
+        coords: snapshotTarget.coords
+      };
+    }
+    return this._buildRouteFocusFallbackTarget(focus);
+  },
+
+  _buildRouteFocusFallbackTarget(focus = {}) {
+    if (!focus || typeof focus !== 'object') return null;
+    const eventType = String(focus?.event_type || '').trim().toLowerCase() || 'generic';
+    const lat = Number(focus?.lat);
+    const lon = Number(focus?.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+
+    const rawLabel = String(focus?.label || '').trim();
+    const label = rawLabel && rawLabel.toLowerCase() !== 'focus' ? rawLabel : '';
+    const props = {
+      event_id: String(focus?.event_id || '').trim() || null,
+      source_id: String(focus?.source_id || '').trim() || null,
+      feed_id: String(focus?.feed_id || '').trim() || null,
+      event_type: eventType,
+      route_focus_anchor: true,
+      latitude: lat,
+      longitude: lon,
+      timestamp: null
+    };
+
+    if (focus?.loc_id) {
+      props.loc_id = String(focus.loc_id).trim();
+    }
+
+    switch (eventType) {
+      case 'volcano':
+        if (label) props.volcano_name = label;
+        break;
+      case 'hurricane':
+        if (label) props.storm_name = label;
+        break;
+      case 'wildfire':
+        if (label) props.fire_name = label;
+        break;
+      case 'earthquake':
+        if (label) props.place = label;
+        break;
+      case 'tornado':
+      case 'flood':
+      case 'tsunami':
+      case 'landslide':
+        if (label) props.name = label;
+        break;
+      default:
+        if (label) props.name = label;
+        break;
+    }
+
+    return {
+      eventType,
+      props,
+      coords: [lon, lat]
+    };
+  },
+
+  _bindRouteFocusInteractions(focus = {}) {
+    if (!this.map) return;
+    this._unbindRouteFocusInteractions();
+
+    const layerIds = [];
+    if (this.map.getLayer(CONFIG.layers.focusPointIcon)) {
+      layerIds.push(CONFIG.layers.focusPointIcon);
+    } else if (this.map.getLayer(CONFIG.layers.focusPointCore)) {
+      layerIds.push(CONFIG.layers.focusPointCore);
+    } else if (this.map.getLayer(CONFIG.layers.focusPointHalo)) {
+      layerIds.push(CONFIG.layers.focusPointHalo);
+    }
+
+    const mouseenter = (e) => {
+      this.map.getCanvas().style.cursor = 'pointer';
+      if (this.popupLocked) return;
+      const target = this._resolveRouteFocusPopupTarget(focus);
+      if (!target?.props || !target?.eventType) return;
+      const lngLat = e?.lngLat
+        ? [Number(e.lngLat.lng), Number(e.lngLat.lat)]
+        : target.coords;
+      const html = DisasterPopup.buildHoverHtml(target.props, target.eventType);
+      this.showPopup(lngLat, html);
+    };
+
+    const mouseleave = () => {
+      this.map.getCanvas().style.cursor = '';
+      if (!this.popupLocked) {
+        this.hidePopup();
+      }
+    };
+
+    const click = (e) => {
+      const target = this._resolveRouteFocusPopupTarget(focus);
+      if (!target?.props || !target?.eventType) return;
+      const lngLat = e?.lngLat
+        ? [Number(e.lngLat.lng), Number(e.lngLat.lat)]
+        : target.coords;
+      DisasterPopup.show(lngLat, target.props, target.eventType);
+      this.setSelectedPopupContext?.({
+        kind: 'route_focus',
+        eventType: target.eventType,
+        properties: target.props
+      });
+    };
+
+    for (const layerId of layerIds) {
+      if (!this.map.getLayer(layerId)) continue;
+      this.map.on('mouseenter', layerId, mouseenter);
+      this.map.on('mouseleave', layerId, mouseleave);
+      this.map.on('click', layerId, click);
+      this.routeFocusHandlerRefs.push({ layerId, mouseenter, mouseleave, click });
+    }
+  },
+
+  _unbindRouteFocusInteractions() {
+    if (!this.map || !Array.isArray(this.routeFocusHandlerRefs)) {
+      this.routeFocusHandlerRefs = [];
+      return;
+    }
+    for (const ref of this.routeFocusHandlerRefs) {
+      const layerId = ref?.layerId;
+      if (!layerId) continue;
+      if (ref.mouseenter) this.map.off('mouseenter', layerId, ref.mouseenter);
+      if (ref.mouseleave) this.map.off('mouseleave', layerId, ref.mouseleave);
+      if (ref.click) this.map.off('click', layerId, ref.click);
+    }
+    this.routeFocusHandlerRefs = [];
+  },
+
+  refreshRouteFocusPopupFromSnapshot() {
+    if (!this.popupLocked) return;
+    const context = this.getSelectedPopupContext?.();
+    if (context?.kind !== 'route_focus') return;
+    const focus = this.currentRouteFocus;
+    if (!focus || focus.type !== 'point') return;
+    const target = this._resolveRouteFocusPopupTarget({
+      ...focus,
+      event_id: context?.event_id || focus?.event_id || '',
+      event_type: context?.event_type || focus?.event_type || ''
+    });
+    if (!target?.props || !target?.eventType || !Array.isArray(this.currentFocusLngLat)) return;
+    const html = DisasterPopup.buildBasicPopup(target.props, target.eventType);
+    this.showPopup(this.currentFocusLngLat, html);
+    this.popupLocked = true;
+    this.setSelectedPopupContext?.({
+      kind: 'route_focus',
+      eventType: target.eventType,
+      properties: target.props
+    });
+    window.setTimeout(() => DisasterPopup.setupButtonHandlers?.(), 50);
   },
 
   loadResearchDisplayLayers(layers = []) {

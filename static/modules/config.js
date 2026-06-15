@@ -112,7 +112,6 @@ export const CONFIG = {
     focusPointHalo: 'route-focus-point-halo',
     focusPointIcon: 'route-focus-point-icon',
     focusPointCore: 'route-focus-point-core',
-    focusPointLabel: 'route-focus-point-label',
     // Hurricane/storm layer
     hurricaneSource: 'hurricane-points',
     hurricaneCircle: 'hurricane-circle',

@@ -9,6 +9,8 @@
  * See docs/DISASTER_DISPLAY.md for full specification.
  */
 
+import { CONFIG } from './config.js';
+
 const DisasterPopup = {
   // Current popup state
   state: 'CLOSED', // CLOSED, BASIC, DETAIL, SEQUENCE_CONFIRM, RELATED_CONFIRM, RELATED
@@ -44,6 +46,16 @@ const DisasterPopup = {
     generic: '#888888'
   },
 
+  getVolcanoHistoryColor(vei) {
+    const palette = CONFIG?.volcanoColors || {};
+    const numericVei = Number(vei);
+    if (!Number.isFinite(numericVei)) {
+      return '#44ff44';
+    }
+    const bucket = Math.max(0, Math.min(7, Math.round(numericVei)));
+    return palette[bucket] || palette.default || '#ffcc00';
+  },
+
   /**
    * Format power stat based on disaster type
    */
@@ -69,7 +81,10 @@ const DisasterPopup = {
         if (vei != null) {
           return { label: 'Power', value: `VEI ${vei}`, detail: 'Eruption index' };
         }
-        return { label: 'Power', value: 'Unknown', detail: 'VEI not recorded' };
+        if (props.route_focus_anchor) {
+          return { label: 'State', value: 'Dormant', detail: 'No active eruption' };
+        }
+        return { label: 'Power', value: 'Quiet', detail: 'No VEI recorded' };
 
       case 'hurricane':
       case 'tropical_storm':
@@ -701,6 +716,10 @@ const DisasterPopup = {
           : 'This loads a focused flood impact view.';
         break;
       case 'volcano':
+        count = 1;
+        noun = 'focused event view';
+        description = 'This loads a focused volcano impact view.';
+        break;
       case 'landslide':
       default:
         count = 1;
@@ -921,6 +940,11 @@ const DisasterPopup = {
           <button class="popup-btn btn-sequence" data-action="sequence">
             ${this.getSequenceText(props, eventType)}
           </button>
+          ${eventType === 'volcano' && (props.route_focus_anchor || props.history_context_key) ? `
+          <button class="popup-btn btn-history" data-action="history">
+            History
+          </button>
+          ` : ''}
           <button class="popup-btn btn-related" data-action="related">
             Related
           </button>
@@ -1753,6 +1777,81 @@ const DisasterPopup = {
     return html;
   },
 
+  buildHistoryConfirmPopup(props, eventType, historyData) {
+    const color = this.colors[eventType] || this.colors.generic;
+    const title = this.getTitle(props, eventType);
+    const subtitle = this.getSubtitle(props, eventType);
+    const summary = historyData
+      ? `${historyData.events?.length || 0} eruptions found`
+      : 'Loading eruption history...';
+
+    return `
+      <div class="disaster-popup popup-related" data-type="${eventType}" data-id="${props.event_id || ''}">
+        <div class="popup-header-detail" style="border-left: 4px solid ${color}">
+          <button class="popup-back" data-action="back">&lt; Back</button>
+          <span class="popup-title-detail">Volcano History</span>
+        </div>
+
+        <div class="related-primary">
+          <span class="related-icon" style="background: ${color}">${this.icons[eventType] || this.icons.generic}</span>
+          <div class="related-info">
+            <div class="related-title">${title}</div>
+            <div class="related-subtitle">${subtitle}</div>
+          </div>
+        </div>
+
+        <div class="sequence-summary">
+          <div class="seq-count">${summary}</div>
+        </div>
+      </div>
+    `;
+  },
+
+  buildHistoryPopup(props, eventType, historyData) {
+    const color = this.colors[eventType] || this.colors.generic;
+    const title = this.getTitle(props, eventType);
+    const events = Array.isArray(historyData?.events) ? historyData.events : [];
+
+    const rows = events.length
+      ? events.map((evt, idx) => {
+          const eventId = String(evt.event_id || '').trim();
+          const year = evt.year != null ? evt.year : '';
+          const timestamp = evt.timestamp ? this.formatDate(evt.timestamp) : '';
+          const vei = evt.VEI != null ? `VEI ${evt.VEI}` : 'VEI unknown';
+          const ongoing = evt.is_ongoing === true || evt.is_ongoing === 'true' ? 'ongoing' : '';
+          const labelBits = [timestamp || year, vei, ongoing].filter(Boolean).join(' · ');
+          const accent = this.getVolcanoHistoryColor(evt.VEI);
+          return `<div class="sequence-item history-item" data-id="${eventId}" data-history-index="${idx}" style="border-left:3px solid ${accent}">
+            <span class="seq-marker" style="color:${accent}">V</span>
+            <span class="seq-label">${eventId || `Eruption ${idx + 1}`}</span>
+            <span class="seq-sublabel" style="color:${accent}">${labelBits}</span>
+          </div>`;
+        }).join('\n')
+      : '<div class="related-empty">No historical eruptions found for this volcano anchor.</div>';
+
+    return `
+      <div class="disaster-popup popup-sequence" data-type="${eventType}" data-id="${props.event_id || ''}">
+        <div class="popup-header-detail" style="border-left: 4px solid ${color}">
+          <button class="popup-back" data-action="back">&lt; Back</button>
+          <span class="popup-title-detail">Volcano History</span>
+        </div>
+
+        <div class="sequence-summary">
+          <strong>${title}</strong>
+          <div class="seq-count">${events.length} eruptions from this volcano</div>
+        </div>
+
+        <div class="sequence-list">
+          ${rows}
+        </div>
+
+        <div class="popup-footer">
+          Click any eruption to open that event. For the full historical timeline and broader context, use Explore mode.
+        </div>
+      </div>
+    `;
+  },
+
   /**
    * Build unified hover HTML for all disaster types.
    * Styled to match the click popups with color-coding.
@@ -1873,6 +1972,11 @@ const DisasterPopup = {
       item.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
+        if (item.classList.contains('history-item')) {
+          const index = Number(item.dataset.historyIndex);
+          this.handleHistoryItemClick(index);
+          return;
+        }
         const id = item.dataset.id;
         this.handleSequenceItemClick(id);
       });
@@ -1898,6 +2002,9 @@ const DisasterPopup = {
       case 'related':
         this.showRelated();
         break;
+      case 'history':
+        this.loadHistory();
+        break;
       case 'view-chain':
         this.loadRelatedChain();
         break;
@@ -1911,6 +2018,15 @@ const DisasterPopup = {
    * Handle back button
    */
   handleBack() {
+    const historyKey = String(this.currentEvent?.history_context_key || '').trim();
+    if (this.state === 'DETAIL' && historyKey && this.cachedData[historyKey]) {
+      this.state = 'HISTORY';
+      const historyData = this.cachedData[historyKey];
+      const anchorProps = historyData.anchor_event || this.currentEvent;
+      const html = this.buildHistoryPopup(anchorProps, this.currentType, historyData);
+      this.updatePopupContent(html);
+      return;
+    }
     this.state = 'BASIC';
     const html = this.buildBasicPopup(this.currentEvent, this.currentType);
     this.updatePopupContent(html);
@@ -1959,6 +2075,22 @@ const DisasterPopup = {
   loadSequence() {
     this.triggerSequenceHandler();
     this.hide();
+  },
+
+  loadHistory() {
+    this.state = 'HISTORY_CONFIRM';
+    const cacheKey = String(this.currentEvent?.history_context_key || '').trim()
+      || `hist_${this.currentType}_${this.currentEvent.event_id || this.currentEvent.volcano_name || 'focus'}`;
+    if (this.cachedData[cacheKey]) {
+      const historyData = this.cachedData[cacheKey];
+      const anchorProps = historyData.anchor_event || this.currentEvent;
+      const html = this.buildHistoryPopup(anchorProps, this.currentType, historyData);
+      this.updatePopupContent(html);
+      return;
+    }
+    const html = this.buildHistoryConfirmPopup(this.currentEvent, this.currentType, null);
+    this.updatePopupContent(html);
+    this.triggerHistoryHandler();
   },
 
   /**
@@ -2041,6 +2173,19 @@ const DisasterPopup = {
     }));
   },
 
+  triggerHistoryHandler() {
+    const props = this.currentEvent;
+    const eventType = this.currentType;
+
+    document.dispatchEvent(new CustomEvent('disaster-history-request', {
+      detail: {
+        eventId: props.event_id,
+        eventType,
+        props
+      }
+    }));
+  },
+
   triggerRelatedChainHandler() {
     const props = this.currentEvent;
     const eventType = this.currentType;
@@ -2080,6 +2225,23 @@ const DisasterPopup = {
         parentId: this.currentEvent?.event_id
       }
     }));
+  },
+
+  handleHistoryItemClick(index) {
+    const cacheKey = String(this.currentEvent?.history_context_key || '').trim()
+      || `hist_${this.currentType}_${this.currentEvent.event_id || this.currentEvent.volcano_name || 'focus'}`;
+    const historyData = this.cachedData[cacheKey] || null;
+    const events = historyData?.events || [];
+    const selected = events[index];
+    if (!selected) return;
+    this.currentEvent = {
+      ...selected,
+      history_context_key: cacheKey
+    };
+    this.currentType = 'volcano';
+    this.state = 'DETAIL';
+    const html = this.buildDetailPopup(this.currentEvent, this.currentType, {});
+    this.updatePopupContent(html);
   },
 
   /**

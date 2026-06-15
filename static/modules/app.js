@@ -138,6 +138,7 @@ export const App = {
   publicPackCatalogLoadedAt: 0,
   publicPackCatalogSource: '',
   currentRouteFocus: null,
+  pendingRouteFocusCameraToken: 0,
   mapViews: new Map(),
   uiFullscreen: false,
   laneMapBindings: {
@@ -657,6 +658,8 @@ export const App = {
     ChatManager.applyModeUiState?.();
 
     const applyRouteIntentLoad = async (lane, routeIntent) => {
+      const focusToken = routeIntent?.focus ? (this.pendingRouteFocusCameraToken + 1) : 0;
+      this.pendingRouteFocusCameraToken = focusToken;
       if (routeIntent?.share_state) {
         const handledShareState = await this.applyShareState(routeIntent.share_state, { lane });
         if (!handledShareState) {
@@ -671,10 +674,28 @@ export const App = {
       if (routeIntent?.focus) {
         this.applyRouteFocus(routeIntent.focus, {
           feedId: routeIntent?.feed_id || null,
-          sourceId: routeIntent?.source_id || null
+          sourceId: routeIntent?.source_id || null,
+          eventId: routeIntent?.event_id || null
         });
+        const focusSnapshot = this.currentRouteFocus ? cloneSerializable(this.currentRouteFocus) : null;
+        if (focusSnapshot && focusToken) {
+          window.setTimeout(() => {
+            if (this.pendingRouteFocusCameraToken !== focusToken) return;
+            this.applyRouteFocus(focusSnapshot, {
+              feedId: routeIntent?.feed_id || null,
+              sourceId: routeIntent?.source_id || null,
+              zoom: Number.isFinite(Number(MapAdapter?.map?.getZoom?.()))
+                ? Number(MapAdapter.map.getZoom())
+                : undefined
+            });
+            if (this.pendingRouteFocusCameraToken === focusToken) {
+              this.pendingRouteFocusCameraToken = 0;
+            }
+          }, 250);
+        }
       } else {
         this.clearRouteFocus();
+        this.pendingRouteFocusCameraToken = 0;
       }
       if (!handled) {
         const intentSummary = {
@@ -1042,6 +1063,10 @@ export const App = {
     const feedId = String(focus.feed_id || options.feedId || '').trim();
     if (feedId) {
       normalizedFocus.feed_id = feedId;
+    }
+    const eventId = String(focus.event_id || options.eventId || '').trim();
+    if (eventId) {
+      normalizedFocus.event_id = eventId;
     }
     this.currentRouteFocus = normalizedFocus;
     MapAdapter.showRouteFocusPoint?.(normalizedFocus);
@@ -2222,7 +2247,7 @@ export const App = {
     // via jumpTo in applyMapViewState. Skip all fit calls so the camera stays
     // exactly where the user left it, instead of being overridden by a fresh
     // bbox of whatever data layer is being re-rendered.
-    const skipFit = options.restoringViewState === true;
+    const skipFit = options.restoringViewState === true || this.pendingRouteFocusCameraToken > 0;
 
     // Check if we should merge with existing data (same source, multi-year)
     const shouldMerge = this.currentData &&

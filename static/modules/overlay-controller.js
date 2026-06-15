@@ -949,6 +949,8 @@ export const OverlayController = {
       this.opsSnapshotPayloads.set(overlayId, payload);
     }
 
+    MapAdapter?.refreshRouteFocusPopupFromSnapshot?.();
+
     if (!this._isOpsMode()) {
       return;
     }
@@ -997,6 +999,68 @@ export const OverlayController = {
       return true;
     }
     return false;
+  },
+
+  _findOpsSnapshotFeature(payload, focus = {}) {
+    const features = Array.isArray(payload?.geojson?.features) ? payload.geojson.features : [];
+    if (!features.length) return null;
+
+    const eventId = String(focus?.event_id || '').trim();
+    if (eventId) {
+      const exactMatch = features.find((feature) => {
+        const props = feature?.properties || {};
+        return String(props.event_id || props.storm_id || feature?.id || '').trim() === eventId;
+      });
+      if (exactMatch) return exactMatch;
+    }
+
+    const focusLon = Number(focus?.lon);
+    const focusLat = Number(focus?.lat);
+    if (Number.isFinite(focusLon) && Number.isFinite(focusLat)) {
+      let nearestFeature = null;
+      let nearestDistance = Number.POSITIVE_INFINITY;
+      for (const feature of features) {
+        const coords = feature?.geometry?.coordinates;
+        if (!Array.isArray(coords) || coords.length < 2) continue;
+        const lon = Number(coords[0]);
+        const lat = Number(coords[1]);
+        if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
+        const distance = ((lon - focusLon) ** 2) + ((lat - focusLat) ** 2);
+        if (distance < nearestDistance) {
+          nearestDistance = distance;
+          nearestFeature = feature;
+        }
+      }
+      if (nearestFeature) return nearestFeature;
+    }
+
+    return null;
+  },
+
+  resolveRouteFocusSnapshotTarget(focus = {}) {
+    const eventType = String(focus?.event_type || '').trim().toLowerCase();
+    const overlayId = this._opsOverlayIdForPayload({
+      source_id: focus?.source_id,
+      event_type: eventType
+    });
+    if (!overlayId) return null;
+    const payload = this.opsSnapshotPayloads.get(overlayId);
+    if (!payload) return null;
+    const feature = this._findOpsSnapshotFeature(payload, focus);
+    if (!feature) return null;
+    const props = feature?.properties && typeof feature.properties === 'object'
+      ? { ...feature.properties }
+      : {};
+    const coords = Array.isArray(feature?.geometry?.coordinates) && feature.geometry.coordinates.length >= 2
+      ? [Number(feature.geometry.coordinates[0]), Number(feature.geometry.coordinates[1])]
+      : [Number(focus?.lon), Number(focus?.lat)];
+    if (!Number.isFinite(coords[0]) || !Number.isFinite(coords[1])) return null;
+    return {
+      overlayId,
+      eventType,
+      props,
+      coords
+    };
   },
 
   /**
@@ -1112,6 +1176,13 @@ export const OverlayController = {
         this.handleNearbyVolcanoes(data);
       });
       console.log('OverlayController: Registered earthquake->volcano cross-link listener');
+    }
+
+    if (model.onVolcanoHistory) {
+      model.onVolcanoHistory((data) => {
+        this.handleVolcanoHistory(data);
+      });
+      console.log('OverlayController: Registered volcano history listener');
     }
 
     // Tsunami -> Runups: when user clicks "View runups" on a tsunami
@@ -3222,5 +3293,60 @@ export const OverlayController = {
     const elapsedMs = Math.round(performance.now() - t0);
     console.log(`OverlayController: Preload complete in ${elapsedMs}ms:`, summary);
     return summary;
-  }
+  },
+
+  handleVolcanoHistory(data) {
+    const { features, volcanoName, volcanoLat, volcanoLon, radiusKm } = data;
+    console.log(`OverlayController: Displaying ${features.length} historical eruptions for ${volcanoName}`);
+
+    if (!Array.isArray(features) || features.length === 0) {
+      console.log('OverlayController: No eruption history to display');
+      return;
+    }
+
+    const returnViewState = this.captureViewState();
+    const geojson = {
+      type: 'FeatureCollection',
+      features: features.map((feature) => ({
+        type: 'Feature',
+        geometry: feature.geometry,
+        properties: {
+          ...(feature.properties || {})
+        }
+      }))
+    };
+
+    const model = ModelRegistry?.getModel('point-radius');
+    if (model) {
+      model.update(geojson, 'volcano');
+    }
+
+    const maplibre = window.maplibregl || maplibregl;
+    const bounds = new maplibre.LngLatBounds();
+    if (Number.isFinite(volcanoLon) && Number.isFinite(volcanoLat)) {
+      bounds.extend([volcanoLon, volcanoLat]);
+    }
+    for (const feature of geojson.features) {
+      const coords = feature?.geometry?.coordinates;
+      if (Array.isArray(coords) && coords.length >= 2) {
+        bounds.extend(coords);
+      }
+    }
+
+    if (!bounds.isEmpty()) {
+      MapAdapter.map.fitBounds(bounds, { padding: 80, maxZoom: 9, duration: 1500 });
+    }
+
+    addGenericExitButton(
+      'volcano-history-exit-btn',
+      'Exit History View',
+      '#feb24c',
+      () => {
+        document.getElementById('volcano-history-exit-btn')?.remove();
+        this.restoreViewState(returnViewState, ['volcanoes']);
+      }
+    );
+
+    console.log(`OverlayController: Loaded volcano history view for ${volcanoName} within ${radiusKm}km`);
+  },
 };

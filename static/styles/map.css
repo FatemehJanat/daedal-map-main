@@ -1700,6 +1700,15 @@ body.tutorial-mode .popup-tutorial-wrap {
   background: #388e3c;
 }
 
+.popup-btn.btn-history {
+  background: #4caf50;
+  color: white;
+}
+
+.popup-btn.btn-history:hover {
+  background: #388e3c;
+}
+
 .popup-btn.btn-related {
   background: #ff9800;
   color: white;
@@ -2596,17 +2605,20 @@ body.tutorial-mode .popup-tutorial-wrap {
 }
 
 .popup-btn.btn-details,
-.popup-btn.btn-sequence {
+.popup-btn.btn-sequence,
+.popup-btn.btn-history {
   background: linear-gradient(180deg, rgba(17, 64, 84, 0.96), rgba(7, 30, 43, 0.92));
   box-shadow: var(--map-glow-cyan);
 }
 
-.popup-btn.btn-sequence {
+.popup-btn.btn-sequence,
+.popup-btn.btn-history {
   background: linear-gradient(180deg, rgba(25, 81, 92, 0.96), rgba(8, 43, 45, 0.92));
 }
 
 .popup-btn.btn-details:hover,
 .popup-btn.btn-sequence:hover,
+.popup-btn.btn-history:hover,
 .popup-btn.btn-related:hover {
   transform: translateY(-1px);
   filter: brightness(1.05);

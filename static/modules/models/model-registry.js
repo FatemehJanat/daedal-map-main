@@ -53,6 +53,11 @@ export const ModelRegistry = {
     setTrackDeps(deps);
     setPolygonDeps(deps);
 
+    // Popup action listeners should not depend on an overlay already being
+    // rendered. Route-focus popups in quiet watches need these listeners even
+    // when no point-radius dataset has been drawn yet.
+    PointRadiusModel._setupPopupEventListeners?.();
+
     // Setup central sequence dispatcher
     this.setupSequenceDispatcher();
 

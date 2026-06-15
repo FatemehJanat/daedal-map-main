@@ -226,6 +226,8 @@ function normalizeFocusState(rawFocus = null) {
     if (sourceId) normalized.source_id = sourceId;
     const feedId = String(rawFocus.feed_id || '').trim();
     if (feedId) normalized.feed_id = feedId;
+    const eventId = String(rawFocus.event_id || '').trim();
+    if (eventId) normalized.event_id = eventId;
     return normalized;
   }
 

@@ -228,6 +228,22 @@ body.chat-mode-ops {
   background: #248a52;
 }
 
+#shareMapBtn {
+  background: rgba(16, 40, 58, 0.9);
+  border: 1px solid rgba(123, 231, 255, 0.3);
+  color: #d6f6ff;
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, border-color 0.2s, box-shadow 0.2s;
+}
+
+#shareMapBtn:hover {
+  background: rgba(20, 54, 76, 0.98);
+  border-color: rgba(123, 231, 255, 0.46);
+}
+
 .header-tutorial-btn {
   background: rgba(16, 40, 58, 0.9);
   border: 1px solid rgba(123, 231, 255, 0.3);
@@ -535,7 +551,8 @@ body.mobile-limited #mobileMapNotice {
 
 #sidebarToggle,
 #newChatBtn,
-#authBtn {
+#authBtn,
+#shareMapBtn {
   box-shadow:
     0 0 0 1px rgba(var(--chat-mode-accent-rgb), 0.2),
     0 0 18px rgba(var(--chat-mode-accent-rgb), 0.12);
