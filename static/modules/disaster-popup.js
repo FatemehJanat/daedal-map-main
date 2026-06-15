@@ -10,6 +10,7 @@
  */
 
 import { CONFIG } from './config.js';
+import { fetchMsgpack } from './utils/fetch.js';
 
 const DisasterPopup = {
   // Current popup state
@@ -17,6 +18,7 @@ const DisasterPopup = {
   currentEvent: null,
   currentType: null,
   cachedData: {}, // Cache for sequence/related data
+  basicCountCache: {},
 
   // Event type icons
   icons: {
@@ -54,6 +56,18 @@ const DisasterPopup = {
     }
     const bucket = Math.max(0, Math.min(7, Math.round(numericVei)));
     return palette[bucket] || palette.default || '#ffcc00';
+  },
+
+  getEarthquakeSequenceColor(magnitude) {
+    const numericMag = Number(magnitude);
+    if (!Number.isFinite(numericMag)) {
+      return '#90caf9';
+    }
+    if (numericMag >= 8) return '#b71c1c';
+    if (numericMag >= 7) return '#d32f2f';
+    if (numericMag >= 6) return '#f57c00';
+    if (numericMag >= 5) return '#fbc02d';
+    return '#81c784';
   },
 
   /**
@@ -590,18 +604,27 @@ const DisasterPopup = {
    * Get sequence button text
    */
   getSequenceText(props, eventType) {
+    const numericCounts = [
+      props.aftershock_count,
+      props.runup_count,
+      props.sequence_count,
+      props.history_count,
+      props.impact_count
+    ].map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0);
+    const genericCount = numericCounts.length ? numericCounts[0] : null;
+
     switch (eventType) {
       case 'earthquake':
         if (props.aftershock_count > 0) {
           return `Aftershocks (${props.aftershock_count})`;
         }
-        return 'Impact';
+        return 'Chain';
 
       case 'tsunami':
         if (props.runup_count > 0) {
           return `Runups (${props.runup_count})`;
         }
-        return 'Impact';
+        return 'Runups';
 
       case 'hurricane':
       case 'tropical_storm':
@@ -614,6 +637,9 @@ const DisasterPopup = {
         return 'Path';
 
       case 'volcano':
+        if (genericCount) {
+          return `Impact (${genericCount})`;
+        }
         return 'Impact';
 
       case 'wildfire':
@@ -623,11 +649,51 @@ const DisasterPopup = {
         return 'Extent';
 
       case 'landslide':
+        if (genericCount) {
+          return `Impact (${genericCount})`;
+        }
         return 'Impact';
 
       default:
         return 'Sequence';
     }
+  },
+
+  getRelatedCount(props, eventType) {
+    if (Array.isArray(props.related_events) && props.related_events.length > 0) {
+      return props.related_events.length;
+    }
+
+    if (props.eq_event_id) return 1;
+    if (props.volcano_id) return 1;
+    if (props.hurricane_id) return 1;
+    if (props.tsunami_event_id) return 1;
+
+    if (Array.isArray(props.earthquake_event_ids) && props.earthquake_event_ids.length > 0) {
+      return props.earthquake_event_ids.length;
+    }
+
+    if (typeof props.earthquake_event_ids === 'string' && props.earthquake_event_ids.trim()) {
+      return props.earthquake_event_ids
+        .split(/[,\s;|]+/)
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+        .length;
+    }
+
+    if (eventType === 'tsunami' && String(props.cause || '').trim()) {
+      return 1;
+    }
+
+    return null;
+  },
+
+  getRelatedText(props, eventType) {
+    const relatedCount = this.getRelatedCount(props, eventType);
+    if (Number.isFinite(relatedCount) && relatedCount > 0) {
+      return `Related (${relatedCount})`;
+    }
+    return 'Related';
   },
 
   /**
@@ -662,6 +728,7 @@ const DisasterPopup = {
 
   buildPopupTutorialHelp(props, eventType) {
     const seqText = this.getSequenceText(props, eventType);
+    const relatedText = this.getRelatedText(props, eventType);
     let middleActionHelp = `${seqText} shows the event footprint or progression when available.`;
     if (seqText.startsWith('Aftershocks')) {
       middleActionHelp = `${seqText} follows the earthquake sequence tied to this event.`;
@@ -670,7 +737,7 @@ const DisasterPopup = {
     } else if (seqText === 'Track' || seqText === 'Path' || seqText === 'Progression' || seqText === 'Extent') {
       middleActionHelp = `${seqText} steps through how this disaster moved or spread.`;
     }
-    return `Details shows structured facts for this disaster. ${middleActionHelp} Related shows linked disasters such as earthquake-to-tsunami connections.`;
+    return `Details shows structured facts for this disaster. ${middleActionHelp} ${relatedText} shows linked disasters such as earthquake-to-tsunami connections.`;
   },
 
   getSequencePreview(props, eventType) {
@@ -842,6 +909,7 @@ const DisasterPopup = {
     const hasSeq = this.hasSequence(props, eventType);
     const hasRel = this.hasRelated(props, eventType);
     const seqText = this.getSequenceText(props, eventType);
+    const relatedText = this.getRelatedText(props, eventType);
 
     // Build HTML
     let html = `
@@ -884,7 +952,7 @@ const DisasterPopup = {
             ${seqText}
           </button>
           <button class="popup-btn btn-related${hasRel ? '' : ' disabled'}" data-action="related" ${hasRel ? '' : 'disabled'}>
-            Related
+            ${relatedText}
           </button>
         </div>
       </div>
@@ -946,7 +1014,7 @@ const DisasterPopup = {
           </button>
           ` : ''}
           <button class="popup-btn btn-related" data-action="related">
-            Related
+            ${this.getRelatedText(props, eventType)}
           </button>
         </div>
       </div>
@@ -1852,6 +1920,103 @@ const DisasterPopup = {
     `;
   },
 
+  buildEarthquakeSequenceConfirmPopup(props, eventType, sequenceData) {
+    const color = this.colors[eventType] || this.colors.generic;
+    const title = this.getTitle(props, eventType);
+    const summary = sequenceData
+      ? `${sequenceData.total_count || 0} events in this earthquake sequence`
+      : 'Loading earthquake sequence...';
+
+    return `
+      <div class="disaster-popup popup-related" data-type="${eventType}" data-id="${props.event_id || ''}">
+        <div class="popup-header-detail" style="border-left: 4px solid ${color}">
+          <button class="popup-back" data-action="back">&lt; Back</button>
+          <span class="popup-title-detail">Earthquake Sequence</span>
+        </div>
+
+        <div class="related-primary">
+          <span class="related-icon" style="background: ${color}">${this.icons[eventType] || this.icons.generic}</span>
+          <div class="related-info">
+            <div class="related-title">${title}</div>
+            <div class="related-subtitle">${this.getSubtitle(props, eventType)}</div>
+          </div>
+        </div>
+
+        <div class="sequence-summary">
+          <div class="seq-count">${summary}</div>
+        </div>
+      </div>
+    `;
+  },
+
+  buildEarthquakeSequencePopup(props, eventType, sequenceData) {
+    const color = this.colors[eventType] || this.colors.generic;
+    const mainshock = sequenceData?.mainshock || props || {};
+    const mainshockTitle = this.getTitle(mainshock, eventType);
+    const totalCount = Number(sequenceData?.total_count) || 0;
+    const visibleCount = Number(sequenceData?.visible_count) || 0;
+    const rows = Array.isArray(sequenceData?.events) ? sequenceData.events : [];
+    const summaryBits = [];
+    if (mainshock?.magnitude != null) {
+      summaryBits.push(`M ${Number(mainshock.magnitude).toFixed(1)}`);
+    }
+    if (mainshock?.timestamp) {
+      summaryBits.push(this.formatDate(mainshock.timestamp));
+    }
+    const normalizedSummaryText = summaryBits.join(' - ');
+    const summaryText = summaryBits.join(' · ');
+
+    const listHtml = rows.length
+      ? rows.map((evt, idx) => {
+          const eventId = String(evt.event_id || '').trim();
+          const mag = evt.magnitude != null ? `M ${Number(evt.magnitude).toFixed(1)}` : 'M ?';
+          const timeText = evt.timestamp ? this.formatDate(evt.timestamp) : '';
+          const role = idx === 0 || evt.is_mainshock ? 'Mainshock' : `Aftershock ${idx}`;
+          const accent = this.getEarthquakeSequenceColor(evt.magnitude);
+          const normalizedSublabel = [role, mag, timeText].filter(Boolean).join(' - ');
+          const sublabel = [role, mag, timeText].filter(Boolean).join(' · ');
+          return `<div class="sequence-item history-item" data-sequence-index="${idx}" style="border-left:3px solid ${accent}">
+            <span class="seq-marker" style="color:${accent}">${idx === 0 || evt.is_mainshock ? 'M' : 'A'}</span>
+            <span class="seq-label">${eventId || `Event ${idx + 1}`}</span>
+            <span class="seq-sublabel" style="color:${accent}">${normalizedSublabel}</span>
+          </div>`;
+        }).join('\n')
+      : '<div class="related-empty">No sequence events found.</div>';
+
+    const overflowNote = totalCount > visibleCount
+      ? `<div class="sequence-more">Showing ${visibleCount.toLocaleString()} of ${totalCount.toLocaleString()} events.</div>`
+      : '';
+
+    return `
+      <div class="disaster-popup popup-sequence" data-type="${eventType}" data-id="${props.event_id || ''}">
+        <div class="popup-header-detail" style="border-left: 4px solid ${color}">
+          <button class="popup-back" data-action="back">&lt; Back</button>
+          <span class="popup-title-detail">Earthquake Sequence</span>
+        </div>
+
+        <div class="sequence-summary">
+          <strong>${mainshockTitle}</strong>
+          <div class="seq-count">${totalCount.toLocaleString()} events in this sequence</div>
+          ${normalizedSummaryText ? `<div class="sequence-meta">${normalizedSummaryText}</div>` : ''}
+        </div>
+
+        <div class="sequence-list">
+          ${listHtml}
+          ${overflowNote}
+        </div>
+
+        <div class="popup-actions">
+          <button class="popup-btn btn-sequence" data-action="load-sequence">
+            Animate Aftershocks
+          </button>
+          <button class="popup-btn btn-related" data-action="related">
+            Related
+          </button>
+        </div>
+      </div>
+    `;
+  },
+
   /**
    * Build unified hover HTML for all disaster types.
    * Styled to match the click popups with color-coding.
@@ -1895,6 +2060,63 @@ const DisasterPopup = {
     `;
   },
 
+  async hydrateBasicPopupCounts(props, eventType) {
+    if (eventType !== 'earthquake') {
+      return;
+    }
+
+    const eventId = String(props?.event_id || '').trim();
+    const mainshockId = String(props?.mainshock_id || '').trim();
+    const countSourceEventId = mainshockId || eventId;
+    if (!eventId) {
+      return;
+    }
+
+    const cacheKey = `basic_${eventType}_${countSourceEventId}`;
+    if (this.basicCountCache[cacheKey]) {
+      const cached = this.basicCountCache[cacheKey];
+      Object.assign(props, cached);
+      if (this.currentEvent && String(this.currentEvent?.event_id || '').trim() === eventId) {
+          Object.assign(this.currentEvent, cached);
+      }
+      return;
+    }
+
+    if (Number(props?.aftershock_count) > 0) {
+      this.basicCountCache[cacheKey] = { aftershock_count: Number(props.aftershock_count) };
+      return;
+    }
+
+    try {
+      const data = await fetchMsgpack(`/api/earthquakes/aftershocks/${encodeURIComponent(countSourceEventId)}`);
+      const aftershockCount = Number(data?.metadata?.aftershock_count);
+      if (!Number.isFinite(aftershockCount) || aftershockCount <= 0) {
+        return;
+      }
+
+      const hydrated = {
+        aftershock_count: aftershockCount,
+        mainshock_id: countSourceEventId !== eventId ? countSourceEventId : (props?.mainshock_id || null)
+      };
+      this.basicCountCache[cacheKey] = hydrated;
+      Object.assign(props, hydrated);
+      if (this.currentEvent && String(this.currentEvent?.event_id || '').trim() === eventId) {
+        Object.assign(this.currentEvent, hydrated);
+      }
+
+      if (
+        this.state === 'BASIC'
+        && this.currentType === eventType
+        && String(this.currentEvent?.event_id || '').trim() === eventId
+      ) {
+        const html = this.buildBasicPopup(this.currentEvent, this.currentType);
+        this.updatePopupContent(html);
+      }
+    } catch (error) {
+      console.warn('Could not hydrate popup earthquake counts:', error);
+    }
+  },
+
   /**
    * Show basic popup
    */
@@ -1917,6 +2139,7 @@ const DisasterPopup = {
 
     // Setup button handlers after popup is in DOM
     setTimeout(() => this.setupButtonHandlers(), 50);
+    void this.hydrateBasicPopupCounts(this.currentEvent, this.currentType);
   },
 
   /**
@@ -1972,6 +2195,11 @@ const DisasterPopup = {
       item.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
+        if (item.dataset.sequenceIndex != null && item.dataset.sequenceIndex !== '') {
+          const index = Number(item.dataset.sequenceIndex);
+          this.handleSequenceEntryClick(index);
+          return;
+        }
         if (item.classList.contains('history-item')) {
           const index = Number(item.dataset.historyIndex);
           this.handleHistoryItemClick(index);
@@ -2018,6 +2246,15 @@ const DisasterPopup = {
    * Handle back button
    */
   handleBack() {
+    const sequenceKey = String(this.currentEvent?.sequence_context_key || '').trim();
+    if (this.state === 'DETAIL' && sequenceKey && this.cachedData[sequenceKey]) {
+      this.state = 'SEQUENCE';
+      const sequenceData = this.cachedData[sequenceKey];
+      const anchorProps = sequenceData.anchor_event || this.currentEvent;
+      const html = this.buildEarthquakeSequencePopup(anchorProps, this.currentType, sequenceData);
+      this.updatePopupContent(html);
+      return;
+    }
     const historyKey = String(this.currentEvent?.history_context_key || '').trim();
     if (this.state === 'DETAIL' && historyKey && this.cachedData[historyKey]) {
       this.state = 'HISTORY';
@@ -2067,6 +2304,25 @@ const DisasterPopup = {
    * are handled as map animations, not popup lists
    */
   showSequence() {
+    if (this.currentType === 'earthquake') {
+      this.state = 'SEQUENCE_CONFIRM';
+      const cacheKey = String(this.currentEvent?.sequence_context_key || '').trim()
+        || `eqseq_${this.currentType}_${this.currentEvent.event_id || 'focus'}`;
+      if (this.cachedData[cacheKey]) {
+        this.state = 'SEQUENCE';
+        const html = this.buildEarthquakeSequencePopup(
+          this.cachedData[cacheKey].anchor_event || this.currentEvent,
+          this.currentType,
+          this.cachedData[cacheKey]
+        );
+        this.updatePopupContent(html);
+        return;
+      }
+      const html = this.buildEarthquakeSequenceConfirmPopup(this.currentEvent, this.currentType, null);
+      this.updatePopupContent(html);
+      this.triggerSequenceDataHandler();
+      return;
+    }
     this.state = 'SEQUENCE_CONFIRM';
     const html = this.buildSequenceConfirmPopup(this.currentEvent, this.currentType);
     this.updatePopupContent(html);
@@ -2156,6 +2412,19 @@ const DisasterPopup = {
     }));
   },
 
+  triggerSequenceDataHandler() {
+    const props = this.currentEvent;
+    const eventType = this.currentType;
+
+    document.dispatchEvent(new CustomEvent('disaster-sequence-data-request', {
+      detail: {
+        eventId: props.event_id,
+        eventType,
+        props
+      }
+    }));
+  },
+
   /**
    * Trigger existing related handler based on event type
    */
@@ -2225,6 +2494,22 @@ const DisasterPopup = {
         parentId: this.currentEvent?.event_id
       }
     }));
+  },
+
+  handleSequenceEntryClick(index) {
+    const cacheKey = String(this.currentEvent?.sequence_context_key || '').trim()
+      || `eqseq_${this.currentType}_${this.currentEvent.event_id || 'focus'}`;
+    const sequenceData = this.cachedData[cacheKey] || null;
+    const events = sequenceData?.events || [];
+    const selected = events[index];
+    if (!selected) return;
+    this.currentEvent = {
+      ...selected,
+      sequence_context_key: cacheKey
+    };
+    this.state = 'DETAIL';
+    const html = this.buildDetailPopup(this.currentEvent, this.currentType, {});
+    this.updatePopupContent(html);
   },
 
   handleHistoryItemClick(index) {

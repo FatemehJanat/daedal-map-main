@@ -1,10 +1,13 @@
 import EventAnimator, { AnimationMode } from './event-animator.js';
-import { addGenericExitButton } from './overlay-disaster-common.js';
+import { addGenericExitButton, beginFocusedAnimationSession } from './overlay-disaster-common.js';
 
 export function handleTornadoPointAnimation(controller, data, deps) {
   const { MapAdapter, TimeSlider } = deps;
   const { eventId, scale, timestamp } = data;
-  const returnViewState = controller.captureViewState?.();
+  const overlaysToRestore = controller.captureFocusedOverlayIds?.(['tornadoes']) || ['tornadoes'];
+  const session = beginFocusedAnimationSession(controller, overlaysToRestore, {
+    entryDurationMs: 1500
+  });
   const latitude = parseFloat(data.latitude);
   const longitude = parseFloat(data.longitude);
   if (isNaN(latitude) || isNaN(longitude)) return console.warn('OverlayController: Invalid coordinates for tornado point animation:', data);
@@ -44,7 +47,7 @@ export function handleTornadoPointAnimation(controller, data, deps) {
         TimeSlider.enterEventAnimation?.(startMs, endMs);
       }
     }
-    controller._tornadoPointAnimState = { sourceId, layerId, startMs, endMs, scaleId, returnViewState };
+    controller._tornadoPointAnimState = { sourceId, layerId, startMs, endMs, scaleId, returnViewState: session.returnViewState };
     controller._tornadoPointTimeHandler = (time) => {
       if (!controller._tornadoPointAnimState) return;
       const progress = Math.max(0, Math.min(1, (time - startMs) / (endMs - startMs)));
@@ -80,7 +83,10 @@ export function exitTornadoPointAnimation(controller, deps) {
 export function handleTornadoSequence(controller, data, deps) {
   const { MapAdapter, TimeSlider, dataCache, yearRangeCache } = deps;
   const { geojson, seedEventId, sequenceCount } = data;
-  const returnViewState = controller.captureViewState?.();
+  const overlaysToRestore = controller.captureFocusedOverlayIds?.(['tornadoes']) || ['tornadoes'];
+  const session = beginFocusedAnimationSession(controller, overlaysToRestore, {
+    entryDurationMs: 1400
+  });
   console.log(`OverlayController: Starting tornado sequence animation for ${seedEventId} with ${sequenceCount} tornadoes`);
   if (!geojson?.features?.length) return console.warn('OverlayController: No data for tornado sequence animation');
   if (geojson.features.length === 1 && !geojson.features[0].properties?.track) {
@@ -110,12 +116,14 @@ export function handleTornadoSequence(controller, data, deps) {
     renderer: 'point-radius',
     center: centerLat && centerLon ? { lat: centerLat, lon: centerLon } : null,
     zoom: 8,
+    autoPlay: true,
+    autoPlayDelayMs: session.autoPlayDelayMs,
     rendererOptions: { eventType: 'tornado' },
     onExit: () => {
-      controller.restoreViewState?.(returnViewState, ['tornadoes']);
+      session.restore();
     }
   });
   if (!started) {
-    controller.restoreViewState?.(returnViewState, ['tornadoes']);
+    session.restore();
   }
 }

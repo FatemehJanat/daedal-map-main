@@ -1,9 +1,13 @@
 import EventAnimator, { AnimationMode } from './event-animator.js';
+import { beginFocusedAnimationSession } from './overlay-disaster-common.js';
 
 export function handleTsunamiRunups(controller, data, deps) {
   const { MapAdapter, TimeSlider, dataCache, yearRangeCache } = deps;
   const { geojson, eventId, runupCount } = data;
-  const returnViewState = controller.captureViewState?.();
+  const overlaysToRestore = controller.captureFocusedOverlayIds?.(['tsunamis']) || ['tsunamis'];
+  const session = beginFocusedAnimationSession(controller, overlaysToRestore, {
+    entryDurationMs: 1500
+  });
   console.log(`OverlayController: Starting tsunami runups animation for ${eventId} with ${runupCount} runups`);
   if (!geojson?.features || geojson.features.length < 2) return console.warn('OverlayController: Not enough data for tsunami animation');
   const sourceEvent = geojson.features.find(f => f.properties?.is_source === true);
@@ -25,10 +29,10 @@ export function handleTsunamiRunups(controller, data, deps) {
     renderer: 'point-radius',
     rendererOptions: { eventType: 'tsunami' },
     onExit: () => {
-      controller.restoreViewState?.(returnViewState, ['tsunamis']);
+      session.restore();
     }
   });
   if (!started) {
-    controller.restoreViewState?.(returnViewState, ['tsunamis']);
+    session.restore();
   }
 }

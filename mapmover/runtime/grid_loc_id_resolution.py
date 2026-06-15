@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 import pandas as pd
@@ -332,6 +333,26 @@ def _resolve_metric_aggregation(metric: str, aggregation_method: str, metric_agg
     return str(aggregation_method or "area_weighted_mean").strip().lower()
 
 
+def _weighted_quantile(values: pd.Series, weights: pd.Series, quantile: float) -> float | None:
+    if values.empty or weights.empty:
+        return None
+    q = float(quantile)
+    if math.isnan(q):
+        return None
+    q = max(0.0, min(1.0, q))
+    ordered = pd.DataFrame({"value": values.astype(float), "weight": weights.astype(float)})
+    ordered = ordered.replace([float("inf"), float("-inf")], pd.NA).dropna()
+    ordered = ordered.loc[ordered["weight"] > 0].sort_values("value").reset_index(drop=True)
+    if ordered.empty:
+        return None
+    cumulative = ordered["weight"].cumsum()
+    threshold = q * float(ordered["weight"].sum())
+    match = ordered.loc[cumulative >= threshold, "value"]
+    if match.empty:
+        return float(ordered["value"].iloc[-1])
+    return float(match.iloc[0])
+
+
 def aggregate_grid_to_loc_ids(
     cell_rows: list[dict[str, Any]],
     overlap_rows: pd.DataFrame | list[dict[str, Any]],
@@ -342,6 +363,7 @@ def aggregate_grid_to_loc_ids(
     target_loc_id_field: str = "loc_id",
     aggregation_method: str = "area_weighted_mean",
     metric_aggregations: dict[str, str] | None = None,
+    metric_stats: dict[str, list[str]] | None = None,
 ) -> pd.DataFrame:
     """
     Aggregate cell metrics to loc_ids using overlap-derived cell fractions.
@@ -381,19 +403,36 @@ def aggregate_grid_to_loc_ids(
             if not valid.any():
                 row[metric] = None
                 continue
+            valid_values = values[valid]
+            valid_weights = weights[valid]
             mode = _resolve_metric_aggregation(metric, aggregation_method, metric_aggregations)
             if mode in {"area_weighted_mean", "weighted_mean", "mean"}:
-                weighted_total = float((values[valid] * weights[valid]).sum())
-                denom = float(weights[valid].sum())
+                weighted_total = float((valid_values * valid_weights).sum())
+                denom = float(valid_weights.sum())
                 row[metric] = weighted_total / denom if denom > 0 else None
             elif mode in {"weighted_sum", "sum"}:
-                row[metric] = float((values[valid] * weights[valid]).sum())
+                row[metric] = float((valid_values * valid_weights).sum())
             elif mode == "max":
-                row[metric] = float(values[valid].max())
+                row[metric] = float(valid_values.max())
             elif mode == "min":
-                row[metric] = float(values[valid].min())
+                row[metric] = float(valid_values.min())
             else:
                 raise ValueError(f"Unsupported aggregation mode for {metric}: {mode}")
+            requested_stats = [str(stat or "").strip().lower() for stat in (metric_stats or {}).get(metric, []) if str(stat or "").strip()]
+            for stat_name in requested_stats:
+                stat_col = f"{metric}__{stat_name}"
+                if stat_name == "min":
+                    row[stat_col] = float(valid_values.min())
+                elif stat_name == "max":
+                    row[stat_col] = float(valid_values.max())
+                elif stat_name in {"p05", "p5", "q05", "q5"}:
+                    row[stat_col] = _weighted_quantile(valid_values, valid_weights, 0.05)
+                elif stat_name in {"p50", "median", "q50"}:
+                    row[stat_col] = _weighted_quantile(valid_values, valid_weights, 0.5)
+                elif stat_name in {"p95", "q95"}:
+                    row[stat_col] = _weighted_quantile(valid_values, valid_weights, 0.95)
+                else:
+                    raise ValueError(f"Unsupported metric stat for {metric}: {stat_name}")
         out_rows.append(row)
     return pd.DataFrame(out_rows)
 

@@ -13,6 +13,31 @@ export function addGenericExitButton(id, text, color, onExit) {
   document.body.appendChild(btn);
 }
 
+export function beginFocusedAnimationSession(controller, overlayIds = [], options = {}) {
+  const normalizedOverlayIds = Array.isArray(overlayIds) ? overlayIds.filter(Boolean) : [];
+  const captureOverlayIds = typeof controller?.captureFocusedOverlayIds === 'function'
+    ? controller.captureFocusedOverlayIds(normalizedOverlayIds)
+    : normalizedOverlayIds;
+  const returnViewState = controller?.captureViewState?.() || null;
+  const entryDurationMs = Number.isFinite(Number(options.entryDurationMs))
+    ? Math.max(0, Number(options.entryDurationMs))
+    : 0;
+  const autoPlayDelayMs = Number.isFinite(Number(options.autoPlayDelayMs))
+    ? Math.max(0, Number(options.autoPlayDelayMs))
+    : Math.max(600, entryDurationMs + 250);
+
+  return {
+    overlayIds: normalizedOverlayIds,
+    restoreOverlayIds: captureOverlayIds,
+    returnViewState,
+    entryDurationMs,
+    autoPlayDelayMs,
+    restore() {
+      controller?.restoreViewState?.(returnViewState, captureOverlayIds);
+    }
+  };
+}
+
 export function getBoundsFromCoords(coords) {
   if (!coords || coords.length === 0) return null;
   let minLng = Infinity;

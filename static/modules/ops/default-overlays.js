@@ -4,6 +4,7 @@ const OPS_PUBLIC_DEFAULT_OVERLAY_IDS = [
   'hurricanes',
   'tsunamis',
   'volcanoes',
+  'ocean_sst',
   'aurora',
   'currency'
 ];

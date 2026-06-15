@@ -54,7 +54,7 @@ import {
   stopHurricaneRollingAnimation as stopRollingHurricanes,
   startTrackAnimation as startHurricaneTrackAnimation
 } from './overlay-hurricane.js';
-import { addGenericExitButton } from './overlay-disaster-common.js';
+import { addGenericExitButton, beginFocusedAnimationSession } from './overlay-disaster-common.js';
 import {
   exitFireAnimation,
   exitWildfireImpact,
@@ -87,6 +87,8 @@ import {
 } from './overlay-volcano.js';
 import { fetchMsgpack } from './utils/fetch.js';
 import { WeatherGridModel, setDependencies as setWeatherGridDeps } from './models/model-weather-grid.js';
+import { OceanRasterModel, setDependencies as setOceanRasterDeps } from './models/model-ocean-raster.js';
+import { OceanRasterPanel, setDependencies as setOceanRasterPanelDeps } from './ocean-raster-panel.js';
 import { GeometryModel } from './models/model-geometry.js';
 import { AuroraOverlay } from './overlay-aurora.js';
 import { NwsAlertsOverlay } from './overlay-nws-alerts.js';
@@ -123,6 +125,17 @@ export function setDependencies(deps) {
   // Wire dependencies to WeatherGridModel
   setWeatherGridDeps({
     MapAdapter: deps.MapAdapter
+  });
+
+  // Wire dependencies to OceanRasterModel (animated SST basin rasters)
+  setOceanRasterDeps({
+    MapAdapter: deps.MapAdapter
+  });
+
+  // Wire the Ocean Temp Grid control panel
+  setOceanRasterPanelDeps({
+    OceanRasterModel,
+    getCurrentTime: () => TimeSlider?.currentTime,
   });
 }
 
@@ -767,6 +780,7 @@ export const OverlayController = {
 
   // AbortControllers for in-flight fetch requests (overlayId -> AbortController)
   abortControllers: new Map(),
+  exactEventFilters: new Map(),
 
   // Last known TimeSlider year (for change detection)
   lastTimeSliderYear: null,
@@ -1292,7 +1306,9 @@ export const OverlayController = {
    */
   handleVolcanoEarthquakes(data) {
     const { features, volcanoName, volcanoLat, volcanoLon } = data;
-    const returnViewState = this.captureViewState();
+    const session = beginFocusedAnimationSession(this, ['earthquakes'], {
+      entryDurationMs: 1500
+    });
     console.log(`OverlayController: Displaying ${features.length} earthquakes triggered by ${volcanoName}`);
 
     if (features.length === 0) return;
@@ -1388,7 +1404,7 @@ export const OverlayController = {
       renderer: 'point-radius',
       onExit: () => {
         console.log('OverlayController: Volcano earthquake sequence exited');
-        this.restoreViewState(returnViewState, ['earthquakes']);
+        session.restore();
       }
     });
 
@@ -1455,8 +1471,10 @@ export const OverlayController = {
       return;
     }
 
-    const returnViewState = this.captureViewState();
     const overlaysToRestore = (OverlaySelector?.getActiveOverlays?.() || []).filter(id => id !== 'demographics' && OVERLAY_ENDPOINTS[id]);
+    const session = beginFocusedAnimationSession(this, overlaysToRestore, {
+      entryDurationMs: 1500
+    });
 
     const typeColors = {
       earthquake: '#ff6b6b',
@@ -1538,7 +1556,7 @@ export const OverlayController = {
       granularity: '12h',
       renderer: 'point-radius',
       onExit: () => {
-        this.restoreViewState(returnViewState, overlaysToRestore);
+        session.restore();
       }
     });
   },
@@ -1839,10 +1857,35 @@ export const OverlayController = {
   },
 
   captureViewState() {
+    const camera = MapAdapter?.map
+      ? {
+          center: {
+            lng: Number(MapAdapter.map.getCenter().lng),
+            lat: Number(MapAdapter.map.getCenter().lat)
+          },
+          zoom: Number(MapAdapter.map.getZoom()),
+          bearing: Number(MapAdapter.map.getBearing()),
+          pitch: Number(MapAdapter.map.getPitch())
+        }
+      : null;
+
     return {
       timestamp: this.getCurrentTimestamp(),
-      year: this.getCurrentYear()
+      year: this.getCurrentYear(),
+      camera
     };
+  },
+
+  captureFocusedOverlayIds(preferredOverlayIds = []) {
+    const current = Array.isArray(OverlaySelector?.getActiveOverlays?.())
+      ? OverlaySelector.getActiveOverlays().filter((id) => id !== 'demographics')
+      : [];
+    const merged = [...current];
+    for (const overlayId of Array.isArray(preferredOverlayIds) ? preferredOverlayIds : []) {
+      if (!overlayId || overlayId === 'demographics' || merged.includes(overlayId)) continue;
+      merged.push(overlayId);
+    }
+    return merged;
   },
 
   restoreViewState(viewState, overlayIds = []) {
@@ -1868,6 +1911,20 @@ export const OverlayController = {
         this.renderFilteredData(overlayId, viewState.timestamp, { useTimestamp: true });
       } else if (viewState?.year != null) {
         this.renderFilteredData(overlayId, viewState.year);
+      }
+    }
+
+    if (viewState?.camera && MapAdapter?.map?.easeTo) {
+      const { center, zoom, bearing, pitch } = viewState.camera;
+      if (Number.isFinite(center?.lng) && Number.isFinite(center?.lat)) {
+        MapAdapter.map.easeTo({
+          center: [center.lng, center.lat],
+          zoom: Number.isFinite(zoom) ? zoom : MapAdapter.map.getZoom(),
+          bearing: Number.isFinite(bearing) ? bearing : MapAdapter.map.getBearing(),
+          pitch: Number.isFinite(pitch) ? pitch : MapAdapter.map.getPitch(),
+          duration: 900,
+          essential: true
+        });
       }
     }
   },
@@ -2006,6 +2063,15 @@ export const OverlayController = {
           } else {
             WeatherGridModel.renderAtTimestamp(overlayId, timestamp);
           }
+        }
+        continue;
+      }
+
+      // Handle ocean raster overlays (whole time series is in the bundle, just
+      // swap the frame for the slider position)
+      if (overlayConfig?.model === 'ocean-raster') {
+        if (OceanRasterModel.hasInstance(overlayId)) {
+          OceanRasterModel.renderAtTimestamp(overlayId, timestamp);
         }
         continue;
       }
@@ -2297,6 +2363,18 @@ export const OverlayController = {
       return;
     }
 
+    // Ocean raster overlays (animated SST basin grids)
+    if (overlayConfig?.model === 'ocean-raster') {
+      if (isActive) {
+        await this.loadOceanRasterOverlay(overlayId, overlayConfig);
+      } else {
+        this.clearOceanRasterOverlay(overlayId);
+      }
+      refreshTickerForOverlayState();
+      emitOverlayStatusMessage(overlayId, isActive, options);
+      return;
+    }
+
     if (isActive) {
       if (
         this.defaultLoadExecutor &&
@@ -2385,6 +2463,60 @@ export const OverlayController = {
   clearWeatherGridOverlay(overlayId) {
     WeatherGridModel.hide(overlayId);
     console.log(`OverlayController: Cleared weather grid ${overlayId}`);
+  },
+
+  /**
+   * Load and display an animated ocean SST basin raster overlay.
+   * The whole monthly time series ships in one per-basin bundle (XOP: full
+   * 1982-2026), so we load it once, default the visible window to the latest
+   * year, and register the monthly timestamps so Play steps through frames.
+   * Chat can widen the visible range across the full prepared span.
+   * @param {string} overlayId - Overlay ID (e.g. 'ocean-sst-grid')
+   * @param {object} config - Overlay config
+   */
+  async loadOceanRasterOverlay(overlayId, config) {
+    const sourceId = config?.rasterSource || 'ocean_sst';
+    const basins = config?.rasterBasins || ['XOP'];
+    const variable = config?.rasterVariable || 'sst_c';
+
+    console.log(`OverlayController: Loading ocean raster ${overlayId} basins=${basins.join(',')} var=${variable}`);
+    const ok = await OceanRasterModel.load(overlayId, sourceId, basins, variable);
+    if (!ok) {
+      console.error(`OverlayController: Failed to load ocean raster ${overlayId}`);
+      return;
+    }
+
+    const timestamps = OceanRasterModel.getTimestamps(overlayId);
+    const range = OceanRasterModel.getTimestampRange(overlayId);
+    if (TimeSlider && range && !this.suppressTimelineAutoShow) {
+      // Default view: the latest year of the prepared window; full prepared span
+      // (~10 years) stays available so chat can ask for more time.
+      const latest = range.max;
+      const defaultMin = Math.max(range.min, latest - 365.25 * 24 * 3600 * 1000);
+      const visibleTimestamps = timestamps.filter(
+        (timestamp) => timestamp >= defaultMin && timestamp <= latest
+      );
+      TimeSlider.setTimeRange({
+        min: defaultMin,
+        max: latest,
+        granularity: 'monthly',
+        available: visibleTimestamps.length ? visibleTimestamps : timestamps,
+      });
+      this.showTimelineIfAllowed();
+      if (timestamps.length) TimeSlider.setTime(timestamps[timestamps.length - 1]);
+    }
+    OceanRasterPanel.show(overlayId);
+    console.log(`OverlayController: Ocean raster ${overlayId} loaded (${timestamps.length} frames)`);
+  },
+
+  /**
+   * Clear an ocean raster overlay.
+   * @param {string} overlayId - Overlay ID
+   */
+  clearOceanRasterOverlay(overlayId) {
+    OceanRasterPanel.hide();
+    OceanRasterModel.cleanup(overlayId);
+    console.log(`OverlayController: Cleared ocean raster ${overlayId}`);
   },
 
   /**
@@ -2525,6 +2657,16 @@ export const OverlayController = {
 
     if (!endpoint || !cachedData) return;
 
+    const activeAnimatorType = String(
+      EventAnimator?.config?.rendererOptions?.eventType
+      || EventAnimator?.config?.eventType
+      || ''
+    ).trim();
+    if (EventAnimator?.getIsActive?.() && activeAnimatorType && activeAnimatorType === endpoint.eventType) {
+      console.log(`OverlayController: Skipping base render for ${overlayId} while focused ${activeAnimatorType} animation is active`);
+      return;
+    }
+
     let filteredGeojson;
     const useTimestamp = options.useTimestamp && useLifecycleFiltering;
 
@@ -2574,6 +2716,18 @@ export const OverlayController = {
       filteredGeojson = cachedData;
     }
 
+    const exactEventId = String(this.exactEventFilters.get(overlayId) || '').trim();
+    if (exactEventId) {
+      filteredGeojson = {
+        ...filteredGeojson,
+        features: (Array.isArray(filteredGeojson?.features) ? filteredGeojson.features : []).filter((feature) => {
+          const props = feature?.properties || {};
+          return String(props.event_id || props.storm_id || feature?.id || '').trim() === exactEventId;
+        })
+      };
+      console.log(`OverlayController: Applied exact-event filter for ${overlayId} -> ${filteredGeojson.features.length} feature(s)`);
+    }
+
     // Track displayed year (for legacy compatibility)
     displayedYear[overlayId] = useTimestamp ? this.getYearFromTime(yearOrTimestamp) : yearOrTimestamp;
 
@@ -2600,6 +2754,8 @@ export const OverlayController = {
    * @param {string} overlayId - Overlay ID
    */
   hideOverlay(overlayId) {
+    this.clearExactEventFilter?.(overlayId);
+
     if (isSharedMetricOverlay(overlayId)) {
       const activeOverlays = OverlaySelector?.getActiveOverlays?.() || [];
       const anyMetricActive = activeOverlays.some((id) => isSharedMetricOverlay(id));
@@ -2907,6 +3063,23 @@ export const OverlayController = {
    */
   getCachedData(overlayId) {
     return getOverlayCachedData(overlayId);
+  },
+
+  setExactEventFilter(overlayId, eventId) {
+    const normalizedOverlayId = String(overlayId || '').trim();
+    const normalizedEventId = String(eventId || '').trim();
+    if (!normalizedOverlayId) return;
+    if (!normalizedEventId) {
+      this.exactEventFilters.delete(normalizedOverlayId);
+      return;
+    }
+    this.exactEventFilters.set(normalizedOverlayId, normalizedEventId);
+  },
+
+  clearExactEventFilter(overlayId) {
+    const normalizedOverlayId = String(overlayId || '').trim();
+    if (!normalizedOverlayId) return;
+    this.exactEventFilters.delete(normalizedOverlayId);
   },
 
   /**

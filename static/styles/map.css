@@ -982,14 +982,30 @@ body.chat-mode-ops #tutorialTimelineRegion:not(.timeline-region-active) > .tutor
   color: #ff9800;
   white-space: nowrap;
   pointer-events: none;
+  max-width: 84px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 #lowerTrimHandle {
   left: 0;
 }
 
+#lowerTrimHandle .trim-handle-label {
+  left: 0;
+  transform: none;
+  text-align: left;
+}
+
 #upperTrimHandle {
   right: 0;
+}
+
+#upperTrimHandle .trim-handle-label {
+  left: auto;
+  right: 0;
+  transform: none;
+  text-align: right;
 }
 
 /* Trim overlay - dims the excluded areas */
@@ -1992,9 +2008,16 @@ body.tutorial-mode .popup-tutorial-wrap {
 }
 
 .sequence-list {
-  max-height: 200px;
+  max-height: 260px;
   overflow-y: auto;
   margin-bottom: 10px;
+}
+
+.sequence-meta {
+  margin-top: 6px;
+  font-size: 11px;
+  color: #666;
+  font-style: normal;
 }
 
 .sequence-item {

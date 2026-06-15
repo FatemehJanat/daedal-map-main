@@ -26,6 +26,8 @@ const OVERLAY_ICONS = {
   'demographics': 'D',
   'disasters': '!',
   'climate': 'C',
+  'ocean_sst': 'O',
+  'ocean-sst-grid': 'O',
   'usa': 'U',
   'earthquakes': 'E',
   'volcanoes': 'V',
@@ -58,6 +60,7 @@ const OPS_FEED_TO_OVERLAY_IDS = {
   earthquakes: ['earthquakes'],
   volcanoes: ['volcanoes'],
   hurricanes_ibtracs_nrt: ['hurricanes'],
+  ocean_sst: ['ocean_sst'],
   tsunamis: ['tsunamis'],
   wildfires_us_nifc: ['wildfires'],
   noaa_aurora: ['aurora'],
@@ -348,7 +351,7 @@ function buildCategoriesFromTree(overlayTree) {
         });
       }
 
-      if (allChildrenAreChoropleths && overlays.length) {
+      if (allChildrenAreChoropleths && overlays.length && categoryId !== 'climate') {
         metricOverlays.push(...overlays);
         continue;
       }
@@ -381,18 +384,6 @@ function buildCategoriesFromTree(overlayTree) {
         packIds: deriveOverlayPackIds(categoryId, categoryData.sources)
       };
 
-      if (categoryId === 'climate') {
-        categories.push({
-          id: 'climate',
-          label: categoryData.label || 'Climate',
-          icon: icon,
-          isCategory: true,
-          expanded: false,
-          overlays: [overlay]
-        });
-        continue;
-      }
-
       if (model === 'choropleth') {
         metricOverlays.push(overlay);
         continue;
@@ -411,16 +402,8 @@ function buildCategoriesFromTree(overlayTree) {
   // Add or extend climate overlays. Some catalogs now provide a Climate
   // category, so merge instead of blindly appending a duplicate section.
   const hardcodedClimateOverlays = [
-    { id: 'temperature', label: 'Temperature', description: 'Global temperature', default: false, locked: false, model: 'weather-grid', icon: '*', hasYearFilter: true, variable: 'temp_c' },
-    { id: 'humidity', label: 'Humidity', description: 'Relative humidity', default: false, locked: false, model: 'weather-grid', icon: '%', hasYearFilter: true, variable: 'humidity' },
-    { id: 'snow-depth', label: 'Snow Depth', description: 'Snow depth', default: false, locked: false, model: 'weather-grid', icon: '#', hasYearFilter: true, variable: 'snow_depth_m' },
-    { id: 'precipitation', label: 'Precipitation', description: 'Rainfall', default: false, locked: false, model: 'weather-grid', icon: ',', hasYearFilter: true, variable: 'precipitation_mm' },
-    { id: 'cloud-cover', label: 'Cloud Cover', description: 'Cloud coverage', default: false, locked: false, model: 'weather-grid', icon: 'o', hasYearFilter: true, variable: 'cloud_cover_pct' },
-    { id: 'pressure', label: 'Pressure', description: 'Sea level pressure', default: false, locked: false, model: 'weather-grid', icon: 'P', hasYearFilter: true, variable: 'pressure_hpa' },
-    { id: 'solar-radiation', label: 'Solar Radiation', description: 'Surface solar radiation', default: false, locked: false, model: 'weather-grid', icon: 'S', hasYearFilter: true, variable: 'solar_radiation' },
-    { id: 'soil-temp', label: 'Soil Temperature', description: 'Surface soil temp', default: false, locked: false, model: 'weather-grid', icon: 'G', hasYearFilter: true, variable: 'soil_temp_c' },
-    { id: 'soil-moisture', label: 'Soil Moisture', description: 'Surface soil moisture', default: false, locked: false, model: 'weather-grid', icon: 'M', hasYearFilter: true, variable: 'soil_moisture' },
-    { id: 'aurora', label: 'Aurora', description: 'Live aurora forecast', default: false, locked: false, model: 'aurora', icon: 'A', hasYearFilter: false, live: true }
+    { id: 'aurora', label: 'Aurora', description: 'Live aurora forecast', default: false, locked: false, model: 'aurora', icon: 'A', hasYearFilter: false, live: true },
+    { id: 'ocean-sst-grid', label: 'Ocean Temp Grid', description: 'Monthly ocean temperature grid', default: false, locked: false, model: 'ocean-raster', icon: 'O', hasYearFilter: false, live: false, rasterSource: 'ocean_sst', rasterBasins: ['XOP'], rasterVariable: 'sst_c' }
   ];
   const climateCategory = categories.find((cat) => cat.id === 'climate' && cat.isCategory);
   if (climateCategory) {

@@ -1,0 +1,156 @@
+/**
+ * Ocean Temp Grid control panel.
+ *
+ * Self-contained floating panel (inline styles, no HTML/CSS dependency) wired to
+ * OceanRasterModel: variable toggle (Temperature / Anomaly), opacity slider, and
+ * a color legend. Opens when the Ocean Temp Grid overlay is toggled on.
+ */
+
+let _model = null;
+let _getTime = null;
+
+export function setDependencies(deps) {
+  _model = deps.OceanRasterModel;
+  _getTime = deps.getCurrentTime || (() => Date.now());
+}
+
+const PANEL_ID = 'ocean-raster-panel';
+const VAR_LABELS = { sst_c: 'Temperature', sst_anom_c: 'Anomaly' };
+const VAR_UNIT = '°C';
+
+let _overlayId = null;
+
+function _gradientCss(scale) {
+  const stops = scale?.stops || [];
+  const min = scale?.min ?? (stops[0]?.[0] ?? 0);
+  const max = scale?.max ?? (stops[stops.length - 1]?.[0] ?? 1);
+  const range = (max - min) || 1;
+  const parts = stops.map(([v, hex]) => `${hex} ${Math.round(((v - min) / range) * 100)}%`);
+  return { css: `linear-gradient(to right, ${parts.join(', ')})`, min, max };
+}
+
+function _build() {
+  let panel = document.getElementById(PANEL_ID);
+  if (panel) return panel;
+
+  panel = document.createElement('div');
+  panel.id = PANEL_ID;
+  Object.assign(panel.style, {
+    position: 'fixed', top: '88px', right: '16px', zIndex: '2000', width: '224px',
+    background: 'rgba(18,20,26,0.9)', color: '#e8eaed',
+    font: "12px/1.45 system-ui, -apple-system, sans-serif",
+    borderRadius: '10px', padding: '12px 14px',
+    boxShadow: '0 6px 22px rgba(0,0,0,0.45)', backdropFilter: 'blur(6px)',
+    border: '1px solid rgba(255,255,255,0.08)', display: 'none',
+  });
+
+  // Header
+  const header = document.createElement('div');
+  Object.assign(header.style, { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' });
+  const title = document.createElement('div');
+  title.textContent = 'Ocean Temp Grid';
+  Object.assign(title.style, { fontWeight: '600', fontSize: '13px' });
+  const close = document.createElement('button');
+  close.textContent = '×';
+  Object.assign(close.style, { background: 'transparent', border: 'none', color: '#aab', fontSize: '18px', cursor: 'pointer', lineHeight: '1', padding: '0 2px' });
+  close.addEventListener('click', () => OceanRasterPanel.hide());
+  header.appendChild(title);
+  header.appendChild(close);
+  panel.appendChild(header);
+
+  // Variable toggle
+  const varRow = document.createElement('div');
+  varRow.id = `${PANEL_ID}-vars`;
+  Object.assign(varRow.style, { display: 'flex', gap: '6px', marginBottom: '12px' });
+  panel.appendChild(varRow);
+
+  // Opacity
+  const opRow = document.createElement('div');
+  Object.assign(opRow.style, { marginBottom: '12px' });
+  const opLabel = document.createElement('div');
+  Object.assign(opLabel.style, { display: 'flex', justifyContent: 'space-between', marginBottom: '4px', color: '#bcc' });
+  const opText = document.createElement('span'); opText.textContent = 'Opacity';
+  const opVal = document.createElement('span'); opVal.id = `${PANEL_ID}-opval`;
+  opLabel.appendChild(opText); opLabel.appendChild(opVal);
+  const opSlider = document.createElement('input');
+  opSlider.type = 'range'; opSlider.min = '0'; opSlider.max = '100'; opSlider.id = `${PANEL_ID}-opacity`;
+  Object.assign(opSlider.style, { width: '100%', accentColor: '#5ec5ff' });
+  opSlider.addEventListener('input', () => {
+    const o = Number(opSlider.value) / 100;
+    opVal.textContent = `${opSlider.value}%`;
+    if (_overlayId && _model) _model.setOpacity(_overlayId, o);
+  });
+  opRow.appendChild(opLabel); opRow.appendChild(opSlider);
+  panel.appendChild(opRow);
+
+  // Legend
+  const legend = document.createElement('div');
+  legend.id = `${PANEL_ID}-legend`;
+  const legendBar = document.createElement('div');
+  legendBar.id = `${PANEL_ID}-legendbar`;
+  Object.assign(legendBar.style, { height: '10px', borderRadius: '3px', marginBottom: '3px' });
+  const legendLabels = document.createElement('div');
+  legendLabels.id = `${PANEL_ID}-legendlabels`;
+  Object.assign(legendLabels.style, { display: 'flex', justifyContent: 'space-between', color: '#9aa', fontSize: '11px' });
+  legend.appendChild(legendBar); legend.appendChild(legendLabels);
+  panel.appendChild(legend);
+
+  document.body.appendChild(panel);
+  return panel;
+}
+
+function _renderVariables(panel) {
+  const varRow = panel.querySelector(`#${PANEL_ID}-vars`);
+  varRow.innerHTML = '';
+  const variables = _model.getVariables(_overlayId);
+  const active = _model.getVariable(_overlayId);
+  for (const v of variables) {
+    const btn = document.createElement('button');
+    btn.textContent = VAR_LABELS[v] || v;
+    const isActive = v === active;
+    Object.assign(btn.style, {
+      flex: '1', padding: '5px 0', borderRadius: '6px', cursor: 'pointer', fontSize: '12px',
+      border: '1px solid rgba(255,255,255,0.12)',
+      background: isActive ? '#3a6ea5' : 'rgba(255,255,255,0.06)',
+      color: isActive ? '#fff' : '#ccd',
+    });
+    btn.addEventListener('click', () => {
+      _model.setVariable(_overlayId, v);
+      _model.renderAtTimestamp(_overlayId, _getTime());
+      _renderVariables(panel);
+      _renderLegend(panel);
+    });
+    varRow.appendChild(btn);
+  }
+}
+
+function _renderLegend(panel) {
+  const scale = _model.getColorScale(_overlayId, _model.getVariable(_overlayId));
+  const bar = panel.querySelector(`#${PANEL_ID}-legendbar`);
+  const labels = panel.querySelector(`#${PANEL_ID}-legendlabels`);
+  if (!scale) { bar.style.background = '#444'; labels.innerHTML = ''; return; }
+  const { css, min, max } = _gradientCss(scale);
+  bar.style.background = css;
+  labels.innerHTML = `<span>${min}${VAR_UNIT}</span><span>${max}${VAR_UNIT}</span>`;
+}
+
+export const OceanRasterPanel = {
+  show(overlayId) {
+    if (!_model) return;
+    _overlayId = overlayId;
+    const panel = _build();
+    _renderVariables(panel);
+    const op = Math.round((_model.getOpacity(overlayId) ?? 0.6) * 100);
+    const slider = panel.querySelector(`#${PANEL_ID}-opacity`);
+    const opVal = panel.querySelector(`#${PANEL_ID}-opval`);
+    if (slider) slider.value = String(op);
+    if (opVal) opVal.textContent = `${op}%`;
+    _renderLegend(panel);
+    panel.style.display = 'block';
+  },
+
+  hide() {
+    const panel = document.getElementById(PANEL_ID);
+    if (panel) panel.style.display = 'none';
+  },
+};

@@ -1393,6 +1393,11 @@ export const MapAdapter = {
     'NZL': { center: [172, -41], zoom: 5 },
     'KIR': { center: [-170, 0], zoom: 5 },
     'ATA': { center: [0, -82], zoom: 2 },
+    // Marine basins that cross the antimeridian (X* water-body loc_ids). Their
+    // true bbox wraps the wrong way; raster clip bundles for these store
+    // longitude in a continuous 0-360 frame (see CLIMATE_DISPLAY.md). Add other
+    // crossers (e.g. XON Arctic is circumpolar) as their bundles get built.
+    'XOP': { center: [-160, 0], zoom: 2 },  // Pacific Ocean
     // Wide overseas-territory cases
     'FRA': { center: [2.5, 46.5], zoom: 5 },
     'GBR': { center: [-2, 54], zoom: 5 },

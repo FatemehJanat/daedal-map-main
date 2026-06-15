@@ -16,6 +16,19 @@ import {
 } from './overlay-cache.js';
 import { fetchMsgpack } from './utils/fetch.js';
 
+function resolveClimateGridRequest(endpoint) {
+  if (endpoint?.climateGrid?.variables?.length) {
+    return {
+      variables: endpoint.climateGrid.variables,
+      variableOverlayMap: endpoint.climateGrid.variableOverlayMap || VARIABLE_OVERLAY_MAP
+    };
+  }
+  return {
+    variables: CLIMATE_VARIABLES,
+    variableOverlayMap: VARIABLE_OVERLAY_MAP
+  };
+}
+
 /**
  * Load weather grid data for a specific year.
  * Weather data uses a different format than GeoJSON overlays.
@@ -26,8 +39,10 @@ export async function loadWeatherYearData(overlayId, year, endpoint, signal = nu
     return true;
   }
 
-  const missingVars = CLIMATE_VARIABLES.filter((varName) => {
-    const varOverlayId = VARIABLE_OVERLAY_MAP[varName];
+  const climateGrid = resolveClimateGridRequest(endpoint);
+
+  const missingVars = climateGrid.variables.filter((varName) => {
+    const varOverlayId = climateGrid.variableOverlayMap[varName];
     return !dataCache[varOverlayId]?.years?.[year];
   });
 
@@ -37,6 +52,13 @@ export async function loadWeatherYearData(overlayId, year, endpoint, signal = nu
   }
 
   const url = new URL(endpoint.baseUrl, window.location.origin);
+  const defaultParams = endpoint.params || {};
+  for (const [key, value] of Object.entries(defaultParams)) {
+    if (key === 'variable') continue;
+    if (value !== undefined && value !== null && value !== '') {
+      url.searchParams.set(key, String(value));
+    }
+  }
   url.searchParams.set('tier', endpoint.params.tier || 'monthly');
   url.searchParams.set('variables', missingVars.join(','));
   url.searchParams.set('year', year);
@@ -59,7 +81,7 @@ export async function loadWeatherYearData(overlayId, year, endpoint, signal = nu
 
     if (data.variables && data.color_scales) {
       for (const variable of data.variables) {
-        const varOverlayId = VARIABLE_OVERLAY_MAP[variable];
+        const varOverlayId = climateGrid.variableOverlayMap[variable];
         if (!varOverlayId) continue;
 
         if (!dataCache[varOverlayId]) {
@@ -97,7 +119,7 @@ export async function loadWeatherYearData(overlayId, year, endpoint, signal = nu
       console.log(`OverlayController: Cached ${data.variables.length} climate variables for year ${year} (${frameCount} frames)`);
 
       for (const variable of data.variables) {
-        const varOverlayId = VARIABLE_OVERLAY_MAP[variable];
+        const varOverlayId = climateGrid.variableOverlayMap[variable];
         if (varOverlayId) {
           window.dispatchEvent(new CustomEvent('overlayCacheUpdated', { detail: { overlayId: varOverlayId, year } }));
         }

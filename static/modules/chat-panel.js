@@ -437,6 +437,10 @@ function ingestEventsToOverlay(response, order = null) {
     return '';
   }
 
+  if (OverlayController?.clearExactEventFilter && !isExactEventOrder(order)) {
+    OverlayController.clearExactEventFilter(overlayId);
+  }
+
   OverlaySelector?.showOverlay?.(overlayId);
   if (OverlaySelector && !OverlaySelector.isActive(overlayId)) {
     OverlaySelector.setActive(overlayId, true);
@@ -511,6 +515,8 @@ function applyExactEventFocusState(order = null, response = null) {
   if (!featureTargetId) {
     return false;
   }
+
+  OverlayController?.setExactEventFilter?.(overlayId, featureTargetId);
 
   const cached = window.OverlayController?.getCachedData?.(overlayId);
   const cachedFeatures = Array.isArray(cached?.features) ? cached.features : [];

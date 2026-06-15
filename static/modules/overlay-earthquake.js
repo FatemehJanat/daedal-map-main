@@ -1,13 +1,14 @@
 import EventAnimator, { AnimationMode } from './event-animator.js';
+import { beginFocusedAnimationSession } from './overlay-disaster-common.js';
 
 export async function handleSequenceChange(controller, sequenceId, eventId, deps) {
   const { ModelRegistry, OverlaySelector, OVERLAY_ENDPOINTS, TimeSlider, dataCache, yearRangeCache, gardnerKnopoffTimeWindow, fetchMsgpack } = deps;
+  const VIEWPORT_DURATION_MS = 1500;
   if (EventAnimator.getIsActive()) EventAnimator.stop();
   if (!sequenceId && !eventId) {
     controller.restoreViewState?.(controller.captureViewState?.(), ['earthquakes']);
     return;
   }
-  const returnViewState = controller.captureViewState?.();
   const cacheKey = eventId || sequenceId;
   let seqEvents;
   try {
@@ -46,10 +47,13 @@ export async function handleSequenceChange(controller, sequenceId, eventId, deps
   const label = `M${mainMag.toFixed(1)} ${new Date(mainTime).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
   const activeOverlays = OverlaySelector?.getActiveOverlays() || [];
   const overlaysToRestore = activeOverlays.filter(id => id !== 'demographics' && OVERLAY_ENDPOINTS[id]);
+  const session = beginFocusedAnimationSession(controller, overlaysToRestore, {
+    entryDurationMs: VIEWPORT_DURATION_MS
+  });
   const model = ModelRegistry?.getModelForType('earthquake');
   if (model?.clear) model.clear();
   EventAnimator.start({
-    id: `seq-${sequenceId.substring(0, 8)}`,
+    id: `seq-${String(cacheKey || 'earthquake').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 12)}`,
     label,
     mode: AnimationMode.EARTHQUAKE,
     events: seqEvents,
@@ -58,8 +62,10 @@ export async function handleSequenceChange(controller, sequenceId, eventId, deps
     timeField: 'timestamp',
     granularity: granularityLabel,
     renderer: 'point-radius',
+    autoPlay: true,
+    autoPlayDelayMs: session.autoPlayDelayMs,
     onExit: () => {
-      controller.restoreViewState?.(returnViewState, overlaysToRestore);
+      session.restore();
     }
   });
 }

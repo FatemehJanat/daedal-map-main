@@ -1,8 +1,12 @@
-import { addGenericExitButton, createCircleFeature } from './overlay-disaster-common.js';
+import { addGenericExitButton, beginFocusedAnimationSession, createCircleFeature } from './overlay-disaster-common.js';
 
 export function handleVolcanoImpact(controller, data, deps) {
   const { MapAdapter } = deps;
   const { volcanoName, latitude, longitude, feltRadius, damageRadius, VEI } = data;
+  const overlaysToRestore = controller.captureFocusedOverlayIds?.(['volcanoes']) || ['volcanoes'];
+  const session = beginFocusedAnimationSession(controller, overlaysToRestore, {
+    entryDurationMs: 1500
+  });
   console.log(`OverlayController: Starting volcano impact animation for ${volcanoName} (VEI ${VEI})`);
   if (!latitude || !longitude) return console.warn('OverlayController: No coordinates for volcano impact animation');
   MapAdapter?.hidePopup?.();
@@ -43,17 +47,18 @@ export function handleVolcanoImpact(controller, data, deps) {
     if (progress < 1) requestAnimationFrame(animate);
   };
   setTimeout(animate, 1600);
-  controller._volcanoImpactState = { feltSourceId, damageSourceId, feltLayerId, damageLayerId, feltStrokeId, damageStrokeId };
+  controller._volcanoImpactState = { feltSourceId, damageSourceId, feltLayerId, damageLayerId, feltStrokeId, damageStrokeId, returnViewState: session.returnViewState };
   addGenericExitButton('volcano-exit-btn', 'Exit Impact View', '#ff5722', () => exitVolcanoImpact(controller, deps));
 }
 
 export function exitVolcanoImpact(controller, deps) {
   const { MapAdapter } = deps;
   if (controller._volcanoImpactState) {
-    const { feltSourceId, damageSourceId, feltLayerId, damageLayerId, feltStrokeId, damageStrokeId } = controller._volcanoImpactState;
+    const { feltSourceId, damageSourceId, feltLayerId, damageLayerId, feltStrokeId, damageStrokeId, returnViewState } = controller._volcanoImpactState;
     [feltLayerId, damageLayerId, feltStrokeId, damageStrokeId].forEach(id => { if (MapAdapter.map.getLayer(id)) MapAdapter.map.removeLayer(id); });
     [feltSourceId, damageSourceId].forEach(id => { if (MapAdapter.map.getSource(id)) MapAdapter.map.removeSource(id); });
     controller._volcanoImpactState = null;
+    controller.restoreViewState?.(returnViewState, ['volcanoes']);
   }
   document.getElementById('volcano-exit-btn')?.remove();
 }

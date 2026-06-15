@@ -145,6 +145,53 @@ export const PointRadiusModel = {
     return Math.max(0.5, baseWidth * 0.45);
   },
 
+  _featureSortValue(feature, eventType) {
+    const props = feature?.properties || {};
+    switch (eventType) {
+      case 'earthquake':
+        return Number(props.magnitude) || 0;
+      case 'volcano':
+        return Number(props.VEI) || 0;
+      case 'tsunami':
+        return Number(props.runup_count) || 0;
+      case 'wildfire':
+        return Number(props.area_km2) || 0;
+      case 'flood':
+        return Number(props.duration_days) || 0;
+      case 'tornado': {
+        const raw = String(props.tornado_scale || 'EF0');
+        const parsed = parseInt(raw.replace(/[^0-9]/g, ''), 10);
+        return Number.isFinite(parsed) ? parsed : 0;
+      }
+      case 'landslide':
+        return Number(props.intensity) || 0;
+      default:
+        return Number(props.year) || 0;
+    }
+  },
+
+  _sortGeojsonForEventType(geojson, eventType) {
+    const features = Array.isArray(geojson?.features) ? geojson.features : [];
+    if (features.length <= 1) {
+      return geojson;
+    }
+    return {
+      ...geojson,
+      features: [...features].sort((a, b) => this._featureSortValue(a, eventType) - this._featureSortValue(b, eventType))
+    };
+  },
+
+  _pickBestFeatureCandidate(features, eventType) {
+    const candidates = Array.isArray(features) ? features.filter(Boolean) : [];
+    if (!candidates.length) return null;
+    return candidates.reduce((best, candidate) => {
+      if (!best) return candidate;
+      return this._featureSortValue(candidate, eventType) > this._featureSortValue(best, eventType)
+        ? candidate
+        : best;
+    }, null);
+  },
+
   _iconLayerId(eventType) {
     return this._layerId('icon', eventType);
   },
@@ -316,6 +363,7 @@ export const PointRadiusModel = {
     const sourceId = this._layerId('source', eventType);
     const layerId = this._iconLayerId(eventType);
     const imageId = this._iconImageId(eventType);
+    const sortKey = this._getCircleSortKey(eventType);
     if (!map.getSource(sourceId) || map.getLayer(layerId) || !map.hasImage(imageId)) return;
 
     map.addLayer({
@@ -328,7 +376,8 @@ export const PointRadiusModel = {
         'icon-size': this._buildIconSizeExpr(eventType, iconSizeExpr),
         'icon-allow-overlap': true,
         'icon-ignore-placement': true,
-        'icon-anchor': 'center'
+        'icon-anchor': 'center',
+        'symbol-sort-key': sortKey
       },
       paint: {
         'icon-opacity': opacityExpr,
@@ -454,6 +503,8 @@ export const PointRadiusModel = {
       return;
     }
 
+    const sortedGeojson = this._sortGeojsonForEventType(geojson, eventType);
+
     // Check if source already exists - if so, just update data (no flash)
     const sourceId = this._layerId('source', eventType);
     const existingSource = MapAdapter.map.getSource(sourceId);
@@ -461,7 +512,7 @@ export const PointRadiusModel = {
     if (existingSource) {
       // Source exists - just update data, don't recreate layers
       this.activeTypes.add(eventType);
-      existingSource.setData(geojson);
+      existingSource.setData(sortedGeojson);
       this._ensureEventTypeIconLayer(eventType);
       return true;
     }
@@ -473,7 +524,7 @@ export const PointRadiusModel = {
     // Add type-specific source (allows multiple overlays)
     MapAdapter.map.addSource(sourceId, {
       type: 'geojson',
-      data: geojson
+      data: sortedGeojson
     });
 
     // Build layers based on event type (pass eventType for type-specific layer IDs)
@@ -503,7 +554,8 @@ export const PointRadiusModel = {
       if (TimeSlider?.isPlaying) return;
 
       if (e.features.length > 0) {
-        const props = e.features[0].properties;
+        const pickedFeature = this._pickBestFeatureCandidate(e.features, eventType) || e.features[0];
+        const props = pickedFeature.properties;
 
         // Use unified DisasterPopup system
         DisasterPopup.show([e.lngLat.lng, e.lngLat.lat], props, eventType);
@@ -2383,11 +2435,12 @@ export const PointRadiusModel = {
     const eventType = options.eventType || this.activeType || 'generic_event';
     const sourceId = this._layerId('source', eventType);
     const source = MapAdapter.map.getSource(sourceId);
+    const sortedGeojson = this._sortGeojsonForEventType(geojson, eventType);
     if (source) {
-      source.setData(geojson);
+      source.setData(sortedGeojson);
     } else {
       // Source doesn't exist, need to render with proper event type
-      this.render(geojson, eventType, options);
+      this.render(sortedGeojson, eventType, options);
     }
   },
 
@@ -4468,6 +4521,101 @@ export const PointRadiusModel = {
 
     // NOTE: disaster-sequence-request is now handled by ModelRegistry central dispatcher
     // which routes to this model's handleSequence() method
+
+    document.addEventListener('disaster-sequence-data-request', async (e) => {
+      const { eventId, eventType, props } = e.detail || {};
+      if (eventType !== 'earthquake' || !eventId) {
+        return;
+      }
+
+      const cacheKey = `eqseq_${eventType}_${eventId}`;
+
+      try {
+        const data = await fetchMsgpack(`/api/earthquakes/aftershocks/${encodeURIComponent(eventId)}`);
+        const features = Array.isArray(data?.features) ? data.features : [];
+        if (!features.length) {
+          if (window.DisasterPopup && window.DisasterPopup.state === 'SEQUENCE_CONFIRM') {
+            window.DisasterPopup.cachedData[cacheKey] = {
+              anchor_event: { ...props, sequence_context_key: cacheKey },
+              mainshock: { ...props, sequence_context_key: cacheKey },
+              total_count: 0,
+              visible_count: 0,
+              events: []
+            };
+            window.DisasterPopup.state = 'SEQUENCE';
+            const html = window.DisasterPopup.buildEarthquakeSequencePopup(
+              window.DisasterPopup.cachedData[cacheKey].anchor_event,
+              eventType,
+              window.DisasterPopup.cachedData[cacheKey]
+            );
+            window.DisasterPopup.updatePopupContent(html);
+          }
+          return;
+        }
+
+        let mainshock = features.find((feature) => feature?.properties?.is_mainshock);
+        if (!mainshock) {
+          mainshock = features.reduce((best, candidate) => {
+            const bestMag = Number(best?.properties?.magnitude) || 0;
+            const candidateMag = Number(candidate?.properties?.magnitude) || 0;
+            return candidateMag > bestMag ? candidate : best;
+          }, features[0]);
+        }
+
+        const normalizedEvents = features
+          .map((feature) => ({ ...(feature?.properties || {}) }))
+          .filter((candidate) => String(candidate?.event_id || '').trim())
+          .sort((a, b) => {
+            if (a.is_mainshock && !b.is_mainshock) return -1;
+            if (!a.is_mainshock && b.is_mainshock) return 1;
+            const aTime = a?.timestamp ? new Date(a.timestamp).getTime() : Number.POSITIVE_INFINITY;
+            const bTime = b?.timestamp ? new Date(b.timestamp).getTime() : Number.POSITIVE_INFINITY;
+            return aTime - bTime;
+          });
+
+        const visibleEvents = normalizedEvents.slice(0, 50);
+
+        if (window.DisasterPopup) {
+          window.DisasterPopup.cachedData[cacheKey] = {
+            anchor_event: { ...props, sequence_context_key: cacheKey },
+            mainshock: { ...(mainshock?.properties || {}), sequence_context_key: cacheKey },
+            total_count: normalizedEvents.length,
+            visible_count: visibleEvents.length,
+            events: visibleEvents.map((event) => ({
+              ...event,
+              sequence_context_key: cacheKey
+            }))
+          };
+          if (window.DisasterPopup.state === 'SEQUENCE_CONFIRM') {
+            window.DisasterPopup.state = 'SEQUENCE';
+            const html = window.DisasterPopup.buildEarthquakeSequencePopup(
+              window.DisasterPopup.cachedData[cacheKey].anchor_event,
+              eventType,
+              window.DisasterPopup.cachedData[cacheKey]
+            );
+            window.DisasterPopup.updatePopupContent(html);
+          }
+        }
+      } catch (err) {
+        console.error('Error fetching earthquake sequence data:', err);
+        if (window.DisasterPopup && window.DisasterPopup.state === 'SEQUENCE_CONFIRM') {
+          window.DisasterPopup.cachedData[cacheKey] = {
+            anchor_event: { ...props, sequence_context_key: cacheKey },
+            mainshock: { ...props, sequence_context_key: cacheKey },
+            total_count: 0,
+            visible_count: 0,
+            events: []
+          };
+          window.DisasterPopup.state = 'SEQUENCE';
+          const html = window.DisasterPopup.buildEarthquakeSequencePopup(
+            window.DisasterPopup.cachedData[cacheKey].anchor_event,
+            eventType,
+            window.DisasterPopup.cachedData[cacheKey]
+          );
+          window.DisasterPopup.updatePopupContent(html);
+        }
+      }
+    });
 
     // Handle Related button clicks - uses links.parquet via API
     document.addEventListener('disaster-related-request', async (e) => {

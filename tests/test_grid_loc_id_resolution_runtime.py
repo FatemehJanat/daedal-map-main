@@ -100,6 +100,32 @@ class GridLocIdResolutionRuntimeTests(unittest.TestCase):
         self.assertAlmostEqual(float(fairfax["sst_c"]), (10.0 * 1.0 + 20.0 * 0.5) / 1.5, places=6)
         self.assertAlmostEqual(float(pacific["sst_c"]), 20.0, places=6)
 
+    def test_aggregate_grid_to_loc_ids_supports_weighted_stats(self):
+        cell_rows = [
+            {"cell_id": "c1", "timestamp": "2026-06-01", "sst_c": 10.0},
+            {"cell_id": "c2", "timestamp": "2026-06-01", "sst_c": 20.0},
+            {"cell_id": "c3", "timestamp": "2026-06-01", "sst_c": 30.0},
+        ]
+        overlap_rows = [
+            {"cell_id": "c1", "loc_id": "XOP", "cell_fraction": 1.0},
+            {"cell_id": "c2", "loc_id": "XOP", "cell_fraction": 2.0},
+            {"cell_id": "c3", "loc_id": "XOP", "cell_fraction": 1.0},
+        ]
+        out = aggregate_grid_to_loc_ids(
+            cell_rows,
+            overlap_rows,
+            metric_columns=["sst_c"],
+            time_columns=["timestamp"],
+            metric_stats={"sst_c": ["min", "max", "p05", "p50", "p95"]},
+        )
+        pacific = out[out["loc_id"] == "XOP"].iloc[0]
+        self.assertAlmostEqual(float(pacific["sst_c"]), 20.0, places=6)
+        self.assertAlmostEqual(float(pacific["sst_c__min"]), 10.0, places=6)
+        self.assertAlmostEqual(float(pacific["sst_c__max"]), 30.0, places=6)
+        self.assertAlmostEqual(float(pacific["sst_c__p05"]), 10.0, places=6)
+        self.assertAlmostEqual(float(pacific["sst_c__p50"]), 20.0, places=6)
+        self.assertAlmostEqual(float(pacific["sst_c__p95"]), 30.0, places=6)
+
     def test_aggregate_grid_to_loc_ids_supports_weighted_sum(self):
         cell_rows = [
             {"cell_id": "c1", "timestamp": "2026-06-01", "people": 100.0},

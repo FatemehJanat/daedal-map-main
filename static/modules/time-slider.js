@@ -315,7 +315,7 @@ export const TimeSlider = {
 
     // Set granularity first (affects timestamp handling)
     this.granularity = options.granularity || 'yearly';
-    this.useTimestamps = ['6h', 'daily', 'weekly', 'monthly'].includes(this.granularity);
+    this.useTimestamps = ['seconds', '12m', '1h', '6h', 'daily', 'weekly', 'monthly'].includes(this.granularity);
 
     // Set default range - normalize to timestamps
     const defaultMinYear = options.minTime || 2000;
@@ -369,7 +369,7 @@ export const TimeSlider = {
     // Update granularity FIRST so normalizeToTimestamp knows whether to convert
     if (rangeConfig.granularity) {
       this.granularity = rangeConfig.granularity;
-      this.useTimestamps = ['6h', 'daily', 'weekly', 'monthly'].includes(this.granularity);
+      this.useTimestamps = ['seconds', '12m', '1h', '6h', 'daily', 'weekly', 'monthly'].includes(this.granularity);
       this.stepMs = this.calculateStepMs(this.granularity);
     }
 
@@ -498,6 +498,9 @@ export const TimeSlider = {
     const HOUR = 3600000;
     const DAY = 86400000;
     switch (granularity) {
+      case 'seconds': return 1000;
+      case '12m': return 12 * 60 * 1000;
+      case '1h': return HOUR;
       case '6h': return HOUR * 6;
       case 'daily': return DAY;
       case 'weekly': return DAY * 7;
@@ -786,10 +789,49 @@ export const TimeSlider = {
     this.stepsPerFrame = TIME_SYSTEM.sliderToStepsPerFrame(sliderValue);
 
     if (this.speedLabel) {
-      this.speedLabel.textContent = TIME_SYSTEM.getSpeedLabel(this.stepsPerFrame);
+      this.speedLabel.textContent = this.getEffectiveSpeedLabel();
     }
 
-    console.log(`TimeSlider: Speed set to ${TIME_SYSTEM.getSpeedLabel(this.stepsPerFrame)} (${this.stepsPerFrame.toFixed(2)} steps/frame)`);
+    console.log(`TimeSlider: Speed set to ${this.getEffectiveSpeedLabel()} (${this.stepsPerFrame.toFixed(2)} steps/frame)`);
+  },
+
+  formatMsPerSecondLabel(msPerSecond) {
+    if (!Number.isFinite(msPerSecond) || msPerSecond <= 0) {
+      return TIME_SYSTEM.getSpeedLabel(this.stepsPerFrame);
+    }
+
+    const secondsPerSecond = msPerSecond / 1000;
+    if (secondsPerSecond < 60) {
+      return `${Math.max(1, Math.round(secondsPerSecond))}s/sec`;
+    }
+
+    const hoursPerSecond = msPerSecond / (60 * 60 * 1000);
+    if (hoursPerSecond < 1) return `${Math.round(hoursPerSecond * 60)}m/sec`;
+    if (hoursPerSecond < 24) return `${Math.round(hoursPerSecond)}h/sec`;
+    if (hoursPerSecond < 168) return `${Math.round(hoursPerSecond / 24)}d/sec`;
+    if (hoursPerSecond < 720) return `${Math.round(hoursPerSecond / 168)}w/sec`;
+    if (hoursPerSecond < 8760) return `${Math.round(hoursPerSecond / 720)}mo/sec`;
+    return `${Math.round(hoursPerSecond / 8760 * 10) / 10}y/sec`;
+  },
+
+  getEffectiveSpeedLabel() {
+    if (this.useIndexedScale && this._inEventMode && Array.isArray(this.sortedTimes) && this.sortedTimes.length > 1) {
+      const baseStepMs = this.stepMs || this.calculateStepMs(this.granularity || 'yearly');
+      const diffs = [];
+      for (let i = 1; i < this.sortedTimes.length; i += 1) {
+        const diff = this.sortedTimes[i] - this.sortedTimes[i - 1];
+        if (Number.isFinite(diff) && diff > 0) {
+          diffs.push(diff);
+        }
+      }
+      if (diffs.length) {
+        const avgIntervalMs = diffs.reduce((sum, value) => sum + value, 0) / diffs.length;
+        const pointsPerFrame = (TIME_SYSTEM.BASE_STEP_MS * this.stepsPerFrame) / Math.max(1, baseStepMs);
+        const msPerSecond = avgIntervalMs * pointsPerFrame * TIME_SYSTEM.MAX_FPS;
+        return this.formatMsPerSecondLabel(msPerSecond);
+      }
+    }
+    return TIME_SYSTEM.getSpeedLabel(this.stepsPerFrame);
   },
 
   /**
@@ -845,7 +887,20 @@ export const TimeSlider = {
    */
   enterEventAnimation(eventStartTime, eventEndTime) {
     const durationMs = eventEndTime - eventStartTime;
-    const suggestedSlider = this.calculateEventSpeed(durationMs);
+    let suggestedSlider;
+
+    if (this.useIndexedScale && Array.isArray(this.sortedTimes) && this.sortedTimes.length > 1) {
+      const TARGET_SECONDS = 12;
+      const targetDisplayFrames = TARGET_SECONDS * (TIME_SYSTEM?.MAX_FPS || 60);
+      const pointsPerFrame = this.sortedTimes.length / Math.max(1, targetDisplayFrames);
+      const clampedSteps = Math.max(
+        TIME_SYSTEM?.MIN_STEPS_PER_FRAME || 0.001,
+        Math.min(TIME_SYSTEM?.MAX_STEPS_PER_FRAME || 100, pointsPerFrame)
+      );
+      suggestedSlider = TIME_SYSTEM.stepsPerFrameToSlider(clampedSteps);
+    } else {
+      suggestedSlider = this.calculateEventSpeed(durationMs);
+    }
 
     // Store previous speed for restoration
     this._previousSpeedSlider = this.speedSliderValue;
@@ -858,7 +913,7 @@ export const TimeSlider = {
     }
 
     const days = durationMs / (24 * 60 * 60 * 1000);
-    console.log(`TimeSlider: Event animation (${days.toFixed(1)} days) -> ${TIME_SYSTEM.getSpeedLabel(this.stepsPerFrame)}`);
+    console.log(`TimeSlider: Event animation (${days.toFixed(1)} days) -> ${this.getEffectiveSpeedLabel()}`);
   },
 
   /**
@@ -916,7 +971,7 @@ export const TimeSlider = {
 
     // Set initial label
     if (this.speedLabel) {
-      this.speedLabel.textContent = TIME_SYSTEM.getSpeedLabel(this.stepsPerFrame);
+      this.speedLabel.textContent = this.getEffectiveSpeedLabel();
     }
 
     // Add speed slider event listener
@@ -1427,7 +1482,7 @@ export const TimeSlider = {
 
     const stepFraction = targetStepMs / Math.max(1, baseStepMs);
     this.discretePlaybackCarry += stepFraction;
-    const frameSteps = Math.floor(this.discretePlaybackCarry);
+    let frameSteps = Math.floor(this.discretePlaybackCarry);
     if (frameSteps <= 0) {
       return fromTime;
     }
@@ -2485,7 +2540,7 @@ export const TimeSlider = {
       this.speedSlider.value = this.speedSliderValue;
     }
     if (this.speedLabel) {
-      this.speedLabel.textContent = TIME_SYSTEM.getSpeedLabel(this.stepsPerFrame);
+      this.speedLabel.textContent = this.getEffectiveSpeedLabel();
     }
     if (this.loopCheckbox) {
       this.loopCheckbox.checked = true;  // Keep loop checked (default on)

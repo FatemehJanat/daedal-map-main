@@ -192,6 +192,7 @@ export const EventAnimator = {
   // Configuration
   config: null,
   onExitCallback: null,
+  autoPlayTimeout: null,
   _timeChangeHandler: null,
 
   // Renderer reference (model-point-radius, model-track, model-polygon)
@@ -273,7 +274,11 @@ export const EventAnimator = {
       windowMs: options.windowMs || WINDOW_DURATIONS[granularity] || WINDOW_DURATIONS['daily'],
       eventType: eventType,
       // Whether to use fade effect (can be disabled)
-      useFade: options.useFade !== false
+      useFade: options.useFade !== false,
+      autoPlay: options.autoPlay === true,
+      autoPlayDelayMs: Number.isFinite(Number(options.autoPlayDelayMs))
+        ? Math.max(0, Number(options.autoPlayDelayMs))
+        : 600
     };
 
     this.mode = this.config.mode;
@@ -313,6 +318,19 @@ export const EventAnimator = {
     this.currentIndex = 0;
     this._renderAtTime(this.timestamps[0]);
 
+    if (this.config.autoPlay && TimeSlider?.play) {
+      if (this.autoPlayTimeout) {
+        clearTimeout(this.autoPlayTimeout);
+        this.autoPlayTimeout = null;
+      }
+      this.autoPlayTimeout = setTimeout(() => {
+        this.autoPlayTimeout = null;
+        if (!this.isActive || !TimeSlider?.play) return;
+        TimeSlider.setTime?.(this.timestamps[0], 'event-animator');
+        TimeSlider.play();
+      }, this.config.autoPlayDelayMs);
+    }
+
     // Start smooth wave animation loop for radial mode (tsunamis)
     // This provides 60 FPS wave circle updates independent of TimeSlider ticks
     if (this.mode === AnimationMode.RADIAL) {
@@ -347,6 +365,11 @@ export const EventAnimator = {
     if (!this.isActive) return;
 
     console.log('EventAnimator: Stopping');
+
+    if (this.autoPlayTimeout) {
+      clearTimeout(this.autoPlayTimeout);
+      this.autoPlayTimeout = null;
+    }
 
     // Stop smooth wave animation loop (radial mode)
     this._stopSmoothWaveLoop();
@@ -391,6 +414,10 @@ export const EventAnimator = {
     const controls = document.getElementById('event-animator-controls');
     if (controls) controls.remove();
 
+    // Mark the session inactive before restore callbacks run so the shared
+    // overlay renderer can repaint the launching layers immediately.
+    this.isActive = false;
+
     // Call exit callback
     if (this.onExitCallback) {
       try {
@@ -401,13 +428,13 @@ export const EventAnimator = {
     }
 
     // Reset state
-    this.isActive = false;
     this.config = null;
     this.events = [];
     this.timestamps = [];
     this.currentIndex = 0;
     this.renderer = null;
     this.onExitCallback = null;
+    this.autoPlayTimeout = null;
 
     // Reset earthquake state
     this._eqMainshock = null;
@@ -2763,8 +2790,12 @@ export const EventAnimator = {
    * @private
    */
   _renderTornadoDisplay() {
-    // Render at the start time (shows all points faded)
     if (this._tornadoJourney && this._tornadoJourney.startTime) {
+      if (this.config?.autoPlay) {
+        this._renderTornadoAtTime(this._tornadoJourney.startTime);
+        return;
+      }
+      // Manual sessions can still preview the upcoming sequence before playback starts.
       this._renderTornadoJourneyAtProgress(0, this._tornadoJourney.startTime - 1);
     }
   },

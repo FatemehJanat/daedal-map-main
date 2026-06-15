@@ -148,6 +148,36 @@ export const App = {
   },
   activeMapViewId: null,
   activeMapLane: 'explore',
+  startupComplete: false,
+  pendingReadyCallbacks: [],
+
+  isStartupComplete() {
+    return this.startupComplete === true;
+  },
+
+  runAfterStartup(callback) {
+    if (typeof callback !== 'function') return;
+    if (this.startupComplete) {
+      callback();
+      return;
+    }
+    this.pendingReadyCallbacks.push(callback);
+  },
+
+  markStartupComplete() {
+    this.startupComplete = true;
+    const callbacks = Array.isArray(this.pendingReadyCallbacks)
+      ? [...this.pendingReadyCallbacks]
+      : [];
+    this.pendingReadyCallbacks = [];
+    for (const callback of callbacks) {
+      try {
+        callback();
+      } catch (error) {
+        console.warn('Deferred startup callback failed:', error);
+      }
+    }
+  },
 
   getNumericAdminLevel(level) {
     if (typeof level === 'number' && !Number.isNaN(level)) return level;
@@ -830,6 +860,7 @@ export const App = {
 
     console.log('Map Explorer ready');
     console.log('Press D to toggle debug mode (hierarchy depth colors)');
+    this.markStartupComplete();
 
   },
 
