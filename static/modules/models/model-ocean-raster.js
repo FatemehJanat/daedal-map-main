@@ -61,6 +61,14 @@ function bytesToFloat32(bytes) {
   return new Float32Array(aligned);
 }
 
+// Decode a variable's frame stack on first use only. Loading all basins at once
+// would otherwise decode every variable up front (~2x memory for nothing).
+function ensureDecoded(layer, variable) {
+  if (layer.framesByVar[variable] || !layer.rawFrames) return;
+  const blobs = layer.rawFrames[variable];
+  if (Array.isArray(blobs)) layer.framesByVar[variable] = blobs.map(bytesToFloat32);
+}
+
 class OceanBasinLayer {
   constructor(overlayId, locId, index) {
     this.locId = locId;
@@ -70,6 +78,7 @@ class OceanBasinLayer {
     this.height = 0;
     this.bounds = null;
     this.timestamps = [];
+    this.rawFrames = {};     // { sst_c: [<msgpack bin>, ...] } decoded on demand
     this.framesByVar = {};   // { sst_c: [Float32Array, ...] }
     this.colorScales = {};
     this.canvas = document.createElement('canvas');
@@ -109,7 +118,7 @@ export const OceanRasterModel = {
     if (!inst) return [];
     const set = new Set();
     for (const layer of inst.basins) {
-      for (const v of Object.keys(layer.framesByVar)) set.add(v);
+      for (const v of Object.keys(layer.rawFrames || {})) set.add(v);
     }
     return Array.from(set);
   },
@@ -154,13 +163,8 @@ export const OceanRasterModel = {
       layer.colorScales = bundle.color_scales || {};
       layer.canvas.width = bundle.width;
       layer.canvas.height = bundle.height;
-      const vars = bundle.variables || [variable];
-      for (const v of vars) {
-        const blobs = bundle.frames[v];
-        if (Array.isArray(blobs)) {
-          layer.framesByVar[v] = blobs.map(bytesToFloat32);
-        }
-      }
+      layer.rawFrames = bundle.frames || {};
+      ensureDecoded(layer, variable);  // decode only the active variable now
       inst.basins.push(layer);
       if (layer.timestamps.length > inst.timestamps.length) {
         inst.timestamps = layer.timestamps;
@@ -199,6 +203,7 @@ export const OceanRasterModel = {
     for (const layer of inst.basins) {
       const idx = this._frameIndexForTime(layer, timeMs);
       if (idx < 0) continue;
+      ensureDecoded(layer, inst.variable);
       const frames = layer.framesByVar[inst.variable];
       if (!frames || !frames[idx]) continue;
       if (idx === layer.lastFrameIndex) continue;
