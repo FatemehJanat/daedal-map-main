@@ -9,6 +9,7 @@
     "XOA": "Atlantic Ocean",
     "XOI": "Indian Ocean",
     "XON": "Arctic Ocean",
+    "XOS": "Southern Ocean",
     "XOO": "Unknown Ocean"
   },
 
@@ -46,6 +47,7 @@
     "XOA": "Atlantic Ocean",
     "XOI": "Indian Ocean",
     "XON": "Arctic Ocean",
+    "XOS": "Southern Ocean",
     "XOO": "Unknown Ocean",
     "XSG": "Gulf of Mexico",
     "XSC": "Caribbean Sea",
