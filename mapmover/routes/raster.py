@@ -146,6 +146,21 @@ def _load_clip_bundle_bytes(source_id: str, catalog: dict | None, period: str) -
     return bundle_path.read_bytes()
 
 
+def _clip_bundle_etag_cheap(source_id: str, catalog: dict | None, period: str) -> str | None:
+    """A cheap ETag (no body read) for the local bundle file via stat. In cloud
+    mode we fall back to a content hash after the read."""
+    if is_cloud_mode():
+        return None
+    raster_dir, _ = _raster_dirs_for_source(source_id, catalog)
+    if raster_dir is None:
+        return None
+    bundle_path = raster_dir / "clip_bundles" / f"{period}.msgpack"
+    if not bundle_path.exists():
+        return None
+    st = bundle_path.stat()
+    return f'"{int(st.st_mtime)}-{st.st_size}"'
+
+
 def _load_clip_bundle_payload(source_id: str, catalog: dict | None, period: str) -> dict | None:
     raw = _load_clip_bundle_bytes(source_id, catalog, period)
     if not raw:
@@ -244,8 +259,16 @@ async def get_raster_scene(source_id: str, period: str):
 
 
 @router.get("/api/raster/{source_id}/clip-bundle/{period}")
-async def get_raster_clip_bundle(source_id: str, period: str):
-    """Return a prebuilt msgpack clip bundle for one scene period."""
+async def get_raster_clip_bundle(source_id: str, period: str, req: Request):
+    """Return a prebuilt msgpack clip bundle for one scene period.
+
+    These bundles are large (tens to hundreds of MB) and immutable until a
+    rebuild/republish, so they are browser-cacheable with revalidation: we send
+    an ETag and `Cache-Control: no-cache`, and answer a matching `If-None-Match`
+    with 304 so the browser never re-downloads an unchanged bundle (e.g. after a
+    server reset). See CACHING.md (Layer 0 artifact, browser-cached + revalidated)."""
+    import hashlib
+
     catalog = _load_scene_catalog(source_id)
     if catalog is None:
         return msgpack_error(f"Raster scene catalog not found for {source_id}", 404)
@@ -254,10 +277,28 @@ async def get_raster_clip_bundle(source_id: str, period: str):
     if scene is None:
         return msgpack_error(f"Unknown period: {period}", 404)
 
+    inm = req.headers.get("if-none-match")
+
+    # Cheap revalidation: if we can ETag from the local file stat, answer 304
+    # without ever loading the bytes.
+    etag = _clip_bundle_etag_cheap(source_id, catalog, period)
+    if etag and inm and inm == etag:
+        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "no-cache"})
+
     raw_bundle = _load_clip_bundle_bytes(source_id, catalog, period)
     if not raw_bundle:
         return msgpack_error(f"Raster clip bundle not found for period: {period}", 404)
-    return Response(content=raw_bundle, media_type="application/msgpack")
+
+    if not etag:
+        etag = '"' + hashlib.md5(raw_bundle).hexdigest() + '"'
+        if inm and inm == etag:
+            return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "no-cache"})
+
+    return Response(
+        content=raw_bundle,
+        media_type="application/msgpack",
+        headers={"ETag": etag, "Cache-Control": "no-cache"},
+    )
 
 
 @router.post("/api/raster/{source_id}/clips")

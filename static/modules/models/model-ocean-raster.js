@@ -61,12 +61,54 @@ function bytesToFloat32(bytes) {
   return new Float32Array(aligned);
 }
 
+// Dequantize a uint8 frame back to float values. The byte holds the color-scale
+// position (0..254 across [min,max]); 255 is the nodata sentinel (NaN). This is
+// lossless for the 256-entry display LUT -- the byte is effectively the LUT index
+// -- but ships 4x smaller than float32 on the wire and on disk.
+const QUANT_NODATA = 255;
+const QUANT_LEVELS = 254;
+function u8ToFloat32(bytes, vmin, vmax) {
+  const span = (vmax - vmin) / QUANT_LEVELS;
+  const out = new Float32Array(bytes.length);
+  for (let i = 0; i < bytes.length; i += 1) {
+    const u = bytes[i];
+    out[i] = u === QUANT_NODATA ? NaN : vmin + u * span;
+  }
+  return out;
+}
+
+// Web Mercator helpers. The bundle is equirectangular (rows even in latitude),
+// but MapLibre parameterizes image sources in Mercator-Y -- in BOTH the flat map
+// AND the globe (the globe wraps that same Mercator space onto a sphere). So we
+// pre-warp each frame into Mercator-Y rows; the one warp fixes both projections,
+// and we don't need to re-render on a globe/mercator toggle.
+// Push right up to the data's edge (89.9). Only EXACTLY 90 is the Mercator
+// singularity; 89.9 is finite and is what the weather grid uses. The poles take a
+// big share of Mercator-Y, so use plenty of warped rows to keep mid-latitudes sharp.
+const MERC_LIMIT = 89.9;                   // display latitude limit (avoid exactly 90)
+const MERC_DISPLAY_ROWS = 900;             // vertical resolution of the warped canvas
+function mercY(latDeg) {
+  const r = (latDeg * Math.PI) / 180;
+  return Math.log(Math.tan(Math.PI / 4 + r / 2));
+}
+function invMercY(y) {
+  return (2 * Math.atan(Math.exp(y)) - Math.PI / 2) * 180 / Math.PI;
+}
+
 // Decode a variable's frame stack on first use only. Loading all basins at once
 // would otherwise decode every variable up front (~2x memory for nothing).
 function ensureDecoded(layer, variable) {
   if (layer.framesByVar[variable] || !layer.rawFrames) return;
   const blobs = layer.rawFrames[variable];
-  if (Array.isArray(blobs)) layer.framesByVar[variable] = blobs.map(bytesToFloat32);
+  if (!Array.isArray(blobs)) return;
+  if (layer.dtype === 'uint8') {
+    const q = layer.quant && layer.quant[variable];
+    const vmin = q ? q.min : 0;
+    const vmax = q ? q.max : 1;
+    layer.framesByVar[variable] = blobs.map((b) => u8ToFloat32(b, vmin, vmax));
+  } else {
+    layer.framesByVar[variable] = blobs.map(bytesToFloat32);
+  }
 }
 
 class OceanBasinLayer {
@@ -80,6 +122,8 @@ class OceanBasinLayer {
     this.timestamps = [];
     this.rawFrames = {};     // { sst_c: [<msgpack bin>, ...] } decoded on demand
     this.framesByVar = {};   // { sst_c: [Float32Array, ...] }
+    this.dtype = 'float32';  // 'float32' (raw) or 'uint8' (quantized, dequantized at decode)
+    this.quant = {};         // { sst_c: {min, max} } scale used when dtype === 'uint8'
     this.colorScales = {};
     this.canvas = document.createElement('canvas');
     this.ctx = this.canvas.getContext('2d');
@@ -161,6 +205,8 @@ export const OceanRasterModel = {
       layer.bounds = bundle.bounds;
       layer.timestamps = bundle.timestamps;
       layer.colorScales = bundle.color_scales || {};
+      layer.dtype = bundle.dtype === 'uint8' ? 'uint8' : 'float32';
+      layer.quant = bundle.quant || {};
       layer.canvas.width = bundle.width;
       layer.canvas.height = bundle.height;
       layer.rawFrames = bundle.frames || {};
@@ -217,20 +263,44 @@ export const OceanRasterModel = {
     const scale = layer.colorScales[inst.variable];
     const { lut, min, max } = buildColorLUT(scale);
     const range = (max - min) || 1;
-    const img = layer.ctx.createImageData(layer.width, layer.height);
+
+    const W = layer.width;
+    const dataN = layer.bounds.north;
+    const dataS = layer.bounds.south;
+    const degLat = (dataN - dataS) / layer.height;
+
+    // Mercator-warped output: rows even in Mercator-Y between +/-MERC_LIMIT, each
+    // sampled from the data row at that row's true latitude. Place at +/-MERC_LIMIT.
+    const yTop = mercY(MERC_LIMIT);
+    const yBot = mercY(-MERC_LIMIT);
+    const OH = MERC_DISPLAY_ROWS;
+    if (layer.canvas.width !== W || layer.canvas.height !== OH) {
+      layer.canvas.width = W;
+      layer.canvas.height = OH;
+    }
+    layer.renderBounds = { west: layer.bounds.west, east: layer.bounds.east, north: MERC_LIMIT, south: -MERC_LIMIT };
+
+    const img = layer.ctx.createImageData(W, OH);
     const px = img.data;
-    for (let i = 0; i < pixels.length; i += 1) {
-      const v = pixels[i];
-      const idx = i * 4;
-      if (Number.isNaN(v)) {
-        px[idx] = px[idx + 1] = px[idx + 2] = px[idx + 3] = 0;
-        continue;
+    for (let r = 0; r < OH; r += 1) {
+      const lat = invMercY(yTop + (r / (OH - 1)) * (yBot - yTop));
+      const dataRow = Math.round((dataN - lat) / degLat);
+      const rowBase = r * W;
+      if (dataRow < 0 || dataRow >= layer.height) {
+        continue;  // latitude outside the data range -> transparent
       }
-      const norm = Math.max(0, Math.min(1, (v - min) / range));
-      const c = lut[Math.round(norm * 255)];
-      // Opaque pixels; the MapLibre raster-opacity (set per overlay) controls the
-      // overall blend so the opacity slider works cleanly.
-      px[idx] = c[0]; px[idx + 1] = c[1]; px[idx + 2] = c[2]; px[idx + 3] = 255;
+      const srcBase = dataRow * W;
+      for (let c = 0; c < W; c += 1) {
+        const v = pixels[srcBase + c];
+        const idx = (rowBase + c) * 4;
+        if (Number.isNaN(v)) {
+          px[idx] = px[idx + 1] = px[idx + 2] = px[idx + 3] = 0;
+          continue;
+        }
+        const norm = Math.max(0, Math.min(1, (v - min) / range));
+        const color = lut[Math.round(norm * 255)];
+        px[idx] = color[0]; px[idx + 1] = color[1]; px[idx + 2] = color[2]; px[idx + 3] = 255;
+      }
     }
     layer.ctx.putImageData(img, 0, 0);
   },
@@ -238,7 +308,7 @@ export const OceanRasterModel = {
   _placeLayer(layer, opacity) {
     const map = MapAdapter?.map;
     if (!map || !layer.bounds) return;
-    const { west, south, east, north } = layer.bounds;
+    const { west, south, east, north } = layer.renderBounds || layer.bounds;
     const coordinates = [[west, north], [east, north], [east, south], [west, south]];
     const dataUrl = layer.canvas.toDataURL('image/png');
     const existing = map.getSource(layer.sourceId);
