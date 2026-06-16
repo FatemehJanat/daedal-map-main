@@ -403,7 +403,7 @@ function buildCategoriesFromTree(overlayTree) {
   // category, so merge instead of blindly appending a duplicate section.
   const hardcodedClimateOverlays = [
     { id: 'aurora', label: 'Aurora', description: 'Live aurora forecast', default: false, locked: false, model: 'aurora', icon: 'A', hasYearFilter: false, live: true },
-    { id: 'ocean-sst-grid', label: 'Ocean Temp Grid', description: 'Monthly ocean temperature grid', default: false, locked: false, model: 'ocean-raster', icon: 'O', hasYearFilter: false, live: false, rasterSource: 'ocean_sst', rasterBasins: ['XOP', 'XOA', 'XOI', 'XON', 'XSA', 'XSB', 'XSC', 'XSE', 'XSG', 'XSH', 'XSJ', 'XSK', 'XSL', 'XSM', 'XSN', 'XSR', 'XSS', 'XST'], rasterVariable: 'sst_c' }
+    { id: 'ocean-sst-grid', label: 'Ocean Temp Grid', description: 'Monthly ocean temperature grid', default: false, locked: false, model: 'ocean-raster', icon: 'O', hasYearFilter: false, live: false, rasterSource: 'ocean_sst', rasterBasins: ['OCEAN'], rasterVariable: 'sst_c' }
   ];
   const climateCategory = categories.find((cat) => cat.id === 'climate' && cat.isCategory);
   if (climateCategory) {

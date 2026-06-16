@@ -20,6 +20,33 @@ const VAR_UNIT = '°C';
 
 let _overlayId = null;
 
+function _makeDraggable(panel, handle) {
+  handle.style.cursor = 'move';
+  handle.style.userSelect = 'none';
+  let startX = 0, startY = 0, startLeft = 0, startTop = 0;
+  const onMove = (e) => {
+    panel.style.left = `${startLeft + e.clientX - startX}px`;
+    panel.style.top = `${startTop + e.clientY - startY}px`;
+  };
+  const onUp = () => {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+  };
+  handle.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    const rect = panel.getBoundingClientRect();
+    // Switch from right-anchored to absolute left/top so dragging is smooth.
+    panel.style.left = `${rect.left}px`;
+    panel.style.top = `${rect.top}px`;
+    panel.style.right = 'auto';
+    startX = e.clientX; startY = e.clientY;
+    startLeft = rect.left; startTop = rect.top;
+    e.preventDefault();
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}
+
 function _gradientCss(scale) {
   const stops = scale?.stops || [];
   const min = scale?.min ?? (stops[0]?.[0] ?? 0);
@@ -54,9 +81,11 @@ function _build() {
   close.textContent = '×';
   Object.assign(close.style, { background: 'transparent', border: 'none', color: '#aab', fontSize: '18px', cursor: 'pointer', lineHeight: '1', padding: '0 2px' });
   close.addEventListener('click', () => OceanRasterPanel.hide());
+  close.addEventListener('mousedown', (e) => e.stopPropagation());  // don't start a drag
   header.appendChild(title);
   header.appendChild(close);
   panel.appendChild(header);
+  _makeDraggable(panel, header);
 
   // Variable toggle
   const varRow = document.createElement('div');
