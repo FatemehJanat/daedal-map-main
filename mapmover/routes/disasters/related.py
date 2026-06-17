@@ -7,10 +7,17 @@ import re
 import json
 from pathlib import Path
 from fastapi import APIRouter, Query
+from fastapi.responses import JSONResponse
 
 from mapmover import logger
 from mapmover.data_loading import get_source_path, load_catalog, load_source_metadata
-from mapmover.duckdb_helpers import duckdb_available, is_cloud_mode, parquet_available, select_rows
+from mapmover.duckdb_helpers import (
+    duckdb_available,
+    is_cloud_mode,
+    parquet_available,
+    select_filtered_event_rows,
+    select_rows,
+)
 from mapmover.paths import GLOBAL_DIR
 from mapmover.runtime_config import get_runtime_config
 from mapmover.storage_mode import get_runtime_mode
@@ -56,6 +63,42 @@ EVENT_TABLES = {
 }
 
 MAX_CHAIN_DEPTH = 2
+MAX_DISCOVERY_LIMIT = 50
+DISASTER_LINK_API_PACKS = {"earthquakes", "tsunamis", "volcanoes"}
+EVENT_TYPE_ALIASES = {
+    "earthquake": "earthquake",
+    "earthquakes": "earthquake",
+    "eq": "earthquake",
+    "tsunami": "tsunami",
+    "tsunamis": "tsunami",
+    "volcano": "volcano",
+    "volcanoes": "volcano",
+    "eruption": "volcano",
+    "eruptions": "volcano",
+    "hurricane": "hurricane",
+    "hurricanes": "hurricane",
+    "storm": "hurricane",
+    "tornado": "tornado",
+    "tornadoes": "tornado",
+    "wildfire": "wildfire",
+    "wildfires": "wildfire",
+    "fire": "wildfire",
+    "fires": "wildfire",
+    "flood": "flood",
+    "floods": "flood",
+    "landslide": "landslide",
+    "landslides": "landslide",
+}
+EVENT_TYPE_LOC_TOKENS = {
+    "earthquake": "EQ",
+    "tsunami": "TSUN",
+    "volcano": "VOLC",
+    "hurricane": "HRCN",
+    "tornado": "TORN",
+    "wildfire": "FIRE",
+    "flood": "FLOOD",
+    "landslide": "LAND",
+}
 EXACT_EVENT_SOURCE_OVERRIDES = {
     "earthquakes_events": {
         "id_fields": ("event_id",),
@@ -84,6 +127,8 @@ EXACT_EVENT_SOURCE_OVERRIDES = {
 EVENT_SEARCH_SOURCE_OVERRIDES = {
     "hurricanes": {"name_fields": ("name",), "country_field": None},
     "volcanoes_events": {"name_fields": ("volcano_name",), "country_field": "country"},
+    "wildfires_usa": {"name_fields": ("fire_name",), "country_field": None},
+    "can_wildfires": {"name_fields": ("fire_name",), "country_field": None},
 }
 LAT_FIELDS = ("lat", "latitude", "centroid_lat")
 LON_FIELDS = ("lon", "longitude", "centroid_lon")
@@ -176,9 +221,71 @@ def _catalog_event_sources_for_pack(pack_id: str) -> list[dict]:
     return candidates
 
 
-def _get_exact_event_candidates(pack_id: str | None = None) -> list[dict]:
+def _wildfire_exact_source_priority(identifier_value: str, source_id: str) -> int:
+    normalized = str(identifier_value or "").strip()
+    normalized_source = str(source_id or "").strip().lower()
+    if not normalized or normalized_source not in {"global_fire_atlas", "wildfires_usa", "can_wildfires"}:
+        return 50
+
+    if re.match(r"^[A-Z]{2}\d{17,20}$", normalized, re.IGNORECASE):
+        if normalized_source == "wildfires_usa":
+            return 0
+        if normalized_source == "can_wildfires":
+            return 1
+        return 2
+
+    if re.match(r"^[A-Z]{2}(?:-[A-Z]{2})?-\d{4}-[A-Za-z0-9-]+$", normalized, re.IGNORECASE):
+        if normalized_source == "can_wildfires":
+            return 0
+        if normalized_source == "wildfires_usa":
+            return 1
+        return 2
+
+    if re.search(r"(?:irwin|mtbs)", normalized, re.IGNORECASE):
+        if normalized_source == "wildfires_usa":
+            return 0
+        return 1 if normalized_source == "global_fire_atlas" else 2
+
+    if re.search(r"-fire-", normalized, re.IGNORECASE):
+        if normalized_source in {"wildfires_usa", "can_wildfires"}:
+            return 0
+        return 2
+
+    return 50
+
+
+def _sort_exact_event_candidates(candidates: list[dict], identifier_value: str = "") -> list[dict]:
+    normalized_identifier = str(identifier_value or "").strip()
+    if not normalized_identifier:
+        return candidates
+
+    def _sort_key(entry: dict):
+        pack_id = str(entry.get("pack_id") or "").strip().lower()
+        source_id = str(entry.get("source_id") or "").strip()
+        if pack_id == "wildfires":
+            return (
+                0,
+                _wildfire_exact_source_priority(normalized_identifier, source_id),
+                0 if "/sources/" in str(entry.get("_normalized_path") or "") else 1,
+                int(entry.get("_path_depth") or 999),
+                str(source_id),
+            )
+        return (
+            1,
+            0 if "/sources/" not in str(entry.get("_normalized_path") or "") else 1,
+            int(entry.get("_path_depth") or 999),
+            str(source_id),
+        )
+
+    return sorted(candidates, key=_sort_key)
+
+
+def _get_exact_event_candidates(pack_id: str | None = None, identifier_value: str = "") -> list[dict]:
     if pack_id:
-        return _catalog_event_sources_for_pack(pack_id)
+        return _sort_exact_event_candidates(
+            _catalog_event_sources_for_pack(pack_id),
+            identifier_value=identifier_value,
+        )
 
     catalog = load_catalog() or {}
     pack_ids: list[str] = []
@@ -197,7 +304,7 @@ def _get_exact_event_candidates(pack_id: str | None = None) -> list[dict]:
     candidates: list[dict] = []
     for candidate_pack_id in pack_ids:
         candidates.extend(_catalog_event_sources_for_pack(candidate_pack_id))
-    return candidates
+    return _sort_exact_event_candidates(candidates, identifier_value=identifier_value)
 
 
 def _resolve_exact_event_parquet(source_id: str):
@@ -469,6 +576,8 @@ def _search_named_event_candidates(
     pack_id: str | None = None,
     limit: int = 10,
 ) -> list[dict]:
+    import pyarrow.parquet as pq
+
     variants = _build_event_search_variants(query_text)
     if not variants:
         return []
@@ -486,10 +595,16 @@ def _search_named_event_candidates(
         primary_id_field = str(id_fields[0] or "event_id").strip()
 
         parquet_path, _metadata = _resolve_exact_event_parquet_for_candidate(candidate)
-        columns: list[str] = list(dict.fromkeys(
+        requested_columns: list[str] = list(dict.fromkeys(
             [primary_id_field, *name_fields, overrides.get("country_field"), "year", "timestamp"]
         ))
-        columns = [column for column in columns if column]
+        requested_columns = [column for column in requested_columns if column]
+        columns = requested_columns
+        try:
+            available_columns = set(pq.read_schema(parquet_path).names)
+            columns = [column for column in requested_columns if column in available_columns]
+        except Exception:
+            columns = requested_columns
         try:
             df = pd.read_parquet(parquet_path, columns=columns)
         except Exception as exc:
@@ -581,9 +696,9 @@ def _resolve_exact_event_payload(identifier_value: str, pack_id: str | None = No
 
     if pack_id:
         normalized_pack = str(pack_id).strip().lower()
-        candidates = _get_exact_event_candidates(normalized_pack)
+        candidates = _get_exact_event_candidates(normalized_pack, identifier_value=normalized_identifier)
     else:
-        candidates = _get_exact_event_candidates()
+        candidates = _get_exact_event_candidates(identifier_value=normalized_identifier)
         hinted_packs, strict_hint = _classify_exact_event_identifier(normalized_identifier)
         if hinted_packs:
             hinted_set = set(hinted_packs)
@@ -659,11 +774,6 @@ def _normalize_link_rows(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _extract_event_type(loc_id: str) -> str:
-    parts = loc_id.split("-")
-    if len(parts) < 2:
-        return "unknown"
-
-    type_code = parts[-2] if len(parts) >= 3 else parts[0]
     type_map = {
         "EQ": "earthquake",
         "TSUN": "tsunami",
@@ -674,7 +784,11 @@ def _extract_event_type(loc_id: str) -> str:
         "FLOOD": "flood",
         "LAND": "landslide",
     }
-    return type_map.get(type_code, "unknown")
+    parts = [part.strip().upper() for part in str(loc_id or "").split("-") if str(part or "").strip()]
+    for part in parts:
+        if part in type_map:
+            return type_map[part]
+    return "unknown"
 
 
 def _extract_event_id(loc_id: str) -> str:
@@ -684,6 +798,360 @@ def _extract_event_id(loc_id: str) -> str:
             if part in ["EQ", "TSUN", "VOLC", "HRCN", "TORN", "FIRE", "FLOOD", "LAND"]:
                 return "-".join(parts[i + 1 :])
     return parts[-1] if parts else loc_id
+
+
+def _normalize_event_type_filter(value: str | None) -> str | None:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return None
+    return EVENT_TYPE_ALIASES.get(normalized, normalized)
+
+
+def _safe_float(value) -> float | None:
+    if value is None or pd.isna(value):
+        return None
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
+def _safe_int(value) -> int | None:
+    if value is None or pd.isna(value):
+        return None
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
+def _loc_id_like_pattern_for_event_type(event_type: str | None) -> str | None:
+    normalized = _normalize_event_type_filter(event_type)
+    if not normalized:
+        return None
+    token = EVENT_TYPE_LOC_TOKENS.get(normalized)
+    if not token:
+        return None
+    return f"%-{token}-%"
+
+
+def _event_score_from_properties(props: dict | None) -> float:
+    if not isinstance(props, dict):
+        return 0.0
+
+    event_type = _normalize_event_type_filter(props.get("event_type"))
+    score = 0.0
+
+    deaths = _safe_float(props.get("deaths"))
+    if deaths is not None:
+        score += min(deaths, 100000.0) * 0.05
+
+    damage = _safe_float(props.get("damage_millions"))
+    if damage is not None:
+        score += min(damage, 100000.0) * 0.02
+
+    if event_type == "earthquake":
+        magnitude = _safe_float(props.get("magnitude"))
+        if magnitude is not None:
+            score += magnitude * 100.0
+    elif event_type == "tsunami":
+        height = _safe_float(props.get("max_water_height_m"))
+        eq_magnitude = _safe_float(props.get("eq_magnitude"))
+        if height is not None:
+            score += height * 80.0
+        if eq_magnitude is not None:
+            score += eq_magnitude * 40.0
+    elif event_type == "volcano":
+        vei = _safe_float(props.get("VEI"))
+        if vei is not None:
+            score += vei * 120.0
+    elif event_type == "hurricane":
+        wind = _safe_float(props.get("max_wind_kt"))
+        if wind is not None:
+            score += wind * 1.5
+    elif event_type == "wildfire":
+        area = _safe_float(props.get("area_sq_km")) or _safe_float(props.get("acres"))
+        if area is not None:
+            score += min(area, 1000000.0) * 0.005
+    elif event_type == "flood":
+        duration = _safe_float(props.get("duration_days"))
+        if duration is not None:
+            score += duration * 8.0
+
+    return round(score, 2)
+
+
+def _summarize_chain_node(feature: dict) -> dict:
+    props = dict((feature or {}).get("properties") or {})
+    return {
+        "loc_id": str(props.get("loc_id") or "").strip() or None,
+        "event_id": str(props.get("event_id") or _extract_event_id(str(props.get("loc_id") or ""))).strip() or None,
+        "event_type": _normalize_event_type_filter(props.get("event_type")),
+        "timestamp": props.get("timestamp"),
+        "year": _safe_int(props.get("year")),
+        "country": props.get("country"),
+        "title": props.get("title") or props.get("name") or props.get("place") or props.get("volcano_name"),
+        "score": _event_score_from_properties(props),
+    }
+
+
+def _build_chain_match(
+    node_loc_ids: list[str],
+    links: list[dict],
+    feature_cache: dict[str, dict | None],
+) -> dict | None:
+    nodes: list[dict] = []
+    total_score = 0.0
+    for loc_id in node_loc_ids:
+        feature = feature_cache.get(loc_id)
+        if feature is None:
+            return None
+        node_summary = _summarize_chain_node(feature)
+        nodes.append(node_summary)
+        total_score += float(node_summary.get("score") or 0.0)
+
+    total_confidence = 0.0
+    for link in links:
+        confidence = _safe_float(link.get("confidence"))
+        if confidence is not None:
+            total_confidence += confidence * 25.0
+
+    score = round(total_score + total_confidence, 2)
+    return {
+        "score": score,
+        "depth": max(0, len(nodes) - 1),
+        "chain_signature": " -> ".join([str(node.get("event_type") or "unknown") for node in nodes]),
+        "nodes": nodes,
+        "links": links,
+    }
+
+
+def _chain_matches_filters(
+    chain: dict,
+    *,
+    start_event_type: str | None,
+    via_event_type: str | None,
+    end_event_type: str | None,
+    year_start: int | None,
+    year_end: int | None,
+) -> bool:
+    nodes = chain.get("nodes") or []
+    if not nodes:
+        return False
+
+    node_types = [_normalize_event_type_filter(node.get("event_type")) for node in nodes]
+    if start_event_type and node_types[0] != start_event_type:
+        return False
+    if end_event_type and node_types[-1] != end_event_type:
+        return False
+    if via_event_type:
+        middle_types = node_types[1:-1] if len(node_types) > 2 else []
+        if via_event_type not in middle_types:
+            return False
+
+    if year_start is not None or year_end is not None:
+        years = [node.get("year") for node in nodes if isinstance(node.get("year"), int)]
+        if years:
+            pivot_year = max(years)
+            if year_start is not None and pivot_year < year_start:
+                return False
+            if year_end is not None and pivot_year > year_end:
+                return False
+
+    return True
+
+
+def _discover_disaster_link_chains(
+    *,
+    start_event_type: str | None = None,
+    via_event_type: str | None = None,
+    end_event_type: str | None = None,
+    year_start: int | None = None,
+    year_end: int | None = None,
+    limit: int = 10,
+) -> dict:
+    normalized_start = _normalize_event_type_filter(start_event_type)
+    normalized_via = _normalize_event_type_filter(via_event_type)
+    normalized_end = _normalize_event_type_filter(end_event_type)
+    effective_limit = max(1, min(int(limit or 10), MAX_DISCOVERY_LIMIT))
+
+    if not any([normalized_start, normalized_via, normalized_end]):
+        return {
+            "count": 0,
+            "chains": [],
+            "message": "At least one event-type filter is required",
+        }
+
+    links_path = GLOBAL_DIR / "disasters/links.parquet"
+    if not parquet_available(links_path):
+        return {
+            "count": 0,
+            "chains": [],
+            "message": "Links data not available",
+        }
+
+    def load_candidate_links(*, parent_event_type: str | None = None, child_event_type: str | None = None) -> pd.DataFrame:
+        parent_pattern = _loc_id_like_pattern_for_event_type(parent_event_type)
+        child_pattern = _loc_id_like_pattern_for_event_type(child_event_type)
+        try:
+            if duckdb_available():
+                return _normalize_link_rows(
+                    select_filtered_event_rows(
+                        links_path,
+                        like_filters={
+                            "parent_loc_id": parent_pattern,
+                            "child_loc_id": child_pattern,
+                        },
+                    )
+                )
+            df = pd.read_parquet(links_path, columns=LINK_COLUMNS)
+        except Exception as exc:
+            runtime_mode = get_runtime_mode(get_runtime_config().get("runtime_mode", "local"))
+            if runtime_mode == "cloud":
+                logger.warning("Disaster link discovery parquet unavailable in cloud runtime: %s", exc)
+                return pd.DataFrame(columns=LINK_COLUMNS)
+            raise
+
+        if parent_pattern:
+            token = str(parent_pattern).strip("%")
+            df = df[df["parent_loc_id"].astype(str).str.contains(token, regex=False, na=False)]
+        if child_pattern:
+            token = str(child_pattern).strip("%")
+            df = df[df["child_loc_id"].astype(str).str.contains(token, regex=False, na=False)]
+        return _normalize_link_rows(df)
+
+    raw_candidates: list[tuple[list[str], list[dict]]] = []
+
+    direct_df = load_candidate_links(
+        parent_event_type=normalized_start,
+        child_event_type=normalized_end,
+    )
+    if not normalized_via:
+        for _, row in direct_df.iterrows():
+            raw_candidates.append((
+                [str(row["parent_loc_id"]), str(row["child_loc_id"])],
+                [{
+                    "parent_loc_id": str(row["parent_loc_id"]),
+                    "child_loc_id": str(row["child_loc_id"]),
+                    "parent_event_id": str(row.get("parent_event_id") or _extract_event_id(str(row["parent_loc_id"]))),
+                    "child_event_id": str(row.get("child_event_id") or _extract_event_id(str(row["child_loc_id"]))),
+                    "link_type": str(row.get("link_type") or "linked"),
+                    "source": row.get("source"),
+                    "confidence": row.get("confidence"),
+                }],
+            ))
+
+    if normalized_via or (normalized_start and normalized_end):
+        left_df = load_candidate_links(
+            parent_event_type=normalized_start,
+            child_event_type=normalized_via,
+        )
+        right_df = load_candidate_links(
+            parent_event_type=normalized_via,
+            child_event_type=normalized_end,
+        )
+
+        if not left_df.empty and not right_df.empty:
+            merged = left_df.merge(
+                right_df,
+                left_on="child_loc_id",
+                right_on="parent_loc_id",
+                suffixes=("_a", "_b"),
+            )
+            for _, row in merged.iterrows():
+                raw_candidates.append((
+                    [
+                        str(row["parent_loc_id_a"]),
+                        str(row["child_loc_id_a"]),
+                        str(row["child_loc_id_b"]),
+                    ],
+                    [
+                        {
+                            "parent_loc_id": str(row["parent_loc_id_a"]),
+                            "child_loc_id": str(row["child_loc_id_a"]),
+                            "parent_event_id": str(row.get("parent_event_id_a") or _extract_event_id(str(row["parent_loc_id_a"]))),
+                            "child_event_id": str(row.get("child_event_id_a") or _extract_event_id(str(row["child_loc_id_a"]))),
+                            "link_type": str(row.get("link_type_a") or "linked"),
+                            "source": row.get("source_a"),
+                            "confidence": row.get("confidence_a"),
+                        },
+                        {
+                            "parent_loc_id": str(row["parent_loc_id_b"]),
+                            "child_loc_id": str(row["child_loc_id_b"]),
+                            "parent_event_id": str(row.get("parent_event_id_b") or _extract_event_id(str(row["parent_loc_id_b"]))),
+                            "child_event_id": str(row.get("child_event_id_b") or _extract_event_id(str(row["child_loc_id_b"]))),
+                            "link_type": str(row.get("link_type_b") or "linked"),
+                            "source": row.get("source_b"),
+                            "confidence": row.get("confidence_b"),
+                        },
+                    ],
+                ))
+
+    requested_loc_ids = sorted({
+        loc_id
+        for node_loc_ids, _links in raw_candidates
+        for loc_id in node_loc_ids
+    })
+    feature_cache = _load_event_features_by_loc_ids(requested_loc_ids)
+
+    chain_matches: list[dict] = []
+    seen_signatures: set[tuple[str, ...]] = set()
+    for node_loc_ids, links in raw_candidates:
+        signature = tuple(node_loc_ids)
+        if signature in seen_signatures:
+            continue
+        if any(feature_cache.get(loc_id) is None for loc_id in node_loc_ids):
+            continue
+        chain = _build_chain_match(node_loc_ids, links, feature_cache)
+        if chain is None:
+            continue
+        if not _chain_matches_filters(
+            chain,
+            start_event_type=normalized_start,
+            via_event_type=normalized_via,
+            end_event_type=normalized_end,
+            year_start=year_start,
+            year_end=year_end,
+        ):
+            continue
+        seen_signatures.add(signature)
+        chain_matches.append(chain)
+
+    chain_matches.sort(
+        key=lambda item: (
+            -float(item.get("score") or 0.0),
+            int(item.get("depth") or 0),
+            str(item.get("chain_signature") or ""),
+        )
+    )
+    limited = chain_matches[:effective_limit]
+    return {
+        "count": len(limited),
+        "total_matches": len(chain_matches),
+        "chains": limited,
+        "message": None if limited else "No matching cross-disaster chains found",
+    }
+
+
+def _build_event_feature_from_row(loc_id: str, event_type: str, config: dict, row: dict) -> dict | None:
+    latitude = row.get("latitude")
+    longitude = row.get("longitude")
+    if pd.isna(latitude) or pd.isna(longitude):
+        return None
+
+    builders = config["builders"]()
+    props = {name: builder(row) for name, builder in builders.items()}
+    props["event_type"] = event_type
+    props["loc_id"] = props.get("loc_id") or loc_id
+
+    return {
+        "type": "Feature",
+        "geometry": {
+            "type": "Point",
+            "coordinates": [float(longitude), float(latitude)],
+        },
+        "properties": props,
+    }
 
 
 def _load_event_feature_by_loc_id(loc_id: str) -> dict | None:
@@ -714,24 +1182,54 @@ def _load_event_feature_by_loc_id(loc_id: str) -> dict | None:
         row_df["year"] = row_df["timestamp"].dt.year
 
     row = row_df.iloc[0].to_dict()
-    latitude = row.get("latitude")
-    longitude = row.get("longitude")
-    if pd.isna(latitude) or pd.isna(longitude):
-        return None
+    return _build_event_feature_from_row(loc_id, event_type, config, row)
 
-    builders = config["builders"]()
-    props = {name: builder(row) for name, builder in builders.items()}
-    props["event_type"] = event_type
-    props["loc_id"] = props.get("loc_id") or loc_id
 
-    return {
-        "type": "Feature",
-        "geometry": {
-            "type": "Point",
-            "coordinates": [float(longitude), float(latitude)],
-        },
-        "properties": props,
-    }
+def _load_event_features_by_loc_ids(loc_ids: list[str]) -> dict[str, dict | None]:
+    requested = [str(loc_id) for loc_id in loc_ids if str(loc_id or "").strip()]
+    result: dict[str, dict | None] = {loc_id: None for loc_id in requested}
+    if not requested:
+        return result
+
+    loc_ids_by_type: dict[str, list[str]] = {}
+    for loc_id in requested:
+        event_type = _extract_event_type(loc_id)
+        if event_type not in EVENT_TABLES:
+            continue
+        loc_ids_by_type.setdefault(event_type, []).append(loc_id)
+
+    for event_type, typed_loc_ids in loc_ids_by_type.items():
+        config = EVENT_TABLES.get(event_type)
+        if not config:
+            continue
+        events_path = config["path"]
+        if not parquet_available(events_path):
+            continue
+        try:
+            if duckdb_available():
+                df = select_rows(
+                    events_path,
+                    in_filters={"loc_id": typed_loc_ids},
+                )
+            else:
+                df = pd.read_parquet(events_path, filters=[("loc_id", "in", typed_loc_ids)])
+        except Exception as exc:
+            logger.warning("Failed batch resolving linked events for %s from %s: %s", event_type, events_path, exc)
+            continue
+        if df.empty:
+            continue
+        if "year" not in df.columns and "timestamp" in df.columns:
+            df = df.copy()
+            df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+            df["year"] = df["timestamp"].dt.year
+        for _, row in df.iterrows():
+            row_dict = row.to_dict()
+            loc_id = str(row_dict.get("loc_id") or "").strip()
+            if not loc_id:
+                continue
+            result[loc_id] = _build_event_feature_from_row(loc_id, event_type, config, row_dict)
+
+    return result
 
 
 def _read_related_rows_for_loc_id(loc_id: str) -> pd.DataFrame:
@@ -752,7 +1250,10 @@ def _read_related_rows_for_loc_id(loc_id: str) -> pd.DataFrame:
     parents["direction"] = "triggered_by"
     parents["related_loc_id"] = parents["parent_loc_id"]
 
-    return pd.concat([children, parents], ignore_index=True)
+    frames = [frame for frame in (children, parents) if not frame.empty]
+    if not frames:
+        return pd.DataFrame(columns=LINK_COLUMNS + ["direction", "related_loc_id"])
+    return pd.concat(frames, ignore_index=True)
 
 
 def _filter_related_rows_for_popup(
@@ -852,90 +1353,156 @@ def _build_chain_payload(root_loc_id: str, depth: int, *, cross_type_only: bool 
     }
 
 
+def _extract_exact_event_reference(payload: dict | None) -> dict | None:
+    if not isinstance(payload, dict):
+        return None
+
+    geojson = payload.get("geojson")
+    if not isinstance(geojson, dict):
+        return None
+    features = geojson.get("features")
+    if not isinstance(features, list) or not features:
+        return None
+    feature = features[0]
+    if not isinstance(feature, dict):
+        return None
+    props = feature.get("properties")
+    if not isinstance(props, dict):
+        return None
+
+    loc_id = str(props.get("loc_id") or "").strip()
+    if not loc_id:
+        return None
+
+    return {
+        "event_id": str(props.get("event_id") or "").strip() or None,
+        "loc_id": loc_id,
+        "pack_id": str(payload.get("pack_id") or "").strip() or None,
+        "source_id": str(payload.get("source_id") or "").strip() or None,
+        "event_type": str(payload.get("event_type") or props.get("event_type") or "").strip() or None,
+    }
+
+
+def _resolve_exact_event_reference(identifier_value: str, *, pack_id: str | None = None) -> dict | None:
+    payload = _resolve_exact_event_payload(identifier_value, pack_id=pack_id)
+    if payload is None:
+        return None
+    return _extract_exact_event_reference(payload)
+
+
+def _build_related_events_payload(loc_id: str, *, cross_type_only: bool = True) -> dict:
+    if not loc_id:
+        return {"event_id": loc_id, "related": [], "count": 0, "message": "Missing event loc_id"}
+
+    links_path = GLOBAL_DIR / "disasters/links.parquet"
+    if not parquet_available(links_path):
+        return {"event_id": loc_id, "related": [], "count": 0, "message": "Links data not available"}
+
+    try:
+        children = _normalize_link_rows(_read_link_rows(links_path, "parent_loc_id", loc_id).copy())
+        parents = _normalize_link_rows(_read_link_rows(links_path, "child_loc_id", loc_id).copy())
+    except Exception as exc:
+        runtime_mode = get_runtime_mode(get_runtime_config().get("runtime_mode", "local"))
+        if runtime_mode == "cloud":
+            logger.warning("Related events links parquet unavailable in cloud runtime: %s", exc)
+            return {
+                "event_id": loc_id,
+                "related": [],
+                "count": 0,
+                "message": "Related-disaster links are not available in the published runtime data.",
+            }
+        raise
+
+    if children.empty or "parent_loc_id" not in children.columns:
+        children = pd.DataFrame(columns=LINK_COLUMNS)
+    children["direction"] = "triggered"
+    children["related_loc_id"] = children["child_loc_id"]
+
+    if parents.empty or "child_loc_id" not in parents.columns:
+        parents = pd.DataFrame(columns=LINK_COLUMNS)
+    parents["direction"] = "triggered_by"
+    parents["related_loc_id"] = parents["parent_loc_id"]
+
+    frames = [frame for frame in (children, parents) if not frame.empty]
+    if not frames:
+        related = pd.DataFrame(columns=LINK_COLUMNS + ["direction", "related_loc_id"])
+    else:
+        related = pd.concat(frames, ignore_index=True)
+    related = _filter_related_rows_for_popup(
+        loc_id,
+        related,
+        cross_type_only=cross_type_only,
+    )
+    if len(related) == 0:
+        message = (
+            "No cross-disaster links found for this event in links.parquet"
+            if cross_type_only
+            else "No related disasters found for this event in links.parquet"
+        )
+        return {
+            "event_id": loc_id,
+            "related": [],
+            "count": 0,
+            "by_type": {},
+            "cross_type_only": cross_type_only,
+            "message": message,
+        }
+
+    related_list = []
+    for _, row in related.iterrows():
+        related_loc_id = row["related_loc_id"]
+        related_list.append(
+            {
+                "loc_id": related_loc_id,
+                "event_id": (
+                    row.get("child_event_id") if row["direction"] == "triggered" else row.get("parent_event_id")
+                ) or _extract_event_id(related_loc_id),
+                "event_type": _extract_event_type(related_loc_id),
+                "link_type": row["link_type"],
+                "direction": row["direction"],
+                "source": row["source"],
+                "confidence": row["confidence"],
+            }
+        )
+
+    type_counts = {}
+    for item in related_list:
+        event_type = item["event_type"]
+        type_counts[event_type] = type_counts.get(event_type, 0) + 1
+
+    return {
+        "event_id": loc_id,
+        "related": related_list,
+        "count": len(related_list),
+        "by_type": type_counts,
+        "cross_type_only": cross_type_only,
+        "message": None,
+    }
+
+
+def _build_related_chain_response(loc_id: str, *, depth: int, cross_type_only: bool = True) -> dict:
+    payload = _build_chain_payload(
+        loc_id,
+        depth,
+        cross_type_only=cross_type_only,
+    )
+    return {
+        "type": "FeatureCollection",
+        "features": payload["features"],
+        "source": payload["source"],
+        "links": payload["links"],
+        "depth": payload["depth"],
+        "count": payload["count"],
+        "cross_type_only": cross_type_only,
+        "loc_id": loc_id,
+    }
+
+
 @router.get("/api/events/related/{loc_id:path}")
 async def get_related_events(loc_id: str, cross_type_only: bool = Query(default=True)):
     """Get related disaster events for a given event loc_id."""
     try:
-        if not loc_id:
-            return msgpack_response({"event_id": loc_id, "related": [], "count": 0, "message": "Missing event loc_id"})
-
-        links_path = GLOBAL_DIR / "disasters/links.parquet"
-        if not parquet_available(links_path):
-            return msgpack_response({"event_id": loc_id, "related": [], "count": 0, "message": "Links data not available"})
-
-        try:
-            children = _normalize_link_rows(_read_link_rows(links_path, "parent_loc_id", loc_id).copy())
-            parents = _normalize_link_rows(_read_link_rows(links_path, "child_loc_id", loc_id).copy())
-        except Exception as exc:
-            runtime_mode = get_runtime_mode(get_runtime_config().get("runtime_mode", "local"))
-            if runtime_mode == "cloud":
-                logger.warning("Related events links parquet unavailable in cloud runtime: %s", exc)
-                return msgpack_response(
-                    {
-                        "event_id": loc_id,
-                        "related": [],
-                        "count": 0,
-                        "message": "Related-disaster links are not available in the published runtime data.",
-                    }
-                )
-            raise
-
-        if children.empty or "parent_loc_id" not in children.columns:
-            children = pd.DataFrame(columns=LINK_COLUMNS)
-        children["direction"] = "triggered"
-        children["related_loc_id"] = children["child_loc_id"]
-
-        if parents.empty or "child_loc_id" not in parents.columns:
-            parents = pd.DataFrame(columns=LINK_COLUMNS)
-        parents["direction"] = "triggered_by"
-        parents["related_loc_id"] = parents["parent_loc_id"]
-
-        related = pd.concat([children, parents], ignore_index=True)
-        related = _filter_related_rows_for_popup(
-            loc_id,
-            related,
-            cross_type_only=cross_type_only,
-        )
-        if len(related) == 0:
-            message = (
-                "No cross-disaster links found for this event in links.parquet"
-                if cross_type_only
-                else "No related disasters found for this event in links.parquet"
-            )
-            return msgpack_response({"event_id": loc_id, "related": [], "count": 0, "message": message})
-
-        related_list = []
-        for _, row in related.iterrows():
-            related_loc_id = row["related_loc_id"]
-            related_list.append(
-                {
-                    "loc_id": related_loc_id,
-                    "event_id": (
-                        row.get("child_event_id") if row["direction"] == "triggered" else row.get("parent_event_id")
-                    ) or _extract_event_id(related_loc_id),
-                    "event_type": _extract_event_type(related_loc_id),
-                    "link_type": row["link_type"],
-                    "direction": row["direction"],
-                    "source": row["source"],
-                    "confidence": row["confidence"],
-                }
-            )
-
-        type_counts = {}
-        for item in related_list:
-            event_type = item["event_type"]
-            type_counts[event_type] = type_counts.get(event_type, 0) + 1
-
-        return msgpack_response(
-            {
-                "event_id": loc_id,
-                "related": related_list,
-                "count": len(related_list),
-                "by_type": type_counts,
-                "cross_type_only": cross_type_only,
-                "message": None,
-            }
-        )
+        return msgpack_response(_build_related_events_payload(loc_id, cross_type_only=cross_type_only))
     except Exception as e:
         logger.error(f"Error fetching related events for {loc_id}: {e}")
         return msgpack_error(str(e), 500)
@@ -1019,26 +1586,151 @@ async def get_related_event_chain(
         if not loc_id:
             return msgpack_error("Missing event loc_id", 400)
 
-        payload = _build_chain_payload(
+        payload = _build_related_chain_response(
             loc_id,
-            depth,
+            depth=depth,
             cross_type_only=cross_type_only,
         )
         if payload["source"] is None:
             return msgpack_error(f"Linked event {loc_id} could not be resolved", 404)
-
-        return msgpack_response(
-            {
-                "type": "FeatureCollection",
-                "features": payload["features"],
-                "source": payload["source"],
-                "links": payload["links"],
-                "depth": payload["depth"],
-                "count": payload["count"],
-                "cross_type_only": cross_type_only,
-                "loc_id": loc_id,
-            }
-        )
+        return msgpack_response(payload)
     except Exception as e:
         logger.error(f"Error building linked event chain for {loc_id}: {e}")
         return msgpack_error(str(e), 500)
+
+
+@router.get("/api/v1/disaster-links/event/{event_id:path}")
+async def get_disaster_links_for_exact_event(
+    event_id: str,
+    pack_id: str | None = Query(default=None),
+    cross_type_only: bool = Query(default=True),
+):
+    """Resolve one exact disaster event id into related-link rows."""
+    try:
+        if not str(event_id or "").strip():
+            return JSONResponse({"error": "Missing event id"}, status_code=400)
+
+        reference = _resolve_exact_event_reference(event_id, pack_id=pack_id)
+        if reference is None:
+            scope_text = f" in pack {pack_id}" if pack_id else ""
+            return JSONResponse({"error": f"Event {event_id} was not found{scope_text}"}, status_code=404)
+
+        resolved_pack_id = str(reference.get("pack_id") or "").strip().lower()
+        if resolved_pack_id not in DISASTER_LINK_API_PACKS:
+            return JSONResponse(
+                {
+                    "error": f"Shared disaster links are not published for pack {resolved_pack_id or pack_id or 'unknown'}"
+                },
+                status_code=400,
+            )
+
+        payload = _build_related_events_payload(
+            str(reference["loc_id"]),
+            cross_type_only=cross_type_only,
+        )
+        payload.update(
+            {
+                "query_event_id": str(event_id),
+                "resolved_event": reference,
+                "supported_link_types": ["triggered"],
+                "default_cross_type_only": True,
+                "cross_hazard_only": True,
+            }
+        )
+        return JSONResponse(payload)
+    except Exception as e:
+        logger.error(f"Error fetching public disaster links for {event_id}: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@router.get("/api/v1/disaster-links/chain/{event_id:path}")
+async def get_disaster_link_chain_for_exact_event(
+    event_id: str,
+    pack_id: str | None = Query(default=None),
+    depth: int = Query(default=1, ge=1, le=MAX_CHAIN_DEPTH),
+    cross_type_only: bool = Query(default=True),
+):
+    """Resolve one exact disaster event id into a related-link chain payload."""
+    try:
+        if not str(event_id or "").strip():
+            return JSONResponse({"error": "Missing event id"}, status_code=400)
+
+        reference = _resolve_exact_event_reference(event_id, pack_id=pack_id)
+        if reference is None:
+            scope_text = f" in pack {pack_id}" if pack_id else ""
+            return JSONResponse({"error": f"Event {event_id} was not found{scope_text}"}, status_code=404)
+
+        resolved_pack_id = str(reference.get("pack_id") or "").strip().lower()
+        if resolved_pack_id not in DISASTER_LINK_API_PACKS:
+            return JSONResponse(
+                {
+                    "error": f"Shared disaster links are not published for pack {resolved_pack_id or pack_id or 'unknown'}"
+                },
+                status_code=400,
+            )
+
+        payload = _build_related_chain_response(
+            str(reference["loc_id"]),
+            depth=depth,
+            cross_type_only=cross_type_only,
+        )
+        if payload["source"] is None:
+            return JSONResponse({"error": f"Linked event {reference['loc_id']} could not be resolved"}, status_code=404)
+
+        payload.update(
+            {
+                "query_event_id": str(event_id),
+                "resolved_event": reference,
+                "supported_link_types": ["triggered"],
+                "default_cross_type_only": True,
+                "cross_hazard_only": True,
+            }
+        )
+        return JSONResponse(payload)
+    except Exception as e:
+        logger.error(f"Error building public disaster link chain for {event_id}: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@router.get("/api/v1/disaster-links/search")
+async def search_disaster_link_chains(
+    start_event_type: str | None = Query(default=None),
+    via_event_type: str | None = Query(default=None),
+    end_event_type: str | None = Query(default=None),
+    year_start: int | None = Query(default=None),
+    year_end: int | None = Query(default=None),
+    limit: int = Query(default=10, ge=1, le=MAX_DISCOVERY_LIMIT),
+):
+    """Discover ranked cross-disaster chains without requiring a seed event id."""
+    try:
+        normalized_year_start = _safe_int(year_start)
+        normalized_year_end = _safe_int(year_end)
+        normalized_limit = _safe_int(limit) or 10
+        payload = _discover_disaster_link_chains(
+            start_event_type=start_event_type,
+            via_event_type=via_event_type,
+            end_event_type=end_event_type,
+            year_start=normalized_year_start,
+            year_end=normalized_year_end,
+            limit=normalized_limit,
+        )
+        payload.update(
+            {
+                "query": {
+                    "start_event_type": _normalize_event_type_filter(start_event_type),
+                    "via_event_type": _normalize_event_type_filter(via_event_type),
+                    "end_event_type": _normalize_event_type_filter(end_event_type),
+                    "year_start": normalized_year_start,
+                    "year_end": normalized_year_end,
+                    "limit": normalized_limit,
+                },
+                "supported_link_types": ["triggered"],
+                "cross_hazard_only": True,
+            }
+        )
+        if payload.get("message") == "At least one event-type filter is required":
+            return JSONResponse(payload, status_code=400)
+        return JSONResponse(payload)
+    except Exception as e:
+        logger.error("Error searching public disaster links: %s", e)
+        return JSONResponse({"error": str(e)}, status_code=500)
