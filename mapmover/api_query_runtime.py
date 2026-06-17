@@ -12,6 +12,7 @@ import pandas as pd
 from .data_loading import get_source_path, load_catalog, load_source_metadata
 from .duckdb_helpers import parquet_available, parquet_columns, path_to_uri, quote_ident, run_df
 from .paths import DATA_ROOT
+from .runtime.aggregate_primitives import resolve_aggregate_admin2_dir
 
 
 DEFAULT_LIMIT = 100
@@ -163,6 +164,26 @@ SUPPORTED_DYNAMIC_SOURCES: dict[str, dict[str, Any]] = {
         "location_field": "loc_id",
         "time_field": "timestamp",
         "time_granularity": "timestamp",
+        "default_limit": 100,
+        "max_limit": 1000,
+    },
+    "flood_aggregates": {
+        "pack_id": "floods",
+        "parquet_name": "yearly.parquet",
+        "query_mode": "single_source",
+        "location_field": "loc_id",
+        "time_field": "year",
+        "time_granularity": "yearly",
+        "default_limit": 100,
+        "max_limit": 1000,
+    },
+    "tornado_aggregates": {
+        "pack_id": "tornadoes",
+        "parquet_name": "yearly.parquet",
+        "query_mode": "single_source",
+        "location_field": "loc_id",
+        "time_field": "year",
+        "time_granularity": "yearly",
         "default_limit": 100,
         "max_limit": 1000,
     },
@@ -329,12 +350,28 @@ def _build_dynamic_source_spec(source_id: str) -> ApiSourceSpec | None:
     time_granularity = normalize_time_granularity(
         temporal_coverage.get("granularity") or source_defaults.get("time_granularity")
     )
-    local_pack_path = DATA_ROOT / "global" / str(source_defaults["pack_id"]) / str(source_defaults["parquet_name"])
-    if local_pack_path.exists():
+    source_path = Path(get_source_path(source_id))
+    parquet_name = str(source_defaults["parquet_name"])
+    wrapper_aggregate_path = None
+    if source_path.name.lower() == "aggregates" and source_path.parent.name.lower() == "sources":
+        aggregate_dir = resolve_aggregate_admin2_dir(source_path, data_root=DATA_ROOT)
+        wrapper_aggregate_path = aggregate_dir / parquet_name
+
+    local_pack_path = DATA_ROOT / "global" / str(source_defaults["pack_id"]) / parquet_name
+    if wrapper_aggregate_path is not None and wrapper_aggregate_path.exists():
+        parquet_path = wrapper_aggregate_path
+    elif local_pack_path.exists():
         parquet_path = local_pack_path
+    elif source_path.exists():
+        primary_candidate = source_path / parquet_name
+        if primary_candidate.exists():
+            parquet_path = primary_candidate
+        elif wrapper_aggregate_path is not None:
+            parquet_path = wrapper_aggregate_path
+        else:
+            parquet_path = primary_candidate
     else:
-        source_path = get_source_path(source_id)
-        parquet_path = source_path / str(source_defaults["parquet_name"]) if source_path else None
+        parquet_path = wrapper_aggregate_path or None
     available_cols: set[str] = set()
     if isinstance(parquet_path, Path) and parquet_path.exists():
         try:
@@ -540,11 +577,18 @@ def get_pack_source_ids(pack_id: str) -> list[str]:
 
 
 def _get_api_ready_pack_source_ids(pack_id: str) -> list[str]:
-    return [
-        source_id
-        for source_id in get_pack_source_ids(pack_id)
-        if get_api_source_spec(source_id) is not None
-    ]
+    source_ids: list[str] = []
+    catalog = load_catalog()
+    normalized_pack_id = str(pack_id or "").strip()
+    for source in catalog.get("sources", []):
+        if str(source.get("pack_id") or "").strip() != normalized_pack_id:
+            continue
+        if not bool(source.get("api_ready")):
+            continue
+        source_id = str(source.get("source_id") or "").strip()
+        if source_id and get_api_source_spec(source_id) is not None:
+            source_ids.append(source_id)
+    return sorted(set(source_ids))
 
 
 def normalize_time_granularity(value: str | None) -> str | None:
@@ -859,6 +903,14 @@ def get_source_parquet_path(spec: ApiSourceSpec) -> Path:
     primary_path = source_dir / spec.parquet_name
     if primary_path.exists():
         return primary_path
+
+    if source_dir.name.lower() == "aggregates" and source_dir.parent.name.lower() == "sources":
+        aggregate_dir = resolve_aggregate_admin2_dir(source_dir, data_root=DATA_ROOT)
+        aggregate_primary_path = aggregate_dir / spec.parquet_name
+        if aggregate_primary_path.exists():
+            return aggregate_primary_path
+        if str(spec.parquet_name or "").strip().lower() == "yearly.parquet":
+            return aggregate_primary_path
 
     if spec.metadata_source_id and spec.metadata_source_id != spec.source_id:
         metadata_source_dir = Path(get_source_path(spec.metadata_source_id))
