@@ -116,6 +116,7 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
     caller_key = auth_user_id or ip_hash or "anonymous"
     user_agent = req.headers.get("user-agent", "").strip() or None
     payment_rail: str | None = None
+    artifact_token_id: str | None = None
     request_fingerprint: str | None = None
     query_scope: dict[str, Any] | None = None
 
@@ -148,7 +149,8 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
                 pack_id=pack_id or "unknown",
                 source_id=source_id,
                 decision="deny",
-                payment_rail=None,
+                payment_rail=payment_rail,
+                artifact_token_id=artifact_token_id,
                 auth_user_id=auth_user_id,
                 ip_hash=ip_hash,
                 user_agent=user_agent,
@@ -341,7 +343,8 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
             pack_id=spec.pack_id,
             source_id=spec.source_id,
             decision="deny",
-            payment_rail=None,
+            payment_rail=payment_rail,
+            artifact_token_id=artifact_token_id,
             auth_user_id=auth_user_id,
             ip_hash=ip_hash,
             user_agent=user_agent,
@@ -804,6 +807,8 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
     amount_charged_usdc_base_units: int | None = None
     artifact_token = get_trusted_artifact_token(req)
     if artifact_token is not None:
+        payment_rail = "trusted_artifact"
+        artifact_token_id = hashlib.sha256(artifact_token.encode()).hexdigest()[:8]
         token_limit = int(os.getenv("ARTIFACT_TOKEN_RATE_LIMIT", "20"))
         token_window = int(os.getenv("ARTIFACT_TOKEN_RATE_WINDOW_SECONDS", "60"))
         allowed, retry_after = rate_limiter.check(
@@ -821,15 +826,13 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
                 pack_id=spec.pack_id,
                 source_id=source_id,
             )
-        payment_rail = "trusted_artifact"
-        token_id = hashlib.sha256(artifact_token.encode()).hexdigest()[:8]
         get_api_analytics_metadata(
             req,
             query_scope=query_scope,
             access_lane="trusted_artifact",
         )
         existing_meta = getattr(req.state, "analytics_metadata", {})
-        existing_meta["artifact_token_id"] = token_id
+        existing_meta["artifact_token_id"] = artifact_token_id
         req.state.analytics_metadata = existing_meta
     elif pack_requires_commercial_access(spec.pack_id):
         if not commercial_access_enabled():
@@ -915,6 +918,7 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
                 source_id=spec.source_id,
                 decision="challenge",
                 payment_rail=payment_rail,
+                artifact_token_id=artifact_token_id,
                 auth_user_id=auth_user_id,
                 ip_hash=ip_hash,
                 user_agent=user_agent,
@@ -1087,6 +1091,7 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
         source_id=spec.source_id,
         decision="allow",
         payment_rail=payment_rail,
+        artifact_token_id=artifact_token_id,
         auth_user_id=auth_user_id,
         ip_hash=ip_hash,
         user_agent=user_agent,

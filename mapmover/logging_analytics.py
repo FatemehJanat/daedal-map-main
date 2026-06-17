@@ -211,6 +211,7 @@ def log_api_query_event(
     source_id: str,
     decision: str,
     payment_rail: str | None = None,
+    artifact_token_id: str | None = None,
     auth_user_id: str | None = None,
     ip_hash: str | None = None,
     user_agent: str | None = None,
@@ -236,6 +237,7 @@ def log_api_query_event(
         "source_id": source_id,
         "decision": decision,
         "payment_rail": payment_rail,
+        "artifact_token_id": artifact_token_id,
         "caller": {
             "auth_user_id": auth_user_id,
             "ip_hash": ip_hash,
@@ -283,6 +285,7 @@ def log_api_query_event(
             query_granularity=query_granularity,
             decision=decision,
             payment_rail=payment_rail,
+            artifact_token_id=artifact_token_id,
             auth_user_id=auth_user_id,
             ip_hash=ip_hash,
             status_code=status_code,
