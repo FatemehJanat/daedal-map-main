@@ -329,6 +329,33 @@ def _build_dynamic_source_spec(source_id: str) -> ApiSourceSpec | None:
     time_granularity = normalize_time_granularity(
         temporal_coverage.get("granularity") or source_defaults.get("time_granularity")
     )
+    local_pack_path = DATA_ROOT / "global" / str(source_defaults["pack_id"]) / str(source_defaults["parquet_name"])
+    if local_pack_path.exists():
+        parquet_path = local_pack_path
+    else:
+        source_path = get_source_path(source_id)
+        parquet_path = source_path / str(source_defaults["parquet_name"]) if source_path else None
+    available_cols: set[str] = set()
+    if isinstance(parquet_path, Path) and parquet_path.exists():
+        try:
+            available_cols = {str(col) for col in pd.read_parquet(parquet_path).columns}
+        except Exception:
+            available_cols = set()
+    elif parquet_path and parquet_available(parquet_path):
+        available_cols = parquet_columns(parquet_path)
+    normalized_time_field = str(time_field or "").strip() or None
+    if normalized_time_field and normalized_time_field not in available_cols:
+        fallback_time_field = None
+        if "year" in available_cols and normalize_time_granularity(time_granularity) == "yearly":
+            fallback_time_field = "year"
+        elif "timestamp" in available_cols:
+            fallback_time_field = "timestamp"
+        elif "date" in available_cols:
+            fallback_time_field = "date"
+        if fallback_time_field:
+            normalized_time_field = fallback_time_field
+        else:
+            normalized_time_field = None
     if not time_granularity and str(time_field or "").strip().lower() == "timestamp":
         time_granularity = "timestamp"
     location_filter_mode = str(
@@ -341,9 +368,9 @@ def _build_dynamic_source_spec(source_id: str) -> ApiSourceSpec | None:
 
     filterable_fields = {location_field}
     sortable_fields = {location_field}
-    if time_field:
-        filterable_fields.add(str(time_field))
-        sortable_fields.add(str(time_field))
+    if normalized_time_field:
+        filterable_fields.add(normalized_time_field)
+        sortable_fields.add(normalized_time_field)
     metadata_filterable = metadata.get("filterable_fields") if isinstance(metadata.get("filterable_fields"), list) else []
     for field in metadata_filterable:
         field_name = str(field).strip()
@@ -371,7 +398,7 @@ def _build_dynamic_source_spec(source_id: str) -> ApiSourceSpec | None:
         parquet_name=str(source_defaults["parquet_name"]),
         query_mode=str(source_defaults["query_mode"]),
         location_field=location_field,
-        time_field=str(time_field) if time_field else None,
+        time_field=normalized_time_field,
         time_granularity=str(time_granularity) if time_granularity else None,
         metrics=metrics,
         filterable_fields=filterable_fields,
