@@ -352,24 +352,19 @@ def _build_dynamic_source_spec(source_id: str) -> ApiSourceSpec | None:
     )
     source_path = Path(get_source_path(source_id))
     parquet_name = str(source_defaults["parquet_name"])
+    primary_candidate = source_path / parquet_name
     wrapper_aggregate_path = None
     if source_path.name.lower() == "aggregates" and source_path.parent.name.lower() == "sources":
         aggregate_dir = resolve_aggregate_admin2_dir(source_path, data_root=DATA_ROOT)
         wrapper_aggregate_path = aggregate_dir / parquet_name
 
     local_pack_path = DATA_ROOT / "global" / str(source_defaults["pack_id"]) / parquet_name
-    if wrapper_aggregate_path is not None and wrapper_aggregate_path.exists():
+    if wrapper_aggregate_path is not None and (wrapper_aggregate_path.exists() or parquet_available(wrapper_aggregate_path)):
         parquet_path = wrapper_aggregate_path
+    elif primary_candidate.exists() or parquet_available(primary_candidate):
+        parquet_path = primary_candidate
     elif local_pack_path.exists():
         parquet_path = local_pack_path
-    elif source_path.exists():
-        primary_candidate = source_path / parquet_name
-        if primary_candidate.exists():
-            parquet_path = primary_candidate
-        elif wrapper_aggregate_path is not None:
-            parquet_path = wrapper_aggregate_path
-        else:
-            parquet_path = primary_candidate
     else:
         parquet_path = wrapper_aggregate_path or None
     available_cols: set[str] = set()
