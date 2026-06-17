@@ -1,3 +1,5 @@
+import { buildExploreWelcomeStatusMessage } from '../shared/surface-messaging.js';
+
 export function buildExploreWelcomeMessage() {
   return (
     'Welcome to Explore. Start here when you want context: see a place, compare layers, ' +
@@ -13,3 +15,5 @@ export function buildExploreWelcomeMessage() {
     '</div>'
   );
 }
+
+export { buildExploreWelcomeStatusMessage };

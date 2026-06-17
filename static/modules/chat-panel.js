@@ -72,7 +72,7 @@ import {
   parseDisplayLegendCommand as parseDisplayLegendCommandImpl,
   parseDisplayStyleCommand as parseDisplayStyleCommandImpl
 } from './chat/chat-display-commands.js';
-import { buildExploreWelcomeMessage } from './explore/welcome.js';
+import { buildExploreWelcomeMessage, buildExploreWelcomeStatusMessage } from './explore/welcome.js';
 import { buildResearchFriendlyWelcomeMessage, buildResearchWelcomeMessage } from './research/welcome.js';
 import { buildOpsFriendlyWelcomeMessage, buildOpsWelcomeMessage } from './ops/welcome.js';
 import {
@@ -1270,6 +1270,7 @@ export const ChatManager = {
   async seedEmptyConversation(mode = this.mode) {
     return seedEmptyConversationImpl(this, mode, {
       buildExploreWelcomeMessage,
+      buildExploreWelcomeStatusMessage,
       buildResearchFriendlyWelcomeMessage,
       buildResearchWelcomeMessage,
       buildOpsFriendlyWelcomeMessage,

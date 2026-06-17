@@ -14,6 +14,8 @@ from functools import lru_cache
 from pathlib import Path
 
 from mapmover.geometry_handlers import get_selection_geometries
+from mapmover.routes.disasters.related import _classify_exact_event_identifier
+from mapmover.runtime_config import get_runtime_config
 
 try:
     import boto3
@@ -32,6 +34,7 @@ CURRENCY_MAP_PATH = REFERENCE_ROOT / "country_currency_map.csv"
 LIVE_STATE_SNAPSHOT_TTL_SECONDS = 60.0
 LIVE_STATE_HISTORY_TTL_SECONDS = 60.0
 DEFAULT_OPS_HISTORY_RETENTION_HOURS = 72
+USGS_FDSN_EVENT_URL = "https://earthquake.usgs.gov/fdsnws/event/1/query"
 _LIVE_STATE_CACHE: dict[tuple[str, str], tuple[float, object]] = {}
 _LIVE_STATE_CACHE_LOCK = threading.Lock()
 _LIVE_STATE_STATUS: dict[tuple[str, str], str] = {}
@@ -204,7 +207,8 @@ def _extract_text(response) -> str:
 
 
 def _object_store_bucket() -> str:
-    return str(os.environ.get("S3_BUCKET", "") or "").strip()
+    cloud_cfg = get_runtime_config().get("cloud", {}) or {}
+    return str(os.environ.get("S3_BUCKET", "") or str(cloud_cfg.get("bucket", "")) or "").strip()
 
 
 def _live_state_prefix() -> str:
@@ -214,6 +218,7 @@ def _live_state_prefix() -> str:
     published_prefix = (
         str(os.environ.get("S3_PUBLISHED_PREFIX", "") or "").strip()
         or str(os.environ.get("S3_PREFIX", "") or "").strip()
+        or str((get_runtime_config().get("cloud", {}) or {}).get("prefix", "") or "").strip()
         or "published"
     )
     published_prefix = published_prefix.strip("/")
@@ -223,7 +228,12 @@ def _live_state_prefix() -> str:
 def _build_object_store_client():
     if boto3 is None or not _object_store_bucket():
         return None
-    endpoint_url = str(os.environ.get("S3_ENDPOINT_URL", "") or "").strip() or None
+    cloud_cfg = get_runtime_config().get("cloud", {}) or {}
+    endpoint_url = (
+        str(os.environ.get("S3_ENDPOINT_URL", "") or "").strip()
+        or str(cloud_cfg.get("endpoint_url", "") or "").strip()
+        or None
+    )
     region = (
         str(os.environ.get("AWS_DEFAULT_REGION", "") or "").strip()
         or str(os.environ.get("AWS_REGION", "") or "").strip()
@@ -273,6 +283,7 @@ def _site_live_state_base_url() -> str:
     value = (
         str(os.environ.get("SITE_URL", "") or "").strip()
         or str(os.environ.get("CLOUD_URL", "") or "").strip()
+        or str(((get_runtime_config().get("app", {}) or {}).get("site_url", "")) or "").strip()
     ).rstrip("/")
     return value
 
@@ -316,7 +327,7 @@ def _get_live_state_status(collector: str, kind: str) -> str:
 
 
 def _cloud_live_state_expected() -> bool:
-    return bool(_object_store_bucket() and str(os.environ.get("AWS_ACCESS_KEY_ID", "") or "").strip() and str(os.environ.get("AWS_SECRET_ACCESS_KEY", "") or "").strip())
+    return bool(_object_store_bucket())
 
 
 def _fetch_live_state_via_site(collector_name: str, kind: str) -> dict | list | None:
@@ -385,6 +396,8 @@ def load_current_state_history(collector_name: str, limit: int | None = None) ->
             entries = _fetch_live_state_via_site(collector, "history")
             if isinstance(entries, list) and entries:
                 _set_live_state_status(collector, "history", "site_fallback")
+    if not isinstance(entries, list):
+        entries = []
     if isinstance(entries, list) and entries:
         _set_live_state_cache(collector, "history", entries)
     else:
@@ -1248,6 +1261,12 @@ def _extract_identifier_reference(query: str) -> tuple[str | None, str | None]:
             value = str(match.group(1) or "").strip()
             if value:
                 return key, value
+
+    token_candidates = re.findall(r"[A-Za-z0-9._:-]{4,}", text)
+    for candidate in token_candidates:
+        hinted_packs, strict = _classify_exact_event_identifier(candidate)
+        if strict and hinted_packs:
+            return "event_id", str(candidate).strip()
     return None, None
 
 
@@ -1857,11 +1876,24 @@ def _select_deep_history_feeds(
     hints: dict | None = None,
     max_feeds: int = 2,
 ) -> list[str]:
-    if not _query_requests_deep_history(query, hints=hints):
-        return []
     explicit = _mentioned_feeds(query, effective_feeds)
     if explicit:
-        return explicit[:max_feeds]
+        if _query_requests_deep_history(query, hints=hints):
+            return explicit[:max_feeds]
+        return explicit[:1]
+
+    if not _query_requests_deep_history(query, hints=hints):
+        inferred_feed = _infer_followup_feed(
+            query=query,
+            chat_history=chat_history,
+            effective_feeds=effective_feeds,
+            cache=cache,
+            report=report,
+        )
+        if inferred_feed:
+            return [inferred_feed]
+        return []
+
     recent_feed = _recent_feed_from_history(chat_history, effective_feeds)
     if recent_feed:
         return [recent_feed]
@@ -2306,6 +2338,12 @@ def _load_exact_history_feature(
             }
             features.append(feature)
     if not features:
+        if feed == "earthquakes":
+            return _recover_exact_earthquake_feature(
+                identifier_value=identifier_value,
+                retention_hours=DEFAULT_OPS_HISTORY_RETENTION_HOURS,
+                cache=cache,
+            )
         return None, None
     payload = {
         "type": "events",
@@ -2325,6 +2363,110 @@ def _load_exact_history_feature(
     }
     _store_ops_history_payload(cache, feed=feed, payload=payload)
     return payload, features[0]
+
+
+def _earthquake_feature_to_row(feature: dict) -> dict | None:
+    if not isinstance(feature, dict):
+        return None
+    props = feature.get("properties") if isinstance(feature.get("properties"), dict) else {}
+    geometry = feature.get("geometry") if isinstance(feature.get("geometry"), dict) else {}
+    coords = geometry.get("coordinates") if isinstance(geometry.get("coordinates"), list) else []
+    if len(coords) < 2:
+        return None
+    timestamp_ms = props.get("time")
+    magnitude = props.get("mag")
+    if not isinstance(timestamp_ms, (int, float)) or magnitude is None:
+        return None
+    try:
+        timestamp = datetime.fromtimestamp(float(timestamp_ms) / 1000.0, tz=timezone.utc)
+        lon = float(coords[0])
+        lat = float(coords[1])
+        depth_km = float(coords[2]) if len(coords) > 2 else 0.0
+        magnitude_value = float(magnitude)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    raw_id = str(feature.get("id") or "").strip()
+    if not raw_id:
+        return None
+    event_id = raw_id if raw_id.startswith("us") else f"us{raw_id}"
+    return {
+        "event_id": event_id,
+        "timestamp": timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+        "latitude": lat,
+        "longitude": lon,
+        "magnitude": magnitude_value,
+        "depth_km": depth_km,
+        "place": str(props.get("place") or "").strip(),
+        "source": "usgs",
+    }
+
+
+def _recover_exact_earthquake_feature(
+    *,
+    identifier_value: str | None,
+    retention_hours: int = DEFAULT_OPS_HISTORY_RETENTION_HOURS,
+    cache=None,
+) -> tuple[dict, dict] | tuple[None, None]:
+    if requests is None:
+        return None, None
+    event_id = str(identifier_value or "").strip()
+    if not event_id:
+        return None, None
+    try:
+        response = requests.get(
+            USGS_FDSN_EVENT_URL,
+            params={"format": "geojson", "eventid": event_id},
+            timeout=10,
+        )
+        if response.status_code >= 300:
+            return None, None
+        payload = response.json()
+    except Exception:
+        return None, None
+    feature_payload = None
+    if isinstance(payload, dict):
+        if payload.get("type") == "Feature":
+            feature_payload = payload
+        else:
+            features = payload.get("features")
+            if isinstance(features, list) and features:
+                feature_payload = features[0]
+    if not isinstance(feature_payload, dict):
+        return None, None
+    row = _earthquake_feature_to_row(feature_payload)
+    if not isinstance(row, dict):
+        return None, None
+    try:
+        event_dt = datetime.strptime(str(row.get("timestamp") or ""), "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None, None
+    if event_dt < datetime.now(timezone.utc) - timedelta(hours=max(int(retention_hours), 1)):
+        return None, None
+    props = dict(row)
+    props.setdefault("collector", "earthquakes")
+    feature = {
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": [row["longitude"], row["latitude"]]},
+        "properties": props,
+    }
+    recovered_payload = {
+        "type": "events",
+        "data_type": "events",
+        "event_type": FEED_FOCUS_SPECS.get("earthquakes", {}).get("label") or "earthquake",
+        "source_id": "earthquakes_recent_api_recovery",
+        "dataset_name": "Ops Earthquakes Exact Event Recovery",
+        "source_name": "Ops Earthquakes Exact Event Recovery",
+        "summary": f"Showing recovered earthquake event {event_id} from the recent USGS window.",
+        "count": 1,
+        "window_label": "the retained Ops window",
+        "fit": True,
+        "geojson": {
+            "type": "FeatureCollection",
+            "features": [feature],
+        },
+    }
+    _store_ops_history_payload(cache, feed="earthquakes", payload=recovered_payload)
+    return recovered_payload, feature
 
 
 def _active_count_for_feed(feed: str, summary: dict, query_text: str) -> tuple[int | None, str | None]:

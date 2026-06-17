@@ -4650,7 +4650,7 @@ export const PointRadiusModel = {
       }
 
       try {
-        const url = `/api/events/related/${encodeURIComponent(unifiedLocId)}`;
+        const url = `/api/events/related/${encodeURIComponent(unifiedLocId)}?cross_type_only=true`;
         const data = await fetchMsgpack(url);
 
         if (data.count > 0) {
@@ -4853,7 +4853,7 @@ export const PointRadiusModel = {
       }
 
       try {
-        const data = await fetchMsgpack(`/api/events/chain/${encodeURIComponent(resolvedLocId)}?depth=2`);
+        const data = await fetchMsgpack(`/api/events/chain/${encodeURIComponent(resolvedLocId)}?depth=2&cross_type_only=true`);
         if (Array.isArray(data?.features) && data.features.length > 1) {
           this._notifyRelatedChain(data);
         } else {

@@ -95,6 +95,25 @@ export const NwsAlertsOverlay = {
     return alertIds.size;
   },
 
+  getDisplayStats() {
+    const features = Array.isArray(this.lastData?.features) ? this.lastData.features : [];
+    const alertIds = new Set();
+    const bySeverity = {};
+    for (const feature of features) {
+      const props = feature?.properties || {};
+      const alertId = String(props.alert_id || '').trim();
+      const severity = String(props.severity || '').trim() || 'Unknown';
+      if (!alertId || alertIds.has(alertId)) continue;
+      alertIds.add(alertId);
+      bySeverity[severity] = (bySeverity[severity] || 0) + 1;
+    }
+    return {
+      snapshotCount: alertIds.size,
+      visibleCount: alertIds.size,
+      bySeverity,
+    };
+  },
+
   _startPolling() {
     this._stopPolling();
     this.pollTimer = setInterval(() => this._refresh(), POLL_INTERVAL_MS);

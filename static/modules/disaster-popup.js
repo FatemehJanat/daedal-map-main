@@ -737,7 +737,7 @@ const DisasterPopup = {
     } else if (seqText === 'Track' || seqText === 'Path' || seqText === 'Progression' || seqText === 'Extent') {
       middleActionHelp = `${seqText} steps through how this disaster moved or spread.`;
     }
-    return `Details shows structured facts for this disaster. ${middleActionHelp} ${relatedText} shows linked disasters such as earthquake-to-tsunami connections.`;
+    return `Details shows structured facts for this disaster. ${middleActionHelp} ${relatedText} shows linked disasters in other hazard families, such as earthquake-to-tsunami connections.`;
   },
 
   getSequencePreview(props, eventType) {
@@ -846,24 +846,24 @@ const DisasterPopup = {
     const count = relatedData?.related?.length ?? relatedData?.count ?? 0;
     const message = relatedData?.message || null;
 
-    let statusHtml = '<div class="related-empty popup-load-summary">Checking for linked disasters...</div>';
+    let statusHtml = '<div class="related-empty popup-load-summary">Checking for cross-disaster links...</div>';
     let actionHtml = '';
 
     if (relatedData) {
       if (count > 0) {
-        statusHtml = `<div class="related-empty popup-load-summary">${count.toLocaleString()} linked disasters found for this event.</div>`;
+        statusHtml = `<div class="related-empty popup-load-summary">${count.toLocaleString()} linked disasters from other hazard families found for this event.</div>`;
         actionHtml = `
           <div class="popup-actions">
             <button class="popup-btn btn-sequence" data-action="view-chain">
-              View Chain
+              View Linked Chain
             </button>
             <button class="popup-btn btn-related" data-action="load-related">
-              Load Related Disasters
+              Open Linked Disasters
             </button>
           </div>
         `;
       } else {
-        statusHtml = `<div class="related-empty popup-load-summary">${message || 'No related disasters found.'}</div>`;
+        statusHtml = `<div class="related-empty popup-load-summary">${message || 'No cross-disaster links found.'}</div>`;
       }
     }
 
@@ -871,7 +871,7 @@ const DisasterPopup = {
       <div class="disaster-popup popup-related" data-type="${eventType}" data-id="${props.event_id || ''}">
         <div class="popup-header-detail" style="border-left: 4px solid ${color}">
           <button class="popup-back" data-action="back">&lt; Back</button>
-          <span class="popup-title-detail">Related Disasters</span>
+          <span class="popup-title-detail">Cross-Disaster Links</span>
           <div class="popup-tutorial-wrap">
             <button class="popup-tutorial-tip" type="button" aria-label="Disaster popup help">?</button>
             <div class="popup-tutorial-tooltip">${tutorialHelp}</div>
@@ -1760,7 +1760,7 @@ const DisasterPopup = {
 
         <div class="popup-actions">
           <button class="popup-btn btn-related" data-action="related">
-            View Related Disasters
+            View Cross-Disaster Links
           </button>
         </div>
       </div>
@@ -1784,7 +1784,7 @@ const DisasterPopup = {
       ? `
         <div class="popup-actions">
           <button class="popup-btn btn-sequence" data-action="view-chain">
-            View Chain
+            View Linked Chain
           </button>
         </div>
       `
@@ -1806,7 +1806,7 @@ const DisasterPopup = {
         </div>`;
       }).join('\n');
     } else {
-      const emptyMessage = relatedData?.message || 'No related disasters found';
+      const emptyMessage = relatedData?.message || 'No cross-disaster links found';
       relatedList = `<div class="related-empty">${emptyMessage}</div>`;
     }
 
@@ -1814,7 +1814,7 @@ const DisasterPopup = {
       <div class="disaster-popup popup-related" data-type="${eventType}" data-id="${props.event_id || ''}">
         <div class="popup-header-detail" style="border-left: 4px solid ${color}">
           <button class="popup-back" data-action="back">&lt; Back</button>
-          <span class="popup-title-detail">Related Disasters</span>
+          <span class="popup-title-detail">Cross-Disaster Links</span>
           <div class="popup-tutorial-wrap">
             <button class="popup-tutorial-tip" type="button" aria-label="Disaster popup help">?</button>
             <div class="popup-tutorial-tooltip">${tutorialHelp}</div>
@@ -1829,7 +1829,7 @@ const DisasterPopup = {
           </div>
         </div>
 
-        <div class="related-chain-label">Disaster Chain:</div>
+        <div class="related-chain-label">Cross-disaster chain:</div>
         ${chainActionHtml}
 
         <div class="related-list">
@@ -1837,7 +1837,7 @@ const DisasterPopup = {
         </div>
 
         <div class="popup-footer">
-          Click any event to view details
+          Click any linked event to open its disaster view
         </div>
       </div>
     `;

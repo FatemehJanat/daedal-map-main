@@ -453,6 +453,10 @@ def build_cached_aurora_payload() -> dict:
             "observation_time": summary.get("observation_time"),
             "forecast_time": summary.get("forecast_time"),
             "max_probability": summary.get("max_probability"),
+            "aurora_visible": summary.get("aurora_visible"),
+            "visible_cell_count": summary.get("visible_cell_count"),
+            "strong_cell_count": summary.get("strong_cell_count"),
+            "cells_truncated": summary.get("cells_truncated"),
             "cells": summary.get("cells") or [],
         }
 

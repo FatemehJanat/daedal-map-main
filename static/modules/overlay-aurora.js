@@ -17,6 +17,7 @@ import { fetchMsgpack } from './utils/fetch.js';
 const POLL_INTERVAL_MS = 5 * 60_000;
 const SRC_ID = 'aurora-src';
 const LAYER_ID = 'aurora-heat';
+const STRONG_PROBABILITY_THRESHOLD = 50;
 
 let MapAdapter = null;
 
@@ -25,6 +26,8 @@ export const AuroraOverlay = {
   enabled: false,
   pollTimer: null,
   lastCells: null,
+  lastDisplayCells: null,
+  lastPayload: null,
 
   init(deps = {}) {
     if (this.initialized) return;
@@ -32,12 +35,12 @@ export const AuroraOverlay = {
     // A style reload (globe/satellite switch) drops custom layers; re-add ours.
     if (MapAdapter?.map) {
       MapAdapter.map.on('style.load', () => {
-        if (this.enabled && this.lastCells) this._render(this.lastCells);
+        if (this.enabled && this.lastDisplayCells) this._render(this.lastDisplayCells);
       });
     }
     // Re-assert after a globe/mercator projection toggle (may not fire style.load).
     window.addEventListener('map-overlays-reassert', () => {
-      if (this.enabled && this.lastCells) this._render(this.lastCells);
+      if (this.enabled && this.lastDisplayCells) this._render(this.lastDisplayCells);
     });
     this.initialized = true;
     console.log('AuroraOverlay initialized');
@@ -71,11 +74,39 @@ export const AuroraOverlay = {
     try {
       const data = await fetchMsgpack('/api/ops/aurora');
       const cells = Array.isArray(data?.cells) ? data.cells : [];
+      this.lastPayload = data && typeof data === 'object' ? data : null;
       this.lastCells = cells;
-      this._render(cells);
+      this.lastDisplayCells = this._selectDisplayCells(cells, this.lastPayload);
+      this._render(this.lastDisplayCells);
     } catch (err) {
       console.warn('AuroraOverlay: refresh failed', err);
     }
+  },
+
+  _selectDisplayCells(cells, payload = null) {
+    const strongCount = Number(payload?.strong_cell_count);
+    if (!Number.isFinite(strongCount) || strongCount <= 0) {
+      return Array.isArray(cells) ? cells : [];
+    }
+    const filtered = (Array.isArray(cells) ? cells : []).filter((cell) => {
+      const probability = Number(Array.isArray(cell) ? cell[2] : null);
+      return Number.isFinite(probability) && probability >= STRONG_PROBABILITY_THRESHOLD;
+    });
+    return filtered.length ? filtered : (Array.isArray(cells) ? cells : []);
+  },
+
+  getDisplayStats() {
+    const snapshotCount = Number(this.lastPayload?.visible_cell_count);
+    const visibleCount = Array.isArray(this.lastDisplayCells) ? this.lastDisplayCells.length : 0;
+    const strongCount = Number(this.lastPayload?.strong_cell_count);
+    const usingStrongBand = Number.isFinite(strongCount) && strongCount > 0 && visibleCount > 0 && visibleCount <= strongCount;
+    return {
+      snapshotCount: Number.isFinite(snapshotCount) ? snapshotCount : (Array.isArray(this.lastCells) ? this.lastCells.length : 0),
+      visibleCount,
+      usingStrongBand,
+      filterDescription: usingStrongBand ? `probability ${STRONG_PROBABILITY_THRESHOLD}% and above` : null,
+      maxProbability: Number(this.lastPayload?.max_probability),
+    };
   },
 
   _toGeoJSON(cells) {

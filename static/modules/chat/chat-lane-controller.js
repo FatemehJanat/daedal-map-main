@@ -84,7 +84,7 @@ export async function switchChatMode(ctx, mode, deps = {}) {
   }
   if (
     !paneHasWelcomeMessage(pane)
-    || (mode !== 'explore' && !paneHasWelcomeStatus(pane))
+    || !paneHasWelcomeStatus(pane)
   ) {
     await seedEmptyConversation(ctx, mode, deps);
   }
@@ -95,6 +95,7 @@ export async function switchChatMode(ctx, mode, deps = {}) {
 
 export async function seedEmptyConversation(ctx, mode = ctx.mode, deps = {}) {
   const buildExploreWelcomeMessage = deps.buildExploreWelcomeMessage || (() => '');
+  const buildExploreWelcomeStatusMessage = deps.buildExploreWelcomeStatusMessage || (() => '');
   const buildResearchFriendlyWelcomeMessage = deps.buildResearchFriendlyWelcomeMessage || (() => '');
   const buildResearchWelcomeMessage = deps.buildResearchWelcomeMessage || ((_manifest, fallback) => fallback || '');
   const buildOpsFriendlyWelcomeMessage = deps.buildOpsFriendlyWelcomeMessage || (() => '');
@@ -102,7 +103,7 @@ export async function seedEmptyConversation(ctx, mode = ctx.mode, deps = {}) {
   const pane = ctx.messagePanes?.[mode];
   const hasIntro = paneHasWelcomeMessage(pane);
   const hasStatus = paneHasWelcomeStatus(pane);
-  if (hasIntro && (mode === 'explore' || hasStatus)) return;
+  if (hasIntro && hasStatus) return;
   if (hasIntro || hasStatus) {
     clearWelcomeMessages(pane);
   }
@@ -158,7 +159,16 @@ export async function seedEmptyConversation(ctx, mode = ctx.mode, deps = {}) {
     return;
   }
 
-  ctx.addMessage(buildExploreWelcomeMessage(), 'assistant', { ...welcomeOptions, html: true });
+  addAssistantMessageIfPresent(
+    ctx,
+    buildExploreWelcomeMessage(),
+    { ...welcomeOptions, html: true }
+  );
+  addAssistantMessageIfPresent(
+    ctx,
+    buildExploreWelcomeStatusMessage(),
+    { mode, className: 'chat-message--welcome', dataset: { welcomeStatus: 'true', welcomeKind: 'status', lane: mode } }
+  );
 }
 
 export function applyModeUiState(ctx, deps = {}) {

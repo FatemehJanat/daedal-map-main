@@ -117,8 +117,27 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
     user_agent = req.headers.get("user-agent", "").strip() or None
     payment_rail: str | None = None
     artifact_token_id: str | None = None
+    artifact_token = get_trusted_artifact_token(req)
     request_fingerprint: str | None = None
     query_scope: dict[str, Any] | None = None
+
+    if artifact_token is not None:
+        payment_rail = "trusted_artifact"
+        artifact_token_id = hashlib.sha256(artifact_token.encode()).hexdigest()[:8]
+        existing_meta = getattr(req.state, "analytics_metadata", {})
+        if not isinstance(existing_meta, dict):
+            existing_meta = {}
+        existing_meta["artifact_token_id"] = artifact_token_id
+        req.state.analytics_metadata = existing_meta
+
+    def current_access_lane(*, pack_id_hint: str | None = None) -> str:
+        if payment_rail == "trusted_artifact":
+            return "trusted_artifact"
+        if payment_rail:
+            return "paid"
+        if pack_id_hint and pack_requires_commercial_access(pack_id_hint):
+            return "paid"
+        return "free"
 
     def error_response(
         request_id: str | None,
@@ -164,7 +183,7 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
                     req,
                     request_fingerprint=request_fingerprint,
                     query_scope=query_scope,
-                    access_lane="paid" if payment_rail else "free",
+                    access_lane=current_access_lane(pack_id_hint=pack_id),
                 ),
             )
         return response
@@ -358,7 +377,7 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
                 req,
                 request_fingerprint=request_fingerprint,
                 query_scope=query_scope,
-                access_lane="paid" if pack_requires_commercial_access(spec.pack_id) else "free",
+                access_lane=current_access_lane(pack_id_hint=spec.pack_id),
             ),
         )
         return metrics_error
@@ -770,7 +789,7 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
     get_api_analytics_metadata(
         req,
         query_scope=query_scope,
-        access_lane="paid" if pack_requires_commercial_access(spec.pack_id) else "free",
+        access_lane=current_access_lane(pack_id_hint=spec.pack_id),
     )
     scope_rejection = query_scope_rejection(query_scope)
     if scope_rejection:
@@ -803,12 +822,8 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
 
     settlement_id: str | None = None
     verifier_payload: dict[str, Any] | None = None
-    payment_rail: str | None = None
     amount_charged_usdc_base_units: int | None = None
-    artifact_token = get_trusted_artifact_token(req)
     if artifact_token is not None:
-        payment_rail = "trusted_artifact"
-        artifact_token_id = hashlib.sha256(artifact_token.encode()).hexdigest()[:8]
         token_limit = int(os.getenv("ARTIFACT_TOKEN_RATE_LIMIT", "20"))
         token_window = int(os.getenv("ARTIFACT_TOKEN_RATE_WINDOW_SECONDS", "60"))
         allowed, retry_after = rate_limiter.check(
@@ -829,7 +844,7 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
         get_api_analytics_metadata(
             req,
             query_scope=query_scope,
-            access_lane="trusted_artifact",
+            access_lane=current_access_lane(pack_id_hint=spec.pack_id),
         )
         existing_meta = getattr(req.state, "analytics_metadata", {})
         existing_meta["artifact_token_id"] = artifact_token_id
@@ -935,7 +950,7 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
                     req,
                     request_fingerprint=request_fingerprint,
                     query_scope=query_scope,
-                    access_lane="paid",
+                    access_lane=current_access_lane(pack_id_hint=spec.pack_id),
                 ),
             )
             return response
@@ -1109,7 +1124,7 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
             req,
             request_fingerprint=request_fingerprint,
             query_scope=query_scope,
-            access_lane="paid" if settlement_id or payment_rail else "free",
+            access_lane=current_access_lane(pack_id_hint=spec.pack_id),
         ),
     )
     return response

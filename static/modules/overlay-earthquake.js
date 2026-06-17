@@ -1,5 +1,5 @@
 import EventAnimator, { AnimationMode } from './event-animator.js';
-import { beginFocusedAnimationSession } from './overlay-disaster-common.js';
+import { beginFocusedAnimationSession, selectEarthquakeSequenceFeatures } from './overlay-disaster-common.js';
 
 export async function handleSequenceChange(controller, sequenceId, eventId, deps) {
   const { ModelRegistry, OverlaySelector, OVERLAY_ENDPOINTS, TimeSlider, dataCache, yearRangeCache, gardnerKnopoffTimeWindow, fetchMsgpack } = deps;
@@ -22,8 +22,10 @@ export async function handleSequenceChange(controller, sequenceId, eventId, deps
     return;
   }
   if (!seqEvents.length) return console.warn(`OverlayController: No events found for sequence ${cacheKey}`);
-  let mainshock = seqEvents.find(f => f.properties.is_mainshock);
-  if (!mainshock) mainshock = seqEvents.reduce((max, f) => ((f.properties.magnitude || 0) > (max.properties.magnitude || 0) ? f : max));
+  const selectedSequence = selectEarthquakeSequenceFeatures(seqEvents);
+  seqEvents = selectedSequence.selectedFeatures;
+  const mainshock = selectedSequence.mainshockFeature;
+  if (!mainshock) return console.warn(`OverlayController: Could not identify mainshock for sequence ${cacheKey}`);
   const mainMag = mainshock.properties.magnitude || 5.5;
   const mainTime = new Date(mainshock.properties.timestamp || mainshock.properties.time).getTime();
   const windowEnd = mainTime + gardnerKnopoffTimeWindow(mainMag) * 24 * 60 * 60 * 1000;

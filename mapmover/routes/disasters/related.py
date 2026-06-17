@@ -755,7 +755,26 @@ def _read_related_rows_for_loc_id(loc_id: str) -> pd.DataFrame:
     return pd.concat([children, parents], ignore_index=True)
 
 
-def _build_chain_payload(root_loc_id: str, depth: int) -> dict:
+def _filter_related_rows_for_popup(
+    root_loc_id: str,
+    related_rows: pd.DataFrame,
+    *,
+    cross_type_only: bool = True,
+) -> pd.DataFrame:
+    if related_rows.empty or not cross_type_only:
+        return related_rows
+
+    root_event_type = _extract_event_type(root_loc_id)
+    if not root_event_type or root_event_type == "unknown":
+        return related_rows
+
+    filtered_rows = related_rows[
+        related_rows["related_loc_id"].map(_extract_event_type) != root_event_type
+    ].copy()
+    return filtered_rows
+
+
+def _build_chain_payload(root_loc_id: str, depth: int, *, cross_type_only: bool = True) -> dict:
     effective_depth = max(1, min(int(depth or 1), MAX_CHAIN_DEPTH))
     queue: list[tuple[str, int]] = [(root_loc_id, 0)]
     visited_nodes: set[str] = set()
@@ -778,6 +797,11 @@ def _build_chain_payload(root_loc_id: str, depth: int) -> dict:
             continue
 
         related_rows = _read_related_rows_for_loc_id(current_loc_id)
+        related_rows = _filter_related_rows_for_popup(
+            current_loc_id,
+            related_rows,
+            cross_type_only=cross_type_only,
+        )
         if related_rows.empty:
             continue
 
@@ -829,7 +853,7 @@ def _build_chain_payload(root_loc_id: str, depth: int) -> dict:
 
 
 @router.get("/api/events/related/{loc_id:path}")
-async def get_related_events(loc_id: str):
+async def get_related_events(loc_id: str, cross_type_only: bool = Query(default=True)):
     """Get related disaster events for a given event loc_id."""
     try:
         if not loc_id:
@@ -867,8 +891,18 @@ async def get_related_events(loc_id: str):
         parents["related_loc_id"] = parents["parent_loc_id"]
 
         related = pd.concat([children, parents], ignore_index=True)
+        related = _filter_related_rows_for_popup(
+            loc_id,
+            related,
+            cross_type_only=cross_type_only,
+        )
         if len(related) == 0:
-            return msgpack_response({"event_id": loc_id, "related": [], "count": 0, "message": "No related disasters found for this event in links.parquet"})
+            message = (
+                "No cross-disaster links found for this event in links.parquet"
+                if cross_type_only
+                else "No related disasters found for this event in links.parquet"
+            )
+            return msgpack_response({"event_id": loc_id, "related": [], "count": 0, "message": message})
 
         related_list = []
         for _, row in related.iterrows():
@@ -898,6 +932,7 @@ async def get_related_events(loc_id: str):
                 "related": related_list,
                 "count": len(related_list),
                 "by_type": type_counts,
+                "cross_type_only": cross_type_only,
                 "message": None,
             }
         )
@@ -974,13 +1009,21 @@ async def search_events(q: str, pack_id: str | None = Query(default=None), limit
 
 
 @router.get("/api/events/chain/{loc_id:path}")
-async def get_related_event_chain(loc_id: str, depth: int = 1):
+async def get_related_event_chain(
+    loc_id: str,
+    depth: int = 1,
+    cross_type_only: bool = Query(default=True),
+):
     """Resolve a linked disaster chain into map-ready features and edges."""
     try:
         if not loc_id:
             return msgpack_error("Missing event loc_id", 400)
 
-        payload = _build_chain_payload(loc_id, depth)
+        payload = _build_chain_payload(
+            loc_id,
+            depth,
+            cross_type_only=cross_type_only,
+        )
         if payload["source"] is None:
             return msgpack_error(f"Linked event {loc_id} could not be resolved", 404)
 
@@ -992,6 +1035,7 @@ async def get_related_event_chain(loc_id: str, depth: int = 1):
                 "links": payload["links"],
                 "depth": payload["depth"],
                 "count": payload["count"],
+                "cross_type_only": cross_type_only,
                 "loc_id": loc_id,
             }
         )
