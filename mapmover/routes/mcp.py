@@ -814,6 +814,66 @@ async def _execute_live_earthquake_tool(arguments: dict[str, Any], rpc_request_i
     return _jsonrpc_response(_tool_result(result), rpc_request_id)
 
 
+def _shape_resolve_point_payload(raw: Any, request_id: str) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {
+            "request_id": request_id,
+            "error": {"code": "resolve_failed", "message": "point resolver returned an invalid payload"},
+        }
+    if raw.get("error"):
+        return {
+            "request_id": request_id,
+            "point": raw.get("point"),
+            "error": {"code": "resolve_failed", "message": str(raw.get("error"))},
+        }
+    return {
+        "request_id": request_id,
+        "point": raw.get("point"),
+        "country": raw.get("country"),
+        "matched": raw.get("matched"),
+        "deepest_resolved_loc_id": raw.get("deepest_resolved_loc_id"),
+        "deepest_resolved_admin_level": raw.get("deepest_resolved_admin_level"),
+        "stack": raw.get("stack") or [],
+    }
+
+
+async def _execute_resolve_point_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
+    payload = _ensure_request_id(arguments, "resolve_point")
+    request_id = str(payload.get("request_id") or "")
+    try:
+        lat = float(payload.get("lat"))
+        lon = float(payload.get("lon"))
+    except (TypeError, ValueError):
+        return _jsonrpc_response(
+            _tool_result(
+                {"request_id": request_id, "error": {"code": "invalid_point", "message": "lat and lon are required numbers"}},
+                is_error=True,
+            ),
+            rpc_request_id,
+        )
+    if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lon <= 180.0):
+        return _jsonrpc_response(
+            _tool_result(
+                {"request_id": request_id, "error": {"code": "invalid_point", "message": "lat must be within -90..90 and lon within -180..180"}},
+                is_error=True,
+            ),
+            rpc_request_id,
+        )
+    try:
+        from mapmover.runtime.loc_id_resolution import resolve_point_to_loc_id_stack
+
+        raw = resolve_point_to_loc_id_stack(lon, lat)
+    except Exception as exc:  # surface a clean tool error, never a 500
+        return _jsonrpc_response(
+            _tool_result(
+                {"request_id": request_id, "error": {"code": "resolve_failed", "message": str(exc)}},
+                is_error=True,
+            ),
+            rpc_request_id,
+        )
+    return _jsonrpc_response(_tool_result(_shape_resolve_point_payload(raw, request_id)), rpc_request_id)
+
+
 async def _execute_live_volcano_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
     payload = _ensure_request_id(arguments, "get_live_volcano_events")
     try:
@@ -1080,6 +1140,12 @@ async def mcp_endpoint(request: Request, pack_id: str | None = None):
         if rate_limit_response:
             return rate_limit_response
         return await _execute_live_volcano_tool(arguments, request_id)
+
+    if tool_name == "resolve_point":
+        rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
+        if rate_limit_response:
+            return rate_limit_response
+        return await _execute_resolve_point_tool(arguments, request_id)
 
     if tool_name not in {
         "get_earthquake_events",

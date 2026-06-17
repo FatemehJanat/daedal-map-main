@@ -76,6 +76,22 @@ def build_tool_definitions() -> list[dict]:
             "annotations": {"readOnlyHint": True},
         },
         {
+            "name": "resolve_point",
+            "title": "Resolve Point to loc_id",
+            "description": "Free geography utility (reverse geocoding). Converts a latitude/longitude into the DaedalMap loc_id administrative chain - the deepest available level plus its parents - so you can join any spatial data to the same loc_id spine the data packs use. Returns the matched country, the deepest resolved loc_id, and the full admin-level stack so you can clip to any level. No payment required.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "lat": {"type": "number", "minimum": -90, "maximum": 90, "description": "Latitude in WGS84 decimal degrees."},
+                    "lon": {"type": "number", "minimum": -180, "maximum": 180, "description": "Longitude in WGS84 decimal degrees."},
+                    "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing."},
+                },
+                "required": ["lat", "lon"],
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": True},
+        },
+        {
             "name": "get_earthquake_events",
             "title": "Get Earthquake Events",
             "description": "Paid x402 canonical tool. Queries the published earthquakes_events lane. Use this first for earthquake questions because it is the enriched DaedalMap history lane with stable loc_id geography, not the preliminary upstream wrapper. Call without payment first - the server returns HTTP 402 with the exact USDC price before any charge. Small queries stay cheap; broad scans cost more or need narrower filters.",
