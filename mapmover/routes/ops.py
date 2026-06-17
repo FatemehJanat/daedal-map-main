@@ -18,6 +18,7 @@ from mapmover.ops_ticker import (
     build_cached_nws_alerts_payload,
     build_cached_ticker_payload,
 )
+from mapmover.ops_point_feeds import build_cached_point_overlay, is_point_feed
 from mapmover.orchestrator_registry import get_orchestrator
 from mapmover.routes.chat_shared import build_chat_error_payload, build_provider_error_payload, decode_json_or_msgpack_body, decode_request_body
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
@@ -88,6 +89,23 @@ async def ops_nws_alerts_endpoint(req: Request):
         return msgpack_response(build_cached_nws_alerts_payload())
     except Exception as exc:
         logger.exception("Ops NWS alerts error")
+        return msgpack_error(str(exc), 500)
+
+
+@router.get("/api/ops/points/{overlay_id}")
+async def ops_points_endpoint(overlay_id: str, req: Request):
+    """Generic live point-feed overlay (GeoJSON points). Public, read-only.
+
+    One endpoint for every registered "location with updating data" feed (ocean
+    buoys, weather stations, sensors): each point carries its latest reading for
+    the click popup. See mapmover/ops_point_feeds.py POINT_FEEDS.
+    """
+    if not is_point_feed(overlay_id):
+        return msgpack_error(f"Unknown point feed: {overlay_id}", 404)
+    try:
+        return msgpack_response(build_cached_point_overlay(overlay_id))
+    except Exception as exc:
+        logger.exception("Ops point feed error: %s", overlay_id)
         return msgpack_error(str(exc), 500)
 
 

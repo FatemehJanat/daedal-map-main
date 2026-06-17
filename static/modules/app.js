@@ -22,6 +22,7 @@ import { OverlayController, setDependencies as setOverlayControllerDeps } from '
 import { TickerController } from './ticker-controller.js';
 import { AuroraOverlay } from './overlay-aurora.js';
 import { NwsAlertsOverlay } from './overlay-nws-alerts.js';
+import { initLivePointOverlays } from './live-point-overlay.js';
 import { DisasterPopup, setDependencies as setDisasterPopupDeps } from './disaster-popup.js';
 import { GeometryModel, setDependencies as setGeometryDeps } from './models/model-geometry.js';
 import { AuthManager } from './auth.js';
@@ -682,6 +683,7 @@ export const App = {
     // Live overlays (toggleable, all modes; need the map to exist).
     AuroraOverlay.init({ MapAdapter });
     NwsAlertsOverlay.init({ MapAdapter });
+    initLivePointOverlays({ MapAdapter });
 
     this.activateLaneMapView(startupMode, { force: true });
     hideStartupChrome();

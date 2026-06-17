@@ -46,7 +46,8 @@ const OVERLAY_ICONS = {
   'reliefweb': 'R',
   'event_areas': 'A',
   'aurora': 'A',
-  'nws_alerts': '!'
+  'nws_alerts': '!',
+  'buoys': 'B'
 };
 
 // Special model overrides (some overlays need specific models)
@@ -66,6 +67,7 @@ const OPS_FEED_TO_OVERLAY_IDS = {
   noaa_aurora: ['aurora'],
   noaa_swpc: ['aurora'],
   usa_nws_alerts: ['nws_alerts'],
+  noaa_ndbc: ['buoys'],
   weather: [
     'temperature',
     'humidity',
@@ -403,6 +405,7 @@ function buildCategoriesFromTree(overlayTree) {
   // category, so merge instead of blindly appending a duplicate section.
   const hardcodedClimateOverlays = [
     { id: 'aurora', label: 'Aurora', description: 'Live aurora forecast', default: false, locked: false, model: 'aurora', icon: 'A', hasYearFilter: false, live: true },
+    { id: 'buoys', label: 'Ocean Buoys', description: 'Live NDBC buoy readings (sea temp, wind, waves)', default: false, locked: false, model: 'buoys', icon: 'B', hasYearFilter: false, live: true },
     { id: 'ocean-sst-grid', label: 'Ocean Temp Grid', description: 'Monthly ocean temperature grid', default: false, locked: false, model: 'ocean-raster', icon: 'O', hasYearFilter: false, live: false, rasterSource: 'ocean_sst', rasterBasins: ['OCEAN'], rasterVariable: 'sst_c' }
   ];
   const climateCategory = categories.find((cat) => cat.id === 'climate' && cat.isCategory);
