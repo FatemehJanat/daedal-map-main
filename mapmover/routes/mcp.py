@@ -874,6 +874,140 @@ async def _execute_resolve_point_tool(arguments: dict[str, Any], rpc_request_id:
     return _jsonrpc_response(_tool_result(_shape_resolve_point_payload(raw, request_id)), rpc_request_id)
 
 
+def _geo_selection_feature(loc_id: str) -> dict[str, Any] | None:
+    from mapmover.geometry_handlers import get_selection_geometries
+
+    payload = get_selection_geometries([loc_id])
+    features = (payload or {}).get("features") or []
+    return features[0] if features else None
+
+
+def _bbox_from_props(props: dict[str, Any]) -> list[float] | None:
+    keys = ("bbox_min_lon", "bbox_min_lat", "bbox_max_lon", "bbox_max_lat")
+    if all(props.get(key) is not None for key in keys):
+        return [props[keys[0]], props[keys[1]], props[keys[2]], props[keys[3]]]
+    return None
+
+
+def _parse_children_by_level(value: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except Exception:
+            return value
+    return value
+
+
+async def _execute_get_boundary_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
+    payload = _ensure_request_id(arguments, "get_boundary")
+    request_id = str(payload.get("request_id") or "")
+    loc_id = str(payload.get("loc_id") or "").strip()
+    if not loc_id:
+        return _jsonrpc_response(
+            _tool_result({"request_id": request_id, "error": {"code": "invalid_loc_id", "message": "loc_id is required"}}, is_error=True),
+            rpc_request_id,
+        )
+    include_polygon = bool(payload.get("include_polygon"))
+    try:
+        feature = _geo_selection_feature(loc_id)
+    except Exception as exc:
+        return _jsonrpc_response(
+            _tool_result({"request_id": request_id, "error": {"code": "boundary_failed", "message": str(exc)}}, is_error=True),
+            rpc_request_id,
+        )
+    if not feature:
+        return _jsonrpc_response(
+            _tool_result({"request_id": request_id, "loc_id": loc_id, "error": {"code": "not_found", "message": f"no geometry found for loc_id '{loc_id}'"}}, is_error=True),
+            rpc_request_id,
+        )
+    props = feature.get("properties") or {}
+    result = {
+        "request_id": request_id,
+        "loc_id": props.get("local_loc_id") or loc_id,
+        "name": props.get("name"),
+        "admin_level": props.get("admin_level"),
+        "bbox": _bbox_from_props(props),
+        "centroid": {"lon": props.get("centroid_lon"), "lat": props.get("centroid_lat")},
+        "has_polygon": bool(props.get("has_polygon")),
+    }
+    if include_polygon:
+        result["geometry"] = feature.get("geometry")
+    return _jsonrpc_response(_tool_result(result), rpc_request_id)
+
+
+async def _execute_loc_id_info_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
+    payload = _ensure_request_id(arguments, "loc_id_info")
+    request_id = str(payload.get("request_id") or "")
+    loc_id = str(payload.get("loc_id") or "").strip()
+    if not loc_id:
+        return _jsonrpc_response(
+            _tool_result({"request_id": request_id, "error": {"code": "invalid_loc_id", "message": "loc_id is required"}}, is_error=True),
+            rpc_request_id,
+        )
+    try:
+        feature = _geo_selection_feature(loc_id)
+    except Exception as exc:
+        return _jsonrpc_response(
+            _tool_result({"request_id": request_id, "error": {"code": "info_failed", "message": str(exc)}}, is_error=True),
+            rpc_request_id,
+        )
+    if not feature:
+        return _jsonrpc_response(
+            _tool_result({"request_id": request_id, "loc_id": loc_id, "error": {"code": "not_found", "message": f"no record found for loc_id '{loc_id}'"}}, is_error=True),
+            rpc_request_id,
+        )
+    props = feature.get("properties") or {}
+    result = {
+        "request_id": request_id,
+        "loc_id": props.get("local_loc_id") or loc_id,
+        "name": props.get("name"),
+        "admin_level": props.get("admin_level"),
+        "parent_id": props.get("parent_id"),
+        "iso3": props.get("iso_a3"),
+        "centroid": {"lon": props.get("centroid_lon"), "lat": props.get("centroid_lat")},
+        "bbox": _bbox_from_props(props),
+        "children_count": props.get("children_count"),
+        "children_by_level": _parse_children_by_level(props.get("children_by_level")),
+        "descendants_count": props.get("descendants_count"),
+    }
+    return _jsonrpc_response(_tool_result(result), rpc_request_id)
+
+
+async def _execute_loc_id_hierarchy_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
+    payload = _ensure_request_id(arguments, "loc_id_hierarchy")
+    request_id = str(payload.get("request_id") or "")
+    loc_id = str(payload.get("loc_id") or "").strip()
+    if not loc_id:
+        return _jsonrpc_response(
+            _tool_result({"request_id": request_id, "error": {"code": "invalid_loc_id", "message": "loc_id is required"}}, is_error=True),
+            rpc_request_id,
+        )
+    try:
+        from mapmover.runtime.admin_hierarchy import get_ancestors, get_parent_loc_id, infer_admin_level_from_loc_id
+
+        ancestors = get_ancestors(loc_id)
+        parent = get_parent_loc_id(loc_id)
+        admin_level = infer_admin_level_from_loc_id(loc_id)
+        feature = _geo_selection_feature(loc_id)
+    except Exception as exc:
+        return _jsonrpc_response(
+            _tool_result({"request_id": request_id, "error": {"code": "hierarchy_failed", "message": str(exc)}}, is_error=True),
+            rpc_request_id,
+        )
+    props = (feature or {}).get("properties") or {}
+    result = {
+        "request_id": request_id,
+        "loc_id": loc_id,
+        "admin_level": admin_level,
+        "name": props.get("name"),
+        "parent": parent,
+        "ancestors": ancestors,
+        "children_count": props.get("children_count"),
+        "children_by_level": _parse_children_by_level(props.get("children_by_level")),
+    }
+    return _jsonrpc_response(_tool_result(result), rpc_request_id)
+
+
 async def _execute_live_volcano_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
     payload = _ensure_request_id(arguments, "get_live_volcano_events")
     try:
@@ -1146,6 +1280,24 @@ async def mcp_endpoint(request: Request, pack_id: str | None = None):
         if rate_limit_response:
             return rate_limit_response
         return await _execute_resolve_point_tool(arguments, request_id)
+
+    if tool_name == "get_boundary":
+        rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
+        if rate_limit_response:
+            return rate_limit_response
+        return await _execute_get_boundary_tool(arguments, request_id)
+
+    if tool_name == "loc_id_hierarchy":
+        rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
+        if rate_limit_response:
+            return rate_limit_response
+        return await _execute_loc_id_hierarchy_tool(arguments, request_id)
+
+    if tool_name == "loc_id_info":
+        rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
+        if rate_limit_response:
+            return rate_limit_response
+        return await _execute_loc_id_info_tool(arguments, request_id)
 
     if tool_name not in {
         "get_earthquake_events",

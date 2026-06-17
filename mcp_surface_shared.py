@@ -92,6 +92,52 @@ def build_tool_definitions() -> list[dict]:
             "annotations": {"readOnlyHint": True},
         },
         {
+            "name": "get_boundary",
+            "title": "Get loc_id Boundary",
+            "description": "Free geography utility. Returns the geographic extent of a DaedalMap loc_id: its bounding box and centroid by default, and the full boundary polygon when include_polygon is true. Use the bbox to clip or index your own grid/raster data against DaedalMap administrative areas; request the polygon only when you need the exact perimeter (it can be large). No payment required.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "loc_id": {"type": "string", "description": "DaedalMap loc_id, e.g. 'USA-CA' or 'USA-CA-037'."},
+                    "include_polygon": {"type": "boolean", "description": "When true, include the full boundary GeoJSON geometry. Default false (bbox + centroid only) to keep responses small."},
+                    "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing."},
+                },
+                "required": ["loc_id"],
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": True},
+        },
+        {
+            "name": "loc_id_hierarchy",
+            "title": "Get loc_id Hierarchy",
+            "description": "Free geography utility. Returns the administrative hierarchy around a DaedalMap loc_id: its parent and full ancestor chain up to the country, plus a summary of its children by level. Use this to walk up or down the loc_id spine and clip to any administrative level. No payment required.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "loc_id": {"type": "string", "description": "DaedalMap loc_id, e.g. 'USA-CA-037'."},
+                    "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing."},
+                },
+                "required": ["loc_id"],
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": True},
+        },
+        {
+            "name": "loc_id_info",
+            "title": "Get loc_id Info",
+            "description": "Free geography utility. Returns descriptive metadata for a DaedalMap loc_id: name, admin level, parent, centroid, bounding box, and child counts by level. No payment required.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "loc_id": {"type": "string", "description": "DaedalMap loc_id, e.g. 'USA-CA'."},
+                    "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing."},
+                },
+                "required": ["loc_id"],
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": True},
+        },
+        {
             "name": "get_earthquake_events",
             "title": "Get Earthquake Events",
             "description": "Paid x402 canonical tool. Queries the published earthquakes_events lane. Use this first for earthquake questions because it is the enriched DaedalMap history lane with stable loc_id geography, not the preliminary upstream wrapper. Call without payment first - the server returns HTTP 402 with the exact USDC price before any charge. Small queries stay cheap; broad scans cost more or need narrower filters.",
