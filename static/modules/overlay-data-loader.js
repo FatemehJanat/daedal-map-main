@@ -150,7 +150,7 @@ export async function loadRangeData(overlayId, startMs, endMs, endpoint, signal 
   if (!endpoint) return false;
 
   if (endpoint.isWeatherGrid) {
-    const year = new Date(endMs).getUTCFullYear();
+    const year = new Date(endMs).getFullYear();
     return loadWeatherYearData(overlayId, year, endpoint, signal);
   }
 
@@ -216,13 +216,13 @@ export async function loadRangeData(overlayId, startMs, endMs, endpoint, signal 
     if (!loadedYears[overlayId]) {
       loadedYears[overlayId] = new Set();
     }
-    const startYear = new Date(startMs).getUTCFullYear();
-    const endYear = new Date(endMs).getUTCFullYear();
+    const startYear = new Date(startMs).getFullYear();
+    const endYear = new Date(endMs).getFullYear();
     const SIX_MONTHS_MS = 180 * 24 * 60 * 60 * 1000;
 
     for (let y = startYear; y <= endYear; y++) {
-      const yearStartMs = Date.UTC(y, 0, 1, 0, 0, 0, 0);
-      const yearEndMs = Date.UTC(y, 11, 31, 23, 59, 59, 999);
+      const yearStartMs = new Date(y, 0, 1).getTime();
+      const yearEndMs = new Date(y, 11, 31, 23, 59, 59).getTime();
       const loadedStart = Math.max(startMs, yearStartMs);
       const loadedEnd = Math.min(endMs, yearEndMs);
       const loadedDuration = loadedEnd - loadedStart;
