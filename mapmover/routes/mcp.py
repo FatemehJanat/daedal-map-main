@@ -13,6 +13,9 @@ from pack_registry_shared import (
     pack_prompt_allowlists,
     pack_tool_allowlists,
     published_pack_ids,
+    tool_family_catalog_entry,
+    tool_family_ids,
+    tool_family_pack_detail,
 )
 from mapmover.data_loading import load_api_catalog, load_api_pack_detail
 from mapmover.live_earthquake_usgs import fetch_live_earthquakes
@@ -37,7 +40,7 @@ AGENT_SAFETY_NOTICE = (
 )
 PACK_SERVER_PROFILES = {
     pack_id: pack_mcp_server_profile(pack_id)
-    for pack_id in published_pack_ids()
+    for pack_id in (*published_pack_ids(), *tool_family_ids())
 }
 
 PACK_TOOL_ALLOWLIST: dict[str, set[str]] = pack_tool_allowlists()
@@ -140,6 +143,21 @@ def _filter_catalog_payload_for_facade(payload: Any, pack_id: str | None) -> Any
                 if isinstance(item, dict) and str(item.get("pack_id") or item.get("id") or "").strip().lower() == normalized
             ]
     return filtered
+
+
+def _augment_catalog_with_tool_families(payload: Any, pack_id: str | None) -> Any:
+    if not isinstance(payload, dict):
+        return payload
+    family_ids = set(tool_family_ids())
+    normalized = _normalize_pack_id(pack_id)
+    if normalized:
+        entries = [tool_family_catalog_entry(normalized)] if normalized in family_ids else []
+    else:
+        entries = [tool_family_catalog_entry(fid) for fid in tool_family_ids()]
+    augmented = dict(payload)
+    augmented["tool_families"] = entries
+    augmented["tool_family_count"] = len(entries)
+    return augmented
 
 
 def _query_dataset_targets_facade(arguments: dict[str, Any], pack_id: str | None) -> bool:
@@ -1250,6 +1268,7 @@ async def mcp_endpoint(request: Request, pack_id: str | None = None):
     if tool_name == "get_catalog":
         payload = load_api_catalog() or {"packs": []}
         payload = _filter_catalog_payload_for_facade(payload, normalized_pack_id)
+        payload = _augment_catalog_with_tool_families(payload, normalized_pack_id)
         return _jsonrpc_response(_tool_result(payload), request_id)
 
     if tool_name == "get_pack":
@@ -1258,6 +1277,8 @@ async def mcp_endpoint(request: Request, pack_id: str | None = None):
             return _jsonrpc_error(request_id, -32602, "pack_id is required")
         if normalized_pack_id and pack_id.lower() != normalized_pack_id:
             return _jsonrpc_error(request_id, -32602, f"Pack '{pack_id}' is not available on this MCP facade")
+        if pack_id.lower() in set(tool_family_ids()):
+            return _jsonrpc_response(_tool_result(tool_family_pack_detail(pack_id.lower())), request_id)
         payload = load_api_pack_detail(pack_id)
         if not payload:
             return _jsonrpc_response(_tool_result({"error": "Pack not found", "pack_id": pack_id}, is_error=True), request_id)

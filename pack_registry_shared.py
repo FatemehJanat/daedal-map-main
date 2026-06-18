@@ -214,11 +214,78 @@ PACK_REGISTRY: dict[str, dict] = {
             "preferred_tool": "query_dataset",
         },
     },
+    "geography": {
+        "display_name": "Geography Tools",
+        "kind": "tool_family",
+        "pricing": "free",
+        "mcp_tool_allowlist": ("get_catalog", "get_pack", "resolve_point", "get_boundary", "loc_id_hierarchy", "loc_id_info"),
+        "mcp_name": "com.daedalmap/geocoding",
+        "mcp_title": "DaedalMap Geocoding and loc_id Tools",
+        "mcp_description": "Free geocoding and reverse-geocoding utilities built on the DaedalMap loc_id spine: resolve latitude/longitude to administrative areas, fetch boundaries and bounding boxes, and walk the loc_id hierarchy. A utility tool family, not a queryable dataset pack. No payment required.",
+        "registry_meta": {
+            "categories": ["geospatial", "geocoding", "data"],
+            "highlights": [
+                "Reverse geocoding: latitude/longitude to administrative loc_id chain",
+                "Boundary and bounding-box lookup for any loc_id",
+                "Walk the loc_id hierarchy up and down to clip to any admin level",
+            ],
+        },
+        "routing": {
+            "preferred_tool": "resolve_point",
+        },
+        "tool_summaries": (
+            {"name": "resolve_point", "summary": "lat/lon -> deepest loc_id plus the full ancestor chain"},
+            {"name": "get_boundary", "summary": "loc_id -> bounding box and centroid (optional full polygon)"},
+            {"name": "loc_id_hierarchy", "summary": "loc_id -> parent, ancestors, and child summary"},
+            {"name": "loc_id_info", "summary": "loc_id -> name, admin level, centroid, bbox, child counts"},
+        ),
+    },
 }
 
 
+def pack_kind(pack_id: str | None) -> str:
+    profile = PACK_REGISTRY.get(str(pack_id or "").strip()) or {}
+    return str(profile.get("kind") or "data_pack")
+
+
 def published_pack_ids() -> tuple[str, ...]:
-    return tuple(PACK_REGISTRY.keys())
+    # Data packs only. Tool families (e.g. geography) are listed separately via
+    # tool_family_ids() so existing pack/catalog/llms surfaces stay unchanged.
+    return tuple(pid for pid, p in PACK_REGISTRY.items() if str(p.get("kind") or "data_pack") == "data_pack")
+
+
+def tool_family_ids() -> tuple[str, ...]:
+    return tuple(pid for pid, p in PACK_REGISTRY.items() if str(p.get("kind") or "data_pack") == "tool_family")
+
+
+def tool_family_catalog_entry(pack_id: str | None) -> dict:
+    normalized = str(pack_id or "").strip()
+    profile = PACK_REGISTRY.get(normalized) or {}
+    pricing = str(profile.get("pricing") or "free")
+    return {
+        "pack_id": normalized,
+        "kind": "tool_family",
+        "display_name": str(profile.get("display_name") or normalized.replace("_", " ")),
+        "title": profile.get("mcp_title"),
+        "description": profile.get("mcp_description"),
+        "pricing": pricing,
+        "paid_data_calls": pricing != "free",
+        "tools": [dict(tool) for tool in (profile.get("tool_summaries") or ())],
+    }
+
+
+def tool_family_pack_detail(pack_id: str | None) -> dict:
+    normalized = str(pack_id or "").strip()
+    profile = PACK_REGISTRY.get(normalized) or {}
+    entry = tool_family_catalog_entry(normalized)
+    entry["mcp"] = {"name": profile.get("mcp_name"), "facade_url": f"/mcp/{normalized}"}
+    entry["registry_meta"] = dict(profile.get("registry_meta") or {})
+    entry["routing"] = dict(profile.get("routing") or {})
+    entry["notes"] = (
+        "Utility tool family on the DaedalMap loc_id spine. Free, and not a queryable "
+        "dataset pack - call the listed tools directly rather than query_dataset."
+    )
+    return entry
 
 
 def free_pack_ids() -> tuple[str, ...]:
