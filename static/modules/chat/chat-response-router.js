@@ -3,69 +3,10 @@
  */
 
 import { getSiteBaseUrl } from '../auth.js';
+import { routeMapPayloadContract } from './chat-response-routing-contract.mjs';
 
 export function routeMapResponse(ctx, response, options = {}, deps = {}) {
-  const App = deps.App || null;
-  if (!response || !App) return false;
-  const origin = options.origin || 'unknown';
-
-  if (origin === 'research' && Array.isArray(response.layers) && response.layers.length) {
-    const validLayers = response.layers.filter(layer => layer?.geojson?.features?.length);
-    if (validLayers.length) {
-      const keepLayers = validLayers.filter(layer => String(layer.context_visibility || '').trim().toLowerCase() === 'keep');
-      const replaceLayers = validLayers.filter(layer => String(layer.context_visibility || '').trim().toLowerCase() !== 'keep');
-      if (replaceLayers.length) {
-        ctx.setResearchDisplayLayersForMode('research', replaceLayers);
-        for (const layer of keepLayers) {
-          ctx.appendResearchDisplayForMode('research', layer);
-        }
-      } else {
-        ctx.setResearchDisplayLayersForMode('research', validLayers);
-      }
-      App.displayMapPayload?.(response, {
-        origin,
-        order: options.order,
-        restoringViewState: options.restoringViewState,
-        skipAdminLevelFilter: options.skipAdminLevelFilter,
-        skipOrderModeLevelHold: options.skipOrderModeLevelHold,
-        preserveExistingRuntimeLayers: options.preserveExistingRuntimeLayers
-      });
-      return true;
-    }
-  }
-
-  if (response.action === 'remove' && response.data_type) {
-    App.displayMapPayload?.(response, {
-      origin,
-      order: options.order,
-      restoringViewState: options.restoringViewState,
-      skipAdminLevelFilter: options.skipAdminLevelFilter,
-      skipOrderModeLevelHold: options.skipOrderModeLevelHold,
-      preserveExistingRuntimeLayers: options.preserveExistingRuntimeLayers
-    });
-    return true;
-  }
-
-  if (response.geojson?.features?.length) {
-    if (origin === 'research') {
-      if (String(response.context_visibility || '').trim().toLowerCase() === 'keep') {
-        ctx.appendResearchDisplayForMode('research', response);
-      } else {
-        ctx.setResearchDisplayForMode('research', response);
-      }
-    }
-    App.displayMapPayload?.(response, {
-      origin,
-      order: options.order,
-      restoringViewState: options.restoringViewState,
-      skipAdminLevelFilter: options.skipAdminLevelFilter,
-      skipOrderModeLevelHold: options.skipOrderModeLevelHold,
-      preserveExistingRuntimeLayers: options.preserveExistingRuntimeLayers
-    });
-    return true;
-  }
-
-  return false;
+  return routeMapPayloadContract(ctx, response, options, deps);
 }
 
 export function applyFilterUpdate(ctx, response, deps = {}) {
@@ -144,8 +85,7 @@ export function handleResponse(ctx, response, deps = {}) {
     SelectionManager = null,
     TutorialMode = null,
     SavedOrders = null,
-    orderPanel = null,
-    ingestEventsToOverlay = null
+    orderPanel = null
   } = deps;
 
   const targetMode = response?._requestMode || ctx.mode;
@@ -279,7 +219,6 @@ export function handleResponse(ctx, response, deps = {}) {
 
     case 'events':
       add(response.summary || `Showing ${response.count} ${response.event_type} events.`, 'assistant');
-      ingestEventsToOverlay?.(response);
       routeMapResponse(ctx, response, { origin: targetMode }, deps);
       break;
 
@@ -425,10 +364,7 @@ export function handleResponse(ctx, response, deps = {}) {
       ctx.applySupplementalChatActions(response);
       if (response.geojson && response.geojson.features && response.geojson.features.length > 0) {
         add(response.message || response.summary || 'Found data for you.', 'assistant');
-        if (response.event_type) {
-          ingestEventsToOverlay?.(response);
-        }
-        App?.displayMapPayload(response);
+        routeMapResponse(ctx, response, { origin: targetMode }, deps);
       } else {
         add(response.message || response.summary || 'Could you be more specific?', 'assistant');
       }

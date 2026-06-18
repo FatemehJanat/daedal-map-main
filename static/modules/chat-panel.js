@@ -272,6 +272,14 @@ function parseExactEventIntent(query) {
     return null;
   }
 
+  const hasLetter = /[A-Za-z]/.test(eventId);
+  const hasDigit = /\d/.test(eventId);
+  const hasSymbol = /[._:-]/.test(eventId);
+  const looksLikeOpaqueIdentifier = (hasLetter && hasDigit) || hasSymbol;
+  if (!explicitMatch && !hasExplicitIdCue && !looksLikeOpaqueIdentifier) {
+    return null;
+  }
+
   let hinted = null;
   for (const candidate of EXACT_EVENT_ENTITY_HINTS) {
     if (candidate.tokens.some((token) => lower.includes(token))) {
@@ -478,7 +486,7 @@ function ingestEventsToOverlay(response, order = null) {
 function renderUnifiedOverlayEventResult(response, order = null) {
   const overlayId = ingestEventsToOverlay(response, order);
   if (overlayId && response?.geojson?.features?.length) {
-    if (!focusExactEventResult(response, { order, overlayId })) {
+    if (!focusSingleEventResult(response, { order, overlayId, allowSingleFeature: true })) {
       MapAdapter?.fitToBounds?.(response.geojson);
     }
     focusEventResultTime(response, overlayId, order);
@@ -584,27 +592,179 @@ function isExactEventOrder(order = null) {
 }
 
 function focusExactEventResult(response, options = {}) {
+  return focusSingleEventResult(response, options);
+}
+
+function parseEventTrackCoords(value) {
+  if (!value) return [];
+  let parsed = value;
+  if (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed);
+    } catch (_error) {
+      return [];
+    }
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter((coords) => Array.isArray(coords) && coords.length >= 2);
+}
+
+function extendBoundsWithCoordinateList(bounds, coords) {
+  if (!Array.isArray(coords) || !coords.length) return;
+  if (
+    coords.length >= 2
+    && Number.isFinite(Number(coords[0]))
+    && Number.isFinite(Number(coords[1]))
+  ) {
+    bounds.extend([Number(coords[0]), Number(coords[1])]);
+    return;
+  }
+  coords.forEach((entry) => extendBoundsWithCoordinateList(bounds, entry));
+}
+
+function extendBoundsWithApproximateRadius(bounds, lon, lat, radiusKm) {
+  if (!Number.isFinite(lon) || !Number.isFinite(lat) || !Number.isFinite(radiusKm) || radiusKm <= 0) {
+    return;
+  }
+  const latDelta = radiusKm / 111.32;
+  const lonDivisor = Math.max(Math.cos((lat * Math.PI) / 180), 0.1);
+  const lonDelta = radiusKm / (111.32 * lonDivisor);
+  bounds.extend([lon - lonDelta, lat - latDelta]);
+  bounds.extend([lon + lonDelta, lat + latDelta]);
+}
+
+function getFocusedEventRadiusKm(feature = null) {
+  const props = feature?.properties || {};
+  const candidates = [
+    props.initial_view_radius_km,
+    props.damage_radius_km,
+    props.felt_radius_km,
+    props.impact_radius_km,
+    props.radius_km,
+    props.search_radius_km,
+    props.extent_radius_km,
+    props.max_radius_km
+  ]
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value > 0);
+
+  if (candidates.length) {
+    return Math.max(...candidates);
+  }
+
+  const eventType = String(props.event_type || '').trim().toLowerCase();
+  const fallbackByType = {
+    earthquake: 180,
+    tsunami: 260,
+    hurricane: 420,
+    tornado: 90,
+    wildfire: 120,
+    flood: 140,
+    volcano: 160,
+    landslide: 60
+  };
+  return fallbackByType[eventType] || 120;
+}
+
+function buildFocusedEventBounds(feature = null) {
+  const maplibre = window.maplibregl || window.maplibregl;
+  if (!maplibre || !feature) return null;
+
+  const bounds = new maplibre.LngLatBounds();
+  const geometry = feature?.geometry || null;
+  const props = feature?.properties || {};
+
+  if (geometry?.coordinates) {
+    extendBoundsWithCoordinateList(bounds, geometry.coordinates);
+  }
+
+  const bboxValues = [
+    Number(props.bbox_min_lon),
+    Number(props.bbox_min_lat),
+    Number(props.bbox_max_lon),
+    Number(props.bbox_max_lat)
+  ];
+  if (bboxValues.every((value) => Number.isFinite(value))) {
+    bounds.extend([bboxValues[0], bboxValues[1]]);
+    bounds.extend([bboxValues[2], bboxValues[3]]);
+  }
+
+  parseEventTrackCoords(props.track_coords).forEach((coords) => {
+    bounds.extend([Number(coords[0]), Number(coords[1])]);
+  });
+
+  const centerLon = Number(
+    props.centroid_lon
+    ?? props.lon
+    ?? (Array.isArray(geometry?.coordinates) ? geometry.coordinates[0] : NaN)
+  );
+  const centerLat = Number(
+    props.centroid_lat
+    ?? props.lat
+    ?? (Array.isArray(geometry?.coordinates) ? geometry.coordinates[1] : NaN)
+  );
+
+  if (Number.isFinite(centerLon) && Number.isFinite(centerLat)) {
+    extendBoundsWithApproximateRadius(bounds, centerLon, centerLat, getFocusedEventRadiusKm(feature));
+  }
+
+  return bounds.isEmpty() ? null : bounds;
+}
+
+function getFocusedEventMaxZoom(bounds) {
+  if (!bounds || typeof bounds.toArray !== 'function') {
+    return 7;
+  }
+  const [[west, south], [east, north]] = bounds.toArray();
+  const lonSpan = Math.abs(Number(east) - Number(west));
+  const latSpan = Math.abs(Number(north) - Number(south));
+  const maxSpan = Math.max(lonSpan, latSpan);
+  if (!Number.isFinite(maxSpan)) return 7;
+  if (maxSpan <= 0.2) return 6;
+  if (maxSpan <= 1) return 6.5;
+  if (maxSpan <= 5) return 7;
+  if (maxSpan <= 20) return 7.5;
+  return 8.5;
+}
+
+function focusSingleEventResult(response, options = {}) {
   if (!MapAdapter) return false;
   const features = Array.isArray(response?.geojson?.features) ? response.geojson.features : [];
   if (features.length !== 1) return false;
-  if (!isExactEventOrder(options.order)) return false;
+  if (!options.allowSingleFeature && !isExactEventOrder(options.order)) return false;
 
   const feature = features[0];
-  const geometry = feature?.geometry || null;
-  if (!geometry) return false;
+  const bounds = buildFocusedEventBounds(feature);
+  if (bounds && MapAdapter?.map?.fitBounds) {
+    const basePadding = { top: 80, right: 80, bottom: 80, left: 80 };
+    const padding = typeof MapAdapter.getFitBoundsPadding === 'function'
+      ? MapAdapter.getFitBoundsPadding(basePadding)
+      : basePadding;
+    MapAdapter.map.fitBounds(bounds, {
+      padding,
+      duration: 1200,
+      maxZoom: getFocusedEventMaxZoom(bounds)
+    });
+    return true;
+  }
 
-  if (geometry.type === 'Point') {
+  const geometry = feature?.geometry || null;
+  if (geometry?.type === 'Point') {
     const coords = Array.isArray(geometry.coordinates) ? geometry.coordinates : null;
     if (!coords || coords.length < 2) return false;
     const lon = Number(coords[0]);
     const lat = Number(coords[1]);
     if (!Number.isFinite(lon) || !Number.isFinite(lat)) return false;
-    MapAdapter.flyTo([lon, lat], 8);
+    MapAdapter.flyTo([lon, lat], 6.5);
     return true;
   }
 
-  MapAdapter.fitToBounds(response.geojson, { maxZoom: 9 });
-  return true;
+  if (geometry) {
+    MapAdapter.fitToBounds(response.geojson, { maxZoom: 7.5 });
+    return true;
+  }
+
+  return false;
 }
 
 function toEventTimestamp(value) {
@@ -1353,28 +1513,41 @@ export const ChatManager = {
       const requestedCount = Number(action._requestedPackCount) || actions.length;
       let successCount = 0;
       const loadedLabels = [];
+      const concurrency = Math.max(1, Math.min(3, actions.length));
+      let nextIndex = 0;
+      let completedCount = 0;
 
-      for (let index = 0; index < actions.length; index += 1) {
-        const childAction = actions[index];
-        options.onProgress?.({
-          index: index + 1,
-          total: requestedCount,
-          label: formatDefaultLoadActionLabel(childAction)
-        });
-        try {
-          const childResult = await this.executeDefaultLoadAction(childAction, {
-            ...options,
-            onProgress: null,
-            suppressResultMessage: true
-          });
-          if (childResult && (typeof childResult !== 'object' || childResult.ok !== false)) {
-            successCount += 1;
-            loadedLabels.push(formatDefaultLoadActionLabel(childAction));
+      const runNext = async () => {
+        while (nextIndex < actions.length) {
+          const currentIndex = nextIndex;
+          nextIndex += 1;
+          const childAction = actions[currentIndex];
+          try {
+            const childResult = await this.executeDefaultLoadAction(childAction, {
+              ...options,
+              onProgress: null,
+              suppressResultMessage: true
+            });
+            if (childResult && (typeof childResult !== 'object' || childResult.ok !== false)) {
+              successCount += 1;
+              loadedLabels.push(formatDefaultLoadActionLabel(childAction));
+            }
+          } catch (error) {
+            console.warn('Default load action failed:', childAction?.label || childAction, error);
+          } finally {
+            completedCount += 1;
+            options.onProgress?.({
+              index: completedCount,
+              total: requestedCount,
+              label: formatDefaultLoadActionLabel(childAction)
+            });
           }
-        } catch (error) {
-          console.warn('Default load action failed:', childAction?.label || childAction, error);
         }
-      }
+      };
+
+      await Promise.all(
+        Array.from({ length: concurrency }, () => runNext())
+      );
 
       if (successCount > 0 && !options.suppressResultMessage) {
         const labelText = joinLabelsForMessage(loadedLabels);
@@ -1862,7 +2035,10 @@ export const ChatManager = {
   },
 
   routeMapResponse(response, options = {}) {
-    return routeMapResponseImpl(this, response, options, { App });
+    return routeMapResponseImpl(this, response, options, {
+      App,
+      renderUnifiedOverlayEventResult
+    });
   },
 
   applyModeUiState() {
@@ -2614,11 +2790,9 @@ export const ChatManager = {
       onReady: (queueId, result) => {
         if (result && (result.type === 'data' || result.type === 'events')) {
           const count = result.count || result.geojson?.features?.length || 0;
-          this.addMessage(`Loaded ${count} locations.`, 'assistant');
-          if (result.type === 'events') {
-            ingestEventsToOverlay(result);
-          }
-          App?.displayMapPayload(result);
+          const message = result.summary || result.message || `Loaded ${count} locations.`;
+          this.addMessage(message, 'assistant');
+          this.routeMapResponse(result, { origin: 'explore' });
         }
       },
       onFailed: (queueId, error) => {
@@ -2714,14 +2888,11 @@ export const ChatManager = {
       let sawAdditiveLayer = false;
       let sawRemoval = false;
       for (const result of data.results) {
-        const handledByOverlay = result?.data_type === 'events' && renderUnifiedOverlayEventResult(result, order);
-        if (!handledByOverlay) {
-          App?.displayMapPayload(result, { order });
-          if (result?.data_type === 'metrics') {
-            const requestedColor = inferRequestedMetricColor(order, result);
-            if (requestedColor) {
-              App?.applyMetricChoroplethStyle?.(requestedColor);
-            }
+        const routed = this.routeMapResponse(result, { origin: requestMode, order });
+        if (!routed && result?.data_type === 'metrics') {
+          const requestedColor = inferRequestedMetricColor(order, result);
+          if (requestedColor) {
+            App?.applyMetricChoroplethStyle?.(requestedColor);
           }
         }
         if (result?.action === 'remove') {
@@ -2749,7 +2920,7 @@ export const ChatManager = {
         if (!options.suppressResultMessage) {
           this.addMessage(message, 'assistant');
         }
-        renderUnifiedOverlayEventResult(data, order);
+        this.routeMapResponse(data, { origin: requestMode, order });
         if (options.exactEventFocus) {
           applyExactEventFocusState(order, data);
         }
@@ -2787,7 +2958,7 @@ export const ChatManager = {
         }
       }
 
-      if (!(dataType === 'events' && resolveOverlayIdForOrderResult(data, order))) {
+      if (dataType !== 'events') {
         App?.displayMapPayload(data, { order });
         if (dataType === 'metrics') {
           const requestedColor = inferRequestedMetricColor(order, data);
@@ -3356,7 +3527,7 @@ export const ChatManager = {
       TutorialMode,
       SavedOrders,
       orderPanel,
-      ingestEventsToOverlay
+      renderUnifiedOverlayEventResult
     });
   },
 
