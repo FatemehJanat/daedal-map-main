@@ -1,5 +1,29 @@
 """Shared pre-validation postprocess pipeline helpers."""
 
+import re
+
+
+EVENT_QUALIFIER_SINGLE_TARGET_PATTERNS = (
+    re.compile(r"\bthe\s+biggest\s+(?P<noun>[a-z_]+)\b"),
+    re.compile(r"\bthe\s+largest\s+(?P<noun>[a-z_]+)\b"),
+    re.compile(r"\bthe\s+strongest\s+(?P<noun>[a-z_]+)\b"),
+    re.compile(r"\bthe\s+most\s+severe\s+(?P<noun>[a-z_]+)\b"),
+)
+
+
+def _query_requests_single_ranked_event(query_text: str) -> bool:
+    normalized = str(query_text or "").strip().lower()
+    if not normalized:
+        return False
+    for pattern in EVENT_QUALIFIER_SINGLE_TARGET_PATTERNS:
+        match = pattern.search(normalized)
+        if not match:
+            continue
+        noun = str(match.group("noun") or "").strip().lower()
+        if noun and not noun.endswith("s"):
+            return True
+    return False
+
 
 def promote_filter_time_granularity(items: list) -> None:
     """Lift legacy filter-scoped time_granularity onto the item itself."""
@@ -92,12 +116,33 @@ def apply_default_time_windows(
     default_year_span: int = 10,
 ) -> None:
     """Apply a bounded shared default when an otherwise valid item has no time filters."""
+    open_ended_time_markers = (
+        "all time",
+        "of all time",
+        "ever recorded",
+        "ever observed",
+        "in history",
+        "historically",
+    )
+
     for item in items:
         if not isinstance(item, dict):
             continue
         if item.get("year") is not None or item.get("year_start") or item.get("year_end"):
             continue
         if item.get("date_start") or item.get("date_end"):
+            continue
+
+        hints = item.get("_hints") if isinstance(item.get("_hints"), dict) else {}
+        query_text = " ".join(
+            part for part in (
+                str(hints.get("original_query") or "").strip().lower(),
+                str(item.get("summary") or "").strip().lower(),
+            )
+            if part
+        )
+        if any(marker in query_text for marker in open_ended_time_markers):
+            item["_time_hint_applied"] = True
             continue
 
         source_id = item.get("source_id")
@@ -125,6 +170,66 @@ def apply_default_time_windows(
             "available_start": available_start,
             "available_end": available_end,
         }
+
+
+def apply_event_qualifier_defaults(
+    items: list,
+    load_source_metadata,
+    load_reference_json,
+) -> None:
+    """Apply deterministic default event ranking when the query uses vague superlatives."""
+    reference = load_reference_json("query_synonyms.json") or {}
+    pack_defaults = reference.get("event_qualifier_defaults") if isinstance(reference, dict) else {}
+    if not isinstance(pack_defaults, dict) or not pack_defaults:
+        return
+
+    for item in items:
+        if not isinstance(item, dict) or item.get("sort"):
+            continue
+
+        source_id = str(item.get("source_id") or "").strip()
+        if not source_id:
+            continue
+
+        metadata = load_source_metadata(source_id) or {}
+        if not isinstance(metadata, dict):
+            continue
+
+        data_type = str(metadata.get("data_type") or "").strip().lower()
+        significance_column = str(metadata.get("significance_column") or "").strip()
+        event_mode = str(item.get("mode") or "").strip().lower()
+        if data_type != "events" and not significance_column and event_mode != "events":
+            continue
+
+        pack_id = str(item.get("pack_id") or metadata.get("pack_id") or "").strip().lower()
+        qualifier_defaults = pack_defaults.get(pack_id)
+        if not isinstance(qualifier_defaults, dict) or not qualifier_defaults:
+            continue
+
+        hints = item.get("_hints") if isinstance(item.get("_hints"), dict) else {}
+        query_text = " ".join(
+            part for part in (
+                str(hints.get("original_query") or "").strip().lower(),
+                str(item.get("summary") or "").strip().lower(),
+            )
+            if part
+        )
+        if not query_text:
+            continue
+
+        selected_metric = None
+        for qualifier, metric_name in qualifier_defaults.items():
+            qualifier_text = str(qualifier or "").strip().lower()
+            metric_text = str(metric_name or "").strip()
+            if qualifier_text and metric_text and qualifier_text in query_text:
+                selected_metric = metric_text
+                break
+        if not selected_metric:
+            continue
+
+        item["sort"] = {"by": selected_metric, "order": "desc"}
+        if not item.get("limit") and _query_requests_single_ranked_event(query_text):
+            item["limit"] = 1
 
 
 def run_pre_validation_pipeline(

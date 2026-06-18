@@ -69,6 +69,7 @@ from mapmover.runtime.postprocess_normalization import (
     rewrite_processed_order_summary as rewrite_processed_order_summary_impl,
 )
 from mapmover.runtime.postprocess_pipeline import (
+    apply_event_qualifier_defaults,
     apply_default_time_windows,
     apply_preprocessor_time_hints,
     build_validation_summary,
@@ -392,6 +393,7 @@ def run_postprocess_order(
     time_hints = hints.get("time", {}) if hints else {}
     apply_preprocessor_time_hints(items, time_hints, load_source_metadata)
     apply_default_time_windows(items, load_source_metadata)
+    apply_event_qualifier_defaults(items, load_source_metadata, load_reference_json)
 
     clarify_message = detect_multiple_path_clarify_runtime(
         items,
