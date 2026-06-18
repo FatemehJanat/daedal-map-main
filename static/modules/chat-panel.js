@@ -1639,17 +1639,23 @@ export const ChatManager = {
   },
 
   centerOpsFocusedEvent(response) {
-    focusExactEventResult(response, {
-      order: {
-        items: [{
-          filters: {
-            event_id: response?.geojson?.features?.[0]?.properties?.event_id
-              || response?.geojson?.features?.[0]?.properties?.storm_id
-              || ''
-          }
-        }]
-      }
-    });
+    const exactId = String(
+      response?.geojson?.features?.[0]?.properties?.event_id
+      || response?.geojson?.features?.[0]?.properties?.storm_id
+      || ''
+    ).trim();
+    if (!exactId) {
+      return;
+    }
+    const syntheticOrder = {
+      items: [{
+        filters: {
+          event_id: exactId
+        }
+      }]
+    };
+    focusExactEventResult(response, { order: syntheticOrder });
+    scheduleExactEventFocusRefresh(syntheticOrder, response);
   },
 
   // Make an app pack/source/feed load a distinct, identifiable analytics
