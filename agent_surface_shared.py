@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from pack_registry_shared import pack_display_name, pack_registry_alias, published_pack_ids
+from pack_registry_shared import (
+    pack_display_name,
+    pack_mcp_server_profile,
+    pack_registry_alias,
+    published_pack_ids,
+    tool_family_catalog_entry,
+    tool_family_ids,
+)
 from pack_pricing_shared import FREE_PACK_IDS, PAID_PACK_IDS
 
 CURRENT_HOSTED_PACK_IDS: tuple[str, ...] = published_pack_ids()
@@ -72,6 +79,28 @@ def facade_transport_lines(app_origin: str) -> str:
     return "\n".join(lines)
 
 
+def geography_tools_section(app_origin: str) -> str:
+    """Registry-driven markdown block for the free geography/utility tool families.
+
+    Tool families (e.g. geography) are not data packs, so they are not in
+    published_pack_ids(); they are surfaced here from tool_family_ids() so the
+    machine-readable agent surfaces advertise the free loc_id spine tools.
+    """
+    base = app_origin.rstrip("/")
+    blocks: list[str] = []
+    for family_id in tool_family_ids():
+        entry = tool_family_catalog_entry(family_id)
+        profile = pack_mcp_server_profile(family_id)
+        tool_line = ", ".join(f"`{tool.get('name')}`" for tool in (entry.get("tools") or []))
+        blocks.append(
+            f"- `{family_id}` utility family (free) - {entry.get('description')}\n"
+            f"  - facade: `{base}/mcp/{family_id}` (registry name `{profile.get('name')}`)\n"
+            f"  - tools: {tool_line}\n"
+            f"  - also reachable on the umbrella `{base}/mcp`; no payment required"
+        )
+    return "\n".join(blocks)
+
+
 def pack_sentence() -> str:
     return ", ".join(CURRENT_HOSTED_PACK_IDS)
 
@@ -105,6 +134,8 @@ def agent_ai_plugin_description_for_model(*, app_origin: str, docs_origin: str, 
     base += (
         "All packs share a loc_id key (ISO3 for countries, hierarchical for sub-national) "
         "enabling cross-pack joins on a single column with no geography normalization. "
+        "Free geography tools resolve lat/lon and loc_ids on the same spine: resolve_point, "
+        "get_boundary, loc_id_hierarchy, loc_id_info. "
         "request_id is optional but recommended for tracing and idempotency. "
         f"{free_vs_paid_sentence()}"
     )
@@ -139,6 +170,9 @@ def render_app_llms_txt() -> str:
         "The published packs are listed below. "
         "Call GET https://app.daedalmap.com/api/v1/catalog for the live current pack index.\n"
         f"{current_pack_code_bullets()}\n\n"
+        "## Geography utility tools (free)\n"
+        "Free loc_id-spine tools: reverse geocode coordinates to administrative areas, fetch boundaries, and walk the loc_id hierarchy. Map any spatial reference onto the same loc_id the data packs use.\n"
+        f"{geography_tools_section('https://app.daedalmap.com')}\n\n"
         "## App UI\n"
         "- Human-facing app: https://app.daedalmap.com\n"
         "- Website and docs: https://daedalmap.com\n"
@@ -192,6 +226,9 @@ def render_site_llms_txt(*, app_origin: str = "https://app.daedalmap.com", site_
         f"{current_pack_code_bullets()}\n\n"
         "## Registry facades\n\n"
         f"{facade_link_bullets(app_origin)}\n\n"
+        "## Geography utility tools (free)\n\n"
+        "A free utility tool family on the loc_id spine - reverse geocode coordinates, fetch boundaries, and walk the loc_id hierarchy to map any spatial reference onto the same loc_id the data packs use.\n\n"
+        f"{geography_tools_section(app_origin)}\n\n"
         "## Current live contract\n\n"
         "- MCP discovery first is valid: read `server.json`, then call `tools/list`, then use a named tool or `query_dataset`\n"
         "- Free discovery first: `guide`, `catalog`, and pack detail\n"
@@ -256,6 +293,9 @@ def render_site_llms_full(*, app_origin: str = "https://app.daedalmap.com", site
         "## Current hosted packs\n\n"
         f"The published packs are listed below.\nCall GET {app_origin}/api/v1/catalog for the live current pack index.\n\n"
         f"{current_pack_code_bullets()}\n\n"
+        "## Geography utility tools (free)\n\n"
+        "Beyond the data packs, DaedalMap exposes a free geography/geocoding utility family on the loc_id spine. These are free tools, not a queryable dataset pack: reverse geocode coordinates to administrative areas, fetch boundaries and bounding boxes, and walk the loc_id hierarchy. They are the on-ramp that maps any spatial reference onto the same loc_id the paid data packs use.\n\n"
+        f"{geography_tools_section(app_origin)}\n\n"
         "## Registry summary\n\n"
         "DaedalMap is a remote MCP server and hosted geographic data API for deterministic,\n"
         f"geography-aware queries across curated packs: {pack_sentence()}.\n"
