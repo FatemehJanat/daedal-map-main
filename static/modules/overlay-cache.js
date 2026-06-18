@@ -61,6 +61,53 @@ export const VARIABLE_OVERLAY_MAP = {
   'soil_moisture': 'soil-moisture'
 };
 
+export function getEffectiveRangeParams(endpoint, overlayId = null) {
+  const defaultParams = endpoint?.params || {};
+  const overrides = overlayId ? (activeFilters[overlayId] || {}) : {};
+  const effectiveParams = { ...defaultParams };
+
+  if (overrides.minMagnitude !== undefined) {
+    effectiveParams.min_magnitude = String(overrides.minMagnitude);
+  }
+  if (overrides.maxMagnitude !== undefined) {
+    effectiveParams.max_magnitude = String(overrides.maxMagnitude);
+  }
+  if (overrides.minCategory !== undefined) {
+    effectiveParams.min_category = `Cat${overrides.minCategory}`;
+  }
+  if (overrides.minScale !== undefined) {
+    effectiveParams.min_scale = `EF${overrides.minScale}`;
+  }
+  if (overrides.minAreaKm2 !== undefined) {
+    effectiveParams.min_area_km2 = String(overrides.minAreaKm2);
+  }
+  if (overrides.minVei !== undefined) {
+    effectiveParams.min_vei = String(overrides.minVei);
+  }
+  if (overrides.minSeverity !== undefined) {
+    effectiveParams.min_severity = String(overrides.minSeverity);
+  }
+  if (overrides.minHeightM !== undefined) {
+    effectiveParams.min_height_m = String(overrides.minHeightM);
+  }
+  if (overrides.locPrefix !== undefined) {
+    effectiveParams.loc_prefix = overrides.locPrefix;
+  }
+  if (overrides.affectedLocId !== undefined) {
+    effectiveParams.affected_loc_id = overrides.affectedLocId;
+  }
+
+  return effectiveParams;
+}
+
+export function getRangeRequestSignature(endpoint, overlayId = null) {
+  const effectiveParams = getEffectiveRangeParams(endpoint, overlayId);
+  const sortedEntries = Object.entries(effectiveParams)
+    .filter(([, value]) => value !== undefined && value !== null && value !== '')
+    .sort(([left], [right]) => left.localeCompare(right));
+  return JSON.stringify(sortedEntries);
+}
+
 /**
  * Calculate total cache size - exact bytes via JSON serialization.
  * @returns {{ totalFeatures: number, bytes: number, sizeMB: string, perOverlay: Object }}
@@ -107,40 +154,7 @@ export function calculateCacheSize() {
  */
 export function buildRangeUrl(endpoint, startMs, endMs, overlayId = null) {
   const url = new URL(endpoint.baseUrl, window.location.origin);
-  const defaultParams = endpoint.params || {};
-  const overrides = overlayId ? (activeFilters[overlayId] || {}) : {};
-  const effectiveParams = { ...defaultParams };
-
-  if (overrides.minMagnitude !== undefined) {
-    effectiveParams.min_magnitude = String(overrides.minMagnitude);
-  }
-  if (overrides.maxMagnitude !== undefined) {
-    effectiveParams.max_magnitude = String(overrides.maxMagnitude);
-  }
-  if (overrides.minCategory !== undefined) {
-    effectiveParams.min_category = `Cat${overrides.minCategory}`;
-  }
-  if (overrides.minScale !== undefined) {
-    effectiveParams.min_scale = `EF${overrides.minScale}`;
-  }
-  if (overrides.minAreaKm2 !== undefined) {
-    effectiveParams.min_area_km2 = String(overrides.minAreaKm2);
-  }
-  if (overrides.minVei !== undefined) {
-    effectiveParams.min_vei = String(overrides.minVei);
-  }
-  if (overrides.minSeverity !== undefined) {
-    effectiveParams.min_severity = String(overrides.minSeverity);
-  }
-  if (overrides.minHeightM !== undefined) {
-    effectiveParams.min_height_m = String(overrides.minHeightM);
-  }
-  if (overrides.locPrefix !== undefined) {
-    effectiveParams.loc_prefix = overrides.locPrefix;
-  }
-  if (overrides.affectedLocId !== undefined) {
-    effectiveParams.affected_loc_id = overrides.affectedLocId;
-  }
+  const effectiveParams = getEffectiveRangeParams(endpoint, overlayId);
 
   for (const [key, value] of Object.entries(effectiveParams)) {
     url.searchParams.set(key, value);

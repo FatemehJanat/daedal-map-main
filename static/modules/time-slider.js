@@ -2336,10 +2336,10 @@ export const TimeSlider = {
           this.setTime(nextTime, 'playback');
 
           const baseStepMs = this.stepMs || this.calculateStepMs(this.granularity || 'yearly');
-          const targetStepMs = TIME_SYSTEM.BASE_STEP_MS * this.stepsPerFrame;
-          const speedRatio = Math.max(0.000001, targetStepMs / Math.max(1, baseStepMs));
-          const baseInterval = this.getPlaybackInterval();
-          const interval = Math.max(16, Math.round(baseInterval / speedRatio));
+          const targetUnitsPerSecond = (
+            TIME_SYSTEM.BASE_STEP_MS * this.stepsPerFrame * TIME_SYSTEM.MAX_FPS
+          ) / Math.max(1, baseStepMs);
+          const interval = Math.max(16, Math.round(1000 / Math.max(0.05, targetUnitsPerSecond)));
           this.playTimeout = setTimeout(tick, interval);
         };
 

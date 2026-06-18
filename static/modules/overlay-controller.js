@@ -17,6 +17,7 @@ import {
   calculateCacheSize,
   dataCache,
   displayedYear,
+  getRangeRequestSignature,
   loadedRanges,
   loadedYears,
   yearRangeCache
@@ -2338,6 +2339,23 @@ export const OverlayController = {
     const endpoint = OVERLAY_ENDPOINTS[overlayId];
     if (!endpoint) return;
 
+    if ((endpoint.minYear && year < endpoint.minYear) || (endpoint.maxYear && year > endpoint.maxYear)) {
+      if (!loadedYears[overlayId]) {
+        loadedYears[overlayId] = new Set();
+      }
+      loadedYears[overlayId].add(year);
+      console.log(`OverlayController: Skipping ${overlayId} year ${year} (outside supported range)`);
+
+      if (useLifecycleFiltering && TimeSlider?.currentTime) {
+        this.renderFilteredData(overlayId, TimeSlider.currentTime, { useTimestamp: true });
+      } else if (timestamp && useLifecycleFiltering) {
+        this.renderFilteredData(overlayId, timestamp, { useTimestamp: true });
+      } else {
+        this.renderFilteredData(overlayId, year);
+      }
+      return false;
+    }
+
     console.log(`OverlayController: Auto-fetching ${overlayId} for year ${year}`);
 
     // Load the year data (year boundaries)
@@ -2785,7 +2803,13 @@ export const OverlayController = {
     try {
       // If range already loaded (cache exists), just re-render without fetching
       // This handles re-enable after hide (0 features is still "loaded")
-      if (loadedRanges[overlayId]?.length > 0) {
+      const requestSignature = getRangeRequestSignature(endpoint, overlayId);
+      const hasMatchingRange = (loadedRanges[overlayId] || []).some((range) =>
+        range &&
+        !range.loading &&
+        (range.signature || '') === requestSignature
+      );
+      if (hasMatchingRange) {
         console.log(`OverlayController: ${overlayId} already loaded, re-rendering from cache`);
         this.loading.delete(overlayId);
         this.renderCurrentData(overlayId);
@@ -2794,7 +2818,14 @@ export const OverlayController = {
         if (TimeSlider?.isLiveMode) {
           const FIVE_MIN = 5 * 60 * 1000;
           const now = Math.floor(Date.now() / FIVE_MIN) * FIVE_MIN;
-          const ranges = loadedRanges[overlayId].filter(r => !r.loading);
+          const ranges = loadedRanges[overlayId].filter((r) =>
+            r &&
+            !r.loading &&
+            (r.signature || '') === requestSignature
+          );
+          if (!ranges.length) {
+            return;
+          }
           const lastEnd = Math.max(...ranges.map(r => r.end));
           if (now > lastEnd) {
             console.log(`OverlayController: ${overlayId} catching up delta in live mode`);
@@ -3567,7 +3598,7 @@ export const OverlayController = {
       if (!loadedRanges[overlayId]) {
         loadedRanges[overlayId] = [];
       }
-      loadedRanges[overlayId].push({ start: rangeMeta.start, end: rangeMeta.end, loading: false });
+      loadedRanges[overlayId].push({ start: rangeMeta.start, end: rangeMeta.end, loading: false, signature: '' });
 
       // Update loadedYears for compatibility
       if (!loadedYears[overlayId]) {
