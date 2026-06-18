@@ -8,7 +8,6 @@ import {
   calculateCacheSize,
   CLIMATE_VARIABLES,
   dataCache,
-  getRangeRequestSignature,
   loadedFilters,
   loadedRanges,
   loadedYears,
@@ -158,20 +157,13 @@ export async function loadRangeData(overlayId, startMs, endMs, endpoint, signal 
     loadedRanges[overlayId] = [];
   }
 
-  const requestSignature = getRangeRequestSignature(endpoint, overlayId);
-  const isRangeCovered = loadedRanges[overlayId].some((r) =>
-    r &&
-    !r.loading &&
-    (r.signature || '') === requestSignature &&
-    r.start <= startMs &&
-    r.end >= endMs
-  );
+  const isRangeCovered = loadedRanges[overlayId].some((r) => r.start <= startMs && r.end >= endMs);
   if (isRangeCovered) {
     console.log(`OverlayController: ${overlayId} range already cached`);
     return false;
   }
 
-  const rangeEntry = { start: startMs, end: endMs, loading: true, signature: requestSignature };
+  const rangeEntry = { start: startMs, end: endMs, loading: true };
   loadedRanges[overlayId].push(rangeEntry);
 
   const url = buildRangeUrl(endpoint, startMs, endMs, overlayId);
