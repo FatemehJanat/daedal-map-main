@@ -185,22 +185,61 @@ def _parse_env_int(name: str, default: int) -> int:
         return default
 
 
-def _live_tool_rate_limit_response(request: Request, tool_name: str, request_id: Any) -> JSONResponse | None:
-    limit = _parse_env_int("MCP_LIVE_TOOL_RATE_LIMIT", 10)
+# Verified account plan_id -> rate tier. Anonymous callers and free plans map to
+# the default free tier; a paid subscription plan raises the limit. Billing that
+# sets plan_id lives on the account/control plane (Stripe); the runtime only
+# reads the verified plan. This is generic - any rate-limited free tool inherits
+# the tiering, not a geography-specific path.
+TOOL_RATE_TIER_BY_PLAN: dict[str, str] = {
+    "plus": "plus",
+    "pro": "plus",
+}
+
+
+def _resolve_caller_rate_tier(request: Request) -> str:
+    """Best-effort, non-blocking tier resolution. Honors an already-verified plan
+    on the request; never triggers a fresh Supabase fetch in the rate-limit path."""
+    user = getattr(request.state, "authenticated_user_context", None)
+    if not isinstance(user, dict):
+        return "free"
+    for source in (user.get("app_metadata"), user.get("user_metadata"), user):
+        if isinstance(source, dict):
+            plan_id = str(source.get("plan_id") or "").strip().lower()
+            if plan_id:
+                return TOOL_RATE_TIER_BY_PLAN.get(plan_id, "free")
+    return "free"
+
+
+def _tool_rate_limit_for_tier(tier: str) -> tuple[int, int]:
     window_seconds = _parse_env_int("MCP_LIVE_TOOL_RATE_WINDOW_SECONDS", 60)
+    free_limit = _parse_env_int("MCP_LIVE_TOOL_RATE_LIMIT", 10)
+    if tier == "plus":
+        return _parse_env_int("MCP_TOOL_RATE_LIMIT_PLUS", max(free_limit, 120)), window_seconds
+    return free_limit, window_seconds
+
+
+def _live_tool_rate_limit_response(request: Request, tool_name: str, request_id: Any) -> JSONResponse | None:
+    tier = _resolve_caller_rate_tier(request)
+    limit, window_seconds = _tool_rate_limit_for_tier(tier)
     caller = get_client_ip(request) or "unknown"
     allowed, retry_after = rate_limiter.check(
-        f"mcp-live-tool:{tool_name}:{caller}",
+        f"mcp-tool:{tool_name}:{tier}:{caller}",
         limit=limit,
         window_seconds=window_seconds,
     )
     if allowed:
         return None
+    data: dict[str, Any] = {"tool": tool_name, "retry_after": retry_after, "tier": tier}
+    if tier == "free":
+        data["upgrade"] = (
+            "Free-tier rate limit reached. A paid DaedalMap plan raises utility-tool "
+            "limits; see https://daedalmap.com/pricing."
+        )
     response = _jsonrpc_error(
         request_id,
         -32000,
-        "Live tool rate limit exceeded",
-        data={"tool": tool_name, "retry_after": retry_after},
+        "Tool rate limit exceeded",
+        data=data,
         status_code=429,
     )
     response.headers["Retry-After"] = str(retry_after)
