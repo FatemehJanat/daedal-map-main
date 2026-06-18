@@ -904,7 +904,7 @@ export const ChatManager = {
     }
 
     const suppressResultMessage = Boolean(
-      eventId && ((lane === 'explore' && (packId || sourceId)) || (lane === 'ops' && feedId))
+      eventId && lane === 'explore' && (packId || sourceId)
     );
 
     return this.runDefaultLoad(
