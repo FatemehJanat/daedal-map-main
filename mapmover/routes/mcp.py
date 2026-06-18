@@ -13,6 +13,7 @@ from pack_registry_shared import (
     pack_prompt_allowlists,
     pack_tool_allowlists,
     published_pack_ids,
+    tool_family_alias_ids,
     tool_family_catalog_entry,
     tool_family_ids,
     tool_family_pack_detail,
@@ -40,7 +41,7 @@ AGENT_SAFETY_NOTICE = (
 )
 PACK_SERVER_PROFILES = {
     pack_id: pack_mcp_server_profile(pack_id)
-    for pack_id in (*published_pack_ids(), *tool_family_ids())
+    for pack_id in (*published_pack_ids(), *tool_family_ids(), *tool_family_alias_ids())
 }
 
 PACK_TOOL_ALLOWLIST: dict[str, set[str]] = pack_tool_allowlists()
@@ -151,7 +152,12 @@ def _augment_catalog_with_tool_families(payload: Any, pack_id: str | None) -> An
     family_ids = set(tool_family_ids())
     normalized = _normalize_pack_id(pack_id)
     if normalized:
-        entries = [tool_family_catalog_entry(normalized)] if normalized in family_ids else []
+        # On a facade, surface that facade's own entry (family or alias); the
+        # umbrella catalog still lists only the canonical tool families.
+        if normalized in family_ids or normalized in set(tool_family_alias_ids()):
+            entries = [tool_family_catalog_entry(normalized)]
+        else:
+            entries = []
     else:
         entries = [tool_family_catalog_entry(fid) for fid in tool_family_ids()]
     augmented = dict(payload)
@@ -1316,7 +1322,7 @@ async def mcp_endpoint(request: Request, pack_id: str | None = None):
             return _jsonrpc_error(request_id, -32602, "pack_id is required")
         if normalized_pack_id and pack_id.lower() != normalized_pack_id:
             return _jsonrpc_error(request_id, -32602, f"Pack '{pack_id}' is not available on this MCP facade")
-        if pack_id.lower() in set(tool_family_ids()):
+        if pack_id.lower() in set(tool_family_ids()) | set(tool_family_alias_ids()):
             return _jsonrpc_response(_tool_result(tool_family_pack_detail(pack_id.lower())), request_id)
         payload = load_api_pack_detail(pack_id)
         if not payload:

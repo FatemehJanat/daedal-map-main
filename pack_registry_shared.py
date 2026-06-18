@@ -240,6 +240,49 @@ PACK_REGISTRY: dict[str, dict] = {
             {"name": "loc_id_info", "summary": "loc_id -> name, admin level, centroid, bbox, child counts"},
         ),
     },
+    "reverse-geocoding": {
+        "display_name": "Reverse Geocoding",
+        "kind": "tool_family_alias",
+        "pricing": "free",
+        "mcp_tool_allowlist": ("get_catalog", "get_pack", "resolve_point"),
+        "mcp_name": "com.daedalmap/reverse-geocoding",
+        "mcp_title": "DaedalMap Reverse Geocoding (coordinates to loc_id)",
+        "mcp_description": "Reverse geocoding: convert latitude/longitude into administrative areas and a hierarchical loc_id chain.",
+        "registry_meta": {
+            "categories": ["geospatial", "geocoding", "data"],
+            "highlights": [
+                "Latitude/longitude to the deepest administrative loc_id",
+                "Full parent chain so you can clip to any admin level",
+                "Free; maps coordinates onto the shared loc_id spine",
+            ],
+        },
+        "routing": {"preferred_tool": "resolve_point"},
+        "tool_summaries": (
+            {"name": "resolve_point", "summary": "lat/lon -> deepest loc_id plus the full ancestor chain"},
+        ),
+    },
+    "boundaries": {
+        "display_name": "Boundaries",
+        "kind": "tool_family_alias",
+        "pricing": "free",
+        "mcp_tool_allowlist": ("get_catalog", "get_pack", "get_boundary", "loc_id_info"),
+        "mcp_name": "com.daedalmap/boundaries",
+        "mcp_title": "DaedalMap Administrative Boundaries (loc_id to polygon)",
+        "mcp_description": "Boundaries: a loc_id to its bounding box, centroid, and polygon, plus name and admin level.",
+        "registry_meta": {
+            "categories": ["geospatial", "boundaries", "data"],
+            "highlights": [
+                "Bounding box and centroid for any loc_id",
+                "Full boundary polygon on request",
+                "Clip or index your own grid/raster data against administrative areas",
+            ],
+        },
+        "routing": {"preferred_tool": "get_boundary"},
+        "tool_summaries": (
+            {"name": "get_boundary", "summary": "loc_id -> bounding box, centroid, and optional polygon"},
+            {"name": "loc_id_info", "summary": "loc_id -> name, admin level, centroid, bbox, child counts"},
+        ),
+    },
 }
 
 
@@ -256,6 +299,13 @@ def published_pack_ids() -> tuple[str, ...]:
 
 def tool_family_ids() -> tuple[str, ...]:
     return tuple(pid for pid, p in PACK_REGISTRY.items() if str(p.get("kind") or "data_pack") == "tool_family")
+
+
+def tool_family_alias_ids() -> tuple[str, ...]:
+    # Registry-discovery-only facades that route to the same geography tools under
+    # their own searchable name/endpoint (the disaster-pack pattern). Excluded
+    # from tool_family_ids() so the catalog still shows one geography family.
+    return tuple(pid for pid, p in PACK_REGISTRY.items() if str(p.get("kind") or "data_pack") == "tool_family_alias")
 
 
 def tool_family_catalog_entry(pack_id: str | None) -> dict:
