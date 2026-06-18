@@ -4,7 +4,7 @@ from fastapi import APIRouter
 
 from mapmover.disaster_filters import apply_location_filters, get_default_min_year
 from mapmover.duckdb_helpers import (
-    duckdb_available, is_cloud_mode, make_cache_key, parquet_available,
+    duckdb_available, is_cloud_mode, is_default_preload_range, make_cache_key, make_preload_cache_key, parquet_available,
     select_filtered_event_rows, select_filtered_event_rows_cached,
 )
 from mapmover.logging_analytics import logger
@@ -23,6 +23,7 @@ async def get_floods_geojson(
     end: str = None,
     min_year: int = None,
     max_year: int = None,
+    min_severity: int = None,
     include_geometry: bool = False,
     loc_prefix: str = None,
     affected_loc_id: str = None,
@@ -46,16 +47,44 @@ async def get_floods_geojson(
             if year is not None:
                 df = select_filtered_event_rows_cached(
                     events_path,
-                    cache_key=make_cache_key("floods", year=year),
+                    cache_key=make_cache_key("floods", year=year, min_severity=min_severity),
                     year=year,
+                    min_value_filters={"severity": min_severity} if min_severity is not None else None,
                 )
             elif start is not None or end is not None:
-                df = select_filtered_event_rows(events_path, start=start, end=end)
+                if (
+                    loc_prefix is None and affected_loc_id is None
+                    and is_default_preload_range(start, end)
+                ):
+                    df = select_filtered_event_rows_cached(
+                        events_path,
+                        cache_key=make_preload_cache_key(
+                            "floods",
+                            min_severity=min_severity,
+                            include_geometry=include_geometry,
+                        ),
+                        permanent=True,
+                        start=start,
+                        end=end,
+                        min_value_filters={"severity": min_severity} if min_severity is not None else None,
+                    )
+                else:
+                    df = select_filtered_event_rows(
+                        events_path,
+                        start=start,
+                        end=end,
+                        min_value_filters={"severity": min_severity} if min_severity is not None else None,
+                    )
             else:
+                min_filters = {}
+                if min_year is not None:
+                    min_filters["year"] = min_year
+                if min_severity is not None:
+                    min_filters["severity"] = min_severity
                 df = select_filtered_event_rows_cached(
                     events_path,
-                    cache_key=make_cache_key("floods", min_year=min_year),
-                    min_value_filters={"year": min_year} if min_year is not None else None,
+                    cache_key=make_cache_key("floods", min_year=min_year, min_severity=min_severity),
+                    min_value_filters=min_filters or None,
                 )
                 if max_year is not None and "year" in df.columns:
                     df = df[df["year"] <= max_year]
@@ -70,6 +99,8 @@ async def get_floods_geojson(
                     df = df[df["year"] >= min_year]
                 if max_year:
                     df = df[df["year"] <= max_year]
+        if min_severity is not None and "severity" in df.columns:
+            df = df[df["severity"] >= min_severity]
 
         df = apply_location_filters(
             df,

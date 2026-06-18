@@ -61,6 +61,61 @@ export const VARIABLE_OVERLAY_MAP = {
   'soil_moisture': 'soil-moisture'
 };
 
+function normalizeFilterOverrideEntries(overrides = {}) {
+  const normalized = {};
+
+  if (overrides.minMagnitude !== undefined) {
+    normalized.min_magnitude = String(overrides.minMagnitude);
+  }
+  if (overrides.maxMagnitude !== undefined) {
+    normalized.max_magnitude = String(overrides.maxMagnitude);
+  }
+  if (overrides.minCategory !== undefined) {
+    normalized.min_category = `Cat${overrides.minCategory}`;
+  }
+  if (overrides.minScale !== undefined) {
+    normalized.min_scale = `EF${overrides.minScale}`;
+  }
+  if (overrides.minAreaKm2 !== undefined) {
+    normalized.min_area_km2 = String(overrides.minAreaKm2);
+  }
+  if (overrides.minVei !== undefined) {
+    normalized.min_vei = String(overrides.minVei);
+  }
+  if (overrides.minHeightM !== undefined) {
+    normalized.min_height_m = String(overrides.minHeightM);
+  }
+  if (overrides.minSeverity !== undefined) {
+    normalized.min_severity = String(overrides.minSeverity);
+  }
+  if (overrides.locPrefix !== undefined) {
+    normalized.loc_prefix = overrides.locPrefix;
+  }
+  if (overrides.affectedLocId !== undefined) {
+    normalized.affected_loc_id = overrides.affectedLocId;
+  }
+
+  return normalized;
+}
+
+export function buildEffectiveRangeParams(endpoint, overlayId = null) {
+  const defaultParams = endpoint?.params || {};
+  const overrides = overlayId ? (activeFilters[overlayId] || {}) : {};
+  return {
+    ...defaultParams,
+    ...normalizeFilterOverrideEntries(overrides)
+  };
+}
+
+export function buildRangeRequestSignature(endpoint, overlayId = null) {
+  const params = buildEffectiveRangeParams(endpoint, overlayId);
+  const parts = Object.entries(params)
+    .filter(([, value]) => value !== undefined && value !== null && value !== '')
+    .sort(([a], [b]) => String(a).localeCompare(String(b)))
+    .map(([key, value]) => `${key}=${String(value)}`);
+  return parts.join('&');
+}
+
 /**
  * Calculate total cache size - exact bytes via JSON serialization.
  * @returns {{ totalFeatures: number, bytes: number, sizeMB: string, perOverlay: Object }}
@@ -107,34 +162,7 @@ export function calculateCacheSize() {
  */
 export function buildRangeUrl(endpoint, startMs, endMs, overlayId = null) {
   const url = new URL(endpoint.baseUrl, window.location.origin);
-  const defaultParams = endpoint.params || {};
-  const overrides = overlayId ? (activeFilters[overlayId] || {}) : {};
-  const effectiveParams = { ...defaultParams };
-
-  if (overrides.minMagnitude !== undefined) {
-    effectiveParams.min_magnitude = String(overrides.minMagnitude);
-  }
-  if (overrides.maxMagnitude !== undefined) {
-    effectiveParams.max_magnitude = String(overrides.maxMagnitude);
-  }
-  if (overrides.minCategory !== undefined) {
-    effectiveParams.min_category = `Cat${overrides.minCategory}`;
-  }
-  if (overrides.minScale !== undefined) {
-    effectiveParams.min_scale = `EF${overrides.minScale}`;
-  }
-  if (overrides.minAreaKm2 !== undefined) {
-    effectiveParams.min_area_km2 = String(overrides.minAreaKm2);
-  }
-  if (overrides.minVei !== undefined) {
-    effectiveParams.min_vei = String(overrides.minVei);
-  }
-  if (overrides.locPrefix !== undefined) {
-    effectiveParams.loc_prefix = overrides.locPrefix;
-  }
-  if (overrides.affectedLocId !== undefined) {
-    effectiveParams.affected_loc_id = overrides.affectedLocId;
-  }
+  const effectiveParams = buildEffectiveRangeParams(endpoint, overlayId);
 
   for (const [key, value] of Object.entries(effectiveParams)) {
     url.searchParams.set(key, value);

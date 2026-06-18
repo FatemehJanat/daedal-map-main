@@ -1,4 +1,16 @@
-const TIMESTAMP_GRANULARITIES = new Set(['6h', 'daily', 'weekly', 'monthly']);
+const TIMESTAMP_GRANULARITIES = new Set([
+  'timestamp',
+  'seconds',
+  '12m',
+  '1h',
+  '2h',
+  '6h',
+  '12h',
+  'daily',
+  '2d',
+  'weekly',
+  'monthly'
+]);
 
 function isNumericYearValue(value) {
   if (typeof value === 'number') {

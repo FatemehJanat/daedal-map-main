@@ -64,6 +64,7 @@ async def get_tsunamis_geojson(
     year: int = None,
     start: str = None,
     end: str = None,
+    min_height_m: float = None,
     min_year: int = None,
     cause: str = None,
     loc_prefix: str = None,
@@ -85,26 +86,40 @@ async def get_tsunamis_geojson(
             if year is not None:
                 df = select_filtered_event_rows_cached(
                     events_path,
-                    cache_key=make_cache_key("tsunamis", year=year),
+                    cache_key=make_cache_key("tsunamis", year=year, min_height_m=min_height_m),
                     year=year,
+                    min_value_filters={"max_water_height_m": min_height_m} if min_height_m is not None else None,
                 )
             elif start is not None or end is not None:
-                if loc_prefix is None and affected_loc_id is None and cause is None and is_default_preload_range(start, end):
+                if (
+                    loc_prefix is None and affected_loc_id is None and cause is None
+                    and is_default_preload_range(start, end)
+                ):
                     df = select_filtered_event_rows_cached(
                         events_path,
-                        cache_key=make_preload_cache_key("tsunamis"),
+                        cache_key=make_preload_cache_key("tsunamis", min_height_m=min_height_m),
                         permanent=True,
                         start=start,
                         end=end,
+                        min_value_filters={"max_water_height_m": min_height_m} if min_height_m is not None else None,
                     )
                 else:
-                    df = select_filtered_event_rows(events_path, start=start, end=end)
+                    df = select_filtered_event_rows(
+                        events_path,
+                        start=start,
+                        end=end,
+                        min_value_filters={"max_water_height_m": min_height_m} if min_height_m is not None else None,
+                    )
             else:
-                min_filters = {"year": min_year} if min_year is not None else None
+                min_filters = {}
+                if min_year is not None:
+                    min_filters["year"] = min_year
+                if min_height_m is not None:
+                    min_filters["max_water_height_m"] = min_height_m
                 df = select_filtered_event_rows_cached(
                     events_path,
-                    cache_key=make_cache_key("tsunamis", min_year=min_year),
-                    min_value_filters=min_filters,
+                    cache_key=make_cache_key("tsunamis", min_year=min_year, min_height_m=min_height_m),
+                    min_value_filters=min_filters or None,
                 )
         else:
             df = pd.read_parquet(events_path)
@@ -116,6 +131,8 @@ async def get_tsunamis_geojson(
                 df = filter_by_time_range(df, start, end)
             elif min_year is not None:
                 df = df[df["year"] >= min_year]
+        if min_height_m is not None and "max_water_height_m" in df.columns:
+            df = df[df["max_water_height_m"] >= min_height_m]
         if cause is not None:
             df = df[df["cause"].str.lower() == cause.lower()]
 

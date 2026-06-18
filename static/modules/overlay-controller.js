@@ -14,6 +14,7 @@ import EventAnimator, { AnimationMode, setDependencies as setEventAnimatorDeps }
 import { resolveOverlayIdFromPackId, resolveOverlayIdFromSourceId } from './overlay-selector.js';
 import { TIME_SYSTEM } from './time-slider.js';
 import {
+  buildRangeRequestSignature,
   calculateCacheSize,
   dataCache,
   displayedYear,
@@ -561,6 +562,142 @@ const EVENT_LIFECYCLE = {
   }
 };
 
+function parseTimeMs(value) {
+  if (value == null || value === '') return null;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.abs(value) >= 1000000000 ? value : null;
+  }
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function firstFiniteNumber(values) {
+  for (const value of values) {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) {
+      return numeric;
+    }
+  }
+  return null;
+}
+
+function resolveFeatureStartMs(props = {}) {
+  return parseTimeMs(
+    props.start_timestamp ??
+    props.start_time ??
+    props.start_date ??
+    props.timestamp ??
+    props.time ??
+    null
+  );
+}
+
+function resolveFeatureDurationMs(props = {}) {
+  const durationMs = firstFiniteNumber([props.duration_ms, props.length_ms]);
+  if (durationMs != null) return durationMs;
+
+  const durationSeconds = firstFiniteNumber([props.duration_seconds, props.length_seconds]);
+  if (durationSeconds != null) return durationSeconds * 1000;
+
+  const durationMinutes = firstFiniteNumber([props.duration_minutes, props.length_minutes, props.duration_mins]);
+  if (durationMinutes != null) return durationMinutes * 60 * 1000;
+
+  const durationHours = firstFiniteNumber([props.duration_hours, props.length_hours]);
+  if (durationHours != null) return durationHours * 60 * 60 * 1000;
+
+  const durationDays = firstFiniteNumber([props.duration_days, props.length_days]);
+  if (durationDays != null) return durationDays * 24 * 60 * 60 * 1000;
+
+  return null;
+}
+
+function resolveFeatureFadeMs(props = {}) {
+  const fadeMs = firstFiniteNumber([props.fade_ms, props.fade_duration_ms]);
+  if (fadeMs != null) return fadeMs;
+
+  const fadeSeconds = firstFiniteNumber([props.fade_seconds]);
+  if (fadeSeconds != null) return fadeSeconds * 1000;
+
+  const fadeMinutes = firstFiniteNumber([props.fade_minutes, props.fade_mins]);
+  if (fadeMinutes != null) return fadeMinutes * 60 * 1000;
+
+  const fadeHours = firstFiniteNumber([props.fade_hours]);
+  if (fadeHours != null) return fadeHours * 60 * 60 * 1000;
+
+  const fadeDays = firstFiniteNumber([props.fade_days]);
+  if (fadeDays != null) return fadeDays * 24 * 60 * 60 * 1000;
+
+  return 0;
+}
+
+function resolveFeatureEndMs(props = {}, startMs = null) {
+  const explicitEnd = parseTimeMs(
+    props.end_timestamp ??
+    props.end_time ??
+    props.end_date ??
+    props.finish_timestamp ??
+    props.finish_time ??
+    null
+  );
+  if (explicitEnd != null) return explicitEnd;
+
+  if (String(props.is_ongoing || '').trim().toLowerCase() === 'true') {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const durationMs = resolveFeatureDurationMs(props);
+  if (durationMs != null && startMs != null) {
+    return startMs + durationMs;
+  }
+
+  return startMs;
+}
+
+function resolveFeatureLifecycle(feature) {
+  const props = feature?.properties || {};
+  const startMs = resolveFeatureStartMs(props);
+  if (!Number.isFinite(startMs)) {
+    return null;
+  }
+
+  const endMs = resolveFeatureEndMs(props, startMs);
+  if (endMs == null || Number.isNaN(endMs)) {
+    return null;
+  }
+
+  return {
+    startMs,
+    endMs,
+    fadeDuration: Math.max(0, resolveFeatureFadeMs(props) || 0)
+  };
+}
+
+function resolveLegacyFeatureLifecycle(feature, eventType) {
+  const config = EVENT_LIFECYCLE[eventType];
+  if (!config?.getStartMs || !config?.getEndMs) {
+    return null;
+  }
+
+  try {
+    const startMs = config.getStartMs(feature);
+    const endMs = config.getEndMs(feature);
+    if (!Number.isFinite(startMs) || Number.isNaN(endMs)) {
+      return null;
+    }
+    return {
+      startMs,
+      endMs,
+      fadeDuration: Math.max(0, config.getFadeDuration?.(feature) || config.fadeDuration || 0)
+    };
+  } catch (error) {
+    return null;
+  }
+}
+
+function resolveFeatureLifecycleWithFallback(feature, eventType) {
+  return resolveFeatureLifecycle(feature) || resolveLegacyFeatureLifecycle(feature, eventType);
+}
+
 /**
  * Filter and annotate features by lifecycle state.
  * Adds animation properties for expanding circle effects:
@@ -582,27 +719,15 @@ function filterByLifecycle(features, currentMs, eventType) {
   }
 
   return features.map(f => {
-    let startMs, endMs;
-    try {
-      startMs = config.getStartMs(f);
-      endMs = config.getEndMs(f);
-    } catch (e) {
-      // If timestamp parsing fails, show at full opacity
+    const lifecycle = resolveFeatureLifecycleWithFallback(f, eventType);
+    if (!lifecycle) {
       return {
         ...f,
         properties: { ...f.properties, _opacity: 1.0, _phase: 'active', _radiusProgress: 1.0 }
       };
     }
+    const { startMs, endMs, fadeDuration } = lifecycle;
 
-    // Handle invalid dates
-    if (isNaN(startMs) || isNaN(endMs)) {
-      return {
-        ...f,
-        properties: { ...f.properties, _opacity: 1.0, _phase: 'active', _radiusProgress: 1.0 }
-      };
-    }
-
-    const fadeDuration = config.getFadeDuration?.(f) || config.fadeDuration;
     const fadeEndMs = endMs + fadeDuration;
 
     // Not visible yet
@@ -619,7 +744,7 @@ function filterByLifecycle(features, currentMs, eventType) {
     if (currentMs <= endMs) {
       // In active period - calculate expansion progress
       phase = 'active';
-      const activeDuration = Math.max(endMs - startMs, config.defaultDuration || 60000);
+      const activeDuration = Math.max(endMs - startMs, 60000);
       // Animation duration: 10% of active period or 5 days, whichever is smaller
       const animationDuration = Math.min(activeDuration * 0.1, 5 * 24 * 60 * 60 * 1000);
       const elapsed = currentMs - startMs;
@@ -727,19 +852,11 @@ function filterByTemporalWindow(features, minMs, maxMs, eventType) {
   }
 
   return features.map(f => {
-    let startMs, endMs;
-    try {
-      startMs = config.getStartMs(f);
-      endMs = config.getEndMs(f);
-    } catch (e) {
+    const lifecycle = resolveFeatureLifecycleWithFallback(f, eventType);
+    if (!lifecycle) {
       return null;
     }
-
-    if (isNaN(startMs) || isNaN(endMs)) {
-      return null;
-    }
-
-    const fadeDuration = config.getFadeDuration?.(f) || config.fadeDuration || 0;
+    const { startMs, endMs, fadeDuration } = lifecycle;
     const visibleEndMs = endMs + fadeDuration;
     const overlapsWindow = visibleEndMs >= minMs && startMs <= maxMs;
     if (!overlapsWindow) {
@@ -764,6 +881,32 @@ function filterByTemporalWindow(features, minMs, maxMs, eventType) {
  */
 function easeOutQuad(t) {
   return t * (2 - t);
+}
+
+function getCurrentUtcYear() {
+  return new Date().getUTCFullYear();
+}
+
+function getUtcYearRangeMs(year) {
+  return {
+    start: Date.UTC(year, 0, 1, 0, 0, 0, 0),
+    end: Date.UTC(year, 11, 31, 23, 59, 59, 999)
+  };
+}
+
+function collectOverlayEventTimestamps(overlayId) {
+  const features = Array.isArray(dataCache[overlayId]?.features) ? dataCache[overlayId].features : [];
+  const timestamps = [];
+  for (const feature of features) {
+    const lifecycle = resolveFeatureLifecycleWithFallback(feature, OVERLAY_ENDPOINTS[overlayId]?.eventType);
+    if (lifecycle?.startMs != null) {
+      timestamps.push(lifecycle.startMs);
+    }
+    if (Number.isFinite(lifecycle?.endMs) && lifecycle.endMs !== lifecycle.startMs) {
+      timestamps.push(lifecycle.endMs);
+    }
+  }
+  return timestamps;
 }
 
 // Feature flag to enable/disable lifecycle filtering (for gradual rollout)
@@ -821,6 +964,14 @@ export const OverlayController = {
     if (dataCache[overlayId]?.years && Object.keys(dataCache[overlayId].years).length) return true;
     if (this.opsSnapshotPayloads.has(overlayId)) return true;
     return false;
+  },
+
+  hasCompletedRangeForCurrentFilters(overlayId, endpoint = null) {
+    const ranges = Array.isArray(loadedRanges[overlayId]) ? loadedRanges[overlayId] : [];
+    if (!ranges.length) return false;
+    if (!endpoint) return ranges.some((range) => !range.loading);
+    const signature = buildRangeRequestSignature(endpoint, overlayId);
+    return ranges.some((range) => !range.loading && (range.filterSignature || '') === signature);
   },
 
   _isOpsMode() {
@@ -2033,7 +2184,7 @@ export const OverlayController = {
     if (TimeSlider.timestampToYear) {
       return TimeSlider.timestampToYear(TimeSlider.currentTime);
     }
-    return new Date(TimeSlider.currentTime).getFullYear();
+    return new Date(TimeSlider.currentTime).getUTCFullYear();
   },
 
   /**
@@ -2204,8 +2355,7 @@ export const OverlayController = {
 
     if (!yearAlreadyLoaded) {
       console.log(`OverlayController: AUTO-FETCHING ${overlayId} for year ${year} (legacy handler)`);
-      const yearStart = new Date(year, 0, 1).getTime();
-      const yearEnd = new Date(year, 11, 31, 23, 59, 59).getTime();
+      const { start: yearStart, end: yearEnd } = getUtcYearRangeMs(year);
       await loadRangeData(overlayId, yearStart, yearEnd, OVERLAY_ENDPOINTS[overlayId]);
     }
 
@@ -2234,8 +2384,7 @@ export const OverlayController = {
       console.log(`OverlayController: Using cached weather ${overlayId} for year ${year}`);
     } else {
       // Load via the cache system (year boundaries for weather grid)
-      const yearStart = new Date(year, 0, 1).getTime();
-      const yearEnd = new Date(year, 11, 31, 23, 59, 59).getTime();
+      const { start: yearStart, end: yearEnd } = getUtcYearRangeMs(year);
       await loadRangeData(overlayId, yearStart, yearEnd, OVERLAY_ENDPOINTS[overlayId]);
     }
 
@@ -2341,8 +2490,7 @@ export const OverlayController = {
     console.log(`OverlayController: Auto-fetching ${overlayId} for year ${year}`);
 
     // Load the year data (year boundaries)
-    const yearStart = new Date(year, 0, 1).getTime();
-    const yearEnd = new Date(year, 11, 31, 23, 59, 59).getTime();
+    const { start: yearStart, end: yearEnd } = getUtcYearRangeMs(year);
     const loaded = await loadRangeData(overlayId, yearStart, yearEnd, OVERLAY_ENDPOINTS[overlayId]);
 
     // Check if overlay is still active
@@ -2640,18 +2788,17 @@ export const OverlayController = {
    */
   async loadWeatherGridOverlay(overlayId, config) {
     // Determine year based on current time slider position
-    let year = new Date().getFullYear();
+    let year = getCurrentUtcYear();
 
     if (TimeSlider?.currentTime) {
       const currentDate = new Date(TimeSlider.currentTime);
-      year = currentDate.getFullYear();
+      year = currentDate.getUTCFullYear();
     }
 
     console.log(`OverlayController: Loading weather grid ${overlayId} for year ${year}`);
 
     // Load data via cache system (year boundaries for weather grid)
-    const yearStart = new Date(year, 0, 1).getTime();
-    const yearEnd = new Date(year, 11, 31, 23, 59, 59).getTime();
+    const { start: yearStart, end: yearEnd } = getUtcYearRangeMs(year);
     await loadRangeData(overlayId, yearStart, yearEnd, OVERLAY_ENDPOINTS[overlayId]);
 
     // Get cached data and display (instances are created automatically)
@@ -2785,7 +2932,7 @@ export const OverlayController = {
     try {
       // If range already loaded (cache exists), just re-render without fetching
       // This handles re-enable after hide (0 features is still "loaded")
-      if (loadedRanges[overlayId]?.length > 0) {
+      if (this.hasCompletedRangeForCurrentFilters(overlayId, endpoint)) {
         console.log(`OverlayController: ${overlayId} already loaded, re-rendering from cache`);
         this.loading.delete(overlayId);
         this.renderCurrentData(overlayId);
@@ -2837,7 +2984,7 @@ export const OverlayController = {
 
       // Initialize TimeSlider for this overlay
       if (endpoint.yearField && TimeSlider && !this.suppressTimelineAutoShow) {
-        const currentYear = new Date().getFullYear();
+        const currentYear = getCurrentUtcYear();
         const minYear = 2000;
         const maxYear = currentYear;
 
@@ -3128,8 +3275,33 @@ export const OverlayController = {
   recalculateTimeRange() {
     if (!TimeSlider) return;
 
-    // Get remaining cached year ranges
-    const activeRanges = Object.values(yearRangeCache);
+    const activeOverlayIds = OverlaySelector?.getActiveOverlays?.() || [];
+    const eventTimestamps = [];
+    for (const overlayId of activeOverlayIds) {
+      eventTimestamps.push(...collectOverlayEventTimestamps(overlayId));
+    }
+
+    if (eventTimestamps.length > 0) {
+      const sortedTimestamps = [...new Set(eventTimestamps)]
+        .filter((value) => Number.isFinite(value))
+        .sort((a, b) => a - b);
+      if (sortedTimestamps.length > 0) {
+        TimeSlider.setTimeRange({
+          min: sortedTimestamps[0],
+          max: sortedTimestamps[sortedTimestamps.length - 1],
+          granularity: 'timestamp',
+          available: sortedTimestamps,
+          replace: true
+        });
+        console.log(`OverlayController: Recalculated timestamp timeline with ${sortedTimestamps.length} points`);
+        return;
+      }
+    }
+
+    // Fallback for yearly/grid overlays that do not expose event timestamps
+    const activeRanges = activeOverlayIds
+      .map((overlayId) => yearRangeCache[overlayId])
+      .filter(Boolean);
 
     if (activeRanges.length === 0) {
       // No active overlays with year data - hide slider or reset to default
@@ -3354,7 +3526,7 @@ export const OverlayController = {
       if (useLifecycleFiltering && TimeSlider?.currentTime) {
         this.renderFilteredData(overlayId, TimeSlider.currentTime, { useTimestamp: true });
       } else {
-        const year = TimeSlider?.currentTime ? this.getYearFromTime(TimeSlider.currentTime) : new Date().getFullYear();
+        const year = TimeSlider?.currentTime ? this.getYearFromTime(TimeSlider.currentTime) : getCurrentUtcYear();
         this.renderFilteredData(overlayId, year);
       }
     }
@@ -3573,8 +3745,8 @@ export const OverlayController = {
       if (!loadedYears[overlayId]) {
         loadedYears[overlayId] = new Set();
       }
-      const startYear = new Date(rangeMeta.start).getFullYear();
-      const endYear = new Date(rangeMeta.end).getFullYear();
+      const startYear = new Date(rangeMeta.start).getUTCFullYear();
+      const endYear = new Date(rangeMeta.end).getUTCFullYear();
       if (!yearRangeCache[overlayId]) {
         yearRangeCache[overlayId] = { min: startYear, max: endYear, available: [] };
       }

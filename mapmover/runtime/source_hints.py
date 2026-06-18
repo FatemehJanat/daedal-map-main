@@ -630,12 +630,17 @@ def get_query_alias_matches(metadata: dict | None, query: str | None) -> list[st
     if not query_lower:
         return []
 
-    matches: list[str] = []
+    raw_matches: list[str] = []
     for alias in get_hint_alias_terms(metadata, "query_aliases", "broad_topic_aliases"):
-        if alias and alias in query_lower and alias not in matches:
-            matches.append(alias)
-    matches.sort(key=len, reverse=True)
-    return matches
+        if alias and alias in query_lower and alias not in raw_matches:
+            raw_matches.append(alias)
+
+    filtered_matches: list[str] = []
+    for alias in sorted(raw_matches, key=len, reverse=True):
+        if any(alias in existing for existing in filtered_matches):
+            continue
+        filtered_matches.append(alias)
+    return filtered_matches
 
 
 def select_query_guided_metric(query: str | None, metadata: dict | None) -> str:

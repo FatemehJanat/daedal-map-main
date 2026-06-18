@@ -23,6 +23,19 @@ export function setDependencies(deps) {
 
 // Playback speed multiplier for fast forward/rewind (legacy - being replaced by continuous speed)
 const FAST_SPEED = 5;
+const TIMESTAMP_GRANULARITIES = new Set([
+  'timestamp',
+  'seconds',
+  '12m',
+  '1h',
+  '2h',
+  '6h',
+  '12h',
+  'daily',
+  '2d',
+  'weekly',
+  'monthly'
+]);
 
 // ============================================================================
 // UNIFIED TIME SYSTEM - Continuous speed control (Phase 7)
@@ -47,8 +60,8 @@ export const TIME_SYSTEM = {
   MAX_STEPS_PER_FRAME: 1460,    // ~1 year per frame (fastest - overview)
 
   // Rendering
-  MAX_FPS: 15,  // Start conservative, increase to 60 later if needed
-  FRAME_INTERVAL_MS: 1000 / 15,  // ~67ms
+  MAX_FPS: 30,
+  FRAME_INTERVAL_MS: 1000 / 30,  // ~33ms
 
   /**
    * Convert slider position (0-1) to steps per frame.
@@ -315,11 +328,11 @@ export const TimeSlider = {
 
     // Set granularity first (affects timestamp handling)
     this.granularity = options.granularity || 'yearly';
-    this.useTimestamps = ['seconds', '12m', '1h', '6h', 'daily', 'weekly', 'monthly'].includes(this.granularity);
+    this.useTimestamps = TIMESTAMP_GRANULARITIES.has(this.granularity);
 
     // Set default range - normalize to timestamps
     const defaultMinYear = options.minTime || 2000;
-    const defaultMaxYear = options.maxTime || new Date().getFullYear();
+    const defaultMaxYear = options.maxTime || new Date().getUTCFullYear();
     this.minTime = this.normalizeToTimestamp(defaultMinYear);
     this.maxTime = this.normalizeToTimestamp(defaultMaxYear);
     this.currentTime = this.maxTime;
@@ -369,7 +382,7 @@ export const TimeSlider = {
     // Update granularity FIRST so normalizeToTimestamp knows whether to convert
     if (rangeConfig.granularity) {
       this.granularity = rangeConfig.granularity;
-      this.useTimestamps = ['seconds', '12m', '1h', '6h', 'daily', 'weekly', 'monthly'].includes(this.granularity);
+      this.useTimestamps = TIMESTAMP_GRANULARITIES.has(this.granularity);
       this.stepMs = this.calculateStepMs(this.granularity);
     }
 
@@ -498,11 +511,15 @@ export const TimeSlider = {
     const HOUR = 3600000;
     const DAY = 86400000;
     switch (granularity) {
+      case 'timestamp': return this.getDiscreteTimelineBaseStepMs();
       case 'seconds': return 1000;
       case '12m': return 12 * 60 * 1000;
       case '1h': return HOUR;
+      case '2h': return HOUR * 2;
       case '6h': return HOUR * 6;
+      case '12h': return HOUR * 12;
       case 'daily': return DAY;
+      case '2d': return DAY * 2;
       case 'weekly': return DAY * 7;
       case 'monthly': return DAY * 30;  // Approximate
       case 'yearly': return DAY * 365;
@@ -510,6 +527,28 @@ export const TimeSlider = {
       case '10y': return DAY * 365 * 10;
       default: return DAY * 365;
     }
+  },
+
+  getDiscreteTimelineBaseStepMs() {
+    const fallback = TIME_SYSTEM.BASE_STEP_MS;
+    if (!Array.isArray(this.sortedTimes) || this.sortedTimes.length < 2) {
+      return fallback;
+    }
+
+    const diffs = [];
+    for (let i = 1; i < this.sortedTimes.length; i += 1) {
+      const diff = this.sortedTimes[i] - this.sortedTimes[i - 1];
+      if (Number.isFinite(diff) && diff > 0) {
+        diffs.push(diff);
+      }
+    }
+
+    if (!diffs.length) {
+      return fallback;
+    }
+
+    diffs.sort((a, b) => a - b);
+    return diffs[Math.floor(diffs.length / 2)] || fallback;
   },
 
   // ============================================================================
@@ -592,6 +631,9 @@ export const TimeSlider = {
    * @returns {boolean}
    */
   shouldUseIndexedScale() {
+    if (this.useTimestamps && this.sortedTimes.length > 1) {
+      return true;
+    }
     return this.sortedTimes.length >= this.indexedScaleMinPoints;
   },
 
@@ -825,7 +867,7 @@ export const TimeSlider = {
         }
       }
       if (diffs.length) {
-        const avgIntervalMs = diffs.reduce((sum, value) => sum + value, 0) / diffs.length;
+        const avgIntervalMs = this.getDiscreteTimelineBaseStepMs() || (diffs.reduce((sum, value) => sum + value, 0) / diffs.length);
         const pointsPerFrame = (TIME_SYSTEM.BASE_STEP_MS * this.stepsPerFrame) / Math.max(1, baseStepMs);
         const msPerSecond = avgIntervalMs * pointsPerFrame * TIME_SYSTEM.MAX_FPS;
         return this.formatMsPerSecondLabel(msPerSecond);
@@ -849,14 +891,13 @@ export const TimeSlider = {
   },
 
   /**
-   * Calculate optimal speed for animating a specific event in ~3 seconds.
-   * Works with EventAnimator which generates 150 evenly-spaced frames.
+   * Calculate optimal speed for animating a specific event in ~5 seconds.
    * @param {number} eventDurationMs - Event lifespan in milliseconds
    * @returns {number} Slider position (0-1)
    */
   calculateEventSpeed(eventDurationMs) {
-    const TARGET_SECONDS = 3;
-    const MIN_SECONDS = 2;  // Very short events still get 2+ seconds
+    const TARGET_SECONDS = 5;
+    const MIN_SECONDS = 3;
     const MAX_FPS = TIME_SYSTEM?.MAX_FPS || 60;
 
     // Target display frames for playback
@@ -890,7 +931,7 @@ export const TimeSlider = {
     let suggestedSlider;
 
     if (this.useIndexedScale && Array.isArray(this.sortedTimes) && this.sortedTimes.length > 1) {
-      const TARGET_SECONDS = 12;
+      const TARGET_SECONDS = 5;
       const targetDisplayFrames = TARGET_SECONDS * (TIME_SYSTEM?.MAX_FPS || 60);
       const pointsPerFrame = this.sortedTimes.length / Math.max(1, targetDisplayFrames);
       const clampedSteps = Math.max(
@@ -1059,7 +1100,7 @@ export const TimeSlider = {
     // Granularity support - detect from timeRange or default to yearly (set FIRST)
     this.granularity = timeRange.granularity || 'yearly';
     this.useTimestamps = timeRange.useTimestamps ||
-      ['6h', 'daily', 'weekly', 'monthly'].includes(this.granularity);
+      TIMESTAMP_GRANULARITIES.has(this.granularity);
     this.stepMs = this.calculateStepMs(this.granularity);
 
     // Normalize time range to timestamps (converts years like 2024 to ms)
@@ -1076,6 +1117,7 @@ export const TimeSlider = {
     this.availableTimes = rawTimes.map(t => this.normalizeToTimestamp(t));
     // Sort available times for navigation
     this.sortedTimes = [...this.availableTimes].sort((a, b) => a - b);
+    this.stepMs = this.calculateStepMs(this.granularity);
     this.currentTime = this.maxTime;  // Start at latest time (already normalized)
     this.playSpeed = 1;
     const timeSpanMs = Math.max(0, this.maxTime - this.minTime);
@@ -1180,7 +1222,7 @@ export const TimeSlider = {
 
     this.granularity = timeRange.granularity || this.granularity || 'yearly';
     this.useTimestamps = timeRange.useTimestamps ||
-      ['6h', 'daily', 'weekly', 'monthly'].includes(this.granularity);
+      TIMESTAMP_GRANULARITIES.has(this.granularity);
     this.stepMs = this.calculateStepMs(this.granularity);
 
     this.minTime = this.normalizeToTimestamp(timeRange.min);
@@ -1193,6 +1235,7 @@ export const TimeSlider = {
     const rawTimes = timeRange.available || timeRange.available_years || [];
     this.availableTimes = rawTimes.map(t => this.normalizeToTimestamp(t));
     this.sortedTimes = [...this.availableTimes].sort((a, b) => a - b);
+    this.stepMs = this.calculateStepMs(this.granularity);
 
     if (this.explicitMetrics && this.explicitMetrics.length > 0) {
       this.availableMetrics = this.explicitMetrics;
@@ -1832,7 +1875,7 @@ export const TimeSlider = {
       label: scaleConfig.label || scaleConfig.id,
       granularity: scaleConfig.granularity || 'yearly',
       useTimestamps: scaleConfig.useTimestamps ||
-        ['6h', 'daily', 'weekly', 'monthly'].includes(scaleConfig.granularity),
+        TIMESTAMP_GRANULARITIES.has(scaleConfig.granularity),
       timeRange: scaleConfig.timeRange,
       timeData: scaleConfig.timeData,
       baseGeojson: scaleConfig.baseGeojson || this.baseGeojson,
@@ -1915,6 +1958,7 @@ export const TimeSlider = {
     const rawTimes = scale.timeRange.available || scale.timeRange.available_years || [];
     this.availableTimes = rawTimes.map(t => this.normalizeToTimestamp(t));
     this.sortedTimes = [...this.availableTimes].sort((a, b) => a - b);
+    this.stepMs = this.calculateStepMs(this.granularity);
     this.currentTime = scale.currentTime
       ? this.normalizeToTimestamp(scale.currentTime)
       : this.maxTime;
@@ -2304,45 +2348,6 @@ export const TimeSlider = {
     const useUnifiedSpeed = this.speedSlider !== null;
 
     if (useUnifiedSpeed) {
-      if (!this.useTimestamps) {
-        const interval = this.getPlaybackInterval();
-        const tick = () => {
-          if (!this.isPlaying) return;
-
-          const effectiveMin = this.boundMinTime !== null ? this.boundMinTime : this.minTime;
-          const effectiveMax = this.boundMaxTime !== null ? this.boundMaxTime : this.maxTime;
-
-          let nextTime;
-          if (this.playDirection === 1) {
-            nextTime = this.getNextAvailableTime(this.currentTime);
-            if (nextTime <= this.currentTime || nextTime > effectiveMax) {
-              if (this.loopEnabled) {
-                nextTime = effectiveMin;
-              } else {
-                this.pause();
-                return;
-              }
-            }
-          } else {
-            nextTime = this.getPrevAvailableTime(this.currentTime);
-            if (nextTime >= this.currentTime || nextTime < effectiveMin) {
-              if (this.loopEnabled) {
-                nextTime = effectiveMax;
-              } else {
-                this.pause();
-                return;
-              }
-            }
-          }
-
-          this.setTime(nextTime, 'playback');
-          this.playTimeout = setTimeout(tick, interval);
-        };
-
-        tick();
-        return;
-      }
-
       // Phase 7: Unified speed control using stepsPerFrame
       const tick = () => {
         if (!this.isPlaying) return;
@@ -2356,7 +2361,7 @@ export const TimeSlider = {
         const effectiveMax = this.boundMaxTime !== null ? this.boundMaxTime : this.maxTime;
 
         let nextTime;
-        if (this.useIndexedScale) {
+        if (this.useIndexedScale || !this.useTimestamps) {
           nextTime = this.advanceDiscreteTime(this.currentTime, stepMs, this.playDirection);
         } else if (this.playDirection === 1) {
           nextTime = this.currentTime + stepMs;

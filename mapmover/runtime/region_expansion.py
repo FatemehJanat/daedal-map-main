@@ -116,8 +116,14 @@ def expand_region(
     if normalized_region in {"puerto rico", "puerto rico usa"}:
         return {"USA-PR"}
 
-    if "-" in region and region.split("-")[0].isupper() and len(region.split("-")[0]) == 3:
-        return {region}
+    region_parts = [part for part in region_text.split("-") if part]
+    if (
+        len(region_parts) >= 2
+        and len(region_parts[0]) == 3
+        and region_parts[0].isalpha()
+        and all(part.replace("_", "").isalnum() for part in region_parts[1:])
+    ):
+        return {"-".join(part.upper() for part in region_parts)}
 
     conversions = load_conversions_func()
     region_lower = region.lower()
@@ -143,15 +149,20 @@ def expand_region(
 
     iso_data = load_iso_codes_func()
     iso3_to_name = iso_data.get("iso3_to_name", {})
-    eez_loc_id = _resolve_country_waters(region_text, iso3_to_name)
-    if eez_loc_id:
-        return {eez_loc_id}
     for code, name in iso3_to_name.items():
         if name.lower() == region_lower:
             return {code}
 
     if region.upper() in iso3_to_name:
         return {region.upper()}
+
+    # Only resolve plain country names to EEZ-* when the caller explicitly
+    # requested marine semantics. Land queries like "Canada" or "Australia"
+    # should stay on CAN/AUS rather than silently switching to national waters.
+    if prefer_water_body:
+        eez_loc_id = _resolve_country_waters(region_text, iso3_to_name)
+        if eez_loc_id:
+            return {eez_loc_id}
 
     usa_admin = load_usa_admin_func()
     state_abbrevs = usa_admin.get("state_abbreviations", {})

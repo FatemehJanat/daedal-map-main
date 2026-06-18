@@ -5,6 +5,7 @@
 import {
   activeFilters,
   buildRangeUrl,
+  buildRangeRequestSignature,
   calculateCacheSize,
   CLIMATE_VARIABLES,
   dataCache,
@@ -15,6 +16,17 @@ import {
   yearRangeCache
 } from './overlay-cache.js';
 import { fetchMsgpack } from './utils/fetch.js';
+
+function getUtcYear(timestampMs) {
+  return new Date(timestampMs).getUTCFullYear();
+}
+
+function getUtcYearRangeMs(year) {
+  return {
+    start: Date.UTC(year, 0, 1, 0, 0, 0, 0),
+    end: Date.UTC(year, 11, 31, 23, 59, 59, 999)
+  };
+}
 
 function resolveClimateGridRequest(endpoint) {
   if (endpoint?.climateGrid?.variables?.length) {
@@ -149,7 +161,7 @@ export async function loadRangeData(overlayId, startMs, endMs, endpoint, signal 
   if (!endpoint) return false;
 
   if (endpoint.isWeatherGrid) {
-    const year = new Date(endMs).getFullYear();
+    const year = getUtcYear(endMs);
     return loadWeatherYearData(overlayId, year, endpoint, signal);
   }
 
@@ -157,13 +169,19 @@ export async function loadRangeData(overlayId, startMs, endMs, endpoint, signal 
     loadedRanges[overlayId] = [];
   }
 
-  const isRangeCovered = loadedRanges[overlayId].some((r) => r.start <= startMs && r.end >= endMs);
+  const filterSignature = buildRangeRequestSignature(endpoint, overlayId);
+  const isRangeCovered = loadedRanges[overlayId].some((r) =>
+    !r.loading &&
+    (r.filterSignature || '') === filterSignature &&
+    r.start <= startMs &&
+    r.end >= endMs
+  );
   if (isRangeCovered) {
     console.log(`OverlayController: ${overlayId} range already cached`);
     return false;
   }
 
-  const rangeEntry = { start: startMs, end: endMs, loading: true };
+  const rangeEntry = { start: startMs, end: endMs, loading: true, filterSignature };
   loadedRanges[overlayId].push(rangeEntry);
 
   const url = buildRangeUrl(endpoint, startMs, endMs, overlayId);
@@ -208,13 +226,12 @@ export async function loadRangeData(overlayId, startMs, endMs, endpoint, signal 
     if (!loadedYears[overlayId]) {
       loadedYears[overlayId] = new Set();
     }
-    const startYear = new Date(startMs).getFullYear();
-    const endYear = new Date(endMs).getFullYear();
+    const startYear = getUtcYear(startMs);
+    const endYear = getUtcYear(endMs);
     const SIX_MONTHS_MS = 180 * 24 * 60 * 60 * 1000;
 
     for (let y = startYear; y <= endYear; y++) {
-      const yearStartMs = new Date(y, 0, 1).getTime();
-      const yearEndMs = new Date(y, 11, 31, 23, 59, 59).getTime();
+      const { start: yearStartMs, end: yearEndMs } = getUtcYearRangeMs(y);
       const loadedStart = Math.max(startMs, yearStartMs);
       const loadedEnd = Math.min(endMs, yearEndMs);
       const loadedDuration = loadedEnd - loadedStart;
