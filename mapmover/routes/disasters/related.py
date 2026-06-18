@@ -21,6 +21,7 @@ from mapmover.duckdb_helpers import (
 from mapmover.paths import GLOBAL_DIR
 from mapmover.runtime_config import get_runtime_config
 from mapmover.storage_mode import get_runtime_mode
+from mapmover.execution.event_execution import _build_single_event_message
 from mapmover.execution.event_loading import resolve_event_parquet_path_for_source
 
 from .helpers import msgpack_error, msgpack_response
@@ -436,7 +437,7 @@ def _build_exact_event_feature(row: dict, event_type: str, source_id: str, pack_
     source_name = str(metadata.get("source_name", source_id))
     source_url = str(metadata.get("source_url", ""))
 
-    return {
+    payload = {
         "type": "events",
         "data_type": "events",
         "source_id": source_id,
@@ -460,6 +461,10 @@ def _build_exact_event_feature(row: dict, event_type: str, source_id: str, pack_
             "url": source_url,
         }],
     }
+    message = _build_single_event_message(event_type, props, query_text=f"show {event_type} event")
+    if message:
+        payload["message"] = message
+    return payload
 
 
 def _query_exact_event(candidate: dict, identifier_field: str, identifier_value: str) -> pd.DataFrame:

@@ -442,6 +442,19 @@ DISASTER ROUTING CORRECTION:
 - If the user is asking for individual incidents, named events, perimeters, tracks, or actual fires/storms/earthquakes on the map, prefer event_shape routing with mode="events".
 - Do not use raw event overlays to satisfy county rankings when the pack has a geometry_shape regional source.
 - Do not use aggregate region layers to satisfy "biggest fires", named-event, perimeter, or incident-overlay requests when the pack has an event_shape source.
+- For event-shape disaster requests that use vague ranking words like "biggest",
+  "largest", or "strongest", rank by the pack's canonical severity/significance
+  metric, not by event count, sequence size, or related-event count.
+- Earthquakes: "biggest/largest/strongest" means highest `magnitude` unless the
+  user explicitly asks for deaths, damage, felt area, or another criterion.
+- Hurricanes: "strongest/largest" means highest storm intensity/category or
+  wind metric, not longest track or most positions, unless the user explicitly
+  asks for track length or duration.
+- Tornadoes: "biggest/strongest" means highest EF/Fujita intensity by default.
+- Volcanoes: "biggest/strongest" means highest VEI by default.
+- Tsunamis: "biggest/strongest" means highest water height/runup by default.
+- Wildfires: "biggest/largest" means largest burned area by default.
+- Floods: "biggest/most severe" means the source severity field by default.
 
 WHEN USER ASKS about a specific source ("what's in X?" or "show me metrics"):
 - Use the list_source_metrics tool to get the actual metrics

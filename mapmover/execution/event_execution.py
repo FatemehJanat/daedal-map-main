@@ -1,6 +1,153 @@
+import re
+
 import pandas as pd
 
 from mapmover.runtime.filter_primitives import resolve_exact_id_filter_field
+
+
+def _format_event_timestamp_utc(value) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    timestamp = pd.to_datetime(value, errors="coerce", utc=True)
+    if pd.isna(timestamp):
+        return ""
+    return timestamp.strftime("%b %d, %Y UTC")
+
+
+def _build_single_event_message(
+    event_type: str,
+    properties: dict,
+    *,
+    query_text: str = "",
+) -> str | None:
+    if not isinstance(properties, dict) or not properties:
+        return None
+
+    lowered_query = str(query_text or "").strip().lower()
+    if not lowered_query:
+        return None
+
+    superlative_tokens = ("biggest", "largest", "strongest", "highest", "worst", "most severe")
+    prefix = "The selected event was"
+    if any(token in lowered_query for token in superlative_tokens):
+        prefix = f"The {event_type} was"
+        match = re.search(r"\b(?:in|during|for)\s+(\d{4})\b", lowered_query)
+        if match:
+            prefix = f"The {event_type} in {match.group(1)} was"
+
+    timestamp_text = _format_event_timestamp_utc(
+        properties.get("timestamp")
+        or properties.get("time")
+        or properties.get("start_time")
+        or properties.get("start_timestamp")
+        or properties.get("date")
+    )
+
+    if event_type == "earthquake":
+        magnitude = properties.get("magnitude")
+        place = str(properties.get("place") or properties.get("location") or "").strip()
+        detail = []
+        if magnitude not in (None, "") and not pd.isna(magnitude):
+            detail.append(f"M {float(magnitude):.1f}")
+        if place:
+            detail.append(place)
+        if timestamp_text:
+            detail.append(timestamp_text)
+        if detail:
+            return f"{prefix} {' - '.join(detail)}."
+
+    if event_type == "hurricane":
+        name = str(properties.get("name") or properties.get("storm_name") or "").strip()
+        category = properties.get("category")
+        detail = []
+        if name:
+            detail.append(name)
+        if category not in (None, "") and not pd.isna(category):
+            detail.append(f"Category {category}")
+        if timestamp_text:
+            detail.append(timestamp_text)
+        if detail:
+            return f"{prefix} {' - '.join(detail)}."
+
+    if event_type == "tornado":
+        rating = str(properties.get("ef_rating") or properties.get("rating") or "").strip()
+        place = str(properties.get("place") or properties.get("county") or properties.get("state") or "").strip()
+        detail = []
+        if rating:
+            detail.append(rating)
+        if place:
+            detail.append(place)
+        if timestamp_text:
+            detail.append(timestamp_text)
+        if detail:
+            return f"{prefix} {' - '.join(detail)}."
+
+    if event_type == "wildfire":
+        name = str(properties.get("fire_name") or properties.get("name") or properties.get("event_id") or "").strip()
+        area_km2 = properties.get("area_km2")
+        area_acres = properties.get("area_acres") or properties.get("burned_area_acres")
+        detail = []
+        if name:
+            detail.append(name)
+        if area_km2 not in (None, "") and not pd.isna(area_km2):
+            detail.append(f"{float(area_km2):,.0f} km2")
+        elif area_acres not in (None, "") and not pd.isna(area_acres):
+            detail.append(f"{float(area_acres):,.0f} acres")
+        if timestamp_text:
+            detail.append(timestamp_text)
+        if detail:
+            return f"{prefix} {' - '.join(detail)}."
+
+    if event_type == "tsunami":
+        height = properties.get("max_height_m") or properties.get("wave_height_m") or properties.get("runup_m")
+        place = str(properties.get("place") or properties.get("location_name") or "").strip()
+        detail = []
+        if height not in (None, "") and not pd.isna(height):
+            detail.append(f"{float(height):.1f} m")
+        if place:
+            detail.append(place)
+        if timestamp_text:
+            detail.append(timestamp_text)
+        if detail:
+            return f"{prefix} {' - '.join(detail)}."
+
+    if event_type == "volcano":
+        name = str(properties.get("volcano_name") or properties.get("name") or "").strip()
+        vei = properties.get("vei")
+        detail = []
+        if name:
+            detail.append(name)
+        if vei not in (None, "") and not pd.isna(vei):
+            detail.append(f"VEI {vei}")
+        if timestamp_text:
+            detail.append(timestamp_text)
+        if detail:
+            return f"{prefix} {' - '.join(detail)}."
+
+    if event_type == "flood":
+        name = str(properties.get("event_name") or properties.get("name") or properties.get("event_id") or "").strip()
+        severity = properties.get("severity")
+        detail = []
+        if name:
+            detail.append(name)
+        if severity not in (None, "") and not pd.isna(severity):
+            detail.append(f"severity {severity}")
+        if timestamp_text:
+            detail.append(timestamp_text)
+        if detail:
+            return f"{prefix} {' - '.join(detail)}."
+
+    name = str(
+        properties.get("name")
+        or properties.get("title")
+        or properties.get("event_name")
+        or properties.get("event_id")
+        or ""
+    ).strip()
+    detail = [part for part in (name, timestamp_text) if part]
+    if detail:
+        return f"{prefix} {' - '.join(detail)}."
+    return None
 
 
 def _build_default_time_note(items: list) -> str | None:
@@ -370,6 +517,21 @@ def execute_event_order_impl(
         "count": len(features),
         "sources": source_info,
     }
+    if len(features) == 1:
+        query_text = " ".join(
+            part for part in (
+                str(order.get("summary") or "").strip(),
+                order_item_original_query(primary_item),
+            )
+            if part
+        ).strip()
+        message = _build_single_event_message(
+            event_type,
+            features[0].get("properties") or {},
+            query_text=query_text,
+        )
+        if message:
+            response["message"] = message
     default_time_note = _build_default_time_note(items)
     if default_time_note:
         response["data_note"] = default_time_note

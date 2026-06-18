@@ -34,6 +34,45 @@
     "ranking": ["rank", "order", "sorted", "list by"]
   },
 
+  "event_qualifier_defaults": {
+    "_description": "Default meaning for vague event-ranking words when the user does not name a different criterion",
+    "earthquakes": {
+      "biggest": "magnitude",
+      "largest": "magnitude",
+      "strongest": "magnitude"
+    },
+    "hurricanes": {
+      "biggest": "max_category",
+      "largest": "max_category",
+      "strongest": "max_category"
+    },
+    "tornadoes": {
+      "biggest": "tornado_scale",
+      "largest": "tornado_scale",
+      "strongest": "tornado_scale"
+    },
+    "volcanoes": {
+      "biggest": "vei",
+      "largest": "vei",
+      "strongest": "vei"
+    },
+    "tsunamis": {
+      "biggest": "max_water_height_m",
+      "largest": "max_water_height_m",
+      "strongest": "max_water_height_m"
+    },
+    "wildfires": {
+      "biggest": "area_km2",
+      "largest": "area_km2"
+    },
+    "floods": {
+      "biggest": "severity",
+      "largest": "severity",
+      "strongest": "severity",
+      "most severe": "severity"
+    }
+  },
+
   "geographic_synonyms": {
     "_description": "Geographic query patterns - see also region_aliases in conversions.json",
     "worldwide": ["global", "all countries", "entire world", "every country"],
