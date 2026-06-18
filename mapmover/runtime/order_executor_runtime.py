@@ -220,6 +220,17 @@ def _load_disaster_aggregate_data(source_id: str, item: dict) -> tuple[Optional[
     )
 
 
+def load_event_data(source_id: str, event_file_key: str = "events") -> tuple[pd.DataFrame, dict]:
+    return load_event_data_impl(
+        source_id,
+        event_file_key,
+        get_source_path_func=_get_source_path,
+        load_source_metadata_func=load_source_metadata,
+        is_cloud_mode_func=is_cloud_mode,
+        select_rows_func=select_rows,
+    )
+
+
 def execute_geometry_overlay(geometry_overlay: dict, filter_loc_ids: list = None) -> dict:
     return execute_geometry_overlay_runtime(
         geometry_overlay,

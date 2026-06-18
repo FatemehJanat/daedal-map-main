@@ -99,6 +99,57 @@ def _normalize_nri_highest_risk_metric(item: dict, metadata: dict | None, query:
     return metric
 
 
+def _build_unsupported_multi_hazard_event_weighted_clarify(
+    metadata: dict | None,
+    query: str,
+) -> str | None:
+    if not isinstance(metadata, dict):
+        return None
+    routing_hints = get_routing_hints(metadata)
+    if str(routing_hints.get("family_role") or "").strip() != "hazard_member_of_nri_pack":
+        return None
+
+    query_lower = str(query or "").strip().lower()
+    if not query_lower:
+        return None
+
+    hazard_terms = (
+        "earthquake",
+        "wildfire",
+        "flood",
+        "hurricane",
+        "drought",
+        "heat",
+        "tornado",
+        "tsunami",
+        "volcano",
+        "landslide",
+    )
+    mentioned_hazards = [term for term in hazard_terms if term in query_lower]
+    if len(set(mentioned_hazards)) < 2:
+        return None
+
+    event_weight_terms = (
+        "weighted by number of events",
+        "weighted by events",
+        "event-weighted",
+        "event weighted",
+    )
+    if not any(term in query_lower for term in event_weight_terms):
+        return None
+
+    if "risk" not in query_lower:
+        return None
+
+    if not any(term in query_lower for term in ("county", "counties", "admin region", "admin regions")):
+        return None
+
+    return (
+        "Combined multi-hazard county risk weighted by event counts needs a cross-pack aggregate join. "
+        "A single NRI hazard-risk source cannot execute earthquake and wildfire event-weighted aggregates by county yet."
+    )
+
+
 def validate_item(
     item: dict,
     catalog: dict,
@@ -118,7 +169,9 @@ def validate_item(
     query_prefers_event_source_func,
     query_requests_short_current_window_func,
     reroute_item_to_event_sibling_func,
+    reroute_item_to_aggregate_sibling_func,
     resolve_pack_source_by_shape_func,
+    resolve_pack_aggregate_source_func,
     load_source_metadata_func,
     expand_filter_value_aliases_func,
     source_requires_metric_func,
@@ -133,6 +186,18 @@ def validate_item(
     source_id = item.get("source_id")
     metric = item.get("metric")
     query = str(((item.get("_hints") or {}).get("original_query")) or "").lower()
+
+    def _query_requests_regional_aggregate(query_text: str) -> bool:
+        if not query_text:
+            return False
+        aggregate_terms = (
+            "county", "counties", "state", "states", "province", "provinces",
+            "admin region", "admin regions", "region", "regions",
+            "affected by", "affected areas", "burned area", "event count",
+            "frequency", "exposure", "trend", "increasing", "decreasing",
+            "rank ", "ranking", "population at risk", "gdp at risk",
+        )
+        return any(term in query_text for term in aggregate_terms)
 
     if item.get("type") == "derived_result":
         item["_valid"] = True
@@ -225,8 +290,9 @@ def validate_item(
         item["_resolved_from_pack"] = True
         source_id = explicit_currency_source
         catalog_source = get_catalog_source_func(catalog, source_id)
-    if pack_id and query:
-        pack_routing_allowed = bool(item.get("_resolved_from_pack"))
+    if pack_id and query and not item.get("_lock_source_id"):
+        source_belongs_to_pack = str((catalog_source or {}).get("pack_id") or "").strip() == pack_id
+        pack_routing_allowed = bool(item.get("_resolved_from_pack")) or source_belongs_to_pack
         preferred_source_id, preferred_metadata, preferred_metric = select_pack_family_source_for_query(
             pack_id,
             query,
@@ -269,6 +335,11 @@ def validate_item(
             item["geo_level"] = inferred_geo_level
     else:
         metadata = None
+    unsupported_multi_hazard = _build_unsupported_multi_hazard_event_weighted_clarify(metadata, query)
+    if unsupported_multi_hazard:
+        item["_valid"] = False
+        item["_error"] = unsupported_multi_hazard
+        return item
     normalize_item_filters_func(item, catalog_source)
     normalize_location_shape_metric_func(item, catalog_source)
     metric = item.get("metric")
@@ -306,6 +377,19 @@ def validate_item(
             item,
             catalog,
             resolve_pack_source_by_shape_func=resolve_pack_source_by_shape_func,
+        )
+    ):
+        return validate_item_func(item, catalog)
+
+    if (
+        pack_id
+        and query
+        and _query_requests_regional_aggregate(query)
+        and not source_supports_aggregate_mode_func(catalog_source)
+        and reroute_item_to_aggregate_sibling_func(
+            item,
+            catalog,
+            resolve_pack_aggregate_source_func=resolve_pack_aggregate_source_func,
         )
     ):
         return validate_item_func(item, catalog)
@@ -402,17 +486,35 @@ def validate_item(
                     item.pop("_error", None)
                     item["_valid"] = True
                     return item
+                aggregate_derived_match = next(
+                    (
+                        col for col in (
+                            f"total_{metric_lower}",
+                            f"avg_{metric_lower}",
+                            f"max_{metric_lower}",
+                        )
+                        if col in aggregate_metric_cols
+                    ),
+                    None,
+                )
+                if aggregate_derived_match:
+                    item["metric"] = aggregate_derived_match
+                    item["metric_label"] = format_metric_label_func(aggregate_derived_match)
+                    item.pop("_error", None)
+                    item["_valid"] = True
+                    return item
 
-            pack_metric_source = resolve_pack_source_for_metric_func(
-                catalog,
-                item.get("pack_id"),
-                item.get("region"),
-                metric,
-            )
-            if pack_metric_source and pack_metric_source != source_id:
-                item["source_id"] = pack_metric_source
-                item["_resolved_from_pack"] = True
-                return validate_item_func(item, catalog)
+            if not item.get("_lock_source_id"):
+                pack_metric_source = resolve_pack_source_for_metric_func(
+                    catalog,
+                    item.get("pack_id"),
+                    item.get("region"),
+                    metric,
+                )
+                if pack_metric_source and pack_metric_source != source_id:
+                    item["source_id"] = pack_metric_source
+                    item["_resolved_from_pack"] = True
+                    return validate_item_func(item, catalog)
 
             close_matches = []
             for key, value in metrics.items():

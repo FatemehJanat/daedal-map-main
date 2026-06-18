@@ -69,6 +69,29 @@ def reroute_item_to_event_sibling(
     return True
 
 
+def reroute_item_to_aggregate_sibling(
+    item: dict,
+    catalog: dict,
+    *,
+    resolve_pack_aggregate_source_func,
+) -> bool:
+    pack_id = item.get("pack_id")
+    if not pack_id:
+        return False
+    aggregate_source_id = resolve_pack_aggregate_source_func(catalog, pack_id, item.get("region"))
+    if not aggregate_source_id:
+        return False
+    if str(item.get("source_id") or "").strip() == str(aggregate_source_id).strip():
+        return False
+    item["source_id"] = aggregate_source_id
+    item["_resolved_from_pack"] = True
+    item["_lock_source_id"] = True
+    item.pop("mode", None)
+    item.pop("event_file", None)
+    item.pop("metric_label", None)
+    return True
+
+
 def build_event_retry_order(
     order: dict,
     items: list,

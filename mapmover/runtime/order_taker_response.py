@@ -639,10 +639,10 @@ def _build_metadata_guided_two_source_order(user_query: str, hints: dict | None)
 
     items: list[dict] = []
     summaries: list[str] = []
-    used_packs: set[str] = set()
+    used_sources: set[str] = set()
     for _, source_id, metadata, metric in sorted(scored_candidates, key=lambda item: item[0], reverse=True):
         pack_id = str(metadata.get("pack_id") or source_id).strip()
-        if pack_id in used_packs:
+        if source_id in used_sources:
             continue
         item = {
             "source_id": source_id,
@@ -666,7 +666,7 @@ def _build_metadata_guided_two_source_order(user_query: str, hints: dict | None)
         metric_info = (metadata.get("metrics") or {}).get(metric) or {}
         label = str(metric_info.get("name") or metric or metadata.get("source_name") or source_id).strip()
         summaries.append(label)
-        used_packs.add(pack_id)
+        used_sources.add(source_id)
         if len(items) >= 2:
             break
 

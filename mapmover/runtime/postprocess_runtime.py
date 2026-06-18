@@ -45,7 +45,9 @@ from mapmover.runtime.order_semantics import (
     detect_event_mode as detect_event_mode_impl,
     normalize_aggregate_metric_mode as normalize_aggregate_metric_mode_impl,
     resolve_pack_source as resolve_pack_source_impl,
+    reroute_item_to_aggregate_sibling as reroute_item_to_aggregate_sibling_impl,
     resolve_pack_source_by_shape,
+    _resolve_pack_aggregate_source as resolve_pack_aggregate_source_impl,
     resolve_pack_source_for_metric,
 )
 from mapmover.runtime.population_resolution import (
@@ -104,6 +106,12 @@ from mapmover.runtime.query_intent_primitives import (
 from mapmover.runtime.retry_primitives import (
     reroute_item_to_event_sibling as reroute_item_to_event_sibling_impl,
 )
+from mapmover.runtime.source_hints import (
+    get_query_alias_matches,
+    get_routing_hints,
+    infer_requested_geo_level_from_query,
+    select_query_guided_metric,
+)
 from mapmover.runtime.warning_policy import DEFAULT_METRIC_WARNING_POLICY
 from mapmover.runtime.warning_primitives import build_metric_warning
 from mapmover.source_time_contract import metadata_metric_year_range
@@ -112,6 +120,130 @@ from mapmover.source_time_contract import metadata_metric_year_range
 DERIVED_EXPANSIONS = DEFAULT_DERIVED_EXPANSIONS
 POPULATION_FAMILY = "population"
 _POPULATION_RESOLUTION_CACHE = {}
+
+
+def _query_looks_multi_source_comparison(query: str) -> bool:
+    query_lower = str(query or "").strip().lower()
+    if not query_lower:
+        return False
+    padded = f" {query_lower} "
+    comparison_terms = (
+        " compare ",
+        " compared ",
+        " against ",
+        " versus ",
+        " vs ",
+        " alongside ",
+        " correlation ",
+        " correlated ",
+        " relationship ",
+        " related to ",
+    )
+    return any(term in padded for term in comparison_terms)
+
+
+def _score_pack_sibling_for_query(query: str, metadata: dict) -> float:
+    metric = select_query_guided_metric(query, metadata)
+    query_alias_matches = get_query_alias_matches(metadata, query)
+    inferred_geo_level = infer_requested_geo_level_from_query(query, metadata)
+    if not (metric or query_alias_matches or inferred_geo_level):
+        return 0.0
+
+    score = 0.0
+    if metric:
+        score += 10.0
+    if query_alias_matches:
+        score += float(len(query_alias_matches) * 2)
+    score += float(get_routing_hints(metadata).get("query_priority", 0.0) or 0.0)
+    if inferred_geo_level:
+        score += 1.0
+    return score
+
+
+def _diversify_same_pack_comparison_items(
+    validated_items: list[dict],
+    catalog: dict,
+    validate_item,
+) -> list[dict]:
+    if len(validated_items) < 2:
+        return validated_items
+
+    query = ""
+    for item in validated_items:
+        hints = item.get("_hints") or {}
+        query = str(hints.get("original_query") or "").strip()
+        if query:
+            break
+    if not _query_looks_multi_source_comparison(query):
+        return validated_items
+
+    pack_to_indices: dict[str, list[int]] = {}
+    for index, item in enumerate(validated_items):
+        if not item.get("_valid"):
+            continue
+        pack_id = str(item.get("pack_id") or "").strip()
+        source_id = str(item.get("source_id") or "").strip()
+        if not pack_id or not source_id:
+            continue
+        pack_to_indices.setdefault(pack_id, []).append(index)
+
+    for pack_id, indices in pack_to_indices.items():
+        if len(indices) < 2:
+            continue
+
+        sibling_source_ids = [
+            str(src.get("source_id") or "").strip()
+            for src in catalog_sources_impl(catalog)
+            if str(src.get("pack_id") or "").strip() == pack_id
+        ]
+        sibling_source_ids = [source_id for source_id in sibling_source_ids if source_id]
+        if len(sibling_source_ids) < 2:
+            continue
+
+        used_sources: set[str] = set()
+        for index in indices:
+            item = validated_items[index]
+            current_source_id = str(item.get("source_id") or "").strip()
+            if current_source_id and current_source_id not in used_sources:
+                used_sources.add(current_source_id)
+                continue
+
+            best_alternative = None
+            best_score = 0.0
+            for sibling_source_id in sibling_source_ids:
+                if sibling_source_id in used_sources:
+                    continue
+                metadata = load_source_metadata(sibling_source_id) or {}
+                if not metadata:
+                    continue
+                score = _score_pack_sibling_for_query(query, metadata)
+                if score > best_score:
+                    best_alternative = sibling_source_id
+                    best_score = score
+
+            if not best_alternative or best_score <= 0.0:
+                continue
+
+            rerouted_item = dict(item)
+            rerouted_item["source_id"] = best_alternative
+            rerouted_item["_resolved_from_pack"] = True
+            rerouted_item["_lock_source_id"] = True
+            rerouted_item.pop("metric_label", None)
+
+            metadata = load_source_metadata(best_alternative) or {}
+            metrics = metadata.get("metrics") or {}
+            metric = str(rerouted_item.get("metric") or "").strip()
+            if metric and metric not in metrics:
+                rerouted_item.pop("metric", None)
+
+            rerouted_item = validate_item(rerouted_item, catalog)
+            if not rerouted_item.get("_valid"):
+                continue
+
+            validated_items[index] = rerouted_item
+            used_sources.add(best_alternative)
+
+    return validated_items
 
 
 def run_postprocess_order(
@@ -188,7 +320,9 @@ def run_postprocess_order(
             query_prefers_event_source_func=query_prefers_event_source_impl,
             query_requests_short_current_window_func=query_requests_short_current_window_impl,
             reroute_item_to_event_sibling_func=reroute_item_to_event_sibling_impl,
+            reroute_item_to_aggregate_sibling_func=reroute_item_to_aggregate_sibling_impl,
             resolve_pack_source_by_shape_func=resolve_pack_source_by_shape,
+            resolve_pack_aggregate_source_func=resolve_pack_aggregate_source_impl,
             load_source_metadata_func=load_source_metadata,
             expand_filter_value_aliases_func=expand_filter_value_aliases_impl,
             source_requires_metric_func=lambda item, catalog_source: source_requires_metric_impl(
@@ -329,6 +463,13 @@ def run_postprocess_order(
         ),
         validate_item,
     )
+    validated_items = _diversify_same_pack_comparison_items(
+        validated_items,
+        catalog,
+        validate_item,
+    )
+    errors = [item.get("_error", "Unknown error") for item in validated_items if not item.get("_valid")]
+    valid_count = sum(1 for item in validated_items if item.get("_valid"))
     if derived_intent:
         for item in validated_items:
             if not item.get("_valid"):

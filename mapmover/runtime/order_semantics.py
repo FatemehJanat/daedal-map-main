@@ -717,3 +717,27 @@ def reroute_item_to_event_sibling(item: dict, catalog: dict) -> bool:
     ):
         item.pop(field, None)
     return True
+
+
+def reroute_item_to_aggregate_sibling(
+    item: dict,
+    catalog: dict,
+    *,
+    resolve_pack_aggregate_source_func=None,
+) -> bool:
+    pack_id = item.get("pack_id")
+    if not pack_id:
+        return False
+    resolver = resolve_pack_aggregate_source_func or _resolve_pack_aggregate_source
+    aggregate_source_id = resolver(catalog, pack_id, item.get("region"))
+    if not aggregate_source_id:
+        return False
+    if str(item.get("source_id") or "").strip() == str(aggregate_source_id).strip():
+        return False
+    item["source_id"] = aggregate_source_id
+    item["_resolved_from_pack"] = True
+    item["_lock_source_id"] = True
+    item.pop("mode", None)
+    item.pop("event_file", None)
+    item.pop("metric_label", None)
+    return True

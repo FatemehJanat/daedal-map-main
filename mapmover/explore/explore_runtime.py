@@ -62,11 +62,12 @@ def finalize_explore_order_result(
         )
 
     if not processed.get("all_valid", True):
+        invalid_summary = processed.get("validation_summary") or result_summary
         return (
             "clarify_invalid_order",
             build_clarify_response_func(
                 processed.get("validation_summary") or "I need a more specific executable request before I can run that.",
-                summary=result_summary,
+                summary=invalid_summary,
                 full_order=processed,
             ),
         )
