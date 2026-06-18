@@ -272,6 +272,12 @@ export async function loadRangeData(overlayId, startMs, endMs, endpoint, signal 
         ? Math.min(current, effectiveFilters.min_severity)
         : effectiveFilters.min_severity;
     }
+    if (effectiveFilters.min_height_m !== undefined) {
+      const current = loadedFilters[overlayId].minHeightM;
+      loadedFilters[overlayId].minHeightM = current !== undefined
+        ? Math.min(current, effectiveFilters.min_height_m)
+        : effectiveFilters.min_height_m;
+    }
 
     return featureCount > 0;
   } catch (error) {

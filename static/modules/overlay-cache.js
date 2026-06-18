@@ -132,6 +132,9 @@ export function buildRangeUrl(endpoint, startMs, endMs, overlayId = null) {
   if (overrides.minSeverity !== undefined) {
     effectiveParams.min_severity = String(overrides.minSeverity);
   }
+  if (overrides.minHeightM !== undefined) {
+    effectiveParams.min_height_m = String(overrides.minHeightM);
+  }
   if (overrides.locPrefix !== undefined) {
     effectiveParams.loc_prefix = overrides.locPrefix;
   }
