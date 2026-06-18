@@ -1918,8 +1918,16 @@ async def get_v1_guide():
 async def get_v1_catalog():
     """Return the agent/API catalog filtered to sources marked api_ready."""
     from mapmover.data_loading import load_api_catalog
+    from pack_registry_shared import tool_family_catalog_entry, tool_family_ids
 
-    payload = load_api_catalog()
+    payload = load_api_catalog() or {"packs": []}
+    if isinstance(payload, dict):
+        # Surface free utility tool families (e.g. geography) alongside the data
+        # packs, tagged by kind. Mirrors MCP get_catalog; aliases stay registry-only.
+        payload = dict(payload)
+        entries = [tool_family_catalog_entry(fid) for fid in tool_family_ids()]
+        payload["tool_families"] = entries
+        payload["tool_family_count"] = len(entries)
     return JSONResponse(payload)
 
 
@@ -2000,6 +2008,17 @@ async def get_pack_mcp_server_json(pack_id: str):
 async def get_v1_pack(pack_id: str):
     """Return the agent/API pack detail filtered to api_ready sources only."""
     from mapmover.data_loading import load_api_pack_detail
+    from pack_registry_shared import (
+        tool_family_alias_ids,
+        tool_family_ids,
+        tool_family_pack_detail,
+    )
+
+    normalized = str(pack_id or "").strip().lower()
+    if normalized in set(tool_family_ids()) | set(tool_family_alias_ids()):
+        # Geography tool families/aliases are synthesized from the registry,
+        # not the generated api_catalog artifact. Mirrors MCP get_pack.
+        return JSONResponse(tool_family_pack_detail(normalized))
 
     payload = load_api_pack_detail(pack_id)
     if not payload:
