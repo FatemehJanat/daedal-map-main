@@ -24,7 +24,7 @@ from mapmover.storage_mode import get_runtime_mode
 from mapmover.execution.event_loading import resolve_event_parquet_path_for_source
 
 from .helpers import msgpack_error, msgpack_response
-from .earthquakes import get_earthquake_property_builders, _load_earthquake_event_row
+from .earthquakes import get_earthquake_property_builders
 from .landslides import get_landslide_property_builders
 from .tsunamis import get_tsunami_property_builders
 from .volcanoes import get_eruption_property_builders
@@ -750,7 +750,7 @@ def _resolve_exact_event_payload(identifier_value: str, pack_id: str | None = No
     normalized_pack = str(pack_id or "").strip().lower()
     if normalized_pack == "earthquakes":
         try:
-            df = _load_earthquake_event_row(normalized_identifier)
+            df = _load_earthquake_exact_event_row(normalized_identifier)
         except Exception as exc:
             logger.warning(
                 "Earthquake exact fallback failed for %s: %s",
@@ -772,6 +772,18 @@ def _resolve_exact_event_payload(identifier_value: str, pack_id: str | None = No
                 if payload:
                     return payload
     return None
+
+
+def _load_earthquake_exact_event_row(event_id: str) -> pd.DataFrame:
+    events_path = GLOBAL_DIR / "disasters/earthquakes/events.parquet"
+    if not parquet_available(events_path):
+        return pd.DataFrame()
+    if duckdb_available():
+        return select_rows(events_path, exact_filters={"event_id": event_id}, limit=1)
+    df = pd.read_parquet(events_path)
+    if "event_id" not in df.columns:
+        return pd.DataFrame()
+    return df[df["event_id"] == event_id].head(1).copy()
 
 
 def _read_link_rows(links_path, column: str, loc_id: str) -> pd.DataFrame:
