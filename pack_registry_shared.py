@@ -220,7 +220,7 @@ PACK_REGISTRY: dict[str, dict] = {
         "pricing": "free",
         "mcp_tool_allowlist": ("get_catalog", "get_pack", "resolve_point", "get_boundary", "loc_id_hierarchy", "loc_id_info"),
         "mcp_name": "com.daedalmap/geocoding",
-        "mcp_title": "DaedalMap Geocoding and loc_id Tools",
+        "mcp_title": "DaedalMap Geocoding and Reverse Geocoding (loc_id)",
         "mcp_description": "Free geocoding and reverse-geocoding utilities built on the DaedalMap loc_id spine: resolve latitude/longitude to administrative areas, fetch boundaries and bounding boxes, and walk the loc_id hierarchy. A utility tool family, not a queryable dataset pack. No payment required.",
         "registry_meta": {
             "categories": ["geospatial", "geocoding", "data"],
