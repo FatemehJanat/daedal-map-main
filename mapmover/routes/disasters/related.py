@@ -24,7 +24,7 @@ from mapmover.storage_mode import get_runtime_mode
 from mapmover.execution.event_loading import resolve_event_parquet_path_for_source
 
 from .helpers import msgpack_error, msgpack_response
-from .earthquakes import get_earthquake_property_builders
+from .earthquakes import get_earthquake_property_builders, _load_earthquake_event_row
 from .landslides import get_landslide_property_builders
 from .tsunamis import get_tsunami_property_builders
 from .volcanoes import get_eruption_property_builders
@@ -743,6 +743,34 @@ def _resolve_exact_event_payload(identifier_value: str, pack_id: str | None = No
         matched_pack_id = str(named_candidates[0].get("pack_id") or "").strip().lower() or None
         if matched_event_id:
             return _resolve_exact_event_payload(matched_event_id, pack_id=matched_pack_id)
+
+    # Earthquake exact ids are a critical live/ops path. Keep a direct fallback
+    # to the earthquake loader so exact-event lookup still works even if the
+    # generic candidate resolution misses a cloud/runtime edge case.
+    normalized_pack = str(pack_id or "").strip().lower()
+    if normalized_pack == "earthquakes":
+        try:
+            df = _load_earthquake_event_row(normalized_identifier)
+        except Exception as exc:
+            logger.warning(
+                "Earthquake exact fallback failed for %s: %s",
+                normalized_identifier,
+                exc,
+            )
+        else:
+            if not df.empty:
+                metadata = load_source_metadata("earthquakes_events") or {}
+                row = df.head(1).iloc[0].to_dict()
+                payload = _build_exact_event_feature(
+                    row,
+                    event_type="earthquake",
+                    source_id="earthquakes_events",
+                    pack_id="earthquakes",
+                    identifier_field="event_id",
+                    metadata=metadata,
+                )
+                if payload:
+                    return payload
     return None
 
 
