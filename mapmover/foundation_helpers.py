@@ -22,6 +22,7 @@ from .duckdb_helpers import is_cloud_mode, parquet_columns
 from .orchestrator_specs import list_orchestrator_specs
 from .paths import COUNTRIES_DIR, DATA_ROOT, GEOMETRY_DIR
 from .runtime.explainer_response import build_explainer_response, looks_like_explainer_question
+from .runtime.read_posture import prefer_local_geometry_reads
 from .runtime.result_cap import (
     apply_runtime_feature_cap_to_payload,
     apply_runtime_result_cap,
@@ -76,8 +77,8 @@ FOUNDATION_HELPER_REGISTRY = {
 }
 
 _REFERENCE_JSON_CACHE: dict[str, Any] = {}
-_COUNTRY_CROSSWALK_CACHE: dict[str, dict | None] = {}
-_COUNTRY_JSON_ASSET_CACHE: dict[tuple[str, str], Any] = {}
+_COUNTRY_CROSSWALK_CACHE: dict[tuple[str, str], dict | None] = {}
+_COUNTRY_JSON_ASSET_CACHE: dict[tuple[str, str, str], Any] = {}
 _GLOBAL_COUNTRIES_CACHE = None
 _WORLD_FACTBOOK_STATIC_CACHE = None
 
@@ -195,32 +196,41 @@ def load_country_crosswalk(iso3: str) -> dict | None:
     iso3 = (iso3 or "").upper()
     if not iso3:
         return None
-    if iso3 in _COUNTRY_CROSSWALK_CACHE:
-        return _COUNTRY_CROSSWALK_CACHE[iso3]
+    read_mode = "local" if prefer_local_geometry_reads() else "runtime"
+    cache_key = (iso3, read_mode)
+    if cache_key in _COUNTRY_CROSSWALK_CACHE:
+        return _COUNTRY_CROSSWALK_CACHE[cache_key]
 
     crosswalk_path = COUNTRIES_DIR / iso3 / "crosswalk.json"
+    if crosswalk_path.exists():
+        try:
+            with open(crosswalk_path, "r", encoding="utf-8-sig") as f:
+                data = json.load(f)
+            _COUNTRY_CROSSWALK_CACHE[cache_key] = data
+            return data
+        except Exception as e:
+            logger.warning(f"Failed to load crosswalk for {iso3}: {e}")
+            _COUNTRY_CROSSWALK_CACHE[cache_key] = None
+            return None
+
+    if prefer_local_geometry_reads():
+        _COUNTRY_CROSSWALK_CACHE[cache_key] = None
+        return None
+
     if not crosswalk_path.exists():
         if is_cloud_mode():
             try:
                 from .data_loading import _fetch_json_from_s3
 
                 data = _fetch_json_from_s3(f"countries/{iso3}/crosswalk.json")
-                _COUNTRY_CROSSWALK_CACHE[iso3] = data
+                _COUNTRY_CROSSWALK_CACHE[cache_key] = data
                 return data
             except Exception as e:
                 logger.warning(f"Failed to load crosswalk for {iso3} from cloud storage: {e}")
-        _COUNTRY_CROSSWALK_CACHE[iso3] = None
+        _COUNTRY_CROSSWALK_CACHE[cache_key] = None
         return None
-
-    try:
-        with open(crosswalk_path, "r", encoding="utf-8-sig") as f:
-            data = json.load(f)
-        _COUNTRY_CROSSWALK_CACHE[iso3] = data
-        return data
-    except Exception as e:
-        logger.warning(f"Failed to load crosswalk for {iso3}: {e}")
-        _COUNTRY_CROSSWALK_CACHE[iso3] = None
-        return None
+    _COUNTRY_CROSSWALK_CACHE[cache_key] = None
+    return None
 
 
 def load_country_json_asset(iso3: str, filename: str) -> Any:
@@ -230,11 +240,27 @@ def load_country_json_asset(iso3: str, filename: str) -> Any:
     if not iso3 or not filename:
         return None
 
-    cache_key = (iso3, filename)
+    read_mode = "local" if prefer_local_geometry_reads() else "runtime"
+    cache_key = (iso3, filename, read_mode)
     if cache_key in _COUNTRY_JSON_ASSET_CACHE:
         return _COUNTRY_JSON_ASSET_CACHE[cache_key]
 
     asset_path = COUNTRIES_DIR / iso3 / filename
+    if asset_path.exists():
+        try:
+            with open(asset_path, "r", encoding="utf-8-sig") as f:
+                data = json.load(f)
+            _COUNTRY_JSON_ASSET_CACHE[cache_key] = data
+            return data
+        except Exception as e:
+            logger.warning("Failed to load country asset %s/%s: %s", iso3, filename, e)
+            _COUNTRY_JSON_ASSET_CACHE[cache_key] = None
+            return None
+
+    if prefer_local_geometry_reads():
+        _COUNTRY_JSON_ASSET_CACHE[cache_key] = None
+        return None
+
     if not asset_path.exists():
         if is_cloud_mode():
             try:
@@ -247,16 +273,8 @@ def load_country_json_asset(iso3: str, filename: str) -> Any:
                 logger.warning("Failed to load country asset %s/%s from cloud storage: %s", iso3, filename, e)
         _COUNTRY_JSON_ASSET_CACHE[cache_key] = None
         return None
-
-    try:
-        with open(asset_path, "r", encoding="utf-8-sig") as f:
-            data = json.load(f)
-        _COUNTRY_JSON_ASSET_CACHE[cache_key] = data
-        return data
-    except Exception as e:
-        logger.warning("Failed to load country asset %s/%s: %s", iso3, filename, e)
-        _COUNTRY_JSON_ASSET_CACHE[cache_key] = None
-        return None
+    _COUNTRY_JSON_ASSET_CACHE[cache_key] = None
+    return None
 
 
 def load_global_countries_frame():

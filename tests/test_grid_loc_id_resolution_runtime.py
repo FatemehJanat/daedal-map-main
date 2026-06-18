@@ -51,6 +51,11 @@ class GridLocIdResolutionRuntimeTests(unittest.TestCase):
         self.assertFalse(is_eez_loc_id("USA"))
         self.assertFalse(is_eez_loc_id("XOP"))
 
+    def test_classifies_regional_base_targets_through_shared_spine(self):
+        self.assertEqual(classify_grid_target_loc_id("DEU-DE2"), "admin_1")
+        self.assertEqual(classify_grid_target_loc_id("DEU-DE27"), "admin_2")
+        self.assertEqual(classify_grid_target_loc_id("DEU-DE27C"), "admin_3")
+
     def test_build_grid_target_overlaps_accepts_eez_target(self):
         cell_rows = [{"cell_id": "c1", "bbox": [0.0, 0.0, 1.0, 1.0]}]
         target_rows = [{"loc_id": "EEZ-USA", "bbox": [0.0, 0.0, 1.0, 1.0]}]

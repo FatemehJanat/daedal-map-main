@@ -14,6 +14,17 @@ _CONVERSIONS_CACHE: dict[str, Any] | None = None
 _ISO_CODES_CACHE: dict[str, Any] | None = None
 _USA_ADMIN_CACHE: dict[str, Any] | None = None
 _COUNTRY_SUBDIVISION_SLUG_CACHE: dict[tuple[str, str], str | None] = {}
+_WATER_BODY_CODES_CACHE: set[str] | None = None
+
+_EVENT_ENTITY_MARKER_SEGMENTS = {
+    "EQ",
+    "FIRE",
+    "FLOOD",
+    "HRCN",
+    "TORN",
+    "TSUN",
+    "VOLC",
+}
 
 USA_COUNTY_EQUIVALENT_SUFFIXES = (
     " city and borough",
@@ -29,6 +40,86 @@ USA_COUNTY_EQUIVALENT_SUFFIXES = (
 def canonicalize_loc_id(loc_id: str) -> str:
     """Return runtime loc_ids in canonical form. Legacy formats are not normalized here."""
     return loc_id
+
+
+def _load_water_body_loc_ids() -> set[str]:
+    global _WATER_BODY_CODES_CACHE
+    if _WATER_BODY_CODES_CACHE is not None:
+        return _WATER_BODY_CODES_CACHE
+    payload = load_reference_json("water_body_codes.json")
+    codes: set[str] = set()
+    if isinstance(payload, dict):
+        all_codes = payload.get("all_codes")
+        if isinstance(all_codes, dict):
+            for key in all_codes.keys():
+                code = str(key or "").strip().upper()
+                if code:
+                    codes.add(code)
+    _WATER_BODY_CODES_CACHE = codes
+    return codes
+
+
+def is_water_body_loc_id(loc_id: str | None) -> bool:
+    value = str(loc_id or "").strip().upper()
+    return bool(value) and value in _load_water_body_loc_ids()
+
+
+def is_eez_loc_id(loc_id: str | None) -> bool:
+    return str(loc_id or "").strip().upper().startswith("EEZ-")
+
+
+def _looks_like_geometry_admin_loc_id(value: str) -> bool:
+    parts = value.split("-")
+    return len(parts) > 1 and all(str(part).startswith("G") for part in parts[1:])
+
+
+def _looks_like_event_or_entity_loc_id(value: str) -> bool:
+    parts = [segment for segment in str(value or "").strip().upper().split("-") if segment]
+    if not parts:
+        return False
+    if parts[0] in _EVENT_ENTITY_MARKER_SEGMENTS:
+        return True
+    return any(segment in _EVENT_ENTITY_MARKER_SEGMENTS for segment in parts[1:])
+
+
+def _looks_like_zcta_loc_id(value: str) -> bool:
+    return bool(re.fullmatch(r"USA-Z-\d{5}", value))
+
+
+def _looks_like_tribal_loc_id(value: str) -> bool:
+    parts = [segment for segment in str(value or "").strip().upper().split("-") if segment]
+    return "TRIBAL" in parts
+
+
+def classify_loc_id_family(loc_id: str | None) -> str | None:
+    """Classify the shared runtime loc_id family.
+
+    Family classification is the default seam that runtime and QA should share.
+    Metadata may refine behavior later, but it should not decide whether the
+    seam exists at all.
+    """
+    value = str(loc_id or "").strip().upper()
+    if not value:
+        return None
+    if is_water_body_loc_id(value):
+        return "water_body"
+    if is_eez_loc_id(value):
+        return "marine_eez"
+    if re.fullmatch(r"[A-Z]{3}", value):
+        return "admin_0"
+    if _looks_like_zcta_loc_id(value):
+        return "overlay_zcta"
+    if _looks_like_tribal_loc_id(value):
+        return "overlay_tribal"
+    if derive_eurostat_geo_level(value):
+        return "regional_base"
+    if _looks_like_event_or_entity_loc_id(value):
+        return "event_or_entity"
+    if _looks_like_geometry_admin_loc_id(value):
+        return "admin_geometry"
+    if re.fullmatch(r"[A-Z]{3}(?:-[A-Z0-9]+)+", value):
+        return "admin_local"
+    return None
 
 
 def build_crosswalk_maps(crosswalk_data: dict[str, Any] | None) -> tuple[dict[str, str], dict[str, str]]:

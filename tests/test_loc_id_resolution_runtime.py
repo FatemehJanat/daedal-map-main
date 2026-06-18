@@ -19,6 +19,13 @@ class LocIdResolutionRuntimeTests(unittest.TestCase):
         self.assertEqual(resolved["deepest_resolved_admin_level"], "admin_2")
         self.assertEqual(resolved["matches"]["admin_2"]["loc_id"], "USA-VA-059")
 
+    def test_event_loc_id_does_not_masquerade_as_admin_loc_id(self):
+        resolved = resolve_admin_text_to_loc_id("USA-FLOOD-DFO-9")
+        self.assertEqual(resolved["match_type"], "direct_event_loc_id")
+        self.assertEqual(resolved["loc_id_family"], "event_or_entity")
+        self.assertEqual(resolved["matches"], {})
+        self.assertEqual(resolved["error"], "event/entity loc_id requires exact-event routing")
+
     def test_direct_admin_name_uses_name_standardizer(self):
         with patch(
             "mapmover.runtime.loc_id_resolution._get_name_standardizer"

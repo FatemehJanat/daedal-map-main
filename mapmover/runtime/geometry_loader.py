@@ -6,12 +6,15 @@ from typing import Any
 from ..duckdb_helpers import is_cloud_mode, parquet_columns
 from ..foundation_helpers import load_country_crosswalk
 from ..paths import COUNTRIES_DIR, GEOMETRY_DIR
+from .read_posture import prefer_local_geometry_reads
 
 
 def parquet_accessible(path: Path | None) -> bool:
     """Return True when a parquet path exists locally or is cloud-readable."""
     if path is None:
         return False
+    if prefer_local_geometry_reads():
+        return path.exists()
     if not is_cloud_mode():
         return path.exists()
     try:

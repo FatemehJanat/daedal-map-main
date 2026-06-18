@@ -22,7 +22,7 @@ import pandas as pd
 
 from ..duckdb_helpers import parquet_available, select_columns_from_parquet
 from ..paths import GEOMETRY_DIR
-from .grid_loc_id_resolution import is_eez_loc_id, is_water_body_loc_id
+from .geography_reference import is_eez_loc_id, is_water_body_loc_id
 
 MARINE_DIR = GEOMETRY_DIR / "marine"
 EEZ_PATH = MARINE_DIR / "eez.parquet"

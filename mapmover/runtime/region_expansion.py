@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from mapmover.runtime.grid_loc_id_resolution import is_eez_loc_id, is_water_body_loc_id, load_water_body_codes
+from mapmover.runtime.geography_reference import is_eez_loc_id, is_water_body_loc_id
+from mapmover.runtime.grid_loc_id_resolution import load_water_body_codes
 
 
 def _normalize_region_text(value: str | None) -> str:

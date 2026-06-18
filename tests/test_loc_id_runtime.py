@@ -1,8 +1,11 @@
 import unittest
+from unittest.mock import patch
 
+from mapmover.runtime.read_posture import geometry_read_mode
 from mapmover.runtime.geography_reference import (
     build_crosswalk_maps,
     canonicalize_loc_id,
+    classify_loc_id_family,
     translate_geometry_id_to_local_id,
     translate_loc_id_to_geometry_id,
 )
@@ -43,6 +46,38 @@ class LocIdRuntimeTests(unittest.TestCase):
         self.assertEqual(local_to_geo["USA-VA-059"], "USA-G125186-G215213")
         self.assertEqual(geo_to_local["USA-G125186"], "USA-VA")
         self.assertEqual(geo_to_local["USA-G125186-G215213"], "USA-VA-059")
+
+    def test_classify_loc_id_family_covers_shared_geometry_doctrine(self):
+        cases = {
+            "USA": "admin_0",
+            "USA-G125186-G215213": "admin_geometry",
+            "USA-VA-059-452400": "admin_local",
+            "DEU-DE27C": "regional_base",
+            "USA-Z-22031": "overlay_zcta",
+            "USA-AK-TRIBAL-6650": "overlay_tribal",
+            "EEZ-USA": "marine_eez",
+            "XSM": "water_body",
+            "USA-FLOOD-DFO-9": "event_or_entity",
+            "FIRE-413706": "event_or_entity",
+        }
+        for loc_id, expected in cases.items():
+            with self.subTest(loc_id=loc_id):
+                self.assertEqual(classify_loc_id_family(loc_id), expected)
+
+    def test_geometry_read_mode_uses_existing_deployment_and_storage_envs(self):
+        with patch.dict(
+            "os.environ",
+            {"DEPLOYMENT": "local", "STORAGE_MODE": "local"},
+            clear=False,
+        ):
+            self.assertEqual(geometry_read_mode(), "local")
+
+        with patch.dict(
+            "os.environ",
+            {"DEPLOYMENT": "local", "STORAGE_MODE": "s3"},
+            clear=False,
+        ):
+            self.assertEqual(geometry_read_mode(), "runtime")
 
 
 if __name__ == "__main__":

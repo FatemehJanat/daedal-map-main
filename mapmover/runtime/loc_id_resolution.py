@@ -13,7 +13,11 @@ from ..geometry_handlers import (
 from ..name_standardizer import NameStandardizer
 from ..reference.usa.location_lookup import by_zip as usa_zip_lookup
 from .admin_hierarchy import get_parent_loc_id, infer_admin_level_from_loc_id
-from .geography_reference import canonicalize_loc_id, translate_geometry_id_to_local_id
+from .geography_reference import (
+    canonicalize_loc_id,
+    classify_loc_id_family,
+    translate_geometry_id_to_local_id,
+)
 
 _LOC_ID_RE = re.compile(r"^[A-Z]{3}(?:-[A-Z0-9]+)+$|^[A-Z]{3}$")
 _USA_ZIP_RE = re.compile(r"^\d{5}$")
@@ -353,6 +357,18 @@ def resolve_admin_text_to_loc_id(
         return postal_match
 
     if _LOC_ID_RE.match(value):
+        family = classify_loc_id_family(value)
+        if family == "event_or_entity":
+            return {
+                "query": value,
+                "match_type": "direct_event_loc_id",
+                "matches": {},
+                "deepest_resolved_loc_id": None,
+                "deepest_resolved_admin_level": None,
+                "should_persist_deepest_loc_id": False,
+                "loc_id_family": family,
+                "error": "event/entity loc_id requires exact-event routing",
+            }
         loc_id = translate_geometry_id_to_local_id(value)
         admin_level = infer_admin_level_from_loc_id(loc_id)
         key = _level_key(admin_level)
@@ -365,6 +381,7 @@ def resolve_admin_text_to_loc_id(
         return {
             "query": value,
             "match_type": "direct_loc_id",
+            "loc_id_family": family,
             "matches": {key: entry} if key else {},
             "deepest_resolved_loc_id": loc_id,
             "deepest_resolved_admin_level": key,

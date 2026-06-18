@@ -11,6 +11,12 @@ from shapely.strtree import STRtree
 
 from ..foundation_helpers import load_reference_json
 from .admin_hierarchy import infer_admin_level_from_loc_id
+from .geography_reference import (
+    classify_loc_id_family,
+    derive_eurostat_geo_level,
+    is_eez_loc_id,
+    is_water_body_loc_id,
+)
 
 _WATER_BODY_CODES_CACHE: dict[str, str] | None = None
 
@@ -33,34 +39,17 @@ def load_water_body_codes() -> dict[str, str]:
     _WATER_BODY_CODES_CACHE = codes
     return codes
 
-
-def is_water_body_loc_id(loc_id: str | None) -> bool:
-    value = str(loc_id or "").strip().upper()
-    return bool(value) and value in load_water_body_codes()
-
-
-def is_eez_loc_id(loc_id: str | None) -> bool:
-    """Marine EEZ loc_ids (EEZ-<ISO3>, EEZ-<ISO3>-<mrgid>, EEZ-MRGID-<n>).
-
-    EEZ zones are a marine overlay namespace: not part of the admin_0..admin_5
-    spine, but a valid grid-aggregation target alongside the X* water bodies.
-    They crosswalk back to canonical admin_0 sovereign/territory loc_ids via the
-    EEZ geometry bank's crosswalk, so they still participate in the shared loc_id
-    crosswalk model.
-    """
-    return str(loc_id or "").strip().upper().startswith("EEZ-")
-
-
 def classify_grid_target_loc_id(loc_id: str | None) -> str | None:
     value = str(loc_id or "").strip()
     if not value:
         return None
-    if is_water_body_loc_id(value):
+    family = classify_loc_id_family(value)
+    if family == "water_body":
         return "water_body"
-    # EEZ must be checked before the admin inference: "EEZ-USA" would otherwise
-    # be mis-parsed as an admin stack ("EEZ" + "USA").
-    if is_eez_loc_id(value):
+    if family == "marine_eez":
         return "marine_eez"
+    if family == "regional_base":
+        return derive_eurostat_geo_level(value)
     admin_level = infer_admin_level_from_loc_id(value)
     if admin_level is not None:
         return f"admin_{admin_level}"
