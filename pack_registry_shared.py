@@ -328,9 +328,57 @@ def tool_family_pack_detail(pack_id: str | None) -> dict:
     normalized = str(pack_id or "").strip()
     profile = PACK_REGISTRY.get(normalized) or {}
     entry = tool_family_catalog_entry(normalized)
+    tools = [dict(tool) for tool in (profile.get("tool_summaries") or ())]
+    preferred_tool = str((profile.get("routing") or {}).get("preferred_tool") or "").strip()
+    first_arguments: dict[str, object]
+    start_here: list[str]
+    important_rules: list[str]
+    if preferred_tool == "resolve_point":
+        first_arguments = {"lat": 34.0522, "lon": -118.2437}
+        start_here = [
+            "Call resolve_point first when you have coordinates and need a loc_id.",
+            "Take the returned deepest_resolved_loc_id or any ancestor from the stack.",
+            "Use that loc_id in pack filters.region_ids or with the other geography tools.",
+        ]
+        important_rules = [
+            "These are free utility tools, not a query_dataset pack.",
+            "Coordinates must be WGS84 decimal degrees.",
+            "resolve_point returns the deepest loc_id plus the full ancestor chain.",
+            "get_boundary returns bbox and centroid by default; request include_polygon only when you need the full geometry payload.",
+        ]
+    elif preferred_tool == "get_boundary":
+        first_arguments = {"loc_id": "USA-CA-037"}
+        start_here = [
+            "Call get_boundary when you already have a loc_id and need its extent.",
+            "Use bbox and centroid for lightweight indexing and clipping.",
+            "Request include_polygon only when you need the exact perimeter.",
+        ]
+        important_rules = [
+            "These are free utility tools, not a query_dataset pack.",
+            "Use canonical loc_ids such as USA, CAN-BC, or USA-CA-037.",
+            "BBox/centroid is the default response shape because full polygons can be large.",
+        ]
+    else:
+        first_arguments = {"loc_id": "USA-CA-037"}
+        start_here = [
+            "Call the preferred tool first, then expand to the other geography helpers as needed.",
+        ]
+        important_rules = [
+            "These are free utility tools, not a query_dataset pack.",
+        ]
     entry["mcp"] = {"name": profile.get("mcp_name"), "facade_url": f"/mcp/{normalized}"}
     entry["registry_meta"] = dict(profile.get("registry_meta") or {})
     entry["routing"] = dict(profile.get("routing") or {})
+    entry["quick_start"] = {
+        "why_it_exists": "Use the geography tool family to map coordinates and loc_ids onto the same shared loc_id spine the DaedalMap packs use.",
+        "start_here": start_here,
+        "first_query_template": {
+            "tool": preferred_tool,
+            "arguments": first_arguments,
+        },
+        "important_rules": important_rules,
+        "starter_tools": [tool.get("name") for tool in tools if tool.get("name")],
+    }
     entry["notes"] = (
         "Utility tool family on the DaedalMap loc_id spine. Free, and not a queryable "
         "dataset pack - call the listed tools directly rather than query_dataset."
