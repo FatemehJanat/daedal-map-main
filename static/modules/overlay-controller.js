@@ -2034,7 +2034,7 @@ export const OverlayController = {
     if (TimeSlider.timestampToYear) {
       return TimeSlider.timestampToYear(TimeSlider.currentTime);
     }
-    return new Date(TimeSlider.currentTime).getFullYear();
+    return new Date(TimeSlider.currentTime).getUTCFullYear();
   },
 
   /**
@@ -2205,8 +2205,8 @@ export const OverlayController = {
 
     if (!yearAlreadyLoaded) {
       console.log(`OverlayController: AUTO-FETCHING ${overlayId} for year ${year} (legacy handler)`);
-      const yearStart = new Date(year, 0, 1).getTime();
-      const yearEnd = new Date(year, 11, 31, 23, 59, 59).getTime();
+      const yearStart = Date.UTC(year, 0, 1, 0, 0, 0, 0);
+      const yearEnd = Date.UTC(year, 11, 31, 23, 59, 59, 999);
       await loadRangeData(overlayId, yearStart, yearEnd, OVERLAY_ENDPOINTS[overlayId]);
     }
 
@@ -2235,8 +2235,8 @@ export const OverlayController = {
       console.log(`OverlayController: Using cached weather ${overlayId} for year ${year}`);
     } else {
       // Load via the cache system (year boundaries for weather grid)
-      const yearStart = new Date(year, 0, 1).getTime();
-      const yearEnd = new Date(year, 11, 31, 23, 59, 59).getTime();
+      const yearStart = Date.UTC(year, 0, 1, 0, 0, 0, 0);
+      const yearEnd = Date.UTC(year, 11, 31, 23, 59, 59, 999);
       await loadRangeData(overlayId, yearStart, yearEnd, OVERLAY_ENDPOINTS[overlayId]);
     }
 
@@ -2359,8 +2359,8 @@ export const OverlayController = {
     console.log(`OverlayController: Auto-fetching ${overlayId} for year ${year}`);
 
     // Load the year data (year boundaries)
-    const yearStart = new Date(year, 0, 1).getTime();
-    const yearEnd = new Date(year, 11, 31, 23, 59, 59).getTime();
+    const yearStart = Date.UTC(year, 0, 1, 0, 0, 0, 0);
+    const yearEnd = Date.UTC(year, 11, 31, 23, 59, 59, 999);
     const loaded = await loadRangeData(overlayId, yearStart, yearEnd, OVERLAY_ENDPOINTS[overlayId]);
 
     // Check if overlay is still active
@@ -2658,18 +2658,18 @@ export const OverlayController = {
    */
   async loadWeatherGridOverlay(overlayId, config) {
     // Determine year based on current time slider position
-    let year = new Date().getFullYear();
+    let year = new Date().getUTCFullYear();
 
     if (TimeSlider?.currentTime) {
       const currentDate = new Date(TimeSlider.currentTime);
-      year = currentDate.getFullYear();
+      year = currentDate.getUTCFullYear();
     }
 
     console.log(`OverlayController: Loading weather grid ${overlayId} for year ${year}`);
 
     // Load data via cache system (year boundaries for weather grid)
-    const yearStart = new Date(year, 0, 1).getTime();
-    const yearEnd = new Date(year, 11, 31, 23, 59, 59).getTime();
+    const yearStart = Date.UTC(year, 0, 1, 0, 0, 0, 0);
+    const yearEnd = Date.UTC(year, 11, 31, 23, 59, 59, 999);
     await loadRangeData(overlayId, yearStart, yearEnd, OVERLAY_ENDPOINTS[overlayId]);
 
     // Get cached data and display (instances are created automatically)
@@ -2868,7 +2868,7 @@ export const OverlayController = {
 
       // Initialize TimeSlider for this overlay
       if (endpoint.yearField && TimeSlider && !this.suppressTimelineAutoShow) {
-        const currentYear = new Date().getFullYear();
+        const currentYear = new Date().getUTCFullYear();
         const minYear = 2000;
         const maxYear = currentYear;
 
@@ -3385,7 +3385,7 @@ export const OverlayController = {
       if (useLifecycleFiltering && TimeSlider?.currentTime) {
         this.renderFilteredData(overlayId, TimeSlider.currentTime, { useTimestamp: true });
       } else {
-        const year = TimeSlider?.currentTime ? this.getYearFromTime(TimeSlider.currentTime) : new Date().getFullYear();
+        const year = TimeSlider?.currentTime ? this.getYearFromTime(TimeSlider.currentTime) : new Date().getUTCFullYear();
         this.renderFilteredData(overlayId, year);
       }
     }
@@ -3604,8 +3604,8 @@ export const OverlayController = {
       if (!loadedYears[overlayId]) {
         loadedYears[overlayId] = new Set();
       }
-      const startYear = new Date(rangeMeta.start).getFullYear();
-      const endYear = new Date(rangeMeta.end).getFullYear();
+      const startYear = new Date(rangeMeta.start).getUTCFullYear();
+      const endYear = new Date(rangeMeta.end).getUTCFullYear();
       if (!yearRangeCache[overlayId]) {
         yearRangeCache[overlayId] = { min: startYear, max: endYear, available: [] };
       }
