@@ -2304,45 +2304,6 @@ export const TimeSlider = {
     const useUnifiedSpeed = this.speedSlider !== null;
 
     if (useUnifiedSpeed) {
-      if (!this.useTimestamps) {
-        const interval = this.getPlaybackInterval();
-        const tick = () => {
-          if (!this.isPlaying) return;
-
-          const effectiveMin = this.boundMinTime !== null ? this.boundMinTime : this.minTime;
-          const effectiveMax = this.boundMaxTime !== null ? this.boundMaxTime : this.maxTime;
-
-          let nextTime;
-          if (this.playDirection === 1) {
-            nextTime = this.getNextAvailableTime(this.currentTime);
-            if (nextTime <= this.currentTime || nextTime > effectiveMax) {
-              if (this.loopEnabled) {
-                nextTime = effectiveMin;
-              } else {
-                this.pause();
-                return;
-              }
-            }
-          } else {
-            nextTime = this.getPrevAvailableTime(this.currentTime);
-            if (nextTime >= this.currentTime || nextTime < effectiveMin) {
-              if (this.loopEnabled) {
-                nextTime = effectiveMax;
-              } else {
-                this.pause();
-                return;
-              }
-            }
-          }
-
-          this.setTime(nextTime, 'playback');
-          this.playTimeout = setTimeout(tick, interval);
-        };
-
-        tick();
-        return;
-      }
-
       // Phase 7: Unified speed control using stepsPerFrame
       const tick = () => {
         if (!this.isPlaying) return;
@@ -2356,8 +2317,19 @@ export const TimeSlider = {
         const effectiveMax = this.boundMaxTime !== null ? this.boundMaxTime : this.maxTime;
 
         let nextTime;
-        if (this.useIndexedScale) {
+        if (this.useIndexedScale || !this.useTimestamps) {
           nextTime = this.advanceDiscreteTime(this.currentTime, stepMs, this.playDirection);
+
+          if (!this.loopEnabled) {
+            if (this.playDirection === 1 && nextTime >= effectiveMax && this.currentTime >= effectiveMax) {
+              this.pause();
+              return;
+            }
+            if (this.playDirection === -1 && nextTime <= effectiveMin && this.currentTime <= effectiveMin) {
+              this.pause();
+              return;
+            }
+          }
         } else if (this.playDirection === 1) {
           nextTime = this.currentTime + stepMs;
           // Check for end (use effective max)

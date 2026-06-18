@@ -70,6 +70,9 @@ export function getActiveFiltersForOverlay(overlayId, overlayEndpoints) {
   if (config.params.min_area_km2) {
     filters.minAreaKm2 = parseFloat(config.params.min_area_km2);
   }
+  if (config.params.min_severity) {
+    filters.minSeverity = parseFloat(config.params.min_severity);
+  }
 
   return { ...filters, ...(activeFilters[overlayId] || {}) };
 }
