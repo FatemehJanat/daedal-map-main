@@ -23,7 +23,6 @@ async def get_floods_geojson(
     end: str = None,
     min_year: int = None,
     max_year: int = None,
-    min_severity: int = None,
     include_geometry: bool = False,
     loc_prefix: str = None,
     affected_loc_id: str = None,
@@ -71,9 +70,6 @@ async def get_floods_geojson(
                     df = df[df["year"] >= min_year]
                 if max_year:
                     df = df[df["year"] <= max_year]
-
-        if min_severity is not None and "severity" in df.columns:
-            df = df[df["severity"] >= min_severity]
 
         df = apply_location_filters(
             df,
@@ -146,7 +142,6 @@ async def get_floods_geojson(
                     "count": len(features),
                     "min_year": min_year,
                     "max_year": max_year or 2019,
-                    "min_severity": min_severity,
                     "include_geometry": include_geometry,
                 },
             }

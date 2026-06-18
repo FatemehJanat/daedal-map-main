@@ -1307,61 +1307,30 @@ export const ChatManager = {
         return false;
       }
 
-      const runLoadBatch = async (items, {
-        total,
-        packId: batchPackId,
-        warningPrefix,
-        concurrency = 3
-      } = {}) => {
-        const normalizedItems = Array.isArray(items) ? items.filter(Boolean) : [];
-        if (!normalizedItems.length) {
-          return { successCount: 0, loadedLabels: [] };
-        }
-        const safeConcurrency = Math.max(1, Math.min(Number(concurrency) || 1, normalizedItems.length));
-        let nextIndex = 0;
-        let completedCount = 0;
-        let successCount = 0;
-        const loadedLabels = [];
-
-        const worker = async () => {
-          while (nextIndex < normalizedItems.length) {
-            const currentIndex = nextIndex;
-            nextIndex += 1;
-            const childAction = normalizedItems[currentIndex];
-            try {
-              const childResult = await this.executeDefaultLoadAction(childAction, {
-                ...options,
-                onProgress: null,
-                suppressResultMessage: true,
-                packId: batchPackId || options.packId
-              });
-              if (childResult && (typeof childResult !== 'object' || childResult.ok !== false)) {
-                successCount += 1;
-                loadedLabels.push(formatDefaultLoadActionLabel(childAction));
-              }
-            } catch (error) {
-              console.warn(warningPrefix, childAction?.sourceId || childAction?.label || childAction, error);
-            } finally {
-              completedCount += 1;
-              options.onProgress?.({
-                index: completedCount,
-                total,
-                label: formatDefaultLoadActionLabel(childAction)
-              });
-            }
+      let successCount = 0;
+      const loadedLabels = [];
+      for (let index = 0; index < childActions.length; index += 1) {
+        const childAction = childActions[index];
+        options.onProgress?.({
+          index: index + 1,
+          total: childActions.length,
+          label: formatDefaultLoadActionLabel(childAction)
+        });
+        try {
+          const childResult = await this.executeDefaultLoadAction(childAction, {
+            ...options,
+            onProgress: null,
+            suppressResultMessage: true,
+            packId: packId || options.packId
+          });
+          if (childResult && (typeof childResult !== 'object' || childResult.ok !== false)) {
+            successCount += 1;
+            loadedLabels.push(formatDefaultLoadActionLabel(childAction));
           }
-        };
-
-        await Promise.all(Array.from({ length: safeConcurrency }, () => worker()));
-        return { successCount, loadedLabels };
-      };
-
-      const { successCount, loadedLabels } = await runLoadBatch(childActions, {
-        total: childActions.length,
-        packId: packId || options.packId,
-        warningPrefix: 'Pack default source action failed:',
-        concurrency: 3
-      });
+        } catch (error) {
+          console.warn('Pack default source action failed:', childAction?.sourceId || childAction, error);
+        }
+      }
 
       if (successCount > 0 && !options.suppressResultMessage) {
         const labelText = joinLabelsForMessage(loadedLabels);
@@ -1382,60 +1351,30 @@ export const ChatManager = {
     if (action.type === 'multi_default_load' && Array.isArray(action.actions)) {
       const actions = action.actions.filter(Boolean);
       const requestedCount = Number(action._requestedPackCount) || actions.length;
-      const runLoadBatch = async (items, {
-        total,
-        packId: batchPackId,
-        warningPrefix,
-        concurrency = 3
-      } = {}) => {
-        const normalizedItems = Array.isArray(items) ? items.filter(Boolean) : [];
-        if (!normalizedItems.length) {
-          return { successCount: 0, loadedLabels: [] };
-        }
-        const safeConcurrency = Math.max(1, Math.min(Number(concurrency) || 1, normalizedItems.length));
-        let nextIndex = 0;
-        let completedCount = 0;
-        let successCount = 0;
-        const loadedLabels = [];
+      let successCount = 0;
+      const loadedLabels = [];
 
-        const worker = async () => {
-          while (nextIndex < normalizedItems.length) {
-            const currentIndex = nextIndex;
-            nextIndex += 1;
-            const childAction = normalizedItems[currentIndex];
-            try {
-              const childResult = await this.executeDefaultLoadAction(childAction, {
-                ...options,
-                onProgress: null,
-                suppressResultMessage: true,
-                packId: batchPackId || options.packId
-              });
-              if (childResult && (typeof childResult !== 'object' || childResult.ok !== false)) {
-                successCount += 1;
-                loadedLabels.push(formatDefaultLoadActionLabel(childAction));
-              }
-            } catch (error) {
-              console.warn(warningPrefix, childAction?.sourceId || childAction?.label || childAction, error);
-            } finally {
-              completedCount += 1;
-              options.onProgress?.({
-                index: completedCount,
-                total,
-                label: formatDefaultLoadActionLabel(childAction)
-              });
-            }
+      for (let index = 0; index < actions.length; index += 1) {
+        const childAction = actions[index];
+        options.onProgress?.({
+          index: index + 1,
+          total: requestedCount,
+          label: formatDefaultLoadActionLabel(childAction)
+        });
+        try {
+          const childResult = await this.executeDefaultLoadAction(childAction, {
+            ...options,
+            onProgress: null,
+            suppressResultMessage: true
+          });
+          if (childResult && (typeof childResult !== 'object' || childResult.ok !== false)) {
+            successCount += 1;
+            loadedLabels.push(formatDefaultLoadActionLabel(childAction));
           }
-        };
-
-        await Promise.all(Array.from({ length: safeConcurrency }, () => worker()));
-        return { successCount, loadedLabels };
-      };
-
-      const { successCount, loadedLabels } = await runLoadBatch(actions, {
-        total: requestedCount,
-        warningPrefix: 'Default load action failed:',
-        concurrency: 3
-      });
+        } catch (error) {
+          console.warn('Default load action failed:', childAction?.label || childAction, error);
+        }
+      }
 
       if (successCount > 0 && !options.suppressResultMessage) {
         const labelText = joinLabelsForMessage(loadedLabels);
