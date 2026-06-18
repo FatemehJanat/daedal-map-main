@@ -1,6 +1,7 @@
 """Wildfire disaster endpoints."""
 
 from fastapi import APIRouter
+import pandas as pd
 
 from mapmover.disaster_filters import apply_location_filters, get_default_min_year
 from mapmover.duckdb_helpers import cache_get, cache_set, duckdb_available, is_cloud_mode, is_default_preload_range, make_cache_key, make_preload_cache_key, parquet_available, path_to_uri, select_filtered_partitioned_rows, select_rows
@@ -11,6 +12,13 @@ from .helpers import filter_by_time_range, msgpack_error, msgpack_response
 
 
 router = APIRouter()
+
+
+WILDFIRE_SUMMARY_SOURCES = (
+    ("global_fire_atlas", GLOBAL_DIR / "disasters/wildfires/events.parquet"),
+    ("wildfires_usa", GLOBAL_DIR / "disasters/wildfires/sources/usa/fires_enriched.parquet"),
+    ("can_wildfires", GLOBAL_DIR / "disasters/wildfires/sources/can/fires_enriched.parquet"),
+)
 
 
 def _resolve_first_existing(*paths):
@@ -71,6 +79,90 @@ def wildfire_year_from_path(path) -> int | None:
         return None
 
 
+def _load_wildfire_event_record(event_id: str):
+    """Return the first matching wildfire event row across all event sources."""
+    normalized_event_id = str(event_id or "").strip()
+    if not normalized_event_id:
+        return None
+
+    for source_id, summary_path in WILDFIRE_SUMMARY_SOURCES:
+        if not parquet_available(summary_path):
+            continue
+        try:
+            if duckdb_available():
+                df = select_rows(
+                    summary_path,
+                    exact_filters={"event_id": normalized_event_id},
+                )
+            else:
+                df = pd.read_parquet(summary_path, filters=[("event_id", "=", normalized_event_id)])
+        except Exception:
+            continue
+        if df is None or df.empty:
+            continue
+        row = df.iloc[0].to_dict()
+        row["source_id"] = source_id
+        return row
+    return None
+
+
+def _wildfire_source_supports_progression(source_id: str, row: dict | None = None) -> bool:
+    if str(source_id or "").strip() != "global_fire_atlas":
+        return False
+    if isinstance(row, dict):
+        value = row.get("has_progression")
+        if value is not None and not pd.isna(value):
+            try:
+                return bool(value)
+            except Exception:
+                return False
+    return True
+
+
+def _extract_wildfire_event_year(row: dict | None) -> int | None:
+    if not isinstance(row, dict):
+        return None
+    value = row.get("year")
+    if value is not None and not pd.isna(value):
+        try:
+            return int(value)
+        except Exception:
+            pass
+    timestamp_value = row.get("timestamp")
+    if timestamp_value is None or pd.isna(timestamp_value):
+        return None
+    try:
+        ts = pd.to_datetime(timestamp_value, errors="coerce")
+    except Exception:
+        return None
+    if ts is None or pd.isna(ts):
+        return None
+    return int(ts.year)
+
+
+def _candidate_wildfire_detail_years(resolved_year: int | None) -> list[int]:
+    """Return likely year partitions for detail lookups, including year edges."""
+    available_years = {int(year) for year, _path in list_wildfire_year_files()}
+    if resolved_year is None:
+        return sorted(available_years)
+
+    candidates: list[int] = []
+    for candidate_year in (resolved_year - 1, resolved_year, resolved_year + 1):
+        if candidate_year in available_years and candidate_year not in candidates:
+            candidates.append(candidate_year)
+    return candidates
+
+
+def _split_wildfire_detail_years(resolved_year: int | None) -> tuple[list[int], list[int]]:
+    """Return exact-year candidates first, with boundary years as fallback."""
+    if resolved_year is None:
+        return [], []
+    exact_years = _candidate_wildfire_detail_years(resolved_year)
+    primary = [year for year in exact_years if year == resolved_year]
+    fallback = [year for year in exact_years if year != resolved_year]
+    return primary, fallback
+
+
 def _resolve_wildfire_event_year(event_id: str, year: int | None = None) -> int | None:
     """Resolve a wildfire event's year from summary data before scanning detail files."""
     import pandas as pd
@@ -78,6 +170,11 @@ def _resolve_wildfire_event_year(event_id: str, year: int | None = None) -> int 
 
     if year is not None:
         return year
+
+    event_row = _load_wildfire_event_record(event_id)
+    resolved_from_event = _extract_wildfire_event_year(event_row)
+    if resolved_from_event is not None:
+        return resolved_from_event
 
     summary_candidates = [
         GLOBAL_DIR / "disasters/wildfires/fires.parquet",
@@ -98,26 +195,25 @@ def _resolve_wildfire_event_year(event_id: str, year: int | None = None) -> int 
             if duckdb_available():
                 df = select_rows(
                     summary_path,
-                    columns=["event_id", "timestamp", "year"],
+                    columns=["event_id", "timestamp"],
                     exact_filters={"event_id": event_id},
                 )
             else:
                 df = pq.read_table(
                     summary_path,
-                    columns=["event_id", "timestamp", "year"],
+                    columns=["event_id", "timestamp"],
                     filters=[("event_id", "=", event_id)],
                 ).to_pandas()
             if df is None or df.empty:
                 continue
             row = df.iloc[0]
-            if pd.notna(row.get("year")):
-                return int(row["year"])
             ts = pd.to_datetime(row.get("timestamp"), errors="coerce")
             if pd.notna(ts):
                 return int(ts.year)
         except Exception:
             continue
 
+    matched_years: list[int] = []
     for candidate_year, summary_path in list_wildfire_year_files():
         if not parquet_available(summary_path):
             continue
@@ -129,14 +225,16 @@ def _resolve_wildfire_event_year(event_id: str, year: int | None = None) -> int 
                     exact_filters={"event_id": event_id},
                 )
                 if df is not None and not df.empty:
-                    return candidate_year
+                    matched_years.append(candidate_year)
             else:
                 table = pq.read_table(summary_path, columns=["event_id"], filters=[("event_id", "=", event_id)])
                 if table.num_rows > 0:
-                    return candidate_year
+                    matched_years.append(candidate_year)
         except Exception:
             continue
 
+    if len(matched_years) == 1:
+        return matched_years[0]
     return None
 
 
@@ -498,38 +596,61 @@ async def get_wildfire_perimeter(event_id: str, year: int = None):
     import pyarrow.parquet as pq
 
     try:
+        event_row = _load_wildfire_event_record(event_id)
+        if event_row is not None and event_row.get("source_id") in {"wildfires_usa", "can_wildfires"}:
+            perimeter_value = event_row.get("perimeter")
+            if perimeter_value is not None and not pd.isna(perimeter_value):
+                perimeter = json_lib.loads(perimeter_value) if isinstance(perimeter_value, str) else perimeter_value
+                props = {
+                    "event_id": str(event_row.get("event_id") or event_id),
+                    "source_id": str(event_row.get("source_id") or ""),
+                }
+                event_year = _extract_wildfire_event_year(event_row)
+                if event_year is not None:
+                    props["year"] = event_year
+                fire_name = str(event_row.get("fire_name") or "").strip()
+                if fire_name:
+                    props["fire_name"] = fire_name
+                return msgpack_response({"type": "Feature", "geometry": perimeter, "properties": props})
+
         main_path = GLOBAL_DIR / "disasters/wildfires/fires.parquet"
         year_files = list_wildfire_year_files()
         resolved_year = _resolve_wildfire_event_year(event_id, year)
 
-        candidate_files = []
-        if resolved_year is not None:
-            candidate_files = [path for yr, path in year_files if yr == resolved_year]
-        else:
-            candidate_files = [path for _, path in year_files]
-
+        primary_years, fallback_years = _split_wildfire_detail_years(resolved_year)
         matches = []
-        for year_file in candidate_files:
-            try:
-                if duckdb_available():
-                    df = select_rows(
-                        year_file,
-                        columns=["event_id", "perimeter"],
-                        exact_filters={"event_id": event_id},
-                    )
-                    if df.empty:
-                        continue
-                    perimeter_str = df.iloc[0].get("perimeter")
-                else:
-                    table = pq.read_table(year_file, columns=["event_id", "perimeter"], filters=[("event_id", "=", event_id)])
-                    if table.num_rows == 0:
-                        continue
-                    perimeter_str = table.column("perimeter")[0].as_py()
-            except Exception:
-                continue
-            if perimeter_str:
-                perimeter = json_lib.loads(perimeter_str) if isinstance(perimeter_str, str) else perimeter_str
-                matches.append((wildfire_year_from_path(year_file), perimeter))
+        candidate_groups = []
+        if primary_years:
+            candidate_groups.append([path for yr, path in year_files if yr in primary_years])
+        if fallback_years:
+            candidate_groups.append([path for yr, path in year_files if yr in fallback_years])
+        if not candidate_groups:
+            candidate_groups = [[path for _, path in year_files]]
+
+        for candidate_files in candidate_groups:
+            for year_file in candidate_files:
+                try:
+                    if duckdb_available():
+                        df = select_rows(
+                            year_file,
+                            columns=["event_id", "perimeter"],
+                            exact_filters={"event_id": event_id},
+                        )
+                        if df.empty:
+                            continue
+                        perimeter_str = df.iloc[0].get("perimeter")
+                    else:
+                        table = pq.read_table(year_file, columns=["event_id", "perimeter"], filters=[("event_id", "=", event_id)])
+                        if table.num_rows == 0:
+                            continue
+                        perimeter_str = table.column("perimeter")[0].as_py()
+                except Exception:
+                    continue
+                if perimeter_str:
+                    perimeter = json_lib.loads(perimeter_str) if isinstance(perimeter_str, str) else perimeter_str
+                    matches.append((wildfire_year_from_path(year_file), perimeter))
+            if matches:
+                break
 
         if len(matches) > 1 and year is None:
             years = [y for y, _ in matches if y is not None]
@@ -569,6 +690,10 @@ async def get_wildfire_perimeter(event_id: str, year: int = None):
             perimeter = json_lib.loads(perimeter_str) if isinstance(perimeter_str, str) else perimeter_str
             return msgpack_response({"type": "Feature", "geometry": perimeter, "properties": {"event_id": event_id}})
 
+        if event_row is not None:
+            source_label = str(event_row.get("source_id") or "wildfires").strip()
+            return msgpack_error(f"No perimeter data published for wildfire {event_id} in source {source_label}", 404)
+
         return msgpack_error("Wildfire data not available", 404)
     except Exception as e:
         logger.error(f"Error fetching wildfire perimeter: {e}")
@@ -582,6 +707,29 @@ async def get_wildfire_progression(event_id: str, year: int = None):
     import pyarrow.parquet as pq
 
     try:
+        event_row = _load_wildfire_event_record(event_id)
+        if event_row is not None:
+            source_id = str(event_row.get("source_id") or "").strip()
+            if not _wildfire_source_supports_progression(source_id, event_row):
+                source_note = (
+                    "Daily progression is currently published for the global fire atlas lane only."
+                    if source_id in {"wildfires_usa", "can_wildfires"}
+                    else "No progression data available for this wildfire event."
+                )
+                return msgpack_response(
+                    {
+                        "type": "FeatureCollection",
+                        "features": [],
+                        "metadata": {
+                            "event_id": event_id,
+                            "event_type": "wildfire",
+                            "source_id": source_id or None,
+                            "total_count": 0,
+                            "error": source_note,
+                        },
+                    }
+                )
+
         progression_path = GLOBAL_DIR / "disasters/wildfires"
         resolved_year = _resolve_wildfire_event_year(event_id, year)
         if not is_cloud_mode() and not progression_path.exists():
@@ -598,26 +746,33 @@ async def get_wildfire_progression(event_id: str, year: int = None):
                 }
             )
 
-        if resolved_year is not None:
-            candidate_files = [progression_path / f"fire_progression_{resolved_year}.parquet"]
-        else:
-            candidate_files = sorted(progression_path.glob("fire_progression_*.parquet"), reverse=True)
-
+        primary_years, fallback_years = _split_wildfire_detail_years(resolved_year)
         matches = []
-        for prog_file in candidate_files:
-            if not is_cloud_mode() and not prog_file.exists():
-                continue
-            if duckdb_available():
-                current_df = select_rows(
-                    prog_file,
-                    exact_filters={"event_id": str(event_id)},
-                )
-                if not current_df.empty:
-                    matches.append((wildfire_year_from_path(prog_file), current_df))
-            else:
-                current = pq.read_table(prog_file, filters=[("event_id", "=", str(event_id))])
-                if current.num_rows > 0:
-                    matches.append((wildfire_year_from_path(prog_file), current.to_pandas()))
+        candidate_groups = []
+        if primary_years:
+            candidate_groups.append([progression_path / f"fire_progression_{candidate_year}.parquet" for candidate_year in primary_years])
+        if fallback_years:
+            candidate_groups.append([progression_path / f"fire_progression_{candidate_year}.parquet" for candidate_year in fallback_years])
+        if not candidate_groups:
+            candidate_groups = [sorted(progression_path.glob("fire_progression_*.parquet"), reverse=True)]
+
+        for candidate_files in candidate_groups:
+            for prog_file in candidate_files:
+                if not is_cloud_mode() and not prog_file.exists():
+                    continue
+                if duckdb_available():
+                    current_df = select_rows(
+                        prog_file,
+                        exact_filters={"event_id": str(event_id)},
+                    )
+                    if not current_df.empty:
+                        matches.append((wildfire_year_from_path(prog_file), current_df))
+                else:
+                    current = pq.read_table(prog_file, filters=[("event_id", "=", str(event_id))])
+                    if current.num_rows > 0:
+                        matches.append((wildfire_year_from_path(prog_file), current.to_pandas()))
+            if matches:
+                break
 
         if len(matches) > 1 and year is None:
             years = [y for y, _ in matches if y is not None]
@@ -669,6 +824,7 @@ async def get_wildfire_progression(event_id: str, year: int = None):
                 "metadata": {
                     "event_id": event_id,
                     "event_type": "wildfire",
+                    "source_id": "global_fire_atlas",
                     "total_count": len(features),
                     "year": matched_year,
                     "time_range": {

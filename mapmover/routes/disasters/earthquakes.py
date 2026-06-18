@@ -174,6 +174,65 @@ def _load_earthquakes_duckdb(
     return run_df(sql, params)
 
 
+def _load_earthquake_event_row(event_id: str) -> pd.DataFrame:
+    events_path = GLOBAL_DIR / "disasters/earthquakes/events.parquet"
+    if duckdb_available():
+        return _load_earthquakes_duckdb(event_id=event_id)
+    df = pd.read_parquet(events_path)
+    return df[df["event_id"] == event_id].copy()
+
+
+def _resolve_aftershock_anchor_event_id(event_id: str) -> tuple[str | None, pd.DataFrame]:
+    main_df = _load_earthquake_event_row(event_id)
+    if len(main_df) == 0:
+        return None, main_df
+
+    seed_row = main_df.iloc[0]
+    mainshock_id = seed_row.get("mainshock_id")
+    if mainshock_id:
+        anchor_df = _load_earthquake_event_row(str(mainshock_id))
+        if len(anchor_df) > 0:
+            return str(mainshock_id), anchor_df
+    return event_id, main_df
+
+
+def _build_aftershock_feature_collection(event_id: str, min_magnitude: float = None) -> dict | None:
+    events_path = GLOBAL_DIR / "disasters/earthquakes/events.parquet"
+    if not parquet_available(events_path):
+        return None
+
+    anchor_event_id, mainshock_df = _resolve_aftershock_anchor_event_id(event_id)
+    if not anchor_event_id or len(mainshock_df) == 0:
+        return None
+
+    if duckdb_available():
+        aftershocks_df = _load_earthquakes_duckdb(mainshock_id=anchor_event_id, min_magnitude=min_magnitude)
+        result_df = pd.concat([mainshock_df, aftershocks_df], ignore_index=True)
+        if min_magnitude is not None:
+            result_df = result_df[(result_df["event_id"] == anchor_event_id) | (result_df["magnitude"] >= min_magnitude)]
+    else:
+        df = pd.read_parquet(events_path)
+        aftershocks_df = df[df["mainshock_id"] == anchor_event_id]
+        result_df = pd.concat([mainshock_df, aftershocks_df], ignore_index=True)
+        if min_magnitude is not None:
+            result_df = result_df[(result_df["event_id"] == anchor_event_id) | (result_df["magnitude"] >= min_magnitude)]
+
+    result_df = ensure_year_column(result_df)
+    features = build_geojson_features(result_df, get_earthquake_property_builders())
+
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+        "metadata": {
+            "query_event_id": event_id,
+            "event_id": anchor_event_id,
+            "event_type": "earthquake",
+            "total_count": len(features),
+            "aftershock_count": max(0, len(features) - 1),
+        },
+    }
+
+
 @router.get("/api/earthquakes/geojson")
 async def get_earthquakes_geojson(
     year: int = None,
@@ -298,54 +357,37 @@ async def get_earthquake_sequence(sequence_id: str, min_magnitude: float = None)
 async def get_earthquake_aftershocks(event_id: str, min_magnitude: float = None):
     """Get mainshock + aftershocks for a specific event ID."""
     try:
-        events_path = GLOBAL_DIR / "disasters/earthquakes/events.parquet"
-        if not parquet_available(events_path):
+        payload = _build_aftershock_feature_collection(event_id, min_magnitude=min_magnitude)
+        if payload is None:
             return msgpack_error("Earthquake data not available", 404)
-
-        if duckdb_available():
-            mainshock_df = _load_earthquakes_duckdb(event_id=event_id)
-            if len(mainshock_df) == 0:
-                return msgpack_error(f"Event {event_id} not found", 404)
-            aftershocks_df = _load_earthquakes_duckdb(mainshock_id=event_id, min_magnitude=min_magnitude)
-            result_df = pd.concat([mainshock_df, aftershocks_df], ignore_index=True)
-            if min_magnitude is not None:
-                result_df = result_df[(result_df["event_id"] == event_id) | (result_df["magnitude"] >= min_magnitude)]
-        else:
-            df = pd.read_parquet(events_path)
-
-            mainshock_df = df[df["event_id"] == event_id]
-            if len(mainshock_df) == 0:
-                return msgpack_error(f"Event {event_id} not found", 404)
-
-            aftershocks_df = df[df["mainshock_id"] == event_id]
-            result_df = pd.concat([mainshock_df, aftershocks_df], ignore_index=True)
-
-            if min_magnitude is not None:
-                result_df = result_df[result_df["magnitude"] >= min_magnitude]
-
-        if len(mainshock_df) == 0:
+        if payload.get("metadata", {}).get("total_count", 0) == 0:
             return msgpack_error(f"Event {event_id} not found", 404)
-
-        result_df = ensure_year_column(result_df)
-        features = build_geojson_features(result_df, get_earthquake_property_builders())
-
-        logger.info(f"Returning {len(features)} events for mainshock {event_id}")
-        return msgpack_response(
-            {
-                "type": "FeatureCollection",
-                "features": features,
-                "metadata": {
-                    "event_id": event_id,
-                    "event_type": "earthquake",
-                    "total_count": len(features),
-                    "aftershock_count": len(features) - 1,
-                },
-            }
+        logger.info(
+            "Returning %s events for aftershock query %s anchored at %s",
+            payload["metadata"]["total_count"],
+            event_id,
+            payload["metadata"]["event_id"],
         )
+        return msgpack_response(payload)
 
     except Exception as e:
         logger.error(f"Error fetching aftershocks for {event_id}: {e}")
         return msgpack_error(str(e), 500)
+
+
+@router.get("/api/v1/earthquakes/aftershocks/{event_id}")
+async def get_earthquake_aftershocks_json(event_id: str, min_magnitude: float = None):
+    """JSON API helper for mainshock + aftershocks for any earthquake in a sequence."""
+    try:
+        payload = _build_aftershock_feature_collection(event_id, min_magnitude=min_magnitude)
+        if payload is None:
+            return JSONResponse({"error": "Earthquake data not available"}, status_code=404)
+        if payload.get("metadata", {}).get("total_count", 0) == 0:
+            return JSONResponse({"error": f"Event {event_id} not found"}, status_code=404)
+        return JSONResponse(payload)
+    except Exception as e:
+        logger.error(f"Error fetching earthquake aftershocks JSON for {event_id}: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @router.get("/api/earthquakes/{event_id}/related-tsunamis")

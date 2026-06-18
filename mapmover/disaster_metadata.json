@@ -92,21 +92,20 @@
     "has_event_areas": true,
     "geographic_sources": {
       "USA": {
-        "file": "countries/USA/wildfires/fires_enriched.parquet",
-        "year_range": [1984, 2024],
-        "record_count": 30733,
+        "file": "global/disasters/wildfires/sources/usa/fires_enriched.parquet",
+        "year_range": [1984, 2026],
+        "record_count": 32515,
         "priority": 1
       },
       "CAN": {
-        "file": "countries/CAN/cnfdb/fires_enriched.parquet",
-        "year_range": [1930, 2023],
-        "record_count": 442308,
+        "file": "global/disasters/wildfires/sources/can/fires_enriched.parquet",
+        "year_range": [1930, 2024],
+        "record_count": 442159,
         "priority": 1
       },
       "_default": {
-        "file": "global/disasters/wildfires/by_year_enriched/",
-        "partitioned_by": "year",
-        "year_range": [2002, 2024],
+        "file": "global/disasters/wildfires/events.parquet",
+        "year_range": [2015, 2024],
         "priority": 2
       }
     },
