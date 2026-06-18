@@ -7,6 +7,9 @@ import json
 from mapmover.aggregation_system import validate_aggregation_policy
 from mapmover.data_loading import load_catalog, load_source_metadata
 from mapmover.runtime.order_taker_prompt import get_source_visibility_mode
+from mapmover.runtime.order_semantics import (
+    source_supports_aggregate_mode as source_supports_aggregate_mode_impl,
+)
 from mapmover.runtime.query_intent_primitives import query_prefers_event_source
 from mapmover.runtime.source_hints import (
     get_hint_alias_terms,
@@ -548,6 +551,131 @@ def _iter_pack_family_source_ids(hints: dict | None) -> list[str]:
     return source_ids
 
 
+def _query_requests_over_time_analysis(hints: dict | None) -> bool:
+    if not isinstance(hints, dict):
+        return False
+    time_hints = hints.get("time") or {}
+    if not isinstance(time_hints, dict):
+        return False
+
+    if time_hints.get("is_time_series"):
+        return True
+
+    pattern_type = str(time_hints.get("pattern_type") or "").strip().lower()
+    if pattern_type in {"trend", "historical"}:
+        return True
+
+    year_start = time_hints.get("year_start")
+    year_end = time_hints.get("year_end")
+    return bool(year_start and year_end and year_start != year_end)
+
+
+def _score_metadata_guided_source(query: str, metadata: dict) -> tuple[float, str]:
+    metric = _select_metadata_guided_metric(query, metadata)
+    query_alias_matches = get_query_alias_matches(metadata, query)
+    inferred_geo_level = infer_requested_geo_level_from_query(query, metadata)
+    if not (metric or query_alias_matches or inferred_geo_level):
+        return 0.0, ""
+
+    score = 0.0
+    if metric:
+        score += 10.0
+    if query_alias_matches:
+        score += float(len(query_alias_matches) * 2)
+    score += float(get_routing_hints(metadata).get("query_priority", 0.0) or 0.0)
+    if inferred_geo_level:
+        score += 1.0
+    return score, metric
+
+
+def _build_metadata_guided_pack_aggregate_order(user_query: str, hints: dict | None) -> dict | None:
+    if not user_query or not isinstance(hints, dict):
+        return None
+    if not _query_requests_over_time_analysis(hints):
+        return None
+
+    detected_source = hints.get("detected_source") or {}
+    pack_id = str(detected_source.get("pack_id") or "").strip()
+    if not pack_id:
+        return None
+
+    catalog = load_catalog() or {}
+    pack_sources = [
+        src for src in (catalog.get("sources") or [])
+        if str(src.get("pack_id") or "").strip() == pack_id
+    ]
+    if not pack_sources:
+        return None
+
+    best_source = None
+    best_metadata = None
+    best_metric = ""
+    best_score = 0.0
+    for src in pack_sources:
+        if not source_supports_aggregate_mode_impl(src):
+            continue
+        source_id = str(src.get("source_id") or "").strip()
+        if not source_id:
+            continue
+        metadata = load_source_metadata(source_id) or {}
+        if not metadata:
+            continue
+        score, metric = _score_metadata_guided_source(user_query, metadata)
+        if score <= 0.0:
+            continue
+        if score > best_score:
+            best_source = src
+            best_metadata = metadata
+            best_metric = metric
+            best_score = score
+
+    if not best_source or not best_metadata or not best_metric:
+        return None
+
+    location = hints.get("location") or {}
+    iso3 = str(location.get("iso3") or "").strip()
+    time_hints = hints.get("time") or {}
+    year_start = time_hints.get("year_start")
+    year_end = time_hints.get("year_end")
+    inferred_geo_level = infer_requested_geo_level_from_query(user_query, best_metadata)
+
+    item = {
+        "source_id": str(best_source.get("source_id") or "").strip(),
+        "pack_id": pack_id,
+        "_hints": {"original_query": user_query},
+        "metric": best_metric,
+    }
+    if inferred_geo_level:
+        item["geo_level"] = inferred_geo_level
+    if iso3:
+        item["region"] = iso3
+    if year_start and year_end:
+        item["year_start"] = year_start
+        item["year_end"] = year_end
+    elif year_start:
+        item["year"] = year_start
+
+    metric_info = (best_metadata.get("metrics") or {}).get(best_metric) or {}
+    metric_name = str(metric_info.get("name") or best_metric).strip()
+    source_name = str(best_metadata.get("source_name") or item["source_id"]).strip()
+    summary = f"{metric_name} from {source_name}"
+    if item.get("year_start") and item.get("year_end"):
+        summary += f", {item['year_start']}-{item['year_end']}"
+    elif item.get("year"):
+        summary += f" for {item['year']}"
+    if item.get("region"):
+        summary += f" in {item['region']}"
+
+    return {
+        "type": "order",
+        "order": {
+            "summary": summary,
+            "items": [item],
+        },
+        "summary": summary,
+    }
+
+
 def _select_metadata_guided_source(user_query: str, hints: dict | None) -> tuple[str, dict] | tuple[None, None]:
     best_source_id = None
     best_metadata = None
@@ -843,6 +971,9 @@ def _apply_metadata_guided_response_normalization(result: dict, *, user_query: s
         return result
     if not hints or not isinstance(hints, dict):
         return result
+    aggregate_guided_order = _build_metadata_guided_pack_aggregate_order(user_query, hints)
+    if aggregate_guided_order is not None:
+        return aggregate_guided_order
     items = (((result.get("order") or {}) if isinstance(result.get("order"), dict) else {}).get("items") or [])
     source_id, metadata = _select_metadata_guided_source(user_query, hints)
     if not source_id or not metadata:
