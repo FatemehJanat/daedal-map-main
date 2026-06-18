@@ -129,9 +129,6 @@ export function buildRangeUrl(endpoint, startMs, endMs, overlayId = null) {
   if (overrides.minVei !== undefined) {
     effectiveParams.min_vei = String(overrides.minVei);
   }
-  if (overrides.minSeverity !== undefined) {
-    effectiveParams.min_severity = String(overrides.minSeverity);
-  }
   if (overrides.locPrefix !== undefined) {
     effectiveParams.loc_prefix = overrides.locPrefix;
   }

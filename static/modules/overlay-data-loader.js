@@ -266,12 +266,6 @@ export async function loadRangeData(overlayId, startMs, endMs, endpoint, signal 
         ? Math.min(current, effectiveFilters.min_area_km2)
         : effectiveFilters.min_area_km2;
     }
-    if (effectiveFilters.min_severity !== undefined) {
-      const current = loadedFilters[overlayId].minSeverity;
-      loadedFilters[overlayId].minSeverity = current !== undefined
-        ? Math.min(current, effectiveFilters.min_severity)
-        : effectiveFilters.min_severity;
-    }
 
     return featureCount > 0;
   } catch (error) {
