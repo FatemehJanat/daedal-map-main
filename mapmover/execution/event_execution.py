@@ -211,6 +211,13 @@ def execute_event_order_impl(
                 how="left",
                 suffixes=("", "_pos"),
             )
+        elif df.empty:
+            # Storm-level hurricane queries may legitimately filter down to zero
+            # rows before any representative track point can be attached. Keep
+            # the response empty instead of turning that into a coordinate error.
+            df = df.copy()
+            df["latitude"] = pd.Series(dtype="float64")
+            df["longitude"] = pd.Series(dtype="float64")
 
     lat_col, lon_col = get_coordinate_columns_func(df)
     if not lat_col or not lon_col:
