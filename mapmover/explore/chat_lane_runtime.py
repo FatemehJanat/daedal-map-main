@@ -49,9 +49,9 @@ def _format_loaded_filter_value(overlay_id: str, loaded_filters: dict) -> str:
         if min_severity is not None:
             parts.append(f"severity >= {min_severity}")
     elif overlay_id == "tsunamis":
-        min_height = filters.get("minHeightM")
-        if min_height is not None:
-            parts.append(f"height >= {min_height} m")
+        min_runup = filters.get("minRunupM")
+        if min_runup is not None:
+            parts.append(f"runup >= {min_runup} m")
 
     return ", ".join(parts) if parts else "no extra severity filter"
 

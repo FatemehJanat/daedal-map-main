@@ -73,9 +73,6 @@ export function getActiveFiltersForOverlay(overlayId, overlayEndpoints) {
   if (config.params.min_severity) {
     filters.minSeverity = parseFloat(config.params.min_severity);
   }
-  if (config.params.min_height_m) {
-    filters.minHeightM = parseFloat(config.params.min_height_m);
-  }
 
   return { ...filters, ...(activeFilters[overlayId] || {}) };
 }

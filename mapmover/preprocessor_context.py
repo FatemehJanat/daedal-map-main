@@ -42,9 +42,6 @@ def format_filter_description(filters: dict, overlay_type: str) -> str:
     elif overlay_type == "floods":
         if filters.get("minSeverity") is not None:
             parts.append(f"severity >= {filters['minSeverity']}")
-    elif overlay_type == "tsunamis":
-        if filters.get("minHeightM") is not None:
-            parts.append(f"height >= {filters['minHeightM']} m")
 
     return ", ".join(parts) if parts else "no filters"
 

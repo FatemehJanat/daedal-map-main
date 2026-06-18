@@ -55,7 +55,7 @@ async def get_tornadoes_geojson(
             if year is not None and start is None and end is None and loc_prefix is None:
                 df = select_filtered_event_rows_cached(
                     events_path,
-                    cache_key=make_cache_key("tornadoes", year=year, min_scale=min_scale),
+                    cache_key=make_cache_key("tornadoes", year=year),
                     year=year,
                 )
             elif (
@@ -64,7 +64,7 @@ async def get_tornadoes_geojson(
             ):
                 df = select_filtered_event_rows_cached(
                     events_path,
-                    cache_key=make_preload_cache_key("tornadoes", min_scale=min_scale),
+                    cache_key=make_preload_cache_key("tornadoes"),
                     permanent=True,
                     start=start,
                     end=end,

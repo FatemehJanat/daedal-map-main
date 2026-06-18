@@ -4,7 +4,7 @@ from fastapi import APIRouter
 
 from mapmover.disaster_filters import apply_location_filters, get_default_min_year
 from mapmover.duckdb_helpers import (
-    duckdb_available, is_cloud_mode, is_default_preload_range, make_cache_key, make_preload_cache_key, parquet_available,
+    duckdb_available, is_cloud_mode, make_cache_key, parquet_available,
     select_filtered_event_rows, select_filtered_event_rows_cached,
 )
 from mapmover.logging_analytics import logger
@@ -43,37 +43,19 @@ async def get_floods_geojson(
             return msgpack_error("Flood data not available", 404)
 
         use_duckdb = duckdb_available()
-        preload_cache_key = None
-        if (
-            start is not None and end is not None
-            and loc_prefix is None and affected_loc_id is None
-            and is_default_preload_range(start, end)
-        ):
-            preload_cache_key = make_preload_cache_key(
-                "floods",
-                min_severity=min_severity,
-                include_geometry=include_geometry,
-            )
         if use_duckdb:
             if year is not None:
                 df = select_filtered_event_rows_cached(
                     events_path,
-                    cache_key=make_cache_key("floods", year=year, min_severity=min_severity, include_geometry=include_geometry),
+                    cache_key=make_cache_key("floods", year=year),
                     year=year,
-                )
-            elif preload_cache_key is not None:
-                df = select_filtered_event_rows_cached(
-                    events_path,
-                    cache_key=preload_cache_key,
-                    start=start,
-                    end=end,
                 )
             elif start is not None or end is not None:
                 df = select_filtered_event_rows(events_path, start=start, end=end)
             else:
                 df = select_filtered_event_rows_cached(
                     events_path,
-                    cache_key=make_cache_key("floods", min_year=min_year, max_year=max_year, min_severity=min_severity, include_geometry=include_geometry),
+                    cache_key=make_cache_key("floods", min_year=min_year),
                     min_value_filters={"year": min_year} if min_year is not None else None,
                 )
                 if max_year is not None and "year" in df.columns:

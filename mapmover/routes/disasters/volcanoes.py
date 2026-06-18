@@ -147,19 +147,19 @@ async def get_eruptions_geojson(
         if not parquet_available(eruptions_path):
             return msgpack_error("Eruption data not available", 404)
 
-        if year is not None and start is None and end is None and loc_prefix is None:
+        if year is not None and start is None and end is None and min_vei is None and loc_prefix is None:
             df = select_filtered_event_rows_cached(
                 eruptions_path,
-                cache_key=make_cache_key("volcanoes", year=year, min_vei=min_vei, exclude_ongoing=exclude_ongoing),
+                cache_key=make_cache_key("volcanoes", year=year),
                 year=year,
             )
         elif (
-            start is not None and end is not None and loc_prefix is None
+            start is not None and end is not None and min_vei is None and loc_prefix is None
             and affected_loc_id is None and is_default_preload_range(start, end)
         ):
             df = select_filtered_event_rows_cached(
                 eruptions_path,
-                cache_key=make_preload_cache_key("volcanoes", min_vei=min_vei, exclude_ongoing=exclude_ongoing),
+                cache_key=make_preload_cache_key("volcanoes", exclude_ongoing=exclude_ongoing),
                 permanent=True,
                 start=start,
                 end=end,

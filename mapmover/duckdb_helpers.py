@@ -1033,105 +1033,88 @@ def prewarm_disaster_sources(global_dir: Path) -> None:
     preload_start = "2020-01-01 00:00:00"
     preload_end = "2025-12-31 23:59:59"
 
-    # --- earthquakes (current 7-disaster preload uses min_magnitude 6.0) -----
+    # --- earthquakes (min_magnitude 5.5 from overlay-controller.js) ----------
     eq_path = global_dir / "disasters/earthquakes/events.parquet"
     for yr in animation_years:
-        ck = make_cache_key("earthquakes", year=yr, min_magnitude=6.0)
+        ck = make_cache_key("earthquakes", year=yr, min_magnitude=5.5)
         if cache_get(ck) is None:
             try:
                 t0 = time.monotonic()
-                df = select_filtered_event_rows(eq_path, year=yr, min_value_filters={"magnitude": 6.0})
+                df = select_filtered_event_rows(eq_path, year=yr, min_value_filters={"magnitude": 5.5})
                 if not df.empty:
                     cache_set(ck, df, permanent=True)
                 log.info("prewarm earthquakes year=%d: %d rows in %.1fs", yr, len(df), time.monotonic() - t0)
             except Exception as exc:
                 log.warning("prewarm earthquakes year=%d failed: %s", yr, exc)
-    preload_ck = make_preload_cache_key("earthquakes", min_magnitude=6.0)
+    preload_ck = make_preload_cache_key("earthquakes", min_magnitude=5.5)
     if cache_get(preload_ck) is None:
         try:
             t0 = time.monotonic()
-            df = select_filtered_event_rows(eq_path, start=preload_start, end=preload_end, min_value_filters={"magnitude": 6.0})
+            df = select_filtered_event_rows(eq_path, start=preload_start, end=preload_end, min_value_filters={"magnitude": 5.5})
             if not df.empty:
                 cache_set(preload_ck, df, permanent=True)
             log.info("prewarm earthquakes preload-range: %d rows in %.1fs", len(df), time.monotonic() - t0)
         except Exception as exc:
             log.warning("prewarm earthquakes preload-range failed: %s", exc)
 
-    # --- tsunamis (current 7-disaster preload uses min_height_m=3) ----------
+    # --- tsunamis (no extra filters) -----------------------------------------
     ts_path = global_dir / "disasters/tsunamis/events.parquet"
     for yr in animation_years:
-        ck = make_cache_key("tsunamis", year=yr, min_height_m=3)
+        ck = make_cache_key("tsunamis", year=yr)
         if cache_get(ck) is None:
             try:
                 t0 = time.monotonic()
-                df = select_filtered_event_rows(ts_path, year=yr, min_value_filters={"max_water_height_m": 3})
+                df = select_filtered_event_rows(ts_path, year=yr)
                 if not df.empty:
                     cache_set(ck, df, permanent=True)
                 log.info("prewarm tsunamis year=%d: %d rows in %.1fs", yr, len(df), time.monotonic() - t0)
             except Exception as exc:
                 log.warning("prewarm tsunamis year=%d failed: %s", yr, exc)
-    preload_ck = make_preload_cache_key("tsunamis", min_height_m=3)
+    preload_ck = make_preload_cache_key("tsunamis")
     if cache_get(preload_ck) is None:
         try:
             t0 = time.monotonic()
-            df = select_filtered_event_rows(ts_path, start=preload_start, end=preload_end, min_value_filters={"max_water_height_m": 3})
+            df = select_filtered_event_rows(ts_path, start=preload_start, end=preload_end)
             if not df.empty:
                 cache_set(preload_ck, df, permanent=True)
             log.info("prewarm tsunamis preload-range: %d rows in %.1fs", len(df), time.monotonic() - t0)
         except Exception as exc:
             log.warning("prewarm tsunamis preload-range failed: %s", exc)
 
-    # --- floods (dataset ends at 2023; current 10y disaster preload only needs 2017+) --
+    # --- floods (max year is 2019, no animation years qualify) ----------------
     fl_path = global_dir / "disasters/floods/events_enriched.parquet"
     if not parquet_available(fl_path):
         fl_path = global_dir / "disasters/floods/events.parquet"
-    flood_years = list(range(2017, 2024))
-    for yr in flood_years:
-        ck = make_cache_key("floods", year=yr, min_severity=2, include_geometry=True)
+    for yr in [y for y in animation_years if y <= 2019]:
+        ck = make_cache_key("floods", year=yr)
         if cache_get(ck) is None:
             try:
                 t0 = time.monotonic()
                 df = select_filtered_event_rows(fl_path, year=yr)
-                if not df.empty and "severity" in df.columns:
-                    df = df[df["severity"] >= 2]
                 if not df.empty:
                     cache_set(ck, df, permanent=True)
                 log.info("prewarm floods year=%d: %d rows in %.1fs", yr, len(df), time.monotonic() - t0)
             except Exception as exc:
                 log.warning("prewarm floods year=%d failed: %s", yr, exc)
-    preload_ck = make_preload_cache_key("floods", min_severity=2, include_geometry=True)
-    if cache_get(preload_ck) is None:
-        try:
-            t0 = time.monotonic()
-            df = select_filtered_event_rows(fl_path, start="2017-01-01 00:00:00", end=preload_end)
-            if not df.empty and "severity" in df.columns:
-                df = df[df["severity"] >= 2]
-            if not df.empty:
-                cache_set(preload_ck, df, permanent=True)
-            log.info("prewarm floods preload-range: %d rows in %.1fs", len(df), time.monotonic() - t0)
-        except Exception as exc:
-            log.warning("prewarm floods preload-range failed: %s", exc)
 
-    # --- volcanoes/eruptions (current 7-disaster preload uses min_vei=3) ----
+    # --- volcanoes/eruptions (exclude_ongoing is a post-fetch pandas filter) --
     vol_path = global_dir / "disasters/volcanoes/events.parquet"
     for yr in animation_years:
-        ck = make_cache_key("volcanoes", year=yr, min_vei=3, exclude_ongoing=True)
+        ck = make_cache_key("volcanoes", year=yr)
         if cache_get(ck) is None:
             try:
                 t0 = time.monotonic()
-                df = select_filtered_event_rows(vol_path, year=yr, min_value_filters={"VEI": 3})
-                if not df.empty and "is_ongoing" in df.columns:
-                    df = df[df["is_ongoing"] != True]
+                df = select_filtered_event_rows(vol_path, year=yr)
                 if not df.empty:
                     cache_set(ck, df, permanent=True)
                 log.info("prewarm volcanoes year=%d: %d rows in %.1fs", yr, len(df), time.monotonic() - t0)
             except Exception as exc:
                 log.warning("prewarm volcanoes year=%d failed: %s", yr, exc)
-    preload_ck = make_preload_cache_key("volcanoes", min_vei=3, exclude_ongoing=True)
+    preload_ck = make_preload_cache_key("volcanoes", exclude_ongoing=True)
     if cache_get(preload_ck) is None:
         try:
             t0 = time.monotonic()
-            df = select_filtered_event_rows(vol_path, start=preload_start, end=preload_end, min_value_filters={"VEI": 3})
+            df = select_filtered_event_rows(vol_path, start=preload_start, end=preload_end)
             if not df.empty and "is_ongoing" in df.columns:
                 df = df[df["is_ongoing"] != True]
             if not df.empty:
@@ -1140,36 +1123,24 @@ def prewarm_disaster_sources(global_dir: Path) -> None:
         except Exception as exc:
             log.warning("prewarm volcanoes preload-range failed: %s", exc)
 
-    # --- tornadoes (current 7-disaster preload uses min_scale=EF2) ----------
+    # --- tornadoes (min_scale=EF2 is a post-fetch filter; cache raw year slice)
     tor_path = global_dir / "disasters/tornadoes/events.parquet"
     for yr in animation_years:
-        ck = make_cache_key("tornadoes", year=yr, min_scale="EF2")
+        ck = make_cache_key("tornadoes", year=yr)
         if cache_get(ck) is None:
             try:
                 t0 = time.monotonic()
                 df = select_filtered_event_rows(tor_path, year=yr)
-                if not df.empty and "tornado_scale" in df.columns:
-                    scale_num = pd.to_numeric(
-                        df["tornado_scale"].astype(str).str.upper().str.replace("EF", "", regex=False).str.replace("F", "", regex=False),
-                        errors="coerce",
-                    )
-                    df = df[scale_num >= 2]
                 if not df.empty:
                     cache_set(ck, df, permanent=True)
                 log.info("prewarm tornadoes year=%d: %d rows in %.1fs", yr, len(df), time.monotonic() - t0)
             except Exception as exc:
                 log.warning("prewarm tornadoes year=%d failed: %s", yr, exc)
-    preload_ck = make_preload_cache_key("tornadoes", min_scale="EF2")
+    preload_ck = make_preload_cache_key("tornadoes")
     if cache_get(preload_ck) is None:
         try:
             t0 = time.monotonic()
             df = select_filtered_event_rows(tor_path, start=preload_start, end=preload_end)
-            if not df.empty and "tornado_scale" in df.columns:
-                scale_num = pd.to_numeric(
-                    df["tornado_scale"].astype(str).str.upper().str.replace("EF", "", regex=False).str.replace("F", "", regex=False),
-                    errors="coerce",
-                )
-                df = df[scale_num >= 2]
             if not df.empty:
                 cache_set(preload_ck, df, permanent=True)
             log.info("prewarm tornadoes preload-range: %d rows in %.1fs", len(df), time.monotonic() - t0)
