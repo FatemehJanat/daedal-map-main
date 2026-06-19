@@ -1371,12 +1371,24 @@ def get_location_info(loc_id: str):
     if not parts:
         return {"error": "Invalid loc_id"}
 
+    from .runtime.admin_hierarchy import infer_admin_level_from_loc_id
+
     iso3 = parts[0]
+    family = classify_loc_id_family(loc_id)
+    inferred_admin_level = infer_admin_level_from_loc_id(loc_id)
+    if family in {"overlay_zcta", "overlay_tribal", "marine_eez", "water_body", "regional_base"} or (
+        inferred_admin_level is not None and inferred_admin_level >= 3
+    ):
+        feature = _get_selection_feature_for_loc_id(loc_id)
+        if feature:
+            return _build_feature_based_location_info(loc_id, feature)
+
     result = {
         "loc_id": loc_id,
-        "admin_level": len(parts) - 1,  # USA=0, USA-CA=1, USA-CA-037=2
+        "admin_level": inferred_admin_level if inferred_admin_level is not None else len(parts) - 1,
         "memberships": [],
-        "dataset_count": 0
+        "dataset_count": 0,
+        "family": family,
     }
 
     # For country level, check global.csv first
@@ -1435,16 +1447,26 @@ def get_location_info(loc_id: str):
 
                 # Get country-specific level names
                 result["level_names"] = _get_level_names(iso3)
+                result["centroid"] = {"lon": row.get("centroid_lon"), "lat": row.get("centroid_lat")}
+                result["bbox"] = _bbox_from_feature_props(row.to_dict())
+                result["has_polygon"] = bool(row.get("has_polygon"))
+                result["iso3"] = row.get("iso_a3") or iso3
 
                 return result
 
     # For sub-national, check country parquet
     df = load_country_parquet(iso3)
     if df is None:
+        feature = _get_selection_feature_for_loc_id(loc_id)
+        if feature:
+            return _build_feature_based_location_info(loc_id, feature)
         return {"error": f"No data for {iso3}"}
 
     location = df[df["loc_id"] == loc_id]
     if len(location) == 0:
+        feature = _get_selection_feature_for_loc_id(loc_id)
+        if feature:
+            return _build_feature_based_location_info(loc_id, feature)
         return {"error": f"Location not found: {loc_id}"}
 
     row = location.iloc[0]
@@ -1473,6 +1495,10 @@ def get_location_info(loc_id: str):
 
     # Get country-specific level names
     result["level_names"] = _get_level_names(iso3)
+    result["centroid"] = {"lon": row.get("centroid_lon"), "lat": row.get("centroid_lat")}
+    result["bbox"] = _bbox_from_feature_props(row.to_dict())
+    result["has_polygon"] = bool(row.get("has_polygon"))
+    result["iso3"] = row.get("iso_a3") or iso3
 
     return result
 
@@ -1559,6 +1585,43 @@ def _get_dataset_count(loc_id: str) -> int:
     """
     counts = _get_dataset_counts_by_level(loc_id)
     return sum(counts.values())
+
+
+def _bbox_from_feature_props(props: dict) -> list[float] | None:
+    keys = ("bbox_min_lon", "bbox_min_lat", "bbox_max_lon", "bbox_max_lat")
+    if all(props.get(key) is not None for key in keys):
+        return [props[keys[0]], props[keys[1]], props[keys[2]], props[keys[3]]]
+    return None
+
+
+def _get_selection_feature_for_loc_id(loc_id: str) -> dict | None:
+    payload = get_selection_geometries([loc_id])
+    features = (payload or {}).get("features") or []
+    return features[0] if features else None
+
+
+def _build_feature_based_location_info(loc_id: str, feature: dict) -> dict:
+    props = feature.get("properties") or {}
+    family = classify_loc_id_family(loc_id)
+    return {
+        "loc_id": props.get("local_loc_id") or loc_id,
+        "name": props.get("name"),
+        "admin_level": props.get("admin_level"),
+        "parent_id": props.get("parent_id"),
+        "family": family,
+        "children_count": props.get("children_count") or 0,
+        "children_by_level": props.get("children_by_level", "{}"),
+        "descendants_count": props.get("descendants_count") or 0,
+        "descendants_by_level": props.get("descendants_by_level", "{}"),
+        "has_children": bool(props.get("children_count")),
+        "memberships": [],
+        "dataset_count": 0,
+        "dataset_counts": {},
+        "centroid": {"lon": props.get("centroid_lon"), "lat": props.get("centroid_lat")},
+        "bbox": _bbox_from_feature_props(props),
+        "has_polygon": bool(props.get("has_polygon")),
+        "iso3": props.get("iso_a3"),
+    }
 
 
 # Default level names (fallback if conversions.json unavailable)

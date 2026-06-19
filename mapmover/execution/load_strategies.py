@@ -97,7 +97,8 @@ def collect_source_metadata(
         source_id = item.get("source_id")
         if source_id and source_id not in sources_used:
             try:
-                if item.get("mode") == "aggregate":
+                aggregate_like_source = str(source_id or "").strip().endswith("_aggregates")
+                if item.get("mode") == "aggregate" or aggregate_like_source:
                     aggregate_df, metadata = load_disaster_aggregate_data_func(source_id, item)
                     if aggregate_df is None:
                         metadata = load_source_metadata_func(source_id)
@@ -113,6 +114,10 @@ def collect_source_metadata(
                             item.get("aggregate_window_years"),
                             item.get("aggregate_rollup_level"),
                             item.get("aggregate_all_years"),
+                            None,
+                            (),
+                            (),
+                            (),
                         )
                         aggregate_item_cache[cache_key] = (aggregate_df, dict(metadata or {}))
                 else:
@@ -157,11 +162,18 @@ def load_order_item_dataframe(
         if isinstance(_plural_regions, (list, tuple)) and len(_plural_regions) == 1 and _plural_regions[0]:
             region = str(_plural_regions[0])
     filters = item.get("filters") or {}
+    if not isinstance(filters, dict):
+        filters = {}
     metric = item.get("metric")
     source_id = item.get("source_id")
+    aggregate_like_source = str(source_id or "").strip().endswith("_aggregates")
 
     pushdown_year = year if (year and not year_start and not year_end) else None
     pushdown_prefix = region if (region and re.match(r"^[A-Z]{2,3}(-[A-Z0-9]+)?$", region)) else None
+    filters_for_pushdown = dict(filters)
+    filter_loc_id_prefix = str(filters_for_pushdown.pop("loc_id_prefix", "") or "").strip()
+    if pushdown_prefix is None and filter_loc_id_prefix:
+        pushdown_prefix = filter_loc_id_prefix
     # Filter location at the source for marine_zone sources: when a named basin/
     # sea/EEZ region resolves to a single X*/EEZ-* loc_id, push it down to the
     # parquet so the location filter is not lost to the row cap. The X* ocean
@@ -220,7 +232,7 @@ def load_order_item_dataframe(
         year_start = None
         year_end = None
 
-    exact_filters, in_filters, compare_filters = _classify_pushdown_filters(filters)
+    exact_filters, in_filters, compare_filters = _classify_pushdown_filters(filters_for_pushdown)
     if pushdown_year is None:
         if year_start is not None:
             compare_filters.append(("year", ">=", year_start))
@@ -252,7 +264,7 @@ def load_order_item_dataframe(
     requested_columns.extend(str(field).strip() for field in filters.keys() if str(field).strip())
     requested_columns = [value for value in dict.fromkeys(requested_columns) if value]
 
-    if item.get("mode") == "aggregate":
+    if item.get("mode") == "aggregate" or aggregate_like_source:
         cache_key = (
             item.get("source_id"),
             item.get("metric"),
@@ -264,6 +276,10 @@ def load_order_item_dataframe(
             item.get("aggregate_window_years"),
             item.get("aggregate_rollup_level"),
             item.get("aggregate_all_years"),
+            pushdown_prefix,
+            tuple(sorted((exact_filters or {}).items())),
+            tuple((field, tuple(values) if isinstance(values, list) else values) for field, values in sorted((in_filters or {}).items())),
+            tuple(compare_filters or []),
         )
         cached = aggregate_item_cache.get(cache_key)
         if cached is not None:

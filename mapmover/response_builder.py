@@ -96,8 +96,8 @@ def generate_conversational_summary(matches, sort_spec=None, filter_spec=None, m
 def get_country_coordinates(country_name, country_code=None):
     """
     Get approximate coordinates for a country by name or code.
-    First checks Countries.csv geometry lookup, then falls back to
-    conversions.json for countries missing from the geometry CSV.
+    First checks the shared world bootstrap geometry lookup, then falls back to
+    shared runtime country coordinate helpers.
 
     Args:
         country_name: Name of the country
@@ -114,7 +114,7 @@ def get_country_coordinates(country_name, country_code=None):
         if fallback:
             return fallback
 
-    # Second try: Look up in Countries.csv geometry lookup
+    # Second try: Look up in shared world bootstrap geometry
     geometry_lookup = get_geometry_lookup()
     if geometry_lookup:
         name_lower = country_name.lower().strip()
@@ -454,10 +454,10 @@ def build_response(cleaned: list, lookup, filter_spec=None, metadata=None, year_
                 except (json.JSONDecodeError, TypeError):
                     has_geometry = False
 
-            # If no polygon geometry, create a Point fallback using coordinates from Countries.csv
+            # If no polygon geometry, create a Point fallback using shared world bootstrap coordinates
             if not has_geometry and name_col and name_col in row:
                 country_name = str(row[name_col])
-                # Look up coordinates from Countries.csv via geometry cache
+                # Look up coordinates from shared world bootstrap geometry via cache
                 coords = get_country_coordinates(country_name)
                 if coords:
                     lat, lon = coords
@@ -580,7 +580,7 @@ def build_response(cleaned: list, lookup, filter_spec=None, metadata=None, year_
         if not sort_spec or not sort_spec.get("limit"):
             message.append(f"Showing {len(matches)} locations matching filter")
 
-        # Enrich features with geometry from Countries.csv if missing
+        # Enrich features with geometry from shared world bootstrap layer if missing
         logger.debug(f"Before enrichment: {len(matches)} features")
         enriched_matches, still_missing_count, still_missing_names = enrich_with_geometry(
             matches, name_col=name_col, code_col='country_code'

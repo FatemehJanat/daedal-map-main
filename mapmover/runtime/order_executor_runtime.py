@@ -214,6 +214,7 @@ def _load_disaster_aggregate_data(source_id: str, item: dict) -> tuple[Optional[
             load_event_data_func=load_event_data,
         ),
         aggregate_metric_frame_func=aggregate_metric_frame_impl,
+        translate_loc_id_to_geometry_id_func=translate_loc_id_to_geometry_id,
         translate_geometry_id_to_local_id_func=translate_geometry_id_to_local_id,
         path_to_uri_func=path_to_uri,
         logger=logger,

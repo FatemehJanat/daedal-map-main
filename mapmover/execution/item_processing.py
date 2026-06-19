@@ -63,6 +63,64 @@ def _build_temporal_key_series(df: pd.DataFrame, temporal_field: str | None, tem
     return source_series.map(temporal_map)
 
 
+def _normalize_runtime_filters(
+    filters: dict | None,
+    *,
+    translate_loc_id_to_geometry_id_func,
+):
+    if not isinstance(filters, dict) or not filters:
+        return filters
+
+    normalized = dict(filters)
+    loc_id_filter = normalized.get("loc_id")
+
+    def _expand_loc_id_values(raw_values):
+        candidates = []
+        for value in raw_values:
+            text = str(value or "").strip()
+            if not text:
+                continue
+            bridged = translate_loc_id_to_geometry_id_func(text)
+            for candidate in (bridged, text):
+                candidate_text = str(candidate or "").strip()
+                if candidate_text and candidate_text not in candidates:
+                    candidates.append(candidate_text)
+        return candidates
+
+    if loc_id_filter is not None:
+        if isinstance(loc_id_filter, dict):
+            op = str(loc_id_filter.get("op") or "").strip().lower()
+            if op == "in":
+                candidates = _expand_loc_id_values(loc_id_filter.get("values") or [])
+                if candidates:
+                    normalized["loc_id"] = {"op": "in", "values": candidates}
+                else:
+                    normalized.pop("loc_id", None)
+            elif "value" in loc_id_filter:
+                candidates = _expand_loc_id_values([loc_id_filter.get("value")])
+                if not candidates:
+                    normalized.pop("loc_id", None)
+                elif op in {"eq", "="}:
+                    if len(candidates) == 1:
+                        normalized["loc_id"] = candidates[0]
+                    else:
+                        normalized["loc_id"] = candidates
+                else:
+                    updated = dict(loc_id_filter)
+                    updated["value"] = candidates[0]
+                    normalized["loc_id"] = updated
+        else:
+            raw_values = loc_id_filter if isinstance(loc_id_filter, (list, tuple, set)) else [loc_id_filter]
+            candidates = _expand_loc_id_values(raw_values)
+            if not candidates:
+                normalized.pop("loc_id", None)
+            elif len(candidates) == 1:
+                normalized["loc_id"] = candidates[0]
+            else:
+                normalized["loc_id"] = candidates
+    return normalized
+
+
 def process_metric_items(
     *,
     order: dict,
@@ -283,10 +341,13 @@ def process_metric_items(
             ):
                 df = df[df["geo_level"] == geo_contract.source_level_value]
 
-        normalized_filters = filters
+        normalized_filters = _normalize_runtime_filters(
+            filters,
+            translate_loc_id_to_geometry_id_func=translate_loc_id_to_geometry_id_func,
+        )
         if isinstance(filters, dict) and filters and "geo_level" in filters:
             filter_contract = resolve_geo_contract(filters.get("geo_level"), metadata)
-            normalized_filters = dict(filters)
+            normalized_filters = dict(normalized_filters or {})
             if (
                 filter_contract.hierarchy_relation == "exact"
                 and filter_contract.source_filter_field == "geo_level"

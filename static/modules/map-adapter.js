@@ -8,7 +8,7 @@ import { LocationInfoCache } from './cache.js';
 import { DisasterPopup } from './disaster-popup.js';
 import { PointRadiusModel } from './models/model-point-radius.js';
 import { TrackModel } from './models/model-track.js';
-import { fetchMsgpack } from './utils/fetch.js';
+import { fetchMsgpack, postMsgpack } from './utils/fetch.js';
 
 // Dependencies set via setDependencies to avoid circular imports
 let ViewportLoader = null;
@@ -58,6 +58,8 @@ export const MapAdapter = {
   metricDisplaySourceIds: [],
   metricDisplayHandlerRefs: [],
   mapClickHandlerBound: false,
+  canvasPointInspectorBound: false,
+  pointResolveRequestToken: 0,
   baseLayerHandlerRefs: {
     click: null,
     mousemove: null,
@@ -116,6 +118,8 @@ export const MapAdapter = {
     this.map.on('zoomend', () => ViewportLoader?.onZoomEnd());
     this.map.on('moveend', () => ViewportLoader?.onMoveEnd());
 
+    this.bindCanvasPointInspector();
+
     // Persistent style-reload handler: any base-map/projection reload (globe <->
     // mercator, satellite <-> dark) drops custom layers, so re-render all
     // overlays from cache afterward. The base map is the only thing that should
@@ -135,6 +139,42 @@ export const MapAdapter = {
         resolve();
       });
     });
+  },
+
+  bindCanvasPointInspector() {
+    if (this.canvasPointInspectorBound || !this.map) return;
+    const canvas = this.map.getCanvas?.();
+    if (!canvas) return;
+
+    canvas.addEventListener('click', (event) => {
+      if (!this.isEmptyMapPointInspectorEnabled()) return;
+      if (event.defaultPrevented) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const point = {
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top
+      };
+      if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
+
+      const protectedLayers = [
+        CONFIG.layers.selectionFill,
+        CONFIG.layers.eventCircle,
+        CONFIG.layers.cityCircle
+      ].filter(layerId => layerId && this.map.getLayer(layerId));
+
+      if (protectedLayers.length) {
+        const protectedFeatures = this.map.queryRenderedFeatures(point, { layers: protectedLayers });
+        if (protectedFeatures.length) return;
+      }
+
+      const lngLat = this.map.unproject([point.x, point.y]);
+      this.showPointInspectorPopup(lngLat, {
+        subtitle: 'Explore map click'
+      });
+    });
+
+    this.canvasPointInspectorBound = true;
   },
 
   /**
@@ -1082,13 +1122,18 @@ export const MapAdapter = {
       this.baseLayerHandlerRefs.click = async (e) => {
         // Check if click was on an event/overlay layer - if so, skip base layer handling
         // Event layers should take priority over base geometry
-        const eventFeatures = this.map.queryRenderedFeatures(e.point, {
-          layers: [CONFIG.layers.eventCircle, CONFIG.layers.hurricaneMarker, CONFIG.layers.polygonFill].filter(
-            layerId => this.map.getLayer(layerId)
-          )
-        });
+        const eventLayerIds = [CONFIG.layers.eventCircle].filter(
+          layerId => layerId && this.map.getLayer(layerId)
+        );
+        const eventFeatures = eventLayerIds.length
+          ? this.map.queryRenderedFeatures(e.point, { layers: eventLayerIds })
+          : [];
         if (eventFeatures.length > 0) {
           return; // Let event layer handler deal with this click
+        }
+
+        if (this.isEmptyMapPointInspectorEnabled()) {
+          return;
         }
 
         if (e.features.length > 0) {
@@ -1191,27 +1236,36 @@ export const MapAdapter = {
     // Click handler - locks popup and fetches enriched data
     this.map.on('click', fillLayer, this.baseLayerHandlerRefs.click);
 
-    // Click on map (not on feature) - unlock and hide popup
+    // Click on empty map - either invoke the shared empty-map tool or clear popup state
     if (!this.mapClickHandlerBound) {
       this.map.on('click', (e) => {
-        // Check if click was on any interactive feature (choropleth or event layer)
-        // We need to check multiple layers to avoid interfering with event click handlers
-        const fillFeatures = this.map.getLayer(fillLayer)
-          ? this.map.queryRenderedFeatures(e.point, { layers: [fillLayer] })
-          : [];
+        // Check if click was on any higher-priority interactive feature.
+        // Base geometry clicks in Explore are handled by the point inspector above.
         const selectionFeatures = this.map.getLayer(CONFIG.layers.selectionFill)
           ? this.map.queryRenderedFeatures(e.point, { layers: [CONFIG.layers.selectionFill] })
           : [];
-        // Only query event-circle layer if it exists
-        const eventFeatures = this.map.getLayer('event-circle')
-          ? this.map.queryRenderedFeatures(e.point, { layers: ['event-circle'] })
+        const eventLayers = [
+          CONFIG.layers.eventCircle,
+          CONFIG.layers.hurricaneMarker,
+          CONFIG.layers.polygonFill
+        ].filter(layerId => this.map.getLayer(layerId));
+        const eventFeatures = eventLayers.length
+          ? this.map.queryRenderedFeatures(e.point, { layers: eventLayers })
           : [];
-        const allFeatures = [...fillFeatures, ...selectionFeatures, ...eventFeatures];
+        const allFeatures = [...selectionFeatures, ...eventFeatures];
 
-        if (allFeatures.length === 0 && this.popupLocked) {
-          this.popupLocked = false;
-          this.clearPopupFocusOverride('map-click-empty');
-          this.hidePopup();
+        if (allFeatures.length === 0) {
+          if (this.isEmptyMapPointInspectorEnabled()) {
+            this.showPointInspectorPopup(e.lngLat, {
+              subtitle: 'Explore blank-map click'
+            });
+            return;
+          }
+          if (this.popupLocked) {
+            this.popupLocked = false;
+            this.clearPopupFocusOverride('map-click-empty');
+            this.hidePopup();
+          }
         }
       });
       this.mapClickHandlerBound = true;
@@ -1252,6 +1306,227 @@ export const MapAdapter = {
     setTimeout(() => {
       this.isShowingPopup = false;
     }, 50);
+  },
+
+  isEmptyMapPointInspectorEnabled(lane = App?.currentCanvasMode || 'explore') {
+    return lane === 'explore';
+  },
+
+  _escapePopupHtml(value) {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  },
+
+  _formatPointResolveResult(resolution, lng, lat) {
+    const matched = resolution?.matched || null;
+    const stack = Array.isArray(resolution?.stack) ? resolution.stack : [];
+    const overlapFamilies = Array.isArray(resolution?.overlap_families) ? resolution.overlap_families : [];
+    const primaryLocId = matched?.loc_id || resolution?.deepest_resolved_loc_id || '';
+    const formatLevelLabel = (entry) => {
+      if (entry?.admin_level !== null && entry?.admin_level !== undefined && entry?.admin_level !== '') {
+        return `admin_${this._escapePopupHtml(entry.admin_level)}`;
+      }
+      if (entry?.family) {
+        return this._escapePopupHtml(entry.family);
+      }
+      return 'geometry';
+    };
+    const stackHtml = stack.length
+      ? `
+        <div class="blank-map-popup-stack">
+          ${stack.map((entry) => `
+            <div class="blank-map-popup-stack-row">
+              <span class="blank-map-popup-stack-level">${formatLevelLabel(entry)}</span>
+              <span class="blank-map-popup-stack-name">${this._escapePopupHtml(entry?.name || entry?.loc_id || 'Unnamed')}</span>
+            </div>
+          `).join('')}
+        </div>
+      `
+      : '<div class="blank-map-popup-empty">No hierarchy stack returned.</div>';
+    const overlapsHtml = overlapFamilies.length
+      ? `
+        <div class="blank-map-popup-overlaps">
+          <div class="blank-map-popup-loc-id-label">Overlapping families</div>
+          <div class="blank-map-popup-overlap-panel">
+            ${overlapFamilies.map((entry) => `
+              <div class="blank-map-popup-stack-row">
+                <span class="blank-map-popup-stack-level">${formatLevelLabel(entry)}</span>
+                <span class="blank-map-popup-stack-name">${this._escapePopupHtml(entry?.name || entry?.loc_id || 'Unnamed')}</span>
+              </div>
+              <div class="blank-map-popup-overlap-loc-id">${this._escapePopupHtml(entry?.loc_id || '')}</div>
+            `).join('')}
+          </div>
+        </div>
+      `
+      : '';
+
+    if (!matched?.loc_id) {
+      return `
+        <div class="blank-map-popup-result blank-map-popup-result--empty">
+          No containing loc_id was found for ${lat.toFixed(6)}, ${lng.toFixed(6)}.
+        </div>
+      `;
+    }
+
+    return `
+      <div class="blank-map-popup-result">
+        <div class="blank-map-popup-result-title">${this._escapePopupHtml(matched.name || matched.loc_id)}</div>
+        <div class="blank-map-popup-loc-id-box">
+          <div class="blank-map-popup-loc-id-header">
+            <div class="blank-map-popup-loc-id-label">loc_id</div>
+            <a
+              class="blank-map-popup-info-link"
+              href="/docs/loc-id"
+              target="_blank"
+              rel="noopener"
+            >More info</a>
+          </div>
+          <div class="blank-map-popup-loc-id-row">
+            <input
+              type="text"
+              class="blank-map-popup-loc-id-input"
+              value="${this._escapePopupHtml(primaryLocId)}"
+              readonly
+              spellcheck="false"
+              data-role="resolved-loc-id"
+            />
+            <button
+              type="button"
+              class="popup-btn btn-details blank-map-popup-copy-button"
+              data-action="copy-point-loc-id"
+              data-copy-value="${this._escapePopupHtml(primaryLocId)}"
+            >Copy</button>
+          </div>
+        </div>
+        <div class="blank-map-popup-result-meta">Deepest match: ${formatLevelLabel(matched)}</div>
+        ${stackHtml}
+        ${overlapsHtml}
+      </div>
+    `;
+  },
+
+  buildPointInspectorPopupHtml(lng, lat, options = {}) {
+    const statusHtml = options.statusHtml || '';
+    const buttonLabel = options.loading ? 'Resolving...' : 'Get loc_id';
+    const buttonDisabled = options.loading ? ' disabled' : '';
+    const showResolveButton = !options.resolved;
+    const actionsHtml = showResolveButton
+      ? `
+        <div class="blank-map-popup-actions">
+          <button
+            type="button"
+            class="popup-btn btn-details blank-map-popup-button"
+            data-action="resolve-point-loc-id"
+            data-lng="${lng}"
+            data-lat="${lat}"${buttonDisabled}
+          >${buttonLabel}</button>
+        </div>
+      `
+      : '';
+    return `
+      <div class="blank-map-popup" data-popup-kind="point-inspector">
+        <div class="blank-map-popup-header">
+          <div class="blank-map-popup-title">Point lookup</div>
+          <div class="blank-map-popup-subtitle">${this._escapePopupHtml(options.subtitle || 'Click-empty-map tool')}</div>
+        </div>
+        <div class="blank-map-popup-coords">
+          <div class="blank-map-popup-coord-row">
+            <span class="blank-map-popup-label">Latitude</span>
+            <span class="blank-map-popup-value">${lat.toFixed(6)}</span>
+          </div>
+          <div class="blank-map-popup-coord-row">
+            <span class="blank-map-popup-label">Longitude</span>
+            <span class="blank-map-popup-value">${lng.toFixed(6)}</span>
+          </div>
+        </div>
+        ${actionsHtml}
+        <div class="blank-map-popup-status" data-role="point-resolve-status">${statusHtml}</div>
+      </div>
+    `;
+  },
+
+  showPointInspectorPopup(lngLat, options = {}) {
+    if (!lngLat) return;
+    const lng = Number(lngLat.lng);
+    const lat = Number(lngLat.lat);
+    if (!Number.isFinite(lng) || !Number.isFinite(lat)) return;
+
+    this.lockedPopupLocationInfo = null;
+    this.selectedPopupContext = null;
+    this.clearPopupFocusOverride('point-inspector-popup');
+    this.popupLocked = true;
+    this.showPopup(
+      [lng, lat],
+      this.buildPointInspectorPopupHtml(
+        lng,
+        lat,
+        { subtitle: options.subtitle || 'Explore blank-map click' }
+      )
+    );
+    this.setupPopupTabHandlers?.();
+  },
+
+  async resolvePointPopupLookup(button) {
+    if (!button) return;
+    const lng = Number(button.dataset.lng);
+    const lat = Number(button.dataset.lat);
+    if (!Number.isFinite(lng) || !Number.isFinite(lat)) return;
+
+    const requestToken = ++this.pointResolveRequestToken;
+    const popupLngLat = [lng, lat];
+    this.popupLocked = true;
+    this.showPopup(
+      popupLngLat,
+      this.buildPointInspectorPopupHtml(lng, lat, {
+        loading: true,
+        subtitle: 'Shared point inspection',
+        statusHtml: '<div class="blank-map-popup-pending">Resolving deepest containing loc_id...</div>'
+      })
+    );
+    this.setupPopupTabHandlers?.();
+
+    try {
+      const resolution = await postMsgpack('/geometry/resolve-point', { lon: lng, lat });
+      if (requestToken !== this.pointResolveRequestToken) return;
+      const statusHtml = this._formatPointResolveResult(resolution, lng, lat);
+      this.showPopup(
+        popupLngLat,
+        this.buildPointInspectorPopupHtml(lng, lat, {
+          subtitle: 'Shared point inspection',
+          statusHtml,
+          resolved: true
+        })
+      );
+      this.setupPopupTabHandlers?.();
+    } catch (error) {
+      if (requestToken !== this.pointResolveRequestToken) return;
+      if (error?.data?.matched?.loc_id || error?.data?.deepest_resolved_loc_id) {
+        const statusHtml = this._formatPointResolveResult(error.data, lng, lat);
+        this.showPopup(
+          popupLngLat,
+          this.buildPointInspectorPopupHtml(lng, lat, {
+            subtitle: 'Shared point inspection',
+            statusHtml,
+            resolved: true
+          })
+        );
+        this.setupPopupTabHandlers?.();
+        return;
+      }
+      const message = this._escapePopupHtml(error?.message || 'Point resolution failed.');
+      this.showPopup(
+        popupLngLat,
+        this.buildPointInspectorPopupHtml(lng, lat, {
+          subtitle: 'Shared point inspection',
+          statusHtml: `<div class="blank-map-popup-error">${message}</div>`
+        })
+      );
+      this.setupPopupTabHandlers?.();
+    }
   },
 
   /**
@@ -1340,19 +1615,45 @@ export const MapAdapter = {
    */
   setupPopupTabHandlers() {
     const el = this.popup.getElement();
-    if (!el) return;
+    if (!el || el.dataset.handlersBound === 'true') return;
+    el.dataset.handlersBound = 'true';
     el.addEventListener('click', (e) => {
-      if (!e.target.classList.contains('popup-tab')) return;
-      const tabName = e.target.dataset.tab;
-      if (!tabName) return;
-      // Toggle active tab buttons
-      el.querySelectorAll('.popup-tab').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.tab === tabName);
-      });
-      // Toggle active content panels
-      el.querySelectorAll('.popup-tab-content').forEach(panel => {
-        panel.classList.toggle('active', panel.dataset.tab === tabName);
-      });
+      const popupTab = e.target.closest('.popup-tab');
+      if (popupTab) {
+        const tabName = popupTab.dataset.tab;
+        if (!tabName) return;
+        el.querySelectorAll('.popup-tab').forEach(btn => {
+          btn.classList.toggle('active', btn.dataset.tab === tabName);
+        });
+        el.querySelectorAll('.popup-tab-content').forEach(panel => {
+          panel.classList.toggle('active', panel.dataset.tab === tabName);
+        });
+        return;
+      }
+
+      const actionButton = e.target.closest('[data-action="resolve-point-loc-id"]');
+      if (actionButton) {
+        e.preventDefault();
+        this.resolvePointPopupLookup(actionButton);
+        return;
+      }
+
+      const copyButton = e.target.closest('[data-action="copy-point-loc-id"]');
+      if (copyButton) {
+        e.preventDefault();
+        const value = String(copyButton.dataset.copyValue || '').trim();
+        if (!value) return;
+        const input = el.querySelector('[data-role="resolved-loc-id"]');
+        if (input && typeof input.select === 'function') {
+          input.focus();
+          input.select();
+        }
+        if (navigator?.clipboard?.writeText) {
+          navigator.clipboard.writeText(value).catch(() => {});
+        }
+        return;
+      }
+
     });
   },
 

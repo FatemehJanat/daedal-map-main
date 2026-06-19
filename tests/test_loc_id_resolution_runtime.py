@@ -147,9 +147,55 @@ class LocIdResolutionRuntimeTests(unittest.TestCase):
         with patch(
             "mapmover.runtime.loc_id_resolution.legacy_resolve_point_to_location",
             return_value={"error": "No containing country found"},
+        ), patch(
+            "mapmover.runtime.loc_id_resolution._resolve_point_to_marine_stack",
+            return_value=None,
         ):
             resolved = resolve_point_to_loc_id_stack(0, 0)
         self.assertEqual(resolved["error"], "No containing country found")
+
+    def test_point_stack_prefers_spine_water_body_over_marine_overlap(self):
+        with patch(
+            "mapmover.runtime.loc_id_resolution.legacy_resolve_point_to_location",
+            return_value={"error": "No containing country found"},
+        ), patch(
+            "mapmover.runtime.loc_id_resolution._resolve_point_to_marine_stack",
+            return_value={
+                "point": {"lon": -158.561463, "lat": 7.453822},
+                "country": None,
+                "matched": {
+                    "loc_id": "XOP",
+                    "name": "Pacific Ocean",
+                    "admin_level": None,
+                    "country_name": None,
+                    "iso3": None,
+                    "family": "water_body",
+                },
+                "stack": [
+                    {"loc_id": "XOP", "name": "Pacific Ocean", "admin_level": None, "family": "water_body"},
+                ],
+                "matches": {},
+                "deepest_resolved_loc_id": "XOP",
+                "deepest_resolved_admin_level": None,
+                "deepest_resolved_family": "water_body",
+                "overlap_families": [
+                    {
+                        "loc_id": "EEZ-KIR-8441",
+                        "name": "Kiribati Exclusive Economic Zone (Line Group)",
+                        "family": "marine_eez",
+                        "admin_level": None,
+                    }
+                ],
+                "should_persist_deepest_loc_id": True,
+            },
+        ):
+            resolved = resolve_point_to_loc_id_stack(-158.561463, 7.453822)
+
+        self.assertEqual(resolved["deepest_resolved_loc_id"], "XOP")
+        self.assertEqual(resolved["matched"]["family"], "water_body")
+        self.assertEqual(len(resolved["overlap_families"]), 1)
+        self.assertEqual(resolved["overlap_families"][0]["loc_id"], "EEZ-KIR-8441")
+        self.assertEqual(resolved["overlap_families"][0]["family"], "marine_eez")
 
     def test_place_to_point_short_circuits_on_direct_admin_text(self):
         resolved = resolve_place_to_point("Canada")

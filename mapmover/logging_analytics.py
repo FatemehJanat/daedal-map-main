@@ -613,7 +613,8 @@ def log_missing_geometry(country_names, query=None, dataset=None, region=None):
     """
     Log countries/places that are missing map geometry.
 
-    This helps track which geometries need to be added to Countries.csv.
+    This helps track which geometries need to be added to the shared global
+    bootstrap geometry layer.
 
     Args:
         country_names: List of country/place names missing geometry

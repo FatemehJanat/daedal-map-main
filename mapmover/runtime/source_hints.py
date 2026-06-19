@@ -561,6 +561,11 @@ def resolve_geo_contract(requested_geo_level: str | None, metadata: dict | None)
             source_level_value = None
 
     if source_level_value is None and runtime_level and source_filter_field == "geo_level":
+        supported_levels = _metadata_supported_runtime_levels(metadata)
+        if runtime_level in supported_levels and not source_contract:
+            source_level_value = runtime_level
+
+    if source_level_value is None and runtime_level and source_filter_field == "geo_level":
         fallback_name = runtime_names.get(runtime_level)
         if fallback_name:
             source_level_value = fallback_name

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
 import pandas as pd
 
 from ..geometry_handlers import (
+    get_selection_geometries,
     load_country_parquet,
     load_global_countries_frame,
     resolve_point_to_location as legacy_resolve_point_to_location,
@@ -18,6 +20,7 @@ from .geography_reference import (
     classify_loc_id_family,
     translate_geometry_id_to_local_id,
 )
+from .marine_geometry import load_marine_geometry
 
 _LOC_ID_RE = re.compile(r"^[A-Z]{3}(?:-[A-Z0-9]+)+$|^[A-Z]{3}$")
 _USA_ZIP_RE = re.compile(r"^\d{5}$")
@@ -43,6 +46,118 @@ _ADMIN_TEXT_ALIASES = {
     "mecklenburg western pomerania": "mecklenburg vorpommern",
     "mecklenburg-western pomerania": "mecklenburg vorpommern",
 }
+
+def _resolve_point_to_marine_stack(
+    lon: float,
+    lat: float,
+    *,
+    include_geometry: bool = False,
+) -> dict[str, Any] | None:
+    marine_df = load_marine_geometry()
+    if marine_df is None or marine_df.empty:
+        return None
+
+    try:
+        from shapely.geometry import Point, shape
+    except Exception:
+        return None
+
+    point = Point(float(lon), float(lat))
+    candidates = marine_df
+    bbox_cols = {"bbox_min_lon", "bbox_max_lon", "bbox_min_lat", "bbox_max_lat"}
+    if bbox_cols.issubset(set(marine_df.columns)):
+        candidates = marine_df[
+            (marine_df["bbox_max_lon"] >= lon) &
+            (marine_df["bbox_min_lon"] <= lon) &
+            (marine_df["bbox_max_lat"] >= lat) &
+            (marine_df["bbox_min_lat"] <= lat)
+        ]
+    if candidates.empty:
+        candidates = marine_df
+
+    family_order = {"water_body": 0, "marine_eez": 1}
+    matches: list[dict[str, Any]] = []
+    for _, row in candidates.iterrows():
+        loc_id = str(row.get("loc_id") or "").strip()
+        if not loc_id:
+            continue
+        geom_value = row.get("geometry")
+        if not geom_value:
+            continue
+        try:
+            geometry = json.loads(geom_value) if isinstance(geom_value, str) else geom_value
+            if not geometry or geometry.get("type") == "Point":
+                continue
+            if not shape(geometry).covers(point):
+                continue
+        except Exception:
+            continue
+        family = classify_loc_id_family(loc_id)
+        matches.append({
+            "loc_id": loc_id,
+            "name": row.get("name"),
+            "family": family,
+            "family_rank": family_order.get(family, 99),
+        })
+
+    if not matches:
+        return None
+
+    matches.sort(key=lambda item: (item["family_rank"], str(item.get("loc_id") or "")))
+    deepest = matches[0]
+    overlap_families = [
+        {
+            "loc_id": entry["loc_id"],
+            "name": entry.get("name"),
+            "family": entry.get("family"),
+            "admin_level": None,
+        }
+        for entry in matches
+        if entry["loc_id"] != deepest["loc_id"]
+    ]
+    stack = [
+        {
+            "loc_id": deepest["loc_id"],
+            "name": deepest.get("name"),
+            "admin_level": None,
+            "family": deepest.get("family"),
+        }
+    ]
+
+    result = {
+        "point": {"lon": float(lon), "lat": float(lat)},
+        "country": None,
+        "matched": {
+            "loc_id": deepest["loc_id"],
+            "name": deepest.get("name"),
+            "admin_level": None,
+            "country_name": None,
+            "iso3": None,
+            "family": deepest.get("family"),
+        },
+        "stack": stack,
+        "matches": {},
+        "deepest_resolved_loc_id": deepest["loc_id"],
+        "deepest_resolved_admin_level": None,
+        "deepest_resolved_family": deepest.get("family"),
+        "overlap_families": overlap_families,
+        "should_persist_deepest_loc_id": True,
+        "legacy_payload": {
+            "point": {"lon": float(lon), "lat": float(lat)},
+            "matched": {
+                "loc_id": deepest["loc_id"],
+                "name": deepest.get("name"),
+                "family": deepest.get("family"),
+            },
+            "stack": stack,
+            "overlap_families": overlap_families,
+            "resolution_family": "marine",
+        },
+        "resolution_family": "marine",
+    }
+    if include_geometry:
+        result["geojson"] = get_selection_geometries([deepest["loc_id"]])
+    return result
 
 
 def _get_name_standardizer() -> NameStandardizer:
@@ -492,6 +607,9 @@ def resolve_point_to_loc_id_stack(
     if not isinstance(raw, dict):
         return {"point": {"lon": float(lon), "lat": float(lat)}, "error": "point resolver returned invalid payload"}
     if raw.get("error"):
+        marine_result = _resolve_point_to_marine_stack(lon, lat, include_geometry=include_geometry)
+        if marine_result is not None:
+            return marine_result
         return raw
 
     matches: dict[str, dict[str, Any]] = {}
@@ -572,6 +690,7 @@ def resolve_point_to_loc_id_stack(
         "matches": ordered_matches,
         "deepest_resolved_loc_id": deepest_local_loc_id,
         "deepest_resolved_admin_level": _level_key(deepest_level),
+        "overlap_families": raw.get("overlap_families") or [],
         "should_persist_deepest_loc_id": bool(deepest_local_loc_id),
         "legacy_payload": raw,
     }

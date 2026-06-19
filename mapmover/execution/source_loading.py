@@ -110,6 +110,20 @@ def _loc_id_prefix_candidates(loc_id_prefix: str | None) -> list[str | None]:
     return candidates or [original]
 
 
+def _normalize_loc_id_filter_values(values) -> list[str]:
+    normalized: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text:
+            continue
+        bridged = translate_loc_id_to_geometry_id(text)
+        for candidate in (bridged, text):
+            candidate_text = str(candidate or "").strip()
+            if candidate_text and candidate_text not in normalized:
+                normalized.append(candidate_text)
+    return normalized
+
+
 def load_source_data(
     source_id: str,
     *,
@@ -149,6 +163,19 @@ def load_source_data(
 
     metadata = dict(metadata or {})
     resolved_exact_filters = dict(exact_filters or {})
+    resolved_in_filters = dict(in_filters or {})
+    if "loc_id" in resolved_exact_filters:
+        loc_id_candidates = _normalize_loc_id_filter_values([resolved_exact_filters.get("loc_id")])
+        resolved_exact_filters.pop("loc_id", None)
+        if loc_id_candidates:
+            resolved_in_filters["loc_id"] = list(
+                dict.fromkeys(
+                    [*loc_id_candidates, *(resolved_in_filters.get("loc_id") or [])]
+                )
+            )
+    elif "loc_id" in resolved_in_filters:
+        resolved_in_filters["loc_id"] = _normalize_loc_id_filter_values(resolved_in_filters.get("loc_id") or [])
+
     if year is not None:
         resolved_exact_filters["year"] = year
     elif prefer_latest_year_when_unspecified:
@@ -220,7 +247,7 @@ def load_source_data(
                     parquet_path,
                     columns=selected_columns or None,
                     exact_filters=resolved_exact_filters or None,
-                    in_filters=in_filters or None,
+                    in_filters=resolved_in_filters or None,
                     compare_filters=compare_filters or None,
                     starts_with_filters=starts_with_filters or None,
                     limit=pushdown_limit,
@@ -229,7 +256,7 @@ def load_source_data(
                     available_rows = count_rows_func(
                         parquet_path,
                         exact_filters=resolved_exact_filters or None,
-                        in_filters=in_filters or None,
+                        in_filters=resolved_in_filters or None,
                         compare_filters=compare_filters or None,
                         starts_with_filters=starts_with_filters or None,
                     )
@@ -267,7 +294,7 @@ def load_source_data(
                 parquet_path,
                 columns=selected_columns or None,
                 exact_filters=resolved_exact_filters or None,
-                in_filters=in_filters or None,
+                in_filters=resolved_in_filters or None,
                 compare_filters=compare_filters or None,
                 starts_with_filters=starts_with_filters or None,
                 limit=pushdown_limit,
@@ -276,7 +303,7 @@ def load_source_data(
                 available_rows = count_rows_func(
                     parquet_path,
                     exact_filters=resolved_exact_filters or None,
-                    in_filters=in_filters or None,
+                    in_filters=resolved_in_filters or None,
                     compare_filters=compare_filters or None,
                     starts_with_filters=starts_with_filters or None,
                 )

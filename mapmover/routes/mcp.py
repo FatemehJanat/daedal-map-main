@@ -1013,30 +1013,39 @@ async def _execute_loc_id_info_tool(arguments: dict[str, Any], rpc_request_id: A
             rpc_request_id,
         )
     try:
-        feature = _geo_selection_feature(loc_id)
+        from mapmover.geometry_handlers import get_location_info
+
+        info = get_location_info(loc_id)
     except Exception as exc:
         return _jsonrpc_response(
             _tool_result({"request_id": request_id, "error": {"code": "info_failed", "message": str(exc)}}, is_error=True),
             rpc_request_id,
         )
-    if not feature:
+    if not isinstance(info, dict) or info.get("error"):
         return _jsonrpc_response(
-            _tool_result({"request_id": request_id, "loc_id": loc_id, "error": {"code": "not_found", "message": f"no record found for loc_id '{loc_id}'"}}, is_error=True),
+            _tool_result(
+                {
+                    "request_id": request_id,
+                    "loc_id": loc_id,
+                    "error": {"code": "not_found", "message": str((info or {}).get("error") or f"no record found for loc_id '{loc_id}'")},
+                },
+                is_error=True,
+            ),
             rpc_request_id,
         )
-    props = feature.get("properties") or {}
     result = {
         "request_id": request_id,
-        "loc_id": props.get("local_loc_id") or loc_id,
-        "name": props.get("name"),
-        "admin_level": props.get("admin_level"),
-        "parent_id": props.get("parent_id"),
-        "iso3": props.get("iso_a3"),
-        "centroid": {"lon": props.get("centroid_lon"), "lat": props.get("centroid_lat")},
-        "bbox": _bbox_from_props(props),
-        "children_count": props.get("children_count"),
-        "children_by_level": _parse_children_by_level(props.get("children_by_level")),
-        "descendants_count": props.get("descendants_count"),
+        "loc_id": info.get("loc_id") or loc_id,
+        "name": info.get("name"),
+        "admin_level": info.get("admin_level"),
+        "parent_id": info.get("parent_id"),
+        "family": info.get("family"),
+        "iso3": info.get("iso3"),
+        "centroid": info.get("centroid"),
+        "bbox": info.get("bbox"),
+        "children_count": info.get("children_count"),
+        "children_by_level": _parse_children_by_level(info.get("children_by_level")),
+        "descendants_count": info.get("descendants_count"),
     }
     return _jsonrpc_response(_tool_result(result), rpc_request_id)
 

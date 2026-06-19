@@ -1,20 +1,17 @@
 """
 Geometry enrichment functions.
-Handles loading geometry from Countries.csv and enriching data features with geometry.
+Handles loading the shared world bootstrap geometry and enriching data features
+with country-level geometry when finer geometry is not available.
 """
 
 import json
 import logging
-import os
+import re
 import pandas as pd
-from pathlib import Path
 
-from .foundation_helpers import load_reference_json
+from .foundation_helpers import load_global_countries_frame, load_reference_json
 from .geography import get_fallback_coordinates, get_iso_codes
-
-# Base directory for file paths
-BASE_DIR = Path(__file__).resolve().parent.parent
-REFERENCE_DIR = Path(__file__).parent / "reference"
+from .runtime.geography_reference import load_country_name_to_iso3_map
 
 logger = logging.getLogger("mapmover")
 
@@ -23,6 +20,32 @@ _geometry_cache = None
 
 # Cache for country name aliases
 _COUNTRY_ALIASES_CACHE = None
+
+
+def _normalize_country_name(value: str) -> str:
+    """Normalize a country label before shared ISO3 matching."""
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    return _load_country_aliases().get(text, text)
+
+
+def _resolve_bootstrap_country_code(row: pd.Series, name_to_iso3: dict[str, str]) -> str:
+    """
+    Resolve a world-bootstrap row to the ISO3 key expected by country callers.
+
+    `geometry/global.csv` is spine-owned and broader than canonical ISO3 countries,
+    so this adapter intentionally exposes only rows that can be addressed as a
+    country in the shared runtime contract.
+    """
+    loc_id = str(row.get("loc_id") or "").strip().upper()
+    if re.fullmatch(r"[A-Z]{3}", loc_id):
+        return loc_id
+
+    normalized_name = _normalize_country_name(row.get("name"))
+    if not normalized_name:
+        return ""
+    return str(name_to_iso3.get(normalized_name) or "").strip().upper()
 
 
 def _load_country_aliases() -> dict:
@@ -43,24 +66,27 @@ def _load_country_aliases() -> dict:
 
 def get_geometry_lookup():
     """
-    Load Countries.csv geometry data into a lookup dictionary.
-    Returns dict mapping country_code (ISO3) -> geometry dict
+    Load the shared world bootstrap geometry into a lookup dictionary.
+
+    Returns dict mapping country_code (ISO3) -> geometry dict.
+    The backing data source is the spine-owned `geometry/global.csv` helper file,
+    not a separate legacy geometry authority.
     """
     global _geometry_cache
     if _geometry_cache is not None:
         return _geometry_cache
 
-    countries_path = BASE_DIR / "data_pipeline" / "data_cleaned" / "Countries.csv"
-    if not os.path.exists(countries_path):
-        logger.warning(f"Countries.csv not found at {countries_path}")
+    df = load_global_countries_frame()
+    if df is None or df.empty:
+        logger.warning("Shared global bootstrap geometry is not available")
         return {}
 
     try:
-        df = pd.read_csv(countries_path)
         _geometry_cache = {}
+        name_to_iso3 = load_country_name_to_iso3_map()
 
         for _, row in df.iterrows():
-            code = row.get('country_code')
+            code = _resolve_bootstrap_country_code(row, name_to_iso3)
             geom_str = row.get('geometry')
 
             if code and geom_str and pd.notna(geom_str):
@@ -68,28 +94,29 @@ def get_geometry_lookup():
                     geom = json.loads(geom_str) if isinstance(geom_str, str) else geom_str
                     _geometry_cache[code] = {
                         'geometry': geom,
-                        'country_name': row.get('country_name', ''),
-                        'latitude': row.get('latitude'),
-                        'longitude': row.get('longitude'),
+                        'country_name': row.get('name') or row.get('country_name', ''),
+                        'latitude': row.get('centroid_lat') if pd.notna(row.get('centroid_lat')) else row.get('latitude'),
+                        'longitude': row.get('centroid_lon') if pd.notna(row.get('centroid_lon')) else row.get('longitude'),
                         'continent': row.get('continent', ''),
                         'subregion': row.get('subregion', '')
                     }
                 except (json.JSONDecodeError, TypeError):
                     continue
 
-        logger.info(f"Loaded geometry for {len(_geometry_cache)} countries from Countries.csv")
+        logger.info(f"Loaded geometry for {len(_geometry_cache)} countries from shared global bootstrap geometry")
         return _geometry_cache
 
     except Exception as e:
-        logger.error(f"Error loading Countries.csv: {e}")
+        logger.error(f"Error loading shared global bootstrap geometry: {e}")
         return {}
 
 
 def get_country_coordinates(country_name, country_code=None):
     """
     Get approximate coordinates for a country by name or code.
-    First checks Countries.csv geometry lookup, then falls back to
-    conversions.json for countries missing from the geometry CSV.
+    First checks the shared world bootstrap geometry lookup, then falls back to
+    shared capital/fallback coordinates for countries missing from the bootstrap
+    layer.
 
     Args:
         country_name: Name of the country
@@ -104,7 +131,7 @@ def get_country_coordinates(country_name, country_code=None):
         if fallback:
             return fallback
 
-    # Second try: Look up in Countries.csv geometry lookup
+    # Second try: Look up in the shared world bootstrap geometry lookup
     geometry_lookup = get_geometry_lookup()
     if geometry_lookup:
         name_lower = country_name.lower().strip()
@@ -139,7 +166,7 @@ def get_country_coordinates(country_name, country_code=None):
 
 def enrich_with_geometry(features, name_col='country_name', code_col='country_code'):
     """
-    Enrich GeoJSON features with geometry from Countries.csv.
+    Enrich GeoJSON features with geometry from the shared world bootstrap layer.
 
     For features missing geometry, looks up by country_code or country_name.
     Returns tuple: (enriched_features, missing_count, missing_names)
@@ -249,7 +276,7 @@ def get_geometry_source(geographic_level, data_catalog):
     """
     # Map geographic levels to preferred geometry sources
     geometry_sources = {
-        'country': 'Countries.csv',
+        'country': 'geometry/global.csv',
         'county': 'usplaces.csv',
         'state': 'usplaces.csv',  # Can filter to state level
         'city': 'Populated Places.csv',

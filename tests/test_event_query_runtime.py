@@ -190,6 +190,58 @@ class EventQueryRuntimeTests(unittest.TestCase):
         self.assertEqual(items[0]["filters"]["area_km2_min"], 10.0)
         self.assertEqual(items[0]["region"], "CAN-BC")
 
+    def test_query_derived_order_hints_replace_free_text_region_with_canonical_loc_id(self):
+        items = [
+            {
+                "source_id": "worldpop",
+                "region": "Paris, France",
+                "_hints": {
+                    "original_query": "give me a data point for paris, france"
+                },
+            }
+        ]
+
+        apply_query_derived_order_hints(
+            items,
+            load_source_metadata=lambda _source_id: {
+                "data_type": "metrics",
+                "metrics": {"population": {"name": "Population"}},
+            },
+            hints={
+                "query_constraints": {
+                    "region_loc_id": "FRA-G147427",
+                }
+            },
+        )
+
+        self.assertEqual(items[0]["region"], "FRA-G147427")
+
+    def test_query_derived_order_hints_preserve_existing_canonical_region(self):
+        items = [
+            {
+                "source_id": "worldpop",
+                "region": "FRA-G147427",
+                "_hints": {
+                    "original_query": "give me a data point for paris, france"
+                },
+            }
+        ]
+
+        apply_query_derived_order_hints(
+            items,
+            load_source_metadata=lambda _source_id: {
+                "data_type": "metrics",
+                "metrics": {"population": {"name": "Population"}},
+            },
+            hints={
+                "query_constraints": {
+                    "region_loc_id": "FRA-G147427",
+                }
+            },
+        )
+
+        self.assertEqual(items[0]["region"], "FRA-G147427")
+
     def test_extract_query_constraints_resolve_subregion_and_area_units(self):
         constraints = extract_query_constraints(
             "show me fires in BC, canada, from 2017 to present, bigger than 1000 acres",

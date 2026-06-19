@@ -131,7 +131,8 @@ def get_limited_geometry_countries():
 
 def get_fallback_coordinates(country_code, log_missing=True):
     """
-    Get fallback coordinates for countries missing from Countries.csv.
+    Get fallback coordinates for countries missing from the shared world
+    bootstrap geometry layer.
     First checks Populated Places capitals, then conversions.json fallback.
     Returns (lat, lon) tuple or None if not found.
 

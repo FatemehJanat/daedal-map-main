@@ -7,6 +7,20 @@ import re
 import pandas as pd
 
 
+def _normalize_loc_id_filter_values(values, *, translate_loc_id_to_geometry_id_func) -> list[str]:
+    normalized: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text:
+            continue
+        bridged = translate_loc_id_to_geometry_id_func(text)
+        for candidate in (bridged, text):
+            candidate_text = str(candidate or "").strip()
+            if candidate_text and candidate_text not in normalized:
+                normalized.append(candidate_text)
+    return normalized
+
+
 def aggregate_metric_frame(df: pd.DataFrame, group_cols: list[str]) -> pd.DataFrame:
     """Aggregate a disaster metric frame to a coarser spatial level."""
     agg_map = {}
@@ -45,6 +59,13 @@ def infer_implicit_aggregate_rollup_level(item: dict, *, expand_region_func) -> 
     if item.get("aggregate_rollup_level"):
         return None
     region = item.get("region")
+    filters = item.get("filters") if isinstance(item.get("filters"), dict) else {}
+    filter_loc_id = filters.get("loc_id")
+    filter_loc_id_prefix = str(filters.get("loc_id_prefix") or "").strip()
+    if not region and filter_loc_id:
+        return None
+    if not region and filter_loc_id_prefix:
+        return None
     if not region:
         if item.get("aggregate_all_years") or item.get("aggregate_use_rolling"):
             return "admin_0"
@@ -127,6 +148,7 @@ def load_disaster_aggregate_data_impl(
     infer_implicit_aggregate_rollup_level_func,
     derive_event_metric_aggregate_data_func,
     aggregate_metric_frame_func,
+    translate_loc_id_to_geometry_id_func,
     translate_geometry_id_to_local_id_func,
     path_to_uri_func,
     logger,
@@ -149,6 +171,9 @@ def load_disaster_aggregate_data_impl(
     last_error = None
     year, year_start, year_end = normalize_year_filters_func(item)
     region = item.get("region")
+    filters = item.get("filters") if isinstance(item.get("filters"), dict) else {}
+    filter_loc_id_prefix = str(filters.get("loc_id_prefix") or "").strip()
+    filter_loc_id = filters.get("loc_id")
     for candidate in candidates:
         if parquet_path is not None:
             break
@@ -170,8 +195,33 @@ def load_disaster_aggregate_data_impl(
                             (aggregate_year_col, "<=", year_end),
                         ]
                     )
-            if region and "loc_id" in available_cols and re.match(r"^[A-Z]{2,3}(?:-[A-Z0-9]+)*$", str(region).strip()):
-                starts_with_filters["loc_id"] = str(region).strip()
+            if "loc_id" in available_cols:
+                if region and re.match(r"^[A-Z]{2,3}(?:-[A-Z0-9]+)*$", str(region).strip()):
+                    starts_with_filters["loc_id"] = translate_loc_id_to_geometry_id_func(str(region).strip())
+                elif filter_loc_id_prefix:
+                    starts_with_filters["loc_id"] = translate_loc_id_to_geometry_id_func(filter_loc_id_prefix)
+                if filter_loc_id:
+                    loc_id_values = _normalize_loc_id_filter_values(
+                        [filter_loc_id] if not isinstance(filter_loc_id, (list, tuple, set)) else list(filter_loc_id),
+                        translate_loc_id_to_geometry_id_func=translate_loc_id_to_geometry_id_func,
+                    )
+                    if loc_id_values:
+                        if len(loc_id_values) == 1:
+                            exact_filters["loc_id"] = loc_id_values[0]
+                        else:
+                            maybe_df = select_rows_func(
+                                candidate,
+                                exact_filters=exact_filters or None,
+                                in_filters={"loc_id": loc_id_values},
+                                compare_filters=compare_filters or None,
+                                starts_with_filters=starts_with_filters or None,
+                            )
+                            if maybe_df.empty and candidate.exists():
+                                maybe_df = pd.read_parquet(candidate)
+                                maybe_df = maybe_df[maybe_df["loc_id"].astype(str).isin(loc_id_values)]
+                            parquet_path = candidate
+                            df = maybe_df
+                            continue
             maybe_df = select_rows_func(
                 candidate,
                 exact_filters=exact_filters or None,

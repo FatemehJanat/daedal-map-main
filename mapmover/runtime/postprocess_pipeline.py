@@ -245,6 +245,17 @@ def _looks_country_level_region(region: str) -> bool:
     return normalized in {"global", "world", "canada", "usa", "us", "united states", "australia"}
 
 
+def _looks_canonical_region_id(region: str) -> bool:
+    value = str(region or "").strip().upper()
+    if not value:
+        return False
+    return bool(
+        re.fullmatch(r"[A-Z]{3}(?:-[A-Z0-9]+)*", value)
+        or value.startswith("EEZ-")
+        or value.startswith("X")
+    )
+
+
 def apply_query_derived_order_hints(
     items: list,
     load_source_metadata,
@@ -280,6 +291,8 @@ def apply_query_derived_order_hints(
         metrics = metadata.get("metrics") if isinstance(metadata, dict) else {}
 
         area_constraint = query_constraints.get("area_constraint") if isinstance(query_constraints, dict) else {}
+        if not isinstance(area_constraint, dict):
+            area_constraint = {}
         area_threshold_km2 = area_constraint.get("normalized_value")
         if area_threshold_km2 is not None:
             metric_keys = set(metrics.keys()) if isinstance(metrics, dict) else set()
@@ -298,7 +311,11 @@ def apply_query_derived_order_hints(
                 item["filters"] = filters
 
         region_loc_id = str((query_constraints or {}).get("region_loc_id") or "").strip()
-        if region_loc_id and _looks_country_level_region(item.get("region")):
+        current_region = str(item.get("region") or "").strip()
+        if region_loc_id and (
+            _looks_country_level_region(current_region)
+            or not _looks_canonical_region_id(current_region)
+        ):
             item["region"] = region_loc_id
 
 
