@@ -36,6 +36,7 @@ def build_preprocessor_signal_bundle(
     detect_derived_intent,
     detect_tutorial_mode_intent,
     build_preprocessor_hints,
+    extract_query_constraints,
 ) -> dict:
     """Build the shared hint bundle before any lane-specific summary shaping."""
     show_borders = detect_show_borders_intent(query)
@@ -50,6 +51,7 @@ def build_preprocessor_signal_bundle(
         reference_dir=reference_dir,
         get_countries_in_viewport=get_countries_in_viewport,
         logger=logger,
+        extract_query_constraints=extract_query_constraints,
     )
     navigation = resolution["navigation"]
     disambiguation = resolution["disambiguation"]
@@ -92,6 +94,7 @@ def build_preprocessor_signal_bundle(
         saved_order_names=saved_order_names,
         time_state=time_state,
         loaded_data=loaded_data,
+        query_constraints=resolution["query_constraints"],
     )
     return {
         "hints": hints,
