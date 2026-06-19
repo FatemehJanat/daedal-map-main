@@ -6,86 +6,173 @@ import re
 from pathlib import Path
 from typing import Callable, Optional
 
+from .runtime.geography_reference import load_capital_to_iso3_map, load_country_name_to_iso3_map
+from .runtime.loc_id_resolution import resolve_admin_text_to_loc_id
 
-_NAME_TO_ISO3_CACHE = None
-_SUBREGION_TO_ISO3_CACHE = None
+
+_SPAN_STOP_WORDS = {
+    "a",
+    "an",
+    "and",
+    "at",
+    "by",
+    "data",
+    "event",
+    "events",
+    "for",
+    "from",
+    "in",
+    "me",
+    "of",
+    "on",
+    "records",
+    "show",
+    "than",
+    "the",
+    "to",
+    "within",
+}
 
 
 def build_name_to_iso3(*, reference_dir: Path, load_reference_file: Callable[[Path], Optional[dict]]) -> dict:
-    """Build reverse lookup from country name to ISO3 code."""
-    global _NAME_TO_ISO3_CACHE
-    if _NAME_TO_ISO3_CACHE is not None:
-        return _NAME_TO_ISO3_CACHE
-
-    iso_path = reference_dir / "iso_codes.json"
-    name_to_iso3 = {}
-    if iso_path.exists():
-        data = load_reference_file(iso_path) or {}
-        iso3_to_name = data.get("iso3_to_name", {})
-        for iso3, name in iso3_to_name.items():
-            name_to_iso3[name.lower()] = iso3
-            clean_name = name.lower()
-            for suffix in [" islands", " island", " republic", " federation"]:
-                if clean_name.endswith(suffix):
-                    name_to_iso3[clean_name.replace(suffix, "").strip()] = iso3
-
-    name_to_iso3.update(
-        {
-            "usa": "USA",
-            "us": "USA",
-            "united states": "USA",
-            "america": "USA",
-            "uk": "GBR",
-            "britain": "GBR",
-            "england": "GBR",
-            "russia": "RUS",
-            "ussr": "RUS",
-            "korea": "KOR",
-            "south korea": "KOR",
-            "north korea": "PRK",
-            "dprk": "PRK",
-            "taiwan": "TWN",
-            "republic of china": "TWN",
-            "iran": "IRN",
-            "persia": "IRN",
-            "syria": "SYR",
-            "uae": "ARE",
-            "emirates": "ARE",
-            "vietnam": "VNM",
-            "viet nam": "VNM",
-            "congo": "COD",
-            "drc": "COD",
-            "ivory coast": "CIV",
-            "cote d'ivoire": "CIV",
-            "turkey": "TUR",
-            "turkiye": "TUR",
-            "holland": "NLD",
-            "netherlands": "NLD",
-            "czech republic": "CZE",
-            "czechia": "CZE",
-        }
-    )
-    _NAME_TO_ISO3_CACHE = name_to_iso3
-    return name_to_iso3
+    """Compatibility wrapper for the shared runtime country-name spine."""
+    return dict(load_country_name_to_iso3_map())
 
 
 def build_subregion_to_iso3(*, reference_dir: Path, load_reference_file: Callable[[Path], Optional[dict]]) -> dict:
-    """Build lookup from capitals to parent country ISO3."""
-    global _SUBREGION_TO_ISO3_CACHE
-    if _SUBREGION_TO_ISO3_CACHE is not None:
-        return _SUBREGION_TO_ISO3_CACHE
+    """Compatibility wrapper for the shared runtime capital-to-country spine."""
+    return dict(load_capital_to_iso3_map())
 
-    subregion_to_iso3 = {}
-    metadata_path = reference_dir / "country_metadata.json"
-    if metadata_path.exists():
-        data = load_reference_file(metadata_path) or {}
-        capitals = data.get("capitals", {})
-        for iso3, capital in capitals.items():
-            if isinstance(capital, str) and capital and not capital.startswith("_"):
-                subregion_to_iso3[capital.lower()] = iso3
 
-    _SUBREGION_TO_ISO3_CACHE = subregion_to_iso3
-    return subregion_to_iso3
+def _extract_explicit_country_hints(query_lower: str, name_to_iso3: dict[str, str]) -> list[tuple[str, str]]:
+    hints: list[tuple[str, str]] = []
+    seen_iso3: set[str] = set()
+    for name in sorted(name_to_iso3.keys(), key=len, reverse=True):
+        pattern = r"\b" + re.escape(name) + r"\b"
+        if not re.search(pattern, query_lower):
+            continue
+        iso3 = str(name_to_iso3[name] or "").strip().upper()
+        if not iso3 or iso3 in seen_iso3:
+            continue
+        hints.append((name, iso3))
+        seen_iso3.add(iso3)
+    return hints
+
+
+def _iter_query_spans(query_lower: str, *, max_words: int = 6) -> list[str]:
+    cleaned = re.sub(r"[^\w\s,'-]", " ", query_lower)
+    tokens = [token.strip(" ,") for token in cleaned.split() if token.strip(" ,")]
+    spans: list[str] = []
+    seen: set[str] = set()
+    token_count = len(tokens)
+    for length in range(min(max_words, token_count), 0, -1):
+        for start in range(0, token_count - length + 1):
+            span_tokens = tokens[start : start + length]
+            if not span_tokens:
+                continue
+            if all(token in _SPAN_STOP_WORDS for token in span_tokens):
+                continue
+            span = " ".join(span_tokens).strip(" ,")
+            if not span or span in seen:
+                continue
+            seen.add(span)
+            spans.append(span)
+    return spans
+
+
+def _build_location_candidate(
+    *,
+    matched_term: str,
+    loc_id: str,
+    admin_level: int | None,
+    iso3_to_name: dict[str, str],
+    match_type: str,
+    source: str,
+    country_hint: str | None = None,
+) -> dict:
+    iso3 = str(loc_id or "").split("-", 1)[0]
+    level_value = int(admin_level) if admin_level is not None else 0
+    word_count = len([part for part in matched_term.split() if part])
+    return {
+        "matched_term": matched_term,
+        "iso3": iso3,
+        "loc_id": loc_id,
+        "country_name": iso3_to_name.get(iso3, iso3),
+        "confidence": 0.75 + min(word_count, 4) * 0.05 + (0.05 if loc_id != iso3 else 0.0),
+        "match_type": match_type,
+        "is_subregion": loc_id != iso3,
+        "admin_level": level_value,
+        "source": source,
+        "country_hint": country_hint,
+        "word_count": word_count,
+    }
+
+
+def _sort_location_candidates(candidates: list[dict]) -> list[dict]:
+    return sorted(
+        candidates,
+        key=lambda item: (
+            1 if item.get("is_subregion") else 0,
+            int(item.get("word_count", 0)),
+            len(str(item.get("matched_term") or "")),
+            int(item.get("admin_level", 0)),
+        ),
+        reverse=True,
+    )
+
+
+def _resolve_query_location_candidates(
+    query_lower: str,
+    *,
+    name_to_iso3: dict[str, str],
+    iso3_to_name: dict[str, str],
+) -> list[dict]:
+    explicit_country_hints = _extract_explicit_country_hints(query_lower, name_to_iso3)
+    hint_values = [None] + [iso3 for _name, iso3 in explicit_country_hints]
+    candidates: list[dict] = []
+    seen_loc_ids: set[str] = set()
+
+    for span in _iter_query_spans(query_lower):
+        for country_hint in hint_values:
+            resolved = resolve_admin_text_to_loc_id(span, country_hint=country_hint)
+            loc_id = str(resolved.get("deepest_resolved_loc_id") or "").strip()
+            if not loc_id or loc_id in seen_loc_ids:
+                continue
+            admin_level_key = str(resolved.get("deepest_resolved_admin_level") or "").strip()
+            admin_level = None
+            if admin_level_key.startswith("admin_"):
+                try:
+                    admin_level = int(admin_level_key.split("_", 1)[1])
+                except ValueError:
+                    admin_level = None
+            candidate = _build_location_candidate(
+                matched_term=span,
+                loc_id=loc_id,
+                admin_level=admin_level,
+                iso3_to_name=iso3_to_name,
+                match_type=str(resolved.get("match_type") or "direct_admin_name"),
+                source="shared_loc_id_resolver",
+                country_hint=country_hint,
+            )
+            candidates.append(candidate)
+            seen_loc_ids.add(loc_id)
+
+    for country_name, iso3 in explicit_country_hints:
+        if iso3 in seen_loc_ids:
+            continue
+        candidates.append(
+            _build_location_candidate(
+                matched_term=country_name,
+                loc_id=iso3,
+                admin_level=0,
+                iso3_to_name=iso3_to_name,
+                match_type="country",
+                source="country_alias",
+            )
+        )
+        seen_loc_ids.add(iso3)
+
+    return _sort_location_candidates(candidates)
 
 
 def extract_country_from_query(
@@ -95,18 +182,31 @@ def extract_country_from_query(
     reference_dir: Path,
     load_reference_file: Callable[[Path], Optional[dict]],
 ) -> dict:
-    """Extract country from query using hierarchical country/capital resolution."""
+    """Extract the best location candidate from query text using the shared loc spine."""
     result = {"match": None, "ambiguous": False, "matches": [], "source": None}
     normalized_query = normalize_query_for_location_matching(query)
     query_lower = normalized_query.lower()
 
     name_to_iso3 = build_name_to_iso3(reference_dir=reference_dir, load_reference_file=load_reference_file)
-    for name in sorted(name_to_iso3.keys(), key=len, reverse=True):
-        pattern = r"\b" + re.escape(name) + r"\b"
-        if re.search(pattern, query_lower):
-            result["match"] = (name, name_to_iso3[name], False)
-            result["source"] = "country"
-            return result
+    iso_data = load_reference_file(reference_dir / "iso_codes.json") or {}
+    iso3_to_name = iso_data.get("iso3_to_name", {})
+    candidates = _resolve_query_location_candidates(
+        query_lower,
+        name_to_iso3=name_to_iso3,
+        iso3_to_name=iso3_to_name,
+    )
+    if candidates:
+        best = candidates[0]
+        result["match"] = (
+            best["matched_term"],
+            best["iso3"],
+            bool(best.get("is_subregion")),
+        )
+        result["matches"] = candidates
+        result["source"] = best.get("source")
+        result["loc_id"] = best.get("loc_id")
+        result["country_name"] = best.get("country_name")
+        return result
 
     subregion_to_iso3 = build_subregion_to_iso3(reference_dir=reference_dir, load_reference_file=load_reference_file)
     for subregion in sorted(subregion_to_iso3.keys(), key=len, reverse=True):
@@ -114,6 +214,8 @@ def extract_country_from_query(
         if re.search(pattern, query_lower):
             result["match"] = (subregion, subregion_to_iso3[subregion], True)
             result["source"] = "capital"
+            result["loc_id"] = subregion_to_iso3[subregion]
+            result["country_name"] = iso3_to_name.get(subregion_to_iso3[subregion], subregion.title())
             return result
 
     return result
@@ -126,56 +228,19 @@ def detect_location_candidates(
     reference_dir: Path,
     load_reference_file: Callable[[Path], Optional[dict]],
 ) -> dict:
-    """Detect all possible location matches in query with confidence scores."""
+    """Detect location candidates using the shared loc spine."""
     normalized_query = normalize_query_for_location_matching(query)
     query_lower = normalized_query.lower()
-    candidates = []
     iso_data = load_reference_file(reference_dir / "iso_codes.json") or {}
     iso3_to_name = iso_data.get("iso3_to_name", {})
 
     name_to_iso3 = build_name_to_iso3(reference_dir=reference_dir, load_reference_file=load_reference_file)
-    for name in sorted(name_to_iso3.keys(), key=len, reverse=True):
-        pattern = r"\b" + re.escape(name) + r"\b"
-        if re.search(pattern, query_lower):
-            iso3 = name_to_iso3[name]
-            candidates.append(
-                {
-                    "matched_term": name,
-                    "iso3": iso3,
-                    "loc_id": iso3,
-                    "country_name": iso3_to_name.get(iso3, name.title()),
-                    "confidence": 1.0,
-                    "match_type": "country",
-                    "is_subregion": False,
-                }
-            )
-
-    subregion_to_iso3 = build_subregion_to_iso3(reference_dir=reference_dir, load_reference_file=load_reference_file)
-    for subregion in sorted(subregion_to_iso3.keys(), key=len, reverse=True):
-        pattern = r"\b" + re.escape(subregion) + r"\b"
-        if re.search(pattern, query_lower):
-            iso3 = subregion_to_iso3[subregion]
-            candidates.append(
-                {
-                    "matched_term": subregion,
-                    "iso3": iso3,
-                    "loc_id": iso3,
-                    "country_name": iso3_to_name.get(iso3, subregion.title()),
-                    "confidence": 0.9,
-                    "match_type": "capital",
-                    "is_subregion": True,
-                }
-            )
-
-    candidates = sorted(candidates, key=lambda x: -x["confidence"])
-    seen = set()
-    unique_candidates = []
-    for candidate in candidates:
-        loc_key = candidate.get("loc_id") or candidate.get("iso3")
-        if loc_key and loc_key not in seen:
-            seen.add(loc_key)
-            unique_candidates.append(candidate)
-    return {"candidates": unique_candidates, "best": unique_candidates[0] if unique_candidates else None}
+    candidates = _resolve_query_location_candidates(
+        query_lower,
+        name_to_iso3=name_to_iso3,
+        iso3_to_name=iso3_to_name,
+    )
+    return {"candidates": candidates, "best": candidates[0] if candidates else None}
 
 
 def detect_drilldown_pattern(

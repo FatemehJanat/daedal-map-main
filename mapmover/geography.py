@@ -4,22 +4,14 @@ Handles country codes, region lookups, and coordinate fallbacks.
 """
 
 import logging
-import pandas as pd
-from pathlib import Path
-from .foundation_helpers import load_reference_json
 from .runtime.geography_reference import (
+    load_capital_coordinates_by_iso3,
     load_conversions as load_conversions_impl,
     load_iso_codes as load_iso_codes_impl,
 )
 
-# Base directory for file paths
-BASE_DIR = Path(__file__).resolve().parent.parent
-
 # Compatibility alias backed by the shared runtime loader.
 CONVERSIONS_DATA = load_conversions_impl() or {}
-
-# Cache for populated places capitals lookup
-_CAPITALS_CACHE = None
 
 logger = logging.getLogger("mapmover")
 
@@ -137,39 +129,6 @@ def get_limited_geometry_countries():
     return set(limited_geom.get('fallback_coordinates', {}).keys())
 
 
-def _load_capitals_cache():
-    """Load capitals from Populated Places.csv into memory."""
-    global _CAPITALS_CACHE
-    if _CAPITALS_CACHE is not None:
-        return _CAPITALS_CACHE
-
-    try:
-        capitals_path = BASE_DIR / "data_pipeline" / "data_cleaned" / "Populated Places.csv"
-        if capitals_path.exists():
-            df = pd.read_csv(capitals_path)
-            # Filter to capitals only
-            capitals = df[df['level'] == 'capital']
-            # Build lookup by country code
-            _CAPITALS_CACHE = {}
-            for _, row in capitals.iterrows():
-                code = row.get('code')
-                if code and pd.notna(code):
-                    _CAPITALS_CACHE[code] = {
-                        'name': row.get('name'),
-                        'lat': row.get('latitude'),
-                        'lon': row.get('longitude')
-                    }
-            logging.info(f"Loaded {len(_CAPITALS_CACHE)} capitals from Populated Places")
-        else:
-            _CAPITALS_CACHE = {}
-            logging.warning("Populated Places.csv not found")
-    except Exception as e:
-        logging.error(f"Error loading capitals: {e}")
-        _CAPITALS_CACHE = {}
-
-    return _CAPITALS_CACHE
-
-
 def get_fallback_coordinates(country_code, log_missing=True):
     """
     Get fallback coordinates for countries missing from Countries.csv.
@@ -183,8 +142,8 @@ def get_fallback_coordinates(country_code, log_missing=True):
     if not country_code:
         return None
 
-    # 1. First try Populated Places capitals cache
-    capitals = _load_capitals_cache()
+    # 1. First try the shared runtime capital-coordinate spine
+    capitals = load_capital_coordinates_by_iso3()
     if country_code in capitals:
         cap = capitals[country_code]
         if cap.get('lat') and cap.get('lon'):

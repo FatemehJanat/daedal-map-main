@@ -395,7 +395,9 @@ def resolve_admin_text_to_loc_id(
     if admin_level_hint is not None:
         level_order = [int(admin_level_hint)]
     elif country:
-        level_order = [2, 1, 0]
+        # Let the shared country geometry spine resolve the deepest matching
+        # admin level first instead of assuming province/state or county only.
+        level_order = [None, 0]
     else:
         level_order = [0]
 

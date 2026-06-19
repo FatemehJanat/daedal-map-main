@@ -9,7 +9,7 @@ from typing import Optional
 def normalize_query_for_location_matching(query: str) -> str:
     """Normalize query text to improve location matching."""
     query = re.sub(r"'s\b", "", query)
-    query = re.sub(r"'\b", "", query)
+    query = query.replace("'", " ")
     query = re.sub(
         r"\b(\w+?)s\s+(population|gdp|economy|data|capital|government|president|leader)",
         r"\1 \2",

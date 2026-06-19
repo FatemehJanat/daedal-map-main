@@ -5,6 +5,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
 from ..foundation_helpers import load_country_crosswalk, load_country_json_asset, load_reference_json
 
 _BASE_DIR = Path(__file__).resolve().parent.parent
@@ -13,6 +15,10 @@ _CONVERSIONS_PATH = _BASE_DIR / "conversions.json"
 _CONVERSIONS_CACHE: dict[str, Any] | None = None
 _ISO_CODES_CACHE: dict[str, Any] | None = None
 _USA_ADMIN_CACHE: dict[str, Any] | None = None
+_COUNTRY_METADATA_CACHE: dict[str, Any] | None = None
+_COUNTRY_NAME_TO_ISO3_CACHE: dict[str, str] | None = None
+_CAPITAL_TO_ISO3_CACHE: dict[str, str] | None = None
+_CAPITAL_COORDINATES_CACHE: dict[str, dict[str, Any]] | None = None
 _COUNTRY_SUBDIVISION_SLUG_CACHE: dict[tuple[str, str], str | None] = {}
 _WATER_BODY_CODES_CACHE: set[str] | None = None
 
@@ -228,6 +234,124 @@ def load_usa_admin() -> dict[str, Any]:
     data = load_reference_json("usa/usa_admin.json")
     _USA_ADMIN_CACHE = data if isinstance(data, dict) else {}
     return _USA_ADMIN_CACHE
+
+
+def load_country_metadata() -> dict[str, Any]:
+    """Load shared country metadata helpers such as capitals/currencies/timezones."""
+    global _COUNTRY_METADATA_CACHE
+    if _COUNTRY_METADATA_CACHE is not None:
+        return _COUNTRY_METADATA_CACHE
+
+    data = load_reference_json("country_metadata.json")
+    _COUNTRY_METADATA_CACHE = data if isinstance(data, dict) else {}
+    return _COUNTRY_METADATA_CACHE
+
+
+def load_country_name_to_iso3_map() -> dict[str, str]:
+    """Return the shared country-name alias map used by runtime location adapters."""
+    global _COUNTRY_NAME_TO_ISO3_CACHE
+    if _COUNTRY_NAME_TO_ISO3_CACHE is not None:
+        return _COUNTRY_NAME_TO_ISO3_CACHE
+
+    iso_data = load_iso_codes()
+    mapping: dict[str, str] = {}
+    for iso3, name in (iso_data.get("iso3_to_name") or {}).items():
+        clean_iso3 = str(iso3 or "").strip().upper()
+        clean_name = str(name or "").strip().lower()
+        if not clean_iso3 or not clean_name:
+            continue
+        mapping[clean_name] = clean_iso3
+        for suffix in (" islands", " island", " republic", " federation"):
+            if clean_name.endswith(suffix):
+                mapping.setdefault(clean_name[: -len(suffix)].strip(), clean_iso3)
+
+    mapping.update(
+        {
+            "usa": "USA",
+            "us": "USA",
+            "united states": "USA",
+            "america": "USA",
+            "uk": "GBR",
+            "britain": "GBR",
+            "england": "GBR",
+            "russia": "RUS",
+            "ussr": "RUS",
+            "korea": "KOR",
+            "south korea": "KOR",
+            "north korea": "PRK",
+            "dprk": "PRK",
+            "taiwan": "TWN",
+            "republic of china": "TWN",
+            "iran": "IRN",
+            "persia": "IRN",
+            "syria": "SYR",
+            "uae": "ARE",
+            "emirates": "ARE",
+            "vietnam": "VNM",
+            "viet nam": "VNM",
+            "congo": "COD",
+            "drc": "COD",
+            "ivory coast": "CIV",
+            "cote d'ivoire": "CIV",
+            "turkey": "TUR",
+            "turkiye": "TUR",
+            "holland": "NLD",
+            "netherlands": "NLD",
+            "czech republic": "CZE",
+            "czechia": "CZE",
+        }
+    )
+    _COUNTRY_NAME_TO_ISO3_CACHE = mapping
+    return _COUNTRY_NAME_TO_ISO3_CACHE
+
+
+def load_capital_to_iso3_map() -> dict[str, str]:
+    """Return the shared capital-name to ISO3 fallback map."""
+    global _CAPITAL_TO_ISO3_CACHE
+    if _CAPITAL_TO_ISO3_CACHE is not None:
+        return _CAPITAL_TO_ISO3_CACHE
+
+    capitals = load_country_metadata().get("capitals") or {}
+    mapping: dict[str, str] = {}
+    for iso3, capital in capitals.items():
+        clean_iso3 = str(iso3 or "").strip().upper()
+        clean_capital = str(capital or "").strip().lower()
+        if not clean_iso3 or not clean_capital or clean_capital.startswith("_"):
+            continue
+        mapping[clean_capital] = clean_iso3
+    _CAPITAL_TO_ISO3_CACHE = mapping
+    return _CAPITAL_TO_ISO3_CACHE
+
+
+def load_capital_coordinates_by_iso3() -> dict[str, dict[str, Any]]:
+    """Load capital fallback coordinates from the shared populated-places asset."""
+    global _CAPITAL_COORDINATES_CACHE
+    if _CAPITAL_COORDINATES_CACHE is not None:
+        return _CAPITAL_COORDINATES_CACHE
+
+    capitals_path = _BASE_DIR / "data_pipeline" / "data_cleaned" / "Populated Places.csv"
+    capital_map: dict[str, dict[str, Any]] = {}
+    if not capitals_path.exists():
+        _CAPITAL_COORDINATES_CACHE = capital_map
+        return _CAPITAL_COORDINATES_CACHE
+
+    try:
+        df = pd.read_csv(capitals_path)
+        capitals = df[df["level"] == "capital"]
+        for _, row in capitals.iterrows():
+            iso3 = str(row.get("code") or "").strip().upper()
+            if not iso3:
+                continue
+            capital_map[iso3] = {
+                "name": row.get("name"),
+                "lat": row.get("latitude"),
+                "lon": row.get("longitude"),
+            }
+    except Exception:
+        capital_map = {}
+
+    _CAPITAL_COORDINATES_CACHE = capital_map
+    return _CAPITAL_COORDINATES_CACHE
 
 
 def normalize_subdivision_slug(value: str, *, strip_suffixes: tuple[str, ...] = ()) -> str:

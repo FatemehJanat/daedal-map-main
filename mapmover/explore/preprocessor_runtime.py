@@ -31,8 +31,6 @@ from ..runtime.preprocess_pipeline import (
     resolve_navigation_and_location,
 )
 from ..runtime.preprocess_primitives import (
-    build_name_to_iso3 as build_name_to_iso3_impl,
-    build_subregion_to_iso3 as build_subregion_to_iso3_impl,
     detect_derived_intent as detect_derived_intent_impl,
     detect_drilldown_pattern as detect_drilldown_pattern_impl,
     detect_filter_intent as detect_filter_intent_impl,
@@ -56,6 +54,8 @@ from ..runtime.preprocess_user_intents import (
     detect_tutorial_mode_intent,
     normalize_query_for_location_matching,
 )
+from ..runtime.query_constraint_primitives import extract_query_constraints as extract_query_constraints_impl
+from ..runtime.loc_id_resolution import resolve_admin_text_to_loc_id
 from ..runtime.preprocessor_runtime import build_preprocessor_signal_bundle
 from ..runtime.preprocessor_context_runtime import (
     format_filter_description,
@@ -141,14 +141,6 @@ def lookup_location_in_viewport(query: str, viewport: dict = None) -> dict:
     )
 
 
-def build_name_to_iso3() -> dict:
-    return build_name_to_iso3_impl(reference_dir=REFERENCE_DIR, load_reference_file=load_reference_file)
-
-
-def build_subregion_to_iso3() -> dict:
-    return build_subregion_to_iso3_impl(reference_dir=REFERENCE_DIR, load_reference_file=load_reference_file)
-
-
 def extract_country_from_query(query: str, viewport: dict = None) -> dict:
     return extract_country_from_query_impl(
         query,
@@ -168,6 +160,15 @@ def resolve_regions(query: str) -> list:
 
 def detect_time_patterns(query: str) -> dict:
     return detect_time_patterns_impl(query)
+
+
+def extract_query_constraints(query: str) -> dict:
+    return extract_query_constraints_impl(
+        query,
+        resolve_admin_text_to_loc_id_func=resolve_admin_text_to_loc_id,
+        load_reference_file_func=load_reference_file,
+        reference_dir=REFERENCE_DIR,
+    )
 
 
 def lookup_country_specific_data(ref_type: str, iso3: str, country_name: str) -> Optional[dict]:
@@ -325,6 +326,7 @@ def preprocess_query(
         detect_derived_intent=detect_derived_intent,
         detect_tutorial_mode_intent=detect_tutorial_mode_intent,
         build_preprocessor_hints=build_preprocessor_hints,
+        extract_query_constraints=extract_query_constraints,
     )
     hints = preprocessor_state["hints"]
     hints["summary"] = build_preprocessor_summary(

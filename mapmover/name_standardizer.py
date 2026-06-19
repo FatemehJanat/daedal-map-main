@@ -18,6 +18,8 @@ import json
 import pandas as pd
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Set
+import re
+import unicodedata
 from rapidfuzz import fuzz, process
 
 from .duckdb_helpers import duckdb_available, select_columns_from_parquet
@@ -39,7 +41,7 @@ class NameStandardizer:
             data_dir = Path(__file__).parent
 
         self.data_dir = data_dir
-        self.geom_dir = data_dir / "data_cleaned" / "geometry"
+        self.geom_dir = GEOMETRY_DIR
         self.conversions_path = data_dir / "conversions.json"
 
         # Canonical name lookups (populated on first use)
@@ -50,6 +52,7 @@ class NameStandardizer:
 
         # Alias mappings from conversions.json
         self._aliases: Dict[str, str] = {}  # alias lowercase -> canonical
+        self._country_name_index: Dict[Tuple[str, Optional[int]], Dict[str, str]] = {}
 
         # Known aggregates (to skip logging as mismatches)
         self._aggregate_names: Set[str] = set()  # lowercase aggregate names
@@ -77,18 +80,18 @@ class NameStandardizer:
             # Build alias map from iso_codes.json
             for code, name in iso3_to_name.items():
                 self._country_codes[code] = name
-                self._aliases[name.lower()] = name
-                self._aliases[code.lower()] = name
+                self._aliases[self._normalize_lookup_text(name)] = name
+                self._aliases[self._normalize_lookup_text(code)] = name
 
             # Load aggregate names from regional_groupings and region_aliases
             # These are entities like "African Region", "Europe", etc. that will be removed
             for group_name in conv.get('regional_groupings', {}).keys():
                 # Convert underscore names to readable format
                 readable_name = group_name.replace('_', ' ').lower()
-                self._aggregate_names.add(readable_name)
-                self._aggregate_names.add(group_name.lower())
+                self._aggregate_names.add(self._normalize_lookup_text(readable_name))
+                self._aggregate_names.add(self._normalize_lookup_text(group_name))
             for alias in conv.get('region_aliases', {}).keys():
-                self._aggregate_names.add(alias.lower())
+                self._aggregate_names.add(self._normalize_lookup_text(alias))
 
             # Add common aggregate patterns
             self._aggregate_names.update({
@@ -103,31 +106,33 @@ class NameStandardizer:
             # Add common aliases
             self._add_common_aliases()
 
-        # Load countries_geometry.csv
-        countries_path = self.geom_dir / "countries_geometry.csv"
+        # Load current runtime country geometry inventory.
+        countries_path = self.geom_dir / "global.csv"
         if countries_path.exists():
             df = pd.read_csv(countries_path)
             for _, row in df.iterrows():
                 name = row.get('name')
-                code = row.get('code')
+                code = row.get('loc_id') or row.get('code')
                 abbrev = row.get('abbrev')
 
                 if pd.notna(name):
-                    self._country_names[name.lower()] = name
-                    if pd.notna(code):
-                        self._country_codes[code] = name
-                        self._aliases[code.lower()] = name
+                    name_str = str(name).strip()
+                    code_str = str(code).strip().upper() if pd.notna(code) else ""
+                    if len(code_str) == 3 and code_str.isalpha():
+                        self._country_names[self._normalize_lookup_text(name_str)] = name_str
+                        self._country_codes[code_str] = name_str
+                        self._aliases[self._normalize_lookup_text(code_str)] = name_str
                     if pd.notna(abbrev) and abbrev != name:
-                        self._aliases[abbrev.lower()] = name
+                        self._aliases[self._normalize_lookup_text(abbrev)] = name
 
-        # Load places_geometry.csv (capitals and cities)
+        # Optional older geometry extracts for point/city aliases.
         places_path = self.geom_dir / "places_geometry.csv"
         if places_path.exists():
             df = pd.read_csv(places_path)
             for _, row in df.iterrows():
                 name = row.get('name')
                 if pd.notna(name):
-                    self._place_names[name.lower()] = name
+                    self._place_names[self._normalize_lookup_text(name)] = name
 
         # Load usplaces_geometry.csv
         usplaces_path = self.geom_dir / "usplaces_geometry.csv"
@@ -136,7 +141,7 @@ class NameStandardizer:
             for _, row in df.iterrows():
                 name = row.get('name')
                 if pd.notna(name):
-                    self._us_place_names[name.lower()] = name
+                    self._us_place_names[self._normalize_lookup_text(name)] = name
 
         self._loaded = True
         print(f"[NameStandardizer] Loaded {len(self._country_names)} countries, "
@@ -284,7 +289,19 @@ class NameStandardizer:
         }
 
         for alias, canonical in common_aliases.items():
-            self._aliases[alias.lower()] = canonical
+            self._aliases[self._normalize_lookup_text(alias)] = canonical
+
+    @staticmethod
+    def _normalize_lookup_text(value: str) -> str:
+        text = str(value or "").strip().lower()
+        if not text:
+            return ""
+        text = unicodedata.normalize("NFKD", text)
+        text = "".join(ch for ch in text if not unicodedata.combining(ch))
+        text = text.replace("&", " and ")
+        text = re.sub(r"[^\w\s]+", " ", text)
+        text = " ".join(text.split())
+        return text
 
     def standardize_country_name(self, name: str, log_mismatch: bool = True) -> Tuple[str, bool]:
         """
@@ -303,7 +320,7 @@ class NameStandardizer:
             return name, False
 
         name_str = str(name).strip()
-        name_lower = name_str.lower()
+        name_lower = self._normalize_lookup_text(name_str)
 
         # 1. Check exact match in canonical names
         if name_lower in self._country_names:
@@ -439,7 +456,7 @@ class NameStandardizer:
         unmatched = []
 
         for name in unique_names:
-            name_lower = str(name).lower()
+            name_lower = self._normalize_lookup_text(str(name))
 
             # Check canonical
             if level == 'country':
@@ -503,9 +520,16 @@ class NameStandardizer:
         """
         self._load_data()
 
-        name_lower = name.lower().strip()
+        name_lower = self._normalize_lookup_text(name)
 
-        # Try country lookup first
+        # When a country hint is present, prefer that country's geometry spine
+        # before falling back to a same-named sovereign country.
+        if country:
+            loc_id = self._lookup_in_parquet(name_lower, country, admin_level)
+            if loc_id:
+                return loc_id
+
+        # Try country lookup.
         if admin_level is None or admin_level == 0:
             # Check canonical country names
             if name_lower in self._country_names:
@@ -521,10 +545,6 @@ class NameStandardizer:
                     if cname == canon_name:
                         return code
 
-        # For sub-national, load parquet
-        if country:
-            return self._lookup_in_parquet(name_lower, country, admin_level)
-
         return None
 
     def _lookup_in_parquet(
@@ -534,35 +554,40 @@ class NameStandardizer:
         admin_level: int = None
     ) -> Optional[str]:
         """Look up a name in country parquet file."""
-        parquet_file = GEOMETRY_DIR / f"{country}.parquet"
+        cache_key = (str(country or "").upper(), admin_level)
+        if cache_key not in self._country_name_index:
+            parquet_file = GEOMETRY_DIR / f"{country}.parquet"
+            if not parquet_file.exists():
+                return None
 
-        if not parquet_file.exists():
-            return None
-
-        try:
-            columns = ["loc_id", "name", "admin_level"]
-            if duckdb_available():
-                df = select_columns_from_parquet(parquet_file, columns)
-                if df.empty:
+            try:
+                columns = ["loc_id", "name", "admin_level"]
+                # Name resolution should prefer the local geometry spine directly.
+                # Falling through cloud DuckDB here makes deterministic resolver QA
+                # brittle and can fail even when the local geometry bank is healthy.
+                if parquet_file.exists():
                     df = pd.read_parquet(parquet_file, columns=columns)
-            else:
-                df = pd.read_parquet(parquet_file, columns=columns)
+                elif duckdb_available():
+                    df = select_columns_from_parquet(parquet_file, columns)
+                else:
+                    return None
 
-            # Filter by admin level if specified
-            if admin_level is not None:
-                df = df[df['admin_level'] == admin_level]
+                if admin_level is not None:
+                    df = df[df["admin_level"] == admin_level]
 
-            # Search by name (case insensitive)
-            df['name_lower'] = df['name'].str.lower()
-            matches = df[df['name_lower'] == name_lower]
+                df["name_key"] = df["name"].astype(str).map(self._normalize_lookup_text)
+                df = df[df["name_key"] != ""]
+                index: Dict[str, str] = {}
+                for row in df.itertuples(index=False):
+                    key = str(row.name_key or "").strip()
+                    loc_id = str(row.loc_id or "").strip()
+                    if key and loc_id and key not in index:
+                        index[key] = loc_id
+                self._country_name_index[cache_key] = index
+            except Exception:
+                self._country_name_index[cache_key] = {}
 
-            if len(matches) > 0:
-                return matches.iloc[0]['loc_id']
-
-        except Exception:
-            pass
-
-        return None
+        return self._country_name_index.get(cache_key, {}).get(name_lower)
 
     def get_loc_id_from_fips(
         self,
