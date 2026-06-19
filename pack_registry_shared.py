@@ -134,6 +134,26 @@ PACK_REGISTRY: dict[str, dict] = {
             "preferred_tool": "get_tsunami_events",
         },
     },
+    "wildfires": {
+        "display_name": "wildfires",
+        "pricing": "paid_x402_base_usdc",
+        "mcp_tool_allowlist": ("get_catalog", "get_pack", "query_dataset"),
+        "mcp_prompt_allowlist": ("count_disaster_events",),
+        "mcp_name": "com.daedalmap/wildfires",
+        "mcp_title": "DaedalMap Wildfire Events",
+        "mcp_description": "Global, U.S., and Canada wildfire event and aggregate data, including burned area, duration, and source-aware regional routing. Paid via x402 on Base mainnet USDC. Start with an unpaid call to inspect the exact price before committing.",
+        "registry_meta": {
+            "categories": ["hazard", "geospatial", "data"],
+            "highlights": [
+                "Source-aware wildfire coverage across global, U.S., and Canada event lanes",
+                "Paid MCP access for wildfire event discovery, burned-area questions, and regional rollups",
+                "Country, province, state, and county lookups tied to DaedalMap loc_id geography",
+            ],
+        },
+        "routing": {
+            "preferred_tool": "query_dataset",
+        },
+    },
     "un_sdg": {
         "display_name": "UN SDG",
         "pricing": "free",
