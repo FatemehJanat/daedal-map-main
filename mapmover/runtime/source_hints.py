@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ..foundation_helpers import load_reference_json
 from .country_geography import (
     get_country_overlap_levels,
     get_country_sub_admin_levels,
@@ -1070,4 +1071,146 @@ def build_reference_summary(reference_data: dict | None) -> str:
         if qualifier_bits:
             parts.append("Qualifier guidance: " + "; ".join(qualifier_bits) + ".")
 
+    relationship_language_hints = reference_data.get("relationship_language_hints") or {}
+    relationship_summary = build_relationship_language_summary(relationship_language_hints)
+    if relationship_summary:
+        parts.append(relationship_summary)
+
     return "\n".join(parts)
+
+
+def _pack_id_to_event_type(pack_id: str | None) -> str:
+    normalized = str(pack_id or "").strip().lower()
+    aliases = {
+        "earthquakes": "earthquake",
+        "tsunamis": "tsunami",
+        "volcanoes": "volcano",
+        "hurricanes": "hurricane",
+        "tornadoes": "tornado",
+        "floods": "flood",
+        "wildfires": "wildfire",
+    }
+    if normalized in aliases:
+        return aliases[normalized]
+    if normalized.endswith("ies") and len(normalized) > 3:
+        return normalized[:-3] + "y"
+    if normalized.endswith("s") and len(normalized) > 1:
+        return normalized[:-1]
+    return normalized
+
+
+def _clean_string_list(value: object, *, limit: int | None = None) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    cleaned: list[str] = []
+    for item in value:
+        text = str(item or "").strip()
+        if text:
+            cleaned.append(text)
+            if limit is not None and len(cleaned) >= limit:
+                break
+    return cleaned
+
+
+def _shared_disaster_relationship_reference() -> dict:
+    data = load_reference_json("disaster_links.json")
+    return data if isinstance(data, dict) else {}
+
+
+def _shared_relationship_language_relationships() -> list[dict]:
+    reference = _shared_disaster_relationship_reference()
+    language_hints = reference.get("relationship_language_hints") or {}
+    relationships = language_hints.get("relationships") or []
+    return relationships if isinstance(relationships, list) else []
+
+
+def _relationship_involves_pack(relationship: dict, pack_id: str) -> bool:
+    normalized_pack_id = str(pack_id or "").strip().lower()
+    if not normalized_pack_id:
+        return False
+    for side_name in ("side_a", "side_b"):
+        side = relationship.get(side_name) or {}
+        pack_ids = side.get("pack_ids") or []
+        if isinstance(pack_ids, list):
+            for candidate in pack_ids:
+                if str(candidate or "").strip().lower() == normalized_pack_id:
+                    return True
+    pack_event_type = _pack_id_to_event_type(normalized_pack_id)
+    for side_name in ("side_a", "side_b"):
+        side = relationship.get(side_name) or {}
+        if str(side.get("event_type") or "").strip().lower() == pack_event_type:
+            return True
+    return False
+
+
+def build_relationship_language_summary(language_hints: dict | None, *, pack_id: str | None = None) -> str:
+    if not isinstance(language_hints, dict):
+        return ""
+    relationships = language_hints.get("relationships") or []
+    if not isinstance(relationships, list) or not relationships:
+        return ""
+    if pack_id:
+        relationships = [
+            relationship
+            for relationship in relationships
+            if isinstance(relationship, dict) and _relationship_involves_pack(relationship, pack_id)
+        ]
+    else:
+        relationships = [relationship for relationship in relationships if isinstance(relationship, dict)]
+    if not relationships:
+        return ""
+
+    bits: list[str] = []
+    for relationship in relationships[:3]:
+        side_a = relationship.get("side_a") or {}
+        side_b = relationship.get("side_b") or {}
+        side_a_type = str(side_a.get("event_type") or "").strip()
+        side_b_type = str(side_b.get("event_type") or "").strip()
+        if not side_a_type or not side_b_type:
+            continue
+        phrase_bits: list[str] = [f"{side_a_type} -> {side_b_type}"]
+        forward_phrases = _clean_string_list(relationship.get("a_to_b_phrases"), limit=2)
+        if forward_phrases:
+            phrase_bits.append("forward phrases: " + " | ".join(forward_phrases))
+        neutral_phrases = _clean_string_list(relationship.get("neutral_phrases"), limit=2)
+        if neutral_phrases:
+            phrase_bits.append("neutral phrases: " + " | ".join(neutral_phrases))
+        if bool(relationship.get("clarify_when_reversed")) and not bool(relationship.get("reverse_edge_supported")):
+            reversed_phrases = _clean_string_list(relationship.get("b_to_a_phrases"), limit=2)
+            if reversed_phrases:
+                phrase_bits.append("reversed wording should clarify: " + " | ".join(reversed_phrases))
+            else:
+                phrase_bits.append("reversed wording should clarify")
+        example_queries = _clean_string_list(relationship.get("example_queries"), limit=2)
+        if example_queries:
+            phrase_bits.append("examples: " + " | ".join(example_queries))
+        bits.append("; ".join(phrase_bits))
+    if not bits:
+        return ""
+    return "Relationship language guidance: " + " || ".join(bits) + "."
+
+
+def build_shared_disaster_relationship_guidance(pack_id: str | None) -> str:
+    normalized_pack_id = str(pack_id or "").strip().lower()
+    if not normalized_pack_id:
+        return ""
+    reference = _shared_disaster_relationship_reference()
+    published_contract = reference.get("published_contract") or {}
+    supported_pack_ids = published_contract.get("supported_pack_ids") or []
+    normalized_supported = {
+        str(candidate).strip().lower()
+        for candidate in supported_pack_ids
+        if str(candidate).strip()
+    }
+    if normalized_pack_id not in normalized_supported:
+        return ""
+
+    language_hints = reference.get("relationship_language_hints") or {}
+    summary = build_relationship_language_summary(language_hints, pack_id=normalized_pack_id)
+    if not summary:
+        return ""
+
+    metaquestion_examples = _clean_string_list(language_hints.get("metaquestion_examples"), limit=3)
+    if metaquestion_examples:
+        summary += "\nRelationship metaquestions: " + " | ".join(metaquestion_examples) + "."
+    return summary

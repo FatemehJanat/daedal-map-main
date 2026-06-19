@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from mapmover.runtime.source_hints import (
+    build_shared_disaster_relationship_guidance,
     get_country_geo_level_aliases,
     resolve_geo_contract,
 )
@@ -125,6 +126,49 @@ class SourceHintsRuntimeTests(unittest.TestCase):
                 contract = resolve_geo_contract(token, metadata)
                 self.assertIsNone(contract.runtime_level)
                 self.assertIsNone(contract.source_level_value)
+
+    @patch(
+        "mapmover.runtime.source_hints.load_reference_json",
+        return_value={
+            "published_contract": {
+                "supported_pack_ids": ["wildfires", "earthquakes"],
+            },
+            "relationship_language_hints": {
+                "metaquestion_examples": [
+                    "What type of links do you have?",
+                    "How many wildfire to flood links are published?",
+                ],
+                "relationships": [
+                    {
+                        "relationship_id": "wildfire_to_flood",
+                        "side_a": {
+                            "event_type": "wildfire",
+                            "pack_ids": ["wildfires"],
+                        },
+                        "side_b": {
+                            "event_type": "flood",
+                            "pack_ids": ["floods"],
+                        },
+                        "canonical_direction": "a_to_b",
+                        "a_to_b_phrases": ["floods after fires", "post-fire floods"],
+                        "b_to_a_phrases": ["floods that caused fires"],
+                        "neutral_phrases": ["wildfire flood links"],
+                        "clarify_when_reversed": True,
+                        "reverse_edge_supported": False,
+                        "example_queries": ["Show me post-fire floods in California."],
+                    }
+                ],
+            },
+        },
+    )
+    def test_build_shared_disaster_relationship_guidance_uses_neutral_relationship_hints(self, _load_reference_json_mock):
+        guidance = build_shared_disaster_relationship_guidance("wildfires")
+
+        self.assertIn("wildfire -> flood", guidance)
+        self.assertIn("floods after fires", guidance)
+        self.assertIn("wildfire flood links", guidance)
+        self.assertIn("reversed wording should clarify", guidance)
+        self.assertIn("What type of links do you have?", guidance)
 
 
 if __name__ == "__main__":

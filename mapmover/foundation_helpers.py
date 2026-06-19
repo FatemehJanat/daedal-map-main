@@ -37,6 +37,7 @@ FOUNDATION_HELPER_REGISTRY = {
     "reference_json": [
         "admin_levels.json",
         "country_aliases.json",
+        "disaster_links.json",
         "disasters.json",
         "iso_codes.json",
         "query_synonyms.json",

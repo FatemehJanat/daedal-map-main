@@ -11,6 +11,7 @@ from .runtime.source_hints import (
     build_pack_family_preference_guidance,
     build_query_matched_metric_guidance,
     build_reference_summary,
+    build_shared_disaster_relationship_guidance,
     build_source_routing_guidance,
     get_routing_hints,
 )
@@ -198,13 +199,14 @@ def build_tier3_context(
 
     location = hints.get("location")
     if location:
+        location_loc_id = str(location.get("loc_id") or location.get("iso3") or "").strip()
         if location.get("is_subregion"):
             context_parts.append(
                 f"[LOCATION RESOLUTION: '{location['matched_term']}' is in {location['country_name']}. "
-                f"Use loc_id={location['iso3']} for data queries about {location['matched_term']}]"
+                f"Use loc_id={location_loc_id} for data queries about {location['matched_term']}]"
             )
         else:
-            context_parts.append(f"[LOCATION: {location['country_name']} (loc_id={location['iso3']})]")
+            context_parts.append(f"[LOCATION: {location['country_name']} (loc_id={location_loc_id})]")
 
         iso3 = location.get("iso3")
         if iso3 and countries_dir:
@@ -263,6 +265,9 @@ def build_tier3_context(
                             msg += "\n" + pack_summary
                 except Exception:
                     pass
+                relationship_guidance = build_shared_disaster_relationship_guidance(pack_id)
+                if relationship_guidance:
+                    msg += "\n" + relationship_guidance
             msg += "\n\nALL METRICS (use column name in JSON 'metric' field, human name when talking to user):\n"
             for col, human in metrics_mapping.items():
                 msg += f'  "{col}": {human}\n'
@@ -298,6 +303,18 @@ def build_tier3_context(
         time = hints["time"]
         if time.get("year_start") and time.get("year_end"):
             context_parts.append(f"User wants data from {time['year_start']} to {time['year_end']}")
+
+    query_constraints = hints.get("query_constraints") or {}
+    region_loc_id = str(query_constraints.get("region_loc_id") or "").strip()
+    if region_loc_id:
+        context_parts.append(f"Canonical region filter: loc_id prefix {region_loc_id}")
+    area_constraint = query_constraints.get("area_constraint") or {}
+    if area_constraint.get("normalized_value") is not None:
+        context_parts.append(
+            "Canonical numeric filter: "
+            f"{area_constraint.get('normalized_field')} >= {float(area_constraint['normalized_value']):.5f} "
+            f"({area_constraint.get('source_value')} {area_constraint.get('source_unit')})"
+        )
 
     topics = hints.get("topics", [])
     iso3 = None
