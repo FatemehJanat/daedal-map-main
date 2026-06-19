@@ -35,7 +35,7 @@ PACK_REGISTRY: dict[str, dict] = {
     "earthquakes": {
         "display_name": "earthquakes",
         "pricing": "paid_x402_base_usdc",
-        "mcp_tool_allowlist": ("get_catalog", "get_pack", "get_earthquake_events", "get_live_earthquake_events"),
+        "mcp_tool_allowlist": ("get_catalog", "get_pack", "get_disaster_links_for_event", "get_disaster_link_chain", "search_disaster_links", "get_earthquake_events", "get_live_earthquake_events"),
         "mcp_prompt_allowlist": ("largest_earthquake_in_range", "count_disaster_events"),
         "mcp_name": "com.daedalmap/earthquakes",
         "mcp_title": "DaedalMap Earthquake Data",
@@ -57,7 +57,7 @@ PACK_REGISTRY: dict[str, dict] = {
     "floods": {
         "display_name": "floods",
         "pricing": "free",
-        "mcp_tool_allowlist": ("get_catalog", "get_pack", "query_dataset"),
+        "mcp_tool_allowlist": ("get_catalog", "get_pack", "search_disaster_links", "query_dataset"),
         "mcp_prompt_allowlist": ("count_disaster_events",),
         "mcp_name": "com.daedalmap/floods",
         "mcp_title": "DaedalMap Flood Events",
@@ -77,7 +77,7 @@ PACK_REGISTRY: dict[str, dict] = {
     "hurricanes": {
         "display_name": "hurricanes",
         "pricing": "paid_x402_base_usdc",
-        "mcp_tool_allowlist": ("get_catalog", "get_pack", "query_dataset"),
+        "mcp_tool_allowlist": ("get_catalog", "get_pack", "search_disaster_links", "query_dataset"),
         "mcp_prompt_allowlist": ("count_disaster_events",),
         "mcp_name": "com.daedalmap/hurricanes",
         "mcp_title": "DaedalMap Hurricane and Tropical Cyclone Data",
@@ -97,7 +97,7 @@ PACK_REGISTRY: dict[str, dict] = {
     "tornadoes": {
         "display_name": "tornadoes",
         "pricing": "paid_x402_base_usdc",
-        "mcp_tool_allowlist": ("get_catalog", "get_pack", "query_dataset"),
+        "mcp_tool_allowlist": ("get_catalog", "get_pack", "search_disaster_links", "query_dataset"),
         "mcp_prompt_allowlist": ("count_disaster_events",),
         "mcp_name": "com.daedalmap/tornadoes",
         "mcp_title": "DaedalMap Tornado Events",
@@ -117,7 +117,7 @@ PACK_REGISTRY: dict[str, dict] = {
     "tsunamis": {
         "display_name": "tsunamis",
         "pricing": "paid_x402_base_usdc",
-        "mcp_tool_allowlist": ("get_catalog", "get_pack", "get_tsunami_events"),
+        "mcp_tool_allowlist": ("get_catalog", "get_pack", "get_disaster_links_for_event", "get_disaster_link_chain", "search_disaster_links", "get_tsunami_events"),
         "mcp_prompt_allowlist": ("count_disaster_events",),
         "mcp_name": "com.daedalmap/tsunamis",
         "mcp_title": "DaedalMap Tsunami Data",
@@ -137,7 +137,7 @@ PACK_REGISTRY: dict[str, dict] = {
     "wildfires": {
         "display_name": "wildfires",
         "pricing": "paid_x402_base_usdc",
-        "mcp_tool_allowlist": ("get_catalog", "get_pack", "query_dataset"),
+        "mcp_tool_allowlist": ("get_catalog", "get_pack", "get_disaster_links_for_event", "get_disaster_link_chain", "search_disaster_links", "query_dataset"),
         "mcp_prompt_allowlist": ("count_disaster_events",),
         "mcp_name": "com.daedalmap/wildfires",
         "mcp_title": "DaedalMap Wildfire Events",
@@ -176,7 +176,7 @@ PACK_REGISTRY: dict[str, dict] = {
     "volcanoes": {
         "display_name": "volcanoes",
         "pricing": "free",
-        "mcp_tool_allowlist": ("get_catalog", "get_pack", "get_volcanic_activity", "get_live_volcano_events"),
+        "mcp_tool_allowlist": ("get_catalog", "get_pack", "get_disaster_links_for_event", "get_disaster_link_chain", "search_disaster_links", "get_volcanic_activity", "get_live_volcano_events"),
         "mcp_prompt_allowlist": ("count_disaster_events",),
         "mcp_name": "com.daedalmap/volcanoes",
         "mcp_title": "DaedalMap Volcanic Activity",

@@ -22,6 +22,11 @@ from mapmover.data_loading import load_api_catalog, load_api_pack_detail
 from mapmover.live_earthquake_usgs import fetch_live_earthquakes
 from mapmover.live_volcano_smithsonian import fetch_live_volcanoes
 from mapmover.routes.api_query import execute_query_dataset_payload
+from mapmover.routes.disasters.related import (
+    get_disaster_link_chain_for_exact_event,
+    get_disaster_links_for_exact_event,
+    search_disaster_link_chains,
+)
 from mapmover.security import get_allowed_origins, get_client_ip, rate_limiter
 
 
@@ -1115,6 +1120,98 @@ async def _execute_live_volcano_tool(arguments: dict[str, Any], rpc_request_id: 
     return _jsonrpc_response(_tool_result(result), rpc_request_id)
 
 
+def _json_body_payload(response: Response) -> Any:
+    raw_body = getattr(response, "body", b"") or b""
+    if not raw_body:
+        return {}
+    if isinstance(raw_body, str):
+        return json.loads(raw_body)
+    return json.loads(raw_body.decode("utf-8"))
+
+
+async def _execute_disaster_links_for_event_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
+    payload = _ensure_request_id(arguments, "get_disaster_links_for_event")
+    event_id = str(payload.get("event_id") or "").strip()
+    if not event_id:
+        return _jsonrpc_response(
+            _tool_result({"request_id": payload.get("request_id"), "error": {"code": "invalid_event_id", "message": "event_id is required"}}, is_error=True),
+            rpc_request_id,
+        )
+    try:
+        response = await get_disaster_links_for_exact_event(
+            event_id=event_id,
+            pack_id=str(payload.get("pack_id") or "").strip() or None,
+            cross_type_only=bool(payload.get("cross_type_only", True)),
+        )
+        body = _json_body_payload(response)
+    except Exception as exc:
+        return _jsonrpc_response(
+            _tool_result({"request_id": payload.get("request_id"), "error": {"code": "disaster_links_failed", "message": str(exc)}}, is_error=True),
+            rpc_request_id,
+        )
+    if response.status_code != 200:
+        if isinstance(body, dict):
+            body.setdefault("request_id", payload.get("request_id"))
+        return _jsonrpc_response(_tool_result(body, is_error=True), rpc_request_id)
+    if isinstance(body, dict):
+        body.setdefault("request_id", payload.get("request_id"))
+    return _jsonrpc_response(_tool_result(body), rpc_request_id)
+
+
+async def _execute_disaster_link_chain_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
+    payload = _ensure_request_id(arguments, "get_disaster_link_chain")
+    event_id = str(payload.get("event_id") or "").strip()
+    if not event_id:
+        return _jsonrpc_response(
+            _tool_result({"request_id": payload.get("request_id"), "error": {"code": "invalid_event_id", "message": "event_id is required"}}, is_error=True),
+            rpc_request_id,
+        )
+    try:
+        response = await get_disaster_link_chain_for_exact_event(
+            event_id=event_id,
+            pack_id=str(payload.get("pack_id") or "").strip() or None,
+            depth=int(payload.get("depth") or 1),
+            cross_type_only=bool(payload.get("cross_type_only", True)),
+        )
+        body = _json_body_payload(response)
+    except Exception as exc:
+        return _jsonrpc_response(
+            _tool_result({"request_id": payload.get("request_id"), "error": {"code": "disaster_link_chain_failed", "message": str(exc)}}, is_error=True),
+            rpc_request_id,
+        )
+    if response.status_code != 200:
+        if isinstance(body, dict):
+            body.setdefault("request_id", payload.get("request_id"))
+        return _jsonrpc_response(_tool_result(body, is_error=True), rpc_request_id)
+    if isinstance(body, dict):
+        body.setdefault("request_id", payload.get("request_id"))
+    return _jsonrpc_response(_tool_result(body), rpc_request_id)
+
+
+async def _execute_search_disaster_links_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
+    payload = _ensure_request_id(arguments, "search_disaster_links")
+    try:
+        response = await search_disaster_link_chains(
+            start_event_type=str(payload.get("start_event_type") or "").strip() or None,
+            via_event_type=str(payload.get("via_event_type") or "").strip() or None,
+            end_event_type=str(payload.get("end_event_type") or "").strip() or None,
+            year_start=int(payload["year_start"]) if payload.get("year_start") is not None else None,
+            year_end=int(payload["year_end"]) if payload.get("year_end") is not None else None,
+            limit=int(payload.get("limit") or 10),
+        )
+        body = _json_body_payload(response)
+    except Exception as exc:
+        return _jsonrpc_response(
+            _tool_result({"request_id": payload.get("request_id"), "error": {"code": "disaster_links_search_failed", "message": str(exc)}}, is_error=True),
+            rpc_request_id,
+        )
+    if isinstance(body, dict):
+        body.setdefault("request_id", payload.get("request_id"))
+    if response.status_code != 200:
+        return _jsonrpc_response(_tool_result(body, is_error=True), rpc_request_id)
+    return _jsonrpc_response(_tool_result(body), rpc_request_id)
+
+
 # Registry attribution: each MCP registry publishes a per-source tagged endpoint
 # URL (e.g. https://app.daedalmap.com/mcp?registry=glama). The tag is read here
 # and stamped into analytics so we can see which registry drives MCP traffic.
@@ -1365,13 +1462,25 @@ async def mcp_endpoint(request: Request, pack_id: str | None = None):
             return rate_limit_response
         return await _execute_loc_id_info_tool(arguments, request_id)
 
+    if tool_name == "get_disaster_links_for_event":
+        return await _execute_disaster_links_for_event_tool(arguments, request_id)
+
+    if tool_name == "get_disaster_link_chain":
+        return await _execute_disaster_link_chain_tool(arguments, request_id)
+
+    if tool_name == "search_disaster_links":
+        return await _execute_search_disaster_links_tool(arguments, request_id)
+
     if tool_name not in {
         "get_earthquake_events",
         "get_live_earthquake_events",
+        "get_disaster_link_chain",
+        "get_disaster_links_for_event",
         "get_volcanic_activity",
         "get_live_volcano_events",
         "get_tsunami_events",
         "get_fx_rates",
+        "search_disaster_links",
         "query_dataset",
     }:
         return _jsonrpc_error(request_id, -32601, f"Tool '{tool_name}' not found")
