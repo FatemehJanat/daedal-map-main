@@ -1143,6 +1143,43 @@ def _relationship_involves_pack(relationship: dict, pack_id: str) -> bool:
     return False
 
 
+def _build_not_paired_relationship_summary(not_paired_relationships: list[dict], *, pack_id: str | None = None) -> str:
+    if not isinstance(not_paired_relationships, list) or not not_paired_relationships:
+        return ""
+    filtered_relationships = [relationship for relationship in not_paired_relationships if isinstance(relationship, dict)]
+    if pack_id:
+        filtered_relationships = [
+            relationship
+            for relationship in filtered_relationships
+            if _relationship_involves_pack(relationship, pack_id)
+        ]
+    if not filtered_relationships:
+        return ""
+
+    bits: list[str] = []
+    for relationship in filtered_relationships[:4]:
+        side_a = relationship.get("side_a") or {}
+        side_b = relationship.get("side_b") or {}
+        side_a_type = str(side_a.get("event_type") or "").strip()
+        side_b_type = str(side_b.get("event_type") or "").strip()
+        if not side_a_type or not side_b_type:
+            continue
+        phrase_bits: list[str] = [f"{side_a_type} x {side_b_type}"]
+        note = str(relationship.get("note") or "").strip()
+        if note:
+            phrase_bits.append(note)
+        query_behavior = str(relationship.get("query_behavior") or "").strip().lower()
+        if query_behavior == "state_not_published":
+            phrase_bits.append("if asked, state that no published link family exists yet")
+        example_queries = _clean_string_list(relationship.get("example_queries"), limit=2)
+        if example_queries:
+            phrase_bits.append("examples: " + " | ".join(example_queries))
+        bits.append("; ".join(phrase_bits))
+    if not bits:
+        return ""
+    return "Not-paired relationship guidance: " + " || ".join(bits) + "."
+
+
 def build_relationship_language_summary(language_hints: dict | None, *, pack_id: str | None = None) -> str:
     if not isinstance(language_hints, dict):
         return ""
@@ -1181,6 +1218,9 @@ def build_relationship_language_summary(language_hints: dict | None, *, pack_id:
                 phrase_bits.append("reversed wording should clarify: " + " | ".join(reversed_phrases))
             else:
                 phrase_bits.append("reversed wording should clarify")
+            reverse_query_behavior = str(relationship.get("reverse_query_behavior") or "").strip().lower()
+            if reverse_query_behavior == "correct_and_continue_with_canonical_family":
+                phrase_bits.append("reverse wording should correct to the canonical direction and continue with linked events")
         example_queries = _clean_string_list(relationship.get("example_queries"), limit=2)
         if example_queries:
             phrase_bits.append("examples: " + " | ".join(example_queries))
@@ -1195,20 +1235,16 @@ def build_shared_disaster_relationship_guidance(pack_id: str | None) -> str:
     if not normalized_pack_id:
         return ""
     reference = _shared_disaster_relationship_reference()
-    published_contract = reference.get("published_contract") or {}
-    supported_pack_ids = published_contract.get("supported_pack_ids") or []
-    normalized_supported = {
-        str(candidate).strip().lower()
-        for candidate in supported_pack_ids
-        if str(candidate).strip()
-    }
-    if normalized_pack_id not in normalized_supported:
-        return ""
-
     language_hints = reference.get("relationship_language_hints") or {}
     summary = build_relationship_language_summary(language_hints, pack_id=normalized_pack_id)
-    if not summary:
+    not_paired_summary = _build_not_paired_relationship_summary(
+        language_hints.get("not_paired_relationships") or [],
+        pack_id=normalized_pack_id,
+    )
+    summary_bits = [bit for bit in (summary, not_paired_summary) if bit]
+    if not summary_bits:
         return ""
+    summary = "\n".join(summary_bits)
 
     metaquestion_examples = _clean_string_list(language_hints.get("metaquestion_examples"), limit=3)
     if metaquestion_examples:

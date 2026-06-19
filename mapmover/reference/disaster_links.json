@@ -1,7 +1,7 @@
 {
   "_description": "Canonical disaster link semantics for shared links.parquet and embedded relationship fields",
   "_schema_version": "1.0.0",
-  "_last_updated": "2026-05-24",
+  "_last_updated": "2026-06-19",
   "shared_table": {
     "preferred_columns": [
       "parent_event_id",
@@ -73,9 +73,118 @@
         "notes": "Post-fire flood or burn-scar runoff links."
       }
     ],
+    "not_paired_families_last_checked": "2026-06-19",
+    "not_paired_families": [
+      {
+        "event_types": [
+          "earthquake",
+          "hurricane"
+        ],
+        "published_any_direction": false
+      },
+      {
+        "event_types": [
+          "earthquake",
+          "tornado"
+        ],
+        "published_any_direction": false
+      },
+      {
+        "event_types": [
+          "earthquake",
+          "flood"
+        ],
+        "published_any_direction": false
+      },
+      {
+        "event_types": [
+          "earthquake",
+          "wildfire"
+        ],
+        "published_any_direction": false
+      },
+      {
+        "event_types": [
+          "tsunami",
+          "hurricane"
+        ],
+        "published_any_direction": false
+      },
+      {
+        "event_types": [
+          "tsunami",
+          "tornado"
+        ],
+        "published_any_direction": false
+      },
+      {
+        "event_types": [
+          "tsunami",
+          "flood"
+        ],
+        "published_any_direction": false
+      },
+      {
+        "event_types": [
+          "tsunami",
+          "wildfire"
+        ],
+        "published_any_direction": false
+      },
+      {
+        "event_types": [
+          "volcano",
+          "hurricane"
+        ],
+        "published_any_direction": false
+      },
+      {
+        "event_types": [
+          "volcano",
+          "tornado"
+        ],
+        "published_any_direction": false
+      },
+      {
+        "event_types": [
+          "volcano",
+          "flood"
+        ],
+        "published_any_direction": false
+      },
+      {
+        "event_types": [
+          "volcano",
+          "wildfire"
+        ],
+        "published_any_direction": false
+      },
+      {
+        "event_types": [
+          "hurricane",
+          "wildfire"
+        ],
+        "published_any_direction": false
+      },
+      {
+        "event_types": [
+          "tornado",
+          "flood"
+        ],
+        "published_any_direction": false
+      },
+      {
+        "event_types": [
+          "tornado",
+          "wildfire"
+        ],
+        "published_any_direction": false
+      }
+    ],
     "metaquestion_hints": [
       "Use published_link_families to answer questions like what link types exist today and how many published links exist in each direction.",
       "Treat direction as meaningful: wildfire to flood does not imply a published reverse flood to wildfire family.",
+      "Use not_paired_families to answer questions about cross-hazard pairs that are not yet published in either direction.",
       "Same-pack sequences such as earthquake aftershocks are native-pack helpers, not shared cross-hazard published families."
     ]
   },
@@ -131,6 +240,7 @@
         ],
         "clarify_when_reversed": true,
         "reverse_edge_supported": false,
+        "reverse_query_behavior": "correct_and_continue_with_canonical_family",
         "example_queries": [
           "Show me earthquakes that triggered tsunamis since 2000.",
           "Which tsunamis were linked to earthquakes?"
@@ -180,6 +290,7 @@
         ],
         "clarify_when_reversed": true,
         "reverse_edge_supported": false,
+        "reverse_query_behavior": "correct_and_continue_with_canonical_family",
         "example_queries": [
           "Show me floods linked to hurricanes.",
           "How many hurricane to flood links do you have?"
@@ -229,6 +340,7 @@
         ],
         "clarify_when_reversed": true,
         "reverse_edge_supported": false,
+        "reverse_query_behavior": "correct_and_continue_with_canonical_family",
         "example_queries": [
           "Show me tornadoes linked to hurricanes.",
           "How many hurricane to tornado links do you have?"
@@ -280,6 +392,7 @@
         ],
         "clarify_when_reversed": true,
         "reverse_edge_supported": false,
+        "reverse_query_behavior": "correct_and_continue_with_canonical_family",
         "example_queries": [
           "Which volcanic eruptions triggered earthquakes?",
           "Show volcano earthquake links."
@@ -329,6 +442,7 @@
         ],
         "clarify_when_reversed": true,
         "reverse_edge_supported": false,
+        "reverse_query_behavior": "correct_and_continue_with_canonical_family",
         "example_queries": [
           "Show volcanoes that triggered tsunamis.",
           "Which tsunamis were linked to eruptions?"
@@ -383,6 +497,7 @@
         ],
         "clarify_when_reversed": true,
         "reverse_edge_supported": false,
+        "reverse_query_behavior": "correct_and_continue_with_canonical_family",
         "example_queries": [
           "Show me post-fire floods in California.",
           "How many other disasters are linked to fires?",
@@ -390,10 +505,74 @@
         ]
       }
     ],
+    "not_paired_relationships": [
+      {
+        "relationship_id": "volcano_wildfire_not_paired",
+        "side_a": {
+          "event_type": "volcano",
+          "pack_ids": [
+            "volcanoes"
+          ]
+        },
+        "side_b": {
+          "event_type": "wildfire",
+          "pack_ids": [
+            "wildfires"
+          ]
+        },
+        "query_behavior": "state_not_published",
+        "note": "No published cross-disaster link family exists in either direction today.",
+        "example_queries": [
+          "Do you have volcano wildfire links?",
+          "Show me fires linked to volcanoes."
+        ]
+      },
+      {
+        "relationship_id": "earthquake_flood_not_paired",
+        "side_a": {
+          "event_type": "earthquake",
+          "pack_ids": [
+            "earthquakes"
+          ]
+        },
+        "side_b": {
+          "event_type": "flood",
+          "pack_ids": [
+            "floods"
+          ]
+        },
+        "query_behavior": "state_not_published",
+        "note": "No published cross-disaster link family exists in either direction today.",
+        "example_queries": [
+          "Do you have earthquake flood links?"
+        ]
+      },
+      {
+        "relationship_id": "tornado_wildfire_not_paired",
+        "side_a": {
+          "event_type": "tornado",
+          "pack_ids": [
+            "tornadoes"
+          ]
+        },
+        "side_b": {
+          "event_type": "wildfire",
+          "pack_ids": [
+            "wildfires"
+          ]
+        },
+        "query_behavior": "state_not_published",
+        "note": "No published cross-disaster link family exists in either direction today.",
+        "example_queries": [
+          "Do you have tornado wildfire links?"
+        ]
+      }
+    ],
     "metaquestion_examples": [
       "What type of links do you have?",
       "How many wildfire to flood links are published?",
-      "Do you have reverse flood to wildfire links?"
+      "Do you have reverse flood to wildfire links?",
+      "Which disaster types are not paired yet?"
     ]
   },
   "embedded_fields": {

@@ -155,7 +155,24 @@ class SourceHintsRuntimeTests(unittest.TestCase):
                         "neutral_phrases": ["wildfire flood links"],
                         "clarify_when_reversed": True,
                         "reverse_edge_supported": False,
+                        "reverse_query_behavior": "correct_and_continue_with_canonical_family",
                         "example_queries": ["Show me post-fire floods in California."],
+                    }
+                ],
+                "not_paired_relationships": [
+                    {
+                        "relationship_id": "tornado_wildfire_not_paired",
+                        "side_a": {
+                            "event_type": "tornado",
+                            "pack_ids": ["tornadoes"],
+                        },
+                        "side_b": {
+                            "event_type": "wildfire",
+                            "pack_ids": ["wildfires"],
+                        },
+                        "query_behavior": "state_not_published",
+                        "note": "No published cross-disaster link family exists in either direction today.",
+                        "example_queries": ["Do you have tornado wildfire links?"],
                     }
                 ],
             },
@@ -168,7 +185,47 @@ class SourceHintsRuntimeTests(unittest.TestCase):
         self.assertIn("floods after fires", guidance)
         self.assertIn("wildfire flood links", guidance)
         self.assertIn("reversed wording should clarify", guidance)
+        self.assertIn("correct to the canonical direction and continue with linked events", guidance)
+        self.assertIn("tornado x wildfire", guidance)
+        self.assertIn("no published link family exists yet", guidance)
         self.assertIn("What type of links do you have?", guidance)
+
+    @patch(
+        "mapmover.runtime.source_hints.load_reference_json",
+        return_value={
+            "published_contract": {
+                "supported_pack_ids": ["wildfires", "earthquakes"],
+            },
+            "relationship_language_hints": {
+                "relationships": [
+                    {
+                        "relationship_id": "hurricane_to_tornado",
+                        "side_a": {
+                            "event_type": "hurricane",
+                            "pack_ids": ["hurricanes"],
+                        },
+                        "side_b": {
+                            "event_type": "tornado",
+                            "pack_ids": ["tornadoes"],
+                        },
+                        "canonical_direction": "a_to_b",
+                        "a_to_b_phrases": ["tornadoes caused by hurricanes"],
+                        "b_to_a_phrases": ["tornadoes that caused hurricanes"],
+                        "neutral_phrases": ["hurricane tornado links"],
+                        "clarify_when_reversed": True,
+                        "reverse_edge_supported": False,
+                        "reverse_query_behavior": "correct_and_continue_with_canonical_family",
+                    }
+                ],
+                "not_paired_relationships": [],
+            },
+        },
+    )
+    def test_build_shared_disaster_relationship_guidance_is_not_limited_to_api_supported_pack_ids(self, _load_reference_json_mock):
+        guidance = build_shared_disaster_relationship_guidance("tornadoes")
+
+        self.assertIn("hurricane -> tornado", guidance)
+        self.assertIn("correct to the canonical direction and continue with linked events", guidance)
 
 
 if __name__ == "__main__":
