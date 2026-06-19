@@ -1112,6 +1112,20 @@ def _clean_string_list(value: object, *, limit: int | None = None) -> list[str]:
     return cleaned
 
 
+def _normalize_query_text(value: str | None) -> str:
+    return " ".join(str(value or "").strip().lower().split())
+
+
+def _query_contains_any_phrase(query: str, phrases: object) -> bool:
+    normalized_query = _normalize_query_text(query)
+    if not normalized_query:
+        return False
+    for phrase in _clean_string_list(phrases):
+        if _normalize_query_text(phrase) and _normalize_query_text(phrase) in normalized_query:
+            return True
+    return False
+
+
 def _shared_disaster_relationship_reference() -> dict:
     data = load_reference_json("disaster_links.json")
     return data if isinstance(data, dict) else {}
@@ -1141,6 +1155,54 @@ def _relationship_involves_pack(relationship: dict, pack_id: str) -> bool:
         if str(side.get("event_type") or "").strip().lower() == pack_event_type:
             return True
     return False
+
+
+def _query_mentions_relationship_side(query: str, side: dict) -> bool:
+    normalized_query = _normalize_query_text(query)
+    if not normalized_query or not isinstance(side, dict):
+        return False
+    aliases = _clean_string_list(side.get("aliases"))
+    event_type = str(side.get("event_type") or "").strip()
+    if event_type:
+        aliases.append(event_type)
+    for alias in aliases:
+        normalized_alias = _normalize_query_text(alias)
+        if normalized_alias and normalized_alias in normalized_query:
+            return True
+    return False
+
+
+def _relationship_query_match_kind(query: str, relationship: dict) -> str:
+    side_a = relationship.get("side_a") or {}
+    side_b = relationship.get("side_b") or {}
+    mentions_a = _query_mentions_relationship_side(query, side_a)
+    mentions_b = _query_mentions_relationship_side(query, side_b)
+    if not (mentions_a and mentions_b):
+        if _query_contains_any_phrase(query, relationship.get("a_to_b_phrases")):
+            return "forward"
+        if _query_contains_any_phrase(query, relationship.get("b_to_a_phrases")):
+            return "reverse"
+        if _query_contains_any_phrase(query, relationship.get("neutral_phrases")):
+            return "neutral"
+        return ""
+    if _query_contains_any_phrase(query, relationship.get("b_to_a_phrases")):
+        return "reverse"
+    if _query_contains_any_phrase(query, relationship.get("a_to_b_phrases")):
+        return "forward"
+    if _query_contains_any_phrase(query, relationship.get("neutral_phrases")):
+        return "neutral"
+    normalized_query = _normalize_query_text(query)
+    if any(token in normalized_query for token in ("linked", "links", "related", "relationship", "relationships")):
+        return "neutral"
+    return "mentioned_both"
+
+
+def _not_paired_query_matches(query: str, relationship: dict) -> bool:
+    side_a = relationship.get("side_a") or {}
+    side_b = relationship.get("side_b") or {}
+    if _query_mentions_relationship_side(query, side_a) and _query_mentions_relationship_side(query, side_b):
+        return True
+    return _query_contains_any_phrase(query, relationship.get("example_queries"))
 
 
 def _build_not_paired_relationship_summary(not_paired_relationships: list[dict], *, pack_id: str | None = None) -> str:
@@ -1178,6 +1240,66 @@ def _build_not_paired_relationship_summary(not_paired_relationships: list[dict],
     if not bits:
         return ""
     return "Not-paired relationship guidance: " + " || ".join(bits) + "."
+
+
+def build_query_specific_disaster_relationship_guidance(query: str | None, pack_id: str | None) -> str:
+    normalized_query = _normalize_query_text(query)
+    normalized_pack_id = str(pack_id or "").strip().lower()
+    if not normalized_query or not normalized_pack_id:
+        return ""
+
+    reference = _shared_disaster_relationship_reference()
+    language_hints = reference.get("relationship_language_hints") or {}
+    relationships = language_hints.get("relationships") or []
+    if isinstance(relationships, list):
+        for relationship in relationships:
+            if not isinstance(relationship, dict) or not _relationship_involves_pack(relationship, normalized_pack_id):
+                continue
+            match_kind = _relationship_query_match_kind(normalized_query, relationship)
+            if not match_kind:
+                continue
+            side_a = relationship.get("side_a") or {}
+            side_b = relationship.get("side_b") or {}
+            side_a_type = str(side_a.get("event_type") or "").strip()
+            side_b_type = str(side_b.get("event_type") or "").strip()
+            if not side_a_type or not side_b_type:
+                continue
+            guidance_bits = [
+                f"Relationship query resolution: this query matches the published {side_a_type} -> {side_b_type} family."
+            ]
+            if match_kind == "reverse":
+                guidance_bits.append("The user phrased it in the reverse direction.")
+                if str(relationship.get("reverse_query_behavior") or "").strip().lower() == "correct_and_continue_with_canonical_family":
+                    guidance_bits.append(
+                        f"Correct to the canonical {side_a_type} -> {side_b_type} direction and continue with the linked events."
+                    )
+                else:
+                    guidance_bits.append("Clarify the canonical direction before proceeding.")
+            else:
+                guidance_bits.append("Treat this as a linked-events request against the existing published family.")
+            guidance_bits.append("Do not say this relationship family is absent.")
+            guidance_bits.append("Do not fall back to unrelated separate-layer overlays unless the user asks for that instead.")
+            return " ".join(guidance_bits)
+
+    not_paired_relationships = language_hints.get("not_paired_relationships") or []
+    if isinstance(not_paired_relationships, list):
+        for relationship in not_paired_relationships:
+            if not isinstance(relationship, dict) or not _relationship_involves_pack(relationship, normalized_pack_id):
+                continue
+            if not _not_paired_query_matches(normalized_query, relationship):
+                continue
+            side_a = relationship.get("side_a") or {}
+            side_b = relationship.get("side_b") or {}
+            side_a_type = str(side_a.get("event_type") or "").strip()
+            side_b_type = str(side_b.get("event_type") or "").strip()
+            if not side_a_type or not side_b_type:
+                continue
+            return (
+                "Relationship query resolution: this query matches the not-paired "
+                f"{side_a_type} x {side_b_type} family. State that no published cross-disaster link family exists "
+                "in either direction today. Do not remap this query to a different published family."
+            )
+    return ""
 
 
 def build_relationship_language_summary(language_hints: dict | None, *, pack_id: str | None = None) -> str:

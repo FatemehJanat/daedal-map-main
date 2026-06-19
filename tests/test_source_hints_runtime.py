@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from mapmover.runtime.source_hints import (
+    build_query_specific_disaster_relationship_guidance,
     build_shared_disaster_relationship_guidance,
     get_country_geo_level_aliases,
     resolve_geo_contract,
@@ -226,6 +227,96 @@ class SourceHintsRuntimeTests(unittest.TestCase):
 
         self.assertIn("hurricane -> tornado", guidance)
         self.assertIn("correct to the canonical direction and continue with linked events", guidance)
+
+    @patch(
+        "mapmover.runtime.source_hints.load_reference_json",
+        return_value={
+            "relationship_language_hints": {
+                "relationships": [
+                    {
+                        "relationship_id": "wildfire_to_flood",
+                        "side_a": {
+                            "event_type": "wildfire",
+                            "pack_ids": ["wildfires"],
+                            "aliases": ["wildfire", "wildfires", "fire", "fires"],
+                        },
+                        "side_b": {
+                            "event_type": "flood",
+                            "pack_ids": ["floods"],
+                            "aliases": ["flood", "floods", "post-fire flood", "post-fire floods"],
+                        },
+                        "canonical_direction": "a_to_b",
+                        "a_to_b_phrases": ["post-fire floods", "floods after fires"],
+                        "b_to_a_phrases": ["floods that led to fires", "floods that caused fires"],
+                        "neutral_phrases": ["wildfire flood links", "floods linked to fires"],
+                        "clarify_when_reversed": True,
+                        "reverse_edge_supported": False,
+                        "reverse_query_behavior": "correct_and_continue_with_canonical_family",
+                    }
+                ],
+                "not_paired_relationships": [
+                    {
+                        "relationship_id": "volcano_wildfire_not_paired",
+                        "side_a": {
+                            "event_type": "volcano",
+                            "pack_ids": ["volcanoes"],
+                            "aliases": ["volcano", "volcanoes"],
+                        },
+                        "side_b": {
+                            "event_type": "wildfire",
+                            "pack_ids": ["wildfires"],
+                            "aliases": ["wildfire", "wildfires", "fire", "fires"],
+                        },
+                        "query_behavior": "state_not_published",
+                        "example_queries": ["Do you have volcano wildfire links?"],
+                    }
+                ],
+            },
+        },
+    )
+    def test_query_specific_relationship_guidance_corrects_reverse_queries_without_hiding_existing_family(self, _load_reference_json_mock):
+        guidance = build_query_specific_disaster_relationship_guidance(
+            "Show me the floods that led to fires.",
+            "wildfires",
+        )
+
+        self.assertIn("published wildfire -> flood family", guidance)
+        self.assertIn("reverse direction", guidance)
+        self.assertIn("Do not say this relationship family is absent", guidance)
+
+    @patch(
+        "mapmover.runtime.source_hints.load_reference_json",
+        return_value={
+            "relationship_language_hints": {
+                "relationships": [],
+                "not_paired_relationships": [
+                    {
+                        "relationship_id": "volcano_wildfire_not_paired",
+                        "side_a": {
+                            "event_type": "volcano",
+                            "pack_ids": ["volcanoes"],
+                            "aliases": ["volcano", "volcanoes"],
+                        },
+                        "side_b": {
+                            "event_type": "wildfire",
+                            "pack_ids": ["wildfires"],
+                            "aliases": ["wildfire", "wildfires", "fire", "fires"],
+                        },
+                        "query_behavior": "state_not_published",
+                        "example_queries": ["Do you have volcano wildfire links?"],
+                    }
+                ],
+            },
+        },
+    )
+    def test_query_specific_relationship_guidance_resolves_not_paired_queries(self, _load_reference_json_mock):
+        guidance = build_query_specific_disaster_relationship_guidance(
+            "Do you have volcano wildfire links?",
+            "wildfires",
+        )
+
+        self.assertIn("not-paired volcano x wildfire family", guidance)
+        self.assertIn("no published cross-disaster link family exists", guidance)
 
 
 if __name__ == "__main__":

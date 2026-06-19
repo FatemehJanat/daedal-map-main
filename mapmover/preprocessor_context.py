@@ -9,6 +9,7 @@ from .paths import DATA_ROOT
 from .runtime.country_geography import build_country_geometry_alias_context_lines
 from .runtime.source_hints import (
     build_pack_family_preference_guidance,
+    build_query_specific_disaster_relationship_guidance,
     build_query_matched_metric_guidance,
     build_reference_summary,
     build_shared_disaster_relationship_guidance,
@@ -268,6 +269,12 @@ def build_tier3_context(
                 relationship_guidance = build_shared_disaster_relationship_guidance(pack_id)
                 if relationship_guidance:
                     msg += "\n" + relationship_guidance
+                relationship_query_guidance = build_query_specific_disaster_relationship_guidance(
+                    hints.get("original_query"),
+                    pack_id,
+                )
+                if relationship_query_guidance:
+                    msg += "\n" + relationship_query_guidance
             msg += "\n\nALL METRICS (use column name in JSON 'metric' field, human name when talking to user):\n"
             for col, human in metrics_mapping.items():
                 msg += f'  "{col}": {human}\n'
