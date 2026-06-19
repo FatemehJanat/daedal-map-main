@@ -62,10 +62,20 @@ EVENT_TABLES = {
         "builders": get_landslide_property_builders,
     },
 }
+EVENT_TYPE_PACK_IDS = {
+    "earthquake": "earthquakes",
+    "tsunami": "tsunamis",
+    "volcano": "volcanoes",
+    "hurricane": "hurricanes",
+    "tornado": "tornadoes",
+    "wildfire": "wildfires",
+    "flood": "floods",
+    "landslide": "landslides",
+}
 
 MAX_CHAIN_DEPTH = 2
 MAX_DISCOVERY_LIMIT = 50
-DISASTER_LINK_API_PACKS = {"earthquakes", "tsunamis", "volcanoes"}
+DISASTER_LINK_API_PACKS = {"earthquakes", "tsunamis", "volcanoes", "wildfires"}
 EVENT_TYPE_ALIASES = {
     "earthquake": "earthquake",
     "earthquakes": "earthquake",
@@ -119,6 +129,21 @@ EXACT_EVENT_SOURCE_OVERRIDES = {
         "id_fields": ("event_id",),
         "metadata_source_id": "tsunamis_events",
         "parquet_path": GLOBAL_DIR / "disasters/tsunamis/events.parquet",
+    },
+    "global_fire_atlas": {
+        "id_fields": ("loc_id", "event_id"),
+        "metadata_source_id": "global_fire_atlas",
+        "parquet_path": GLOBAL_DIR / "disasters/wildfires/events.parquet",
+    },
+    "wildfires_usa": {
+        "id_fields": ("loc_id", "event_id"),
+        "metadata_source_id": "wildfires_usa",
+        "parquet_path": GLOBAL_DIR / "disasters/wildfires/sources/usa/fires_enriched.parquet",
+    },
+    "can_wildfires": {
+        "id_fields": ("loc_id", "event_id"),
+        "metadata_source_id": "can_wildfires",
+        "parquet_path": GLOBAL_DIR / "disasters/wildfires/sources/can/fires_enriched.parquet",
     },
     "tornadoes": {"id_fields": ("event_id",), "parquet_path": GLOBAL_DIR / "disasters/tornadoes/events.parquet"},
     "floods": {"id_fields": ("event_id",), "parquet_path": GLOBAL_DIR / "disasters/floods/events.parquet"},
@@ -1184,8 +1209,20 @@ def _build_event_feature_from_row(loc_id: str, event_type: str, config: dict, ro
     if pd.isna(latitude) or pd.isna(longitude):
         return None
 
-    builders = config["builders"]()
-    props = {name: builder(row) for name, builder in builders.items()}
+    builder_factory = config.get("builders")
+    if builder_factory:
+        builders = builder_factory()
+        props = {name: builder(row) for name, builder in builders.items()}
+    else:
+        props = {}
+        for key, value in row.items():
+            if value is None or pd.isna(value):
+                continue
+            if hasattr(value, "item"):
+                value = value.item()
+            if isinstance(value, pd.Timestamp):
+                value = value.isoformat()
+            props[key] = value
     props["event_type"] = event_type
     props["loc_id"] = props.get("loc_id") or loc_id
 
@@ -1199,34 +1236,59 @@ def _build_event_feature_from_row(loc_id: str, event_type: str, config: dict, ro
     }
 
 
-def _load_event_feature_by_loc_id(loc_id: str) -> dict | None:
-    event_type = _extract_event_type(loc_id)
-    config = EVENT_TABLES.get(event_type)
-    if not config:
-        return None
-
-    events_path = config["path"]
-    if not parquet_available(events_path):
-        return None
-
-    try:
-        if duckdb_available():
-            df = select_rows(events_path, exact_filters={"loc_id": loc_id})
-        else:
-            df = pd.read_parquet(events_path, filters=[("loc_id", "==", loc_id)])
-    except Exception as exc:
-        logger.warning("Failed resolving linked event %s from %s: %s", loc_id, events_path, exc)
-        return None
-
+def _prepare_linked_event_rows(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
+        return df
+    prepared = df.copy()
+    if "timestamp" in prepared.columns:
+        prepared["timestamp"] = pd.to_datetime(prepared["timestamp"], errors="coerce")
+    if "year" not in prepared.columns and "timestamp" in prepared.columns:
+        prepared["year"] = prepared["timestamp"].dt.year
+    sort_columns = [column for column in ("timestamp", "year") if column in prepared.columns]
+    if sort_columns:
+        ascending = [False] * len(sort_columns)
+        prepared = prepared.sort_values(sort_columns, ascending=ascending, na_position="last")
+    return prepared
+
+
+def _load_linked_event_rows(loc_id: str) -> tuple[str | None, dict, pd.DataFrame]:
+    event_type = _extract_event_type(loc_id)
+    pack_id = EVENT_TYPE_PACK_IDS.get(event_type)
+    if not pack_id:
+        return event_type, {}, pd.DataFrame()
+
+    candidates = _get_exact_event_candidates(pack_id=pack_id, identifier_value=loc_id)
+    if not candidates:
+        return event_type, {}, pd.DataFrame()
+
+    fallback_config = EVENT_TABLES.get(event_type, {})
+    for candidate in candidates:
+        parquet_path, _ = _resolve_exact_event_parquet_for_candidate(candidate)
+        if not parquet_available(parquet_path):
+            continue
+        try:
+            df = select_rows(parquet_path, exact_filters={"loc_id": loc_id})
+        except Exception as exc:
+            logger.warning("Failed resolving linked event %s from %s: %s", loc_id, parquet_path, exc)
+            continue
+        if df.empty:
+            continue
+
+        candidate_event_type = str(candidate.get("event_type") or event_type or "").strip().lower()
+        config = dict(fallback_config)
+        return candidate_event_type, config, _prepare_linked_event_rows(df)
+
+    return event_type, fallback_config, pd.DataFrame()
+
+
+def _load_event_feature_by_loc_id(loc_id: str) -> dict | None:
+    event_type, config, df = _load_linked_event_rows(loc_id)
+    if not event_type or df.empty:
         return None
 
-    row_df = df.head(1).copy()
-    if "year" not in row_df.columns and "timestamp" in row_df.columns:
-        row_df["timestamp"] = pd.to_datetime(row_df["timestamp"], errors="coerce")
-        row_df["year"] = row_df["timestamp"].dt.year
-
-    row = row_df.iloc[0].to_dict()
+    row = df.iloc[0].to_dict()
+    if not config and event_type not in EVENT_TABLES:
+        config = {}
     return _build_event_feature_from_row(loc_id, event_type, config, row)
 
 
@@ -1236,43 +1298,8 @@ def _load_event_features_by_loc_ids(loc_ids: list[str]) -> dict[str, dict | None
     if not requested:
         return result
 
-    loc_ids_by_type: dict[str, list[str]] = {}
     for loc_id in requested:
-        event_type = _extract_event_type(loc_id)
-        if event_type not in EVENT_TABLES:
-            continue
-        loc_ids_by_type.setdefault(event_type, []).append(loc_id)
-
-    for event_type, typed_loc_ids in loc_ids_by_type.items():
-        config = EVENT_TABLES.get(event_type)
-        if not config:
-            continue
-        events_path = config["path"]
-        if not parquet_available(events_path):
-            continue
-        try:
-            if duckdb_available():
-                df = select_rows(
-                    events_path,
-                    in_filters={"loc_id": typed_loc_ids},
-                )
-            else:
-                df = pd.read_parquet(events_path, filters=[("loc_id", "in", typed_loc_ids)])
-        except Exception as exc:
-            logger.warning("Failed batch resolving linked events for %s from %s: %s", event_type, events_path, exc)
-            continue
-        if df.empty:
-            continue
-        if "year" not in df.columns and "timestamp" in df.columns:
-            df = df.copy()
-            df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-            df["year"] = df["timestamp"].dt.year
-        for _, row in df.iterrows():
-            row_dict = row.to_dict()
-            loc_id = str(row_dict.get("loc_id") or "").strip()
-            if not loc_id:
-                continue
-            result[loc_id] = _build_event_feature_from_row(loc_id, event_type, config, row_dict)
+        result[loc_id] = _load_event_feature_by_loc_id(loc_id)
 
     return result
 
