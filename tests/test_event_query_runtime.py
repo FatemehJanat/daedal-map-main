@@ -3,10 +3,13 @@ import unittest
 from mapmover.api_query_runtime import ApiSourceSpec
 from mapmover.api_query_scope import format_year_end, format_year_start, parse_time_filter
 from mapmover.execution.event_execution import _build_single_event_message
+from mapmover.runtime.filter_primitives import partition_region_filter_codes
 from mapmover.runtime.postprocess_pipeline import (
     apply_default_time_windows,
     apply_event_qualifier_defaults,
+    apply_query_derived_order_hints,
 )
+from mapmover.runtime.query_constraint_primitives import extract_query_constraints
 
 
 class EventQueryRuntimeTests(unittest.TestCase):
@@ -124,6 +127,140 @@ class EventQueryRuntimeTests(unittest.TestCase):
             message,
             "The earthquake in 2004 was M 9.1 - Off the west coast of northern Sumatra - Dec 26, 2004 UTC.",
         )
+
+    def test_query_derived_order_hints_convert_acres_to_area_km2(self):
+        items = [
+            {
+                "source_id": "can_wildfires",
+                "pack_id": "wildfires",
+                "mode": "events",
+                "_hints": {
+                    "original_query": "show me fires in BC, canada, from 2017 to present, bigger than 1000 acres"
+                },
+            }
+        ]
+
+        apply_query_derived_order_hints(
+            items,
+            load_source_metadata=lambda _source_id: {
+                "data_type": "events",
+                "metrics": {
+                    "area_km2": {"name": "Burned area"},
+                    "burned_acres": {"name": "Burned acres"},
+                },
+            },
+            hints={
+                "query_constraints": {
+                    "region_loc_id": "CAN-BC",
+                    "area_constraint": {"normalized_value": 4.04686},
+                }
+            },
+        )
+
+        self.assertAlmostEqual(items[0]["filters"]["area_km2_min"], 4.04686, places=5)
+        self.assertEqual(items[0]["region"], "CAN-BC")
+
+    def test_query_derived_order_hints_preserve_existing_narrower_area_filter(self):
+        items = [
+            {
+                "source_id": "can_wildfires",
+                "pack_id": "wildfires",
+                "mode": "events",
+                "filters": {"area_km2_min": 10.0},
+                "_hints": {
+                    "original_query": "show me fires in BC, canada, bigger than 1000 acres"
+                },
+            }
+        ]
+
+        apply_query_derived_order_hints(
+            items,
+            load_source_metadata=lambda _source_id: {
+                "data_type": "events",
+                "metrics": {"area_km2": {"name": "Burned area"}},
+            },
+            hints={
+                "query_constraints": {
+                    "region_loc_id": "CAN-BC",
+                    "area_constraint": {"normalized_value": 4.04686},
+                }
+            },
+        )
+
+        self.assertEqual(items[0]["filters"]["area_km2_min"], 10.0)
+        self.assertEqual(items[0]["region"], "CAN-BC")
+
+    def test_extract_query_constraints_resolve_subregion_and_area_units(self):
+        constraints = extract_query_constraints(
+            "show me fires in BC, canada, from 2017 to present, bigger than 1000 acres",
+            resolve_admin_text_to_loc_id_func=lambda value, country_hint=None, admin_level_hint=None: (
+                {"deepest_resolved_loc_id": "CAN"} if str(value).strip().lower() == "canada"
+                else {"deepest_resolved_loc_id": "CAN-BC"}
+            ),
+            load_reference_file_func=lambda _path: {"iso3_to_name": {"CAN": "Canada"}},
+            reference_dir=".",
+        )
+
+        self.assertEqual(constraints["region_loc_id"], "CAN-BC")
+        self.assertEqual(constraints["location"]["iso3"], "CAN")
+        self.assertAlmostEqual(constraints["filters"]["area_km2_min"], 4.04686, places=5)
+
+    def test_extract_query_constraints_resolve_space_separated_subregion_and_country(self):
+        def _resolve(value, country_hint=None, admin_level_hint=None):
+            normalized = str(value).strip().lower()
+            if normalized == "canada":
+                return {"deepest_resolved_loc_id": "CAN"}
+            if normalized == "ontario":
+                return {"deepest_resolved_loc_id": "CAN-ON"}
+            return {}
+
+        constraints = extract_query_constraints(
+            "show me the fires in ontario canada bigger than 200km2",
+            resolve_admin_text_to_loc_id_func=_resolve,
+            load_reference_file_func=lambda _path: {"iso3_to_name": {"CAN": "Canada"}},
+            reference_dir=".",
+        )
+
+        self.assertEqual(constraints["region_loc_id"], "CAN-ON")
+        self.assertEqual(constraints["location"]["matched_term"], "ontario")
+        self.assertAlmostEqual(constraints["filters"]["area_km2_min"], 200.0, places=5)
+
+    def test_extract_query_constraints_does_not_force_admin_level_one_for_subregions(self):
+        calls = []
+
+        def _resolve(value, country_hint=None, admin_level_hint=None):
+            calls.append(
+                {
+                    "value": str(value).strip().lower(),
+                    "country_hint": country_hint,
+                    "admin_level_hint": admin_level_hint,
+                }
+            )
+            normalized = str(value).strip().lower()
+            if normalized == "canada":
+                return {"deepest_resolved_loc_id": "CAN"}
+            if normalized == "toronto":
+                return {"deepest_resolved_loc_id": "CAN-ON-TOR"}
+            return {}
+
+        constraints = extract_query_constraints(
+            "show me fires in toronto canada bigger than 1 km2",
+            resolve_admin_text_to_loc_id_func=_resolve,
+            load_reference_file_func=lambda _path: {"iso3_to_name": {"CAN": "Canada"}},
+            reference_dir=".",
+        )
+
+        self.assertEqual(constraints["region_loc_id"], "CAN-ON-TOR")
+        self.assertEqual(calls[0]["admin_level_hint"], 0)
+        self.assertIsNone(calls[-1]["admin_level_hint"])
+
+    def test_partition_region_filter_codes_keeps_subnational_loc_ids_as_prefixes(self):
+        prefixes, countries = partition_region_filter_codes(
+            ["CAN-BC", "USA-CA-037", "CAN", "USA", "EEZ-CAN", "XNA"]
+        )
+
+        self.assertEqual(prefixes, ["CAN-BC", "USA-CA-037", "EEZ-CAN", "XNA"])
+        self.assertEqual(countries, ["CAN", "USA"])
 
 
 if __name__ == "__main__":
