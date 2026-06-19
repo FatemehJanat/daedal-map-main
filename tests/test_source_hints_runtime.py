@@ -282,6 +282,8 @@ class SourceHintsRuntimeTests(unittest.TestCase):
 
         self.assertIn("published wildfire -> flood family", guidance)
         self.assertIn("reverse direction", guidance)
+        self.assertIn("not describe flood -> wildfire as a separately published reverse family", guidance)
+        self.assertIn("did not provide an exact event id", guidance)
         self.assertIn("Do not say this relationship family is absent", guidance)
 
     @patch(

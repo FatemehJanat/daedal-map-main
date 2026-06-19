@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 
 from ..foundation_helpers import load_reference_json
 from .country_geography import (
@@ -1126,6 +1127,28 @@ def _query_contains_any_phrase(query: str, phrases: object) -> bool:
     return False
 
 
+_GENERIC_EXACT_EVENT_PATTERNS = (
+    re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE),
+    re.compile(r"^(?:dfo|gfd)-\d+$", re.IGNORECASE),
+    re.compile(r"^ts\d{4,}$", re.IGNORECASE),
+    re.compile(r"^ve\d{4,}$", re.IGNORECASE),
+    re.compile(r"^[A-Z]{2}\d{17,20}$", re.IGNORECASE),
+    re.compile(r"^[A-Z]{2}(?:-[A-Z]{2})?-\d{4}-[A-Za-z0-9-]+$", re.IGNORECASE),
+    re.compile(r"(?:irwin|mtbs|-fire-)", re.IGNORECASE),
+)
+
+
+def _query_looks_like_exact_event_reference(query: str) -> bool:
+    normalized_query = _normalize_query_text(query)
+    if not normalized_query:
+        return False
+    for token in normalized_query.split():
+        for pattern in _GENERIC_EXACT_EVENT_PATTERNS:
+            if pattern.search(token):
+                return True
+    return False
+
+
 def _shared_disaster_relationship_reference() -> dict:
     data = load_reference_json("disaster_links.json")
     return data if isinstance(data, dict) else {}
@@ -1273,10 +1296,23 @@ def build_query_specific_disaster_relationship_guidance(query: str | None, pack_
                     guidance_bits.append(
                         f"Correct to the canonical {side_a_type} -> {side_b_type} direction and continue with the linked events."
                     )
+                    guidance_bits.append(
+                        f"Do not describe {side_b_type} -> {side_a_type} as a separately published reverse family."
+                    )
                 else:
                     guidance_bits.append("Clarify the canonical direction before proceeding.")
             else:
                 guidance_bits.append("Treat this as a linked-events request against the existing published family.")
+                guidance_bits.append(
+                    f"Do not describe {side_b_type} -> {side_a_type} as a separately published reverse family."
+                )
+            if not _query_looks_like_exact_event_reference(normalized_query):
+                guidance_bits.append(
+                    "The user did not provide an exact event id. Do not attempt direct disaster-links event or chain execution yet."
+                )
+                guidance_bits.append(
+                    "Clarify for an exact anchor event, or clarify for region/time if the user wants a broader view of the canonical family."
+                )
             guidance_bits.append("Do not say this relationship family is absent.")
             guidance_bits.append("Do not fall back to unrelated separate-layer overlays unless the user asks for that instead.")
             return " ".join(guidance_bits)
