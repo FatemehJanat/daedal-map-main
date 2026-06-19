@@ -25,9 +25,10 @@ const TYPE_TO_MODEL = {
   cyclone: 'track',
   storm_track: 'track',
 
-  // Polygon events (Model C) - but using point-radius for overview
-  wildfire: 'point-radius',  // Points for overview, perimeter on-demand for animation
-  flood: 'point-radius',     // Points for overview, polygon on-demand for animation
+  // GeoJSON-first event families. Render contract is decided from the payload
+  // shape at runtime: polygon when geometry exists, otherwise point/radius.
+  wildfire: 'point-radius',
+  flood: 'point-radius',
   drought: 'polygon',        // Drought polygons for choropleth animation
   ash_cloud: 'polygon',
   drought_area: 'polygon'
@@ -143,15 +144,18 @@ export const ModelRegistry = {
   },
 
   /**
-   * Render data using appropriate model.
-   * For wildfire/flood, detects geometry type and uses polygon model when available.
+   * Render data using the payload shape rather than hazard-specific defaults.
+   * Wildfires and floods are geojson-first event families: polygons render via
+   * PolygonModel when present, and remaining point features fall back to
+   * PointRadiusModel.
    * @param {Object} geojson - GeoJSON data
    * @param {string} eventType - Event type
    * @param {Object} options - Render options
    * @returns {boolean} True if rendered
    */
   render(geojson, eventType, options = {}) {
-    // For wildfire/flood, check geometry type and use polygon model if available
+    // Geojson-first split render for hazards that can legitimately carry both
+    // event polygons and fallback event points in the same payload.
     if (eventType === 'wildfire' || eventType === 'flood') {
       const features = Array.isArray(geojson?.features) ? geojson.features : [];
       if (!features.length) {

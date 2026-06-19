@@ -177,8 +177,8 @@ export async function loadRangeData(overlayId, startMs, endMs, endpoint, signal 
     r.end >= endMs
   );
   if (isRangeCovered) {
-    console.log(`OverlayController: ${overlayId} range already cached`);
-    return false;
+    console.log(`OverlayController: ${overlayId} range already cached; treating request as loaded`);
+    return true;
   }
 
   const rangeEntry = { start: startMs, end: endMs, loading: true, filterSignature };
@@ -284,7 +284,7 @@ export async function loadRangeData(overlayId, startMs, endMs, endpoint, signal 
         : effectiveFilters.min_area_km2;
     }
 
-    return featureCount > 0;
+    return true;
   } catch (error) {
     const idx = loadedRanges[overlayId].indexOf(rangeEntry);
     if (idx >= 0) loadedRanges[overlayId].splice(idx, 1);

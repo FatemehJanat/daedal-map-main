@@ -72,6 +72,7 @@ from mapmover.runtime.postprocess_pipeline import (
     apply_event_qualifier_defaults,
     apply_default_time_windows,
     apply_preprocessor_time_hints,
+    apply_query_derived_order_hints,
     build_validation_summary,
     inject_original_query_hints,
     promote_filter_time_granularity,
@@ -394,6 +395,7 @@ def run_postprocess_order(
     apply_preprocessor_time_hints(items, time_hints, load_source_metadata)
     apply_default_time_windows(items, load_source_metadata)
     apply_event_qualifier_defaults(items, load_source_metadata, load_reference_json)
+    apply_query_derived_order_hints(items, load_source_metadata, hints=hints)
 
     clarify_message = detect_multiple_path_clarify_runtime(
         items,

@@ -13,6 +13,7 @@ def resolve_navigation_and_location(
     reference_dir,
     get_countries_in_viewport,
     logger,
+    extract_query_constraints,
 ):
     """Resolve navigation, disambiguation, detected source, and location context."""
     nav_intent = detect_navigation_intent(query)
@@ -41,9 +42,12 @@ def resolve_navigation_and_location(
     source_candidates = detect_source_candidates(query)
     detected_source = source_candidates.get("best")
     location = None
+    query_constraints = extract_query_constraints(query)
 
     if not navigation and not disambiguation:
-        location_result = extract_country_from_query(query, viewport=viewport)
+        if isinstance(query_constraints.get("location"), dict):
+            location = dict(query_constraints["location"])
+        location_result = {} if location else extract_country_from_query(query, viewport=viewport)
 
         if detected_source and location_result.get("match"):
             source_name_lower = detected_source.get("source_name", "").lower()
@@ -58,6 +62,7 @@ def resolve_navigation_and_location(
             location = {
                 "matched_term": matched_term,
                 "iso3": iso3,
+                "loc_id": iso3,
                 "country_name": country_name,
                 "is_subregion": is_subregion,
                 "source": location_result.get("source"),
@@ -130,6 +135,7 @@ def resolve_navigation_and_location(
         "source_candidates": source_candidates,
         "detected_source": detected_source,
         "location": location,
+        "query_constraints": query_constraints,
     }
 
 
@@ -157,6 +163,7 @@ def build_preprocessor_hints(
     saved_order_names: list | None = None,
     time_state: dict | None = None,
     loaded_data: list | None = None,
+    query_constraints: dict | None = None,
 ) -> dict:
     return {
         "original_query": query,
@@ -181,6 +188,7 @@ def build_preprocessor_hints(
         "saved_order_names": saved_order_names or [],
         "time_state": time_state,
         "loaded_data": loaded_data or [],
+        "query_constraints": query_constraints or {},
     }
 
 

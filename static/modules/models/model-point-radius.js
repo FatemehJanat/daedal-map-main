@@ -971,7 +971,6 @@ export const PointRadiusModel = {
     // Use type-specific layer IDs for click handlers
     const circleLayerId = this._layerId('circle', eventType);
     const glowLayerId = this._layerId('circle-glow', eventType);
-    const fillLayerId = this._layerId('circle-fill', eventType);
     const hitLayerId = this._layerId('circle-hit', eventType);
     const iconLayerId = this._iconLayerId(eventType);
 
@@ -996,11 +995,6 @@ export const PointRadiusModel = {
       MapAdapter.map.on('click', iconLayerId, clickHandler);
     }
 
-    // Also handle clicks on polygon fill layer (for wildfires with perimeters)
-    if (MapAdapter.map.getLayer(fillLayerId)) {
-      MapAdapter.map.on('click', fillLayerId, clickHandler);
-    }
-
     // Click elsewhere to unlock popup and deselect (only setup once)
     if (!this._mapClickHandler) {
       this._mapClickHandler = (e) => {
@@ -1009,12 +1003,10 @@ export const PointRadiusModel = {
         for (const type of this.activeTypes) {
           const circleId = this._layerId('circle', type);
           const glowId = this._layerId('circle-glow', type);
-          const fillId = this._layerId('circle-fill', type);
           const hitId = this._layerId('circle-hit', type);
           const iconId = this._iconLayerId(type);
           if (MapAdapter.map.getLayer(circleId)) layersToCheck.push(circleId);
           if (MapAdapter.map.getLayer(glowId)) layersToCheck.push(glowId);
-          if (MapAdapter.map.getLayer(fillId)) layersToCheck.push(fillId);
           if (MapAdapter.map.getLayer(hitId)) layersToCheck.push(hitId);
           if (MapAdapter.map.getLayer(iconId)) layersToCheck.push(iconId);
         }
@@ -1122,29 +1114,6 @@ export const PointRadiusModel = {
         }
       });
       MapAdapter.map.on('mouseleave', iconLayerId, () => {
-        if (!MapAdapter.popupLocked) {
-          MapAdapter.hidePopup();
-        }
-      });
-    }
-
-    // Hover handlers for polygon fill layer (wildfire/flood perimeters)
-    if (MapAdapter.map.getLayer(fillLayerId)) {
-      MapAdapter.map.on('mouseenter', fillLayerId, () => {
-        MapAdapter.map.getCanvas().style.cursor = 'pointer';
-      });
-      MapAdapter.map.on('mouseleave', fillLayerId, () => {
-        MapAdapter.map.getCanvas().style.cursor = '';
-      });
-      MapAdapter.map.on('mousemove', fillLayerId, (e) => {
-        if (TimeSlider?.isPlaying) return;
-        if (e.features.length > 0 && !MapAdapter.popupLocked) {
-          const props = e.features[0].properties;
-          const html = DisasterPopup.buildHoverHtml(props, eventType);
-          MapAdapter.showPopup([e.lngLat.lng, e.lngLat.lat], html);
-        }
-      });
-      MapAdapter.map.on('mouseleave', fillLayerId, () => {
         if (!MapAdapter.popupLocked) {
           MapAdapter.hidePopup();
         }
@@ -1884,9 +1853,10 @@ export const PointRadiusModel = {
   },
 
   /**
-   * Add wildfire-specific layer.
-   * Renders polygon perimeters when available, falls back to circles for points.
-   * Size/color based on area_km2 (log scale), orange/red coloring.
+   * Add wildfire-specific fallback point layer.
+   * Polygon wildfire geometry is handled by PolygonModel through the registry.
+   * This model only renders point fallback markers when no perimeter geometry
+   * is present in the payload.
    * @private
    */
   _addWildfireLayer(eventType, options = {}) {
@@ -1913,43 +1883,8 @@ export const PointRadiusModel = {
       4.5, '#880000'   // 30000+ km2 = dark red
     ];
 
-    // Filter for polygon geometries (fires with perimeters)
-    const polygonFilter = ['any',
-      ['==', ['geometry-type'], 'Polygon'],
-      ['==', ['geometry-type'], 'MultiPolygon']
-    ];
-
     // Filter for point geometries (fires without perimeters)
     const pointFilter = ['==', ['geometry-type'], 'Point'];
-
-    // === POLYGON LAYERS (for fires with perimeter data) ===
-
-    // Polygon fill layer
-    map.addLayer({
-      id: this._layerId('circle-fill', eventType),
-      type: 'fill',
-      source: sourceId,
-      filter: polygonFilter,
-      paint: {
-        'fill-color': colorExpr,
-        'fill-opacity': opacityExpr(0.5)
-      }
-    });
-
-    // Polygon stroke layer
-    map.addLayer({
-      id: this._layerId('circle-stroke', eventType),
-      type: 'line',
-      source: sourceId,
-      filter: polygonFilter,
-      paint: {
-        'line-color': '#ffcc00',
-        'line-width': 1.5,
-        'line-opacity': opacityExpr(0.9)
-      }
-    });
-
-    // === CIRCLE LAYERS (fallback for fires without perimeter data) ===
 
     // Size based on area_km2 (log scale)
     const sizeExpr = [
@@ -2679,8 +2614,8 @@ export const PointRadiusModel = {
       this._layerId('circle-glow', eventType),
       this._layerId('circle-hit', eventType),
       this._iconLayerId(eventType),
-      this._layerId('circle-fill', eventType),     // Wildfire polygon fill
-      this._layerId('circle-stroke', eventType),   // Wildfire polygon stroke
+      this._layerId('circle-fill', eventType),     // Legacy inline polygon fill
+      this._layerId('circle-stroke', eventType),   // Legacy inline polygon stroke
       this._layerId('circle-sequence', eventType), // Green sequence highlight
       this._layerId('label', eventType),
       this._layerId('radius-outer', eventType),

@@ -632,8 +632,7 @@ def _build_metadata_guided_pack_aggregate_order(user_query: str, hints: dict | N
     if not best_source or not best_metadata or not best_metric:
         return None
 
-    location = hints.get("location") or {}
-    iso3 = str(location.get("iso3") or "").strip()
+    region = _preferred_region_from_hints(hints)
     time_hints = hints.get("time") or {}
     year_start = time_hints.get("year_start")
     year_end = time_hints.get("year_end")
@@ -647,8 +646,8 @@ def _build_metadata_guided_pack_aggregate_order(user_query: str, hints: dict | N
     }
     if inferred_geo_level:
         item["geo_level"] = inferred_geo_level
-    if iso3:
-        item["region"] = iso3
+    if region:
+        item["region"] = region
     if year_start and year_end:
         item["year_start"] = year_start
         item["year_end"] = year_end
@@ -713,6 +712,20 @@ def _select_metadata_guided_source(user_query: str, hints: dict | None) -> tuple
     return None, None
 
 
+def _preferred_region_from_hints(hints: dict | None) -> str:
+    if not hints or not isinstance(hints, dict):
+        return ""
+    query_constraints = hints.get("query_constraints") or {}
+    region_loc_id = str(query_constraints.get("region_loc_id") or "").strip()
+    if region_loc_id:
+        return region_loc_id
+    location = hints.get("location") or {}
+    loc_id = str(location.get("loc_id") or "").strip()
+    if loc_id:
+        return loc_id
+    return str(location.get("iso3") or "").strip()
+
+
 def _select_pack_family_source_for_query(pack_id: str, user_query: str) -> tuple[str | None, dict | None]:
     if not pack_id or not user_query:
         return None, None
@@ -740,8 +753,7 @@ def _build_metadata_guided_two_source_order(user_query: str, hints: dict | None)
     if _candidate_pack_count_for_guided_sources(user_query, hints) > 2:
         return None
 
-    location = hints.get("location") or {}
-    iso3 = str(location.get("iso3") or "").strip()
+    region = _preferred_region_from_hints(hints)
     time_hints = hints.get("time") or {}
     year_start = time_hints.get("year_start")
     year_end = time_hints.get("year_end")
@@ -782,8 +794,8 @@ def _build_metadata_guided_two_source_order(user_query: str, hints: dict | None)
             item["geo_level"] = inferred_geo_level
         if metric:
             item["metric"] = metric
-        if iso3:
-            item["region"] = iso3
+        if region:
+            item["region"] = region
         if year_start and year_end:
             item["year_start"] = year_start
             item["year_end"] = year_end
@@ -806,8 +818,8 @@ def _build_metadata_guided_two_source_order(user_query: str, hints: dict | None)
         summary += f", {year_start}-{year_end}"
     elif year_start:
         summary += f" for {year_start}"
-    if iso3:
-        summary += f" in {iso3}"
+    if region:
+        summary += f" in {region}"
 
     return {
         "type": "order",
@@ -847,8 +859,7 @@ def _build_metadata_guided_order(user_query: str, hints: dict | None) -> dict | 
     if not metric and not (wants_event_view and supports_view_mode_clarify):
         return None
 
-    location = hints.get("location") or {}
-    iso3 = str(location.get("iso3") or "").strip()
+    region = _preferred_region_from_hints(hints)
 
     time_hints = hints.get("time") or {}
     year_start = time_hints.get("year_start")
@@ -865,8 +876,8 @@ def _build_metadata_guided_order(user_query: str, hints: dict | None) -> dict | 
             item["geo_level"] = inferred_geo_level
         if metric_name:
             item["metric"] = metric_name
-        if iso3:
-            item["region"] = iso3
+        if region:
+            item["region"] = region
         if year_start and year_end:
             item["year_start"] = year_start
             item["year_end"] = year_end

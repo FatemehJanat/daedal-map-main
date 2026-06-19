@@ -3887,46 +3887,6 @@ export const OverlayController = {
     console.log(`OverlayController: Cleared ${geometryType} geometry display`);
   },
 
-  /**
-   * Preload disaster data for 2020-2025 into the browser cache.
-   * Makes one ranged API call per disaster type using the same filters
-   * the overlay controller normally uses during animation.
-   * Floods are skipped (data ends 2019).
-   * @returns {Promise<Object>} Results per overlay id: { loaded: boolean }
-   */
-  async preloadDisasters2020to2025(onProgress = null) {
-    const startMs = new Date(2020, 0, 1).getTime();
-    const endMs = new Date(2025, 11, 31, 23, 59, 59).getTime();
-    const disasterIds = ['earthquakes', 'hurricanes', 'volcanoes', 'wildfires', 'tsunamis', 'tornadoes'];
-
-    console.log('OverlayController: Preloading disasters 2020-2025 (parallel)...');
-    const t0 = performance.now();
-
-    // Each disaster's request is independent. Run them in parallel so total
-    // wall time is max(individual) instead of sum(individual). Wildfires is
-    // the largest dataset and dominates the warm-path total - parallelizing
-    // hides the smaller fetches behind it.
-    const summary = {};
-    let completed = 0;
-
-    const runOne = async (id) => {
-      try {
-        const result = await loadRangeData(id, startMs, endMs, OVERLAY_ENDPOINTS[id]);
-        summary[id] = { loaded: result !== false };
-      } catch (e) {
-        summary[id] = { loaded: false, error: e.message };
-      }
-      completed += 1;
-      if (onProgress) onProgress(completed, disasterIds.length, id);
-    };
-
-    await Promise.all(disasterIds.map(runOne));
-
-    const elapsedMs = Math.round(performance.now() - t0);
-    console.log(`OverlayController: Preload complete in ${elapsedMs}ms:`, summary);
-    return summary;
-  },
-
   handleVolcanoHistory(data) {
     const { features, volcanoName, volcanoLat, volcanoLon, radiusKm } = data;
     console.log(`OverlayController: Displaying ${features.length} historical eruptions for ${volcanoName}`);

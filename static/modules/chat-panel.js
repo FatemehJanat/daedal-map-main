@@ -262,8 +262,10 @@ function parseExactEventIntent(query) {
     .trim();
 
   const explicitMatch = compact.match(/\b(?:event[_\s]?id|storm[_\s]?id|fire[_\s]?id|id)\b\s*[:=]?\s*([A-Za-z0-9._:-]{4,})\b/i);
-  const tailMatch = compact.match(/([A-Za-z0-9._:-]{4,})\s*$/);
-  const eventId = String(explicitMatch?.[1] || tailMatch?.[1] || '').trim();
+  const conciseTailMatch = compact.match(
+    /^(?:show|map|locate|focus on|zoom to|go to|open)\s+(?:(?:exact|specific)\s+)?(?:(?:event|storm|fire)\s+)?([A-Za-z0-9._:-]{4,})\s*$/i
+  );
+  const eventId = String(explicitMatch?.[1] || conciseTailMatch?.[1] || '').trim();
   if (!eventId) {
     return null;
   }
@@ -1305,6 +1307,7 @@ export const ChatManager = {
 
       let successCount = 0;
       const loadedLabels = [];
+      const failedLabels = [];
       for (let index = 0; index < childActions.length; index += 1) {
         const childAction = childActions[index];
         options.onProgress?.({
@@ -1322,8 +1325,11 @@ export const ChatManager = {
           if (childResult && (typeof childResult !== 'object' || childResult.ok !== false)) {
             successCount += 1;
             loadedLabels.push(formatDefaultLoadActionLabel(childAction));
+          } else {
+            failedLabels.push(formatDefaultLoadActionLabel(childAction));
           }
         } catch (error) {
+          failedLabels.push(formatDefaultLoadActionLabel(childAction));
           console.warn('Pack default source action failed:', childAction?.sourceId || childAction, error);
         }
       }
@@ -1335,7 +1341,10 @@ export const ChatManager = {
           : (successCount === childActions.length
               ? `Loaded ${successCount} defaults`
               : `Loaded ${successCount}/${childActions.length} defaults`);
-        const summaryText = `${summaryPrefix}: ${labelText}.`;
+        const failedText = failedLabels.length
+          ? ` Failed: ${joinLabelsForMessage(failedLabels)}.`
+          : '';
+        const summaryText = `${summaryPrefix}: ${labelText}.${failedText}`;
         this.addMessage(summaryText, 'assistant', { mode: options.mode || this.mode });
       }
 
@@ -1349,6 +1358,7 @@ export const ChatManager = {
       const requestedCount = Number(action._requestedPackCount) || actions.length;
       let successCount = 0;
       const loadedLabels = [];
+      const failedLabels = [];
       const concurrency = Math.max(1, Math.min(3, actions.length));
       let nextIndex = 0;
       let completedCount = 0;
@@ -1367,8 +1377,11 @@ export const ChatManager = {
             if (childResult && (typeof childResult !== 'object' || childResult.ok !== false)) {
               successCount += 1;
               loadedLabels.push(formatDefaultLoadActionLabel(childAction));
+            } else {
+              failedLabels.push(formatDefaultLoadActionLabel(childAction));
             }
           } catch (error) {
+            failedLabels.push(formatDefaultLoadActionLabel(childAction));
             console.warn('Default load action failed:', childAction?.label || childAction, error);
           } finally {
             completedCount += 1;
@@ -1387,9 +1400,13 @@ export const ChatManager = {
 
       if (successCount > 0 && !options.suppressResultMessage) {
         const labelText = joinLabelsForMessage(loadedLabels);
-        const summaryText = successCount === requestedCount
+        const baseSummary = successCount === requestedCount
           ? `Loaded ${successCount} defaults: ${labelText}.`
           : `Loaded ${successCount}/${requestedCount} defaults: ${labelText}.`;
+        const failedText = failedLabels.length
+          ? ` Failed: ${joinLabelsForMessage(failedLabels)}.`
+          : '';
+        const summaryText = `${baseSummary}${failedText}`;
         this.addMessage(summaryText, 'assistant', { mode: options.mode || this.mode });
       }
 

@@ -2,6 +2,9 @@
 
 import re
 
+from .loc_id_resolution import resolve_admin_text_to_loc_id
+from .query_constraint_primitives import extract_query_constraints
+
 
 EVENT_QUALIFIER_SINGLE_TARGET_PATTERNS = (
     re.compile(r"\bthe\s+biggest\s+(?P<noun>[a-z_]+)\b"),
@@ -230,6 +233,73 @@ def apply_event_qualifier_defaults(
         item["sort"] = {"by": selected_metric, "order": "desc"}
         if not item.get("limit") and _query_requests_single_ranked_event(query_text):
             item["limit"] = 1
+
+
+def _looks_country_level_region(region: str) -> bool:
+    value = str(region or "").strip()
+    if not value:
+        return True
+    if re.fullmatch(r"^[A-Z]{3}(?:-[A-Z0-9]+)*$", value):
+        return value.count("-") == 0
+    normalized = value.lower()
+    return normalized in {"global", "world", "canada", "usa", "us", "united states", "australia"}
+
+
+def apply_query_derived_order_hints(
+    items: list,
+    load_source_metadata,
+    *,
+    hints: dict | None = None,
+) -> None:
+    """Apply preprocessor-derived canonical region/filter hints to incomplete items."""
+    shared_constraints = (hints or {}).get("query_constraints") if isinstance(hints, dict) else None
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+
+        hints = item.get("_hints") if isinstance(item.get("_hints"), dict) else {}
+        query_text = " ".join(
+            part for part in (
+                str(hints.get("original_query") or "").strip(),
+                str(item.get("summary") or "").strip(),
+            )
+            if part
+        )
+        if not query_text:
+            continue
+
+        query_constraints = shared_constraints or extract_query_constraints(
+            query_text,
+            resolve_admin_text_to_loc_id_func=resolve_admin_text_to_loc_id,
+            load_reference_file_func=lambda _path: {},
+            reference_dir=None,
+        )
+
+        source_id = str(item.get("source_id") or "").strip()
+        metadata = load_source_metadata(source_id) or {}
+        metrics = metadata.get("metrics") if isinstance(metadata, dict) else {}
+
+        area_constraint = query_constraints.get("area_constraint") if isinstance(query_constraints, dict) else {}
+        area_threshold_km2 = area_constraint.get("normalized_value")
+        if area_threshold_km2 is not None:
+            metric_keys = set(metrics.keys()) if isinstance(metrics, dict) else set()
+            if "area_km2" in metric_keys or "burned_acres" in metric_keys:
+                filters = item.get("filters") if isinstance(item.get("filters"), dict) else {}
+                existing_min = filters.get("area_km2_min")
+                try:
+                    existing_value = float(existing_min) if existing_min is not None else None
+                except (TypeError, ValueError):
+                    existing_value = None
+                filters["area_km2_min"] = (
+                    max(existing_value, area_threshold_km2)
+                    if existing_value is not None
+                    else area_threshold_km2
+                )
+                item["filters"] = filters
+
+        region_loc_id = str((query_constraints or {}).get("region_loc_id") or "").strip()
+        if region_loc_id and _looks_country_level_region(item.get("region")):
+            item["region"] = region_loc_id
 
 
 def run_pre_validation_pipeline(

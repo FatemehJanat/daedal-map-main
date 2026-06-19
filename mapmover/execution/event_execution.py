@@ -2,7 +2,10 @@ import re
 
 import pandas as pd
 
-from mapmover.runtime.filter_primitives import resolve_exact_id_filter_field
+from mapmover.runtime.filter_primitives import (
+    partition_region_filter_codes,
+    resolve_exact_id_filter_field,
+)
 
 
 def _format_event_timestamp_utc(value) -> str:
@@ -394,11 +397,10 @@ def execute_event_order_impl(
 
         region_codes = expand_region_func(region)
         if region_codes and "loc_id" in df.columns:
-            us_state_prefixes = [c for c in region_codes if c.startswith("USA-")]
-            country_codes = [c for c in region_codes if not c.startswith("USA-")]
+            loc_prefixes, country_codes = partition_region_filter_codes(region_codes)
 
-            if us_state_prefixes:
-                mask = df["loc_id"].str.startswith(tuple(us_state_prefixes), na=False)
+            if loc_prefixes:
+                mask = df["loc_id"].str.startswith(tuple(loc_prefixes), na=False)
                 df = df[mask]
             elif country_codes:
                 df["_country"] = df["loc_id"].str.split("-").str[0]

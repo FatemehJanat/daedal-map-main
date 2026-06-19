@@ -5,6 +5,23 @@ from __future__ import annotations
 import pandas as pd
 
 
+def partition_region_filter_codes(region_codes) -> tuple[list[str], list[str]]:
+    """Split expanded region codes into loc_id prefixes vs bare country codes."""
+    prefixes: list[str] = []
+    countries: list[str] = []
+
+    for code in region_codes or []:
+        text = str(code or "").strip().upper()
+        if not text:
+            continue
+        if "-" in text or text.startswith("EEZ-") or text.startswith("X"):
+            prefixes.append(text)
+        else:
+            countries.append(text)
+
+    return prefixes, countries
+
+
 def resolve_exact_id_filter_field(
     requested_field: str,
     available_cols,

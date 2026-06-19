@@ -6,7 +6,10 @@ from pathlib import Path
 
 import pandas as pd
 
-from mapmover.runtime.filter_primitives import resolve_exact_id_filter_field
+from mapmover.runtime.filter_primitives import (
+    partition_region_filter_codes,
+    resolve_exact_id_filter_field,
+)
 
 
 def resolve_event_source_id(
@@ -159,12 +162,12 @@ def load_event_data_duckdb(
 
     region_codes = expand_region_func(region)
     if region_codes:
-        us_state_prefixes = sorted(c for c in region_codes if c.startswith("USA-"))
-        country_codes = sorted(c for c in region_codes if not c.startswith("USA-"))
+        loc_prefixes, country_codes = partition_region_filter_codes(region_codes)
+        us_state_prefixes = [code for code in loc_prefixes if code.startswith("USA-")]
         region_parts = []
 
         if loc_id_col:
-            for prefix in us_state_prefixes:
+            for prefix in sorted(loc_prefixes):
                 region_parts.append(f"{quote_ident_func(loc_id_col)} LIKE ?")
                 params.append(f"{prefix}%")
 
