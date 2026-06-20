@@ -18,12 +18,49 @@ def _coerce_temporal_year(value) -> int | None:
     return None
 
 
+def _normalize_filter_alias_text(value) -> str:
+    return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _build_filter_field_aliases(metadata: dict | None) -> dict[str, str]:
+    if not isinstance(metadata, dict):
+        return {}
+
+    aliases: dict[str, str] = {}
+
+    def _register(alias_value, field_name: str) -> None:
+        alias_text = _normalize_filter_alias_text(alias_value)
+        target_text = str(field_name or "").strip()
+        if alias_text and target_text:
+            aliases.setdefault(alias_text, target_text)
+
+    for field_name in metadata.get("filterable_fields") or []:
+        _register(field_name, field_name)
+
+    dimensions = metadata.get("dimensions") if isinstance(metadata.get("dimensions"), dict) else {}
+    for dim_key, dim_spec in dimensions.items():
+        if isinstance(dim_spec, dict):
+            column = str(dim_spec.get("column") or dim_key).strip()
+            for alias_value in (
+                dim_key,
+                column,
+                dim_spec.get("name"),
+                dim_spec.get("label"),
+            ):
+                _register(alias_value, column)
+        else:
+            _register(dim_key, dim_key)
+
+    return aliases
+
+
 def normalize_item_filters(
     item: dict,
     catalog_source: dict | None,
     *,
     load_source_metadata_func,
 ) -> None:
+    metadata = None
     filterable_fields = (catalog_source or {}).get("filterable_fields") or []
     if not filterable_fields:
         source_id = item.get("source_id")
@@ -52,6 +89,18 @@ def normalize_item_filters(
             moved = True
 
     if moved or filters:
+        if metadata is None:
+            source_id = item.get("source_id")
+            metadata = load_source_metadata_func(source_id) if source_id else {}
+        field_aliases = _build_filter_field_aliases(metadata)
+        if field_aliases:
+            normalized_filters = {}
+            for field_name, field_value in filters.items():
+                mapped_field = field_aliases.get(_normalize_filter_alias_text(field_name), field_name)
+                if mapped_field in normalized_filters:
+                    continue
+                normalized_filters[mapped_field] = field_value
+            filters = normalized_filters
         item["filters"] = filters
 
 
@@ -202,16 +251,22 @@ def normalize_source_declared_scope(
     item: dict,
     *,
     load_source_metadata_func,
+    load_source_reference_func=None,
 ) -> dict:
     source_id = item.get("source_id")
     if not source_id:
         return item
 
     metadata = load_source_metadata_func(source_id) or {}
+    reference = load_source_reference_func(source_id) or {} if load_source_reference_func else {}
     coverage = metadata.get("geographic_coverage", {}) or {}
+    scope = (
+        reference.get("scope", {}) if isinstance(reference, dict) else {}
+    ) or metadata.get("scope", {}) or {}
     canonical_region = str(
         coverage.get("canonical_region")
         or metadata.get("canonical_region")
+        or scope.get("canonical_region")
         or ""
     ).strip().lower()
     if not canonical_region:
@@ -220,6 +275,7 @@ def normalize_source_declared_scope(
     aliases_raw = (
         coverage.get("region_aliases")
         or metadata.get("region_aliases")
+        or scope.get("region_aliases")
         or []
     )
     aliases = {
@@ -227,10 +283,16 @@ def normalize_source_declared_scope(
         for alias in aliases_raw
         if str(alias).strip()
     }
+    loc_id_anchor = str(
+        coverage.get("loc_id_anchor")
+        or metadata.get("loc_id_anchor")
+        or scope.get("loc_id_anchor")
+        or ""
+    ).strip()
 
     region = str(item.get("region") or "").strip().lower()
     if not region or region == canonical_region or region in aliases:
-        item["region"] = canonical_region
+        item["region"] = loc_id_anchor or canonical_region
     return item
 
 

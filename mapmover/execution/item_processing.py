@@ -363,13 +363,12 @@ def process_metric_items(
 
         if sort_spec and not temporal_mode_active:
             sort_col = sort_spec.get("by")
-            if sort_col:
-                matched_col = find_metric_column_func(df, sort_col, metadata=metadata)
-                if matched_col:
-                    ascending = sort_spec.get("order", "desc") == "asc"
-                    df = df.sort_values(matched_col, ascending=ascending, na_position="last")
-                    if sort_spec.get("limit"):
-                        df = df.head(sort_spec["limit"])
+            matched_col = find_metric_column_func(df, sort_col or metric_col, metadata=metadata)
+            if matched_col:
+                ascending = sort_spec.get("order", "desc") == "asc"
+                df = df.sort_values(matched_col, ascending=ascending, na_position="last")
+                if sort_spec.get("limit"):
+                    df = df.head(sort_spec["limit"])
         t_after_sort = executor_log_func(trace_id, "sort_applied", t_after_filter, f"item={idx}/{len(items)} source={source_id} rows={len(df)}")
 
         if apply_runtime_result_cap_func is not None and not temporal_mode_active:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from mapmover.data_loading import get_pack_metadata, load_catalog, load_source_metadata
+from mapmover.data_loading import get_pack_metadata, load_catalog, load_source_metadata, load_source_reference
 from mapmover.duckdb_helpers import parquet_columns
 from mapmover.foundation_helpers import load_reference_json
 from mapmover.paths import DATA_ROOT
@@ -464,6 +464,7 @@ def run_postprocess_order(
         lambda item: normalize_source_declared_scope_impl(
             item,
             load_source_metadata_func=load_source_metadata,
+            load_source_reference_func=load_source_reference,
         ),
         validate_item,
     )

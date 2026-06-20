@@ -94,6 +94,7 @@ class LoadStrategiesRuntimeTests(unittest.TestCase):
                 },
                 "region": "USA-VA",
             },
+            temporal_mode=False,
             aggregate_item_cache={},
             load_disaster_aggregate_data_func=load_disaster_aggregate_data,
             load_source_data_func=load_source_data,
@@ -110,6 +111,102 @@ class LoadStrategiesRuntimeTests(unittest.TestCase):
             captured["kwargs"]["compare_filters"],
             [("risk_score", ">=", 90)],
         )
+
+    def test_load_order_item_dataframe_normalizes_lowercase_region_prefix(self):
+        captured = {}
+
+        def load_disaster_aggregate_data(_source_id, _item):
+            return None, None
+
+        def load_source_data(source_id, **kwargs):
+            captured["source_id"] = source_id
+            captured["kwargs"] = kwargs
+            return [], {"source_id": source_id}
+
+        load_order_item_dataframe(
+            item={
+                "source_id": "worldpop",
+                "metric": "population",
+                "region": "usa-ca",
+                "filters": {
+                    "loc_id_prefix": "usa-ca",
+                },
+            },
+            temporal_mode=False,
+            aggregate_item_cache={},
+            load_disaster_aggregate_data_func=load_disaster_aggregate_data,
+            load_source_data_func=load_source_data,
+        )
+
+        self.assertEqual(captured["source_id"], "worldpop")
+        self.assertEqual(captured["kwargs"]["loc_id_prefix"], "USA-CA")
+
+    def test_load_order_item_dataframe_does_not_treat_region_slug_as_loc_id_prefix(self):
+        captured = {}
+
+        def load_disaster_aggregate_data(_source_id, _item):
+            return None, None
+
+        def load_source_data(source_id, **kwargs):
+            captured["source_id"] = source_id
+            captured["kwargs"] = kwargs
+            return [], {"source_id": source_id}
+
+        load_order_item_dataframe(
+            item={
+                "source_id": "fairfax_buildings",
+                "metric": "BLDG_HEIGHT",
+                "region": "usa-va-fairfax",
+            },
+            temporal_mode=False,
+            aggregate_item_cache={},
+            load_disaster_aggregate_data_func=load_disaster_aggregate_data,
+            load_source_data_func=load_source_data,
+        )
+
+        self.assertEqual(captured["source_id"], "fairfax_buildings")
+        self.assertFalse(captured["kwargs"]["loc_id_prefix"])
+
+    def test_load_order_item_dataframe_pushes_source_geo_level_contract(self):
+        captured = {}
+
+        def load_disaster_aggregate_data(_source_id, _item):
+            return None, None
+
+        def load_source_data(source_id, **kwargs):
+            captured["source_id"] = source_id
+            captured["kwargs"] = kwargs
+            return [], {"source_id": source_id}
+
+        load_order_item_dataframe(
+            item={
+                "source_id": "fairfax_nlcd_impervious",
+                "metric": "impervious_max_pct",
+                "geo_level": "blockgroup",
+                "year": 2024,
+            },
+            temporal_mode=False,
+            aggregate_item_cache={},
+            load_disaster_aggregate_data_func=load_disaster_aggregate_data,
+            load_source_data_func=load_source_data,
+            load_source_metadata_func=lambda _source_id: {
+                "geographic_coverage": {"country": "USA"},
+                "geographic_level": "admin_3",
+                "dimensions": {
+                    "geo_level": {
+                        "values": {
+                            "county": "county",
+                            "tract": "tract",
+                            "blockgroup": "blockgroup",
+                            "block": "block",
+                        }
+                    }
+                },
+            },
+        )
+
+        self.assertEqual(captured["source_id"], "fairfax_nlcd_impervious")
+        self.assertEqual(captured["kwargs"]["exact_filters"]["geo_level"], "blockgroup")
 
 
 if __name__ == "__main__":

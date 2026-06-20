@@ -78,6 +78,10 @@ def normalize_sort_spec(sort_spec):
         return normalized
     if isinstance(sort_spec, str):
         raw = str(sort_spec).strip().lower()
+        if raw in {"desc", "descending"}:
+            return {"order": "desc"}
+        if raw in {"asc", "ascending"}:
+            return {"order": "asc"}
         alias_map = {
             "date_desc": {"by": "timestamp", "order": "desc"},
             "date_asc": {"by": "timestamp", "order": "asc"},

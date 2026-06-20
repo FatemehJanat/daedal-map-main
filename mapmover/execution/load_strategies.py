@@ -5,6 +5,33 @@ from __future__ import annotations
 import re
 import time
 
+from mapmover.runtime.geography_reference import canonicalize_loc_id
+from mapmover.runtime.source_hints import resolve_geo_contract
+
+
+def _normalize_loc_id_like_token(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    normalized = canonicalize_loc_id(text)
+    if normalized.startswith("EEZ-") or re.fullmatch(r"X[A-Z0-9]{1,7}", normalized):
+        return normalized
+
+    parts = [segment for segment in normalized.split("-") if segment]
+    if not parts or len(parts[0]) not in {2, 3} or not parts[0].isalpha():
+        return ""
+
+    for segment in parts[1:]:
+        if segment.startswith("G") and segment[1:].isdigit():
+            continue
+        if segment.isdigit():
+            continue
+        if segment.isalnum() and len(segment) <= 5:
+            continue
+        return ""
+
+    return normalized
+
 
 def _classify_pushdown_filters(filters: dict | None) -> tuple[dict, dict, list[tuple[str, str, object]]]:
     """Translate generic order filters into the shared select_rows contract."""
@@ -169,9 +196,9 @@ def load_order_item_dataframe(
     aggregate_like_source = str(source_id or "").strip().endswith("_aggregates")
 
     pushdown_year = year if (year and not year_start and not year_end) else None
-    pushdown_prefix = region if (region and re.match(r"^[A-Z]{2,3}(-[A-Z0-9]+)?$", region)) else None
+    pushdown_prefix = _normalize_loc_id_like_token(region)
     filters_for_pushdown = dict(filters)
-    filter_loc_id_prefix = str(filters_for_pushdown.pop("loc_id_prefix", "") or "").strip()
+    filter_loc_id_prefix = _normalize_loc_id_like_token(filters_for_pushdown.pop("loc_id_prefix", ""))
     if pushdown_prefix is None and filter_loc_id_prefix:
         pushdown_prefix = filter_loc_id_prefix
     # Filter location at the source for marine_zone sources: when a named basin/
@@ -202,8 +229,8 @@ def load_order_item_dataframe(
             except TypeError:
                 _resolved = expand_region_func(region)
             if isinstance(_resolved, (set, list, tuple)) and len(_resolved) == 1:
-                _code = str(next(iter(_resolved))).strip()
-                if re.match(r"^[A-Z]{2,3}(-[A-Z0-9]+)?$", _code):
+                _code = _normalize_loc_id_like_token(next(iter(_resolved)))
+                if _code:
                     pushdown_prefix = _code
 
     # Time-before-location for broad queries: when no specific location is being
@@ -233,6 +260,19 @@ def load_order_item_dataframe(
         year_end = None
 
     exact_filters, in_filters, compare_filters = _classify_pushdown_filters(filters_for_pushdown)
+    requested_geo_level = item.get("geo_level")
+    if requested_geo_level and load_source_metadata_func is not None and "geo_level" not in exact_filters:
+        try:
+            source_metadata = load_source_metadata_func(source_id) if source_id else {}
+        except Exception:
+            source_metadata = {}
+        geo_contract = resolve_geo_contract(requested_geo_level, source_metadata)
+        if (
+            geo_contract.source_filter_field == "geo_level"
+            and geo_contract.filter_strategy == "equals"
+            and geo_contract.source_level_value
+        ):
+            exact_filters["geo_level"] = geo_contract.source_level_value
     if pushdown_year is None:
         if year_start is not None:
             compare_filters.append(("year", ">=", year_start))

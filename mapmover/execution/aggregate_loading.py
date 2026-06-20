@@ -6,6 +6,31 @@ import re
 
 import pandas as pd
 
+from mapmover.runtime.geography_reference import canonicalize_loc_id
+
+
+def _normalize_loc_id_like_token(value) -> str:
+    text = canonicalize_loc_id(value)
+    if not text:
+        return ""
+    if text.startswith("EEZ-") or re.fullmatch(r"X[A-Z0-9]{1,7}", text):
+        return text
+
+    parts = [segment for segment in text.split("-") if segment]
+    if not parts or len(parts[0]) not in {2, 3} or not parts[0].isalpha():
+        return ""
+
+    for segment in parts[1:]:
+        if segment.startswith("G") and segment[1:].isdigit():
+            continue
+        if segment.isdigit():
+            continue
+        if segment.isalnum() and len(segment) <= 5:
+            continue
+        return ""
+
+    return text
+
 
 def _normalize_loc_id_filter_values(values, *, translate_loc_id_to_geometry_id_func) -> list[str]:
     normalized: list[str] = []
@@ -61,7 +86,7 @@ def infer_implicit_aggregate_rollup_level(item: dict, *, expand_region_func) -> 
     region = item.get("region")
     filters = item.get("filters") if isinstance(item.get("filters"), dict) else {}
     filter_loc_id = filters.get("loc_id")
-    filter_loc_id_prefix = str(filters.get("loc_id_prefix") or "").strip()
+    filter_loc_id_prefix = _normalize_loc_id_like_token(filters.get("loc_id_prefix"))
     if not region and filter_loc_id:
         return None
     if not region and filter_loc_id_prefix:
@@ -196,8 +221,9 @@ def load_disaster_aggregate_data_impl(
                         ]
                     )
             if "loc_id" in available_cols:
-                if region and re.match(r"^[A-Z]{2,3}(?:-[A-Z0-9]+)*$", str(region).strip()):
-                    starts_with_filters["loc_id"] = translate_loc_id_to_geometry_id_func(str(region).strip())
+                normalized_region_prefix = _normalize_loc_id_like_token(region)
+                if normalized_region_prefix:
+                    starts_with_filters["loc_id"] = translate_loc_id_to_geometry_id_func(normalized_region_prefix)
                 elif filter_loc_id_prefix:
                     starts_with_filters["loc_id"] = translate_loc_id_to_geometry_id_func(filter_loc_id_prefix)
                 if filter_loc_id:

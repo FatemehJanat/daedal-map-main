@@ -44,8 +44,8 @@ USA_COUNTY_EQUIVALENT_SUFFIXES = (
 
 
 def canonicalize_loc_id(loc_id: str) -> str:
-    """Return runtime loc_ids in canonical form. Legacy formats are not normalized here."""
-    return loc_id
+    """Return runtime loc_ids in canonical form for shared spine comparisons."""
+    return str(loc_id or "").strip().upper()
 
 
 def _load_water_body_loc_ids() -> set[str]:

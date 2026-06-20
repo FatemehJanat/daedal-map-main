@@ -84,7 +84,7 @@ def candidate_parquet_paths(source_dir: Path, metadata: dict) -> list[Path]:
     return candidates
 
 
-def _loc_id_prefix_candidates(loc_id_prefix: str | None) -> list[str | None]:
+def _loc_id_prefix_candidates(loc_id_prefix: str | None, metadata: dict | None = None) -> list[str | None]:
     """Return ordered namespace-aware prefix candidates for parquet pushdown.
 
     Runtime queries often arrive in country-local loc_id form (`USA-CA`), while
@@ -101,7 +101,23 @@ def _loc_id_prefix_candidates(loc_id_prefix: str | None) -> list[str | None]:
 
     candidates: list[str | None] = []
     translated = translate_loc_id_to_geometry_id(original)
-    for candidate in (translated, original):
+    admin_levels = []
+    if isinstance(metadata, dict):
+        coverage = metadata.get("geographic_coverage") if isinstance(metadata.get("geographic_coverage"), dict) else {}
+        admin_levels = coverage.get("admin_levels") if isinstance(coverage.get("admin_levels"), list) else []
+    try:
+        max_admin_level = max(int(level) for level in admin_levels)
+    except (TypeError, ValueError):
+        max_admin_level = None
+
+    prefer_local_first = (
+        translated != original
+        and max_admin_level is not None
+        and max_admin_level > 2
+    )
+    ordered_candidates = (original, translated) if prefer_local_first else (translated, original)
+
+    for candidate in ordered_candidates:
         value = str(candidate).strip() if candidate is not None else ""
         if not value:
             continue
@@ -202,7 +218,7 @@ def load_source_data(
                 text = str(raw_end).strip()
                 if len(text) >= 4 and text[:4].isdigit():
                     resolved_exact_filters.setdefault("year", int(text[:4]))
-    prefix_candidates = _loc_id_prefix_candidates(loc_id_prefix)
+    prefix_candidates = _loc_id_prefix_candidates(loc_id_prefix, metadata)
 
     runtime_block = metadata.get("runtime") if isinstance(metadata.get("runtime"), dict) else {}
     try:
