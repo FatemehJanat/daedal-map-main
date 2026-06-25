@@ -260,9 +260,11 @@ def normalize_source_declared_scope(
     metadata = load_source_metadata_func(source_id) or {}
     reference = load_source_reference_func(source_id) or {} if load_source_reference_func else {}
     coverage = metadata.get("geographic_coverage", {}) or {}
-    scope = (
-        reference.get("scope", {}) if isinstance(reference, dict) else {}
-    ) or metadata.get("scope", {}) or {}
+    reference_scope = reference.get("scope", {}) if isinstance(reference, dict) else {}
+    metadata_scope = metadata.get("scope", {}) or {}
+    scope = reference_scope if isinstance(reference_scope, dict) else {}
+    if not scope and isinstance(metadata_scope, dict):
+        scope = metadata_scope
     canonical_region = str(
         coverage.get("canonical_region")
         or metadata.get("canonical_region")
