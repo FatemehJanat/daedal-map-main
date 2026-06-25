@@ -110,12 +110,22 @@ def _loc_id_prefix_candidates(loc_id_prefix: str | None, metadata: dict | None =
     except (TypeError, ValueError):
         max_admin_level = None
 
+    county_bridge_candidate = ""
+    original_upper = str(original).strip().upper()
+    if max_admin_level is not None and max_admin_level > 2 and original_upper.startswith("USA-"):
+        parts = original_upper.split("-")
+        if len(parts) == 3 and parts[2].isdigit() and len(parts[2]) > 3:
+            county_bridge_candidate = f"{parts[0]}-{parts[1]}-{parts[2][-3:]}"
+
     prefer_local_first = (
         translated != original
         and max_admin_level is not None
         and max_admin_level > 2
     )
-    ordered_candidates = (original, translated) if prefer_local_first else (translated, original)
+    if prefer_local_first:
+        ordered_candidates = (county_bridge_candidate, original, translated)
+    else:
+        ordered_candidates = (translated, county_bridge_candidate, original)
 
     for candidate in ordered_candidates:
         value = str(candidate).strip() if candidate is not None else ""

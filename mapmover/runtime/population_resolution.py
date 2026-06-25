@@ -29,6 +29,17 @@ def get_source_admin_levels(metadata: dict | None) -> list[int]:
         return [int(geo_level[6:])]
     if geo_level in {"country", "admin_0"}:
         return [0]
+
+    coverage = metadata.get("geographic_coverage") if isinstance(metadata.get("geographic_coverage"), dict) else {}
+    coverage_levels = coverage.get("admin_levels")
+    if isinstance(coverage_levels, list):
+        return sorted(
+            {
+                int(level)
+                for level in coverage_levels
+                if isinstance(level, (int, float)) or str(level).isdigit()
+            }
+        )
     return []
 
 
