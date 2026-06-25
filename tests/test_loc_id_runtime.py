@@ -1,7 +1,9 @@
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from mapmover.runtime.read_posture import geometry_read_mode
+from mapmover.runtime.geometry_loader import parquet_accessible
 from mapmover.runtime.geography_reference import (
     build_crosswalk_maps,
     canonicalize_loc_id,
@@ -28,6 +30,12 @@ class LocIdRuntimeTests(unittest.TestCase):
         self.assertEqual(
             translate_geometry_id_to_local_id("USA-G125186-G215213"),
             "USA-VA-059",
+        )
+
+    def test_reverse_bridge_maps_county_fips_style_local_id_to_county_prefix(self):
+        self.assertEqual(
+            translate_geometry_id_to_local_id("USA-CA-06037"),
+            "USA-CA-037",
         )
 
     def test_deprecated_legacy_t_formats_are_not_normalized(self):
@@ -78,6 +86,10 @@ class LocIdRuntimeTests(unittest.TestCase):
             clear=False,
         ):
             self.assertEqual(geometry_read_mode(), "runtime")
+
+    def test_parquet_accessible_accepts_existing_local_file_even_in_runtime_mode(self):
+        with patch("pathlib.Path.exists", return_value=True):
+            self.assertTrue(parquet_accessible(Path(__file__)))
 
 
 if __name__ == "__main__":

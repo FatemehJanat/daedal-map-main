@@ -194,8 +194,19 @@ def translate_geometry_id_to_local_id(loc_id: str) -> str:
 
     iso3 = canonical.split("-", 1)[0]
     crosswalk = load_country_crosswalk(iso3)
-    _, geo_to_local = build_crosswalk_maps(crosswalk)
-    return geo_to_local.get(canonical, canonical)
+    local_to_geo, geo_to_local = build_crosswalk_maps(crosswalk)
+    direct = geo_to_local.get(canonical)
+    if direct:
+        return direct
+
+    if iso3 == "USA":
+        parts = canonical.split("-")
+        if len(parts) == 3 and parts[2].isdigit() and len(parts[2]) > 3:
+            county_only = f"{parts[0]}-{parts[1]}-{parts[2][-3:]}"
+            if county_only in local_to_geo:
+                return county_only
+
+    return canonical
 
 
 def load_conversions() -> dict[str, Any]:

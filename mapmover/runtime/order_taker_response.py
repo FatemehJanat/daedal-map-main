@@ -10,6 +10,7 @@ from mapmover.runtime.order_taker_prompt import get_source_visibility_mode
 from mapmover.runtime.order_semantics import (
     source_supports_aggregate_mode as source_supports_aggregate_mode_impl,
 )
+from mapmover.runtime.population_resolution import get_source_admin_levels
 from mapmover.runtime.query_intent_primitives import query_prefers_event_source
 from mapmover.runtime.source_hints import (
     get_hint_alias_terms,
@@ -23,6 +24,27 @@ from mapmover.runtime.source_hints import (
     select_pack_family_source_for_query as select_pack_family_source_for_query_impl,
     select_query_guided_metric,
 )
+
+
+def _runtime_level_number(runtime_level: str | None) -> int | None:
+    text = str(runtime_level or "").strip().lower()
+    if text.startswith("admin_") and text[6:].isdigit():
+        return int(text[6:])
+    if text == "admin_0":
+        return 0
+    return None
+
+
+def _source_supports_requested_geo_level(metadata: dict | None, requested_geo_level: str | None) -> bool:
+    requested_number = _runtime_level_number(requested_geo_level)
+    if requested_number is None or not isinstance(metadata, dict):
+        return True
+
+    source_levels = get_source_admin_levels(metadata)
+    if not source_levels:
+        return True
+
+    return max(source_levels) >= requested_number
 
 
 def validate_order_item(item: dict) -> dict:
@@ -574,6 +596,8 @@ def _score_metadata_guided_source(query: str, metadata: dict) -> tuple[float, st
     metric = _select_metadata_guided_metric(query, metadata)
     query_alias_matches = get_query_alias_matches(metadata, query)
     inferred_geo_level = infer_requested_geo_level_from_query(query, metadata)
+    if inferred_geo_level and not _source_supports_requested_geo_level(metadata, inferred_geo_level):
+        return 0.0, ""
     if not (metric or query_alias_matches or inferred_geo_level):
         return 0.0, ""
 
@@ -688,6 +712,10 @@ def _select_metadata_guided_source(user_query: str, hints: dict | None) -> tuple
     for source_id in candidate_source_ids:
         metadata = load_source_metadata(source_id) or {}
         if not metadata:
+            continue
+
+        inferred_geo_level = infer_requested_geo_level_from_query(user_query, metadata)
+        if inferred_geo_level and not _source_supports_requested_geo_level(metadata, inferred_geo_level):
             continue
 
         alias_matches = _select_metadata_guided_metrics(user_query, metadata)
@@ -845,6 +873,10 @@ def _build_metadata_guided_order(user_query: str, hints: dict | None) -> dict | 
     detected_source = hints.get("detected_source") or {}
     source_id = str(detected_source.get("source_id") or "").strip()
     metadata = load_source_metadata(source_id) or {} if source_id else {}
+    inferred_geo_level = infer_requested_geo_level_from_query(user_query, metadata) if metadata else None
+    if source_id and metadata and inferred_geo_level and not _source_supports_requested_geo_level(metadata, inferred_geo_level):
+        source_id = ""
+        metadata = {}
     if not source_id or not metadata:
         source_id, metadata = _select_metadata_guided_source(user_query, hints)
     if not source_id or not metadata:
@@ -871,7 +903,6 @@ def _build_metadata_guided_order(user_query: str, hints: dict | None) -> dict | 
             "pack_id": str(metadata.get("pack_id") or detected_source.get("pack_id") or "").strip(),
             "_hints": {"original_query": user_query},
         }
-        inferred_geo_level = infer_requested_geo_level_from_query(user_query, metadata)
         if inferred_geo_level:
             item["geo_level"] = inferred_geo_level
         if metric_name:
