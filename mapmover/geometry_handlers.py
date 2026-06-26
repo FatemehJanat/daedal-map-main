@@ -71,8 +71,10 @@ def _prefer_local_geometry_reads() -> bool:
 
 def _parquet_accessible(path: Path) -> bool:
     """Returns True if a parquet file exists locally or is accessible via S3/DuckDB."""
+    if path.exists():
+        return True
     if not is_cloud_mode():
-        return path.exists()
+        return False
     try:
         cols = parquet_columns(path)
         return bool(cols)
@@ -155,7 +157,7 @@ def load_country_parquet(iso3: str, admin_level: int = None):
     try:
         # Use predicate pushdown if admin_level specified
         if admin_level is not None:
-            if _prefer_local_geometry_reads() and parquet_file.exists():
+            if parquet_file.exists():
                 df = pd.read_parquet(
                     parquet_file,
                     filters=[('admin_level', '==', admin_level)]
@@ -171,7 +173,7 @@ def load_country_parquet(iso3: str, admin_level: int = None):
                         filters=[('admin_level', '==', admin_level)]
                     )
         else:
-            if _prefer_local_geometry_reads() and parquet_file.exists():
+            if parquet_file.exists():
                 df = pd.read_parquet(parquet_file)
             else:
                 if is_cloud_mode():

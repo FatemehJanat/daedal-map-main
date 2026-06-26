@@ -53,6 +53,12 @@ def get_country_regional_overlap_systems(iso3: str) -> dict[str, dict[str, Any]]
     return systems if isinstance(systems, dict) else {}
 
 
+def get_country_location_aliases(iso3: str) -> dict[str, str]:
+    """Return direct country-owned location aliases that map names to loc_ids."""
+    aliases = load_country_geometry_profile(iso3).get("location_aliases") or {}
+    return aliases if isinstance(aliases, dict) else {}
+
+
 def _country_level_geometry_exists(iso3: str, info: dict[str, Any]) -> bool:
     folder = info.get("folder")
     if not folder:

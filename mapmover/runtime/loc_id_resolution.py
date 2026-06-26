@@ -13,8 +13,10 @@ from ..geometry_handlers import (
     resolve_point_to_location as legacy_resolve_point_to_location,
 )
 from ..name_standardizer import NameStandardizer
+from ..paths import COUNTRIES_DIR
 from ..reference.usa.location_lookup import by_zip as usa_zip_lookup
 from .admin_hierarchy import get_parent_loc_id, infer_admin_level_from_loc_id
+from .country_geography import get_country_location_aliases
 from .geography_reference import (
     canonicalize_loc_id,
     classify_loc_id_family,
@@ -26,6 +28,10 @@ _LOC_ID_RE = re.compile(r"^[A-Z]{3}(?:-[A-Z0-9]+)+$|^[A-Z]{3}$")
 _USA_ZIP_RE = re.compile(r"^\d{5}$")
 _NAME_STANDARDIZER: NameStandardizer | None = None
 _TEXT_COLLAPSE_RE = re.compile(r"[^a-z0-9]+")
+_USA_TRIBAL_ALIAS_SUFFIX_RE = re.compile(
+    r"\b(indian reservation and off reservation trust land|indian reservation|off reservation trust land|reservation|nation|tribe|tribal community|community|pueblo|village|native village)\b",
+    re.IGNORECASE,
+)
 _ADMIN_TEXT_SUFFIX_RE = re.compile(
     r"\b(county|parish|borough|municipality|municipio|district|region|province|state|prefecture|department|departement|oblast|county of)\b",
     re.IGNORECASE,
@@ -46,6 +52,7 @@ _ADMIN_TEXT_ALIASES = {
     "mecklenburg western pomerania": "mecklenburg vorpommern",
     "mecklenburg-western pomerania": "mecklenburg vorpommern",
 }
+_COUNTRY_DIRECT_LOCATION_ALIAS_CACHE: dict[str, dict[str, str]] = {}
 
 def _resolve_point_to_marine_stack(
     lon: float,
@@ -214,7 +221,18 @@ def _resolve_country_geometry_name(
     if not candidates:
         return None
 
-    loc_id, name = candidates[0]
+    unique_candidates = []
+    seen_loc_ids: set[str] = set()
+    for loc_id, name in candidates:
+        if loc_id in seen_loc_ids:
+            continue
+        seen_loc_ids.add(loc_id)
+        unique_candidates.append((loc_id, name))
+
+    if len(unique_candidates) != 1:
+        return None
+
+    loc_id, name = unique_candidates[0]
     return _build_match_entry(
         loc_id,
         admin_level=admin_level,
@@ -247,6 +265,66 @@ def _resolve_country_name_from_global_geometry(query: str) -> dict[str, Any] | N
                 source_loc_id=loc_id,
             )
     return None
+
+
+def _build_usa_tribal_aliases() -> dict[str, str]:
+    alias_map: dict[str, str] = {}
+    file_path = COUNTRIES_DIR / "USA" / "geometry" / "tribal" / "USA.parquet"
+    if not file_path.exists():
+        return alias_map
+
+    try:
+        df = pd.read_parquet(file_path, columns=["loc_id", "name"])
+    except Exception:
+        return alias_map
+
+    stripped_candidates: dict[str, set[str]] = {}
+    for row in df.itertuples(index=False):
+        loc_id = str(getattr(row, "loc_id", "") or "").strip()
+        name = str(getattr(row, "name", "") or "").strip()
+        if not loc_id or not name:
+            continue
+        normalized_name = _normalize_admin_text(name)
+        if normalized_name:
+            alias_map.setdefault(normalized_name, loc_id)
+        stripped = _normalize_admin_text(_USA_TRIBAL_ALIAS_SUFFIX_RE.sub(" ", name))
+        if stripped and stripped != normalized_name:
+            stripped_candidates.setdefault(stripped, set()).add(loc_id)
+
+    for alias_text, loc_ids in stripped_candidates.items():
+        if len(loc_ids) == 1:
+            alias_map.setdefault(alias_text, next(iter(loc_ids)))
+    return alias_map
+
+
+def _load_country_direct_location_aliases(country_hint: str | None) -> dict[str, str]:
+    iso3 = str(country_hint or "").strip().upper()
+    if not iso3:
+        return {}
+    cached = _COUNTRY_DIRECT_LOCATION_ALIAS_CACHE.get(iso3)
+    if cached is not None:
+        return cached
+
+    alias_map: dict[str, str] = {}
+    for alias, loc_id in get_country_location_aliases(iso3).items():
+        alias_text = _normalize_admin_text(alias)
+        loc_id_text = str(loc_id or "").strip()
+        if alias_text and loc_id_text:
+            alias_map.setdefault(alias_text, loc_id_text)
+
+    if iso3 == "USA":
+        for alias_text, loc_id in _build_usa_tribal_aliases().items():
+            alias_map.setdefault(alias_text, loc_id)
+
+    _COUNTRY_DIRECT_LOCATION_ALIAS_CACHE[iso3] = alias_map
+    return alias_map
+
+
+def _resolve_country_direct_location_alias(query: str, *, country_hint: str | None) -> str | None:
+    normalized_query = _normalize_admin_text(query)
+    if not normalized_query:
+        return None
+    return _load_country_direct_location_aliases(country_hint).get(normalized_query)
 
 
 def _level_key(admin_level: int | None) -> str | None:
@@ -503,6 +581,33 @@ def resolve_admin_text_to_loc_id(
             "should_persist_deepest_loc_id": True,
         }
 
+    aliased_loc_id = _resolve_country_direct_location_alias(value, country_hint=country_hint)
+    if aliased_loc_id:
+        family = classify_loc_id_family(aliased_loc_id)
+        admin_level = infer_admin_level_from_loc_id(aliased_loc_id) if family in {"admin_0", "admin_local", "admin_geometry"} else None
+        key = _level_key(admin_level)
+        entry = None
+        if key:
+            entry = _build_match_entry(
+                aliased_loc_id,
+                admin_level=admin_level,
+                name=value,
+                method="country_location_alias",
+                source_loc_id=aliased_loc_id,
+            )
+        result = {
+            "query": value,
+            "match_type": "direct_location_alias",
+            "loc_id_family": family,
+            "matches": {key: entry} if key and entry else {},
+            "deepest_resolved_loc_id": aliased_loc_id,
+            "deepest_resolved_admin_level": key,
+            "should_persist_deepest_loc_id": True,
+        }
+        if key is None:
+            result["deepest_resolved_family"] = family
+        return result
+
     standardizer = _get_name_standardizer()
     country = str(country_hint or "").strip().upper() or None
 
@@ -512,7 +617,7 @@ def resolve_admin_text_to_loc_id(
     elif country:
         # Let the shared country geometry spine resolve the deepest matching
         # admin level first instead of assuming province/state or county only.
-        level_order = [None, 0]
+        level_order = [2, 1, None, 0]
     else:
         level_order = [0]
 

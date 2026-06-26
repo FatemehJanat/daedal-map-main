@@ -2,7 +2,10 @@ import unittest
 from unittest.mock import patch
 
 import pandas as pd
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
+from mapmover.name_standardizer import NameStandardizer
 from mapmover.runtime.loc_id_resolution import (
     resolve_admin_text_to_loc_id,
     resolve_place_to_loc_id_stack,
@@ -31,7 +34,7 @@ class LocIdResolutionRuntimeTests(unittest.TestCase):
             "mapmover.runtime.loc_id_resolution._get_name_standardizer"
         ) as get_standardizer:
             standardizer = get_standardizer.return_value
-            standardizer.get_loc_id_from_name.side_effect = [None, "USA-VA", None]
+            standardizer.get_loc_id_from_name.side_effect = [None, "USA-VA"]
             resolved = resolve_admin_text_to_loc_id("Virginia", country_hint="USA")
 
         self.assertEqual(resolved["match_type"], "direct_admin_name")
@@ -58,6 +61,43 @@ class LocIdResolutionRuntimeTests(unittest.TestCase):
         self.assertEqual(resolved["deepest_resolved_admin_level"], "admin_2")
         self.assertEqual(resolved["matches"]["admin_2"]["method"], "geometry_name_lookup")
 
+    def test_direct_admin_name_checks_country_sublevels_without_explicit_hint(self):
+        with patch(
+            "mapmover.runtime.loc_id_resolution._get_name_standardizer"
+        ) as get_standardizer, patch(
+            "mapmover.runtime.loc_id_resolution.load_country_parquet"
+        ) as load_country_parquet:
+            standardizer = get_standardizer.return_value
+            standardizer.get_loc_id_from_name.side_effect = [None, None, None, None]
+
+            def load_country_parquet_side_effect(country_hint, admin_level=None):
+                if country_hint == "USA" and admin_level == 2:
+                    return pd.DataFrame(
+                        [
+                            {"loc_id": "USA-CA-037", "name": "Los Angeles", "name_local": None, "code": "037"},
+                        ]
+                    )
+                return pd.DataFrame()
+
+            load_country_parquet.side_effect = load_country_parquet_side_effect
+            resolved = resolve_admin_text_to_loc_id("Los Angeles County", country_hint="USA")
+
+        self.assertEqual(resolved["deepest_resolved_loc_id"], "USA-CA-037")
+        self.assertEqual(resolved["deepest_resolved_admin_level"], "admin_2")
+        self.assertIn(resolved["matches"]["admin_2"]["method"], {"geometry_name_lookup", "country_location_alias"})
+
+    @patch(
+        "mapmover.runtime.loc_id_resolution._load_country_direct_location_aliases",
+        return_value={"detroit": "USA-MI-163"},
+    )
+    def test_direct_location_alias_resolves_curated_city_anchor(self, _aliases_mock):
+        resolved = resolve_admin_text_to_loc_id("Detroit", country_hint="USA")
+
+        self.assertEqual(resolved["match_type"], "direct_location_alias")
+        self.assertEqual(resolved["deepest_resolved_loc_id"], "USA-MI-163")
+        self.assertEqual(resolved["deepest_resolved_admin_level"], "admin_2")
+        self.assertEqual(resolved["matches"]["admin_2"]["method"], "country_location_alias")
+
     def test_direct_admin_name_falls_back_to_localized_geometry_aliases(self):
         with patch(
             "mapmover.runtime.loc_id_resolution._get_name_standardizer"
@@ -76,6 +116,43 @@ class LocIdResolutionRuntimeTests(unittest.TestCase):
         self.assertEqual(resolved["deepest_resolved_loc_id"], "DEU-G109260")
         self.assertEqual(resolved["deepest_resolved_admin_level"], "admin_1")
         self.assertEqual(resolved["matches"]["admin_1"]["method"], "geometry_name_lookup")
+
+    @patch(
+        "mapmover.runtime.loc_id_resolution._load_country_direct_location_aliases",
+        return_value={"navajo nation": "USA-TRIBAL-2430"},
+    )
+    def test_direct_location_alias_resolves_overlay_tribal_loc_id(self, _aliases_mock):
+        resolved = resolve_admin_text_to_loc_id("Navajo Nation", country_hint="USA")
+
+        self.assertEqual(resolved["match_type"], "direct_location_alias")
+        self.assertEqual(resolved["deepest_resolved_loc_id"], "USA-TRIBAL-2430")
+        self.assertEqual(resolved["loc_id_family"], "overlay_tribal")
+        self.assertEqual(resolved["matches"], {})
+        self.assertEqual(resolved["deepest_resolved_admin_level"], None)
+
+    def test_direct_admin_name_geometry_fallback_skips_ambiguous_normalized_matches(self):
+        with patch(
+            "mapmover.runtime.loc_id_resolution._get_name_standardizer"
+        ) as get_standardizer, patch(
+            "mapmover.runtime.loc_id_resolution.load_country_parquet"
+        ) as load_country_parquet:
+            standardizer = get_standardizer.return_value
+            standardizer.get_loc_id_from_name.side_effect = [None, None, None, None]
+            load_country_parquet.side_effect = lambda country_hint, admin_level=None: (
+                pd.DataFrame(
+                    [
+                        {"loc_id": "USA-AL-069", "name": "Houston", "name_local": None, "code": "069"},
+                        {"loc_id": "USA-TX-225", "name": "Houston", "name_local": None, "code": "225"},
+                    ]
+                )
+                if country_hint == "USA" and admin_level == 2
+                else pd.DataFrame()
+            )
+            resolved = resolve_admin_text_to_loc_id("Houston", country_hint="USA")
+
+        self.assertEqual(resolved["deepest_resolved_loc_id"], "USA-TX-201")
+        self.assertEqual(resolved["deepest_resolved_admin_level"], "admin_2")
+        self.assertEqual(resolved["matches"]["admin_2"]["method"], "country_location_alias")
 
     def test_zip_short_circuit_uses_us_crosswalk_and_stays_on_admin_spine(self):
         with patch(
@@ -283,6 +360,24 @@ class LocIdResolutionRuntimeTests(unittest.TestCase):
             resolved = resolve_place_to_loc_id_stack("Virginia", country_hint="USA")
         self.assertEqual(resolved["resolution_mode"], "direct_admin_text")
         self.assertEqual(resolved["deepest_resolved_loc_id"], "USA-VA")
+
+    def test_name_standardizer_returns_none_for_ambiguous_exact_match(self):
+        standardizer = NameStandardizer()
+        standardizer._loaded = True
+
+        with TemporaryDirectory() as tmpdir, patch("mapmover.name_standardizer.GEOMETRY_DIR", Path(tmpdir)), patch(
+            "mapmover.name_standardizer.pd.read_parquet",
+            return_value=pd.DataFrame(
+                [
+                    {"loc_id": "USA-TX-225", "name": "Houston", "admin_level": 2},
+                    {"loc_id": "USA-MN-055", "name": "Houston", "admin_level": 2},
+                ]
+            ),
+        ):
+            (Path(tmpdir) / "USA.parquet").write_bytes(b"stub")
+            resolved = standardizer.get_loc_id_from_name("Houston", country="USA", admin_level=2)
+
+        self.assertIsNone(resolved)
 
 
 if __name__ == "__main__":

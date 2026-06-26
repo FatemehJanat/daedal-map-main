@@ -13,10 +13,12 @@ def parquet_accessible(path: Path | None) -> bool:
     """Return True when a parquet path exists locally or is cloud-readable."""
     if path is None:
         return False
+    if path.exists():
+        return True
     if prefer_local_geometry_reads():
-        return path.exists()
+        return False
     if not is_cloud_mode():
-        return path.exists()
+        return False
     try:
         cols = parquet_columns(path)
         return bool(cols)

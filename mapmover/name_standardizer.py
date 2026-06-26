@@ -577,17 +577,28 @@ class NameStandardizer:
 
                 df["name_key"] = df["name"].astype(str).map(self._normalize_lookup_text)
                 df = df[df["name_key"] != ""]
-                index: Dict[str, str] = {}
+                index: Dict[str, Optional[str]] = {}
                 for row in df.itertuples(index=False):
                     key = str(row.name_key or "").strip()
                     loc_id = str(row.loc_id or "").strip()
-                    if key and loc_id and key not in index:
+                    if not key or not loc_id:
+                        continue
+                    existing = index.get(key)
+                    if existing is None and key in index:
+                        continue
+                    if existing and existing != loc_id:
+                        index[key] = None
+                        continue
+                    if key not in index:
                         index[key] = loc_id
                 self._country_name_index[cache_key] = index
             except Exception:
                 self._country_name_index[cache_key] = {}
 
-        return self._country_name_index.get(cache_key, {}).get(name_lower)
+        resolved = self._country_name_index.get(cache_key, {}).get(name_lower)
+        if isinstance(resolved, str) and resolved:
+            return resolved
+        return None
 
     def get_loc_id_from_fips(
         self,
