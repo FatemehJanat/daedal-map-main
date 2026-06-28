@@ -72,6 +72,7 @@ from mapmover.routes.ops import router as ops_router
 from mapmover.routes.research import router as research_router
 from mapmover.routes.system import prewarm_public_pack_catalog, router as system_router
 from mapmover.routes.weather import router as weather_router
+from mapmover.runtime_build_info import runtime_build_info
 
 
 if sys.stdout.encoding != "utf-8":
@@ -173,6 +174,12 @@ def _rate_limit_response(surface: str, retry_after: int):
 
 def _apply_surface_headers(response, request: Request, surface: str) -> None:
     response.headers["X-Daedal-Surface"] = surface
+    build_info = runtime_build_info()
+    commit_short = build_info.get("commit_short") or ""
+    if commit_short:
+        response.headers["X-Daedal-Build"] = commit_short
+    if build_info.get("branch"):
+        response.headers["X-Daedal-Branch"] = build_info["branch"]
     if surface == "agent_api_discovery":
         response.headers["Cache-Control"] = "public, max-age=300, s-maxage=300"
         response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"

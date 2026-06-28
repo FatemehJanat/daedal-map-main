@@ -24,6 +24,7 @@ from mapmover import ACCOUNT_URL, CacheSignature, clear_metadata_cache, initiali
 from mapmover.foundation_helpers import load_reference_json
 from mapmover.order_queue import order_queue
 from mapmover.runtime_config import get_runtime_config
+from mapmover.runtime_build_info import runtime_build_info
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
 from mapmover.security import get_client_ip, is_https_request, rate_limiter
 
@@ -1609,7 +1610,19 @@ async def decode_request_body(request: Request) -> dict:
 @router.get("/health")
 async def health_check():
     """Health check endpoint for Railway/Docker deployments."""
-    return {"status": "healthy", "service": "county-map-api"}
+    build_info = runtime_build_info()
+    return {
+        "status": "healthy",
+        "service": "county-map-api",
+        "build": {
+            "commit": build_info.get("commit"),
+            "commit_short": build_info.get("commit_short"),
+            "branch": build_info.get("branch"),
+            "deployment": build_info.get("deployment"),
+            "runtime_mode": build_info.get("runtime_mode"),
+            "install_mode": build_info.get("install_mode"),
+        },
+    }
 
 
 @router.post("/api/feedback")
