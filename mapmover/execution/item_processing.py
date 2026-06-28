@@ -15,13 +15,23 @@ from mapmover.source_time_contract import coerce_temporal_key, resolve_temporal_
 
 def _temporal_years_for_filter(df: pd.DataFrame, temporal_field: str, temporal_granularity: str | None) -> pd.Series:
     series = df[temporal_field]
-    normalized_granularity = str(temporal_granularity or "").strip().lower()
-    if (
-        temporal_field == "timestamp"
-        and normalized_granularity in {"timestamp", "daily", "weekly", "monthly"}
-        and pd.api.types.is_numeric_dtype(series)
-    ):
-        return pd.to_datetime(series, errors="coerce", utc=True, unit="ms").dt.year
+    if temporal_field == "timestamp" and pd.api.types.is_numeric_dtype(series):
+        # Runtime timestamp columns can arrive as Unix seconds or milliseconds
+        # depending on the execution path. Infer the unit from magnitude so
+        # year filtering survives temporal aggregation.
+        numeric_series = pd.to_numeric(series, errors="coerce")
+        non_null = numeric_series.dropna()
+        if not non_null.empty:
+            sample = float(non_null.abs().max())
+            if sample >= 1e17:
+                unit = "ns"
+            elif sample >= 1e14:
+                unit = "us"
+            elif sample >= 1e11:
+                unit = "ms"
+            else:
+                unit = "s"
+            return pd.to_datetime(numeric_series, errors="coerce", utc=True, unit=unit).dt.year
     return pd.to_datetime(series, errors="coerce", utc=True).dt.year
 
 
