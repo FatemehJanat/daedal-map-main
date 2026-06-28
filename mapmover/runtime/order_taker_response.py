@@ -877,8 +877,9 @@ def _build_metadata_guided_order(user_query: str, hints: dict | None) -> dict | 
     if source_id and metadata and inferred_geo_level and not _source_supports_requested_geo_level(metadata, inferred_geo_level):
         source_id = ""
         metadata = {}
+    selected_source_id, selected_metadata = _select_metadata_guided_source(user_query, hints)
     if not source_id or not metadata:
-        source_id, metadata = _select_metadata_guided_source(user_query, hints)
+        source_id, metadata = selected_source_id, selected_metadata
     if not source_id or not metadata:
         return None
 
@@ -892,6 +893,26 @@ def _build_metadata_guided_order(user_query: str, hints: dict | None) -> dict | 
         default_metric = get_single_metric_default(metadata)
         if default_metric and not wants_event_view:
             metric = default_metric
+    if (
+        (not metric and not wants_event_view)
+        and selected_source_id
+        and selected_metadata
+        and selected_source_id != source_id
+    ):
+        selected_metrics = _select_metadata_guided_metrics(user_query, selected_metadata)
+        selected_metric = selected_metrics[0] if selected_metrics else _select_metadata_guided_metric(user_query, selected_metadata)
+        if not selected_metric:
+            default_metric = get_single_metric_default(selected_metadata)
+            if default_metric:
+                selected_metric = default_metric
+        if selected_metric:
+            source_id = selected_source_id
+            metadata = selected_metadata
+            routing_hints = get_routing_hints(metadata)
+            supports_view_mode_clarify = "view_mode" in (routing_hints.get("clarify_path_dimensions") or [])
+            metrics = selected_metrics
+            metric = selected_metric
+            inferred_geo_level = infer_requested_geo_level_from_query(user_query, metadata)
     if not metric and not (wants_event_view and supports_view_mode_clarify):
         return None
 
