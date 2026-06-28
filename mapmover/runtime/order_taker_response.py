@@ -888,6 +888,10 @@ def _build_metadata_guided_order(user_query: str, hints: dict | None) -> dict | 
 
     metrics = _select_metadata_guided_metrics(user_query, metadata)
     metric = metrics[0] if metrics else _select_metadata_guided_metric(user_query, metadata)
+    if not metric:
+        default_metric = get_single_metric_default(metadata)
+        if default_metric and not wants_event_view:
+            metric = default_metric
     if not metric and not (wants_event_view and supports_view_mode_clarify):
         return None
 

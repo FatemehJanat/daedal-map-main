@@ -34,7 +34,10 @@ def resolve_exact_id_filter_field(
     if not field:
         return field
 
-    available = set(available_cols or [])
+    if available_cols is None:
+        available = set()
+    else:
+        available = set(list(available_cols))
     if field in available:
         return field
 

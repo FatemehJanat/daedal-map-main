@@ -518,6 +518,7 @@ def execute_order(order: dict) -> dict:
                 get_coordinate_columns_func=get_coordinate_columns_impl,
                 get_time_column_func=get_time_column_impl,
                 get_id_column_func=get_id_column_impl,
+                load_geometry_rows_by_loc_ids_func=load_geometry_rows_by_loc_ids,
                 expand_region_func=expand_region,
                 default_event_limit=DEFAULT_EVENT_LIMIT,
                 max_event_limit=MAX_EVENT_LIMIT,

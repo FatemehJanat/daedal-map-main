@@ -1,3 +1,4 @@
+import json
 import re
 
 import pandas as pd
@@ -185,6 +186,126 @@ def _build_default_time_note(items: list) -> str | None:
     return "Showing default 10-year windows for items without a time range. Ask for a broader period if you want more history."
 
 
+def _split_packed_loc_ids(value) -> list[str]:
+    if value is None or pd.isna(value):
+        return []
+    text = str(value).strip()
+    if not text:
+        return []
+    loc_ids: list[str] = []
+    for part in text.split("|"):
+        loc_id = str(part or "").strip()
+        if loc_id and loc_id not in loc_ids:
+            loc_ids.append(loc_id)
+    return loc_ids
+
+
+def _build_footprint_geometry_response(
+    df: pd.DataFrame,
+    *,
+    source_id: str,
+    event_type: str,
+    summary: str,
+    metadata: dict,
+    load_geometry_rows_by_loc_ids_func,
+) -> dict | None:
+    if df is None or df.empty:
+        return None
+
+    loc_ids: list[str] = []
+    for _, row in df.iterrows():
+        for field_name in ("affected_loc_ids", "loc_ids", "affected_state_loc_ids"):
+            for loc_id in _split_packed_loc_ids(row.get(field_name)):
+                if loc_id not in loc_ids:
+                    loc_ids.append(loc_id)
+    if not loc_ids:
+        return None
+
+    geometry_frames = []
+    loc_ids_by_iso3: dict[str, list[str]] = {}
+    for loc_id in loc_ids:
+        iso3 = str(loc_id).split("-", 1)[0].strip().upper()
+        if not iso3:
+            continue
+        loc_ids_by_iso3.setdefault(iso3, [])
+        if loc_id not in loc_ids_by_iso3[iso3]:
+            loc_ids_by_iso3[iso3].append(loc_id)
+
+    for iso3, country_loc_ids in loc_ids_by_iso3.items():
+        geometry_df = load_geometry_rows_by_loc_ids_func(iso3, country_loc_ids)
+        if geometry_df is None or geometry_df.empty:
+            continue
+        keep_cols = [col for col in ["loc_id", "name", "geometry"] if col in geometry_df.columns]
+        if keep_cols:
+            geometry_frames.append(geometry_df[keep_cols].copy())
+
+    if not geometry_frames:
+        return None
+
+    geometry_df = pd.concat(geometry_frames, ignore_index=True)
+    geometry_df = geometry_df.drop_duplicates(subset=["loc_id"], keep="first")
+
+    primary_row = df.iloc[0].to_dict() if len(df) == 1 else {}
+    shared_properties = {}
+    for field_name in (
+        "disasterNumber",
+        "femaDeclarationString",
+        "declarationTitle",
+        "declarationType",
+        "incidentType",
+        "incidentId",
+        "canonical_event_id",
+        "suggested_event_id",
+    ):
+        value = primary_row.get(field_name)
+        if value is None or pd.isna(value):
+            continue
+        if hasattr(value, "item"):
+            value = value.item()
+        if isinstance(value, pd.Timestamp):
+            value = value.isoformat()
+        shared_properties[field_name] = value
+
+    features = []
+    for _, row in geometry_df.iterrows():
+        geom_str = row.get("geometry")
+        if pd.isna(geom_str) or not geom_str:
+            continue
+        try:
+            geom = json.loads(geom_str) if isinstance(geom_str, str) else geom_str
+        except (json.JSONDecodeError, TypeError):
+            continue
+        properties = {
+            "loc_id": row.get("loc_id"),
+            "name": row.get("name") or row.get("loc_id"),
+        }
+        properties.update(shared_properties)
+        features.append({
+            "type": "Feature",
+            "geometry": geom,
+            "properties": properties,
+        })
+
+    if not features:
+        return None
+
+    source_info = [{
+        "id": source_id,
+        "name": metadata.get("source_name", source_id),
+        "url": metadata.get("source_url", ""),
+    }]
+    return {
+        "type": "data",
+        "data_type": "geometry",
+        "source_id": source_id,
+        "event_type": event_type,
+        "geojson": {"type": "FeatureCollection", "features": features},
+        "summary": summary or f"Showing {len(features)} affected areas",
+        "count": len(features),
+        "sources": source_info,
+    }
+
+
 def detect_event_type(source_id: str, *, get_source_from_catalog_func, load_source_metadata_func, resolve_event_source_id_func) -> str:
     source = get_source_from_catalog_func(source_id)
     if source.get("event_type"):
@@ -301,6 +422,7 @@ def execute_event_order_impl(
     get_coordinate_columns_func,
     get_time_column_func,
     get_id_column_func,
+    load_geometry_rows_by_loc_ids_func,
     expand_region_func,
     default_event_limit,
     max_event_limit,
@@ -368,15 +490,6 @@ def execute_event_order_impl(
             df = df.copy()
             df["latitude"] = pd.Series(dtype="float64")
             df["longitude"] = pd.Series(dtype="float64")
-
-    lat_col, lon_col = get_coordinate_columns_func(df)
-    if not lat_col or not lon_col:
-        return {
-            "type": "error",
-            "message": f"No coordinate columns found in {source_id}",
-            "geojson": {"type": "FeatureCollection", "features": []},
-            "count": 0,
-        }
 
     time_col = get_time_column_func(df)
     id_col = get_id_column_func(df, event_type)
@@ -454,6 +567,28 @@ def execute_event_order_impl(
             print(f"  Limited to {limit} events (sorted by {sort_col or 'order'})")
     else:
         print(f"  DuckDB filtered to {len(df)} events")
+
+    lat_col, lon_col = get_coordinate_columns_func(df)
+    if not lat_col or not lon_col:
+        footprint_response = _build_footprint_geometry_response(
+            df,
+            source_id=source_id,
+            event_type=event_type,
+            summary=summary,
+            metadata=metadata,
+            load_geometry_rows_by_loc_ids_func=load_geometry_rows_by_loc_ids_func,
+        )
+        if footprint_response is not None:
+            default_time_note = _build_default_time_note(items)
+            if default_time_note:
+                footprint_response["data_note"] = default_time_note
+            return footprint_response
+        return {
+            "type": "error",
+            "message": f"No coordinate columns found in {source_id}",
+            "geojson": {"type": "FeatureCollection", "features": []},
+            "count": 0,
+        }
 
     features = []
     for idx, row in df.iterrows():
