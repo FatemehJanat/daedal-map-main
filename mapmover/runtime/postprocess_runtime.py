@@ -346,6 +346,7 @@ def run_postprocess_order(
                 metric_key,
                 metadata_metric_year_range_func=metadata_metric_year_range,
             ),
+            select_query_guided_metric_func=select_query_guided_metric,
         )
 
     def expand_wildcard_metrics(items: list) -> list:

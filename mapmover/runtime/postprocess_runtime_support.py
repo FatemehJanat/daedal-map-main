@@ -130,6 +130,7 @@ def validate_postprocess_item_runtime(
     format_metric_label_func,
     resolve_pack_source_for_metric_func,
     clamp_item_years_to_metric_func,
+    select_query_guided_metric_func,
 ) -> dict:
     def recurse_validate_item(next_item: dict, next_catalog: dict) -> dict:
         return validate_postprocess_item_runtime(
@@ -160,6 +161,7 @@ def validate_postprocess_item_runtime(
             format_metric_label_func=format_metric_label_func,
             resolve_pack_source_for_metric_func=resolve_pack_source_for_metric_func,
             clamp_item_years_to_metric_func=clamp_item_years_to_metric_func,
+            select_query_guided_metric_func=select_query_guided_metric_func,
         )
 
     return validate_item_func(
@@ -190,4 +192,5 @@ def validate_postprocess_item_runtime(
         format_metric_label_func=format_metric_label_func,
         resolve_pack_source_for_metric_func=resolve_pack_source_for_metric_func,
         clamp_item_years_to_metric_func=clamp_item_years_to_metric_func,
+        select_query_guided_metric_func=select_query_guided_metric_func,
     )

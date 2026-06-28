@@ -179,6 +179,7 @@ def validate_item(
     format_metric_label_func,
     resolve_pack_source_for_metric_func,
     clamp_item_years_to_metric_func,
+    select_query_guided_metric_func,
 ) -> dict:
     """Validate one postprocessed order item against catalog and metadata."""
     item.pop("_error", None)
@@ -385,6 +386,8 @@ def validate_item(
         pack_id
         and query
         and _query_requests_regional_aggregate(query)
+        and item.get("mode") != "events"
+        and not item.get("event_file")
         and not source_supports_aggregate_mode_func(catalog_source)
         and reroute_item_to_aggregate_sibling_func(
             item,
@@ -424,11 +427,16 @@ def validate_item(
                 item["year_end"] = end_year
 
     if source_requires_metric_func(item, catalog_source) and not metric:
-        default_metric = get_single_metric_default(metadata)
-        if default_metric:
-            item["metric"] = default_metric
-            metric = default_metric
-        elif (
+        guided_metric = select_query_guided_metric_func(query, metadata)
+        if guided_metric:
+            item["metric"] = guided_metric
+            metric = guided_metric
+        else:
+            default_metric = get_single_metric_default(metadata)
+            if default_metric:
+                item["metric"] = default_metric
+                metric = default_metric
+        if not metric and (
             query_prefers_event_source_func(query)
             or query_requests_short_current_window_func(query)
         ) and reroute_item_to_event_sibling_func(
@@ -437,7 +445,7 @@ def validate_item(
             resolve_pack_source_by_shape_func=resolve_pack_source_by_shape_func,
         ):
             return validate_item_func(item, catalog)
-        else:
+        if not metric:
             item["_valid"] = False
             item["_error"] = f"Source '{source_id}' requires a concrete metric before execution"
             return item
