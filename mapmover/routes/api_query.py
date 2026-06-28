@@ -507,6 +507,57 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
             source_id=source_id,
         )
 
+    reserved_filter_keys = {"region_ids", "time", "equals", "compare"}
+    direct_filter_fields = {
+        key: value
+        for key, value in filters.items()
+        if str(key).strip() and str(key).strip() not in reserved_filter_keys
+    }
+    if direct_filter_fields:
+        for field, value in direct_filter_fields.items():
+            field_name = str(field).strip()
+            resolved_field_name = _resolve_api_filter_field_alias(
+                spec,
+                field_name,
+                available_columns=available_columns,
+            )
+            if resolved_field_name not in spec.filterable_fields and resolved_field_name not in available_columns:
+                available = sorted(spec.filterable_fields)
+                return error_response(
+                    request_id,
+                    "field_not_filterable",
+                    f"Field '{field_name}' is not filterable for source '{spec.source_id}'. Filterable fields are: {', '.join(available)}.",
+                    400,
+                    retry_hint=f"Use one of the filterable fields: {', '.join(available)}.",
+                    pack_id=spec.pack_id,
+                    source_id=source_id,
+                )
+            if isinstance(value, dict):
+                return error_response(
+                    request_id,
+                    "field_not_filterable",
+                    f"Direct filter field '{field_name}' must be a scalar or list value.",
+                    400,
+                    retry_hint="Use scalar values directly, or use compare/time for structured filters.",
+                    pack_id=spec.pack_id,
+                    source_id=source_id,
+                )
+            if isinstance(value, list):
+                if any(not str(item).strip() for item in value):
+                    return error_response(
+                        request_id,
+                        "field_not_filterable",
+                        f"Direct filter field '{field_name}' contains an empty list value.",
+                        400,
+                        retry_hint="Use a list of non-empty values for direct filter lists.",
+                        pack_id=spec.pack_id,
+                        source_id=source_id,
+                    )
+                if value:
+                    in_filters[resolved_field_name] = value
+                continue
+            exact_filters[resolved_field_name] = value
+
     equals_filters = filters.get("equals") or {}
     if equals_filters:
         if not isinstance(equals_filters, dict):
