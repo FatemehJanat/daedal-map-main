@@ -60,6 +60,23 @@ EVENT_STYLE_ADJECTIVES = (
     "deadliest",
 )
 
+HISTORICAL_EVENT_IMPACT_TERMS = (
+    "impact",
+    "impacts",
+    "damage",
+    "damages",
+    "deaths",
+    "fatalities",
+    "struck",
+    "hit",
+    "happened",
+    "occurred",
+    "caused",
+    "deadliest",
+    "destructive",
+    "most affected",
+)
+
 AGGREGATE_ONLY_PATTERNS = (
     "how many",
     "count",
@@ -290,6 +307,10 @@ def _query_prefers_event_source(query: str) -> bool:
         return True
     has_event_adjective = any(re.search(rf"\b{re.escape(token)}\b", query_lower) for token in EVENT_STYLE_ADJECTIVES)
     has_aggregate_only = any(pattern in query_lower for pattern in AGGREGATE_ONLY_PATTERNS)
+    has_historical_year = bool(re.search(r"\b(?:19|20)\d{2}\b", query_lower))
+    has_historical_impact = any(term in query_lower for term in HISTORICAL_EVENT_IMPACT_TERMS)
+    if has_historical_year and has_historical_impact and not has_aggregate_only:
+        return True
     return has_event_adjective and not has_aggregate_only
 
 

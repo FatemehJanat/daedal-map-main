@@ -592,6 +592,14 @@ def infer_requested_geo_level_from_query(query: str | None, metadata: dict | Non
 
     aliases = get_country_geo_level_aliases(metadata)
     aliases.update(get_geo_level_aliases(metadata))
+    for runtime_level, friendly_name in get_country_runtime_level_names(metadata).items():
+        if not runtime_level or not friendly_name:
+            continue
+        for alias_text in _expand_geo_alias_variants(friendly_name):
+            aliases.setdefault(alias_text, runtime_level)
+    for runtime_level, friendly_name in _DEFAULT_RUNTIME_LEVEL_NAMES.items():
+        for alias_text in _expand_geo_alias_variants(friendly_name):
+            aliases.setdefault(alias_text, runtime_level)
     if not aliases:
         return None
 
