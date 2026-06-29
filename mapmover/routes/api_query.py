@@ -225,6 +225,18 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
         requested_granularity = time_filter.get("granularity")
     normalized_requested_granularity = normalize_time_granularity(requested_granularity)
 
+    if source_id and not pack_id:
+        source_as_pack = resolve_pack_source_for_query(
+            source_id,
+            requested_metrics,
+            requested_granularity=requested_granularity,
+        )
+        if str(source_as_pack.get("resolution") or "").strip() in {"default_source", "single_source"}:
+            pack_id = source_id
+            source_id = ""
+            req.state.analytics_source_id = None
+            req.state.analytics_pack_id = pack_id
+
     resolved_from_pack = False
     if not source_id and pack_id:
         pack_resolution = resolve_pack_source_for_query(
