@@ -11,8 +11,24 @@ from fastapi.responses import JSONResponse
 
 from mapmover.security import get_client_ip, rate_limiter
 
-WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
-GRANT_ANALYZER_DIR = WORKSPACE_ROOT / "county-map-private" / "tools" / "grant_analyzer"
+APP_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _resolve_grant_analyzer_dir() -> Path:
+    candidates = [
+        APP_ROOT.parent / "county-map-private" / "tools" / "grant_analyzer",
+        APP_ROOT / "county-map-private" / "tools" / "grant_analyzer",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    raise RuntimeError(
+        "Grant analyzer private module path was not found. "
+        f"Checked: {', '.join(str(candidate) for candidate in candidates)}"
+    )
+
+
+GRANT_ANALYZER_DIR = _resolve_grant_analyzer_dir()
 if str(GRANT_ANALYZER_DIR) not in sys.path:
     sys.path.insert(0, str(GRANT_ANALYZER_DIR))
 
