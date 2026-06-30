@@ -67,6 +67,7 @@ from mapmover.routes.disasters.volcanoes import router as volcanoes_router
 from mapmover.routes.disasters.wildfires import router as wildfires_router
 from mapmover.routes.raster import router as raster_router
 from mapmover.routes.geometry import router as geometry_router
+from mapmover.routes.grant_mcp import router as grant_mcp_router
 from mapmover.routes.mcp import router as mcp_router
 from mapmover.routes.ops import router as ops_router
 from mapmover.routes.research import router as research_router
@@ -104,6 +105,8 @@ def _get_402index_verify_token() -> str:
 
 def _classify_route_surface(path: str) -> str:
     path = str(path or "").strip()
+    if path == "/mcp-private/grants":
+        return "grant_mcp_private"
     if path == "/api/v1/query/dataset":
         return "agent_api_paid"
     if path == "/mcp" or path.startswith("/mcp/"):
@@ -118,6 +121,8 @@ def _classify_route_surface(path: str) -> str:
 
 
 def _rate_limit_config_for_surface(surface: str) -> tuple[int, int] | None:
+    if surface == "grant_mcp_private":
+        return None
     if surface == "agent_api_discovery":
         return (
             _parse_env_int("AGENT_API_DISCOVERY_RATE_LIMIT", 25),
@@ -196,6 +201,11 @@ def _apply_surface_headers(response, request: Request, surface: str) -> None:
         response.headers["Vary"] = "Accept, Accept-Encoding, Authorization, Origin"
         return
     if surface == "agent_api_mcp":
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+        response.headers["Vary"] = "Accept, Accept-Encoding, Authorization, Origin, MCP-Protocol-Version"
+        return
+    if surface == "grant_mcp_private":
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
         response.headers["Vary"] = "Accept, Accept-Encoding, Authorization, Origin, MCP-Protocol-Version"
@@ -507,6 +517,7 @@ async def redirect_login():
 
 app.include_router(system_router)
 app.include_router(mcp_router)
+app.include_router(grant_mcp_router)
 app.include_router(api_query_router)
 app.include_router(geometry_router)
 app.include_router(raster_router)
