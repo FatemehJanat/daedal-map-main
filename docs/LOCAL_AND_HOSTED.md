@@ -131,7 +131,8 @@ Without Supabase config, the app stays in local/self-host mode and `/settings`
 becomes a local setup page instead of a hosted account redirect. Keep
 service-role keys server-side only; they are not needed for ordinary local
 evaluation. Hosted verifier routes stay inactive unless the private control
-plane token is configured.
+plane token is configured. The hosted collector scheduler, Railway collector
+service, and private scheduled-jobs hosts remain private-side infrastructure.
 
 ## Related Docs
 

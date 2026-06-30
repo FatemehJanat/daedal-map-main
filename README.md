@@ -41,7 +41,8 @@ If you are using this public GitHub repo as a self-host/local runtime, the pract
 - an LLM API key (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`)
 
 Supabase, hosted account wiring, and private verifier endpoints are optional
-for self-host use.
+for self-host use. Hosted collector scheduling and scheduled-jobs hosts such as
+the private DigitalOcean nightly box are not part of this public repo.
 
 ## What This Repo Is For
 
