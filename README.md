@@ -40,7 +40,8 @@ If you are using this public GitHub repo as a self-host/local runtime, the pract
 - a local data location (`DATA_ROOT`, unless you use the default app-data path)
 - an LLM API key (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`)
 
-Supabase and hosted account wiring are optional for self-host use.
+Supabase, hosted account wiring, and private verifier endpoints are optional
+for self-host use.
 
 ## What This Repo Is For
 

@@ -123,11 +123,15 @@ Usually leave these unset unless you explicitly want hosted/account features:
 
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
+- `CLOUD_INTERNAL_API_TOKEN`
+- `COMMERCIAL_ACCESS_VERIFIER_BASE_URL`
+- `RESEARCH_CREDIT_VERIFIER_BASE_URL`
 
 Without Supabase config, the app stays in local/self-host mode and `/settings`
 becomes a local setup page instead of a hosted account redirect. Keep
 service-role keys server-side only; they are not needed for ordinary local
-evaluation.
+evaluation. Hosted verifier routes stay inactive unless the private control
+plane token is configured.
 
 ## Related Docs
 

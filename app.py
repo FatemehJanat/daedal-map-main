@@ -15,17 +15,13 @@ import time
 from pathlib import Path
 
 from dotenv import load_dotenv
+from mapmover.runtime_env_files import runtime_env_file_candidates
 
 
 def _load_runtime_env() -> None:
     """Load local env files before mapmover imports resolve runtime config."""
     workspace_root = Path(__file__).resolve().parents[1]
-    candidate_paths = [
-        workspace_root / "county-map" / ".env",
-        workspace_root / "county-map-private" / ".env",
-        workspace_root / ".env",
-    ]
-    for env_path in candidate_paths:
+    for env_path in runtime_env_file_candidates(workspace_root):
         if env_path.exists():
             load_dotenv(env_path, override=False)
 
