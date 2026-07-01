@@ -24,6 +24,7 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from .hosted_runtime_account import load_account_context
 from .logging_analytics import log_llm_usage_event, logger
 
 
@@ -107,13 +108,13 @@ def extract_qa_suite_metadata(headers: Any) -> dict:
     return out
 
 
-_PROFILE_CACHE: dict[str, tuple[float, dict | None]] = {}
-_PROFILE_CACHE_TTL_S = 300.0  # 5 minutes
-_PROFILE_CACHE_LOCK = threading.Lock()
+_ACCOUNT_CONTEXT_CACHE: dict[str, tuple[float, dict | None]] = {}
+_ACCOUNT_CONTEXT_CACHE_TTL_S = 300.0  # 5 minutes
+_ACCOUNT_CONTEXT_CACHE_LOCK = threading.Lock()
 
 
-def _get_cached_profile(user_id: str) -> Optional[dict]:
-    """Read-through cache around supabase_client.get_profile.
+def _get_cached_account_context(user_id: str) -> Optional[dict]:
+    """Read-through cache around the private runtime-account context endpoint.
 
     Avoids hitting Supabase on every chat call. 5-minute TTL is fine because
     plan_id changes are rare and the worst case (slightly stale tier) is harmless
@@ -122,24 +123,21 @@ def _get_cached_profile(user_id: str) -> Optional[dict]:
     if not user_id:
         return None
     now = time.time()
-    with _PROFILE_CACHE_LOCK:
-        cached = _PROFILE_CACHE.get(user_id)
-        if cached and (now - cached[0]) < _PROFILE_CACHE_TTL_S:
+    with _ACCOUNT_CONTEXT_CACHE_LOCK:
+        cached = _ACCOUNT_CONTEXT_CACHE.get(user_id)
+        if cached and (now - cached[0]) < _ACCOUNT_CONTEXT_CACHE_TTL_S:
             return cached[1]
 
-    profile: Optional[dict] = None
+    context: Optional[dict] = None
     try:
-        from supabase_client import get_supabase_client
-        client = get_supabase_client()
-        if client:
-            profile = client.get_profile(user_id)
+        context = load_account_context(user_id)
     except Exception as exc:
-        logger.warning("llm_usage profile fetch failed user=%s: %s", user_id, exc)
-        profile = None
+        logger.warning("llm_usage account-context fetch failed user=%s: %s", user_id, exc)
+        context = None
 
-    with _PROFILE_CACHE_LOCK:
-        _PROFILE_CACHE[user_id] = (now, profile)
-    return profile
+    with _ACCOUNT_CONTEXT_CACHE_LOCK:
+        _ACCOUNT_CONTEXT_CACHE[user_id] = (now, context)
+    return context
 
 
 def classify_caller(
@@ -176,9 +174,9 @@ def classify_caller(
             "ip_hash": ip_hash,
         }
 
-    profile = _get_cached_profile(user_id) or {}
-    plan_id = (profile.get("plan_id") or "free").strip() or "free"
-    email = (auth_user.get("email") or profile.get("email") or "").strip() or None
+    account_context = _get_cached_account_context(user_id) or {}
+    plan_id = (account_context.get("plan_id") or "free").strip() or "free"
+    email = (auth_user.get("email") or account_context.get("email") or "").strip() or None
     qa_runner_user_id = (os.getenv(_QA_RUNNER_USER_ENV) or "").strip()
     qa_label = str(qa_http_label or "").strip()
 

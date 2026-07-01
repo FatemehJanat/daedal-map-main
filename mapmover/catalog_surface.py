@@ -5,6 +5,8 @@ import os
 from contextlib import contextmanager
 from contextvars import ContextVar
 
+from mapmover.hosted_runtime_account import load_account_context
+
 
 _catalog_surface_override: ContextVar[str | None] = ContextVar("catalog_surface_override", default=None)
 
@@ -43,20 +45,11 @@ def request_can_use_wip_catalog(request, auth_user: dict | None) -> bool:
     if not auth_user:
         return False
 
-    service_key = os.getenv("SUPABASE_SERVICE_KEY", "").strip()
-    if not service_key:
+    account_context = load_account_context(str(auth_user.get("id") or ""))
+    if account_context is None:
         deployment = str(os.getenv("DEPLOYMENT", "")).strip().lower()
         client = getattr(request, "client", None)
         client_host = getattr(client, "host", "") if client else ""
         return deployment == "local" and _is_loopback_host(client_host)
 
-    try:
-        from supabase_client import SupabaseClient
-
-        supa = SupabaseClient()
-        context = supa.get_user_entitlement_context(auth_user.get("id"))
-        if not context or context.get("error"):
-            return False
-        return context.get("plan_id") == "master" or bool(context.get("is_admin"))
-    except Exception:
-        return False
+    return account_context.get("plan_id") == "master" or bool(account_context.get("is_admin"))
