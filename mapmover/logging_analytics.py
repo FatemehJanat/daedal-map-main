@@ -717,3 +717,26 @@ def log_missing_region_to_cloud(region_name, query=None, dataset=None):
                 f.write(json.dumps(entry) + "\n")
         except Exception as e:
             logger.error(f"Failed to log missing region locally: {e}")
+
+
+def log_data_quality_issue_to_cloud(
+    issue_type,
+    name,
+    *,
+    query=None,
+    dataset=None,
+    region=None,
+    metadata=None,
+):
+    """Log a generic data-quality issue through the hosted control plane."""
+    supabase_client = get_supabase()
+    if supabase_client:
+        _submit_background(
+            supabase_client.log_data_quality_issue,
+            issue_type=issue_type,
+            name=name,
+            query=query,
+            dataset=dataset,
+            region=region,
+            metadata=metadata,
+        )

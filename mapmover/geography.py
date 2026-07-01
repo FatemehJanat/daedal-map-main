@@ -163,14 +163,13 @@ def get_fallback_coordinates(country_code, log_missing=True):
     # 3. Not found anywhere - log to Supabase if enabled
     if log_missing:
         try:
-            from supabase_client import get_supabase_client
-            supabase = get_supabase_client()
-            if supabase:
-                supabase.log_data_quality_issue(
-                    issue_type="missing_geometry",
-                    name=country_code,
-                    metadata={"source": "get_fallback_coordinates"}
-                )
+            from .logging_analytics import log_data_quality_issue_to_cloud
+
+            log_data_quality_issue_to_cloud(
+                issue_type="missing_geometry",
+                name=country_code,
+                metadata={"source": "get_fallback_coordinates"},
+            )
         except Exception as e:
             logging.debug(f"Could not log missing geometry: {e}")
 

@@ -132,3 +132,6 @@ class HostedRuntimeEventSink:
 
     def log_missing_region(self, **payload: Any) -> None:
         persist_runtime_event("data_quality", {"issue_type": "missing_region", **payload})
+
+    def log_data_quality_issue(self, **payload: Any) -> None:
+        persist_runtime_event("data_quality", payload)

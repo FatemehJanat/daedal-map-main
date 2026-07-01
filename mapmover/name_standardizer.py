@@ -734,15 +734,7 @@ class NameStandardizer:
             return
 
         try:
-            # Import supabase client from parent directory
-            import sys
-            sys.path.insert(0, str(self.data_dir.parent))
-            from supabase_client import get_supabase_client
-
-            supabase = get_supabase_client()
-            if not supabase:
-                print("[NameStandardizer] Supabase not available, skipping log")
-                return
+            from mapmover.logging_analytics import log_data_quality_issue_to_cloud
 
             # Deduplicate mismatches - only log each unique name once
             seen_names = set()
@@ -757,7 +749,7 @@ class NameStandardizer:
             for mismatch in unique_mismatches:
                 issue_type = 'name_mismatch_fuzzy' if mismatch.get('matched') else 'name_mismatch_none'
 
-                supabase.log_data_quality_issue(
+                log_data_quality_issue_to_cloud(
                     issue_type=issue_type,
                     name=mismatch.get('original', 'unknown'),
                     dataset=dataset_filename,
