@@ -16,6 +16,20 @@ from mapmover.runtime.chat_route_context import build_base_chat_route_context
 from mapmover.runtime.chat_route_support import anonymous_budget_rejection_payload
 from mapmover.routes.chat_shared import human_chat_rate_limit_response
 
+OPS_SUPPORTED_FEEDS = (
+    "currency",
+    "earthquakes",
+    "hurricanes_ibtracs_nrt",
+    "noaa_aurora",
+    "noaa_ndbc",
+    "noaa_swpc",
+    "ocean_sst",
+    "tsunamis",
+    "usa_nws_alerts",
+    "volcanoes",
+    "wildfires_us_nifc",
+)
+
 
 @dataclass
 class OpsChatRouteContext:
@@ -55,15 +69,20 @@ def _normalize_feed_names(values) -> list[str]:
     return normalized
 
 
+def _supported_ops_feeds(values) -> list[str]:
+    supported = set(OPS_SUPPORTED_FEEDS)
+    return [feed for feed in _normalize_feed_names(values or []) if feed in supported]
+
+
 def _account_ops_feeds(auth_user: dict | None) -> list[str]:
     metadata = (auth_user or {}).get("user_metadata") or {}
     if not isinstance(metadata, dict):
         return []
-    return _normalize_feed_names(metadata.get("ops_feeds") or [])
+    return _supported_ops_feeds(metadata.get("ops_feeds") or [])
 
 
 def _public_default_ops_feeds() -> list[str]:
-    return [
+    return _supported_ops_feeds([
         "currency",
         "earthquakes",
         "hurricanes_ibtracs_nrt",
@@ -73,7 +92,7 @@ def _public_default_ops_feeds() -> list[str]:
         "usa_nws_alerts",
         "volcanoes",
         "wildfires_us_nifc",
-    ]
+    ])
 
 
 def _base_ops_feeds(auth_user: dict | None) -> list[str]:
@@ -85,13 +104,13 @@ def _base_ops_feeds(auth_user: dict | None) -> list[str]:
 
 def _requested_ops_feeds(body: dict) -> list[str]:
     watch_context = body.get("watch_context") if isinstance(body.get("watch_context"), dict) else {}
-    return _normalize_feed_names(watch_context.get("sources") or [])
+    return _supported_ops_feeds(watch_context.get("sources") or [])
 
 
 def _merge_ops_feeds(*feed_lists) -> list[str]:
     merged: list[str] = []
     for values in feed_lists:
-        for feed in _normalize_feed_names(values or []):
+        for feed in _supported_ops_feeds(values or []):
             if feed not in merged:
                 merged.append(feed)
     return merged

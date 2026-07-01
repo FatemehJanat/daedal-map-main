@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import os
 import re
 import threading
@@ -14,7 +15,11 @@ from functools import lru_cache
 from pathlib import Path
 
 from mapmover.geometry_handlers import get_selection_geometries
+from mapmover.foundation_helpers import load_reference_dict
+from mapmover.preprocessor_locations import detect_location_candidates
 from mapmover.routes.disasters.related import _classify_exact_event_identifier
+from mapmover.runtime.loc_id_resolution import resolve_point_to_loc_id_stack
+from mapmover.runtime.preprocess_user_intents import normalize_query_for_location_matching
 from mapmover.runtime_config import get_runtime_config
 
 try:
@@ -111,6 +116,18 @@ SUPERLATIVE_PATTERNS = (
     r"\blowest\b",
     r"\bmost severe\b",
     r"\bleast severe\b",
+)
+
+AREA_IMPACT_PATTERNS = (
+    r"\baffect(?:ing|ed|s)?\b",
+    r"\bnear(?:by)?\b",
+    r"\bclose to\b",
+    r"\baround\b",
+    r"\bin this area\b",
+    r"\bin that area\b",
+    r"\bin my area\b",
+    r"\bfrom here\b",
+    r"\bhere\b",
 )
 
 FEED_FOCUS_SPECS = {
@@ -1469,6 +1486,327 @@ def _format_ops_timestamp(value: object) -> str | None:
     return parsed.strftime("%b %d, %Y %H:%M UTC")
 
 
+def _geometry_bbox(geometry: dict | None) -> tuple[float, float, float, float] | None:
+    if not isinstance(geometry, dict):
+        return None
+    coords = geometry.get("coordinates")
+    if not isinstance(coords, list):
+        return None
+
+    points: list[tuple[float, float]] = []
+
+    def _walk(node) -> None:
+        if not isinstance(node, list) or not node:
+            return
+        if len(node) >= 2 and isinstance(node[0], (int, float)) and isinstance(node[1], (int, float)):
+            try:
+                points.append((float(node[0]), float(node[1])))
+            except (TypeError, ValueError):
+                return
+            return
+        for child in node:
+            _walk(child)
+
+    _walk(coords)
+    if not points:
+        return None
+    lons = [point[0] for point in points]
+    lats = [point[1] for point in points]
+    return min(lons), min(lats), max(lons), max(lats)
+
+
+def _bbox_contains_point(bbox: tuple[float, float, float, float], lon: float, lat: float) -> bool:
+    min_lon, min_lat, max_lon, max_lat = bbox
+    return min_lon <= lon <= max_lon and min_lat <= lat <= max_lat
+
+
+def _bbox_overlaps(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> bool:
+    return not (a[2] < b[0] or a[0] > b[2] or a[3] < b[1] or a[1] > b[3])
+
+
+def _bbox_center(bbox: tuple[float, float, float, float]) -> tuple[float, float]:
+    min_lon, min_lat, max_lon, max_lat = bbox
+    return ((min_lon + max_lon) / 2.0, (min_lat + max_lat) / 2.0)
+
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    radius_km = 6371.0
+    lat1_rad = math.radians(lat1)
+    lat2_rad = math.radians(lat2)
+    delta_lat = math.radians(lat2 - lat1)
+    delta_lon = math.radians(lon2 - lon1)
+    a = (
+        math.sin(delta_lat / 2.0) ** 2
+        + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lon / 2.0) ** 2
+    )
+    c = 2.0 * math.atan2(math.sqrt(a), math.sqrt(1.0 - a))
+    return radius_km * c
+
+
+def _extract_query_point(query: str) -> tuple[float, float] | None:
+    text = str(query or "").strip()
+    if not text:
+        return None
+    match = re.search(
+        r"(-?\d{1,3}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)",
+        text,
+    )
+    if not match:
+        return None
+    try:
+        first = float(match.group(1))
+        second = float(match.group(2))
+    except (TypeError, ValueError):
+        return None
+    if abs(first) <= 90 and abs(second) <= 180:
+        return second, first
+    if abs(first) <= 180 and abs(second) <= 90:
+        return first, second
+    return None
+
+
+def _location_candidate_from_query(query: str) -> dict | None:
+    detected = detect_location_candidates(
+        query,
+        normalize_query_for_location_matching=normalize_query_for_location_matching,
+        reference_dir=REFERENCE_ROOT,
+        load_reference_file=load_reference_dict,
+    )
+    candidate = detected.get("best") if isinstance(detected, dict) else None
+    return candidate if isinstance(candidate, dict) else None
+
+
+def _geometry_for_loc_id(loc_id: str | None) -> dict | None:
+    value = str(loc_id or "").strip()
+    if not value:
+        return None
+    try:
+        geojson = get_selection_geometries([value])
+    except Exception:
+        return None
+    if not isinstance(geojson, dict):
+        return None
+    features = geojson.get("features")
+    if not isinstance(features, list):
+        return None
+    for feature in features:
+        if isinstance(feature, dict) and isinstance(feature.get("geometry"), dict):
+            return feature.get("geometry")
+    return None
+
+
+def _resolve_area_target(
+    *,
+    query: str,
+    watch: dict,
+    selected_popup: dict | None = None,
+) -> dict | None:
+    point = _extract_query_point(query)
+    if point is not None:
+        lon, lat = point
+        resolved = resolve_point_to_loc_id_stack(lon, lat, include_geometry=True)
+        matched = resolved.get("matched") if isinstance(resolved.get("matched"), dict) else {}
+        geojson = resolved.get("geojson") if isinstance(resolved.get("geojson"), dict) else {}
+        features = geojson.get("features") if isinstance(geojson.get("features"), list) else []
+        geometry = None
+        for feature in features:
+            if isinstance(feature, dict) and isinstance(feature.get("geometry"), dict):
+                geometry = feature.get("geometry")
+                break
+        bbox = _geometry_bbox(geometry) if geometry else None
+        return {
+            "label": str(matched.get("name") or f"{lat:.3f}, {lon:.3f}").strip(),
+            "loc_id": str(matched.get("loc_id") or "").strip() or None,
+            "point": {"lon": lon, "lat": lat},
+            "bbox": bbox,
+            "source": "query_point",
+        }
+
+    lowered = str(query or "").strip().lower()
+    if re.search(r"\b(here|this area|that area|my area|this location|that location)\b", lowered):
+        if isinstance(selected_popup, dict):
+            geometry = selected_popup.get("geometry") if isinstance(selected_popup.get("geometry"), dict) else None
+            props = selected_popup.get("properties") if isinstance(selected_popup.get("properties"), dict) else {}
+            loc_id = str(selected_popup.get("loc_id") or props.get("loc_id") or "").strip() or None
+            if geometry is None and loc_id:
+                geometry = _geometry_for_loc_id(loc_id)
+            bbox = _geometry_bbox(geometry) if geometry else None
+            if bbox or loc_id:
+                return {
+                    "label": str(selected_popup.get("name") or props.get("name") or loc_id or "selected area").strip(),
+                    "loc_id": loc_id,
+                    "bbox": bbox,
+                    "point": None,
+                    "source": "selected_popup",
+                }
+        geography = watch.get("geography") if isinstance(watch.get("geography"), dict) else {}
+        viewport = geography.get("viewport") if isinstance(geography.get("viewport"), dict) else {}
+        bounds = viewport.get("bounds") if isinstance(viewport.get("bounds"), dict) else {}
+        try:
+            west = float(bounds.get("west"))
+            south = float(bounds.get("south"))
+            east = float(bounds.get("east"))
+            north = float(bounds.get("north"))
+        except (TypeError, ValueError):
+            west = south = east = north = None
+        if None not in (west, south, east, north):
+            return {
+                "label": str(watch.get("label") or "current map area").strip(),
+                "loc_id": None,
+                "bbox": (west, south, east, north),
+                "point": {"lon": (west + east) / 2.0, "lat": (south + north) / 2.0},
+                "source": "watch_viewport",
+            }
+
+    candidate = _location_candidate_from_query(query)
+    if not candidate:
+        return None
+    loc_id = str(candidate.get("loc_id") or "").strip()
+    geometry = _geometry_for_loc_id(loc_id)
+    bbox = _geometry_bbox(geometry) if geometry else None
+    if not bbox and loc_id:
+        return {
+            "label": str(candidate.get("matched_term") or loc_id).strip(),
+            "loc_id": loc_id,
+            "bbox": None,
+            "point": None,
+            "source": "query_location",
+        }
+    return {
+        "label": str(candidate.get("matched_term") or loc_id).strip(),
+        "loc_id": loc_id or None,
+        "bbox": bbox,
+        "point": None,
+        "source": "query_location",
+    }
+
+
+def _query_requests_area_impact(query: str) -> bool:
+    text = str(query or "").strip().lower()
+    if not text:
+        return False
+    if _extract_query_point(text) is not None:
+        return True
+    return any(re.search(pattern, text) for pattern in AREA_IMPACT_PATTERNS)
+
+
+def _feature_match_distance_km(feature: dict, target: dict) -> float | None:
+    geometry = feature.get("geometry") if isinstance(feature.get("geometry"), dict) else {}
+    bbox = _geometry_bbox(geometry)
+    point = target.get("point") if isinstance(target.get("point"), dict) else None
+    target_bbox = target.get("bbox")
+    if point is not None:
+        lon = point.get("lon")
+        lat = point.get("lat")
+        if isinstance(lon, (int, float)) and isinstance(lat, (int, float)):
+            if geometry.get("type") == "Point":
+                coords = geometry.get("coordinates") if isinstance(geometry.get("coordinates"), list) else []
+                if len(coords) >= 2:
+                    try:
+                        feature_lon = float(coords[0])
+                        feature_lat = float(coords[1])
+                    except (TypeError, ValueError):
+                        feature_lon = feature_lat = None
+                    if feature_lon is not None and feature_lat is not None:
+                        return _haversine_km(float(lat), float(lon), feature_lat, feature_lon)
+            if bbox is not None:
+                center_lon, center_lat = _bbox_center(bbox)
+                return _haversine_km(float(lat), float(lon), center_lat, center_lon)
+    if bbox is not None and isinstance(target_bbox, tuple):
+        center_lon, center_lat = _bbox_center(bbox)
+        target_center_lon, target_center_lat = _bbox_center(target_bbox)
+        return _haversine_km(target_center_lat, target_center_lon, center_lat, center_lon)
+    return None
+
+
+def _feature_matches_area_target(feature: dict, target: dict) -> bool:
+    geometry = feature.get("geometry") if isinstance(feature.get("geometry"), dict) else {}
+    if not geometry:
+        return False
+    target_point = target.get("point") if isinstance(target.get("point"), dict) else None
+    target_bbox = target.get("bbox")
+    if target_point is not None:
+        lon = target_point.get("lon")
+        lat = target_point.get("lat")
+        if isinstance(lon, (int, float)) and isinstance(lat, (int, float)):
+            if geometry.get("type") == "Point":
+                coords = geometry.get("coordinates") if isinstance(geometry.get("coordinates"), list) else []
+                if len(coords) >= 2:
+                    try:
+                        feature_lon = float(coords[0])
+                        feature_lat = float(coords[1])
+                    except (TypeError, ValueError):
+                        feature_lon = feature_lat = None
+                    if feature_lon is not None and feature_lat is not None:
+                        return _haversine_km(float(lat), float(lon), feature_lat, feature_lon) <= 75.0
+            bbox = _geometry_bbox(geometry)
+            return bool(bbox and _bbox_contains_point(bbox, float(lon), float(lat)))
+    if isinstance(target_bbox, tuple):
+        bbox = _geometry_bbox(geometry)
+        return bool(bbox and _bbox_overlaps(bbox, target_bbox))
+    return False
+
+
+def _build_area_impact_answer(*, report: dict, effective_feeds: list[str], target: dict) -> str | None:
+    payloads = _report_display_payload_by_feed(report)
+    if not payloads:
+        return None
+
+    matches: list[dict] = []
+    for feed in effective_feeds:
+        payload = payloads.get(feed)
+        if not isinstance(payload, dict):
+            continue
+        matched_features = [
+            feature
+            for feature in _payload_features(payload)
+            if isinstance(feature, dict) and _feature_matches_area_target(feature, target)
+        ]
+        if not matched_features:
+            continue
+        matched_features.sort(
+            key=lambda feature: (
+                _feature_match_distance_km(feature, target)
+                if _feature_match_distance_km(feature, target) is not None
+                else 10**9
+            )
+        )
+        sample_feature = matched_features[0]
+        props = sample_feature.get("properties") if isinstance(sample_feature.get("properties"), dict) else {}
+        descriptor = _focus_feature_name(feed, props)
+        metric = _focus_metric_text(feed, props)
+        timestamp = _focus_timestamp(feed, props)
+        summary_bits = [descriptor]
+        if metric:
+            summary_bits.append(metric)
+        if timestamp:
+            summary_bits.append(timestamp)
+        matches.append(
+            {
+                "feed": feed,
+                "count": len(matched_features),
+                "summary": ", ".join(summary_bits),
+            }
+        )
+
+    label = str(target.get("label") or "that area").strip() or "that area"
+    if not matches:
+        return f"I do not see current Ops events intersecting {label} right now."
+
+    matches.sort(key=lambda item: (-int(item["count"]), str(item["feed"])))
+    lead = matches[:3]
+    parts = []
+    for item in lead:
+        feed = str(item["feed"])
+        count = int(item["count"])
+        feed_label = _feed_singular_label(feed) if count == 1 else _feed_display_name(feed)
+        parts.append(f"{count} {feed_label} ({item['summary']})")
+    joined = "; ".join(parts)
+    if len(matches) == 1:
+        return f"Yes. I see {joined} affecting {label}."
+    return f"Yes. I see {joined} affecting {label}."
+
+
 def _focus_timestamp(feed: str, props: dict) -> str | None:
     for key in ("last_updated", "timestamp", "end_date", "start_date"):
         formatted = _format_ops_timestamp(props.get(key))
@@ -2064,6 +2402,21 @@ def _feed_display_name(feed: str) -> str:
         "usa_nws_alerts": "NWS alerts",
         "noaa_aurora": "aurora forecast cells",
         "noaa_swpc": "space weather alerts",
+    }
+    return names.get(feed, feed.replace("_", " "))
+
+
+def _feed_singular_label(feed: str) -> str:
+    names = {
+        "wildfires_us_nifc": "wildfire",
+        "hurricanes_ibtracs_nrt": "storm",
+        "earthquakes": "earthquake",
+        "tsunamis": "tsunami",
+        "volcanoes": "volcano event",
+        "currency": "currency rate",
+        "usa_nws_alerts": "NWS alert",
+        "noaa_aurora": "aurora forecast cell",
+        "noaa_swpc": "space weather alert",
     }
     return names.get(feed, feed.replace("_", " "))
 
@@ -2965,6 +3318,7 @@ def _try_direct_ops_answer(
     chat_history: list | None = None,
     hints: dict | None = None,
     cache=None,
+    selected_popup: dict | None = None,
 ) -> str | None:
     text = str(query or "").strip()
     lower = text.lower()
@@ -2999,6 +3353,21 @@ def _try_direct_ops_answer(
         )
         if aurora_answer:
             return aurora_answer
+
+    if _query_requests_area_impact(text):
+        target = _resolve_area_target(
+            query=text,
+            watch=watch,
+            selected_popup=selected_popup,
+        )
+        if target:
+            area_answer = _build_area_impact_answer(
+                report=report,
+                effective_feeds=effective_feeds,
+                target=target,
+            )
+            if area_answer:
+                return area_answer
 
     if not _is_count_query(text):
         return None
@@ -3214,6 +3583,7 @@ def run_ops_chat(
         chat_history=chat_history,
         hints=hints,
         cache=cache,
+        selected_popup=selected_popup,
     )
     selected_history_answer = _try_selected_history_answer(
         query=query,
