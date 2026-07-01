@@ -6,6 +6,7 @@ from mapmover import logger
 from mapmover.catalog_surface import catalog_surface_scope
 from mapmover.corpus_registry import corpus_registry
 from mapmover.data_loading import get_catalog_packs, get_pack_metadata, load_catalog
+from mapmover.orchestrator_registry import get_orchestrator
 from mapmover.research_chat_helpers import _manifest_prompt_window_warning
 from mapmover.research_corpus import (
     _annotate_manifest_saved_corpus_state,
@@ -13,6 +14,9 @@ from mapmover.research_corpus import (
     _hydrate_saved_corpus,
     _restore_saved_corpus_from_published_browser_artifacts,
 )
+
+
+research_orchestrator = get_orchestrator("research")
 
 
 def normalize_url_pack_ids(raw_pack_ids: object) -> list[str]:
@@ -95,6 +99,56 @@ def load_url_corpus(
 def reset_session(session_id: str) -> dict:
     corpus_registry.clear_session(session_id)
     return get_manifest(session_id)
+
+
+async def run_turn(
+    *,
+    session_id: str,
+    query: str,
+    chat_history: list | None,
+    research_memory: dict | None,
+    force_large_display: bool,
+    usage_recorder,
+    rescue_usage_recorder,
+    catalog_surface: str | None,
+) -> dict:
+    return await research_orchestrator.run(
+        session_id=session_id,
+        query=query,
+        chat_history=chat_history,
+        research_memory=research_memory,
+        force_large_display=force_large_display,
+        usage_recorder=usage_recorder,
+        rescue_usage_recorder=rescue_usage_recorder,
+        catalog_surface=catalog_surface,
+    )
+
+
+async def run_turn_with_progress(
+    *,
+    session_id: str,
+    query: str,
+    chat_history: list | None,
+    research_memory: dict | None,
+    force_large_display: bool,
+    usage_recorder,
+    rescue_usage_recorder,
+    catalog_surface: str | None,
+):
+    return await research_orchestrator.run_with_progress(
+        session_id=session_id,
+        query=query,
+        chat_history=chat_history,
+        research_memory=research_memory,
+        force_large_display=force_large_display,
+        usage_recorder=usage_recorder,
+        rescue_usage_recorder=rescue_usage_recorder,
+        catalog_surface=catalog_surface,
+    )
+
+
+def progress_heartbeat(idle_count: int):
+    return research_orchestrator.heartbeat(idle_count)
 
 
 def _load_corpus(

@@ -84,7 +84,6 @@ class ResearchOrchestrator(BaseOrchestrator):
         bus, raw_task = await self.run_catalog_scoped_thread_with_progress(
             catalog_surface=catalog_surface,
             progress_bus_cls=ProgressBus,
-            run_research_chat_func=run_research_chat,
             func=run_research_chat,
             session_id=session_id,
             query=query,

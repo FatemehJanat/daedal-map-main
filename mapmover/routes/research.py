@@ -32,8 +32,10 @@ from mapmover.research_service import (
     get_manifest,
     load_saved_corpus,
     load_url_corpus,
+    progress_heartbeat,
+    run_turn,
+    run_turn_with_progress,
 )
-from mapmover.orchestrator_registry import get_orchestrator
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
 from mapmover.routes.chat_shared import (
     build_chat_error_payload,
@@ -51,7 +53,6 @@ from mapmover.runtime.sse import SSE_HEADERS, encode_sse, progress_payload, stag
 
 
 router = APIRouter()
-research_orchestrator = get_orchestrator("research")
 
 
 @router.post("/api/research/corpus")
@@ -316,7 +317,7 @@ async def research_chat_endpoint(req: Request):
             qa_suite_metadata=route_context.qa_suite_metadata,
         )
         try:
-            result = await research_orchestrator.run(
+            result = await run_turn(
                 session_id=route_context.session_id,
                 query=query,
                 chat_history=body.get("chatHistory", []),
@@ -426,7 +427,7 @@ async def research_chat_stream_endpoint(req: Request):
             yield encode_sse(stage_payload("corpus", message="Reading Research workspace..."), dumps=json_dumps_safe)
             yield encode_sse(stage_payload("thinking", message="Researching loaded workspace data..."), dumps=json_dumps_safe)
 
-            bus, task = await research_orchestrator.run_with_progress(
+            bus, task = await run_turn_with_progress(
                 session_id=route_context.session_id,
                 query=query,
                 chat_history=body.get("chatHistory", []),
@@ -440,7 +441,7 @@ async def research_chat_stream_endpoint(req: Request):
                 async for event in bus.drain_until(
                     task,
                     heartbeat_seconds=4.0,
-                    heartbeat=research_orchestrator.heartbeat,
+                    heartbeat=progress_heartbeat,
                 ):
                     yield encode_sse(progress_payload(event), dumps=json_dumps_safe)
 
