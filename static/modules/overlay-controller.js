@@ -695,7 +695,33 @@ function resolveLegacyFeatureLifecycle(feature, eventType) {
 }
 
 function resolveFeatureLifecycleWithFallback(feature, eventType) {
-  return resolveFeatureLifecycle(feature) || resolveLegacyFeatureLifecycle(feature, eventType);
+  const explicitLifecycle = resolveFeatureLifecycle(feature);
+  const legacyLifecycle = resolveLegacyFeatureLifecycle(feature, eventType);
+
+  if (!explicitLifecycle) {
+    return legacyLifecycle;
+  }
+  if (!legacyLifecycle) {
+    return explicitLifecycle;
+  }
+
+  const explicitHasExtendedWindow = (
+    Number.isFinite(explicitLifecycle.endMs) &&
+    explicitLifecycle.endMs !== explicitLifecycle.startMs
+  ) || (
+    Number.isFinite(explicitLifecycle.fadeDuration) &&
+    explicitLifecycle.fadeDuration > 0
+  );
+
+  if (explicitHasExtendedWindow) {
+    return explicitLifecycle;
+  }
+
+  return {
+    startMs: explicitLifecycle.startMs,
+    endMs: legacyLifecycle.endMs,
+    fadeDuration: legacyLifecycle.fadeDuration
+  };
 }
 
 /**
@@ -1216,7 +1242,9 @@ export const OverlayController = {
     const visibleCount = Number.isFinite(preparedPayload?.visibleCount)
       ? preparedPayload.visibleCount
       : snapshotCount;
+    const chatHint = String(preparedPayload?.chatHint || '').trim();
     const countText = (singular, plural = '') => formatCountText(snapshotCount, singular, plural);
+    const withHint = (message) => chatHint ? `${message} ${chatHint}` : message;
 
     switch (primaryOverlayId) {
       case 'earthquakes': {
@@ -1225,30 +1253,30 @@ export const OverlayController = {
         }
         const snapshotText = countText('earthquake');
         if (preparedPayload?.filterDescription && visibleCount < snapshotCount) {
-          return `There ${snapshotCount === 1 ? 'is' : 'are'} ${snapshotText} in the current earthquake snapshot. Showing ${visibleCount.toLocaleString()} earthquakes at ${preparedPayload.filterDescription} to keep the map readable. ${preparedPayload.chatHint}`;
+          return withHint(`There ${snapshotCount === 1 ? 'is' : 'are'} ${snapshotText} in the current earthquake snapshot. Showing ${visibleCount.toLocaleString()} earthquakes at ${preparedPayload.filterDescription} to keep the map readable.`);
         }
-        return `There ${snapshotCount === 1 ? 'is' : 'are'} ${snapshotText} in the current earthquake snapshot. Showing all of them now. ${preparedPayload.chatHint}`;
+        return withHint(`There ${snapshotCount === 1 ? 'is' : 'are'} ${snapshotText} in the current earthquake snapshot. Showing all of them now.`);
       }
       case 'hurricanes': {
         if (!Number.isFinite(snapshotCount) || snapshotCount <= 0) {
           return 'There are 0 active storms in the current hurricane snapshot. Ask chat about recent storm history, one basin, or the strongest recent storms.';
         }
-        return `There ${snapshotCount === 1 ? 'is' : 'are'} ${countText('active storm')} in the current hurricane snapshot. Showing all active storm tracks now. ${preparedPayload.chatHint}`;
+        return withHint(`There ${snapshotCount === 1 ? 'is' : 'are'} ${countText('active storm')} in the current hurricane snapshot. Showing all active storm tracks now.`);
       }
       case 'wildfires': {
         if (!Number.isFinite(snapshotCount) || snapshotCount <= 0) {
           return 'There are 0 active wildfires in the current wildfire snapshot. Ask chat for recent fire history, a region focus, or the biggest recent fires.';
         }
         if (preparedPayload?.filterDescription && visibleCount < snapshotCount) {
-          return `There ${snapshotCount === 1 ? 'is' : 'are'} ${countText('wildfire')} in the current wildfire snapshot. Showing ${visibleCount.toLocaleString()} fires at ${preparedPayload.filterDescription} to keep the map readable. ${preparedPayload.chatHint}`;
+          return withHint(`There ${snapshotCount === 1 ? 'is' : 'are'} ${countText('wildfire')} in the current wildfire snapshot. Showing ${visibleCount.toLocaleString()} fires at ${preparedPayload.filterDescription} to keep the map readable.`);
         }
-        return `There ${snapshotCount === 1 ? 'is' : 'are'} ${countText('wildfire')} in the current wildfire snapshot. Showing all of them now. ${preparedPayload.chatHint}`;
+        return withHint(`There ${snapshotCount === 1 ? 'is' : 'are'} ${countText('wildfire')} in the current wildfire snapshot. Showing all of them now.`);
       }
       case 'tsunamis': {
         if (!Number.isFinite(snapshotCount) || snapshotCount <= 0) {
           return 'There are 0 active tsunami events in the current tsunami snapshot. Ask chat for recent tsunami history, linked earthquake events, or the last 72 hours of activity.';
         }
-        return `There ${snapshotCount === 1 ? 'is' : 'are'} ${countText('tsunami event')} in the current tsunami snapshot. Showing all current events now. ${preparedPayload.chatHint}`;
+        return withHint(`There ${snapshotCount === 1 ? 'is' : 'are'} ${countText('tsunami event')} in the current tsunami snapshot. Showing all current events now.`);
       }
       case 'volcanoes': {
         const ongoingCount = Number.isFinite(compactSummary?.ongoing_count) ? compactSummary.ongoing_count : null;
@@ -1256,9 +1284,9 @@ export const OverlayController = {
           return 'There are 0 active volcano events in the current snapshot. Ask chat for recent volcano history, a region filter, or stronger recent eruptions.';
         }
         if (preparedPayload?.filterDescription && visibleCount < snapshotCount) {
-          return `There ${snapshotCount === 1 ? 'is' : 'are'} ${countText('volcano event')} in the current volcano snapshot. Showing ${visibleCount.toLocaleString()} ${visibleCount === 1 ? 'ongoing event' : 'ongoing events'} first. ${preparedPayload.chatHint}`;
+          return withHint(`There ${snapshotCount === 1 ? 'is' : 'are'} ${countText('volcano event')} in the current volcano snapshot. Showing ${visibleCount.toLocaleString()} ${visibleCount === 1 ? 'ongoing event' : 'ongoing events'} first.`);
         }
-        return `There ${snapshotCount === 1 ? 'is' : 'are'} ${countText('volcano event')} in the current volcano snapshot. Showing all current events now. ${preparedPayload.chatHint}`;
+        return withHint(`There ${snapshotCount === 1 ? 'is' : 'are'} ${countText('volcano event')} in the current volcano snapshot. Showing all current events now.`);
       }
       case 'nws_alerts': {
         const stats = NwsAlertsOverlay?.getDisplayStats?.() || {};
@@ -1294,6 +1322,7 @@ export const OverlayController = {
   },
 
   setOpsSnapshotPayloads(displayPayloads = []) {
+    const previousOverlayIds = new Set(this.opsSnapshotPayloads.keys());
     this.opsSnapshotPayloads.clear();
     for (const payload of displayPayloads || []) {
       const overlayId = this._opsOverlayIdForPayload(payload);
@@ -1308,6 +1337,29 @@ export const OverlayController = {
     }
 
     const activeOverlays = OverlaySelector?.getActiveOverlays?.() || [];
+    const managedOverlayIds = new Set([
+      ...previousOverlayIds,
+      ...this.opsSnapshotPayloads.keys(),
+      'earthquakes',
+      'hurricanes',
+      'wildfires',
+      'tsunamis',
+      'volcanoes',
+      'currency',
+      'tornadoes',
+      'floods',
+      'landslides',
+    ]);
+
+    for (const overlayId of managedOverlayIds) {
+      if (!this._isOpsSnapshotManagedOverlay(overlayId)) continue;
+      const isActive = activeOverlays.includes(overlayId);
+      const hasSnapshot = this.opsSnapshotPayloads.has(overlayId);
+      if (!isActive || !hasSnapshot) {
+        this.hideOverlay(overlayId);
+      }
+    }
+
     for (const overlayId of activeOverlays) {
       if (this.opsSnapshotPayloads.has(overlayId)) {
         this.renderOpsSnapshotOverlay(overlayId);
@@ -2592,7 +2644,8 @@ export const OverlayController = {
         emitOverlayStatusMessage(overlayId, true, options);
         return;
       }
-      if (isActive && this._opsWatchHasOverlay(overlayId)) {
+      if (isActive && this._opsWatchHasOverlay(overlayId) && this.hasCachedOverlayData(overlayId)) {
+        this.renderCurrentData(overlayId);
         emitOverlayStatusMessage(overlayId, true, options);
         return;
       }
@@ -2614,8 +2667,8 @@ export const OverlayController = {
       if (!isActive) {
         this.hideOverlay(overlayId);
         emitOverlayStatusMessage(overlayId, false, options);
+        return;
       }
-      return;
     }
 
     // Demographics controls choropleth visibility AND loads countries

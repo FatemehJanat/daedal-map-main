@@ -776,6 +776,34 @@ def _resolve_pack_temporal(pack_id: str, pack_sources: list[dict], primary: dict
     except Exception:
         pass
 
+    def _normalize_temporal_value(value):
+        if value in (None, "", "unknown"):
+            return None
+        if isinstance(value, bool):
+            return str(value).lower()
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value) if value.is_integer() else value
+
+        text = str(value).strip()
+        if not text or text.lower() == "unknown":
+            return None
+        if text.lstrip("-").isdigit():
+            try:
+                return int(text)
+            except Exception:
+                return text
+        return text
+
+    def _collapse_temporal_values(values, pick=min):
+        normalized = [value for value in (_normalize_temporal_value(item) for item in values) if value is not None]
+        if not normalized:
+            return None
+        if all(isinstance(value, (int, float)) for value in normalized):
+            return pick(normalized)
+        return pick(str(value) for value in normalized)
+
     starts = []
     ends = []
     granularities = []
@@ -793,8 +821,8 @@ def _resolve_pack_temporal(pack_id: str, pack_sources: list[dict], primary: dict
             granularities.append(granularity)
 
     return {
-        "start": min(starts) if starts else None,
-        "end": max(ends) if ends else None,
+        "start": _collapse_temporal_values(starts, min),
+        "end": _collapse_temporal_values(ends, max),
         "granularity": granularities[0] if granularities else (primary.get("temporal_coverage", {}) or {}).get("granularity"),
     }
 
@@ -981,7 +1009,12 @@ def _build_public_pack_list(api_ready_only: bool = False) -> list[dict]:
             "pack_maintainer_url": s.get("pack_maintainer_url") or s.get("maintainer_url") or ACCOUNT_URL,
         })
 
-    packs.sort(key=lambda p: (p["category"], p["title"].lower()))
+    packs.sort(
+        key=lambda p: (
+            str(p.get("category") or "other"),
+            str(p.get("title") or p.get("pack_name") or "").lower(),
+        )
+    )
     _public_pack_list_cache[api_ready_only] = {"value": packs, "cached_at": time.time()}
     return packs
 
