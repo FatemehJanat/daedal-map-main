@@ -1083,6 +1083,26 @@ def _query_requests_broad_recent_changes(query: str) -> bool:
 def _build_prompt_safe_ops_report(report: dict | None) -> dict:
     if not isinstance(report, dict):
         return {}
+    raw_snapshots = report.get("feed_snapshots") or []
+    prompt_safe_snapshots: list[dict] = []
+    for item in raw_snapshots if isinstance(raw_snapshots, list) else []:
+        if not isinstance(item, dict):
+            continue
+        cleaned = dict(item)
+        history_entries = cleaned.pop("history_entry_count", None)
+        if history_entries is not None:
+            cleaned["retained_history_entry_count"] = history_entries
+        prompt_safe_snapshots.append(cleaned)
+    raw_recent_changes = report.get("recent_change_index") or []
+    prompt_safe_recent_changes: list[dict] = []
+    for item in raw_recent_changes if isinstance(raw_recent_changes, list) else []:
+        if not isinstance(item, dict):
+            continue
+        cleaned = dict(item)
+        history_entries = cleaned.pop("history_entry_count", None)
+        if history_entries is not None:
+            cleaned["retained_history_entry_count"] = history_entries
+        prompt_safe_recent_changes.append(cleaned)
     return {
         "report_version": report.get("report_version"),
         "watch_id": report.get("watch_id"),
@@ -1090,8 +1110,8 @@ def _build_prompt_safe_ops_report(report: dict | None) -> dict:
         "effective_feeds": report.get("effective_feeds") or [],
         "snapshot_hashes": report.get("snapshot_hashes") or {},
         "headline_summary": report.get("headline_summary"),
-        "feed_snapshots": report.get("feed_snapshots") or [],
-        "recent_change_index": report.get("recent_change_index") or [],
+        "feed_snapshots": prompt_safe_snapshots,
+        "recent_change_index": prompt_safe_recent_changes,
         "map_items": report.get("map_items") or [],
     }
 
@@ -1436,6 +1456,121 @@ def _focus_timestamp(feed: str, props: dict) -> str | None:
         if formatted:
             return formatted
     return None
+
+
+def _payload_features(payload: dict | None) -> list[dict]:
+    if not isinstance(payload, dict):
+        return []
+    geojson = payload.get("geojson")
+    if not isinstance(geojson, dict):
+        return []
+    features = geojson.get("features")
+    return features if isinstance(features, list) else []
+
+
+def _select_extrema_feature_from_payload(
+    *,
+    feed: str,
+    payload: dict | None,
+    pick: str = "max",
+) -> tuple[dict, dict, float] | tuple[None, None, None]:
+    spec = FEED_FOCUS_SPECS.get(feed)
+    if not spec:
+        return None, None, None
+    best_feature = None
+    best_value = None
+    for feature in _payload_features(payload):
+        if not isinstance(feature, dict):
+            continue
+        value = _feature_numeric_value(feature, spec["metric_keys"])
+        if value is None:
+            continue
+        if (
+            best_value is None
+            or (pick == "max" and value > best_value)
+            or (pick == "min" and value < best_value)
+        ):
+            best_feature = feature
+            best_value = value
+    if best_feature is None or best_value is None:
+        return None, None, None
+    return payload, best_feature, float(best_value)
+
+
+def _build_earthquake_extrema_answer(
+    *,
+    query: str,
+    report: dict,
+    effective_feeds: list[str],
+    hints: dict | None = None,
+    cache=None,
+) -> str | None:
+    if "earthquakes" not in effective_feeds:
+        return None
+    lower = str(query or "").strip().lower()
+    if not lower:
+        return None
+    if "earthquake" not in lower and "quake" not in lower:
+        return None
+    if not any(token in lower for token in ("biggest", "largest", "strongest", "smallest", "lowest")):
+        return None
+
+    payload = None
+    if _query_requests_deep_history(lower, hints=hints):
+        history_feed, history_payload = _resolve_cached_history_payload(cache=cache, effective_feeds=effective_feeds)
+        if history_feed == "earthquakes" and isinstance(history_payload, dict):
+            payload = history_payload
+        else:
+            payload = _load_history_focus_payload(
+                feed="earthquakes",
+                query=query,
+                hints=hints,
+                cache=cache,
+            )
+    if not isinstance(payload, dict):
+        payload = _report_display_payload_by_feed(report).get("earthquakes") or _build_ops_payload_for_feed("earthquakes")
+    if not isinstance(payload, dict):
+        return None
+
+    need_max = any(token in lower for token in ("biggest", "largest", "strongest"))
+    need_min = any(token in lower for token in ("smallest", "lowest"))
+    max_feature = _select_extrema_feature_from_payload(feed="earthquakes", payload=payload, pick="max")[1] if need_max else None
+    min_feature = _select_extrema_feature_from_payload(feed="earthquakes", payload=payload, pick="min")[1] if need_min else None
+
+    def _describe(feature: dict, label: str) -> str | None:
+        if not isinstance(feature, dict):
+            return None
+        props = feature.get("properties") if isinstance(feature.get("properties"), dict) else {}
+        name = _focus_feature_name("earthquakes", props)
+        metric = _focus_metric_text("earthquakes", props)
+        timestamp = _focus_timestamp("earthquakes", props)
+        depth = props.get("depth_km")
+        pieces = [f"{label}: {name}"]
+        if metric:
+            pieces[-1] += f", {metric}"
+        if depth not in (None, ""):
+            pieces[-1] += f", depth {depth} km"
+        if timestamp:
+            pieces[-1] += f", observed {timestamp}"
+        return pieces[-1] + "."
+
+    lines: list[str] = []
+    if need_max:
+        described = _describe(max_feature, "Largest")
+        if described:
+            lines.append(described)
+    if need_min:
+        described = _describe(min_feature, "Smallest")
+        if described:
+            lines.append(described)
+    if not lines:
+        return None
+
+    if _query_requests_deep_history(lower, hints=hints):
+        lines.append("This answer uses the retained Ops history window, not the current live snapshot.")
+    else:
+        lines.append("This answer uses the current displayed Ops earthquake snapshot.")
+    return " ".join(lines)
 
 
 def _category_rank(value: object) -> float:
@@ -2871,6 +3006,16 @@ def _try_direct_ops_answer(
         if aurora_answer:
             return aurora_answer
 
+    earthquake_extrema_answer = _build_earthquake_extrema_answer(
+        query=query,
+        report=report,
+        effective_feeds=effective_feeds,
+        hints=hints,
+        cache=cache,
+    )
+    if earthquake_extrema_answer:
+        return earthquake_extrema_answer
+
     if not _is_count_query(text):
         return None
 
@@ -2982,7 +3127,8 @@ def build_targeted_history_context(
         feed_contexts.append(
             {
                 "feed": feed,
-                "history_entry_count": len(entries),
+                "retained_history_entry_count": len(entries),
+                "history_entry_count_note": "This is the number of retained history snapshots, not the number of events/items.",
                 "entries": _compact_history_entries(feed, entries),
             }
         )
