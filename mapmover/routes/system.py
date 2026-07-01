@@ -22,6 +22,7 @@ from mapmover.auth_context import build_session_cache_key, get_authenticated_use
 from mapmover.corpus_registry import corpus_registry
 from mapmover import ACCOUNT_URL, CacheSignature, clear_metadata_cache, initialize_catalog, logger, session_manager
 from mapmover.foundation_helpers import load_reference_json
+from mapmover.hosted_runtime_events import submit_runtime_feedback
 from mapmover.order_queue import order_queue
 from mapmover.runtime_config import get_runtime_config
 from mapmover.runtime_build_info import runtime_build_info
@@ -1680,18 +1681,12 @@ async def submit_feedback(request: Request):
         source = "local"
 
     try:
-        from supabase_client import get_supabase_client
-        sb = get_supabase_client()
-        if sb:
-            row = {"message": message, "source": source}
-            if user_id:
-                row["user_id"] = user_id
-            sb.client.table("feedback").insert(row).execute()
-        else:
-            logger.warning("Feedback received but Supabase not configured: %s", message[:80])
+        saved = submit_runtime_feedback(message=message, source=source, user_id=user_id)
     except Exception as exc:
         logger.error("Failed to save feedback: %s", exc)
         return msgpack_error("Could not save feedback right now", 500)
+    if not saved:
+        logger.warning("Feedback received without hosted control-plane sink: %s", message[:80])
 
     return msgpack_response({"ok": True})
 

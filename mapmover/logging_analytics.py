@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from .hosted_runtime_events import HostedRuntimeEventSink, hosted_runtime_control_enabled
 from .paths import LOGS_DIR, ensure_dir
 
 # Set up logging
@@ -416,20 +417,19 @@ def log_route_request_event(
 
 
 def get_supabase():
-    """Get the Supabase client, initializing if needed."""
+    """Get the hosted telemetry sink, initializing if needed."""
     global _supabase_client
     if _runtime_analytics_disabled():
         return None
     if _supabase_client is None:
         try:
-            from supabase_client import get_supabase_client
-            _supabase_client = get_supabase_client()
-            if _supabase_client:
-                logger.info("Supabase client initialized - cloud logging enabled")
+            if hosted_runtime_control_enabled():
+                _supabase_client = HostedRuntimeEventSink()
+                logger.info("Hosted runtime control sink initialized")
             else:
                 logger.info("Supabase not configured - using local logging only")
         except Exception as e:
-            logger.warning(f"Could not initialize Supabase client: {e}")
+            logger.warning(f"Could not initialize hosted runtime control sink: {e}")
             _supabase_client = False  # Mark as failed to avoid retrying
     return _supabase_client if _supabase_client else None
 
