@@ -37,39 +37,61 @@
   "event_qualifier_defaults": {
     "_description": "Default meaning for vague event-ranking words when the user does not name a different criterion",
     "earthquakes": {
-      "biggest": "magnitude",
-      "largest": "magnitude",
-      "strongest": "magnitude"
+      "biggest": {"metric": "magnitude", "order": "desc"},
+      "largest": {"metric": "magnitude", "order": "desc"},
+      "strongest": {"metric": "magnitude", "order": "desc"},
+      "highest": {"metric": "magnitude", "order": "desc"},
+      "smallest": {"metric": "magnitude", "order": "asc"},
+      "lowest": {"metric": "magnitude", "order": "asc"}
     },
     "hurricanes": {
-      "biggest": "max_category",
-      "largest": "max_category",
-      "strongest": "max_category"
+      "biggest": {"metric": "max_category", "order": "desc"},
+      "largest": {"metric": "max_category", "order": "desc"},
+      "strongest": {"metric": "max_category", "order": "desc"},
+      "highest": {"metric": "max_category", "order": "desc"},
+      "smallest": {"metric": "max_category", "order": "asc"},
+      "lowest": {"metric": "max_category", "order": "asc"}
     },
     "tornadoes": {
-      "biggest": "tornado_scale",
-      "largest": "tornado_scale",
-      "strongest": "tornado_scale"
+      "biggest": {"metric": "tornado_scale", "order": "desc"},
+      "largest": {"metric": "tornado_scale", "order": "desc"},
+      "strongest": {"metric": "tornado_scale", "order": "desc"},
+      "highest": {"metric": "tornado_scale", "order": "desc"},
+      "smallest": {"metric": "tornado_scale", "order": "asc"},
+      "lowest": {"metric": "tornado_scale", "order": "asc"}
     },
     "volcanoes": {
-      "biggest": "vei",
-      "largest": "vei",
-      "strongest": "vei"
+      "biggest": {"metric": "vei", "order": "desc"},
+      "largest": {"metric": "vei", "order": "desc"},
+      "strongest": {"metric": "vei", "order": "desc"},
+      "highest": {"metric": "vei", "order": "desc"},
+      "smallest": {"metric": "vei", "order": "asc"},
+      "lowest": {"metric": "vei", "order": "asc"}
     },
     "tsunamis": {
-      "biggest": "max_water_height_m",
-      "largest": "max_water_height_m",
-      "strongest": "max_water_height_m"
+      "biggest": {"metric": "max_water_height_m", "order": "desc"},
+      "largest": {"metric": "max_water_height_m", "order": "desc"},
+      "strongest": {"metric": "max_water_height_m", "order": "desc"},
+      "highest": {"metric": "max_water_height_m", "order": "desc"},
+      "smallest": {"metric": "max_water_height_m", "order": "asc"},
+      "lowest": {"metric": "max_water_height_m", "order": "asc"}
     },
     "wildfires": {
-      "biggest": "area_km2",
-      "largest": "area_km2"
+      "biggest": {"metric": "area_km2", "order": "desc"},
+      "largest": {"metric": "area_km2", "order": "desc"},
+      "highest": {"metric": "area_km2", "order": "desc"},
+      "smallest": {"metric": "area_km2", "order": "asc"},
+      "lowest": {"metric": "area_km2", "order": "asc"}
     },
     "floods": {
-      "biggest": "severity",
-      "largest": "severity",
-      "strongest": "severity",
-      "most severe": "severity"
+      "biggest": {"metric": "severity", "order": "desc"},
+      "largest": {"metric": "severity", "order": "desc"},
+      "strongest": {"metric": "severity", "order": "desc"},
+      "highest": {"metric": "severity", "order": "desc"},
+      "most severe": {"metric": "severity", "order": "desc"},
+      "smallest": {"metric": "severity", "order": "asc"},
+      "lowest": {"metric": "severity", "order": "asc"},
+      "least severe": {"metric": "severity", "order": "asc"}
     }
   },
 

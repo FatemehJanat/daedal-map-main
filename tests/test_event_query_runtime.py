@@ -66,6 +66,34 @@ class EventQueryRuntimeTests(unittest.TestCase):
         self.assertEqual(items[0]["sort"], {"by": "magnitude", "order": "desc"})
         self.assertNotIn("limit", items[0])
 
+    def test_event_qualifier_defaults_support_ascending_rank_queries(self):
+        items = [
+            {
+                "source_id": "earthquakes_events",
+                "pack_id": "earthquakes",
+                "mode": "events",
+                "_hints": {"original_query": "show me the smallest earthquake in 2004"},
+            }
+        ]
+
+        apply_event_qualifier_defaults(
+            items,
+            load_source_metadata=lambda _source_id: {
+                "data_type": "events",
+                "pack_id": "earthquakes",
+            },
+            load_reference_json=lambda _path: {
+                "event_qualifier_defaults": {
+                    "earthquakes": {
+                        "smallest": {"metric": "magnitude", "order": "asc"},
+                    },
+                }
+            },
+        )
+
+        self.assertEqual(items[0]["sort"], {"by": "magnitude", "order": "asc"})
+        self.assertEqual(items[0]["limit"], 1)
+
     def test_default_time_windows_skip_open_ended_all_time_queries(self):
         items = [
             {
@@ -126,6 +154,22 @@ class EventQueryRuntimeTests(unittest.TestCase):
         self.assertEqual(
             message,
             "The earthquake in 2004 was M 9.1 - Off the west coast of northern Sumatra - Dec 26, 2004 UTC.",
+        )
+
+    def test_single_event_message_preserves_smallest_qualifier(self):
+        message = _build_single_event_message(
+            "earthquake",
+            {
+                "magnitude": 1.2,
+                "place": "Nevada",
+                "timestamp": "2004-01-02T00:00:00Z",
+            },
+            query_text="show me the smallest earthquake in 2004",
+        )
+
+        self.assertEqual(
+            message,
+            "The smallest earthquake in 2004 was M 1.2 - Nevada - Jan 02, 2004 UTC.",
         )
 
     def test_query_derived_order_hints_convert_acres_to_area_km2(self):

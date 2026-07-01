@@ -31,13 +31,45 @@ def _build_single_event_message(
     if not lowered_query:
         return None
 
-    superlative_tokens = ("biggest", "largest", "strongest", "highest", "worst", "most severe")
+    qualifier = None
+    for token in (
+        "least severe",
+        "most severe",
+        "smallest",
+        "largest",
+        "strongest",
+        "highest",
+        "lowest",
+        "biggest",
+        "worst",
+    ):
+        if token in lowered_query:
+            qualifier = token
+            break
+
     prefix = "The selected event was"
-    if any(token in lowered_query for token in superlative_tokens):
-        prefix = f"The {event_type} was"
+    if qualifier:
+        qualifier_word = {
+            "biggest": "largest",
+            "largest": "largest",
+            "strongest": "strongest",
+            "highest": "highest",
+            "worst": "worst",
+            "most severe": "most severe",
+            "smallest": "smallest",
+            "lowest": "lowest",
+            "least severe": "least severe",
+        }.get(qualifier, qualifier)
+        if qualifier in {"smallest", "lowest", "least severe"}:
+            prefix = f"The {qualifier_word} {event_type} was"
+        else:
+            prefix = f"The {event_type} was"
         match = re.search(r"\b(?:in|during|for)\s+(\d{4})\b", lowered_query)
         if match:
-            prefix = f"The {event_type} in {match.group(1)} was"
+            if qualifier in {"smallest", "lowest", "least severe"}:
+                prefix = f"The {qualifier_word} {event_type} in {match.group(1)} was"
+            else:
+                prefix = f"The {event_type} in {match.group(1)} was"
 
     timestamp_text = _format_event_timestamp_utc(
         properties.get("timestamp")

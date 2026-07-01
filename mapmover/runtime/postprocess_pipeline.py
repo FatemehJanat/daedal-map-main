@@ -9,8 +9,12 @@ from .query_constraint_primitives import extract_query_constraints
 EVENT_QUALIFIER_SINGLE_TARGET_PATTERNS = (
     re.compile(r"\bthe\s+biggest\s+(?P<noun>[a-z_]+)\b"),
     re.compile(r"\bthe\s+largest\s+(?P<noun>[a-z_]+)\b"),
+    re.compile(r"\bthe\s+smallest\s+(?P<noun>[a-z_]+)\b"),
     re.compile(r"\bthe\s+strongest\s+(?P<noun>[a-z_]+)\b"),
+    re.compile(r"\bthe\s+highest\s+(?P<noun>[a-z_]+)\b"),
+    re.compile(r"\bthe\s+lowest\s+(?P<noun>[a-z_]+)\b"),
     re.compile(r"\bthe\s+most\s+severe\s+(?P<noun>[a-z_]+)\b"),
+    re.compile(r"\bthe\s+least\s+severe\s+(?P<noun>[a-z_]+)\b"),
 )
 
 
@@ -221,16 +225,25 @@ def apply_event_qualifier_defaults(
             continue
 
         selected_metric = None
-        for qualifier, metric_name in qualifier_defaults.items():
+        selected_order = "desc"
+        for qualifier, config in qualifier_defaults.items():
             qualifier_text = str(qualifier or "").strip().lower()
-            metric_text = str(metric_name or "").strip()
-            if qualifier_text and metric_text and qualifier_text in query_text:
+            if not qualifier_text or qualifier_text not in query_text:
+                continue
+            if isinstance(config, dict):
+                metric_text = str(config.get("metric") or "").strip()
+                order_text = str(config.get("order") or "desc").strip().lower()
+            else:
+                metric_text = str(config or "").strip()
+                order_text = "desc"
+            if metric_text:
                 selected_metric = metric_text
+                selected_order = "asc" if order_text == "asc" else "desc"
                 break
         if not selected_metric:
             continue
 
-        item["sort"] = {"by": selected_metric, "order": "desc"}
+        item["sort"] = {"by": selected_metric, "order": selected_order}
         if not item.get("limit") and _query_requests_single_ranked_event(query_text):
             item["limit"] = 1
 
