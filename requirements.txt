@@ -42,7 +42,6 @@ msgpack==1.1.2  # MessagePack serialization (2-5x faster, 30-50% smaller)
 rapidfuzz==3.14.3
 
 # Cloud logging and analytics (optional - graceful fallback if not configured)
-supabase==2.24.0
 
 # Required for country bounds bbox intersection (viewport geometry loading):
 shapely==2.1.2

@@ -33,8 +33,7 @@
     window.DAEDALMAP_VENDOR = {
       maplibreCss: '/static/vendor/maplibre-gl/maplibre-gl.css',
       maplibreJs: '/static/vendor/maplibre-gl/maplibre-gl.js',
-      msgpackJs: '/static/vendor/msgpack/msgpack.min.js',
-      supabaseJs: '/static/vendor/supabase/supabase.min.js'
+      msgpackJs: '/static/vendor/msgpack/msgpack.min.js'
     };
 
     function loadStylesheetWithFallback(primaryHref, fallbackHref) {
@@ -115,10 +114,6 @@
       await loadScriptWithFallback(
         'https://unpkg.com/@msgpack/msgpack@3.0.0-beta2/dist.es5+umd/msgpack.min.js',
         window.DAEDALMAP_VENDOR.msgpackJs
-      );
-      await loadScriptWithFallback(
-        'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2',
-        window.DAEDALMAP_VENDOR.supabaseJs
       );
     })();
   </script>

@@ -57,13 +57,14 @@ function appendErrorCta(messageEl, response) {
   if (cta !== 'sign_up' && cta !== 'top_up') return;
 
   const rawUrl = String(response.cta_url || '').trim();
+  const siteBase = String(getSiteBaseUrl() || '').trim();
   const ctaUrl = rawUrl
     ? (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')
         ? rawUrl
-        : `${getSiteBaseUrl()}${rawUrl.startsWith('/') ? rawUrl : `/${rawUrl}`}`)
-    : (cta === 'top_up' ? `${getSiteBaseUrl()}/account` : `${getSiteBaseUrl()}/login`);
+        : `${siteBase}${rawUrl.startsWith('/') ? rawUrl : `/${rawUrl}`}`)
+    : '/settings';
   const ctaLabel = String(response.cta_label || '').trim()
-    || (cta === 'top_up' ? 'Open account' : 'Create account');
+    || 'Open settings';
 
   const container = document.createElement('div');
   container.className = 'metric-warning-buttons';

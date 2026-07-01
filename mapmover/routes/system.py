@@ -65,7 +65,7 @@ def _admin_catalog_refresh_forbidden_response(req: Request) -> Response | None:
     # Trusted service-to-service path: the private dashboard/control plane calls
     # this with the shared internal token (the same trust boundary that already
     # lets it drive collectors). Accept it in place of an admin user session so
-    # the dashboard "Force catalog refresh" button works without a Supabase JWT.
+    # the dashboard "Force catalog refresh" button works without hosted-user auth.
     import hmac
     internal_token = os.getenv("CLOUD_INTERNAL_API_TOKEN", "").strip()
     provided_token = (req.headers.get("x-internal-api-key") or "").strip()
@@ -222,7 +222,7 @@ def _configured_host(url: str) -> str:
 
 
 def _hosted_auth_enabled() -> bool:
-    return bool(os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_ANON_KEY"))
+    return False
 
 
 def _is_localish_url(url: str) -> bool:
@@ -1604,7 +1604,7 @@ async def health_check():
 
 @router.post("/api/feedback")
 async def submit_feedback(request: Request):
-    """Accept anonymous feedback and write it to the Supabase feedback table.
+    """Accept anonymous feedback and write it through the private feedback bridge.
     Accepts both msgpack (map app) and JSON (the .com site).
     """
     from mapmover.paths import APP_URL
@@ -1777,7 +1777,7 @@ def _get_entitled_packs(req: Request):
     None  -> full bypass: all catalog sources returned, including those without pack_id.
              Applies to: master plan, is_admin=True, or no service key (dev/self-host).
     set() -> anonymous or entitlement lookup failed: geometry_global only.
-    {..}  -> authenticated user: their entitled pack_ids from Supabase.
+    {..}  -> authenticated user: their entitled pack_ids from the hosted account service.
 
     Plan tiers:
       master      -> None (owner, sees everything including untagged/unreleased sources)
@@ -3934,8 +3934,6 @@ async def get_auth_config():
     )
     return {
         "enabled": enabled,
-        "supabase_url": os.getenv("SUPABASE_URL", ""),
-        "supabase_anon_key": os.getenv("SUPABASE_ANON_KEY", ""),
         "site_url": SITE_URL,
         "account_url": ACCOUNT_URL if enabled else "/settings",
         "local_wrapper_enabled": local_wrapper_enabled,
@@ -3947,52 +3945,15 @@ async def get_auth_me(req: Request):
     """
     Return the current user's identity and plan info.
 
-    - Unauthenticated: returns guest defaults
-    - Authenticated without service key: returns basic identity from token
-    - Authenticated with service key: returns full profile and plan from Supabase
+    Public open-core runtime returns guest defaults only. Hosted account state
+    is resolved on the private side.
     """
-    auth_user = get_authenticated_user(req)
-
-    if not auth_user:
-        return msgpack_response({
-            "authenticated": False,
-            "plan_id": "free",
-            "enabled_shells": ["simple"],
-            "max_packs": 2,
-        })
-
-    user_id = auth_user.get("id")
-    email = auth_user.get("email")
-
-    context = load_account_context(str(user_id or ""))
-    metadata = auth_user.get("user_metadata") if isinstance(auth_user.get("user_metadata"), dict) else {}
-    ops_feeds = metadata.get("ops_feeds") if isinstance(metadata.get("ops_feeds"), list) else []
-    if context:
-        return msgpack_response({
-            "authenticated": True,
-            "user_id": user_id,
-            "email": email,
-            "plan_id": context.get("plan_id", "free"),
-            "is_admin": context.get("is_admin", False),
-            "enabled_shells": context.get("enabled_shells", ["simple"]),
-            "max_packs": context.get("max_packs", 2),
-            "org_id": context.get("org_id"),
-            "user_packs": context.get("user_packs", []),
-            "org_packs": context.get("org_packs", []),
-            "ops_feeds": ops_feeds,
-            "balance_micro_usd": context.get("balance_micro_usd"),
-            "account_url": ACCOUNT_URL,
-        })
-
-    # Fallback: identity from token only, default to free plan
     return msgpack_response({
-        "authenticated": True,
-        "user_id": user_id,
-        "email": email,
+        "authenticated": False,
         "plan_id": "free",
         "enabled_shells": ["simple"],
         "max_packs": 2,
-        "ops_feeds": (auth_user.get("user_metadata") or {}).get("ops_feeds", []),
+        "ops_feeds": [],
     })
 
 
