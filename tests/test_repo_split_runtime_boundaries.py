@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from mapmover import data_loading
 from mapmover.private_mcp_loader import DEFAULT_PRIVATE_MCP_BUNDLE_ROOTS
@@ -56,6 +57,39 @@ class RepoSplitRuntimeBoundaryTests(unittest.TestCase):
         os.environ["COUNTY_MAP_API_CATALOG_OUTPUT_ROOT"] = override
 
         self.assertEqual(data_loading._api_catalog_output_root(), Path(override))
+
+    def test_api_pack_detail_hydration_strips_private_browser_artifact_paths(self) -> None:
+        payload = {
+            "pack_id": "demo_pack",
+            "sources": [
+                {
+                    "source_id": "demo_source",
+                    "browser_artifact": {"storage_key": "stale/value.json.gz"},
+                }
+            ],
+        }
+        metadata = {
+            "browser_artifact": {
+                "storage_key": "published/browser_artifacts/sources/demo_source/runtime_snapshot_v1.json.gz",
+                "sha256": "abc123",
+                "transfer_bytes": 10,
+                "stored_bytes": 10,
+                "expanded_bytes": 20,
+                "generated_at": "2026-06-30T00:00:00Z",
+                "local_artifact_path": "/opt/global-map/repo/county-map-private/build/browser_artifacts/output/published/browser_artifacts/sources/demo_source/runtime_snapshot_v1.json.gz",
+            }
+        }
+
+        with mock.patch("mapmover.data_loading.load_source_metadata", return_value=metadata):
+            hydrated = data_loading._hydrate_api_pack_detail_from_source_metadata(payload)
+
+        source = hydrated["sources"][0]
+        artifact = source["browser_artifact"]
+        self.assertEqual(
+            artifact["storage_key"],
+            "published/browser_artifacts/sources/demo_source/runtime_snapshot_v1.json.gz",
+        )
+        self.assertNotIn("local_artifact_path", artifact)
 
 
 if __name__ == "__main__":

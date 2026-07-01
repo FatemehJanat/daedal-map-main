@@ -376,6 +376,14 @@ def load_api_pack_detail(pack_id: str) -> dict | None:
     return payload
 
 
+def _public_browser_artifact_metadata(raw_value: dict | None) -> dict | None:
+    if not isinstance(raw_value, dict) or not raw_value:
+        return None
+    sanitized = deepcopy(raw_value)
+    sanitized.pop("local_artifact_path", None)
+    return sanitized
+
+
 def _hydrate_api_pack_detail_from_source_metadata(payload: dict | None) -> dict | None:
     """
     Refresh pack-detail freshness fields from source metadata.
@@ -437,9 +445,9 @@ def _hydrate_api_pack_detail_from_source_metadata(payload: dict | None) -> dict 
             if default_limit is not None:
                 refreshed["default_limit"] = default_limit
 
-            browser_artifact = metadata.get("browser_artifact")
-            if isinstance(browser_artifact, dict) and browser_artifact:
-                refreshed["browser_artifact"] = deepcopy(browser_artifact)
+            browser_artifact = _public_browser_artifact_metadata(metadata.get("browser_artifact"))
+            if browser_artifact:
+                refreshed["browser_artifact"] = browser_artifact
 
             live_watermark = metadata.get("live_watermark_utc")
             if live_watermark:
