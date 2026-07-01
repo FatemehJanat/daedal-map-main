@@ -88,22 +88,29 @@ SINGULAR_FOCUS_PATTERNS = (
     r"\bshow the strongest\b",
     r"\bshow the worst\b",
     r"\bshow the highest\b",
+    r"\bshow the lowest\b",
+    r"\bshow the smallest\b",
     r"\bshow the one\b",
     r"\bmap the biggest\b",
     r"\bmap the largest\b",
     r"\bmap the strongest\b",
     r"\bmap the worst\b",
     r"\bmap the highest\b",
+    r"\bmap the lowest\b",
+    r"\bmap the smallest\b",
     r"\bmap the one\b",
 )
 
 SUPERLATIVE_PATTERNS = (
     r"\bbiggest\b",
     r"\blargest\b",
+    r"\bsmallest\b",
     r"\bworst\b",
     r"\bstrongest\b",
     r"\bhighest\b",
+    r"\blowest\b",
     r"\bmost severe\b",
+    r"\bleast severe\b",
 )
 
 FEED_FOCUS_SPECS = {
@@ -1265,6 +1272,18 @@ def _query_requests_superlative(query: str) -> bool:
     return any(re.search(pattern, text) for pattern in SUPERLATIVE_PATTERNS)
 
 
+def _superlative_picks(query: str) -> list[str]:
+    text = str(query or "").strip().lower()
+    if not text:
+        return []
+    picks: list[str] = []
+    if any(token in text for token in ("biggest", "largest", "strongest", "worst", "highest", "most severe")):
+        picks.append("max")
+    if any(token in text for token in ("smallest", "lowest", "least severe")):
+        picks.append("min")
+    return picks
+
+
 def _extract_identifier_reference(query: str) -> tuple[str | None, str | None]:
     text = str(query or "").strip()
     if not text:
@@ -1497,82 +1516,6 @@ def _select_extrema_feature_from_payload(
     return payload, best_feature, float(best_value)
 
 
-def _build_earthquake_extrema_answer(
-    *,
-    query: str,
-    report: dict,
-    effective_feeds: list[str],
-    hints: dict | None = None,
-    cache=None,
-) -> str | None:
-    if "earthquakes" not in effective_feeds:
-        return None
-    lower = str(query or "").strip().lower()
-    if not lower:
-        return None
-    if "earthquake" not in lower and "quake" not in lower:
-        return None
-    if not any(token in lower for token in ("biggest", "largest", "strongest", "smallest", "lowest")):
-        return None
-
-    payload = None
-    if _query_requests_deep_history(lower, hints=hints):
-        history_feed, history_payload = _resolve_cached_history_payload(cache=cache, effective_feeds=effective_feeds)
-        if history_feed == "earthquakes" and isinstance(history_payload, dict):
-            payload = history_payload
-        else:
-            payload = _load_history_focus_payload(
-                feed="earthquakes",
-                query=query,
-                hints=hints,
-                cache=cache,
-            )
-    if not isinstance(payload, dict):
-        payload = _report_display_payload_by_feed(report).get("earthquakes") or _build_ops_payload_for_feed("earthquakes")
-    if not isinstance(payload, dict):
-        return None
-
-    need_max = any(token in lower for token in ("biggest", "largest", "strongest"))
-    need_min = any(token in lower for token in ("smallest", "lowest"))
-    max_feature = _select_extrema_feature_from_payload(feed="earthquakes", payload=payload, pick="max")[1] if need_max else None
-    min_feature = _select_extrema_feature_from_payload(feed="earthquakes", payload=payload, pick="min")[1] if need_min else None
-
-    def _describe(feature: dict, label: str) -> str | None:
-        if not isinstance(feature, dict):
-            return None
-        props = feature.get("properties") if isinstance(feature.get("properties"), dict) else {}
-        name = _focus_feature_name("earthquakes", props)
-        metric = _focus_metric_text("earthquakes", props)
-        timestamp = _focus_timestamp("earthquakes", props)
-        depth = props.get("depth_km")
-        pieces = [f"{label}: {name}"]
-        if metric:
-            pieces[-1] += f", {metric}"
-        if depth not in (None, ""):
-            pieces[-1] += f", depth {depth} km"
-        if timestamp:
-            pieces[-1] += f", observed {timestamp}"
-        return pieces[-1] + "."
-
-    lines: list[str] = []
-    if need_max:
-        described = _describe(max_feature, "Largest")
-        if described:
-            lines.append(described)
-    if need_min:
-        described = _describe(min_feature, "Smallest")
-        if described:
-            lines.append(described)
-    if not lines:
-        return None
-
-    if _query_requests_deep_history(lower, hints=hints):
-        lines.append("This answer uses the retained Ops history window, not the current live snapshot.")
-    else:
-        lines.append("This answer uses the current displayed Ops earthquake snapshot.")
-    return " ".join(lines)
-
-
 def _category_rank(value: object) -> float:
     text = str(value or "").strip().upper()
     ranks = {
@@ -1775,41 +1718,25 @@ def _select_focus_candidate(
     *,
     feed: str,
     report: dict,
+    pick: str = "max",
 ) -> tuple[dict, dict, float] | tuple[None, None, None]:
     spec = FEED_FOCUS_SPECS.get(feed)
     if not spec:
         return None, None, None
     payload = _report_display_payload_by_feed(report).get(feed) or _build_ops_payload_for_feed(feed)
-    return _select_focus_candidate_from_payload(feed=feed, payload=payload)
+    return _select_focus_candidate_from_payload(feed=feed, payload=payload, pick=pick)
 
 
 def _select_focus_candidate_from_payload(
     *,
     feed: str,
     payload: dict | None,
+    pick: str = "max",
 ) -> tuple[dict, dict, float] | tuple[None, None, None]:
     spec = FEED_FOCUS_SPECS.get(feed)
     if not spec or not isinstance(payload, dict):
         return None, None, None
-    if not isinstance(payload, dict):
-        return None, None, None
-    features = (payload.get("geojson") or {}).get("features") if isinstance(payload.get("geojson"), dict) else None
-    if not isinstance(features, list):
-        return None, None, None
-    best_feature = None
-    best_value = None
-    for feature in features:
-        if not isinstance(feature, dict):
-            continue
-        value = _feature_numeric_value(feature, spec["metric_keys"])
-        if value is None:
-            continue
-        if best_value is None or value > best_value:
-            best_feature = feature
-            best_value = value
-    if best_feature is None or best_value is None:
-        return None, None, None
-    return payload, best_feature, float(best_value)
+    return _select_extrema_feature_from_payload(feed=feed, payload=payload, pick=pick)
 
 
 def _feature_matches_identifier(feed: str, feature: dict, identifier_key: str | None, identifier_value: str | None) -> bool:
@@ -1923,14 +1850,18 @@ def _resolve_cached_focus_target(*, cache, report: dict, effective_feeds: list[s
     return None, None, None
 
 
-def _build_focus_chat_message(*, feed: str, feature: dict) -> str:
+def _superlative_word(pick: str) -> str:
+    return "smallest" if pick == "min" else "largest"
+
+
+def _build_focus_chat_message(*, feed: str, feature: dict, pick: str = "max") -> str:
     props = feature.get("properties") if isinstance(feature.get("properties"), dict) else {}
     label = FEED_FOCUS_SPECS.get(feed, {}).get("label") or "event"
     name = _focus_feature_name(feed, props)
     location = _focus_feature_location(feed, props)
     metric = _focus_metric_text(feed, props)
     timestamp = _focus_timestamp(feed, props)
-    pieces = [f"The largest active {label} is {name}"]
+    pieces = [f"The {_superlative_word(pick)} active {label} is {name}"]
     if location:
         pieces[-1] += f" in {location}"
     if metric:
@@ -1941,14 +1872,14 @@ def _build_focus_chat_message(*, feed: str, feature: dict) -> str:
     return " ".join(pieces)
 
 
-def _build_history_focus_chat_message(*, feed: str, feature: dict) -> str:
+def _build_history_focus_chat_message(*, feed: str, feature: dict, pick: str = "max") -> str:
     props = feature.get("properties") if isinstance(feature.get("properties"), dict) else {}
     label = FEED_FOCUS_SPECS.get(feed, {}).get("label") or "event"
     name = _focus_feature_name(feed, props)
     location = _focus_feature_location(feed, props)
     metric = _focus_metric_text(feed, props)
     timestamp = _focus_timestamp(feed, props)
-    pieces = [f"The largest retained {label} in that window is {name}"]
+    pieces = [f"The {_superlative_word(pick)} retained {label} in that window is {name}"]
     if location:
         pieces[-1] += f" in {location}"
     if metric:
@@ -1957,6 +1888,32 @@ def _build_history_focus_chat_message(*, feed: str, feature: dict) -> str:
     if timestamp:
         pieces.append(f"Observed {timestamp}.")
     return " ".join(pieces)
+
+
+def _build_multi_focus_chat_message(
+    *,
+    feed: str,
+    picks: list[str],
+    features_by_pick: dict[str, dict],
+    retained: bool,
+) -> str | None:
+    lines: list[str] = []
+    for pick in picks:
+        feature = features_by_pick.get(pick)
+        if not isinstance(feature, dict):
+            continue
+        if retained:
+            lines.append(_build_history_focus_chat_message(feed=feed, feature=feature, pick=pick))
+        else:
+            lines.append(_build_focus_chat_message(feed=feed, feature=feature, pick=pick))
+    if not lines:
+        return None
+    lines.append(
+        "This answer uses the retained Ops history window, not the current live snapshot."
+        if retained
+        else "This answer uses the current displayed Ops snapshot."
+    )
+    return " ".join(lines)
 
 
 def _build_focus_map_result(*, feed: str, payload: dict, feature: dict, watch: dict, effective_feeds: list[str], message: str | None = None) -> dict:
@@ -2801,6 +2758,10 @@ def _try_focus_result(
     if not _query_requests_superlative(lower):
         return None
 
+    picks = _superlative_picks(lower)
+    if not picks:
+        return None
+
     feed = _focus_feed_from_query(
         query=lower,
         chat_history=chat_history,
@@ -2815,15 +2776,26 @@ def _try_focus_result(
         effective_feeds=effective_feeds,
     )
     if history_feed == feed:
-        payload, feature, _score = _select_focus_candidate_from_payload(feed=feed, payload=history_payload)
-        if payload and feature:
-            _store_ops_focus_target(cache, feed=feed, payload=payload, feature=feature)
-            focus_message = _build_history_focus_chat_message(feed=feed, feature=feature)
+        features_by_pick: dict[str, dict] = {}
+        stored_feature = None
+        payload = history_payload if isinstance(history_payload, dict) else None
+        for pick in picks:
+            candidate_payload, feature, _score = _select_focus_candidate_from_payload(feed=feed, payload=history_payload, pick=pick)
+            if candidate_payload and feature:
+                payload = candidate_payload
+                features_by_pick[pick] = feature
+                if stored_feature is None:
+                    stored_feature = feature
+        if payload and stored_feature and features_by_pick:
+            _store_ops_focus_target(cache, feed=feed, payload=payload, feature=stored_feature)
+            focus_message = _build_multi_focus_chat_message(feed=feed, picks=picks, features_by_pick=features_by_pick, retained=True)
+            if not focus_message:
+                return None
             if _query_requests_map_focus(lower):
                 return _build_focus_map_result(
                     feed=feed,
                     payload=payload,
-                    feature=feature,
+                    feature=stored_feature,
                     watch=watch,
                     effective_feeds=effective_feeds,
                     message=focus_message,
@@ -2840,15 +2812,26 @@ def _try_focus_result(
             hints=hints,
             cache=cache,
         )
-        payload, feature, _score = _select_focus_candidate_from_payload(feed=feed, payload=history_payload)
-        if payload and feature:
-            _store_ops_focus_target(cache, feed=feed, payload=payload, feature=feature)
-            focus_message = _build_history_focus_chat_message(feed=feed, feature=feature)
+        features_by_pick = {}
+        stored_feature = None
+        payload = history_payload if isinstance(history_payload, dict) else None
+        for pick in picks:
+            candidate_payload, feature, _score = _select_focus_candidate_from_payload(feed=feed, payload=history_payload, pick=pick)
+            if candidate_payload and feature:
+                payload = candidate_payload
+                features_by_pick[pick] = feature
+                if stored_feature is None:
+                    stored_feature = feature
+        if payload and stored_feature and features_by_pick:
+            _store_ops_focus_target(cache, feed=feed, payload=payload, feature=stored_feature)
+            focus_message = _build_multi_focus_chat_message(feed=feed, picks=picks, features_by_pick=features_by_pick, retained=True)
+            if not focus_message:
+                return None
             if _query_requests_map_focus(lower):
                 return _build_focus_map_result(
                     feed=feed,
                     payload=payload,
-                    feature=feature,
+                    feature=stored_feature,
                     watch=watch,
                     effective_feeds=effective_feeds,
                     message=focus_message,
@@ -2858,18 +2841,29 @@ def _try_focus_result(
                 "message": focus_message,
             }
 
-    payload, feature, _score = _select_focus_candidate(feed=feed, report=report)
-    if not payload or not feature:
+    payload = None
+    stored_feature = None
+    features_by_pick = {}
+    for pick in picks:
+        candidate_payload, feature, _score = _select_focus_candidate(feed=feed, report=report, pick=pick)
+        if candidate_payload and feature:
+            payload = candidate_payload
+            features_by_pick[pick] = feature
+            if stored_feature is None:
+                stored_feature = feature
+    if not payload or not stored_feature or not features_by_pick:
         return None
 
-    _store_ops_focus_target(cache, feed=feed, payload=payload, feature=feature)
-    focus_message = _build_focus_chat_message(feed=feed, feature=feature)
+    _store_ops_focus_target(cache, feed=feed, payload=payload, feature=stored_feature)
+    focus_message = _build_multi_focus_chat_message(feed=feed, picks=picks, features_by_pick=features_by_pick, retained=False)
+    if not focus_message:
+        return None
 
     if _query_requests_map_focus(lower):
         return _build_focus_map_result(
             feed=feed,
             payload=payload,
-            feature=feature,
+            feature=stored_feature,
             watch=watch,
             effective_feeds=effective_feeds,
             message=focus_message,
@@ -3005,16 +2999,6 @@ def _try_direct_ops_answer(
         )
         if aurora_answer:
             return aurora_answer
-
-    earthquake_extrema_answer = _build_earthquake_extrema_answer(
-        query=query,
-        report=report,
-        effective_feeds=effective_feeds,
-        hints=hints,
-        cache=cache,
-    )
-    if earthquake_extrema_answer:
-        return earthquake_extrema_answer
 
     if not _is_count_query(text):
         return None
