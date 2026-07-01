@@ -116,7 +116,7 @@ _ACCOUNT_CONTEXT_CACHE_LOCK = threading.Lock()
 def _get_cached_account_context(user_id: str) -> Optional[dict]:
     """Read-through cache around the private runtime-account context endpoint.
 
-    Avoids hitting Supabase on every chat call. 5-minute TTL is fine because
+    Avoids hitting the hosted account service on every chat call. 5-minute TTL is fine because
     plan_id changes are rare and the worst case (slightly stale tier) is harmless
     for analytics.
     """

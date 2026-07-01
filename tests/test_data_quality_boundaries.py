@@ -18,14 +18,14 @@ class DataQualityBoundaryTests(unittest.TestCase):
         logger_mock.assert_called_once()
         self.assertEqual(logger_mock.call_args.kwargs["issue_type"], "missing_geometry")
 
-    def test_name_standardizer_logs_mismatches_without_supabase_import(self) -> None:
+    def test_name_standardizer_logs_mismatches_without_private_db_import(self) -> None:
         standardizer = NameStandardizer()
         standardizer.mismatches = [
             {"original": "Aland", "matched": "Aland Islands", "score": 0.9, "type": "fuzzy"},
             {"original": "Aland", "matched": "Aland Islands", "score": 0.9, "type": "fuzzy"},
         ]
         with patch("mapmover.logging_analytics.log_data_quality_issue_to_cloud") as logger_mock:
-            standardizer.log_mismatches_to_supabase("test.csv")
+            standardizer.log_mismatches_to_control_plane("test.csv")
 
         logger_mock.assert_called_once()
         self.assertEqual(logger_mock.call_args.kwargs["issue_type"], "name_mismatch_fuzzy")

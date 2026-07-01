@@ -12,10 +12,10 @@ constructing the LLMUsageRecorder and invoking the LLM):
         return _budget_rejection_response(decision)
     # ...continue normal LLM path
 
-Reads from the `llm_usage_events_with_cost` view. A 30-second in-process cache
-keeps the check off the response path. The cache means a hot caller can
-technically over-spend by up to 30s of LLM calls before being cut off; that is
-acceptable for v1.
+In the hosted deployment this reads daily spend from the private control plane's
+backing store. A 30-second in-process cache keeps the check off the response
+path. The cache means a hot caller can technically over-spend by up to 30s of
+LLM calls before being cut off; that is acceptable for v1.
 
 See docs/future/llm_usage_tracking_implementation.md for the phased plan.
 """
@@ -78,13 +78,15 @@ def get_anonymous_cap_usd() -> Decimal:
 def _fetch_anonymous_cost_today(ip_hash: str) -> Decimal:
     """Sum of cost_usd today (UTC) for anonymous calls from this ip_hash.
 
-    Returns 0 on Supabase unavailable / query failure - we fail open rather than
-    blocking traffic on an analytics outage.
+    Returns 0 on hosted budget-store unavailable / query failure - we fail open
+    rather than blocking traffic on a control-plane outage.
     """
-    from .logging_analytics import get_supabase, logger
+    from .logging_analytics import get_hosted_event_sink, logger
 
-    client = get_supabase()
+    client = get_hosted_event_sink()
     if client is None:
+        return Decimal("0")
+    if not hasattr(client, "client"):
         return Decimal("0")
     try:
         result = (
@@ -114,7 +116,7 @@ def _fetch_anonymous_cost_today(ip_hash: str) -> Decimal:
 def check_anonymous_chat_budget(caller_ctx: dict) -> BudgetDecision:
     """Decide whether an anonymous chat call is allowed.
 
-    Authenticated callers always get allowed=True - their gating is Phase 2b.
+    Authenticated callers always get allowed=True - their hosted gating is Phase 2b.
     """
     caller_kind = (caller_ctx or {}).get("caller_kind")
     cap = get_anonymous_cap_usd()

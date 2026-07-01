@@ -11,7 +11,7 @@ This module:
 2. Builds alias mappings from conversions.json
 3. Matches incoming names to canonical names
 4. Provides loc_id lookups from names and codes (FIPS, ISO)
-5. Logs mismatches to Supabase for data quality tracking
+5. Logs mismatches to the hosted control plane for data quality tracking
 """
 
 import json
@@ -721,9 +721,9 @@ class NameStandardizer:
 
         return iso_code if iso_code in self._country_codes else None
 
-    def log_mismatches_to_supabase(self, dataset_filename: str = None):
+    def log_mismatches_to_control_plane(self, dataset_filename: str = None):
         """
-        Log name mismatches to Supabase for data quality tracking.
+        Log name mismatches to the hosted control plane for data quality tracking.
 
         Deduplicates mismatches before logging - each unique name is logged once.
 
@@ -763,10 +763,10 @@ class NameStandardizer:
                 )
                 logged_count += 1
 
-            print(f"[NameStandardizer] Logged {logged_count} unique mismatches to Supabase (source: data_ingestion)")
+            print(f"[NameStandardizer] Logged {logged_count} unique mismatches to hosted control plane (source: data_ingestion)")
 
         except Exception as e:
-            print(f"[NameStandardizer] Error logging to Supabase: {e}")
+            print(f"[NameStandardizer] Error logging to hosted control plane: {e}")
 
 
 # Convenience function for quick use
