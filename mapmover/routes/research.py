@@ -3,49 +3,41 @@
 from __future__ import annotations
 
 import asyncio
-import json
 
-from anthropic import Anthropic
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from mapmover import logger
 from mapmover.auth_context import build_session_cache_key, get_authenticated_user_async
-from mapmover.catalog_surface import catalog_surface_scope
-from mapmover.corpus_registry import corpus_registry
-from mapmover.data_loading import get_catalog_packs, get_pack_metadata, load_catalog
 from mapmover.logging_analytics import log_app_error, log_conversation
-from mapmover.research_chat_helpers import (
-    _manifest_prompt_window_warning,
-    _word_chunks,
-)
+from mapmover.research_chat_helpers import _word_chunks
 from mapmover.research_corpus import (
     _annotate_manifest_saved_corpus_state,
     _build_browser_install_manifest,
-    _build_research_focus_geojson,
     _decode_browser_source_artifact_payloads,
-    _hydrate_saved_corpus,
     _json_safe_value,
     _load_saved_corpus_for_user,
     _read_browser_artifact_bytes,
     _restore_browser_install_source_snapshots,
-    _restore_saved_corpus_from_published_browser_artifacts,
 )
 from mapmover.research_lane_runtime import (
     json_dumps_safe,
     research_request_id,
-    run_research_chat,
 )
 from mapmover.research_route_runtime import (
     prepare_research_chat_route_context,
     settle_and_log_research_turn,
+)
+from mapmover.research_service import (
+    get_manifest,
+    load_saved_corpus,
+    load_url_corpus,
 )
 from mapmover.orchestrator_registry import get_orchestrator
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
 from mapmover.routes.chat_shared import (
     build_chat_error_payload,
     build_provider_error_payload,
-    _catalog_surface_for_request,
     decode_json_or_msgpack_body,
     decode_request_body,
 )
@@ -62,61 +54,6 @@ router = APIRouter()
 research_orchestrator = get_orchestrator("research")
 
 
-def _normalize_url_pack_ids(raw_pack_ids: object) -> list[str]:
-    values: list[str] = []
-    seen: set[str] = set()
-    iterable = raw_pack_ids if isinstance(raw_pack_ids, list) else str(raw_pack_ids or "").split(",")
-    for raw_value in iterable:
-        pack_id = str(raw_value or "").strip()
-        if not pack_id or pack_id in seen:
-            continue
-        seen.add(pack_id)
-        values.append(pack_id)
-    return values
-
-
-def _resolve_research_url_corpus(catalog: dict, pack_ids: list[str]) -> dict:
-    resolved_pack_ids: list[str] = []
-    resolved_source_ids: list[str] = []
-    seen_source_ids: set[str] = set()
-    packs_payload: list[dict] = []
-    pack_catalog = {str(pack.get("pack_id") or "").strip(): pack for pack in get_catalog_packs(catalog)}
-
-    for pack_id in pack_ids:
-        pack = pack_catalog.get(pack_id) or get_pack_metadata(pack_id, catalog)
-        if not isinstance(pack, dict):
-            raise ValueError(f"Pack not found in published catalog: {pack_id}")
-        pack_sources = pack.get("sources") or pack.get("source_ids") or []
-        pack_source_ids: list[str] = []
-        for source in pack_sources:
-            source_id = str((source or {}).get("source_id") if isinstance(source, dict) else source or "").strip()
-            if not source_id:
-                continue
-            pack_source_ids.append(source_id)
-            if source_id in seen_source_ids:
-                continue
-            seen_source_ids.add(source_id)
-            resolved_source_ids.append(source_id)
-        if not pack_source_ids:
-            raise ValueError(f"Pack has no published sources: {pack_id}")
-        resolved_pack_ids.append(pack_id)
-        packs_payload.append({"pack_id": pack_id, "source_ids": pack_source_ids})
-
-    if not resolved_pack_ids or not resolved_source_ids:
-        raise ValueError("No usable published packs were provided for the Research URL corpus")
-
-    corpus_key = ",".join(resolved_pack_ids)
-    return {
-        "id": f"ephemeral:url:research:{corpus_key}",
-        "name": f"Research URL Corpus ({', '.join(resolved_pack_ids)})",
-        "pack_ids": resolved_pack_ids,
-        "source_ids": resolved_source_ids,
-        "packs": packs_payload,
-        "ephemeral": True,
-        "origin": "url_packs",
-    }
-
-
 @router.post("/api/research/corpus")
 async def research_corpus_endpoint(req: Request):
     try:
@@ -124,11 +61,7 @@ async def research_corpus_endpoint(req: Request):
         frontend_session_id = body.get("sessionId", "anonymous")
         auth_user = await get_authenticated_user_async(req)
         session_id = build_session_cache_key(frontend_session_id, auth_user)
-        manifest = _annotate_manifest_saved_corpus_state(corpus_registry.manifest(session_id))
-        focus_geojson = _build_research_focus_geojson(session_id)
-        if focus_geojson:
-            manifest["focus_geojson"] = focus_geojson
-        return msgpack_response(manifest)
+        return msgpack_response(get_manifest(session_id))
     except Exception as exc:
         logger.exception("Research corpus snapshot error")
         return msgpack_error(str(exc), 500)
@@ -153,43 +86,7 @@ async def research_load_saved_corpus_endpoint(req: Request):
         if not saved_corpus:
             return msgpack_error("Saved corpus not found", 404)
 
-        corpus_registry.set_saved_corpus(session_id, saved_corpus)
-        load_path = "raw_hydration"
-        hydration_warning = None
-        try:
-            _restore_saved_corpus_from_published_browser_artifacts(session_id, saved_corpus)
-            hydration = {
-                "loaded_sources": [],
-                "skipped_sources": [],
-                "restore_mode": "published_browser_artifacts",
-            }
-            load_path = "published_browser_artifacts"
-        except Exception as snapshot_restore_error:
-            logger.warning(
-                "Research saved corpus published-browser-artifact restore failed for %s: %s",
-                saved_corpus.get("id"),
-                snapshot_restore_error,
-            )
-            hydration_warning = (
-                "Published runtime snapshots were unavailable for this corpus, "
-                "so Research fell back to a slower server-side restore."
-            )
-            hydration = _hydrate_saved_corpus(session_id, saved_corpus)
-        manifest = _annotate_manifest_saved_corpus_state(corpus_registry.manifest(session_id))
-        focus_geojson = _build_research_focus_geojson(session_id)
-        prompt_window_warning = _manifest_prompt_window_warning(manifest)
-        combined_warning = "\n\n".join(
-            part for part in [hydration_warning, prompt_window_warning] if part
-        ) or None
-        return msgpack_response({
-            "type": "saved_corpus_loaded",
-            "message": f'Loaded "{saved_corpus.get("name")}" into the Research workspace.',
-            "corpus": manifest,
-            "hydration": hydration,
-            "focus_geojson": focus_geojson,
-            "warning": combined_warning,
-            "load_path": load_path,
-        })
+        return msgpack_response(load_saved_corpus(session_id, saved_corpus))
     except Exception as exc:
         logger.exception("Research saved corpus load error")
         return msgpack_error(str(exc), 500)
@@ -199,54 +96,14 @@ async def research_load_saved_corpus_endpoint(req: Request):
 async def research_load_url_corpus_endpoint(req: Request):
     try:
         body = await decode_request_body(req)
-        pack_ids = _normalize_url_pack_ids(body.get("packIds") or body.get("pack_ids"))
-        if not pack_ids:
-            return msgpack_error("No packIds provided", 400)
-
         auth_user = await get_authenticated_user_async(req)
         frontend_session_id = body.get("sessionId", "anonymous")
         session_id = build_session_cache_key(frontend_session_id, auth_user)
-
-        with catalog_surface_scope("published"):
-            saved_corpus = _resolve_research_url_corpus(load_catalog(), pack_ids)
-
-        corpus_registry.set_saved_corpus(session_id, saved_corpus)
-        load_path = "raw_hydration"
-        hydration_warning = None
-        try:
-            _restore_saved_corpus_from_published_browser_artifacts(session_id, saved_corpus)
-            hydration = {
-                "loaded_sources": [],
-                "skipped_sources": [],
-                "restore_mode": "published_browser_artifacts",
-            }
-            load_path = "published_browser_artifacts"
-        except Exception as snapshot_restore_error:
-            logger.warning(
-                "Research URL corpus published-browser-artifact restore failed for %s: %s",
-                saved_corpus.get("id"),
-                snapshot_restore_error,
-            )
-            hydration_warning = (
-                "Published runtime snapshots were unavailable for this URL corpus, "
-                "so Research fell back to a slower server-side restore."
-            )
-            hydration = _hydrate_saved_corpus(session_id, saved_corpus)
-        manifest = _annotate_manifest_saved_corpus_state(corpus_registry.manifest(session_id))
-        focus_geojson = _build_research_focus_geojson(session_id)
-        prompt_window_warning = _manifest_prompt_window_warning(manifest)
-        combined_warning = "\n\n".join(
-            part for part in [hydration_warning, prompt_window_warning] if part
-        ) or None
-        return msgpack_response({
-            "type": "url_corpus_loaded",
-            "message": f'Loaded "{saved_corpus.get("name")}" into the Research workspace.',
-            "corpus": manifest,
-            "hydration": hydration,
-            "focus_geojson": focus_geojson,
-            "warning": combined_warning,
-            "load_path": load_path,
-        })
+        return msgpack_response(load_url_corpus(
+            session_id,
+            body.get("packIds") or body.get("pack_ids"),
+            catalog_surface="published",
+        ))
     except ValueError as exc:
         return msgpack_error(str(exc), 400)
     except Exception as exc:
