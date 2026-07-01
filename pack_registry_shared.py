@@ -173,6 +173,25 @@ PACK_REGISTRY: dict[str, dict] = {
             "preferred_tool": "query_dataset",
         },
     },
+    "world_bank_wdi": {
+        "display_name": "World Bank WDI",
+        "pricing": "free",
+        "mcp_tool_allowlist": ("get_catalog", "get_pack", "query_dataset"),
+        "mcp_name": "com.daedalmap/world_bank_wdi",
+        "mcp_title": "DaedalMap World Bank WDI",
+        "mcp_description": "World Bank World Development Indicators by country and year across seven categories: economy, environment, health, education, debt, infrastructure, and social. Free - no payment required.",
+        "registry_meta": {
+            "categories": ["development", "economics", "data", "geospatial"],
+            "highlights": [
+                "Curated World Development Indicators across seven category sources",
+                "Free MCP access for economic, health, education, and environment metrics",
+                "Country-level lookups tied to DaedalMap loc_id geography",
+            ],
+        },
+        "routing": {
+            "preferred_tool": "query_dataset",
+        },
+    },
     "volcanoes": {
         "display_name": "volcanoes",
         "pricing": "free",
