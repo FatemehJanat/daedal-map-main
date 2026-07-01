@@ -4,7 +4,10 @@ import os
 import unittest
 from unittest.mock import patch
 
-from mapmover.hosted_runtime_account import load_saved_corpus_for_user
+from mapmover.hosted_runtime_account import (
+    load_anonymous_usage_cost,
+    load_saved_corpus_for_user,
+)
 
 
 class HostedRuntimeAccountTests(unittest.TestCase):
@@ -43,6 +46,20 @@ class HostedRuntimeAccountTests(unittest.TestCase):
         post_internal.assert_called_once_with(
             "/internal/runtime-account/corpus",
             {"user_id": "user-1", "corpus_id": "corpus-1"},
+        )
+
+    def test_anonymous_usage_reads_private_endpoint(self) -> None:
+        os.environ["CLOUD_INTERNAL_API_TOKEN"] = "test-token"
+        with patch(
+            "mapmover.hosted_runtime_account._post_internal",
+            return_value=(200, {"cost_usd": "0.37"}),
+        ) as post_internal:
+            result = load_anonymous_usage_cost("ip-1", "2026-06-30T00:00:00+00:00")
+
+        self.assertEqual(result, 0.37)
+        post_internal.assert_called_once_with(
+            "/internal/runtime-account/anonymous-usage",
+            {"ip_hash": "ip-1", "start_at": "2026-06-30T00:00:00+00:00"},
         )
 
 

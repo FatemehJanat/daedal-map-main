@@ -11,6 +11,7 @@ from mapmover.hosted_runtime_events import _post_internal, hosted_runtime_contro
 logger = logging.getLogger("mapmover")
 RUNTIME_ACCOUNT_CONTEXT_PATH = "/internal/runtime-account/context"
 RUNTIME_ACCOUNT_CORPUS_PATH = "/internal/runtime-account/corpus"
+RUNTIME_ACCOUNT_ANONYMOUS_USAGE_PATH = "/internal/runtime-account/anonymous-usage"
 
 
 def load_account_context(user_id: str) -> dict[str, Any] | None:
@@ -56,3 +57,34 @@ def load_saved_corpus_for_user(user_id: str, corpus_id: str) -> dict[str, Any] |
         return None
     corpus = body.get("corpus")
     return corpus if isinstance(corpus, dict) else None
+
+
+def load_anonymous_usage_cost(ip_hash: str, start_at: str) -> float | None:
+    if not hosted_runtime_control_enabled():
+        return None
+    payload = {
+        "ip_hash": ip_hash,
+        "start_at": start_at,
+    }
+    try:
+        status_code, body = _post_internal(RUNTIME_ACCOUNT_ANONYMOUS_USAGE_PATH, payload)
+    except Exception as exc:
+        logger.warning("Hosted anonymous-usage read failed ip_hash=%s: %s", ip_hash, exc)
+        return None
+    if status_code != 200 or not isinstance(body, dict):
+        logger.warning(
+            "Hosted anonymous-usage read returned invalid response ip_hash=%s status=%s body=%s",
+            ip_hash,
+            status_code,
+            body,
+        )
+        return None
+    try:
+        return float(body.get("cost_usd"))
+    except Exception:
+        logger.warning(
+            "Hosted anonymous-usage read returned invalid cost ip_hash=%s body=%s",
+            ip_hash,
+            body,
+        )
+        return None

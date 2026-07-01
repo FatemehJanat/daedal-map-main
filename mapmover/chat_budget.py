@@ -30,6 +30,8 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Optional
 
+from .hosted_runtime_account import load_anonymous_usage_cost
+
 
 _BUDGET_CACHE_TTL_S = 30.0
 _BUDGET_CACHE: dict[str, tuple[float, Decimal]] = {}
@@ -81,33 +83,13 @@ def _fetch_anonymous_cost_today(ip_hash: str) -> Decimal:
     Returns 0 on hosted budget-store unavailable / query failure - we fail open
     rather than blocking traffic on a control-plane outage.
     """
-    from .logging_analytics import get_hosted_event_sink, logger
+    from .logging_analytics import logger
 
-    client = get_hosted_event_sink()
-    if client is None:
-        return Decimal("0")
-    if not hasattr(client, "client"):
-        return Decimal("0")
     try:
-        result = (
-            client.client.table("llm_usage_events_with_cost")
-            .select("cost_usd")
-            .eq("caller_kind", "anonymous")
-            .eq("ip_hash", ip_hash)
-            .gte("created_at", _utc_today_start_iso())
-            .execute()
-        )
-        rows = result.data or []
-        total = Decimal("0")
-        for row in rows:
-            value = row.get("cost_usd")
-            if value is None:
-                continue
-            try:
-                total += Decimal(str(value))
-            except InvalidOperation:
-                continue
-        return total
+        cost = load_anonymous_usage_cost(ip_hash, _utc_today_start_iso())
+        if cost is None:
+            return Decimal("0")
+        return Decimal(str(cost))
     except Exception as exc:
         logger.warning("anonymous budget fetch failed ip_hash=%s: %s", ip_hash, exc)
         return Decimal("0")
