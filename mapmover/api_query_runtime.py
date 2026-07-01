@@ -263,6 +263,29 @@ for _sdg_i in range(1, 18):
     }
 del _sdg_i
 
+# World Bank WDI category sources share the same yearly country-panel shape; each
+# source stores its parquet as "<source_id>.parquet" under global/<source_id>/.
+for _wb_source in (
+    "wb_economy",
+    "wb_environment",
+    "wb_health",
+    "wb_education",
+    "wb_debt",
+    "wb_infrastructure",
+    "wb_social",
+):
+    SUPPORTED_DYNAMIC_SOURCES[_wb_source] = {
+        "pack_id": "world_bank_wdi",
+        "parquet_name": f"{_wb_source}.parquet",
+        "query_mode": "single_source",
+        "location_field": "loc_id",
+        "time_field": "year",
+        "time_granularity": "yearly",
+        "default_limit": DEFAULT_LIMIT,
+        "max_limit": MAX_LIMIT,
+    }
+del _wb_source
+
 
 API_SOURCE_SPECS: dict[str, ApiSourceSpec] = {
     CURRENCY_SOURCE_SPEC.source_id: CURRENCY_SOURCE_SPEC,
