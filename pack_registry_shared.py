@@ -160,13 +160,13 @@ PACK_REGISTRY: dict[str, dict] = {
         "mcp_tool_allowlist": ("get_catalog", "get_pack", "query_dataset"),
         "mcp_name": "com.daedalmap/un_sdg",
         "mcp_title": "DaedalMap UN Sustainable Development Goals",
-        "mcp_description": "UN SDG country indicators across all 17 goals: poverty, health, education, climate. Free.",
+        "mcp_description": "UN Sustainable Development Goal indicators across all 17 goals - poverty, health, education, gender, energy, climate, and institutions - as curated country-year panels normalized to the DaedalMap loc_id spine. Free.",
         "registry_meta": {
             "categories": ["development", "data", "geospatial"],
             "highlights": [
-                "210 UN SDG indicators across all 17 goals",
-                "Free MCP access for development and social metrics",
-                "Country-level lookups tied to DaedalMap loc_id geography",
+                "210 curated SDG indicators across all 17 goal families",
+                "Normalized country-year panels on the shared DaedalMap loc_id spine",
+                "Free MCP access; complements World Development Indicators and country reference data",
             ],
         },
         "routing": {
@@ -177,9 +177,10 @@ PACK_REGISTRY: dict[str, dict] = {
         "display_name": "World Bank WDI",
         "pricing": "free",
         "mcp_tool_allowlist": ("get_catalog", "get_pack", "query_dataset"),
-        "mcp_name": "com.daedalmap/world_bank_wdi",
-        "mcp_title": "DaedalMap World Bank WDI",
-        "mcp_description": "World Bank World Development Indicators by country and year across seven categories: economy, environment, health, education, debt, infrastructure, and social. Free - no payment required.",
+        "mcp_name": "com.daedalmap/world-development-indicators",
+        "mcp_title": "DaedalMap World Development Indicators",
+        "mcp_description": "World Bank World Development Indicators as curated country-year panels: economy, health, education, environment, debt, infrastructure, and social - normalized to the DaedalMap loc_id spine with tiered metrics. Free.",
+        "registry_search_alias": "world-development-indicators",
         "registry_meta": {
             "categories": ["development", "economics", "data", "geospatial"],
             "highlights": [
