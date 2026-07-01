@@ -9,9 +9,33 @@ from mapmover.hosted_runtime_events import _post_internal, hosted_runtime_contro
 
 
 logger = logging.getLogger("mapmover")
+RUNTIME_ACCOUNT_AUTH_USER_PATH = "/internal/runtime-account/auth-user"
 RUNTIME_ACCOUNT_CONTEXT_PATH = "/internal/runtime-account/context"
 RUNTIME_ACCOUNT_CORPUS_PATH = "/internal/runtime-account/corpus"
 RUNTIME_ACCOUNT_ANONYMOUS_USAGE_PATH = "/internal/runtime-account/anonymous-usage"
+
+
+def load_authenticated_user(access_token: str) -> dict[str, Any] | None:
+    if not hosted_runtime_control_enabled():
+        return None
+    token = str(access_token or "").strip()
+    if not token:
+        return None
+    payload = {"access_token": token}
+    try:
+        status_code, body = _post_internal(RUNTIME_ACCOUNT_AUTH_USER_PATH, payload)
+    except Exception as exc:
+        logger.warning("Hosted auth-user read failed: %s", exc)
+        return None
+    if status_code != 200 or not isinstance(body, dict):
+        logger.warning(
+            "Hosted auth-user read returned invalid response status=%s body=%s",
+            status_code,
+            body,
+        )
+        return None
+    user = body.get("user")
+    return user if isinstance(user, dict) else None
 
 
 def load_account_context(user_id: str) -> dict[str, Any] | None:
