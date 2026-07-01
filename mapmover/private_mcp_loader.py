@@ -8,6 +8,7 @@ from types import ModuleType
 
 DEFAULT_PRIVATE_MCP_BUNDLE_ROOTS = (
     Path("/app/private_mcp_tools"),
+    Path("/app/county-map-private/tools"),
 )
 
 _PROVIDER_CACHE: dict[str, ModuleType] = {}

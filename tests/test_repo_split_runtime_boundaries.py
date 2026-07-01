@@ -46,11 +46,12 @@ class RepoSplitRuntimeBoundaryTests(unittest.TestCase):
 
         self.assertIn(private_env, candidates)
 
-    def test_private_mcp_loader_defaults_do_not_point_at_private_repo_checkout(self) -> None:
+    def test_private_mcp_loader_defaults_allow_hosted_private_bundle_roots_only(self) -> None:
         root_texts = {str(path) for path in DEFAULT_PRIVATE_MCP_BUNDLE_ROOTS}
 
         self.assertIn(str(Path("/app/private_mcp_tools")), root_texts)
-        self.assertFalse(any("county-map-private" in text for text in root_texts))
+        self.assertIn(str(Path("/app/county-map-private/tools")), root_texts)
+        self.assertFalse(any(r"C:\workspace\global map\county-map-private" in text for text in root_texts))
 
     def test_api_catalog_output_root_uses_env_override(self) -> None:
         override = r"C:\tmp\api-catalog-output"
