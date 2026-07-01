@@ -209,7 +209,10 @@ def _fetch_json_from_s3(relative_path: str) -> dict:
 
 
 def _api_catalog_output_root() -> Path:
-    return Path(__file__).resolve().parents[2] / "county-map-private" / "build" / "api_catalog" / "output"
+    configured = str(os.environ.get("COUNTY_MAP_API_CATALOG_OUTPUT_ROOT") or "").strip()
+    if configured:
+        return Path(configured)
+    return Path(__file__).resolve().parents[2] / "api_catalog" / "output"
 
 
 def _load_json_from_runtime_or_s3(relative_path: str, *, use_api_prefix: bool = False) -> dict | None:

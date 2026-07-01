@@ -209,7 +209,7 @@ TOOL_RATE_TIER_BY_PLAN: dict[str, str] = {
 
 def _resolve_caller_rate_tier(request: Request) -> str:
     """Best-effort, non-blocking tier resolution. Honors an already-verified plan
-    on the request; never triggers a fresh Supabase fetch in the rate-limit path."""
+    on the request; never triggers a fresh hosted account lookup in the rate-limit path."""
     user = getattr(request.state, "authenticated_user_context", None)
     if not isinstance(user, dict):
         return "free"

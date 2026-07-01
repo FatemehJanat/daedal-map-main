@@ -94,7 +94,10 @@ async function fetchProfile({ forceRefresh = false } = {}) {
   try {
     const token = currentSession?.access_token;
     const userId = currentSession?.user?.id || '';
-    if (!token) { currentProfile = null; return; }
+    if (!token) {
+      currentProfile = null;
+      return;
+    }
     if (userId && !forceRefresh) {
       const cached = await readAccountContextCache(userId);
       if (cached && Object.prototype.hasOwnProperty.call(cached, 'ops_feeds')) {
@@ -105,7 +108,10 @@ async function fetchProfile({ forceRefresh = false } = {}) {
     const resp = await fetch('/api/auth/me', {
       headers: { Authorization: `Bearer ${token}` }
     });
-    if (!resp.ok) { currentProfile = null; return; }
+    if (!resp.ok) {
+      currentProfile = null;
+      return;
+    }
     const buf = await resp.arrayBuffer();
     const mp = window.MessagePack || {};
     currentProfile = mp.decode ? mp.decode(new Uint8Array(buf)) : null;
@@ -115,7 +121,7 @@ async function fetchProfile({ forceRefresh = false } = {}) {
         savedAt: Date.now()
       });
     }
-  } catch (e) {
+  } catch (_error) {
     currentProfile = null;
   }
 }
@@ -399,14 +405,14 @@ async function consumeLogoutSignal(client) {
     window.history.replaceState(null, '', window.location.pathname + window.location.search);
   }
 
-    const returnTo = String(signal.returnTo || '').trim();
-    if (returnTo) {
-      try {
-        const dest = new URL(returnTo, window.location.origin);
-        const allowedOrigins = new Set([window.location.origin, getSiteBase()]);
-        if (allowedOrigins.has(dest.origin)) {
-          window.location.replace(dest.toString());
-          return true;
+  const returnTo = String(signal.returnTo || '').trim();
+  if (returnTo) {
+    try {
+      const dest = new URL(returnTo, window.location.origin);
+      const allowedOrigins = new Set([window.location.origin, getSiteBase()]);
+      if (allowedOrigins.has(dest.origin)) {
+        window.location.replace(dest.toString());
+        return true;
       }
     } catch (_) {
       // Fall through to default signed-out state.
@@ -529,49 +535,45 @@ export const AuthManager = {
     initPromise = (async () => {
       markAuthBootPending();
       try {
-      authConfig = await loadConfig();
-      if (authConfig.enabled) {
-        const supabase = getBrowserSupabase();
-        authClient = supabase.createClient(authConfig.supabase_url, authConfig.supabase_anon_key, {
-          auth: {
-            persistSession: true,
-            autoRefreshToken: true,
-            storageKey: 'countymap-auth',
-            storage: window.localStorage
+        authConfig = await loadConfig();
+        if (authConfig.enabled) {
+          const supabase = getBrowserSupabase();
+          authClient = supabase.createClient(authConfig.supabase_url, authConfig.supabase_anon_key, {
+            auth: {
+              persistSession: true,
+              autoRefreshToken: true,
+              storageKey: 'countymap-auth',
+              storage: window.localStorage
+            }
+          });
+          const logoutRedirected = await consumeLogoutSignal(authClient);
+          if (logoutRedirected) {
+            return;
           }
-        });
-        const logoutRedirected = await consumeLogoutSignal(authClient);
-        if (logoutRedirected) {
-          return;
-        }
-        // Handle cross-origin session handoff explicitly when a hosted account
-        // site is configured. The handoff uses a short-lived one-time code.
-        // Exchange it for a session, then clean the hash. Direct Supabase hash
-        // imports remain supported for provider/magic-link flows landing here.
-        const handoffSession = await importHandoffCodeSession(authClient) || await importHashSession(authClient);
-        const { data, error } = await authClient.auth.getSession();
-        if (!error) {
-          currentSession = handoffSession || data.session || await trySilentSiteSessionImport(authClient);
-          _lastAuthUserId = currentSession?.user?.id ?? null;
-          clearLegacySharedCookies();
-          await fetchProfile();
-          await syncLocalWrapperAuthState();
-          updateDom();
-        }
-        authClient.auth.onAuthStateChange(async (_event, session) => {
-          const newUserId = session?.user?.id ?? null;
-          const userChanged = newUserId !== _lastAuthUserId;
-          _lastAuthUserId = newUserId;
-          currentSession = session;
-          clearLegacySharedCookies();
-          await fetchProfile();
-          await syncLocalWrapperAuthState();
-          updateDom();
-          if (userChanged && (_event === 'SIGNED_IN' || _event === 'SIGNED_OUT')) {
-            emitAuthChanged();
+          const handoffSession = await importHandoffCodeSession(authClient) || await importHashSession(authClient);
+          const { data, error } = await authClient.auth.getSession();
+          if (!error) {
+            currentSession = handoffSession || data.session || await trySilentSiteSessionImport(authClient);
+            _lastAuthUserId = currentSession?.user?.id ?? null;
+            clearLegacySharedCookies();
+            await fetchProfile();
+            await syncLocalWrapperAuthState();
+            updateDom();
           }
-        });
-      }
+          authClient.auth.onAuthStateChange(async (_event, session) => {
+            const newUserId = session?.user?.id ?? null;
+            const userChanged = newUserId !== _lastAuthUserId;
+            _lastAuthUserId = newUserId;
+            currentSession = session;
+            clearLegacySharedCookies();
+            await fetchProfile();
+            await syncLocalWrapperAuthState();
+            updateDom();
+            if (userChanged && (_event === 'SIGNED_IN' || _event === 'SIGNED_OUT')) {
+              emitAuthChanged();
+            }
+          });
+        }
       } catch (error) {
         console.warn('[Auth] Disabled:', error.message);
         authConfig = { enabled: false, supabase_url: '', supabase_anon_key: '', local_wrapper_enabled: false };

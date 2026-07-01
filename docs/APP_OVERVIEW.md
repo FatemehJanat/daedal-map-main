@@ -68,9 +68,11 @@ In the hosted DaedalMap deployment, the private site owns:
 - account overview
 - billing/credits
 - admin runtime/release visibility
+- live collector orchestration and status surfaces
+- scheduled jobs hosts used for unattended publish and nightly rebuilds
 
 For self-host/local use:
-- Supabase is optional
+- bring your own auth/database/analytics stack if you want one
 - the local runtime can operate without a hosted account system
 - `/settings` acts as a local runtime setup page when hosted auth is not configured
 

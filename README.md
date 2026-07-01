@@ -40,7 +40,9 @@ If you are using this public GitHub repo as a self-host/local runtime, the pract
 - a local data location (`DATA_ROOT`, unless you use the default app-data path)
 - an LLM API key (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`)
 
-Supabase and hosted account wiring are optional for self-host use.
+Hosted account wiring and private verifier endpoints are optional
+for self-host use. Hosted collector scheduling and scheduled-jobs hosts such as
+the private DigitalOcean nightly box are not part of this public repo.
 
 ## What This Repo Is For
 
@@ -249,15 +251,9 @@ RUNTIME_MODE=cloud
 PORT=7000
 ```
 
-If you want optional Supabase-backed auth locally:
-
-```env
-SUPABASE_URL=...
-SUPABASE_ANON_KEY=...
-```
-
-Keep service-role keys server-side only. They are not needed for ordinary local
-evaluation.
+If you want hosted account behavior, connect this runtime to your own auth,
+database, and analytics stack or to a separate private control plane you
+operate. Those business-side services are intentionally not bundled here.
 
 ### 3. Run the app
 
@@ -372,7 +368,6 @@ Important files and folders:
 - `mapmover/` - runtime logic, routes, path helpers, DuckDB helpers
 - `static/` - frontend app modules and styles
 - `templates/` - app HTML shell
-- `supabase_client.py` - auth/control-plane integration
 - `docs/` - local documentation for schemas, runtime notes, and reference material
 
 ## Documentation In This Repo

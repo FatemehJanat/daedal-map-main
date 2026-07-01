@@ -11,7 +11,7 @@ This module:
 2. Builds alias mappings from conversions.json
 3. Matches incoming names to canonical names
 4. Provides loc_id lookups from names and codes (FIPS, ISO)
-5. Logs mismatches to Supabase for data quality tracking
+5. Logs mismatches to the hosted control plane for data quality tracking
 """
 
 import json
@@ -721,9 +721,9 @@ class NameStandardizer:
 
         return iso_code if iso_code in self._country_codes else None
 
-    def log_mismatches_to_supabase(self, dataset_filename: str = None):
+    def log_mismatches_to_control_plane(self, dataset_filename: str = None):
         """
-        Log name mismatches to Supabase for data quality tracking.
+        Log name mismatches to the hosted control plane for data quality tracking.
 
         Deduplicates mismatches before logging - each unique name is logged once.
 
@@ -734,15 +734,7 @@ class NameStandardizer:
             return
 
         try:
-            # Import supabase client from parent directory
-            import sys
-            sys.path.insert(0, str(self.data_dir.parent))
-            from supabase_client import get_supabase_client
-
-            supabase = get_supabase_client()
-            if not supabase:
-                print("[NameStandardizer] Supabase not available, skipping log")
-                return
+            from mapmover.logging_analytics import log_data_quality_issue_to_cloud
 
             # Deduplicate mismatches - only log each unique name once
             seen_names = set()
@@ -757,7 +749,7 @@ class NameStandardizer:
             for mismatch in unique_mismatches:
                 issue_type = 'name_mismatch_fuzzy' if mismatch.get('matched') else 'name_mismatch_none'
 
-                supabase.log_data_quality_issue(
+                log_data_quality_issue_to_cloud(
                     issue_type=issue_type,
                     name=mismatch.get('original', 'unknown'),
                     dataset=dataset_filename,
@@ -771,10 +763,10 @@ class NameStandardizer:
                 )
                 logged_count += 1
 
-            print(f"[NameStandardizer] Logged {logged_count} unique mismatches to Supabase (source: data_ingestion)")
+            print(f"[NameStandardizer] Logged {logged_count} unique mismatches to hosted control plane (source: data_ingestion)")
 
         except Exception as e:
-            print(f"[NameStandardizer] Error logging to Supabase: {e}")
+            print(f"[NameStandardizer] Error logging to hosted control plane: {e}")
 
 
 # Convenience function for quick use

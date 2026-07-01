@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from .hosted_runtime_events import HostedRuntimeEventSink, hosted_runtime_control_enabled
 from .paths import LOGS_DIR, ensure_dir
 
 # Set up logging
@@ -56,12 +57,12 @@ analytics_log_path = analytics_dir / "query_analytics.jsonl"
 api_query_analytics_log_path = analytics_dir / "api_query_analytics.jsonl"
 route_analytics_log_path = analytics_dir / "route_analytics.jsonl"
 
-# Initialize Supabase client (lazy loaded to avoid import issues)
-_supabase_client = None
+# Initialize the hosted telemetry sink lazily.
+_hosted_event_sink = None
 _missing_ip_salt_warned = False
 
-# Background executor for fire-and-forget Supabase logging.
-# Keeps synchronous Supabase HTTP calls off the response path.
+# Background executor for fire-and-forget hosted telemetry.
+# Keeps synchronous control-plane HTTP calls off the response path.
 _analytics_pool_size = max(1, int(os.getenv("ANALYTICS_BG_WORKERS", "4")))
 _analytics_executor = ThreadPoolExecutor(
     max_workers=_analytics_pool_size,
@@ -96,11 +97,10 @@ def _submit_background(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Non
     affect the response path or the next request.
 
     Retry policy: one retry on any exception with a 100ms backoff. The most
-    common failure here is httpx's "Server disconnected" when the postgrest
-    connection pool holds a connection the Supabase server has closed (idle
-    timeout, restart). httpx evicts the dead connection on the failed attempt,
-    so the second try uses a fresh connection. Retrying any exception is
-    safe because these calls are idempotent inserts with server-generated ids.
+    common failure here is a transient disconnect while posting to the hosted
+    control plane. The retry uses a fresh connection on the second attempt.
+    Retrying any exception is safe because these calls are idempotent inserts
+    with server-generated ids.
     """
     def _run() -> None:
         last_exc: Exception | None = None
@@ -165,7 +165,7 @@ _MCP_SCANNER_METHODS = frozenset({
 })
 
 
-def _should_mirror_route_event_to_supabase(
+def _should_mirror_route_event_to_control_plane(
     path: str | None,
     method: str | None = None,
     status_code: int | None = None,
@@ -272,11 +272,11 @@ def log_api_query_event(
         auth_user_id or "anonymous",
     )
 
-    supabase_client = get_supabase()
-    if supabase_client:
+    event_sink = get_hosted_event_sink()
+    if event_sink:
         _meta = metadata or {}
         _submit_background(
-            supabase_client.log_api_usage_event,
+            event_sink.log_api_usage_event,
             event_kind=decision or "request_completed",
             request_id=request_id,
             capability_id=capability_id,
@@ -359,8 +359,8 @@ def log_route_request_event(
     _append_jsonl(route_analytics_log_path, event)
 
     # Skip stdout logging for low-signal scanner traffic. JSONL still
-    # captures the full event for analytics. Supabase mirror is already
-    # selective for the same paths via _should_mirror_route_event_to_supabase.
+    # captures the full event for analytics. Hosted mirroring is already
+    # selective for the same paths via _should_mirror_route_event_to_control_plane.
     # Always log when something interesting happened (rate limit, error).
     _is_low_signal = (
         (path == "/mcp" or path.startswith("/mcp/"))
@@ -382,8 +382,8 @@ def log_route_request_event(
             source_id or "-",
         )
 
-    supabase_client = get_supabase()
-    if supabase_client and _should_mirror_route_event_to_supabase(
+    event_sink = get_hosted_event_sink()
+    if event_sink and _should_mirror_route_event_to_control_plane(
         path,
         method=method,
         status_code=status_code,
@@ -392,7 +392,7 @@ def log_route_request_event(
         error_code=error_code,
     ):
         _submit_background(
-            supabase_client.log_security_event,
+            event_sink.log_security_event,
             method=method,
             path=path,
             surface=surface,
@@ -415,23 +415,22 @@ def log_route_request_event(
         )
 
 
-def get_supabase():
-    """Get the Supabase client, initializing if needed."""
-    global _supabase_client
+def get_hosted_event_sink():
+    """Get the hosted telemetry sink, initializing if needed."""
+    global _hosted_event_sink
     if _runtime_analytics_disabled():
         return None
-    if _supabase_client is None:
+    if _hosted_event_sink is None:
         try:
-            from supabase_client import get_supabase_client
-            _supabase_client = get_supabase_client()
-            if _supabase_client:
-                logger.info("Supabase client initialized - cloud logging enabled")
+            if hosted_runtime_control_enabled():
+                _hosted_event_sink = HostedRuntimeEventSink()
+                logger.info("Hosted runtime control sink initialized")
             else:
-                logger.info("Supabase not configured - using local logging only")
+                logger.info("Hosted runtime control is not configured - using local logging only")
         except Exception as e:
-            logger.warning(f"Could not initialize Supabase client: {e}")
-            _supabase_client = False  # Mark as failed to avoid retrying
-    return _supabase_client if _supabase_client else None
+            logger.warning(f"Could not initialize hosted runtime control sink: {e}")
+            _hosted_event_sink = False  # Mark as failed to avoid retrying
+    return _hosted_event_sink if _hosted_event_sink else None
 
 
 def log_conversation(
@@ -473,10 +472,10 @@ def log_conversation(
         except Exception as e:
             logger.error(f"Failed to log conversation locally: {e}")
 
-    supabase_client = get_supabase()
-    if supabase_client and session_id:
+    event_sink = get_hosted_event_sink()
+    if event_sink and session_id:
         _submit_background(
-            supabase_client.log_session_message,
+            event_sink.log_session_message,
             session_id=session_id,
             user_query=query,
             assistant_response=response_text or "",
@@ -528,10 +527,10 @@ def log_llm_usage_event(
         plan_id or "-",
     )
 
-    supabase_client = get_supabase()
-    if supabase_client:
+    event_sink = get_hosted_event_sink()
+    if event_sink:
         _submit_background(
-            supabase_client.log_llm_usage_event,
+            event_sink.log_llm_usage_event,
             request_id=request_id,
             session_id=session_id,
             surface=surface,
@@ -590,10 +589,10 @@ def log_app_error(
         error_message[:200] if error_message else "",
     )
 
-    supabase_client = get_supabase()
-    if supabase_client:
+    event_sink = get_hosted_event_sink()
+    if event_sink:
         _submit_background(
-            supabase_client.log_error,
+            event_sink.log_error,
             error_type=error_type,
             error_message=error_message,
             query=query,
@@ -648,11 +647,11 @@ def log_missing_geometry(country_names, query=None, dataset=None, region=None):
         except Exception as e:
             logger.error(f"Failed to log missing geometries locally: {e}")
 
-    # Log to Supabase if configured
-    supabase_client = get_supabase()
-    if supabase_client:
+    # Mirror to the private control plane when configured.
+    event_sink = get_hosted_event_sink()
+    if event_sink:
         _submit_background(
-            supabase_client.log_missing_geometry,
+            event_sink.log_missing_geometry,
             country_names=country_names,
             query=query,
             dataset=dataset,
@@ -662,7 +661,7 @@ def log_missing_geometry(country_names, query=None, dataset=None, region=None):
 
 def log_error_to_cloud(error_type, error_message, query=None, tb=None, metadata=None):
     """
-    Log errors to Supabase cloud for centralized error tracking.
+    Log errors to the hosted control plane for centralized tracking.
 
     Args:
         error_type: Type of error (e.g., "JSONDecodeError", "ValueError")
@@ -671,10 +670,10 @@ def log_error_to_cloud(error_type, error_message, query=None, tb=None, metadata=
         tb: Traceback string
         metadata: Additional context
     """
-    supabase_client = get_supabase()
-    if supabase_client:
+    event_sink = get_hosted_event_sink()
+    if event_sink:
         _submit_background(
-            supabase_client.log_error,
+            event_sink.log_error,
             error_type=error_type,
             error_message=error_message,
             query=query,
@@ -685,17 +684,17 @@ def log_error_to_cloud(error_type, error_message, query=None, tb=None, metadata=
 
 def log_missing_region_to_cloud(region_name, query=None, dataset=None):
     """
-    Log missing region lookups to Supabase for tracking gaps in conversions.json.
+    Log missing region lookups to the hosted control plane for tracking gaps in conversions.json.
 
     Args:
         region_name: The region name that failed lookup
         query: The query that triggered this
         dataset: The dataset being queried
     """
-    supabase_client = get_supabase()
-    if supabase_client:
+    event_sink = get_hosted_event_sink()
+    if event_sink:
         _submit_background(
-            supabase_client.log_missing_region,
+            event_sink.log_missing_region,
             region_name=region_name,
             query=query,
             dataset=dataset,
@@ -717,3 +716,26 @@ def log_missing_region_to_cloud(region_name, query=None, dataset=None):
                 f.write(json.dumps(entry) + "\n")
         except Exception as e:
             logger.error(f"Failed to log missing region locally: {e}")
+
+
+def log_data_quality_issue_to_cloud(
+    issue_type,
+    name,
+    *,
+    query=None,
+    dataset=None,
+    region=None,
+    metadata=None,
+):
+    """Log a generic data-quality issue through the hosted control plane."""
+    event_sink = get_hosted_event_sink()
+    if event_sink:
+        _submit_background(
+            event_sink.log_data_quality_issue,
+            issue_type=issue_type,
+            name=name,
+            query=query,
+            dataset=dataset,
+            region=region,
+            metadata=metadata,
+        )

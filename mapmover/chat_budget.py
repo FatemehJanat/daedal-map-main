@@ -12,10 +12,10 @@ constructing the LLMUsageRecorder and invoking the LLM):
         return _budget_rejection_response(decision)
     # ...continue normal LLM path
 
-Reads from the `llm_usage_events_with_cost` view. A 30-second in-process cache
-keeps the check off the response path. The cache means a hot caller can
-technically over-spend by up to 30s of LLM calls before being cut off; that is
-acceptable for v1.
+In the hosted deployment this reads daily spend from the private control plane's
+backing store. A 30-second in-process cache keeps the check off the response
+path. The cache means a hot caller can technically over-spend by up to 30s of
+LLM calls before being cut off; that is acceptable for v1.
 
 See docs/future/llm_usage_tracking_implementation.md for the phased plan.
 """
@@ -29,6 +29,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Optional
+
+from .hosted_runtime_account import load_anonymous_usage_cost
 
 
 _BUDGET_CACHE_TTL_S = 30.0
@@ -78,34 +80,16 @@ def get_anonymous_cap_usd() -> Decimal:
 def _fetch_anonymous_cost_today(ip_hash: str) -> Decimal:
     """Sum of cost_usd today (UTC) for anonymous calls from this ip_hash.
 
-    Returns 0 on Supabase unavailable / query failure - we fail open rather than
-    blocking traffic on an analytics outage.
+    Returns 0 on hosted budget-store unavailable / query failure - we fail open
+    rather than blocking traffic on a control-plane outage.
     """
-    from .logging_analytics import get_supabase, logger
+    from .logging_analytics import logger
 
-    client = get_supabase()
-    if client is None:
-        return Decimal("0")
     try:
-        result = (
-            client.client.table("llm_usage_events_with_cost")
-            .select("cost_usd")
-            .eq("caller_kind", "anonymous")
-            .eq("ip_hash", ip_hash)
-            .gte("created_at", _utc_today_start_iso())
-            .execute()
-        )
-        rows = result.data or []
-        total = Decimal("0")
-        for row in rows:
-            value = row.get("cost_usd")
-            if value is None:
-                continue
-            try:
-                total += Decimal(str(value))
-            except InvalidOperation:
-                continue
-        return total
+        cost = load_anonymous_usage_cost(ip_hash, _utc_today_start_iso())
+        if cost is None:
+            return Decimal("0")
+        return Decimal(str(cost))
     except Exception as exc:
         logger.warning("anonymous budget fetch failed ip_hash=%s: %s", ip_hash, exc)
         return Decimal("0")
@@ -114,7 +98,7 @@ def _fetch_anonymous_cost_today(ip_hash: str) -> Decimal:
 def check_anonymous_chat_budget(caller_ctx: dict) -> BudgetDecision:
     """Decide whether an anonymous chat call is allowed.
 
-    Authenticated callers always get allowed=True - their gating is Phase 2b.
+    Authenticated callers always get allowed=True - their hosted gating is Phase 2b.
     """
     caller_kind = (caller_ctx or {}).get("caller_kind")
     cap = get_anonymous_cap_usd()

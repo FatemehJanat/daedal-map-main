@@ -119,15 +119,19 @@ Usually set these for a usable local app:
 - `DATA_ROOT`
 - `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`
 
-Usually leave these unset unless you explicitly want hosted/account features:
+Usually leave these unset unless you explicitly want hosted private-control-plane bridges:
 
-- `SUPABASE_URL`
-- `SUPABASE_ANON_KEY`
+- `CLOUD_INTERNAL_API_TOKEN`
+- `COMMERCIAL_ACCESS_VERIFIER_BASE_URL`
+- `RESEARCH_CREDIT_VERIFIER_BASE_URL`
 
-Without Supabase config, the app stays in local/self-host mode and `/settings`
-becomes a local setup page instead of a hosted account redirect. Keep
-service-role keys server-side only; they are not needed for ordinary local
-evaluation.
+Without private control-plane config, the app stays in local/self-host mode and
+`/settings` becomes a local setup page instead of a hosted account redirect.
+Keep business-side database and analytics credentials server-side only; they
+are not needed for ordinary local evaluation. Hosted verifier routes stay
+inactive unless the private control-plane token is configured. The hosted
+collector scheduler, Railway collector service, and private scheduled-jobs
+hosts remain private-side infrastructure.
 
 ## Related Docs
 

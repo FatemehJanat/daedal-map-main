@@ -1,73 +1,46 @@
 """
-Helpers for optional Supabase-backed auth context on API requests.
+Open-core auth helpers for the public runtime.
 
-This is intentionally lightweight:
-- no auth requirement for public use
-- verifies bearer tokens against Supabase when present
-- caches verification briefly to avoid repeated auth round-trips
+The downloadable/local runtime remains guest-first and does not embed
+DaedalMap's private auth stack. Hosted deployments can still resolve bearer
+tokens through the private runtime-account bridge when that control plane is
+configured.
 """
 
 from __future__ import annotations
 
-import asyncio
-import os
 import time
 from typing import Any, Dict, Optional
 
-import httpx
-import requests
 from fastapi import Request
 
-from . import logger
-
-
-_async_client: Optional[httpx.AsyncClient] = None
-_async_client_loop: Optional[asyncio.AbstractEventLoop] = None
-
-
-def _get_async_client() -> httpx.AsyncClient:
-    """Lazily create a shared httpx.AsyncClient for Supabase auth verification.
-
-    Reusing one client keeps TLS sessions warm across requests, which matters
-    when many authenticated requests miss the in-memory cache simultaneously.
-    """
-    global _async_client, _async_client_loop
-    current_loop = asyncio.get_running_loop()
-    if _async_client is None or _async_client_loop is not current_loop:
-        _async_client = httpx.AsyncClient(timeout=httpx.Timeout(5.0))
-        _async_client_loop = current_loop
-    return _async_client
+from mapmover.hosted_runtime_account import load_authenticated_user
 
 
 AUTH_CACHE_TTL_SECONDS = 300
 AUTH_CACHE_MAXSIZE = 1024
+_AUTH_REQUEST_CACHE_ATTR = "authenticated_user_context"
+_AUTH_REQUEST_CACHE_READY_ATTR = "authenticated_user_context_resolved"
 _auth_cache: Dict[str, Dict[str, Any]] = {}
 
 
 def _get_bearer_token(request: Request) -> Optional[str]:
-    auth_header = request.headers.get("authorization", "").strip()
+    auth_header = str(request.headers.get("authorization") or "").strip()
     if not auth_header.lower().startswith("bearer "):
         return None
     token = auth_header[7:].strip()
     return token or None
 
 
-def _get_supabase_auth_config() -> Optional[Dict[str, str]]:
-    url = os.getenv("SUPABASE_URL", "").strip()
-    anon_key = os.getenv("SUPABASE_ANON_KEY", "").strip()
-    if not url or not anon_key:
-        return None
-    return {"url": url.rstrip("/"), "anon_key": anon_key}
-
-
-def _get_cached_user(token: str) -> Optional[Dict[str, Any]]:
+def _get_cached_user(token: str) -> tuple[bool, Optional[Dict[str, Any]]]:
     entry = _auth_cache.get(token)
     if not entry:
-        return None
-    if time.time() - entry["cached_at"] > AUTH_CACHE_TTL_SECONDS:
+        return False, None
+    if time.time() - float(entry.get("cached_at") or 0) > AUTH_CACHE_TTL_SECONDS:
         _auth_cache.pop(token, None)
-        return None
-    return entry["user"]
+        return False, None
+    user = entry.get("user")
+    return True, user if isinstance(user, dict) else None
 
 
 def _cache_user(token: str, user: Optional[Dict[str, Any]]) -> None:
@@ -76,119 +49,57 @@ def _cache_user(token: str, user: Optional[Dict[str, Any]]) -> None:
         _auth_cache.pop(oldest_token, None)
     _auth_cache[token] = {
         "cached_at": time.time(),
-        "user": user,
+        "user": user if isinstance(user, dict) else None,
     }
 
 
-def _try_cache_path(
-    request: Request,
-    *,
-    force_refresh: bool = False,
-) -> tuple[bool, Optional[Dict[str, Any]], Optional[str], Optional[Dict[str, str]]]:
-    """Shared fast-path: per-request state cache, then per-token in-memory cache.
+def _set_request_user(request: Request, user: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    setattr(request.state, _AUTH_REQUEST_CACHE_ATTR, user if isinstance(user, dict) else None)
+    setattr(request.state, _AUTH_REQUEST_CACHE_READY_ATTR, True)
+    return getattr(request.state, _AUTH_REQUEST_CACHE_ATTR, None)
 
-    Returns (resolved, user, token, config). When `resolved` is True, the caller
-    should return `user` immediately. When False, the caller must verify against
-    Supabase using `token` and `config`.
-    """
+
+def _get_request_cached_user(request: Request) -> tuple[bool, Optional[Dict[str, Any]]]:
+    if getattr(request.state, _AUTH_REQUEST_CACHE_READY_ATTR, False):
+        cached = getattr(request.state, _AUTH_REQUEST_CACHE_ATTR, None)
+        return True, cached if isinstance(cached, dict) else None
+    return False, None
+
+
+def _resolve_authenticated_user(request: Request, *, force_refresh: bool = False) -> Optional[Dict[str, Any]]:
     if not force_refresh:
-        cached_request_user = getattr(request.state, "authenticated_user_context", None)
-        if cached_request_user is not None:
-            return True, cached_request_user, None, None
+        resolved, cached_user = _get_request_cached_user(request)
+        if resolved:
+            return cached_user
 
     token = _get_bearer_token(request)
     if not token:
-        request.state.authenticated_user_context = None
-        return True, None, None, None
+        return _set_request_user(request, None)
 
     if not force_refresh:
-        cached = _get_cached_user(token)
-        if cached is not None:
-            request.state.authenticated_user_context = cached
-            return True, cached, None, None
+        cached_hit, cached_user = _get_cached_user(token)
+        if cached_hit:
+            return _set_request_user(request, cached_user)
 
-    config = _get_supabase_auth_config()
-    if not config:
-        request.state.authenticated_user_context = None
-        return True, None, None, None
-
-    return False, None, token, config
+    user = load_authenticated_user(token)
+    _cache_user(token, user)
+    return _set_request_user(request, user)
 
 
 def get_authenticated_user(request: Request, *, force_refresh: bool = False) -> Optional[Dict[str, Any]]:
-    """Sync entry point. Blocks the calling thread on cache miss.
-
-    Use `get_authenticated_user_async` from async code paths to avoid blocking
-    the event loop on Supabase verification.
-    """
-    resolved, user, token, config = _try_cache_path(request, force_refresh=force_refresh)
-    if resolved:
-        return user
-
-    try:
-        response = requests.get(
-            f"{config['url']}/auth/v1/user",
-            headers={
-                "apikey": config["anon_key"],
-                "Authorization": f"Bearer {token}",
-            },
-            timeout=5,
-        )
-        if response.status_code != 200:
-            _cache_user(token, None)
-            request.state.authenticated_user_context = None
-            return None
-
-        user = response.json()
-        _cache_user(token, user)
-        request.state.authenticated_user_context = user
-        return user
-    except Exception as exc:
-        logger.warning(f"Supabase user verification failed: {exc}")
-        request.state.authenticated_user_context = None
-        return None
+    return _resolve_authenticated_user(request, force_refresh=force_refresh)
 
 
 async def get_authenticated_user_async(request: Request, *, force_refresh: bool = False) -> Optional[Dict[str, Any]]:
-    """Async entry point that does not block the event loop on cache miss.
-
-    Identical contract to `get_authenticated_user`. The cache hit path is
-    synchronous in-memory work; only the Supabase verification fetch is awaited.
-    """
-    resolved, user, token, config = _try_cache_path(request, force_refresh=force_refresh)
-    if resolved:
-        return user
-
-    try:
-        client = _get_async_client()
-        response = await client.get(
-            f"{config['url']}/auth/v1/user",
-            headers={
-                "apikey": config["anon_key"],
-                "Authorization": f"Bearer {token}",
-            },
-        )
-        if response.status_code != 200:
-            _cache_user(token, None)
-            request.state.authenticated_user_context = None
-            return None
-
-        user = response.json()
-        _cache_user(token, user)
-        request.state.authenticated_user_context = user
-        return user
-    except Exception as exc:
-        logger.warning(f"Supabase user verification failed: {exc}")
-        request.state.authenticated_user_context = None
-        return None
+    return _resolve_authenticated_user(request, force_refresh=force_refresh)
 
 
 def build_session_cache_key(session_id: str, user: Optional[Dict[str, Any]]) -> str:
     """
     Build the backend session cache key.
 
-    Authenticated users get a user-scoped cache namespace.
-    Anonymous users keep their existing session ID behavior.
+    Open-core runtime defaults to guest-only behavior, but the helper preserves
+    the old user-scoped namespace shape for any future generic auth bridge.
     """
     base_session_id = (session_id or "anonymous").strip() or "anonymous"
     user_id = (user or {}).get("id")

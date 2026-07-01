@@ -138,7 +138,7 @@ def get_fallback_coordinates(country_code, log_missing=True):
 
     Args:
         country_code: ISO-3 country code
-        log_missing: If True, log missing places to Supabase for tracking
+        log_missing: If True, log missing places to the hosted control plane for tracking
     """
     if not country_code:
         return None
@@ -160,17 +160,16 @@ def get_fallback_coordinates(country_code, log_missing=True):
             # coords is [lon, lat] format (GeoJSON standard)
             return (coords[1], coords[0])  # Return as (lat, lon)
 
-    # 3. Not found anywhere - log to Supabase if enabled
+    # 3. Not found anywhere - log to the hosted control plane if enabled
     if log_missing:
         try:
-            from supabase_client import get_supabase_client
-            supabase = get_supabase_client()
-            if supabase:
-                supabase.log_data_quality_issue(
-                    issue_type="missing_geometry",
-                    name=country_code,
-                    metadata={"source": "get_fallback_coordinates"}
-                )
+            from .logging_analytics import log_data_quality_issue_to_cloud
+
+            log_data_quality_issue_to_cloud(
+                issue_type="missing_geometry",
+                name=country_code,
+                metadata={"source": "get_fallback_coordinates"},
+            )
         except Exception as e:
             logging.debug(f"Could not log missing geometry: {e}")
 

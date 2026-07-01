@@ -22,6 +22,8 @@ from mapmover.auth_context import build_session_cache_key, get_authenticated_use
 from mapmover.corpus_registry import corpus_registry
 from mapmover import ACCOUNT_URL, CacheSignature, clear_metadata_cache, initialize_catalog, logger, session_manager
 from mapmover.foundation_helpers import load_reference_json
+from mapmover.hosted_runtime_account import load_account_context
+from mapmover.hosted_runtime_events import submit_runtime_feedback
 from mapmover.order_queue import order_queue
 from mapmover.runtime_config import get_runtime_config
 from mapmover.runtime_build_info import runtime_build_info
@@ -63,7 +65,7 @@ def _admin_catalog_refresh_forbidden_response(req: Request) -> Response | None:
     # Trusted service-to-service path: the private dashboard/control plane calls
     # this with the shared internal token (the same trust boundary that already
     # lets it drive collectors). Accept it in place of an admin user session so
-    # the dashboard "Force catalog refresh" button works without a Supabase JWT.
+    # the dashboard "Force catalog refresh" button works without hosted-user auth.
     import hmac
     internal_token = os.getenv("CLOUD_INTERNAL_API_TOKEN", "").strip()
     provided_token = (req.headers.get("x-internal-api-key") or "").strip()
@@ -79,29 +81,21 @@ def _admin_catalog_refresh_forbidden_response(req: Request) -> Response | None:
         )
         return msgpack_error("Unauthorized", 401)
 
-    service_key = os.getenv("SUPABASE_SERVICE_KEY", "").strip()
-    if service_key:
-        try:
-            from supabase_client import SupabaseClient
-            supa = SupabaseClient()
-            context = supa.get_user_entitlement_context(auth_user.get("id"))
-            if not context or context.get("error"):
-                logger.warning(
-                    "Denied admin runtime action: entitlement lookup empty user_id=%s",
-                    auth_user.get("id"),
-                )
-                return msgpack_error("Forbidden", 403)
-            if context.get("plan_id") != "master" and not context.get("is_admin"):
-                logger.warning(
-                    "Denied admin runtime action: insufficient privileges user_id=%s plan_id=%s is_admin=%s",
-                    auth_user.get("id"),
-                    context.get("plan_id"),
-                    context.get("is_admin"),
-                )
-                return msgpack_error("Forbidden", 403)
-        except Exception as exc:
-            logger.warning(f"Admin runtime action: entitlement check failed: {exc}")
-            return msgpack_error("Entitlement check failed", 500)
+    context = load_account_context(str(auth_user.get("id") or ""))
+    if context is None:
+        logger.warning(
+            "Denied admin runtime action: entitlement lookup unavailable user_id=%s",
+            auth_user.get("id"),
+        )
+        return msgpack_error("Forbidden", 403)
+    if context.get("plan_id") != "master" and not context.get("is_admin"):
+        logger.warning(
+            "Denied admin runtime action: insufficient privileges user_id=%s plan_id=%s is_admin=%s",
+            auth_user.get("id"),
+            context.get("plan_id"),
+            context.get("is_admin"),
+        )
+        return msgpack_error("Forbidden", 403)
     return None
 
 
@@ -413,31 +407,14 @@ def _require_admin(req: Request):
         )
         return None, _admin_error(req, "Unauthorized", 401)
 
-    service_key = os.getenv("SUPABASE_SERVICE_KEY", "").strip()
-    if not service_key:
+    context = load_account_context(str(auth_user.get("id") or ""))
+    if context is None:
         logger.warning(
-            "Denied hosted admin request: service key missing path=%s user_id=%s",
+            "Denied hosted admin request: account context unavailable path=%s user_id=%s",
             req.url.path,
             auth_user.get("id"),
         )
         return None, _admin_error(req, "Admin operations unavailable", 403)
-
-    try:
-        from supabase_client import SupabaseClient
-
-        supa = SupabaseClient()
-        context = supa.get_user_entitlement_context(auth_user.get("id"))
-    except Exception as exc:
-        logger.warning(f"Admin entitlement check failed: {exc}")
-        return None, _admin_error(req, "Entitlement check failed", 500)
-
-    if not context or context.get("error"):
-        logger.warning(
-            "Denied hosted admin request: entitlement lookup empty path=%s user_id=%s",
-            req.url.path,
-            auth_user.get("id"),
-        )
-        return None, _admin_error(req, "Forbidden", 403)
     if context.get("plan_id") != "master" and not context.get("is_admin"):
         logger.warning(
             "Denied hosted admin request: insufficient privileges path=%s user_id=%s plan_id=%s is_admin=%s",
@@ -1627,7 +1604,7 @@ async def health_check():
 
 @router.post("/api/feedback")
 async def submit_feedback(request: Request):
-    """Accept anonymous feedback and write it to the Supabase feedback table.
+    """Accept anonymous feedback and write it through the private feedback bridge.
     Accepts both msgpack (map app) and JSON (the .com site).
     """
     from mapmover.paths import APP_URL
@@ -1680,18 +1657,12 @@ async def submit_feedback(request: Request):
         source = "local"
 
     try:
-        from supabase_client import get_supabase_client
-        sb = get_supabase_client()
-        if sb:
-            row = {"message": message, "source": source}
-            if user_id:
-                row["user_id"] = user_id
-            sb.client.table("feedback").insert(row).execute()
-        else:
-            logger.warning("Feedback received but Supabase not configured: %s", message[:80])
+        saved = submit_runtime_feedback(message=message, source=source, user_id=user_id)
     except Exception as exc:
         logger.error("Failed to save feedback: %s", exc)
         return msgpack_error("Could not save feedback right now", 500)
+    if not saved:
+        logger.warning("Feedback received without hosted control-plane sink: %s", message[:80])
 
     return msgpack_response({"ok": True})
 
@@ -1806,7 +1777,7 @@ def _get_entitled_packs(req: Request):
     None  -> full bypass: all catalog sources returned, including those without pack_id.
              Applies to: master plan, is_admin=True, or no service key (dev/self-host).
     set() -> anonymous or entitlement lookup failed: geometry_global only.
-    {..}  -> authenticated user: their entitled pack_ids from Supabase.
+    {..}  -> authenticated user: their entitled pack_ids from the hosted account service.
 
     Plan tiers:
       master      -> None (owner, sees everything including untagged/unreleased sources)
@@ -1821,25 +1792,14 @@ def _get_entitled_packs(req: Request):
     if not auth_user:
         return set()
 
-    service_key = os.getenv("SUPABASE_SERVICE_KEY", "").strip()
-    if not service_key:
-        # Dev / self-host mode: no entitlement enforcement
-        return None
-
     user_id = auth_user.get("id")
-    try:
-        from supabase_client import SupabaseClient
-        supa = SupabaseClient()
-        context = supa.get_user_entitlement_context(user_id)
-        if context and not context.get("error"):
-            # Master plan or admin flag: full bypass, no pack_id filtering at all
-            if context.get("plan_id") == "master" or context.get("is_admin"):
-                return None
-            user_packs = set(context.get("user_packs") or [])
-            org_packs = set(context.get("org_packs") or [])
-            return user_packs | org_packs
-    except Exception as exc:
-        logger.warning(f"Entitlement lookup failed for catalog filter: {exc}")
+    context = load_account_context(str(user_id or ""))
+    if context:
+        if context.get("plan_id") == "master" or context.get("is_admin"):
+            return None
+        user_packs = set(context.get("user_packs") or [])
+        org_packs = set(context.get("org_packs") or [])
+        return user_packs | org_packs
 
     # Fallback: authenticated but entitlement fetch failed
     return set()
@@ -3987,9 +3947,9 @@ async def get_auth_me(req: Request):
     """
     Return the current user's identity and plan info.
 
-    - Unauthenticated: returns guest defaults
-    - Authenticated without service key: returns basic identity from token
-    - Authenticated with service key: returns full profile and plan from Supabase
+    Guest/local runtime returns free defaults.
+    Hosted runtime callers can attach a bearer token, which is resolved through
+    the private runtime-account bridge instead of direct public business logic.
     """
     auth_user = get_authenticated_user(req)
 
@@ -3999,40 +3959,32 @@ async def get_auth_me(req: Request):
             "plan_id": "free",
             "enabled_shells": ["simple"],
             "max_packs": 2,
+            "ops_feeds": [],
         })
 
     user_id = auth_user.get("id")
     email = auth_user.get("email")
 
-    # Try to load full profile via service key
-    service_key = os.getenv("SUPABASE_SERVICE_KEY", "").strip()
-    if service_key:
-        try:
-            from supabase_client import SupabaseClient
-            supa = SupabaseClient()
-            context = supa.get_user_entitlement_context(user_id)
-            metadata = auth_user.get("user_metadata") if isinstance(auth_user.get("user_metadata"), dict) else {}
-            ops_feeds = metadata.get("ops_feeds") if isinstance(metadata.get("ops_feeds"), list) else []
-            if context and not context.get("error"):
-                return msgpack_response({
-                    "authenticated": True,
-                    "user_id": user_id,
-                    "email": email,
-                    "plan_id": context.get("plan_id", "free"),
-                    "is_admin": context.get("is_admin", False),
-                    "enabled_shells": context.get("enabled_shells", ["simple"]),
-                    "max_packs": context.get("max_packs", 2),
-                    "org_id": context.get("org_id"),
-                    "user_packs": context.get("user_packs", []),
-                    "org_packs": context.get("org_packs", []),
-                    "ops_feeds": ops_feeds,
-                    "balance_micro_usd": context.get("balance_micro_usd"),
-                    "account_url": ACCOUNT_URL,
-                })
-        except Exception as exc:
-            logger.warning(f"Failed to load entitlement context: {exc}")
+    context = load_account_context(str(user_id or ""))
+    metadata = auth_user.get("user_metadata") if isinstance(auth_user.get("user_metadata"), dict) else {}
+    ops_feeds = metadata.get("ops_feeds") if isinstance(metadata.get("ops_feeds"), list) else []
+    if context:
+        return msgpack_response({
+            "authenticated": True,
+            "user_id": user_id,
+            "email": email,
+            "plan_id": context.get("plan_id", "free"),
+            "is_admin": context.get("is_admin", False),
+            "enabled_shells": context.get("enabled_shells", ["simple"]),
+            "max_packs": context.get("max_packs", 2),
+            "org_id": context.get("org_id"),
+            "user_packs": context.get("user_packs", []),
+            "org_packs": context.get("org_packs", []),
+            "ops_feeds": ops_feeds,
+            "balance_micro_usd": context.get("balance_micro_usd"),
+            "account_url": ACCOUNT_URL,
+        })
 
-    # Fallback: identity from token only, default to free plan
     return msgpack_response({
         "authenticated": True,
         "user_id": user_id,
@@ -4040,7 +3992,8 @@ async def get_auth_me(req: Request):
         "plan_id": "free",
         "enabled_shells": ["simple"],
         "max_packs": 2,
-        "ops_feeds": (auth_user.get("user_metadata") or {}).get("ops_feeds", []),
+        "ops_feeds": ops_feeds,
+        "account_url": ACCOUNT_URL,
     })
 
 

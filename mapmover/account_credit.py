@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Optional
 
-from mapmover import logger
-from supabase_client import get_supabase_client
+from mapmover.hosted_research_credit import (
+    hosted_research_credit_enabled,
+    hosted_research_credit_settlement,
+    hosted_research_budget_decision,
+)
 
 
 MICRO_USD_PER_DOLLAR = 1_000_000
@@ -27,115 +29,15 @@ class ResearchBudgetDecision:
     cta_url: Optional[str] = None
 
 
-def _to_micro_usd(cost_usd: Decimal) -> int:
-    scaled = (cost_usd * Decimal(MICRO_USD_PER_DOLLAR)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
-    return int(scaled)
-
-
-def get_user_balance_micro_usd(user_id: str) -> Optional[int]:
-    """Fetch authoritative balance from Supabase. Used by settlement only;
-    the pre-call hot path reads `account_locked` from the cached profile via
-    `_get_cached_profile()` in `mapmover.llm_usage` to avoid a round trip."""
-    client = get_supabase_client()
-    if client is None:
-        return None
-    profile = client.get_profile(user_id)
-    if not isinstance(profile, dict):
-        return None
-    try:
-        return int(profile.get("balance_micro_usd") or 0)
-    except Exception:
-        return None
-
-
-def _cached_profile(user_id: str) -> Optional[dict]:
-    """Read from the 5-minute in-process profile cache used by classify_caller.
-
-    Returns None if the cache layer is unavailable. The caller decides whether
-    to fail open or block on cache miss.
-    """
-    try:
-        from mapmover.llm_usage import _get_cached_profile  # type: ignore
-    except Exception:
-        return None
-    try:
-        return _get_cached_profile(user_id)
-    except Exception:
-        return None
-
-
-def _fresh_profile_after_topup(user_id: str) -> Optional[dict]:
-    """Bypass the profile cache to fetch the authoritative `account_locked`
-    state from Supabase. Called only when the cached profile says the user is
-    locked, so a just-topped-up user does not eat up to 5 minutes of stale
-    rejection while their cache entry expires.
-
-    Cost: one Supabase round trip per locked-user attempt. The unlocked hot
-    path is unaffected.
-    """
-    client = get_supabase_client()
-    if client is None:
-        return None
-    try:
-        return client.get_profile(user_id)
-    except Exception:
-        return None
-
-
 def check_research_budget(caller_ctx: dict, model: str | None = None) -> ResearchBudgetDecision:
-    """Pre-call budget gate. Reads `account_locked` from the cached profile so
-    the hot path costs zero Supabase round trips. Settlement still runs
-    post-call against the authoritative ledger inside
-    `deduct_micro_credits_with_floor()`.
+    """Pre-call budget gate for hosted Research.
 
-    Lock semantics: `account_locked = TRUE` whenever the most recent settlement
-    pushed `balance_micro_usd` below zero. The previous turn already completed
-    (settlement is post-call); this gate rejects the *next* turn. Top-up via
-    `grant_micro_credits()` clears the flag in the same transaction.
+    The public runtime fails open when no private verifier is configured so
+    local and self-host installs remain usable without hosted account wiring.
     """
-    caller_kind = str((caller_ctx or {}).get("caller_kind") or "").strip().lower()
-    user_id = str((caller_ctx or {}).get("auth_user_id") or "").strip()
-
-    if caller_kind not in {"authenticated", "qa_suite", "qa_http_suite"} or not user_id:
+    if not hosted_research_credit_enabled():
         return ResearchBudgetDecision(allowed=True, balance_micro_usd=0)
-
-    profile = _cached_profile(user_id)
-    if not isinstance(profile, dict):
-        # Fail open on cache lookup problems so we never break Research on
-        # transient Supabase issues. Settlement still enforces the floor.
-        return ResearchBudgetDecision(allowed=True, balance_micro_usd=0)
-
-    account_locked = bool(profile.get("account_locked"))
-    try:
-        balance_micro_usd = int(profile.get("balance_micro_usd") or 0)
-    except Exception:
-        balance_micro_usd = 0
-
-    if account_locked:
-        # A user who just topped up via Stripe may have a stale cached profile
-        # showing the old lock state. The webhook runs in a separate process
-        # so in-process cache invalidation does not reach across. Re-fetch
-        # authoritatively before rejecting; cost is one Supabase round trip
-        # per locked-user attempt, which is acceptable because locked users
-        # cannot make Research calls anyway.
-        fresh = _fresh_profile_after_topup(user_id)
-        if isinstance(fresh, dict) and not bool(fresh.get("account_locked")):
-            try:
-                balance_micro_usd = int(fresh.get("balance_micro_usd") or 0)
-            except Exception:
-                pass
-            return ResearchBudgetDecision(allowed=True, balance_micro_usd=balance_micro_usd)
-
-        return ResearchBudgetDecision(
-            allowed=False,
-            balance_micro_usd=balance_micro_usd,
-            error_code="research_top_up_required",
-            message="Top up your account to continue using hosted Research.",
-            cta=RESEARCH_TOP_UP_CTA,
-            cta_url=RESEARCH_TOP_UP_URL,
-        )
-
-    return ResearchBudgetDecision(allowed=True, balance_micro_usd=balance_micro_usd)
+    return hosted_research_budget_decision(caller_ctx, model=model)
 
 
 def research_budget_rejection_payload(decision: ResearchBudgetDecision) -> dict:
@@ -158,56 +60,11 @@ def settle_research_charge(
     request_fingerprint: Optional[str] = None,
     selected_model: Optional[str] = None,
 ) -> Optional[dict]:
-    caller_kind = str((caller_ctx or {}).get("caller_kind") or "").strip().lower()
-    user_id = str((caller_ctx or {}).get("auth_user_id") or "").strip()
-    if caller_kind not in {"authenticated", "qa_suite", "qa_http_suite"} or not user_id or not request_id:
+    if not hosted_research_credit_enabled():
         return None
-
-    client = get_supabase_client()
-    if client is None:
-        return None
-
-    cost_usd = client.get_llm_usage_cost_usd(
+    return hosted_research_credit_settlement(
         request_id=request_id,
-        auth_user_id=user_id,
-        surface="research",
-    )
-    if cost_usd <= 0:
-        return {
-            "success": True,
-            "balance_micro_usd": get_user_balance_micro_usd(user_id),
-            "deducted_micro_usd": 0,
-            "charged_cost_usd": 0.0,
-            "idempotent_replay": False,
-        }
-
-    try:
-        charged_micro_usd = _to_micro_usd(cost_usd)
-    except (InvalidOperation, ValueError) as exc:
-        logger.warning("Failed to convert research cost for request %s: %s", request_id, exc)
-        return None
-
-    result = client.deduct_micro_credits_with_floor(
-        user_id=user_id,
-        amount_micro_usd=charged_micro_usd,
-        operation_type="research_chat",
-        min_balance_micro_usd=RESEARCH_NEGATIVE_FLOOR_MICRO_USD,
-        request_id=request_id,
+        caller_ctx=caller_ctx,
         request_fingerprint=request_fingerprint,
-        idempotency_key=f"research_chat:{request_id}",
-        notes="Hosted Research chat settlement",
-        metadata={
-            "surface": "research",
-            "selected_model": selected_model,
-            "charged_cost_usd": float(cost_usd),
-        },
+        selected_model=selected_model,
     )
-    if not isinstance(result, dict):
-        return None
-    if not result.get("success"):
-        logger.warning("Research charge settlement failed request=%s result=%s", request_id, result)
-        return result
-
-    result["charged_cost_usd"] = float(cost_usd)
-    result["charged_micro_usd"] = charged_micro_usd
-    return result
