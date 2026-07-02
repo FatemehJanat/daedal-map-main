@@ -127,6 +127,14 @@ def parquet_available(path: Path) -> bool:
     return path.exists()
 
 
+def resolve_flood_events_path(global_dir: Path) -> Path:
+    canonical_path = global_dir / "disasters/floods/events.parquet"
+    if is_cloud_mode() or canonical_path.exists():
+        return canonical_path
+    legacy_enriched_path = global_dir / "disasters/floods/events_enriched.parquet"
+    return legacy_enriched_path if legacy_enriched_path.exists() else canonical_path
+
+
 def _configure_httpfs(con) -> None:
     """Configure object-storage access via httpfs on an existing connection."""
     # Some local/dev environments cannot write to the default DuckDB home under
@@ -1099,9 +1107,7 @@ def prewarm_disaster_sources(global_dir: Path) -> None:
             log.warning("prewarm tsunamis preload-range failed: %s", exc)
 
     # --- floods (default preset is severity 2+, data currently ends in 2019) --
-    fl_path = global_dir / "disasters/floods/events_enriched.parquet"
-    if not parquet_available(fl_path):
-        fl_path = global_dir / "disasters/floods/events.parquet"
+    fl_path = resolve_flood_events_path(global_dir)
     for yr in [y for y in animation_years if y <= 2019]:
         ck = make_cache_key("floods", year=yr, min_severity=2, include_geometry=True)
         if cache_get(ck) is None:
