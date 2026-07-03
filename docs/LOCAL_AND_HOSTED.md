@@ -1,8 +1,8 @@
 # Local And Hosted Deployment
 
-This guide explains where DaedalMap runs and where it reads data. For Explore,
-Research, Ops, and Tutorial behavior, see
-[RUNTIME_MODES.md](RUNTIME_MODES.md).
+DaedalMap can run locally or as a hosted application. Runtime data can live on
+local storage or object storage. For Explore, Research, Ops, and Tutorial
+behavior, see [RUNTIME_MODES.md](RUNTIME_MODES.md).
 
 DaedalMap uses two environment settings:
 
@@ -78,6 +78,9 @@ application-data folder. On Windows this is normally:
 The public source checkout does not include a full data tree, so a useful local
 run needs data at that default location or an explicit `DATA_ROOT`.
 
+For the step-by-step data install flow, including the local Pack Store and
+researcher artifact tokens, see [DATA_INSTALLATION.md](DATA_INSTALLATION.md).
+
 ## Local application and cloud data
 
 Use:
@@ -132,8 +135,8 @@ Without them, `/settings` remains a local setup surface.
 
 ## Next steps
 
-- [DATA_PREPARATION.md](DATA_PREPARATION.md) — prepare a source
-- [PACK_AUTHORING.md](PACK_AUTHORING.md) — group sources into a pack
-- [RESEARCH_MCP.md](RESEARCH_MCP.md) — use a subscription client for research
-- [RUNTIME_MODES.md](RUNTIME_MODES.md) — choose Explore, Research, or Ops
-- [DATA_SCHEMAS.md](DATA_SCHEMAS.md) — inspect the exact data contract
+- [DATA_PREPARATION.md](DATA_PREPARATION.md) - prepare a source
+- [PACK_AUTHORING.md](PACK_AUTHORING.md) - group sources into a pack
+- [RESEARCH_MCP.md](RESEARCH_MCP.md) - use a subscription client for research
+- [RUNTIME_MODES.md](RUNTIME_MODES.md) - choose Explore, Research, or Ops
+- [DATA_SCHEMAS.md](DATA_SCHEMAS.md) - inspect the exact data contract

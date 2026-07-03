@@ -17,10 +17,11 @@ In this arrangement:
 https://app.daedalmap.com/mcp-private/research
 ```
 
-The transport is Streamable HTTP. The endpoint currently requires a DaedalMap
-bearer token. This is a private-pilot access boundary, not a model-provider API
-key. Researchers need a token issued by the DaedalMap operator until
-self-service authentication exists.
+The transport is Streamable HTTP. The endpoint requires a DaedalMap bearer
+token. This private-pilot token is not a model-provider API key.
+
+The same token also authorizes read-only `published` and `staging` artifact
+access through the [cloud artifact gateway](CLOUD_ARTIFACT_ACCESS.md).
 
 Never commit a bearer token to Git, `.mcp.json`, documentation, notebooks, or
 shared screenshots.
@@ -33,8 +34,8 @@ shared screenshots.
 | Research MCP | Source discovery, bounded corpus preparation, query contracts, and evidence rows |
 | DaedalMap runtime | Deterministic geography, time, metric, validation, and dataset execution |
 
-This avoids requiring every researcher to create and fund a separate model API
-account or spend DaedalMap-hosted model credits.
+Researchers use the model access they already have in their MCP client.
+DaedalMap supplies source discovery, query contracts, and evidence rows.
 
 ## Research workflow
 
@@ -83,16 +84,14 @@ features.
 Local data operations require no model key. Set an OpenAI or Anthropic key only
 if you want the built-in local chat interface to perform reasoning.
 
-The hosted Research MCP currently queries the hosted published source catalog.
-It does not automatically see unpublished sources in a researcher's local
-`DATA_ROOT`. Local-source MCP use would require an explicitly self-hosted MCP
-path or a future secure local bridge.
+The hosted Research MCP queries the hosted published source catalog. Local
+sources in a researcher's `DATA_ROOT` need a self-hosted MCP path or secure
+local bridge.
 
-## Current limitations
+## Boundaries
 
 - Access is token-gated rather than self-service.
 - Evidence is limited to MCP-published packs and source contracts.
 - Client quality and MCP support vary.
 - Researchers must inspect provenance, versions, scope, and warnings.
 - A subscription-client MCP workflow is not automatically offline.
-

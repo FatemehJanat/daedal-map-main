@@ -12,6 +12,10 @@ from fastapi.responses import JSONResponse, Response
 
 from mapmover.pack_pricing import FREE_PACK_IDS as _FREE_PACK_IDS
 from mapmover.paths import SITE_URL
+from mapmover.artifact_access import (
+    artifact_token_records,
+    get_artifact_token_record,
+)
 
 
 COMMERCIAL_ACCESS_CHECK_PATH = "/internal/commercial-access/check"
@@ -35,21 +39,12 @@ def commercial_access_enabled() -> bool:
 
 
 def trusted_artifact_tokens() -> set[str]:
-    raw = os.getenv("ARTIFACT_ACCESS_TOKENS", "").strip()
-    if not raw:
-        return set()
-    return {tok.strip() for tok in raw.split(",") if tok.strip()}
+    return {record.token for record in artifact_token_records()}
 
 
 def get_trusted_artifact_token(request: Request) -> str | None:
-    tokens = trusted_artifact_tokens()
-    if not tokens:
-        return None
-    auth_header = request.headers.get("authorization", "").strip()
-    if not auth_header.lower().startswith("bearer "):
-        return None
-    provided = auth_header[7:].strip()
-    return provided if provided in tokens else None
+    record = get_artifact_token_record(request)
+    return record.token if record is not None else None
 
 
 def pack_requires_commercial_access(pack_id: str | None) -> bool:

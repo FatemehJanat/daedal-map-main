@@ -1,8 +1,8 @@
 # DaedalMap Public Technical Context
 
-This is the documentation router for the public DaedalMap runtime.
+Public documentation router for the DaedalMap runtime.
 
-Use it when you have cloned the repository and need to answer:
+Use it after cloning the repository to answer:
 
 - What is this project?
 - Where should I start?
@@ -14,9 +14,10 @@ map for contributors and researchers.
 
 ## Choose your path
 
-| I want to… | Read |
+| I want to... | Read |
 |---|---|
 | Run the application locally | [LOCAL_AND_HOSTED.md](LOCAL_AND_HOSTED.md) |
+| Install or download data packs | [DATA_INSTALLATION.md](DATA_INSTALLATION.md) |
 | Understand Explore, Research, Ops, and Tutorial | [RUNTIME_MODES.md](RUNTIME_MODES.md) |
 | Understand shared versus mode-specific behavior | [RUNTIME_UNIFICATION.md](RUNTIME_UNIFICATION.md) |
 | Learn where code lives | [ARCHITECTURE.md](ARCHITECTURE.md) |
@@ -24,6 +25,7 @@ map for contributors and researchers.
 | Understand a request from chat to map | [QUERY_AND_DISPLAY.md](QUERY_AND_DISPLAY.md) |
 | Use or extend HTTP and MCP surfaces | [API_AND_MCP.md](API_AND_MCP.md) |
 | Research using my MCP-capable subscription | [RESEARCH_MCP.md](RESEARCH_MCP.md) |
+| Download public or researcher cloud artifacts | [CLOUD_ARTIFACT_ACCESS.md](CLOUD_ARTIFACT_ACCESS.md) |
 | Prepare my own dataset | [DATA_PREPARATION.md](DATA_PREPARATION.md) |
 | Check exact source schemas | [DATA_SCHEMAS.md](DATA_SCHEMAS.md) |
 | Build and share a pack | [PACK_AUTHORING.md](PACK_AUTHORING.md) |
@@ -105,11 +107,13 @@ Keep these stable across features and modes:
 
 ### Add a source or pack
 
-1. [DATA_SCHEMAS.md](DATA_SCHEMAS.md)
-2. [DATA_PREPARATION.md](DATA_PREPARATION.md)
-3. [PACK_AUTHORING.md](PACK_AUTHORING.md)
-4. Build the catalog with `converters/catalog_builder.py`.
-5. Test discovery in Explore and bounded use in Research.
+1. [DATA_INSTALLATION.md](DATA_INSTALLATION.md) if you need maintained packs
+   or cloud artifacts first.
+2. [DATA_SCHEMAS.md](DATA_SCHEMAS.md)
+3. [DATA_PREPARATION.md](DATA_PREPARATION.md)
+4. [PACK_AUTHORING.md](PACK_AUTHORING.md)
+5. Build the catalog with `converters/catalog_builder.py`.
+6. Test discovery in Explore and bounded use in Research.
 
 ### Add or change a mode
 
@@ -167,6 +171,7 @@ git status --short
 | `RUNTIME_UNIFICATION.md` | Shared-versus-mode-specific doctrine |
 | `RUNTIME_MODES.md` | User-facing mode meanings |
 | `QUERY_AND_DISPLAY.md` | Request lifecycle and map output |
+| `DATA_INSTALLATION.md` | Local data folders, Pack Store installs, and researcher downloads |
 | `DATA_SCHEMAS.md` | Source and metadata contract |
 | `DATA_PREPARATION.md` | Reproducible conversion workflow |
 | `PACK_AUTHORING.md` | Pack and corpus authoring |

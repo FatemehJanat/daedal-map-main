@@ -3,9 +3,9 @@
 DaedalMap exposes human, structured HTTP, and MCP surfaces from the same public
 runtime.
 
-The live FastAPI application is the authoritative route inventory. This guide
-groups stable public entry points; it is not a promise that every internal or
-debug route is a supported external API.
+The live FastAPI application is the authoritative route inventory. These are
+the stable public entry points. Internal and debug routes are outside the
+supported external API.
 
 ## Discovery
 
@@ -38,6 +38,18 @@ effective scope, and provenance in addition to data rows.
 
 The same source, metric, geography, time, and aggregation contracts apply to
 local/self-host and hosted deployments.
+
+## Cloud artifacts
+
+The read-only artifact gateway is:
+
+```text
+GET|HEAD /api/artifacts/{lane}/{object_path}
+```
+
+`downloadable` is anonymous. `published` and `staging` require the same
+`ARTIFACT_ACCESS_TOKENS` bearer token used by Research MCP. `control` is always
+denied. See [CLOUD_ARTIFACT_ACCESS.md](CLOUD_ARTIFACT_ACCESS.md).
 
 ## MCP
 
@@ -126,4 +138,3 @@ python app.py
 
 The root README contains the current hosted MCP address for users who do not
 need to run a local instance.
-
