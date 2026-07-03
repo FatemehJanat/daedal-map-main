@@ -1,140 +1,109 @@
-# Local And Hosted Modes
+# Local And Hosted Deployment
 
-This is the main runtime-mode guide for self-host and local users.
+This guide explains where DaedalMap runs and where it reads data. For Explore,
+Research, Ops, and Tutorial behavior, see
+[RUNTIME_MODES.md](RUNTIME_MODES.md).
 
-Read this after the root [README.md](../README.md).
-If you want a higher-level explanation of what the app is and how the runtime is evolving, continue to [APP_OVERVIEW.md](APP_OVERVIEW.md).
+DaedalMap uses two environment settings:
 
-DaedalMap currently has a clean runtime matrix built from two axes:
+- `INSTALL_MODE`: where the application is installed
+- `RUNTIME_MODE`: where runtime data is read
 
-- `INSTALL_MODE`
-  - `local`
-  - `cloud`
-- `RUNTIME_MODE`
-  - `local`
-  - `cloud`
+## Supported configurations
 
-Supported runtime shapes:
+| Install | Data runtime | Use case |
+|---|---|---|
+| `local` | `local` | Research, development, and self-hosting with a local data tree |
+| `local` | `cloud` | Local application testing against object storage |
+| `cloud` | `cloud` | Hosted application with object-storage data |
 
-1. `INSTALL_MODE=local` + `RUNTIME_MODE=local`
-2. `INSTALL_MODE=local` + `RUNTIME_MODE=cloud`
-3. `INSTALL_MODE=cloud` + `RUNTIME_MODE=cloud`
+`INSTALL_MODE=cloud` with `RUNTIME_MODE=local` is not a supported first-class
+configuration.
 
-Unsupported as a first-class runtime shape:
+## Local application and local data
 
-- `INSTALL_MODE=cloud` + `RUNTIME_MODE=local`
+Use:
 
-## 1. Local Install + Local Data
+```text
+INSTALL_MODE=local
+RUNTIME_MODE=local
+DATA_ROOT=C:/path/to/your/data
+OPENAI_API_KEY=your-key
+```
 
-Uses:
-- explicit `DATA_ROOT`
+You may use `ANTHROPIC_API_KEY` instead of an OpenAI key.
 
-Best for:
-- local development against full datasets
-- route and converter testing against real local parquet and geometry files
-- self-hosting where data is managed on the same machine or volume
+This is the clearest path for academic work:
 
-Notes:
-- this is the default non-cloud mode
-- the current public repo does not ship with a bundled demo `data/` folder
-- a plain source checkout therefore still needs local data arranged separately
-- if `DATA_ROOT` is left blank, the runtime uses the default local app-data folder:
-  `%LOCALAPPDATA%\DaedalMap\data`
+- data stays on a machine or mounted volume you control;
+- imported sources can be rebuilt and tested without cloud publication;
+- local packs can be grouped into Research corpora;
+- hosted account infrastructure is not required.
 
-For a useful local/self-host run, you should also configure one LLM provider key:
-- `OPENAI_API_KEY`
-- or `ANTHROPIC_API_KEY`
+If `DATA_ROOT` is blank, the runtime uses the platform's default local
+application-data folder. On Windows this is normally:
 
-That means the practical public-GitHub setup is:
-1. install Python requirements
-2. set `DATA_ROOT`
-3. set one LLM API key
-4. run `python app.py`
+```text
+%LOCALAPPDATA%\DaedalMap\data
+```
 
-## 2. Local Install + Cloud Data
+The public source checkout does not include a full data tree, so a useful local
+run needs data at that default location or an explicit `DATA_ROOT`.
 
-Uses:
-- object storage for parquet-backed runtime data
-- local data-root paths are mapped to object-storage keys for DuckDB queries
+## Local application and cloud data
 
-Best for:
-- reproducing hosted behavior locally
-- testing runtime logic before deploy
-- validating object-storage-backed DuckDB query behavior
+Use:
 
-Notes:
-- metadata files are cached locally
-- parquet is queried remotely through DuckDB `httpfs`
-- startup is faster because the full parquet tree is not mirrored locally
-- choose an object-storage prefix that matches your own deployment layout
+```text
+INSTALL_MODE=local
+RUNTIME_MODE=cloud
+```
 
-## 3. Cloud Install + Cloud Data
+Configure object storage using the variables documented in
+[../.env.example](../.env.example).
 
-Best for:
-- hosted web deployments
-- product demos
-- cloud-managed pack access
+In this configuration:
 
-## 4. Planned Installable Product Layer
+- metadata is hydrated or cached locally;
+- Parquet can be queried remotely through DuckDB;
+- local code exercises the same general data path as a cloud deployment.
 
-This sits on top of the runtime matrix above.
+Use storage and credentials you are authorized to access. A local installation
+does not imply local data when `RUNTIME_MODE=cloud`.
 
-Target shape:
-- install the open engine/runtime separately from the repo
-- choose and download data packs after install
-- keep frontend and API behavior aligned with the hosted app
+## Cloud application and cloud data
 
-Best for:
-- non-developer local installs
-- future installer builds
-- pack-based onboarding and updates
+Use:
 
-## Why This Matters
+```text
+INSTALL_MODE=cloud
+RUNTIME_MODE=cloud
+```
 
-Running the app locally does not automatically mean the app is reading local data.
+This is the deployment shape for a hosted instance. The public runtime can be
+deployed using infrastructure and object storage you control.
 
-If `RUNTIME_MODE=cloud`, a local server can still be exercising the hosted-style data path.
+Hosted account, billing, admin, collector, and publication-control systems are
+separate concerns and are not required to run the open runtime.
 
-That is often the right way to catch production-like issues before deploy.
+## Common local choices
 
-## Common Local Env Choices
+Set:
 
-Usually leave these blank:
+- `DATA_ROOT` when your data is outside the default app-data folder;
+- one supported model-provider key;
+- `INSTALL_MODE=local`;
+- `RUNTIME_MODE=local` for local research data.
 
-- `DATA_ROOT`
-- `APP_URL`
-- `SITE_URL`
+Leave `APP_URL` and `SITE_URL` unset unless the instance needs to advertise
+specific external URLs.
 
-Why:
+Private hosted bridge variables are not needed for ordinary local operation.
+Without them, `/settings` remains a local setup surface.
 
-- `DATA_ROOT`
-  only matters in `RUNTIME_MODE=local`; blank means use the default local app-data folder
-- `APP_URL`
-  only needed if you want the app to advertise a specific external URL
-- `SITE_URL`
-  only needed if you want links to point at a non-default website/docs host
+## Next steps
 
-Usually set these for a usable local app:
-
-- `DATA_ROOT`
-- `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`
-
-Usually leave these unset unless you explicitly want hosted private-control-plane bridges:
-
-- `CLOUD_INTERNAL_API_TOKEN`
-- `COMMERCIAL_ACCESS_VERIFIER_BASE_URL`
-- `RESEARCH_CREDIT_VERIFIER_BASE_URL`
-
-Without private control-plane config, the app stays in local/self-host mode and
-`/settings` becomes a local setup page instead of a hosted account redirect.
-Keep business-side database and analytics credentials server-side only; they
-are not needed for ordinary local evaluation. Hosted verifier routes stay
-inactive unless the private control-plane token is configured. The hosted
-collector scheduler, Railway collector service, and private scheduled-jobs
-hosts remain private-side infrastructure.
-
-## Related Docs
-
-- [../README.md](../README.md) - top-level quick start and repo overview
-- [APP_OVERVIEW.md](APP_OVERVIEW.md) - runtime/app mental model
-- [DATA_SCHEMAS.md](DATA_SCHEMAS.md) - data and `loc_id` conventions
+- [DATA_PREPARATION.md](DATA_PREPARATION.md) — prepare a source
+- [PACK_AUTHORING.md](PACK_AUTHORING.md) — group sources into a pack
+- [RUNTIME_MODES.md](RUNTIME_MODES.md) — choose Explore, Research, or Ops
+- [DATA_SCHEMAS.md](DATA_SCHEMAS.md) — inspect the exact data contract

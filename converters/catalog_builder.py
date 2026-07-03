@@ -217,7 +217,9 @@ def build_catalog(data_root: Path, output_path: Path = None):
         sources.append({
             "source_id": metadata.get("source_id"),
             "source_name": metadata.get("source_name"),
+            "pack_id": metadata.get("pack_id"),
             "category": metadata.get("category"),
+            "data_type": metadata.get("data_type"),
             "scope": scope,
             "topic_tags": metadata.get("topic_tags", []),
             "keywords": metadata.get("keywords", []),

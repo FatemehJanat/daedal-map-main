@@ -375,9 +375,13 @@ Important files and folders:
 Public runtime docs live in [docs/README.md](docs/README.md).
 
 Recommended starting points:
+- [docs/CONTEXT.md](docs/CONTEXT.md) - technical router for contributors and researchers
 - [docs/LOCAL_AND_HOSTED.md](docs/LOCAL_AND_HOSTED.md) - runtime mode selection and self-host basics
+- [docs/RUNTIME_MODES.md](docs/RUNTIME_MODES.md) - Explore, Research, Ops, and Tutorial
+- [docs/RUNTIME_UNIFICATION.md](docs/RUNTIME_UNIFICATION.md) - shared architecture and mode extension contract
 - [docs/DATA_SCHEMAS.md](docs/DATA_SCHEMAS.md) - schema and `loc_id` conventions
-- [docs/APP_OVERVIEW.md](docs/APP_OVERVIEW.md) - higher-level runtime/app overview
+- [docs/DATA_PREPARATION.md](docs/DATA_PREPARATION.md) - convert and validate your own data
+- [docs/PACK_AUTHORING.md](docs/PACK_AUTHORING.md) - build research packs and corpora
 
 ## Local Development Modes
 

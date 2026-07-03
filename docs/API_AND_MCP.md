@@ -1,0 +1,129 @@
+# HTTP API And MCP
+
+DaedalMap exposes human, structured HTTP, and MCP surfaces from the same public
+runtime.
+
+The live FastAPI application is the authoritative route inventory. This guide
+groups stable public entry points; it is not a promise that every internal or
+debug route is a supported external API.
+
+## Discovery
+
+Useful discovery endpoints include:
+
+- `GET /api/v1/guide`
+- `GET /api/v1/catalog`
+- `GET /api/v1/packs/{pack_id}`
+- `GET /api/catalog/sources`
+- `GET /api/catalog/packs`
+- `GET /api/catalog/overlays`
+- `GET /.well-known/mcp/server-card.json`
+- `GET /.well-known/mcp/{pack_id}/server-card.json`
+- `GET /apis.json`
+- `GET /mcp/server.json`
+
+Start with discovery rather than hard-coding an assumed source inventory.
+
+## Structured dataset query
+
+The main structured query route is:
+
+```text
+POST /api/v1/query/dataset
+```
+
+Callers should resolve available packs, sources, metrics, geography, and limits
+from discovery metadata. Responses may include validation failures, warnings,
+effective scope, and provenance in addition to data rows.
+
+The same source, metric, geography, time, and aggregation contracts apply to
+local/self-host and hosted deployments.
+
+## MCP
+
+Streamable HTTP MCP endpoints include:
+
+```text
+GET|POST /mcp
+GET|POST /mcp/{pack_id}
+```
+
+The root surface provides broad discovery. Pack-scoped endpoints constrain
+tools or discovery to a pack where supported.
+
+MCP is a transport/tool facade. Tool implementations should call deterministic
+runtime services rather than reproduce source selection or query semantics.
+
+## Geometry
+
+Public geometry helpers include:
+
+- country and hierarchy discovery;
+- location information and children;
+- viewport and selection geometry;
+- point-to-location resolution;
+- `POST /api/v1/resolve/point`.
+
+Inspect `mapmover/routes/geometry.py` for the current route and request models.
+
+## Mode routes
+
+Human-mode endpoints include:
+
+- `/chat` and `/chat/stream`;
+- `/chat/research` and `/chat/research/stream`;
+- `/chat/ops` and `/chat/ops/stream`;
+- Research corpus endpoints;
+- Ops watch and report endpoints.
+
+Streaming routes use server-sent events. Clients should tolerate progress
+stages before the final result.
+
+## Specialized data routes
+
+The runtime also has event, disaster, weather, climate, raster, and related
+event routes. These are useful to the bundled map interface, but consumers
+should inspect route models and tests before treating them as a versioned
+external contract.
+
+Prefer `/api/v1/` surfaces when a versioned equivalent exists.
+
+## Failure behavior
+
+Integrations should handle:
+
+- invalid or unavailable metrics;
+- unmatched regions;
+- unsupported time ranges;
+- overly broad requests;
+- missing local data;
+- unavailable optional provider/model services;
+- authorization or commercial-access responses on deployments that configure
+  those layers.
+
+Do not parse human prose when a structured error or warning field is available.
+
+## Adding an API or MCP tool
+
+1. Define the transport model.
+2. Resolve inputs through shared source/geography/time helpers.
+3. Run deterministic validation and execution.
+4. Return shared warnings and provenance.
+5. Add route/tool-specific envelope behavior.
+6. Test a valid request and each important rejection path.
+7. Update discovery metadata and this document if the surface is public.
+
+Do not embed credentials in browser code or examples.
+
+## Local inspection
+
+Run the server, then inspect FastAPI's generated schema or the public discovery
+routes:
+
+```powershell
+python app.py
+```
+
+The root README contains the current hosted MCP address for users who do not
+need to run a local instance.
+
