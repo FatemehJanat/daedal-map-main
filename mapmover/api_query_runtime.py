@@ -127,6 +127,36 @@ SUPPORTED_DYNAMIC_SOURCES: dict[str, dict[str, Any]] = {
         "default_limit": 200,
         "max_limit": 5000,
     },
+    "distributed_manufacturing": {
+        "pack_id": "distributed_manufacturing",
+        "parquet_name": "locations.parquet",
+        "query_mode": "single_source_static",
+        "location_field": "loc_id",
+        "time_field": None,
+        "time_granularity": None,
+        "default_limit": 100,
+        "max_limit": 1000,
+    },
+    "owid_co2": {
+        "pack_id": "owid_co2",
+        "parquet_name": "owid_co2.parquet",
+        "query_mode": "single_source",
+        "location_field": "loc_id",
+        "time_field": "year",
+        "time_granularity": "yearly",
+        "default_limit": DEFAULT_LIMIT,
+        "max_limit": MAX_LIMIT,
+    },
+    "un_wpp": {
+        "pack_id": "un_wpp",
+        "parquet_name": "un_wpp.parquet",
+        "query_mode": "single_source",
+        "location_field": "loc_id",
+        "time_field": "year",
+        "time_granularity": "yearly",
+        "default_limit": DEFAULT_LIMIT,
+        "max_limit": MAX_LIMIT,
+    },
     "earthquakes_events": {
         "pack_id": "earthquakes",
         "parquet_name": "events.parquet",
@@ -315,6 +345,40 @@ for _wb_source in (
         "max_limit": MAX_LIMIT,
     }
 del _wb_source
+
+# NRI hazard member sources share the same county-static shape; each source
+# stores one USA.parquet under countries/USA/<source_id>/.
+for _nri_source in (
+    "nri_avalanche",
+    "nri_coastal_flood",
+    "nri_cold_wave",
+    "nri_drought",
+    "nri_earthquake",
+    "nri_extreme_heat",
+    "nri_hail",
+    "nri_hurricane",
+    "nri_ice_storm",
+    "nri_inland_flood",
+    "nri_landslide",
+    "nri_lightning",
+    "nri_strong_wind",
+    "nri_tornado",
+    "nri_tsunami",
+    "nri_volcano",
+    "nri_wildfire",
+    "nri_winter_weather",
+):
+    SUPPORTED_DYNAMIC_SOURCES[_nri_source] = {
+        "pack_id": "nri",
+        "parquet_name": "USA.parquet",
+        "query_mode": "single_source_static",
+        "location_field": "loc_id",
+        "time_field": None,
+        "time_granularity": None,
+        "default_limit": 100,
+        "max_limit": 1000,
+    }
+del _nri_source
 
 
 API_SOURCE_SPECS: dict[str, ApiSourceSpec] = {

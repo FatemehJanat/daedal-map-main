@@ -193,6 +193,86 @@ PACK_REGISTRY: dict[str, dict] = {
             "preferred_tool": "query_dataset",
         },
     },
+    "distributed_manufacturing": {
+        "display_name": "Distributed Manufacturing",
+        "pricing": "free",
+        "mcp_tool_allowlist": ("get_catalog", "get_pack", "query_dataset"),
+        "mcp_name": "com.daedalmap/distributed-manufacturing",
+        "mcp_title": "DaedalMap Distributed Manufacturing Locations",
+        "mcp_description": "Global fab lab, makerspace, hackerspace, Precious Plastic, and Prusa World location data normalized to the DaedalMap loc_id spine. Free.",
+        "registry_search_alias": "distributed-manufacturing",
+        "registry_meta": {
+            "categories": ["manufacturing", "geospatial", "data"],
+            "highlights": [
+                "Global registry of open manufacturing and maker facilities",
+                "Free MCP access for country and facility-type location queries",
+                "Point locations tied to DaedalMap loc_id geography",
+            ],
+        },
+        "routing": {
+            "preferred_tool": "query_dataset",
+        },
+    },
+    "owid_co2": {
+        "display_name": "OWID CO2",
+        "pricing": "free",
+        "mcp_tool_allowlist": ("get_catalog", "get_pack", "query_dataset"),
+        "mcp_name": "com.daedalmap/co2-emissions",
+        "mcp_title": "DaedalMap CO2 and Greenhouse Gas Emissions",
+        "mcp_description": "Our World in Data CO2 and greenhouse gas country-year metrics including totals, per-capita rates, cumulative emissions, and fuel breakdowns. Free.",
+        "registry_search_alias": "co2-emissions",
+        "registry_meta": {
+            "categories": ["climate", "environment", "data", "geospatial"],
+            "highlights": [
+                "Country-year CO2 and greenhouse gas metrics from Our World in Data",
+                "Free MCP access for emissions totals, per-capita rates, and cumulative metrics",
+                "Country-level lookups tied to DaedalMap loc_id geography",
+            ],
+        },
+        "routing": {
+            "preferred_tool": "query_dataset",
+        },
+    },
+    "un_wpp": {
+        "display_name": "UN World Population Prospects",
+        "pricing": "free",
+        "mcp_tool_allowlist": ("get_catalog", "get_pack", "query_dataset"),
+        "mcp_name": "com.daedalmap/world-population-prospects",
+        "mcp_title": "DaedalMap UN World Population Prospects",
+        "mcp_description": "UN World Population Prospects country-year population, births, deaths, migration, and life expectancy metrics from 1950 through projections to 2100. Free.",
+        "registry_search_alias": "world-population-prospects",
+        "registry_meta": {
+            "categories": ["demographic", "development", "data", "geospatial"],
+            "highlights": [
+                "UN WPP historical estimates and medium-variant projections",
+                "Free MCP access for population, fertility, mortality, and migration metrics",
+                "Country-level lookups tied to DaedalMap loc_id geography",
+            ],
+        },
+        "routing": {
+            "preferred_tool": "query_dataset",
+        },
+    },
+    "nri": {
+        "display_name": "FEMA NRI",
+        "pricing": "free",
+        "mcp_tool_allowlist": ("get_catalog", "get_pack", "query_dataset"),
+        "mcp_name": "com.daedalmap/fema-nri",
+        "mcp_title": "DaedalMap FEMA National Risk Index",
+        "mcp_description": "FEMA National Risk Index county hazard-risk layers, including baseline risk, expected annual loss, social vulnerability, resilience, and selected future scenario fields. Free.",
+        "registry_search_alias": "fema-nri",
+        "registry_meta": {
+            "categories": ["hazard", "risk", "geospatial", "data"],
+            "highlights": [
+                "County-level FEMA National Risk Index hazard members",
+                "Free MCP access for risk scores, expected annual loss, social vulnerability, and resilience",
+                "USA county loc_id filtering for hazard-specific risk layers",
+            ],
+        },
+        "routing": {
+            "preferred_tool": "query_dataset",
+        },
+    },
     "volcanoes": {
         "display_name": "volcanoes",
         "pricing": "free",
