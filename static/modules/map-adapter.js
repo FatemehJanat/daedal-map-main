@@ -85,7 +85,7 @@ export const MapAdapter = {
       showCompass: true,
       showZoom: false,
       visualizePitch: false
-    }), 'top-left');
+    }), 'top-right');
 
     // Create popup instance - compact sizing, no fixed width
     this.popup = new maplibregl.Popup({

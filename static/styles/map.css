@@ -287,6 +287,12 @@ body.tutorial-mode #tutorialTimelineRegion {
   background: radial-gradient(circle at var(--focus-x) var(--focus-y), #0a1b2b 0%, #040b14 58%, #020814 100%);
 }
 
+.maplibregl-ctrl-top-right {
+  top: 6px;
+  right: min(450px, calc(100vw - 56px));
+  z-index: 5300;
+}
+
 #mapModeMount {
   position: absolute;
   top: 14px;
