@@ -1,0 +1,1322 @@
+"""Reusable DuckDB helpers for parquet-backed runtime queries.
+
+In local mode, all functions accept Path objects pointing to local parquet files.
+In cloud mode, path_to_uri() converts local cache paths to s3:// URIs and the
+DuckDB connection is configured with httpfs + object-storage credentials.
+DuckDB fetches only the row groups it needs via HTTP range requests.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import threading
+import time
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Iterable, Optional
+
+import pandas as pd
+
+from .runtime_config import get_runtime_config
+from .catalog_surface import get_catalog_surface_override
+
+try:
+    import duckdb
+except ImportError:
+    duckdb = None
+
+
+logger = logging.getLogger(__name__)
+_MISSING_TIME_FILTER_WARNING_KEYS: set[tuple[str, tuple[str, ...]]] = set()
+
+
+DUCKDB_EVENT_SOURCES = {
+    # Legacy pack-level event ids
+    "earthquakes",
+    "floods",
+    "hurricanes",
+    "landslides",
+    "tornadoes",
+    "tsunamis",
+    "volcanoes",
+    # Current pack-facing event source ids after disaster source cleanup
+    "earthquakes_events",
+    "tsunamis_events",
+    "volcanoes_events",
+    # Wildfire event sources remain split by upstream family rather than a single
+    # shared events parquet, so keep the concrete event-capable ids here.
+    "global_fire_atlas",
+    "wildfires_usa",
+    "can_wildfires",
+}
+
+
+def duckdb_available() -> bool:
+    return duckdb is not None
+
+
+def can_query_event_source(source_id: str) -> bool:
+    return duckdb_available() and source_id in DUCKDB_EVENT_SOURCES
+
+
+# ---------------------------------------------------------------------------
+# Cloud / httpfs helpers
+# ---------------------------------------------------------------------------
+
+def is_cloud_mode() -> bool:
+    return str(get_runtime_config().get("runtime_mode", "local")).strip().lower() == "cloud"
+
+
+def _allow_local_source_fallback() -> bool:
+    override = get_catalog_surface_override()
+    if override in {"published", "wip"}:
+        return override == "wip"
+    raw = str(os.environ.get("USE_WIP_CATALOG", "")).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _get_s3_endpoint() -> str:
+    """Return the R2/S3 endpoint without https:// prefix (as DuckDB expects)."""
+    cloud_cfg = get_runtime_config().get("cloud", {})
+    url = (os.environ.get("S3_ENDPOINT_URL", "").strip() or str(cloud_cfg.get("endpoint_url", "")).strip())
+    if url.startswith("https://"):
+        url = url[len("https://"):]
+    elif url.startswith("http://"):
+        url = url[len("http://"):]
+    return url.rstrip("/")
+
+
+def _get_data_root() -> Path:
+    from .paths import DATA_ROOT
+    return DATA_ROOT
+
+
+def path_to_uri(local_path: Path) -> str:
+    """Convert a local data path to an s3:// URI in cloud mode, or a local path string in local mode."""
+    if not is_cloud_mode():
+        return str(local_path)
+
+    if _allow_local_source_fallback() and local_path.exists():
+        return str(local_path)
+
+    cloud_cfg = get_runtime_config().get("cloud", {})
+    bucket = os.environ.get("S3_BUCKET", "").strip() or str(cloud_cfg.get("bucket", "")).strip()
+    prefix = (os.environ.get("S3_PREFIX", "").strip() or str(cloud_cfg.get("prefix", "")).strip()).strip("/")
+    prefix = f"{prefix}/" if prefix else ""
+    data_root = _get_data_root()
+
+    try:
+        rel = local_path.relative_to(data_root)
+        return f"s3://{bucket}/{prefix}{rel.as_posix()}"
+    except ValueError:
+        pass
+
+    # Fallback: use the path as-is (shouldn't normally happen)
+    return str(local_path)
+
+
+def parquet_available(path: Path) -> bool:
+    """Return True if the parquet file is accessible.
+    In cloud mode, always returns True (DuckDB will raise if the file is missing remotely).
+    In local mode, checks if the file exists on disk.
+    """
+    if is_cloud_mode():
+        return path.exists() or True
+    return path.exists()
+
+
+def resolve_flood_events_path(global_dir: Path) -> Path:
+    canonical_path = global_dir / "disasters/floods/events.parquet"
+    if is_cloud_mode() or canonical_path.exists():
+        return canonical_path
+    legacy_enriched_path = global_dir / "disasters/floods/events_enriched.parquet"
+    return legacy_enriched_path if legacy_enriched_path.exists() else canonical_path
+
+
+def _configure_httpfs(con) -> None:
+    """Configure object-storage access via httpfs on an existing connection."""
+    # Some local/dev environments cannot write to the default DuckDB home under
+    # the user profile. Point extension storage at our writable runtime cache so
+    # cloud-mode queries behave the same way in hosted and local QA.
+    from .paths import CACHE_DIR
+
+    extension_dir = CACHE_DIR / "duckdb_extensions"
+    extension_dir.mkdir(parents=True, exist_ok=True)
+    extension_dir_sql = str(extension_dir).replace("'", "''")
+    con.execute(f"SET extension_directory='{extension_dir_sql}'")
+    try:
+        con.execute("LOAD httpfs")
+    except Exception:
+        con.execute("INSTALL httpfs")
+        con.execute("LOAD httpfs")
+    endpoint = _get_s3_endpoint()
+    if endpoint:
+        con.execute(f"SET s3_endpoint='{endpoint}'")
+    key = os.environ.get("AWS_ACCESS_KEY_ID", "").strip()
+    secret = os.environ.get("AWS_SECRET_ACCESS_KEY", "").strip()
+    region = os.environ.get("AWS_DEFAULT_REGION", "auto").strip() or "auto"
+    if key:
+        con.execute(f"SET s3_access_key_id='{key}'")
+    if secret:
+        con.execute(f"SET s3_secret_access_key='{secret}'")
+    con.execute(f"SET s3_region='{region}'")
+    con.execute("SET s3_url_style='path'")
+    # Cache parquet footer/metadata globally across connections - eliminates
+    # repeated HTTP HEAD+range requests for the same files on each new connection.
+    con.execute("SET enable_http_metadata_cache=true")
+    con.execute("SET http_keep_alive=true")
+
+
+def _configure_common_runtime_settings(con) -> None:
+    """Apply shared runtime safety settings to any DuckDB connection."""
+    # Cap DuckDB's internal buffer pool so it doesn't grow unbounded under load.
+    # Adjust DUCKDB_MEMORY_LIMIT env var to tune (default: 512MB).
+    mem_limit = os.environ.get("DUCKDB_MEMORY_LIMIT", "512MB")
+    con.execute(f"SET memory_limit='{mem_limit}'")
+
+
+def build_guarded_connection(
+    *,
+    database: str = ":memory:",
+    configure_cloud: bool | None = None,
+):
+    """Create a DuckDB connection with the shared runtime safety settings."""
+    if duckdb is None:
+        return None
+    con = duckdb.connect(database=database)
+    _configure_common_runtime_settings(con)
+    if configure_cloud is None:
+        configure_cloud = is_cloud_mode()
+    if configure_cloud:
+        _configure_httpfs(con)
+    return con
+
+
+# ---------------------------------------------------------------------------
+# Thread-local connection pool
+# ---------------------------------------------------------------------------
+#
+# Each worker thread keeps one fully-configured DuckDB connection that
+# persists across queries. This eliminates per-query connection setup
+# (LOAD httpfs + credentials + memory limit) which dominates "cheap"
+# filter queries in cloud mode.
+#
+# Why thread-local instead of one shared connection + cursor():
+#
+#   - DuckDB cursor() shares the database and globally-scoped settings,
+#     but session-scoped settings (notably s3_endpoint and httpfs
+#     credentials in 1.5.0) do NOT propagate. A 2026-04-27 deploy of a
+#     shared-primary design caused production 500s because cursors hit
+#     the default AWS endpoint instead of R2.
+#   - Thread-local sidesteps the scoping question entirely. Each
+#     connection is fully configured by _configure_httpfs at creation
+#     and never relies on inheritance.
+#
+# Trade-offs:
+#
+#   - Connection setup is paid once per worker thread (typically 5-40
+#     threads in uvicorn), not once per process. Small upfront cost,
+#     no per-query cost after that.
+#   - Each thread keeps its own HTTP metadata cache. Caches do not
+#     share across threads. Within ~10-20 queries on a thread, all hot
+#     parquets are warm in that thread's cache.
+#   - A bad query is isolated to its connection; recovery clears the
+#     thread-local entry so the next call rebuilds.
+
+_thread_state = threading.local()
+_THREAD_CONNECTION_GENERATION = 0
+_THREAD_CONNECTION_GENERATION_LOCK = threading.Lock()
+
+
+def _build_thread_connection():
+    """Create and fully configure a DuckDB connection for the current thread."""
+    return build_guarded_connection(database=":memory:")
+
+
+def _get_thread_connection():
+    """Return this thread's DuckDB connection, creating it on first use."""
+    con = getattr(_thread_state, "con", None)
+    generation = getattr(_thread_state, "generation", -1)
+    if con is None or generation != _THREAD_CONNECTION_GENERATION:
+        if con is not None:
+            try:
+                con.close()
+            except Exception:
+                pass
+        con = _build_thread_connection()
+        _thread_state.con = con
+        _thread_state.generation = _THREAD_CONNECTION_GENERATION
+    return con
+
+
+def _drop_thread_connection() -> None:
+    """Drop the current thread's connection; the next query rebuilds.
+
+    Called when an exception suggests the connection may be in a bad state
+    (e.g. transport-level error, broken pipe). Cursor-style query errors
+    are rare to non-existent here because we use the connection directly.
+    """
+    con = getattr(_thread_state, "con", None)
+    if con is not None:
+        try:
+            con.close()
+        except Exception:
+            pass
+        _thread_state.con = None
+        _thread_state.generation = -1
+
+
+def reset_thread_connection_pool() -> int:
+    """Invalidate all pooled thread-local DuckDB connections.
+
+    The current thread drops immediately. Other worker threads lazily rebuild
+    their connection on the next query when they observe the bumped generation.
+    """
+    global _THREAD_CONNECTION_GENERATION
+    with _THREAD_CONNECTION_GENERATION_LOCK:
+        _THREAD_CONNECTION_GENERATION += 1
+        generation = _THREAD_CONNECTION_GENERATION
+    _drop_thread_connection()
+    return generation
+
+
+def _make_connection():
+    """Backward-compatible accessor used by debug endpoints.
+
+    Returns the thread-local connection. Callers historically did
+    `con.close()` after use; that is now a no-op against the pool because
+    `close()` on a DuckDB connection only closes that handle, but the
+    pool returns the same handle on the next call. Debug endpoints that
+    used this pattern continue to work but no longer get isolation.
+    """
+    if duckdb is None:
+        return None
+    return _get_thread_connection()
+
+
+# ---------------------------------------------------------------------------
+# Core query runners
+# ---------------------------------------------------------------------------
+
+def _looks_like_connection_error(exc: BaseException) -> bool:
+    """Heuristic: distinguish transport-level errors from query-level errors.
+
+    Query errors (bad SQL, missing column, type mismatch) leave the
+    connection healthy and we keep it pooled. Transport errors (broken
+    socket, R2 reachability problems) suggest the connection state is
+    suspect; drop and rebuild on the next call.
+    """
+    name = type(exc).__name__
+    if name in {"IOException", "HTTPException", "ConnectionException"}:
+        return True
+    msg = str(exc).lower()
+    return any(s in msg for s in ("broken pipe", "connection reset", "connection refused"))
+
+
+def run_df(sql: str, params: list) -> pd.DataFrame:
+    if duckdb is None:
+        return pd.DataFrame()
+    con = _get_thread_connection()
+    try:
+        return con.execute(sql, params).df()
+    except Exception as exc:
+        if _looks_like_connection_error(exc):
+            _drop_thread_connection()
+        raise
+
+
+def run_rows(sql: str, params: list) -> list[tuple]:
+    if duckdb is None:
+        return []
+    con = _get_thread_connection()
+    try:
+        return con.execute(sql, params).fetchall()
+    except Exception as exc:
+        if _looks_like_connection_error(exc):
+            _drop_thread_connection()
+        raise
+
+
+def _normalize_ts_for_duckdb(val: str | None) -> str | None:
+    """Convert a ms-epoch timestamp string to an ISO datetime string for DuckDB.
+
+    DuckDB's CAST(? AS TIMESTAMP) rejects raw millisecond integers like
+    '1735718400000'. Detect them (>10 digits, all numeric) and convert to
+    'YYYY-MM-DD HH:MM:SS' in UTC which DuckDB handles fine.
+    """
+    if val is None:
+        return None
+    s = str(val).strip()
+    if s.lstrip("-").isdigit() and len(s) > 10:
+        from datetime import datetime, timezone
+        return datetime.fromtimestamp(int(s) / 1000.0, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    return val
+
+
+def parquet_columns(parquet_path: Path) -> set[str]:
+    if duckdb is None:
+        return set()
+    if not is_cloud_mode() and not parquet_path.exists():
+        return set()
+    uri = path_to_uri(parquet_path)
+    rows = run_rows("DESCRIBE SELECT * FROM read_parquet(?)", [uri])
+    return {row[0] for row in rows}
+
+
+def quote_ident(name: str) -> str:
+    return '"' + str(name).replace('"', '""') + '"'
+
+
+# ---------------------------------------------------------------------------
+# Path resolution
+# ---------------------------------------------------------------------------
+
+def resolve_event_parquet_path(source_dir: Path, event_file_key: str = "events") -> tuple[Path, dict]:
+    meta_path = source_dir / "metadata.json"
+    with open(meta_path, encoding="utf-8") as f:
+        metadata = json.load(f)
+
+    files_section = metadata.get("files")
+    files_info = files_section if isinstance(files_section, dict) else {}
+    file_info = files_info.get(event_file_key)
+    if not isinstance(file_info, dict):
+        file_info = None
+
+    if not file_info:
+        fallback_names = [
+            f"{event_file_key}.parquet",
+            "events.parquet",
+            "fires.parquet",
+            "positions.parquet",
+            "storms.parquet",
+        ]
+        for name in fallback_names:
+            candidate = source_dir / name
+            if is_cloud_mode() or candidate.exists():
+                return candidate, metadata
+        if not is_cloud_mode():
+            parquet_candidates = sorted(source_dir.glob("*.parquet"))
+            for candidate in parquet_candidates:
+                if candidate.name in ("all_countries.parquet", "all_regions.parquet"):
+                    continue
+                return candidate, metadata
+        raise ValueError(f"No event file '{event_file_key}' found in {source_dir}")
+
+    filename = file_info.get("name") or file_info.get("filename")
+    if not filename:
+        raise ValueError(f"No filename specified for '{event_file_key}' in {source_dir}")
+
+    parquet_path = source_dir / filename
+    if not is_cloud_mode() and not parquet_path.exists():
+        raise ValueError(f"Event file not found: {parquet_path}")
+    return parquet_path, metadata
+
+
+# ---------------------------------------------------------------------------
+# Query functions (all accept Path objects; path_to_uri is applied internally)
+# ---------------------------------------------------------------------------
+
+def select_distinct_event_loc_ids(areas_path: Path, affected_loc_id: str, exact: bool = False, limit: int | None = None) -> list[str]:
+    if duckdb is None or not parquet_available(areas_path):
+        return []
+    uri = path_to_uri(areas_path)
+    comparator = "=" if exact else "LIKE"
+    if exact:
+        value = affected_loc_id
+    else:
+        escaped = (
+            str(affected_loc_id)
+            .replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
+        value = f"{escaped}%"
+    sql = (
+        "SELECT DISTINCT event_loc_id "
+        "FROM read_parquet(?) "
+        f"WHERE affected_loc_id {comparator} ? "
+        "ORDER BY event_loc_id"
+    )
+    if not exact:
+        sql = sql.replace("ORDER BY", "ESCAPE '\\' ORDER BY", 1)
+    params: list = [uri, value]
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(limit)
+    rows = run_rows(sql, params)
+    return [row[0] for row in rows if row and row[0] is not None]
+
+
+def select_event_ids_by_regions(parquet_path: Path, regions: Iterable[str]) -> list[str]:
+    if duckdb is None or not parquet_available(parquet_path):
+        return []
+    uri = path_to_uri(parquet_path)
+    regions = list(regions)
+    sql = "SELECT event_id FROM read_parquet(?)"
+    params: list = [uri]
+    if regions:
+        prefixes = [f"{r}%" for r in regions]
+        exacts = list(regions)
+        like_parts = ['"loc_id" LIKE ?' for _ in prefixes]
+        eq_parts = ['"loc_id" = ?' for _ in exacts]
+        sql += " WHERE " + " OR ".join(like_parts + eq_parts)
+        params.extend(prefixes + exacts)
+    rows = run_rows(sql, params)
+    return [row[0] for row in rows if row and row[0] is not None]
+
+
+def select_filtered_event_rows(
+    parquet_path: Path,
+    *,
+    year: int | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    min_value_filters: dict | None = None,
+    exact_filters: dict | None = None,
+    like_filters: dict | None = None,
+    in_filters: dict | None = None,
+    order_by_desc: str | None = None,
+    limit: int | None = None,
+) -> pd.DataFrame:
+    if duckdb is None or not parquet_available(parquet_path):
+        return pd.DataFrame()
+
+    uri = path_to_uri(parquet_path)
+    available_cols = parquet_columns(parquet_path)
+    where: list[str] = []
+    params: list = [uri]
+
+    if year is not None and "year" in available_cols:
+        where.append('"year" = ?')
+        params.append(year)
+    if start is not None and "timestamp" in available_cols:
+        where.append('"timestamp" >= CAST(? AS TIMESTAMP)')
+        params.append(_normalize_ts_for_duckdb(start))
+    if end is not None and "timestamp" in available_cols:
+        where.append('"timestamp" <= CAST(? AS TIMESTAMP)')
+        params.append(_normalize_ts_for_duckdb(end))
+    if (start is not None or end is not None) and "timestamp" not in available_cols:
+        warning_key = (str(parquet_path), tuple(sorted(available_cols)))
+        if warning_key not in _MISSING_TIME_FILTER_WARNING_KEYS:
+            _MISSING_TIME_FILTER_WARNING_KEYS.add(warning_key)
+            logger.warning(
+                "select_filtered_event_rows ignored start/end for %s because no timestamp column exists. Available time-like columns: %s",
+                parquet_path,
+                [col for col in ("year", "start_date", "end_date", "date", "datetime") if col in available_cols],
+            )
+
+    for col, value in (min_value_filters or {}).items():
+        if col in available_cols and value is not None:
+            where.append(f"{quote_ident(col)} >= ?")
+            params.append(value)
+
+    for col, value in (exact_filters or {}).items():
+        if col in available_cols and value is not None:
+            where.append(f"{quote_ident(col)} = ?")
+            params.append(value)
+
+    for col, value in (like_filters or {}).items():
+        if col in available_cols and value is not None:
+            where.append(f"{quote_ident(col)} LIKE ?")
+            params.append(value)
+
+    for col, values in (in_filters or {}).items():
+        values = list(values or [])
+        if col in available_cols and values:
+            placeholders = ", ".join("?" for _ in values)
+            where.append(f"{quote_ident(col)} IN ({placeholders})")
+            params.extend(values)
+
+    sql = "SELECT * FROM read_parquet(?)"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    if order_by_desc and order_by_desc in available_cols:
+        sql += f" ORDER BY {quote_ident(order_by_desc)} DESC NULLS LAST"
+    if limit is not None and limit > 0:
+        sql += " LIMIT ?"
+        params.append(limit)
+
+    return run_df(sql, params)
+
+
+def select_rows_by_exact_value(
+    parquet_path: Path,
+    column: str,
+    value,
+    *,
+    order_by: str | None = None,
+) -> pd.DataFrame:
+    if duckdb is None or not parquet_available(parquet_path):
+        return pd.DataFrame()
+
+    uri = path_to_uri(parquet_path)
+    available_cols = parquet_columns(parquet_path)
+    if column not in available_cols:
+        return pd.DataFrame()
+
+    sql = f"SELECT * FROM read_parquet(?) WHERE {quote_ident(column)} = ?"
+    params: list = [uri, value]
+    if order_by and order_by in available_cols:
+        sql += f" ORDER BY {quote_ident(order_by)} ASC NULLS LAST"
+    return run_df(sql, params)
+
+
+def select_rows(
+    parquet_path: Path,
+    *,
+    columns: Iterable[str] | None = None,
+    exact_filters: dict | None = None,
+    in_filters: dict | None = None,
+    compare_filters: list[tuple[str, str, object]] | None = None,
+    starts_with_filters: dict | None = None,
+    order_by: str | None = None,
+    limit: int | None = None,
+) -> pd.DataFrame:
+    if duckdb is None or not parquet_available(parquet_path):
+        return pd.DataFrame()
+
+    uri = path_to_uri(parquet_path)
+    available_cols = parquet_columns(parquet_path)
+    selected = [c for c in (columns or []) if c in available_cols]
+    select_expr = ", ".join(quote_ident(c) for c in selected) if selected else "*"
+
+    where: list[str] = []
+    params: list = [uri]
+
+    for col, value in (exact_filters or {}).items():
+        if col in available_cols and value is not None:
+            where.append(f"{quote_ident(col)} = ?")
+            params.append(value)
+
+    for col, values in (in_filters or {}).items():
+        values = [v for v in (values or []) if v is not None]
+        if col in available_cols and values:
+            placeholders = ", ".join("?" for _ in values)
+            where.append(f"{quote_ident(col)} IN ({placeholders})")
+            params.extend(values)
+
+    for col, op, value in (compare_filters or []):
+        if col not in available_cols or value is None:
+            continue
+        if op not in {"=", "!=", ">", ">=", "<", "<="}:
+            continue
+        where.append(f"{quote_ident(col)} {op} ?")
+        params.append(value)
+
+    for col, prefix in (starts_with_filters or {}).items():
+        if col in available_cols and prefix is not None:
+            where.append(f"starts_with({quote_ident(col)}, ?)")
+            params.append(prefix)
+
+    sql = f"SELECT {select_expr} FROM read_parquet(?)"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    if order_by and order_by in available_cols:
+        sql += f" ORDER BY {quote_ident(order_by)} ASC NULLS LAST"
+    if limit is not None and int(limit) > 0:
+        sql += " LIMIT ?"
+        params.append(int(limit))
+    return run_df(sql, params)
+
+
+def count_rows(
+    parquet_path: Path,
+    *,
+    exact_filters: dict | None = None,
+    in_filters: dict | None = None,
+    compare_filters: list[tuple[str, str, object]] | None = None,
+    starts_with_filters: dict | None = None,
+) -> int:
+    if duckdb is None or not parquet_available(parquet_path):
+        return 0
+
+    uri = path_to_uri(parquet_path)
+    available_cols = parquet_columns(parquet_path)
+    where: list[str] = []
+    params: list = [uri]
+
+    for col, value in (exact_filters or {}).items():
+        if col in available_cols and value is not None:
+            where.append(f"{quote_ident(col)} = ?")
+            params.append(value)
+
+    for col, values in (in_filters or {}).items():
+        values = [v for v in (values or []) if v is not None]
+        if col in available_cols and values:
+            placeholders = ", ".join("?" for _ in values)
+            where.append(f"{quote_ident(col)} IN ({placeholders})")
+            params.extend(values)
+
+    for col, op, value in (compare_filters or []):
+        if col not in available_cols or value is None:
+            continue
+        if op not in {"=", "!=", ">", ">=", "<", "<="}:
+            continue
+        where.append(f"{quote_ident(col)} {op} ?")
+        params.append(value)
+
+    for col, prefix in (starts_with_filters or {}).items():
+        if col in available_cols and prefix is not None:
+            where.append(f"starts_with({quote_ident(col)}, ?)")
+            params.append(prefix)
+
+    sql = "SELECT COUNT(*) FROM read_parquet(?)"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    rows = run_rows(sql, params)
+    if not rows:
+        return 0
+    try:
+        return int(rows[0][0] or 0)
+    except Exception:
+        return 0
+
+
+def select_linked_values(
+    links_path: Path,
+    *,
+    source_column: str,
+    source_value: str,
+    target_column: str,
+    link_type: str | None = None,
+) -> list[str]:
+    if duckdb is None or not parquet_available(links_path):
+        return []
+
+    uri = path_to_uri(links_path)
+    available_cols = parquet_columns(links_path)
+    if source_column not in available_cols or target_column not in available_cols:
+        return []
+
+    sql = (
+        f"SELECT DISTINCT {quote_ident(target_column)} "
+        f"FROM read_parquet(?) "
+        f"WHERE {quote_ident(source_column)} = ?"
+    )
+    params: list = [uri, source_value]
+    if link_type is not None and "link_type" in available_cols:
+        sql += ' AND "link_type" = ?'
+        params.append(link_type)
+    sql += f" ORDER BY {quote_ident(target_column)}"
+    rows = run_rows(sql, params)
+    return [row[0] for row in rows if row and row[0] is not None]
+
+
+def select_linked_loc_ids(
+    links_path: Path,
+    *,
+    source_column: str,
+    source_loc_id: str,
+    target_column: str,
+    link_type: str | None = None,
+) -> list[str]:
+    return select_linked_values(
+        links_path,
+        source_column=source_column,
+        source_value=source_loc_id,
+        target_column=target_column,
+        link_type=link_type,
+    )
+
+
+def select_peak_positions_by_storm_ids(positions_path: Path, storm_ids: Iterable[str]) -> pd.DataFrame:
+    if duckdb is None or not parquet_available(positions_path):
+        return pd.DataFrame()
+
+    storm_ids = [s for s in storm_ids if s]
+    if not storm_ids:
+        return pd.DataFrame()
+
+    df = select_filtered_event_rows(
+        positions_path,
+        in_filters={"storm_id": storm_ids},
+    )
+    if df.empty:
+        return df
+
+    df = df.dropna(subset=["latitude", "longitude"])
+    if df.empty or "storm_id" not in df.columns:
+        return pd.DataFrame()
+
+    if "wind_kt" in df.columns:
+        df["wind_sort"] = df["wind_kt"].fillna(-1)
+        idx = df.groupby("storm_id")["wind_sort"].idxmax()
+        df = df.loc[idx].drop(columns=["wind_sort"], errors="ignore")
+    else:
+        df = df.sort_values(["storm_id", "timestamp"] if "timestamp" in df.columns else ["storm_id"])
+        df = df.groupby("storm_id").head(1)
+
+    return df
+
+
+def select_filtered_partitioned_rows(
+    parquet_paths: Iterable[Path],
+    *,
+    year: int | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    min_value_filters: dict | None = None,
+    exact_filters: dict | None = None,
+    like_filters: dict | None = None,
+    in_filters: dict | None = None,
+) -> pd.DataFrame:
+    if duckdb is None:
+        return pd.DataFrame()
+
+    if is_cloud_mode():
+        # In S3 mode, convert paths to s3:// URIs - skip local exists check
+        uris = [path_to_uri(Path(p)) for p in parquet_paths]
+    else:
+        uris = [str(Path(p)) for p in parquet_paths if Path(p).exists()]
+
+    if not uris:
+        return pd.DataFrame()
+
+    # Get columns from first reachable file to build WHERE clause
+    available_cols: set[str] = set()
+    if is_cloud_mode():
+        for uri in uris:
+            try:
+                rows = run_rows("DESCRIBE SELECT * FROM read_parquet(?)", [uri])
+                available_cols = {row[0] for row in rows}
+                break
+            except Exception:
+                continue
+    else:
+        available_cols = parquet_columns(Path(uris[0]))
+
+    # Build WHERE clause and filter params (not including the URI placeholder)
+    where: list[str] = []
+    filter_params: list = []
+
+    if year is not None and "year" in available_cols:
+        where.append('"year" = ?')
+        filter_params.append(year)
+    if start is not None and "timestamp" in available_cols:
+        where.append('"timestamp" >= CAST(? AS TIMESTAMP)')
+        filter_params.append(_normalize_ts_for_duckdb(start))
+    if end is not None and "timestamp" in available_cols:
+        where.append('"timestamp" <= CAST(? AS TIMESTAMP)')
+        filter_params.append(_normalize_ts_for_duckdb(end))
+
+    for col, value in (min_value_filters or {}).items():
+        if col in available_cols and value is not None:
+            where.append(f"{quote_ident(col)} >= ?")
+            filter_params.append(value)
+
+    for col, value in (exact_filters or {}).items():
+        if col in available_cols and value is not None:
+            where.append(f"{quote_ident(col)} = ?")
+            filter_params.append(value)
+
+    for col, value in (like_filters or {}).items():
+        if col in available_cols and value is not None:
+            where.append(f"{quote_ident(col)} LIKE ?")
+            filter_params.append(value)
+
+    for col, values in (in_filters or {}).items():
+        values = list(values or [])
+        if col in available_cols and values:
+            placeholders_w = ", ".join("?" for _ in values)
+            where.append(f"{quote_ident(col)} IN ({placeholders_w})")
+            filter_params.extend(values)
+
+    where_clause = " WHERE " + " AND ".join(where) if where else ""
+
+    if is_cloud_mode():
+        # Query each file individually so missing S3 files are silently skipped
+        dfs = []
+        for uri in uris:
+            try:
+                df = run_df(f"SELECT * FROM read_parquet(?){where_clause}", [uri] + filter_params)
+                if not df.empty:
+                    dfs.append(df)
+            except Exception as e:
+                err = str(e)
+                if "No files found" in err or "404" in err or "HTTP" in err:
+                    continue
+                raise
+        return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
+    else:
+        placeholders = ", ".join("?" for _ in uris)
+        sql = f"SELECT * FROM read_parquet([{placeholders}]){where_clause}"
+        return run_df(sql, list(uris) + filter_params)
+
+
+def select_columns_from_parquet(parquet_path: Path, columns: Iterable[str]) -> pd.DataFrame:
+    if duckdb is None or not parquet_available(parquet_path):
+        return pd.DataFrame()
+
+    uri = path_to_uri(parquet_path)
+    available_cols = parquet_columns(parquet_path)
+    selected = [c for c in columns if c in available_cols]
+    if not selected:
+        return pd.DataFrame()
+
+    sql = "SELECT " + ", ".join(quote_ident(c) for c in selected) + " FROM read_parquet(?)"
+    return run_df(sql, [uri])
+
+
+# ---------------------------------------------------------------------------
+# In-memory TTL response cache
+# Caches DataFrames from slow default GeoJSON queries so cold-start fetches
+# from R2 do not block every incoming request.
+# ---------------------------------------------------------------------------
+
+_CACHE_LOCK = threading.Lock()
+_CACHE: dict[str, tuple[pd.DataFrame, float]] = {}  # key -> (df, expires_at)
+
+DEFAULT_CACHE_TTL = int(os.environ.get("DUCKDB_CACHE_TTL", "300"))  # seconds
+
+def get_default_preload_year_window(relative_years: int = 10) -> tuple[int, int]:
+    current_year = datetime.now(timezone.utc).year
+    start_year = max(1900, current_year - max(1, relative_years) + 1)
+    return start_year, current_year
+
+
+def get_default_preload_range_bounds(relative_years: int = 10) -> tuple[datetime, datetime, datetime, datetime]:
+    start_year, end_year = get_default_preload_year_window(relative_years)
+    return (
+        datetime(start_year - 1, 12, 30, 0, 0, 0, tzinfo=timezone.utc),
+        datetime(start_year, 1, 2, 23, 59, 59, tzinfo=timezone.utc),
+        datetime(end_year, 12, 30, 0, 0, 0, tzinfo=timezone.utc),
+        datetime(end_year + 1, 1, 2, 23, 59, 59, tzinfo=timezone.utc),
+    )
+
+
+def cache_get(key: str) -> pd.DataFrame | None:
+    """Return cached DataFrame if still valid, else None.
+
+    Non-permanent entries get a sliding TTL: each hit extends expiry by DEFAULT_CACHE_TTL.
+    Permanent entries (expires_at == inf) are never expired or extended.
+    """
+    now = time.monotonic()
+    with _CACHE_LOCK:
+        entry = _CACHE.get(key)
+        if entry is None:
+            return None
+        df, expires_at = entry
+        if now > expires_at:
+            _CACHE.pop(key, None)
+            return None
+        # Slide expiry window on access for non-permanent entries
+        if expires_at != float("inf"):
+            _CACHE[key] = (df, now + DEFAULT_CACHE_TTL)
+    return df
+
+
+def cache_set(key: str, df: pd.DataFrame, ttl: int | None = None, permanent: bool = False) -> None:
+    """Store a DataFrame in the cache.
+
+    permanent=True: entry never expires (used for prewarmed base data).
+    ttl: seconds until expiry; defaults to DEFAULT_CACHE_TTL if not permanent.
+    """
+    expires_at = float("inf") if permanent else time.monotonic() + (ttl if ttl is not None else DEFAULT_CACHE_TTL)
+    with _CACHE_LOCK:
+        _CACHE[key] = (df, expires_at)
+
+
+def cache_clear(prefix: str | None = None) -> None:
+    """Clear all cache entries, or only those whose key starts with prefix."""
+    with _CACHE_LOCK:
+        if prefix is None:
+            _CACHE.clear()
+        else:
+            for k in list(_CACHE):
+                if k.startswith(prefix):
+                    del _CACHE[k]
+
+
+def make_cache_key(source: str, **params) -> str:
+    """Build a cache key from a source name and request params.
+
+    Only non-None values are included. Sorted so key is stable regardless of
+    argument order. Use the same helper in both the pre-warmer and route
+    handlers so keys always match.
+
+    Example:
+        make_cache_key("floods", year=2021, include_geometry=True)
+        -> "floods:include_geometry:True:year:2021"
+    """
+    relevant = {k: v for k, v in params.items() if v is not None and v is not False}
+    parts = [source] + [f"{k}:{v}" for k, v in sorted(relevant.items())]
+    return ":".join(parts)
+
+
+def _parse_cache_range_ts(value: str | None) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        s = str(value).strip()
+        if s.lstrip("-").isdigit():
+            return datetime.fromtimestamp(int(s) / 1000.0, tz=timezone.utc)
+        dt = pd.to_datetime(s, utc=True)
+        if pd.isna(dt):
+            return None
+        return dt.to_pydatetime()
+    except Exception:
+        return None
+
+
+def is_default_preload_range(start: str | None, end: str | None) -> bool:
+    """Return True for the frontend's default multi-year disaster preload window.
+
+    Allows a little slack around midnight boundaries so browser timezone
+    differences still map to the same warm cache bucket.
+    """
+    start_dt = _parse_cache_range_ts(start)
+    end_dt = _parse_cache_range_ts(end)
+    if start_dt is None or end_dt is None:
+        return False
+    preload_start_lower, preload_start_upper, preload_end_lower, preload_end_upper = get_default_preload_range_bounds()
+    return preload_start_lower <= start_dt <= preload_start_upper and preload_end_lower <= end_dt <= preload_end_upper
+
+
+def make_preload_cache_key(source: str, **params) -> str:
+    """Canonical cache key for the frontend's default disaster preload workflow."""
+    return make_cache_key(source, preset="preload_2020_2025", **params)
+
+
+def select_filtered_event_rows_cached(
+    parquet_path: Path,
+    cache_key: str,
+    ttl: int | None = None,
+    permanent: bool = False,
+    **kwargs,
+) -> pd.DataFrame:
+    """Like select_filtered_event_rows but checks/stores results in the TTL cache.
+
+    Use this for default (no user-specific filters) queries to avoid cold R2
+    fetches on every request. cached DataFrame is returned for cache_ttl seconds.
+    """
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
+    df = select_filtered_event_rows(parquet_path, **kwargs)
+    if not df.empty:
+        cache_set(cache_key, df, ttl, permanent=permanent)
+    return df
+
+
+# ---------------------------------------------------------------------------
+# Startup pre-warmer
+# Runs the expensive default queries for each disaster source so the DuckDB
+# http metadata cache and our in-memory DataFrame cache are both populated
+# before the first user request arrives.
+# ---------------------------------------------------------------------------
+
+def _prewarm_source(source_id: str, parquet_path: Path, min_year_filter: dict | None) -> None:
+    """Run the default query for one source and populate the cache."""
+    import logging
+    log = logging.getLogger(__name__)
+    if not parquet_available(parquet_path):
+        return
+    cache_key = f"{source_id}:default:{min_year_filter}"
+    if cache_get(cache_key) is not None:
+        return  # already warm
+    try:
+        t0 = time.monotonic()
+        df = select_filtered_event_rows(
+            parquet_path,
+            min_value_filters=min_year_filter,
+        )
+        elapsed = time.monotonic() - t0
+        if not df.empty:
+            cache_set(cache_key, df)
+        log.info("prewarm %s: %d rows in %.1fs", source_id, len(df), elapsed)
+    except Exception as exc:
+        log.warning("prewarm %s failed: %s", source_id, exc)
+
+
+def prewarm_disaster_sources(global_dir: Path) -> None:
+    """Pre-warm the default queries for all disaster sources.
+
+    Call this in a background thread from the app lifespan. It populates both
+    the DuckDB http metadata cache and our in-memory DataFrame cache so that
+    the first user request does not incur cold R2 latency.
+
+    Animation years 2020-2025 are pre-warmed with the exact filter params that
+    the frontend overlay-controller.js uses (min_magnitude, min_area_km2, etc.)
+    so that animation playback hits the cache on the first pass.
+    """
+    if not is_cloud_mode():
+        return  # pre-warming only needed for R2 mode
+
+    import logging
+    log = logging.getLogger(__name__)
+
+    # Prewarm the same relative-year window the Explore preset uses.
+    preload_start_year, preload_end_year = get_default_preload_year_window(relative_years=10)
+    animation_years = list(range(preload_start_year, preload_end_year + 1))
+    preload_start = f"{preload_start_year:04d}-01-01 00:00:00"
+    preload_end = f"{preload_end_year:04d}-12-31 23:59:59"
+
+    # --- earthquakes (min_magnitude 5.5 from overlay-controller.js) ----------
+    eq_path = global_dir / "disasters/earthquakes/events.parquet"
+    for yr in animation_years:
+        ck = make_cache_key("earthquakes", year=yr, min_magnitude=5.5)
+        if cache_get(ck) is None:
+            try:
+                t0 = time.monotonic()
+                df = select_filtered_event_rows(eq_path, year=yr, min_value_filters={"magnitude": 5.5})
+                if not df.empty:
+                    cache_set(ck, df, permanent=True)
+                log.info("prewarm earthquakes year=%d: %d rows in %.1fs", yr, len(df), time.monotonic() - t0)
+            except Exception as exc:
+                log.warning("prewarm earthquakes year=%d failed: %s", yr, exc)
+    preload_ck = make_preload_cache_key("earthquakes", min_magnitude=5.5)
+    if cache_get(preload_ck) is None:
+        try:
+            t0 = time.monotonic()
+            df = select_filtered_event_rows(eq_path, start=preload_start, end=preload_end, min_value_filters={"magnitude": 5.5})
+            if not df.empty:
+                cache_set(preload_ck, df, permanent=True)
+            log.info("prewarm earthquakes preload-range: %d rows in %.1fs", len(df), time.monotonic() - t0)
+        except Exception as exc:
+            log.warning("prewarm earthquakes preload-range failed: %s", exc)
+
+    # --- tsunamis (default preset is 3m+ wave height) ------------------------
+    ts_path = global_dir / "disasters/tsunamis/events.parquet"
+    for yr in animation_years:
+        ck = make_cache_key("tsunamis", year=yr, min_height_m=3)
+        if cache_get(ck) is None:
+            try:
+                t0 = time.monotonic()
+                df = select_filtered_event_rows(ts_path, year=yr, min_value_filters={"max_water_height_m": 3})
+                if not df.empty:
+                    cache_set(ck, df, permanent=True)
+                log.info("prewarm tsunamis year=%d: %d rows in %.1fs", yr, len(df), time.monotonic() - t0)
+            except Exception as exc:
+                log.warning("prewarm tsunamis year=%d failed: %s", yr, exc)
+    preload_ck = make_preload_cache_key("tsunamis", min_height_m=3)
+    if cache_get(preload_ck) is None:
+        try:
+            t0 = time.monotonic()
+            df = select_filtered_event_rows(
+                ts_path,
+                start=preload_start,
+                end=preload_end,
+                min_value_filters={"max_water_height_m": 3},
+            )
+            if not df.empty:
+                cache_set(preload_ck, df, permanent=True)
+            log.info("prewarm tsunamis preload-range: %d rows in %.1fs", len(df), time.monotonic() - t0)
+        except Exception as exc:
+            log.warning("prewarm tsunamis preload-range failed: %s", exc)
+
+    # --- floods (default preset is severity 2+, data currently ends in 2019) --
+    fl_path = resolve_flood_events_path(global_dir)
+    for yr in [y for y in animation_years if y <= 2019]:
+        ck = make_cache_key("floods", year=yr, min_severity=2, include_geometry=True)
+        if cache_get(ck) is None:
+            try:
+                t0 = time.monotonic()
+                df = select_filtered_event_rows(fl_path, year=yr, min_value_filters={"severity": 2})
+                if not df.empty:
+                    cache_set(ck, df, permanent=True)
+                log.info("prewarm floods year=%d: %d rows in %.1fs", yr, len(df), time.monotonic() - t0)
+            except Exception as exc:
+                log.warning("prewarm floods year=%d failed: %s", yr, exc)
+    flood_preload_end_year = min(preload_end_year, 2019)
+    if preload_start_year <= flood_preload_end_year:
+        preload_ck = make_preload_cache_key("floods", min_severity=2, include_geometry=True)
+        if cache_get(preload_ck) is None:
+            try:
+                t0 = time.monotonic()
+                flood_preload_start = f"{preload_start_year:04d}-01-01 00:00:00"
+                flood_preload_end = f"{flood_preload_end_year:04d}-12-31 23:59:59"
+                df = select_filtered_event_rows(
+                    fl_path,
+                    start=flood_preload_start,
+                    end=flood_preload_end,
+                    min_value_filters={"severity": 2},
+                )
+                if not df.empty:
+                    cache_set(preload_ck, df, permanent=True)
+                log.info("prewarm floods preload-range: %d rows in %.1fs", len(df), time.monotonic() - t0)
+            except Exception as exc:
+                log.warning("prewarm floods preload-range failed: %s", exc)
+
+    # --- volcanoes/eruptions (default preset is VEI 3+, exclude ongoing) -----
+    vol_path = global_dir / "disasters/volcanoes/events.parquet"
+    for yr in animation_years:
+        ck = make_cache_key("volcanoes", year=yr, min_vei=3)
+        if cache_get(ck) is None:
+            try:
+                t0 = time.monotonic()
+                df = select_filtered_event_rows(vol_path, year=yr, min_value_filters={"VEI": 3})
+                if not df.empty:
+                    cache_set(ck, df, permanent=True)
+                log.info("prewarm volcanoes year=%d: %d rows in %.1fs", yr, len(df), time.monotonic() - t0)
+            except Exception as exc:
+                log.warning("prewarm volcanoes year=%d failed: %s", yr, exc)
+    preload_ck = make_preload_cache_key("volcanoes", min_vei=3, exclude_ongoing=True)
+    if cache_get(preload_ck) is None:
+        try:
+            t0 = time.monotonic()
+            df = select_filtered_event_rows(
+                vol_path,
+                start=preload_start,
+                end=preload_end,
+                min_value_filters={"VEI": 3},
+            )
+            if not df.empty and "is_ongoing" in df.columns:
+                df = df[df["is_ongoing"] != True]
+            if not df.empty:
+                cache_set(preload_ck, df, permanent=True)
+            log.info("prewarm volcanoes preload-range: %d rows in %.1fs", len(df), time.monotonic() - t0)
+        except Exception as exc:
+            log.warning("prewarm volcanoes preload-range failed: %s", exc)
+
+    # --- tornadoes (default preset is EF2+, post-fetch scale filter) ----------
+    tor_path = global_dir / "disasters/tornadoes/events.parquet"
+    for yr in animation_years:
+        ck = make_cache_key("tornadoes", year=yr, min_scale="EF2")
+        if cache_get(ck) is None:
+            try:
+                t0 = time.monotonic()
+                df = select_filtered_event_rows(tor_path, year=yr)
+                if not df.empty:
+                    cache_set(ck, df, permanent=True)
+                log.info("prewarm tornadoes year=%d: %d rows in %.1fs", yr, len(df), time.monotonic() - t0)
+            except Exception as exc:
+                log.warning("prewarm tornadoes year=%d failed: %s", yr, exc)
+    preload_ck = make_preload_cache_key("tornadoes", min_scale="EF2")
+    if cache_get(preload_ck) is None:
+        try:
+            t0 = time.monotonic()
+            df = select_filtered_event_rows(tor_path, start=preload_start, end=preload_end)
+            if not df.empty:
+                cache_set(preload_ck, df, permanent=True)
+            log.info("prewarm tornadoes preload-range: %d rows in %.1fs", len(df), time.monotonic() - t0)
+        except Exception as exc:
+            log.warning("prewarm tornadoes preload-range failed: %s", exc)
+
+    # --- hurricanes (storms.parquet + positions.parquet; route assembles join)
+    # Warm DuckDB metadata cache for both files; route handler caches the join.
+    hur_storms_path = global_dir / "disasters/hurricanes/storms.parquet"
+    hur_positions_path = global_dir / "disasters/hurricanes/positions.parquet"
+    for yr in animation_years:
+        ck = make_cache_key("hurricanes", year=yr, min_category="Cat1")
+        if cache_get(ck) is None:
+            try:
+                t0 = time.monotonic()
+                storms_df = select_filtered_event_rows(hur_storms_path, year=yr)
+                if not storms_df.empty:
+                    # Filter Cat1+ (matches overlay-controller.js default)
+                    cat_order = {"TD": 0, "TS": 1, "Cat1": 2, "Cat2": 3, "Cat3": 4, "Cat4": 5, "Cat5": 6}
+                    storms_df = storms_df[storms_df["max_category"].map(lambda x: cat_order.get(x, 0) >= 2)]
+                    if not storms_df.empty:
+                        storm_ids = storms_df["storm_id"].tolist()
+                        peak_positions = select_peak_positions_by_storm_ids(hur_positions_path, storm_ids)
+                        if not peak_positions.empty:
+                            joined = storms_df.merge(peak_positions[["storm_id", "latitude", "longitude"]], on="storm_id", how="inner", suffixes=("", "_pos"))
+                            if not joined.empty:
+                                cache_set(ck, joined, permanent=True)
+                log.info("prewarm hurricanes year=%d: %d storms in %.1fs", yr, len(storms_df), time.monotonic() - t0)
+            except Exception as exc:
+                log.warning("prewarm hurricanes year=%d failed: %s", yr, exc)
+    preload_ck = make_preload_cache_key("hurricanes_tracks", min_category="Cat1")
+    if cache_get(preload_ck) is None:
+        try:
+            t0 = time.monotonic()
+            # storms.parquet has no `timestamp` column - it has `start_date` /
+            # `end_date` for each storm - so passing start/end here silently
+            # falls through and returns ALL storms (1842-2026, 13.5k rows).
+            # Filter by `year` directly so the join only covers storms in the
+            # canonical 2020-2025 preload window. Without this, the cached
+            # joined frame was ~303k rows instead of ~14k, and every hurricane
+            # request paid pandas-on-300k cost.
+            storms_df = select_filtered_event_rows(hur_storms_path)
+            if not storms_df.empty and "year" in storms_df.columns:
+                storms_df = storms_df[
+                    (storms_df["year"] >= preload_start_year) & (storms_df["year"] <= preload_end_year)
+                ]
+            if not storms_df.empty:
+                cat_order = {"TD": 0, "TS": 1, "Cat1": 2, "Cat2": 3, "Cat3": 4, "Cat4": 5, "Cat5": 6}
+                storms_df = storms_df[storms_df["max_category"].map(lambda x: cat_order.get(x, 0) >= 2)]
+                if not storms_df.empty:
+                    storm_ids = storms_df["storm_id"].tolist()
+                    pos_df = select_filtered_event_rows(hur_positions_path, in_filters={"storm_id": storm_ids})
+                    pos_df = pos_df.dropna(subset=["latitude", "longitude"])
+                    if not pos_df.empty:
+                        joined = pos_df.merge(
+                            storms_df[
+                                [
+                                    "storm_id",
+                                    "name",
+                                    "year",
+                                    "basin",
+                                    "max_wind_kt",
+                                    "min_pressure_mb",
+                                    "max_category",
+                                    "num_positions",
+                                    "start_date",
+                                    "end_date",
+                                    "made_landfall",
+                                ]
+                            ],
+                            on="storm_id",
+                            how="inner",
+                        )
+                        if not joined.empty:
+                            cache_set(preload_ck, joined, permanent=True)
+            log.info("prewarm hurricanes preload-range: %d joined rows in %.1fs", len(joined) if 'joined' in locals() else 0, time.monotonic() - t0)
+        except Exception as exc:
+            log.warning("prewarm hurricanes preload-range failed: %s", exc)
+
+    # --- wildfires (per-year global files 2020-2024; route caches assembled df)
+    # Warm DuckDB metadata cache for the per-year parquet files.
+    wf_base = global_dir / "disasters/wildfires/by_year_enriched"
+    for yr in animation_years:
+        if yr > 2024:
+            continue  # global wildfire data only goes to 2024
+        ck = make_cache_key("wildfires", year=yr, min_area_km2=500)
+        if cache_get(ck) is None:
+            try:
+                t0 = time.monotonic()
+                wf_path = wf_base / f"fires_{yr}_enriched.parquet"
+                df = select_filtered_event_rows(wf_path, min_value_filters={"area_km2": 500})
+                if not df.empty:
+                    import pandas as _pd
+                    df["timestamp"] = _pd.to_datetime(df["timestamp"], errors="coerce")
+                    df["year"] = df["timestamp"].dt.year
+                    df = df[df["year"] == yr]
+                    if "land_cover" not in df.columns:
+                        df["land_cover"] = ""
+                    if not df.empty:
+                        cache_set(ck, df, permanent=True)
+                log.info("prewarm wildfires year=%d: %d rows in %.1fs", yr, len(df), time.monotonic() - t0)
+            except Exception as exc:
+                log.warning("prewarm wildfires year=%d failed: %s", yr, exc)
+    preload_ck = make_preload_cache_key("wildfires", min_area_km2=500, include_perimeter=True)
+    if cache_get(preload_ck) is None:
+        try:
+            t0 = time.monotonic()
+            year_files = [
+                wf_base / f"fires_{yr}_enriched.parquet"
+                for yr in range(preload_start_year, min(preload_end_year, 2024) + 1)
+            ]
+            df = select_filtered_partitioned_rows(
+                year_files,
+                min_value_filters={"area_km2": 500},
+            )
+            if not df.empty:
+                import pandas as _pd
+                df["timestamp"] = _pd.to_datetime(df["timestamp"], errors="coerce")
+                df = df[(df["timestamp"] >= _pd.to_datetime(preload_start)) & (df["timestamp"] <= _pd.to_datetime(preload_end))]
+                if "land_cover" not in df.columns:
+                    df["land_cover"] = ""
+                if "source" not in df.columns:
+                    df["source"] = "global_fire_atlas"
+                if "iso3" in df.columns:
+                    df = df[~df["iso3"].isin(["USA", "CAN"])]
+                if not df.empty:
+                    cache_set(preload_ck, df, permanent=True)
+            log.info("prewarm wildfires preload-range: %d rows in %.1fs", len(df), time.monotonic() - t0)
+        except Exception as exc:
+            log.warning("prewarm wildfires preload-range failed: %s", exc)
+
+    log.info("Pre-warmer complete")

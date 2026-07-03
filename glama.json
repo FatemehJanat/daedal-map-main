@@ -1,0 +1,20 @@
+{
+  "$schema": "https://glama.ai/mcp/schemas/server.json",
+  "maintainers": [
+    "xyver"
+  ],
+  "name": "daedal-map",
+  "description": "Remote MCP server for geographic data. Free packs: currency, volcanoes, hurricanes, UN SDG, World Factbook. Paid packs via x402 on Base USDC: earthquakes, tsunamis. Start with get_catalog, then get_pack for details.",
+  "tags": [
+    "geospatial",
+    "disaster",
+    "earthquakes",
+    "tsunamis",
+    "volcanoes",
+    "hurricanes",
+    "fx-rates",
+    "economics",
+    "mcp",
+    "location"
+  ]
+}

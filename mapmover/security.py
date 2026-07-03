@@ -1,0 +1,192 @@
+"""Small app-side security helpers for the hosted API."""
+
+from __future__ import annotations
+
+import os
+import ipaddress
+import threading
+import time
+from collections import defaultdict, deque
+from urllib.parse import urlparse
+from typing import Deque
+
+from fastapi import Request
+from mapmover.runtime_config import get_runtime_config
+
+
+def _normalize_origin(value: str) -> str:
+    value = (value or "").strip()
+    if not value:
+        return ""
+    parsed = urlparse(value if "://" in value else f"https://{value}")
+    if not parsed.netloc:
+        return ""
+    scheme = parsed.scheme or "https"
+    return f"{scheme}://{parsed.netloc}".rstrip("/")
+
+
+def _origin_variants(value: str) -> list[str]:
+    origin = _normalize_origin(value)
+    if not origin:
+        return []
+
+    parsed = urlparse(origin)
+    host = parsed.hostname or ""
+    if not host:
+        return [origin]
+
+    variants = [origin]
+    port = f":{parsed.port}" if parsed.port else ""
+
+    if host.startswith("www."):
+        bare_host = host[4:]
+        variants.append(f"{parsed.scheme}://{bare_host}{port}")
+    elif host.count(".") >= 1 and host not in {"localhost", "127.0.0.1"}:
+        variants.append(f"{parsed.scheme}://www.{host}{port}")
+
+    return [item for item in dict.fromkeys(variants) if item]
+
+
+def get_allowed_origins() -> list[str]:
+    """Return the configured CORS allowlist for browser callers."""
+    configured = os.getenv("CORS_ALLOWED_ORIGINS", "").strip()
+    if configured:
+        return [origin.strip() for origin in configured.split(",") if origin.strip()]
+
+    runtime_cfg = get_runtime_config().get("app", {})
+    configured_origins: list[str] = []
+    for origin in (
+        runtime_cfg.get("app_url", ""),
+        runtime_cfg.get("site_url", ""),
+    ):
+        configured_origins.extend(_origin_variants(origin))
+
+    configured_origins.extend(
+        variant
+        for origin in os.getenv("APP_URL_ALIASES", "").split(",")
+        if origin.strip()
+        for variant in _origin_variants(origin)
+    )
+
+    defaults = [
+        "http://localhost:7000",
+        "http://localhost:8080",
+        "http://localhost:8000",
+        "http://localhost:8001",
+        "http://127.0.0.1:7000",
+        "http://127.0.0.1:8080",
+        "http://127.0.0.1:8000",
+        "http://127.0.0.1:8001",
+    ]
+    return [origin for origin in dict.fromkeys([*configured_origins, *defaults]) if origin]
+
+
+def is_https_request(request: Request) -> bool:
+    forwarded_proto = (request.headers.get("x-forwarded-proto") or "").split(",", 1)[0].strip().lower()
+    if forwarded_proto:
+        return forwarded_proto == "https"
+    return request.url.scheme == "https"
+
+
+def _env_truthy(name: str) -> bool:
+    return str(os.getenv(name, "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _deployment_name() -> str:
+    return str(os.getenv("DEPLOYMENT", "")).strip().lower()
+
+
+def _trusted_proxy_cidrs():
+    networks = []
+    for raw_value in os.getenv("TRUSTED_PROXY_CIDRS", "").split(","):
+        value = raw_value.strip()
+        if not value:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(value, strict=False))
+        except ValueError:
+            continue
+    return networks
+
+
+def _request_from_trusted_proxy(request: Request) -> bool:
+    if not _env_truthy("TRUST_PROXY_HEADERS"):
+        return False
+    networks = _trusted_proxy_cidrs()
+    if not networks:
+        return True
+    peer = request.client.host if request.client else ""
+    try:
+        peer_ip = ipaddress.ip_address(peer)
+    except ValueError:
+        return False
+    return any(peer_ip in network for network in networks)
+
+
+def _trusted_proxy_ip_headers() -> list[str]:
+    configured = os.getenv("TRUSTED_PROXY_IP_HEADERS", "").strip()
+    if configured:
+        return [item.strip().lower() for item in configured.split(",") if item.strip()]
+    return ["cf-connecting-ip", "true-client-ip", "x-real-ip"]
+
+
+def get_client_ip(request: Request) -> str:
+    """
+    Best-effort client IP for app-side throttling and security telemetry.
+
+    Important rule:
+    - do not trust forwarding headers from arbitrary public callers
+    - trust proxy-controlled identity headers only when explicitly enabled
+
+    This keeps anonymous limiter identity from being steered by a caller that
+    simply rotates a self-supplied forwarding chain.
+    """
+    if _request_from_trusted_proxy(request):
+        for header in _trusted_proxy_ip_headers():
+            raw = (request.headers.get(header) or "").strip()
+            if raw:
+                return raw.split(",", 1)[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def log_startup_security_warnings(logger) -> None:
+    """Emit loud warnings for risky-but-valid hosted security configs."""
+    if _env_truthy("TRUST_PROXY_HEADERS") and not _trusted_proxy_cidrs():
+        logger.warning(
+            "Security warning: TRUST_PROXY_HEADERS=true but TRUSTED_PROXY_CIDRS is empty. "
+            "Any immediate peer will be trusted for client-IP headers."
+        )
+
+    forced_qa_user_id = str(os.getenv("LLM_USAGE_FORCE_QA_USER_ID", "")).strip()
+    if forced_qa_user_id and _deployment_name() not in {"", "local"}:
+        logger.warning(
+            "Security warning: LLM_USAGE_FORCE_QA_USER_ID is set in a non-local deployment. "
+            "Hosted chat calls may be misclassified as qa_suite until this env var is removed."
+        )
+
+
+class SlidingWindowRateLimiter:
+    """Thread-safe, in-memory sliding-window limiter."""
+
+    def __init__(self):
+        self._events: dict[str, Deque[float]] = defaultdict(deque)
+        self._lock = threading.Lock()
+
+    def check(self, key: str, limit: int, window_seconds: int) -> tuple[bool, int]:
+        now = time.time()
+        cutoff = now - window_seconds
+
+        with self._lock:
+            bucket = self._events[key]
+            while bucket and bucket[0] <= cutoff:
+                bucket.popleft()
+
+            if len(bucket) >= limit:
+                retry_after = max(1, int(bucket[0] + window_seconds - now))
+                return False, retry_after
+
+            bucket.append(now)
+            return True, 0
+
+
+rate_limiter = SlidingWindowRateLimiter()

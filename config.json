@@ -1,0 +1,16 @@
+{
+  "styles": {
+    "basic": {
+      "style": "styles/style.json",
+      "tilejson": {
+        "bounds": [-180, -85, 180, 85]
+      }
+    }
+  },
+  "data": {
+    "counties": {
+      "mbtiles": "static/counties.mbtiles"
+    }
+  }
+}
+

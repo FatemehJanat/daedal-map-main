@@ -1,0 +1,95 @@
+# =============================================================================
+# county-map (PUBLIC REPO) - .gitignore
+# =============================================================================
+# This is the open-source public repo. It contains:
+# - The web app (FastAPI + frontend)
+# - Example converters (in examples/)
+# - Schema documentation
+#
+# It does NOT contain:
+# - Production converters (county-map-private)
+# - Processed data files (county-map-data)
+# - Raw downloaded data (county-map-raw)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Python
+# -----------------------------------------------------------------------------
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+
+# -----------------------------------------------------------------------------
+# Node
+# -----------------------------------------------------------------------------
+node_modules/
+package-lock.json
+
+# -----------------------------------------------------------------------------
+# Data (all data lives in county-map-data, never inside this repo)
+# -----------------------------------------------------------------------------
+data/
+data_pipeline/
+.data_s3_cache/
+../appdata/
+
+# -----------------------------------------------------------------------------
+# Logs and temp files
+# -----------------------------------------------------------------------------
+logs/
+*.log
+*.tmp
+nul
+
+# -----------------------------------------------------------------------------
+# Environment and secrets (NEVER commit these)
+# -----------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+!.env.hosted.example
+config.local.json
+settings.json
+*.local.json
+
+# -----------------------------------------------------------------------------
+# OS files
+# -----------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# -----------------------------------------------------------------------------
+# IDE
+# -----------------------------------------------------------------------------
+.vscode/
+.idea/
+*.code-workspace
+
+# -----------------------------------------------------------------------------
+# Claude Code settings (local only)
+# -----------------------------------------------------------------------------
+.claude/settings.local.json
+CLAUDE.md
+mcp-registry-ed25519.pem
+mcp-registry-ed25519.der
+mcp-registry-ed25519-public.der
+*.pem
+*.der
+pub.der
+mcp-registry-auth
+mcp-publisher.exe
+mcp-publisher.tar.gz
