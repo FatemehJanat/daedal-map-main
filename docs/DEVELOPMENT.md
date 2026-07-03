@@ -4,7 +4,7 @@
 
 - Python 3.12 or newer
 - Git
-- a supported model API key for chat behavior
+- a supported model API key only for the built-in local chat UI
 - Node.js only for the JavaScript examples or package scripts
 - a compatible local data tree, unless testing cloud-data mode
 
@@ -19,17 +19,20 @@ python -m pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-Set at least:
+Set the local runtime and data path:
 
 ```text
 INSTALL_MODE=local
 RUNTIME_MODE=local
 DATA_ROOT=C:/path/to/your/data
-OPENAI_API_KEY=your-key
 ```
 
-An Anthropic key can be used instead. See
-[LOCAL_AND_HOSTED.md](LOCAL_AND_HOSTED.md).
+No model key is required for local data operations. Set OpenAI or Anthropic
+only when exercising the built-in local chat UI. Researchers using
+[Research MCP](RESEARCH_MCP.md) reason through their MCP-capable subscription
+client instead. See [LOCAL_AND_HOSTED.md](LOCAL_AND_HOSTED.md).
+
+This template has no cloud-storage or hosted-service dependency.
 
 ## Run
 
@@ -103,8 +106,7 @@ mode-specific branching.
 
 ## Environment files
 
-- `.env.example` documents ordinary runtime variables.
-- `.env.hosted.example` illustrates a hosted runtime shape.
+- `.env.example` is the single minimal GitHub/local starting point.
 - local `.env` values must remain untracked.
 
 Treat tokens, provider keys, storage credentials, and internal bridge secrets

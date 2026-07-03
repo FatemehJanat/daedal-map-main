@@ -23,6 +23,7 @@ map for contributors and researchers.
 | Set up a development workflow | [DEVELOPMENT.md](DEVELOPMENT.md) |
 | Understand a request from chat to map | [QUERY_AND_DISPLAY.md](QUERY_AND_DISPLAY.md) |
 | Use or extend HTTP and MCP surfaces | [API_AND_MCP.md](API_AND_MCP.md) |
+| Research using my MCP-capable subscription | [RESEARCH_MCP.md](RESEARCH_MCP.md) |
 | Prepare my own dataset | [DATA_PREPARATION.md](DATA_PREPARATION.md) |
 | Check exact source schemas | [DATA_SCHEMAS.md](DATA_SCHEMAS.md) |
 | Build and share a pack | [PACK_AUTHORING.md](PACK_AUTHORING.md) |
@@ -58,6 +59,10 @@ The runtime can read a local data tree or object storage. Sources are described
 by metadata and grouped into packs. Explore discovers broadly, Research works
 inside a corpus, Ops starts from a watch/current-state posture, and machine
 surfaces use structured HTTP or MCP requests.
+
+For many academic users, the simplest reasoning path is the hosted
+[Research MCP](RESEARCH_MCP.md): their subscription client supplies the model,
+while DaedalMap supplies deterministic source-bound evidence.
 
 ## Repository map
 

@@ -58,6 +58,7 @@ nul
 .env
 .env.*
 !.env.example
+!.env.example
 !.env.hosted.example
 config.local.json
 settings.json

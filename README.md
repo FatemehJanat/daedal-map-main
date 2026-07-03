@@ -38,7 +38,7 @@ not need identical UI on every surface.
 
 If you are using this public GitHub repo as a self-host/local runtime, the practical setup contract right now is:
 - a local data location (`DATA_ROOT`, unless you use the default app-data path)
-- an LLM API key (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`)
+- optionally, an LLM API key for the built-in local chat UI
 
 Hosted account wiring and private verifier endpoints are optional
 for self-host use. Hosted collector scheduling and scheduled-jobs hosts such as
@@ -212,15 +212,29 @@ pip install -r requirements.txt
 
 ### 2. Add environment variables
 
-Create a `.env` file for local development. The minimum useful local setup is:
+For the smallest GitHub/local setup:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Then edit `DATA_ROOT`. The minimum local configuration is:
 
 ```env
-ANTHROPIC_API_KEY=your_key_here
+DEPLOYMENT=local
+INSTALL_MODE=local
+RUNTIME_MODE=local
 DATA_ROOT=C:/path/to/your/local/data
 ```
 
-You can use `OPENAI_API_KEY` instead of `ANTHROPIC_API_KEY` if that is your preferred provider.
 If you leave `DATA_ROOT` blank, DaedalMap uses the default local app-data path and expects your data to live there.
+No S3, R2, AWS, database, account, or hosted-control-plane configuration is
+needed for this path.
+
+No model API key is required for local data operations. Set
+`OPENAI_API_KEY` or `ANTHROPIC_API_KEY` only for the built-in local chat UI.
+For research using the model from an MCP-capable subscription client, see
+[docs/RESEARCH_MCP.md](docs/RESEARCH_MCP.md).
 
 Hosted-style object-storage configuration is intentionally deployment-specific.
 For public self-hosting, start with local data. Operators who run a cloud-backed
@@ -315,7 +329,8 @@ That makes local cloud-mode testing useful for reproducing hosted-runtime behavi
 Important note:
 - the current public repo does not include a bundled `data/` demo tree
 - a source checkout therefore needs either `DATA_ROOT` in `local` mode, or `RUNTIME_MODE=cloud` with cloud storage configured
-- for a usable chat experience, you should also set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`
+- built-in local chat needs `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`; the hosted
+  Research MCP instead uses the model in the researcher's MCP-capable client
 
 ## Data And Pack Direction
 

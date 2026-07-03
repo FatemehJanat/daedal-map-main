@@ -9,6 +9,28 @@ DaedalMap uses two environment settings:
 - `INSTALL_MODE`: where the application is installed
 - `RUNTIME_MODE`: where runtime data is read
 
+## GitHub and wrapper installs
+
+A GitHub clone and the downloadable wrapper are two entrances to the same local
+runtime:
+
+- GitHub is the direct developer/researcher installation path.
+- The wrapper is the easier installation, update, storage, and pack-management
+  front end.
+
+Both use `INSTALL_MODE=local`. The wrapper is not a separate runtime
+architecture. After installation, either path can use local data or explicitly
+configured cloud-backed data.
+
+For the simplest GitHub setup, copy the minimal template:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Edit `DATA_ROOT`. No model key, S3, R2, AWS, database, account, or
+hosted-control-plane variables are needed for local data operations.
+
 ## Supported configurations
 
 | Install | Data runtime | Use case |
@@ -25,13 +47,15 @@ configuration.
 Use:
 
 ```text
+DEPLOYMENT=local
 INSTALL_MODE=local
 RUNTIME_MODE=local
 DATA_ROOT=C:/path/to/your/data
-OPENAI_API_KEY=your-key
 ```
 
-You may use `ANTHROPIC_API_KEY` instead of an OpenAI key.
+Set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` only when you want the built-in
+local chat UI. Researchers using [Research MCP](RESEARCH_MCP.md) use the model
+in their MCP-capable subscription client instead.
 
 This is the clearest path for academic work:
 
@@ -39,6 +63,10 @@ This is the clearest path for academic work:
 - imported sources can be rebuilt and tested without cloud publication;
 - local packs can be grouped into Research corpora;
 - hosted account infrastructure is not required.
+
+Local is not universally "better" than cloud-backed data. It is the natural
+choice when privacy, reproducibility, offline control, custom imports, or
+independence from hosted storage matter.
 
 If `DATA_ROOT` is blank, the runtime uses the platform's default local
 application-data folder. On Windows this is normally:
@@ -91,9 +119,10 @@ separate concerns and are not required to run the open runtime.
 Set:
 
 - `DATA_ROOT` when your data is outside the default app-data folder;
-- one supported model-provider key;
 - `INSTALL_MODE=local`;
 - `RUNTIME_MODE=local` for local research data.
+
+Optionally set one supported model-provider key for built-in local chat.
 
 Leave `APP_URL` and `SITE_URL` unset unless the instance needs to advertise
 specific external URLs.
@@ -105,5 +134,6 @@ Without them, `/settings` remains a local setup surface.
 
 - [DATA_PREPARATION.md](DATA_PREPARATION.md) — prepare a source
 - [PACK_AUTHORING.md](PACK_AUTHORING.md) — group sources into a pack
+- [RESEARCH_MCP.md](RESEARCH_MCP.md) — use a subscription client for research
 - [RUNTIME_MODES.md](RUNTIME_MODES.md) — choose Explore, Research, or Ops
 - [DATA_SCHEMAS.md](DATA_SCHEMAS.md) — inspect the exact data contract
