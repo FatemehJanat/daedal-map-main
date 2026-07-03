@@ -1132,6 +1132,7 @@ export const OverlayController = {
       : {};
 
     const fullCountFromPayload = Number.isFinite(sourcePayload?.count) ? sourcePayload.count : sourceFeatures.length;
+    const isHistoryDefault = String(sourcePayload?.ops_default_view || '').trim() === 'history';
     const clonePayload = (features, summaryText) => ({
       ...sourcePayload,
       summary: summaryText || sourcePayload?.summary,
@@ -1158,11 +1159,12 @@ export const OverlayController = {
         const useFilter = filtered.length > 0 && filtered.length < sourceFeatures.length;
         const visibleFeatures = useFilter ? filtered : sourceFeatures;
         return {
-          payload: useFilter ? clonePayload(filtered, `Showing ${filtered.length.toLocaleString()} earthquakes at magnitude 4.5+ from the live snapshot.`) : sourcePayload,
-          snapshotCount: Number.isFinite(compactSummary?.event_count) ? compactSummary.event_count : fullCountFromPayload,
+          payload: useFilter ? clonePayload(filtered, `Showing ${filtered.length.toLocaleString()} earthquakes at magnitude 4.5+ from the retained Ops window.`) : sourcePayload,
+          snapshotCount: isHistoryDefault ? fullCountFromPayload : (Number.isFinite(compactSummary?.event_count) ? compactSummary.event_count : fullCountFromPayload),
           visibleCount: visibleFeatures.length,
           filterDescription: useFilter ? 'magnitude 4.5 and above' : null,
-          chatHint: 'Ask chat to show all recent quakes, raise the threshold, or focus on the biggest event.',
+          chatHint: 'Ask chat to raise the threshold, focus on a region, or compare what changed recently.',
+          defaultView: isHistoryDefault ? 'history' : 'snapshot',
         };
       }
       case 'wildfires': {
@@ -1185,28 +1187,31 @@ export const OverlayController = {
         const useFilter = filtered.length > 0 && filtered.length < sourceFeatures.length;
         const visibleFeatures = useFilter ? filtered : sourceFeatures;
         return {
-          payload: useFilter ? clonePayload(filtered, `Showing ${filtered.length.toLocaleString()} ongoing volcano events from the live snapshot.`) : sourcePayload,
-          snapshotCount: Number.isFinite(compactSummary?.event_count) ? compactSummary.event_count : fullCountFromPayload,
+          payload: useFilter ? clonePayload(filtered, `Showing ${filtered.length.toLocaleString()} ongoing volcano events from the retained Ops window.`) : sourcePayload,
+          snapshotCount: isHistoryDefault ? fullCountFromPayload : (Number.isFinite(compactSummary?.event_count) ? compactSummary.event_count : fullCountFromPayload),
           visibleCount: visibleFeatures.length,
           filterDescription: useFilter ? 'ongoing events only' : null,
           chatHint: 'Ask chat to include lower-activity volcanoes, filter by region, or show the strongest events.',
+          defaultView: isHistoryDefault ? 'history' : 'snapshot',
         };
       }
       case 'hurricanes':
         return {
           payload: sourcePayload,
-          snapshotCount: Number.isFinite(compactSummary?.storm_count) ? compactSummary.storm_count : fullCountFromPayload,
+          snapshotCount: isHistoryDefault ? fullCountFromPayload : (Number.isFinite(compactSummary?.storm_count) ? compactSummary.storm_count : fullCountFromPayload),
           visibleCount: sourceFeatures.length,
           filterDescription: null,
           chatHint: 'Ask chat to focus on one storm, compare tracks, or show only the strongest storms.',
+          defaultView: isHistoryDefault ? 'history' : 'snapshot',
         };
       case 'tsunamis':
         return {
           payload: sourcePayload,
-          snapshotCount: Number.isFinite(compactSummary?.event_count) ? compactSummary.event_count : fullCountFromPayload,
+          snapshotCount: isHistoryDefault ? fullCountFromPayload : (Number.isFinite(compactSummary?.event_count) ? compactSummary.event_count : fullCountFromPayload),
           visibleCount: sourceFeatures.length,
           filterDescription: null,
           chatHint: 'Ask chat for recent tsunami history, linked earthquake events, or the last 72 hours of activity.',
+          defaultView: isHistoryDefault ? 'history' : 'snapshot',
         };
       case 'currency':
         return {
@@ -1250,6 +1255,12 @@ export const OverlayController = {
 
     switch (primaryOverlayId) {
       case 'earthquakes': {
+        if (preparedPayload?.defaultView === 'history') {
+          if (!Number.isFinite(snapshotCount) || snapshotCount <= 0) {
+            return 'No earthquakes are visible in the retained Ops window right now. Ask chat to lower the threshold, focus on a region, or check the current snapshot.';
+          }
+          return withHint(`Showing ${countText('earthquake')} from recent retained earthquake history.`);
+        }
         if (!Number.isFinite(snapshotCount) || snapshotCount <= 0) {
           return 'There are 0 earthquakes active now in the current earthquake snapshot. Ask chat for recent quake history, raise or lower the threshold, or focus on a region.';
         }
@@ -1260,6 +1271,12 @@ export const OverlayController = {
         return withHint(`There ${snapshotCount === 1 ? 'is' : 'are'} ${snapshotText} in the current earthquake snapshot. Showing all of them now.`);
       }
       case 'hurricanes': {
+        if (preparedPayload?.defaultView === 'history') {
+          if (!Number.isFinite(snapshotCount) || snapshotCount <= 0) {
+            return 'No recent storm tracks are visible in the retained Ops window right now. Ask chat to check the current snapshot, one basin, or recent storm history.';
+          }
+          return withHint(`Showing ${countText('storm track')} from recent retained hurricane history.`);
+        }
         if (!Number.isFinite(snapshotCount) || snapshotCount <= 0) {
           return 'There are 0 active storms in the current hurricane snapshot. Ask chat about recent storm history, one basin, or the strongest recent storms.';
         }
@@ -1275,12 +1292,24 @@ export const OverlayController = {
         return withHint(`There ${snapshotCount === 1 ? 'is' : 'are'} ${countText('wildfire')} in the current wildfire snapshot. Showing all of them now.`);
       }
       case 'tsunamis': {
+        if (preparedPayload?.defaultView === 'history') {
+          if (!Number.isFinite(snapshotCount) || snapshotCount <= 0) {
+            return 'No tsunami events are visible in the retained Ops window right now. Ask chat for linked earthquake events or the current snapshot.';
+          }
+          return withHint(`Showing ${countText('tsunami event')} from recent retained tsunami history.`);
+        }
         if (!Number.isFinite(snapshotCount) || snapshotCount <= 0) {
           return 'There are 0 active tsunami events in the current tsunami snapshot. Ask chat for recent tsunami history, linked earthquake events, or the last 72 hours of activity.';
         }
         return withHint(`There ${snapshotCount === 1 ? 'is' : 'are'} ${countText('tsunami event')} in the current tsunami snapshot. Showing all current events now.`);
       }
       case 'volcanoes': {
+        if (preparedPayload?.defaultView === 'history') {
+          if (!Number.isFinite(snapshotCount) || snapshotCount <= 0) {
+            return 'No volcano events are visible in the retained Ops window right now. Ask chat for a region filter or the current snapshot.';
+          }
+          return withHint(`Showing ${countText('volcano event')} from recent retained volcano history.`);
+        }
         const ongoingCount = Number.isFinite(compactSummary?.ongoing_count) ? compactSummary.ongoing_count : null;
         if ((!Number.isFinite(snapshotCount) || snapshotCount <= 0) && (!Number.isFinite(ongoingCount) || ongoingCount <= 0)) {
           return 'There are 0 active volcano events in the current snapshot. Ask chat for recent volcano history, a region filter, or stronger recent eruptions.';

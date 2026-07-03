@@ -181,6 +181,14 @@ FEED_HISTORY_METRIC_ALIASES = {
     },
 }
 
+OPS_DEFAULT_VIEW_MODE = {
+    "earthquakes": "history",
+    "tsunamis": "history",
+    "volcanoes": "history",
+    "hurricanes_ibtracs_nrt": "history",
+    "wildfires_us_nifc": "snapshot",
+}
+
 DEEP_HISTORY_PATTERNS = (
     r"\bchange\b",
     r"\bchanged\b",
@@ -749,53 +757,33 @@ def _build_currency_display_payload(snapshot: dict | None) -> dict | None:
     }
 
 
-def _build_display_payloads(snapshots_by_feed: dict[str, dict]) -> list[dict]:
-    payloads: list[dict] = []
-    earthquakes_payload = _build_point_event_display_payload(
-        snapshots_by_feed.get("earthquakes"),
-        collector="earthquakes",
-        event_type="earthquake",
-        label="Ops Earthquake Snapshot",
-    )
-    if earthquakes_payload:
-        payloads.append(earthquakes_payload)
-    tsunami_payload = _build_point_event_display_payload(
-        snapshots_by_feed.get("tsunamis"),
-        collector="tsunamis",
-        event_type="tsunami",
-        label="Ops Tsunami Snapshot",
-    )
-    if tsunami_payload:
-        payloads.append(tsunami_payload)
-    volcano_payload = _build_point_event_display_payload(
-        snapshots_by_feed.get("volcanoes"),
-        collector="volcanoes",
-        event_type="volcano",
-        label="Ops Volcano Snapshot",
-    )
-    if volcano_payload:
-        payloads.append(volcano_payload)
-    wildfire_payload = _build_point_event_display_payload(
-        snapshots_by_feed.get("wildfires_us_nifc"),
-        collector="wildfires_us_nifc",
-        event_type="wildfire",
-        label="Ops Wildfire Snapshot",
-    )
-    if wildfire_payload:
-        payloads.append(wildfire_payload)
-    hurricane_payload = _build_hurricane_display_payload(snapshots_by_feed.get("hurricanes_ibtracs_nrt"))
-    if hurricane_payload:
-        payloads.append(hurricane_payload)
-    currency_payload = _build_currency_display_payload(snapshots_by_feed.get("currency"))
-    if currency_payload:
-        payloads.append(currency_payload)
-    return payloads
+def _default_history_window_entries(*, snapshot: dict, history_entries: list[dict]) -> tuple[list[dict], str]:
+    hours = _ops_history_retention_hours_for_snapshot(snapshot)
+    cutoff = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(hours=max(hours, 1))
+    timeline: list[dict] = []
+    if isinstance(snapshot, dict):
+        timeline.append(snapshot)
+    timeline.extend(entry for entry in history_entries if isinstance(entry, dict))
+    in_window = []
+    for entry in timeline:
+        observed_at = _history_observed_at(entry)
+        if observed_at is None or observed_at < cutoff:
+            continue
+        in_window.append(entry)
+    return in_window, f"the retained Ops window ({hours}h)"
 
 
-def _build_ops_payload_for_feed(feed: str) -> dict | None:
-    snapshot = load_current_state_snapshot(feed)
-    if not isinstance(snapshot, dict):
-        return None
+def _build_default_history_payload(*, feed: str, snapshot: dict, history_entries: list[dict]) -> dict | None:
+    in_window, window_label = _default_history_window_entries(
+        snapshot=snapshot,
+        history_entries=history_entries,
+    )
+    if feed == "hurricanes_ibtracs_nrt":
+        return _build_hurricane_history_display_payload(in_window=in_window, window_label=window_label)
+    return _build_history_event_payload(feed=feed, in_window=in_window, window_label=window_label)
+
+
+def _build_snapshot_display_payload(feed: str, snapshot: dict | None) -> dict | None:
     if feed == "earthquakes":
         return _build_point_event_display_payload(
             snapshot,
@@ -829,6 +817,51 @@ def _build_ops_payload_for_feed(feed: str) -> dict | None:
     if feed == "currency":
         return _build_currency_display_payload(snapshot)
     return None
+
+
+def _build_display_payloads(state_by_feed: dict[str, tuple[dict | None, list[dict]]]) -> list[dict]:
+    payloads: list[dict] = []
+    for feed in (
+        "earthquakes",
+        "tsunamis",
+        "volcanoes",
+        "wildfires_us_nifc",
+        "hurricanes_ibtracs_nrt",
+        "currency",
+    ):
+        snapshot, history_entries = state_by_feed.get(feed, (None, []))
+        payload = None
+        if OPS_DEFAULT_VIEW_MODE.get(feed) == "history" and isinstance(snapshot, dict):
+            payload = _build_default_history_payload(
+                feed=feed,
+                snapshot=snapshot,
+                history_entries=history_entries,
+            )
+        if payload is None:
+            payload = _build_snapshot_display_payload(feed, snapshot)
+        if payload:
+            payload["ops_default_view"] = OPS_DEFAULT_VIEW_MODE.get(feed, "snapshot")
+            payloads.append(payload)
+    return payloads
+
+
+def _build_ops_payload_for_feed(feed: str) -> dict | None:
+    snapshot = load_current_state_snapshot(feed)
+    if not isinstance(snapshot, dict):
+        return None
+    if OPS_DEFAULT_VIEW_MODE.get(feed) == "history":
+        history_payload = _build_default_history_payload(
+            feed=feed,
+            snapshot=snapshot,
+            history_entries=load_current_state_history(feed),
+        )
+        if history_payload:
+            history_payload["ops_default_view"] = "history"
+            return history_payload
+    payload = _build_snapshot_display_payload(feed, snapshot)
+    if payload:
+        payload["ops_default_view"] = OPS_DEFAULT_VIEW_MODE.get(feed, "snapshot")
+    return payload
 
 
 def _compact_payload_summary(collector: str, summary: dict, *, sample_limit: int = 3) -> dict:
@@ -1039,6 +1072,10 @@ def build_ops_report(
     snapshot_hashes: dict[str, str] = {}
     snapshots_by_feed: dict[str, dict] = {}
     history_feed_set = {str(feed or "").strip() for feed in (history_feeds or []) if str(feed or "").strip()}
+    history_feed_set.update(
+        feed for feed in effective_feeds
+        if OPS_DEFAULT_VIEW_MODE.get(feed) == "history"
+    )
     state_by_feed: dict[str, tuple[dict | None, list[dict]]] = {}
 
     def _load_feed_state(feed: str) -> tuple[dict | None, list[dict]]:
@@ -1086,7 +1123,7 @@ def build_ops_report(
         "recent_change_index": recent_change_index[:6],
         "map_items": _build_map_items(feed_snapshots),
         "geojson": geojson,
-        "display_payloads": _build_display_payloads(snapshots_by_feed),
+        "display_payloads": _build_display_payloads(state_by_feed),
     }
     return report
 
@@ -2587,6 +2624,86 @@ def _build_history_event_payload(*, feed: str, in_window: list[dict], window_lab
         "dataset_name": title,
         "source_name": title,
         "summary": f"Showing {len(features)} retained {_history_count_noun(feed)} from {label}.",
+        "count": len(features),
+        "window_label": label,
+        "fit": True,
+        "geojson": {
+            "type": "FeatureCollection",
+            "features": features,
+        },
+    }
+
+
+def _build_hurricane_history_display_payload(*, in_window: list[dict], window_label: str | None) -> dict | None:
+    storms_by_id: dict[str, dict] = {}
+    positions_by_storm: dict[str, dict[str, dict]] = {}
+    for entry in in_window:
+        summary = entry.get("payload_summary") if isinstance(entry.get("payload_summary"), dict) else {}
+        storms = summary.get("storms") if isinstance(summary.get("storms"), list) else []
+        positions = summary.get("positions") if isinstance(summary.get("positions"), list) else []
+        for storm in storms:
+            if not isinstance(storm, dict):
+                continue
+            storm_id = str(storm.get("storm_id") or "").strip()
+            if storm_id:
+                storms_by_id[storm_id] = {**storms_by_id.get(storm_id, {}), **storm}
+        for row in positions:
+            if not isinstance(row, dict):
+                continue
+            storm_id = str(row.get("storm_id") or "").strip()
+            timestamp = str(row.get("timestamp") or "").strip()
+            if not storm_id or not timestamp:
+                continue
+            try:
+                lon = float(row.get("longitude"))
+                lat = float(row.get("latitude"))
+            except (TypeError, ValueError):
+                continue
+            normalized = dict(row)
+            normalized["_lon"] = lon
+            normalized["_lat"] = lat
+            positions_by_storm.setdefault(storm_id, {})[timestamp] = normalized
+
+    features: list[dict] = []
+    for storm_id, rows_by_timestamp in positions_by_storm.items():
+        ordered = sorted(rows_by_timestamp.values(), key=lambda row: str(row.get("timestamp") or ""))
+        coords = [[row["_lon"], row["_lat"]] for row in ordered]
+        if len(coords) < 2:
+            continue
+        storm = storms_by_id.get(storm_id, {})
+        props = {
+            "storm_id": storm_id,
+            "name": storm.get("name") or (ordered[-1] or {}).get("name"),
+            "year": storm.get("year") or (ordered[-1] or {}).get("year"),
+            "basin": storm.get("basin") or (ordered[-1] or {}).get("basin"),
+            "nature": storm.get("nature") or (ordered[-1] or {}).get("nature"),
+            "start_date": storm.get("start_date") or (ordered[0] or {}).get("timestamp"),
+            "end_date": storm.get("end_date") or (ordered[-1] or {}).get("timestamp"),
+            "max_wind_kt": storm.get("max_wind_kt"),
+            "max_category": storm.get("max_category"),
+            "category": storm.get("max_category"),
+            "num_positions": len(coords),
+            "collector": "hurricanes_ibtracs_nrt",
+        }
+        features.append(
+            {
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": coords},
+                "properties": props,
+            }
+        )
+
+    if not features:
+        return None
+    label = window_label or "the retained window"
+    return {
+        "type": "data",
+        "data_type": "events",
+        "event_type": "hurricane",
+        "source_id": "hurricanes_ibtracs_nrt_history_ops",
+        "dataset_name": "Ops Hurricane History",
+        "source_name": "Retained hurricane history",
+        "summary": f"Showing {len(features)} retained storm tracks from {label}.",
         "count": len(features),
         "window_label": label,
         "fit": True,
