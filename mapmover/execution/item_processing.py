@@ -12,6 +12,62 @@ from mapmover.runtime.source_hints import (
 )
 from mapmover.source_time_contract import coerce_temporal_key, resolve_temporal_axis
 
+USA_STATE_ABBREVIATIONS = {
+    "alabama": "AL",
+    "alaska": "AK",
+    "arizona": "AZ",
+    "arkansas": "AR",
+    "california": "CA",
+    "colorado": "CO",
+    "connecticut": "CT",
+    "delaware": "DE",
+    "district of columbia": "DC",
+    "florida": "FL",
+    "georgia": "GA",
+    "hawaii": "HI",
+    "idaho": "ID",
+    "illinois": "IL",
+    "indiana": "IN",
+    "iowa": "IA",
+    "kansas": "KS",
+    "kentucky": "KY",
+    "louisiana": "LA",
+    "maine": "ME",
+    "maryland": "MD",
+    "massachusetts": "MA",
+    "michigan": "MI",
+    "minnesota": "MN",
+    "mississippi": "MS",
+    "missouri": "MO",
+    "montana": "MT",
+    "nebraska": "NE",
+    "nevada": "NV",
+    "new hampshire": "NH",
+    "new jersey": "NJ",
+    "new mexico": "NM",
+    "new york": "NY",
+    "north carolina": "NC",
+    "north dakota": "ND",
+    "ohio": "OH",
+    "oklahoma": "OK",
+    "oregon": "OR",
+    "pennsylvania": "PA",
+    "rhode island": "RI",
+    "south carolina": "SC",
+    "south dakota": "SD",
+    "tennessee": "TN",
+    "texas": "TX",
+    "utah": "UT",
+    "vermont": "VT",
+    "virginia": "VA",
+    "washington": "WA",
+    "west virginia": "WV",
+    "wisconsin": "WI",
+    "wyoming": "WY",
+}
+
+USA_STATE_ABBREVIATION_VALUES = {value.lower(): value for value in USA_STATE_ABBREVIATIONS.values()}
+
 
 def _temporal_years_for_filter(df: pd.DataFrame, temporal_field: str, temporal_granularity: str | None) -> pd.Series:
     series = df[temporal_field]
@@ -57,6 +113,46 @@ def _build_geom_loc_series(df: pd.DataFrame, canonicalize_loc_id_func, translate
         for loc_id in unique_loc_ids
     }
     return canonical_series.map(geom_loc_map)
+
+
+def _source_max_admin_level(metadata: dict | None) -> int | None:
+    if not isinstance(metadata, dict):
+        return None
+    coverage = metadata.get("geographic_coverage") if isinstance(metadata.get("geographic_coverage"), dict) else {}
+    levels = coverage.get("admin_levels") if isinstance(coverage.get("admin_levels"), list) else []
+    candidates = []
+    for level in levels:
+        try:
+            candidates.append(int(level))
+        except (TypeError, ValueError):
+            pass
+    geographic_level = metadata.get("geographic_level")
+    values = geographic_level if isinstance(geographic_level, list) else [geographic_level]
+    for value in values:
+        text = str(value or "").strip().lower()
+        if text.startswith("admin_") and text[6:].isdigit():
+            candidates.append(int(text[6:]))
+    return max(candidates) if candidates else None
+
+
+def _source_country(metadata: dict | None) -> str:
+    if not isinstance(metadata, dict):
+        return ""
+    coverage = metadata.get("geographic_coverage") if isinstance(metadata.get("geographic_coverage"), dict) else {}
+    return str(coverage.get("country") or metadata.get("country") or "").strip().upper()
+
+
+def _resolve_usa_state_prefix(region: str | None) -> str:
+    if not region:
+        return ""
+    region_text = str(region or "").strip().lower().replace("_", " ").replace("-", " ")
+    for suffix in (" state", " usa", " us"):
+        if region_text.endswith(suffix):
+            region_text = region_text[: -len(suffix)].strip()
+    abbrev = USA_STATE_ABBREVIATIONS.get(region_text) or USA_STATE_ABBREVIATION_VALUES.get(region_text)
+    if abbrev:
+        return f"USA-{abbrev}"
+    return ""
 
 
 def _build_temporal_key_series(df: pd.DataFrame, temporal_field: str | None, temporal_granularity: str | None):
@@ -320,7 +416,16 @@ def process_metric_items(
             _regions_to_resolve.extend(str(value) for value in _plural_regions if value)
         region_codes = set()
         for _region_value in _regions_to_resolve:
-            region_codes |= expand_region_func(_region_value, prefer_water_body=_prefer_water_body)
+            resolved_codes = expand_region_func(_region_value, prefer_water_body=_prefer_water_body)
+            if (
+                not _prefer_water_body
+                and _source_country(metadata) == "USA"
+                and (_source_max_admin_level(metadata) or 0) >= 2
+            ):
+                usa_state_prefix = _resolve_usa_state_prefix(_region_value)
+                if usa_state_prefix:
+                    resolved_codes = {usa_state_prefix}
+            region_codes |= resolved_codes
         if region_codes:
             all_region_codes.update(region_codes)
         if region_codes and "loc_id" in df.columns:
@@ -370,6 +475,9 @@ def process_metric_items(
 
         df = apply_dataframe_filters_func(df, normalized_filters)
         t_after_filter = executor_log_func(trace_id, "field_filters_applied", t_after_region_filter, f"item={idx}/{len(items)} source={source_id} rows={len(df)}")
+
+        if temporal_mode_active and not ((temporal_field and temporal_field in df.columns) or "year" in df.columns):
+            temporal_mode_active = False
 
         if sort_spec and not temporal_mode_active:
             sort_col = sort_spec.get("by")

@@ -165,7 +165,9 @@ def apply_dataframe_filters(df: pd.DataFrame, filters: dict | None) -> pd.DataFr
 
         if isinstance(value, bool):
             series = filtered[field]
-            if value:
+            if pd.api.types.is_bool_dtype(series):
+                filtered = filtered[series == value]
+            elif value:
                 filtered = filtered[series.notna() & (series.astype(str).str.strip() != "")]
             else:
                 filtered = filtered[series.isna() | (series.astype(str).str.strip() == "")]

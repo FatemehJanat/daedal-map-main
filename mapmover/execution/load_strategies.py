@@ -8,6 +8,62 @@ import time
 from mapmover.runtime.geography_reference import canonicalize_loc_id
 from mapmover.runtime.source_hints import resolve_geo_contract
 
+USA_STATE_ABBREVIATIONS = {
+    "alabama": "AL",
+    "alaska": "AK",
+    "arizona": "AZ",
+    "arkansas": "AR",
+    "california": "CA",
+    "colorado": "CO",
+    "connecticut": "CT",
+    "delaware": "DE",
+    "district of columbia": "DC",
+    "florida": "FL",
+    "georgia": "GA",
+    "hawaii": "HI",
+    "idaho": "ID",
+    "illinois": "IL",
+    "indiana": "IN",
+    "iowa": "IA",
+    "kansas": "KS",
+    "kentucky": "KY",
+    "louisiana": "LA",
+    "maine": "ME",
+    "maryland": "MD",
+    "massachusetts": "MA",
+    "michigan": "MI",
+    "minnesota": "MN",
+    "mississippi": "MS",
+    "missouri": "MO",
+    "montana": "MT",
+    "nebraska": "NE",
+    "nevada": "NV",
+    "new hampshire": "NH",
+    "new jersey": "NJ",
+    "new mexico": "NM",
+    "new york": "NY",
+    "north carolina": "NC",
+    "north dakota": "ND",
+    "ohio": "OH",
+    "oklahoma": "OK",
+    "oregon": "OR",
+    "pennsylvania": "PA",
+    "rhode island": "RI",
+    "south carolina": "SC",
+    "south dakota": "SD",
+    "tennessee": "TN",
+    "texas": "TX",
+    "utah": "UT",
+    "vermont": "VT",
+    "virginia": "VA",
+    "washington": "WA",
+    "west virginia": "WV",
+    "wisconsin": "WI",
+    "wyoming": "WY",
+}
+
+USA_STATE_ABBREVIATION_VALUES = {value.lower(): value for value in USA_STATE_ABBREVIATIONS.values()}
+
 
 def _normalize_loc_id_like_token(value: object) -> str:
     text = str(value or "").strip()
@@ -92,12 +148,57 @@ def _classify_pushdown_filters(filters: dict | None) -> tuple[dict, dict, list[t
             continue
 
         if isinstance(value, bool):
+            exact_filters[field] = value
             continue
 
         if value is not None:
             exact_filters[field] = value
 
     return exact_filters, in_filters, compare_filters
+
+
+def _source_max_admin_level(metadata: dict | None) -> int | None:
+    if not isinstance(metadata, dict):
+        return None
+
+    coverage = metadata.get("geographic_coverage") if isinstance(metadata.get("geographic_coverage"), dict) else {}
+    admin_levels = coverage.get("admin_levels") if isinstance(coverage.get("admin_levels"), list) else []
+    candidates = []
+    for level in admin_levels:
+        try:
+            candidates.append(int(level))
+        except (TypeError, ValueError):
+            pass
+
+    geographic_level = metadata.get("geographic_level")
+    values = geographic_level if isinstance(geographic_level, list) else [geographic_level]
+    for value in values:
+        text = str(value or "").strip().lower()
+        if text.startswith("admin_") and text[6:].isdigit():
+            candidates.append(int(text[6:]))
+
+    return max(candidates) if candidates else None
+
+
+def _source_country(metadata: dict | None) -> str:
+    if not isinstance(metadata, dict):
+        return ""
+    coverage = metadata.get("geographic_coverage") if isinstance(metadata.get("geographic_coverage"), dict) else {}
+    return str(coverage.get("country") or metadata.get("country") or "").strip().upper()
+
+
+def _resolve_usa_state_prefix(region: str | None) -> str:
+    if not region:
+        return ""
+
+    region_text = str(region or "").strip().lower().replace("_", " ").replace("-", " ")
+    for suffix in (" state", " usa", " us"):
+        if region_text.endswith(suffix):
+            region_text = region_text[: -len(suffix)].strip()
+    abbrev = USA_STATE_ABBREVIATIONS.get(region_text) or USA_STATE_ABBREVIATION_VALUES.get(region_text)
+    if abbrev:
+        return f"USA-{abbrev}"
+    return ""
 
 
 def collect_source_metadata(
@@ -199,30 +300,30 @@ def load_order_item_dataframe(
     pushdown_prefix = _normalize_loc_id_like_token(region)
     filters_for_pushdown = dict(filters)
     filter_loc_id_prefix = _normalize_loc_id_like_token(filters_for_pushdown.pop("loc_id_prefix", ""))
-    if pushdown_prefix is None and filter_loc_id_prefix:
+    if not pushdown_prefix and filter_loc_id_prefix:
         pushdown_prefix = filter_loc_id_prefix
-    # Filter location at the source for marine_zone sources: when a named basin/
-    # sea/EEZ region resolves to a single X*/EEZ-* loc_id, push it down to the
-    # parquet so the location filter is not lost to the row cap. The X* ocean
-    # basins sort past the cap window on a loc_id-sorted marine table, so without
-    # pushdown a Mediterranean (XSM) query over a year range would load only the
-    # first cap window of EEZ-A* zones and filter to zero. Scoped to marine
-    # because land/currency/event sources key on different loc_id spines and a
-    # speculative ISO3 pushdown there could mismatch the stored scheme.
+    # Filter location at the source for named regions when the source's loc_id
+    # contract makes that safe. Marine sources need X*/EEZ-* resolution. USA
+    # admin_2+ USA sources need state/county prefixes before the render cap, or a
+    # query like "North Carolina tracts" may load an unrelated national slice
+    # and then filter to zero.
     # See live_source_qa_checklist.md (time-before-location / cap-window trap).
     if (
-        pushdown_prefix is None
+        not pushdown_prefix
         and region
         and expand_region_func is not None
         and load_source_metadata_func is not None
         and source_id
     ):
         is_marine = False
+        is_usa_high_admin = False
         try:
             _meta = load_source_metadata_func(source_id) or {}
             is_marine = str(_meta.get("geographic_level") or "").strip().lower() == "marine_zone"
+            is_usa_high_admin = _source_country(_meta) == "USA" and (_source_max_admin_level(_meta) or 0) >= 2
         except Exception:
             is_marine = False
+            is_usa_high_admin = False
         if is_marine:
             try:
                 _resolved = expand_region_func(region, prefer_water_body=True)
@@ -232,6 +333,23 @@ def load_order_item_dataframe(
                 _code = _normalize_loc_id_like_token(next(iter(_resolved)))
                 if _code:
                     pushdown_prefix = _code
+        elif is_usa_high_admin:
+            state_prefix = _resolve_usa_state_prefix(region)
+            if state_prefix:
+                pushdown_prefix = state_prefix
+            else:
+                try:
+                    _resolved = expand_region_func(region)
+                except TypeError:
+                    _resolved = expand_region_func(region, prefer_water_body=False)
+                loc_prefixes = [
+                    _normalize_loc_id_like_token(value)
+                    for value in (_resolved or [])
+                    if str(value or "").strip().upper().startswith("USA-")
+                ]
+                loc_prefixes = [value for value in loc_prefixes if value]
+                if len(loc_prefixes) == 1:
+                    pushdown_prefix = loc_prefixes[0]
 
     # Time-before-location for broad queries: when no specific location is being
     # pushed down and the time range was auto-defaulted by the order-taker (not
@@ -244,7 +362,7 @@ def load_order_item_dataframe(
     # has no _defaulted_time_range marker and is always honored.
     # See live_source_qa_checklist.md (time-before-location / cap-window trap).
     if (
-        pushdown_prefix is None
+        not pushdown_prefix
         and pushdown_year is None
         and item.get("_defaulted_time_range")
         and (year_start is not None or year_end is not None)
