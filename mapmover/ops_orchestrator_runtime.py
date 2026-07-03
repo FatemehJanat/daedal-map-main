@@ -972,6 +972,30 @@ def _compact_payload_summary(collector: str, summary: dict, *, sample_limit: int
             "grid_shape": summary.get("grid_shape"),
             "resolution_deg": summary.get("resolution_deg"),
         }
+    if collector == "noaa_ndbc":
+        warmest_station = summary.get("warmest_station")
+        coldest_station = summary.get("coldest_station")
+        rows = [row for row in (summary.get("buoys") or []) if isinstance(row, dict)]
+        warmest_row = next((row for row in rows if row.get("station_id") == warmest_station), None)
+        coldest_row = next((row for row in rows if row.get("station_id") == coldest_station), None)
+        return {
+            "buoy_count": summary.get("buoy_count"),
+            "sst_buoy_count": summary.get("sst_buoy_count"),
+            "warmest_sst_c": summary.get("warmest_sst_c"),
+            "warmest_station": warmest_station,
+            "warmest_buoy": {
+                key: warmest_row.get(key)
+                for key in ("station_id", "lat", "lon", "sst_c", "air_c", "wave_m", "wind_mps", "obs_utc")
+                if isinstance(warmest_row, dict) and key in warmest_row
+            },
+            "coldest_sst_c": summary.get("coldest_sst_c"),
+            "coldest_station": coldest_station,
+            "coldest_buoy": {
+                key: coldest_row.get(key)
+                for key in ("station_id", "lat", "lon", "sst_c", "air_c", "wave_m", "wind_mps", "obs_utc")
+                if isinstance(coldest_row, dict) and key in coldest_row
+            },
+        }
     compact: dict = {}
     for key in ("event_count", "incident_count", "storm_count", "position_count", "rate_count", "alert_count"):
         if key in summary:
@@ -3605,6 +3629,48 @@ def _try_exact_event_result(
     }
 
 
+def _try_ocean_hotspot_answer(*, query: str, effective_feeds: list[str], report: dict) -> str | None:
+    lower = str(query or "").lower()
+    asks_ocean = bool(re.search(r"\b(ocean|sea|sst|temperature|water|buoy|buoys)\b", lower))
+    asks_hot = bool(re.search(r"\b(hottest|warmest|highest|maximum|max|hot spot|hotspot)\b", lower))
+    asks_cold = bool(re.search(r"\b(coldest|coolest|lowest|minimum|min)\b", lower))
+    if not asks_ocean or not (asks_hot or asks_cold):
+        return None
+    if "noaa_ndbc" not in effective_feeds:
+        return None
+
+    snapshot = _report_snapshot_by_feed(report).get("noaa_ndbc") or {}
+    summary = snapshot.get("summary") if isinstance(snapshot.get("summary"), dict) else {}
+    key = "coldest_buoy" if asks_cold and not asks_hot else "warmest_buoy"
+    buoy = summary.get(key) if isinstance(summary.get(key), dict) else {}
+    if not buoy:
+        live_snapshot = load_current_state_snapshot("noaa_ndbc") or {}
+        live_summary = live_snapshot.get("payload_summary") if isinstance(live_snapshot.get("payload_summary"), dict) else {}
+        station_key = "coldest_station" if asks_cold and not asks_hot else "warmest_station"
+        station = live_summary.get(station_key)
+        rows = [row for row in (live_summary.get("buoys") or []) if isinstance(row, dict)]
+        buoy = next((row for row in rows if row.get("station_id") == station), {})
+    if not buoy:
+        return None
+
+    station = buoy.get("station_id") or "unknown"
+    sst = buoy.get("sst_c")
+    lat = buoy.get("lat")
+    lon = buoy.get("lon")
+    observed = buoy.get("obs_utc")
+    label = "coldest" if asks_cold and not asks_hot else "warmest"
+    parts = [f"The {label} live ocean point I can answer from Ops right now is NDBC buoy {station}"]
+    if sst is not None:
+        parts.append(f"with sea temperature {sst} deg C")
+    if lat is not None and lon is not None:
+        parts.append(f"at {lat}, {lon}")
+    sentence = " ".join(parts) + "."
+    if observed:
+        sentence += f" Observed at {observed} UTC."
+    sentence += " This is from the live buoy snapshot, not a full raw-grid max over every OISST raster cell."
+    return sentence
+
+
 def _try_direct_ops_answer(
     *,
     query: str,
@@ -3625,6 +3691,14 @@ def _try_direct_ops_answer(
         return f"Active watch has {len(effective_feeds)} feeds: {', '.join(effective_feeds)}."
     if re.search(r"\bhow many feeds\b", lower):
         return f"Active watch has {len(effective_feeds)} feeds."
+
+    ocean_hotspot_answer = _try_ocean_hotspot_answer(
+        query=text,
+        effective_feeds=effective_feeds,
+        report=report,
+    )
+    if ocean_hotspot_answer:
+        return ocean_hotspot_answer
 
     if (
         ("highest severity" in lower or "most severe" in lower)

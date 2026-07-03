@@ -358,7 +358,7 @@ const OVERLAY_ENDPOINTS = {
   },
   'ocean-sst-grid': {
     baseUrl: '/api/climate/grid',
-    params: { source: 'ocean_sst', tier: 'monthly' },
+    params: { source: 'ocean_sst', tier: 'daily' },
     climateGrid: {
       variables: ['sst_c'],
       variableOverlayMap: {
@@ -367,7 +367,7 @@ const OVERLAY_ENDPOINTS = {
     },
     isWeatherGrid: true,
     minYear: 1982,
-    defaultMinYear: 1982
+    defaultMinYear: 2025
   }
 };
 
@@ -3050,9 +3050,9 @@ export const OverlayController = {
 
   /**
    * Load and display an animated ocean SST basin raster overlay.
-   * The whole monthly time series ships in one per-basin bundle (XOP: full
-   * 1982-2026), so we load it once, default the visible window to the latest
-   * year, and register the monthly timestamps so Play steps through frames.
+   * The whole prepared time series ships in one per-basin bundle, so we load it
+   * once, default the visible window to the latest year, and register the real
+   * bundle timestamps so Play steps through the available frames.
    * Chat can widen the visible range across the full prepared span.
    * @param {string} overlayId - Overlay ID (e.g. 'ocean-sst-grid')
    * @param {object} config - Overlay config
@@ -3061,6 +3061,7 @@ export const OverlayController = {
     const sourceId = config?.rasterSource || 'ocean_sst';
     const basins = config?.rasterBasins || ['XOP'];
     const variable = config?.rasterVariable || 'sst_c';
+    const cadence = config?.rasterCadence || 'monthly';
 
     console.log(`OverlayController: Loading ocean raster ${overlayId} basins=${basins.join(',')} var=${variable}`);
     const ok = await OceanRasterModel.load(overlayId, sourceId, basins, variable);
@@ -3072,8 +3073,8 @@ export const OverlayController = {
     const timestamps = OceanRasterModel.getTimestamps(overlayId);
     const range = OceanRasterModel.getTimestampRange(overlayId);
     if (TimeSlider && range && !this.suppressTimelineAutoShow) {
-      // Default view: the latest year of the prepared window; full prepared span
-      // (~10 years) stays available so chat can ask for more time.
+      // Default view: the latest year of the prepared window; the full prepared
+      // span stays available so chat can ask for more time.
       const latest = range.max;
       const defaultMin = Math.max(range.min, latest - 365.25 * 24 * 3600 * 1000);
       const visibleTimestamps = timestamps.filter(
@@ -3082,7 +3083,7 @@ export const OverlayController = {
       TimeSlider.setTimeRange({
         min: defaultMin,
         max: latest,
-        granularity: 'monthly',
+        granularity: cadence,
         available: visibleTimestamps.length ? visibleTimestamps : timestamps,
       });
       this.showTimelineIfAllowed();

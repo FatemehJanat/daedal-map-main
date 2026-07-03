@@ -16,7 +16,7 @@ export function setDependencies(deps) {
 
 const PANEL_ID = 'ocean-raster-panel';
 const VAR_LABELS = { sst_c: 'Temperature', sst_anom_c: 'Anomaly' };
-const VAR_UNIT = '°C';
+const VAR_UNIT = ' deg C';
 
 let _overlayId = null;
 
@@ -63,7 +63,7 @@ function _build() {
   panel = document.createElement('div');
   panel.id = PANEL_ID;
   Object.assign(panel.style, {
-    position: 'fixed', top: '88px', right: '16px', zIndex: '2000', width: '224px',
+    position: 'fixed', top: '88px', right: '216px', zIndex: '2000', width: '224px',
     background: 'rgba(18,20,26,0.9)', color: '#e8eaed',
     font: "12px/1.45 system-ui, -apple-system, sans-serif",
     borderRadius: '10px', padding: '12px 14px',
@@ -78,7 +78,7 @@ function _build() {
   title.textContent = 'Ocean Temp Grid';
   Object.assign(title.style, { fontWeight: '600', fontSize: '13px' });
   const close = document.createElement('button');
-  close.textContent = '×';
+  close.textContent = 'x';
   Object.assign(close.style, { background: 'transparent', border: 'none', color: '#aab', fontSize: '18px', cursor: 'pointer', lineHeight: '1', padding: '0 2px' });
   close.addEventListener('click', () => OceanRasterPanel.hide());
   close.addEventListener('mousedown', (e) => e.stopPropagation());  // don't start a drag

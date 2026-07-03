@@ -81,6 +81,10 @@ const OPS_FEED_TO_OVERLAY_IDS = {
   ]
 };
 
+const HIDDEN_CATALOG_OVERLAY_IDS = new Set([
+  'ocean_sst',
+]);
+
 // Categories built dynamically from catalog
 let ALL_CATEGORIES = [];
 let CATEGORIES = [];
@@ -330,6 +334,9 @@ function buildCategoriesFromTree(overlayTree) {
       let allChildrenAreChoropleths = true;
 
       for (const [overlayId, overlayData] of Object.entries(categoryData.children)) {
+        if (HIDDEN_CATALOG_OVERLAY_IDS.has(overlayId)) {
+          continue;
+        }
         // Get data_type from first source
         const firstSource = overlayData.sources?.[0];
         const dataType = firstSource?.data_type || 'events';
@@ -357,6 +364,9 @@ function buildCategoriesFromTree(overlayTree) {
         metricOverlays.push(...overlays);
         continue;
       }
+      if (!overlays.length) {
+        continue;
+      }
 
       categories.push({
         id: categoryId,
@@ -368,6 +378,9 @@ function buildCategoriesFromTree(overlayTree) {
       });
     } else if (categoryData.sources) {
       // Standalone overlay (like demographics)
+      if (HIDDEN_CATALOG_OVERLAY_IDS.has(categoryId)) {
+        continue;
+      }
       const firstSource = categoryData.sources?.[0];
       const dataType = firstSource?.data_type || 'metrics';
       const model = DATA_TYPE_TO_MODEL[dataType] || 'choropleth';
@@ -406,7 +419,7 @@ function buildCategoriesFromTree(overlayTree) {
   const hardcodedClimateOverlays = [
     { id: 'aurora', label: 'Aurora', description: 'Live aurora forecast', default: false, locked: false, model: 'aurora', icon: 'A', hasYearFilter: false, live: true },
     { id: 'buoys', label: 'Ocean Buoys', description: 'Live NDBC buoy readings (sea temp, wind, waves)', default: false, locked: false, model: 'buoys', icon: 'B', hasYearFilter: false, live: true },
-    { id: 'ocean-sst-grid', label: 'Ocean Temp Grid', description: 'Monthly ocean temperature grid', default: false, locked: false, model: 'ocean-raster', icon: 'O', hasYearFilter: false, live: false, rasterSource: 'ocean_sst', rasterBasins: ['OCEAN'], rasterVariable: 'sst_c' }
+    { id: 'ocean-sst-grid', label: 'Ocean Temp Grid', description: 'Daily ocean temperature grid', default: false, locked: false, model: 'ocean-raster', icon: 'O', hasYearFilter: false, live: false, rasterSource: 'ocean_sst', rasterBasins: ['OCEAN_DAILY_20250701'], rasterVariable: 'sst_c', rasterCadence: 'daily' }
   ];
   const climateCategory = categories.find((cat) => cat.id === 'climate' && cat.isCategory);
   if (climateCategory) {
