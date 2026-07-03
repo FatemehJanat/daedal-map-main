@@ -7,7 +7,7 @@
  * module owns only the bar DOM + polling, not its own toggle button.
  *
  * Data source: GET /api/ops/ticker (msgpack) -> { items: [{source, text,
- * severity, scale, issued}, ...] }. Read-only and best-effort.
+ * severity, scale, issued, accent_color}, ...] }. Read-only and best-effort.
  */
 
 import { fetchMsgpack } from './utils/fetch.js';
@@ -75,11 +75,15 @@ export const TickerController = {
       #opsTicker .ticker-item { display: inline-block; margin: 0 26px; }
       #opsTicker .ticker-segment { display: inline-flex; flex: 0 0 auto; }
       #opsTicker .ticker-item .src {
-        color: #7f8798; text-transform: uppercase; font-size: 11px; margin-right: 7px;
+        color: color-mix(in srgb, var(--ticker-accent, #7f8798) 72%, #ffffff 28%);
+        text-transform: uppercase; font-size: 11px; margin-right: 7px;
       }
       #opsTicker .ticker-item .scale {
         margin-left: 7px; padding: 1px 5px; border-radius: 3px;
-        background: rgba(255,255,255,0.08); font-size: 11px;
+        color: var(--ticker-accent, #9aa4bf);
+        background: color-mix(in srgb, var(--ticker-accent, #9aa4bf) 16%, transparent);
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ticker-accent, #9aa4bf) 40%, transparent);
+        font-size: 11px;
       }
       #opsTicker .ticker-empty { color: #7f8798; margin-left: 16px; }
       #opsTicker .ticker-item.clickable { cursor: pointer; }
@@ -190,10 +194,10 @@ export const TickerController = {
   },
 
   _itemHtml(it) {
-    const color = SEVERITY_COLORS[it.severity] || SEVERITY_COLORS.info;
+    const color = this._safeColor(it.accent_color) || SEVERITY_COLORS[it.severity] || SEVERITY_COLORS.info;
     const src = this._escape(it.source || '');
     const text = this._escape(it.text || '');
-    const scale = it.scale ? `<span class="scale" style="color:${color}">${this._escape(it.scale)}</span>` : '';
+    const scale = it.scale ? `<span class="scale">${this._escape(it.scale)}</span>` : '';
     let cls = 'ticker-item';
     let attrs = '';
     const p = it.point;
@@ -204,7 +208,12 @@ export const TickerController = {
       cls += ' clickable';
       attrs = ` data-url="${this._escape(it.url)}" title="Click for more info (source agency)"`;
     }
-    return `<span class="${cls}" style="color:${color}"${attrs}><span class="src">${src}</span>${text}${scale}</span>`;
+    return `<span class="${cls}" style="--ticker-accent:${color};color:${color}"${attrs}><span class="src">${src}</span>${text}${scale}</span>`;
+  },
+
+  _safeColor(value) {
+    const color = String(value || '').trim();
+    return /^#[0-9a-fA-F]{6}$/.test(color) ? color : '';
   },
 
   _escape(value) {

@@ -378,6 +378,63 @@ _NWS_SEVERITY = {
     "Unknown": "info",
 }
 
+_NWS_ALERT_FAMILY_COLORS = {
+    "tornado": "#b026ff",
+    "thunderstorm": "#f97316",
+    "flood": "#0284c7",
+    "winter": "#38bdf8",
+    "heat": "#dc2626",
+    "fire": "#e11d48",
+    "marine": "#0d9488",
+    "dust": "#a16207",
+    "other": "#a3a3a3",
+}
+
+
+def _nws_alert_family(event: object) -> str:
+    text = str(event or "").strip().lower()
+    if not text:
+        return "other"
+    if "tornado" in text:
+        return "tornado"
+    if "thunderstorm" in text:
+        return "thunderstorm"
+    if "flash flood" in text or "flood" in text:
+        return "flood"
+    if (
+        "winter" in text
+        or "snow" in text
+        or "blizzard" in text
+        or "ice" in text
+        or "freezing" in text
+    ):
+        return "winter"
+    if "heat" in text:
+        return "heat"
+    if "fire" in text or "red flag" in text:
+        return "fire"
+    if (
+        "marine" in text
+        or "coastal" in text
+        or "surf" in text
+        or "rip current" in text
+        or "gale" in text
+        or "small craft" in text
+    ):
+        return "marine"
+    if "dust" in text:
+        return "dust"
+    return "other"
+
+
+def _apply_nws_ticker_accent(item: dict | None, event: object) -> dict | None:
+    if not item:
+        return None
+    family = _nws_alert_family(event)
+    item["alert_family"] = family
+    item["accent_color"] = _NWS_ALERT_FAMILY_COLORS.get(family, _NWS_ALERT_FAMILY_COLORS["other"])
+    return item
+
 
 def _short_area(area: object) -> str:
     parts = [p.strip() for p in str(area or "").split(";") if p.strip()]
@@ -400,7 +457,7 @@ def _nws_conditions_item(snap: dict, summary: dict) -> dict | None:
     detail = ", ".join(parts) if parts else f"{count} active"
     by_severity = summary.get("by_severity") or {}
     severity = "severe" if by_severity.get("Extreme") else "warning"
-    return make_ticker_item(
+    lead_item = make_ticker_item(
         source="NWS",
         text=f"{count} active US weather alerts: {detail}",
         severity=severity,
@@ -409,6 +466,14 @@ def _nws_conditions_item(snap: dict, summary: dict) -> dict | None:
         lead=True,
         url="https://api.weather.gov/alerts/active",
     )
+    lead_family = "other"
+    for entry in (summary.get("top_events") or [])[:1]:
+        lead_family = _nws_alert_family(entry.get("event"))
+        break
+    if lead_item:
+        lead_item["alert_family"] = lead_family
+        lead_item["accent_color"] = _NWS_ALERT_FAMILY_COLORS.get(lead_family, _NWS_ALERT_FAMILY_COLORS["other"])
+    return lead_item
 
 
 def nws_alerts_ticker_adapter(snap: dict) -> "list[dict]":
@@ -431,7 +496,7 @@ def nws_alerts_ticker_adapter(snap: dict) -> "list[dict]":
             url=alert.get("alert_id") if str(alert.get("alert_id") or "").startswith("http") else "",
         )
         if item:
-            items.append(item)
+            items.append(_apply_nws_ticker_accent(item, event))
     return items
 
 
@@ -537,6 +602,8 @@ def _assemble_nws_alerts_geojson(summary: dict) -> dict:
             "alert_id": alert.get("alert_id"),
             "event": alert.get("event"),
             "severity": alert.get("severity"),
+            "urgency": alert.get("urgency"),
+            "certainty": alert.get("certainty"),
             "headline": alert.get("headline"),
             "area": alert.get("area"),
             "expires": alert.get("expires"),

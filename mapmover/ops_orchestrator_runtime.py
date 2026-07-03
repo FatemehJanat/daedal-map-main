@@ -2991,6 +2991,172 @@ def _try_warning_severity_answer(*, effective_feeds: list[str], report: dict) ->
     return f"The highest active space weather warning in the current watch is {top_scale}."
 
 
+_NWS_SEVERITY_RANK = {
+    "Unknown": 0,
+    "Minor": 1,
+    "Moderate": 2,
+    "Severe": 3,
+    "Extreme": 4,
+}
+
+
+def _query_requests_nws_severity_increase(query: str) -> bool:
+    text = str(query or "").strip().lower()
+    if not text:
+        return False
+    if not re.search(r"\b(severity|severe|warning|warnings|alert|alerts)\b", text):
+        return False
+    increase_terms = (
+        r"\bincreased?\b",
+        r"\bescalat",
+        r"\bworsen",
+        r"\bmore severe\b",
+        r"\bhigher severity\b",
+        r"\bupgraded?\b",
+    )
+    return any(re.search(pattern, text) for pattern in increase_terms)
+
+
+def _nws_severity_score(value: object) -> int:
+    text = str(value or "").strip()
+    return _NWS_SEVERITY_RANK.get(text, -1)
+
+
+def _nws_alerts_from_snapshot(snapshot: dict | None) -> list[dict]:
+    if not isinstance(snapshot, dict):
+        return []
+    summary = snapshot.get("payload_summary") if isinstance(snapshot.get("payload_summary"), dict) else {}
+    if not summary and isinstance(snapshot.get("summary"), dict):
+        summary = snapshot.get("summary") or {}
+    alerts = summary.get("alerts") if isinstance(summary.get("alerts"), list) else []
+    return [alert for alert in alerts if isinstance(alert, dict)]
+
+
+def _short_nws_area(area: object) -> str:
+    parts = [p.strip() for p in str(area or "").split(";") if p.strip()]
+    if not parts:
+        return ""
+    if len(parts) <= 2:
+        return "; ".join(parts)
+    return "; ".join(parts[:2]) + f" +{len(parts) - 2} more"
+
+
+def _nws_alert_label(alert: dict) -> str:
+    event = str(alert.get("event") or "NWS alert").strip()
+    area = _short_nws_area(alert.get("area"))
+    if area:
+        return f"{event} - {area}"
+    return event
+
+
+def _format_nws_severity_change(alert: dict, first_severity: str, current_severity: str) -> str:
+    label = _nws_alert_label(alert)
+    message_type = str(alert.get("message_type") or "").strip()
+    suffix = f" ({message_type})" if message_type else ""
+    return f"{label}: {first_severity} to {current_severity}{suffix}"
+
+
+def _try_nws_severity_increase_answer(
+    *,
+    query: str,
+    effective_feeds: list[str],
+    chat_history: list | None,
+    report: dict,
+    cache,
+    hints: dict | None = None,
+) -> str | None:
+    if "usa_nws_alerts" not in effective_feeds:
+        return None
+    if not _query_requests_nws_severity_increase(query):
+        return None
+    feed = _infer_followup_feed(
+        query=query,
+        chat_history=chat_history,
+        effective_feeds=effective_feeds,
+        cache=cache,
+        report=report,
+    )
+    if feed and feed != "usa_nws_alerts":
+        return None
+
+    live_snapshot = load_current_state_snapshot("usa_nws_alerts") or {}
+    history_entries = load_current_state_history("usa_nws_alerts")
+    cutoff, window_label = _extract_history_window(query, hints=hints)
+    if cutoff is None:
+        cutoff = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(
+            hours=_ops_history_retention_hours_for_snapshot(live_snapshot)
+        )
+        window_label = "the retained Ops window"
+
+    active_by_id: dict[str, dict] = {}
+    for alert in _nws_alerts_from_snapshot(live_snapshot):
+        alert_id = str(alert.get("alert_id") or "").strip()
+        if alert_id:
+            active_by_id[alert_id] = alert
+
+    if not active_by_id:
+        return "There are no active NWS alerts in the current snapshot to compare for severity increases."
+
+    observations: list[tuple[datetime, str, dict]] = []
+    for entry in history_entries:
+        observed_at = _history_observed_at(entry)
+        if observed_at is None or observed_at < cutoff:
+            continue
+        delta = entry.get("delta") if isinstance(entry.get("delta"), dict) else {}
+        for bucket in ("added", "updated"):
+            rows = delta.get(bucket) if isinstance(delta.get(bucket), list) else []
+            for alert in rows:
+                if isinstance(alert, dict):
+                    observations.append((observed_at, bucket, alert))
+
+    current_time = _history_observed_at(live_snapshot) or datetime.now(timezone.utc)
+    for alert in active_by_id.values():
+        observations.append((current_time, "current", alert))
+
+    first_by_id: dict[str, tuple[datetime, dict]] = {}
+    for observed_at, _bucket, alert in sorted(observations, key=lambda item: item[0]):
+        alert_id = str(alert.get("alert_id") or "").strip()
+        if not alert_id or alert_id not in active_by_id:
+            continue
+        if _nws_severity_score(alert.get("severity")) < 0:
+            continue
+        first_by_id.setdefault(alert_id, (observed_at, alert))
+
+    increased: list[tuple[int, str]] = []
+    for alert_id, current_alert in active_by_id.items():
+        first_observation = first_by_id.get(alert_id)
+        if not first_observation:
+            continue
+        first_alert = first_observation[1]
+        first_score = _nws_severity_score(first_alert.get("severity"))
+        current_score = _nws_severity_score(current_alert.get("severity"))
+        if current_score > first_score:
+            first_severity = str(first_alert.get("severity") or "Unknown")
+            current_severity = str(current_alert.get("severity") or "Unknown")
+            increased.append((current_score, _format_nws_severity_change(current_alert, first_severity, current_severity)))
+
+    if increased:
+        increased.sort(key=lambda item: item[0], reverse=True)
+        shown = [line for _score, line in increased[:8]]
+        more = len(increased) - len(shown)
+        extra = f" Plus {more} more." if more > 0 else ""
+        return (
+            f"{len(increased)} active NWS alert{' has' if len(increased) == 1 else 's have'} increased in severity over {window_label}: "
+            + "; ".join(shown)
+            + extra
+        )
+
+    if not observations:
+        history_status = _get_live_state_status("usa_nws_alerts", "history")
+        if history_status == "cloud_unavailable":
+            return "I could not read cloud Ops history for NWS alerts, so I cannot compare severity increases right now."
+        if history_status == "cloud_not_configured":
+            return "Cloud Ops history is not configured in this runtime for NWS alerts, so I cannot compare severity increases."
+        return "I do not have retained NWS alert history in this environment yet, so I cannot compare severity increases."
+
+    return f"I found retained NWS alert history for {window_label}, but none of the currently active alerts show a severity increase in that retained window."
+
+
 def _format_lat_band(north_boundary: object, south_boundary: object) -> str | None:
     try:
         north = float(north_boundary) if north_boundary is not None else None
@@ -3530,6 +3696,30 @@ def run_ops_chat(
     )
     if isinstance(getattr(cache, "map_state", None), dict):
         cache.map_state["ops_report"] = report
+
+    nws_severity_answer = _try_nws_severity_increase_answer(
+        query=query,
+        effective_feeds=effective_feeds,
+        chat_history=chat_history,
+        report=report,
+        cache=cache,
+        hints=hints,
+    )
+    if nws_severity_answer:
+        result = {
+            "type": "chat",
+            "message": nws_severity_answer,
+            "summary": f"Ops watch: {watch.get('label') or 'Watch'} | feeds: {', '.join(effective_feeds)}",
+            "watch_id": watch.get("watch_id"),
+            "watch_context": watch,
+            "effective_feeds": effective_feeds,
+            "ops_report": report,
+        }
+        if report.get("display_payloads"):
+            result["display_payloads"] = report.get("display_payloads")
+        if report.get("geojson"):
+            result["geojson"] = report["geojson"]
+        return result
 
     exact_event_result = _try_exact_event_result(
         query=query,
