@@ -30,6 +30,7 @@ function colorExpression(colorBy) {
 export function createLivePointOverlay(config) {
   const SRC_ID = `lpo-${config.id}-src`;
   const CIRCLE_ID = `lpo-${config.id}-circle`;
+  const HIT_LAYER_ID = `lpo-${config.id}-hit`;
   const ICON_LAYER_ID = `lpo-${config.id}-icon`;
   const ICON_IMAGE_ID = `lpo-${config.id}-img`;
 
@@ -126,10 +127,18 @@ export function createLivePointOverlay(config) {
         id: CIRCLE_ID, type: 'circle', source: SRC_ID,
         paint: {
           'circle-color': colorExpression(config.colorBy),
-          'circle-radius': ['interpolate', ['linear'], ['zoom'], 1, 2.4, 4, 4, 8, 7],
+          'circle-radius': config.circleRadius || ['interpolate', ['linear'], ['zoom'], 1, 3.6, 4, 6, 8, 10.5],
           'circle-stroke-color': '#ffffff',
           'circle-stroke-width': 0.8,
           'circle-opacity': 0.92,
+        },
+      });
+      map.addLayer({
+        id: HIT_LAYER_ID, type: 'circle', source: SRC_ID,
+        paint: {
+          'circle-radius': config.hitRadius || ['interpolate', ['linear'], ['zoom'], 1, 7.2, 4, 12, 8, 21],
+          'circle-color': '#ffffff',
+          'circle-opacity': 0,
         },
       });
       if (config.icon) {
@@ -198,7 +207,7 @@ export function createLivePointOverlay(config) {
       };
       this._mouseenterHandler = () => { map.getCanvas().style.cursor = 'pointer'; };
       this._mouseleaveHandler = () => { map.getCanvas().style.cursor = ''; };
-      for (const layerId of [CIRCLE_ID, ICON_LAYER_ID]) {
+      for (const layerId of [HIT_LAYER_ID, CIRCLE_ID, ICON_LAYER_ID]) {
         if (!map.getLayer(layerId)) continue;
         map.on('click', layerId, this._popupHandler);
         map.on('mouseenter', layerId, this._mouseenterHandler);
@@ -209,7 +218,7 @@ export function createLivePointOverlay(config) {
 
     _unbindPopup(map) {
       if (!this._clickBound || !map) return;
-      for (const layerId of [CIRCLE_ID, ICON_LAYER_ID]) {
+      for (const layerId of [HIT_LAYER_ID, CIRCLE_ID, ICON_LAYER_ID]) {
         if (this._popupHandler) map.off('click', layerId, this._popupHandler);
         if (this._mouseenterHandler) map.off('mouseenter', layerId, this._mouseenterHandler);
         if (this._mouseleaveHandler) map.off('mouseleave', layerId, this._mouseleaveHandler);
@@ -225,7 +234,7 @@ export function createLivePointOverlay(config) {
       if (!map) return;
       try {
         this._unbindPopup(map);
-        for (const id of [ICON_LAYER_ID, CIRCLE_ID]) {
+        for (const id of [ICON_LAYER_ID, HIT_LAYER_ID, CIRCLE_ID]) {
           if (map.getLayer(id)) map.removeLayer(id);
         }
         if (map.getSource(SRC_ID)) map.removeSource(SRC_ID);
@@ -254,7 +263,9 @@ const BUOYS_CONFIG = {
   feedId: 'noaa_ndbc',
   endpoint: '/api/ops/points/buoys',
   colorBy: { prop: 'sst_c', stops: SST_STOPS, nullColor: '#9aa4bf' },
-  icon: { svg: BUOY_ICON_SVG, pixelSize: [28, 34], minzoom: 3 },
+  circleRadius: ['interpolate', ['linear'], ['zoom'], 1, 3.6, 4, 6, 8, 10.5],
+  hitRadius: ['interpolate', ['linear'], ['zoom'], 1, 7.2, 4, 12, 8, 21],
+  icon: { svg: BUOY_ICON_SVG, pixelSize: [42, 51], minzoom: 3, size: ['interpolate', ['linear'], ['zoom'], 3, 0.75, 8, 1.275] },
   popup: {
     titleProp: 'station_id',
     titlePrefix: 'Buoy ',

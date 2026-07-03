@@ -1,3 +1,3 @@
 export function getExploreDefaultOverlayIds() {
-  return ['earthquakes', 'demographics', 'ocean_sst', 'ocean-sst-grid'];
+  return ['earthquakes', 'demographics', 'ocean-sst-grid', 'buoys'];
 }
