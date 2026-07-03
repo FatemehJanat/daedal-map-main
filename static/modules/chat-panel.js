@@ -901,6 +901,13 @@ export const ChatManager = {
       return false;
     }
 
+    if (lane === 'ops' && feedId) {
+      await this.loadOpsFeedSet([feedId], {
+        label: 'Ops deep link',
+        forceDisplayReplay: true
+      });
+    }
+
     const suppressResultMessage = Boolean(
       eventId && lane === 'explore' && (packId || sourceId)
     );
@@ -950,7 +957,9 @@ export const ChatManager = {
         ? payload.display_payloads
         : (Array.isArray(this.latestOpsReport?.display_payloads) ? this.latestOpsReport.display_payloads : [])
     );
-    this.renderOpsDisplayPayloads(payload);
+    this.renderOpsDisplayPayloads(payload, {
+      force: options.forceDisplayReplay === true
+    });
     this.saveState();
     OverlaySelector?.refreshVisibility?.();
     return payload || null;
@@ -2080,7 +2089,7 @@ export const ChatManager = {
     return payload || null;
   },
 
-  renderOpsDisplayPayloads(payload = null) {
+  renderOpsDisplayPayloads(payload = null, options = {}) {
     if (this.mode !== 'ops') {
       return;
     }
@@ -2098,7 +2107,7 @@ export const ChatManager = {
         year_keys: item?.year_data ? Object.keys(item.year_data) : []
       }))
     );
-    if (signature && signature === this._lastOpsDisplaySig) {
+    if (!options.force && signature && signature === this._lastOpsDisplaySig) {
       return;
     }
     this._lastOpsDisplaySig = signature;

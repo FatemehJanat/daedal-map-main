@@ -102,6 +102,13 @@ def _base_ops_feeds(auth_user: dict | None) -> list[str]:
     return _public_default_ops_feeds()
 
 
+def _qa_all_ops_feeds(caller_ctx: dict | None) -> list[str]:
+    caller_kind = str((caller_ctx or {}).get("caller_kind") or "").strip()
+    if caller_kind in {"qa_suite", "qa_http_suite"}:
+        return list(OPS_SUPPORTED_FEEDS)
+    return []
+
+
 def _requested_ops_feeds(body: dict) -> list[str]:
     watch_context = body.get("watch_context") if isinstance(body.get("watch_context"), dict) else {}
     return _supported_ops_feeds(watch_context.get("sources") or [])
@@ -198,7 +205,7 @@ async def prepare_ops_chat_route_context(
         return None, None, rejection_payload, rejection_status, rejection_headers
 
     cache = session_manager.get_or_create(base_context.session_id)
-    base_feeds = _base_ops_feeds(base_context.auth_user)
+    base_feeds = _qa_all_ops_feeds(base_context.caller_ctx) or _base_ops_feeds(base_context.auth_user)
     allowed_feeds = list(base_feeds)
     watch = load_or_create_ops_watch(
         cache=cache,

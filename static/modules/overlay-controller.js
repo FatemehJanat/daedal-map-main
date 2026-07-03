@@ -175,6 +175,8 @@ function formatCountText(count, singular, plural = '') {
 
 const STATUS_MESSAGE_DEDUPE_TTL_MS = 1500;
 const recentStatusMessages = new Map();
+const OPS_RETAINED_HISTORY_MS = 72 * 60 * 60 * 1000;
+const OPS_RETAINED_HISTORY_OVERLAYS = new Set(['earthquakes']);
 
 function shouldSuppressDuplicateStatusMessage(mode, text) {
   const normalizedMode = String(mode || 'explore').trim().toLowerCase() || 'explore';
@@ -1407,6 +1409,82 @@ export const OverlayController = {
     return false;
   },
 
+  _usesOpsRetainedHistoryWindow(overlayId) {
+    return this._isOpsMode()
+      && OPS_RETAINED_HISTORY_OVERLAYS.has(String(overlayId || '').trim());
+  },
+
+  _getOpsRetainedHistoryWindow() {
+    const FIVE_MIN = 5 * 60 * 1000;
+    const endMs = Math.floor(Date.now() / FIVE_MIN) * FIVE_MIN;
+    return {
+      startMs: endMs - OPS_RETAINED_HISTORY_MS,
+      endMs
+    };
+  },
+
+  _filterOpsRetainedHistoryFeatures(overlayId, features, endpoint) {
+    if (!this._usesOpsRetainedHistoryWindow(overlayId) || !Array.isArray(features) || !features.length) {
+      return features;
+    }
+
+    const { startMs, endMs } = this._getOpsRetainedHistoryWindow();
+    const filteredFeatures = features.filter((feature) => {
+      const lifecycle = resolveFeatureLifecycleWithFallback(feature, endpoint?.eventType);
+      const featureStartMs = Number(lifecycle?.startMs);
+      const featureEndMs = Number.isFinite(Number(lifecycle?.endMs))
+        ? Number(lifecycle.endMs)
+        : featureStartMs;
+      if (!Number.isFinite(featureStartMs)) {
+        return true;
+      }
+      return featureEndMs >= startMs && featureStartMs <= endMs;
+    });
+
+    if (filteredFeatures.length !== features.length) {
+      console.log(
+        `OverlayController: Ops retained-window filtered ${features.length} -> ${filteredFeatures.length} ${overlayId}`
+      );
+    }
+    return filteredFeatures;
+  },
+
+  renderOpsCurrentOverlayData(overlayId) {
+    const endpoint = OVERLAY_ENDPOINTS[overlayId];
+    const cachedData = dataCache[overlayId];
+    const features = Array.isArray(cachedData?.features) ? cachedData.features : [];
+    if (!endpoint || !features.length) {
+      return false;
+    }
+
+    TimeSlider?.hide?.();
+    this._cleanupOverlayAnimations(overlayId);
+
+    const exactEventId = String(this.exactEventFilters.get(overlayId) || '').trim();
+    const retainedFeatures = this._filterOpsRetainedHistoryFeatures(overlayId, features, endpoint);
+    const displayFeatures = exactEventId
+      ? retainedFeatures.filter((feature) => {
+          const props = feature?.properties || {};
+          return String(props.event_id || props.storm_id || feature?.id || '').trim() === exactEventId;
+        })
+      : retainedFeatures;
+
+    const displayGeojson = {
+      ...cachedData,
+      type: 'FeatureCollection',
+      features: displayFeatures
+    };
+
+    const rendered = ModelRegistry?.render(displayGeojson, endpoint.eventType, {
+      onEventClick: (props) => this.handleEventClick(overlayId, props)
+    });
+    if (rendered) {
+      console.log(`OverlayController: Rendered Ops current snapshot ${overlayId} (${displayFeatures.length} features)`);
+      return true;
+    }
+    return false;
+  },
+
   _findOpsSnapshotFeature(payload, focus = {}) {
     const features = Array.isArray(payload?.geojson?.features) ? payload.geojson.features : [];
     if (!features.length) return null;
@@ -2328,6 +2406,10 @@ export const OverlayController = {
 
     for (const overlayId of restoreOverlayIds) {
       if (!dataCache[overlayId]) continue;
+      if (this._isOpsMode() && this._isOpsSnapshotManagedOverlay(overlayId)) {
+        this.renderCurrentData(overlayId);
+        continue;
+      }
       if (viewState?.timestamp != null) {
         this.renderFilteredData(overlayId, viewState.timestamp, { useTimestamp: true });
       } else if (viewState?.year != null) {
@@ -2358,6 +2440,12 @@ export const OverlayController = {
    * @param {string} overlayId - Overlay ID
    */
   renderCurrentData(overlayId) {
+    if (this._isOpsMode() && this._isOpsSnapshotManagedOverlay(overlayId)) {
+      if (this.renderOpsCurrentOverlayData(overlayId)) {
+        return;
+      }
+    }
+
     if (useLifecycleFiltering) {
       const timestamp = this.getCurrentTimestamp();
       if (timestamp) {
@@ -3006,24 +3094,30 @@ export const OverlayController = {
         return;
       }
 
-      // Load past 30 days of data (one-time initial load)
+      // Load initial retained data. Ops event-history overlays use the feed-retention window.
       // Round to 5-minute intervals to prevent duplicate fetches from ms drift
       const FIVE_MIN = 5 * 60 * 1000;
       const now = Math.floor(Date.now() / FIVE_MIN) * FIVE_MIN;
-      const thirtyDaysAgo = now - (30 * 24 * 60 * 60 * 1000);
+      const initialWindowMs = this._usesOpsRetainedHistoryWindow(overlayId)
+        ? OPS_RETAINED_HISTORY_MS
+        : 30 * 24 * 60 * 60 * 1000;
+      const initialWindowLabel = this._usesOpsRetainedHistoryWindow(overlayId)
+        ? 'Ops retained history'
+        : 'past 30 days';
+      const initialWindowStart = now - initialWindowMs;
 
       // Respect maxYear constraint (e.g., floods end at 2019)
       let endMs = now;
-      let startMs = thirtyDaysAgo;
+      let startMs = initialWindowStart;
       if (endpoint.maxYear) {
         const maxEndMs = new Date(endpoint.maxYear, 11, 31).getTime();
         if (endMs > maxEndMs) {
           endMs = maxEndMs;
-          startMs = endMs - (30 * 24 * 60 * 60 * 1000);
+          startMs = endMs - initialWindowMs;
         }
       }
 
-      console.log(`OverlayController: Loading ${overlayId} (past 30 days)`);
+      console.log(`OverlayController: Loading ${overlayId} (${initialWindowLabel})`);
 
       // Load the range data
       const loaded = await loadRangeData(overlayId, startMs, endMs, endpoint, abortController.signal);
