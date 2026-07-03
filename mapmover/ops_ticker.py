@@ -20,18 +20,14 @@ Normalized ticker item shape (use make_ticker_item to build one):
 
 Reads the same current_state snapshots the live collectors publish:
 - cloud:  R2 published/live_state/collectors/<name>/snapshot.json
-- local:  county-map-private/live/state/<name>/snapshot.json
 
 Read-only and best-effort: a missing/malformed feed is skipped, so the ticker
 degrades to fewer items rather than erroring.
 """
 from __future__ import annotations
 
-import json
-import os
 import threading
 import time
-from pathlib import Path
 from datetime import datetime, timezone
 from typing import Callable
 
@@ -60,27 +56,23 @@ _TICKER_ADAPTERS: "dict[str, TickerAdapter]" = {}
 # Snapshot reading + caching
 # ---------------------------------------------------------------------------
 def read_live_snapshot(collector: str) -> dict | None:
-    """Read one collector's current_state snapshot (cloud R2, then local dev)."""
+    """Read one collector's cloud current_state snapshot.
+
+    Ops map overlays must use the same live-state contract as Ops chat: cloud
+    object storage first, then the hosted live-state endpoint fallback. Local
+    collector files are temporary test artifacts and are not runtime truth.
+    """
+    name = str(collector or "").strip()
+    if not name:
+        return None
     try:
-        from mapmover.duckdb_helpers import is_cloud_mode
-        if is_cloud_mode():
-            from mapmover.data_loading import _fetch_json_from_s3
-            data = _fetch_json_from_s3(f"live_state/collectors/{collector}/snapshot.json")
-            return data if isinstance(data, dict) else None
+        from mapmover.ops_orchestrator_runtime import load_current_state_snapshot
+        data = load_current_state_snapshot(name)
+        return data if isinstance(data, dict) else None
     except Exception as exc:
         # A missing snapshot (collector not publishing yet) is normal; keep it
         # at debug so the ticker poll does not spam warnings every cycle.
-        logger.debug("ticker: cloud snapshot read failed for %s: %s", collector, exc)
-
-    # Local dev fallback: the collectors write under county-map-private/live/state.
-    try:
-        root = os.environ.get("GLOBAL_MAP_ROOT")
-        base = Path(root) if root else Path(__file__).resolve().parents[2]
-        path = base / "county-map-private" / "live" / "state" / collector / "snapshot.json"
-        if path.exists():
-            return json.loads(path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        logger.warning("ticker: local snapshot read failed for %s: %s", collector, exc)
+        logger.debug("ticker: cloud live-state read failed for %s: %s", name, exc)
     return None
 
 
