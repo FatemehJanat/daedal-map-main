@@ -1369,6 +1369,12 @@ export const OverlayController = {
         }
         return `Aurora feed active now. Showing ${stats.snapshotCount.toLocaleString()} visible forecast cells from the current outlook. Ask chat to focus on North America or summarize tonight's outlook.`;
       }
+      case 'ocean-sst-grid': {
+        const gridDate = String(compactSummary?.grid_date || '').trim();
+        const product = String(compactSummary?.product || 'NOAA OISST').trim();
+        const dateText = gridDate ? ` Latest live collector grid date: ${gridDate}.` : '';
+        return `Ocean temperature feed active. Showing the prepared ocean SST grid overlay for map display.${dateText} Source: ${product}. Ask chat to compare basins, switch to anomalies, or explain recent SST context.`;
+      }
       default: {
         const label = formatSurfaceLabel(primaryOverlayId || normalizedFeedId || 'feed');
         const genericCountText = formatCountText(snapshotCount, 'item');

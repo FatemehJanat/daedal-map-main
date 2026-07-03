@@ -61,7 +61,7 @@ const OPS_FEED_TO_OVERLAY_IDS = {
   earthquakes: ['earthquakes'],
   volcanoes: ['volcanoes'],
   hurricanes_ibtracs_nrt: ['hurricanes'],
-  ocean_sst: ['ocean_sst'],
+  ocean_sst: ['ocean-sst-grid'],
   tsunamis: ['tsunamis'],
   wildfires_us_nifc: ['wildfires'],
   noaa_aurora: ['aurora'],

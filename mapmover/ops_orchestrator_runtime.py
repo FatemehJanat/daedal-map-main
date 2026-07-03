@@ -963,6 +963,15 @@ def _compact_payload_summary(collector: str, summary: dict, *, sample_limit: int
             "north_boundary_lat": summary.get("north_boundary_lat"),
             "south_boundary_lat": summary.get("south_boundary_lat"),
         }
+    if collector == "ocean_sst":
+        return {
+            "product": summary.get("product"),
+            "grid_date": summary.get("grid_date"),
+            "variables": summary.get("variables"),
+            "units": summary.get("units"),
+            "grid_shape": summary.get("grid_shape"),
+            "resolution_deg": summary.get("resolution_deg"),
+        }
     compact: dict = {}
     for key in ("event_count", "incident_count", "storm_count", "position_count", "rate_count", "alert_count"):
         if key in summary:
