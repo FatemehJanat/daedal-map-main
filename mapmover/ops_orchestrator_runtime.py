@@ -181,13 +181,9 @@ FEED_HISTORY_METRIC_ALIASES = {
     },
 }
 
-OPS_DEFAULT_VIEW_MODE = {
-    "earthquakes": "history",
-    "tsunamis": "history",
-    "volcanoes": "history",
-    "hurricanes_ibtracs_nrt": "history",
-    "wildfires_us_nifc": "snapshot",
-}
+OPS_DEFAULT_LOAD_SNAPSHOT = "snapshot"
+OPS_DEFAULT_LOAD_HISTORY = "history"
+OPS_DEFAULT_LOAD_VALUES = {OPS_DEFAULT_LOAD_SNAPSHOT, OPS_DEFAULT_LOAD_HISTORY}
 
 DEEP_HISTORY_PATTERNS = (
     r"\bchange\b",
@@ -773,6 +769,15 @@ def _default_history_window_entries(*, snapshot: dict, history_entries: list[dic
     return in_window, f"the retained Ops window ({hours}h)"
 
 
+def _ops_default_load_mode(snapshot: dict | None) -> str:
+    if not isinstance(snapshot, dict):
+        return OPS_DEFAULT_LOAD_SNAPSHOT
+    raw = str(snapshot.get("ops_default_load") or "").strip().lower()
+    if raw in OPS_DEFAULT_LOAD_VALUES:
+        return raw
+    return OPS_DEFAULT_LOAD_SNAPSHOT
+
+
 def _build_default_history_payload(*, feed: str, snapshot: dict, history_entries: list[dict]) -> dict | None:
     in_window, window_label = _default_history_window_entries(
         snapshot=snapshot,
@@ -830,8 +835,9 @@ def _build_display_payloads(state_by_feed: dict[str, tuple[dict | None, list[dic
         "currency",
     ):
         snapshot, history_entries = state_by_feed.get(feed, (None, []))
+        default_load = _ops_default_load_mode(snapshot)
         payload = None
-        if OPS_DEFAULT_VIEW_MODE.get(feed) == "history" and isinstance(snapshot, dict):
+        if default_load == OPS_DEFAULT_LOAD_HISTORY and isinstance(snapshot, dict):
             payload = _build_default_history_payload(
                 feed=feed,
                 snapshot=snapshot,
@@ -840,7 +846,7 @@ def _build_display_payloads(state_by_feed: dict[str, tuple[dict | None, list[dic
         if payload is None:
             payload = _build_snapshot_display_payload(feed, snapshot)
         if payload:
-            payload["ops_default_view"] = OPS_DEFAULT_VIEW_MODE.get(feed, "snapshot")
+            payload["ops_default_view"] = default_load
             payloads.append(payload)
     return payloads
 
@@ -849,18 +855,19 @@ def _build_ops_payload_for_feed(feed: str) -> dict | None:
     snapshot = load_current_state_snapshot(feed)
     if not isinstance(snapshot, dict):
         return None
-    if OPS_DEFAULT_VIEW_MODE.get(feed) == "history":
+    default_load = _ops_default_load_mode(snapshot)
+    if default_load == OPS_DEFAULT_LOAD_HISTORY:
         history_payload = _build_default_history_payload(
             feed=feed,
             snapshot=snapshot,
             history_entries=load_current_state_history(feed),
         )
         if history_payload:
-            history_payload["ops_default_view"] = "history"
+            history_payload["ops_default_view"] = default_load
             return history_payload
     payload = _build_snapshot_display_payload(feed, snapshot)
     if payload:
-        payload["ops_default_view"] = OPS_DEFAULT_VIEW_MODE.get(feed, "snapshot")
+        payload["ops_default_view"] = default_load
     return payload
 
 
@@ -1072,15 +1079,12 @@ def build_ops_report(
     snapshot_hashes: dict[str, str] = {}
     snapshots_by_feed: dict[str, dict] = {}
     history_feed_set = {str(feed or "").strip() for feed in (history_feeds or []) if str(feed or "").strip()}
-    history_feed_set.update(
-        feed for feed in effective_feeds
-        if OPS_DEFAULT_VIEW_MODE.get(feed) == "history"
-    )
     state_by_feed: dict[str, tuple[dict | None, list[dict]]] = {}
 
     def _load_feed_state(feed: str) -> tuple[dict | None, list[dict]]:
         snapshot = load_current_state_snapshot(feed)
-        history_entries = load_current_state_history(feed) if feed in history_feed_set else []
+        should_load_history = feed in history_feed_set or _ops_default_load_mode(snapshot) == OPS_DEFAULT_LOAD_HISTORY
+        history_entries = load_current_state_history(feed) if should_load_history else []
         return snapshot, history_entries
 
     max_workers = max(1, min(len(effective_feeds), 8))
