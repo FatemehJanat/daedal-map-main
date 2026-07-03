@@ -24,11 +24,11 @@ const LEGEND_ID = 'nws-alerts-legend';
 
 const ALERT_FAMILIES = {
   tornado: { label: 'Tornado', color: '#b026ff', lineColor: '#f5d0fe' },
-  thunderstorm: { label: 'Thunderstorm', color: '#f97316', lineColor: '#fed7aa' },
+  thunderstorm: { label: 'Thunderstorm', color: '#facc15', lineColor: '#fef08a' },
   flood: { label: 'Flood', color: '#0284c7', lineColor: '#bae6fd' },
   winter: { label: 'Winter', color: '#38bdf8', lineColor: '#e0f2fe' },
-  heat: { label: 'Heat', color: '#dc2626', lineColor: '#fecaca' },
-  fire: { label: 'Fire weather', color: '#e11d48', lineColor: '#fecdd3' },
+  heat: { label: 'Heat', color: '#f97316', lineColor: '#fed7aa' },
+  fire: { label: 'Fire weather', color: '#dc2626', lineColor: '#fecaca' },
   marine: { label: 'Marine/coastal', color: '#0d9488', lineColor: '#99f6e4' },
   dust: { label: 'Dust', color: '#a16207', lineColor: '#fde68a' },
   other: { label: 'Other alerts', color: '#a3a3a3', lineColor: '#e5e7eb' },
@@ -125,6 +125,7 @@ export const NwsAlertsOverlay = {
   _mouseleaveHandler: null,
   _pinLoadPromise: null,
   _legendEl: null,
+  _legendClickHandler: null,
 
   init(deps = {}) {
     if (this.initialized) return;
@@ -376,16 +377,17 @@ export const NwsAlertsOverlay = {
       })
       .map(([family, count]) => {
         const meta = ALERT_FAMILIES[family] || ALERT_FAMILIES.other;
-        return `<div style="display:flex;align-items:center;gap:7px;margin-top:5px;">
+        return `<button type="button" data-family="${family}" title="Zoom to ${meta.label}" style="appearance:none;border:0;background:transparent;color:inherit;font:inherit;width:100%;display:flex;align-items:center;gap:7px;margin-top:5px;padding:3px 2px;border-radius:4px;cursor:pointer;text-align:left;">
           <span style="width:10px;height:10px;border-radius:50%;background:${meta.color};border:1px solid rgba(255,255,255,.8);display:inline-block;"></span>
           <span style="flex:1;">${meta.label}</span>
           <span style="color:#9ca3af;">${count}</span>
-        </div>`;
+        </button>`;
       })
       .join('');
 
     legend.innerHTML = `<div style="font-weight:700;margin-bottom:4px;">NWS alerts</div>${rows}
       <div style="margin-top:8px;color:#9ca3af;font-size:11px;">Thicker outline = higher urgency/severity</div>`;
+    this._bindLegendClicks(legend);
   },
 
   _ensureLegend() {
@@ -408,7 +410,7 @@ export const NwsAlertsOverlay = {
       fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       fontSize: '12px',
       lineHeight: '1.25',
-      pointerEvents: 'none',
+      pointerEvents: 'auto',
     });
     const mapContainer = MapAdapter?.map?.getContainer?.();
     (mapContainer || document.body).appendChild(legend);
@@ -416,8 +418,74 @@ export const NwsAlertsOverlay = {
     return legend;
   },
 
+  _bindLegendClicks(legend) {
+    if (!legend || this._legendClickHandler) return;
+    this._legendClickHandler = (event) => {
+      const button = event.target?.closest?.('button[data-family]');
+      if (!button) return;
+      event.preventDefault();
+      this._zoomToFamily(button.dataset.family);
+    };
+    legend.addEventListener('click', this._legendClickHandler);
+  },
+
+  _zoomToFamily(family) {
+    const map = MapAdapter?.map;
+    const targetFamily = String(family || '').trim();
+    const features = Array.isArray(this.lastData?.features) ? this.lastData.features : [];
+    if (!map || !targetFamily || !features.length) return;
+
+    const bounds = this._boundsForFeatures(features.filter((feature) => {
+      const props = feature?.properties || {};
+      return String(props.alert_family || '').trim() === targetFamily;
+    }));
+    if (!bounds) return;
+
+    const [[minLon, minLat], [maxLon, maxLat]] = bounds;
+    if (minLon === maxLon && minLat === maxLat) {
+      map.easeTo({ center: [minLon, minLat], zoom: Math.max(map.getZoom(), 7), duration: 650 });
+      return;
+    }
+    map.fitBounds(bounds, {
+      padding: { top: 96, bottom: 120, left: 80, right: 280 },
+      maxZoom: 9,
+      duration: 750,
+    });
+  },
+
+  _boundsForFeatures(features) {
+    let minLon = Infinity;
+    let minLat = Infinity;
+    let maxLon = -Infinity;
+    let maxLat = -Infinity;
+
+    const visit = (value) => {
+      if (!Array.isArray(value)) return;
+      if (value.length >= 2 && Number.isFinite(Number(value[0])) && Number.isFinite(Number(value[1]))) {
+        const lon = Number(value[0]);
+        const lat = Number(value[1]);
+        minLon = Math.min(minLon, lon);
+        minLat = Math.min(minLat, lat);
+        maxLon = Math.max(maxLon, lon);
+        maxLat = Math.max(maxLat, lat);
+        return;
+      }
+      for (const child of value) visit(child);
+    };
+
+    for (const feature of features) {
+      visit(feature?.geometry?.coordinates);
+    }
+    if (![minLon, minLat, maxLon, maxLat].every(Number.isFinite)) return null;
+    return [[minLon, minLat], [maxLon, maxLat]];
+  },
+
   _removeLegend() {
     if (this._legendEl) {
+      if (this._legendClickHandler) {
+        this._legendEl.removeEventListener('click', this._legendClickHandler);
+        this._legendClickHandler = null;
+      }
       this._legendEl.remove();
       this._legendEl = null;
     }

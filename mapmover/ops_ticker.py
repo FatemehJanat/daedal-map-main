@@ -372,11 +372,11 @@ _NWS_SEVERITY = {
 
 _NWS_ALERT_FAMILY_COLORS = {
     "tornado": "#b026ff",
-    "thunderstorm": "#f97316",
+    "thunderstorm": "#facc15",
     "flood": "#0284c7",
     "winter": "#38bdf8",
-    "heat": "#dc2626",
-    "fire": "#e11d48",
+    "heat": "#f97316",
+    "fire": "#dc2626",
     "marine": "#0d9488",
     "dust": "#a16207",
     "other": "#a3a3a3",
