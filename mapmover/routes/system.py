@@ -2755,11 +2755,18 @@ async def admin_runtime_soft_refresh(req: Request):
 
 
 def _render_app_shell() -> str:
-    """Build the frontend HTML shell with cache-busting version stamps on static assets."""
+    """Build the frontend HTML shell with cache-busting version stamps on static assets.
+
+    Uses the deploy commit when the platform exposes one (stable across worker
+    restarts), falling back to per-file mtime for local dev. Versioned URLs are
+    the prerequisite for ever moving entry assets to long-lived caching."""
     template_path = BASE_DIR / "templates" / "index.html"
     static_dir = BASE_DIR / "static"
+    build_commit = runtime_build_info().get("commit_short") or ""
 
     def _v(rel: str) -> str:
+        if build_commit:
+            return build_commit
         p = static_dir / rel
         try:
             return str(int(p.stat().st_mtime))
@@ -2767,8 +2774,21 @@ def _render_app_shell() -> str:
             return "0"
 
     html = template_path.read_text(encoding="utf-8")
-    html = html.replace('href="/static/styles/map.css"', f'href="/static/styles/map.css?v={_v("styles/map.css")}"')
-    html = html.replace('href="/static/styles/chat.css"', f'href="/static/styles/chat.css?v={_v("styles/chat.css")}"')
+    versioned = (
+        ('href="/static/styles/map.css"', "styles/map.css"),
+        ('href="/static/styles/chat.css"', "styles/chat.css"),
+        ('href="/static/vendor/maplibre-gl/maplibre-gl.css"', "vendor/maplibre-gl/maplibre-gl.css"),
+        ("'/static/vendor/maplibre-gl/maplibre-gl.css'", "vendor/maplibre-gl/maplibre-gl.css"),
+        ("'/static/vendor/maplibre-gl/maplibre-gl.js'", "vendor/maplibre-gl/maplibre-gl.js"),
+        ("'/static/vendor/msgpack/msgpack.min.js'", "vendor/msgpack/msgpack.min.js"),
+        ("'/static/vendor/supabase/supabase.min.js'", "vendor/supabase/supabase.min.js"),
+        ("'/static/modules/app.js'", "modules/app.js"),
+        ("'/static/modules/feedback-bubble.js'", "modules/feedback-bubble.js"),
+    )
+    for needle, rel in versioned:
+        quote = needle[-1]
+        stamped = needle[:-1] + f"?v={_v(rel)}" + quote
+        html = html.replace(needle, stamped)
     return html
 
 
