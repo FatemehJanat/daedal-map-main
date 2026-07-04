@@ -346,7 +346,7 @@ export const NwsAlertsOverlay = {
         ${instruction}
         ${(p.area || p.description) ? `<div class="nws-popup-details">${detail('Areas', p.area)}${detail('Description', p.description)}</div>` : ''}
         ${p.expires ? `<div class="nws-popup-expires"><span>Expires</span>${esc(p.expires)}</div>` : ''}
-        ${(typeof p.alert_id === 'string' && /^https?:/.test(p.alert_id)) ? `<a class="nws-popup-source" href="${esc(p.alert_id)}" target="_blank" rel="noopener">More info (NWS) &rsaquo;</a>` : ''}
+        ${(typeof p.alert_id === 'string' && /^https?:/.test(p.alert_id)) ? `<a class="nws-popup-source" href="${esc(p.alert_id)}" target="_blank" rel="noopener" title="Opens the original machine-readable NWS alert record">Official NWS source (JSON) &rsaquo;</a>` : ''}
       </div>`;
       if (this._popup) this._popup.remove();
       this._popup = new maplibre.Popup({ closeButton: true })
