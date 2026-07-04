@@ -12,7 +12,26 @@ from mapmover.private_mcp_loader import get_private_mcp_provider
 
 
 router = APIRouter()
-PRIVATE_MCP_PROXY_TIMEOUT_SECONDS = 15.0
+
+# Upstream proxy timeout to the private MCP service, as (connect, read) seconds.
+# The read timeout must absorb a cold-start on the private container (boot +
+# httpfs/DuckDB load + first R2 footer fetch), which can exceed a tight limit.
+# A single 15s value previously surfaced cold-start/heavy calls as a generic
+# "upstream request failed" 502 with nothing logged on the private side (it
+# timed out before responding, it did not raise). Split so connects still fail
+# fast; both env-overridable for tuning without a code change.
+PRIVATE_MCP_PROXY_CONNECT_TIMEOUT_SECONDS = float(
+    os.getenv("PRIVATE_MCP_PROXY_CONNECT_TIMEOUT_SECONDS", "5") or 5.0
+)
+PRIVATE_MCP_PROXY_READ_TIMEOUT_SECONDS = float(
+    os.getenv("PRIVATE_MCP_PROXY_READ_TIMEOUT_SECONDS", "60") or 60.0
+)
+PRIVATE_MCP_PROXY_TIMEOUT = (
+    PRIVATE_MCP_PROXY_CONNECT_TIMEOUT_SECONDS,
+    PRIVATE_MCP_PROXY_READ_TIMEOUT_SECONDS,
+)
+# Backward-compatible alias (read timeout) for any importer expecting the scalar.
+PRIVATE_MCP_PROXY_TIMEOUT_SECONDS = PRIVATE_MCP_PROXY_READ_TIMEOUT_SECONDS
 PROXY_RESPONSE_HEADERS = (
     "Cache-Control",
     "Content-Type",
@@ -81,7 +100,7 @@ def _private_mcp_proxy_response(provider_slug: str, method: str, *, body: bytes 
             target_url,
             data=body,
             headers=request_headers,
-            timeout=PRIVATE_MCP_PROXY_TIMEOUT_SECONDS,
+            timeout=PRIVATE_MCP_PROXY_TIMEOUT,
         )
     except requests.RequestException as exc:
         return JSONResponse(
