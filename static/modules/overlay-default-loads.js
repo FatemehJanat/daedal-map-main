@@ -38,6 +38,10 @@ const SOURCE_TO_OVERLAY = {
   drought_events: 'drought'
 };
 
+const OVERLAY_ONLY_DEFAULTS = {
+  ocean_sst: ['ocean-sst-grid']
+};
+
 function getCurrentUtcYear() {
   return new Date().getUTCFullYear();
 }
@@ -179,6 +183,22 @@ function buildResolvedSourceDefaultLoadAction(sourceEntry, {
 function buildSourceDefaultLoadAction(sourceId, packId = '') {
   const normalizedSourceId = String(sourceId || '').trim();
   if (!normalizedSourceId) return null;
+  if (OVERLAY_ONLY_DEFAULTS[normalizedSourceId]) {
+    return {
+      type: 'source_default_load',
+      sourceId: normalizedSourceId,
+      packId: String(packId || resolvePackIdFromSourceId(normalizedSourceId) || '').trim(),
+      label: normalizedSourceId,
+      loadAction: {
+        type: 'overlay_activation',
+        overlayIds: OVERLAY_ONLY_DEFAULTS[normalizedSourceId],
+        entity: {
+          sourceId: normalizedSourceId,
+          packId: String(packId || resolvePackIdFromSourceId(normalizedSourceId) || '').trim()
+        }
+      }
+    };
+  }
   const sourceEntry = getOverlayCatalogEntryBySourceId(normalizedSourceId)
     || getSourceDefaultOverride(normalizedSourceId);
   if (!sourceEntry) return null;
@@ -192,6 +212,21 @@ function buildSourceDefaultLoadAction(sourceId, packId = '') {
 function buildPackDefaultLoadAction(packId) {
   const normalizedPackId = String(packId || '').trim();
   if (!normalizedPackId) return null;
+  if (OVERLAY_ONLY_DEFAULTS[normalizedPackId]) {
+    return {
+      type: 'pack_default_load',
+      packId: normalizedPackId,
+      label: normalizedPackId,
+      packOverrideAction: {
+        type: 'overlay_activation',
+        overlayIds: OVERLAY_ONLY_DEFAULTS[normalizedPackId],
+        entity: {
+          packId: normalizedPackId
+        }
+      },
+      childActions: []
+    };
+  }
 
   const packOverride = getPackDefaultOverride(normalizedPackId);
   const packOverrideAction = packOverride

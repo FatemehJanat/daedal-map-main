@@ -1041,6 +1041,18 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
     ]
     if not pack_sources:
         return None
+    if pack_id == "currency":
+        currency_order = {
+            "fx_usd_historical": 0,
+            "fx_usd_historical_weekly": 1,
+            "fx_usd_historical_monthly": 2,
+        }
+        pack_sources.sort(
+            key=lambda source: (
+                currency_order.get(str(source.get("source_id") or ""), 99),
+                str(source.get("source_id") or ""),
+            )
+        )
 
     primary = next((s for s in pack_sources if s.get("source_id") == pack_id), pack_sources[0])
     pack_summary = pack_summaries.get(pack_id, {})
@@ -1096,11 +1108,36 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
                     smetrics[key] = value
         stc = s.get("temporal_coverage", {}) or {}
         source_size = _source_size_contract(s)
+        source_questions = []
+        for question in (
+            s.get("default_question"),
+            smeta.get("default_question"),
+        ):
+            if str(question or "").strip():
+                source_questions.append(str(question).strip())
+        for container in (s, smeta):
+            for key in ("example_questions", "sample_questions"):
+                values = container.get(key) if isinstance(container, dict) else None
+                if isinstance(values, list):
+                    source_questions.extend(str(q).strip() for q in values if str(q or "").strip())
+        deduped_source_questions = []
+        seen_source_questions = set()
+        for question in source_questions:
+            normalized = question.lower()
+            if normalized in seen_source_questions:
+                continue
+            seen_source_questions.add(normalized)
+            deduped_source_questions.append(question)
+        source_default_question = _best_source_text(
+            s.get("default_question"),
+            smeta.get("default_question"),
+        )
         subsources.append({
             "source_id": s.get("source_id"),
             # Presence signals the pack page to show a per-source "View on map"
             # button (-> /explore?source=<id>); only authored sources get one.
-            "default_question": s.get("default_question"),
+            "default_question": source_default_question,
+            "example_questions": deduped_source_questions,
             "source_name": _best_source_text(
                 sref_source.get("source_name"),
                 smeta.get("source_name"),
@@ -1177,6 +1214,16 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
         "temporal_coverage": temporal,
         "metrics": all_metrics,
         "llm_summary": _best_source_text(primary_meta.get("llm_summary"), primary.get("llm_summary", "")),
+        "default_question": _best_source_text(pack_summary.get("default_question"), primary.get("default_question", "")),
+        "default_response": _best_source_text(pack_summary.get("default_response"), primary.get("default_response", "")),
+        "default_load": pack_summary.get("default_load") if isinstance(pack_summary.get("default_load"), dict) else primary.get("default_load") or {},
+        "example_questions": (
+            pack_summary.get("example_questions")
+            if isinstance(pack_summary.get("example_questions"), list)
+            else pack_summary.get("sample_questions")
+            if isinstance(pack_summary.get("sample_questions"), list)
+            else []
+        ),
         "source_count": len(pack_sources),
         "source_ids": [s["source_id"] for s in pack_sources],
         "file_size_mb_total": pack_transfer_mb,
