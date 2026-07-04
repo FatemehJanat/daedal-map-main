@@ -309,6 +309,25 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     return JSONResponse({"error": "Internal server error"}, status_code=500)
 
 
+def _apply_common_security_headers(response, request: Request, path: str) -> None:
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    if path == "/static/browser-corpus-bridge.html":
+        try:
+            if "X-Frame-Options" in response.headers:
+                del response.headers["X-Frame-Options"]
+        except Exception:
+            pass
+        response.headers["Content-Security-Policy"] = (
+            "frame-ancestors 'self' http://localhost:8080 https://www.daedalmap.com https://daedalmap.com"
+        )
+    else:
+        response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    if is_https_request(request):
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+
 @app.middleware("http")
 async def static_no_cache(request: Request, call_next):
     """Force revalidation on static JS and CSS so deploys are immediately visible."""
@@ -324,6 +343,16 @@ async def static_no_cache(request: Request, call_next):
                 return JSONResponse({"error": "Request body too large"}, status_code=413)
         except ValueError:
             pass
+
+    if path.startswith("/static/"):
+        # Static assets skip auth, rate limiting, and analytics logging;
+        # security headers (including the browser-corpus-bridge frame
+        # exception) still apply.
+        response = await call_next(request)
+        if path.endswith(".js") or path.endswith(".css"):
+            response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        _apply_common_security_headers(response, request, path)
+        return response
 
     auth_user = await get_authenticated_user_async(request)
     auth_user_id = str((auth_user or {}).get("id") or "").strip() or None
@@ -365,25 +394,7 @@ async def static_no_cache(request: Request, call_next):
             return response
 
     response = await call_next(request)
-    if path.startswith("/static/") and (path.endswith(".js") or path.endswith(".css")):
-        response.headers["Cache-Control"] = "no-cache, must-revalidate"
-
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    if path == "/static/browser-corpus-bridge.html":
-        try:
-            if "X-Frame-Options" in response.headers:
-                del response.headers["X-Frame-Options"]
-        except Exception:
-            pass
-        response.headers["Content-Security-Policy"] = (
-            "frame-ancestors 'self' http://localhost:8080 https://www.daedalmap.com https://daedalmap.com"
-        )
-    else:
-        response.headers["X-Frame-Options"] = "DENY"
-    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
-    if is_https_request(request):
-        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    _apply_common_security_headers(response, request, path)
     _apply_surface_headers(response, request, surface)
 
     ip_hash = hash_ip_for_analytics(_get_request_ip(request))
