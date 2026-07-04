@@ -190,16 +190,21 @@ def _should_mirror_route_event_to_control_plane(
         # Log actual tool calls and anything else not filtered above
         return True
 
-    if path.startswith("/api/"):
-        return True
-    if path.startswith("/geometry/"):
-        return True
-    if path.startswith("/reference/"):
-        return True
-    if path.startswith("/debug/"):
-        return True
-    if path in {"/chat", "/chat/stream"}:
-        return True
+    # Non-MCP surfaces: security_events is the violations/errors record
+    # (rate limits, 402 challenges, auth failures, status >= 400), not a
+    # general traffic mirror. Routine 2xx polling (e.g. /api/ops/ticker,
+    # /api/auth/me) was the dominant writer before 2026-07-04 and only bloated
+    # the table and its permanent daily rollups; the local route JSONL still
+    # records every request, and product analytics live in api_usage_events /
+    # llm_usage_events / conversation_sessions.
+    if (
+        path.startswith("/api/")
+        or path.startswith("/geometry/")
+        or path.startswith("/reference/")
+        or path.startswith("/debug/")
+        or path in {"/chat", "/chat/stream"}
+    ):
+        return bool(rate_limited or error_code or (status_code and status_code >= 400))
     return False
 
 
