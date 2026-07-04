@@ -187,7 +187,7 @@ export const TrackModel = {
       type: 'fill',
       source: CONFIG.layers.hurricaneSource,
       filter: ['all',
-        ['==', ['geometry-type'], 'Polygon'],
+        ['match', ['geometry-type'], ['Polygon', 'MultiPolygon'], true, false],
         ['==', ['get', 'track_kind'], 'forecast_uncertainty']
       ],
       paint: {

@@ -398,6 +398,7 @@ def load_current_state_snapshot(collector_name: str) -> dict | None:
         if not children:
             return None
         storms_by_key: dict[str, dict] = {}
+        name_year_index: dict[str, str] = {}
         for child in children:
             summary = child.get("payload_summary") if isinstance(child.get("payload_summary"), dict) else {}
             for item in summary.get("storms") or []:
@@ -406,12 +407,34 @@ def load_current_state_snapshot(collector_name: str) -> dict | None:
                 name = str(item.get("name") or item.get("storm_id") or "").strip()
                 normalized_name = re.sub(r"[-_\s]?\d{2,4}$", "", name).strip().lower()
                 year = str(item.get("year") or "")[:4]
-                key = f"{normalized_name}:{year}" if normalized_name else str(item.get("storm_id") or "")
+                name_year_key = f"{normalized_name}:{year}" if normalized_name else ""
+                identity = item.get("identity") if isinstance(item.get("identity"), dict) else {}
+                canonical_id = str(identity.get("canonical_id") or "").strip()
+                key = (
+                    name_year_index.get(name_year_key)
+                    or canonical_id
+                    or name_year_key
+                    or str(item.get("storm_id") or "")
+                )
+                if name_year_key:
+                    name_year_index[name_year_key] = key
                 existing = storms_by_key.get(key)
                 source = str(item.get("source") or "").upper()
                 if existing is None:
                     normalized = dict(item)
                     normalized["contributing_sources"] = [source] if source else []
+                    normalized["source_identities"] = {
+                        source: identity
+                    } if source and identity else {}
+                    if source == "GDACS":
+                        normalized["gdacs_alert"] = {
+                            field: item.get(field)
+                            for field in (
+                                "alert_level", "alert_score", "countries", "iso3",
+                                "population_affected", "vulnerability", "description",
+                                "source_url",
+                            )
+                        }
                     storms_by_key[key] = normalized
                     continue
                 existing_source = str(existing.get("source") or "").upper()
@@ -426,9 +449,12 @@ def load_current_state_snapshot(collector_name: str) -> dict | None:
                     }
                 if source and source not in existing.get("contributing_sources", []):
                     existing.setdefault("contributing_sources", []).append(source)
+                if source and identity:
+                    existing.setdefault("source_identities", {})[source] = identity
                 if HURRICANE_SOURCE_PRIORITY.get(source, 0) > HURRICANE_SOURCE_PRIORITY.get(existing_source, 0):
                     replacement = dict(item)
                     replacement["contributing_sources"] = existing.get("contributing_sources", [])
+                    replacement["source_identities"] = existing.get("source_identities", {})
                     if existing.get("gdacs_alert"):
                         replacement["gdacs_alert"] = existing["gdacs_alert"]
                     storms_by_key[key] = replacement
@@ -879,13 +905,89 @@ def _ops_default_load_mode(snapshot: dict | None) -> str:
     return OPS_DEFAULT_LOAD_SNAPSHOT
 
 
+def _with_hurricane_history_tracks(snapshot: dict, entries: list[dict]) -> dict:
+    summary = snapshot.get("payload_summary") if isinstance(snapshot.get("payload_summary"), dict) else {}
+    storms = [dict(item) for item in summary.get("storms") or [] if isinstance(item, dict)]
+    positions: dict[str, dict[str, dict]] = {}
+
+    def identity_keys(storm: dict) -> set[str]:
+        identity = storm.get("identity") if isinstance(storm.get("identity"), dict) else {}
+        canonical = str(identity.get("canonical_id") or storm.get("storm_id") or "").strip().lower()
+        name = re.sub(
+            r"[-_\s]?\d{2,4}$",
+            "",
+            str(storm.get("name") or "").strip(),
+        ).strip().lower()
+        year = str(storm.get("year") or "")[:4]
+        return {value for value in (canonical, f"{name}:{year}" if name else "") if value}
+
+    current_by_key = {}
+    for storm in storms:
+        for key in identity_keys(storm):
+            current_by_key[key] = storm
+
+    for entry in entries:
+        entry_summary = entry.get("payload_summary") if isinstance(entry.get("payload_summary"), dict) else {}
+        for historical in entry_summary.get("storms") or []:
+            if not isinstance(historical, dict):
+                continue
+            target = next(
+                (current_by_key.get(key) for key in identity_keys(historical) if current_by_key.get(key)),
+                None,
+            )
+            if target is None:
+                continue
+            point = historical.get("current_position")
+            if not isinstance(point, dict):
+                continue
+            timestamp = str(point.get("timestamp") or historical.get("issued_at") or "").strip()
+            try:
+                latitude = float(point.get("latitude"))
+                longitude = float(point.get("longitude"))
+            except (TypeError, ValueError):
+                continue
+            storm_positions = positions.setdefault(str(target.get("storm_id")), {})
+            priority = HURRICANE_SOURCE_PRIORITY.get(str(historical.get("source") or "").upper(), 0)
+            existing = storm_positions.get(timestamp)
+            if existing and int(existing.get("_source_priority") or 0) > priority:
+                continue
+            storm_positions[timestamp] = {
+                **point,
+                "timestamp": timestamp,
+                "latitude": latitude,
+                "longitude": longitude,
+                "_source_priority": priority,
+            }
+
+    for storm in storms:
+        storm_positions = positions.get(str(storm.get("storm_id")), {})
+        if storm_positions:
+            storm["observed_track"] = [
+                {
+                    field: value
+                    for field, value in storm_positions[key].items()
+                    if field != "_source_priority"
+                }
+                for key in sorted(storm_positions)
+            ]
+    return {
+        **snapshot,
+        "payload_summary": {
+            **summary,
+            "storms": storms,
+        },
+    }
+
+
 def _build_default_history_payload(*, feed: str, snapshot: dict, history_entries: list[dict]) -> dict | None:
     in_window, window_label = _default_history_window_entries(
         snapshot=snapshot,
         history_entries=history_entries,
     )
     if feed == "hurricanes":
-        return _build_live_hurricane_display_payload(snapshot)
+        return _build_live_hurricane_display_payload(
+            _with_hurricane_history_tracks(snapshot, in_window)
+        )
     return _build_history_event_payload(feed=feed, in_window=in_window, window_label=window_label)
 
 
