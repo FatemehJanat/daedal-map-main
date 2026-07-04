@@ -598,6 +598,8 @@ def _assemble_nws_alerts_geojson(summary: dict) -> dict:
             "certainty": alert.get("certainty"),
             "headline": alert.get("headline"),
             "area": alert.get("area"),
+            "description": alert.get("description"),
+            "instruction": alert.get("instruction"),
             "expires": alert.get("expires"),
         }
         # Area geometry: the exact warning polygon, or the affected counties.

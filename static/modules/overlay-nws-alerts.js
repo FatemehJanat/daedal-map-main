@@ -327,14 +327,26 @@ export const NwsAlertsOverlay = {
       const f = e.features && e.features[0];
       if (!f) return;
       const p = f.properties || {};
-      const esc = (v) => String(v == null ? '' : v).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
-      const html = `<div style="font-family:monospace;font-size:12px;max-width:240px">
-        <div style="font-weight:bold">${esc(p.event)}</div>
-        <div style="color:#666">${esc(p.alert_family_label || '')}${p.severity ? ` | ${esc(p.severity)}` : ''}</div>
-        ${(p.urgency || p.certainty) ? `<div style="color:#888">${esc(p.urgency || '')}${p.urgency && p.certainty ? ' / ' : ''}${esc(p.certainty || '')}</div>` : ''}
-        ${p.area ? `<div style="margin-top:4px">${esc(p.area)}</div>` : ''}
-        ${p.expires ? `<div style="color:#888;margin-top:4px">Expires: ${esc(p.expires)}</div>` : ''}
-        ${(typeof p.alert_id === 'string' && /^https?:/.test(p.alert_id)) ? `<div style="margin-top:6px"><a href="${esc(p.alert_id)}" target="_blank" rel="noopener" style="color:#4dd2ff">More info (NWS) &rsaquo;</a></div>` : ''}
+      const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[c]));
+      const text = (v) => esc(v).replace(/\r?\n/g, '<br>');
+      const detail = (label, value) => value ? `
+        <details class="nws-popup-detail">
+          <summary>${label}</summary>
+          <div class="nws-popup-detail-body">${text(value)}</div>
+        </details>` : '';
+      const instruction = p.instruction
+        ? `<div class="nws-popup-instruction"><span>What to do</span>${text(p.instruction)}</div>`
+        : '';
+      const html = `<div class="nws-alert-popup">
+        <div class="nws-popup-title">${esc(p.event)}</div>
+        <div class="nws-popup-classification">${esc(p.alert_family_label || '')}${p.severity ? ` | ${esc(p.severity)}` : ''}</div>
+        ${(p.urgency || p.certainty) ? `<div class="nws-popup-confidence">${esc(p.urgency || '')}${p.urgency && p.certainty ? ' / ' : ''}${esc(p.certainty || '')}</div>` : ''}
+        ${instruction}
+        ${(p.area || p.description) ? `<div class="nws-popup-details">${detail('Areas', p.area)}${detail('Description', p.description)}</div>` : ''}
+        ${p.expires ? `<div class="nws-popup-expires"><span>Expires</span>${esc(p.expires)}</div>` : ''}
+        ${(typeof p.alert_id === 'string' && /^https?:/.test(p.alert_id)) ? `<a class="nws-popup-source" href="${esc(p.alert_id)}" target="_blank" rel="noopener">More info (NWS) &rsaquo;</a>` : ''}
       </div>`;
       if (this._popup) this._popup.remove();
       this._popup = new maplibre.Popup({ closeButton: true })
