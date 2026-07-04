@@ -462,6 +462,17 @@ def load_current_state_snapshot(collector_name: str) -> dict | None:
         hashes = [str(item.get("payload_hash") or "") for item in children]
         latest_checked = max(str(item.get("last_checked_at") or "") for item in children)
         latest_changed = max(str(item.get("last_changed_at") or "") for item in children)
+        retention_hours = DEFAULT_OPS_HISTORY_RETENTION_HOURS
+        child_retention_hours = []
+        for child in children:
+            try:
+                hours = int(child.get("ops_history_retention_hours"))
+                if hours > 0:
+                    child_retention_hours.append(hours)
+            except Exception:
+                pass
+        if child_retention_hours:
+            retention_hours = max(child_retention_hours)
         payload_summary = {
             "logical_feed": "hurricanes",
             "storm_count": len(storms),
@@ -480,7 +491,7 @@ def load_current_state_snapshot(collector_name: str) -> dict | None:
             "schema_version": 1,
             "feed_type": "forecast",
             "ops_history_enabled": True,
-            "ops_history_retention_hours": DEFAULT_OPS_HISTORY_RETENTION_HOURS,
+            "ops_history_retention_hours": retention_hours,
             "ops_default_load": "history",
         }
     cached = _get_live_state_cache(collector, "snapshot")
@@ -909,6 +920,7 @@ def _with_hurricane_history_tracks(snapshot: dict, entries: list[dict]) -> dict:
     summary = snapshot.get("payload_summary") if isinstance(snapshot.get("payload_summary"), dict) else {}
     storms = [dict(item) for item in summary.get("storms") or [] if isinstance(item, dict)]
     positions: dict[str, dict[str, dict]] = {}
+    source_priority_by_storm: dict[str, int] = {}
 
     def identity_keys(storm: dict) -> set[str]:
         identity = storm.get("identity") if isinstance(storm.get("identity"), dict) else {}
@@ -922,9 +934,87 @@ def _with_hurricane_history_tracks(snapshot: dict, entries: list[dict]) -> dict:
         return {value for value in (canonical, f"{name}:{year}" if name else "") if value}
 
     current_by_key = {}
+
+    def register_storm(storm: dict, *, retained_only: bool = False, append_if_new: bool = True) -> dict | None:
+        storm_id = str(storm.get("storm_id") or "").strip()
+        if not storm_id:
+            return None
+        target = next(
+            (current_by_key.get(key) for key in identity_keys(storm) if current_by_key.get(key)),
+            None,
+        )
+        source_priority = HURRICANE_SOURCE_PRIORITY.get(str(storm.get("source") or "").upper(), 0)
+        if target is None:
+            target = dict(storm)
+            if retained_only:
+                target["retained_history_only"] = True
+            if append_if_new:
+                storms.append(target)
+        else:
+            target_id = str(target.get("storm_id") or storm_id)
+            existing_priority = source_priority_by_storm.get(target_id, 0)
+            if source_priority > existing_priority:
+                for field in (
+                    "name", "basin", "source", "source_url", "advisory_number",
+                    "issued_at", "forecast_track", "forecast_points",
+                    "uncertainty_geometry", "identity",
+                ):
+                    if storm.get(field) not in (None, "", []):
+                        target[field] = storm.get(field)
+        target_id = str(target.get("storm_id") or storm_id)
+        source_priority_by_storm[target_id] = max(
+            source_priority_by_storm.get(target_id, 0),
+            source_priority,
+        )
+        for key in identity_keys(target) | identity_keys(storm):
+            current_by_key[key] = target
+        return target
+
+    def add_position(target: dict, point: dict | None, *, source: str | None = None, fallback_timestamp: str | None = None) -> None:
+        if not isinstance(point, dict):
+            return
+        timestamp = str(point.get("timestamp") or fallback_timestamp or "").strip()
+        if not timestamp:
+            return
+        try:
+            latitude = float(point.get("latitude"))
+            longitude = float(point.get("longitude"))
+        except (TypeError, ValueError):
+            return
+        storm_id = str(target.get("storm_id") or "").strip()
+        if not storm_id:
+            return
+        storm_positions = positions.setdefault(storm_id, {})
+        priority = HURRICANE_SOURCE_PRIORITY.get(str(source or target.get("source") or "").upper(), 0)
+        existing = storm_positions.get(timestamp)
+        if existing and int(existing.get("_source_priority") or 0) > priority:
+            return
+        storm_positions[timestamp] = {
+            **point,
+            "timestamp": timestamp,
+            "latitude": latitude,
+            "longitude": longitude,
+            "_source_priority": priority,
+        }
+
     for storm in storms:
-        for key in identity_keys(storm):
-            current_by_key[key] = storm
+        target = register_storm(storm, append_if_new=False)
+        if target is None:
+            continue
+        for point in storm.get("observed_track") or []:
+            if isinstance(point, dict):
+                add_position(
+                    target,
+                    point,
+                    source=str(storm.get("source") or ""),
+                    fallback_timestamp=str(point.get("timestamp") or storm.get("issued_at") or ""),
+                )
+        add_position(
+            target,
+            storm.get("current_position") if isinstance(storm.get("current_position"), dict) else None,
+            source=str(storm.get("source") or ""),
+            fallback_timestamp=str(storm.get("issued_at") or ""),
+        )
 
     for entry in entries:
         entry_summary = entry.get("payload_summary") if isinstance(entry.get("payload_summary"), dict) else {}
@@ -936,28 +1026,23 @@ def _with_hurricane_history_tracks(snapshot: dict, entries: list[dict]) -> dict:
                 None,
             )
             if target is None:
+                target = register_storm(historical, retained_only=True)
+            if target is None:
                 continue
-            point = historical.get("current_position")
-            if not isinstance(point, dict):
-                continue
-            timestamp = str(point.get("timestamp") or historical.get("issued_at") or "").strip()
-            try:
-                latitude = float(point.get("latitude"))
-                longitude = float(point.get("longitude"))
-            except (TypeError, ValueError):
-                continue
-            storm_positions = positions.setdefault(str(target.get("storm_id")), {})
-            priority = HURRICANE_SOURCE_PRIORITY.get(str(historical.get("source") or "").upper(), 0)
-            existing = storm_positions.get(timestamp)
-            if existing and int(existing.get("_source_priority") or 0) > priority:
-                continue
-            storm_positions[timestamp] = {
-                **point,
-                "timestamp": timestamp,
-                "latitude": latitude,
-                "longitude": longitude,
-                "_source_priority": priority,
-            }
+            for point in historical.get("observed_track") or []:
+                if isinstance(point, dict):
+                    add_position(
+                        target,
+                        point,
+                        source=str(historical.get("source") or ""),
+                        fallback_timestamp=str(point.get("timestamp") or historical.get("issued_at") or ""),
+                    )
+            add_position(
+                target,
+                historical.get("current_position") if isinstance(historical.get("current_position"), dict) else None,
+                source=str(historical.get("source") or ""),
+                fallback_timestamp=str(historical.get("issued_at") or ""),
+            )
 
     for storm in storms:
         storm_positions = positions.get(str(storm.get("storm_id")), {})
@@ -970,6 +1055,13 @@ def _with_hurricane_history_tracks(snapshot: dict, entries: list[dict]) -> dict:
                 }
                 for key in sorted(storm_positions)
             ]
+            if not isinstance(storm.get("current_position"), dict):
+                latest_key = sorted(storm_positions)[-1]
+                storm["current_position"] = {
+                    field: value
+                    for field, value in storm_positions[latest_key].items()
+                    if field != "_source_priority"
+                }
     return {
         **snapshot,
         "payload_summary": {
@@ -985,9 +1077,12 @@ def _build_default_history_payload(*, feed: str, snapshot: dict, history_entries
         history_entries=history_entries,
     )
     if feed == "hurricanes":
-        return _build_live_hurricane_display_payload(
+        payload = _build_live_hurricane_display_payload(
             _with_hurricane_history_tracks(snapshot, in_window)
         )
+        if payload and window_label:
+            payload["window_label"] = window_label
+        return payload
     return _build_history_event_payload(feed=feed, in_window=in_window, window_label=window_label)
 
 
