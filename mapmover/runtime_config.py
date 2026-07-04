@@ -20,7 +20,6 @@ APP_NAME = "DaedalMap"
 APP_ROOT = Path(__file__).resolve().parent.parent
 STATIC_ROOT = APP_ROOT / "static"
 TEMPLATES_ROOT = APP_ROOT / "templates"
-MAP_CONFIG_PATH = APP_ROOT / "config.json"
 
 
 def _default_workspace_app_data_root() -> Path:

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .runtime_config import APP_ROOT, MAP_CONFIG_PATH, STATIC_ROOT, TEMPLATES_ROOT, get_runtime_config
+from .runtime_config import APP_ROOT, STATIC_ROOT, TEMPLATES_ROOT, get_runtime_config
 from .storage_mode import get_runtime_mode
 
 
@@ -35,7 +35,6 @@ RUNTIME_MODE = get_runtime_mode(_CONFIG.get("runtime_mode", "local"))
 # Read-only app assets
 STATIC_DIR = STATIC_ROOT
 TEMPLATES_DIR = TEMPLATES_ROOT
-MAP_ASSET_CONFIG_PATH = MAP_CONFIG_PATH
 
 # Writable runtime state
 CONFIG_DIR = _as_path(_PATHS["config_dir"])
