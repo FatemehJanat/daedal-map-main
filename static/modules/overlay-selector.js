@@ -60,7 +60,7 @@ const OPS_FEED_TO_OVERLAY_IDS = {
   currency: ['currency'],
   earthquakes: ['earthquakes'],
   volcanoes: ['volcanoes'],
-  hurricanes_live: ['hurricanes'],
+  hurricanes: ['hurricanes'],
   ocean_sst: ['ocean-sst-grid'],
   tsunamis: ['tsunamis'],
   wildfires_us_nifc: ['wildfires'],
