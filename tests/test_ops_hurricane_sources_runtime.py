@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 from mapmover import ops_orchestrator_runtime as ops
@@ -146,6 +147,7 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
 
         storms = snapshot["payload_summary"]["storms"]
         self.assertEqual(336, snapshot["ops_history_retention_hours"])
+        self.assertEqual(72, snapshot["ops_history_display_hours"])
         self.assertEqual(2, len(storms))
         bavi = next(storm for storm in storms if storm["name"] == "BAVI")
         self.assertEqual("JTWC", bavi["source"])
@@ -234,6 +236,61 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
         self.assertIn("observed", kinds)
         self.assertIn("forecast", kinds)
         self.assertEqual(2, payload["count"])
+
+    def test_default_hurricane_history_uses_display_window_not_saved_retention(self):
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        snapshot = {
+            "collector": "hurricanes",
+            "payload_hash": "current-hash",
+            "ops_history_retention_hours": 336,
+            "ops_history_display_hours": 72,
+            "payload_summary": {"storms": []},
+        }
+        history = [
+            {
+                "published_at": (now - timedelta(hours=96)).isoformat(),
+                "payload_summary": {
+                    "storms": [{
+                        "storm_id": "WP072026",
+                        "identity": {"canonical_id": "WP072026"},
+                        "name": "OLD",
+                        "year": 2026,
+                        "source": "JMA",
+                        "current_position": {
+                            "timestamp": (now - timedelta(hours=96)).isoformat(),
+                            "latitude": 8.0,
+                            "longitude": 130.0,
+                        },
+                    }],
+                },
+            },
+            {
+                "published_at": (now - timedelta(hours=48)).isoformat(),
+                "payload_summary": {
+                    "storms": [{
+                        "storm_id": "WP082026",
+                        "identity": {"canonical_id": "WP082026"},
+                        "name": "RECENT",
+                        "year": 2026,
+                        "source": "JMA",
+                        "current_position": {
+                            "timestamp": (now - timedelta(hours=48)).isoformat(),
+                            "latitude": 10.0,
+                            "longitude": 140.0,
+                        },
+                    }],
+                },
+            },
+        ]
+
+        in_window, window_label = ops._default_history_window_entries(
+            snapshot=snapshot,
+            history_entries=history,
+        )
+        self.assertEqual("the default Ops display window (72h)", window_label)
+        self.assertEqual(1, len(in_window))
+        storms = in_window[0]["payload_summary"]["storms"]
+        self.assertEqual("WP082026", storms[0]["storm_id"])
 
 
 if __name__ == "__main__":

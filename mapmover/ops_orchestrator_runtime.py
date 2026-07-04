@@ -40,6 +40,7 @@ CURRENCY_MAP_PATH = REFERENCE_ROOT / "country_currency_map.csv"
 LIVE_STATE_SNAPSHOT_TTL_SECONDS = 60.0
 LIVE_STATE_HISTORY_TTL_SECONDS = 60.0
 DEFAULT_OPS_HISTORY_RETENTION_HOURS = 72
+DEFAULT_OPS_HISTORY_DISPLAY_HOURS = 72
 HURRICANE_OPS_COLLECTORS = ("tc_nhc", "tc_gdacs", "tc_jtwc", "tc_jma")
 HURRICANE_SOURCE_PRIORITY = {"NHC": 50, "JTWC": 40, "JMA": 35, "GDACS": 10}
 USGS_FDSN_EVENT_URL = "https://earthquake.usgs.gov/fdsnws/event/1/query"
@@ -473,6 +474,17 @@ def load_current_state_snapshot(collector_name: str) -> dict | None:
                 pass
         if child_retention_hours:
             retention_hours = max(child_retention_hours)
+        display_hours = DEFAULT_OPS_HISTORY_DISPLAY_HOURS
+        child_display_hours = []
+        for child in children:
+            try:
+                hours = int(child.get("ops_history_display_hours"))
+                if hours > 0:
+                    child_display_hours.append(hours)
+            except Exception:
+                pass
+        if child_display_hours:
+            display_hours = max(child_display_hours)
         payload_summary = {
             "logical_feed": "hurricanes",
             "storm_count": len(storms),
@@ -492,6 +504,7 @@ def load_current_state_snapshot(collector_name: str) -> dict | None:
             "feed_type": "forecast",
             "ops_history_enabled": True,
             "ops_history_retention_hours": retention_hours,
+            "ops_history_display_hours": min(display_hours, retention_hours),
             "ops_default_load": "history",
         }
     cached = _get_live_state_cache(collector, "snapshot")
@@ -892,7 +905,7 @@ def _build_currency_display_payload(snapshot: dict | None) -> dict | None:
 
 
 def _default_history_window_entries(*, snapshot: dict, history_entries: list[dict]) -> tuple[list[dict], str]:
-    hours = _ops_history_retention_hours_for_snapshot(snapshot)
+    hours = _ops_history_display_hours_for_snapshot(snapshot)
     cutoff = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(hours=max(hours, 1))
     timeline: list[dict] = []
     if isinstance(snapshot, dict):
@@ -904,7 +917,7 @@ def _default_history_window_entries(*, snapshot: dict, history_entries: list[dic
         if observed_at is None or observed_at < cutoff:
             continue
         in_window.append(entry)
-    return in_window, f"the retained Ops window ({hours}h)"
+    return in_window, f"the default Ops display window ({hours}h)"
 
 
 def _ops_default_load_mode(snapshot: dict | None) -> str:
@@ -1628,6 +1641,19 @@ def _ops_history_retention_hours_for_snapshot(snapshot: dict | None) -> int:
         except Exception:
             pass
     return DEFAULT_OPS_HISTORY_RETENTION_HOURS
+
+
+def _ops_history_display_hours_for_snapshot(snapshot: dict | None) -> int:
+    if isinstance(snapshot, dict):
+        raw = snapshot.get("ops_history_display_hours")
+        try:
+            hours = int(raw)
+            if hours > 0:
+                retention_hours = _ops_history_retention_hours_for_snapshot(snapshot)
+                return min(hours, retention_hours)
+        except Exception:
+            pass
+    return min(DEFAULT_OPS_HISTORY_DISPLAY_HOURS, _ops_history_retention_hours_for_snapshot(snapshot))
 
 
 def _mentioned_feeds(query: str, effective_feeds: list[str]) -> list[str]:
