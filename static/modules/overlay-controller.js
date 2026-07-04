@@ -1009,7 +1009,7 @@ export const OverlayController = {
   _opsOverlayIdForPayload(payload) {
     const sourceId = String(payload?.source_id || '').trim();
     const eventType = String(payload?.event_type || '').trim();
-    if (sourceId === 'ibtracs_live_ops' || eventType === 'hurricane') return 'hurricanes';
+    if (sourceId === 'hurricanes_live_ops' || eventType === 'hurricane') return 'hurricanes';
     if (sourceId === 'currency_live_ops') return 'currency';
     if (eventType === 'earthquake') return 'earthquakes';
     if (eventType === 'tsunami') return 'tsunamis';
@@ -1088,7 +1088,7 @@ export const OverlayController = {
       case 'earthquakes':
         return 'earthquakes';
       case 'hurricanes':
-        return 'hurricanes_ibtracs_nrt';
+        return 'hurricanes_live';
       case 'wildfires':
         return 'wildfires_us_nifc';
       case 'tsunamis':

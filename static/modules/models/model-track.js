@@ -97,9 +97,11 @@ export const TrackModel = {
     // First time render - create source and layers
     const categoryColorExpr = this._buildCategoryColorExpr();
 
-    // Detect geometry type from first feature
-    const firstFeature = geojson.features[0];
-    const isLineString = firstFeature.geometry?.type === 'LineString';
+    // Live advisory payloads mix current-position points, observed/forecast
+    // lines, and cone polygons. Use track rendering whenever any line exists.
+    const isLineString = geojson.features.some(
+      feature => feature?.geometry?.type === 'LineString'
+    );
 
     // Add hurricane source
     map.addSource(CONFIG.layers.hurricaneSource, {
@@ -135,6 +137,10 @@ export const TrackModel = {
       id: CONFIG.layers.hurricaneCircle + '-lines',
       type: 'line',
       source: CONFIG.layers.hurricaneSource,
+      filter: ['all',
+        ['==', ['geometry-type'], 'LineString'],
+        ['!=', ['get', 'track_kind'], 'forecast']
+      ],
       layout: {
         'line-cap': 'round',
         'line-join': 'round'
@@ -152,9 +158,72 @@ export const TrackModel = {
     });
 
     map.addLayer({
+      id: CONFIG.layers.hurricaneCircle + '-forecast-lines',
+      type: 'line',
+      source: CONFIG.layers.hurricaneSource,
+      filter: ['all',
+        ['==', ['geometry-type'], 'LineString'],
+        ['==', ['get', 'track_kind'], 'forecast']
+      ],
+      layout: {
+        'line-cap': 'round',
+        'line-join': 'round'
+      },
+      paint: {
+        'line-color': categoryColorExpr,
+        'line-width': [
+          'interpolate', ['linear'], ['zoom'],
+          2, 2,
+          5, 4,
+          8, 5.5
+        ],
+        'line-opacity': ['*', 0.8, lifecycleOpacity],
+        'line-dasharray': [2, 2]
+      }
+    });
+
+    map.addLayer({
+      id: CONFIG.layers.hurricaneCircle + '-forecast-cones',
+      type: 'fill',
+      source: CONFIG.layers.hurricaneSource,
+      filter: ['all',
+        ['==', ['geometry-type'], 'Polygon'],
+        ['==', ['get', 'track_kind'], 'forecast_uncertainty']
+      ],
+      paint: {
+        'fill-color': categoryColorExpr,
+        'fill-opacity': 0.16,
+        'fill-outline-color': categoryColorExpr
+      }
+    });
+
+    map.addLayer({
+      id: CONFIG.layers.hurricaneCircle + '-current',
+      type: 'circle',
+      source: CONFIG.layers.hurricaneSource,
+      filter: ['all',
+        ['==', ['geometry-type'], 'Point'],
+        ['==', ['get', 'track_kind'], 'current']
+      ],
+      paint: {
+        'circle-radius': [
+          'interpolate', ['linear'], ['zoom'],
+          2, 5,
+          5, 7,
+          8, 9
+        ],
+        'circle-color': categoryColorExpr,
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': 2,
+        'circle-opacity': 0.95
+      }
+    });
+
+    map.addLayer({
       id: CONFIG.layers.hurricaneCircle + '-lines-hit',
       type: 'line',
       source: CONFIG.layers.hurricaneSource,
+      filter: ['==', ['geometry-type'], 'LineString'],
       layout: {
         'line-cap': 'round',
         'line-join': 'round'
@@ -237,6 +306,8 @@ export const TrackModel = {
     };
     map.on('click', CONFIG.layers.hurricaneCircle + '-lines', this.clickHandler);
     map.on('click', CONFIG.layers.hurricaneCircle + '-lines-hit', this.clickHandler);
+    map.on('click', CONFIG.layers.hurricaneCircle + '-forecast-lines', this.clickHandler);
+    map.on('click', CONFIG.layers.hurricaneCircle + '-current', this.clickHandler);
     map.on('click', CONFIG.layers.hurricaneCircle + '-glow', this.clickHandler);
 
     // Hover cursor for lines
@@ -449,7 +520,9 @@ export const TrackModel = {
         CONFIG.layers.hurricaneCircle + '-hit',
         CONFIG.layers.hurricaneCircle + '-glow',
         CONFIG.layers.hurricaneCircle + '-lines',
-        CONFIG.layers.hurricaneCircle + '-lines-hit'
+        CONFIG.layers.hurricaneCircle + '-lines-hit',
+        CONFIG.layers.hurricaneCircle + '-forecast-lines',
+        CONFIG.layers.hurricaneCircle + '-current'
       ].filter((layerId) => map.getLayer(layerId));
       if (!layersToCheck.length) return;
       const features = map.queryRenderedFeatures(e.point, { layers: layersToCheck });
@@ -637,6 +710,8 @@ export const TrackModel = {
       map.off('click', CONFIG.layers.hurricaneCircle + '-glow', this.clickHandler);
       map.off('click', CONFIG.layers.hurricaneCircle + '-lines', this.clickHandler);
       map.off('click', CONFIG.layers.hurricaneCircle + '-lines-hit', this.clickHandler);
+      map.off('click', CONFIG.layers.hurricaneCircle + '-forecast-lines', this.clickHandler);
+      map.off('click', CONFIG.layers.hurricaneCircle + '-current', this.clickHandler);
       this.clickHandler = null;
     }
     if (this.emptyClickHandler) {
@@ -651,7 +726,10 @@ export const TrackModel = {
       CONFIG.layers.hurricaneCircle + '-hit',
       CONFIG.layers.hurricaneCircle + '-glow',
       CONFIG.layers.hurricaneCircle + '-lines',
-      CONFIG.layers.hurricaneCircle + '-lines-hit'
+      CONFIG.layers.hurricaneCircle + '-lines-hit',
+      CONFIG.layers.hurricaneCircle + '-forecast-lines',
+      CONFIG.layers.hurricaneCircle + '-forecast-cones',
+      CONFIG.layers.hurricaneCircle + '-current'
     ];
 
     for (const layerId of layersToRemove) {

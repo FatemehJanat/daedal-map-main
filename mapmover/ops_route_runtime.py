@@ -19,7 +19,7 @@ from mapmover.routes.chat_shared import human_chat_rate_limit_response
 OPS_SUPPORTED_FEEDS = (
     "currency",
     "earthquakes",
-    "hurricanes_ibtracs_nrt",
+    "hurricanes_live",
     "noaa_aurora",
     "noaa_ndbc",
     "noaa_swpc",
@@ -85,7 +85,7 @@ def _public_default_ops_feeds() -> list[str]:
     return _supported_ops_feeds([
         "currency",
         "earthquakes",
-        "hurricanes_ibtracs_nrt",
+        "hurricanes_live",
         "noaa_aurora",
         "noaa_swpc",
         "tsunamis",

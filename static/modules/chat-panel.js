@@ -242,7 +242,7 @@ const EXACT_EVENT_ENTITY_HINTS = [
   { tokens: ['tsunami', 'tsunamis', 'runup', 'runups'], packId: 'tsunamis', feedId: 'tsunamis' },
   { tokens: ['volcano', 'volcanoes', 'eruption', 'eruptions'], packId: 'volcanoes', feedId: 'volcanoes' },
   { tokens: ['wildfire', 'wildfires', 'fire', 'fires', 'nifc'], packId: 'wildfires', feedId: 'wildfires_us_nifc' },
-  { tokens: ['hurricane', 'hurricanes', 'storm', 'storms', 'cyclone', 'typhoon', 'ibtracs'], packId: 'hurricanes', feedId: 'hurricanes_ibtracs_nrt' },
+  { tokens: ['hurricane', 'hurricanes', 'storm', 'storms', 'cyclone', 'typhoon'], packId: 'hurricanes', feedId: 'hurricanes_live' },
   { tokens: ['flood', 'floods'], packId: 'floods', feedId: 'floods' },
   { tokens: ['tornado', 'tornadoes', 'twister', 'twisters'], packId: 'tornadoes', feedId: 'tornadoes' }
 ];
