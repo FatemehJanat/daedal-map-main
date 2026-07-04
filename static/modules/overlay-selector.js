@@ -419,7 +419,31 @@ function buildCategoriesFromTree(overlayTree) {
   const hardcodedClimateOverlays = [
     { id: 'aurora', label: 'Aurora', description: 'Live aurora forecast', default: false, locked: false, model: 'aurora', icon: 'A', hasYearFilter: false, live: true },
     { id: 'buoys', label: 'Ocean Buoys', description: 'Live NDBC buoy readings (sea temp, wind, waves)', default: false, locked: false, model: 'buoys', icon: 'B', hasYearFilter: false, live: true },
-    { id: 'ocean-sst-grid', label: 'Ocean Temp Grid', description: 'Daily ocean temperature grid', default: false, locked: false, model: 'ocean-raster', icon: 'O', hasYearFilter: false, live: false, rasterSource: 'ocean_sst', rasterBasins: ['OCEAN_DAILY_20250701'], rasterVariable: 'sst_c', rasterCadence: 'daily' }
+    {
+      id: 'ocean-sst-grid',
+      label: 'Ocean Temp Grid',
+      description: 'Ocean temperature grid',
+      default: false,
+      locked: false,
+      model: 'ocean-raster',
+      icon: 'O',
+      hasYearFilter: false,
+      live: false,
+      rasterSource: 'ocean_sst',
+      rasterBasins: ['OCEAN_WEEKLY_1DEG_20250701'],
+      rasterBasinsByLane: {
+        explore: ['OCEAN_WEEKLY_1DEG_20250701'],
+        research: ['OCEAN_WEEKLY_1DEG_20250701'],
+        ops: ['OCEAN_DAILY_20250701']
+      },
+      rasterCadence: 'weekly',
+      rasterCadenceByLane: {
+        explore: 'weekly',
+        research: 'weekly',
+        ops: 'daily'
+      },
+      rasterVariable: 'sst_c'
+    }
   ];
   const climateCategory = categories.find((cat) => cat.id === 'climate' && cat.isCategory);
   if (climateCategory) {

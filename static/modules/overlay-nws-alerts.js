@@ -336,20 +336,16 @@ export const NwsAlertsOverlay = {
           <summary>${label}</summary>
           <div class="nws-popup-detail-body">${text(value)}</div>
         </details>` : '';
-      const instruction = p.instruction
-        ? `<div class="nws-popup-instruction"><span>What to do</span>${text(p.instruction)}</div>`
-        : '';
       const html = `<div class="nws-alert-popup">
         <div class="nws-popup-title">${esc(p.event)}</div>
         <div class="nws-popup-classification">${esc(p.alert_family_label || '')}${p.severity ? ` | ${esc(p.severity)}` : ''}</div>
         ${(p.urgency || p.certainty) ? `<div class="nws-popup-confidence">${esc(p.urgency || '')}${p.urgency && p.certainty ? ' / ' : ''}${esc(p.certainty || '')}</div>` : ''}
-        ${instruction}
-        ${(p.area || p.description) ? `<div class="nws-popup-details">${detail('Areas', p.area)}${detail('Description', p.description)}</div>` : ''}
+        ${(p.instruction || p.description || p.area) ? `<div class="nws-popup-details">${detail('Instructions', p.instruction)}${detail('Description', p.description)}${detail('Areas', p.area)}</div>` : ''}
         ${p.expires ? `<div class="nws-popup-expires"><span>Expires</span>${esc(p.expires)}</div>` : ''}
         ${(typeof p.alert_id === 'string' && /^https?:/.test(p.alert_id)) ? `<a class="nws-popup-source" href="${esc(p.alert_id)}" target="_blank" rel="noopener" title="Opens the original machine-readable NWS alert record">Official NWS source (JSON) &rsaquo;</a>` : ''}
       </div>`;
       if (this._popup) this._popup.remove();
-      this._popup = new maplibre.Popup({ closeButton: true })
+      this._popup = new maplibre.Popup({ closeButton: true, maxWidth: '340px' })
         .setLngLat(e.lngLat).setHTML(html).addTo(map);
     };
     this._mouseenterHandler = () => { map.getCanvas().style.cursor = 'pointer'; };

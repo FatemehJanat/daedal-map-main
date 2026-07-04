@@ -3059,11 +3059,14 @@ export const OverlayController = {
    */
   async loadOceanRasterOverlay(overlayId, config) {
     const sourceId = config?.rasterSource || 'ocean_sst';
-    const basins = config?.rasterBasins || ['XOP'];
+    const laneMode = OverlaySelector?.currentLaneMode || 'explore';
+    const basinsByLane = config?.rasterBasinsByLane || {};
+    const cadenceByLane = config?.rasterCadenceByLane || {};
+    const basins = basinsByLane[laneMode] || config?.rasterBasins || ['XOP'];
     const variable = config?.rasterVariable || 'sst_c';
-    const cadence = config?.rasterCadence || 'monthly';
+    const cadence = cadenceByLane[laneMode] || config?.rasterCadence || 'monthly';
 
-    console.log(`OverlayController: Loading ocean raster ${overlayId} basins=${basins.join(',')} var=${variable}`);
+    console.log(`OverlayController: Loading ocean raster ${overlayId} lane=${laneMode} basins=${basins.join(',')} var=${variable}`);
     const ok = await OceanRasterModel.load(overlayId, sourceId, basins, variable);
     if (!ok) {
       console.error(`OverlayController: Failed to load ocean raster ${overlayId}`);

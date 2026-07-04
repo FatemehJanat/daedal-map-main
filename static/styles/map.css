@@ -1554,10 +1554,19 @@ body.chat-mode-ops #tutorialTimelineRegion:not(.timeline-region-active) > .tutor
 /* ========== Disaster Popup Styles ========== */
 
 .nws-alert-popup {
-  width: min(320px, calc(100vw - 72px));
+  width: min(300px, calc(100vw - 72px));
+  max-height: min(520px, 65vh);
+  overflow-y: auto;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   font-size: 12px;
   line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.nws-alert-popup,
+.nws-alert-popup * {
+  box-sizing: border-box;
+  max-width: 100%;
 }
 
 .nws-popup-title {
@@ -1578,16 +1587,6 @@ body.chat-mode-ops #tutorialTimelineRegion:not(.timeline-region-active) > .tutor
   color: var(--map-text-muted);
 }
 
-.nws-popup-instruction {
-  margin-top: 12px;
-  padding: 10px 12px;
-  border-left: 3px solid #f59e0b;
-  border-radius: 4px;
-  background: rgba(245, 158, 11, 0.12);
-  color: var(--map-text);
-}
-
-.nws-popup-instruction span,
 .nws-popup-expires span {
   display: block;
   margin-bottom: 3px;
@@ -1599,24 +1598,26 @@ body.chat-mode-ops #tutorialTimelineRegion:not(.timeline-region-active) > .tutor
 }
 
 .nws-popup-details {
-  display: flex;
+  display: grid;
   gap: 6px;
   margin-top: 10px;
 }
 
 .nws-popup-detail {
-  flex: 1;
+  width: 100%;
   min-width: 0;
 }
 
 .nws-popup-detail summary {
-  padding: 7px 10px;
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 7px 28px 7px 10px;
   border: 1px solid rgba(148, 163, 184, 0.35);
   border-radius: 5px;
   background: rgba(148, 163, 184, 0.1);
   color: var(--map-text);
   font-weight: 600;
-  text-align: center;
   cursor: pointer;
   list-style: none;
 }
@@ -1625,12 +1626,14 @@ body.chat-mode-ops #tutorialTimelineRegion:not(.timeline-region-active) > .tutor
   display: none;
 }
 
-.nws-popup-detail[open] {
-  flex-basis: 100%;
-}
-
-.nws-popup-details:has(.nws-popup-detail[open]) {
-  flex-wrap: wrap;
+.nws-popup-detail summary::after {
+  content: "+";
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  color: var(--map-text-muted);
+  font-weight: 700;
+  transform: translateY(-50%);
 }
 
 .nws-popup-detail[open] summary {
@@ -1638,9 +1641,15 @@ body.chat-mode-ops #tutorialTimelineRegion:not(.timeline-region-active) > .tutor
   color: #4dd2ff;
 }
 
+.nws-popup-detail[open] summary::after {
+  content: "-";
+  color: #4dd2ff;
+}
+
 .nws-popup-detail-body {
   width: 100%;
-  max-height: 170px;
+  min-width: 0;
+  max-height: 140px;
   margin-top: 6px;
   padding: 9px 10px;
   overflow-y: auto;
@@ -1649,6 +1658,7 @@ body.chat-mode-ops #tutorialTimelineRegion:not(.timeline-region-active) > .tutor
   background: rgba(5, 14, 22, 0.75);
   color: var(--map-text);
   box-sizing: border-box;
+  overflow-wrap: anywhere;
 }
 
 .nws-popup-expires {
