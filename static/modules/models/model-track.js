@@ -43,9 +43,20 @@ export const TrackModel = {
    * @returns {Array} MapLibre match expression
    */
   _buildCategoryColorExpr() {
+    const windCategory = [
+      'case',
+      ['>=', ['to-number', ['coalesce', ['get', 'max_wind_kt'], ['get', 'wind_kt'], 0]], 137], 'Cat5',
+      ['>=', ['to-number', ['coalesce', ['get', 'max_wind_kt'], ['get', 'wind_kt'], 0]], 113], 'Cat4',
+      ['>=', ['to-number', ['coalesce', ['get', 'max_wind_kt'], ['get', 'wind_kt'], 0]], 96], 'Cat3',
+      ['>=', ['to-number', ['coalesce', ['get', 'max_wind_kt'], ['get', 'wind_kt'], 0]], 83], 'Cat2',
+      ['>=', ['to-number', ['coalesce', ['get', 'max_wind_kt'], ['get', 'wind_kt'], 0]], 64], 'Cat1',
+      ['>=', ['to-number', ['coalesce', ['get', 'max_wind_kt'], ['get', 'wind_kt'], 0]], 34], 'TS',
+      ['>', ['to-number', ['coalesce', ['get', 'max_wind_kt'], ['get', 'wind_kt'], 0]], 0], 'TD',
+      ''
+    ];
     return [
       'match',
-      ['coalesce', ['get', 'category'], ['get', 'max_category']],
+      ['coalesce', ['get', 'category'], ['get', 'max_category'], windCategory],
       // String formats from IBTrACS (Cat1, Cat2, etc.)
       'TD', CONFIG.hurricaneColors.TD,
       'TS', CONFIG.hurricaneColors.TS,
@@ -134,6 +145,21 @@ export const TrackModel = {
 
     // Add track line layer (colored by max category)
     map.addLayer({
+      id: CONFIG.layers.hurricaneCircle + '-forecast-cones',
+      type: 'fill',
+      source: CONFIG.layers.hurricaneSource,
+      filter: ['all',
+        ['match', ['geometry-type'], ['Polygon', 'MultiPolygon'], true, false],
+        ['==', ['get', 'track_kind'], 'forecast_uncertainty']
+      ],
+      paint: {
+        'fill-color': categoryColorExpr,
+        'fill-opacity': 0.13,
+        'fill-outline-color': categoryColorExpr
+      }
+    });
+
+    map.addLayer({
       id: CONFIG.layers.hurricaneCircle + '-lines',
       type: 'line',
       source: CONFIG.layers.hurricaneSource,
@@ -153,7 +179,7 @@ export const TrackModel = {
           5, 4,
           8, 5.5
         ],
-        'line-opacity': ['*', 0.8, lifecycleOpacity]
+        'line-opacity': ['*', 0.95, lifecycleOpacity]
       }
     });
 
@@ -177,23 +203,8 @@ export const TrackModel = {
           5, 4,
           8, 5.5
         ],
-        'line-opacity': ['*', 0.8, lifecycleOpacity],
+        'line-opacity': ['*', 0.9, lifecycleOpacity],
         'line-dasharray': [2, 2]
-      }
-    });
-
-    map.addLayer({
-      id: CONFIG.layers.hurricaneCircle + '-forecast-cones',
-      type: 'fill',
-      source: CONFIG.layers.hurricaneSource,
-      filter: ['all',
-        ['match', ['geometry-type'], ['Polygon', 'MultiPolygon'], true, false],
-        ['==', ['get', 'track_kind'], 'forecast_uncertainty']
-      ],
-      paint: {
-        'fill-color': categoryColorExpr,
-        'fill-opacity': 0.16,
-        'fill-outline-color': categoryColorExpr
       }
     });
 

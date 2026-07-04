@@ -678,6 +678,34 @@ def _build_live_hurricane_display_payload(snapshot: dict | None) -> dict | None:
     storms = summary.get("storms") if isinstance(summary.get("storms"), list) else []
     features = []
     storm_ids = set()
+
+    def numeric_value(*values) -> float | None:
+        for value in values:
+            try:
+                parsed = float(value)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(parsed):
+                return parsed
+        return None
+
+    def category_from_wind(wind_kt: float | None) -> str | None:
+        if wind_kt is None:
+            return None
+        if wind_kt >= 137:
+            return "Cat5"
+        if wind_kt >= 113:
+            return "Cat4"
+        if wind_kt >= 96:
+            return "Cat3"
+        if wind_kt >= 83:
+            return "Cat2"
+        if wind_kt >= 64:
+            return "Cat1"
+        if wind_kt >= 34:
+            return "TS"
+        return "TD"
+
     for storm in storms:
         if not isinstance(storm, dict):
             continue
@@ -685,6 +713,29 @@ def _build_live_hurricane_display_payload(snapshot: dict | None) -> dict | None:
         if not storm_id:
             continue
         storm_ids.add(storm_id)
+        current = storm.get("current_position") if isinstance(storm.get("current_position"), dict) else {}
+        observed_points = [
+            point for point in (storm.get("observed_track") or [])
+            if isinstance(point, dict)
+        ]
+        wind_candidates = [
+            numeric_value(storm.get("max_wind_kt"), storm.get("wind_kt"), current.get("wind_kt"))
+        ]
+        wind_candidates.extend(
+            numeric_value(point.get("wind_kt"))
+            for point in observed_points
+        )
+        max_wind_kt = max(
+            [value for value in wind_candidates if value is not None],
+            default=None,
+        )
+        current_wind_kt = numeric_value(current.get("wind_kt"), storm.get("wind_kt"), max_wind_kt)
+        category = (
+            storm.get("category")
+            or storm.get("max_category")
+            or category_from_wind(max_wind_kt)
+            or category_from_wind(current_wind_kt)
+        )
         base_props = {
             "storm_id": storm_id,
             "name": storm.get("name"),
@@ -693,17 +744,18 @@ def _build_live_hurricane_display_payload(snapshot: dict | None) -> dict | None:
             "source_url": storm.get("source_url"),
             "advisory_number": storm.get("advisory_number"),
             "issued_at": storm.get("issued_at"),
+            "wind_kt": current_wind_kt,
+            "max_wind_kt": max_wind_kt,
+            "category": category,
+            "max_category": category,
             "event_type": "hurricane",
         }
         observed = []
-        for point in storm.get("observed_track") or []:
-            if not isinstance(point, dict):
-                continue
+        for point in observed_points:
             try:
                 observed.append([float(point.get("longitude")), float(point.get("latitude"))])
             except (TypeError, ValueError):
                 continue
-        current = storm.get("current_position") if isinstance(storm.get("current_position"), dict) else {}
         try:
             current_coord = [float(current.get("longitude")), float(current.get("latitude"))]
         except (TypeError, ValueError):

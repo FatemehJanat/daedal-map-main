@@ -172,11 +172,13 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
                         "timestamp": "2026-07-04T06:00:00+00:00",
                         "latitude": 12.5,
                         "longitude": 150.8,
+                        "wind_kt": 135,
                     },
                     "observed_track": [{
                         "timestamp": "2026-07-04T00:00:00+00:00",
                         "latitude": 12.4,
                         "longitude": 151.5,
+                        "wind_kt": 120,
                     }],
                     "forecast_track": {
                         "type": "LineString",
@@ -235,6 +237,12 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
         kinds = [feature["properties"]["track_kind"] for feature in features]
         self.assertIn("observed", kinds)
         self.assertIn("forecast", kinds)
+        observed = next(feature for feature in features if feature["properties"]["track_kind"] == "observed")
+        current = next(feature for feature in features if feature["properties"]["track_kind"] == "current")
+        self.assertEqual("Cat4", observed["properties"]["category"])
+        self.assertEqual(135.0, observed["properties"]["max_wind_kt"])
+        self.assertEqual("Cat4", current["properties"]["category"])
+        self.assertEqual(135, current["properties"]["wind_kt"])
         self.assertEqual(2, payload["count"])
 
     def test_default_hurricane_history_uses_display_window_not_saved_retention(self):
