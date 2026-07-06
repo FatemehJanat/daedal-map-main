@@ -494,8 +494,9 @@ def _hydrate_runtime_geometry_source(source_id: str, metadata: dict) -> dict:
         return {"source_id": source_id, "status": "skipped", "reason": "missing_geometry"}
 
     preferred_columns = [
-        "loc_id", "parent_id", "name", "NAME", "feature_id", "building_id", "BLDGIDENT",
-        "TYPE", "BLDG_CM_TYPE", "BLDG_CM_LABEL", "BLDG_HEIGHT", "SOURCE", "geometry",
+        "loc_id", "parent_id", "name", "NAME", "feature_id", "building_id",
+        "GlobalID", "OBJECTID", "BLDGIDENT", "TYPE", "BLDG_CM_TYPE", "BLDG_CM_LABEL",
+        "BLDG_HEIGHT", "SOURCE", "geometry",
     ]
     select_columns = [column for column in preferred_columns if column in available_columns]
     try:
@@ -522,6 +523,13 @@ def _hydrate_runtime_geometry_source(source_id: str, metadata: dict) -> dict:
         except Exception:
             continue
         props = {k: v for k, v in row.items() if k != "geometry"}
+        if "feature_id" not in props:
+            props["feature_id"] = (
+                props.get("GlobalID")
+                or props.get("OBJECTID")
+                or props.get("BLDGIDENT")
+                or props.get("loc_id")
+            )
         if "name" not in props and props.get("NAME"):
             props["name"] = props.get("NAME")
         if "name" not in props:
