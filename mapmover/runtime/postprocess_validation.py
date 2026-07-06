@@ -5,6 +5,8 @@ from __future__ import annotations
 from .source_hints import (
     get_routing_hints,
     get_single_metric_default,
+    get_supported_geography_summary,
+    get_unsupported_metric_aliases,
     infer_requested_geo_level_from_query,
     select_pack_family_source_for_query,
     select_query_guided_metric,
@@ -148,6 +150,36 @@ def _build_unsupported_multi_hazard_event_weighted_clarify(
         "Combined multi-hazard county risk weighted by event counts needs a cross-pack aggregate join. "
         "A single NRI hazard-risk source cannot execute earthquake and wildfire event-weighted aggregates by county yet."
     )
+
+
+def _build_unsupported_metric_error(metadata: dict | None, query: str) -> str | None:
+    if not isinstance(metadata, dict):
+        return None
+    query_lower = str(query or "").strip().lower()
+    if not query_lower:
+        return None
+
+    for alias in get_unsupported_metric_aliases(metadata):
+        alias_text = str(alias or "").strip()
+        if not alias_text or alias_text.lower() not in query_lower:
+            continue
+        label = alias_text.upper() if " " not in alias_text and alias_text.isalpha() and len(alias_text) <= 5 else alias_text
+        source_name = metadata.get("source_name") or metadata.get("source_id") or "this source"
+        metric_names = []
+        for info in (metadata.get("metrics") or {}).values():
+            if not isinstance(info, dict):
+                continue
+            name = str(info.get("name") or "").strip()
+            if name:
+                metric_names.append(name)
+        metric_names = list(dict.fromkeys(metric_names))
+        available = "; ".join(metric_names[:6])
+        suffix = f" Available metrics include: {available}." if available else ""
+        return (
+            f"{source_name} does not include {label}. "
+            f"This source supports {get_supported_geography_summary(metadata)}.{suffix}"
+        )
+    return None
 
 
 def validate_item(
@@ -403,6 +435,12 @@ def validate_item(
         return item
 
     metadata = metadata or load_source_metadata_func(source_id)
+    unsupported_metric_error = _build_unsupported_metric_error(metadata, query)
+    if unsupported_metric_error:
+        item["_valid"] = False
+        item["_error"] = unsupported_metric_error
+        return item
+
     expand_filter_value_aliases_func(item, metadata)
     comparison_intent = item.get("_comparison_derived_intent")
     comparison_hints = metadata.get("comparison_hints") or {}

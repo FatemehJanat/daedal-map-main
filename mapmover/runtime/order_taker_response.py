@@ -528,6 +528,28 @@ def _select_metadata_guided_metric(user_query: str, metadata: dict) -> str:
 
 
 def _select_metadata_guided_metrics(user_query: str, metadata: dict) -> list[str]:
+    routing_hints = get_routing_hints(metadata)
+    query_lower = str(user_query or "").strip().lower()
+    pair_aliases = routing_hints.get("metric_pair_aliases") or []
+    if isinstance(pair_aliases, list) and query_lower:
+        for pair in pair_aliases:
+            if not isinstance(pair, dict):
+                continue
+            aliases = pair.get("aliases") or []
+            metrics_for_pair = pair.get("metrics") or []
+            if not isinstance(aliases, list) or not isinstance(metrics_for_pair, list):
+                continue
+            alias_terms = [str(alias or "").strip().lower() for alias in aliases if str(alias or "").strip()]
+            if not alias_terms or not all(alias in query_lower for alias in alias_terms):
+                continue
+            metrics = []
+            for metric_name in metrics_for_pair:
+                metric_text = str(metric_name or "").strip()
+                if metric_text and metric_text not in metrics:
+                    metrics.append(metric_text)
+            if metrics:
+                return metrics
+
     alias_matches = get_metric_alias_matches(metadata, user_query)
     metrics: list[str] = []
     for _, metric_name in alias_matches:
