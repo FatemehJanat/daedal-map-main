@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .paths import DATA_ROOT, PACKS_ROOT, SETTINGS_PATH, STATE_DIR, ensure_dir
+from .catalog_surface import filter_catalog_for_product_surface
 
 
 PACK_STATE_PATH = STATE_DIR / "pack_state.json"
@@ -369,10 +370,11 @@ def get_effective_active_pack_ids(full_catalog: dict, state: dict | None = None)
     return []
 
 
-def build_active_catalog(full_catalog: dict, state: dict | None = None) -> dict:
+def build_active_catalog(full_catalog: dict, state: dict | None = None, catalog_surface: str | None = "explore") -> dict:
     state = state or load_pack_state()
-    sources = full_catalog.get("sources", [])
-    packs = full_catalog.get("packs", [])
+    visible_catalog = filter_catalog_for_product_surface(full_catalog, catalog_surface)
+    sources = visible_catalog.get("sources", [])
+    packs = visible_catalog.get("packs", [])
 
     if state.get("catalog_mode") == "unmanaged_data_root":
         # In the public/published runtime, pack_id is the final publish gate.
@@ -405,7 +407,7 @@ def build_active_catalog(full_catalog: dict, state: dict | None = None) -> dict:
         active_sources = filtered_sources
         active_pack_ids = sorted(active_pack_ids)
 
-    active_catalog = dict(full_catalog)
+    active_catalog = dict(visible_catalog)
     active_catalog["sources"] = active_sources
     active_catalog["total_sources"] = len(active_sources)
     active_source_ids = {src.get("source_id") for src in active_sources if src.get("source_id")}

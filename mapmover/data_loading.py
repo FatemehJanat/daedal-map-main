@@ -38,7 +38,7 @@ import time
 from pathlib import Path
 from copy import deepcopy
 
-from .catalog_surface import get_catalog_surface_override
+from .catalog_surface import catalog_product_surface, get_catalog_surface_override
 from .foundation_helpers import load_country_crosswalk
 from .pack_state import build_active_catalog
 from pack_registry_shared import pack_routing_hints
@@ -184,9 +184,13 @@ def _use_wip_catalog_for_local_runtime() -> bool:
 
 def _requested_catalog_surface() -> str:
     override = get_catalog_surface_override()
-    if override in {"published", "wip"}:
+    if override in {"published", "wip", "explore", "research", "api", "downloadable"}:
         return override
     return "wip" if _use_wip_catalog_for_local_runtime() else "published"
+
+
+def _requested_product_surface() -> str | None:
+    return catalog_product_surface(_requested_catalog_surface())
 
 
 def _allow_local_source_fallback() -> bool:
@@ -251,7 +255,7 @@ def load_catalog():
 
     now = time.time()
     if _catalog_cache is not None and (now - _catalog_cache_time) < _CATALOG_TTL_SECONDS:
-        return _catalog_cache
+        return build_active_catalog(_catalog_cache, catalog_surface=_requested_product_surface())
 
     runtime_mode = str(get_runtime_config().get("runtime_mode", "local")).strip().lower()
 
@@ -262,7 +266,7 @@ def load_catalog():
             raw_catalog = _fetch_json_from_s3("catalog.json")
             _catalog_cache = raw_catalog
             _catalog_cache_time = now
-            active_catalog = build_active_catalog(raw_catalog)
+            active_catalog = build_active_catalog(raw_catalog, catalog_surface=_requested_product_surface())
             logger.debug(f"Loaded catalog.json from S3 with {len(raw_catalog.get('sources', []))} sources")
             return active_catalog
         except Exception as e:
@@ -274,7 +278,7 @@ def load_catalog():
                         raw_catalog = json.load(f)
                     _catalog_cache = raw_catalog
                     _catalog_cache_time = now
-                    active_catalog = build_active_catalog(raw_catalog)
+                    active_catalog = build_active_catalog(raw_catalog, catalog_surface=_requested_product_surface())
                     logger.debug(
                         "Loaded catalog.json from local disk fallback with %d sources",
                         len(raw_catalog.get('sources', [])),
@@ -298,7 +302,7 @@ def load_catalog():
             raw_catalog = json.load(f)
             _catalog_cache = raw_catalog
             _catalog_cache_time = now
-            active_catalog = raw_catalog if use_wip_catalog else build_active_catalog(raw_catalog)
+            active_catalog = raw_catalog if use_wip_catalog else build_active_catalog(raw_catalog, catalog_surface=_requested_product_surface())
             catalog_label = "wip_catalog.json" if use_wip_catalog else "catalog.json"
             logger.debug(f"Loaded {catalog_label} with {len(raw_catalog.get('sources', []))} sources")
             return active_catalog

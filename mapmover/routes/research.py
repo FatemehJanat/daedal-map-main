@@ -103,7 +103,7 @@ async def research_load_url_corpus_endpoint(req: Request):
         return msgpack_response(load_url_corpus(
             session_id,
             body.get("packIds") or body.get("pack_ids"),
-            catalog_surface="published",
+            catalog_surface="research",
         ))
     except ValueError as exc:
         return msgpack_error(str(exc), 400)
