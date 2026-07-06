@@ -128,6 +128,53 @@ class SourceHintsRuntimeTests(unittest.TestCase):
                 self.assertIsNone(contract.runtime_level)
                 self.assertIsNone(contract.source_level_value)
 
+    def test_fairfax_sources_resolve_friendly_levels_through_shared_geo_contract(self):
+        lst_metadata = {
+            "source_id": "fairfax_lst",
+            "geographic_coverage": {"country": "USA", "admin_levels": [2, 3, 4, 5]},
+            "geographic_level": "admin_3",
+            "routing_hints": {
+                "geo_level_aliases": {
+                    "county": "admin_2",
+                    "tract": "admin_3",
+                    "blockgroup": "admin_4",
+                    "block group": "admin_4",
+                    "block": "admin_5",
+                }
+            },
+        }
+        nlcd_metadata = {
+            "source_id": "fairfax_nlcd_impervious",
+            "geographic_coverage": {"country": "USA", "admin_levels": [2, 3, 4, 5]},
+            "geographic_level": "admin_3",
+            "routing_hints": {
+                "geo_level_aliases": {
+                    "county": "county",
+                    "tract": "tract",
+                    "blockgroup": "blockgroup",
+                    "block group": "blockgroup",
+                    "block": "block",
+                }
+            },
+        }
+
+        cases = [
+            (lst_metadata, "tract", "admin_3", "admin_3"),
+            (lst_metadata, "block group", "admin_4", "admin_4"),
+            (lst_metadata, "block", "admin_5", "admin_5"),
+            (nlcd_metadata, "tract", "admin_3", "tract"),
+            (nlcd_metadata, "block group", "admin_4", "blockgroup"),
+            (nlcd_metadata, "block", "admin_5", "block"),
+        ]
+
+        for metadata, token, expected_runtime_level, expected_source_value in cases:
+            with self.subTest(source=metadata["source_id"], token=token):
+                contract = resolve_geo_contract(token, metadata)
+                self.assertEqual(contract.runtime_level, expected_runtime_level)
+                self.assertEqual(contract.source_level_value, expected_source_value)
+                self.assertEqual(contract.source_filter_field, "geo_level")
+                self.assertEqual(contract.filter_strategy, "equals")
+
     @patch(
         "mapmover.runtime.source_hints.load_reference_json",
         return_value={
