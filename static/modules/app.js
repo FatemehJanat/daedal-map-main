@@ -32,6 +32,7 @@ import { setDependencies as setSceneRasterDeps } from './scene-raster-model.js';
 import { loadPublicPackCatalog } from './shared/catalog-cache.js';
 import { buildShareStateUrl, getInitialLane, normalizeBootUrl, onRouteChange, parseRouteIntent, setLaneTitle } from './routing/app-route-state.js';
 import { getTemporalMetricPayload, hasTemporalMetricPayload, mergeTemporalMetricPayload } from './temporal-payload.js';
+import { resolveOverlayIdForOrderResult } from './overlay-default-loads.js';
 import { MetricDisplayRegistry } from './metric-display-registry.js';
 
 const CHAT_MAP_LANES = ['explore', 'research', 'ops'];
@@ -2551,6 +2552,28 @@ export const App = {
     if (data.type === 'events') {
       console.log(`Event data detected: ${data.event_type}, ${data.count} events`);
 
+      // Route known disaster families through the shared overlay system so
+      // chat results get the same lifecycle animation and timeline as a
+      // toggled overlay (one display path, not two). Ops snapshots and
+      // unknown event families keep the static event layer below.
+      const laneMode = ChatManager?.mode || this.currentCanvasMode || 'explore';
+      if (laneMode !== 'ops') {
+        const overlayId = resolveOverlayIdForOrderResult(data, options.order || null);
+        const handledByOverlay = overlayId
+          && OverlayController?.applyEventOrderResult?.(overlayId, data.geojson, data.time_range);
+        if (handledByOverlay) {
+          // Drop any stale static event layer from an earlier direct render
+          // so the lifecycle-rendered overlay is the only copy on screen.
+          MapAdapter.clearEventLayer?.();
+          if (!skipFit) MapAdapter.fitToEventBounds(data.geojson);
+          const summaryEl = document.getElementById('queryStatus');
+          if (summaryEl) {
+            summaryEl.textContent = data.summary || `${data.count} ${data.event_type} events`;
+          }
+          return;
+        }
+      }
+
       TimeSlider.reset();
       ChoroplethManager.reset();
 
@@ -2595,7 +2618,31 @@ export const App = {
     const temporalPayload = getTemporalMetricPayload(data);
 
     if (isHurricaneData && data.geojson?.features?.length) {
-      // Hurricane point or track data - use shared hurricane layer path
+      // Hurricane point or track data. Route through the shared overlay
+      // system (same pattern as the events branch above) so chat storm
+      // results get the hurricanes overlay's lifecycle animation, timeline,
+      // and popup/track drill-down instead of a static marker layer.
+      const hurricaneLaneMode = ChatManager?.mode || this.currentCanvasMode || 'explore';
+      if (hurricaneLaneMode !== 'ops') {
+        const hurricaneOverlayId = resolveOverlayIdForOrderResult(data, options.order || null) || 'hurricanes';
+        const handledByOverlay = OverlayController?.applyEventOrderResult?.(
+          hurricaneOverlayId,
+          data.geojson,
+          data.time_range || null
+        );
+        if (handledByOverlay) {
+          // Drop any stale static storm layer from an earlier direct render.
+          MapAdapter.clearHurricaneLayer?.();
+          if (!skipFit) MapAdapter.fitToBounds(data.geojson);
+          const summaryEl = document.getElementById('queryStatus');
+          if (summaryEl && data.summary) {
+            summaryEl.textContent = data.summary;
+          }
+          return;
+        }
+      }
+
+      // Fallback (Ops lane, unresolvable payloads): static hurricane layer
       console.log('Hurricane data detected, using hurricane layer');
 
       TimeSlider.reset();

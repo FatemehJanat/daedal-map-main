@@ -17,9 +17,9 @@ import {
   buildRangeRequestSignature,
   calculateCacheSize,
   dataCache,
-  displayedYear,
   loadedRanges,
   loadedYears,
+  recordYearRangeCoverage,
   yearRangeCache
 } from './overlay-cache.js';
 import {
@@ -34,11 +34,13 @@ import {
   getLoadedFiltersForOverlay,
   getLoadedYearsForOverlay,
   ingestMetricData as ingestOverlayMetricData,
+  isYearLoaded,
   refreshGeometryFromCache as refreshCachedGeometry,
   removeEventData as removeOverlayEventData,
   removeGeometryData as removeOverlayGeometryData,
   removeMetricData as removeOverlayMetricData,
   renderGeometryData as renderOverlayGeometryData,
+  seedEventData as seedOverlayEventData,
   updateOverlayFilters
 } from './overlay-cache-ops.js';
 import { loadRangeData, loadWeatherYearData } from './overlay-data-loader.js';
@@ -55,7 +57,7 @@ import {
   stopHurricaneRollingAnimation as stopRollingHurricanes,
   startTrackAnimation as startHurricaneTrackAnimation
 } from './overlay-hurricane.js';
-import { addGenericExitButton, beginFocusedAnimationSession, selectLinkedAnimationFeatures } from './overlay-disaster-common.js';
+import { addGenericExitButton, beginFocusedAnimationSession, selectLinkedAnimationFeatures, routeTimeToFocusAnimation } from './overlay-disaster-common.js';
 import {
   exitFireAnimation,
   exitWildfireImpact,
@@ -2310,15 +2312,13 @@ export const OverlayController = {
    * @param {string} source - What triggered: 'slider' | 'playback' | 'api'
    */
   handleTimeChange(time, source) {
-    // If EventAnimator is active, forward timestamp to it
+    // If a focused animation session (EventAnimator or TrackAnimator) is active,
+    // route the time change to it instead of doing normal year-based filtering.
+    // EventAnimator has no listener of its own, so it needs setTime() forwarded;
+    // TrackAnimator already listens to TimeSlider directly and just needs us to
+    // step aside.
     // Note: Don't check time value - pre-1970 events have negative timestamps
-    if (EventAnimator.getIsActive()) {
-      EventAnimator.setTime(time);
-      return;  // Don't do normal year-based filtering
-    }
-
-    // If TrackAnimator (focused mode) is active, it handles its own rendering
-    if (TrackAnimator.isActive) {
+    if (routeTimeToFocusAnimation(time, EventAnimator, TrackAnimator)) {
       return;
     }
 
@@ -2327,7 +2327,7 @@ export const OverlayController = {
     const forceRerender = source === 'bounds';
 
     if (useLifecycleFiltering && isTimestamp) {
-      // NEW: Timestamp-based lifecycle filtering
+      // Timestamp lane: lifecycle filtering at the continuous playhead.
       // Throttle updates to avoid excessive re-renders (render every ~6 hours of slider time)
       const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
       if (forceRerender ||
@@ -2337,7 +2337,10 @@ export const OverlayController = {
         this.onTimeChangeTimestamp(time);
       }
     } else {
-      // LEGACY: Year-based filtering
+      // Year lane (deliberate, not legacy): |time| < 50000 means a bare year
+      // integer, the format year-granularity and very old history datasets
+      // (pre-epoch events) still flow through. Keep this lane; ms timestamps
+      // cannot represent that data cleanly.
       const year = this.getYearFromTime(time);
       if (forceRerender || year !== this.lastTimeSliderYear) {
         this.lastTimeSliderYear = year;
@@ -2521,7 +2524,9 @@ export const OverlayController = {
 
   /**
    * Handle TimeSlider year change - update all active overlays.
-   * LEGACY: Year-based filtering (used when useLifecycleFiltering is false)
+   * Year lane: reached when the slider emits bare year integers
+   * (year-granularity and very old / pre-epoch history data). This is a
+   * deliberate second input format, not a legacy leftover.
    * Auto-fetches data for the year if not already cached.
    * @param {number} year - New year
    */
@@ -2552,8 +2557,8 @@ export const OverlayController = {
    * @param {number} year - Year to load
    */
   async loadAndRenderYear(overlayId, year) {
-    // Use loadedYears set for simpler year tracking
-    const yearAlreadyLoaded = loadedYears[overlayId]?.has(year);
+    // Coverage derived from loadedRanges (see isYearLoaded in overlay-cache-ops.js)
+    const yearAlreadyLoaded = isYearLoaded(overlayId, year);
 
     if (!yearAlreadyLoaded) {
       console.log(`OverlayController: AUTO-FETCHING ${overlayId} for year ${year} (legacy handler)`);
@@ -2638,11 +2643,21 @@ export const OverlayController = {
         continue;
       }
 
-      // Handle ocean raster overlays (whole time series is in the bundle, just
-      // swap the frame for the slider position)
+      // Handle ocean raster overlays. ocean_sst has two linked scenes (recent
+      // weekly / full history monthly, see loadOceanRasterOverlay); when the
+      // slider moves outside the loaded range, fetch the other tier and MERGE
+      // it into the same instance as one continuous timeline (repeat calls
+      // while the fetch is in flight are no-ops in the model).
       if (overlayConfig?.model === 'ocean-raster') {
         if (OceanRasterModel.hasInstance(overlayId)) {
-          OceanRasterModel.renderAtTimestamp(overlayId, timestamp);
+          const range = OceanRasterModel.getTimestampRange(overlayId);
+          if (range && (timestamp < range.min || timestamp > range.max)) {
+            const nextTier = timestamp < range.min ? 'history' : 'recent';
+            this.loadOceanRasterOverlay(overlayId, overlayConfig, { tier: nextTier, resetTimeRange: false })
+              .then(() => OceanRasterModel.renderAtTimestamp(overlayId, TimeSlider?.currentTime ?? timestamp));
+          } else {
+            OceanRasterModel.renderAtTimestamp(overlayId, timestamp);
+          }
         }
         continue;
       }
@@ -2655,7 +2670,7 @@ export const OverlayController = {
 
       // Check if we need to load this year's data
       const yearKey = `${overlayId}_${year}`;
-      const yearAlreadyLoaded = loadedYears[overlayId]?.has(year);
+      const yearAlreadyLoaded = isYearLoaded(overlayId, year);
       const currentlyLoading = this._loadingYears?.has(yearKey);
 
       console.log(`OverlayController: ${overlayId} year=${year}, loaded=${yearAlreadyLoaded}, loading=${currentlyLoading}`);
@@ -3050,23 +3065,46 @@ export const OverlayController = {
 
   /**
    * Load and display an animated ocean SST basin raster overlay.
-   * The whole prepared time series ships in one per-basin bundle, so we load it
-   * once, default the visible window to the latest year, and register the real
-   * bundle timestamps so Play steps through the available frames.
-   * Chat can widen the visible range across the full prepared span.
+   * ocean_sst ships two linked scenes of one pack, the same way weather has
+   * hourly/weekly/monthly tiers: "recent" is the smooth weekly bundle
+   * (2025-07-01+, the default on enable); "history" is the full 1982-2026
+   * monthly archive, fetched on demand when the slider moves outside the
+   * loaded range (see onTimeChangeTimestamp). The tiers MERGE into one
+   * instance with a union timeline -- monthly frames through the archive,
+   * weekly frames where the recent bundle covers -- and the model renders
+   * the finest cadence available at each moment, so playback density rises
+   * naturally as the playhead enters the recent window.
    * @param {string} overlayId - Overlay ID (e.g. 'ocean-sst-grid')
    * @param {object} config - Overlay config
+   * @param {object} [options]
+   * @param {'recent'|'history'} [options.tier='recent'] - Which linked scene to load
+   * @param {boolean} [options.resetTimeRange] - Reset the slider to the default
+   *   latest-year window; defaults to true for 'recent' and false for
+   *   'history' so an on-demand merge doesn't move the user's playhead.
    */
-  async loadOceanRasterOverlay(overlayId, config) {
+  async loadOceanRasterOverlay(overlayId, config, options = {}) {
+    const tier = options.tier === 'history' ? 'history' : 'recent';
+    const resetTimeRange = options.resetTimeRange !== undefined ? options.resetTimeRange : tier === 'recent';
+
     const sourceId = config?.rasterSource || 'ocean_sst';
     const laneMode = OverlaySelector?.currentLaneMode || 'explore';
-    const basinsByLane = config?.rasterBasinsByLane || {};
-    const cadenceByLane = config?.rasterCadenceByLane || {};
-    const basins = basinsByLane[laneMode] || config?.rasterBasins || ['XOP'];
     const variable = config?.rasterVariable || 'sst_c';
-    const cadence = cadenceByLane[laneMode] || config?.rasterCadence || 'monthly';
 
-    console.log(`OverlayController: Loading ocean raster ${overlayId} lane=${laneMode} basins=${basins.join(',')} var=${variable}`);
+    let basins;
+    let cadence;
+    if (tier === 'history') {
+      const historyBasinsByLane = config?.rasterHistoryBasinsByLane || {};
+      const historyCadenceByLane = config?.rasterHistoryCadenceByLane || {};
+      basins = historyBasinsByLane[laneMode] || config?.rasterHistoryBasins || ['OCEAN'];
+      cadence = historyCadenceByLane[laneMode] || config?.rasterHistoryCadence || 'monthly';
+    } else {
+      const basinsByLane = config?.rasterBasinsByLane || {};
+      const cadenceByLane = config?.rasterCadenceByLane || {};
+      basins = basinsByLane[laneMode] || config?.rasterBasins || ['XOP'];
+      cadence = cadenceByLane[laneMode] || config?.rasterCadence || 'monthly';
+    }
+
+    console.log(`OverlayController: Loading ocean raster ${overlayId} lane=${laneMode} tier=${tier} basins=${basins.join(',')} var=${variable}`);
     const ok = await OceanRasterModel.load(overlayId, sourceId, basins, variable);
     if (!ok) {
       console.error(`OverlayController: Failed to load ocean raster ${overlayId}`);
@@ -3076,24 +3114,36 @@ export const OverlayController = {
     const timestamps = OceanRasterModel.getTimestamps(overlayId);
     const range = OceanRasterModel.getTimestampRange(overlayId);
     if (TimeSlider && range && !this.suppressTimelineAutoShow) {
-      // Default view: the latest year of the prepared window; the full prepared
-      // span stays available so chat can ask for more time.
-      const latest = range.max;
-      const defaultMin = Math.max(range.min, latest - 365.25 * 24 * 3600 * 1000);
-      const visibleTimestamps = timestamps.filter(
-        (timestamp) => timestamp >= defaultMin && timestamp <= latest
-      );
-      TimeSlider.setTimeRange({
-        min: defaultMin,
-        max: latest,
-        granularity: cadence,
-        available: visibleTimestamps.length ? visibleTimestamps : timestamps,
-      });
-      this.showTimelineIfAllowed();
-      if (timestamps.length) TimeSlider.setTime(timestamps[timestamps.length - 1]);
+      if (resetTimeRange) {
+        // Default view: the latest year of the prepared window; the full
+        // prepared span stays available so chat can ask for more time.
+        const latest = range.max;
+        const defaultMin = Math.max(range.min, latest - 365.25 * 24 * 3600 * 1000);
+        const visibleTimestamps = timestamps.filter(
+          (timestamp) => timestamp >= defaultMin && timestamp <= latest
+        );
+        TimeSlider.setTimeRange({
+          min: defaultMin,
+          max: latest,
+          granularity: cadence,
+          available: visibleTimestamps.length ? visibleTimestamps : timestamps,
+        });
+        this.showTimelineIfAllowed();
+        if (timestamps.length) TimeSlider.setTime(timestamps[timestamps.length - 1]);
+      } else {
+        // Tier-cascade reload: widen the slider bounds to the newly loaded
+        // bundle's full range without moving the current playhead.
+        TimeSlider.setTimeRange({
+          min: range.min,
+          max: range.max,
+          granularity: cadence,
+          available: timestamps,
+        });
+        this.showTimelineIfAllowed();
+      }
     }
     OceanRasterPanel.show(overlayId);
-    console.log(`OverlayController: Ocean raster ${overlayId} loaded (${timestamps.length} frames)`);
+    console.log(`OverlayController: Ocean raster ${overlayId} loaded tier=${tier} (${timestamps.length} frames)`);
   },
 
   /**
@@ -3201,14 +3251,9 @@ export const OverlayController = {
         const minYear = 2000;
         const maxYear = currentYear;
 
-        // Initialize year range cache
-        if (!yearRangeCache[overlayId]) {
-          yearRangeCache[overlayId] = {
-            min: currentYear,
-            max: currentYear,
-            available: loaded ? [currentYear] : []
-          };
-        }
+        // yearRangeCache[overlayId] is written by loadRangeData itself (via
+        // recordYearRangeCoverage) on a successful fetch above -- no need to
+        // initialize it here as well.
 
         TimeSlider.setTimeRange({
           min: minYear,
@@ -3320,9 +3365,6 @@ export const OverlayController = {
       };
       console.log(`OverlayController: Applied exact-event filter for ${overlayId} -> ${filteredGeojson.features.length} feature(s)`);
     }
-
-    // Track displayed year (for legacy compatibility)
-    displayedYear[overlayId] = useTimestamp ? this.getYearFromTime(yearOrTimestamp) : yearOrTimestamp;
 
     // Render using appropriate model
     const rendered = ModelRegistry?.render(filteredGeojson, endpoint.eventType, {
@@ -3947,31 +3989,23 @@ export const OverlayController = {
       console.log(`OverlayController: Order result had no new ${overlayId} features (all duplicates)`);
     }
 
-    // Track the loaded range if metadata provided
+    // Track the loaded range if metadata provided. Order results are handed
+    // over already-fetched in full for [start, end], so mark the whole span
+    // loaded (yearsFullyLoaded) rather than applying loadRangeData's
+    // 6-month partial-year threshold. Year coverage is derived from this on
+    // read (see isYearLoaded / getLoadedYearsForOverlay in
+    // overlay-cache-ops.js) -- no separate loadedYears write needed.
     if (rangeMeta && rangeMeta.start && rangeMeta.end) {
       if (!loadedRanges[overlayId]) {
         loadedRanges[overlayId] = [];
       }
-      loadedRanges[overlayId].push({ start: rangeMeta.start, end: rangeMeta.end, loading: false });
-
-      // Update loadedYears for compatibility
-      if (!loadedYears[overlayId]) {
-        loadedYears[overlayId] = new Set();
-      }
-      const startYear = new Date(rangeMeta.start).getUTCFullYear();
-      const endYear = new Date(rangeMeta.end).getUTCFullYear();
-      if (!yearRangeCache[overlayId]) {
-        yearRangeCache[overlayId] = { min: startYear, max: endYear, available: [] };
-      }
-      yearRangeCache[overlayId].min = Math.min(yearRangeCache[overlayId].min, startYear);
-      yearRangeCache[overlayId].max = Math.max(yearRangeCache[overlayId].max, endYear);
-      for (let y = startYear; y <= endYear; y++) {
-        loadedYears[overlayId].add(y);
-        if (!yearRangeCache[overlayId].available.includes(y)) {
-          yearRangeCache[overlayId].available.push(y);
-        }
-      }
-      yearRangeCache[overlayId].available.sort((a, b) => a - b);
+      loadedRanges[overlayId].push({
+        start: rangeMeta.start,
+        end: rangeMeta.end,
+        loading: false,
+        yearsFullyLoaded: true
+      });
+      recordYearRangeCoverage(overlayId, rangeMeta.start, rangeMeta.end);
     }
 
     // Update cache size
@@ -4074,6 +4108,37 @@ export const OverlayController = {
    */
   removeEventData(sourceId, criteria) {
     return removeOverlayEventData(sourceId, criteria);
+  },
+
+  /**
+   * Route a chat-order events result through the shared overlay system so it
+   * gets the same lifecycle animation and timeline as a toggled overlay --
+   * chat results and overlay toggles are ONE display path, not two.
+   * Seeds the overlay cache with the returned features, activates the
+   * overlay, and renders at the current playhead.
+   *
+   * @param {string} overlayId - Resolved overlay id (e.g. 'earthquakes')
+   * @param {Object} geojson - FeatureCollection from the order response
+   * @param {Object|null} timeRange - {min, max} ms range from the response
+   * @returns {boolean} true if the overlay path handled the display
+   */
+  applyEventOrderResult(overlayId, geojson, timeRange = null) {
+    const normalizedOverlayId = String(overlayId || '').trim();
+    if (!normalizedOverlayId || !OVERLAY_ENDPOINTS[normalizedOverlayId]) return false;
+    if (!Array.isArray(geojson?.features) || !geojson.features.length) return false;
+
+    const seeded = seedOverlayEventData(normalizedOverlayId, geojson, timeRange);
+    console.log(`OverlayController: Seeded ${seeded} ${normalizedOverlayId} features from chat order`);
+
+    if (OverlaySelector && !OverlaySelector.isActive(normalizedOverlayId)) {
+      OverlaySelector.showOverlay?.(normalizedOverlayId);
+      OverlaySelector.setActive(normalizedOverlayId, true);
+    }
+
+    this.recalculateTimeRange();
+    this.showTimelineIfAllowed();
+    this.renderCurrentData(normalizedOverlayId);
+    return true;
   },
 
   /**
