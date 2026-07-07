@@ -10,7 +10,23 @@
  * Antimeridian basins (Pacific) just carry a wide -180..180 bbox with the other
  * oceans as a transparent gap; no special longitude frame.
  * See county-map-private/docs/CLIMATE_DISPLAY.md (Ocean SST Grid Animation).
+ *
+ * Shared LUT/dequantize/Mercator-warp/image-source primitives live in
+ * raster-core.js (county-map-private/docs/future/display_unification_plan.md
+ * Task C). Multi-layer cadence selection (_activeLayersForTime and friends)
+ * stays here -- it's ocean's multi-basin/multi-cadence merge behavior, not a
+ * generic raster primitive.
  */
+
+import {
+  buildColorLUT,
+  bytesToFloat32,
+  u8ToFloat32,
+  renderMercatorWarpedFrame,
+  placeImageLayer,
+  setLayerVisibility,
+  frameIndexForTime,
+} from './raster-core.js';
 
 let MapAdapter = null;
 
@@ -19,81 +35,6 @@ export function setDependencies(deps) {
 }
 
 const DEFAULT_OPACITY = 0.4;
-
-function hexToRgb(hex) {
-  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-  return m
-    ? { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) }
-    : { r: 128, g: 128, b: 128 };
-}
-
-/** Build a 256-entry RGBA LUT from {min, max, stops:[[value,hex],...]}. */
-function buildColorLUT(scale) {
-  const stops = scale?.stops || [[-2, '#2b2c7f'], [36, '#7f0000']];
-  const min = scale?.min ?? stops[0][0];
-  const max = scale?.max ?? stops[stops.length - 1][0];
-  const range = max - min || 1;
-  const lut = new Array(256);
-  for (let i = 0; i < 256; i += 1) {
-    const value = min + (i / 255) * range;
-    let lo = stops[0];
-    let hi = stops[stops.length - 1];
-    for (let j = 0; j < stops.length - 1; j += 1) {
-      if (value >= stops[j][0] && value <= stops[j + 1][0]) {
-        lo = stops[j]; hi = stops[j + 1]; break;
-      }
-    }
-    const t = hi[0] === lo[0] ? 0 : (value - lo[0]) / (hi[0] - lo[0]);
-    const lc = hexToRgb(lo[1]);
-    const hc = hexToRgb(hi[1]);
-    lut[i] = [
-      Math.round(lc.r + t * (hc.r - lc.r)),
-      Math.round(lc.g + t * (hc.g - lc.g)),
-      Math.round(lc.b + t * (hc.b - lc.b)),
-    ];
-  }
-  return { lut, min, max };
-}
-
-function bytesToFloat32(bytes) {
-  // msgpack bin -> aligned Float32Array
-  const aligned = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-  return new Float32Array(aligned);
-}
-
-// Dequantize a uint8 frame back to float values. The byte holds the color-scale
-// position (0..254 across [min,max]); 255 is the nodata sentinel (NaN). This is
-// lossless for the 256-entry display LUT -- the byte is effectively the LUT index
-// -- but ships 4x smaller than float32 on the wire and on disk.
-const QUANT_NODATA = 255;
-const QUANT_LEVELS = 254;
-function u8ToFloat32(bytes, vmin, vmax) {
-  const span = (vmax - vmin) / QUANT_LEVELS;
-  const out = new Float32Array(bytes.length);
-  for (let i = 0; i < bytes.length; i += 1) {
-    const u = bytes[i];
-    out[i] = u === QUANT_NODATA ? NaN : vmin + u * span;
-  }
-  return out;
-}
-
-// Web Mercator helpers. The bundle is equirectangular (rows even in latitude),
-// but MapLibre parameterizes image sources in Mercator-Y -- in BOTH the flat map
-// AND the globe (the globe wraps that same Mercator space onto a sphere). So we
-// pre-warp each frame into Mercator-Y rows; the one warp fixes both projections,
-// and we don't need to re-render on a globe/mercator toggle.
-// Push right up to the data's edge (89.9). Only EXACTLY 90 is the Mercator
-// singularity; 89.9 is finite and is what the weather grid uses. The poles take a
-// big share of Mercator-Y, so use plenty of warped rows to keep mid-latitudes sharp.
-const MERC_LIMIT = 89.9;                   // display latitude limit (avoid exactly 90)
-const MERC_DISPLAY_ROWS = 900;             // vertical resolution of the warped canvas
-function mercY(latDeg) {
-  const r = (latDeg * Math.PI) / 180;
-  return Math.log(Math.tan(Math.PI / 4 + r / 2));
-}
-function invMercY(y) {
-  return (2 * Math.atan(Math.exp(y)) - Math.PI / 2) * 180 / Math.PI;
-}
 
 // Decode a variable's frame stack on first use only. Loading all basins at once
 // would otherwise decode every variable up front (~2x memory for nothing).
@@ -129,6 +70,7 @@ class OceanBasinLayer {
     this.ctx = this.canvas.getContext('2d');
     this.added = false;
     this.lastFrameIndex = -1;
+    this.lastVisibility = null;
   }
 }
 
@@ -179,6 +121,12 @@ export const OceanRasterModel = {
 
   /**
    * Load one or more basin bundles for an overlay and render the latest frame.
+   * Loading into an overlay that already has an instance MERGES the new
+   * bundles in as additional layers on one continuous timeline (e.g. the
+   * full-history monthly bundle joining the recent weekly bundle); locIds
+   * already loaded or currently fetching are skipped, so repeated calls are
+   * cheap no-ops. Rendering picks the finest-cadence layer covering each
+   * moment (see _activeLayersForTime).
    * @param {string} overlayId
    * @param {string} sourceId - e.g. "ocean_sst"
    * @param {string[]} basinIds - e.g. ["XOP"]
@@ -186,16 +134,29 @@ export const OceanRasterModel = {
    */
   async load(overlayId, sourceId, basinIds, variable = 'sst_c') {
     const { fetchMsgpack } = await import('../utils/fetch.js');
-    const inst = { variable, opacity: DEFAULT_OPACITY, basins: [], timestamps: [] };
+    const isNewInstance = !this.instances.has(overlayId);
+    let inst = this.instances.get(overlayId);
+    if (!inst) {
+      inst = { variable, opacity: DEFAULT_OPACITY, basins: [], timestamps: [], pendingLocIds: new Set() };
+      this.instances.set(overlayId, inst);
+    }
+    if (!inst.pendingLocIds) inst.pendingLocIds = new Set();
 
+    let addedLayer = false;
     for (let i = 0; i < basinIds.length; i += 1) {
       const locId = basinIds[i];
+      if (inst.basins.some((existing) => existing.locId === locId) || inst.pendingLocIds.has(locId)) {
+        continue;
+      }
+      inst.pendingLocIds.add(locId);
       let bundle;
       try {
         bundle = await fetchMsgpack(`/api/raster/${encodeURIComponent(sourceId)}/clip-bundle/${encodeURIComponent(locId)}`);
       } catch (err) {
         console.warn('OceanRasterModel: bundle fetch failed', locId, err);
         continue;
+      } finally {
+        inst.pendingLocIds.delete(locId);
       }
       if (!bundle || !bundle.frames || !bundle.timestamps) continue;
 
@@ -212,122 +173,139 @@ export const OceanRasterModel = {
       layer.rawFrames = bundle.frames || {};
       ensureDecoded(layer, variable);  // decode only the active variable now
       inst.basins.push(layer);
-      if (layer.timestamps.length > inst.timestamps.length) {
-        inst.timestamps = layer.timestamps;
-      }
+      addedLayer = true;
     }
 
     if (!inst.basins.length) {
+      this.instances.delete(overlayId);
       console.error('OceanRasterModel: no basins loaded for', overlayId);
       return false;
     }
 
-    this.instances.set(overlayId, inst);
-    // Render the most recent frame by default.
-    this.renderAtTimestamp(overlayId, inst.timestamps[inst.timestamps.length - 1]);
+    if (addedLayer) {
+      // Union of all layers' timestamps: one continuous timeline that gets
+      // denser where a finer-cadence bundle covers it.
+      const merged = new Set();
+      for (const layer of inst.basins) {
+        for (const timestamp of layer.timestamps) merged.add(timestamp);
+      }
+      inst.timestamps = Array.from(merged).sort((a, b) => a - b);
+    }
+
+    // Render the most recent frame by default on first load; merge loads
+    // leave the current view alone (the caller re-renders at the playhead).
+    if (isNewInstance) {
+      this.renderAtTimestamp(overlayId, inst.timestamps[inst.timestamps.length - 1]);
+    }
     return true;
   },
 
   _frameIndexForTime(layer, timeMs) {
+    return frameIndexForTime(layer.timestamps, timeMs);
+  },
+
+  // Time distance from a layer's covered range (0 when the time is inside it).
+  _layerTimeDistance(layer, timeMs) {
     const ts = layer.timestamps;
-    if (!ts.length) return -1;
-    if (timeMs <= ts[0]) return 0;
-    if (timeMs >= ts[ts.length - 1]) return ts.length - 1;
-    // largest index with ts[i] <= timeMs
-    let lo = 0;
-    let hi = ts.length - 1;
-    while (lo < hi) {
-      const mid = (lo + hi + 1) >> 1;
-      if (ts[mid] <= timeMs) lo = mid; else hi = mid - 1;
-    }
-    return lo;
+    if (!ts.length) return Infinity;
+    if (timeMs < ts[0]) return ts[0] - timeMs;
+    if (timeMs > ts[ts.length - 1]) return timeMs - ts[ts.length - 1];
+    return 0;
+  },
+
+  // Average spacing between a layer's frames (its cadence).
+  _layerAvgStepMs(layer) {
+    const ts = layer.timestamps;
+    if (ts.length < 2) return Infinity;
+    return (ts[ts.length - 1] - ts[0]) / (ts.length - 1);
+  },
+
+  /**
+   * Pick which layers should be visible at a given time. Layers whose range
+   * covers the time win over layers where it doesn't (nearest range wins when
+   * none cover it). Among covering layers, only the finest cadence renders:
+   * where the monthly history and weekly recent bundles overlap, the weekly
+   * frames show. Spatial basin splits (same cadence, disjoint bounds) all
+   * pass the cadence filter together, preserving the original multi-basin
+   * behavior.
+   */
+  _activeLayersForTime(inst, timeMs) {
+    const layers = inst.basins.filter((layer) => layer.timestamps.length);
+    if (layers.length <= 1) return layers;
+    const minDistance = Math.min(...layers.map((layer) => this._layerTimeDistance(layer, timeMs)));
+    const candidates = layers.filter((layer) => this._layerTimeDistance(layer, timeMs) === minDistance);
+    const finestStep = Math.min(...candidates.map((layer) => this._layerAvgStepMs(layer)));
+    return candidates.filter((layer) => this._layerAvgStepMs(layer) <= finestStep * 1.5);
+  },
+
+  _setLayerVisibility(layer, visible) {
+    const map = MapAdapter?.map;
+    if (!layer.added) return;
+    setLayerVisibility(map, layer.layerId, visible, { cache: layer });
   },
 
   renderAtTimestamp(overlayId, timeMs) {
     const inst = this.instances.get(overlayId);
     if (!inst) return;
+    const activeLayers = new Set(this._activeLayersForTime(inst, timeMs));
     for (const layer of inst.basins) {
+      if (!activeLayers.has(layer)) {
+        this._setLayerVisibility(layer, false);
+        continue;
+      }
       const idx = this._frameIndexForTime(layer, timeMs);
-      if (idx < 0) continue;
+      if (idx < 0) {
+        this._setLayerVisibility(layer, false);
+        continue;
+      }
       ensureDecoded(layer, inst.variable);
       const frames = layer.framesByVar[inst.variable];
-      if (!frames || !frames[idx]) continue;
-      if (idx === layer.lastFrameIndex) continue;
-      layer.lastFrameIndex = idx;
-      this._renderFrame(layer, frames[idx], inst);
-      this._placeLayer(layer, inst.opacity);
+      if (!frames || !frames[idx]) {
+        this._setLayerVisibility(layer, false);
+        continue;
+      }
+      // Only re-render when the frame actually changed; visibility is still
+      // restored below so a layer returning from a hidden stretch reappears.
+      if (idx !== layer.lastFrameIndex) {
+        layer.lastFrameIndex = idx;
+        this._renderFrame(layer, frames[idx], inst);
+        this._placeLayer(layer, inst.opacity);
+      }
+      this._setLayerVisibility(layer, true);
     }
   },
 
   _renderFrame(layer, pixels, inst) {
     const scale = layer.colorScales[inst.variable];
     const { lut, min, max } = buildColorLUT(scale);
-    const range = (max - min) || 1;
-
-    const W = layer.width;
-    const dataN = layer.bounds.north;
-    const dataS = layer.bounds.south;
-    const degLat = (dataN - dataS) / layer.height;
-
-    // Mercator-warped output: rows even in Mercator-Y between +/-MERC_LIMIT, each
-    // sampled from the data row at that row's true latitude. Place at +/-MERC_LIMIT.
-    const yTop = mercY(MERC_LIMIT);
-    const yBot = mercY(-MERC_LIMIT);
-    const OH = MERC_DISPLAY_ROWS;
-    if (layer.canvas.width !== W || layer.canvas.height !== OH) {
-      layer.canvas.width = W;
-      layer.canvas.height = OH;
-    }
-    layer.renderBounds = { west: layer.bounds.west, east: layer.bounds.east, north: MERC_LIMIT, south: -MERC_LIMIT };
-
-    const img = layer.ctx.createImageData(W, OH);
-    const px = img.data;
-    for (let r = 0; r < OH; r += 1) {
-      const lat = invMercY(yTop + (r / (OH - 1)) * (yBot - yTop));
-      const dataRow = Math.round((dataN - lat) / degLat);
-      const rowBase = r * W;
-      if (dataRow < 0 || dataRow >= layer.height) {
-        continue;  // latitude outside the data range -> transparent
-      }
-      const srcBase = dataRow * W;
-      for (let c = 0; c < W; c += 1) {
-        const v = pixels[srcBase + c];
-        const idx = (rowBase + c) * 4;
-        if (Number.isNaN(v)) {
-          px[idx] = px[idx + 1] = px[idx + 2] = px[idx + 3] = 0;
-          continue;
-        }
-        const norm = Math.max(0, Math.min(1, (v - min) / range));
-        const color = lut[Math.round(norm * 255)];
-        px[idx] = color[0]; px[idx + 1] = color[1]; px[idx + 2] = color[2]; px[idx + 3] = 255;
-      }
-    }
-    layer.ctx.putImageData(img, 0, 0);
+    layer.renderBounds = renderMercatorWarpedFrame({
+      ctx: layer.ctx,
+      canvas: layer.canvas,
+      width: layer.width,
+      height: layer.height,
+      bounds: layer.bounds,
+      pixels,
+      min,
+      max,
+      lut,
+    });
   },
 
   _placeLayer(layer, opacity) {
     const map = MapAdapter?.map;
     if (!map || !layer.bounds) return;
-    const { west, south, east, north } = layer.renderBounds || layer.bounds;
-    const coordinates = [[west, north], [east, north], [east, south], [west, south]];
-    const dataUrl = layer.canvas.toDataURL('image/png');
-    const existing = map.getSource(layer.sourceId);
-    if (existing) {
-      existing.updateImage({ url: dataUrl, coordinates });
-      return;
-    }
-    let labelLayerId;
-    for (const l of map.getStyle().layers) {
-      if (l.type === 'symbol' && l.layout?.['text-field']) { labelLayerId = l.id; break; }
-    }
-    map.addSource(layer.sourceId, { type: 'image', url: dataUrl, coordinates });
-    map.addLayer({
-      id: layer.layerId,
-      type: 'raster',
-      source: layer.sourceId,
+    const bounds = layer.renderBounds || layer.bounds;
+    const result = placeImageLayer(map, {
+      sourceId: layer.sourceId,
+      layerId: layer.layerId,
+      bounds,
+      canvas: layer.canvas,
       paint: { 'raster-opacity': opacity, 'raster-fade-duration': 0, 'raster-resampling': 'linear' },
-    }, labelLayerId);
-    layer.added = true;
+    });
+    if (result.created) {
+      layer.added = true;
+      layer.lastVisibility = 'visible';
+    }
   },
 
   setVariable(overlayId, variable) {
@@ -348,20 +326,20 @@ export const OceanRasterModel = {
   },
 
   show(overlayId) {
-    const map = MapAdapter?.map;
     const inst = this.instances.get(overlayId);
-    if (!map || !inst) return;
+    if (!inst) return;
+    // Show everything; the next renderAtTimestamp re-hides layers that are
+    // not active for the current playhead time.
     for (const layer of inst.basins) {
-      if (map.getLayer(layer.layerId)) map.setLayoutProperty(layer.layerId, 'visibility', 'visible');
+      this._setLayerVisibility(layer, true);
     }
   },
 
   hide(overlayId) {
-    const map = MapAdapter?.map;
     const inst = this.instances.get(overlayId);
-    if (!map || !inst) return;
+    if (!inst) return;
     for (const layer of inst.basins) {
-      if (map.getLayer(layer.layerId)) map.setLayoutProperty(layer.layerId, 'visibility', 'none');
+      this._setLayerVisibility(layer, false);
     }
   },
 

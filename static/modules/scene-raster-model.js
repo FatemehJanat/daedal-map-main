@@ -1,6 +1,21 @@
 /**
  * Scene raster model for source-driven image overlays.
+ *
+ * Renders flat (unwarped) rasters -- no Mercator pre-warp like ocean's model,
+ * because Fairfax-scale sources cover a tiny lat span where equirectangular
+ * vs Mercator distortion is negligible -- either a single scene raster or a
+ * set of loc_id-keyed clips from a period bundle. Shared LUT/canvas/image-
+ * source primitives live in models/raster-core.js (see
+ * county-map-private/docs/future/display_unification_plan.md Task C).
  */
+
+import {
+  buildColorLUT as buildColorLUTCore,
+  bytesToFloat32,
+  renderFlatFrame,
+  placeImageLayer,
+  setLayerVisibility,
+} from './models/raster-core.js';
 
 let MapAdapter = null;
 
@@ -27,43 +42,13 @@ const DEFAULT_MIN_F = 90;
 const DEFAULT_MAX_F = 130;
 const DEFAULT_OPACITY = 0.75;
 
-function hexToRgb(hex) {
-  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-  return result
-    ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) }
-    : { r: 128, g: 128, b: 128 };
-}
-
+// Nodata sentinel here is 0 (checked in raster-core's renderFlatFrame), not
+// NaN like ocean's model -- scene-raster's Fahrenheit temperature grids never
+// legitimately hit exactly 0. Alpha 210 is baked into every LUT entry (scene
+// rasters are never fully opaque); ocean's LUT leaves alpha for the renderer
+// to set per-pixel since NaN pixels there must be fully transparent.
 function buildColorLUT(minF, maxF, stops) {
-  const range = maxF - minF;
-  const lut = new Array(256);
-
-  for (let i = 0; i < 256; i += 1) {
-    const value = minF + (i / 255) * range;
-
-    let low = stops[0];
-    let high = stops[stops.length - 1];
-    for (let j = 0; j < stops.length - 1; j += 1) {
-      if (value >= stops[j][0] && value <= stops[j + 1][0]) {
-        low = stops[j];
-        high = stops[j + 1];
-        break;
-      }
-    }
-
-    const t = high[0] === low[0] ? 0 : (value - low[0]) / (high[0] - low[0]);
-    const lc = hexToRgb(low[1]);
-    const hc = hexToRgb(high[1]);
-
-    lut[i] = [
-      Math.round(lc.r + t * (hc.r - lc.r)),
-      Math.round(lc.g + t * (hc.g - lc.g)),
-      Math.round(lc.b + t * (hc.b - lc.b)),
-      210,
-    ];
-  }
-
-  return lut;
+  return buildColorLUTCore({ min: minF, max: maxF, stops }, { alpha: 210 }).lut;
 }
 
 export const SceneRasterModel = {
@@ -103,9 +88,7 @@ export const SceneRasterModel = {
       return false;
     }
 
-    const raw = data.pixels;
-    const aligned = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength);
-    this.pixels = new Float32Array(aligned);
+    this.pixels = bytesToFloat32(data.pixels);
     this.width = data.width;
     this.height = data.height;
     this.bounds = data.bounds;
@@ -153,30 +136,24 @@ export const SceneRasterModel = {
   },
 
   show() {
+    const map = MapAdapter?.map;
     if (this.displayMode === 'clips') {
       for (const entry of this.clipEntries || []) {
-        if (MapAdapter?.map?.getLayer(entry.layerId)) {
-          MapAdapter.map.setLayoutProperty(entry.layerId, 'visibility', 'visible');
-        }
+        setLayerVisibility(map, entry.layerId, true);
       }
       this.isVisible = true;
       return;
     }
     if (!this.pixels) return;
-    if (MapAdapter?.map?.getLayer(LAYER_ID)) {
-      MapAdapter.map.setLayoutProperty(LAYER_ID, 'visibility', 'visible');
-    }
+    setLayerVisibility(map, LAYER_ID, true);
     this.isVisible = true;
   },
 
   hide() {
-    if (MapAdapter?.map?.getLayer(LAYER_ID)) {
-      MapAdapter.map.setLayoutProperty(LAYER_ID, 'visibility', 'none');
-    }
+    const map = MapAdapter?.map;
+    setLayerVisibility(map, LAYER_ID, false);
     for (const entry of this.clipEntries || []) {
-      if (MapAdapter?.map?.getLayer(entry.layerId)) {
-        MapAdapter.map.setLayoutProperty(entry.layerId, 'visibility', 'none');
-      }
+      setLayerVisibility(map, entry.layerId, false);
     }
     this.isVisible = false;
   },
@@ -189,15 +166,11 @@ export const SceneRasterModel = {
     this.period = payload?.period || this.period;
     this.sourceId = payload?.source_id || sourceId;
     this._clearClipLayers();
-    if (MapAdapter?.map?.getLayer(LAYER_ID)) {
-      MapAdapter.map.setLayoutProperty(LAYER_ID, 'visibility', 'none');
-    }
+    setLayerVisibility(MapAdapter?.map, LAYER_ID, false);
 
     this._rebuildLUT();
     this.clipEntries = clips.map((clip, index) => {
-      const raw = clip.pixels;
-      const aligned = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength);
-      const pixels = new Float32Array(aligned);
+      const pixels = bytesToFloat32(clip.pixels);
       const canvas = document.createElement('canvas');
       canvas.width = clip.width;
       canvas.height = clip.height;
@@ -285,102 +258,26 @@ export const SceneRasterModel = {
 
   _render() {
     if (!this.pixels || !this.ctx || !this.colorLUT) return;
-
-    const imageData = this.ctx.createImageData(this.width, this.height);
-    const px = imageData.data;
-    const lut = this.colorLUT;
-    const minF = this.minF;
-    const maxF = this.maxF;
-    const range = maxF - minF;
-
-    for (let i = 0; i < this.pixels.length; i += 1) {
-      const val = this.pixels[i];
-      const idx = i * 4;
-
-      if (!val || val === 0) {
-        px[idx] = px[idx + 1] = px[idx + 2] = px[idx + 3] = 0;
-        continue;
-      }
-
-      const norm = Math.max(0, Math.min(1, (val - minF) / range));
-      const lutIdx = Math.round(norm * 255);
-      const color = lut[lutIdx];
-
-      px[idx] = color[0];
-      px[idx + 1] = color[1];
-      px[idx + 2] = color[2];
-      px[idx + 3] = color[3];
-    }
-
-    this.ctx.putImageData(imageData, 0, 0);
+    renderFlatFrame(this.ctx, this.width, this.height, this.pixels, this.colorLUT, this.minF, this.maxF);
   },
 
   _renderClipEntry(entry) {
     if (!entry?.pixels || !entry?.ctx || !this.colorLUT) return;
-    const imageData = entry.ctx.createImageData(entry.width, entry.height);
-    const px = imageData.data;
-    const lut = this.colorLUT;
-    const minF = this.minF;
-    const maxF = this.maxF;
-    const range = maxF - minF;
-
-    for (let i = 0; i < entry.pixels.length; i += 1) {
-      const val = entry.pixels[i];
-      const idx = i * 4;
-      if (!val || val === 0) {
-        px[idx] = px[idx + 1] = px[idx + 2] = px[idx + 3] = 0;
-        continue;
-      }
-      const norm = Math.max(0, Math.min(1, (val - minF) / range));
-      const lutIdx = Math.round(norm * 255);
-      const color = lut[lutIdx];
-      px[idx] = color[0];
-      px[idx + 1] = color[1];
-      px[idx + 2] = color[2];
-      px[idx + 3] = color[3];
-    }
-
-    entry.ctx.putImageData(imageData, 0, 0);
+    renderFlatFrame(entry.ctx, entry.width, entry.height, entry.pixels, this.colorLUT, this.minF, this.maxF);
   },
 
   _updateMapSource() {
     const map = MapAdapter?.map;
     if (!map || !this.bounds || !this.canvas) return;
 
-    const { west, south, east, north } = this.bounds;
-    const coordinates = [
-      [west, north],
-      [east, north],
-      [east, south],
-      [west, south],
-    ];
-
-    const dataUrl = this.canvas.toDataURL('image/png');
-    const existing = map.getSource(SOURCE_ID);
-
-    if (existing) {
-      existing.updateImage({ url: dataUrl, coordinates });
-    } else {
-      map.addSource(SOURCE_ID, { type: 'image', url: dataUrl, coordinates });
-
-      let labelLayerId;
-      for (const layer of map.getStyle().layers) {
-        if (layer.type === 'symbol' && layer.layout?.['text-field']) {
-          labelLayerId = layer.id;
-          break;
-        }
-      }
-
-      map.addLayer({
-        id: LAYER_ID,
-        type: 'raster',
-        source: SOURCE_ID,
-        paint: {
-          'raster-opacity': this.opacity,
-          'raster-fade-duration': 0,
-        },
-      }, labelLayerId);
-
+    const result = placeImageLayer(map, {
+      sourceId: SOURCE_ID,
+      layerId: LAYER_ID,
+      bounds: this.bounds,
+      canvas: this.canvas,
+      paint: { 'raster-opacity': this.opacity, 'raster-fade-duration': 0 },
+    });
+    if (result.created) {
       this.isVisible = true;
     }
   },
@@ -389,39 +286,16 @@ export const SceneRasterModel = {
     const map = MapAdapter?.map;
     if (!map) return;
 
-    let labelLayerId;
-    for (const layer of map.getStyle().layers) {
-      if (layer.type === 'symbol' && layer.layout?.['text-field']) {
-        labelLayerId = layer.id;
-        break;
-      }
-    }
-
     for (const entry of this.clipEntries || []) {
       const { west, south, east, north } = entry.bounds || {};
       if ([west, south, east, north].some((value) => !Number.isFinite(value))) continue;
-      const coordinates = [
-        [west, north],
-        [east, north],
-        [east, south],
-        [west, south],
-      ];
-      const dataUrl = entry.canvas.toDataURL('image/png');
-      const existing = map.getSource(entry.sourceId);
-      if (existing) {
-        existing.updateImage({ url: dataUrl, coordinates });
-      } else {
-        map.addSource(entry.sourceId, { type: 'image', url: dataUrl, coordinates });
-        map.addLayer({
-          id: entry.layerId,
-          type: 'raster',
-          source: entry.sourceId,
-          paint: {
-            'raster-opacity': this.opacity,
-            'raster-fade-duration': 0,
-          },
-        }, labelLayerId);
-      }
+      placeImageLayer(map, {
+        sourceId: entry.sourceId,
+        layerId: entry.layerId,
+        bounds: entry.bounds,
+        canvas: entry.canvas,
+        paint: { 'raster-opacity': this.opacity, 'raster-fade-duration': 0 },
+      });
     }
   },
 

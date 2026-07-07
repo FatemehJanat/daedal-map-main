@@ -430,6 +430,12 @@ function buildCategoriesFromTree(overlayTree) {
       hasYearFilter: false,
       live: false,
       rasterSource: 'ocean_sst',
+      // Two linked scenes of the same ocean_sst pack, like weather's hourly/
+      // weekly/monthly tiers: "recent" is the smooth weekly-cadence animation
+      // (2025-07-01+, preloaded on enable); "history" is the full 1982-2026
+      // monthly archive, fetched on demand when the playhead leaves the
+      // loaded range. The tiers merge into one continuous timeline and the
+      // model renders the finest cadence covering each moment.
       rasterBasins: ['OCEAN_WEEKLY_1DEG_20250701'],
       rasterBasinsByLane: {
         explore: ['OCEAN_WEEKLY_1DEG_20250701'],
@@ -441,6 +447,16 @@ function buildCategoriesFromTree(overlayTree) {
         explore: 'weekly',
         research: 'weekly',
         ops: 'daily'
+      },
+      rasterHistoryBasins: ['OCEAN'],
+      rasterHistoryBasinsByLane: {
+        explore: ['OCEAN'],
+        research: ['OCEAN']
+      },
+      rasterHistoryCadence: 'monthly',
+      rasterHistoryCadenceByLane: {
+        explore: 'monthly',
+        research: 'monthly'
       },
       rasterVariable: 'sst_c'
     }
