@@ -758,8 +758,11 @@ function restoreSingleEntityDisplay(order = null, response = null, mode = 'explo
 /**
  * Route metrics order results to OverlayController for cache ingestion.
  * @param {Object} response - API response with data_type 'metrics'
+ * @param {Object|null} order - confirmed order that produced this response
+ *   (single-source per setMetricOrderContext's invariant), used to carry the
+ *   region/parent loc_id onto the recorded ledger claim (Task L3).
  */
-function ingestMetricsToCache(response) {
+function ingestMetricsToCache(response, order = null) {
   if (!OverlayController?.ingestMetricData) return;
   if (!response?.geojson?.features) return;
 
@@ -771,8 +774,15 @@ function ingestMetricsToCache(response) {
 
   const timeData = response.time_data || response.year_data || null;
   const timeRange = response.time_range || response.year_range || null;
+  const region = order?.items?.[0]?.region;
 
-  OverlayController.ingestMetricData(sourceId, response.geojson, timeData, timeRange);
+  OverlayController.ingestMetricData(sourceId, response.geojson, timeData, timeRange, {
+    geoLevel: response.geographic_level || null,
+    metrics: Array.isArray(response.available_metrics) && response.available_metrics.length
+      ? response.available_metrics
+      : null,
+    region: region && region !== 'global' ? region : null
+  });
 }
 
 /**
@@ -2792,7 +2802,7 @@ export const ChatManager = {
         if (!options.suppressResultMessage) {
           this.addMessage(message, 'assistant');
         }
-        ingestMetricsToCache(data);
+        ingestMetricsToCache(data, order);
       } else if (dataType === 'geometry') {
         const message = data.summary || `Showing ${data.count || data.geojson.features?.length || 0} ${data.geographic_level || data.overlay_type || 'geometry'} areas`;
         if (!options.suppressResultMessage) {

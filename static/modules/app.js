@@ -32,6 +32,7 @@ import { setDependencies as setSceneRasterDeps } from './scene-raster-model.js';
 import { loadPublicPackCatalog } from './shared/catalog-cache.js';
 import { buildShareStateUrl, getInitialLane, normalizeBootUrl, onRouteChange, parseRouteIntent, setLaneTitle } from './routing/app-route-state.js';
 import { getTemporalMetricPayload, hasTemporalMetricPayload, mergeTemporalMetricPayload } from './temporal-payload.js';
+import { buildMetricClaim, metricTimeClaimFromRange, overlayLedger } from './overlay-cache.js';
 import { resolveOverlayIdForOrderResult } from './overlay-default-loads.js';
 import { MetricDisplayRegistry } from './metric-display-registry.js';
 
@@ -416,9 +417,17 @@ export const App = {
       loadedLevels.add(currentLevel);
     }
 
+    // Task L3: the order's carried region (single-source order, per the
+    // sourceIds.length !== 1 guard above), used to build the ledger
+    // need-claim's scope in ensureMetricLevelLoaded. 'global' is the
+    // legacy no-region sentinel (see loaded-data registration above).
+    const regionItem = items[0]?.region;
+    const region = regionItem && regionItem !== 'global' ? regionItem : null;
+
     this.activeMetricOrderContext = {
       order: JSON.parse(JSON.stringify(order)),
       sourceId,
+      region,
       availableGeoLevels,
       loadedLevels,
       loadingLevels: new Set(),
@@ -522,6 +531,47 @@ export const App = {
     if (!context.availableGeoLevels.includes(level)) return false;
 
     const geoLevel = `admin_${level}`;
+
+    // Task L3 (METRIC_DIFF Phase 2 lazy-level bridge): consult the coverage
+    // ledger before issuing a follow-up order. Need-claim is (source,
+    // target geoLevel, current region scope, current time) per the doc.
+    // geoLevel is a strict-equality axis in the ledger (a deeper level is
+    // never covered by a shallower one), so this is normally all-or-nothing
+    // per level -- expected. metrics/time mirror what this source is
+    // currently known to hold (this.currentData, kept in sync across
+    // levels by mergeMetricData), so a level already recorded by an earlier
+    // ingest this session (e.g. re-entering a level after zooming out) diffs
+    // to empty and skips the network entirely.
+    const currentTemporal = getTemporalMetricPayload(this.currentData);
+    const metrics = Array.isArray(this.currentData?.available_metrics) && this.currentData.available_metrics.length
+      ? this.currentData.available_metrics
+      : null;
+    const levelScope = context.region ? { kind: 'region', value: context.region } : { kind: 'all' };
+    const needClaim = buildMetricClaim(context.sourceId, {
+      geoLevel,
+      metrics,
+      scope: levelScope,
+      time: currentTemporal ? metricTimeClaimFromRange(currentTemporal.timeRange) : { kind: 'all' }
+    });
+
+    if (overlayLedger.diff(needClaim).length === 0) {
+      // Ledger already holds this level's data -- render from the
+      // already-merged cache (model-choropleth's accumulated timeData/
+      // baseGeojson) with zero fetches. This is the Phase 2 acceptance
+      // behavior for repeat zoom-in/zoom-out.
+      context.loadedLevels.add(level);
+      if (this.activeMetricOrderContext?.sourceId === context.sourceId) {
+        this.activeMetricOrderContext.loadedLevels.add(level);
+      }
+      if (ViewportLoader?.currentAdminLevel === level) {
+        this.applyOrderModeLevelFilter(level);
+      }
+      if (!options.prefetch) {
+        this.scheduleNextMetricLevelPrefetch(level);
+      }
+      return true;
+    }
+
     const nextOrder = JSON.parse(JSON.stringify(context.order));
     nextOrder.items = (nextOrder.items || []).map((item) => ({
       ...item,
@@ -533,6 +583,14 @@ export const App = {
       : '/chat';
 
     context.loadingLevels.add(level);
+    // In-flight guard: context.loadingLevels/loadingPromises above (pre-
+    // existing) is what actually prevents a double-zoom from double-firing
+    // this fetch -- it is checked synchronously before any await, at the
+    // top of this function. markInFlight mirrors that onto the shared
+    // ledger so ledger.diff() (here and for future ledger-only consumers,
+    // e.g. Task L6) also excludes this claim while the request is
+    // outstanding, same spirit as the Task L2 loadRangeData retrofit.
+    const inFlightToken = overlayLedger.markInFlight(needClaim);
 
     const loadPromise = (async () => {
       try {
@@ -548,6 +606,7 @@ export const App = {
         });
 
         if (response?.type === 'already_loaded') {
+          overlayLedger.resolveInFlight(inFlightToken);
           context.loadedLevels.add(level);
           if (this.activeMetricOrderContext?.sourceId === context.sourceId) {
             this.activeMetricOrderContext.loadedLevels.add(level);
@@ -559,6 +618,7 @@ export const App = {
         }
 
         if (response?.type === 'error') {
+          overlayLedger.dropInFlight(inFlightToken);
           console.warn(`Lazy metric load failed for ${geoLevel}:`, response.message);
           return false;
         }
@@ -572,6 +632,12 @@ export const App = {
           if (this.activeMetricOrderContext?.sourceId === context.sourceId) {
             this.activeMetricOrderContext.loadedLevels.add(level);
           }
+          // Promote the in-flight claim to held (requested axes); the
+          // ingest below (ingestLazyMetricData -> OverlayController.
+          // ingestMetricData) then records the response's REAL claim from
+          // its own geoLevel/metrics/time -- record()'s exact-duplicate/
+          // merge handling makes recording both harmless.
+          overlayLedger.resolveInFlight(inFlightToken);
           this.ingestLazyMetricData(response, nextOrder, {
             schedulePrefetch: !options.prefetch
           });
@@ -584,8 +650,10 @@ export const App = {
           return true;
         }
 
+        overlayLedger.dropInFlight(inFlightToken);
         console.warn(`Lazy metric response missing geojson features for ${geoLevel}`, response);
       } catch (error) {
+        overlayLedger.dropInFlight(inFlightToken);
         console.warn(`Lazy metric fetch error for ${geoLevel}:`, error.message);
       } finally {
         context.loadingLevels.delete(level);
@@ -602,11 +670,19 @@ export const App = {
   ingestLazyMetricData(data, order, options = {}) {
     if (data?.source_id) {
       const temporalPayload = getTemporalMetricPayload(data);
+      const region = order?.items?.[0]?.region;
       OverlayController?.ingestMetricData(
         data.source_id,
         data.geojson,
         temporalPayload?.timeData || null,
-        temporalPayload?.timeRange || null
+        temporalPayload?.timeRange || null,
+        {
+          geoLevel: data.geographic_level || null,
+          metrics: Array.isArray(data.available_metrics) && data.available_metrics.length
+            ? data.available_metrics
+            : (temporalPayload?.availableMetrics?.length ? temporalPayload.availableMetrics : null),
+          region: region && region !== 'global' ? region : null
+        }
       );
     }
 

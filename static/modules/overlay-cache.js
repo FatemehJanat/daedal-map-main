@@ -95,6 +95,86 @@ export const dataCache = {};
 // sourceId -> { geojson, time_data, time_range, loadedAt }
 export const metricCache = {};
 
+// Chunk-aware metric store (Task L3, METRIC_DIFF_LOADING_PLAN Phase 2).
+// metricCache above stays the flat legacy shape existing consumers read
+// (calculateCacheSize, getCacheStats, the render-facing accumulation in
+// model-choropleth.js via TimeSlider.init/mergeData); metricChunks is the
+// new structure addressable by the claim axes (geoLevel x time-key x
+// loc_id) so ingest paths can record real coverage and the lazy-level zoom
+// flow can ask the ledger "do I already hold this level" instead of only
+// trusting an in-memory Set. Shape:
+//   metricChunks[sourceId] = {
+//     levels: { [geoLevelKey]: { [timeKey]: { [locId]: {metric: value} } } },
+//     featuresByLocId: { [locId]: geojsonFeature }
+//   }
+// geoLevelKey uses NATIVE_LEVEL_KEY for source-native data (geoLevel null),
+// since object keys must be strings.
+export const metricChunks = {};
+export const NATIVE_LEVEL_KEY = '__native__';
+
+/**
+ * Build a metric claim (Task L3). Mirrors buildEventRangeClaim/
+ * buildEventYearsClaim above but for the metric axes: metrics is the real
+ * per-response metric list ('*' only when the caller genuinely does not
+ * know it -- both ingest recording and the lazy-level need check always
+ * pass a concrete list when one is available). filters is always '' --
+ * metric orders have no predicate-filter axis today (unlike event overlays'
+ * magnitude/category filters); this will need a real signature if/when
+ * metric filtering is added.
+ * @param {string} sourceId
+ * @param {{geoLevel?: string|null, metrics?: string[]|null, scope?: object|null, time?: object|null}} parts
+ * @returns {object} unnormalized claim
+ */
+export function buildMetricClaim(sourceId, { geoLevel = null, metrics = null, scope = null, time = null } = {}) {
+  return {
+    source: sourceId,
+    metrics: Array.isArray(metrics) && metrics.length ? metrics : '*',
+    geoLevel: geoLevel || null,
+    scope: scope || { kind: 'all' },
+    time: time || { kind: 'all' },
+    filters: ''
+  };
+}
+
+/**
+ * scope for a metric claim: region (the order's carried region/parent
+ * loc_id) takes priority per the Task L3 spec; otherwise fall back to the
+ * payload's own loc_ids (from its geojson features); otherwise 'all'.
+ * @param {string|null} region
+ * @param {object|null} geojson
+ * @returns {object} unnormalized scope
+ */
+export function metricScopeFromRegionOrLocIds(region, geojson) {
+  if (region) return { kind: 'region', value: region };
+  const locIds = (geojson?.features || [])
+    .map((f) => f?.properties?.loc_id || f?.id)
+    .filter(Boolean);
+  if (locIds.length) return { kind: 'locIds', value: [...new Set(locIds)] };
+  return { kind: 'all' };
+}
+
+/**
+ * time axis for a metric claim, from a temporal-payload.js timeRange
+ * ({min, max, available, useTimestamps}): 'years' for ordinary yearly
+ * metric data, 'range' when the payload is truly continuous-timestamp
+ * data, 'all' when there is no temporal payload at all (single-year metric
+ * orders have no time axis to distinguish).
+ * @param {object|null} timeRange
+ * @returns {object} unnormalized time
+ */
+export function metricTimeClaimFromRange(timeRange) {
+  if (!timeRange) return { kind: 'all' };
+  if (timeRange.useTimestamps) {
+    const min = Number(timeRange.min);
+    const max = Number(timeRange.max);
+    if (Number.isFinite(min) && Number.isFinite(max)) return { kind: 'range', min, max };
+    return { kind: 'all' };
+  }
+  const years = (timeRange.available || []).map(Number).filter(Number.isFinite);
+  if (years.length) return { kind: 'years', years };
+  return { kind: 'all' };
+}
+
 // Track which time ranges have been loaded per overlay.
 // TASK L2: this is now a thin MIRROR, not the coverage source of truth --
 // coverage decisions (isYearLoaded, getYearsCoveredByRanges,

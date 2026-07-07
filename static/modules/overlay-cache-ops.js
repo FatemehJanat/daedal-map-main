@@ -1,11 +1,16 @@
 import {
   activeFilters,
+  buildMetricClaim,
   calculateCacheSize,
   dataCache,
   loadedFilters,
   loadedRanges,
   loadedYears,
+  metricChunks,
   metricCache,
+  metricScopeFromRegionOrLocIds,
+  metricTimeClaimFromRange,
+  NATIVE_LEVEL_KEY,
   overlayLedger,
   recordFullyLoadedRangeClaim,
   recordYearRangeCoverage,
@@ -290,11 +295,73 @@ export function getCacheStats(overlayEndpoints) {
   return stats;
 }
 
-export function ingestMetricData(sourceId, geojson, timeData = null, timeRange = null) {
+/**
+ * Write metric cells + features into the chunk store (Task L3). Pure
+ * bookkeeping alongside the legacy metricCache blob -- addressable by
+ * geoLevel so the lazy-level flow's ledger claims describe something real.
+ * Does not touch metricCache or any render-facing structure.
+ * @param {string} sourceId
+ * @param {string|null} geoLevel
+ * @param {object} geojson
+ * @param {object} timeData
+ */
+export function recordMetricChunks(sourceId, geoLevel, geojson, timeData) {
+  if (!metricChunks[sourceId]) {
+    metricChunks[sourceId] = { levels: {}, featuresByLocId: {} };
+  }
+  const levelKey = geoLevel || NATIVE_LEVEL_KEY;
+  const levels = metricChunks[sourceId].levels;
+  if (!levels[levelKey]) levels[levelKey] = {};
+  const levelChunk = levels[levelKey];
+
+  for (const [timeKey, locData] of Object.entries(timeData || {})) {
+    if (!levelChunk[timeKey]) levelChunk[timeKey] = {};
+    for (const [locId, metrics] of Object.entries(locData || {})) {
+      if (!levelChunk[timeKey][locId]) levelChunk[timeKey][locId] = {};
+      Object.assign(levelChunk[timeKey][locId], metrics || {});
+    }
+  }
+
+  const featuresByLocId = metricChunks[sourceId].featuresByLocId;
+  for (const feature of geojson?.features || []) {
+    const locId = feature?.properties?.loc_id || feature?.id;
+    if (locId) featuresByLocId[locId] = feature;
+  }
+}
+
+/**
+ * Record a coverage-ledger claim for one metric ingest (Task L3). meta
+ * carries the real axes the response actually delivered: geoLevel is the
+ * payload's admin level (data.geographic_level, or null for source-native
+ * data); metrics is the payload's concrete metric list ('*' only if the
+ * caller has none -- should not normally happen for a real metric fetch);
+ * region is the confirmed order's carried region/parent loc_id, if any
+ * (falls back to the payload's own loc_ids, then 'all' -- see
+ * metricScopeFromRegionOrLocIds). filters is always '' (see buildMetricClaim
+ * doc comment -- metric orders have no predicate-filter axis yet).
+ * @param {string} sourceId
+ * @param {object} geojson
+ * @param {object|null} timeRange
+ * @param {{geoLevel?: string|null, metrics?: string[]|null, region?: string|null}} meta
+ */
+function recordMetricIngestClaim(sourceId, geojson, timeRange, meta = {}) {
+  const claim = buildMetricClaim(sourceId, {
+    geoLevel: meta.geoLevel || null,
+    metrics: meta.metrics || null,
+    scope: metricScopeFromRegionOrLocIds(meta.region || null, geojson),
+    time: metricTimeClaimFromRange(timeRange)
+  });
+  overlayLedger.record(claim);
+}
+
+export function ingestMetricData(sourceId, geojson, timeData = null, timeRange = null, meta = {}) {
   if (!geojson?.features) {
     console.warn(`OverlayController: Cannot ingest metrics - invalid data for source: ${sourceId}`);
     return;
   }
+
+  recordMetricChunks(sourceId, meta.geoLevel || null, geojson, timeData);
+  recordMetricIngestClaim(sourceId, geojson, timeRange, meta);
 
   const existing = metricCache[sourceId];
   if (existing) {

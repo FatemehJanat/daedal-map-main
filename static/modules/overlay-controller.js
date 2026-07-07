@@ -4050,8 +4050,8 @@ export const OverlayController = {
    * @param {Object} timeData - Optional temporal cell map keyed by time
    * @param {Object} timeRange - Optional temporal metadata {min, max, available, granularity}
    */
-  ingestMetricData(sourceId, geojson, timeData = null, timeRange = null) {
-    ingestOverlayMetricData(sourceId, geojson, timeData, timeRange);
+  ingestMetricData(sourceId, geojson, timeData = null, timeRange = null, meta = {}) {
+    ingestOverlayMetricData(sourceId, geojson, timeData, timeRange, meta);
   },
 
   /**
