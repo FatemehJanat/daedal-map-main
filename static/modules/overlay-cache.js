@@ -11,17 +11,28 @@ export const dataCache = {};
 // sourceId -> { geojson, time_data, time_range, loadedAt }
 export const metricCache = {};
 
-// Track which time ranges have been loaded per overlay
-// Each entry is an array of {start, end} (millisecond timestamps)
+// Track which time ranges have been loaded per overlay.
+// Single source of truth for "what's loaded" -- each entry is
+// {start, end, loading, filterSignature} (millisecond timestamps).
+// Year-coverage and year-range queries below are derived from this.
 export const loadedRanges = {};
 
-// Legacy: loadedYears kept as derived view for compatibility with render logic
+// Weather-grid year cache: per-overlay Set of years fetched.
+// Weather grid has no range fetches (one API call per year per variable, see
+// loadWeatherYearData in overlay-data-loader.js), so it keeps its own
+// year-keyed bookkeeping instead of being forced onto loadedRanges. Range-
+// backed overlays (earthquakes, hurricanes, etc.) no longer write this --
+// their year coverage is derived from loadedRanges (see isYearLoaded /
+// getLoadedYearsForOverlay in overlay-cache-ops.js).
 export const loadedYears = {};
 
-// Track current displayed year per overlay
-export const displayedYear = {};
-
-// Cache year ranges per overlay (for recalculating combined range when overlays change)
+// Cache year ranges per overlay (for recalculating combined range when
+// overlays change, and for grid overlays whose fallback range calc in
+// recalculateTimeRange has no per-feature timestamps to read).
+// All range-shaped writers (loadRangeData, seedEventData, ingestOrderResult)
+// go through the single recordYearRangeCoverage() helper below. Weather grid
+// is the one exception: it writes per-year in loadWeatherYearData alongside
+// loadedYears, since it has no range to derive a span from (see note above).
 export const yearRangeCache = {};
 
 // Active filter overrides per overlay (for chat-based filter modifications)
@@ -150,6 +161,47 @@ export function calculateCacheSize() {
 
   const sizeMB = (totalBytes / (1024 * 1024)).toFixed(2);
   return { totalFeatures, bytes: totalBytes, sizeMB, perOverlay };
+}
+
+/**
+ * UTC year boundaries in milliseconds, shared by loadRangeData's year-coverage
+ * calc (overlay-data-loader.js) and the derived coverage query in
+ * overlay-cache-ops.js so both agree on what "year N" spans.
+ * @param {number} year
+ * @returns {{start: number, end: number}}
+ */
+export function getUtcYearRangeMs(year) {
+  return {
+    start: Date.UTC(year, 0, 1, 0, 0, 0, 0),
+    end: Date.UTC(year, 11, 31, 23, 59, 59, 999)
+  };
+}
+
+/**
+ * Single writer for yearRangeCache: widen an overlay's cached min/max/available
+ * years to cover [startMs, endMs]. Called from loadRangeData, seedEventData,
+ * and ingestOrderResult -- the three places that learn about a newly-covered
+ * span. Weather grid does not use this (see yearRangeCache comment above).
+ * @param {string} overlayId
+ * @param {number} startMs
+ * @param {number} endMs
+ */
+export function recordYearRangeCoverage(overlayId, startMs, endMs) {
+  const startYear = new Date(startMs).getUTCFullYear();
+  const endYear = new Date(endMs).getUTCFullYear();
+
+  if (!yearRangeCache[overlayId]) {
+    yearRangeCache[overlayId] = { min: startYear, max: endYear, available: [] };
+  }
+  const cache = yearRangeCache[overlayId];
+  cache.min = Math.min(cache.min, startYear);
+  cache.max = Math.max(cache.max, endYear);
+  for (let y = startYear; y <= endYear; y++) {
+    if (!cache.available.includes(y)) {
+      cache.available.push(y);
+    }
+  }
+  cache.available.sort((a, b) => a - b);
 }
 
 /**

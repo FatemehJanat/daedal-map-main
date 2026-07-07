@@ -2,14 +2,28 @@ import {
   activeFilters,
   calculateCacheSize,
   dataCache,
+  getUtcYearRangeMs,
   loadedFilters,
   loadedRanges,
   loadedYears,
   metricCache,
+  recordYearRangeCoverage,
   yearRangeCache
 } from './overlay-cache.js';
 import { GeometryModel } from './models/model-geometry.js';
 import { mergeTemporalMetricPayload } from './temporal-payload.js';
+
+// Sentinel filterSignature for loadedRanges entries created by seedEventData.
+// Seeded data (chat order results merged straight into the cache) has no
+// associated fetch filters, so it must never collide with a real endpoint's
+// filterSignature (see buildRangeRequestSignature) -- if it did, a later
+// legitimate fetch at the default/narrower filter could be mistaken for
+// "already covered" and skipped. Using a signature no real request can
+// produce means the seeded range only ever satisfies the year-coverage
+// check below (isYearLoaded/getYearsCoveredByRanges, which ignores
+// filterSignature), not the exact-signature checks in loadRangeData /
+// hasCompletedRangeForCurrentFilters.
+const SEEDED_RANGE_FILTER_SIGNATURE = '__seeded__';
 
 function getGeometryFeatureKey(feature) {
   const props = feature?.properties || {};
@@ -18,6 +32,117 @@ function getGeometryFeatureKey(feature) {
 
 export function getCachedData(overlayId) {
   return dataCache[overlayId] || null;
+}
+
+/**
+ * Return the set of years within an overlay's loadedRanges that count as
+ * "loaded". filterSignature is intentionally ignored here -- year
+ * "loadedness" for auto-fetch/UI purposes has never been filter-specific;
+ * filter changes are handled separately by a hard cache clear + refetch
+ * (see OverlayController.reloadOverlay).
+ *
+ * Two coverage rules, matching what each writer historically guaranteed:
+ * - Ranges from loadRangeData (real windowed API fetches): a year counts
+ *   only once >=6 months of it (or the full year) was actually fetched,
+ *   since these are often narrow 30-day/delta windows.
+ * - Ranges marked `yearsFullyLoaded` (ingestOrderResult, seedEventData --
+ *   data handed over already-fetched/seeded in full for the given span):
+ *   every year the range touches counts, no threshold. This matches what
+ *   those two call sites unconditionally marked before consolidation.
+ * @param {string} overlayId
+ * @returns {Set<number>}
+ */
+function getYearsCoveredByRanges(overlayId) {
+  const ranges = loadedRanges[overlayId] || [];
+  const years = new Set();
+  const SIX_MONTHS_MS = 180 * 24 * 60 * 60 * 1000;
+
+  for (const range of ranges) {
+    if (range.loading) continue;
+    const startYear = new Date(range.start).getUTCFullYear();
+    const endYear = new Date(range.end).getUTCFullYear();
+
+    for (let y = startYear; y <= endYear; y++) {
+      if (range.yearsFullyLoaded) {
+        years.add(y);
+        continue;
+      }
+
+      const { start: yearStartMs, end: yearEndMs } = getUtcYearRangeMs(y);
+      const loadedStart = Math.max(range.start, yearStartMs);
+      const loadedEnd = Math.min(range.end, yearEndMs);
+      const loadedDuration = loadedEnd - loadedStart;
+      const isFullYearRequest = range.start <= yearStartMs && range.end >= yearEndMs;
+
+      if (isFullYearRequest || loadedDuration >= SIX_MONTHS_MS) {
+        years.add(y);
+      }
+    }
+  }
+
+  return years;
+}
+
+/**
+ * Check whether a single year is loaded for an overlay.
+ * Weather-grid overlays keep their own per-year loadedYears set (no range
+ * fetches to derive coverage from); all other overlays derive coverage from
+ * loadedRanges via getYearsCoveredByRanges.
+ * @param {string} overlayId
+ * @param {number} year
+ * @returns {boolean}
+ */
+export function isYearLoaded(overlayId, year) {
+  if (loadedYears[overlayId]?.has(year)) return true;
+  return getYearsCoveredByRanges(overlayId).has(year);
+}
+
+/**
+ * Seed the overlay cache with event features already fetched elsewhere
+ * (chat order results). Dedupes by event_id/storm_id against features the
+ * overlay lane may already hold, and widens yearRangeCache so the timeline
+ * covers the seeded span. Also records a loadedRanges entry (sentinel
+ * filterSignature, see SEEDED_RANGE_FILTER_SIGNATURE above) so playback
+ * auto-fetch treats the seeded span's years as already loaded and does not
+ * duplicate-fetch them, without letting the seeded entry mask a real fetch
+ * at the overlay's actual filters.
+ * @returns {number} count of newly added features
+ */
+export function seedEventData(overlayId, geojson, timeRangeMs = null) {
+  const features = Array.isArray(geojson?.features) ? geojson.features : [];
+  if (!dataCache[overlayId]) {
+    dataCache[overlayId] = { type: 'FeatureCollection', features: [] };
+  }
+  const existingIds = new Set(
+    dataCache[overlayId].features
+      .map((f) => f.properties?.event_id || f.properties?.storm_id || f.id)
+      .filter(Boolean)
+  );
+  const newFeatures = features.filter((f) => {
+    const id = f.properties?.event_id || f.properties?.storm_id || f.id;
+    return !id || !existingIds.has(id);
+  });
+  dataCache[overlayId].features.push(...newFeatures);
+
+  const minMs = Number(timeRangeMs?.min);
+  const maxMs = Number(timeRangeMs?.max);
+  if (Number.isFinite(minMs) && Number.isFinite(maxMs)) {
+    recordYearRangeCoverage(overlayId, minMs, maxMs);
+
+    if (!loadedRanges[overlayId]) {
+      loadedRanges[overlayId] = [];
+    }
+    loadedRanges[overlayId].push({
+      start: minMs,
+      end: maxMs,
+      loading: false,
+      filterSignature: SEEDED_RANGE_FILTER_SIGNATURE,
+      // Seeded data is handed over already-complete for its span -- do not
+      // apply the 6-month partial-year threshold used for real API fetches.
+      yearsFullyLoaded: true
+    });
+  }
+  return newFeatures.length;
 }
 
 export function clearAllOverlayCaches() {
@@ -46,7 +171,11 @@ export function clearOverlayData(overlayId) {
 }
 
 export function getLoadedYearsForOverlay(overlayId) {
-  return loadedYears[overlayId] ? Array.from(loadedYears[overlayId]).sort((a, b) => a - b) : [];
+  if (loadedYears[overlayId]?.size) {
+    // Weather-grid overlays track loaded years directly.
+    return Array.from(loadedYears[overlayId]).sort((a, b) => a - b);
+  }
+  return Array.from(getYearsCoveredByRanges(overlayId)).sort((a, b) => a - b);
 }
 
 export function getLoadedFiltersForOverlay(overlayId) {
@@ -108,7 +237,7 @@ export function getCacheStats(overlayEndpoints) {
 
   for (const overlayId of Object.keys(overlayEndpoints)) {
     const features = dataCache[overlayId]?.features || [];
-    const years = loadedYears[overlayId] ? Array.from(loadedYears[overlayId]).sort((a, b) => a - b) : [];
+    const years = getLoadedYearsForOverlay(overlayId);
     const ranges = (loadedRanges[overlayId] || []).filter(r => !r.loading);
     const overlaySize = sizeInfo.perOverlay[overlayId] || { features: 0, bytes: 0 };
 

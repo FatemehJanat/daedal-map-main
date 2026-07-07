@@ -12,6 +12,7 @@ import {
   loadedFilters,
   loadedRanges,
   loadedYears,
+  recordYearRangeCoverage,
   VARIABLE_OVERLAY_MAP,
   yearRangeCache
 } from './overlay-cache.js';
@@ -19,13 +20,6 @@ import { fetchMsgpack } from './utils/fetch.js';
 
 function getUtcYear(timestampMs) {
   return new Date(timestampMs).getUTCFullYear();
-}
-
-function getUtcYearRangeMs(year) {
-  return {
-    start: Date.UTC(year, 0, 1, 0, 0, 0, 0),
-    end: Date.UTC(year, 11, 31, 23, 59, 59, 999)
-  };
 }
 
 function resolveClimateGridRequest(endpoint) {
@@ -222,35 +216,14 @@ export async function loadRangeData(overlayId, startMs, endMs, endpoint, signal 
     }
 
     rangeEntry.loading = false;
-
-    if (!loadedYears[overlayId]) {
-      loadedYears[overlayId] = new Set();
-    }
-    const startYear = getUtcYear(startMs);
-    const endYear = getUtcYear(endMs);
-    const SIX_MONTHS_MS = 180 * 24 * 60 * 60 * 1000;
-
-    for (let y = startYear; y <= endYear; y++) {
-      const { start: yearStartMs, end: yearEndMs } = getUtcYearRangeMs(y);
-      const loadedStart = Math.max(startMs, yearStartMs);
-      const loadedEnd = Math.min(endMs, yearEndMs);
-      const loadedDuration = loadedEnd - loadedStart;
-      const isFullYearRequest = startMs <= yearStartMs && endMs >= yearEndMs;
-
-      if (isFullYearRequest || loadedDuration >= SIX_MONTHS_MS) {
-        loadedYears[overlayId].add(y);
-        console.log(`OverlayController: Marked ${overlayId} year ${y} as loaded (${Math.round(loadedDuration / (24 * 60 * 60 * 1000))} days)`);
-      } else {
-        console.log(`OverlayController: ${overlayId} year ${y} partial load (${Math.round(loadedDuration / (24 * 60 * 60 * 1000))} days) - not marking as loaded`);
-      }
-    }
     console.log(`OverlayController: ${overlayId} total cached: ${dataCache[overlayId]?.features?.length || 0} features`);
 
-    if (!yearRangeCache[overlayId]) {
-      yearRangeCache[overlayId] = { min: startYear, max: endYear, available: [] };
-    }
-    yearRangeCache[overlayId].min = Math.min(yearRangeCache[overlayId].min, startYear);
-    yearRangeCache[overlayId].max = Math.max(yearRangeCache[overlayId].max, endYear);
+    // Year-loadedness (for auto-fetch during playback and the Loaded tab) is
+    // now derived on read from loadedRanges -- see isYearLoaded and
+    // getLoadedYearsForOverlay in overlay-cache-ops.js. loadedRanges is the
+    // single source of truth; this range entry (marked non-loading above) is
+    // all that's needed for that derivation.
+    recordYearRangeCoverage(overlayId, startMs, endMs);
 
     const defaultParams = endpoint.params || {};
     const overrides = activeFilters[overlayId] || {};
