@@ -3524,71 +3524,79 @@ export const OverlayController = {
   },
 
   /**
-   * Recalculate TimeSlider range from all active overlays.
-   * Called when an overlay is disabled to contract the range.
+   * Recalculate TimeSlider range as the UNION of time coverage across ALL
+   * active overlays -- event timestamps, frame-stack raster timelines (ocean
+   * grid), and year-keyed overlays together. Loading a narrower dataset must
+   * never contract the slider below what another active overlay covers: the
+   * slider spans the union, and each overlay simply has nothing to show
+   * outside its own coverage (ocean animates from 1982 while earthquakes
+   * only appear from their first loaded year).
+   * This is a coverage query -- once the shared coverage ledger exists
+   * (METRIC_DIFF_LOADING_PLAN.md), it becomes a ledger lookup.
+   * Also called when an overlay is disabled, to contract the range.
    */
   recalculateTimeRange() {
     if (!TimeSlider) return;
 
     const activeOverlayIds = OverlaySelector?.getActiveOverlays?.() || [];
-    const eventTimestamps = [];
-    for (const overlayId of activeOverlayIds) {
-      eventTimestamps.push(...collectOverlayEventTimestamps(overlayId));
-    }
+    const timestamps = [];
+    const years = new Set();
 
-    if (eventTimestamps.length > 0) {
-      const sortedTimestamps = [...new Set(eventTimestamps)]
-        .filter((value) => Number.isFinite(value))
-        .sort((a, b) => a - b);
-      if (sortedTimestamps.length > 0) {
-        TimeSlider.setTimeRange({
-          min: sortedTimestamps[0],
-          max: sortedTimestamps[sortedTimestamps.length - 1],
-          granularity: 'timestamp',
-          available: sortedTimestamps,
-          replace: true
-        });
-        console.log(`OverlayController: Recalculated timestamp timeline with ${sortedTimestamps.length} points`);
-        return;
+    for (const overlayId of activeOverlayIds) {
+      // Event overlays: real event timestamps from the cache
+      timestamps.push(...collectOverlayEventTimestamps(overlayId));
+
+      // Frame-stack rasters (ocean grid): the merged bundle timeline
+      if (OceanRasterModel.hasInstance(overlayId)) {
+        timestamps.push(...OceanRasterModel.getTimestamps(overlayId));
+      }
+
+      // Year-keyed overlays (weather grid, event year ranges)
+      const yearRange = yearRangeCache[overlayId];
+      if (yearRange) {
+        for (const year of yearRange.available || []) years.add(year);
+        if (Number.isFinite(yearRange.min)) years.add(yearRange.min);
+        if (Number.isFinite(yearRange.max)) years.add(yearRange.max);
       }
     }
 
-    // Fallback for yearly/grid overlays that do not expose event timestamps
-    const activeRanges = activeOverlayIds
-      .map((overlayId) => yearRangeCache[overlayId])
-      .filter(Boolean);
-
-    if (activeRanges.length === 0) {
-      // No active overlays with year data - hide slider or reset to default
-      console.log('OverlayController: No active overlays, TimeSlider range unchanged');
+    if (timestamps.length === 0 && years.size > 0) {
+      // Pure year-keyed overlays: keep the year lane (bare year integers)
+      const sortedYears = Array.from(years).sort((a, b) => a - b);
+      TimeSlider.setTimeRange({
+        min: sortedYears[0],
+        max: sortedYears[sortedYears.length - 1],
+        granularity: 'yearly',
+        available: sortedYears,
+        replace: true  // Allow contracting the range
+      });
+      console.log(`OverlayController: Recalculated yearly timeline ${sortedYears[0]}-${sortedYears[sortedYears.length - 1]}`);
       return;
     }
 
-    // Calculate combined range (union of all active overlays)
-    let combinedMin = Infinity;
-    let combinedMax = -Infinity;
-    const allYears = new Set();
-
-    for (const range of activeRanges) {
-      if (range.min < combinedMin) combinedMin = range.min;
-      if (range.max > combinedMax) combinedMax = range.max;
-      for (const year of range.available) {
-        allYears.add(year);
-      }
+    if (timestamps.length === 0) {
+      console.log('OverlayController: No active overlays with time coverage, TimeSlider range unchanged');
+      return;
     }
 
-    const sortedYears = Array.from(allYears).sort((a, b) => a - b);
+    // Mixed or timestamp coverage: fold year coverage in as Jan 1 timestamps
+    // so one continuous timeline spans every active overlay.
+    for (const year of years) {
+      timestamps.push(Date.UTC(year, 0, 1));
+    }
 
-    // Update TimeSlider with REPLACE mode (contract range if needed)
+    const sortedTimestamps = [...new Set(timestamps)]
+      .filter((value) => Number.isFinite(value))
+      .sort((a, b) => a - b);
+
     TimeSlider.setTimeRange({
-      min: combinedMin,
-      max: combinedMax,
-      granularity: 'yearly',
-      available: sortedYears,
-      replace: true  // Allow contracting the range
+      min: sortedTimestamps[0],
+      max: sortedTimestamps[sortedTimestamps.length - 1],
+      granularity: 'timestamp',
+      available: sortedTimestamps,
+      replace: true
     });
-
-    console.log(`OverlayController: Recalculated TimeSlider range ${combinedMin}-${combinedMax} from ${activeRanges.length} overlays`);
+    console.log(`OverlayController: Recalculated union timeline with ${sortedTimestamps.length} points across ${activeOverlayIds.length} overlays`);
   },
 
   /**
