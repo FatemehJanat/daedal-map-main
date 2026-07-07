@@ -12,17 +12,15 @@
  *   - init() with {granularity: 'yearly'} or omit for default
  */
 
-// Dependencies set via setDependencies to avoid circular imports
-let MapAdapter = null;
-let ChoroplethManager = null;
+import { ChoroplethModel, setDependencies as setChoroplethModelDeps } from './models/model-choropleth.js';
 
+// Dependencies (MapAdapter, ChoroplethManager) are forwarded straight to
+// ChoroplethModel -- TimeSlider itself no longer touches either directly
+// (see models/model-choropleth.js, display_unification_plan.md Task F).
 export function setDependencies(deps) {
-  MapAdapter = deps.MapAdapter;
-  ChoroplethManager = deps.ChoroplethManager;
+  setChoroplethModelDeps(deps);
 }
 
-// Playback speed multiplier for fast forward/rewind (legacy - being replaced by continuous speed)
-const FAST_SPEED = 5;
 const TIMESTAMP_GRANULARITIES = new Set([
   'timestamp',
   'seconds',
@@ -145,8 +143,6 @@ export const TimeSlider = {
   playBtn: null,
   stepBackBtn: null,
   stepFwdBtn: null,
-  rewindBtn: null,
-  fastFwdBtn: null,
   minLabel: null,
   maxLabel: null,
   titleLabel: null,
@@ -161,8 +157,6 @@ export const TimeSlider = {
   _inEventMode: false,     // True when animating specific event (vs world view)
   _previousSpeedSlider: null, // Saved speed when entering event mode
   playTimeout: null,       // For new stepsPerFrame-based playback
-  discretePlaybackCarry: 0,
-  discretePlaybackDirection: 1,
 
   // Time range bounds - constrain playback/stepping to subset of full range
   sliderTrackContainer: null,  // DOM container holding slider and trim handles
@@ -178,19 +172,38 @@ export const TimeSlider = {
   _isDraggingTrim: false,  // Track if currently dragging a trim handle
   _activeTrimHandle: null, // Which handle is being dragged ('lower' or 'upper')
 
-  // Data state
-  timeData: null,      // {time: {loc_id: {metric: value}}} - original data (time = year or timestamp)
-  timeDataFilled: null, // {time: {loc_id: {metric, data_time}}} - with gaps filled
-  baseGeojson: null,   // Geometry without time-specific values
-  metricKey: null,     // Which property to color by
+  // Data state (choropleth fields below are thin passthroughs onto
+  // ChoroplethModel -- storage/logic lives there, see models/model-choropleth.js.
+  // Kept as getters/setters so the full existing public API is unchanged.
+  get timeData() { return ChoroplethModel.timeData; },
+  set timeData(v) { ChoroplethModel.timeData = v; },
+  get timeDataFilled() { return ChoroplethModel.timeDataFilled; },
+  set timeDataFilled(v) { ChoroplethModel.timeDataFilled = v; },
+  get baseGeojson() { return ChoroplethModel.baseGeojson; },
+  set baseGeojson(v) { ChoroplethModel.baseGeojson = v; },
+  get metricKey() { return ChoroplethModel.metricKey; },
+  set metricKey(v) { ChoroplethModel.metricKey = v; },
+  get explicitMetrics() { return ChoroplethModel.explicitMetrics; },
+  set explicitMetrics(v) { ChoroplethModel.explicitMetrics = v; },
+  get metricYearRanges() { return ChoroplethModel.metricYearRanges; },
+  set metricYearRanges(v) { ChoroplethModel.metricYearRanges = v; },
+  get originalMinTime() { return ChoroplethModel.originalMinTime; },
+  set originalMinTime(v) { ChoroplethModel.originalMinTime = v; },
+  get originalMaxTime() { return ChoroplethModel.originalMaxTime; },
+  set originalMaxTime(v) { ChoroplethModel.originalMaxTime = v; },
+  get currentAdminLevel() { return ChoroplethModel.currentAdminLevel; },
+  set currentAdminLevel(v) { ChoroplethModel.currentAdminLevel = v; },
+  get availableMetrics() { return ChoroplethModel.availableMetrics; },
+  set availableMetrics(v) { ChoroplethModel.availableMetrics = v; },
+  get _lastDataKey() { return ChoroplethModel._lastDataKey; },
+  set _lastDataKey(v) { ChoroplethModel._lastDataKey = v; },
+
   currentTime: null,   // Current year (int) or timestamp (ms)
   minTime: null,
   maxTime: null,
   availableTimes: [],  // Times that actually have data
   sortedTimes: [],     // Sorted array for navigation
   isPlaying: false,
-  playInterval: null,
-  playSpeed: 1,        // 1 = normal, FAST_SPEED = fast forward/rewind (legacy)
   playDirection: 1,    // 1 = forward, -1 = rewind
   listenersSetup: false,  // Track if event listeners have been added
   sliderInitialized: false, // Track if DOM setup is done
@@ -201,7 +214,6 @@ export const TimeSlider = {
   // Granularity support
   granularity: 'monthly',  // '6h', 'daily', 'weekly', 'monthly', 'yearly', '5y', '10y'
   useTimestamps: false,   // true for sub-yearly (6h, daily, weekly, monthly), false for yearly+
-  stepMs: null,           // Step size in milliseconds (for sub-yearly)
 
   // Non-linear scale support for data with gaps or large time ranges
   // When true, slider position maps to index in sortedTimes (data-density scaling)
@@ -216,10 +228,10 @@ export const TimeSlider = {
   MAX_SCALES: 3,          // Maximum allowed scales
 
   // Admin level filtering (for hierarchical data display)
-  currentAdminLevel: null,  // null = show all, 0/1/2/3 = filter to specific level
+  // (currentAdminLevel is a getter/setter onto ChoroplethModel, declared above)
 
   // Multi-metric support
-  availableMetrics: [],     // Array of detected metric names
+  // (availableMetrics is a getter/setter onto ChoroplethModel, declared above)
   metricTabContainer: null, // DOM element for metric tabs
 
   // ============================================================================
@@ -296,8 +308,6 @@ export const TimeSlider = {
     this.playBtn = document.getElementById('playBtn');
     this.stepBackBtn = document.getElementById('stepBackBtn');
     this.stepFwdBtn = document.getElementById('stepFwdBtn');
-    this.rewindBtn = document.getElementById('rewindBtn');
-    this.fastFwdBtn = document.getElementById('fastFwdBtn');
     this.minLabel = document.getElementById('minYearLabel');
     this.maxLabel = document.getElementById('maxYearLabel');
     this.titleLabel = document.getElementById('sliderTitle');
@@ -383,7 +393,6 @@ export const TimeSlider = {
     if (rangeConfig.granularity) {
       this.granularity = rangeConfig.granularity;
       this.useTimestamps = TIMESTAMP_GRANULARITIES.has(this.granularity);
-      this.stepMs = this.calculateStepMs(this.granularity);
     }
 
     // Normalize incoming values to timestamps (converts years like 2024 to ms)
@@ -473,29 +482,10 @@ export const TimeSlider = {
       }
     }
 
-    // Keep trim-handle UI and bound labels in sync with the new range even when
-    // no pending bounds are being restored. Without this, the visible selector
-    // handles can still show an older range until the user interacts with them.
+    // Keep trim-handle UI and bound labels in sync with the new range.
+    // Without this, the visible selector handles can still show an older
+    // range until the user interacts with them.
     this.updateTrimHandlePositions();
-
-    // Apply pending trim bounds from session recovery (only once)
-    if (this._pendingBoundMinTime !== undefined || this._pendingBoundMaxTime !== undefined) {
-      // Validate bounds are within the current time range
-      if (this._pendingBoundMinTime !== undefined && this._pendingBoundMinTime >= this.minTime && this._pendingBoundMinTime <= this.maxTime) {
-        this.boundMinTime = this._pendingBoundMinTime;
-      }
-      if (this._pendingBoundMaxTime !== undefined && this._pendingBoundMaxTime >= this.minTime && this._pendingBoundMaxTime <= this.maxTime) {
-        this.boundMaxTime = this._pendingBoundMaxTime;
-      }
-      // Update UI if bounds were applied
-      if (this.boundMinTime !== null || this.boundMaxTime !== null) {
-        this.updateTrimHandlePositions();
-        console.log('[TimeSlider] Applied pending trim bounds');
-      }
-      // Clear pending (only apply once)
-      delete this._pendingBoundMinTime;
-      delete this._pendingBoundMaxTime;
-    }
 
     this.show();
   },
@@ -503,53 +493,6 @@ export const TimeSlider = {
   // ============================================================================
   // UTILITY METHODS
   // ============================================================================
-
-  /**
-   * Calculate step size in milliseconds for a given granularity
-   */
-  calculateStepMs(granularity) {
-    const HOUR = 3600000;
-    const DAY = 86400000;
-    switch (granularity) {
-      case 'timestamp': return this.getDiscreteTimelineBaseStepMs();
-      case 'seconds': return 1000;
-      case '12m': return 12 * 60 * 1000;
-      case '1h': return HOUR;
-      case '2h': return HOUR * 2;
-      case '6h': return HOUR * 6;
-      case '12h': return HOUR * 12;
-      case 'daily': return DAY;
-      case '2d': return DAY * 2;
-      case 'weekly': return DAY * 7;
-      case 'monthly': return DAY * 30;  // Approximate
-      case 'yearly': return DAY * 365;
-      case '5y': return DAY * 365 * 5;
-      case '10y': return DAY * 365 * 10;
-      default: return DAY * 365;
-    }
-  },
-
-  getDiscreteTimelineBaseStepMs() {
-    const fallback = TIME_SYSTEM.BASE_STEP_MS;
-    if (!Array.isArray(this.sortedTimes) || this.sortedTimes.length < 2) {
-      return fallback;
-    }
-
-    const diffs = [];
-    for (let i = 1; i < this.sortedTimes.length; i += 1) {
-      const diff = this.sortedTimes[i] - this.sortedTimes[i - 1];
-      if (Number.isFinite(diff) && diff > 0) {
-        diffs.push(diff);
-      }
-    }
-
-    if (!diffs.length) {
-      return fallback;
-    }
-
-    diffs.sort((a, b) => a - b);
-    return diffs[Math.floor(diffs.length / 2)] || fallback;
-  },
 
   // ============================================================================
   // TIMESTAMP CONVERSION - Unified internal time representation
@@ -610,13 +553,27 @@ export const TimeSlider = {
   /**
    * Get the key for looking up data in timeData/timeDataFilled.
    * For yearly data, converts timestamp to year (since data uses year keys).
-   * For sub-yearly data, returns timestamp directly.
+   * For sub-yearly data, snaps to the most recent available data time at or
+   * before the timestamp. This is the "converter" that lets playback advance
+   * continuous time over discrete datasets: the playhead flows smoothly and
+   * each lookup lands on a real data frame (June's data shows until July
+   * arrives), the same way yearly mode snaps via timestampToYear.
    * @param {number} timestamp - Internal timestamp
    * @returns {number} Key to use for data lookup
    */
   getDataLookupKey(timestamp) {
     if (!this.useTimestamps) {
       return this.timestampToYear(timestamp);
+    }
+    if (this.sortedTimes.length) {
+      const idx = this.timeToIndex(timestamp);
+      const snapped = this.sortedTimes[idx];
+      // timeToIndex finds the NEAREST frame; shift back one when it rounded
+      // forward so we never show data from the future.
+      if (snapped > timestamp && idx > 0) {
+        return this.sortedTimes[idx - 1];
+      }
+      return snapped;
     }
     return timestamp;
   },
@@ -793,30 +750,6 @@ export const TimeSlider = {
     });
   },
 
-  /**
-   * Get playback interval based on granularity (faster for finer granularity)
-   * Base intervals tuned for smooth playback.
-   * Special case: '12m' uses 200ms for smooth tsunami animation (5 steps/sec, same speed as 1h)
-   *
-   * NOTE: This is the LEGACY method. New code should use TIME_SYSTEM.FRAME_INTERVAL_MS
-   * with stepsPerFrame for speed control.
-   */
-  getPlaybackInterval() {
-    const baseIntervals = {
-      '12m': 200,     // Smooth tsunami: 5 steps/sec (same overall speed as 1h, but smoother)
-      '1h': 1000,     // Real-time: 1 second = 1 hour
-      '6h': 30,       // Doubled for slower animation
-      'daily': 40,
-      'weekly': 60,
-      'monthly': 80,  // ~12 steps/second at normal speed
-      'yearly': 120,
-      '5y': 160,
-      '10y': 200
-    };
-    const base = baseIntervals[this.granularity] || 120;
-    return this.playSpeed === FAST_SPEED ? Math.floor(base / FAST_SPEED) : base;
-  },
-
   // ============================================================================
   // UNIFIED SPEED CONTROL (Phase 7)
   // ============================================================================
@@ -837,42 +770,10 @@ export const TimeSlider = {
     console.log(`TimeSlider: Speed set to ${this.getEffectiveSpeedLabel()} (${this.stepsPerFrame.toFixed(2)} steps/frame)`);
   },
 
-  formatMsPerSecondLabel(msPerSecond) {
-    if (!Number.isFinite(msPerSecond) || msPerSecond <= 0) {
-      return TIME_SYSTEM.getSpeedLabel(this.stepsPerFrame);
-    }
-
-    const secondsPerSecond = msPerSecond / 1000;
-    if (secondsPerSecond < 60) {
-      return `${Math.max(1, Math.round(secondsPerSecond))}s/sec`;
-    }
-
-    const hoursPerSecond = msPerSecond / (60 * 60 * 1000);
-    if (hoursPerSecond < 1) return `${Math.round(hoursPerSecond * 60)}m/sec`;
-    if (hoursPerSecond < 24) return `${Math.round(hoursPerSecond)}h/sec`;
-    if (hoursPerSecond < 168) return `${Math.round(hoursPerSecond / 24)}d/sec`;
-    if (hoursPerSecond < 720) return `${Math.round(hoursPerSecond / 168)}w/sec`;
-    if (hoursPerSecond < 8760) return `${Math.round(hoursPerSecond / 720)}mo/sec`;
-    return `${Math.round(hoursPerSecond / 8760 * 10) / 10}y/sec`;
-  },
-
   getEffectiveSpeedLabel() {
-    if (this.useIndexedScale && this._inEventMode && Array.isArray(this.sortedTimes) && this.sortedTimes.length > 1) {
-      const baseStepMs = this.stepMs || this.calculateStepMs(this.granularity || 'yearly');
-      const diffs = [];
-      for (let i = 1; i < this.sortedTimes.length; i += 1) {
-        const diff = this.sortedTimes[i] - this.sortedTimes[i - 1];
-        if (Number.isFinite(diff) && diff > 0) {
-          diffs.push(diff);
-        }
-      }
-      if (diffs.length) {
-        const avgIntervalMs = this.getDiscreteTimelineBaseStepMs() || (diffs.reduce((sum, value) => sum + value, 0) / diffs.length);
-        const pointsPerFrame = (TIME_SYSTEM.BASE_STEP_MS * this.stepsPerFrame) / Math.max(1, baseStepMs);
-        const msPerSecond = avgIntervalMs * pointsPerFrame * TIME_SYSTEM.MAX_FPS;
-        return this.formatMsPerSecondLabel(msPerSecond);
-      }
-    }
+    // Playback advances continuous time at stepsPerFrame everywhere (no
+    // discrete index stepping), so the label is the same simple conversion
+    // for every dataset and mode.
     return TIME_SYSTEM.getSpeedLabel(this.stepsPerFrame);
   },
 
@@ -1090,25 +991,17 @@ export const TimeSlider = {
    * @param {string[]} availableMetrics - Explicit list of metrics from order (optional)
    */
   init(timeRange, timeData, baseGeojson, metricKey, availableMetrics = null, metricYearRanges = null) {
-    this.timeData = timeData;
-    this.baseGeojson = baseGeojson;
-    this.metricKey = metricKey;
-    this.explicitMetrics = availableMetrics;  // Store explicit metrics from order
-    this.metricYearRanges = metricYearRanges || {};  // Per-metric year ranges
-    console.log('TimeSlider.init: metricYearRanges received:', this.metricYearRanges);
-
+    // TIME range setup FIRST -- ChoroplethModel.init's gap-filling/metric
+    // detection reads minTime/maxTime/sortedTimes/useTimestamps, so those
+    // must already be current before we hand off to the model.
     // Granularity support - detect from timeRange or default to yearly (set FIRST)
     this.granularity = timeRange.granularity || 'yearly';
     this.useTimestamps = timeRange.useTimestamps ||
       TIMESTAMP_GRANULARITIES.has(this.granularity);
-    this.stepMs = this.calculateStepMs(this.granularity);
 
     // Normalize time range to timestamps (converts years like 2024 to ms)
     this.minTime = this.normalizeToTimestamp(timeRange.min);
     this.maxTime = this.normalizeToTimestamp(timeRange.max);
-    // Store original range for restoration when switching metrics
-    this.originalMinTime = this.minTime;
-    this.originalMaxTime = this.maxTime;
 
     // TEMPORARY MIRROR: support available_years only while older producers are
     // still being migrated to canonical available.
@@ -1117,15 +1010,17 @@ export const TimeSlider = {
     this.availableTimes = rawTimes.map(t => this.normalizeToTimestamp(t));
     // Sort available times for navigation
     this.sortedTimes = [...this.availableTimes].sort((a, b) => a - b);
-    this.stepMs = this.calculateStepMs(this.granularity);
     this.currentTime = this.maxTime;  // Start at latest time (already normalized)
-    this.playSpeed = 1;
     const timeSpanMs = Math.max(0, this.maxTime - this.minTime);
     const suggestedSpeed = this.suggestSpeedForRange(timeSpanMs);
     this.setSpeedFromSlider(suggestedSpeed);
 
-    // Pre-compute gap-filled data (carry forward last known values)
-    this.timeDataFilled = this.buildFilledTimeData();
+    // Choropleth data storage, gap-filling, and metric resolution are owned
+    // by ChoroplethModel (stores original range for restoration when
+    // switching metrics too). Resolved metricKey may differ from the raw
+    // argument if it wasn't in availableMetrics.
+    console.log('TimeSlider.init: metricYearRanges received:', metricYearRanges || {});
+    this.metricKey = ChoroplethModel.init(this, timeData, baseGeojson, metricKey, availableMetrics, metricYearRanges);
 
     // Cache DOM elements
     this.container = document.getElementById('timeSliderContainer');
@@ -1134,8 +1029,6 @@ export const TimeSlider = {
     this.playBtn = document.getElementById('playBtn');
     this.stepBackBtn = document.getElementById('stepBackBtn');
     this.stepFwdBtn = document.getElementById('stepFwdBtn');
-    this.rewindBtn = document.getElementById('rewindBtn');
-    this.fastFwdBtn = document.getElementById('fastFwdBtn');
     this.minLabel = document.getElementById('minYearLabel');
     this.maxLabel = document.getElementById('maxYearLabel');
     this.titleLabel = document.getElementById('sliderTitle');
@@ -1146,20 +1039,6 @@ export const TimeSlider = {
 
     // Load timezone setting for live mode
     this.loadLiveTimezone();
-
-    // Use explicit metrics from order if provided, otherwise detect from data
-    if (this.explicitMetrics && this.explicitMetrics.length > 0) {
-      this.availableMetrics = this.explicitMetrics;
-      console.log('Using explicit metrics from order:', this.availableMetrics);
-    } else {
-      this.availableMetrics = this.detectAvailableMetrics();
-      console.log('Detected metrics from data:', this.availableMetrics);
-    }
-
-    // If metricKey not in available metrics, use first available
-    if (this.availableMetrics.length > 0 && !this.availableMetrics.includes(this.metricKey)) {
-      this.metricKey = this.availableMetrics[0];
-    }
 
     this.renderMetricTabs();
 
@@ -1187,13 +1066,9 @@ export const TimeSlider = {
     // Show slider
     this.show();
 
-    // Initialize choropleth with full data range (before first render)
-    ChoroplethManager?.init(metricKey, timeData, this.availableTimes);
-
-    // Load geometry ONCE with initial time data (full loadGeoJSON)
-    const initialGeojson = this.buildTimeGeojson(this.currentTime);
-    MapAdapter?.loadGeoJSON(initialGeojson);
-    ChoroplethManager?.update(initialGeojson, this.metricKey);
+    // Render the resolved metric/time onto the map + legend (full loadGeoJSON,
+    // once, before any incremental setTime updates).
+    ChoroplethModel.renderInitial(this);
 
     // Update label with formatted time
     // Live mode is only activated by clicking the LIVE button
@@ -1212,42 +1087,25 @@ export const TimeSlider = {
    * @param {Object} metricYearRanges - Per-metric year ranges
    */
   updateData(timeRange, timeData, baseGeojson, availableMetrics = null, metricYearRanges = null) {
-    this.timeData = timeData || {};
-    this.baseGeojson = baseGeojson || { type: 'FeatureCollection', features: [] };
-    this.explicitMetrics = availableMetrics || this.explicitMetrics || null;
-    this.metricYearRanges = metricYearRanges || this.metricYearRanges || {};
-
     const currentTime = this.currentTime;
-    const currentMetric = this.metricKey;
 
     this.granularity = timeRange.granularity || this.granularity || 'yearly';
     this.useTimestamps = timeRange.useTimestamps ||
       TIMESTAMP_GRANULARITIES.has(this.granularity);
-    this.stepMs = this.calculateStepMs(this.granularity);
 
     this.minTime = this.normalizeToTimestamp(timeRange.min);
     this.maxTime = this.normalizeToTimestamp(timeRange.max);
-    this.originalMinTime = this.minTime;
-    this.originalMaxTime = this.maxTime;
 
     // TEMPORARY MIRROR: support available_years only while older producers are
     // still being migrated to canonical available.
     const rawTimes = timeRange.available || timeRange.available_years || [];
     this.availableTimes = rawTimes.map(t => this.normalizeToTimestamp(t));
     this.sortedTimes = [...this.availableTimes].sort((a, b) => a - b);
-    this.stepMs = this.calculateStepMs(this.granularity);
 
-    if (this.explicitMetrics && this.explicitMetrics.length > 0) {
-      this.availableMetrics = this.explicitMetrics;
-    } else {
-      this.availableMetrics = this.detectAvailableMetrics();
-    }
-
-    if (currentMetric && this.availableMetrics.includes(currentMetric)) {
-      this.metricKey = currentMetric;
-    } else if (this.availableMetrics.length > 0) {
-      this.metricKey = this.availableMetrics[0];
-    }
+    // Choropleth data merge + metric resolution (keeps current metric if
+    // still available, else falls back to first) is owned by ChoroplethModel.
+    // Must run AFTER the TIME range fields above are current.
+    ChoroplethModel.mergeData(this, timeData, baseGeojson, availableMetrics, metricYearRanges);
 
     this.currentTime = currentTime != null ? currentTime : this.maxTime;
     if (this.currentTime < this.minTime) {
@@ -1256,7 +1114,6 @@ export const TimeSlider = {
       this.currentTime = this.maxTime;
     }
 
-    this.timeDataFilled = this.buildFilledTimeData();
     this.renderMetricTabs();
     this.configureSliderScale();
 
@@ -1267,10 +1124,7 @@ export const TimeSlider = {
       this.yearLabel.textContent = this.formatTimeLabel(this.currentTime);
     }
 
-    ChoroplethManager?.init(this.metricKey, this.timeData, this.availableTimes);
-    const geojson = this.buildTimeGeojson(this.currentTime);
-    MapAdapter?.loadGeoJSON(geojson);
-    ChoroplethManager?.update(geojson, this.metricKey);
+    ChoroplethModel.renderMerged(this);
   },
 
   /**
@@ -1315,23 +1169,6 @@ export const TimeSlider = {
     this.stepFwdBtn?.addEventListener('click', () => {
       this.pause();
       this.stepToNext();
-    });
-
-    // Fast forward/rewind buttons - toggle fast mode
-    this.rewindBtn?.addEventListener('click', () => {
-      if (this.isPlaying && this.playSpeed === FAST_SPEED && this.playDirection === -1) {
-        this.pause();
-      } else {
-        this.playFast(-1);  // Rewind fast
-      }
-    });
-
-    this.fastFwdBtn?.addEventListener('click', () => {
-      if (this.isPlaying && this.playSpeed === FAST_SPEED && this.playDirection === 1) {
-        this.pause();
-      } else {
-        this.playFast(1);  // Fast forward
-      }
     });
 
     // Time range bounds controls - drag handling for trim handles
@@ -1510,40 +1347,6 @@ export const TimeSlider = {
     return this.sortedTimes[this.sortedTimes.length - 1] || this.maxTime;
   },
 
-  advanceDiscreteTime(fromTime, targetStepMs, direction = 1) {
-    if (!this.sortedTimes.length) {
-      return fromTime;
-    }
-
-    const currentIndex = this.timeToIndex(fromTime);
-    const baseStepMs = this.stepMs || this.calculateStepMs(this.granularity || 'yearly');
-    const effectiveDirection = direction >= 0 ? 1 : -1;
-    if (this.discretePlaybackDirection !== effectiveDirection) {
-      this.discretePlaybackCarry = 0;
-      this.discretePlaybackDirection = effectiveDirection;
-    }
-
-    const stepFraction = targetStepMs / Math.max(1, baseStepMs);
-    this.discretePlaybackCarry += stepFraction;
-    let frameSteps = Math.floor(this.discretePlaybackCarry);
-    if (frameSteps <= 0) {
-      return fromTime;
-    }
-    this.discretePlaybackCarry -= frameSteps;
-
-    const signedSteps = effectiveDirection * frameSteps;
-    let nextIndex = currentIndex + signedSteps;
-
-    if (this.loopEnabled) {
-      const count = this.sortedTimes.length;
-      nextIndex = ((nextIndex % count) + count) % count;
-    } else {
-      nextIndex = Math.max(0, Math.min(this.sortedTimes.length - 1, nextIndex));
-    }
-
-    return this.indexToTime(nextIndex);
-  },
-
   /**
    * Get step size based on current speed.
    * Returns milliseconds matching what the speed label shows.
@@ -1658,105 +1461,38 @@ export const TimeSlider = {
     // Use setSliderFromTime to handle both indexed and linear modes
     this.setSliderFromTime(time);
 
-    // Build GeoJSON for this time and update source data (fast, no layer recreation)
-    // The interpolate expression automatically re-evaluates when source data changes
-    // Only do this if we have choropleth data loaded
-    // OPTIMIZATION: Only update map when data key (year) actually changes
-    if (this.baseGeojson && this.timeDataFilled) {
-      const dataKey = this.getDataLookupKey(time);
-      if (dataKey !== this._lastDataKey) {
-        this._lastDataKey = dataKey;
-        const geojson = this.buildTimeGeojson(time);
-        MapAdapter?.updateSourceData(geojson);
-      }
-    }
+    // Render choropleth for this time (no-op if no choropleth data is loaded,
+    // and a no-op if the snapped data key hasn't changed -- see
+    // ChoroplethModel.renderAtTime). Runs BEFORE _notifyChangeListeners so
+    // choropleth rendering keeps its historical ordering relative to other
+    // change listeners.
+    ChoroplethModel.renderAtTime(this, time);
 
     // Notify all listeners of time change
     this._notifyChangeListeners(source);
   },
 
   /**
-   * Pre-compute gap-filled time data (called once at init).
-   * For yearly mode: fills gaps between years (using year keys for data lookup).
-   * For timestamp mode: only uses actual data points (no interpolation).
-   * Returns {dataKey: {loc_id: {metric, data_time}}} where dataKey is year or timestamp
-   * depending on granularity.
+   * Pre-compute gap-filled time data. Thin delegate onto ChoroplethModel
+   * (storage/logic lives there); kept here since it's part of TimeSlider's
+   * existing public API.
    */
   buildFilledTimeData() {
-    const filled = {};
-    const lastKnown = {};  // {loc_id: {data, data_time}}
-
-    // Get all location IDs from the base geometry
-    const allLocIds = this.baseGeojson.features.map(f => f.properties.loc_id);
-
-    if (this.useTimestamps) {
-      // For timestamp mode, only fill for actual data points (no gap filling)
-      // timeData keys are timestamps, sortedTimes are timestamps
-      for (const time of this.sortedTimes) {
-        const dataKey = this.getDataLookupKey(time);
-        filled[dataKey] = {};
-        const timeValues = this.timeData[dataKey] || {};
-
-        for (const locId of allLocIds) {
-          if (timeValues[locId] && Object.keys(timeValues[locId]).length > 0) {
-            filled[dataKey][locId] = {
-              ...timeValues[locId],
-              data_time: time
-            };
-          }
-        }
-      }
-    } else {
-      // For yearly mode, process all years and carry forward values
-      // timeData keys are years (integers), convert timestamps to years for iteration
-      const minYear = this.timestampToYear(this.minTime);
-      const maxYear = this.timestampToYear(this.maxTime);
-
-      for (let year = minYear; year <= maxYear; year++) {
-        filled[year] = {};
-        const yearValues = this.timeData[year] || {};
-
-        for (const locId of allLocIds) {
-          // Check if this year has data for this location
-          if (yearValues[locId] && Object.keys(yearValues[locId]).length > 0) {
-            // New data - update last known
-            lastKnown[locId] = {
-              data: yearValues[locId],
-              data_time: year
-            };
-          }
-
-          // Use last known value (or empty if none yet)
-          if (lastKnown[locId]) {
-            filled[year][locId] = {
-              ...lastKnown[locId].data,
-              data_time: lastKnown[locId].data_time
-            };
-          }
-        }
-      }
-    }
-
-    return filled;
+    return ChoroplethModel.buildFilledTimeData(this);
   },
 
   /**
-   * Get admin level from loc_id based on dash count.
+   * Get admin level from loc_id based on dash count. Thin delegate onto
+   * ChoroplethModel.
    * @param {string} locId - Location ID (e.g., 'AUS', 'AUS-NSW', 'AUS-NSW-10050')
    * @returns {number} - Admin level (0=country, 1=state, 2=county, 3+=deeper)
    */
   getAdminLevelFromLocId(locId) {
-    if (!locId) return 0;
-    const dashCount = (locId.match(/-/g) || []).length;
-    return dashCount;
+    return ChoroplethModel.getAdminLevelFromLocId(locId);
   },
 
   getFeatureAdminLevel(feature) {
-    const explicitLevel = feature?.properties?.admin_level_num;
-    if (explicitLevel != null && !isNaN(Number(explicitLevel))) {
-      return Number(explicitLevel);
-    }
-    return this.getAdminLevelFromLocId(feature?.properties?.loc_id);
+    return ChoroplethModel.getFeatureAdminLevel(feature);
   },
 
   /**
@@ -1765,31 +1501,7 @@ export const TimeSlider = {
    * @param {number|null} level - Admin level to filter to, or null for all
    */
   setAdminLevelFilter(level) {
-    if (this.currentAdminLevel === level) return;  // No change
-
-    this.currentAdminLevel = level;
-    console.log(`TimeSlider: Filtering to admin level ${level}`);
-
-    // Re-render current time with new filter
-    if (this.currentTime != null && this.baseGeojson) {
-      const geojson = this.buildTimeGeojson(this.currentTime);
-      MapAdapter?.loadGeoJSON(geojson);
-
-      // Update feature count display
-      const countEl = document.getElementById('totalAreas');
-      if (countEl) {
-        countEl.textContent = geojson.features.length;
-      }
-
-      // Recalculate color scale for filtered features
-      if (ChoroplethManager && this.metricKey) {
-        const values = geojson.features
-          .map(f => f.properties[this.metricKey])
-          .filter(v => v != null && !isNaN(v));
-        ChoroplethManager.update(geojson, this.metricKey);
-        ChoroplethManager.updateScaleForValues(values, this.metricKey);
-      }
-    }
+    ChoroplethModel.setAdminLevelFilter(this, level);
   },
 
   hasActiveTrimBounds() {
@@ -1804,46 +1516,13 @@ export const TimeSlider = {
   },
 
   /**
-   * Build GeoJSON with time-specific values injected.
-   * Uses pre-computed gap-filled data for O(1) lookup per location.
-   * Filters by currentAdminLevel if set.
+   * Build GeoJSON with time-specific values injected. Thin delegate onto
+   * ChoroplethModel (storage/logic lives there); kept here since it's part
+   * of TimeSlider's existing public API (app.js calls this directly).
    * @param {number} time - Timestamp (ms since epoch)
    */
   buildTimeGeojson(time) {
-    // Convert timestamp to data lookup key (year for yearly mode, timestamp for sub-yearly)
-    const dataKey = this.getDataLookupKey(time);
-    const timeValues = this.timeDataFilled[dataKey] || {};
-
-    // Filter features by admin level if filter is active
-    let features = this.baseGeojson.features;
-    if (this.currentAdminLevel != null) {
-      features = features.filter(f => {
-        const level = this.getFeatureAdminLevel(f);
-        return level === this.currentAdminLevel;
-      });
-    }
-
-    // Extract year from timestamp for properties
-    const year = this.timestampToYear(time);
-
-    return {
-      type: 'FeatureCollection',
-      features: features.map(f => {
-        const locId = f.properties.loc_id;
-        const locData = timeValues[locId] || {};
-
-        return {
-          ...f,
-          properties: {
-            ...f.properties,
-            ...locData,
-            // Include both 'time' (timestamp) and 'year' for compatibility
-            time: time,
-            year: year
-          }
-        };
-      })
-    };
+    return ChoroplethModel.buildTimeGeojson(this, time);
   },
 
   // ============================================================================
@@ -1945,12 +1624,6 @@ export const TimeSlider = {
     this.activeScaleId = scaleId;
     this.granularity = scale.granularity;
     this.useTimestamps = scale.useTimestamps;
-    this.stepMs = this.calculateStepMs(scale.granularity);
-
-    // Load scale's data
-    this.timeData = scale.timeData;
-    this.baseGeojson = scale.baseGeojson;
-    this.metricKey = scale.metricKey;
 
     // Normalize time range values to timestamps
     this.minTime = this.normalizeToTimestamp(scale.timeRange.min);
@@ -1958,29 +1631,20 @@ export const TimeSlider = {
     const rawTimes = scale.timeRange.available || scale.timeRange.available_years || [];
     this.availableTimes = rawTimes.map(t => this.normalizeToTimestamp(t));
     this.sortedTimes = [...this.availableTimes].sort((a, b) => a - b);
-    this.stepMs = this.calculateStepMs(this.granularity);
     this.currentTime = scale.currentTime
       ? this.normalizeToTimestamp(scale.currentTime)
       : this.maxTime;
 
-    // Rebuild filled data for new scale (only if we have base geometry for choropleth)
-    // Point-event scales (earthquakes, etc.) don't use baseGeojson
-    if (this.baseGeojson && this.baseGeojson.features) {
-      this.timeDataFilled = this.buildFilledTimeData();
-    } else {
-      // For point-event scales, just use timeData directly
-      this.timeDataFilled = this.timeData || {};
-    }
+    // Load scale's data + rebuild filled data (choropleth scales only --
+    // point-event scales, e.g. earthquakes, don't use baseGeojson and
+    // handle their own rendering via overlay-controller).
+    ChoroplethModel.applyScaleData(this, scale.timeData, scale.baseGeojson, scale.metricKey);
 
     // Configure slider (auto-detects indexed vs linear scale based on data density)
     this.configureSliderScale();
 
     // Update map (only for choropleth scales with baseGeojson)
-    // Point-event scales handle their own rendering via overlay-controller
-    if (this.baseGeojson && this.baseGeojson.features) {
-      const geojson = this.buildTimeGeojson(this.currentTime);
-      MapAdapter?.updateSourceData(geojson);
-    }
+    ChoroplethModel.renderForScale(this);
 
     // Re-render tabs to update active state
     this.renderTabs();
@@ -2103,42 +1767,13 @@ export const TimeSlider = {
   // ============================================================================
 
   /**
-   * Detect available metrics from timeData structure.
-   * Metrics are keys in the loc_id objects, excluding system keys.
-   * Samples from beginning, middle, and end of time range to catch sparse data.
+   * Detect available metrics from timeData structure. Thin delegate onto
+   * ChoroplethModel; kept here since it's part of TimeSlider's existing
+   * public API.
    * @returns {string[]} - Array of metric names
    */
   detectAvailableMetrics() {
-    const metrics = new Set();
-    const systemKeys = ['data_time', 'time', 'year', 'loc_id'];
-
-    // Sample from beginning, middle, and end to catch metrics that only exist for some years
-    // (e.g., demographic data might only exist for recent years)
-    const len = this.sortedTimes.length;
-    const sampleIndices = [
-      0, 1, 2,  // First 3
-      Math.floor(len / 2),  // Middle
-      len - 3, len - 2, len - 1  // Last 3
-    ].filter(i => i >= 0 && i < len);
-
-    // Dedupe indices
-    const uniqueIndices = [...new Set(sampleIndices)];
-
-    for (const idx of uniqueIndices) {
-      const time = this.sortedTimes[idx];
-      const timeValues = this.timeData[time] || {};
-      for (const locId in timeValues) {
-        const locData = timeValues[locId];
-        for (const key in locData) {
-          if (!systemKeys.includes(key) && typeof locData[key] === 'number') {
-            metrics.add(key);
-          }
-        }
-        break;  // Only need one loc_id per time
-      }
-    }
-
-    return Array.from(metrics);
+    return ChoroplethModel.detectAvailableMetrics(this);
   },
 
   /**
@@ -2294,146 +1929,89 @@ export const TimeSlider = {
     // Re-render metric tabs to update active state
     this.renderMetricTabs();
 
-    // Reinitialize choropleth with new metric (recalculates min/max)
-    ChoroplethManager?.init(metric, this.timeData, this.availableTimes);
-
-    // Re-render current time with new metric colors
-    if (this.currentTime != null && this.baseGeojson) {
-      const geojson = this.buildTimeGeojson(this.currentTime);
-      MapAdapter?.updateSourceData(geojson);
-      ChoroplethManager?.update(geojson, metric);
-    }
+    // Reinitialize choropleth scale + repaint current time with new metric colors
+    ChoroplethModel.renderMetric(this, metric);
   },
 
   /**
-   * Start playback animation (normal speed, forward)
+   * Start playback animation (forward)
    */
   play() {
-    this.playSpeed = 1;
     this.playDirection = 1;
     this.startPlayback();
   },
 
   /**
-   * Start fast playback in given direction
-   * @param {number} direction - 1 for forward, -1 for rewind
-   */
-  playFast(direction) {
-    this.playSpeed = FAST_SPEED;
-    this.playDirection = direction;
-    this.startPlayback();
-  },
-
-  /**
-   * Internal: start the playback interval
-   * Uses unified TIME_SYSTEM for speed control (Phase 7)
+   * Internal: start the playback loop.
+   *
+   * ONE playback system for every overlay type: advance continuous time at
+   * stepsPerFrame (the speed slider), ticking at TIME_SYSTEM.FRAME_INTERVAL_MS.
+   * Rendering snaps to real data frames at lookup time -- getDataLookupKey for
+   * choropleths, per-model frame search for rasters, time windows for events --
+   * so datasets of any cadence play smoothly through the same loop.
    */
   startPlayback() {
-    // Clear any existing interval/timeout
-    if (this.playInterval) {
-      clearInterval(this.playInterval);
-      this.playInterval = null;
-    }
     if (this.playTimeout) {
       clearTimeout(this.playTimeout);
       this.playTimeout = null;
     }
 
     this.isPlaying = true;
-    this.discretePlaybackCarry = 0;
-    this.discretePlaybackDirection = this.playDirection >= 0 ? 1 : -1;
     this.updateButtonStates();
 
-    // Use unified speed system if speed slider is available
-    const useUnifiedSpeed = this.speedSlider !== null;
+    // setTimeout(..., FRAME_INTERVAL_MS) only guarantees a minimum delay, so
+    // a slow frame (e.g. a heavy raster render) makes real ticks arrive later
+    // than 33ms apart. Advance by actual elapsed wall time rather than
+    // assuming a fixed 30fps tick, so the displayed "X/sec" speed label stays
+    // true to what plays back instead of silently slowing down.
+    let lastTickAt = null;
+    const tick = () => {
+      if (!this.isPlaying) return;
 
-    if (useUnifiedSpeed) {
-      // Phase 7: Unified speed control using stepsPerFrame
-      const tick = () => {
-        if (!this.isPlaying) return;
+      const now = performance.now();
+      // Cap the catch-up: a backgrounded/throttled tab can leave minutes
+      // between ticks, and we want a bounded skip on resume, not a single
+      // multi-year jump.
+      const rawElapsedMs = lastTickAt === null ? TIME_SYSTEM.FRAME_INTERVAL_MS : now - lastTickAt;
+      const elapsedMs = Math.min(rawElapsedMs, TIME_SYSTEM.FRAME_INTERVAL_MS * 5);
+      lastTickAt = now;
 
-        // Calculate time step - fractional stepsPerFrame gives smaller steps
-        // Always advance every frame (no slideshow mode holding)
-        const stepMs = TIME_SYSTEM.BASE_STEP_MS * this.stepsPerFrame;
-
-        // Use bounded range if set, otherwise use global range
-        const effectiveMin = this.boundMinTime !== null ? this.boundMinTime : this.minTime;
-        const effectiveMax = this.boundMaxTime !== null ? this.boundMaxTime : this.maxTime;
-
-        let nextTime;
-        if (this.useIndexedScale || !this.useTimestamps) {
-          nextTime = this.advanceDiscreteTime(this.currentTime, stepMs, this.playDirection);
-        } else if (this.playDirection === 1) {
-          nextTime = this.currentTime + stepMs;
-          // Check for end (use effective max)
-          if (nextTime > effectiveMax) {
-            if (this.loopEnabled) {
-              // Loop back to start (use effective min)
-              nextTime = effectiveMin;
-            } else {
-              this.pause();
-              return;
-            }
-          }
-        } else {
-          nextTime = this.currentTime - stepMs;
-          // Check for start (use effective min)
-          if (nextTime < effectiveMin) {
-            if (this.loopEnabled) {
-              // Loop back to end (use effective max)
-              nextTime = effectiveMax;
-            } else {
-              this.pause();
-              return;
-            }
-          }
-        }
-
-        this.setTime(nextTime, 'playback');
-
-        // Schedule next frame
-        this.playTimeout = setTimeout(tick, TIME_SYSTEM.FRAME_INTERVAL_MS);
-      };
-
-      tick();
-    } else {
-      // Legacy mode: granularity-based playback (fallback if no speed slider)
-      const interval = this.getPlaybackInterval();
+      const stepMs = TIME_SYSTEM.BASE_STEP_MS * this.stepsPerFrame * (elapsedMs / TIME_SYSTEM.FRAME_INTERVAL_MS);
 
       // Use bounded range if set, otherwise use global range
       const effectiveMin = this.boundMinTime !== null ? this.boundMinTime : this.minTime;
       const effectiveMax = this.boundMaxTime !== null ? this.boundMaxTime : this.maxTime;
 
-      this.playInterval = setInterval(() => {
-        let nextTime;
-        if (this.playDirection === 1) {
-          nextTime = this.getNextAvailableTime(this.currentTime);
-          // Check if we've reached the effective max or wrapped around
-          if (nextTime <= this.currentTime || nextTime > effectiveMax) {
-            if (this.loopEnabled) {
-              // Loop back to start (use effective min)
-              nextTime = effectiveMin;
-            } else {
-              this.pause();
-              return;
-            }
-          }
-        } else {
-          nextTime = this.getPrevAvailableTime(this.currentTime);
-          // Check if we've reached the effective min or wrapped around
-          if (nextTime >= this.currentTime || nextTime < effectiveMin) {
-            if (this.loopEnabled) {
-              // Loop back to end (use effective max)
-              nextTime = effectiveMax;
-            } else {
-              this.pause();
-              return;
-            }
+      let nextTime;
+      if (this.playDirection === 1) {
+        nextTime = this.currentTime + stepMs;
+        if (nextTime > effectiveMax) {
+          if (this.loopEnabled) {
+            nextTime = effectiveMin;
+          } else {
+            this.pause();
+            return;
           }
         }
-        this.setTime(nextTime, 'playback');
-      }, interval);
-    }
+      } else {
+        nextTime = this.currentTime - stepMs;
+        if (nextTime < effectiveMin) {
+          if (this.loopEnabled) {
+            nextTime = effectiveMax;
+          } else {
+            this.pause();
+            return;
+          }
+        }
+      }
+
+      this.setTime(nextTime, 'playback');
+
+      // Schedule next frame
+      this.playTimeout = setTimeout(tick, TIME_SYSTEM.FRAME_INTERVAL_MS);
+    };
+
+    tick();
   },
 
   /**
@@ -2443,22 +2021,9 @@ export const TimeSlider = {
     // Guard against null elements (reset called before init)
     if (!this.playBtn) return;
 
-    // Reset all buttons
-    this.rewindBtn?.classList.remove('active');
-    this.fastFwdBtn?.classList.remove('active');
-
     if (this.isPlaying) {
       this.playBtn.textContent = '❚❚';
       this.playBtn.title = 'Pause';
-
-      // Highlight fast buttons when in fast mode
-      if (this.playSpeed === FAST_SPEED) {
-        if (this.playDirection === -1) {
-          this.rewindBtn?.classList.add('active');
-        } else {
-          this.fastFwdBtn?.classList.add('active');
-        }
-      }
     } else {
       this.playBtn.textContent = '▶';
       this.playBtn.title = 'Play';
@@ -2470,13 +2035,7 @@ export const TimeSlider = {
    */
   pause() {
     this.isPlaying = false;
-    this.playSpeed = 1;
-    this.discretePlaybackCarry = 0;
 
-    if (this.playInterval) {
-      clearInterval(this.playInterval);
-      this.playInterval = null;
-    }
     if (this.playTimeout) {
       clearTimeout(this.playTimeout);
       this.playTimeout = null;
@@ -2513,23 +2072,14 @@ export const TimeSlider = {
    */
   reset() {
     this.hide();
-    this.timeData = null;
-    this.timeDataFilled = null;
-    this.baseGeojson = null;
-    this.metricKey = null;
-    this.explicitMetrics = null;  // Reset explicit metrics from order
-    this.metricYearRanges = {};  // Reset per-metric year ranges
-    this.originalMinTime = null;  // Reset stored original range
-    this.originalMaxTime = null;
+    ChoroplethModel.reset();  // Clears timeData/timeDataFilled/baseGeojson/metricKey/
+                               // explicitMetrics/metricYearRanges/originalMinTime/
+                               // originalMaxTime/currentAdminLevel/availableMetrics/_lastDataKey
     this.sortedTimes = [];
     this.availableTimes = [];
-    this.playSpeed = 1;
     this.playDirection = 1;
     this.granularity = 'yearly';
     this.useTimestamps = false;
-    this.stepMs = null;
-    this.currentAdminLevel = null;  // Reset admin level filter
-    this._lastDataKey = null;  // Reset data key tracking for animation optimization
 
     // Clear unified speed control state (Phase 7)
     this.stepsPerFrame = 97;  // Reset to default (~1yr/sec)
@@ -2559,8 +2109,7 @@ export const TimeSlider = {
       this.tabContainer.innerHTML = '';
     }
 
-    // Clear multi-metric state
-    this.availableMetrics = [];
+    // Clear multi-metric state (data already cleared by ChoroplethModel.reset above)
     if (this.metricTabContainer) {
       this.metricTabContainer.style.display = 'none';
       this.metricTabContainer.innerHTML = '';
@@ -2739,21 +2288,6 @@ export const TimeSlider = {
 
     // Update trim handles
     this.updateTrimHandlePositions();
-
-    // Apply pending trim bounds if any
-    if (this._pendingBoundMinTime !== undefined || this._pendingBoundMaxTime !== undefined) {
-      if (this._pendingBoundMinTime !== undefined && this._pendingBoundMinTime >= this.minTime && this._pendingBoundMinTime <= this.maxTime) {
-        this.boundMinTime = this._pendingBoundMinTime;
-      }
-      if (this._pendingBoundMaxTime !== undefined && this._pendingBoundMaxTime >= this.minTime && this._pendingBoundMaxTime <= this.maxTime) {
-        this.boundMaxTime = this._pendingBoundMaxTime;
-      }
-      if (this.boundMinTime !== null || this.boundMaxTime !== null) {
-        this.updateTrimHandlePositions();
-      }
-      delete this._pendingBoundMinTime;
-      delete this._pendingBoundMaxTime;
-    }
 
     console.log('[TimeSlider] Display refreshed');
   },
