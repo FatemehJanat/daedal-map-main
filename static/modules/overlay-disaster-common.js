@@ -239,6 +239,131 @@ export function beginFocusedAnimationSession(controller, overlayIds = [], option
   };
 }
 
+/**
+ * Take over the TimeSlider with a dedicated scale for a focused animation
+ * (EventAnimator or TrackAnimator). Adds the scale, activates it, applies the
+ * auto-calculated playback speed for the given time range, and wires a change
+ * listener that forwards external time changes back to the caller.
+ *
+ * @param {Object} TimeSlider - TimeSlider module/instance
+ * @param {Object} options
+ * @param {string} options.scaleId - Unique scale id
+ * @param {string} options.label - Scale label shown on the slider
+ * @param {string} options.granularity - Time step granularity
+ * @param {number} options.currentTime - Initial time for the scale
+ * @param {Object} options.timeRange - {min, max, available}
+ * @param {Object} options.timeData - Per-timestamp metadata keyed by timestamp
+ * @param {string} options.mapRenderer - Renderer identifier for the scale
+ * @param {string} options.changeSource - Source tag this session uses when it drives time itself
+ * @param {(time:number)=>void} options.onTimeChange - Called when an external time change should be applied
+ * @returns {{scaleId: string, timeChangeHandler: Function}|null} Session handle, or null if the scale wasn't added
+ */
+export function takeOverTimeSliderScale(TimeSlider, options = {}) {
+  if (!TimeSlider) return null;
+
+  const added = TimeSlider.addScale({
+    id: options.scaleId,
+    label: options.label,
+    granularity: options.granularity,
+    useTimestamps: true,
+    currentTime: options.currentTime,
+    timeRange: options.timeRange,
+    timeData: options.timeData,
+    mapRenderer: options.mapRenderer
+  });
+
+  if (!added) return null;
+
+  TimeSlider.setActiveScale(options.scaleId);
+
+  // Speed suggestion: auto-calculate playback speed for a smooth run through the range
+  if (TimeSlider.enterEventAnimation) {
+    TimeSlider.enterEventAnimation(options.timeRange?.min, options.timeRange?.max);
+  }
+
+  const timeChangeHandler = (time, source) => {
+    if (source !== options.changeSource && time > 3000) {
+      options.onTimeChange?.(time);
+    }
+  };
+  TimeSlider.addChangeListener(timeChangeHandler);
+
+  return { scaleId: options.scaleId, timeChangeHandler };
+}
+
+/**
+ * Undo takeOverTimeSliderScale(): remove the change listener and scale, and
+ * either return to the primary scale or hide the slider if nothing is left.
+ *
+ * Callers differ on how they want playback speed restored after the scale is
+ * removed (some reset a fixed preset, some just call exitEventAnimation), so
+ * that behavior is left to the optional hooks rather than homogenized here.
+ *
+ * @param {Object} TimeSlider
+ * @param {{scaleId: string, timeChangeHandler: Function}|null} session - Handle from takeOverTimeSliderScale
+ * @param {Object} hooks
+ * @param {(TimeSlider:Object)=>void} [hooks.beforeRemoveScale] - Called before the scale is removed (e.g. exitEventAnimation)
+ * @param {(TimeSlider:Object)=>void} [hooks.afterRestorePrimary] - Called only if the primary scale exists and was restored
+ */
+export function releaseTimeSliderScale(TimeSlider, session, hooks = {}) {
+  if (!TimeSlider || !session) return;
+
+  if (hooks.beforeRemoveScale) hooks.beforeRemoveScale(TimeSlider);
+
+  if (session.timeChangeHandler) {
+    TimeSlider.removeChangeListener(session.timeChangeHandler);
+  }
+
+  if (session.scaleId) {
+    TimeSlider.removeScale(session.scaleId);
+    if (TimeSlider.scales?.find(s => s.id === 'primary')) {
+      TimeSlider.setActiveScale('primary');
+      if (hooks.afterRestorePrimary) hooks.afterRestorePrimary(TimeSlider);
+    } else if (TimeSlider.scales?.length === 0) {
+      TimeSlider.hide();
+    }
+  }
+}
+
+/**
+ * Whether any focused animation session (EventAnimator or TrackAnimator) is
+ * currently active. Single gate replacing separate isActive checks.
+ *
+ * @param {Object} EventAnimator
+ * @param {Object} TrackAnimator
+ * @returns {boolean}
+ */
+export function isFocusAnimationActive(EventAnimator, TrackAnimator) {
+  return Boolean(EventAnimator?.getIsActive?.()) || Boolean(TrackAnimator?.isActive);
+}
+
+/**
+ * Route a TimeSlider time change to whichever focused animation session is
+ * active, if any.
+ *
+ * EventAnimator has no listener of its own on the shared TimeSlider change
+ * event, so it must be driven explicitly via setTime(). TrackAnimator
+ * registers its own change listener directly with TimeSlider (see
+ * track-animator.js setupTimeSlider), so it needs no forwarding here -
+ * this only needs to report that it already owns the time change so the
+ * caller can skip its normal handling.
+ *
+ * @param {number} time
+ * @param {Object} EventAnimator
+ * @param {Object} TrackAnimator
+ * @returns {boolean} true if a focused session handled (or owns) this time change
+ */
+export function routeTimeToFocusAnimation(time, EventAnimator, TrackAnimator) {
+  if (EventAnimator?.getIsActive?.()) {
+    EventAnimator.setTime(time);
+    return true;
+  }
+  if (TrackAnimator?.isActive) {
+    return true;
+  }
+  return false;
+}
+
 export function getBoundsFromCoords(coords) {
   if (!coords || coords.length === 0) return null;
   let minLng = Infinity;

@@ -20,6 +20,11 @@
  */
 
 import { CONFIG } from './config.js';
+import {
+  addGenericExitButton,
+  takeOverTimeSliderScale,
+  releaseTimeSliderScale
+} from './overlay-disaster-common.js';
 
 // Dependencies set via setDependencies
 let MapAdapter = null;
@@ -922,42 +927,26 @@ export const TrackAnimator = {
       timeData[ts] = { positionIndex: i };
     }
 
-    // Create scale ID for this track
-    this.scaleId = `track-${this.stormId.substring(0, 8)}`;
-
-    // Add scale to TimeSlider using multi-scale API
-    const added = TimeSlider.addScale({
-      id: this.scaleId,
+    // Takes over the TimeSlider: adds a scale for this track, activates it,
+    // applies the auto-calculated playback speed (~10s for the full track),
+    // and wires the change listener that forwards external time changes to
+    // setTimestamp().
+    const session = takeOverTimeSliderScale(TimeSlider, {
+      scaleId: `track-${this.stormId.substring(0, 8)}`,
       label: this.stormName,
       granularity: '6h',
-      useTimestamps: true,
       currentTime: this.startTime,
-      timeRange: {
-        min: this.startTime,
-        max: this.endTime,
-        available: timestamps
-      },
-      timeData: timeData,
-      mapRenderer: 'track-animation'
+      timeRange: { min: this.startTime, max: this.endTime, available: timestamps },
+      timeData,
+      mapRenderer: 'track-animation',
+      changeSource: 'track-animator',
+      onTimeChange: (time) => this.setTimestamp(time)
     });
 
-    if (added) {
-      TimeSlider.setActiveScale(this.scaleId);
-
-      // Enter event animation mode with auto-calculated speed for ~10 second playback
-      if (TimeSlider.enterEventAnimation) {
-        TimeSlider.enterEventAnimation(this.startTime, this.endTime);
-      }
-
+    if (session) {
+      this.scaleId = session.scaleId;
+      this._timeChangeHandler = session.timeChangeHandler;
       console.log(`TrackAnimator: Added TimeSlider scale ${this.scaleId}`);
-
-      // Listen for time changes from TimeSlider
-      this._timeChangeHandler = (time, source) => {
-        if (source !== 'track-animator' && time > 3000) {
-          this.setTimestamp(time);
-        }
-      };
-      TimeSlider.addChangeListener(this._timeChangeHandler);
     }
 
     // Add exit button
@@ -968,33 +957,7 @@ export const TrackAnimator = {
    * Add exit button to return to storm list.
    */
   addExitButton() {
-    // Remove existing exit button if any
-    const existing = document.getElementById('track-exit-btn');
-    if (existing) existing.remove();
-
-    const btn = document.createElement('button');
-    btn.id = 'track-exit-btn';
-    btn.textContent = 'Exit Track View';
-    btn.className = 'track-exit-button';
-    btn.style.cssText = `
-      position: fixed;
-      top: 80px;
-      left: 50%;
-      transform: translateX(-50%);
-      padding: 10px 20px;
-      background: #e74c3c;
-      color: white;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 14px;
-      font-weight: 500;
-      z-index: 1000;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-    `;
-
-    btn.addEventListener('click', () => this.stop());
-    document.body.appendChild(btn);
+    addGenericExitButton('track-exit-btn', 'Exit Track View', '#e74c3c', () => this.stop());
   },
 
   /**
@@ -1032,29 +995,16 @@ export const TrackAnimator = {
       const exitBtn = document.getElementById('track-exit-btn');
       if (exitBtn) exitBtn.remove();
 
-      // Remove TimeSlider scale and listener
-      if (TimeSlider) {
-        // Exit event animation mode - restore yearly overview speed
-        if (TimeSlider.exitEventAnimation) {
-          TimeSlider.exitEventAnimation();
+      // Remove TimeSlider scale and listener. Unlike EventAnimator, TrackAnimator
+      // restores speed via TimeSlider.exitEventAnimation() before the scale is
+      // removed, rather than resetting a fixed preset after returning to primary.
+      releaseTimeSliderScale(TimeSlider, { scaleId: this.scaleId, timeChangeHandler: this._timeChangeHandler }, {
+        beforeRemoveScale: (ts) => {
+          if (ts.exitEventAnimation) ts.exitEventAnimation();
         }
-
-        if (this._timeChangeHandler) {
-          TimeSlider.removeChangeListener(this._timeChangeHandler);
-          this._timeChangeHandler = null;
-        }
-        if (this.scaleId) {
-          TimeSlider.removeScale(this.scaleId);
-          // Only switch to primary if it exists (may not exist if only overlays are displayed)
-          if (TimeSlider.scales?.find(s => s.id === 'primary')) {
-            TimeSlider.setActiveScale('primary');
-          } else if (TimeSlider.scales?.length === 0) {
-            // No scales left, hide the time slider
-            TimeSlider.hide();
-          }
-          this.scaleId = null;
-        }
-      }
+      });
+      this._timeChangeHandler = null;
+      this.scaleId = null;
 
       // Call exit callback (only for focused mode)
       if (this.onExit) {

@@ -25,6 +25,12 @@
  *   });
  */
 
+import {
+  addGenericExitButton,
+  takeOverTimeSliderScale,
+  releaseTimeSliderScale
+} from './overlay-disaster-common.js';
+
 // Dependencies injected via setDependencies
 let MapAdapter = null;
 let TimeSlider = null;
@@ -382,37 +388,25 @@ export const EventAnimator = {
     this._stopTornadoAnimation();
     this._removeTornadoLayers();
 
-    // Remove TimeSlider scale and listener
-    if (TimeSlider) {
-      if (this._timeChangeHandler) {
-        TimeSlider.removeChangeListener(this._timeChangeHandler);
-        this._timeChangeHandler = null;
+    // Remove TimeSlider scale and listener. On return to the primary scale,
+    // reset speed to yearly (default for world view) - EventAnimator does not
+    // use TimeSlider.exitEventAnimation() for this (see TrackAnimator for the
+    // other restore strategy).
+    releaseTimeSliderScale(TimeSlider, { scaleId: this.scaleId, timeChangeHandler: this._timeChangeHandler }, {
+      afterRestorePrimary: (ts) => {
+        if (ts.setSpeedPreset) ts.setSpeedPreset('YEARLY');
       }
-      if (this.scaleId) {
-        TimeSlider.removeScale(this.scaleId);
-        // Only switch to primary if it exists (may not exist if only overlays are displayed)
-        if (TimeSlider.scales?.find(s => s.id === 'primary')) {
-          TimeSlider.setActiveScale('primary');
-          // Reset speed to yearly (default for world view)
-          if (TimeSlider.setSpeedPreset) {
-            TimeSlider.setSpeedPreset('YEARLY');
-          }
-        } else if (TimeSlider.scales?.length === 0) {
-          // No scales left, hide the time slider
-          TimeSlider.hide();
-        }
-        this.scaleId = null;
-      }
-    }
+    });
+    this._timeChangeHandler = null;
+    this.scaleId = null;
 
     // Clear renderer
     if (this.renderer?.clear) {
       this.renderer.clear();
     }
 
-    // Remove exit button container
-    const controls = document.getElementById('event-animator-controls');
-    if (controls) controls.remove();
+    // Remove exit button
+    document.getElementById('event-animator-exit-btn')?.remove();
 
     // Mark the session inactive before restore callbacks run so the shared
     // overlay renderer can repaint the launching layers immediately.
@@ -712,7 +706,7 @@ export const EventAnimator = {
       return;
     }
 
-    this.scaleId = `anim-${this.config.id.substring(0, 12)}`;
+    const scaleId = `anim-${this.config.id.substring(0, 12)}`;
 
     // Build timeData structure for TimeSlider
     const timeData = {};
@@ -723,38 +717,24 @@ export const EventAnimator = {
     const minTime = this.timestamps[0];
     const maxTime = this.timestamps[this.timestamps.length - 1];
 
-    // Add scale
-    const added = TimeSlider.addScale({
-      id: this.scaleId,
+    // Takes over the TimeSlider: adds the scale, activates it, applies the
+    // auto-calculated playback speed (~3s for the full range), and wires the
+    // change listener that forwards external time changes to setTime().
+    const session = takeOverTimeSliderScale(TimeSlider, {
+      scaleId,
       label: this.config.label,
       granularity: this.config.granularity,
-      useTimestamps: true,
       currentTime: minTime,
-      timeRange: {
-        min: minTime,
-        max: maxTime,
-        available: this.timestamps
-      },
-      timeData: timeData,
-      mapRenderer: 'event-animation'
+      timeRange: { min: minTime, max: maxTime, available: this.timestamps },
+      timeData,
+      mapRenderer: 'event-animation',
+      changeSource: 'event-animator',
+      onTimeChange: (time) => this.setTime(time)
     });
 
-    if (added) {
-      TimeSlider.setActiveScale(this.scaleId);
-
-      // Enter event animation mode with auto-calculated speed for ~3 second playback
-      if (TimeSlider.enterEventAnimation) {
-        TimeSlider.enterEventAnimation(minTime, maxTime);
-      }
-
-      // Listen for time changes
-      this._timeChangeHandler = (time, source) => {
-        if (source !== 'event-animator' && time > 3000) {
-          this.setTime(time);
-        }
-      };
-      TimeSlider.addChangeListener(this._timeChangeHandler);
-
+    if (session) {
+      this.scaleId = session.scaleId;
+      this._timeChangeHandler = session.timeChangeHandler;
       console.log(`EventAnimator: Added TimeSlider scale ${this.scaleId}`);
     }
   },
@@ -930,42 +910,7 @@ export const EventAnimator = {
    * @private
    */
   _addExitButton() {
-    // Remove existing container if any
-    const existing = document.getElementById('event-animator-controls');
-    if (existing) existing.remove();
-
-    // Create container at top center (matching track controls)
-    const container = document.createElement('div');
-    container.id = 'event-animator-controls';
-    container.style.cssText = `
-      position: fixed;
-      top: 80px;
-      left: 50%;
-      transform: translateX(-50%);
-      display: flex;
-      gap: 12px;
-      z-index: 1000;
-    `;
-
-    // Exit button (gray to match "Back to..." style)
-    const exitBtn = document.createElement('button');
-    exitBtn.id = 'event-animator-exit-btn';
-    exitBtn.textContent = 'Exit Animation';
-    exitBtn.style.cssText = `
-      padding: 10px 20px;
-      background: #6b7280;
-      color: white;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 14px;
-      font-weight: 500;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-    `;
-
-    exitBtn.addEventListener('click', () => this.stop());
-    container.appendChild(exitBtn);
-    document.body.appendChild(container);
+    addGenericExitButton('event-animator-exit-btn', 'Exit Animation', '#6b7280', () => this.stop());
   },
 
   /**
