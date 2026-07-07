@@ -6,7 +6,7 @@
  * vs Mercator distortion is negligible -- either a single scene raster or a
  * set of loc_id-keyed clips from a period bundle. Shared LUT/canvas/image-
  * source primitives live in models/raster-core.js (see
- * county-map-private/docs/future/display_unification_plan.md Task C).
+ * county-map-private/docs/archive/display_unification_2026-07.md Task C).
  */
 
 import {

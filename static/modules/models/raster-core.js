@@ -3,7 +3,7 @@
  * MapLibre image source rendering.
  *
  * Extracted from model-ocean-raster.js (the most evolved of the three parallel
- * raster renderers) per county-map-private/docs/future/display_unification_plan.md
+ * raster renderers) per county-map-private/docs/archive/display_unification_2026-07.md
  * Task C. Behavior here must match what model-ocean-raster.js did before the
  * extraction; this module holds NO source-name checks ('ocean', 'fairfax', ...)
  * -- callers pass config (bounds, warp on/off, alpha baked into the LUT or not).

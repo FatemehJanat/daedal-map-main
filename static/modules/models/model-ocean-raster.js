@@ -12,7 +12,7 @@
  * See county-map-private/docs/CLIMATE_DISPLAY.md (Ocean SST Grid Animation).
  *
  * Shared LUT/dequantize/Mercator-warp/image-source primitives live in
- * raster-core.js (county-map-private/docs/future/display_unification_plan.md
+ * raster-core.js (county-map-private/docs/archive/display_unification_2026-07.md
  * Task C). Multi-layer cadence selection (_activeLayersForTime and friends)
  * stays here -- it's ocean's multi-basin/multi-cadence merge behavior, not a
  * generic raster primitive.

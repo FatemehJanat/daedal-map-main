@@ -4,7 +4,7 @@
  * over time).
  *
  * Extracted from time-slider.js (county-map-private/docs/future/
- * display_unification_plan.md Task F) so TimeSlider becomes a pure time
+ * display_unification_2026-07.md Task F) so TimeSlider becomes a pure time
  * source + UI, matching every other display family (which render via a
  * model, not inline inside the slider -- see models/model-ocean-raster.js,
  * models/raster-core.js).

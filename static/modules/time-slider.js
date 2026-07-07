@@ -16,7 +16,7 @@ import { ChoroplethModel, setDependencies as setChoroplethModelDeps } from './mo
 
 // Dependencies (MapAdapter, ChoroplethManager) are forwarded straight to
 // ChoroplethModel -- TimeSlider itself no longer touches either directly
-// (see models/model-choropleth.js, display_unification_plan.md Task F).
+// (see models/model-choropleth.js, display_unification_2026-07.md Task F).
 export function setDependencies(deps) {
   setChoroplethModelDeps(deps);
 }

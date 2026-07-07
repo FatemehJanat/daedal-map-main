@@ -462,7 +462,7 @@ function buildCategoriesFromTree(overlayTree) {
       rasterBasinsByLane: {
         explore: ['OCEAN_WEEKLY_1DEG_20250701'],
         research: ['OCEAN_WEEKLY_1DEG_20250701'],
-        ops: ['OCEAN_DAILY_20250701']
+        ops: ['OCEAN_72H']
       },
       rasterCadence: 'weekly',
       rasterCadenceByLane: {
