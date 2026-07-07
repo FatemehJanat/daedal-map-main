@@ -19,6 +19,8 @@ import {
   dataCache,
   loadedRanges,
   loadedYears,
+  overlayLedger,
+  recordFullyLoadedRangeClaim,
   recordYearRangeCoverage,
   yearRangeCache
 } from './overlay-cache.js';
@@ -997,11 +999,15 @@ export const OverlayController = {
   },
 
   hasCompletedRangeForCurrentFilters(overlayId, endpoint = null) {
-    const ranges = Array.isArray(loadedRanges[overlayId]) ? loadedRanges[overlayId] : [];
-    if (!ranges.length) return false;
-    if (!endpoint) return ranges.some((range) => !range.loading);
+    // TASK L2: reads overlayLedger instead of the loadedRanges mirror.
+    // claimsFor() only ever returns held (recorded) claims -- in-flight
+    // claims live separately in the ledger -- so `claims.length > 0` is the
+    // ledger equivalent of the old `ranges.some((range) => !range.loading)`.
+    const claims = overlayLedger.claimsFor(overlayId);
+    if (!claims.length) return false;
+    if (!endpoint) return true;
     const signature = buildRangeRequestSignature(endpoint, overlayId);
-    return ranges.some((range) => !range.loading && (range.filterSignature || '') === signature);
+    return claims.some((claim) => claim.filters === signature);
   },
 
   _isOpsMode() {
@@ -3457,6 +3463,7 @@ export const OverlayController = {
     delete dataCache[overlayId];
     delete yearRangeCache[overlayId];
     delete loadedYears[overlayId];
+    overlayLedger.clearSource(overlayId);
     delete loadedRanges[overlayId];
 
     // Dispatch cache update for Loaded tab
@@ -4014,6 +4021,12 @@ export const OverlayController = {
         yearsFullyLoaded: true
       });
       recordYearRangeCoverage(overlayId, rangeMeta.start, rangeMeta.end);
+      // TASK L2: mirror onto the ledger with filters '' -- this entry never
+      // set filterSignature (falls back to '' in the old (range.filterSignature
+      // || '') checks), so recordFullyLoadedRangeClaim with '' reproduces
+      // that exact fallback, including the edge case where an endpoint's
+      // real signature is also '' (e.g. tsunamis' empty default params).
+      recordFullyLoadedRangeClaim(overlayId, rangeMeta.start, rangeMeta.end, '');
     }
 
     // Update cache size

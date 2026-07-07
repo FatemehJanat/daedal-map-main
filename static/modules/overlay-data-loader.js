@@ -4,6 +4,7 @@
 
 import {
   activeFilters,
+  buildEventRangeClaim,
   buildRangeUrl,
   buildRangeRequestSignature,
   calculateCacheSize,
@@ -12,6 +13,7 @@ import {
   loadedFilters,
   loadedRanges,
   loadedYears,
+  overlayLedger,
   recordYearRangeCoverage,
   VARIABLE_OVERLAY_MAP,
   yearRangeCache
@@ -177,6 +179,12 @@ export async function loadRangeData(overlayId, startMs, endMs, endpoint, signal 
 
   const rangeEntry = { start: startMs, end: endMs, loading: true, filterSignature };
   loadedRanges[overlayId].push(rangeEntry);
+  // TASK L2: markInFlight mirrors the loading:true entry above onto the
+  // ledger so isYearLoaded/getYearsCoveredByRanges/hasCompletedRange...
+  // (which now read overlayLedger, not this array) exclude this range while
+  // it is in flight, same as the old `if (range.loading) continue;` /
+  // `!range.loading` filters did.
+  const claimToken = overlayLedger.markInFlight(buildEventRangeClaim(overlayId, startMs, endMs, filterSignature));
 
   const url = buildRangeUrl(endpoint, startMs, endMs, overlayId);
   const startDate = new Date(startMs).toISOString().split('T')[0];
@@ -219,11 +227,13 @@ export async function loadRangeData(overlayId, startMs, endMs, endpoint, signal 
     console.log(`OverlayController: ${overlayId} total cached: ${dataCache[overlayId]?.features?.length || 0} features`);
 
     // Year-loadedness (for auto-fetch during playback and the Loaded tab) is
-    // now derived on read from loadedRanges -- see isYearLoaded and
-    // getLoadedYearsForOverlay in overlay-cache-ops.js. loadedRanges is the
-    // single source of truth; this range entry (marked non-loading above) is
-    // all that's needed for that derivation.
+    // derived on read from overlayLedger -- see isYearLoaded and
+    // getLoadedYearsForOverlay in overlay-cache-ops.js. resolveInFlight
+    // promotes the in-flight claim to held (recording exactly what was
+    // requested, since this fetch's actual response is not claim-shaped
+    // beyond features already merged above).
     recordYearRangeCoverage(overlayId, startMs, endMs);
+    overlayLedger.resolveInFlight(claimToken);
 
     const defaultParams = endpoint.params || {};
     const overrides = activeFilters[overlayId] || {};
@@ -261,6 +271,7 @@ export async function loadRangeData(overlayId, startMs, endMs, endpoint, signal 
   } catch (error) {
     const idx = loadedRanges[overlayId].indexOf(rangeEntry);
     if (idx >= 0) loadedRanges[overlayId].splice(idx, 1);
+    overlayLedger.dropInFlight(claimToken);
 
     if (error.name === 'AbortError') {
       console.log(`OverlayController: Range fetch aborted for ${overlayId}`);

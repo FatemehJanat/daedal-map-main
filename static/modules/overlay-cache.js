@@ -2,6 +2,90 @@
  * Shared overlay cache state and cache-related helpers.
  */
 
+import { createLedger, SEEDED_FILTERS } from './coverage-ledger.js';
+
+export { SEEDED_FILTERS };
+
+// Single coverage-ledger instance for the whole app (Task L2). Event overlay
+// coverage bookkeeping (overlay-cache-ops.js, overlay-data-loader.js,
+// overlay-controller.js) all read/write this same ledger so a claim recorded
+// by one is visible to the others. See "Task L2: retrofit event overlays
+// onto the ledger" in
+// county-map-private/docs/future/coverage_ledger_implementation.md.
+export const overlayLedger = createLedger();
+
+/**
+ * Build a range-shaped event claim: source=overlayId, metrics '*' (events
+ * have no per-metric fetch granularity), geoLevel null (source-native),
+ * scope 'all' (no region/loc_id scoping for events yet). filters is the
+ * real buildRangeRequestSignature() output for a genuine fetch, or a
+ * sentinel (SEEDED_FILTERS, or '' to mirror a pre-retrofit undefined
+ * filterSignature) for data merged in without a fetch signature.
+ * @param {string} overlayId
+ * @param {number} startMs
+ * @param {number} endMs
+ * @param {string} [filters]
+ * @returns {object} unnormalized claim (coverage-ledger normalizes on use)
+ */
+export function buildEventRangeClaim(overlayId, startMs, endMs, filters = '') {
+  return {
+    source: overlayId,
+    metrics: '*',
+    geoLevel: null,
+    scope: { kind: 'all' },
+    time: { kind: 'range', min: startMs, max: endMs },
+    filters
+  };
+}
+
+/**
+ * Build a years-shaped event claim covering every calendar year touched by
+ * [startMs, endMs] (inclusive of partial edge years). The ledger covers a
+ * 'years' claim's years unconditionally -- no six-month threshold -- which
+ * is what the legacy yearsFullyLoaded flag on seeded/order-ingested
+ * loadedRanges entries meant (data handed over already-complete for its
+ * span, unlike loadRangeData's real windowed fetches).
+ * @param {string} overlayId
+ * @param {number} startMs
+ * @param {number} endMs
+ * @param {string} filters
+ * @returns {object} unnormalized claim
+ */
+export function buildEventYearsClaim(overlayId, startMs, endMs, filters) {
+  const startYear = new Date(startMs).getUTCFullYear();
+  const endYear = new Date(endMs).getUTCFullYear();
+  const years = [];
+  for (let y = startYear; y <= endYear; y++) years.push(y);
+  return {
+    source: overlayId,
+    metrics: '*',
+    geoLevel: null,
+    scope: { kind: 'all' },
+    time: { kind: 'years', years },
+    filters
+  };
+}
+
+/**
+ * Record both claim shapes for event data handed over already-fetched-in-
+ * full for [startMs, endMs] (seedEventData, ingestOrderResult): a 'years'
+ * claim so isYearLoaded/getYearsCoveredByRanges (ledger.yearsCovered) treat
+ * every touched year as loaded unconditionally, and a 'range' claim so
+ * hasCompletedRangeForCurrentFilters / loadRangeData's covered-range dedup
+ * see the same interval+filter match a real fetch at that filters value
+ * would have produced (matters when filters === '' happens to equal an
+ * endpoint's actual signature, e.g. tsunamis' empty default params -- see
+ * the legacy fallback in ingestOrderResult).
+ * @param {string} overlayId
+ * @param {number} startMs
+ * @param {number} endMs
+ * @param {string} filters
+ */
+export function recordFullyLoadedRangeClaim(overlayId, startMs, endMs, filters) {
+  overlayLedger.record(buildEventYearsClaim(overlayId, startMs, endMs, filters));
+  overlayLedger.record(buildEventRangeClaim(overlayId, startMs, endMs, filters));
+}
+
 // Cache for loaded overlay data (full unfiltered datasets)
 export const dataCache = {};
 
@@ -12,9 +96,17 @@ export const dataCache = {};
 export const metricCache = {};
 
 // Track which time ranges have been loaded per overlay.
-// Single source of truth for "what's loaded" -- each entry is
-// {start, end, loading, filterSignature} (millisecond timestamps).
-// Year-coverage and year-range queries below are derived from this.
+// TASK L2: this is now a thin MIRROR, not the coverage source of truth --
+// coverage decisions (isYearLoaded, getYearsCoveredByRanges,
+// hasCompletedRangeForCurrentFilters) read overlayLedger instead (see
+// overlay-cache-ops.js / overlay-controller.js). loadedRanges is kept
+// because a few call sites still need the raw {start, end} numbers rather
+// than a coverage boolean: the live-mode delta catch-up read in
+// OverlayController.loadOverlay/refreshLiveOverlays (max(range.end) across
+// completed ranges) and reloadOverlay's preserved-ranges refetch list.
+// Each entry is {start, end, loading, filterSignature} (millisecond
+// timestamps); every writer of this mirror also writes a matching claim to
+// overlayLedger in the same call.
 export const loadedRanges = {};
 
 // Weather-grid year cache: per-overlay Set of years fetched.
@@ -164,9 +256,10 @@ export function calculateCacheSize() {
 }
 
 /**
- * UTC year boundaries in milliseconds, shared by loadRangeData's year-coverage
- * calc (overlay-data-loader.js) and the derived coverage query in
- * overlay-cache-ops.js so both agree on what "year N" spans.
+ * UTC year boundaries in milliseconds. Exported utility for callers that
+ * need to agree on what "year N" spans; the ledger (coverage-ledger.js)
+ * has its own equivalent internal yearBounds() as of Task L2, since it must
+ * stay a zero-import pure module.
  * @param {number} year
  * @returns {{start: number, end: number}}
  */

@@ -2,12 +2,14 @@ import {
   activeFilters,
   calculateCacheSize,
   dataCache,
-  getUtcYearRangeMs,
   loadedFilters,
   loadedRanges,
   loadedYears,
   metricCache,
+  overlayLedger,
+  recordFullyLoadedRangeClaim,
   recordYearRangeCoverage,
+  SEEDED_FILTERS,
   yearRangeCache
 } from './overlay-cache.js';
 import { GeometryModel } from './models/model-geometry.js';
@@ -22,8 +24,9 @@ import { mergeTemporalMetricPayload } from './temporal-payload.js';
 // produce means the seeded range only ever satisfies the year-coverage
 // check below (isYearLoaded/getYearsCoveredByRanges, which ignores
 // filterSignature), not the exact-signature checks in loadRangeData /
-// hasCompletedRangeForCurrentFilters.
-const SEEDED_RANGE_FILTER_SIGNATURE = '__seeded__';
+// hasCompletedRangeForCurrentFilters. Re-exported from coverage-ledger.js
+// (SEEDED_FILTERS) as of Task L2 -- same sentinel value, single definition.
+const SEEDED_RANGE_FILTER_SIGNATURE = SEEDED_FILTERS;
 
 function getGeometryFeatureKey(feature) {
   const props = feature?.properties || {};
@@ -53,34 +56,14 @@ export function getCachedData(overlayId) {
  * @returns {Set<number>}
  */
 function getYearsCoveredByRanges(overlayId) {
-  const ranges = loadedRanges[overlayId] || [];
-  const years = new Set();
-  const SIX_MONTHS_MS = 180 * 24 * 60 * 60 * 1000;
-
-  for (const range of ranges) {
-    if (range.loading) continue;
-    const startYear = new Date(range.start).getUTCFullYear();
-    const endYear = new Date(range.end).getUTCFullYear();
-
-    for (let y = startYear; y <= endYear; y++) {
-      if (range.yearsFullyLoaded) {
-        years.add(y);
-        continue;
-      }
-
-      const { start: yearStartMs, end: yearEndMs } = getUtcYearRangeMs(y);
-      const loadedStart = Math.max(range.start, yearStartMs);
-      const loadedEnd = Math.min(range.end, yearEndMs);
-      const loadedDuration = loadedEnd - loadedStart;
-      const isFullYearRequest = range.start <= yearStartMs && range.end >= yearEndMs;
-
-      if (isFullYearRequest || loadedDuration >= SIX_MONTHS_MS) {
-        years.add(y);
-      }
-    }
-  }
-
-  return years;
+  // TASK L2: derived from overlayLedger instead of the loadedRanges mirror.
+  // 'range'-kind claims (real loadRangeData fetches) use the 'six-month'
+  // policy (>=180 days of a year, or the full year); 'years'-kind claims
+  // (seedEventData/ingestOrderResult, via recordFullyLoadedRangeClaim) cover
+  // their years unconditionally -- the ledger equivalent of the legacy
+  // yearsFullyLoaded flag. In-flight claims are excluded by default, same as
+  // the old `if (range.loading) continue;`.
+  return overlayLedger.yearsCovered(overlayId, { yearCoverageRule: 'six-month' });
 }
 
 /**
@@ -141,6 +124,12 @@ export function seedEventData(overlayId, geojson, timeRangeMs = null) {
       // apply the 6-month partial-year threshold used for real API fetches.
       yearsFullyLoaded: true
     });
+    // TASK L2: mirror this loadedRanges entry onto the ledger -- a 'years'
+    // claim (unconditional per-year coverage, matching yearsFullyLoaded
+    // above) plus a 'range' claim (so hasCompletedRangeForCurrentFilters /
+    // loadRangeData's covered-range dedup see the same interval+filter
+    // match). See recordFullyLoadedRangeClaim doc comment for why both.
+    recordFullyLoadedRangeClaim(overlayId, minMs, maxMs, SEEDED_FILTERS);
   }
   return newFeatures.length;
 }
@@ -153,6 +142,7 @@ export function clearAllOverlayCaches() {
     delete loadedYears[key];
   }
   for (const key in loadedRanges) {
+    overlayLedger.clearSource(key);
     delete loadedRanges[key];
   }
   for (const key in yearRangeCache) {
@@ -166,6 +156,7 @@ export function clearAllOverlayCaches() {
 export function clearOverlayData(overlayId) {
   delete dataCache[overlayId];
   delete loadedYears[overlayId];
+  overlayLedger.clearSource(overlayId);
   delete loadedRanges[overlayId];
   delete yearRangeCache[overlayId];
 }
