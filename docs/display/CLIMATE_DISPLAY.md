@@ -226,9 +226,12 @@ per-basin" below). Current state:
   `overlay-controller.js` (`model === 'ocean-raster'` dispatch + time-change +
   load/clear) and `overlay-selector.js` (`Ocean Temp Grid` overlay,
   `rasterBasins: ['OCEAN']`). Added to Explore tray in `explore/default-overlays.js`.
-- Play animation: works via the shared slider path -- the key was registering
-  `granularity: 'monthly'` + the real monthly timestamp ARRAY as `available`
-  (not `granularity:'timestamp'` + `{min,max}`). See yearly_animation_fix.md.
+- Play animation: works via the shared slider path -- register the real
+  timestamp ARRAY as `available` plus the cadence as `granularity`. Since the
+  2026-07 playback unification the slider advances continuous time and the
+  model snaps to frames itself (`_frameIndexForTime`), so there is no
+  discrete/indexed playback mode to opt into. See
+  [TIME_ANIMATION.md](TIME_ANIMATION.md).
 
 **Global vs per-basin (why we switched the whole-ocean view to global):**
 
@@ -317,6 +320,29 @@ untouched. Then the **full data-source update**: added the 10 enriched metrics
 metrics, and published `data.parquet` + `metadata.json` + `reference.json` +
 `water_bodies.parquet` to R2. Live on next redeploy (clears the in-process metadata
 cache); api_catalog discovery refresh lags on its normal cadence.
+
+### Update 2026-07-06: two-tier timeline (recent weekly + monthly history)
+
+ocean_sst now ships two linked scenes of the same pack for the Explore grid
+view, and they play as ONE continuous timeline:
+
+- `OCEAN_WEEKLY_1DEG_20250701` -- weekly-cadence 1deg bundle from 2025-07-01,
+  preloaded when the overlay is toggled on (default view = latest year).
+- `OCEAN` -- the full 1982-2026 monthly 2deg archive, fetched on demand the
+  first time the playhead moves before the loaded range (chat "load back to
+  1982", slider drag, or playback).
+
+Contract (see [TIME_ANIMATION.md](TIME_ANIMATION.md), "Multi-cadence
+datasets"): the bundles MERGE into one `OceanRasterModel` instance whose
+timeline is the sorted union of both timestamp sets; the renderer shows the
+finest-cadence bundle covering the playhead (`_activeLayersForTime`), so the
+animation is monthly through the archive and densifies to weekly frames in
+the recent window with no visible tier switch. Config lives in
+`overlay-selector.js` (`rasterBasins*` = recent, `rasterHistoryBasins*` =
+history); the on-demand fetch is the ocean-raster branch of
+`onTimeChangeTimestamp` in `overlay-controller.js`. Do not regress this to a
+bundle swap -- swapping tiers is what made "load back to 1982" freeze the
+animation on one frame.
 
 ### Per-basin zoom tier (ONGOING)
 
