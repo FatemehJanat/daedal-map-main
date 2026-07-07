@@ -83,11 +83,12 @@ def _account_ops_feeds(auth_user: dict | None) -> list[str]:
 
 def _public_default_ops_feeds() -> list[str]:
     return _supported_ops_feeds([
-        "currency",
         "earthquakes",
         "hurricanes",
         "noaa_aurora",
+        "noaa_ndbc",
         "noaa_swpc",
+        "ocean_sst",
         "tsunamis",
         "usa_nws_alerts",
         "volcanoes",
@@ -158,10 +159,14 @@ def load_or_create_ops_watch(*, cache, session_id: str, body: dict, allowed_feed
     requested_watch_id = str(body.get("watch_id") or "").strip() or None
     watch_context = body.get("watch_context") if isinstance(body.get("watch_context"), dict) else {}
     requested_feeds = _supported_ops_feeds(watch_context.get("sources") or [])
+    reset_to_allowed = bool(watch_context.get("reset_to_allowed"))
     existing = _watch_from_cache(cache, requested_watch_id)
     if isinstance(existing, dict):
         if requested_feeds:
             existing["active_feeds"] = [feed for feed in requested_feeds if feed in allowed_feeds]
+        elif reset_to_allowed:
+            existing["active_feeds"] = list(allowed_feeds)
+        if requested_feeds or reset_to_allowed:
             label = str(watch_context.get("label") or watch_context.get("focus") or "").strip()
             if label:
                 existing["label"] = label

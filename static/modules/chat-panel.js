@@ -2071,7 +2071,8 @@ export const ChatManager = {
       sessionId: this.getSessionIdForMode('ops'),
       watch_id: this.opsWatchId || this.getSessionIdForMode('ops'),
       watch_context: {
-        label: 'Ops watch'
+        label: 'Ops watch',
+        reset_to_allowed: loadWatch === true
       }
     });
     this.opsWatchId = payload?.watch_id || this.opsWatchId;

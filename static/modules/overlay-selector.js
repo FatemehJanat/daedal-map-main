@@ -18,7 +18,8 @@ const DATA_TYPE_TO_MODEL = {
   'events': 'point-radius',
   'metrics': 'choropleth',
   'gridded': 'weather-grid',
-  'geometry': 'polygon'
+  'geometry': 'polygon',
+  'tract_status': 'choropleth'
 };
 
 // Icon mapping for overlay types
@@ -53,7 +54,8 @@ const OVERLAY_ICONS = {
 // Special model overrides (some overlays need specific models)
 const MODEL_OVERRIDES = {
   'hurricanes': 'track',
-  'drought': 'polygon'
+  'drought': 'polygon',
+  'distributed_manufacturing': 'point-radius'
 };
 
 const OPS_FEED_TO_OVERLAY_IDS = {
@@ -316,13 +318,26 @@ function getVisibleTrayOverlayIdsForMode(mode = getCurrentOverlayLaneMode()) {
   return visible;
 }
 
+function getCategoryDisplayLabel(category) {
+  if (!category) return '';
+  const laneMode = getCurrentOverlayLaneMode();
+  if (laneMode === 'ops') {
+    if (category.id === 'global_indicators') return 'Global';
+    if (category.id === 'us_context') return 'USA';
+  }
+  if (category.id === 'global_indicators') return 'Global Indicators';
+  if (category.id === 'us_context') return 'US Context';
+  return category.label || '';
+}
+
 /**
  * Build CATEGORIES from overlay_tree fetched from API.
  * @param {Object} overlayTree - The overlay_tree from catalog
  */
 function buildCategoriesFromTree(overlayTree) {
   const categories = [];
-  const metricOverlays = [];
+  const globalIndicatorOverlays = [];
+  const usContextOverlays = [];
 
   for (const [categoryId, categoryData] of Object.entries(overlayTree)) {
     const icon = OVERLAY_ICONS[categoryId] || categoryId[0].toUpperCase();
@@ -345,7 +360,7 @@ function buildCategoriesFromTree(overlayTree) {
           allChildrenAreChoropleths = false;
         }
 
-        overlays.push({
+        const overlay = {
           id: overlayId,
           label: overlayData.label || overlayId.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
           description: `${overlayData.sources?.length || 0} source(s)`,
@@ -357,11 +372,18 @@ function buildCategoriesFromTree(overlayTree) {
           sources: overlayData.sources || [],
           sourceIds: deriveOverlaySourceIds(overlayData.sources),
           packIds: deriveOverlayPackIds(overlayId, overlayData.sources)
-        });
+        };
+
+        if (overlayId === 'risk' || (categoryId === 'climate' && overlayId.startsWith('fairfax_'))) {
+          usContextOverlays.push(overlay);
+          continue;
+        }
+
+        overlays.push(overlay);
       }
 
-      if (allChildrenAreChoropleths && overlays.length && categoryId !== 'climate') {
-        metricOverlays.push(...overlays);
+      if ((categoryId === 'global_indicators' || allChildrenAreChoropleths) && overlays.length && categoryId !== 'climate') {
+        globalIndicatorOverlays.push(...overlays);
         continue;
       }
       if (!overlays.length) {
@@ -400,7 +422,7 @@ function buildCategoriesFromTree(overlayTree) {
       };
 
       if (model === 'choropleth') {
-        metricOverlays.push(overlay);
+        globalIndicatorOverlays.push(overlay);
         continue;
       }
 
@@ -480,10 +502,10 @@ function buildCategoriesFromTree(overlayTree) {
     });
   }
 
-  // Metrics overlays - the shared choropleth (global.csv country fills, etc.).
+  // Global indicator overlays - the shared choropleth (global.csv country fills, etc.).
   // The toggle controls choropleth visibility, so dense global layers like the
   // currency choropleth can be hidden to see point/area feeds underneath.
-  metricOverlays.push({
+  globalIndicatorOverlays.push({
     id: 'currency',
     label: 'Currency',
     description: 'Global currency choropleth',
@@ -494,27 +516,28 @@ function buildCategoriesFromTree(overlayTree) {
     hasYearFilter: false
   });
 
-  if (metricOverlays.length) {
+  if (globalIndicatorOverlays.length) {
     categories.push({
-      id: 'metrics',
-      label: 'Metrics',
-      icon: 'M',
+      id: 'global_indicators',
+      label: 'Global Indicators',
+      icon: 'G',
       isCategory: true,
       expanded: false,
-      overlays: metricOverlays
+      overlays: globalIndicatorOverlays
     });
   }
 
-  // USA overlays - operational overlays tied to US-only alert/coverage areas.
+  // US context overlays - US-only risk, alert, and local coverage surfaces.
   // NOTE: the announcement ticker is intentionally NOT here - it is a display
   // surface (chrome) that aggregates many feeds, not a single-feed overlay.
   categories.push({
-    id: 'usa',
-    label: 'USA',
+    id: 'us_context',
+    label: 'US Context',
     icon: 'U',
     isCategory: true,
     expanded: false,
     overlays: [
+      ...usContextOverlays,
       { id: 'nws_alerts', label: 'US Weather Alerts', description: 'Live NWS warnings', default: false, locked: false, model: 'nws_alerts', icon: '!', hasYearFilter: false, live: true }
     ]
   });
@@ -764,9 +787,9 @@ export const OverlaySelector = {
       // Fallback to minimal hardcoded categories
       ALL_CATEGORIES = [
         {
-          id: 'metrics',
-          label: 'Metrics',
-          icon: 'M',
+          id: 'global_indicators',
+          label: 'Global Indicators',
+          icon: 'G',
           isCategory: true,
           expanded: false,
           alwaysVisible: true,
@@ -887,7 +910,7 @@ export const OverlaySelector = {
              ${allActive ? 'checked' : ''}
              ${someActive ? 'data-indeterminate="true"' : ''}>
       <span class="overlay-icon">${category.icon}</span>
-      <span class="overlay-label">${category.label}</span>
+      <span class="overlay-label">${getCategoryDisplayLabel(category)}</span>
       <span class="category-toggle">${this.categoryExpanded[category.id] ? '-' : '+'}</span>
     `;
     wrapper.appendChild(header);

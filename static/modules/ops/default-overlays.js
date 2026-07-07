@@ -7,7 +7,7 @@ const OPS_PUBLIC_DEFAULT_OVERLAY_IDS = [
   'ocean-sst-grid',
   'buoys',
   'aurora',
-  'currency'
+  'nws_alerts'
 ];
 
 export function getOpsPublicDefaultOverlayIds() {
