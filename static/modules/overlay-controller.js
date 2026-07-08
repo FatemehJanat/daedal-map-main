@@ -22,6 +22,7 @@ import {
   overlayLedger,
   recordFullyLoadedRangeClaim,
   recordYearRangeCoverage,
+  resolveSourceVersion,
   yearRangeCache
 } from './overlay-cache.js';
 import {
@@ -3928,6 +3929,21 @@ export const OverlayController = {
       const endpoint = OVERLAY_ENDPOINTS[overlayId];
       if (!endpoint || endpoint.isWeatherGrid) continue;
 
+      // TASK L5: if a current content version is resolvable for this
+      // overlay, invalidate any held claims cut from a different version
+      // before the refresh logic below runs -- dropped claims fall out of
+      // loadedRanges' ledger-derived coverage reads (isYearLoaded /
+      // getYearsCoveredByRanges) and the normal diff/fetch path below
+      // refetches and re-stamps them at the current version. Guarded to
+      // non-null: resolveSourceVersion returns null for every overlay today
+      // (see its doc comment in overlay-cache.js), so this is inert until a
+      // real per-source version signal exists to populate the registry --
+      // null versions must never auto-invalidate (ledger contract).
+      const currentVersion = resolveSourceVersion(overlayId);
+      if (currentVersion) {
+        overlayLedger.invalidateVersion(overlayId, currentVersion);
+      }
+
       // Skip if no ranges loaded yet (overlay hasn't done initial load)
       const ranges = loadedRanges[overlayId];
       if (!ranges || ranges.length === 0) continue;
@@ -4026,7 +4042,10 @@ export const OverlayController = {
       // || '') checks), so recordFullyLoadedRangeClaim with '' reproduces
       // that exact fallback, including the edge case where an endpoint's
       // real signature is also '' (e.g. tsunamis' empty default params).
-      recordFullyLoadedRangeClaim(overlayId, rangeMeta.start, rangeMeta.end, '');
+      // TASK L5: stamp whatever version is currently resolvable for this
+      // overlay (null today -- see resolveSourceVersion doc comment in
+      // overlay-cache.js; confirmed_order responses carry no version field).
+      recordFullyLoadedRangeClaim(overlayId, rangeMeta.start, rangeMeta.end, '', resolveSourceVersion(overlayId));
     }
 
     // Update cache size

@@ -14,27 +14,76 @@ export { SEEDED_FILTERS };
 // county-map-private/docs/future/coverage_ledger_implementation.md.
 export const overlayLedger = createLedger();
 
+// Task L5 (version stamping + invalidation): client-side registry of the
+// content version a source was last fetched/observed at. Populated by
+// setSourceVersion() whenever a loader learns a real version signal (catalog
+// watermark, browser_artifact sha256, clip-bundle ETag, etc.); read back
+// synchronously by resolveSourceVersion() so claim builders and the live-
+// refresh invalidation hook never need to fetch. As of this task NOTHING
+// populates this registry yet -- discovery (see "Task L5" in
+// county-map-private/docs/future/coverage_ledger_implementation.md) found no
+// fetch site in reach today (event range responses, confirmed_order
+// responses, the frontend's /api/catalog/packs payload) that carries a
+// per-source version/watermark/etag field; the real version primitives that
+// exist server-side (live_watermark_utc, browser_artifact.sha256) are only
+// surfaced through the external API pack-detail hydration path, which these
+// call sites never reach. resolveSourceVersion() therefore returns null
+// everywhere today (spec-legal: null version never auto-invalidates) -- this
+// is the seam a future signal plugs into without another ledger change.
+const sourceVersions = new Map();
+
+/**
+ * Record the current content version for a source (Task L5). Pass null/
+ * undefined/'' to clear a stale entry.
+ * @param {string} sourceId
+ * @param {string|null} [version]
+ */
+export function setSourceVersion(sourceId, version) {
+  if (!sourceId) return;
+  if (version === null || version === undefined || version === '') {
+    sourceVersions.delete(sourceId);
+    return;
+  }
+  sourceVersions.set(sourceId, String(version));
+}
+
+/**
+ * Best-available content version for a source, read synchronously from
+ * already-loaded state (never fetches). Null when no signal is known (see
+ * sourceVersions comment above for the current state of the world).
+ * @param {string} overlayIdOrSourceId
+ * @returns {string|null}
+ */
+export function resolveSourceVersion(overlayIdOrSourceId) {
+  if (!overlayIdOrSourceId) return null;
+  return sourceVersions.get(overlayIdOrSourceId) || null;
+}
+
 /**
  * Build a range-shaped event claim: source=overlayId, metrics '*' (events
  * have no per-metric fetch granularity), geoLevel null (source-native),
  * scope 'all' (no region/loc_id scoping for events yet). filters is the
  * real buildRangeRequestSignature() output for a genuine fetch, or a
  * sentinel (SEEDED_FILTERS, or '' to mirror a pre-retrofit undefined
- * filterSignature) for data merged in without a fetch signature.
+ * filterSignature) for data merged in without a fetch signature. version is
+ * the content version this claim was cut from (Task L5), or null when none
+ * is known -- see resolveSourceVersion.
  * @param {string} overlayId
  * @param {number} startMs
  * @param {number} endMs
  * @param {string} [filters]
+ * @param {string|null} [version]
  * @returns {object} unnormalized claim (coverage-ledger normalizes on use)
  */
-export function buildEventRangeClaim(overlayId, startMs, endMs, filters = '') {
+export function buildEventRangeClaim(overlayId, startMs, endMs, filters = '', version = null) {
   return {
     source: overlayId,
     metrics: '*',
     geoLevel: null,
     scope: { kind: 'all' },
     time: { kind: 'range', min: startMs, max: endMs },
-    filters
+    filters,
+    version
   };
 }
 
@@ -49,9 +98,10 @@ export function buildEventRangeClaim(overlayId, startMs, endMs, filters = '') {
  * @param {number} startMs
  * @param {number} endMs
  * @param {string} filters
+ * @param {string|null} [version] content version this claim was cut from (Task L5)
  * @returns {object} unnormalized claim
  */
-export function buildEventYearsClaim(overlayId, startMs, endMs, filters) {
+export function buildEventYearsClaim(overlayId, startMs, endMs, filters, version = null) {
   const startYear = new Date(startMs).getUTCFullYear();
   const endYear = new Date(endMs).getUTCFullYear();
   const years = [];
@@ -62,7 +112,8 @@ export function buildEventYearsClaim(overlayId, startMs, endMs, filters) {
     geoLevel: null,
     scope: { kind: 'all' },
     time: { kind: 'years', years },
-    filters
+    filters,
+    version
   };
 }
 
@@ -80,10 +131,11 @@ export function buildEventYearsClaim(overlayId, startMs, endMs, filters) {
  * @param {number} startMs
  * @param {number} endMs
  * @param {string} filters
+ * @param {string|null} [version] content version this claim was cut from (Task L5)
  */
-export function recordFullyLoadedRangeClaim(overlayId, startMs, endMs, filters) {
-  overlayLedger.record(buildEventYearsClaim(overlayId, startMs, endMs, filters));
-  overlayLedger.record(buildEventRangeClaim(overlayId, startMs, endMs, filters));
+export function recordFullyLoadedRangeClaim(overlayId, startMs, endMs, filters, version = null) {
+  overlayLedger.record(buildEventYearsClaim(overlayId, startMs, endMs, filters, version));
+  overlayLedger.record(buildEventRangeClaim(overlayId, startMs, endMs, filters, version));
 }
 
 // Cache for loaded overlay data (full unfiltered datasets)
@@ -121,18 +173,21 @@ export const NATIVE_LEVEL_KEY = '__native__';
  * metric orders have no predicate-filter axis today (unlike event overlays'
  * magnitude/category filters); this will need a real signature if/when
  * metric filtering is added.
+ * version is the content version this claim was cut from (Task L5), or null
+ * when none is known -- see resolveSourceVersion.
  * @param {string} sourceId
- * @param {{geoLevel?: string|null, metrics?: string[]|null, scope?: object|null, time?: object|null}} parts
+ * @param {{geoLevel?: string|null, metrics?: string[]|null, scope?: object|null, time?: object|null, version?: string|null}} parts
  * @returns {object} unnormalized claim
  */
-export function buildMetricClaim(sourceId, { geoLevel = null, metrics = null, scope = null, time = null } = {}) {
+export function buildMetricClaim(sourceId, { geoLevel = null, metrics = null, scope = null, time = null, version = null } = {}) {
   return {
     source: sourceId,
     metrics: Array.isArray(metrics) && metrics.length ? metrics : '*',
     geoLevel: geoLevel || null,
     scope: scope || { kind: 'all' },
     time: time || { kind: 'all' },
-    filters: ''
+    filters: '',
+    version
   };
 }
 

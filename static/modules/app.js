@@ -32,7 +32,7 @@ import { setDependencies as setSceneRasterDeps } from './scene-raster-model.js';
 import { loadPublicPackCatalog } from './shared/catalog-cache.js';
 import { buildShareStateUrl, getInitialLane, normalizeBootUrl, onRouteChange, parseRouteIntent, setLaneTitle } from './routing/app-route-state.js';
 import { getTemporalMetricPayload, hasTemporalMetricPayload, mergeTemporalMetricPayload } from './temporal-payload.js';
-import { buildMetricClaim, metricTimeClaimFromRange, overlayLedger } from './overlay-cache.js';
+import { buildMetricClaim, metricTimeClaimFromRange, overlayLedger, resolveSourceVersion } from './overlay-cache.js';
 import { resolveOverlayIdForOrderResult } from './overlay-default-loads.js';
 import { MetricDisplayRegistry } from './metric-display-registry.js';
 
@@ -551,7 +551,13 @@ export const App = {
       geoLevel,
       metrics,
       scope: levelScope,
-      time: currentTemporal ? metricTimeClaimFromRange(currentTemporal.timeRange) : { kind: 'all' }
+      time: currentTemporal ? metricTimeClaimFromRange(currentTemporal.timeRange) : { kind: 'all' },
+      // TASK L5: stamp whatever version is currently resolvable for this
+      // source (null today -- see resolveSourceVersion doc comment in
+      // overlay-cache.js). Kept consistent with the real claim recordMetric
+      // IngestClaim writes on ingest, in case this in-flight claim is ever
+      // promoted to held with no actualClaim override.
+      version: resolveSourceVersion(context.sourceId)
     });
 
     if (overlayLedger.diff(needClaim).length === 0) {

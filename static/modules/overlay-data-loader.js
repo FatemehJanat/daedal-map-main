@@ -15,6 +15,7 @@ import {
   loadedYears,
   overlayLedger,
   recordYearRangeCoverage,
+  resolveSourceVersion,
   VARIABLE_OVERLAY_MAP,
   yearRangeCache
 } from './overlay-cache.js';
@@ -184,7 +185,14 @@ export async function loadRangeData(overlayId, startMs, endMs, endpoint, signal 
   // (which now read overlayLedger, not this array) exclude this range while
   // it is in flight, same as the old `if (range.loading) continue;` /
   // `!range.loading` filters did.
-  const claimToken = overlayLedger.markInFlight(buildEventRangeClaim(overlayId, startMs, endMs, filterSignature));
+  // TASK L5: stamp whatever version is currently resolvable for this
+  // overlay (null today -- see resolveSourceVersion doc comment in
+  // overlay-cache.js; the range-fetch response itself carries no version
+  // field). resolveInFlight below has no actualClaim, so this is the exact
+  // claim that gets promoted to held.
+  const claimToken = overlayLedger.markInFlight(
+    buildEventRangeClaim(overlayId, startMs, endMs, filterSignature, resolveSourceVersion(overlayId))
+  );
 
   const url = buildRangeUrl(endpoint, startMs, endMs, overlayId);
   const startDate = new Date(startMs).toISOString().split('T')[0];

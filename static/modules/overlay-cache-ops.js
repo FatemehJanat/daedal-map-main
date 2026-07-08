@@ -14,6 +14,7 @@ import {
   overlayLedger,
   recordFullyLoadedRangeClaim,
   recordYearRangeCoverage,
+  resolveSourceVersion,
   SEEDED_FILTERS,
   yearRangeCache
 } from './overlay-cache.js';
@@ -134,7 +135,9 @@ export function seedEventData(overlayId, geojson, timeRangeMs = null) {
     // above) plus a 'range' claim (so hasCompletedRangeForCurrentFilters /
     // loadRangeData's covered-range dedup see the same interval+filter
     // match). See recordFullyLoadedRangeClaim doc comment for why both.
-    recordFullyLoadedRangeClaim(overlayId, minMs, maxMs, SEEDED_FILTERS);
+    // TASK L5: stamp whatever version is currently resolvable for this
+    // overlay (null today -- see resolveSourceVersion doc comment).
+    recordFullyLoadedRangeClaim(overlayId, minMs, maxMs, SEEDED_FILTERS, resolveSourceVersion(overlayId));
   }
   return newFeatures.length;
 }
@@ -349,7 +352,11 @@ function recordMetricIngestClaim(sourceId, geojson, timeRange, meta = {}) {
     geoLevel: meta.geoLevel || null,
     metrics: meta.metrics || null,
     scope: metricScopeFromRegionOrLocIds(meta.region || null, geojson),
-    time: metricTimeClaimFromRange(timeRange)
+    time: metricTimeClaimFromRange(timeRange),
+    // TASK L5: stamp whatever version is currently resolvable for this
+    // source (null today -- see resolveSourceVersion doc comment in
+    // overlay-cache.js; confirmed_order responses carry no version field).
+    version: resolveSourceVersion(sourceId)
   });
   overlayLedger.record(claim);
 }
