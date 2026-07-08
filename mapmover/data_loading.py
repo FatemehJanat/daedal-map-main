@@ -388,6 +388,25 @@ def _public_browser_artifact_metadata(raw_value: dict | None) -> dict | None:
     return sanitized
 
 
+def source_data_version(metadata: dict | None) -> str | None:
+    """
+    Best-available per-source content version for the app-facing/frontend
+    payloads (Task L5 activation). Value is source metadata's
+    live_watermark_utc if present, else last_updated, else None (omit).
+    Callers must already hold the metadata dict (no fresh load here) --
+    this is a pure lookup, safe to call in loops.
+    """
+    if not isinstance(metadata, dict) or not metadata:
+        return None
+    live_watermark = metadata.get("live_watermark_utc")
+    if live_watermark:
+        return str(live_watermark)
+    last_updated = metadata.get("last_updated")
+    if last_updated:
+        return str(last_updated)
+    return None
+
+
 def _hydrate_api_pack_detail_from_source_metadata(payload: dict | None) -> dict | None:
     """
     Refresh pack-detail freshness fields from source metadata.

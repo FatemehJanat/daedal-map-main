@@ -55,6 +55,10 @@ def _extract_overlay_label(source: dict, leaf_key: str) -> str:
 
 
 def _build_overlay_tree_for_sources(sources: list[dict]) -> dict:
+    # Local import to avoid a circular import at module load time
+    # (data_loading imports build_active_catalog from this module).
+    from .data_loading import load_source_metadata, source_data_version
+
     tree: dict = {}
 
     for source in sources or []:
@@ -83,15 +87,24 @@ def _build_overlay_tree_for_sources(sources: list[dict]) -> dict:
                 "sources": [],
             },
         )
-        leaf["sources"].append({
-            "source_id": source.get("source_id"),
+        source_id = source.get("source_id")
+        # load_source_metadata is memoized (_metadata_cache), so this is a
+        # cheap cache hit after first load -- not a fresh per-request read
+        # (Task L5 activation guard: no new hot-loop metadata loads).
+        metadata = load_source_metadata(source_id) if source_id else None
+        entry = {
+            "source_id": source_id,
             "pack_id": source.get("pack_id"),
             "scope": source.get("scope"),
             "data_type": source.get("data_type"),
             "default_load": source.get("default_load"),
             "default_question": source.get("default_question"),
             "default_response": source.get("default_response"),
-        })
+        }
+        version = source_data_version(metadata)
+        if version:
+            entry["data_version"] = version
+        leaf["sources"].append(entry)
 
     return tree
 

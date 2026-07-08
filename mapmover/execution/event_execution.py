@@ -7,6 +7,7 @@ from mapmover.runtime.filter_primitives import (
     partition_region_filter_codes,
     resolve_exact_id_filter_field,
 )
+from mapmover.data_loading import source_data_version
 
 
 def _format_event_timestamp_utc(value) -> str:
@@ -326,6 +327,9 @@ def _build_footprint_geometry_response(
         "name": metadata.get("source_name", source_id),
         "url": metadata.get("source_url", ""),
     }]
+    data_version = source_data_version(metadata)
+    if data_version:
+        source_info[0]["data_version"] = data_version
     return {
         "type": "data",
         "data_type": "geometry",
@@ -674,6 +678,9 @@ def execute_event_order_impl(
         "name": metadata.get("source_name", source_id),
         "url": metadata.get("source_url", ""),
     }]
+    data_version = source_data_version(metadata)
+    if data_version:
+        source_info[0]["data_version"] = data_version
 
     response = {
         "type": "events",

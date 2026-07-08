@@ -12,6 +12,7 @@ import { getCurrentProfile } from './auth.js';
 import { getExploreDefaultOverlayIds } from './explore/default-overlays.js';
 import { getResearchDefaultOverlayIds } from './research/default-overlays.js';
 import { getOpsDefaultOverlayIds, getOpsPublicDefaultOverlayIds } from './ops/default-overlays.js';
+import { setSourceVersion } from './overlay-cache.js';
 
 // Model mapping based on data_type
 const DATA_TYPE_TO_MODEL = {
@@ -612,6 +613,40 @@ function getCurrentOverlayLaneMode() {
   return 'explore';
 }
 
+/**
+ * Register per-source content versions (Task L5 activation) from the
+ * overlay tree's per-source `data_version` field, so the coverage ledger's
+ * invalidateVersion hook has a real signal instead of always-null. Registers
+ * under BOTH keys the ledger is queried by: the leaf/overlay id (event
+ * claims key by overlayId -- see buildEventRangeClaim call sites) and each
+ * member source_id (metric claims key by sourceId -- see buildMetricClaim
+ * call sites). Walks nested category children recursively.
+ * @param {object} overlayTree
+ */
+function registerOverlayTreeVersions(overlayTree) {
+  for (const [key, node] of Object.entries(overlayTree || {})) {
+    if (!node || typeof node !== 'object') continue;
+    if (node.children) {
+      registerOverlayTreeVersions(node.children);
+      continue;
+    }
+    if (Array.isArray(node.sources)) {
+      let leafVersion = null;
+      for (const source of node.sources) {
+        const version = source && source.data_version;
+        if (!version) continue;
+        setSourceVersion(source.source_id, version);
+        if (!leafVersion || String(version) > String(leafVersion)) {
+          leafVersion = version;
+        }
+      }
+      if (leafVersion) {
+        setSourceVersion(key, leafVersion);
+      }
+    }
+  }
+}
+
 export function applyOverlayCatalogResponse(response = {}) {
   const overlayTree = response.overlay_tree || {};
   PACK_DEFAULTS = response.pack_defaults || {};
@@ -620,6 +655,7 @@ export function applyOverlayCatalogResponse(response = {}) {
   CATEGORIES = filterCategoriesForCurrentMode(ALL_CATEGORIES);
   ALL_OVERLAYS = getAllOverlaysFromCategories(ALL_CATEGORIES);
   VISIBLE_OVERLAYS = getAllOverlaysFromCategories(CATEGORIES);
+  registerOverlayTreeVersions(overlayTree);
 }
 
 export function getAllowedOpsOverlayIds() {

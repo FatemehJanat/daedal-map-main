@@ -8,6 +8,7 @@ import pandas as pd
 
 from mapmover.runtime.result_cap import apply_cap_info_to_payload
 from mapmover.runtime.retry_primitives import execute_event_retry_fallback
+from mapmover.data_loading import source_data_version
 
 
 def _build_default_time_note(items: list) -> str | None:
@@ -40,6 +41,21 @@ def _build_default_time_note(items: list) -> str | None:
         return f"Showing {shown} by default because no time range was specified."
 
     return "Showing default 10-year windows for items without a time range. Ask for a broader period if you want more history."
+
+
+def _source_info_entry(source_id: str, metadata: dict) -> dict:
+    """Build one confirmed-order 'sources' entry, stamping data_version
+    (Task L5 activation) from the metadata already loaded for this source."""
+    entry = {
+        "id": source_id,
+        "name": metadata.get("source_name", source_id),
+        "url": metadata.get("source_url", ""),
+        "category": metadata.get("category", "general"),
+    }
+    version = source_data_version(metadata)
+    if version:
+        entry["data_version"] = version
+    return entry
 
 
 def build_metrics_response(
@@ -134,12 +150,7 @@ def build_metrics_response(
 
     if location_features and not loc_ids_to_check and not year_data:
         source_info = [
-            {
-                "id": source_id,
-                "name": metadata.get("source_name", source_id),
-                "url": metadata.get("source_url", ""),
-                "category": metadata.get("category", "general"),
-            }
+            _source_info_entry(source_id, metadata)
             for source_id, metadata in sources_used.items()
         ]
         primary_source = list(sources_used.keys())[0] if sources_used else None
@@ -313,12 +324,7 @@ def build_metrics_response(
         executor_log_func(trace_id, "geometry_lookup_skipped", t_execute_start, "no_geometry_rows")
 
     source_info = [
-        {
-            "id": source_id,
-            "name": metadata.get("source_name", source_id),
-            "url": metadata.get("source_url", ""),
-            "category": metadata.get("category", "general"),
-        }
+        _source_info_entry(source_id, metadata)
         for source_id, metadata in sources_used.items()
     ]
     primary_source = list(sources_used.keys())[0] if sources_used else None
