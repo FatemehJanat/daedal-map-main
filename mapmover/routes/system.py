@@ -20,7 +20,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from agent_surface_shared import agent_ai_plugin_description_for_model
 from mapmover.auth_context import build_session_cache_key, get_authenticated_user
 from mapmover.corpus_registry import corpus_registry
-from mapmover import ACCOUNT_URL, CacheSignature, clear_metadata_cache, initialize_catalog, logger, session_manager
+from mapmover import ACCOUNT_URL, CacheSignature, CoverageClaim, clear_metadata_cache, initialize_catalog, logger, session_manager
 from mapmover.foundation_helpers import load_reference_json
 from mapmover.hosted_runtime_account import load_account_context
 from mapmover.hosted_runtime_events import submit_runtime_feedback
@@ -4365,12 +4365,60 @@ async def get_cache_inventory_endpoint(session_id: str):
         return msgpack_error(str(e), 500)
 
 
+def _cache_claims_delta(cache, need_claims_json: list) -> list:
+    """
+    Task L4: diff a batch of claim JSON dicts against this session's cache.
+
+    Each need claim is bridged against a per-source claim built from the
+    session's legacy CacheSignature inventory (CacheSignature.to_claim()).
+    This mirrors the 'want' path below, which is also session-wide rather
+    than per-key -- session_cache.py does not yet track claims/sources
+    natively, so this is a translation point, not a new source of truth.
+    A per-source-aware ledger (record/in-flight/versions) is L5/L6 work;
+    see coverage_ledger_implementation.md Task L4/L5/L6.
+    """
+    results = []
+    combined = cache.inventory.combined_signature() if cache else None
+    for idx, need_json in enumerate(need_claims_json):
+        try:
+            need = CoverageClaim.from_json_dict(need_json)
+        except ValueError as e:
+            results.append({"index": idx, "error": str(e)})
+            continue
+
+        if combined is None:
+            results.append({"index": idx, "covered": False, "missing": [need.to_json_dict()]})
+            continue
+
+        held = combined.to_claim(source=need.source)
+        missing = held.diff(need)
+        results.append(
+            {
+                "index": idx,
+                "covered": len(missing) == 0,
+                "missing": [m.to_json_dict() for m in missing],
+            }
+        )
+    return results
+
+
 @router.post("/api/cache/delta")
 async def compute_cache_delta_endpoint(req: Request):
     """Compute what data needs to be fetched given what is already cached."""
     try:
         body = await decode_request_body(req)
         session_id = body.get("sessionId", "anonymous")
+
+        # Task L4: claims-based delta request, alongside (not replacing)
+        # the legacy loc_ids/years/metrics 'want' contract below.
+        claims_body = body.get("claims")
+        if claims_body is not None:
+            if not isinstance(claims_body, list) or not claims_body:
+                return msgpack_error("'claims' must be a non-empty list", 400)
+            cache = session_manager.get(session_id)
+            results = _cache_claims_delta(cache, claims_body)
+            return msgpack_response({"claims": results})
+
         want = body.get("want", {})
         if not want:
             return msgpack_error("'want' field required", 400)

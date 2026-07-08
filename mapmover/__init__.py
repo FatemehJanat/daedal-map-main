@@ -163,6 +163,10 @@ from .cache_signature import (
     CacheSignature,
     DataPackage,
     CacheInventory,
+    CoverageClaim,
+    ClaimScope,
+    ClaimTime,
+    SEEDED_FILTERS,
 )
 
 # Session cache management
@@ -293,6 +297,10 @@ __all__ = [
     "CacheSignature",
     "DataPackage",
     "CacheInventory",
+    "CoverageClaim",
+    "ClaimScope",
+    "ClaimTime",
+    "SEEDED_FILTERS",
     # Session cache
     "SessionCache",
     "SessionManager",
