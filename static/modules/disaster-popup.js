@@ -1590,7 +1590,10 @@ const DisasterPopup = {
         return 'https://volcano.si.edu/';
       },
       hurricane: (id, data) => {
-        // IBTrACS - search by storm name and year works best
+        if (data.source_page_url || data.source_url) {
+          return data.source_page_url || data.source_url;
+        }
+        // Historical IBTrACS fallback - search by storm name and year works best
         const name = data.name;
         const year = data.year;
         if (name && year) {
@@ -1603,7 +1606,9 @@ const DisasterPopup = {
         return 'https://www.ncei.noaa.gov/products/international-best-track-archive';
       },
       tropical_storm: (id, data) => {
-        // Same as hurricane
+        if (data.source_page_url || data.source_url) {
+          return data.source_page_url || data.source_url;
+        }
         const name = data.name;
         const year = data.year;
         if (name && year) {
@@ -1681,14 +1686,18 @@ const DisasterPopup = {
     // Build source URL if available
     const urlBuilder = sourceUrlBuilders[eventType];
     const sourceUrl = urlBuilder ? urlBuilder(data.event_id, data) : null;
-    const sourceName = data.source || data.data_source || defaultSources[eventType] || 'Unknown';
+    const sourceName = data.source_name || data.source || data.data_source || defaultSources[eventType] || 'Unknown';
+    const productUrl = data.source_product_url && data.source_product_url !== sourceUrl
+      ? data.source_product_url
+      : null;
+    const eventId = data.event_id || ((eventType === 'hurricane' || eventType === 'tropical_storm') ? data.storm_id : null);
 
     // Event ID row - make clickable if we have a URL
-    if (data.event_id) {
+    if (eventId) {
       if (sourceUrl) {
-        lines.push(`<div class="detail-row"><span class="detail-label">Event ID:</span> <a href="${sourceUrl}" target="_blank" rel="noopener" class="source-link">${data.event_id}</a></div>`);
+        lines.push(`<div class="detail-row"><span class="detail-label">Event ID:</span> <a href="${sourceUrl}" target="_blank" rel="noopener" class="source-link">${eventId}</a></div>`);
       } else {
-        lines.push(`<div class="detail-row"><span class="detail-label">Event ID:</span> ${data.event_id}</div>`);
+        lines.push(`<div class="detail-row"><span class="detail-label">Event ID:</span> ${eventId}</div>`);
       }
     }
 
@@ -1697,6 +1706,11 @@ const DisasterPopup = {
       lines.push(`<div class="detail-row"><span class="detail-label">Source:</span> <a href="${sourceUrl}" target="_blank" rel="noopener" class="source-link">${sourceName}</a></div>`);
     } else {
       lines.push(`<div class="detail-row"><span class="detail-label">Source:</span> ${sourceName}</div>`);
+    }
+
+    if (productUrl) {
+      const productLabel = (eventType === 'hurricane' || eventType === 'tropical_storm') ? 'Advisory/Product' : 'Source Product';
+      lines.push(`<div class="detail-row"><span class="detail-label">${productLabel}:</span> <a href="${productUrl}" target="_blank" rel="noopener" class="source-link">Open</a></div>`);
     }
 
     if (data.last_updated) {

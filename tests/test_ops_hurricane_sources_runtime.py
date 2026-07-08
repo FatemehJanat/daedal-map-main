@@ -168,6 +168,7 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
                     "name": "BAVI",
                     "year": 2026,
                     "source": "JTWC",
+                    "source_url": "https://www.metoc.navy.mil/jtwc/products/wp0926web.txt",
                     "current_position": {
                         "timestamp": "2026-07-04T06:00:00+00:00",
                         "latitude": 12.5,
@@ -241,6 +242,13 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
         current = next(feature for feature in features if feature["properties"]["track_kind"] == "current")
         self.assertEqual("Cat4", observed["properties"]["category"])
         self.assertEqual(135.0, observed["properties"]["max_wind_kt"])
+        self.assertEqual("Joint Typhoon Warning Center", observed["properties"]["source_name"])
+        self.assertEqual("https://www.metoc.navy.mil/jtwc/jtwc.html", observed["properties"]["source_url"])
+        self.assertEqual("https://www.metoc.navy.mil/jtwc/jtwc.html", observed["properties"]["source_page_url"])
+        self.assertEqual(
+            "https://www.metoc.navy.mil/jtwc/products/wp0926web.txt",
+            observed["properties"]["source_product_url"],
+        )
         self.assertEqual("Cat4", current["properties"]["category"])
         self.assertEqual(135, current["properties"]["wind_kt"])
         self.assertEqual(2, payload["count"])

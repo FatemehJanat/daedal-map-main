@@ -43,6 +43,18 @@ DEFAULT_OPS_HISTORY_RETENTION_HOURS = 72
 DEFAULT_OPS_HISTORY_DISPLAY_HOURS = 72
 HURRICANE_OPS_COLLECTORS = ("tc_nhc", "tc_gdacs", "tc_jtwc", "tc_jma")
 HURRICANE_SOURCE_PRIORITY = {"NHC": 50, "JTWC": 40, "JMA": 35, "GDACS": 10}
+HURRICANE_SOURCE_PAGES = {
+    "NHC": "https://www.nhc.noaa.gov/cyclones/",
+    "GDACS": "https://www.gdacs.org/",
+    "JTWC": "https://www.metoc.navy.mil/jtwc/jtwc.html",
+    "JMA": "https://www.data.jma.go.jp/multi/cyclone/index.html?lang=en",
+}
+HURRICANE_SOURCE_LABELS = {
+    "NHC": "National Hurricane Center",
+    "GDACS": "GDACS Tropical Cyclone Alerts",
+    "JTWC": "Joint Typhoon Warning Center",
+    "JMA": "Japan Meteorological Agency",
+}
 USGS_FDSN_EVENT_URL = "https://earthquake.usgs.gov/fdsnws/event/1/query"
 _LIVE_STATE_CACHE: dict[tuple[str, str], tuple[float, object]] = {}
 _LIVE_STATE_CACHE_LOCK = threading.Lock()
@@ -679,6 +691,23 @@ def _build_live_hurricane_display_payload(snapshot: dict | None) -> dict | None:
     features = []
     storm_ids = set()
 
+    def source_key(storm: dict) -> str:
+        return str(storm.get("source") or "").strip().upper()
+
+    def source_page_url(storm: dict) -> str | None:
+        explicit = str(storm.get("source_page_url") or "").strip()
+        if explicit:
+            return explicit
+        return HURRICANE_SOURCE_PAGES.get(source_key(storm))
+
+    def source_label(storm: dict) -> str:
+        key = source_key(storm)
+        return (
+            HURRICANE_SOURCE_LABELS.get(key)
+            or str(storm.get("source_name") or storm.get("source") or "").strip()
+            or "Tropical cyclone advisory source"
+        )
+
     def numeric_value(*values) -> float | None:
         for value in values:
             try:
@@ -736,12 +765,17 @@ def _build_live_hurricane_display_payload(snapshot: dict | None) -> dict | None:
             or category_from_wind(max_wind_kt)
             or category_from_wind(current_wind_kt)
         )
+        product_url = str(storm.get("source_product_url") or storm.get("source_url") or "").strip() or None
+        page_url = source_page_url(storm)
         base_props = {
             "storm_id": storm_id,
             "name": storm.get("name"),
             "basin": storm.get("basin"),
             "source": storm.get("source"),
-            "source_url": storm.get("source_url"),
+            "source_name": source_label(storm),
+            "source_url": page_url or product_url,
+            "source_page_url": page_url,
+            "source_product_url": product_url,
             "advisory_number": storm.get("advisory_number"),
             "issued_at": storm.get("issued_at"),
             "wind_kt": current_wind_kt,
