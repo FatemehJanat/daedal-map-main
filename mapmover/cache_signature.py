@@ -685,19 +685,22 @@ class ClaimTime:
     """
     time: { kind: 'all' }
         | { kind: 'range', min: msEpoch, max: msEpoch }
-        | { kind: 'years', years: FrozenSet[int] }   # gap-aware, may be sparse
+        | { kind: 'years', years: FrozenSet[int] }    # gap-aware, may be sparse
+        | { kind: 'stamps', stamps: FrozenSet[int] }  # v1.1: explicit sparse timestamps
     """
 
     kind: str
     min: Optional[float] = None
     max: Optional[float] = None
     years: FrozenSet[int] = frozenset()
+    stamps: FrozenSet[float] = frozenset()
 
     def __post_init__(self) -> None:
         if self.kind == "all":
             object.__setattr__(self, "min", None)
             object.__setattr__(self, "max", None)
             object.__setattr__(self, "years", frozenset())
+            object.__setattr__(self, "stamps", frozenset())
         elif self.kind == "range":
             if self.min is None or self.max is None:
                 raise ValueError("CoverageClaim: range time.min/time.max must be finite numbers")
@@ -713,6 +716,7 @@ class ClaimTime:
             object.__setattr__(self, "min", mn)
             object.__setattr__(self, "max", mx)
             object.__setattr__(self, "years", frozenset())
+            object.__setattr__(self, "stamps", frozenset())
         elif self.kind == "years":
             years = self.years
             if not isinstance(years, (set, frozenset, list, tuple)):
@@ -724,6 +728,24 @@ class ClaimTime:
             object.__setattr__(self, "years", yrs)
             object.__setattr__(self, "min", None)
             object.__setattr__(self, "max", None)
+            object.__setattr__(self, "stamps", frozenset())
+        elif self.kind == "stamps":
+            stamps = self.stamps
+            if not isinstance(stamps, (set, frozenset, list, tuple)):
+                raise ValueError("CoverageClaim: stamps time.stamps must be an iterable of finite numbers")
+            try:
+                vals = [float(s) for s in stamps]
+            except (TypeError, ValueError):
+                raise ValueError("CoverageClaim: stamps time.stamps must be an iterable of finite numbers")
+            if not all(math.isfinite(v) for v in vals):
+                raise ValueError("CoverageClaim: stamps time.stamps must be an iterable of finite numbers")
+            frozen = frozenset(vals)
+            if not frozen:
+                raise ValueError("CoverageClaim: stamps time.stamps must not be empty")
+            object.__setattr__(self, "stamps", frozen)
+            object.__setattr__(self, "min", None)
+            object.__setattr__(self, "max", None)
+            object.__setattr__(self, "years", frozenset())
         else:
             raise ValueError(f"CoverageClaim: unknown time.kind '{self.kind}'")
 
@@ -839,11 +861,19 @@ class CoverageClaim:
                 return held.min <= need_time.min and held.max >= need_time.max
             if need_time.kind == "years":
                 return all(_range_covers_year(held, y) for y in need_time.years)
+            if need_time.kind == "stamps":
+                return all(held.min <= s <= held.max for s in need_time.stamps)
             return False
         if held.kind == "years":
             if need_time.kind == "years":
                 return need_time.years.issubset(held.years)
-            return False  # years never covers a range need (v1, conservative)
+            return False  # years never covers a range or stamps need (v1, conservative)
+        if held.kind == "stamps":
+            # stamps never covers a range or years need (a finite sample
+            # never proves interval coverage).
+            if need_time.kind == "stamps":
+                return need_time.stamps.issubset(held.stamps)
+            return False
         return False
 
     def _filters_covers(self, need_filters: str, ignore_filters: bool) -> bool:
@@ -884,20 +914,38 @@ class CoverageClaim:
                 return None
             return [ClaimTime(kind="range", min=a, max=b) for a, b in remainder]
 
-        # need_time.kind == "years"
+        if need_time.kind == "years":
+            if held_time.kind == "all":
+                return None
+            covered: Set[int] = set()
+            if held_time.kind == "years":
+                covered |= held_time.years
+            elif held_time.kind == "range":
+                for y in need_time.years:
+                    if _range_covers_year(held_time, y):
+                        covered.add(y)
+            # held_time.kind == "stamps" never contributes to a years need
+            # (different semantics: a Jan-1 stamp is an instant, a year is a
+            # bucket).
+            missing = sorted(set(need_time.years) - covered)
+            if not missing:
+                return None
+            return [ClaimTime(kind="years", years=frozenset(missing))]
+
+        # need_time.kind == "stamps"
         if held_time.kind == "all":
             return None
-        covered: Set[int] = set()
-        if held_time.kind == "years":
-            covered |= held_time.years
-        elif held_time.kind == "range":
-            for y in need_time.years:
-                if _range_covers_year(held_time, y):
-                    covered.add(y)
-        missing = sorted(set(need_time.years) - covered)
-        if not missing:
+        covered_stamps: Set[float] = set()
+        if held_time.kind == "stamps":
+            covered_stamps |= held_time.stamps
+        # held_time.kind in ("range", "years") never contributes to a stamps
+        # need -- a finite sample is never proven by an interval or year
+        # bucket; that partial pairing naturally falls out below as the full
+        # remainder, matching the over-fetch fallback.
+        missing_stamps = sorted(set(need_time.stamps) - covered_stamps)
+        if not missing_stamps:
             return None
-        return [ClaimTime(kind="years", years=frozenset(missing))]
+        return [ClaimTime(kind="stamps", stamps=frozenset(missing_stamps))]
 
     def diff(self, need: "CoverageClaim", ignore_filters: bool = False) -> List["CoverageClaim"]:
         """
@@ -967,8 +1015,10 @@ class CoverageClaim:
             time_json: Dict[str, Any] = {"kind": "all"}
         elif self.time.kind == "range":
             time_json = {"kind": "range", "min": self.time.min, "max": self.time.max}
-        else:  # years
+        elif self.time.kind == "years":
             time_json = {"kind": "years", "years": sorted(self.time.years)}
+        else:  # stamps
+            time_json = {"kind": "stamps", "stamps": sorted(self.time.stamps)}
 
         return {
             "source": self.source,
@@ -999,6 +1049,8 @@ class CoverageClaim:
             time = ClaimTime(kind="range", min=time_data.get("min"), max=time_data.get("max"))
         elif time_kind == "years":
             time = ClaimTime(kind="years", years=time_data.get("years") or [])
+        elif time_kind == "stamps":
+            time = ClaimTime(kind="stamps", stamps=time_data.get("stamps") or [])
         elif time_kind == "all":
             time = ClaimTime(kind="all")
         else:

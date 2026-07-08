@@ -79,6 +79,12 @@ class NormalizationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             ClaimTime(kind="bogus")
 
+    def test_stamps_time_normalizes_unsorted_dupes_rejects_empty(self):
+        claim = base_claim(time=ClaimTime(kind="stamps", stamps=[300, 100, 300, 200]))
+        self.assertEqual(claim.time.stamps, frozenset([100, 200, 300]))
+        with self.assertRaises(ValueError):
+            ClaimTime(kind="stamps", stamps=[])
+
 
 class JsonRoundTripTests(unittest.TestCase):
     def test_to_json_from_json_round_trip(self):
@@ -122,6 +128,13 @@ class JsonRoundTripTests(unittest.TestCase):
         self.assertEqual(json_dict["metrics"], ["a", "b"])
         self.assertEqual(json_dict["geoLevel"], "admin_2")
         self.assertEqual(json_dict["time"], {"kind": "years", "years": [2019, 2021]})
+
+    def test_stamps_time_json_round_trip_matches_js_key_names(self):
+        claim = base_claim(source="raster", time=ClaimTime(kind="stamps", stamps=[300, 100, 200]))
+        json_dict = claim.to_json_dict()
+        self.assertEqual(json_dict["time"], {"kind": "stamps", "stamps": [100, 200, 300]})
+        restored = CoverageClaim.from_json_dict(json_dict)
+        self.assertEqual(restored, claim)
 
 
 class ContainmentSourceMetricsGeoLevelTests(unittest.TestCase):
@@ -235,6 +248,52 @@ class ContainmentTimeTests(unittest.TestCase):
         self.assertTrue(held.covers(base_claim(time=ClaimTime(kind="years", years=[2020]))))
         self.assertFalse(held.covers(base_claim(time=ClaimTime(kind="years", years=[2021]))))
 
+    def test_stamps_matrix_v1_1_addendum(self):
+        range_2020 = ClaimTime(kind="range", min=ymd(2020, 1, 1), max=ymd(2021, 1, 1) - 1)
+        years_full = ClaimTime(kind="years", years=[2019, 2020])
+        stamps_held = ClaimTime(kind="stamps", stamps=[ymd(2020, 6, 1), ymd(2020, 7, 1)])
+
+        cases = [
+            (ClaimTime(kind="all"), ClaimTime(kind="stamps", stamps=[ymd(2020, 6, 1)]), True, "'all' covers stamps"),
+            (
+                range_2020,
+                ClaimTime(kind="stamps", stamps=[ymd(2020, 6, 1), ymd(2020, 7, 1)]),
+                True,
+                "range covers stamps when every stamp lies in [min,max]",
+            ),
+            (
+                range_2020,
+                ClaimTime(kind="stamps", stamps=[ymd(2020, 6, 1), ymd(2021, 6, 1)]),
+                False,
+                "range does not cover a stamp outside its span",
+            ),
+            (
+                stamps_held,
+                ClaimTime(kind="stamps", stamps=[ymd(2020, 6, 1)]),
+                True,
+                "stamps covers stamps by superset",
+            ),
+            (
+                stamps_held,
+                ClaimTime(kind="stamps", stamps=[ymd(2020, 6, 1), ymd(2020, 8, 1)]),
+                False,
+                "stamps does not cover a stamp it does not hold",
+            ),
+            (stamps_held, range_2020, False, "stamps does NOT cover range"),
+            (stamps_held, years_full, False, "stamps does NOT cover years"),
+            (
+                years_full,
+                ClaimTime(kind="stamps", stamps=[ymd(2019, 1, 1)]),
+                False,
+                "years does NOT cover stamps (an instant vs a bucket)",
+            ),
+            (stamps_held, ClaimTime(kind="all"), False, "'all' need only covered by held 'all'"),
+        ]
+        for held_time, need_time, expected, note in cases:
+            held = base_claim(time=held_time)
+            need = base_claim(time=need_time)
+            self.assertEqual(held.covers(need), expected, note)
+
 
 class DiffTests(unittest.TestCase):
     def test_fully_covered_need_returns_empty_list(self):
@@ -266,6 +325,30 @@ class DiffTests(unittest.TestCase):
         result = held.diff(need)
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].time, ClaimTime(kind="years", years=frozenset([2020, 2022])))
+
+    def test_time_axis_stamps_set_difference(self):
+        held = base_claim(time=ClaimTime(kind="stamps", stamps=[100, 300]))
+        need = base_claim(time=ClaimTime(kind="stamps", stamps=[100, 200, 300, 400]))
+        result = held.diff(need)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].time, ClaimTime(kind="stamps", stamps=frozenset([200, 400])))
+
+    def test_time_axis_stamps_need_paired_with_non_stamps_held_falls_back_to_over_fetch(self):
+        # Held claim matches every other axis but its range does not contain
+        # the needed stamps, so covers() is false; a stamps need is only ever
+        # satisfied (fully or partially) by stamps-kind held claims, so this
+        # must not attempt a set-difference against the range -- it must
+        # return the need unchanged (over-fetch fallback).
+        held = base_claim(time=ClaimTime(kind="range", min=0, max=50))
+        need = base_claim(time=ClaimTime(kind="stamps", stamps=[100, 200]))
+        result = held.diff(need)
+        self.assertEqual(result, [need])
+
+    def test_time_axis_range_need_paired_with_stamps_only_held_falls_back_to_over_fetch(self):
+        held = base_claim(time=ClaimTime(kind="stamps", stamps=[100, 200]))
+        need = base_claim(time=ClaimTime(kind="range", min=0, max=1000))
+        result = held.diff(need)
+        self.assertEqual(result, [need])
 
     def test_loc_ids_axis_missing_loc_ids_when_all_other_axes_contained(self):
         held = base_claim(scope=ClaimScope(kind="loc_ids", value=["USA-VA-059"]))

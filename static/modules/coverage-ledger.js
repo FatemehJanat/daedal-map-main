@@ -21,7 +21,8 @@
  *             | { kind: 'bbox',   value: [w, s, e, n] },
  *     time:     { kind: 'all' }
  *             | { kind: 'range', min: msEpoch, max: msEpoch }
- *             | { kind: 'years', years: int[] },
+ *             | { kind: 'years', years: int[] }
+ *             | { kind: 'stamps', stamps: msEpoch[] },  // v1.1: explicit sparse timestamps
  *     filters:  string,
  *     version:  string | null
  *   }
@@ -132,6 +133,16 @@ function normalizeTime(time) {
       }
       return { kind: 'years', years: [...new Set(time.years)].sort((a, b) => a - b) };
     }
+    case 'stamps': {
+      if (!Array.isArray(time.stamps) || !time.stamps.every((s) => typeof s === 'number' && Number.isFinite(s))) {
+        throw new TypeError('coverage-ledger: stamps time.stamps must be an array of finite numbers');
+      }
+      const deduped = [...new Set(time.stamps)].sort((a, b) => a - b);
+      if (deduped.length === 0) {
+        throw new TypeError('coverage-ledger: stamps time.stamps array must not be empty');
+      }
+      return { kind: 'stamps', stamps: deduped };
+    }
     default:
       throw new TypeError(`coverage-ledger: unknown time.kind '${time.kind}'`);
   }
@@ -199,7 +210,8 @@ function timeEqual(a, b) {
   if (a.kind !== b.kind) return false;
   if (a.kind === 'all') return true;
   if (a.kind === 'range') return a.min === b.min && a.max === b.max;
-  return arraysEqual(a.years, b.years); // years
+  if (a.kind === 'years') return arraysEqual(a.years, b.years);
+  return arraysEqual(a.stamps, b.stamps); // stamps
 }
 
 function claimsEqual(a, b) {
@@ -223,7 +235,8 @@ function cloneScope(scope) {
 function cloneTime(time) {
   if (time.kind === 'all') return { kind: 'all' };
   if (time.kind === 'range') return { kind: 'range', min: time.min, max: time.max };
-  return { kind: 'years', years: [...time.years] };
+  if (time.kind === 'years') return { kind: 'years', years: [...time.years] };
+  return { kind: 'stamps', stamps: [...time.stamps] };
 }
 
 function cloneClaim(claim) {
@@ -311,11 +324,18 @@ function timeCovers(held, need, opts) {
   if (held.kind === 'range') {
     if (need.kind === 'range') return held.min <= need.min && held.max >= need.max;
     if (need.kind === 'years') return need.years.every((y) => rangeCoversYear(held, y, opts));
+    if (need.kind === 'stamps') return need.stamps.every((s) => s >= held.min && s <= held.max);
     return false;
   }
   if (held.kind === 'years') {
     if (need.kind === 'years') return need.years.every((y) => held.years.includes(y));
-    return false; // years never covers a range need (v1, conservative)
+    return false; // years never covers a range or stamps need (v1, conservative)
+  }
+  if (held.kind === 'stamps') {
+    // stamps never covers a range or years need (a finite sample never
+    // proves interval coverage).
+    if (need.kind === 'stamps') return need.stamps.every((s) => held.stamps.includes(s));
+    return false;
   }
   return false;
 }
@@ -387,21 +407,39 @@ function computeTimeRemainder(needTime, heldTimes, opts) {
     if (remainder.length === 0) return null;
     return remainder.map(([min, max]) => ({ kind: 'range', min, max }));
   }
-  // needTime.kind === 'years'
+  if (needTime.kind === 'years') {
+    if (heldTimes.some((t) => t.kind === 'all')) return null;
+    const covered = new Set();
+    for (const t of heldTimes) {
+      if (t.kind === 'years') {
+        for (const y of t.years) covered.add(y);
+      } else if (t.kind === 'range') {
+        for (const y of needTime.years) {
+          if (rangeCoversYear(t, y, opts)) covered.add(y);
+        }
+      }
+      // 'stamps' held claims never contribute to a years need (different
+      // semantics: a Jan-1 stamp is an instant, a year is a bucket).
+    }
+    const missing = needTime.years.filter((y) => !covered.has(y));
+    if (missing.length === 0) return null;
+    return [{ kind: 'years', years: missing }];
+  }
+  // needTime.kind === 'stamps'
   if (heldTimes.some((t) => t.kind === 'all')) return null;
   const covered = new Set();
   for (const t of heldTimes) {
-    if (t.kind === 'years') {
-      for (const y of t.years) covered.add(y);
-    } else if (t.kind === 'range') {
-      for (const y of needTime.years) {
-        if (rangeCoversYear(t, y, opts)) covered.add(y);
-      }
+    if (t.kind === 'stamps') {
+      for (const s of t.stamps) covered.add(s);
     }
+    // 'range'/'years' held claims never contribute to a stamps need (a
+    // finite sample is never proven by an interval or year bucket); any
+    // such partial pairing naturally falls out as a full remainder below,
+    // matching the over-fetch fallback.
   }
-  const missing = needTime.years.filter((y) => !covered.has(y));
+  const missing = needTime.stamps.filter((s) => !covered.has(s));
   if (missing.length === 0) return null;
-  return [{ kind: 'years', years: missing }];
+  return [{ kind: 'stamps', stamps: missing }];
 }
 
 // ============================================================================
@@ -413,6 +451,9 @@ function mergeTimeAxis(a, b) {
   if (a.kind === 'all') return { kind: 'all' };
   if (a.kind === 'years') {
     return { kind: 'years', years: [...new Set([...a.years, ...b.years])].sort((x, y) => x - y) };
+  }
+  if (a.kind === 'stamps') {
+    return { kind: 'stamps', stamps: [...new Set([...a.stamps, ...b.stamps])].sort((x, y) => x - y) };
   }
   // range: only merge when overlapping or touching -- merging disjoint gaps
   // would falsely claim coverage of the gap between them.
@@ -589,10 +630,9 @@ class CoverageLedger {
     return { min, max };
   }
 
-  // Sorted Jan-1 timestamps for every year held as an explicit 'years' claim.
-  // NOTE: the spec also mentions "explicit sets callers register" as a
-  // timestamp source; no registration API is in the Required API surface
-  // for L1, so that half is intentionally unimplemented here (see report).
+  // Sorted union of: Jan-1 timestamps for every year held as an explicit
+  // 'years' claim, PLUS stamps held directly as an explicit 'stamps' claim
+  // (v1.1 addendum -- closes the L1 gap for raster frame timelines).
   timestampsUnion(sources) {
     const list = Array.isArray(sources) ? sources : [sources];
     const stamps = new Set();
@@ -600,6 +640,8 @@ class CoverageLedger {
       for (const claim of this._held.get(source) || []) {
         if (claim.time.kind === 'years') {
           for (const y of claim.time.years) stamps.add(Date.UTC(y, 0, 1));
+        } else if (claim.time.kind === 'stamps') {
+          for (const s of claim.time.stamps) stamps.add(s);
         }
       }
     }
@@ -626,6 +668,9 @@ class CoverageLedger {
       }
       // 'all' kind: cannot enumerate an unbounded year set; excluded
       // deliberately (under-reporting coverage is acceptable per spec).
+      // 'stamps' kind: ignored entirely per the v1.1 addendum (a set of
+      // instants does not translate into a year-bucket claim; under-
+      // reporting coverage here is acceptable).
     }
     return years;
   }

@@ -52,6 +52,12 @@ test('normalizeClaim: rejects empty metrics array', () => {
   assert.throws(() => normalizeClaim(baseClaim({ metrics: [] })), TypeError);
 });
 
+test('normalizeClaim: stamps time normalizes unsorted/dupes, rejects empty array', () => {
+  const claim = normalizeClaim(baseClaim({ time: { kind: 'stamps', stamps: [300, 100, 300, 200] } }));
+  assert.deepEqual(claim.time, { kind: 'stamps', stamps: [100, 200, 300] });
+  assert.throws(() => normalizeClaim(baseClaim({ time: { kind: 'stamps', stamps: [] } })), TypeError);
+});
+
 test('normalizeClaim: rejects range with min > max', () => {
   assert.throws(() => normalizeClaim(baseClaim({ time: { kind: 'range', min: 100, max: 50 } })), TypeError);
 });
@@ -77,6 +83,18 @@ test('JSON round-trip: toJSON/fromJSON preserves claims exactly', () => {
 
   assert.deepEqual(restored.claimsFor('a'), ledger.claimsFor('a'));
   assert.deepEqual(restored.claimsFor('b'), ledger.claimsFor('b'));
+  assert.deepEqual(restored.toJSON(), json);
+});
+
+test('JSON round-trip: stamps time survives toJSON/fromJSON with identical key names', () => {
+  const ledger = createLedger();
+  ledger.record(baseClaim({ source: 'raster', time: { kind: 'stamps', stamps: [300, 100, 200] } }));
+  const json = ledger.toJSON();
+  assert.deepEqual(json.claims.raster[0].time, { kind: 'stamps', stamps: [100, 200, 300] });
+
+  const restored = createLedger();
+  restored.fromJSON(json);
+  assert.deepEqual(restored.claimsFor('raster'), ledger.claimsFor('raster'));
   assert.deepEqual(restored.toJSON(), json);
 });
 
@@ -229,6 +247,60 @@ test('containment: time matrix', () => {
   }
 });
 
+test('containment: stamps matrix (v1.1 addendum) -- all/range/years/stamps in both directions', () => {
+  const range2020 = { kind: 'range', min: ymd(2020, 1, 1), max: ymd(2021, 1, 1) - 1 };
+  const yearsFull = { kind: 'years', years: [2019, 2020] };
+  const stampsHeld = { kind: 'stamps', stamps: [ymd(2020, 6, 1), ymd(2020, 7, 1)] };
+
+  const cases = [
+    { held: { kind: 'all' }, need: { kind: 'stamps', stamps: [ymd(2020, 6, 1)] }, expect: true, note: "'all' covers stamps" },
+    {
+      held: range2020,
+      need: { kind: 'stamps', stamps: [ymd(2020, 6, 1), ymd(2020, 7, 1)] },
+      expect: true,
+      note: 'range covers stamps when every stamp lies in [min,max]'
+    },
+    {
+      held: range2020,
+      need: { kind: 'stamps', stamps: [ymd(2020, 6, 1), ymd(2021, 6, 1)] },
+      expect: false,
+      note: 'range does not cover a stamp outside its span'
+    },
+    {
+      held: stampsHeld,
+      need: { kind: 'stamps', stamps: [ymd(2020, 6, 1)] },
+      expect: true,
+      note: 'stamps covers stamps by superset'
+    },
+    {
+      held: stampsHeld,
+      need: { kind: 'stamps', stamps: [ymd(2020, 6, 1), ymd(2020, 8, 1)] },
+      expect: false,
+      note: 'stamps does not cover a stamp it does not hold'
+    },
+    { held: stampsHeld, need: range2020, expect: false, note: 'stamps does NOT cover range' },
+    { held: stampsHeld, need: yearsFull, expect: false, note: 'stamps does NOT cover years' },
+    {
+      held: yearsFull,
+      need: { kind: 'stamps', stamps: [ymd(2019, 1, 1)] },
+      expect: false,
+      note: 'years does NOT cover stamps (a Jan-1 stamp is an instant, a year is a bucket)'
+    },
+    {
+      held: stampsHeld,
+      need: { kind: 'all' },
+      expect: false,
+      note: "'all' need only covered by held 'all'"
+    }
+  ];
+
+  for (const c of cases) {
+    const ledger = createLedger();
+    ledger.record(baseClaim({ time: c.held }));
+    assert.equal(ledger.covers(baseClaim({ time: c.need })), c.expect, c.note || JSON.stringify(c));
+  }
+});
+
 test('containment: range-covers-years requires the FULL year span inside the range', () => {
   const ledger = createLedger();
   // Range covers all of 2020 but only part of 2021 (through June).
@@ -293,6 +365,37 @@ test('diff: time axis -- missing year set', () => {
   const result = ledger.diff(baseClaim({ time: { kind: 'years', years: [2019, 2020, 2021, 2022] } }));
   assert.equal(result.length, 1);
   assert.deepEqual(result[0].time, { kind: 'years', years: [2020, 2022] });
+});
+
+test('diff: time axis -- stamps set difference', () => {
+  const ledger = createLedger();
+  ledger.record(baseClaim({ time: { kind: 'stamps', stamps: [100, 300] } }));
+  const result = ledger.diff(baseClaim({ time: { kind: 'stamps', stamps: [100, 200, 300, 400] } }));
+  assert.equal(result.length, 1);
+  assert.deepEqual(result[0].time, { kind: 'stamps', stamps: [200, 400] });
+});
+
+test('diff: time axis -- stamps need paired with a non-stamps held claim falls back to over-fetch', () => {
+  const ledger = createLedger();
+  // Held claim matches every other axis but its range does not contain the
+  // needed stamps, so covers() is false; a stamps need is only ever
+  // satisfied (in full or in part) by stamps-kind held claims, so this must
+  // not attempt a set-difference against the range -- it must return the
+  // need unchanged (over-fetch fallback).
+  ledger.record(baseClaim({ time: { kind: 'range', min: 0, max: 50 } }));
+  const need = baseClaim({ time: { kind: 'stamps', stamps: [100, 200] } });
+  const result = ledger.diff(need);
+  assert.equal(result.length, 1);
+  assert.deepEqual(result[0], normalizeClaim(need));
+});
+
+test('diff: time axis -- range need paired with a stamps-only held claim falls back to over-fetch', () => {
+  const ledger = createLedger();
+  ledger.record(baseClaim({ time: { kind: 'stamps', stamps: [100, 200] } }));
+  const need = baseClaim({ time: { kind: 'range', min: 0, max: 1000 } });
+  const result = ledger.diff(need);
+  assert.equal(result.length, 1);
+  assert.deepEqual(result[0], normalizeClaim(need));
 });
 
 test('diff: locIds axis -- missing locIds returned when all other axes contained', () => {
@@ -430,6 +533,15 @@ test('merge-on-record: years union merges', () => {
   assert.deepEqual(claims[0].time.years, [2019, 2021]);
 });
 
+test('merge-on-record: stamps union merges', () => {
+  const ledger = createLedger();
+  ledger.record(baseClaim({ time: { kind: 'stamps', stamps: [100, 300] } }));
+  ledger.record(baseClaim({ time: { kind: 'stamps', stamps: [200] } }));
+  const claims = ledger.claimsFor('nri');
+  assert.equal(claims.length, 1);
+  assert.deepEqual(claims[0].time.stamps, [100, 200, 300]);
+});
+
 test('merge-on-record: exact duplicate claim is a no-op', () => {
   const ledger = createLedger();
   ledger.record(baseClaim());
@@ -507,6 +619,25 @@ test('timestampsUnion: sorted Jan-1 timestamps from years claims only', () => {
   ledger.record(baseClaim({ source: 'b', time: { kind: 'range', min: 0, max: 100 } }));
   const stamps = ledger.timestampsUnion(['a', 'b']);
   assert.deepEqual(stamps, [ymd(2019, 1, 1), ymd(2021, 1, 1)]);
+});
+
+test('timestampsUnion: merges explicit stamps-kind stamps with years-kind Jan-1 stamps, sorted unique', () => {
+  const ledger = createLedger();
+  ledger.record(baseClaim({ source: 'a', time: { kind: 'years', years: [2021, 2019] } }));
+  ledger.record(baseClaim({ source: 'b', time: { kind: 'stamps', stamps: [ymd(2020, 6, 1), ymd(2019, 1, 1)] } }));
+  ledger.record(baseClaim({ source: 'c', time: { kind: 'range', min: 0, max: 100 } }));
+  const stamps = ledger.timestampsUnion(['a', 'b', 'c']);
+  // ymd(2019,1,1) appears both as a years-kind Jan-1 stamp and an explicit
+  // stamps-kind stamp -- deduped, not doubled.
+  assert.deepEqual(stamps, [ymd(2019, 1, 1), ymd(2020, 6, 1), ymd(2021, 1, 1)]);
+});
+
+test('yearsCovered: ignores stamps-kind claims entirely (under-reporting, allowed)', () => {
+  const ledger = createLedger();
+  ledger.record(baseClaim({ time: { kind: 'years', years: [2018] } }));
+  ledger.record(baseClaim({ source: 'nri', time: { kind: 'stamps', stamps: [ymd(2020, 6, 1)] }, filters: 'z=1' }));
+  const years = ledger.yearsCovered('nri');
+  assert.deepEqual([...years].sort(), [2018]);
 });
 
 test('yearsCovered: unions years claims and range claims (filter-agnostic)', () => {
