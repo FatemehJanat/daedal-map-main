@@ -41,6 +41,29 @@ play through the same loop: where frames are dense the animation is smooth,
 where they are sparse the current frame holds until the next one -- no mode
 switch, no dataset-specific playback code.
 
+## Fetch policy: playback renders held coverage only
+
+The slider spans the UNION of every active overlay's time coverage, so the
+playhead routinely sweeps moments one overlay holds and another does not
+(ocean from 1982 while disasters start 2017). Sweeping is display, not a
+request:
+
+- PLAYBACK ticks never fetch. Each overlay renders whatever its held
+  coverage provides at the playhead (often nothing, or a clamped frame),
+  and appears when the playhead reaches its data.
+- DELIBERATE time changes (user drag, api, bounds) may auto-fetch the
+  moment they land on -- moving there expresses interest in it. This
+  includes the ocean history-tier merge.
+- Everything else arrives by explicit ask: chat orders, load buttons,
+  overlay-toggle defaults.
+- Artifact granularity note: fetching a coarse artifact honestly claims
+  everything it contains (the ocean history bundle is one 1982-2026 file),
+  so a deliberate scrub below 2025 widens the slider to 1982 -- by design.
+
+Enforced in overlay-controller.js handleTimeChange ->
+onTimeChangeTimestamp/onTimeChange via the TimeSlider change source
+('playback' vs 'slider'/'api'/'bounds').
+
 ## What datasets must provide
 
 Registering with the slider (`setTimeRange` / scale config):
