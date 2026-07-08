@@ -5,6 +5,7 @@
 
 import { CONFIG } from './config.js';
 import { fetchMsgpack, postMsgpack, logExecutedOrder } from './utils/fetch.js';
+import { setSourceVersion } from './overlay-cache.js';
 
 // Reusable modules
 import {
@@ -775,6 +776,11 @@ function ingestMetricsToCache(response, order = null) {
   const timeData = response.time_data || response.year_data || null;
   const timeRange = response.time_range || response.year_range || null;
   const region = order?.items?.[0]?.region;
+
+  // Register the artifact version the backend cut this response from, so
+  // the claim recorded below carries it (L5 version stamping).
+  const dataVersion = response.sources?.[0]?.data_version || null;
+  if (dataVersion) setSourceVersion(sourceId, dataVersion);
 
   OverlayController.ingestMetricData(sourceId, response.geojson, timeData, timeRange, {
     geoLevel: response.geographic_level || null,

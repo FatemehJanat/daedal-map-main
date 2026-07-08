@@ -15,9 +15,10 @@ import { resolveOverlayIdFromPackId, resolveOverlayIdFromSourceId } from './over
 import { TIME_SYSTEM } from './time-slider.js';
 import {
   buildRangeRequestSignature,
+  buildStampsClaim,
   calculateCacheSize,
   dataCache,
-  loadedRanges,
+  heldRangeSpans,
   loadedYears,
   overlayLedger,
   recordFullyLoadedRangeClaim,
@@ -2564,7 +2565,7 @@ export const OverlayController = {
    * @param {number} year - Year to load
    */
   async loadAndRenderYear(overlayId, year) {
-    // Coverage derived from loadedRanges (see isYearLoaded in overlay-cache-ops.js)
+    // Coverage derived from overlayLedger (see isYearLoaded in overlay-cache-ops.js)
     const yearAlreadyLoaded = isYearLoaded(overlayId, year);
 
     if (!yearAlreadyLoaded) {
@@ -3119,6 +3120,21 @@ export const OverlayController = {
     }
 
     const timestamps = OceanRasterModel.getTimestamps(overlayId);
+
+    // TASK L6 item 1: record the raster's frame timeline as a stamps-kind
+    // ledger claim so recalculateTimeRange/timestampsUnion can read it from
+    // the ledger instead of peeking OceanRasterModel directly. On a tier
+    // merge (resetTimeRange:false), `timestamps` here is already the
+    // model's post-merge union timeline, so re-recording just unions the
+    // held claim with itself (superset) -- record-merge (same source/
+    // metrics/geoLevel/scope/filters/version, only the stamps set differs)
+    // handles this without ever losing coverage. Guarded non-empty: an empty
+    // stamps array is an invalid claim (coverage-ledger throws on it) and
+    // would mean the bundle carried no frames at all -- nothing to claim.
+    if (timestamps.length) {
+      overlayLedger.record(buildStampsClaim(overlayId, timestamps, resolveSourceVersion(overlayId)));
+    }
+
     const range = OceanRasterModel.getTimestampRange(overlayId);
     if (TimeSlider && range && !this.suppressTimelineAutoShow) {
       if (resetTimeRange) {
@@ -3160,6 +3176,7 @@ export const OverlayController = {
   clearOceanRasterOverlay(overlayId) {
     OceanRasterPanel.hide();
     OceanRasterModel.cleanup(overlayId);
+    overlayLedger.clearSource(overlayId);
     console.log(`OverlayController: Cleared ocean raster ${overlayId}`);
   },
 
@@ -3205,7 +3222,11 @@ export const OverlayController = {
         if (TimeSlider?.isLiveMode) {
           const FIVE_MIN = 5 * 60 * 1000;
           const now = Math.floor(Date.now() / FIVE_MIN) * FIVE_MIN;
-          const ranges = loadedRanges[overlayId].filter(r => !r.loading);
+          // TASK L6 item 3: max(range.end) read from range-kind ledger claims
+          // instead of the retired loadedRanges mirror. This branch only runs
+          // after hasCompletedRangeForCurrentFilters confirmed at least one
+          // held claim exists, so ranges is guaranteed non-empty here.
+          const ranges = heldRangeSpans(overlayId);
           const lastEnd = Math.max(...ranges.map(r => r.end));
           if (now > lastEnd) {
             console.log(`OverlayController: ${overlayId} catching up delta in live mode`);
@@ -3465,7 +3486,6 @@ export const OverlayController = {
     delete yearRangeCache[overlayId];
     delete loadedYears[overlayId];
     overlayLedger.clearSource(overlayId);
-    delete loadedRanges[overlayId];
 
     // Dispatch cache update for Loaded tab
     window.dispatchEvent(new CustomEvent('overlayCacheUpdated', { detail: calculateCacheSize() }));
@@ -3554,12 +3574,22 @@ export const OverlayController = {
       // Event overlays: real event timestamps from the cache
       timestamps.push(...collectOverlayEventTimestamps(overlayId));
 
-      // Frame-stack rasters (ocean grid): the merged bundle timeline
+      // Frame-stack rasters (ocean grid): the merged bundle timeline, now
+      // read via the ledger's stamps-kind claims (Task L6 item 1 records
+      // them in loadOceanRasterOverlay) instead of peeking the raster model
+      // directly. Guarded by hasInstance so this only fires for overlays
+      // that actually carry a raster instance -- timestampsUnion would
+      // otherwise also fold in Jan-1 stamps from any years-kind claims an
+      // event overlay holds, which is not the union this branch is for.
       if (OceanRasterModel.hasInstance(overlayId)) {
-        timestamps.push(...OceanRasterModel.getTimestamps(overlayId));
+        timestamps.push(...overlayLedger.timestampsUnion([overlayId]));
       }
 
-      // Year-keyed overlays (weather grid, event year ranges)
+      // Year-keyed overlays (weather grid, event year ranges). Weather grid
+      // records no coverage-ledger claims (documented exception -- see
+      // loadedYears' doc comment in overlay-cache.js), so this yearRangeCache
+      // peek stays in place; full convergence onto the ledger awaits a
+      // future weather-grid claims task.
       const yearRange = yearRangeCache[overlayId];
       if (yearRange) {
         for (const year of yearRange.available || []) years.add(year);
@@ -3882,11 +3912,13 @@ export const OverlayController = {
 
     console.log(`OverlayController: Reloading ${overlayId} with filters:`, this.getActiveFilters(overlayId));
 
-    const preservedRanges = Array.isArray(loadedRanges[overlayId])
-      ? loadedRanges[overlayId]
-        .filter((range) => range && !range.loading && Number.isFinite(range.start) && Number.isFinite(range.end))
-        .map((range) => ({ start: range.start, end: range.end }))
-      : [];
+    // TASK L6 item 3: preserved spans read from range-kind ledger claims
+    // instead of the retired loadedRanges mirror. excludeSeeded:true drops
+    // SEEDED_FILTERS claims (chat-order seeded data) -- only spans that came
+    // from a real fetch (or the '' ingest fallback) are worth replaying
+    // through loadRangeData at the (possibly new) active filters; a seeded
+    // span was never fetched at any filter signature to begin with.
+    const preservedRanges = heldRangeSpans(overlayId, { excludeSeeded: true });
 
     // Clear cache for this overlay
     clearOverlayData(overlayId);
@@ -3932,24 +3964,25 @@ export const OverlayController = {
       // TASK L5: if a current content version is resolvable for this
       // overlay, invalidate any held claims cut from a different version
       // before the refresh logic below runs -- dropped claims fall out of
-      // loadedRanges' ledger-derived coverage reads (isYearLoaded /
-      // getYearsCoveredByRanges) and the normal diff/fetch path below
-      // refetches and re-stamps them at the current version. Guarded to
-      // non-null: resolveSourceVersion returns null for every overlay today
-      // (see its doc comment in overlay-cache.js), so this is inert until a
-      // real per-source version signal exists to populate the registry --
-      // null versions must never auto-invalidate (ledger contract).
+      // the ledger-derived coverage reads (isYearLoaded / getYearsCoveredByRanges
+      // and, as of Task L6 item 3, heldRangeSpans below) and the normal
+      // diff/fetch path refetches and re-stamps them at the current version.
+      // Guarded to non-null: null versions must never auto-invalidate
+      // (ledger contract) -- see resolveSourceVersion's doc comment in
+      // overlay-cache.js for which sources currently resolve a real one.
       const currentVersion = resolveSourceVersion(overlayId);
       if (currentVersion) {
         overlayLedger.invalidateVersion(overlayId, currentVersion);
       }
 
-      // Skip if no ranges loaded yet (overlay hasn't done initial load)
-      const ranges = loadedRanges[overlayId];
-      if (!ranges || ranges.length === 0) continue;
+      // TASK L6 item 3: range-kind ledger claims replace the retired
+      // loadedRanges mirror. Read AFTER the invalidateVersion call above so
+      // a version-driven drop is reflected in this pass, not the next one.
+      const ranges = heldRangeSpans(overlayId);
+      if (ranges.length === 0) continue;
 
       // Find the latest end time across all loaded ranges
-      const lastEnd = Math.max(...ranges.filter(r => !r.loading).map(r => r.end));
+      const lastEnd = Math.max(...ranges.map(r => r.end));
       if (now <= lastEnd) {
         // Already up to date (within same 5-min window)
         continue;
@@ -4027,24 +4060,16 @@ export const OverlayController = {
     // read (see isYearLoaded / getLoadedYearsForOverlay in
     // overlay-cache-ops.js) -- no separate loadedYears write needed.
     if (rangeMeta && rangeMeta.start && rangeMeta.end) {
-      if (!loadedRanges[overlayId]) {
-        loadedRanges[overlayId] = [];
-      }
-      loadedRanges[overlayId].push({
-        start: rangeMeta.start,
-        end: rangeMeta.end,
-        loading: false,
-        yearsFullyLoaded: true
-      });
       recordYearRangeCoverage(overlayId, rangeMeta.start, rangeMeta.end);
-      // TASK L2: mirror onto the ledger with filters '' -- this entry never
-      // set filterSignature (falls back to '' in the old (range.filterSignature
-      // || '') checks), so recordFullyLoadedRangeClaim with '' reproduces
-      // that exact fallback, including the edge case where an endpoint's
-      // real signature is also '' (e.g. tsunamis' empty default params).
+      // TASK L6 item 3: the loadedRanges mirror entry this used to also
+      // write (yearsFullyLoaded: true, filterSignature falling back to '')
+      // is retired -- the ledger claim below is the only bookkeeping now,
+      // with filters '' reproducing that exact fallback, including the edge
+      // case where an endpoint's real signature is also '' (e.g. tsunamis'
+      // empty default params).
       // TASK L5: stamp whatever version is currently resolvable for this
-      // overlay (null today -- see resolveSourceVersion doc comment in
-      // overlay-cache.js; confirmed_order responses carry no version field).
+      // overlay (confirmed_order responses carry no version field of their
+      // own yet -- see resolveSourceVersion's doc comment in overlay-cache.js).
       recordFullyLoadedRangeClaim(overlayId, rangeMeta.start, rangeMeta.end, '', resolveSourceVersion(overlayId));
     }
 

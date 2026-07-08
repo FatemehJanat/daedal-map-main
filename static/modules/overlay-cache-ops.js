@@ -3,8 +3,8 @@ import {
   buildMetricClaim,
   calculateCacheSize,
   dataCache,
+  heldRangeSpans,
   loadedFilters,
-  loadedRanges,
   loadedYears,
   metricChunks,
   metricCache,
@@ -16,23 +16,11 @@ import {
   recordYearRangeCoverage,
   resolveSourceVersion,
   SEEDED_FILTERS,
+  summarizeClaimsFor,
   yearRangeCache
 } from './overlay-cache.js';
 import { GeometryModel } from './models/model-geometry.js';
 import { mergeTemporalMetricPayload } from './temporal-payload.js';
-
-// Sentinel filterSignature for loadedRanges entries created by seedEventData.
-// Seeded data (chat order results merged straight into the cache) has no
-// associated fetch filters, so it must never collide with a real endpoint's
-// filterSignature (see buildRangeRequestSignature) -- if it did, a later
-// legitimate fetch at the default/narrower filter could be mistaken for
-// "already covered" and skipped. Using a signature no real request can
-// produce means the seeded range only ever satisfies the year-coverage
-// check below (isYearLoaded/getYearsCoveredByRanges, which ignores
-// filterSignature), not the exact-signature checks in loadRangeData /
-// hasCompletedRangeForCurrentFilters. Re-exported from coverage-ledger.js
-// (SEEDED_FILTERS) as of Task L2 -- same sentinel value, single definition.
-const SEEDED_RANGE_FILTER_SIGNATURE = SEEDED_FILTERS;
 
 function getGeometryFeatureKey(feature) {
   const props = feature?.properties || {};
@@ -76,7 +64,7 @@ function getYearsCoveredByRanges(overlayId) {
  * Check whether a single year is loaded for an overlay.
  * Weather-grid overlays keep their own per-year loadedYears set (no range
  * fetches to derive coverage from); all other overlays derive coverage from
- * loadedRanges via getYearsCoveredByRanges.
+ * overlayLedger via getYearsCoveredByRanges.
  * @param {string} overlayId
  * @param {number} year
  * @returns {boolean}
@@ -90,11 +78,12 @@ export function isYearLoaded(overlayId, year) {
  * Seed the overlay cache with event features already fetched elsewhere
  * (chat order results). Dedupes by event_id/storm_id against features the
  * overlay lane may already hold, and widens yearRangeCache so the timeline
- * covers the seeded span. Also records a loadedRanges entry (sentinel
- * filterSignature, see SEEDED_RANGE_FILTER_SIGNATURE above) so playback
- * auto-fetch treats the seeded span's years as already loaded and does not
- * duplicate-fetch them, without letting the seeded entry mask a real fetch
- * at the overlay's actual filters.
+ * covers the seeded span. Also records a ledger claim (sentinel filters
+ * value SEEDED_FILTERS) so playback auto-fetch treats the seeded span's
+ * years as already loaded and does not duplicate-fetch them, without
+ * letting the seeded claim mask a real fetch at the overlay's actual
+ * filters (see filtersCovers's SEEDED_FILTERS exception in
+ * coverage-ledger.js).
  * @returns {number} count of newly added features
  */
 export function seedEventData(overlayId, geojson, timeRangeMs = null) {
@@ -118,21 +107,11 @@ export function seedEventData(overlayId, geojson, timeRangeMs = null) {
   if (Number.isFinite(minMs) && Number.isFinite(maxMs)) {
     recordYearRangeCoverage(overlayId, minMs, maxMs);
 
-    if (!loadedRanges[overlayId]) {
-      loadedRanges[overlayId] = [];
-    }
-    loadedRanges[overlayId].push({
-      start: minMs,
-      end: maxMs,
-      loading: false,
-      filterSignature: SEEDED_RANGE_FILTER_SIGNATURE,
-      // Seeded data is handed over already-complete for its span -- do not
-      // apply the 6-month partial-year threshold used for real API fetches.
-      yearsFullyLoaded: true
-    });
-    // TASK L2: mirror this loadedRanges entry onto the ledger -- a 'years'
-    // claim (unconditional per-year coverage, matching yearsFullyLoaded
-    // above) plus a 'range' claim (so hasCompletedRangeForCurrentFilters /
+    // TASK L6 item 3: the loadedRanges mirror entry this used to also write
+    // (sentinel filterSignature, yearsFullyLoaded: true) is retired -- the
+    // ledger claim below is the only bookkeeping now. A 'years' claim
+    // (unconditional per-year coverage, matching the old yearsFullyLoaded
+    // flag) plus a 'range' claim (so hasCompletedRangeForCurrentFilters /
     // loadRangeData's covered-range dedup see the same interval+filter
     // match). See recordFullyLoadedRangeClaim doc comment for why both.
     // TASK L5: stamp whatever version is currently resolvable for this
@@ -143,15 +122,18 @@ export function seedEventData(overlayId, geojson, timeRangeMs = null) {
 }
 
 export function clearAllOverlayCaches() {
+  // TASK L6 item 3: ledger claims are only ever recorded alongside a
+  // dataCache[overlayId] write (seedEventData/ingestOrderResult/
+  // loadRangeData all set dataCache before recording), so this loop's keys
+  // are the same set the retired loadedRanges mirror used to iterate for
+  // clearSource -- clearing here alongside the dataCache delete keeps that
+  // invariant without a second enumeration.
   for (const key in dataCache) {
+    overlayLedger.clearSource(key);
     delete dataCache[key];
   }
   for (const key in loadedYears) {
     delete loadedYears[key];
-  }
-  for (const key in loadedRanges) {
-    overlayLedger.clearSource(key);
-    delete loadedRanges[key];
   }
   for (const key in yearRangeCache) {
     delete yearRangeCache[key];
@@ -165,7 +147,6 @@ export function clearOverlayData(overlayId) {
   delete dataCache[overlayId];
   delete loadedYears[overlayId];
   overlayLedger.clearSource(overlayId);
-  delete loadedRanges[overlayId];
   delete yearRangeCache[overlayId];
 }
 
@@ -237,7 +218,12 @@ export function getCacheStats(overlayEndpoints) {
   for (const overlayId of Object.keys(overlayEndpoints)) {
     const features = dataCache[overlayId]?.features || [];
     const years = getLoadedYearsForOverlay(overlayId);
-    const ranges = (loadedRanges[overlayId] || []).filter(r => !r.loading);
+    // TASK L6 item 3: ranges/rangeStart/rangeEnd now derive from range-kind
+    // ledger claims (heldRangeSpans) instead of the retired loadedRanges
+    // mirror; same {start, end} shape the mirror produced (loading/
+    // filterSignature fields dropped -- no consumer read them off this
+    // array, see renderLoadedTab in order/manager.js).
+    const ranges = heldRangeSpans(overlayId);
     const overlaySize = sizeInfo.perOverlay[overlayId] || { features: 0, bytes: 0 };
 
     if (features.length > 0 || years.length > 0) {
@@ -257,7 +243,11 @@ export function getCacheStats(overlayEndpoints) {
         ranges,
         rangeStart,
         rangeEnd,
-        dataType: 'events'
+        dataType: 'events',
+        // TASK L6 item 4: additive level-aware claims summary -- existing
+        // fields above are untouched so current consumers (Loaded tab)
+        // render exactly as before.
+        claims: summarizeClaimsFor(overlayId)
       };
 
       stats.totals.features += features.length;
@@ -282,7 +272,9 @@ export function getCacheStats(overlayEndpoints) {
         timesLoaded: times.length,
         years: times,
         yearRange: isGeometry ? 'n/a' : (timeRange ? `${timeRange.min}-${timeRange.max}` : 'none'),
-        dataType: cached?.dataType || 'metrics'
+        dataType: cached?.dataType || 'metrics',
+        // TASK L6 item 4: additive level-aware claims summary (see above).
+        claims: summarizeClaimsFor(sourceId)
       };
 
       stats.totals.features += features.length;

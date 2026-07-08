@@ -19,17 +19,24 @@ export const overlayLedger = createLedger();
 // setSourceVersion() whenever a loader learns a real version signal (catalog
 // watermark, browser_artifact sha256, clip-bundle ETag, etc.); read back
 // synchronously by resolveSourceVersion() so claim builders and the live-
-// refresh invalidation hook never need to fetch. As of this task NOTHING
-// populates this registry yet -- discovery (see "Task L5" in
-// county-map-private/docs/future/coverage_ledger_implementation.md) found no
-// fetch site in reach today (event range responses, confirmed_order
-// responses, the frontend's /api/catalog/packs payload) that carries a
-// per-source version/watermark/etag field; the real version primitives that
-// exist server-side (live_watermark_utc, browser_artifact.sha256) are only
-// surfaced through the external API pack-detail hydration path, which these
-// call sites never reach. resolveSourceVersion() therefore returns null
-// everywhere today (spec-legal: null version never auto-invalidates) -- this
-// is the seam a future signal plugs into without another ledger change.
+// refresh invalidation hook never need to fetch.
+//
+// Activated: /api/catalog/overlays now carries a per-source `data_version`
+// field (source metadata's live_watermark_utc, else last_updated -- see
+// mapmover/pack_state.py's _build_overlay_tree_for_sources and
+// mapmover/data_loading.py's source_data_version) and
+// overlay-selector.js's applyOverlayCatalogResponse registers it here under
+// both the leaf/overlay id and each member source_id the moment the catalog
+// loads. applyOverlayCatalogResponse only runs once, at app startup (see its
+// single call site in OverlaySelector.init in app.js) -- there is no
+// lane-switch or live-tick refetch of the overlay catalog, so a registered
+// version is stable for the life of the session and refreshLiveOverlays'
+// invalidateVersion hook (every 5 min) never sees it change mid-session; it
+// only advances on the next full catalog load. Confirmed-order responses
+// (mapmover/execution/event_execution.py, response_builder.py) also carry
+// data_version per source now, but nothing on the frontend registers that
+// one yet (see chat-panel/app.js order-response handling) -- left for a
+// follow-up so as not to collide with concurrent work in that area.
 const sourceVersions = new Map();
 
 /**
@@ -138,6 +145,82 @@ export function recordFullyLoadedRangeClaim(overlayId, startMs, endMs, filters, 
   overlayLedger.record(buildEventRangeClaim(overlayId, startMs, endMs, filters, version));
 }
 
+/**
+ * Build a stamps-shaped claim (v1.1 time form) for a frame-stack raster's
+ * explicit timeline -- e.g. the ocean SST grid's merged clip-bundle
+ * timestamps (Task L6 item 1). metrics '*', geoLevel null and scope 'all'
+ * mirror the event claim shapes above: rasters have no per-metric or
+ * per-region fetch granularity today. filters is always '' -- raster tier
+ * loads have no predicate-filter axis. Recording this claim again after a
+ * tier merge (loadOceanRasterOverlay's resetTimeRange:false path) unions
+ * the stamps with whatever was already held, since every other axis stays
+ * identical and coverage-ledger's record() merges same-axes claims (see
+ * mergeTimeAxis's 'stamps' case).
+ * @param {string} overlayId
+ * @param {number[]} stamps - sorted or unsorted msEpoch timestamps; the
+ *   ledger normalizes (sorts + dedupes) on record.
+ * @param {string|null} [version] content version this claim was cut from (Task L5)
+ * @returns {object} unnormalized claim
+ */
+export function buildStampsClaim(overlayId, stamps, version = null) {
+  return {
+    source: overlayId,
+    metrics: '*',
+    geoLevel: null,
+    scope: { kind: 'all' },
+    time: { kind: 'stamps', stamps: Array.isArray(stamps) ? stamps : [] },
+    filters: '',
+    version
+  };
+}
+
+/**
+ * Range-kind claims held for an overlay, as {start, end} pairs -- the Task
+ * L6 item 3 replacement for reading raw entries off the retired loadedRanges
+ * mirror. Only 'range'-kind claims are range-shaped (years-kind companion
+ * claims from recordFullyLoadedRangeClaim are excluded; in-flight claims are
+ * excluded by claimsFor, matching the mirror's `!r.loading` filters).
+ * @param {string} overlayId
+ * @param {{excludeSeeded?: boolean}} [opts] - excludeSeeded drops claims
+ *   recorded with the SEEDED_FILTERS sentinel (seedEventData); used by
+ *   reloadOverlay's preserved-ranges refetch, which should only replay
+ *   spans that came from a real (or ''-signature ingest) fetch.
+ * @returns {{start: number, end: number}[]}
+ */
+export function heldRangeSpans(overlayId, { excludeSeeded = false } = {}) {
+  return overlayLedger.claimsFor(overlayId)
+    .filter((claim) => claim.time.kind === 'range')
+    .filter((claim) => !excludeSeeded || claim.filters !== SEEDED_FILTERS)
+    .map((claim) => ({ start: claim.time.min, end: claim.time.max }));
+}
+
+/**
+ * Level-aware claims summary for a source (Task L6 item 4): a compact,
+ * read-only view of overlayLedger.claimsFor() for display (Loaded tab /
+ * console debugging), not a new tracker. One entry per held claim.
+ * @param {string} sourceId
+ * @returns {Array<{geoLevel: string|null, scopeKind: string, timeKind: string, timeSpan?: {min:number,max:number}, timeCount?: number, filters: string, version: string|null}>}
+ */
+export function summarizeClaimsFor(sourceId) {
+  return overlayLedger.claimsFor(sourceId).map((claim) => {
+    const summary = {
+      geoLevel: claim.geoLevel,
+      scopeKind: claim.scope.kind,
+      timeKind: claim.time.kind,
+      filters: claim.filters,
+      version: claim.version
+    };
+    if (claim.time.kind === 'range') {
+      summary.timeSpan = { min: claim.time.min, max: claim.time.max };
+    } else if (claim.time.kind === 'years') {
+      summary.timeCount = claim.time.years.length;
+    } else if (claim.time.kind === 'stamps') {
+      summary.timeCount = claim.time.stamps.length;
+    }
+    return summary;
+  });
+}
+
 // Cache for loaded overlay data (full unfiltered datasets)
 export const dataCache = {};
 
@@ -230,27 +313,26 @@ export function metricTimeClaimFromRange(timeRange) {
   return { kind: 'all' };
 }
 
-// Track which time ranges have been loaded per overlay.
-// TASK L2: this is now a thin MIRROR, not the coverage source of truth --
-// coverage decisions (isYearLoaded, getYearsCoveredByRanges,
-// hasCompletedRangeForCurrentFilters) read overlayLedger instead (see
-// overlay-cache-ops.js / overlay-controller.js). loadedRanges is kept
-// because a few call sites still need the raw {start, end} numbers rather
-// than a coverage boolean: the live-mode delta catch-up read in
-// OverlayController.loadOverlay/refreshLiveOverlays (max(range.end) across
-// completed ranges) and reloadOverlay's preserved-ranges refetch list.
-// Each entry is {start, end, loading, filterSignature} (millisecond
-// timestamps); every writer of this mirror also writes a matching claim to
-// overlayLedger in the same call.
-export const loadedRanges = {};
+// TASK L6 item 3: the loadedRanges mirror is RETIRED. Its three raw-range
+// readers (loadOverlay's live-mode delta lastEnd, refreshLiveOverlays' max
+// range.end, reloadOverlay's preserved-ranges list) now read range-kind
+// claims straight off overlayLedger via heldRangeSpans() above; loadRangeData's
+// covered-range dedup now calls overlayLedger.covers() directly (see
+// overlay-data-loader.js). Coverage decisions (isYearLoaded,
+// getYearsCoveredByRanges, hasCompletedRangeForCurrentFilters) already read
+// overlayLedger as of Task L2.
 
 // Weather-grid year cache: per-overlay Set of years fetched.
 // Weather grid has no range fetches (one API call per year per variable, see
 // loadWeatherYearData in overlay-data-loader.js), so it keeps its own
-// year-keyed bookkeeping instead of being forced onto loadedRanges. Range-
-// backed overlays (earthquakes, hurricanes, etc.) no longer write this --
-// their year coverage is derived from loadedRanges (see isYearLoaded /
-// getLoadedYearsForOverlay in overlay-cache-ops.js).
+// year-keyed bookkeeping instead of recording ledger claims -- weather-grid
+// records no coverage-ledger claims at all today (documented exception; see
+// recalculateTimeRange's comment in overlay-controller.js for the
+// consequence: its yearRangeCache peek stays in place pending a future
+// weather-grid claims task). Range-backed overlays (earthquakes, hurricanes,
+// etc.) no longer write this -- their year coverage is derived from
+// overlayLedger (see isYearLoaded / getLoadedYearsForOverlay in
+// overlay-cache-ops.js).
 export const loadedYears = {};
 
 // Cache year ranges per overlay (for recalculating combined range when

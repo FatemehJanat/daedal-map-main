@@ -11,7 +11,6 @@ import {
   CLIMATE_VARIABLES,
   dataCache,
   loadedFilters,
-  loadedRanges,
   loadedYears,
   overlayLedger,
   recordYearRangeCoverage,
@@ -162,29 +161,23 @@ export async function loadRangeData(overlayId, startMs, endMs, endpoint, signal 
     return loadWeatherYearData(overlayId, year, endpoint, signal);
   }
 
-  if (!loadedRanges[overlayId]) {
-    loadedRanges[overlayId] = [];
-  }
-
   const filterSignature = buildRangeRequestSignature(endpoint, overlayId);
-  const isRangeCovered = loadedRanges[overlayId].some((r) =>
-    !r.loading &&
-    (r.filterSignature || '') === filterSignature &&
-    r.start <= startMs &&
-    r.end >= endMs
-  );
-  if (isRangeCovered) {
+
+  // TASK L6 item 3: the loadedRanges mirror's isRangeCovered dedup is
+  // retired -- overlayLedger.covers() with includeInFlight:false reproduces
+  // it exactly. The old check required `!r.loading` (an in-flight fetch for
+  // the same range did NOT count as covered, so a concurrent second call
+  // would fetch again); includeInFlight:false excludes in-flight claims the
+  // same way, since claimCoversNeed here checks source/metrics('*')/
+  // geoLevel(null)/scope('all')/exact filters/range-containment -- the same
+  // axes the old start<=startMs && end>=endMs + exact-filterSignature check
+  // compared.
+  const needClaim = buildEventRangeClaim(overlayId, startMs, endMs, filterSignature);
+  if (overlayLedger.covers(needClaim, { includeInFlight: false })) {
     console.log(`OverlayController: ${overlayId} range already cached; treating request as loaded`);
     return true;
   }
 
-  const rangeEntry = { start: startMs, end: endMs, loading: true, filterSignature };
-  loadedRanges[overlayId].push(rangeEntry);
-  // TASK L2: markInFlight mirrors the loading:true entry above onto the
-  // ledger so isYearLoaded/getYearsCoveredByRanges/hasCompletedRange...
-  // (which now read overlayLedger, not this array) exclude this range while
-  // it is in flight, same as the old `if (range.loading) continue;` /
-  // `!range.loading` filters did.
   // TASK L5: stamp whatever version is currently resolvable for this
   // overlay (null today -- see resolveSourceVersion doc comment in
   // overlay-cache.js; the range-fetch response itself carries no version
@@ -231,7 +224,6 @@ export async function loadRangeData(overlayId, startMs, endMs, endpoint, signal 
       console.log(`OverlayController: No ${overlayId} events in range`);
     }
 
-    rangeEntry.loading = false;
     console.log(`OverlayController: ${overlayId} total cached: ${dataCache[overlayId]?.features?.length || 0} features`);
 
     // Year-loadedness (for auto-fetch during playback and the Loaded tab) is
@@ -277,8 +269,6 @@ export async function loadRangeData(overlayId, startMs, endMs, endpoint, signal 
 
     return true;
   } catch (error) {
-    const idx = loadedRanges[overlayId].indexOf(rangeEntry);
-    if (idx >= 0) loadedRanges[overlayId].splice(idx, 1);
     overlayLedger.dropInFlight(claimToken);
 
     if (error.name === 'AbortError') {
