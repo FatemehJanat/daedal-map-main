@@ -244,9 +244,28 @@ export const OceanRasterModel = {
     setLayerVisibility(map, layer.layerId, visible, { cache: layer });
   },
 
+  /**
+   * Register a callback fired whenever the DISPLAYED frame changes:
+   * cb(frameStampMs|null) -- null means nothing is rendered (playhead before
+   * the first held frame). Lets the control panel show which data moment is
+   * actually on screen, making held-last-known state visible.
+   */
+  setFrameCallback(overlayId, cb) {
+    const inst = this.instances.get(overlayId);
+    if (inst) {
+      inst.frameCallback = typeof cb === 'function' ? cb : null;
+      if (inst.frameCallback) inst.frameCallback(inst.displayedFrameStamp ?? null);
+    }
+  },
+
+  getDisplayedFrameStamp(overlayId) {
+    return this.instances.get(overlayId)?.displayedFrameStamp ?? null;
+  },
+
   renderAtTimestamp(overlayId, timeMs) {
     const inst = this.instances.get(overlayId);
     if (!inst) return;
+    let displayedStamp = null;
     const activeLayers = new Set(this._activeLayersForTime(inst, timeMs));
     for (const layer of inst.basins) {
       if (!activeLayers.has(layer)) {
@@ -281,6 +300,13 @@ export const OceanRasterModel = {
         this._placeLayer(layer, inst.opacity);
       }
       this._setLayerVisibility(layer, true);
+      const stamp = layer.timestamps[idx];
+      if (displayedStamp === null || stamp > displayedStamp) displayedStamp = stamp;
+    }
+
+    if (inst.displayedFrameStamp !== displayedStamp) {
+      inst.displayedFrameStamp = displayedStamp;
+      if (inst.frameCallback) inst.frameCallback(displayedStamp);
     }
   },
 

@@ -93,6 +93,16 @@ function _build() {
   Object.assign(varRow.style, { display: 'flex', gap: '6px', marginBottom: '12px' });
   panel.appendChild(varRow);
 
+  // Displayed-frame timestamp: which data moment is actually on screen.
+  // Makes the held-last-known trailing edge visible (slider can say "now"
+  // while the newest frame is days old), and reads "No data at this time"
+  // when the playhead is before the first held frame (screen cleared).
+  const stampRow = document.createElement('div');
+  stampRow.id = `${PANEL_ID}-stamp`;
+  Object.assign(stampRow.style, { marginBottom: '12px', color: '#bcc', fontSize: '11px' });
+  stampRow.textContent = 'Showing data from: --';
+  panel.appendChild(stampRow);
+
   // Opacity
   const opRow = document.createElement('div');
   Object.assign(opRow.style, { marginBottom: '12px' });
@@ -153,6 +163,25 @@ function _renderVariables(panel) {
   }
 }
 
+function _formatFrameStamp(stampMs) {
+  if (stampMs === null || stampMs === undefined || !Number.isFinite(stampMs)) {
+    return 'No data at this time';
+  }
+  return new Date(stampMs).toLocaleDateString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC'
+  });
+}
+
+function _updateFrameStamp(stampMs) {
+  const row = document.getElementById(`${PANEL_ID}-stamp`);
+  if (!row) return;
+  if (stampMs === null || stampMs === undefined) {
+    row.textContent = 'No data at this time';
+  } else {
+    row.textContent = `Showing data from: ${_formatFrameStamp(stampMs)}`;
+  }
+}
+
 function _renderLegend(panel) {
   const scale = _model.getColorScale(_overlayId, _model.getVariable(_overlayId));
   const bar = panel.querySelector(`#${PANEL_ID}-legendbar`);
@@ -175,6 +204,8 @@ export const OceanRasterPanel = {
     if (slider) slider.value = String(op);
     if (opVal) opVal.textContent = `${op}%`;
     _renderLegend(panel);
+    // Live displayed-frame readout (fires immediately with current state)
+    _model.setFrameCallback?.(overlayId, _updateFrameStamp);
     panel.style.display = 'block';
   },
 
