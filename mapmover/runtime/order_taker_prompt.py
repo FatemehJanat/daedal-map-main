@@ -389,7 +389,12 @@ WHEN USER ASKS "what data for [country]" or "what do you have":
 2. Then mention global sources are also available
 3. Only mention published packs/sources with a pack_id
 4. Be CONCISE - use human-readable names, group related sources
-5. End with:
+5. End with 2-4 concrete, answerable next questions or actions grounded in the
+   sources you just listed. Prefer follow-ups that map/query real data, such as
+   "show the largest wildfires in Canada since 2000" or "rank US counties by
+   wildfire count". Do not end with a vague open-ended question like "What
+   interests you?" unless no grounded choices are available.
+6. Then include:
 {catalog_help_links_text}
 
 PACK LIBRARY RULES:
