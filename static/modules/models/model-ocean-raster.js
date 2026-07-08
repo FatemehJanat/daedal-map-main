@@ -253,6 +253,15 @@ export const OceanRasterModel = {
         this._setLayerVisibility(layer, false);
         continue;
       }
+      // Leading edge: before a layer's first frame there IS no state to show
+      // -- rendering the first frame would invent history (a shared slider
+      // can span far earlier than this overlay's data). Hide instead.
+      // Trailing edge intentionally differs: past the last frame we hold the
+      // last known state (a frame stays valid until a newer one exists).
+      if (layer.timestamps.length && timeMs < layer.timestamps[0]) {
+        this._setLayerVisibility(layer, false);
+        continue;
+      }
       const idx = this._frameIndexForTime(layer, timeMs);
       if (idx < 0) {
         this._setLayerVisibility(layer, false);
