@@ -2342,7 +2342,7 @@ export const OverlayController = {
           this.lastTimeSliderTimestamp === null ||
           Math.abs(time - this.lastTimeSliderTimestamp) >= SIX_HOURS_MS) {
         this.lastTimeSliderTimestamp = time;
-        this.onTimeChangeTimestamp(time);
+        this.onTimeChangeTimestamp(time, source);
       }
     } else {
       // Year lane (deliberate, not legacy): |time| < 50000 means a bare year
@@ -2352,7 +2352,7 @@ export const OverlayController = {
       const year = this.getYearFromTime(time);
       if (forceRerender || year !== this.lastTimeSliderYear) {
         this.lastTimeSliderYear = year;
-        this.onTimeChange(year);
+        this.onTimeChange(year, source);
       }
     }
   },
@@ -2535,11 +2535,14 @@ export const OverlayController = {
    * Year lane: reached when the slider emits bare year integers
    * (year-granularity and very old / pre-epoch history data). This is a
    * deliberate second input format, not a legacy leftover.
-   * Auto-fetches data for the year if not already cached.
+   * Auto-fetches data for the year only on deliberate time changes (same
+   * fetch policy as onTimeChangeTimestamp: playback renders held coverage).
    * @param {number} year - New year
+   * @param {string} source - What triggered: 'slider' | 'playback' | 'api' | 'bounds'
    */
-  onTimeChange(year) {
+  onTimeChange(year, source = 'slider') {
     const activeOverlays = OverlaySelector?.getActiveOverlays() || [];
+    const allowAutoFetch = source !== 'playback';
 
     for (const overlayId of activeOverlays) {
       if (overlayId === 'demographics') continue;
@@ -2547,15 +2550,22 @@ export const OverlayController = {
       // Handle weather grid overlays
       const overlayConfig = OverlaySelector?.getOverlayConfig(overlayId);
       if (overlayConfig?.model === 'weather-grid') {
-        this.reloadWeatherGridForYear(overlayId, overlayConfig, year);
+        if (allowAutoFetch || loadedYears[overlayId]?.has(year)) {
+          this.reloadWeatherGridForYear(overlayId, overlayConfig, year);
+        }
         continue;
       }
 
       const endpoint = OVERLAY_ENDPOINTS[overlayId];
       if (!endpoint || !endpoint.yearField) continue;
 
-      // Auto-fetch data for the year if not cached, then render
-      this.loadAndRenderYear(overlayId, year);
+      if (allowAutoFetch || isYearLoaded(overlayId, year)) {
+        // Fetch if needed (deliberate scrub) or render the held year
+        this.loadAndRenderYear(overlayId, year);
+      } else if (dataCache[overlayId]) {
+        // Playback over an uncovered year: render from cache only
+        this.renderFilteredData(overlayId, year);
+      }
     }
   },
 
@@ -2627,23 +2637,36 @@ export const OverlayController = {
    * Handle TimeSlider timestamp change - update all active overlays with lifecycle filtering.
    * NEW: Timestamp-based filtering (used when useLifecycleFiltering is true)
    * Also handles hurricane rolling animation (progressive track drawing during active period).
-   * Auto-fetches data for the year if not already cached.
+   *
+   * Fetch policy: PLAYBACK RENDERS HELD COVERAGE ONLY. The slider spans the
+   * union of every active overlay's coverage, so during playback the playhead
+   * routinely sweeps years one overlay holds and another does not (ocean from
+   * 1982 while disasters start 2017) -- that is display, not a request for
+   * more data. Auto-fetch of an uncovered year fires only for deliberate time
+   * changes (user drag / api / bounds), where moving to a moment expresses
+   * interest in it. Getting more data otherwise takes an explicit ask (chat,
+   * load buttons, overlay toggle defaults).
    * @param {number} timestamp - Current timestamp in milliseconds
+   * @param {string} source - What triggered: 'slider' | 'playback' | 'api' | 'bounds'
    */
-  onTimeChangeTimestamp(timestamp) {
+  onTimeChangeTimestamp(timestamp, source = 'slider') {
     const activeOverlays = OverlaySelector?.getActiveOverlays() || [];
     const year = this.getYearFromTime(timestamp);
+    const allowAutoFetch = source !== 'playback';
 
     for (const overlayId of activeOverlays) {
       if (overlayId === 'demographics') continue;
 
-      // Handle weather grid overlays
+      // Handle weather grid overlays (same fetch policy: playback renders
+      // the loaded year only; a deliberate scrub outside it loads that year)
       const overlayConfig = OverlaySelector?.getOverlayConfig(overlayId);
       if (overlayConfig?.model === 'weather-grid') {
         if (WeatherGridModel.hasInstance(overlayId)) {
           const range = WeatherGridModel.getTimestampRange(overlayId);
           if (range && (timestamp < range.min || timestamp > range.max)) {
-            this.reloadWeatherGridForYear(overlayId, overlayConfig, year);
+            if (allowAutoFetch) {
+              this.reloadWeatherGridForYear(overlayId, overlayConfig, year);
+            }
           } else {
             WeatherGridModel.renderAtTimestamp(overlayId, timestamp);
           }
@@ -2652,14 +2675,17 @@ export const OverlayController = {
       }
 
       // Handle ocean raster overlays. ocean_sst has two linked scenes (recent
-      // weekly / full history monthly, see loadOceanRasterOverlay); when the
-      // slider moves outside the loaded range, fetch the other tier and MERGE
-      // it into the same instance as one continuous timeline (repeat calls
-      // while the fetch is in flight are no-ops in the model).
+      // weekly / full history monthly, see loadOceanRasterOverlay); a
+      // DELIBERATE scrub outside the loaded range fetches the other tier and
+      // MERGES it into the same instance as one continuous timeline (repeat
+      // calls while the fetch is in flight are no-ops in the model). During
+      // playback the same fetch policy as events applies: another overlay
+      // widening the slider must not make the ocean self-fetch its entire
+      // history bundle -- it renders clamped to its held frames instead.
       if (overlayConfig?.model === 'ocean-raster') {
         if (OceanRasterModel.hasInstance(overlayId)) {
           const range = OceanRasterModel.getTimestampRange(overlayId);
-          if (range && (timestamp < range.min || timestamp > range.max)) {
+          if (range && (timestamp < range.min || timestamp > range.max) && allowAutoFetch) {
             const nextTier = timestamp < range.min ? 'history' : 'recent';
             this.loadOceanRasterOverlay(overlayId, overlayConfig, { tier: nextTier, resetTimeRange: false })
               .then(() => OceanRasterModel.renderAtTimestamp(overlayId, TimeSlider?.currentTime ?? timestamp));
@@ -2681,20 +2707,19 @@ export const OverlayController = {
       const yearAlreadyLoaded = isYearLoaded(overlayId, year);
       const currentlyLoading = this._loadingYears?.has(yearKey);
 
-      console.log(`OverlayController: ${overlayId} year=${year}, loaded=${yearAlreadyLoaded}, loading=${currentlyLoading}`);
-
-      if (!yearAlreadyLoaded && !currentlyLoading) {
+      if (allowAutoFetch && !yearAlreadyLoaded && !currentlyLoading) {
         // Track that we're loading this year
         if (!this._loadingYears) this._loadingYears = new Set();
         this._loadingYears.add(yearKey);
 
-        console.log(`OverlayController: AUTO-FETCHING ${overlayId} for year ${year}`);
+        console.log(`OverlayController: AUTO-FETCHING ${overlayId} for year ${year} (deliberate scrub)`);
         // Auto-fetch data for this year, then render
         this.loadYearAndRender(overlayId, year, timestamp).finally(() => {
           this._loadingYears?.delete(yearKey);
         });
       } else if (dataCache[overlayId]) {
-        // Render from cache
+        // Render from cache (during playback, uncovered years simply render
+        // whatever lifecycle-filtered features exist -- usually none)
         this.renderFilteredData(overlayId, timestamp, { useTimestamp: true });
 
       }
