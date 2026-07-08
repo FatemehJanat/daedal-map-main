@@ -49,8 +49,12 @@ playhead routinely sweeps moments one overlay holds and another does not
 request:
 
 - PLAYBACK ticks never fetch. Each overlay renders whatever its held
-  coverage provides at the playhead (often nothing, or a clamped frame),
-  and appears when the playhead reaches its data.
+  coverage provides at the playhead and appears when the playhead reaches
+  its data.
+- Edge rendering is ASYMMETRIC by design: BEFORE an overlay's first held
+  frame it shows NOTHING (rendering the first frame would invent history);
+  AFTER its last frame it holds the last known state (a frame stays valid
+  until a newer one exists -- keeps the map meaningful at "now").
 - DELIBERATE time changes (user drag, api, bounds) may auto-fetch the
   moment they land on -- moving there expresses interest in it. This
   includes the ocean history-tier merge.
