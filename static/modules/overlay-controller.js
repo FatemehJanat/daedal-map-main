@@ -1151,6 +1151,42 @@ export const OverlayController = {
     return feedSnapshots.find((item) => String(item?.feed || '').trim() === feedId) || null;
   },
 
+  _getOpsFeedSnapshotCount(overlayId, summary = null) {
+    const normalizedOverlayId = String(overlayId || '').trim();
+    const compactSummary = summary && typeof summary === 'object' ? summary : {};
+    switch (normalizedOverlayId) {
+      case 'earthquakes':
+      case 'tsunamis':
+      case 'volcanoes':
+      case 'tornadoes':
+      case 'floods':
+      case 'landslides':
+        return Number.isFinite(compactSummary?.event_count) ? compactSummary.event_count : null;
+      case 'hurricanes':
+        return Number.isFinite(compactSummary?.storm_count) ? compactSummary.storm_count : null;
+      case 'wildfires':
+        return Number.isFinite(compactSummary?.active_count)
+          ? compactSummary.active_count
+          : (Number.isFinite(compactSummary?.event_count) ? compactSummary.event_count : null);
+      case 'currency':
+        return Number.isFinite(compactSummary?.rate_count) ? compactSummary.rate_count : null;
+      default:
+        return null;
+    }
+  },
+
+  _clearStaleOpsManagedOverlay(overlayId, reason = '') {
+    const normalizedOverlayId = String(overlayId || '').trim();
+    if (!this._isOpsSnapshotManagedOverlay(normalizedOverlayId)) {
+      return;
+    }
+    this.hideOverlay(normalizedOverlayId);
+    clearOverlayData(normalizedOverlayId);
+    window.dispatchEvent(new CustomEvent('overlayCacheUpdated', { detail: calculateCacheSize() }));
+    const suffix = reason ? ` (${reason})` : '';
+    console.log(`OverlayController: Cleared stale Ops-managed cache for ${normalizedOverlayId}${suffix}`);
+  },
+
   _opsWatchHasOverlay(overlayId) {
     const feedId = this._opsFeedIdForOverlay(overlayId);
     const effectiveFeeds = Array.isArray(ChatManager?.latestOpsReport?.effective_feeds)
@@ -1290,26 +1326,7 @@ export const OverlayController = {
     const compactSummary = feedSnapshot?.summary && typeof feedSnapshot.summary === 'object'
       ? feedSnapshot.summary
       : {};
-    let feedSnapshotCount = null;
-    switch (primaryOverlayId) {
-      case 'earthquakes':
-      case 'tsunamis':
-      case 'volcanoes':
-        feedSnapshotCount = Number.isFinite(compactSummary?.event_count) ? compactSummary.event_count : null;
-        break;
-      case 'hurricanes':
-        feedSnapshotCount = Number.isFinite(compactSummary?.storm_count) ? compactSummary.storm_count : null;
-        break;
-      case 'wildfires':
-        feedSnapshotCount = Number.isFinite(compactSummary?.active_count) ? compactSummary.active_count : null;
-        break;
-      case 'currency':
-        feedSnapshotCount = Number.isFinite(compactSummary?.rate_count) ? compactSummary.rate_count : null;
-        break;
-      default:
-        feedSnapshotCount = null;
-        break;
-    }
+    const feedSnapshotCount = this._getOpsFeedSnapshotCount(primaryOverlayId, compactSummary);
     const snapshotCount = Number.isFinite(preparedPayload?.snapshotCount)
       ? preparedPayload.snapshotCount
       : (Number.isFinite(feedSnapshotCount)
@@ -1480,11 +1497,10 @@ export const OverlayController = {
       const isActive = activeOverlays.includes(overlayId);
       const hasSnapshot = this.opsSnapshotPayloads.has(overlayId);
       if (!isActive || !hasSnapshot) {
-        this.hideOverlay(overlayId);
         if (isActive && !hasSnapshot) {
-          clearOverlayData(overlayId);
-          window.dispatchEvent(new CustomEvent('overlayCacheUpdated', { detail: calculateCacheSize() }));
-          console.log(`OverlayController: Cleared stale Ops-managed cache for ${overlayId} (no current Ops payload)`);
+          this._clearStaleOpsManagedOverlay(overlayId, 'no current Ops payload');
+        } else {
+          this.hideOverlay(overlayId);
         }
       }
     }
@@ -2898,10 +2914,7 @@ export const OverlayController = {
         return;
       }
       if (isActive && this._opsWatchHasOverlay(overlayId)) {
-        this.hideOverlay(overlayId);
-        clearOverlayData(overlayId);
-        window.dispatchEvent(new CustomEvent('overlayCacheUpdated', { detail: calculateCacheSize() }));
-        console.log(`OverlayController: Suppressed stale cached ${overlayId} data in Ops mode (no current Ops payload)`);
+        this._clearStaleOpsManagedOverlay(overlayId, 'no current Ops payload');
         emitOverlayStatusMessage(overlayId, true, options);
         return;
       }
