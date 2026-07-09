@@ -20,6 +20,7 @@ import {
   dataCache,
   heldRangeSpans,
   loadedYears,
+  metricCache,
   overlayLedger,
   recordFullyLoadedRangeClaim,
   recordYearRangeCoverage,
@@ -156,6 +157,32 @@ function getLoadedOverlayCount(overlayId) {
   if (Number.isFinite(featureCount)) {
     return featureCount;
   }
+
+  const directMetricCount = metricCache[overlayId]?.geojson?.features?.length;
+  if (Number.isFinite(directMetricCount)) {
+    return directMetricCount;
+  }
+
+  const config = OverlaySelector?.getOverlayConfig?.(overlayId);
+  const sourceIds = Array.isArray(config?.sourceIds)
+    ? config.sourceIds
+    : [];
+  if (sourceIds.length) {
+    let totalFeatures = 0;
+    let hasMetricData = false;
+    for (const sourceId of sourceIds) {
+      const sourceFeatureCount = metricCache[sourceId]?.geojson?.features?.length;
+      if (!Number.isFinite(sourceFeatureCount)) {
+        continue;
+      }
+      hasMetricData = true;
+      totalFeatures += sourceFeatureCount;
+    }
+    if (hasMetricData) {
+      return totalFeatures;
+    }
+  }
+
   return null;
 }
 
