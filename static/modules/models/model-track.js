@@ -76,6 +76,145 @@ export const TrackModel = {
     ];
   },
 
+  _hasWindRadiiProps(props = {}) {
+    return ['r34_ne', 'r34_se', 'r34_sw', 'r34_nw', 'r50_ne', 'r50_se', 'r50_sw', 'r50_nw', 'r64_ne', 'r64_se', 'r64_sw', 'r64_nw']
+      .some((key) => Number(props?.[key]) > 0);
+  },
+
+  _addWindRadiiFeature(features, lon, lat, props, level, keys) {
+    const polygon = this._buildWindRadiiPolygon(lon, lat, {
+      ne: props[keys.ne],
+      se: props[keys.se],
+      sw: props[keys.sw],
+      nw: props[keys.nw]
+    });
+    if (!polygon) return;
+    features.push({
+      type: 'Feature',
+      geometry: { type: 'Polygon', coordinates: polygon },
+      properties: {
+        storm_id: props.storm_id,
+        name: props.name,
+        basin: props.basin,
+        source: props.source,
+        source_name: props.source_name,
+        source_url: props.source_url,
+        wind_kt: props.wind_kt,
+        max_wind_kt: props.max_wind_kt,
+        category: props.category,
+        max_category: props.max_category,
+        event_type: 'hurricane',
+        track_kind: 'wind_radii',
+        windLevel: level
+      }
+    });
+  },
+
+  _withLiveWindFootprints(geojson) {
+    const allFeatures = Array.isArray(geojson?.features) ? geojson.features : [];
+    const sourceFeatures = allFeatures.length
+      ? allFeatures.filter((feature) => feature?.properties?.track_kind !== 'wind_radii')
+      : [];
+    const windFeatures = [];
+    for (const feature of sourceFeatures) {
+      const props = feature?.properties || {};
+      if (feature?.geometry?.type !== 'Point') continue;
+      if (props.track_kind && props.track_kind !== 'current') continue;
+      if (!this._hasWindRadiiProps(props)) continue;
+      const lon = Number(feature.geometry.coordinates?.[0]);
+      const lat = Number(feature.geometry.coordinates?.[1]);
+      if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
+      this._addWindRadiiFeature(windFeatures, lon, lat, props, 34, {
+        ne: 'r34_ne', se: 'r34_se', sw: 'r34_sw', nw: 'r34_nw'
+      });
+      this._addWindRadiiFeature(windFeatures, lon, lat, props, 50, {
+        ne: 'r50_ne', se: 'r50_se', sw: 'r50_sw', nw: 'r50_nw'
+      });
+      this._addWindRadiiFeature(windFeatures, lon, lat, props, 64, {
+        ne: 'r64_ne', se: 'r64_se', sw: 'r64_sw', nw: 'r64_nw'
+      });
+    }
+    if (!windFeatures.length) {
+      return sourceFeatures.length === allFeatures.length ? geojson : { ...geojson, features: sourceFeatures };
+    }
+    return {
+      ...geojson,
+      features: [...sourceFeatures, ...windFeatures]
+    };
+  },
+
+  _windIntensityHaloRadiusExpr() {
+    const windExpr = ['to-number', ['coalesce', ['get', 'wind_kt'], ['get', 'max_wind_kt'], 0]];
+    const lowZoom = ['interpolate', ['linear'], windExpr, 0, 7, 34, 10, 64, 15, 96, 22, 137, 32];
+    const midZoom = ['interpolate', ['linear'], windExpr, 0, 11, 34, 16, 64, 25, 96, 37, 137, 54];
+    const highZoom = ['interpolate', ['linear'], windExpr, 0, 17, 34, 24, 64, 38, 96, 58, 137, 82];
+    return [
+      'interpolate', ['linear'], ['zoom'],
+      2, lowZoom,
+      5, midZoom,
+      8, highZoom
+    ];
+  },
+
+  _addLiveWindRadiiLayers(map) {
+    for (const config of [
+      { level: 34, color: CONFIG.windRadiiColors.r34, stroke: CONFIG.windRadiiColors.stroke34, opacity: 0.7 },
+      { level: 50, color: CONFIG.windRadiiColors.r50, stroke: CONFIG.windRadiiColors.stroke50, opacity: 0.72 },
+      { level: 64, color: CONFIG.windRadiiColors.r64, stroke: CONFIG.windRadiiColors.stroke64, opacity: 0.75 }
+    ]) {
+      map.addLayer({
+        id: CONFIG.layers.hurricaneCircle + `-wind-radii-${config.level}`,
+        type: 'fill',
+        source: CONFIG.layers.hurricaneSource,
+        filter: ['all',
+          ['==', ['geometry-type'], 'Polygon'],
+          ['==', ['get', 'track_kind'], 'wind_radii'],
+          ['==', ['get', 'windLevel'], config.level]
+        ],
+        paint: {
+          'fill-color': config.color,
+          'fill-outline-color': config.stroke,
+          'fill-opacity': config.opacity
+        }
+      });
+    }
+  },
+
+  _addWindIntensityHaloLayer(map, categoryColorExpr, currentOnly = false) {
+    const filter = ['all',
+      ['==', ['geometry-type'], 'Point'],
+      ['>', ['to-number', ['coalesce', ['get', 'wind_kt'], ['get', 'max_wind_kt'], 0]], 0]
+    ];
+    if (currentOnly) {
+      filter.push(['==', ['get', 'track_kind'], 'current']);
+    }
+    map.addLayer({
+      id: CONFIG.layers.hurricaneCircle + '-intensity-halo',
+      type: 'circle',
+      source: CONFIG.layers.hurricaneSource,
+      filter,
+      paint: {
+        'circle-radius': this._windIntensityHaloRadiusExpr(),
+        'circle-color': categoryColorExpr,
+        'circle-opacity': [
+          'case',
+          ['any',
+            ['>', ['to-number', ['coalesce', ['get', 'r34_ne'], 0]], 0],
+            ['>', ['to-number', ['coalesce', ['get', 'r34_se'], 0]], 0],
+            ['>', ['to-number', ['coalesce', ['get', 'r34_sw'], 0]], 0],
+            ['>', ['to-number', ['coalesce', ['get', 'r34_nw'], 0]], 0]
+          ],
+          0.08,
+          0.22
+        ],
+        'circle-stroke-color': categoryColorExpr,
+        'circle-stroke-width': 1,
+        'circle-stroke-opacity': 0.34,
+        'circle-blur': 0.55
+      }
+    });
+  },
+
   /**
    * Render hurricane/storm features onto the map.
    * Supports both Point (max intensity markers) and LineString (track lines) features.
@@ -98,29 +237,28 @@ export const TrackModel = {
     const map = MapAdapter.map;
 
     // Check if source already exists - if so, just update data (no flash)
+    const displayGeojson = this._withLiveWindFootprints(geojson);
     const existingSource = map.getSource(CONFIG.layers.hurricaneSource);
     if (existingSource) {
       // Source exists - just update data, don't recreate layers
-      existingSource.setData(geojson);
+      existingSource.setData(displayGeojson);
       return true;
     }
 
     // First time render - create source and layers
     const categoryColorExpr = this._buildCategoryColorExpr();
 
-    // Live advisory payloads mix current-position points, observed/forecast
-    // lines, and cone polygons. Use track rendering whenever any line exists.
-    const isLineString = geojson.features.some(
-      feature => feature?.geometry?.type === 'LineString'
-    );
-
     // Add hurricane source
     map.addSource(CONFIG.layers.hurricaneSource, {
       type: 'geojson',
-      data: geojson
+      data: displayGeojson
     });
 
-    if (isLineString) {
+    const hasLineString = displayGeojson.features.some(
+      feature => feature?.geometry?.type === 'LineString'
+    );
+
+    if (hasLineString) {
       // Render track lines for yearly overview
       this._renderTrackLines(map, categoryColorExpr, options);
     } else {
@@ -131,7 +269,7 @@ export const TrackModel = {
     // Set up popup event listeners for sequence button
     this._setupPopupEventListeners();
 
-    console.log(`TrackModel: Loaded ${geojson.features.length} ${eventType} ${isLineString ? 'tracks' : 'markers'}`);
+    console.log(`TrackModel: Loaded ${geojson.features.length} ${eventType} ${hasLineString ? 'tracks' : 'markers'}`);
   },
 
   /**
@@ -143,7 +281,12 @@ export const TrackModel = {
     // Lifecycle opacity expression: uses _opacity property or defaults to 1.0
     const lifecycleOpacity = ['coalesce', ['get', '_opacity'], 1.0];
 
-    // Add track line layer (colored by max category)
+    // Add true wind-field footprints when the live source provides quadrant
+    // radii. These are generated from r34/r50/r64 fields, not inferred from
+    // intensity.
+    this._addLiveWindRadiiLayers(map);
+
+    // Add forecast cone polygons (colored by max category)
     map.addLayer({
       id: CONFIG.layers.hurricaneCircle + '-forecast-cones',
       type: 'fill',
@@ -207,6 +350,8 @@ export const TrackModel = {
         'line-dasharray': [2, 2]
       }
     });
+
+    this._addWindIntensityHaloLayer(map, categoryColorExpr, true);
 
     map.addLayer({
       id: CONFIG.layers.hurricaneCircle + '-current',
@@ -278,6 +423,7 @@ export const TrackModel = {
       id: CONFIG.layers.hurricaneLabel,
       type: 'symbol',
       source: CONFIG.layers.hurricaneSource,
+      filter: ['==', ['geometry-type'], 'LineString'],
       minzoom: 3,
       layout: {
         'symbol-placement': 'line',
@@ -383,11 +529,15 @@ export const TrackModel = {
    * @private
    */
   _renderPointMarkers(map, categoryColorExpr, options) {
+    this._addLiveWindRadiiLayers(map);
+    this._addWindIntensityHaloLayer(map, categoryColorExpr, false);
+
     // Add outer glow
     map.addLayer({
       id: CONFIG.layers.hurricaneCircle + '-glow',
       type: 'circle',
       source: CONFIG.layers.hurricaneSource,
+      filter: ['==', ['geometry-type'], 'Point'],
       paint: {
         'circle-radius': 14,
         'circle-color': categoryColorExpr,
@@ -400,6 +550,7 @@ export const TrackModel = {
       id: CONFIG.layers.hurricaneCircle + '-hit',
       type: 'circle',
       source: CONFIG.layers.hurricaneSource,
+      filter: ['==', ['geometry-type'], 'Point'],
       paint: {
         'circle-radius': 18,
         'circle-color': '#ffffff',
@@ -412,6 +563,7 @@ export const TrackModel = {
       id: CONFIG.layers.hurricaneCircle,
       type: 'circle',
       source: CONFIG.layers.hurricaneSource,
+      filter: ['==', ['geometry-type'], 'Point'],
       paint: {
         'circle-radius': 8,
         'circle-color': categoryColorExpr,
@@ -426,6 +578,7 @@ export const TrackModel = {
       id: CONFIG.layers.hurricaneLabel,
       type: 'symbol',
       source: CONFIG.layers.hurricaneSource,
+      filter: ['==', ['geometry-type'], 'Point'],
       minzoom: 4,
       layout: {
         'text-field': ['coalesce', ['get', 'name'], ['get', 'storm_name']],
@@ -530,6 +683,10 @@ export const TrackModel = {
         CONFIG.layers.hurricaneCircle,
         CONFIG.layers.hurricaneCircle + '-hit',
         CONFIG.layers.hurricaneCircle + '-glow',
+        CONFIG.layers.hurricaneCircle + '-intensity-halo',
+        CONFIG.layers.hurricaneCircle + '-wind-radii-34',
+        CONFIG.layers.hurricaneCircle + '-wind-radii-50',
+        CONFIG.layers.hurricaneCircle + '-wind-radii-64',
         CONFIG.layers.hurricaneCircle + '-lines',
         CONFIG.layers.hurricaneCircle + '-lines-hit',
         CONFIG.layers.hurricaneCircle + '-forecast-lines',
@@ -736,6 +893,10 @@ export const TrackModel = {
       CONFIG.layers.hurricaneCircle,
       CONFIG.layers.hurricaneCircle + '-hit',
       CONFIG.layers.hurricaneCircle + '-glow',
+      CONFIG.layers.hurricaneCircle + '-intensity-halo',
+      CONFIG.layers.hurricaneCircle + '-wind-radii-64',
+      CONFIG.layers.hurricaneCircle + '-wind-radii-50',
+      CONFIG.layers.hurricaneCircle + '-wind-radii-34',
       CONFIG.layers.hurricaneCircle + '-lines',
       CONFIG.layers.hurricaneCircle + '-lines-hit',
       CONFIG.layers.hurricaneCircle + '-forecast-lines',
