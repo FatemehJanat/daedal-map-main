@@ -233,6 +233,9 @@ export const PopupBuilder = {
     const sections = Array.isArray(combinedMetricData?.sections) ? combinedMetricData.sections : [];
     if (!sections.length) return '';
 
+    const lane = combinedMetricData?.lane || 'explore';
+    const selectedDisplayId = combinedMetricData?.selected_display_id || null;
+
     const blocks = sections.map((section) => {
       const metrics = Array.isArray(section.available_metrics) && section.available_metrics.length
         ? section.available_metrics
@@ -247,8 +250,15 @@ export const PopupBuilder = {
       const colorSwatch = section.color
         ? `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${section.color};margin-right:6px;vertical-align:middle;"></span>`
         : '';
-      let html = '<div class="popup-metric-section">';
-      html += `<div style="font-size:11px;font-weight:700;color:rgba(230,243,255,0.94);margin-top:4px;">${colorSwatch}${section.source_name || section.source_id || 'Metric layer'}</div>`;
+      // Section is clickable so users can pick which display owns the
+      // single visible legend (selected-legend model). Highlight the
+      // currently selected instance so the affordance is discoverable.
+      const isSelected = Boolean(section.display_id) && section.display_id === selectedDisplayId;
+      const sectionStyle = isSelected
+        ? 'cursor:pointer;background:rgba(255,255,255,0.07);border-radius:4px;padding:2px 4px;margin:2px -4px;'
+        : 'cursor:pointer;padding:2px 4px;margin:2px -4px;';
+      let html = `<div class="popup-metric-section" style="${sectionStyle}" data-action="select-metric-display" data-display-id="${section.display_id || ''}" data-lane="${lane}" title="Click to show this layer's legend">`;
+      html += `<div style="font-size:11px;font-weight:700;color:rgba(230,243,255,0.94);margin-top:4px;">${colorSwatch}${section.source_name || section.source_id || 'Metric layer'}${isSelected ? ' <span style="font-weight:400;color:rgba(230,243,255,0.55);">(legend)</span>' : ''}</div>`;
       if (headerBits.length) {
         html += `<div style="font-size:10px;color:rgba(230,243,255,0.62);margin-bottom:2px;">${headerBits.join(' | ')}</div>`;
       }

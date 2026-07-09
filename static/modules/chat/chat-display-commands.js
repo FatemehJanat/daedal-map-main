@@ -6,7 +6,7 @@ function normalizeColorHex(color) {
   return String(color || '').trim().toLowerCase();
 }
 
-function getNamedColors() {
+export function getNamedColors() {
   return {
     red: '#ef4444',
     blue: '#3b82f6',
@@ -212,5 +212,117 @@ export function parseDisplayStyleCommand(ctx, query, options = {}) {
     reply: labelParts.length
       ? `Updated the ${labelParts.join(', ')} colors for the current display.`
       : 'Updated the current display colors.'
+  };
+}
+
+// =============================================================================
+// Per-display remove/hide lifecycle commands
+// =============================================================================
+//
+// Deterministic parser for commands like:
+//   "remove the flood risk layer"
+//   "hide fire risk"
+//   "unhide flood risk" / "show the flood risk layer again"
+// Matches the same deterministic-regex style used by parseDisplayStyleCommand
+// above: no LLM, fall through to null (normal chat path) on anything not
+// confidently matched.
+
+function tokensForDisplay(display) {
+  return [
+    display?.source_id,
+    display?.source_name,
+    display?.metric_key,
+    ...(Array.isArray(display?.available_metrics) ? display.available_metrics : [])
+  ]
+    .map(normalizeCommandText)
+    .filter(Boolean);
+}
+
+function matchDisplayByText(laneDisplays, normalizedDescriptor) {
+  if (!normalizedDescriptor) return null;
+  for (const display of laneDisplays) {
+    const tokens = tokensForDisplay(display);
+    for (const token of tokens) {
+      if (!token) continue;
+      if (token === normalizedDescriptor || token.includes(normalizedDescriptor) || normalizedDescriptor.includes(token)) {
+        return display;
+      }
+    }
+  }
+  return null;
+}
+
+function stripLifecycleWords(text) {
+  return String(text || '')
+    .replace(/\blayer\b/g, '')
+    .replace(/\bdisplay\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function parseDisplayLifecycleCommand(ctx, query, options = {}, deps = {}) {
+  const normalized = normalizeCommandText(query);
+  if (!normalized) return null;
+  const registry = deps.MetricDisplayRegistry;
+  if (!registry) return null;
+
+  let action = null;
+  let descriptor = '';
+
+  let match = normalized.match(/^(?:remove|delete|drop)\s+(?:the\s+)?(.+)$/);
+  if (match) {
+    action = 'remove';
+    descriptor = match[1];
+  }
+
+  if (!action) {
+    match = normalized.match(/^(?:unhide|restore)\s+(?:the\s+)?(.+)$/);
+    if (match) {
+      action = 'show';
+      descriptor = match[1];
+    }
+  }
+
+  if (!action) {
+    match = normalized.match(/^show\s+(?:the\s+)?(.+?)\s+again$/);
+    if (match) {
+      action = 'show';
+      descriptor = match[1];
+    }
+  }
+
+  if (!action) {
+    match = normalized.match(/^hide\s+(?:the\s+)?(.+)$/);
+    if (match) {
+      action = 'hide';
+      descriptor = match[1];
+    }
+  }
+
+  if (!action) return null;
+
+  descriptor = stripLifecycleWords(descriptor);
+  if (!descriptor) return null;
+
+  const mode = options.mode || ctx?.mode || 'explore';
+  const laneDisplays = registry.getLaneDisplays(mode);
+  if (!laneDisplays.length) return null;
+
+  const target = matchDisplayByText(laneDisplays, descriptor);
+  if (!target) return null;
+
+  const label = target.source_name || target.metric_key || 'layer';
+  const reply = action === 'remove'
+    ? `Removed the ${label} layer.`
+    : action === 'hide'
+      ? `Hid the ${label} layer.`
+      : `Restored the ${label} layer.`;
+
+  return {
+    action,
+    lane: mode,
+    displayId: target.display_id,
+    label,
+    reply
   };
 }

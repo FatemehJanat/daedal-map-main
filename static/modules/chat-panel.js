@@ -71,9 +71,12 @@ import {
   getResearchDisplayFallbackMessage as getResearchDisplayFallbackMessageImpl
 } from './research/research-chat-commands.js';
 import {
+  getNamedColors,
   parseDisplayLegendCommand as parseDisplayLegendCommandImpl,
+  parseDisplayLifecycleCommand as parseDisplayLifecycleCommandImpl,
   parseDisplayStyleCommand as parseDisplayStyleCommandImpl
 } from './chat/chat-display-commands.js';
+import { MetricDisplayRegistry } from './metric-display-registry.js';
 import { buildExploreWelcomeMessage, buildExploreWelcomeStatusMessage } from './explore/welcome.js';
 import { buildResearchFriendlyWelcomeMessage, buildResearchWelcomeMessage } from './research/welcome.js';
 import { buildOpsFriendlyWelcomeMessage, buildOpsWelcomeMessage } from './ops/welcome.js';
@@ -108,17 +111,10 @@ export function setDependencies(deps) {
 
 // Map event_type from API responses to overlay IDs
 const CHAT_MODES = ['explore', 'research', 'ops'];
-const DISPLAY_COLOR_MAP = {
-  red: '#ef4444',
-  blue: '#3b82f6',
-  green: '#10b981',
-  orange: '#f59e0b',
-  yellow: '#eab308',
-  purple: '#8b5cf6',
-  pink: '#ec4899',
-  cyan: '#06b6d4',
-  teal: '#14b8a6'
-};
+// Shared color vocabulary - reuse the same named-color table used by the
+// deterministic recolor commands in chat-display-commands.js instead of
+// keeping a second copy in sync.
+const DISPLAY_COLOR_MAP = getNamedColors();
 
 function normalizeChatMode(mode) {
   return CHAT_MODES.includes(mode) ? mode : 'explore';
@@ -3191,6 +3187,24 @@ export const ChatManager = {
       input.style.height = 'auto';
     }
 
+    const lifecycleCommand = this.parseDisplayLifecycleCommand(query, requestMode);
+    if (lifecycleCommand) {
+      this.history.push({ role: 'user', content: query });
+      this.modeHistories[requestMode] = this.history;
+      if (lifecycleCommand.action === 'remove') {
+        App?.removeMetricDisplay?.(lifecycleCommand.lane, lifecycleCommand.displayId);
+      } else if (lifecycleCommand.action === 'hide') {
+        App?.setMetricDisplayVisibility?.(lifecycleCommand.lane, lifecycleCommand.displayId, false);
+      } else if (lifecycleCommand.action === 'show') {
+        App?.setMetricDisplayVisibility?.(lifecycleCommand.lane, lifecycleCommand.displayId, true);
+      }
+      this.history.push({ role: 'assistant', content: lifecycleCommand.reply });
+      this.modeHistories[requestMode] = this.history;
+      this.addMessage(lifecycleCommand.reply, 'assistant', { mode: requestMode });
+      this.saveState();
+      return;
+    }
+
     const styleCommand = this.parseDisplayStyleCommand(query, requestMode);
     if (styleCommand) {
       this.history.push({ role: 'user', content: query });
@@ -3480,6 +3494,10 @@ export const ChatManager = {
     return parseDisplayStyleCommandImpl(this, query, { mode, App });
   },
 
+  parseDisplayLifecycleCommand(query, mode = this.mode) {
+    return parseDisplayLifecycleCommandImpl(this, query, { mode }, { MetricDisplayRegistry });
+  },
+
   isExploreOrderTakerEnabled() {
     return this.exploreOrderTakerEnabled === true;
   },
@@ -3488,7 +3506,10 @@ export const ChatManager = {
     const normalized = String(query || '').trim();
     if (!normalized || !/\band\b/i.test(normalized)) return null;
     const segments = normalized.split(/\s+\band\b\s+/i).map((part) => part.trim()).filter(Boolean);
-    if (segments.length < 2) return null;
+    // Conservative fan-out: only split confidently-small requests. Anything
+    // longer likely isn't a simple "X in color and Y in color" pattern, so
+    // fall through to the normal single-order path untouched.
+    if (segments.length < 2 || segments.length > 3) return null;
     const actionMatch = segments[0].match(/^(show me|show|display|map|load|find)\b/i);
     const actionPrefix = actionMatch ? actionMatch[1] : 'show me';
     const sharedModifierMatch = segments[0].match(/^(?:show me|show|display|map|load|find)\s+((?:top\s+\d{1,2}(?:\s*%|\s+percent)\s+)?(?:highest|lowest)\s+risk)\b/i);

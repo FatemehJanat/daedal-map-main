@@ -54,9 +54,11 @@ export const MapAdapter = {
   lockedPopupLocationInfo: null,
   selectedPopupContext: null,
   researchDisplayLayerIds: [],
-  metricDisplayLayerIds: [],
-  metricDisplaySourceIds: [],
-  metricDisplayHandlerRefs: [],
+  // Per-display bookkeeping for additive metric fill layers, keyed by
+  // display_id: { sourceId, layerId, handlers: { mousemove, mouseleave, click } }.
+  // Keying by display_id (instead of parallel index arrays) lets a single
+  // display's layer/source/handlers be removed without disturbing the rest.
+  metricDisplayEntries: {},
   mapClickHandlerBound: false,
   canvasPointInspectorBound: false,
   pointResolveRequestToken: 0,
@@ -915,32 +917,29 @@ export const MapAdapter = {
 
   clearMetricDisplayLayers() {
     if (!this.map) return;
-    for (const handlerSet of this.metricDisplayHandlerRefs) {
-      const layerId = handlerSet?.layerId;
-      if (!layerId) continue;
-      if (handlerSet.mousemove) {
-        this.map.off('mousemove', layerId, handlerSet.mousemove);
-      }
-      if (handlerSet.mouseleave) {
-        this.map.off('mouseleave', layerId, handlerSet.mouseleave);
-      }
-      if (handlerSet.click) {
-        this.map.off('click', layerId, handlerSet.click);
-      }
+    for (const displayId of Object.keys(this.metricDisplayEntries)) {
+      this.removeMetricDisplayEntry(displayId);
     }
-    for (const layerId of this.metricDisplayLayerIds) {
-      if (this.map.getLayer(layerId)) {
-        this.map.removeLayer(layerId);
-      }
+  },
+
+  /**
+   * Remove exactly one display's fill layer, source, and bound handlers
+   * without touching any other additive metric display currently rendered.
+   */
+  removeMetricDisplayEntry(displayId) {
+    const entry = this.metricDisplayEntries[displayId];
+    if (!entry) return;
+    const { layerId, sourceId, handlers } = entry;
+    if (this.map && layerId) {
+      if (handlers?.mousemove) this.map.off('mousemove', layerId, handlers.mousemove);
+      if (handlers?.mouseleave) this.map.off('mouseleave', layerId, handlers.mouseleave);
+      if (handlers?.click) this.map.off('click', layerId, handlers.click);
+      if (this.map.getLayer(layerId)) this.map.removeLayer(layerId);
     }
-    for (const sourceId of this.metricDisplaySourceIds) {
-      if (this.map.getSource(sourceId)) {
-        this.map.removeSource(sourceId);
-      }
+    if (this.map && sourceId && this.map.getSource(sourceId)) {
+      this.map.removeSource(sourceId);
     }
-    this.metricDisplayLayerIds = [];
-    this.metricDisplaySourceIds = [];
-    this.metricDisplayHandlerRefs = [];
+    delete this.metricDisplayEntries[displayId];
   },
 
   getSharedOverlayAnchorLayerId() {
@@ -992,9 +991,9 @@ export const MapAdapter = {
         this.map.setLayoutProperty(layerId, 'visibility', visibility);
       }
     }
-    for (const layerId of this.metricDisplayLayerIds) {
-      if (this.map.getLayer(layerId)) {
-        this.map.setLayoutProperty(layerId, 'visibility', visibility);
+    for (const entry of Object.values(this.metricDisplayEntries)) {
+      if (entry?.layerId && this.map.getLayer(entry.layerId)) {
+        this.map.setLayoutProperty(entry.layerId, 'visibility', visibility);
       }
     }
 
@@ -1011,21 +1010,61 @@ export const MapAdapter = {
     console.log(`MapAdapter: Choropleth layers ${visible ? 'shown' : 'hidden'}`);
   },
 
+  /**
+   * Toggle visibility of just the shared base fill/stroke layer (the layer
+   * the current/primary metric display renders through). Used by the
+   * per-display remove/hide lifecycle when the targeted display happens to
+   * be the primary display rather than an additive overlay -- the primary
+   * display doesn't have its own metricDisplayEntries layer to remove, so
+   * this is the best-effort first-pass way to hide it without disturbing
+   * additive overlays or the single-metric fast path's own render calls.
+   */
+  setBaseFillVisible(visible) {
+    if (!this.map) return;
+    const visibility = visible ? 'visible' : 'none';
+    if (this.map.getLayer(CONFIG.layers.fill)) {
+      this.map.setLayoutProperty(CONFIG.layers.fill, 'visibility', visibility);
+    }
+    if (this.map.getLayer(CONFIG.layers.stroke)) {
+      this.map.setLayoutProperty(CONFIG.layers.stroke, 'visibility', visibility);
+    }
+  },
+
+  /**
+   * Render additive metric fill layers for every non-primary display in
+   * `displays`. Rebinds bookkeeping per display_id (see metricDisplayEntries)
+   * so a single display can later be removed/hidden without recreating the
+   * layers of any sibling display.
+   */
   renderMetricDisplayLayers(displays = [], options = {}) {
     if (!this.map) return;
-    this.clearMetricDisplayLayers();
 
     const currentDisplayId = String(options.currentDisplayId || '').trim();
     const overlayDisplays = (Array.isArray(displays) ? displays : [])
       .filter((display) => display?.geojson?.features?.length)
+      .filter((display) => display.visibility !== false)
       .filter((display) => String(display.display_id || '').trim() !== currentDisplayId);
+
+    const nextIds = new Set(
+      overlayDisplays.map((display) => String(display.display_id || '').trim()).filter(Boolean)
+    );
+
+    // Drop bookkeeping for any display that is no longer part of the
+    // additive overlay set (removed, hidden, or newly promoted to primary).
+    // This never touches the layers/sources of displays still in nextIds.
+    for (const displayId of Object.keys(this.metricDisplayEntries)) {
+      if (!nextIds.has(displayId)) {
+        this.removeMetricDisplayEntry(displayId);
+      }
+    }
 
     if (!overlayDisplays.length) return;
 
     const overlayAnchorId = this.getSharedOverlayAnchorLayerId();
-    overlayDisplays.forEach((display, index) => {
-      const sourceId = `metric-display-source-${index}`;
-      const layerId = `metric-display-fill-${index}`;
+    overlayDisplays.forEach((display) => {
+      const displayId = String(display.display_id || '').trim();
+      if (!displayId) return;
+
       const layerGeojson = {
         type: 'FeatureCollection',
         features: display.geojson.features.map((feature, featureIndex) => ({
@@ -1038,6 +1077,33 @@ export const MapAdapter = {
             baseColor: display.color || null
           })
         : ['case', ['has', display.metric_key], display.color || '#3b82f6', '#cccccc'];
+      const opacity = display.opacity || 0.56;
+      const hoverOpacity = Math.min(opacity + 0.16, 0.92);
+      const opacityExpression = [
+        'case',
+        ['boolean', ['feature-state', 'hover'], false],
+        hoverOpacity,
+        opacity
+      ];
+
+      const existingEntry = this.metricDisplayEntries[displayId];
+      if (existingEntry && this.map.getSource(existingEntry.sourceId) && this.map.getLayer(existingEntry.layerId)) {
+        // Same display still active - refresh in place instead of tearing
+        // down and rebuilding (keeps sibling displays fully untouched).
+        this.map.getSource(existingEntry.sourceId).setData(layerGeojson);
+        this.map.setPaintProperty(existingEntry.layerId, 'fill-color', colorExpression);
+        this.map.setPaintProperty(existingEntry.layerId, 'fill-opacity', opacityExpression);
+        return;
+      }
+      if (existingEntry) {
+        // Layer/source was dropped (e.g. base style reload) - clean up the
+        // stale bookkeeping and rebuild this display from scratch below.
+        this.removeMetricDisplayEntry(displayId);
+      }
+
+      const safeId = displayId.replace(/[^a-z0-9]+/gi, '-');
+      const sourceId = `metric-display-source-${safeId}`;
+      const layerId = `metric-display-fill-${safeId}`;
 
       this.map.addSource(sourceId, {
         type: 'geojson',
@@ -1050,23 +1116,17 @@ export const MapAdapter = {
         source: sourceId,
         paint: {
           'fill-color': colorExpression,
-          'fill-opacity': [
-            'case',
-            ['boolean', ['feature-state', 'hover'], false],
-            Math.min((display.opacity || 0.56) + 0.16, 0.92),
-            display.opacity || 0.56
-          ]
+          'fill-opacity': opacityExpression
         }
       }, overlayAnchorId || undefined);
 
-      this.metricDisplaySourceIds.push(sourceId);
-      this.metricDisplayLayerIds.push(layerId);
-      this.bindMetricDisplayInteractions(layerId);
+      const handlers = this.bindMetricDisplayInteractions(layerId);
+      this.metricDisplayEntries[displayId] = { sourceId, layerId, handlers };
     });
   },
 
   bindMetricDisplayInteractions(layerId) {
-    if (!this.map || !layerId || !this.map.getLayer(layerId)) return;
+    if (!this.map || !layerId || !this.map.getLayer(layerId)) return null;
 
     const mousemove = (e) => {
       if (!e.features?.length || this.popupLocked) return;
@@ -1109,7 +1169,7 @@ export const MapAdapter = {
     this.map.on('mousemove', layerId, mousemove);
     this.map.on('mouseleave', layerId, mouseleave);
     this.map.on('click', layerId, click);
-    this.metricDisplayHandlerRefs.push({ layerId, mousemove, mouseleave, click });
+    return { mousemove, mouseleave, click };
   },
 
   /**
@@ -1635,6 +1695,17 @@ export const MapAdapter = {
       if (actionButton) {
         e.preventDefault();
         this.resolvePointPopupLookup(actionButton);
+        return;
+      }
+
+      const metricSectionHeader = e.target.closest('[data-action="select-metric-display"]');
+      if (metricSectionHeader) {
+        e.preventDefault();
+        const displayId = metricSectionHeader.dataset.displayId;
+        const lane = metricSectionHeader.dataset.lane;
+        if (displayId) {
+          App?.selectMetricDisplay?.(lane, displayId);
+        }
         return;
       }
 

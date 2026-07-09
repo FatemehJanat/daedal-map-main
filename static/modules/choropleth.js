@@ -435,6 +435,41 @@ export const ChoroplethManager = {
   },
 
   /**
+   * Render the shared legend DOM (title/gradient/min/max) for a specific
+   * metric display registry instance, without touching this.metric /
+   * this.minValue / this.maxValue / this.paletteBaseColor -- those remain
+   * owned by the primary/base choropleth's own render path. This is how the
+   * selected-legend model swaps the one visible legend to a non-primary
+   * display without disturbing the base fast path.
+   */
+  renderLegendForDisplay(display) {
+    if (!display || !display.metric_key) return;
+
+    if (!this.legend) {
+      this.legend = document.getElementById('choroplethLegend');
+      this.legendTitle = document.getElementById('legendTitle');
+      this.legendGradient = document.getElementById('legendGradient');
+      this.legendMin = document.getElementById('legendMin');
+      this.legendMax = document.getElementById('legendMax');
+    }
+
+    const metric = display.metric_key;
+    const range = this.getMetricRangeFromGeojson(metric, display.geojson);
+    const stops = this.getColorStopsForBaseColor(display.color || null);
+
+    if (this.legendTitle) {
+      const displayName = metric.length > 25 ? metric.substring(0, 22) + '...' : metric;
+      this.legendTitle.textContent = displayName;
+    }
+    if (this.legendGradient) {
+      this.legendGradient.style.background = `linear-gradient(to right, ${stops.map((stop) => stop.color).join(', ')})`;
+    }
+    if (this.legendMin) this.legendMin.textContent = this.formatValue(range.min);
+    if (this.legendMax) this.legendMax.textContent = this.formatValue(range.max);
+    if (this.legend) this.legend.classList.add('visible');
+  },
+
+  /**
    * Hide the legend
    */
   hide() {

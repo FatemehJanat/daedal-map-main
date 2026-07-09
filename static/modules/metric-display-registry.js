@@ -78,6 +78,14 @@ export const MetricDisplayRegistry = {
     ops: []
   },
 
+  // Tracks which display currently owns the single visible legend, per lane.
+  // Default selection is the most recently added/styled visible display.
+  selectedByLane: {
+    explore: null,
+    research: null,
+    ops: null
+  },
+
   upsertFromPayload(lane, payload, options = {}) {
     if (!payload || payload.data_type !== 'metrics' || !payload.geojson?.features?.length) {
       return null;
@@ -86,6 +94,8 @@ export const MetricDisplayRegistry = {
     const normalizedLane = normalizeLane(lane);
     const displayId = toDisplayId(payload);
     const featureMap = toFeatureMap(payload.geojson);
+    const laneDisplaysForLookup = this.displaysByLane[normalizedLane] || [];
+    const existingDisplay = laneDisplaysForLookup.find((display) => display.display_id === displayId) || null;
     const nextDisplay = {
       display_id: displayId,
       lane_scope: normalizedLane,
@@ -98,7 +108,11 @@ export const MetricDisplayRegistry = {
       feature_map: featureMap,
       color: options.color || defaultDisplayColor(payload),
       opacity: typeof options.opacity === 'number' ? options.opacity : 0.56,
-      visibility: options.visibility !== false,
+      // Preserve an explicitly hidden display's state across passive
+      // re-upserts (e.g. time-slider re-syncs) unless visibility is given.
+      visibility: options.visibility !== undefined
+        ? options.visibility !== false
+        : (existingDisplay ? existingDisplay.visibility : true),
       time_key: options.timeKey ?? null,
       updated_at: Date.now()
     };
@@ -111,6 +125,12 @@ export const MetricDisplayRegistry = {
       laneDisplays.push(nextDisplay);
     }
     this.displaysByLane[normalizedLane] = laneDisplays;
+    // Newly added displays become the default legend selection (most
+    // recently added instance owns the single visible legend). Passive
+    // re-upserts of an existing display do not steal a user's selection.
+    if ((existingIndex < 0 || !this.selectedByLane[normalizedLane]) && nextDisplay.visibility) {
+      this.selectedByLane[normalizedLane] = displayId;
+    }
     return nextDisplay;
   },
 
@@ -124,17 +144,88 @@ export const MetricDisplayRegistry = {
         String(display.geographic_level || '') === String(geographicLevel || '')
       ) {
         display.color = color || null;
+        display.updated_at = Date.now();
+        // Styling a display makes it the most-recently-styled instance,
+        // so it becomes the default legend owner.
+        if (display.visibility) {
+          this.selectedByLane[normalizedLane] = display.display_id;
+        }
       }
     }
   },
 
+  removeDisplay(lane, displayId) {
+    const normalizedLane = normalizeLane(lane);
+    const laneDisplays = this.displaysByLane[normalizedLane] || [];
+    this.displaysByLane[normalizedLane] = laneDisplays.filter((display) => display.display_id !== displayId);
+    if (this.selectedByLane[normalizedLane] === displayId) {
+      this.selectedByLane[normalizedLane] = null;
+      this._recomputeSelection(normalizedLane);
+    }
+  },
+
+  setDisplayVisibility(lane, displayId, visible) {
+    const normalizedLane = normalizeLane(lane);
+    const laneDisplays = this.displaysByLane[normalizedLane] || [];
+    const display = laneDisplays.find((entry) => entry.display_id === displayId);
+    if (!display) return null;
+    display.visibility = visible !== false;
+    display.updated_at = Date.now();
+    if (!display.visibility && this.selectedByLane[normalizedLane] === displayId) {
+      this.selectedByLane[normalizedLane] = null;
+      this._recomputeSelection(normalizedLane);
+    } else if (display.visibility) {
+      this.selectedByLane[normalizedLane] = displayId;
+    }
+    return display;
+  },
+
+  setSelectedDisplay(lane, displayId) {
+    const normalizedLane = normalizeLane(lane);
+    const laneDisplays = this.displaysByLane[normalizedLane] || [];
+    const display = laneDisplays.find((entry) => entry.display_id === displayId);
+    if (!display || !display.visibility) return null;
+    this.selectedByLane[normalizedLane] = displayId;
+    return display;
+  },
+
+  getSelectedDisplay(lane) {
+    const normalizedLane = normalizeLane(lane);
+    const displayId = this.selectedByLane[normalizedLane];
+    if (!displayId) return null;
+    const laneDisplays = this.displaysByLane[normalizedLane] || [];
+    return laneDisplays.find((entry) => entry.display_id === displayId) || null;
+  },
+
+  _recomputeSelection(lane) {
+    const normalizedLane = normalizeLane(lane);
+    const laneDisplays = (this.displaysByLane[normalizedLane] || []).filter((display) => display.visibility);
+    if (!laneDisplays.length) {
+      this.selectedByLane[normalizedLane] = null;
+      return;
+    }
+    const mostRecent = laneDisplays.reduce((latest, display) => (
+      (display.updated_at || 0) > (latest.updated_at || 0) ? display : latest
+    ), laneDisplays[0]);
+    this.selectedByLane[normalizedLane] = mostRecent.display_id;
+  },
+
+  findDisplay(lane, displayId) {
+    const normalizedLane = normalizeLane(lane);
+    const laneDisplays = this.displaysByLane[normalizedLane] || [];
+    return laneDisplays.find((entry) => entry.display_id === displayId) || null;
+  },
+
   clearLane(lane) {
-    this.displaysByLane[normalizeLane(lane)] = [];
+    const normalizedLane = normalizeLane(lane);
+    this.displaysByLane[normalizedLane] = [];
+    this.selectedByLane[normalizedLane] = null;
   },
 
   clearAll() {
     for (const lane of LANES) {
       this.displaysByLane[lane] = [];
+      this.selectedByLane[lane] = null;
     }
   },
 

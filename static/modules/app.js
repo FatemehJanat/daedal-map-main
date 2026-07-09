@@ -1826,6 +1826,77 @@ export const App = {
     MapAdapter?.renderMetricDisplayLayers?.(displays, {
       currentDisplayId: this.getCurrentMetricDisplayId()
     });
+    this.refreshSelectedDisplayLegend(normalizedLane);
+  },
+
+  /**
+   * Selected-legend model: exactly one display instance owns the visible
+   * legend per lane. Single-metric requests (the default fast path) are left
+   * untouched -- this only swaps legend content once a lane genuinely has
+   * more than one active display.
+   */
+  refreshSelectedDisplayLegend(lane = ChatManager?.mode || this.currentCanvasMode || 'explore') {
+    const normalizedLane = normalizeChatMapLane(lane);
+    const laneDisplays = MetricDisplayRegistry.getLaneDisplays(normalizedLane);
+    if (!laneDisplays.length) {
+      return;
+    }
+    const currentDisplayId = this.getCurrentMetricDisplayId();
+    if (
+      laneDisplays.length === 1 &&
+      laneDisplays[0].display_id === currentDisplayId &&
+      laneDisplays[0].visibility
+    ) {
+      // Single-metric fast path: the base choropleth already owns and
+      // renders its own legend. Leave legacy behavior fully untouched.
+      return;
+    }
+    const selected = MetricDisplayRegistry.getSelectedDisplay(normalizedLane);
+    if (!selected) {
+      ChoroplethManager?.hide?.();
+      return;
+    }
+    ChoroplethManager?.renderLegendForDisplay?.(selected);
+  },
+
+  /**
+   * Selection affordance entry point (clicked popup metric section, or any
+   * future legend selector UI). Swaps which display owns the legend without
+   * touching the underlying fill layers.
+   */
+  selectMetricDisplay(lane = ChatManager?.mode || this.currentCanvasMode || 'explore', displayId) {
+    const normalizedLane = normalizeChatMapLane(lane);
+    const selected = MetricDisplayRegistry.setSelectedDisplay(normalizedLane, displayId);
+    if (selected) {
+      this.refreshSelectedDisplayLegend(normalizedLane);
+    }
+    return selected;
+  },
+
+  /**
+   * Per-display remove/hide lifecycle. Only the targeted display's
+   * layer/source/handlers are torn down (see MapAdapter.renderMetricDisplayLayers
+   * / removeMetricDisplayEntry) -- sibling displays keep rendering untouched.
+   */
+  removeMetricDisplay(lane = ChatManager?.mode || this.currentCanvasMode || 'explore', displayId) {
+    const normalizedLane = normalizeChatMapLane(lane);
+    if (displayId && displayId === this.getCurrentMetricDisplayId()) {
+      // Targeted display owns the shared base fill layer, not an additive
+      // overlay. First pass: hide the base fill so remaining overlays stay
+      // rendered; the base layer machinery itself is untouched.
+      MapAdapter?.setBaseFillVisible?.(false);
+    }
+    MetricDisplayRegistry.removeDisplay(normalizedLane, displayId);
+    this.renderMetricDisplayRegistryLayers(normalizedLane);
+  },
+
+  setMetricDisplayVisibility(lane = ChatManager?.mode || this.currentCanvasMode || 'explore', displayId, visible) {
+    const normalizedLane = normalizeChatMapLane(lane);
+    if (displayId && displayId === this.getCurrentMetricDisplayId()) {
+      MapAdapter?.setBaseFillVisible?.(visible !== false);
+    }
+    MetricDisplayRegistry.setDisplayVisibility(normalizedLane, displayId, visible);
+    this.renderMetricDisplayRegistryLayers(normalizedLane);
   },
 
   syncMetricDisplayRegistryForCurrentState(lane = ChatManager?.mode || this.currentCanvasMode || 'explore') {
@@ -1883,11 +1954,13 @@ export const App = {
     if (!sections.length) {
       return null;
     }
+    const normalizedLane = normalizeChatMapLane(lane);
     return {
-      lane: normalizeChatMapLane(lane),
+      lane: normalizedLane,
       clicked_loc_id: locId,
       ancestry: buildCurrentLocIdAncestors(locId),
-      sections
+      sections,
+      selected_display_id: MetricDisplayRegistry.getSelectedDisplay(normalizedLane)?.display_id || null
     };
   },
 
