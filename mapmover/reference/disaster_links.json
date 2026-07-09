@@ -28,7 +28,7 @@
     "requires_exact_event_id": true,
     "default_cross_type_only": true,
     "max_chain_depth": 2,
-    "published_link_families_last_checked": "2026-06-19",
+    "published_link_families_last_checked": "2026-06-27",
     "published_link_families": [
       {
         "from_event_type": "earthquake",
@@ -73,7 +73,7 @@
         "notes": "Post-fire flood or burn-scar runoff links."
       }
     ],
-    "not_paired_families_last_checked": "2026-06-19",
+    "not_paired_families_last_checked": "2026-06-27",
     "not_paired_families": [
       {
         "event_types": [
