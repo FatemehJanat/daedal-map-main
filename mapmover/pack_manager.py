@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .artifact_utils import sha256_file
 from .pack_state import (
     MANAGED_DATA_ROOT_MARKER,
     _normalize_pack_ids,
@@ -25,16 +27,11 @@ from .pack_downloader import stage_pack_artifact
 from .paths import DATA_ROOT, PACKS_ROOT, ensure_dir
 
 
+logger = logging.getLogger("mapmover")
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _load_json(path: Path) -> dict:
@@ -78,7 +75,7 @@ def _build_manifest(pack_id: str, pack_version: str, data_root: Path, catalog_fr
         files.append({
             "path": str(file_path.relative_to(data_root)).replace("\\", "/"),
             "size": file_path.stat().st_size,
-            "sha256": _sha256_file(file_path),
+            "sha256": sha256_file(file_path),
         })
 
     manifest = {
@@ -279,16 +276,27 @@ def install_pack_from_manifest(
         raise RuntimeError(f"Manifest stage missing data/catalog.json: {stage_catalog_path}")
     catalog_fragment = _load_catalog_from_root(stage_data_root)
 
+    unverified_count = 0
     for file_info in manifest.get("files", []):
-        rel_path = str(file_info.get("path") or "").strip().replace("/", "\\")
+        rel_path = str(file_info.get("path") or "").strip()
         if not rel_path:
             continue
-        source_file = stage_data_root / rel_path
+        source_file = stage_data_root.joinpath(*rel_path.split("/"))
         if not source_file.exists():
             raise RuntimeError(f"Manifest file missing from stage: {source_file}")
         expected_hash = str(file_info.get("sha256") or "").strip().lower()
-        if expected_hash and _sha256_file(source_file).lower() != expected_hash:
+        if not expected_hash:
+            unverified_count += 1
+        elif sha256_file(source_file).lower() != expected_hash:
             raise RuntimeError(f"Manifest hash mismatch for {source_file}")
+
+    if unverified_count:
+        logger.warning(
+            "SECURITY WARNING: pack %s manifest has %d file entries with no sha256; "
+            "these files were NOT verified during install",
+            pack_id,
+            unverified_count,
+        )
 
     install_root = PACKS_ROOT / pack_id
     data_root = install_root / "data"
@@ -302,7 +310,7 @@ def install_pack_from_manifest(
     ensure_dir(install_root)
     shutil.copytree(stage_data_root, data_root, dirs_exist_ok=True)
     shutil.copy2(manifest_path, final_manifest_path)
-    manifest_hash = str(manifest.get("manifest_hash") or "").strip() or _sha256_file(final_manifest_path)
+    manifest_hash = str(manifest.get("manifest_hash") or "").strip() or sha256_file(final_manifest_path)
 
     saved_state, materialization = _install_pack_record(
         pack_id,

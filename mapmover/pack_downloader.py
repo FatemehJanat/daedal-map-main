@@ -14,25 +14,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import shutil
-import zipfile
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
 import requests
 
+from .artifact_utils import safe_extract_zip, sha256_file
 from .paths import CACHE_DIR, ensure_dir
 
 
+logger = logging.getLogger("mapmover")
+
 PACK_STAGING_ROOT = CACHE_DIR / "pack-staging"
-
-
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _looks_like_url(value: str) -> bool:
@@ -76,16 +71,6 @@ def _load_json_from_ref(ref: str) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _safe_extract_zip(zip_path: Path, dest_dir: Path) -> None:
-    ensure_dir(dest_dir)
-    with zipfile.ZipFile(zip_path) as archive:
-        for member in archive.infolist():
-            member_path = (dest_dir / member.filename).resolve()
-            if not str(member_path).startswith(str(dest_dir.resolve())):
-                raise RuntimeError(f"Unsafe archive path in pack artifact: {member.filename}")
-        archive.extractall(dest_dir)
-
-
 def _looks_like_stable_current_manifest(manifest: dict) -> bool:
     return bool(manifest.get("current_version")) and bool(manifest.get("version_manifest_url"))
 
@@ -105,6 +90,12 @@ def _stage_pack_zip_from_version_manifest(version_manifest: dict, stage_root: Pa
         raise RuntimeError("Version manifest missing source_id/pack_id")
     if not artifact_url:
         raise RuntimeError(f"Version manifest missing artifact.download_url for {pack_id}")
+    if not expected_sha:
+        # The stable downloadable contract is produced by our own exporter, so a
+        # missing artifact hash means a broken release, not an optional field.
+        raise RuntimeError(
+            f"Version manifest missing artifact.sha256 for {pack_id}; refusing to install unverified pack artifact"
+        )
 
     if stage_root.exists():
         shutil.rmtree(stage_root)
@@ -115,11 +106,11 @@ def _stage_pack_zip_from_version_manifest(version_manifest: dict, stage_root: Pa
     artifact_zip = artifact_dir / "pack.zip"
     _download_to_path(artifact_url, artifact_zip)
 
-    if expected_sha and _sha256_file(artifact_zip).lower() != expected_sha:
+    if sha256_file(artifact_zip).lower() != expected_sha:
         raise RuntimeError(f"Hash mismatch for staged pack artifact: {pack_id}")
 
     extract_root = stage_root / "_extract"
-    _safe_extract_zip(artifact_zip, extract_root)
+    safe_extract_zip(artifact_zip, extract_root)
 
     data_root = extract_root / "data"
     if not (data_root / "catalog.json").exists():
@@ -160,9 +151,14 @@ def _stage_pack_zip_from_version_manifest(version_manifest: dict, stage_root: Pa
 
 def _default_artifact_base(manifest_ref: str) -> str:
     if _looks_like_url(manifest_ref):
-        if manifest_ref.endswith("manifest.json"):
-            return manifest_ref[: -len("manifest.json")] + "data/"
-        return manifest_ref.rstrip("/") + "/data/"
+        parsed = urlparse(manifest_ref)
+        url_path = parsed.path or ""
+        prefix, _, last_segment = url_path.rpartition("/")
+        if last_segment == "manifest.json":
+            base_path = prefix + "/data/"
+        else:
+            base_path = url_path.rstrip("/") + "/data/"
+        return parsed._replace(path=base_path, query="", fragment="").geturl()
     manifest_path = _resolve_local_source(manifest_ref)
     return str(manifest_path.parent / "data")
 
@@ -201,20 +197,32 @@ def stage_pack_artifact(manifest_ref: str, artifact_base_ref: str | None = None)
     artifact_base_ref = artifact_base_ref or manifest.get("artifact_base_url") or _default_artifact_base(manifest_ref)
 
     downloaded_files = []
+    unverified_files = []
     for file_info in manifest.get("files", []):
         rel_path = str(file_info.get("path") or "").strip()
         if not rel_path:
             continue
-        dest_path = data_root / rel_path.replace("/", "\\")
+        dest_path = data_root.joinpath(*rel_path.split("/"))
         if _looks_like_url(artifact_base_ref):
             source_ref = urljoin(artifact_base_ref if artifact_base_ref.endswith("/") else artifact_base_ref + "/", rel_path)
         else:
-            source_ref = str(Path(artifact_base_ref) / rel_path.replace("/", "\\"))
+            source_ref = str(Path(artifact_base_ref).joinpath(*rel_path.split("/")))
         _download_to_path(source_ref, dest_path)
         expected_hash = str(file_info.get("sha256") or "").strip().lower()
-        if expected_hash and _sha256_file(dest_path).lower() != expected_hash:
+        if not expected_hash:
+            unverified_files.append(rel_path)
+        elif sha256_file(dest_path).lower() != expected_hash:
             raise RuntimeError(f"Hash mismatch for staged file: {rel_path}")
         downloaded_files.append(rel_path)
+
+    if unverified_files:
+        logger.warning(
+            "SECURITY WARNING: pack %s staged %d of %d files with no sha256 in the legacy manifest; "
+            "these files were NOT verified",
+            pack_id,
+            len(unverified_files),
+            len(downloaded_files),
+        )
 
     return {
         "pack_id": pack_id,
