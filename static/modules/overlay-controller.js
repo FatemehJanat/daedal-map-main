@@ -1284,14 +1284,37 @@ export const OverlayController = {
       .map((value) => String(value || '').trim())
       .filter(Boolean);
     const primaryOverlayId = normalizedOverlayIds[0] || '';
-    const preparedPayload = this._buildFilteredOpsPayload(primaryOverlayId, this.opsSnapshotPayloads.get(primaryOverlayId));
+    const sourcePayload = this.opsSnapshotPayloads.get(primaryOverlayId);
+    const preparedPayload = this._buildFilteredOpsPayload(primaryOverlayId, sourcePayload);
     const feedSnapshot = this._getOpsReportFeedSnapshot(primaryOverlayId);
     const compactSummary = feedSnapshot?.summary && typeof feedSnapshot.summary === 'object'
       ? feedSnapshot.summary
       : {};
+    let feedSnapshotCount = null;
+    switch (primaryOverlayId) {
+      case 'earthquakes':
+      case 'tsunamis':
+      case 'volcanoes':
+        feedSnapshotCount = Number.isFinite(compactSummary?.event_count) ? compactSummary.event_count : null;
+        break;
+      case 'hurricanes':
+        feedSnapshotCount = Number.isFinite(compactSummary?.storm_count) ? compactSummary.storm_count : null;
+        break;
+      case 'wildfires':
+        feedSnapshotCount = Number.isFinite(compactSummary?.active_count) ? compactSummary.active_count : null;
+        break;
+      case 'currency':
+        feedSnapshotCount = Number.isFinite(compactSummary?.rate_count) ? compactSummary.rate_count : null;
+        break;
+      default:
+        feedSnapshotCount = null;
+        break;
+    }
     const snapshotCount = Number.isFinite(preparedPayload?.snapshotCount)
       ? preparedPayload.snapshotCount
-      : (this.getOpsSnapshotCount(primaryOverlayId) ?? this.getOverlayFeatureCount(primaryOverlayId));
+      : (Number.isFinite(feedSnapshotCount)
+        ? feedSnapshotCount
+        : (this.getOpsSnapshotCount(primaryOverlayId) ?? this.getOverlayFeatureCount(primaryOverlayId)));
     const currentSnapshotFallback = preparedPayload?.defaultView === 'history' ? null : snapshotCount;
     const currentSnapshotCount = Number.isFinite(preparedPayload?.currentSnapshotCount)
       ? preparedPayload.currentSnapshotCount
@@ -1458,6 +1481,11 @@ export const OverlayController = {
       const hasSnapshot = this.opsSnapshotPayloads.has(overlayId);
       if (!isActive || !hasSnapshot) {
         this.hideOverlay(overlayId);
+        if (isActive && !hasSnapshot) {
+          clearOverlayData(overlayId);
+          window.dispatchEvent(new CustomEvent('overlayCacheUpdated', { detail: calculateCacheSize() }));
+          console.log(`OverlayController: Cleared stale Ops-managed cache for ${overlayId} (no current Ops payload)`);
+        }
       }
     }
 
@@ -2869,8 +2897,11 @@ export const OverlayController = {
         emitOverlayStatusMessage(overlayId, true, options);
         return;
       }
-      if (isActive && this._opsWatchHasOverlay(overlayId) && this.hasCachedOverlayData(overlayId)) {
-        this.renderCurrentData(overlayId);
+      if (isActive && this._opsWatchHasOverlay(overlayId)) {
+        this.hideOverlay(overlayId);
+        clearOverlayData(overlayId);
+        window.dispatchEvent(new CustomEvent('overlayCacheUpdated', { detail: calculateCacheSize() }));
+        console.log(`OverlayController: Suppressed stale cached ${overlayId} data in Ops mode (no current Ops payload)`);
         emitOverlayStatusMessage(overlayId, true, options);
         return;
       }

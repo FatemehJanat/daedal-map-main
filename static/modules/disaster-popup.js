@@ -1571,7 +1571,14 @@ const DisasterPopup = {
         return 'https://www.ngdc.noaa.gov/hazel/view/hazards/earthquake/search';
       },
       tsunami: (id, data) => {
-        // Our IDs are internal (TS000001) - link to NCEI search filtered by year
+        // Our TS IDs preserve the NOAA NCEI tsunami id with zero padding.
+        const eventId = String(data.event_id || id || '').trim();
+        const eventMatch = eventId.match(/^TS0*(\d+)$/i);
+        if (eventMatch) {
+          return `https://www.ngdc.noaa.gov/hazel/view/hazards/tsunami/event-more-info/${Number(eventMatch[1])}`;
+        }
+
+        // Fallback to NCEI search filtered by year when the NOAA id is absent.
         if (data.year) {
           return `https://www.ngdc.noaa.gov/hazel/view/hazards/tsunami/search?minYear=${data.year}&maxYear=${data.year}`;
         }
