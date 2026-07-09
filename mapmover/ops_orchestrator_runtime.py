@@ -834,14 +834,24 @@ def _build_live_hurricane_display_payload(snapshot: dict | None) -> dict | None:
             "event_type": "hurricane",
         }
         observed = []
+        observed_times = []
         for point in observed_points:
             coord = point_coord(point)
             if coord:
                 observed.append(coord)
+                observed_times.append(point_time(point, storm.get("issued_at")))
         current_time = point_time(current, storm.get("issued_at"))
         current_in_history_window = current_time is not None and history_cutoff <= current_time <= now
         current_coord = point_coord(current) if current_in_history_window else None
-        if current_coord and (not observed or observed[-1] != current_coord):
+        latest_observed_time = max(
+            [value for value in observed_times if value is not None],
+            default=None,
+        )
+        current_is_latest_observed = (
+            current_time is not None
+            and (latest_observed_time is None or current_time >= latest_observed_time)
+        )
+        if current_coord and current_is_latest_observed and (not observed or observed[-1] != current_coord):
             observed.append(current_coord)
         forecast_coords = [coord for coord in (point_coord(point) for point in forecast_points) if coord]
         if not observed and not current_coord and not forecast_coords:
@@ -1196,16 +1206,17 @@ def _with_hurricane_history_tracks(snapshot: dict, entries: list[dict]) -> dict:
     for storm in storms:
         storm_positions = positions.get(str(storm.get("storm_id")), {})
         if storm_positions:
+            sorted_position_keys = sorted(storm_positions)
             storm["observed_track"] = [
                 {
                     field: value
                     for field, value in storm_positions[key].items()
                     if field != "_source_priority"
                 }
-                for key in sorted(storm_positions)
+                for key in sorted_position_keys
             ]
-            if not isinstance(storm.get("current_position"), dict):
-                latest_key = sorted(storm_positions)[-1]
+            if storm.get("retained_history_only") or not isinstance(storm.get("current_position"), dict):
+                latest_key = sorted_position_keys[-1]
                 storm["current_position"] = {
                     field: value
                     for field, value in storm_positions[latest_key].items()

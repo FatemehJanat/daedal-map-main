@@ -270,6 +270,85 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
         self.assertEqual(135, current["properties"]["wind_kt"])
         self.assertEqual(2, payload["count"])
 
+    def test_retained_hurricane_current_uses_latest_track_point(self):
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        snapshot = {
+            "collector": "hurricanes",
+            "payload_hash": "current-hash",
+            "ops_history_retention_hours": 336,
+            "ops_history_display_hours": 336,
+            "payload_summary": {"storms": []},
+        }
+        history = [
+            {
+                "published_at": (now - timedelta(hours=72)).isoformat(),
+                "payload_summary": {
+                    "storms": [{
+                        "storm_id": "GDACS-TC1001281",
+                        "name": "MAYSAK-26",
+                        "year": 2026,
+                        "source": "GDACS",
+                        "current_position": {
+                            "timestamp": (now - timedelta(hours=72)).isoformat(),
+                            "latitude": 20.2,
+                            "longitude": 108.4,
+                        },
+                    }],
+                },
+            },
+            {
+                "published_at": (now - timedelta(hours=48)).isoformat(),
+                "payload_summary": {
+                    "storms": [{
+                        "storm_id": "WP102026",
+                        "identity": {"canonical_id": "WP102026"},
+                        "name": "MAYSAK",
+                        "year": 2026,
+                        "source": "JTWC",
+                        "current_position": {
+                            "timestamp": (now - timedelta(hours=48)).isoformat(),
+                            "latitude": 21.6,
+                            "longitude": 107.9,
+                        },
+                    }],
+                },
+            },
+            {
+                "published_at": (now - timedelta(hours=24)).isoformat(),
+                "payload_summary": {
+                    "storms": [{
+                        "storm_id": "WP102026",
+                        "identity": {"canonical_id": "WP102026"},
+                        "name": "MAYSAK",
+                        "year": 2026,
+                        "source": "JMA",
+                        "current_position": {
+                            "timestamp": (now - timedelta(hours=24)).isoformat(),
+                            "latitude": 25.0,
+                            "longitude": 109.0,
+                        },
+                    }],
+                },
+            },
+        ]
+
+        augmented = ops._with_hurricane_history_tracks(snapshot, history)
+        storm = augmented["payload_summary"]["storms"][0]
+        self.assertTrue(storm["retained_history_only"])
+        self.assertEqual(25.0, storm["current_position"]["latitude"])
+        self.assertEqual(109.0, storm["current_position"]["longitude"])
+
+        payload = ops._build_live_hurricane_display_payload(augmented)
+        observed = next(
+            feature for feature in payload["geojson"]["features"]
+            if feature["properties"]["track_kind"] == "observed"
+        )
+        self.assertEqual([109.0, 25.0], observed["geometry"]["coordinates"][-1])
+        self.assertNotEqual(
+            observed["geometry"]["coordinates"][0],
+            observed["geometry"]["coordinates"][-1],
+        )
+
     def test_default_hurricane_history_uses_display_window_not_saved_retention(self):
         now = datetime.now(timezone.utc).replace(microsecond=0)
         snapshot = {
