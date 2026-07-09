@@ -690,6 +690,9 @@ def _build_live_hurricane_display_payload(snapshot: dict | None) -> dict | None:
     storms = summary.get("storms") if isinstance(summary.get("storms"), list) else []
     features = []
     storm_ids = set()
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    history_hours = _ops_history_display_hours_for_snapshot(snapshot)
+    history_cutoff = now - timedelta(hours=max(history_hours, 1))
 
     def source_key(storm: dict) -> str:
         return str(storm.get("source") or "").strip().upper()
@@ -735,17 +738,59 @@ def _build_live_hurricane_display_payload(snapshot: dict | None) -> dict | None:
             return "TS"
         return "TD"
 
+    def point_time(point: dict | None, *fallbacks: object) -> datetime | None:
+        if not isinstance(point, dict):
+            for fallback in fallbacks:
+                parsed = _parse_iso_datetime(fallback)
+                if parsed is not None:
+                    return parsed
+            return None
+        for key in ("timestamp", "valid_at", "time", "issued_at"):
+            parsed = _parse_iso_datetime(point.get(key))
+            if parsed is not None:
+                return parsed
+        for fallback in fallbacks:
+            parsed = _parse_iso_datetime(fallback)
+            if parsed is not None:
+                return parsed
+        return None
+
+    def forecast_horizon_cutoff(storm: dict) -> datetime:
+        try:
+            hours = int(storm.get("forecast_horizon_hours") or 120)
+        except Exception:
+            hours = 120
+        return now + timedelta(hours=max(hours, 1))
+
+    def point_coord(point: dict) -> list[float] | None:
+        try:
+            return [float(point.get("longitude")), float(point.get("latitude"))]
+        except (TypeError, ValueError):
+            return None
+
     for storm in storms:
         if not isinstance(storm, dict):
             continue
         storm_id = str(storm.get("storm_id") or "").strip()
         if not storm_id:
             continue
-        storm_ids.add(storm_id)
         current = storm.get("current_position") if isinstance(storm.get("current_position"), dict) else {}
+        future_cutoff = forecast_horizon_cutoff(storm)
         observed_points = [
             point for point in (storm.get("observed_track") or [])
-            if isinstance(point, dict)
+            if (
+                isinstance(point, dict)
+                and (observed_time := point_time(point, storm.get("issued_at"))) is not None
+                and history_cutoff <= observed_time <= now
+            )
+        ]
+        forecast_points = [
+            point for point in (storm.get("forecast_points") or [])
+            if (
+                isinstance(point, dict)
+                and (forecast_time := point_time(point, storm.get("issued_at"))) is not None
+                and now <= forecast_time <= future_cutoff
+            )
         ]
         wind_candidates = [
             numeric_value(storm.get("max_wind_kt"), storm.get("wind_kt"), current.get("wind_kt"))
@@ -753,6 +798,10 @@ def _build_live_hurricane_display_payload(snapshot: dict | None) -> dict | None:
         wind_candidates.extend(
             numeric_value(point.get("wind_kt"))
             for point in observed_points
+        )
+        wind_candidates.extend(
+            numeric_value(point.get("wind_kt"))
+            for point in forecast_points
         )
         max_wind_kt = max(
             [value for value in wind_candidates if value is not None],
@@ -786,16 +835,18 @@ def _build_live_hurricane_display_payload(snapshot: dict | None) -> dict | None:
         }
         observed = []
         for point in observed_points:
-            try:
-                observed.append([float(point.get("longitude")), float(point.get("latitude"))])
-            except (TypeError, ValueError):
-                continue
-        try:
-            current_coord = [float(current.get("longitude")), float(current.get("latitude"))]
-        except (TypeError, ValueError):
-            current_coord = None
+            coord = point_coord(point)
+            if coord:
+                observed.append(coord)
+        current_time = point_time(current, storm.get("issued_at"))
+        current_in_history_window = current_time is not None and history_cutoff <= current_time <= now
+        current_coord = point_coord(current) if current_in_history_window else None
         if current_coord and (not observed or observed[-1] != current_coord):
             observed.append(current_coord)
+        forecast_coords = [coord for coord in (point_coord(point) for point in forecast_points) if coord]
+        if not observed and not current_coord and not forecast_coords:
+            continue
+        storm_ids.add(storm_id)
         if len(observed) >= 2:
             features.append({
                 "type": "Feature",
@@ -816,10 +867,9 @@ def _build_live_hurricane_display_payload(snapshot: dict | None) -> dict | None:
                     "track_kind": "current",
                 },
             })
-        forecast_track = storm.get("forecast_track")
-        if isinstance(forecast_track, dict) and forecast_track.get("type") == "LineString":
-            coords = forecast_track.get("coordinates") or []
-            if current_coord and coords and coords[0] != current_coord:
+        if forecast_coords:
+            coords = forecast_coords
+            if current_coord and (not coords or coords[0] != current_coord):
                 coords = [current_coord, *coords]
             if len(coords) >= 2:
                 features.append({
@@ -832,7 +882,7 @@ def _build_live_hurricane_display_payload(snapshot: dict | None) -> dict | None:
                     },
                 })
         uncertainty = storm.get("uncertainty_geometry")
-        if isinstance(uncertainty, dict) and uncertainty.get("type") in {"Polygon", "MultiPolygon"}:
+        if forecast_coords and isinstance(uncertainty, dict) and uncertainty.get("type") in {"Polygon", "MultiPolygon"}:
             features.append({
                 "type": "Feature",
                 "geometry": uncertainty,
@@ -2481,7 +2531,7 @@ def _build_selected_hurricane_history_answer(selected_popup: dict | None) -> str
     )
 
     sentences: list[str] = [
-        f"{early_name} appears in {len(ordered)} retained Ops hurricane snapshots over the last 72 hours."
+        f"{early_name} appears in {len(ordered)} retained Ops hurricane snapshots in the current live history window."
     ]
 
     change_bits: list[str] = []
@@ -2991,11 +3041,11 @@ def _build_exact_event_explore_handoff(feed: str, identifier_value: str) -> str:
     if not pack_id or not identifier:
         return (
             f"I could not find that {noun} record in the retained Ops window. "
-            "Ops only keeps about 72 hours of live history; use Explore for the full historical record."
+            "Ops only keeps a bounded live-history window; use Explore for the full historical record."
         )
     return (
         f"I could not find that {noun} record in the retained Ops window. "
-        f"Ops only keeps about 72 hours of live history; try Explore for the full historical record: "
+        f"Ops only keeps a bounded live-history window; try Explore for the full historical record: "
         f"/explore?pack={pack_id}&event_id={identifier}"
     )
 

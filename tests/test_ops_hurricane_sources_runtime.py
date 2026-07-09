@@ -61,6 +61,7 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
             "tc_nhc/snapshot.json": {
                 "collector": "tc_nhc",
                 "ops_history_retention_hours": 336,
+                "ops_history_display_hours": 336,
                 "last_checked_at": "2026-07-04T07:30:00+00:00",
                 "last_changed_at": "2026-07-04T07:30:00+00:00",
                 "payload_hash": "nhc-hash",
@@ -84,6 +85,7 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
             "tc_gdacs/snapshot.json": {
                 "collector": "tc_gdacs",
                 "ops_history_retention_hours": 336,
+                "ops_history_display_hours": 336,
                 "last_checked_at": "2026-07-04T07:32:00+00:00",
                 "last_changed_at": "2026-07-04T07:32:00+00:00",
                 "payload_hash": "gdacs-hash",
@@ -101,6 +103,7 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
             "tc_jtwc/snapshot.json": {
                 "collector": "tc_jtwc",
                 "ops_history_retention_hours": 336,
+                "ops_history_display_hours": 336,
                 "last_checked_at": "2026-07-04T07:33:00+00:00",
                 "last_changed_at": "2026-07-04T07:33:00+00:00",
                 "payload_hash": "jtwc-hash",
@@ -120,6 +123,7 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
             "tc_jma/snapshot.json": {
                 "collector": "tc_jma",
                 "ops_history_retention_hours": 336,
+                "ops_history_display_hours": 336,
                 "last_checked_at": "2026-07-04T07:34:00+00:00",
                 "last_changed_at": "2026-07-04T07:34:00+00:00",
                 "payload_hash": "jma-hash",
@@ -147,7 +151,7 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
 
         storms = snapshot["payload_summary"]["storms"]
         self.assertEqual(336, snapshot["ops_history_retention_hours"])
-        self.assertEqual(72, snapshot["ops_history_display_hours"])
+        self.assertEqual(336, snapshot["ops_history_display_hours"])
         self.assertEqual(2, len(storms))
         bavi = next(storm for storm in storms if storm["name"] == "BAVI")
         self.assertEqual("JTWC", bavi["source"])
@@ -157,10 +161,12 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
         self.assertEqual("2609", bavi["source_identities"]["JMA"]["aliases"]["jma_number"])
 
     def test_hurricane_history_payload_keeps_retained_only_storms_and_source_tracks(self):
+        now = datetime.now(timezone.utc).replace(microsecond=0)
         snapshot = {
             "collector": "hurricanes",
             "payload_hash": "current-hash",
             "ops_history_retention_hours": 336,
+            "ops_history_display_hours": 336,
             "payload_summary": {
                 "storms": [{
                     "storm_id": "WP092026",
@@ -170,27 +176,38 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
                     "source": "JTWC",
                     "source_url": "https://www.metoc.navy.mil/jtwc/products/wp0926web.txt",
                     "current_position": {
-                        "timestamp": "2026-07-04T06:00:00+00:00",
+                        "timestamp": (now - timedelta(hours=6)).isoformat(),
                         "latitude": 12.5,
                         "longitude": 150.8,
                         "wind_kt": 135,
                     },
                     "observed_track": [{
-                        "timestamp": "2026-07-04T00:00:00+00:00",
+                        "timestamp": (now - timedelta(hours=12)).isoformat(),
                         "latitude": 12.4,
                         "longitude": 151.5,
                         "wind_kt": 120,
                     }],
-                    "forecast_track": {
-                        "type": "LineString",
-                        "coordinates": [[149.8, 13.2], [148.5, 14.0]],
-                    },
+                    "forecast_points": [
+                        {
+                            "valid_at": (now + timedelta(hours=12)).isoformat(),
+                            "latitude": 13.2,
+                            "longitude": 149.8,
+                            "wind_kt": 130,
+                        },
+                        {
+                            "valid_at": (now + timedelta(hours=24)).isoformat(),
+                            "latitude": 14.0,
+                            "longitude": 148.5,
+                            "wind_kt": 125,
+                        },
+                    ],
+                    "forecast_horizon_hours": 120,
                 }],
             },
         }
         history = [
             {
-                "published_at": "2026-07-03T00:00:00+00:00",
+                "published_at": (now - timedelta(hours=30)).isoformat(),
                 "payload_summary": {
                     "storms": [{
                         "storm_id": "WP082026",
@@ -199,7 +216,7 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
                         "year": 2026,
                         "source": "JMA",
                         "current_position": {
-                            "timestamp": "2026-07-03T00:00:00+00:00",
+                            "timestamp": (now - timedelta(hours=30)).isoformat(),
                             "latitude": 10.0,
                             "longitude": 140.0,
                         },
@@ -207,7 +224,7 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
                 },
             },
             {
-                "published_at": "2026-07-04T03:00:00+00:00",
+                "published_at": (now - timedelta(hours=9)).isoformat(),
                 "payload_summary": {
                     "storms": [{
                         "storm_id": "WP092026",
@@ -216,7 +233,7 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
                         "year": 2026,
                         "source": "JMA",
                         "current_position": {
-                            "timestamp": "2026-07-04T03:00:00+00:00",
+                            "timestamp": (now - timedelta(hours=9)).isoformat(),
                             "latitude": 12.45,
                             "longitude": 151.0,
                         },
@@ -307,6 +324,49 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
         self.assertEqual(1, len(in_window))
         storms = in_window[0]["payload_summary"]["storms"]
         self.assertEqual("WP082026", storms[0]["storm_id"])
+
+    def test_hurricane_display_drops_stale_source_slots(self):
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        snapshot = {
+            "collector": "hurricanes",
+            "payload_hash": "current-hash",
+            "ops_history_retention_hours": 336,
+            "ops_history_display_hours": 336,
+            "payload_summary": {
+                "storms": [
+                    {
+                        "storm_id": "WP192025",
+                        "identity": {"canonical_id": "WP192025"},
+                        "name": "NEOGURI",
+                        "year": 2025,
+                        "source": "JMA",
+                        "current_position": {
+                            "timestamp": "2025-09-29T00:00:00+00:00",
+                            "latitude": 42.0,
+                            "longitude": 173.0,
+                        },
+                    },
+                    {
+                        "storm_id": "WP102026",
+                        "identity": {"canonical_id": "WP102026"},
+                        "name": "MAYSAK",
+                        "year": 2026,
+                        "source": "JMA",
+                        "current_position": {
+                            "timestamp": (now - timedelta(hours=96)).isoformat(),
+                            "latitude": 25.0,
+                            "longitude": 109.0,
+                        },
+                    },
+                ],
+            },
+        }
+
+        payload = ops._build_live_hurricane_display_payload(snapshot)
+        names = {feature["properties"]["name"] for feature in payload["geojson"]["features"]}
+        self.assertNotIn("NEOGURI", names)
+        self.assertIn("MAYSAK", names)
+        self.assertEqual(1, payload["count"])
 
 
 if __name__ == "__main__":
