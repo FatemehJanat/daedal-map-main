@@ -886,6 +886,20 @@ export const App = {
       }
     }
 
+    // Shift the map's logical center to account for the sidebar width.
+    // The map container covers the full viewport but the sidebar overlays it on the left,
+    // so without padding the "center" is visually offset. MapLibre's padding option
+    // moves the optical center so features like flyTo and fitBounds land in the visible area.
+    // This must run BEFORE the route-intent load: applySidebarPadding's easeTo
+    // cancels in-flight camera animations, and the route intent may start a
+    // feed-entry focus fit that has to survive.
+    const sidebarEl = document.getElementById('sidebar');
+    this.applySidebarPadding();
+    new MutationObserver(() => this.applySidebarPadding()).observe(sidebarEl, {
+      attributes: true,
+      attributeFilter: ['class', 'style']
+    });
+
     // Declarative deep-links are additive entry adjustments. First establish the
     // base lane state (public defaults for anon, account defaults/watch for
     // signed-in), then widen that session with the route intent.
@@ -894,17 +908,6 @@ export const App = {
 
     ChatManager.applyModeUiState?.();
     this.syncMetricOverlayVisibility();
-
-    // Shift the map's logical center to account for the sidebar width.
-    // The map container covers the full viewport but the sidebar overlays it on the left,
-    // so without padding the "center" is visually offset. MapLibre's padding option
-    // moves the optical center so features like flyTo and fitBounds land in the visible area.
-    const sidebarEl = document.getElementById('sidebar');
-    this.applySidebarPadding();
-    new MutationObserver(() => this.applySidebarPadding()).observe(sidebarEl, {
-      attributes: true,
-      attributeFilter: ['class', 'style']
-    });
 
     // Load reference data for popups (non-blocking)
     PopupBuilder.loadAdminLevels();
@@ -2043,10 +2046,15 @@ export const App = {
     if (!MapAdapter?.map) return;
     // Keep the geographic focal point anchored to the true screen center.
     // The sidebar overlays the map rather than redefining the map's logical center.
-    MapAdapter.map.easeTo({
-      padding: { top: 0, right: 0, bottom: 0, left: 0 },
-      duration: 0
-    });
+    // Any easeTo cancels an in-flight camera animation (e.g. the feed-entry
+    // focus fit), so skip the call entirely when padding is already correct.
+    const target = { top: 0, right: 0, bottom: 0, left: 0 };
+    const current = MapAdapter.map.getPadding?.() || {};
+    const unchanged = ['top', 'right', 'bottom', 'left'].every(
+      (side) => (Number(current[side]) || 0) === target[side]
+    );
+    if (unchanged) return;
+    MapAdapter.map.easeTo({ padding: target, duration: 0 });
   },
 
   setUiFullscreen(enabled) {

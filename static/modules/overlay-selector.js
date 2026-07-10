@@ -1168,8 +1168,20 @@ export const OverlaySelector = {
   _maybeAutoFocusOnEnable(overlayId, isActive) {
     if (!isActive) return;
     if (!shouldAutoFocusOnOverlayEnable(this.currentLaneMode)) return;
-    if (!getRenderedOpsGeojson(overlayId)) return;
-    focusActiveOpsOverlays();
+    if (getRenderedOpsGeojson(overlayId)) {
+      focusActiveOpsOverlays();
+      return;
+    }
+    // First enable often races the overlay's async data load (the toggle
+    // handler runs synchronously; handleOverlayChange fetches later). One
+    // short retry catches the freshly rendered features without polling.
+    window.setTimeout(() => {
+      if (!this.activeOverlays.has(overlayId)) return;
+      if (!shouldAutoFocusOnOverlayEnable(this.currentLaneMode)) return;
+      if (getRenderedOpsGeojson(overlayId)) {
+        focusActiveOpsOverlays();
+      }
+    }, 1200);
   },
 
   /**
