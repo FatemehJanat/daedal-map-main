@@ -29,10 +29,10 @@ class OpsRouteRuntimeTest(unittest.TestCase):
                     "sources": ["earthquakes", "hurricanes"],
                 },
             },
-            allowed_feeds=["earthquakes", "hurricanes", "wildfires_us_nifc"],
+            allowed_feeds=["earthquakes", "hurricanes_live", "wildfires_us_nifc"],
         )
 
-        self.assertEqual(["earthquakes", "hurricanes"], watch["active_feeds"])
+        self.assertEqual(["earthquakes", "hurricanes_live"], watch["active_feeds"])
         self.assertEqual("Updated watch", watch["label"])
         self.assertEqual(watch, cache.map_state["ops_watch"])
 
@@ -55,10 +55,10 @@ class OpsRouteRuntimeTest(unittest.TestCase):
                     "reset_to_allowed": True,
                 },
             },
-            allowed_feeds=["earthquakes", "hurricanes", "wildfires_us_nifc"],
+            allowed_feeds=["earthquakes", "hurricanes_live", "wildfires_us_nifc"],
         )
 
-        self.assertEqual(["earthquakes", "hurricanes", "wildfires_us_nifc"], watch["active_feeds"])
+        self.assertEqual(["earthquakes", "hurricanes_live", "wildfires_us_nifc"], watch["active_feeds"])
         self.assertEqual("Ops watch", watch["label"])
 
     def test_report_without_reset_preserves_cached_narrow_watch(self):
@@ -79,7 +79,7 @@ class OpsRouteRuntimeTest(unittest.TestCase):
                     "label": "Ops watch",
                 },
             },
-            allowed_feeds=["earthquakes", "hurricanes", "wildfires_us_nifc"],
+            allowed_feeds=["earthquakes", "hurricanes_live", "wildfires_us_nifc"],
         )
 
         self.assertEqual(["earthquakes"], watch["active_feeds"])
@@ -89,6 +89,7 @@ class OpsRouteRuntimeTest(unittest.TestCase):
         feeds = _public_default_ops_feeds()
         self.assertNotIn("currency", feeds)
         self.assertIn("earthquakes", feeds)
+        self.assertIn("hurricanes_live", feeds)
         self.assertIn("noaa_ndbc", feeds)
         self.assertIn("ocean_sst", feeds)
         self.assertIn("usa_nws_alerts", feeds)

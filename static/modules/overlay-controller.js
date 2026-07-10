@@ -319,6 +319,12 @@ const OVERLAY_ENDPOINTS = {
     eventType: 'hurricane',
     yearField: 'year'
   },
+  hurricanes_live: {
+    baseUrl: '/api/storms/tracks/geojson',
+    params: { min_category: 'Cat1' },
+    eventType: 'hurricane',
+    yearField: 'year'
+  },
   volcanoes: {
     baseUrl: '/api/eruptions/geojson',
     params: { exclude_ongoing: 'true' },
@@ -1093,7 +1099,9 @@ export const OverlayController = {
   _opsOverlayIdForPayload(payload) {
     const sourceId = String(payload?.source_id || '').trim();
     const eventType = String(payload?.event_type || '').trim();
-    if (sourceId === 'hurricanes_ops' || eventType === 'hurricane') return 'hurricanes';
+    if (sourceId === 'hurricanes_live_ops' || sourceId === 'hurricanes_ops') return 'hurricanes_live';
+    if (eventType === 'hurricane' && this._isOpsMode()) return 'hurricanes_live';
+    if (eventType === 'hurricane') return 'hurricanes';
     if (sourceId === 'currency_live_ops') return 'currency';
     if (eventType === 'earthquake') return 'earthquakes';
     if (eventType === 'tsunami') return 'tsunamis';
@@ -1109,6 +1117,7 @@ export const OverlayController = {
     return [
       'currency',
       'earthquakes',
+      'hurricanes_live',
       'hurricanes',
       'tsunamis',
       'volcanoes',
@@ -1172,7 +1181,8 @@ export const OverlayController = {
       case 'earthquakes':
         return 'earthquakes';
       case 'hurricanes':
-        return 'hurricanes';
+      case 'hurricanes_live':
+        return 'hurricanes_live';
       case 'wildfires':
         return 'wildfires_us_nifc';
       case 'tsunamis':
@@ -1209,7 +1219,7 @@ export const OverlayController = {
       case 'floods':
       case 'landslides':
         return Number.isFinite(compactSummary?.event_count) ? compactSummary.event_count : null;
-      case 'hurricanes':
+      case 'hurricanes_live':
         return Number.isFinite(compactSummary?.storm_count) ? compactSummary.storm_count : null;
       case 'wildfires':
         return Number.isFinite(compactSummary?.active_count)
@@ -1320,7 +1330,7 @@ export const OverlayController = {
           windowLabel: windowLabel || null,
         };
       }
-      case 'hurricanes':
+      case 'hurricanes_live':
         return {
           payload: sourcePayload,
           snapshotCount: isHistoryDefault ? fullCountFromPayload : (Number.isFinite(compactSummary?.storm_count) ? compactSummary.storm_count : fullCountFromPayload),
@@ -1412,7 +1422,7 @@ export const OverlayController = {
         }
         return withHint(`There ${snapshotCount === 1 ? 'is' : 'are'} ${snapshotText} in the current earthquake snapshot. Showing all of them now.`);
       }
-      case 'hurricanes': {
+      case 'hurricanes_live': {
         if (preparedPayload?.defaultView === 'history') {
           if (!Number.isFinite(snapshotCount) || snapshotCount <= 0) {
             return 'No recent storm tracks are visible in the retained Ops window right now. Ask chat to check the current snapshot, one basin, or recent storm history.';
@@ -1529,6 +1539,7 @@ export const OverlayController = {
       ...previousOverlayIds,
       ...this.opsSnapshotPayloads.keys(),
       'earthquakes',
+      'hurricanes_live',
       'hurricanes',
       'wildfires',
       'tsunamis',
@@ -3635,6 +3646,7 @@ export const OverlayController = {
 
     switch (overlayId) {
       case 'hurricanes':
+      case 'hurricanes_live':
         this.stopHurricaneRollingAnimation();
         break;
 

@@ -522,6 +522,7 @@ function formatOverlayName(overlayId) {
     volcanoes: 'Volcanoes',
     tsunamis: 'Tsunamis',
     hurricanes: 'Hurricanes',
+    hurricanes_live: 'Hurricanes',
     wildfires: 'Wildfires',
     tornadoes: 'Tornadoes',
     floods: 'Floods',

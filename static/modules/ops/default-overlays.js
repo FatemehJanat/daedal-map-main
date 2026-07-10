@@ -1,7 +1,7 @@
 const OPS_PUBLIC_DEFAULT_OVERLAY_IDS = [
   'earthquakes',
   'wildfires',
-  'hurricanes',
+  'hurricanes_live',
   'tsunamis',
   'volcanoes',
   'ocean-sst-grid',

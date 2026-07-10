@@ -41,6 +41,8 @@ LIVE_STATE_SNAPSHOT_TTL_SECONDS = 60.0
 LIVE_STATE_HISTORY_TTL_SECONDS = 60.0
 DEFAULT_OPS_HISTORY_RETENTION_HOURS = 72
 DEFAULT_OPS_HISTORY_DISPLAY_HOURS = 72
+HURRICANE_LIVE_FEED = "hurricanes_live"
+HURRICANE_LEGACY_OPS_FEED = "hurricanes"
 HURRICANE_OPS_COLLECTORS = ("tc_nhc", "tc_gdacs", "tc_jtwc", "tc_jma")
 HURRICANE_SOURCE_PRIORITY = {"NHC": 50, "JTWC": 40, "JMA": 35, "GDACS": 10}
 HURRICANE_SOURCE_PAGES = {
@@ -61,13 +63,24 @@ _LIVE_STATE_CACHE_LOCK = threading.Lock()
 _LIVE_STATE_STATUS: dict[tuple[str, str], str] = {}
 _LIVE_STATE_STATUS_LOCK = threading.Lock()
 
+
+def _normalize_ops_feed_id(feed: object) -> str:
+    text = str(feed or "").strip()
+    if text == HURRICANE_LEGACY_OPS_FEED:
+        return HURRICANE_LIVE_FEED
+    return text
+
+
+def _is_hurricane_live_feed(feed: object) -> bool:
+    return _normalize_ops_feed_id(feed) == HURRICANE_LIVE_FEED
+
 FEED_ALIASES = {
     "earthquakes": ("earthquake", "earthquakes", "quake", "quakes", "seismic"),
     "currency": ("currency", "currencies", "fx", "exchange rate", "exchange rates", "usd"),
     "tsunamis": ("tsunami", "tsunamis", "runup", "runups"),
     "volcanoes": ("volcano", "volcanoes", "eruption", "eruptions", "vei"),
     "wildfires_us_nifc": ("wildfire", "wildfires", "fire", "fires", "nifc"),
-    "hurricanes": ("hurricane", "hurricanes", "storm", "storms", "cyclone", "typhoon"),
+    HURRICANE_LIVE_FEED: ("hurricane", "hurricanes", "storm", "storms", "cyclone", "typhoon"),
     "usa_nws_alerts": ("nws", "nws alerts", "weather alert", "weather alerts", "warning", "warnings", "alert", "alerts"),
     "noaa_swpc": ("space weather", "space weather alerts", "geomagnetic", "solar storm", "radio blackout"),
     "noaa_aurora": ("aurora", "aurora forecast", "northern lights"),
@@ -167,7 +180,7 @@ FEED_FOCUS_SPECS = {
         "label": "volcano event",
         "id_keys": ("event_id", "volcano_name"),
     },
-    "hurricanes": {
+    HURRICANE_LIVE_FEED: {
         "metric_keys": ("max_category", "category", "max_wind_kt"),
         "label": "storm",
         "id_keys": ("storm_id", "name"),
@@ -399,10 +412,10 @@ def _fetch_live_state_via_site(collector_name: str, kind: str) -> dict | list | 
 
 
 def load_current_state_snapshot(collector_name: str) -> dict | None:
-    collector = str(collector_name or "").strip()
+    collector = _normalize_ops_feed_id(collector_name)
     if not collector:
         return None
-    if collector == "hurricanes":
+    if collector == HURRICANE_LIVE_FEED:
         children = [
             load_current_state_snapshot(name)
             for name in HURRICANE_OPS_COLLECTORS
@@ -498,14 +511,14 @@ def load_current_state_snapshot(collector_name: str) -> dict | None:
         if child_display_hours:
             display_hours = max(child_display_hours)
         payload_summary = {
-            "logical_feed": "hurricanes",
+            "logical_feed": HURRICANE_LIVE_FEED,
             "storm_count": len(storms),
             "source_count": len(children),
             "sources": [str(item.get("collector") or "") for item in children],
             "storms": storms,
         }
         return {
-            "collector": "hurricanes",
+            "collector": HURRICANE_LIVE_FEED,
             "fetched_at": latest_checked,
             "last_checked_at": latest_checked,
             "last_changed_at": latest_changed,
@@ -542,10 +555,10 @@ def load_current_state_snapshot(collector_name: str) -> dict | None:
 
 
 def load_current_state_history(collector_name: str, limit: int | None = None) -> list[dict]:
-    collector = str(collector_name or "").strip()
+    collector = _normalize_ops_feed_id(collector_name)
     if not collector:
         return []
-    if collector == "hurricanes":
+    if collector == HURRICANE_LIVE_FEED:
         merged = []
         for name in HURRICANE_OPS_COLLECTORS:
             merged.extend(load_current_state_history(name))
@@ -907,7 +920,7 @@ def _build_live_hurricane_display_payload(snapshot: dict | None) -> dict | None:
         "type": "data",
         "data_type": "events",
         "event_type": "hurricane",
-        "source_id": "hurricanes_ops",
+        "source_id": "hurricanes_live_ops",
         "snapshot_hash": snapshot.get("payload_hash"),
         "dataset_name": "Hurricanes",
         "source_name": "Tropical cyclone advisory sources",
@@ -1236,7 +1249,7 @@ def _build_default_history_payload(*, feed: str, snapshot: dict, history_entries
         snapshot=snapshot,
         history_entries=history_entries,
     )
-    if feed == "hurricanes":
+    if _is_hurricane_live_feed(feed):
         payload = _build_live_hurricane_display_payload(
             _with_hurricane_history_tracks(snapshot, in_window)
         )
@@ -1275,7 +1288,7 @@ def _build_snapshot_display_payload(feed: str, snapshot: dict | None) -> dict | 
             event_type="wildfire",
             label="Ops Wildfire Snapshot",
         )
-    if feed == "hurricanes":
+    if _is_hurricane_live_feed(feed):
         return _build_live_hurricane_display_payload(snapshot)
     if feed == "currency":
         return _build_currency_display_payload(snapshot)
@@ -1289,7 +1302,7 @@ def _build_display_payloads(state_by_feed: dict[str, tuple[dict | None, list[dic
         "tsunamis",
         "volcanoes",
         "wildfires_us_nifc",
-        "hurricanes",
+        HURRICANE_LIVE_FEED,
         "currency",
     ):
         snapshot, history_entries = state_by_feed.get(feed, (None, []))
@@ -1391,7 +1404,7 @@ def _compact_payload_summary(collector: str, summary: dict, *, sample_limit: int
                 sample_limit,
             ),
         }
-    if collector == "hurricanes":
+    if _is_hurricane_live_feed(collector):
         return {
             "storm_count": summary.get("storm_count"),
             "position_count": summary.get("position_count"),
@@ -1938,8 +1951,8 @@ def _report_display_payload_by_feed(report: dict | None) -> dict[str, dict]:
         source_id = str(payload.get("source_id") or "").strip()
         if source_id == "currency_live_ops":
             payloads["currency"] = payload
-        elif source_id == "hurricanes_ops":
-            payloads["hurricanes"] = payload
+        elif source_id in {"hurricanes_ops", "hurricanes_live_ops"}:
+            payloads[HURRICANE_LIVE_FEED] = payload
         elif source_id.endswith("_live_ops"):
             payloads[source_id[:-9]] = payload
     return payloads
@@ -1967,7 +1980,7 @@ def _focus_feature_name(feed: str, props: dict) -> str:
         return str(props.get("location") or props.get("country") or props.get("event_id") or "Unnamed tsunami").strip()
     if feed == "volcanoes":
         return str(props.get("volcano_name") or props.get("event_id") or "Unnamed volcano").strip()
-    if feed == "hurricanes":
+    if _is_hurricane_live_feed(feed):
         return str(props.get("name") or props.get("storm_id") or "Unnamed storm").strip()
     return str(props.get("event_id") or props.get("storm_id") or "Unnamed event").strip()
 
@@ -1985,7 +1998,7 @@ def _focus_feature_location(feed: str, props: dict) -> str | None:
         if location and country and location.lower() not in country.lower():
             return f"{location}, {country}"
         return location or country or None
-    if feed == "hurricanes":
+    if _is_hurricane_live_feed(feed):
         basin = str(props.get("basin") or "").strip()
         return basin or None
     return None
@@ -2006,7 +2019,7 @@ def _focus_metric_text(feed: str, props: dict) -> str | None:
     if feed == "volcanoes":
         value = props.get("VEI") if props.get("VEI") not in (None, "") else props.get("vei")
         return f"VEI {value}" if value not in (None, "") else None
-    if feed == "hurricanes":
+    if _is_hurricane_live_feed(feed):
         category = props.get("max_category") if props.get("max_category") not in (None, "") else props.get("category")
         wind = props.get("max_wind_kt")
         if category not in (None, "") and wind not in (None, ""):
@@ -2430,12 +2443,13 @@ def _coords_text(lat: object, lon: object) -> str | None:
 def _selected_popup_feed(selected_popup: dict | None, effective_feeds: list[str]) -> str | None:
     if not isinstance(selected_popup, dict):
         return None
+    normalized_effective_feeds = [_normalize_ops_feed_id(feed) for feed in effective_feeds or []]
     props = selected_popup.get("properties") if isinstance(selected_popup.get("properties"), dict) else {}
     event_type = str(selected_popup.get("event_type") or props.get("event_type") or "").strip().lower()
-    if event_type in {"hurricane", "storm", "cyclone", "typhoon"} and "hurricanes" in effective_feeds:
-        return "hurricanes"
-    if str(props.get("storm_id") or "").strip() and "hurricanes" in effective_feeds:
-        return "hurricanes"
+    if event_type in {"hurricane", "storm", "cyclone", "typhoon"} and HURRICANE_LIVE_FEED in normalized_effective_feeds:
+        return HURRICANE_LIVE_FEED
+    if str(props.get("storm_id") or "").strip() and HURRICANE_LIVE_FEED in normalized_effective_feeds:
+        return HURRICANE_LIVE_FEED
     return None
 
 
@@ -2473,7 +2487,7 @@ def _build_selected_hurricane_history_answer(selected_popup: dict | None) -> str
     if not storm_id and not storm_name:
         return None
 
-    entries = load_current_state_history("hurricanes")
+    entries = load_current_state_history(HURRICANE_LIVE_FEED)
     label = storm_name or storm_id or "the selected storm"
     if not entries:
         return (
@@ -2595,7 +2609,7 @@ def _try_selected_history_answer(
     if not _query_requests_deep_history(query):
         return None
     selected_feed = _selected_popup_feed(selected_popup, effective_feeds)
-    if selected_feed != "hurricanes":
+    if not _is_hurricane_live_feed(selected_feed):
         return None
     return _build_selected_hurricane_history_answer(selected_popup)
 
@@ -2714,7 +2728,7 @@ def _resolve_cached_focus_target(*, cache, report: dict, effective_feeds: list[s
         fallback_feature = stored.get("feature")
         if isinstance(fallback_feature, dict):
             return feed, {
-                "type": stored.get("source_id") == "hurricanes_ops" and "data" or "events",
+                "type": stored.get("source_id") in {"hurricanes_ops", "hurricanes_live_ops"} and "data" or "events",
                 "data_type": "events",
                 "event_type": FEED_FOCUS_SPECS.get(feed, {}).get("label"),
                 "source_id": stored.get("source_id"),
@@ -2931,7 +2945,7 @@ def _feed_prefers_history_by_default(feed: str) -> bool:
         "tsunamis",
         "volcanoes",
         "wildfires_us_nifc",
-        "hurricanes",
+        HURRICANE_LIVE_FEED,
         "usa_nws_alerts",
         "noaa_swpc",
         "noaa_aurora",
@@ -2942,7 +2956,7 @@ def _feed_prefers_history_by_default(feed: str) -> bool:
 def _feed_display_name(feed: str) -> str:
     names = {
         "wildfires_us_nifc": "wildfires",
-        "hurricanes": "storms",
+        HURRICANE_LIVE_FEED: "storms",
         "earthquakes": "earthquakes",
         "tsunamis": "tsunamis",
         "volcanoes": "volcanoes",
@@ -2957,7 +2971,7 @@ def _feed_display_name(feed: str) -> str:
 def _feed_singular_label(feed: str) -> str:
     names = {
         "wildfires_us_nifc": "wildfire",
-        "hurricanes": "storm",
+        HURRICANE_LIVE_FEED: "storm",
         "earthquakes": "earthquake",
         "tsunamis": "tsunami",
         "volcanoes": "volcano event",
@@ -2994,7 +3008,7 @@ def _feed_history_id_set(feed: str, summary: dict) -> set[str]:
     elif feed == "wildfires_us_nifc":
         rows = summary.get("events") or []
         id_keys = ("event_id",)
-    elif feed == "hurricanes":
+    elif _is_hurricane_live_feed(feed):
         rows = summary.get("storms") or []
         id_keys = ("storm_id",)
     elif feed == "currency":
@@ -3025,7 +3039,7 @@ def _history_count_noun(feed: str) -> str:
         "tsunamis": "tsunami events",
         "volcanoes": "volcano events",
         "wildfires_us_nifc": "wildfires",
-        "hurricanes": "storms",
+        HURRICANE_LIVE_FEED: "storms",
         "currency": "currency rates",
         "noaa_swpc": "space weather alerts",
         "usa_nws_alerts": "NWS alerts",
@@ -3040,7 +3054,7 @@ def _feed_to_explore_pack(feed: str) -> str:
         "tsunamis": "tsunamis",
         "volcanoes": "volcanoes",
         "wildfires_us_nifc": "wildfires",
-        "hurricanes": "hurricanes",
+        HURRICANE_LIVE_FEED: "hurricanes",
     }
     return mapping.get(feed, "")
 
@@ -3468,7 +3482,7 @@ def _active_count_for_feed(feed: str, summary: dict, query_text: str) -> tuple[i
     if feed == "wildfires_us_nifc":
         value = summary.get("active_count")
         return (int(value), "active wildfires") if value is not None else (None, None)
-    if feed == "hurricanes":
+    if _is_hurricane_live_feed(feed):
         value = summary.get("storm_count")
         return (int(value), "active storms") if value is not None else (None, None)
     if feed == "volcanoes":

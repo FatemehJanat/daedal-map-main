@@ -34,6 +34,7 @@ const OVERLAY_ICONS = {
   'earthquakes': 'E',
   'volcanoes': 'V',
   'hurricanes': 'H',
+  'hurricanes_live': 'H',
   'tornadoes': 'R',
   'tsunamis': 'T',
   'wildfires': 'W',
@@ -55,6 +56,7 @@ const OVERLAY_ICONS = {
 // Special model overrides (some overlays need specific models)
 const MODEL_OVERRIDES = {
   'hurricanes': 'track',
+  'hurricanes_live': 'track',
   'drought': 'polygon',
   'distributed_manufacturing': 'point-radius'
 };
@@ -63,7 +65,8 @@ const OPS_FEED_TO_OVERLAY_IDS = {
   currency: ['currency'],
   earthquakes: ['earthquakes'],
   volcanoes: ['volcanoes'],
-  hurricanes: ['hurricanes'],
+  hurricanes: ['hurricanes_live'],
+  hurricanes_live: ['hurricanes_live'],
   ocean_sst: ['ocean-sst-grid'],
   tsunamis: ['tsunamis'],
   wildfires_us_nifc: ['wildfires'],
@@ -83,6 +86,12 @@ const OPS_FEED_TO_OVERLAY_IDS = {
     'soil-moisture'
   ]
 };
+
+function normalizeOpsFeedId(feedId) {
+  const normalized = String(feedId || '').trim();
+  if (normalized === 'hurricanes') return 'hurricanes_live';
+  return normalized;
+}
 
 const HIDDEN_CATALOG_OVERLAY_IDS = new Set([
   'ocean_sst',
@@ -125,7 +134,7 @@ function deriveOverlayPackIds(overlayId, sources = []) {
 function normalizeFeedNames(values) {
   const out = [];
   for (const value of values || []) {
-    const text = String(value || '').trim();
+    const text = normalizeOpsFeedId(value);
     if (text && !out.includes(text)) {
       out.push(text);
     }
@@ -150,7 +159,7 @@ export function hasExplicitOpsFeedSelection() {
 export function getOpsOverlayIdsForFeeds(feeds = []) {
   const overlayIds = new Set();
   for (const feed of feeds || []) {
-    const ids = OPS_FEED_TO_OVERLAY_IDS[String(feed || '').trim()] || [];
+    const ids = OPS_FEED_TO_OVERLAY_IDS[normalizeOpsFeedId(feed)] || [];
     for (const overlayId of ids) {
       overlayIds.add(overlayId);
     }
@@ -161,9 +170,12 @@ export function getOpsOverlayIdsForFeeds(feeds = []) {
 export function getOpsFeedIdForOverlay(overlayId) {
   const normalizedOverlayId = String(overlayId || '').trim();
   if (!normalizedOverlayId) return '';
+  if (normalizedOverlayId === 'hurricanes_live' || normalizedOverlayId === 'hurricanes') {
+    return 'hurricanes_live';
+  }
   for (const [feedId, overlayIds] of Object.entries(OPS_FEED_TO_OVERLAY_IDS)) {
     if (Array.isArray(overlayIds) && overlayIds.includes(normalizedOverlayId)) {
-      return feedId;
+      return normalizeOpsFeedId(feedId);
     }
   }
   return '';
@@ -201,7 +213,7 @@ export function focusActiveOpsOverlays() {
 }
 
 export function isOpsFeedAllowed(feedId) {
-  const normalizedFeedId = String(feedId || '').trim();
+  const normalizedFeedId = normalizeOpsFeedId(feedId);
   if (!normalizedFeedId) return false;
   const overlayIds = getOpsOverlayIdsForFeeds([normalizedFeedId]);
   if (!overlayIds.length) return false;
@@ -468,6 +480,37 @@ function buildCategoriesFromTree(overlayTree) {
     }
   }
 
+  // Ops uses a separate live hurricane overlay id so it cannot collide with
+  // the historical IBTrACS hurricane overlay/cache used in Explore.
+  const liveHurricaneOverlay = {
+    id: 'hurricanes_live',
+    label: 'Hurricanes',
+    description: 'Live storm tracks and forecasts',
+    default: false,
+    locked: false,
+    model: 'track',
+    icon: 'H',
+    hasYearFilter: false,
+    live: true,
+    sourceIds: ['hurricanes_live'],
+    packIds: ['hurricanes']
+  };
+  const disastersCategory = categories.find((cat) => cat.id === 'disasters' && cat.isCategory);
+  if (disastersCategory) {
+    if (!disastersCategory.overlays.some((overlay) => overlay.id === 'hurricanes_live')) {
+      disastersCategory.overlays.push(liveHurricaneOverlay);
+    }
+  } else {
+    categories.push({
+      id: 'disasters',
+      label: 'Disasters',
+      icon: '!',
+      isCategory: true,
+      expanded: true,
+      overlays: [liveHurricaneOverlay]
+    });
+  }
+
   // Add or extend climate overlays. Some catalogs now provide a Climate
   // category, so merge instead of blindly appending a duplicate section.
   const hardcodedClimateOverlays = [
@@ -699,7 +742,7 @@ export function getAllowedOpsOverlayIds() {
   }
   const allowed = new Set();
   for (const feed of opsFeeds) {
-    const overlayIds = OPS_FEED_TO_OVERLAY_IDS[feed] || [];
+    const overlayIds = OPS_FEED_TO_OVERLAY_IDS[normalizeOpsFeedId(feed)] || [];
     for (const overlayId of overlayIds) {
       allowed.add(overlayId);
     }
@@ -874,6 +917,7 @@ export const OverlaySelector = {
           overlays: [
             { id: 'earthquakes', label: 'Earthquakes', description: 'Seismic events', default: false, locked: false, model: 'point-radius', icon: 'E', hasYearFilter: true },
             { id: 'hurricanes', label: 'Hurricanes', description: 'Storm tracks', default: false, locked: false, model: 'track', icon: 'H', hasYearFilter: true },
+            { id: 'hurricanes_live', label: 'Hurricanes', description: 'Live storm tracks and forecasts', default: false, locked: false, model: 'track', icon: 'H', hasYearFilter: false, live: true },
             { id: 'wildfires', label: 'Wildfires', description: 'Fire events', default: false, locked: false, model: 'point-radius', icon: 'W', hasYearFilter: true }
           ]
         }

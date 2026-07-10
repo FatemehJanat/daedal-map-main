@@ -15,6 +15,14 @@ export const SURFACE_MESSAGE_PROFILES = {
     exploreHints: 'Ask chat to focus on one basin, one storm, or the strongest seasons.',
     exploreExamples: ['show Atlantic hurricanes', 'focus on the strongest recent storms'],
   },
+  hurricanes_live: {
+    label: 'Hurricanes',
+    singular: 'storm track',
+    plural: 'storm tracks',
+    exploreActiveDescription: 'live storm tracks, recent advisory history, and forecasts',
+    exploreHints: 'Ask chat to focus on one storm, one basin, or the strongest active storms.',
+    exploreExamples: ['show active hurricanes', 'focus on the strongest storm'],
+  },
   volcanoes: {
     label: 'Volcanoes',
     singular: 'volcano event',

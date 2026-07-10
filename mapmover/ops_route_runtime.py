@@ -19,7 +19,7 @@ from mapmover.routes.chat_shared import human_chat_rate_limit_response
 OPS_SUPPORTED_FEEDS = (
     "currency",
     "earthquakes",
-    "hurricanes",
+    "hurricanes_live",
     "noaa_aurora",
     "noaa_ndbc",
     "noaa_swpc",
@@ -29,6 +29,10 @@ OPS_SUPPORTED_FEEDS = (
     "volcanoes",
     "wildfires_us_nifc",
 )
+
+OPS_FEED_ALIASES = {
+    "hurricanes": "hurricanes_live",
+}
 
 
 @dataclass
@@ -63,7 +67,7 @@ def ops_request_id(session_id: str, query: str) -> str:
 def _normalize_feed_names(values) -> list[str]:
     normalized: list[str] = []
     for value in values or []:
-        text = str(value or "").strip()
+        text = OPS_FEED_ALIASES.get(str(value or "").strip(), str(value or "").strip())
         if text and text not in normalized:
             normalized.append(text)
     return normalized
@@ -84,7 +88,7 @@ def _account_ops_feeds(auth_user: dict | None) -> list[str]:
 def _public_default_ops_feeds() -> list[str]:
     return _supported_ops_feeds([
         "earthquakes",
-        "hurricanes",
+        "hurricanes_live",
         "noaa_aurora",
         "noaa_ndbc",
         "noaa_swpc",

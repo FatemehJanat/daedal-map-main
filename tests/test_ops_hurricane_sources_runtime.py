@@ -163,7 +163,7 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
     def test_hurricane_history_payload_keeps_retained_only_storms_and_source_tracks(self):
         now = datetime.now(timezone.utc).replace(microsecond=0)
         snapshot = {
-            "collector": "hurricanes",
+            "collector": "hurricanes_live",
             "payload_hash": "current-hash",
             "ops_history_retention_hours": 336,
             "ops_history_display_hours": 336,
@@ -251,6 +251,7 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
         self.assertTrue(retained["retained_history_only"])
 
         payload = ops._build_live_hurricane_display_payload(augmented)
+        self.assertEqual("hurricanes_live_ops", payload["source_id"])
         features = payload["geojson"]["features"]
         kinds = [feature["properties"]["track_kind"] for feature in features]
         self.assertIn("observed", kinds)
@@ -273,7 +274,7 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
     def test_retained_hurricane_current_uses_latest_track_point(self):
         now = datetime.now(timezone.utc).replace(microsecond=0)
         snapshot = {
-            "collector": "hurricanes",
+            "collector": "hurricanes_live",
             "payload_hash": "current-hash",
             "ops_history_retention_hours": 336,
             "ops_history_display_hours": 336,
@@ -352,7 +353,7 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
     def test_default_hurricane_history_uses_display_window_not_saved_retention(self):
         now = datetime.now(timezone.utc).replace(microsecond=0)
         snapshot = {
-            "collector": "hurricanes",
+            "collector": "hurricanes_live",
             "payload_hash": "current-hash",
             "ops_history_retention_hours": 336,
             "ops_history_display_hours": 72,
@@ -407,7 +408,7 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
     def test_hurricane_display_drops_stale_source_slots(self):
         now = datetime.now(timezone.utc).replace(microsecond=0)
         snapshot = {
-            "collector": "hurricanes",
+            "collector": "hurricanes_live",
             "payload_hash": "current-hash",
             "ops_history_retention_hours": 336,
             "ops_history_display_hours": 336,
