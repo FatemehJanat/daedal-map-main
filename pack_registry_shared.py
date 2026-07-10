@@ -338,16 +338,17 @@ PACK_REGISTRY: dict[str, dict] = {
         "display_name": "Geography Tools",
         "kind": "tool_family",
         "pricing": "free",
-        "mcp_tool_allowlist": ("get_catalog", "get_pack", "resolve_point", "get_boundary", "loc_id_hierarchy", "loc_id_info"),
+        "mcp_tool_allowlist": ("get_catalog", "get_pack", "resolve_point", "get_boundary", "loc_id_hierarchy", "loc_id_info", "sidechain_to_admin", "admin_to_sidechain"),
         "mcp_name": "com.daedalmap/geocoding",
-        "mcp_title": "DaedalMap Geocoding and Reverse Geocoding (loc_id)",
-        "mcp_description": "Free geocoding and reverse-geocoding utilities built on the DaedalMap loc_id spine: resolve latitude/longitude to administrative areas, fetch boundaries and bounding boxes, and walk the loc_id hierarchy. A utility tool family, not a queryable dataset pack. No payment required.",
+        "mcp_title": "DaedalMap Geography Tools (loc_id)",
+        "mcp_description": "Free geography utilities built on the DaedalMap loc_id spine: resolve latitude/longitude to administrative areas, fetch boundaries and bounding boxes, walk the loc_id hierarchy, and bridge ZCTAs or tribal areas to administrative loc_ids by weighted polygon overlap. A utility tool family, not a queryable dataset pack. No payment required.",
         "registry_meta": {
             "categories": ["geospatial", "geocoding", "data"],
             "highlights": [
                 "Reverse geocoding: latitude/longitude to administrative loc_id chain",
                 "Boundary and bounding-box lookup for any loc_id",
                 "Walk the loc_id hierarchy up and down to clip to any admin level",
+                "Weighted bridges from ZCTAs and tribal areas to the admin spine",
             ],
         },
         "routing": {
@@ -358,6 +359,8 @@ PACK_REGISTRY: dict[str, dict] = {
             {"name": "get_boundary", "summary": "loc_id -> bounding box and centroid (optional full polygon)"},
             {"name": "loc_id_hierarchy", "summary": "loc_id -> parent, ancestors, and child summary"},
             {"name": "loc_id_info", "summary": "loc_id -> name, admin level, centroid, bbox, child counts"},
+            {"name": "sidechain_to_admin", "summary": "ZCTA or tribal loc_id -> ranked admin matches with overlap shares"},
+            {"name": "admin_to_sidechain", "summary": "admin loc_id -> ranked overlapping ZCTAs or tribal areas"},
         ),
     },
     "reverse-geocoding": {
@@ -465,6 +468,9 @@ def tool_family_pack_detail(pack_id: str | None) -> dict:
             "Coordinates must be WGS84 decimal degrees.",
             "resolve_point returns the deepest loc_id plus the full ancestor chain.",
             "get_boundary returns bbox and centroid by default; request include_polygon only when you need the full geometry payload.",
+            "Use sidechain_to_admin for ZIP/ZCTA or tribal-area to admin conversions. For ZCTAs, source_family is overlay_zcta and source_loc_id can be either USA-Z-10001 or 10001.",
+            "Use admin_to_sidechain for reverse lookup from an admin loc_id to overlapping ZCTAs or tribal areas.",
+            "Bridge tools return primary_match and overlaps. source_area_share ranks side-chain to admin results; target_area_share ranks admin to side-chain results.",
         ]
     elif preferred_tool == "get_boundary":
         first_arguments = {"loc_id": "USA-CA-037"}
@@ -477,6 +483,8 @@ def tool_family_pack_detail(pack_id: str | None) -> dict:
             "These are free utility tools, not a query_dataset pack.",
             "Use canonical loc_ids such as USA, CAN-BC, or USA-CA-037.",
             "BBox/centroid is the default response shape because full polygons can be large.",
+            "Use sidechain_to_admin for ZIP/ZCTA or tribal-area to admin conversions. For ZCTAs, source_family is overlay_zcta and source_loc_id can be either USA-Z-10001 or 10001.",
+            "Use admin_to_sidechain for reverse lookup from an admin loc_id to overlapping ZCTAs or tribal areas.",
         ]
     else:
         first_arguments = {"loc_id": "USA-CA-037"}
@@ -496,6 +504,28 @@ def tool_family_pack_detail(pack_id: str | None) -> dict:
             "tool": preferred_tool,
             "arguments": first_arguments,
         },
+        "bridge_examples": [
+            {
+                "question": "What Census tracts overlap ZIP/ZCTA 10001?",
+                "tool": "sidechain_to_admin",
+                "arguments": {
+                    "source_family": "overlay_zcta",
+                    "source_loc_id": "10001",
+                    "target_admin_level": "tract",
+                    "limit": 10,
+                },
+            },
+            {
+                "question": "Which ZCTAs overlap this block group?",
+                "tool": "admin_to_sidechain",
+                "arguments": {
+                    "target_loc_id": "USA-NY-061-009903-2",
+                    "source_family": "overlay_zcta",
+                    "target_admin_level": "block_group",
+                    "limit": 10,
+                },
+            },
+        ],
         "important_rules": important_rules,
         "starter_tools": [tool.get("name") for tool in tools if tool.get("name")],
     }

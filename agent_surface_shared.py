@@ -135,7 +135,7 @@ def agent_ai_plugin_description_for_model(*, app_origin: str, docs_origin: str, 
         "All packs share a loc_id key (ISO3 for countries, hierarchical for sub-national) "
         "enabling cross-pack joins on a single column with no geography normalization. "
         "Free geography tools resolve lat/lon and loc_ids on the same spine: resolve_point, "
-        "get_boundary, loc_id_hierarchy, loc_id_info. "
+        "get_boundary, loc_id_hierarchy, loc_id_info, sidechain_to_admin, admin_to_sidechain. "
         "request_id is optional but recommended for tracing and idempotency. "
         f"{free_vs_paid_sentence()}"
     )
@@ -157,6 +157,7 @@ def render_app_llms_txt() -> str:
         "- Start here for docs: https://daedalmap.com/docs/for-agents\n"
         "- Agent examples: https://daedalmap.com/docs/agent-examples\n"
         "- loc_id guide: https://daedalmap.com/docs/loc-id\n"
+        "- Geometry tools: https://daedalmap.com/docs/geometry-tools\n"
         "- Full machine-readable guide: https://daedalmap.com/llms-full.txt\n\n"
         "## Live machine-facing endpoints\n"
         "- GET https://app.daedalmap.com/mcp/server.json\n"
@@ -240,6 +241,7 @@ def render_site_llms_txt(*, app_origin: str = "https://app.daedalmap.com", site_
         f"- [For Agents]({site_origin}/docs/for-agents)\n"
         f"- [Agent Examples]({site_origin}/docs/agent-examples)\n"
         f"- [loc_id Guide]({site_origin}/docs/loc-id)\n"
+        f"- [Geometry Tools]({site_origin}/docs/geometry-tools)\n"
         "- [GitHub (open runtime)](https://github.com/xyver/daedal-map)\n"
     )
 

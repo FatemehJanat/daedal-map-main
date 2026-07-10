@@ -1085,6 +1085,123 @@ async def _execute_loc_id_hierarchy_tool(arguments: dict[str, Any], rpc_request_
     return _jsonrpc_response(_tool_result(result), rpc_request_id)
 
 
+def _normalize_bridge_limit(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        limit = int(value)
+    except (TypeError, ValueError):
+        return None
+    return max(1, min(limit, 100))
+
+
+def _normalize_bridge_share(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        share = float(value)
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, min(share, 1.0))
+
+
+def _normalize_sidechain_source_loc_id(source_family: str, source_loc_id: str, iso3: str) -> str:
+    value = str(source_loc_id or "").strip()
+    family = str(source_family or "").strip().lower()
+    country = str(iso3 or "USA").strip().upper() or "USA"
+    if family == "overlay_zcta" and value.isdigit() and len(value) == 5:
+        return f"{country}-Z-{value}"
+    return value
+
+
+async def _execute_sidechain_to_admin_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
+    payload = _ensure_request_id(arguments, "sidechain_to_admin")
+    request_id = str(payload.get("request_id") or "")
+    source_family = str(payload.get("source_family") or "").strip().lower()
+    iso3 = str(payload.get("iso3") or "USA").strip().upper() or "USA"
+    source_loc_id = _normalize_sidechain_source_loc_id(source_family, str(payload.get("source_loc_id") or ""), iso3)
+    target_admin_level = payload.get("target_admin_level")
+    if not source_family or not source_loc_id or target_admin_level in (None, ""):
+        return _jsonrpc_response(
+            _tool_result(
+                {
+                    "request_id": request_id,
+                    "error": {
+                        "code": "invalid_bridge_request",
+                        "message": "source_family, source_loc_id, and target_admin_level are required",
+                    },
+                },
+                is_error=True,
+            ),
+            rpc_request_id,
+        )
+    try:
+        from mapmover.runtime.sidechain_admin_bridge import resolve_sidechain_to_admin
+
+        result = resolve_sidechain_to_admin(
+            source_loc_id,
+            source_family=source_family,
+            target_admin_level=target_admin_level,
+            iso3=iso3,
+            min_source_area_share=_normalize_bridge_share(payload.get("min_source_area_share")),
+            limit=_normalize_bridge_limit(payload.get("limit")),
+        )
+    except Exception as exc:
+        return _jsonrpc_response(
+            _tool_result({"request_id": request_id, "error": {"code": "bridge_failed", "message": str(exc)}}, is_error=True),
+            rpc_request_id,
+        )
+    result = {"request_id": request_id, **result}
+    if not result.get("ok"):
+        result.setdefault("error", {"code": "not_found", "message": "no bridge rows matched the request"})
+        return _jsonrpc_response(_tool_result(result, is_error=True), rpc_request_id)
+    return _jsonrpc_response(_tool_result(result), rpc_request_id)
+
+
+async def _execute_admin_to_sidechain_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
+    payload = _ensure_request_id(arguments, "admin_to_sidechain")
+    request_id = str(payload.get("request_id") or "")
+    target_loc_id = str(payload.get("target_loc_id") or "").strip()
+    source_family = str(payload.get("source_family") or "").strip().lower()
+    iso3 = str(payload.get("iso3") or "USA").strip().upper() or "USA"
+    target_admin_level = payload.get("target_admin_level")
+    if not target_loc_id or not source_family or target_admin_level in (None, ""):
+        return _jsonrpc_response(
+            _tool_result(
+                {
+                    "request_id": request_id,
+                    "error": {
+                        "code": "invalid_bridge_request",
+                        "message": "target_loc_id, source_family, and target_admin_level are required",
+                    },
+                },
+                is_error=True,
+            ),
+            rpc_request_id,
+        )
+    try:
+        from mapmover.runtime.sidechain_admin_bridge import resolve_admin_to_sidechains
+
+        result = resolve_admin_to_sidechains(
+            target_loc_id,
+            source_family=source_family,
+            target_admin_level=target_admin_level,
+            iso3=iso3,
+            min_target_area_share=_normalize_bridge_share(payload.get("min_target_area_share")),
+            limit=_normalize_bridge_limit(payload.get("limit")),
+        )
+    except Exception as exc:
+        return _jsonrpc_response(
+            _tool_result({"request_id": request_id, "error": {"code": "bridge_failed", "message": str(exc)}}, is_error=True),
+            rpc_request_id,
+        )
+    result = {"request_id": request_id, **result}
+    if not result.get("ok"):
+        result.setdefault("error", {"code": "not_found", "message": "no bridge rows matched the request"})
+        return _jsonrpc_response(_tool_result(result, is_error=True), rpc_request_id)
+    return _jsonrpc_response(_tool_result(result), rpc_request_id)
+
+
 async def _execute_live_volcano_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
     payload = _ensure_request_id(arguments, "get_live_volcano_events")
     try:
@@ -1405,6 +1522,15 @@ async def mcp_endpoint(request: Request, pack_id: str | None = None):
 
     tool_name = str(params.get("name") or "").strip()
     arguments = params.get("arguments") or {}
+    caller_request_id = ""
+    if isinstance(arguments, dict):
+        caller_request_id = str(arguments.get("request_id") or "").strip()
+    if caller_request_id:
+        request.state.analytics_request_id = caller_request_id
+    if normalized_pack_id:
+        request.state.analytics_pack_id = normalized_pack_id
+    if tool_name:
+        request.state.analytics_source_id = tool_name
     request.state.analytics_metadata = {
         **getattr(request.state, "analytics_metadata", {}),
         "mcp_tool_name": tool_name or None,
@@ -1470,6 +1596,18 @@ async def mcp_endpoint(request: Request, pack_id: str | None = None):
         if rate_limit_response:
             return rate_limit_response
         return await _execute_loc_id_info_tool(arguments, request_id)
+
+    if tool_name == "sidechain_to_admin":
+        rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
+        if rate_limit_response:
+            return rate_limit_response
+        return await _execute_sidechain_to_admin_tool(arguments, request_id)
+
+    if tool_name == "admin_to_sidechain":
+        rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
+        if rate_limit_response:
+            return rate_limit_response
+        return await _execute_admin_to_sidechain_tool(arguments, request_id)
 
     if tool_name == "get_disaster_links_for_event":
         return await _execute_disaster_links_for_event_tool(arguments, request_id)
