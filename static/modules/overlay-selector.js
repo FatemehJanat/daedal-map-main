@@ -176,20 +176,22 @@ function shouldAutoFocusOnOverlayEnable(mode) {
   return mode === 'ops';
 }
 
-function getOpsSnapshotGeojson(overlayId) {
-  const payload = window.OverlayController?.opsSnapshotPayloads?.get?.(overlayId);
-  const geojson = payload?.geojson;
+function getRenderedOpsGeojson(overlayId) {
+  // Delegates to OverlayController: covers both inline ops snapshot payloads
+  // (earthquakes-style) and endpoint-fetched dataCache features
+  // (hurricanes-style track loads).
+  const geojson = window.OverlayController?.getRenderedOverlayGeojson?.(overlayId);
   return Array.isArray(geojson?.features) && geojson.features.length ? geojson : null;
 }
 
 /**
- * Fit the camera to the union of every active Ops overlay's snapshot
- * payload. Returns false (no camera move) when nothing renderable is active.
+ * Fit the camera to the union of every active Ops overlay's rendered
+ * features. Returns false (no camera move) when nothing renderable is active.
  */
 export function focusActiveOpsOverlays() {
   const collections = [];
   for (const overlayId of OverlaySelector.getActiveOverlays()) {
-    const geojson = getOpsSnapshotGeojson(overlayId);
+    const geojson = getRenderedOpsGeojson(overlayId);
     if (geojson) {
       collections.push(geojson);
     }
@@ -1122,7 +1124,7 @@ export const OverlaySelector = {
   _maybeAutoFocusOnEnable(overlayId, isActive) {
     if (!isActive) return;
     if (!shouldAutoFocusOnOverlayEnable(this.currentLaneMode)) return;
-    if (!getOpsSnapshotGeojson(overlayId)) return;
+    if (!getRenderedOpsGeojson(overlayId)) return;
     focusActiveOpsOverlays();
   },
 

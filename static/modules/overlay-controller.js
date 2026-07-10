@@ -1027,6 +1027,53 @@ export const OverlayController = {
     return false;
   },
 
+  /**
+   * FeatureCollection of what is actually rendered/loaded for an overlay,
+   * for camera-fit helpers. Lookup order:
+   *   1. Ops snapshot display payload, run through the same
+   *      _buildFilteredOpsPayload the render path uses so the fit matches
+   *      what is visible (e.g. magnitude 4.5+ earthquakes).
+   *   2. Module-scope dataCache features - the endpoint-fetch path that
+   *      overlays like the Ops hurricanes track load use
+   *      (handleOverlayChange -> loadOverlay -> loadRangeData), with the
+   *      Ops retained-history window applied where rendering applies it.
+   * The years-keyed dataCache variant is weather-grid data (grids, not
+   * GeoJSON features) and never applies to Ops event feeds, so it is
+   * intentionally skipped.
+   * @param {string} overlayId
+   * @returns {Object|null} FeatureCollection, or null when nothing usable
+   *   is loaded for this overlay.
+   */
+  getRenderedOverlayGeojson(overlayId) {
+    const normalizedOverlayId = String(overlayId || '').trim();
+    if (!normalizedOverlayId) return null;
+
+    const snapshotPayload = this.opsSnapshotPayloads.get(normalizedOverlayId);
+    if (snapshotPayload) {
+      const prepared = this._buildFilteredOpsPayload(normalizedOverlayId, snapshotPayload);
+      const features = prepared?.payload?.geojson?.features;
+      if (Array.isArray(features) && features.length) {
+        return { type: 'FeatureCollection', features };
+      }
+    }
+
+    const cachedFeatures = Array.isArray(dataCache[normalizedOverlayId]?.features)
+      ? dataCache[normalizedOverlayId].features
+      : [];
+    if (cachedFeatures.length) {
+      const visibleFeatures = this._filterOpsRetainedHistoryFeatures(
+        normalizedOverlayId,
+        cachedFeatures,
+        OVERLAY_ENDPOINTS[normalizedOverlayId]
+      );
+      if (Array.isArray(visibleFeatures) && visibleFeatures.length) {
+        return { type: 'FeatureCollection', features: visibleFeatures };
+      }
+    }
+
+    return null;
+  },
+
   hasCompletedRangeForCurrentFilters(overlayId, endpoint = null) {
     // TASK L2: reads overlayLedger instead of the loadedRanges mirror.
     // claimsFor() only ever returns held (recorded) claims -- in-flight

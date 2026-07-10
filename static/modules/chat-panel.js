@@ -955,7 +955,12 @@ export const ChatManager = {
         || eventId
       );
       if (!hasExplicitCameraIntent) {
-        focusActiveOpsOverlays();
+        const moved = focusActiveOpsOverlays();
+        if (!moved) {
+          // One-shot retry: the load chain is awaited end to end, but if a
+          // feed's render lands a beat later, catch it once (no polling).
+          window.setTimeout(() => focusActiveOpsOverlays(), 600);
+        }
       }
     }
 
