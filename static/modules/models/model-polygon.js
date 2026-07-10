@@ -13,6 +13,7 @@
 
 import { CONFIG } from '../config.js';
 import { DisasterPopup } from '../disaster-popup.js';
+import { extendBoundsWithCoordinateList } from '../map-focus.mjs';
 
 // Dependencies set via setDependencies
 let MapAdapter = null;
@@ -437,19 +438,10 @@ export const PolygonModel = {
    * @private
    */
   _extendBoundsWithGeometry(bounds, geometry) {
-    if (geometry.type === 'Polygon') {
-      // Outer ring is first element
-      for (const coord of geometry.coordinates[0]) {
-        bounds.extend(coord);
-      }
-    } else if (geometry.type === 'MultiPolygon') {
-      for (const polygon of geometry.coordinates) {
-        for (const coord of polygon[0]) {
-          bounds.extend(coord);
-        }
-      }
-    } else if (geometry.type === 'Point') {
-      bounds.extend(geometry.coordinates);
+    // Holes never extend past the outer ring, so walking every ring via the
+    // shared union yields the same bounds as walking outer rings only.
+    if (geometry.type === 'Polygon' || geometry.type === 'MultiPolygon' || geometry.type === 'Point') {
+      extendBoundsWithCoordinateList(bounds, geometry.coordinates);
     }
   },
 

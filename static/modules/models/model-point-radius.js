@@ -12,6 +12,7 @@
 import { CONFIG } from '../config.js';
 import { DisasterPopup } from '../disaster-popup.js';
 import { fetchMsgpack } from '../utils/fetch.js';
+import { extendBoundsWithCoordinateList } from '../map-focus.mjs';
 
 const DISASTER_ICON_SVGS = {
   earthquake: `
@@ -3163,9 +3164,8 @@ export const PointRadiusModel = {
 
     // Fit map to track bounds
     if (data.track?.geometry?.coordinates?.length > 0) {
-      const coords = data.track.geometry.coordinates;
       const bounds = new maplibregl.LngLatBounds();
-      coords.forEach(c => bounds.extend(c));
+      extendBoundsWithCoordinateList(bounds, data.track.geometry.coordinates);
       map.fitBounds(bounds, { padding: 80, duration: 800, maxZoom: 12 });
     }
 
@@ -3616,12 +3616,7 @@ export const PointRadiusModel = {
 
     // Fit bounds to full sequence
     const bounds = new maplibregl.LngLatBounds();
-    sortedFeatures.forEach(f => {
-      bounds.extend([f.properties.longitude, f.properties.latitude]);
-      if (f.properties.end_longitude && f.properties.end_latitude) {
-        bounds.extend([f.properties.end_longitude, f.properties.end_latitude]);
-      }
-    });
+    extendBoundsWithCoordinateList(bounds, this._sequenceBoundsCoords(sortedFeatures));
     map.fitBounds(bounds, { padding: 80, duration: 1000, maxZoom: 10 });
 
     // Hide popup
@@ -3827,12 +3822,7 @@ export const PointRadiusModel = {
 
     // Fit bounds
     const bounds = new maplibregl.LngLatBounds();
-    sortedFeatures.forEach(f => {
-      bounds.extend([f.properties.longitude, f.properties.latitude]);
-      if (f.properties.end_longitude && f.properties.end_latitude) {
-        bounds.extend([f.properties.end_longitude, f.properties.end_latitude]);
-      }
-    });
+    extendBoundsWithCoordinateList(bounds, this._sequenceBoundsCoords(sortedFeatures));
     map.fitBounds(bounds, { padding: 80, duration: 1000, maxZoom: 10 });
 
     // Hide popup
@@ -3955,6 +3945,22 @@ export const PointRadiusModel = {
   },
 
   /**
+   * Collect [lon, lat] pairs from sequence features (start point plus
+   * optional end point) for shared bounds union.
+   * @private
+   */
+  _sequenceBoundsCoords(features) {
+    const coords = [];
+    features.forEach(f => {
+      coords.push([f.properties.longitude, f.properties.latitude]);
+      if (f.properties.end_longitude && f.properties.end_latitude) {
+        coords.push([f.properties.end_longitude, f.properties.end_latitude]);
+      }
+    });
+    return coords;
+  },
+
+  /**
    * Fit map to event bounds.
    * @param {Object} geojson - Event GeoJSON
    */
@@ -3963,13 +3969,11 @@ export const PointRadiusModel = {
       return;
     }
 
-    const bounds = new maplibregl.LngLatBounds();
     const pointCoords = [];
 
     for (const feature of geojson.features) {
       if (feature.geometry && feature.geometry.type === 'Point') {
         const coords = feature.geometry.coordinates;
-        bounds.extend(coords);
         if (Array.isArray(coords) && coords.length >= 2) {
           const lon = Number(coords[0]);
           const lat = Number(coords[1]);
@@ -3984,6 +3988,9 @@ export const PointRadiusModel = {
       MapAdapter.flyTo(pointCoords[0], 8);
       return;
     }
+
+    const bounds = new maplibregl.LngLatBounds();
+    extendBoundsWithCoordinateList(bounds, pointCoords);
 
     if (!bounds.isEmpty()) {
       MapAdapter.map.fitBounds(bounds, {

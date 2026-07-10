@@ -1,9 +1,11 @@
 import {
   addGenericExitButton,
-  collectGeometryCoords,
-  createCircleFeature,
-  getBoundsFromCoords
+  createCircleFeature
 } from './overlay-disaster-common.js';
+
+function pointFeature(lon, lat) {
+  return { type: 'Feature', geometry: { type: 'Point', coordinates: [lon, lat] }, properties: {} };
+}
 
 function hideFloodOverlay(deps) {
   const { ModelRegistry } = deps;
@@ -36,15 +38,11 @@ export function handleFloodAnimation(controller, data, deps) {
   MapAdapter.popupLocked = false;
   hideFloodOverlay(deps);
 
-  let allCoords = [];
-  if (geometry.type === 'FeatureCollection' && geometry.features) {
-    for (const feature of geometry.features) allCoords.push(...collectGeometryCoords(feature.geometry));
-  } else if (geometry.geometry) {
-    allCoords = collectGeometryCoords(geometry.geometry);
+  // Wrap in an array so single-feature radius padding does not apply.
+  const focused = MapAdapter.focusOnFeatures([geometry], { maxZoom: 11 });
+  if (!focused && longitude && latitude) {
+    MapAdapter.focusOnFeatures([pointFeature(longitude, latitude)], { singlePointZoom: 8 });
   }
-  const bounds = allCoords.length > 0 ? getBoundsFromCoords(allCoords) : null;
-  if (bounds) MapAdapter.map.fitBounds(bounds, { padding: 60, duration: 1500, maxZoom: 11 });
-  else if (longitude && latitude) MapAdapter.map.flyTo({ center: [longitude, latitude], zoom: 8, duration: 1500 });
 
   const sourceId = 'flood-anim-polygon';
   const layerId = 'flood-anim-fill';
@@ -117,7 +115,7 @@ export function handleFloodImpact(controller, data, deps) {
   MapAdapter?.hidePopup?.();
   MapAdapter.popupLocked = false;
   hideFloodOverlay(deps);
-  MapAdapter.map.flyTo({ center: [longitude, latitude], zoom: 8, duration: 1500 });
+  MapAdapter.focusOnFeatures([pointFeature(longitude, latitude)], { singlePointZoom: 8 });
   const sourceId = 'flood-impact-radius';
   const fillId = 'flood-impact-fill';
   const strokeId = 'flood-impact-stroke';

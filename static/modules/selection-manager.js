@@ -300,34 +300,21 @@ export const SelectionManager = {
 
     const map = MapAdapter.map;
 
-    // Calculate bounding box of all features
-    let minLon = Infinity, minLat = Infinity, maxLon = -Infinity, maxLat = -Infinity;
+    // Temporarily enable interactions for the focus animation
+    map.dragPan.enable();
 
-    geojson.features.forEach(feature => {
-      const coords = this.getAllCoordinates(feature.geometry);
-      coords.forEach(([lon, lat]) => {
-        minLon = Math.min(minLon, lon);
-        minLat = Math.min(minLat, lat);
-        maxLon = Math.max(maxLon, lon);
-        maxLat = Math.max(maxLat, lat);
-      });
-    });
+    const focused = MapAdapter.focusOnFeatures(geojson, { duration: 1000 });
 
-    if (minLon !== Infinity) {
-      // Temporarily enable interactions for fitBounds animation
-      map.dragPan.enable();
-
-      map.fitBounds(
-        [[minLon, minLat], [maxLon, maxLat]],
-        { padding: 80, duration: 1000 }
-      );
-
-      // Re-freeze after animation
-      setTimeout(() => {
-        if (this.active) {
-          map.dragPan.disable();
-        }
-      }, 1100);
+    // Re-freeze after animation
+    const refreeze = () => {
+      if (this.active) {
+        map.dragPan.disable();
+      }
+    };
+    if (focused) {
+      setTimeout(refreeze, 1100);
+    } else {
+      refreeze();
     }
   },
 

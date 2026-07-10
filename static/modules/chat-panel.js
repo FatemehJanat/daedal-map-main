@@ -56,6 +56,7 @@ import { ensureRuntimeAccessToken, getAccessToken, getCurrentProfile, getCurrent
 import { TutorialMode, parseTutorialCommand } from './tutorial-mode.js';
 import { ResearchModeToggle } from './research/mode.js';
 import {
+  focusActiveOpsOverlays,
   getOpsOverlayIdsForFeeds,
   resolvePackIdFromSourceId,
   setOpsEffectiveFeeds as setOverlaySelectorOpsEffectiveFeeds
@@ -914,9 +915,13 @@ export const ChatManager = {
     }
 
     if (lane === 'ops' && feedId) {
+      // Feed deep links are additive marketing entry points: load and enable
+      // the named feed, but keep the user's full watch universe (public
+      // defaults for anonymous, account ops_feeds for signed-in) in the tray.
       await this.loadOpsFeedSet([feedId], {
         label: 'Ops deep link',
-        forceDisplayReplay: true
+        forceDisplayReplay: true,
+        preserveWatchUniverse: true
       });
     }
 
@@ -924,7 +929,7 @@ export const ChatManager = {
       eventId && lane === 'explore' && (packId || sourceId)
     );
 
-    return this.runDefaultLoad(
+    const handled = await this.runDefaultLoad(
       {
         packId,
         sourceId,
@@ -938,6 +943,23 @@ export const ChatManager = {
         suppressResultMessage
       }
     );
+
+    // Feed deep links default-zoom to the loaded feed's rendered features
+    // unless an explicit camera contract owns the camera instead: a focus=
+    // param, camera share params (bbox/c/z arrive via share_state.camera),
+    // or an exact event id (focusOpsEventById fits that event itself).
+    if (lane === 'ops' && feedId) {
+      const hasExplicitCameraIntent = Boolean(
+        routeIntent?.focus
+        || routeIntent?.share_state?.camera
+        || eventId
+      );
+      if (!hasExplicitCameraIntent) {
+        focusActiveOpsOverlays();
+      }
+    }
+
+    return handled;
   },
 
   async loadOpsFeedSet(feedIds = [], options = {}) {
@@ -963,7 +985,9 @@ export const ChatManager = {
     this.opsWatchId = payload?.watch_id || this.opsWatchId;
     this.latestOpsPayload = payload || null;
     this.latestOpsReport = payload?.ops_report || null;
-    setOverlaySelectorOpsEffectiveFeeds(Array.isArray(payload?.effective_feeds) ? payload.effective_feeds : normalizedFeedIds);
+    if (options.preserveWatchUniverse !== true) {
+      setOverlaySelectorOpsEffectiveFeeds(Array.isArray(payload?.effective_feeds) ? payload.effective_feeds : normalizedFeedIds);
+    }
     OverlayController?.setOpsSnapshotPayloads?.(
       Array.isArray(payload?.display_payloads)
         ? payload.display_payloads
@@ -3811,18 +3835,23 @@ export const ChatManager = {
       props.bbox_min_lat !== undefined &&
       props.bbox_max_lat !== undefined
     ) {
-      MapAdapter.map.fitBounds(
-        [
-          [props.bbox_min_lon, props.bbox_min_lat],
-          [props.bbox_max_lon, props.bbox_max_lat]
-        ],
-        { padding: 60, duration: 1200, maxZoom: 16 }
-      );
+      // Array-wrapped so the helper unions bbox_* props without applying the
+      // single-event radius padding meant for hazard features.
+      MapAdapter.focusOnFeatures([feature], {
+        padding: 60,
+        duration: 1200,
+        maxZoom: 16
+      });
     } else {
-      MapAdapter.map.flyTo({
-        center: [parsed.lng, parsed.lat],
-        zoom: Math.max(MapAdapter.map.getZoom(), 15),
-        duration: 1200
+      const currentZoom = Number(MapAdapter.map.getZoom());
+      MapAdapter.focusOnFeatures([{
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [parsed.lng, parsed.lat] },
+        properties: {}
+      }], {
+        duration: 1200,
+        // Never zoom out below the user's current zoom.
+        singlePointZoom: Math.max(Number.isFinite(currentZoom) ? currentZoom : 0, 15)
       });
     }
   },
@@ -3974,31 +4003,34 @@ export const ChatManager = {
       const geojson = await postMsgpack('/geometry/selection', { loc_ids: locIds });
 
       if (geojson.features && geojson.features.length > 0) {
-        // Calculate bounding box
-        let minLng = 180, maxLng = -180, minLat = 90, maxLat = -90;
-
-        for (const feature of geojson.features) {
-          const props = feature.properties || {};
-          if (props.bbox_min_lon !== undefined) {
-            minLng = Math.min(minLng, props.bbox_min_lon);
-            maxLng = Math.max(maxLng, props.bbox_max_lon);
-            minLat = Math.min(minLat, props.bbox_min_lat);
-            maxLat = Math.max(maxLat, props.bbox_max_lat);
-          } else if (props.centroid_lon !== undefined) {
-            minLng = Math.min(minLng, props.centroid_lon - 1);
-            maxLng = Math.max(maxLng, props.centroid_lon + 1);
-            minLat = Math.min(minLat, props.centroid_lat - 1);
-            maxLat = Math.max(maxLat, props.centroid_lat + 1);
+        // Fit map to the union of the selected locations. The focus helper
+        // reads geometry and bbox_* props directly; features that carry only
+        // a centroid keep the old +/- 1 degree fallback box.
+        const focusFeatures = geojson.features.map((feature) => {
+          const props = feature?.properties || {};
+          if (feature?.geometry?.coordinates || props.bbox_min_lon !== undefined) {
+            return feature;
           }
-        }
-
-        // Fit map to bounds
-        if (MapAdapter?.map && minLng < maxLng && minLat < maxLat) {
-          MapAdapter.map.fitBounds(
-            [[minLng, minLat], [maxLng, maxLat]],
-            { padding: 50, duration: 1000 }
-          );
-        }
+          const lon = Number(props.centroid_lon);
+          const lat = Number(props.centroid_lat);
+          if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
+            return feature;
+          }
+          return {
+            type: 'Feature',
+            properties: {
+              bbox_min_lon: lon - 1,
+              bbox_min_lat: lat - 1,
+              bbox_max_lon: lon + 1,
+              bbox_max_lat: lat + 1
+            }
+          };
+        });
+        MapAdapter?.focusOnFeatures?.(focusFeatures, {
+          padding: 50,
+          duration: 1000,
+          maxZoom: 16
+        });
 
         // Display locations as highlight layer
         App?.displayNavigationLocations(geojson, locations);

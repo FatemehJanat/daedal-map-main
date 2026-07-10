@@ -12,6 +12,7 @@
 
 import { CONFIG } from '../config.js';
 import { DisasterPopup } from '../disaster-popup.js';
+import { extendBoundsWithCoordinateList } from '../map-focus.mjs';
 
 // Dependencies set via setDependencies
 let MapAdapter = null;
@@ -970,14 +971,9 @@ export const TrackModel = {
     const bounds = new maplibregl.LngLatBounds();
 
     for (const feature of geojson.features) {
-      if (feature.geometry) {
-        if (feature.geometry.type === 'Point') {
-          bounds.extend(feature.geometry.coordinates);
-        } else if (feature.geometry.type === 'LineString') {
-          for (const coord of feature.geometry.coordinates) {
-            bounds.extend(coord);
-          }
-        }
+      const geometry = feature.geometry;
+      if (geometry && (geometry.type === 'Point' || geometry.type === 'LineString')) {
+        extendBoundsWithCoordinateList(bounds, geometry.coordinates);
       }
     }
 

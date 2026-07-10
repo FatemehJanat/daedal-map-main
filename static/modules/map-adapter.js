@@ -9,6 +9,11 @@ import { DisasterPopup } from './disaster-popup.js';
 import { PointRadiusModel } from './models/model-point-radius.js';
 import { TrackModel } from './models/model-track.js';
 import { fetchMsgpack, postMsgpack } from './utils/fetch.js';
+import {
+  buildFocusBounds,
+  getAdaptiveMaxZoom,
+  FOCUS_DURATION_MS
+} from './map-focus.mjs';
 
 // Dependencies set via setDependencies to avoid circular imports
 let ViewportLoader = null;
@@ -1844,11 +1849,104 @@ export const MapAdapter = {
     }
   },
 
-  getFitBoundsPadding(overridePadding = null) {
-    if (overridePadding != null) {
-      return overridePadding;
+  /**
+   * Unified camera entry point: fit the map to any feature payload.
+   *
+   * @param {Object|Array} input - A single feature, an array of features, a
+   *   FeatureCollection, or an array of FeatureCollections; everything is
+   *   unioned into one bounds. Per-hazard radius padding applies only when
+   *   input is a single event feature (see map-focus.mjs).
+   * @param {Object} options
+   *   - padding: overrides the timeline-aware base padding (object or number)
+   *   - extraPadding: per-side additions for open panels, e.g.
+   *     { top: 96, bottom: 120, left: 80, right: 280 } when the legend is open
+   *   - maxZoom: number overrides the span-adaptive default
+   *   - minZoom: passed through to fitBounds
+   *   - duration: animation ms (default FOCUS_DURATION_MS)
+   *   - animate: false snaps instead of animating (default true)
+   *   - singlePointZoom: zoom used when bounds degenerate to a single point
+   *     (default: the resolved maxZoom); point focus uses flyTo/easeTo
+   * @returns {boolean} true if a camera move happened, false if no usable bounds
+   */
+  focusOnFeatures(input, options = {}) {
+    if (!this.map) return false;
+
+    const bounds = buildFocusBounds(input, {
+      createBounds: () => new maplibregl.LngLatBounds()
+    });
+    if (!bounds) return false;
+
+    const padding = this.getFitBoundsPadding(options.padding, options.extraPadding);
+    const duration = Number.isFinite(Number(options.duration))
+      ? Number(options.duration)
+      : FOCUS_DURATION_MS;
+    const animate = options.animate !== false;
+    const maxZoom = Number.isFinite(Number(options.maxZoom))
+      ? Number(options.maxZoom)
+      : getAdaptiveMaxZoom(bounds);
+
+    const [[west, south], [east, north]] = bounds.toArray();
+    const isSinglePoint = west === east && south === north;
+    if (isSinglePoint) {
+      const zoom = Number.isFinite(Number(options.singlePointZoom))
+        ? Number(options.singlePointZoom)
+        : maxZoom;
+      const camera = { center: [west, south], zoom, duration };
+      if (animate) {
+        this.map.flyTo(camera);
+      } else {
+        this.map.easeTo({ ...camera, duration: 0, animate: false });
+      }
+      return true;
     }
 
+    this.map.fitBounds(bounds, {
+      padding,
+      duration,
+      maxZoom,
+      minZoom: Number.isFinite(Number(options.minZoom)) ? Number(options.minZoom) : undefined,
+      animate
+    });
+    return true;
+  },
+
+  /**
+   * Resolve fitBounds padding.
+   * @param {Object|number|null} overridePadding - Explicit padding; when set
+   *   it replaces the timeline-aware base padding.
+   * @param {Object|null} extraPadding - Optional per-side additions (e.g.
+   *   room for an open legend or panel), applied on top of the resolved
+   *   base or override padding.
+   */
+  getFitBoundsPadding(overridePadding = null, extraPadding = null) {
+    const padding = overridePadding != null
+      ? overridePadding
+      : this.getTimelineAwarePadding();
+
+    if (extraPadding == null || typeof extraPadding !== 'object') {
+      return padding;
+    }
+
+    const base = typeof padding === 'number'
+      ? { top: padding, right: padding, bottom: padding, left: padding }
+      : {
+          top: Number(padding?.top) || 0,
+          right: Number(padding?.right) || 0,
+          bottom: Number(padding?.bottom) || 0,
+          left: Number(padding?.left) || 0
+        };
+
+    return {
+      top: base.top + (Number(extraPadding.top) || 0),
+      right: base.right + (Number(extraPadding.right) || 0),
+      bottom: base.bottom + (Number(extraPadding.bottom) || 0),
+      left: base.left + (Number(extraPadding.left) || 0)
+    };
+  },
+
+  // Base padding that keeps fitted geometry clear of the timeline slider
+  // when it overlaps the map container.
+  getTimelineAwarePadding() {
     const basePadding = { top: 50, right: 50, bottom: 50, left: 50 };
     const timelineRegion = document.getElementById('tutorialTimelineRegion');
     const timeSlider = document.getElementById('timeSliderContainer');

@@ -31,6 +31,7 @@ export const TickerController = {
   track: null,
   pollTimer: null,
   lastItems: [],
+  stickyPaused: false,
 
   init() {
     if (this.initialized) return;
@@ -70,8 +71,11 @@ export const TickerController = {
         animation: opsTickerScroll 80s linear infinite;
         will-change: transform;
       }
+      #opsTicker { cursor: pointer; }
       #opsTicker:hover .ticker-track,
-      #opsTicker.paused .ticker-track { animation-play-state: paused; }
+      #opsTicker.paused .ticker-track,
+      #opsTicker.pinned .ticker-track { animation-play-state: paused; }
+      #opsTicker.pinned { border-top-color: #4d6fae; }
       #opsTicker .ticker-item { display: inline-block; margin: 0 26px; }
       #opsTicker .ticker-segment { display: inline-flex; flex: 0 0 auto; }
       #opsTicker .ticker-item .src {
@@ -103,6 +107,7 @@ export const TickerController = {
     track.className = 'ticker-track';
     bar.appendChild(track);
     parent.appendChild(bar);
+    bar.title = 'Click the strip to pause or resume scrolling';
     bar.addEventListener('click', (e) => this._onItemClick(e));
     bar.addEventListener('mouseenter', () => bar.classList.add('paused'));
     bar.addEventListener('mouseleave', () => bar.classList.remove('paused'));
@@ -112,7 +117,12 @@ export const TickerController = {
 
   _onItemClick(e) {
     const el = e.target.closest('.ticker-item');
-    if (!el) return;
+    if (!el) {
+      // Click on the strip background (not an item): sticky pause/resume so
+      // the moving item links are easy to catch. Independent of hover pause.
+      this._toggleStickyPause();
+      return;
+    }
     if (el.dataset.url) {
       window.open(el.dataset.url, '_blank', 'noopener');
       return;
@@ -121,10 +131,23 @@ export const TickerController = {
     const lat = parseFloat(el.dataset.lat);
     const map = MapAdapter?.map;
     if (map && Number.isFinite(lon) && Number.isFinite(lat)) {
-      // Located feed: center the event; keep the current zoom.
-      map.panTo([lon, lat]);
+      // Located feed: focus the event. Zoom in to a regional view when the
+      // user is zoomed way out, but never zoom out below their current zoom.
+      const currentZoom = Number(map.getZoom());
+      MapAdapter.focusOnFeatures([{
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [lon, lat] },
+        properties: {}
+      }], {
+        singlePointZoom: Math.max(Number.isFinite(currentZoom) ? currentZoom : 0, 6.5)
+      });
       return;
     }
+  },
+
+  _toggleStickyPause() {
+    this.stickyPaused = !this.stickyPaused;
+    this.bar?.classList.toggle('pinned', this.stickyPaused);
   },
 
   setEnabled(on) {

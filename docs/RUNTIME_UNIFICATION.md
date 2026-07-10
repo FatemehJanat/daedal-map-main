@@ -164,6 +164,12 @@ Modes share one map and display contract:
 A mode may choose a different default view or preserve a different workspace,
 but it should express that choice through shared display primitives.
 
+The concrete focus primitive is `MapAdapter.focusOnFeatures(...)` backed by
+the pure bounds math in `static/modules/map-focus.mjs`. Discretionary
+"zoom to show this" behavior in any mode should call it rather than
+implementing new bounds or camera logic. Animation/playback surfaces may keep
+their own camera pacing but must reuse the shared bounds math.
+
 ### Warnings and errors
 
 Warnings are part of the runtime contract. Shared shapes should cover:

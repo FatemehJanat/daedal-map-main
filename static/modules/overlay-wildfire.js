@@ -1,9 +1,12 @@
 import {
   addGenericExitButton,
   computeGeometryCenter,
-  createCircleFeature,
-  getBoundsFromCoords
+  createCircleFeature
 } from './overlay-disaster-common.js';
+
+function pointFeature(lon, lat) {
+  return { type: 'Feature', geometry: { type: 'Point', coordinates: [lon, lat] }, properties: {} };
+}
 
 function hideWildfireOverlay(deps) {
   const { ModelRegistry } = deps;
@@ -49,7 +52,7 @@ export function handleWildfireImpact(controller, data, deps) {
   MapAdapter?.hidePopup?.();
   MapAdapter.popupLocked = false;
   hideWildfireOverlay(deps);
-  MapAdapter.map.flyTo({ center: [longitude, latitude], zoom: 9, duration: 1500 });
+  MapAdapter.focusOnFeatures([pointFeature(longitude, latitude)], { singlePointZoom: 9 });
   const sourceId = 'wildfire-impact-radius';
   const fillId = 'wildfire-impact-fill';
   const strokeId = 'wildfire-impact-stroke';
@@ -94,13 +97,11 @@ export function handleWildfirePerimeter(controller, data, deps) {
   console.log(`OverlayController: Starting wildfire perimeter animation for ${fireName}`);
   MapAdapter?.hidePopup?.();
   MapAdapter.popupLocked = false;
-  let bounds = null;
-  if (geometry?.geometry) {
-    const coords = geometry.geometry.type === 'Polygon' ? geometry.geometry.coordinates[0] : geometry.geometry.coordinates.flatMap(poly => poly[0]);
-    bounds = getBoundsFromCoords(coords);
+  // Wrap in an array so single-feature radius padding does not apply.
+  const focused = geometry ? MapAdapter.focusOnFeatures([geometry], { maxZoom: 12 }) : false;
+  if (!focused && latitude && longitude) {
+    MapAdapter.focusOnFeatures([pointFeature(longitude, latitude)], { singlePointZoom: 9 });
   }
-  if (bounds) MapAdapter.map.fitBounds(bounds, { padding: 50, duration: 1500, maxZoom: 12 });
-  else if (latitude && longitude) MapAdapter.map.flyTo({ center: [longitude, latitude], zoom: 9, duration: 1500 });
   const sourceId = 'wildfire-perimeter';
   const fillId = 'wildfire-perimeter-fill';
   const strokeId = 'wildfire-perimeter-stroke';
@@ -153,7 +154,7 @@ export function handleFireAnimation(controller, data, deps) {
   const centerLon = longitude || derivedLon;
   const centerLat = latitude || derivedLat;
   addIgnitionMarker(centerLon, centerLat, deps);
-  MapAdapter.map.flyTo({ center: [centerLon, centerLat], zoom: 9, duration: 1500 });
+  MapAdapter.focusOnFeatures([pointFeature(centerLon, centerLat)], { singlePointZoom: 9 });
   const sourceId = 'fire-anim-perimeter';
   const layerId = 'fire-anim-fill';
   const strokeId = 'fire-anim-stroke';
@@ -212,7 +213,7 @@ export function handleFireProgression(controller, data, deps) {
   const centerLon = longitude || derivedLon;
   const centerLat = latitude || derivedLat;
   addIgnitionMarker(centerLon, centerLat, deps);
-  MapAdapter.map.flyTo({ center: [centerLon, centerLat], zoom: 9, duration: 1500 });
+  MapAdapter.focusOnFeatures([pointFeature(centerLon, centerLat)], { singlePointZoom: 9 });
   const sourceIdA = 'fire-prog-perimeter-a';
   const sourceIdB = 'fire-prog-perimeter-b';
   const layerIdA = 'fire-prog-fill-a';

@@ -20,6 +20,7 @@
  */
 
 import { CONFIG } from './config.js';
+import { extendBoundsWithCoordinateList } from './map-focus.mjs';
 import {
   addGenericExitButton,
   takeOverTimeSliderScale,
@@ -968,10 +969,7 @@ export const TrackAnimator = {
 
     const maplibre = window.maplibregl || maplibregl;
     const bounds = new maplibre.LngLatBounds();
-
-    for (const pos of this.positions) {
-      bounds.extend([pos.longitude, pos.latitude]);
-    }
+    extendBoundsWithCoordinateList(bounds, this.positions.map(pos => [pos.longitude, pos.latitude]));
 
     MapAdapter.map.fitBounds(bounds, {
       padding: 80,

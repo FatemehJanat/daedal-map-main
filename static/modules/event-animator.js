@@ -30,6 +30,7 @@ import {
   takeOverTimeSliderScale,
   releaseTimeSliderScale
 } from './overlay-disaster-common.js';
+import { extendBoundsWithCoordinateList } from './map-focus.mjs';
 
 // Dependencies injected via setDependencies
 let MapAdapter = null;
@@ -2312,16 +2313,18 @@ export const EventAnimator = {
     });
 
     // Fit bounds to sequence
-    const bounds = new maplibregl.LngLatBounds();
+    const sequenceCoords = [];
     this._tornadoSortedEvents.forEach(f => {
       const props = f.properties;
       if (props?.longitude && props?.latitude) {
-        bounds.extend([props.longitude, props.latitude]);
+        sequenceCoords.push([props.longitude, props.latitude]);
       }
       if (props?.end_longitude && props?.end_latitude) {
-        bounds.extend([props.end_longitude, props.end_latitude]);
+        sequenceCoords.push([props.end_longitude, props.end_latitude]);
       }
     });
+    const bounds = new maplibregl.LngLatBounds();
+    extendBoundsWithCoordinateList(bounds, sequenceCoords);
 
     if (!bounds.isEmpty()) {
       map.fitBounds(bounds, { padding: 80, duration: 1000, maxZoom: 10 });

@@ -169,6 +169,35 @@ export function getOpsFeedIdForOverlay(overlayId) {
   return '';
 }
 
+// Mode policy for the enable-zoom camera assist: only the Ops lane refits
+// the camera when an overlay is toggled on in the tray. Explore can opt in
+// here later.
+function shouldAutoFocusOnOverlayEnable(mode) {
+  return mode === 'ops';
+}
+
+function getOpsSnapshotGeojson(overlayId) {
+  const payload = window.OverlayController?.opsSnapshotPayloads?.get?.(overlayId);
+  const geojson = payload?.geojson;
+  return Array.isArray(geojson?.features) && geojson.features.length ? geojson : null;
+}
+
+/**
+ * Fit the camera to the union of every active Ops overlay's snapshot
+ * payload. Returns false (no camera move) when nothing renderable is active.
+ */
+export function focusActiveOpsOverlays() {
+  const collections = [];
+  for (const overlayId of OverlaySelector.getActiveOverlays()) {
+    const geojson = getOpsSnapshotGeojson(overlayId);
+    if (geojson) {
+      collections.push(geojson);
+    }
+  }
+  if (!collections.length) return false;
+  return Boolean(MapAdapter?.focusOnFeatures?.(collections));
+}
+
 export function isOpsFeedAllowed(feedId) {
   const normalizedFeedId = String(feedId || '').trim();
   if (!normalizedFeedId) return false;
@@ -1075,9 +1104,26 @@ export const OverlaySelector = {
       // Notify listeners
       this._notifyListeners(overlayId, checkbox.checked);
 
+      // Ops camera assist: enabling an overlay refits to the active set.
+      this._maybeAutoFocusOnEnable(overlayId, checkbox.checked);
+
       // Persist current-session lane state
       this._saveState();
     });
+  },
+
+  /**
+   * Ops-only camera assist for user toggles: when an overlay with a current
+   * Ops snapshot is enabled, refit to the union of all active overlay
+   * snapshots. Never runs on disable, and never runs outside the Ops lane
+   * (see shouldAutoFocusOnOverlayEnable for the mode policy).
+   * @private
+   */
+  _maybeAutoFocusOnEnable(overlayId, isActive) {
+    if (!isActive) return;
+    if (!shouldAutoFocusOnOverlayEnable(this.currentLaneMode)) return;
+    if (!getOpsSnapshotGeojson(overlayId)) return;
+    focusActiveOpsOverlays();
   },
 
   /**
@@ -1088,6 +1134,7 @@ export const OverlaySelector = {
     const category = CATEGORIES.find(c => c.id === categoryId);
     if (!category || !category.isCategory) return;
 
+    let anyEnabled = false;
     for (const overlay of category.overlays) {
       if (overlay.locked || overlay.placeholder) continue;
 
@@ -1107,6 +1154,7 @@ export const OverlaySelector = {
 
       // Notify if state changed
       if (wasActive !== active) {
+        anyEnabled = anyEnabled || active;
         this._notifyListeners(overlay.id, active, {
           categoryBatch: {
             categoryId,
@@ -1129,6 +1177,11 @@ export const OverlaySelector = {
 
     console.log('Category toggled:', categoryId, active);
     console.log('Active overlays:', Array.from(this.activeOverlays));
+
+    // Ops camera assist: one refit for the whole category enable.
+    if (anyEnabled && shouldAutoFocusOnOverlayEnable(this.currentLaneMode)) {
+      focusActiveOpsOverlays();
+    }
 
     // Persist current-session lane state
     this._saveState();
@@ -1187,6 +1240,9 @@ export const OverlaySelector = {
 
     // Notify listeners
     this._notifyListeners(overlayId, this.activeOverlays.has(overlayId));
+
+    // Ops camera assist: enabling an overlay refits to the active set.
+    this._maybeAutoFocusOnEnable(overlayId, this.activeOverlays.has(overlayId));
 
     // Persist current-session lane state
     this._saveState();

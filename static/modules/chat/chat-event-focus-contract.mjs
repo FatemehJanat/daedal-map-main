@@ -1,137 +1,30 @@
-export function parseEventTrackCoords(value) {
-  if (!value) return [];
-  let parsed = value;
-  if (typeof parsed === 'string') {
-    try {
-      parsed = JSON.parse(parsed);
-    } catch (_error) {
-      return [];
-    }
-  }
-  if (!Array.isArray(parsed)) return [];
-  return parsed.filter((coords) => Array.isArray(coords) && coords.length >= 2);
-}
+/**
+ * Chat single-event focus contract. Bounds math lives in map-focus.mjs;
+ * this module keeps the chat-panel public API and camera behavior stable
+ * (padding 80, duration 1200, adaptive maxZoom, point fallback zoom 6.5,
+ * geometry fallback fitToBounds maxZoom 7.5).
+ */
 
-export function extendBoundsWithCoordinateList(bounds, coords) {
-  if (!Array.isArray(coords) || !coords.length || !bounds?.extend) return;
-  if (
-    coords.length >= 2
-    && Number.isFinite(Number(coords[0]))
-    && Number.isFinite(Number(coords[1]))
-  ) {
-    bounds.extend([Number(coords[0]), Number(coords[1])]);
-    return;
-  }
-  coords.forEach((entry) => extendBoundsWithCoordinateList(bounds, entry));
-}
+import {
+  parseTrackCoords,
+  extendBoundsWithCoordinateList,
+  extendBoundsWithApproximateRadius,
+  getEventRadiusKm,
+  buildFocusBounds,
+  getAdaptiveMaxZoom
+} from '../map-focus.mjs';
 
-export function extendBoundsWithApproximateRadius(bounds, lon, lat, radiusKm) {
-  if (!bounds?.extend) return;
-  if (!Number.isFinite(lon) || !Number.isFinite(lat) || !Number.isFinite(radiusKm) || radiusKm <= 0) {
-    return;
-  }
-  const latDelta = radiusKm / 111.32;
-  const lonDivisor = Math.max(Math.cos((lat * Math.PI) / 180), 0.1);
-  const lonDelta = radiusKm / (111.32 * lonDivisor);
-  bounds.extend([lon - lonDelta, lat - latDelta]);
-  bounds.extend([lon + lonDelta, lat + latDelta]);
-}
-
-export function getFocusedEventRadiusKm(feature = null) {
-  const props = feature?.properties || {};
-  const candidates = [
-    props.initial_view_radius_km,
-    props.damage_radius_km,
-    props.felt_radius_km,
-    props.impact_radius_km,
-    props.radius_km,
-    props.search_radius_km,
-    props.extent_radius_km,
-    props.max_radius_km
-  ]
-    .map((value) => Number(value))
-    .filter((value) => Number.isFinite(value) && value > 0);
-
-  if (candidates.length) {
-    return Math.max(...candidates);
-  }
-
-  const eventType = String(props.event_type || '').trim().toLowerCase();
-  const fallbackByType = {
-    earthquake: 180,
-    tsunami: 260,
-    hurricane: 420,
-    tornado: 90,
-    wildfire: 120,
-    flood: 140,
-    volcano: 160,
-    landslide: 60
-  };
-  return fallbackByType[eventType] || 120;
-}
+export {
+  parseTrackCoords as parseEventTrackCoords,
+  extendBoundsWithCoordinateList,
+  extendBoundsWithApproximateRadius,
+  getEventRadiusKm as getFocusedEventRadiusKm,
+  getAdaptiveMaxZoom as getFocusedEventMaxZoom
+};
 
 export function buildFocusedEventBounds(feature = null, deps = {}) {
-  const createBounds = deps.createBounds || null;
-  if (typeof createBounds !== 'function' || !feature) return null;
-
-  const bounds = createBounds();
-  const geometry = feature?.geometry || null;
-  const props = feature?.properties || {};
-
-  if (geometry?.coordinates) {
-    extendBoundsWithCoordinateList(bounds, geometry.coordinates);
-  }
-
-  const bboxValues = [
-    Number(props.bbox_min_lon),
-    Number(props.bbox_min_lat),
-    Number(props.bbox_max_lon),
-    Number(props.bbox_max_lat)
-  ];
-  if (bboxValues.every((value) => Number.isFinite(value))) {
-    bounds.extend([bboxValues[0], bboxValues[1]]);
-    bounds.extend([bboxValues[2], bboxValues[3]]);
-  }
-
-  parseEventTrackCoords(props.track_coords).forEach((coords) => {
-    bounds.extend([Number(coords[0]), Number(coords[1])]);
-  });
-
-  const centerLon = Number(
-    props.centroid_lon
-    ?? props.lon
-    ?? (Array.isArray(geometry?.coordinates) ? geometry.coordinates[0] : NaN)
-  );
-  const centerLat = Number(
-    props.centroid_lat
-    ?? props.lat
-    ?? (Array.isArray(geometry?.coordinates) ? geometry.coordinates[1] : NaN)
-  );
-
-  if (Number.isFinite(centerLon) && Number.isFinite(centerLat)) {
-    extendBoundsWithApproximateRadius(bounds, centerLon, centerLat, getFocusedEventRadiusKm(feature));
-  }
-
-  if (typeof bounds.isEmpty === 'function' && bounds.isEmpty()) {
-    return null;
-  }
-  return bounds;
-}
-
-export function getFocusedEventMaxZoom(bounds) {
-  if (!bounds || typeof bounds.toArray !== 'function') {
-    return 7;
-  }
-  const [[west, south], [east, north]] = bounds.toArray();
-  const lonSpan = Math.abs(Number(east) - Number(west));
-  const latSpan = Math.abs(Number(north) - Number(south));
-  const maxSpan = Math.max(lonSpan, latSpan);
-  if (!Number.isFinite(maxSpan)) return 7;
-  if (maxSpan <= 0.2) return 6;
-  if (maxSpan <= 1) return 6.5;
-  if (maxSpan <= 5) return 7;
-  if (maxSpan <= 20) return 7.5;
-  return 8.5;
+  if (!feature) return null;
+  return buildFocusBounds(feature, deps);
 }
 
 export function focusSingleEventContract(response, options = {}, deps = {}) {
@@ -158,7 +51,7 @@ export function focusSingleEventContract(response, options = {}, deps = {}) {
     MapAdapter.map.fitBounds(bounds, {
       padding,
       duration: 1200,
-      maxZoom: getFocusedEventMaxZoom(bounds)
+      maxZoom: getAdaptiveMaxZoom(bounds)
     });
     return true;
   }

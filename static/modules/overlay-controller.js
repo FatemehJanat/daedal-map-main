@@ -1944,15 +1944,12 @@ export const OverlayController = {
       const model = ModelRegistry?.getModel('point-radius');
       if (model) {
         model.update(geojson);
-        const maplibre = window.maplibregl || maplibregl;
-        const bounds = new maplibre.LngLatBounds();
-        bounds.extend([volcanoLon, volcanoLat]);
-        for (const f of seqEvents) {
-          if (f.geometry?.coordinates) bounds.extend(f.geometry.coordinates);
-        }
-        if (!bounds.isEmpty()) {
-          MapAdapter.map.fitBounds(bounds, { padding: 50, maxZoom: 10 });
-        }
+        const volcanoPoint = {
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [volcanoLon, volcanoLat] },
+          properties: {}
+        };
+        MapAdapter.focusOnFeatures([volcanoPoint, ...seqEvents], { maxZoom: 10 });
       }
       console.log(`OverlayController: Showing ${seqEvents.length} earthquakes statically (no time range)`);
       return;
@@ -2030,23 +2027,13 @@ export const OverlayController = {
     console.log(`OverlayController: Earthquake at [${earthquakeLon}, ${earthquakeLat}]`);
 
     // Fit map to show the earthquake and nearby volcanoes
-    // Use window.maplibregl for ES module compatibility
-    const maplibre = window.maplibregl || maplibregl;
-    const bounds = new maplibre.LngLatBounds();
-    bounds.extend([earthquakeLon, earthquakeLat]);
-
-    for (const f of features) {
-      const coords = f.geometry?.coordinates;
-      if (coords && coords.length >= 2) {
-        console.log(`OverlayController: Adding volcano at [${coords[0]}, ${coords[1]}]`);
-        bounds.extend(coords);
-      }
-    }
-
-    if (!bounds.isEmpty()) {
-      console.log(`OverlayController: Fitting bounds`, bounds.toArray());
-      MapAdapter.map.fitBounds(bounds, { padding: 80, maxZoom: 8, duration: 1500 });
-    } else {
+    const earthquakePoint = {
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [earthquakeLon, earthquakeLat] },
+      properties: {}
+    };
+    const focused = MapAdapter.focusOnFeatures([earthquakePoint, ...features], { maxZoom: 8 });
+    if (!focused) {
       console.warn('OverlayController: Bounds are empty, cannot zoom');
     }
   },
@@ -4352,21 +4339,15 @@ export const OverlayController = {
       model.update(geojson, 'volcano');
     }
 
-    const maplibre = window.maplibregl || maplibregl;
-    const bounds = new maplibre.LngLatBounds();
+    const focusFeatures = [...geojson.features];
     if (Number.isFinite(volcanoLon) && Number.isFinite(volcanoLat)) {
-      bounds.extend([volcanoLon, volcanoLat]);
+      focusFeatures.push({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [volcanoLon, volcanoLat] },
+        properties: {}
+      });
     }
-    for (const feature of geojson.features) {
-      const coords = feature?.geometry?.coordinates;
-      if (Array.isArray(coords) && coords.length >= 2) {
-        bounds.extend(coords);
-      }
-    }
-
-    if (!bounds.isEmpty()) {
-      MapAdapter.map.fitBounds(bounds, { padding: 80, maxZoom: 9, duration: 1500 });
-    }
+    MapAdapter.focusOnFeatures(focusFeatures, { maxZoom: 9 });
 
     addGenericExitButton(
       'volcano-history-exit-btn',

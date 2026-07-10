@@ -364,21 +364,6 @@ export function routeTimeToFocusAnimation(time, EventAnimator, TrackAnimator) {
   return false;
 }
 
-export function getBoundsFromCoords(coords) {
-  if (!coords || coords.length === 0) return null;
-  let minLng = Infinity;
-  let maxLng = -Infinity;
-  let minLat = Infinity;
-  let maxLat = -Infinity;
-  for (const [lng, lat] of coords) {
-    if (lng < minLng) minLng = lng;
-    if (lng > maxLng) maxLng = lng;
-    if (lat < minLat) minLat = lat;
-    if (lat > maxLat) maxLat = lat;
-  }
-  return [[minLng, minLat], [maxLng, maxLat]];
-}
-
 export function createCircleFeature(centerLon, centerLat, radiusKm, steps = 64) {
   const coords = [];
   for (let i = 0; i <= steps; i++) {

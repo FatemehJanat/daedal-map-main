@@ -438,54 +438,22 @@ export const NwsAlertsOverlay = {
   },
 
   _zoomToFamily(family) {
-    const map = MapAdapter?.map;
     const targetFamily = String(family || '').trim();
     const features = Array.isArray(this.lastData?.features) ? this.lastData.features : [];
-    if (!map || !targetFamily || !features.length) return;
+    if (!MapAdapter?.map || !targetFamily || !features.length) return;
 
-    const bounds = this._boundsForFeatures(features.filter((feature) => {
+    const familyFeatures = features.filter((feature) => {
       const props = feature?.properties || {};
       return String(props.alert_family || '').trim() === targetFamily;
-    }));
-    if (!bounds) return;
-
-    const [[minLon, minLat], [maxLon, maxLat]] = bounds;
-    if (minLon === maxLon && minLat === maxLat) {
-      map.easeTo({ center: [minLon, minLat], zoom: Math.max(map.getZoom(), 7), duration: 650 });
-      return;
-    }
-    map.fitBounds(bounds, {
-      padding: { top: 96, bottom: 120, left: 80, right: 280 },
-      maxZoom: 9,
-      duration: 750,
     });
-  },
+    if (!familyFeatures.length) return;
 
-  _boundsForFeatures(features) {
-    let minLon = Infinity;
-    let minLat = Infinity;
-    let maxLon = -Infinity;
-    let maxLat = -Infinity;
-
-    const visit = (value) => {
-      if (!Array.isArray(value)) return;
-      if (value.length >= 2 && Number.isFinite(Number(value[0])) && Number.isFinite(Number(value[1]))) {
-        const lon = Number(value[0]);
-        const lat = Number(value[1]);
-        minLon = Math.min(minLon, lon);
-        minLat = Math.min(minLat, lat);
-        maxLon = Math.max(maxLon, lon);
-        maxLat = Math.max(maxLat, lat);
-        return;
-      }
-      for (const child of value) visit(child);
-    };
-
-    for (const feature of features) {
-      visit(feature?.geometry?.coordinates);
-    }
-    if (![minLon, minLat, maxLon, maxLat].every(Number.isFinite)) return null;
-    return [[minLon, minLat], [maxLon, maxLat]];
+    // extraPadding keeps clearance for the legend panel on top of the
+    // timeline-aware base padding (~50/side).
+    MapAdapter.focusOnFeatures(familyFeatures, {
+      extraPadding: { top: 46, bottom: 70, left: 30, right: 230 },
+      maxZoom: 9,
+    });
   },
 
   _removeLegend() {
