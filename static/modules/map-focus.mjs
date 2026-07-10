@@ -158,6 +158,49 @@ export function collectFeatures(input) {
  * input is a single event feature (not wrapped in an array or collection),
  * matching the original chat event-focus behavior.
  */
+/**
+ * Build antimeridian-aware bounds from collected [lon, lat] points: find the
+ * largest empty longitude gap and cover the complement, so a fit from the
+ * USA to storms near Japan crosses the Pacific instead of spanning the whole
+ * world the long way. East may exceed 180 (e.g. west 130, east 232), which
+ * MapLibre's fitBounds understands as a date-line crossing.
+ */
+function buildWrapAwareBounds(points, createBounds) {
+  if (!points.length) return null;
+
+  let minLat = Infinity;
+  let maxLat = -Infinity;
+  const lonSet = new Set();
+  for (const [lon, lat] of points) {
+    // Normalize into [-180, 180) so the gap scan works on one wrap.
+    const normalizedLon = ((lon + 180) % 360 + 360) % 360 - 180;
+    lonSet.add(normalizedLon);
+    if (lat < minLat) minLat = lat;
+    if (lat > maxLat) maxLat = lat;
+  }
+
+  const lons = Array.from(lonSet).sort((a, b) => a - b);
+  // Start with the wrap gap (last point across the date line back to the
+  // first); any larger interior gap means the covering arc should cross.
+  let largestGap = 360 - (lons[lons.length - 1] - lons[0]);
+  let west = lons[0];
+  let east = lons[lons.length - 1];
+  for (let i = 1; i < lons.length; i += 1) {
+    const gap = lons[i] - lons[i - 1];
+    if (gap > largestGap) {
+      largestGap = gap;
+      west = lons[i];
+      east = lons[i - 1] + 360;
+    }
+  }
+
+  const bounds = createBounds();
+  if (!bounds?.extend) return null;
+  bounds.extend([west, minLat]);
+  bounds.extend([east, maxLat]);
+  return bounds;
+}
+
 export function buildFocusBounds(input, deps = {}) {
   const createBounds = deps.createBounds || null;
   if (typeof createBounds !== 'function' || !input) return null;
@@ -165,10 +208,22 @@ export function buildFocusBounds(input, deps = {}) {
   const features = collectFeatures(input);
   if (!features.length) return null;
 
-  const bounds = createBounds();
-  if (!bounds?.extend) return null;
+  // Collect raw points instead of extending real bounds directly, so the
+  // final box can be computed wrap-aware (shortest way around the globe).
+  const points = [];
+  const collector = {
+    extend(coords) {
+      if (
+        Array.isArray(coords)
+        && Number.isFinite(Number(coords[0]))
+        && Number.isFinite(Number(coords[1]))
+      ) {
+        points.push([Number(coords[0]), Number(coords[1])]);
+      }
+    }
+  };
 
-  features.forEach((feature) => extendBoundsWithFeature(bounds, feature));
+  features.forEach((feature) => extendBoundsWithFeature(collector, feature));
 
   if (isFeatureLike(input)) {
     const feature = input;
@@ -185,14 +240,11 @@ export function buildFocusBounds(input, deps = {}) {
       ?? (Array.isArray(geometry?.coordinates) ? geometry.coordinates[1] : NaN)
     );
     if (Number.isFinite(centerLon) && Number.isFinite(centerLat)) {
-      extendBoundsWithApproximateRadius(bounds, centerLon, centerLat, getEventRadiusKm(feature));
+      extendBoundsWithApproximateRadius(collector, centerLon, centerLat, getEventRadiusKm(feature));
     }
   }
 
-  if (typeof bounds.isEmpty === 'function' && bounds.isEmpty()) {
-    return null;
-  }
-  return bounds;
+  return buildWrapAwareBounds(points, createBounds);
 }
 
 /**
