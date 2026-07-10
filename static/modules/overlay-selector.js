@@ -58,7 +58,13 @@ const MODEL_OVERRIDES = {
   'hurricanes': 'track',
   'hurricanes_live': 'track',
   'drought': 'polygon',
-  'distributed_manufacturing': 'point-radius'
+  'distributed_manufacturing': 'point-radius',
+  // Event overlays whose catalog grouping can lead with a metrics-type
+  // source: without a pin, buildCategoriesFromTree classifies them as
+  // choropleth and hideOverlay takes the shared-metric shortcut, leaving
+  // the event layers on the map when toggled off.
+  'wildfires': 'point-radius',
+  'floods': 'point-radius'
 };
 
 const OPS_FEED_TO_OVERLAY_IDS = {
@@ -188,6 +194,18 @@ function shouldAutoFocusOnOverlayEnable(mode) {
   return mode === 'ops';
 }
 
+// Grid/field overlays cover the planet rather than discrete events; enabling
+// one means "show me the global picture", so they get a fixed world framing
+// instead of a feature-bounds fit.
+const GLOBAL_FOCUS_OVERLAY_IDS = new Set(['ocean-sst-grid', 'aurora']);
+
+function focusGlobalOverlayView() {
+  return Boolean(MapAdapter?.focusOnFeatures?.([
+    { type: 'Feature', geometry: { type: 'Point', coordinates: [-170, -55] }, properties: {} },
+    { type: 'Feature', geometry: { type: 'Point', coordinates: [170, 72] }, properties: {} }
+  ]));
+}
+
 function getRenderedOpsGeojson(overlayId) {
   // Delegates to OverlayController: covers both inline ops snapshot payloads
   // (earthquakes-style) and endpoint-fetched dataCache features
@@ -202,14 +220,25 @@ function getRenderedOpsGeojson(overlayId) {
  */
 export function focusActiveOpsOverlays() {
   const collections = [];
+  let hasActiveGlobalOverlay = false;
   for (const overlayId of OverlaySelector.getActiveOverlays()) {
+    if (GLOBAL_FOCUS_OVERLAY_IDS.has(overlayId)) {
+      hasActiveGlobalOverlay = true;
+      continue;
+    }
     const geojson = getRenderedOpsGeojson(overlayId);
     if (geojson) {
       collections.push(geojson);
     }
   }
-  if (!collections.length) return false;
-  return Boolean(MapAdapter?.focusOnFeatures?.(collections));
+  if (collections.length) {
+    return Boolean(MapAdapter?.focusOnFeatures?.(collections));
+  }
+  // Only global grid/field overlays are active: world framing.
+  if (hasActiveGlobalOverlay) {
+    return focusGlobalOverlayView();
+  }
+  return false;
 }
 
 export function isOpsFeedAllowed(feedId) {
@@ -1168,6 +1197,12 @@ export const OverlaySelector = {
   _maybeAutoFocusOnEnable(overlayId, isActive) {
     if (!isActive) return;
     if (!shouldAutoFocusOnOverlayEnable(this.currentLaneMode)) return;
+    // Enabling a global grid/field overlay means "show me the global
+    // picture" regardless of what else is active.
+    if (GLOBAL_FOCUS_OVERLAY_IDS.has(overlayId)) {
+      focusGlobalOverlayView();
+      return;
+    }
     if (getRenderedOpsGeojson(overlayId)) {
       focusActiveOpsOverlays();
       return;

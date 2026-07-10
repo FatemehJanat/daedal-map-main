@@ -203,7 +203,9 @@ export const PolygonModel = {
     // Check if source already exists - if so, just update data (no flash)
     const existingSource = map.getSource(sourceId);
     if (existingSource) {
-      // Source exists - just update data, don't recreate layers
+      // Source exists - just update data, don't recreate layers. Re-assert
+      // type membership so isTypeActive stays in sync with on-map layers.
+      this.activeTypes.add(eventType);
       existingSource.setData(geojson);
       return true;
     }

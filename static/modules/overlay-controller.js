@@ -1087,6 +1087,15 @@ export const OverlayController = {
         return { type: 'FeatureCollection', features: alertFeatures };
       }
     }
+    const livePointOverlay = getLivePointOverlay(normalizedOverlayId);
+    if (livePointOverlay?.enabled) {
+      const pointFeatures = Array.isArray(livePointOverlay?.lastData?.features)
+        ? livePointOverlay.lastData.features
+        : [];
+      if (pointFeatures.length) {
+        return { type: 'FeatureCollection', features: pointFeatures };
+      }
+    }
 
     return null;
   },
@@ -3603,13 +3612,13 @@ export const OverlayController = {
       }
     }
 
-    // Also clear polygon layers for split-render types
+    // Also clear polygon layers for split-render types. Unconditional:
+    // the polygon model's activeTypes flag can desync from on-map layers
+    // (re-render fast path), and clearType is already existence-safe.
     const eventType = endpoint.eventType;
     if (eventType === 'wildfire' || eventType === 'flood') {
       const polygonModel = ModelRegistry?.getModel('polygon');
-      if (polygonModel?.isTypeActive?.(eventType)) {
-        polygonModel.clearType(eventType);
-      }
+      polygonModel?.clearType?.(eventType);
     }
 
     // Hide popup if showing this overlay's data

@@ -14,7 +14,7 @@ function hideWildfireOverlay(deps) {
   if (model?.clearType) model.clearType('wildfire');
   else if (model?.clear) model.clear();
   const polygonModel = ModelRegistry?.getModel('polygon');
-  if (polygonModel?.isTypeActive?.('wildfire')) polygonModel.clearType('wildfire');
+  polygonModel?.clearType?.('wildfire');
   console.log('OverlayController: Hid wildfire overlay for animation');
 }
 

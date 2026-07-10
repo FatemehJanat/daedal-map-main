@@ -13,7 +13,7 @@ function hideFloodOverlay(deps) {
   if (model?.clearType) model.clearType('flood');
   else if (model?.clear) model.clear();
   const polygonModel = ModelRegistry?.getModel('polygon');
-  if (polygonModel?.isTypeActive?.('flood')) polygonModel.clearType('flood');
+  polygonModel?.clearType?.('flood');
   console.log('OverlayController: Hid flood overlay for animation');
 }
 
