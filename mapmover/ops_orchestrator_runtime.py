@@ -4294,6 +4294,8 @@ def run_ops_chat(
         watch_context={
             "label": watch.get("label"),
             "sources": effective_feeds,
+            "available_sources": watch.get("available_feeds") or [],
+            "inactive_sources": watch.get("inactive_feeds") or [],
             "geography": watch.get("geography"),
         },
     )

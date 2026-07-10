@@ -100,6 +100,53 @@ export function getActiveOverlays(ctx, deps = {}) {
   };
 }
 
+function getActiveOpsFeedIds(deps = {}) {
+  const OverlaySelector = deps.OverlaySelector || null;
+  const getOpsFeedIdForOverlay = deps.getOpsFeedIdForOverlay || null;
+  const activeList = OverlaySelector?.getActiveOverlays() || [];
+  const feedIds = [];
+  for (const overlayId of activeList) {
+    const feedId = String(getOpsFeedIdForOverlay?.(overlayId) || '').trim();
+    if (feedId && !feedIds.includes(feedId)) {
+      feedIds.push(feedId);
+    }
+  }
+  return feedIds;
+}
+
+function summarizeOverlayForChat(overlay, deps = {}) {
+  const getOpsFeedIdForOverlay = deps.getOpsFeedIdForOverlay || null;
+  const overlayId = String(overlay?.id || '').trim();
+  if (!overlayId) return null;
+  const feedId = String(getOpsFeedIdForOverlay?.(overlayId) || '').trim();
+  return {
+    id: overlayId,
+    label: String(overlay?.label || overlayId).trim(),
+    model: String(overlay?.model || '').trim(),
+    live: Boolean(overlay?.live),
+    ...(feedId ? { feedId } : {})
+  };
+}
+
+function getOverlayAvailabilityForChat(deps = {}) {
+  const OverlaySelector = deps.OverlaySelector || null;
+  const activeIds = new Set(OverlaySelector?.getActiveOverlays?.() || []);
+  const visibleOverlays = Array.isArray(OverlaySelector?.getVisibleOverlays?.())
+    ? OverlaySelector.getVisibleOverlays()
+    : [];
+  const available = [];
+  const inactive = [];
+  for (const overlay of visibleOverlays) {
+    const summary = summarizeOverlayForChat(overlay, deps);
+    if (!summary) continue;
+    available.push(summary);
+    if (!activeIds.has(summary.id)) {
+      inactive.push(summary);
+    }
+  }
+  return { available, inactive };
+}
+
 export function getCacheStats(ctx, deps = {}) {
   const OverlayController = deps.OverlayController || null;
   const OverlaySelector = deps.OverlaySelector || null;
@@ -221,6 +268,21 @@ export function buildPayload(ctx, query, resolvedLocation = null, extraOptions =
     ctx.researchMemory = nextResearchMemory || ctx.researchMemory;
   }
 
+  const activeOpsFeedIds = modeOverride === 'ops'
+    ? getActiveOpsFeedIds(deps)
+    : [];
+  const overlayAvailability = getOverlayAvailabilityForChat(deps);
+  const availableOpsFeedIds = modeOverride === 'ops'
+    ? overlayAvailability.available
+      .map((overlay) => String(overlay.feedId || '').trim())
+      .filter((feedId, index, values) => feedId && values.indexOf(feedId) === index)
+    : [];
+  const inactiveOpsFeedIds = modeOverride === 'ops'
+    ? overlayAvailability.inactive
+      .map((overlay) => String(overlay.feedId || '').trim())
+      .filter((feedId, index, values) => feedId && values.indexOf(feedId) === index)
+    : [];
+
   return {
     query,
     catalog_surface: ctx.getEffectiveCatalogSurface(),
@@ -240,6 +302,7 @@ export function buildPayload(ctx, query, resolvedLocation = null, extraOptions =
     resolved_location: resolvedLocation,
     previous_disambiguation_options: ctx.lastDisambiguationOptions || [],
     activeOverlays: getActiveOverlays(ctx, deps),
+    overlayAvailability,
     cacheStats: getCacheStats(ctx, deps),
     timeState: getTimeState(),
     savedOrderNames: SavedOrders?.getNames?.() || [],
@@ -251,7 +314,10 @@ export function buildPayload(ctx, query, resolvedLocation = null, extraOptions =
       ? {
           watch_id: ctx.opsWatchId || ctx.getSessionIdForMode('ops'),
           watch_context: {
-            label: 'Ops watch'
+            label: 'Ops watch',
+            ...(activeOpsFeedIds.length ? { sources: activeOpsFeedIds } : {}),
+            ...(availableOpsFeedIds.length ? { available_sources: availableOpsFeedIds } : {}),
+            ...(inactiveOpsFeedIds.length ? { inactive_sources: inactiveOpsFeedIds } : {})
           }
         }
       : {}),

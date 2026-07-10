@@ -57,6 +57,7 @@ import { TutorialMode, parseTutorialCommand } from './tutorial-mode.js';
 import { ResearchModeToggle } from './research/mode.js';
 import {
   focusActiveOpsOverlays,
+  getOpsFeedIdForOverlay,
   getOpsOverlayIdsForFeeds,
   resolvePackIdFromSourceId,
   setOpsEffectiveFeeds as setOverlaySelectorOpsEffectiveFeeds
@@ -4062,6 +4063,7 @@ export const ChatManager = {
       CONFIG,
       OverlayController,
       OverlaySelector,
+      getOpsFeedIdForOverlay,
       SavedOrders,
       TutorialMode,
       getLoadedDataList

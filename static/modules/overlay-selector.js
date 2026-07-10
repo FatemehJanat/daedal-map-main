@@ -1312,6 +1312,10 @@ export const OverlaySelector = {
     return Array.from(this.activeOverlays);
   },
 
+  getVisibleOverlays() {
+    return VISIBLE_OVERLAYS.map((overlay) => ({ ...overlay }));
+  },
+
   /**
    * Get overlay configuration by ID.
    * @param {string} overlayId - Overlay ID

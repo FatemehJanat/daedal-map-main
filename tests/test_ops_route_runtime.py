@@ -85,6 +85,34 @@ class OpsRouteRuntimeTest(unittest.TestCase):
         self.assertEqual(["earthquakes"], watch["active_feeds"])
         self.assertEqual("Ops deep link", watch["label"])
 
+    def test_active_available_and_inactive_feed_context_updates_watch(self):
+        cache = DummyCache()
+        cache.map_state["ops_watch"] = {
+            "watch_id": "watch_ops",
+            "label": "Old watch",
+            "geography": {"viewport": {}},
+            "active_feeds": ["hurricanes_live"],
+        }
+
+        watch = load_or_create_ops_watch(
+            cache=cache,
+            session_id="ops",
+            body={
+                "watch_id": "watch_ops",
+                "watch_context": {
+                    "label": "Ops watch",
+                    "sources": ["usa_nws_alerts"],
+                    "available_sources": ["usa_nws_alerts", "hurricanes_live", "noaa_ndbc"],
+                    "inactive_sources": ["hurricanes_live", "noaa_ndbc"],
+                },
+            },
+            allowed_feeds=["hurricanes_live", "usa_nws_alerts", "noaa_ndbc"],
+        )
+
+        self.assertEqual(["usa_nws_alerts"], watch["active_feeds"])
+        self.assertEqual(["usa_nws_alerts", "hurricanes_live", "noaa_ndbc"], watch["available_feeds"])
+        self.assertEqual(["hurricanes_live", "noaa_ndbc"], watch["inactive_feeds"])
+
     def test_public_default_ops_feeds_exclude_currency(self):
         feeds = _public_default_ops_feeds()
         self.assertNotIn("currency", feeds)

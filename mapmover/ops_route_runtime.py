@@ -145,11 +145,13 @@ def _build_default_watch(*, session_id: str, body: dict, allowed_feeds: list[str
     viewport = body.get("viewport") if isinstance(body.get("viewport"), dict) else {}
     requested_feeds = _normalize_feed_names(watch_context.get("sources") or [])
     active_feeds = [feed for feed in requested_feeds if feed in allowed_feeds] if requested_feeds else list(allowed_feeds)
+    available_feeds = _supported_ops_feeds(watch_context.get("available_sources") or [])
+    inactive_feeds = _supported_ops_feeds(watch_context.get("inactive_sources") or [])
     watch_id = str(body.get("watch_id") or "").strip() or f"watch_{session_id.replace(':', '_')}"
     label = str(watch_context.get("label") or watch_context.get("focus") or "").strip()
     if not label:
         label = "Ops watch"
-    return {
+    watch = {
         "watch_id": watch_id,
         "label": label,
         "geography": {
@@ -157,6 +159,11 @@ def _build_default_watch(*, session_id: str, body: dict, allowed_feeds: list[str
         },
         "active_feeds": active_feeds,
     }
+    if available_feeds:
+        watch["available_feeds"] = [feed for feed in available_feeds if feed in allowed_feeds]
+    if inactive_feeds:
+        watch["inactive_feeds"] = [feed for feed in inactive_feeds if feed in allowed_feeds]
+    return watch
 
 
 def load_or_create_ops_watch(*, cache, session_id: str, body: dict, allowed_feeds: list[str]) -> dict:
@@ -164,13 +171,21 @@ def load_or_create_ops_watch(*, cache, session_id: str, body: dict, allowed_feed
     watch_context = body.get("watch_context") if isinstance(body.get("watch_context"), dict) else {}
     requested_feeds = _supported_ops_feeds(watch_context.get("sources") or [])
     reset_to_allowed = bool(watch_context.get("reset_to_allowed"))
+    has_available_sources = "available_sources" in watch_context
+    has_inactive_sources = "inactive_sources" in watch_context
     existing = _watch_from_cache(cache, requested_watch_id)
     if isinstance(existing, dict):
         if requested_feeds:
             existing["active_feeds"] = [feed for feed in requested_feeds if feed in allowed_feeds]
-        elif reset_to_allowed:
+        available_feeds = _supported_ops_feeds(watch_context.get("available_sources") or [])
+        inactive_feeds = _supported_ops_feeds(watch_context.get("inactive_sources") or [])
+        if has_available_sources:
+            existing["available_feeds"] = [feed for feed in available_feeds if feed in allowed_feeds]
+        if has_inactive_sources:
+            existing["inactive_feeds"] = [feed for feed in inactive_feeds if feed in allowed_feeds]
+        if reset_to_allowed:
             existing["active_feeds"] = list(allowed_feeds)
-        if requested_feeds or reset_to_allowed:
+        if requested_feeds or reset_to_allowed or has_available_sources or has_inactive_sources:
             label = str(watch_context.get("label") or watch_context.get("focus") or "").strip()
             if label:
                 existing["label"] = label
