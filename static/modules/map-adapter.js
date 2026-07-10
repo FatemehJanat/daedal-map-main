@@ -1885,7 +1885,20 @@ export const MapAdapter = {
       ? Number(options.maxZoom)
       : getAdaptiveMaxZoom(bounds);
 
-    const [[west, south], [east, north]] = bounds.toArray();
+    let [[west, south], [east, north]] = bounds.toArray();
+
+    // Fly the short way around: MapLibre interpolates longitude numerically,
+    // so shift the target bounds to the world copy nearest the current
+    // camera. Without this, USA -> Japan pans eastward across the whole
+    // Atlantic/Africa even though the destination framing is correct.
+    const currentLng = Number(this.map.getCenter()?.lng);
+    if (Number.isFinite(currentLng)) {
+      const targetCenterLng = (west + east) / 2;
+      const worldShift = Math.round((currentLng - targetCenterLng) / 360) * 360;
+      west += worldShift;
+      east += worldShift;
+    }
+
     const isSinglePoint = west === east && south === north;
     if (isSinglePoint) {
       const zoom = Number.isFinite(Number(options.singlePointZoom))
@@ -1900,7 +1913,8 @@ export const MapAdapter = {
       return true;
     }
 
-    this.map.fitBounds(bounds, {
+    const shiftedBounds = new maplibregl.LngLatBounds([west, south], [east, north]);
+    this.map.fitBounds(shiftedBounds, {
       padding,
       duration,
       maxZoom,
