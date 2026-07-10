@@ -1077,6 +1077,17 @@ export const OverlayController = {
       }
     }
 
+    // Module-driven live overlays keep their features inside their own
+    // modules rather than snapshot payloads or dataCache.
+    if (normalizedOverlayId === 'nws_alerts' && NwsAlertsOverlay?.enabled) {
+      const alertFeatures = Array.isArray(NwsAlertsOverlay?.lastData?.features)
+        ? NwsAlertsOverlay.lastData.features
+        : [];
+      if (alertFeatures.length) {
+        return { type: 'FeatureCollection', features: alertFeatures };
+      }
+    }
+
     return null;
   },
 

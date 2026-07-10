@@ -1239,7 +1239,14 @@ export const ChatManager = {
     OverlayController?.setDefaultLoadExecutor?.(async (overlayId, context = {}) => {
       return this.runDefaultLoad(
         { overlayId },
-        { mode: context.lane || this.mode, syntheticSource: 'overlay_default_load' }
+        {
+          mode: context.lane || this.mode,
+          syntheticSource: 'overlay_default_load',
+          // Tray toggles are in-app actions, not entry points: they must not
+          // rewrite the URL/title. URL reflection is reserved for real entry
+          // loads (deep links, presets, chat-driven loads).
+          skipEntityReflection: true
+        }
       );
     });
     onAuthChanged((event) => {

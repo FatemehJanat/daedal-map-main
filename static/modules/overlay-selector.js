@@ -1172,16 +1172,25 @@ export const OverlaySelector = {
       focusActiveOpsOverlays();
       return;
     }
-    // First enable often races the overlay's async data load (the toggle
-    // handler runs synchronously; handleOverlayChange fetches later). One
-    // short retry catches the freshly rendered features without polling.
-    window.setTimeout(() => {
-      if (!this.activeOverlays.has(overlayId)) return;
-      if (!shouldAutoFocusOnOverlayEnable(this.currentLaneMode)) return;
+    // First enable races the overlay's async data load (the toggle handler
+    // runs synchronously; handleOverlayChange fetches later, and cold loads
+    // can take 10s+). Watch briefly for the features to land, then fit once.
+    // A newer toggle replaces any pending watcher; disable cancels it.
+    window.clearInterval(this._autoFocusWatchTimer);
+    const startedAt = Date.now();
+    this._autoFocusWatchTimer = window.setInterval(() => {
+      const expired = Date.now() - startedAt > 20000;
+      const cancelled = !this.activeOverlays.has(overlayId)
+        || !shouldAutoFocusOnOverlayEnable(this.currentLaneMode);
+      if (expired || cancelled) {
+        window.clearInterval(this._autoFocusWatchTimer);
+        return;
+      }
       if (getRenderedOpsGeojson(overlayId)) {
+        window.clearInterval(this._autoFocusWatchTimer);
         focusActiveOpsOverlays();
       }
-    }, 1200);
+    }, 500);
   },
 
   /**
