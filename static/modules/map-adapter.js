@@ -1966,7 +1966,7 @@ export const MapAdapter = {
     // every side equally instead. This zooms fits out slightly while keeping
     // the true screen center, so content clears the HUD on any side. Tune
     // the single number below to trade framing tightness for clearance.
-    const hudClearance = 120;
+    const hudClearance = 250;
     const basePadding = {
       top: hudClearance,
       right: hudClearance,

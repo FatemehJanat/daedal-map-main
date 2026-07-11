@@ -1124,10 +1124,16 @@ export const OverlaySelector = {
       const categoryId = wrapper.dataset.categoryId;
       const checkbox = categoryHeader.querySelector('.category-checkbox');
 
-      // If clicked on checkbox, toggle all overlays in category
+      // If clicked on checkbox, let the native 'change' handler below do the
+      // toggle (it fires for both mouse and keyboard activation). Calling
+      // _toggleCategory here too double-fires the whole category toggle for
+      // a single click (change handler also targets .category-checkbox),
+      // which double-enables/disables every overlay in the category and can
+      // race the async data fetch into announcing a stale count. Only
+      // suppress propagation so the click doesn't also collapse/expand the
+      // category header below.
       if (e.target === checkbox || e.target.closest('.category-checkbox')) {
         e.stopPropagation();
-        this._toggleCategory(categoryId, checkbox.checked);
         return;
       }
 
@@ -1188,22 +1194,25 @@ export const OverlaySelector = {
   },
 
   /**
-   * Ops-only camera assist for user toggles: when an overlay with a current
-   * Ops snapshot is enabled, refit to the union of all active overlay
+   * Ops-only camera assist for user toggles: when overlay(s) with a current
+   * Ops snapshot are enabled, refit to the union of all active overlay
    * snapshots. Never runs on disable, and never runs outside the Ops lane
-   * (see shouldAutoFocusOnOverlayEnable for the mode policy).
+   * (see shouldAutoFocusOnOverlayEnable for the mode policy). Shared by both
+   * the single-overlay toggle path and the category (batch) toggle path.
+   * @param {string[]} overlayIds - Overlay ids just enabled.
    * @private
    */
-  _maybeAutoFocusOnEnable(overlayId, isActive) {
-    if (!isActive) return;
+  _watchForOpsFocusData(overlayIds) {
+    const ids = (overlayIds || []).filter(Boolean);
+    if (!ids.length) return;
     if (!shouldAutoFocusOnOverlayEnable(this.currentLaneMode)) return;
     // Enabling a global grid/field overlay means "show me the global
     // picture" regardless of what else is active.
-    if (GLOBAL_FOCUS_OVERLAY_IDS.has(overlayId)) {
+    if (ids.some((id) => GLOBAL_FOCUS_OVERLAY_IDS.has(id))) {
       focusGlobalOverlayView();
       return;
     }
-    if (getRenderedOpsGeojson(overlayId)) {
+    if (ids.some((id) => getRenderedOpsGeojson(id))) {
       focusActiveOpsOverlays();
       return;
     }
@@ -1215,17 +1224,27 @@ export const OverlaySelector = {
     const startedAt = Date.now();
     this._autoFocusWatchTimer = window.setInterval(() => {
       const expired = Date.now() - startedAt > 20000;
-      const cancelled = !this.activeOverlays.has(overlayId)
+      const cancelled = !ids.some((id) => this.activeOverlays.has(id))
         || !shouldAutoFocusOnOverlayEnable(this.currentLaneMode);
       if (expired || cancelled) {
         window.clearInterval(this._autoFocusWatchTimer);
         return;
       }
-      if (getRenderedOpsGeojson(overlayId)) {
+      if (ids.some((id) => getRenderedOpsGeojson(id))) {
         window.clearInterval(this._autoFocusWatchTimer);
         focusActiveOpsOverlays();
       }
     }, 500);
+  },
+
+  /**
+   * Ops-only camera assist for a single overlay toggle. See
+   * _watchForOpsFocusData for the shared watcher semantics.
+   * @private
+   */
+  _maybeAutoFocusOnEnable(overlayId, isActive) {
+    if (!isActive) return;
+    this._watchForOpsFocusData([overlayId]);
   },
 
   /**
@@ -1237,6 +1256,7 @@ export const OverlaySelector = {
     if (!category || !category.isCategory) return;
 
     let anyEnabled = false;
+    const enabledOverlayIds = [];
     for (const overlay of category.overlays) {
       if (overlay.locked || overlay.placeholder) continue;
 
@@ -1257,6 +1277,7 @@ export const OverlaySelector = {
       // Notify if state changed
       if (wasActive !== active) {
         anyEnabled = anyEnabled || active;
+        if (active) enabledOverlayIds.push(overlay.id);
         this._notifyListeners(overlay.id, active, {
           categoryBatch: {
             categoryId,
@@ -1280,9 +1301,12 @@ export const OverlaySelector = {
     console.log('Category toggled:', categoryId, active);
     console.log('Active overlays:', Array.from(this.activeOverlays));
 
-    // Ops camera assist: one refit for the whole category enable.
-    if (anyEnabled && shouldAutoFocusOnOverlayEnable(this.currentLaneMode)) {
-      focusActiveOpsOverlays();
+    // Ops camera assist: watch the newly-enabled overlays in the category
+    // and refit once any of them has rendered data (see
+    // _watchForOpsFocusData; mirrors the single-overlay toggle path so a
+    // cold first enable via the category checkbox still moves the camera).
+    if (anyEnabled) {
+      this._watchForOpsFocusData(enabledOverlayIds);
     }
 
     // Persist current-session lane state
