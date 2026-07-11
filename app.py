@@ -349,7 +349,7 @@ async def static_no_cache(request: Request, call_next):
         # security headers (including the browser-corpus-bridge frame
         # exception) still apply.
         response = await call_next(request)
-        if path.endswith(".js") or path.endswith(".css"):
+        if path.endswith(".js") or path.endswith(".mjs") or path.endswith(".css"):
             response.headers["Cache-Control"] = "no-cache, must-revalidate"
         _apply_common_security_headers(response, request, path)
         return response
