@@ -1961,7 +1961,18 @@ export const MapAdapter = {
   // Base padding that keeps fitted geometry clear of the timeline slider
   // when it overlaps the map container.
   getTimelineAwarePadding() {
-    const basePadding = { top: 50, right: 50, bottom: 50, left: 50 };
+    // Symmetric HUD clearance: the sidebar/HUD covers part of the map and
+    // shifting the optical center for it proved fragile, so focus fits pad
+    // every side equally instead. This zooms fits out slightly while keeping
+    // the true screen center, so content clears the HUD on any side. Tune
+    // the single number below to trade framing tightness for clearance.
+    const hudClearance = 120;
+    const basePadding = {
+      top: hudClearance,
+      right: hudClearance,
+      bottom: hudClearance,
+      left: hudClearance
+    };
     const timelineRegion = document.getElementById('tutorialTimelineRegion');
     const timeSlider = document.getElementById('timeSliderContainer');
     const mapContainer = document.getElementById('mapContainer');
