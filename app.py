@@ -68,6 +68,7 @@ from mapmover.routes.mcp import router as mcp_router
 from mapmover.routes.ops import router as ops_router
 from mapmover.routes.private_mcp import router as private_mcp_router
 from mapmover.routes.research import router as research_router
+from mapmover.prewarm_status import begin_prewarm, run_prewarm_task
 from mapmover.routes.system import prewarm_public_pack_catalog, router as system_router
 from mapmover.routes.weather import router as weather_router
 from mapmover.runtime_build_info import runtime_build_info
@@ -241,29 +242,36 @@ async def lifespan(app: FastAPI):
         from mapmover.duckdb_helpers import is_cloud_mode, prewarm_disaster_sources
         from mapmover.geometry_handlers import prewarm_geometry
         from mapmover.paths import GLOBAL_DIR
+        tasks = ["public_pack_catalog", "api_catalog"]
+        if is_cloud_mode():
+            tasks.extend(["disasters", "geometry"])
+        begin_prewarm(tasks)
         t_public_catalog = threading.Thread(
-            target=prewarm_public_pack_catalog,
+            target=run_prewarm_task,
+            args=("public_pack_catalog", prewarm_public_pack_catalog),
             daemon=True,
             name="prewarm-public-pack-catalog",
         )
         t_public_catalog.start()
         t_api_catalog = threading.Thread(
-            target=prewarm_api_catalog,
+            target=run_prewarm_task,
+            args=("api_catalog", prewarm_api_catalog),
             daemon=True,
             name="prewarm-api-catalog",
         )
         t_api_catalog.start()
         if is_cloud_mode():
             t_disaster = threading.Thread(
-                target=prewarm_disaster_sources,
-                args=(GLOBAL_DIR,),
+                target=run_prewarm_task,
+                args=("disasters", prewarm_disaster_sources, GLOBAL_DIR),
                 daemon=True,
                 name="prewarm-disasters",
             )
             t_disaster.start()
 
             t_geom = threading.Thread(
-                target=prewarm_geometry,
+                target=run_prewarm_task,
+                args=("geometry", prewarm_geometry),
                 daemon=True,
                 name="prewarm-geometry",
             )

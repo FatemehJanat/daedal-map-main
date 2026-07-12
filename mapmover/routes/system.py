@@ -26,6 +26,7 @@ from mapmover.foundation_helpers import load_reference_json
 from mapmover.hosted_runtime_account import load_account_context
 from mapmover.hosted_runtime_events import submit_runtime_feedback
 from mapmover.order_queue import order_queue
+from mapmover.prewarm_status import begin_prewarm, prewarm_readiness, run_prewarm_task
 from mapmover.runtime_config import get_runtime_config
 from mapmover.runtime_build_info import runtime_build_info
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
@@ -102,8 +103,16 @@ def _admin_catalog_refresh_forbidden_response(req: Request) -> Response | None:
 
 def _start_runtime_prewarm_threads() -> list[str]:
     started: list[str] = []
+    task_names = ["public_pack_catalog"]
     try:
-        prewarm_public_pack_catalog()
+        from mapmover.duckdb_helpers import is_cloud_mode
+        if is_cloud_mode():
+            task_names.extend(["disasters", "geometry"])
+    except Exception:
+        pass
+    begin_prewarm(task_names)
+    try:
+        run_prewarm_task("public_pack_catalog", prewarm_public_pack_catalog)
         started.append("public_pack_catalog")
     except Exception as exc:
         logger.warning("Runtime refresh: public pack catalog prewarm failed: %s", exc)
@@ -115,15 +124,16 @@ def _start_runtime_prewarm_threads() -> list[str]:
 
         if is_cloud_mode():
             threading.Thread(
-                target=prewarm_disaster_sources,
-                args=(GLOBAL_DIR,),
+                target=run_prewarm_task,
+                args=("disasters", prewarm_disaster_sources, GLOBAL_DIR),
                 daemon=True,
                 name="prewarm-disasters-refresh",
             ).start()
             started.append("disasters")
 
             threading.Thread(
-                target=prewarm_geometry,
+                target=run_prewarm_task,
+                args=("geometry", prewarm_geometry),
                 daemon=True,
                 name="prewarm-geometry-refresh",
             ).start()
@@ -1681,6 +1691,21 @@ async def health_check():
             "install_mode": build_info.get("install_mode"),
         },
     }
+
+
+@router.get("/health/ready")
+async def readiness_check():
+    """Return 200 only after this process has completed its startup pre-warm."""
+    readiness = prewarm_readiness()
+    ready = readiness.get("state") == "ready"
+    return JSONResponse(
+        status_code=200 if ready else 503,
+        content={
+            "status": "ready" if ready else "warming",
+            "service": "county-map-api",
+            "prewarm": readiness,
+        },
+    )
 
 
 @router.post("/api/feedback")
