@@ -2205,12 +2205,19 @@ export const ChatManager = {
     });
   },
 
-  async downloadResearchBrowserSourceArtifact(downloadPath) {
+  async downloadResearchBrowserSourceArtifact(downloadPath, directUrl = '') {
     const token = getAccessToken();
-    const response = await fetch(downloadPath, {
-      method: 'GET',
-      headers: token ? { Authorization: `Bearer ${token}` } : {}
-    });
+    let response = null;
+    if (directUrl) {
+      try {
+        response = await fetch(directUrl, { method: 'GET', credentials: 'omit' });
+      } catch (_) {}
+    }
+    if (!response?.ok) {
+      response = await fetch(downloadPath, {
+        method: 'GET', headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+    }
     if (!response.ok) {
       let errorMessage = `HTTP ${response.status}`;
       try {
@@ -2575,18 +2582,19 @@ export const ChatManager = {
       });
       let downloadedSources = 0;
       if (installMode === 'source_artifacts') {
-        for (const sourceEntry of installManifest.sources) {
+        const downloadOne = async (sourceEntry) => {
           const sourceId = String(sourceEntry?.source_id || '').trim();
           const browserArtifact = sourceEntry?.browser_artifact || null;
+          const directUrl = String(sourceEntry?.download_url || '').trim();
           const downloadPath = String(sourceEntry?.download_path || '').trim();
-          if (!sourceId || !browserArtifact || !downloadPath) {
+          if (!sourceId || !browserArtifact || (!directUrl && !downloadPath)) {
             throw new Error(`Install manifest entry is incomplete for ${sourceId || 'unknown source'}.`);
           }
           indicator.updateStage?.(
             'thinking',
             `Saving source artifacts into browser storage... ${downloadedSources + 1} / ${installManifest.sources.length}`
           );
-          const artifactDownload = await this.downloadResearchBrowserSourceArtifact(downloadPath);
+          const artifactDownload = await this.downloadResearchBrowserSourceArtifact(downloadPath, directUrl);
           await saveBrowserSourceArtifact({
             sourceId,
             artifactVersion: artifactDownload.artifactVersion || browserArtifact.artifact_version,
@@ -2596,7 +2604,12 @@ export const ChatManager = {
             corpusId: selectedId
           });
           downloadedSources += 1;
-        }
+        };
+        const queue = [...installManifest.sources];
+        const workers = Array.from({ length: Math.min(3, queue.length) }, async () => {
+          while (queue.length) await downloadOne(queue.shift());
+        });
+        await Promise.all(workers);
       } else {
         indicator.updateStage?.('thinking', 'Saving corpus mount state for faster restore...');
       }

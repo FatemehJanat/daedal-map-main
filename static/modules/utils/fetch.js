@@ -116,28 +116,34 @@ export function logExecutedOrder(order) {
  * @returns {Promise<any>} Decoded response data
  */
 export async function fetchMsgpack(url, options = {}) {
+  // Some small, non-blocking helpers are deliberately fetched in the
+  // background. They must remain abortable/authenticated, but should not make
+  // the map-wide loading scrim imply that visible map data is still loading.
+  const { silent = false, ...requestOptions } = options;
   const loadingLabel = inferLoadingLabel(url, options);
   const requestController = new AbortController();
   activeAbortControllers.add(requestController);
-  if (options.signal) {
-    if (options.signal.aborted) {
+  if (requestOptions.signal) {
+    if (requestOptions.signal.aborted) {
       requestController.abort();
     } else {
-      options.signal.addEventListener('abort', () => requestController.abort(), { once: true });
+      requestOptions.signal.addEventListener('abort', () => requestController.abort(), { once: true });
     }
   }
-  activeRequestCount += 1;
-  activeLoadingLabels.push(loadingLabel);
-  syncGlobalLoadingIndicator();
+  if (!silent) {
+    activeRequestCount += 1;
+    activeLoadingLabels.push(loadingLabel);
+    syncGlobalLoadingIndicator();
+  }
 
   try {
     const response = await fetch(url, {
-      ...options,
+      ...requestOptions,
       signal: requestController.signal,
       headers: {
         'Accept': 'application/msgpack',
         ...buildAuthHeaders(),
-        ...options.headers,
+        ...requestOptions.headers,
       }
     });
 
@@ -164,12 +170,14 @@ export async function fetchMsgpack(url, options = {}) {
     return msgpack.decode(new Uint8Array(buffer));
   } finally {
     activeAbortControllers.delete(requestController);
-    activeRequestCount = Math.max(0, activeRequestCount - 1);
-    const labelIndex = activeLoadingLabels.lastIndexOf(loadingLabel);
-    if (labelIndex >= 0) {
-      activeLoadingLabels.splice(labelIndex, 1);
+    if (!silent) {
+      activeRequestCount = Math.max(0, activeRequestCount - 1);
+      const labelIndex = activeLoadingLabels.lastIndexOf(loadingLabel);
+      if (labelIndex >= 0) {
+        activeLoadingLabels.splice(labelIndex, 1);
+      }
+      syncGlobalLoadingIndicator();
     }
-    syncGlobalLoadingIndicator();
   }
 }
 

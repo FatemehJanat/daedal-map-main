@@ -471,6 +471,16 @@ export const App = {
     );
     if (nextLevel == null) return;
 
+    const connection = typeof navigator !== 'undefined' ? navigator.connection : null;
+    const effectiveType = String(connection?.effectiveType || '').toLowerCase();
+    if (connection?.saveData || effectiveType === 'slow-2g' || effectiveType === '2g' || effectiveType === '3g') {
+      return;
+    }
+
+    // Deep administrative levels can be orders of magnitude larger. Wait for
+    // explicit navigation instead of speculatively loading them for every user.
+    if (nextLevel >= 3) return;
+
     this.clearMetricPrefetch();
 
     const runPrefetch = () => {
@@ -486,9 +496,9 @@ export const App = {
     };
 
     if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
-      this.metricPrefetchHandle = window.requestIdleCallback(runPrefetch, { timeout: 1200 });
+      this.metricPrefetchHandle = window.requestIdleCallback(runPrefetch, { timeout: 2500 });
     } else {
-      this.metricPrefetchHandle = window.setTimeout(runPrefetch, 350);
+      this.metricPrefetchHandle = window.setTimeout(runPrefetch, 1500);
     }
   },
 

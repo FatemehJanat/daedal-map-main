@@ -13,8 +13,10 @@ Schema (13 columns):
 
 import json
 import logging
+import os
 import threading
 import pandas as pd
+from collections import OrderedDict
 from pathlib import Path
 
 # Try orjson for faster JSON parsing (3-10x faster than stdlib json)
@@ -53,13 +55,32 @@ from .runtime.read_posture import geometry_read_mode, prefer_local_geometry_read
 logger = logging.getLogger("mapmover")
 
 # Cache for country parquet data - keyed by (iso3, admin_level) or just iso3 for full
-_country_parquet_cache = {}
+_country_parquet_cache = OrderedDict()
 _country_parquet_cache_lock = threading.Lock()
 _country_parquet_inflight = set()  # keys currently being fetched from R2
 _country_parquet_waiters = {}  # key -> Event for concurrent waiters
 
 # Cache for country bounding boxes (for viewport filtering)
 _country_bounds_cache = None
+
+_GEOMETRY_CACHE_MAX_BYTES = max(32 * 1024 * 1024, int(float(os.environ.get("GEOMETRY_CACHE_MAX_MB", "256")) * 1024 * 1024))
+
+
+def _frame_bytes(df) -> int:
+    try:
+        return int(df.memory_usage(index=True, deep=True).sum())
+    except Exception:
+        return 0
+
+
+def _cache_country_frame(cache_key, df) -> None:
+    """Insert a geometry frame and evict least-recently-used frames by size."""
+    _country_parquet_cache[cache_key] = df
+    _country_parquet_cache.move_to_end(cache_key)
+    total = sum(_frame_bytes(value) for value in _country_parquet_cache.values())
+    while total > _GEOMETRY_CACHE_MAX_BYTES and len(_country_parquet_cache) > 1:
+        _, evicted = _country_parquet_cache.popitem(last=False)
+        total -= _frame_bytes(evicted)
 
 
 def _geometry_read_mode() -> str:
@@ -108,13 +129,14 @@ def load_country_parquet(iso3: str, admin_level: int = None):
 
     with _country_parquet_cache_lock:
         if cache_key in _country_parquet_cache:
+            _country_parquet_cache.move_to_end(cache_key)
             return _country_parquet_cache[cache_key]
 
         # If we have the full dataframe cached, filter from it
         if admin_level is not None and iso3 in _country_parquet_cache:
             full_df = _country_parquet_cache[iso3]
             filtered = full_df[full_df['admin_level'] == admin_level]
-            _country_parquet_cache[cache_key] = filtered
+            _cache_country_frame(cache_key, filtered)
             return filtered
 
         # If another thread is already fetching this key, wait for it to finish
@@ -132,11 +154,12 @@ def load_country_parquet(iso3: str, admin_level: int = None):
             wait_event.wait(timeout=15.0)
         with _country_parquet_cache_lock:
             if cache_key in _country_parquet_cache:
+                _country_parquet_cache.move_to_end(cache_key)
                 return _country_parquet_cache[cache_key]
             if admin_level is not None and iso3 in _country_parquet_cache:
                 full_df = _country_parquet_cache[iso3]
                 filtered = full_df[full_df['admin_level'] == admin_level]
-                _country_parquet_cache[cache_key] = filtered
+                _cache_country_frame(cache_key, filtered)
                 return filtered
         return None
 
@@ -203,7 +226,7 @@ def load_country_parquet(iso3: str, admin_level: int = None):
             return df  # Return empty but do NOT cache, so next request retries
 
         with _country_parquet_cache_lock:
-            _country_parquet_cache[cache_key] = df
+            _cache_country_frame(cache_key, df)
             _country_parquet_inflight.discard(cache_key)
             waiter = _country_parquet_waiters.pop(cache_key, None)
         if waiter is not None:
@@ -1231,9 +1254,12 @@ def get_location_children(loc_id: str):
 
     iso3 = parts[0]
 
-    # Load country parquet
-    df = load_country_parquet(iso3)
-    if df is None:
+    resolved = resolve_country_geometry_source(iso3)
+    parquet_file = resolved.get("parquet_file")
+    # Cloud drill-down reads only the active branch instead of hydrating and
+    # retaining every polygon in the country.
+    df = None if is_cloud_mode() else load_country_parquet(iso3)
+    if parquet_file is None or (df is None and not is_cloud_mode()):
         return {
             "geojson": {"type": "FeatureCollection", "features": []},
             "count": 0,
@@ -1249,7 +1275,13 @@ def get_location_children(loc_id: str):
 
     for _ in range(max_depth):
         # Get all direct children of current parent set
-        children = df[df["parent_id"].isin(current_parents)]
+        if is_cloud_mode():
+            children = select_rows(parquet_file, in_filters={"parent_id": current_parents})
+            if resolved.get("crosswalk") and not children.empty:
+                _, reverse_map = build_crosswalk_maps(resolved["crosswalk"])
+                children["local_loc_id"] = children["loc_id"].map(reverse_map)
+        else:
+            children = df[df["parent_id"].isin(current_parents)]
 
         if len(children) == 0:
             return {
@@ -2207,7 +2239,7 @@ def clear_cache():
     """Clear all cached geometry data. Useful when data files are updated."""
     global _country_parquet_cache, _global_countries_cache, _country_bounds_cache, _subcounty_geometry_cache, _country_parquet_waiters
     with _country_parquet_cache_lock:
-        _country_parquet_cache = {}
+        _country_parquet_cache = OrderedDict()
         _country_parquet_inflight.clear()
         for waiter in _country_parquet_waiters.values():
             waiter.set()

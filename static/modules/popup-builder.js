@@ -34,7 +34,9 @@ export const PopupBuilder = {
     this.adminLevelsLoading = true;
 
     try {
-      this.adminLevels = await fetchMsgpack('/reference/admin-levels');
+      // This only improves future popup labels; it is not map data and should
+      // never hold the global map-loading indicator open during first paint.
+      this.adminLevels = await fetchMsgpack('/reference/admin-levels', { silent: true });
     } catch (e) {
       console.warn('Failed to load admin levels:', e);
     }

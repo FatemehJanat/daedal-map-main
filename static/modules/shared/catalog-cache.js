@@ -2,7 +2,9 @@ import { readSharedCache, writeSharedCache } from './shared-cache.js';
 
 export const PUBLIC_PACK_CATALOG_CACHE_KEY = 'daedalmap-public-pack-catalog-v1';
 export const PUBLIC_PACK_CATALOG_TTL_MS = 15 * 60 * 1000;
+const PUBLIC_PACK_CATALOG_STALE_TTL_MS = 24 * 60 * 60 * 1000;
 export const PUBLIC_PACK_CATALOG_API = '/api/catalog/packs?format=json';
+let catalogRequestPromise = null;
 
 function hasUsablePackArray(value) {
   return Array.isArray(value?.packs);
@@ -15,12 +17,13 @@ export async function readPublicPackCatalogCache() {
   return value;
 }
 
-export async function writePublicPackCatalogCache(packs) {
+export async function writePublicPackCatalogCache(packs, etag = '') {
   const value = {
     savedAt: Date.now(),
+    etag: String(etag || ''),
     packs: Array.isArray(packs) ? packs : []
   };
-  await writeSharedCache(PUBLIC_PACK_CATALOG_CACHE_KEY, value, PUBLIC_PACK_CATALOG_TTL_MS);
+  await writeSharedCache(PUBLIC_PACK_CATALOG_CACHE_KEY, value, PUBLIC_PACK_CATALOG_STALE_TTL_MS);
   return value;
 }
 
@@ -29,9 +32,10 @@ export async function loadPublicPackCatalog({
   endpoint = PUBLIC_PACK_CATALOG_API,
   fetchImpl = fetch
 } = {}) {
+  let cached = null;
   if (!forceRefresh) {
-    const cached = await readPublicPackCatalogCache();
-    if (cached?.packs?.length) {
+    cached = await readPublicPackCatalogCache();
+    if (cached?.packs?.length && (Date.now() - Number(cached.savedAt || 0)) < PUBLIC_PACK_CATALOG_TTL_MS) {
       return {
         packs: cached.packs,
         cached: true,
@@ -40,21 +44,33 @@ export async function loadPublicPackCatalog({
     }
   }
 
-  const response = await fetchImpl(endpoint, {
-    headers: { Accept: 'application/json' }
-  });
+  if (catalogRequestPromise) return catalogRequestPromise;
+  catalogRequestPromise = (async () => {
+  const headers = { Accept: 'application/json' };
+  if (cached?.etag) headers['If-None-Match'] = cached.etag;
+  const response = await fetchImpl(endpoint, { headers });
+  if (response.status === 304 && cached?.packs?.length) {
+    await writePublicPackCatalogCache(cached.packs, cached.etag);
+    return { packs: cached.packs, cached: true, source: 'revalidated-cache' };
+  }
   if (!response.ok) {
     throw new Error(`Public pack catalog request failed: HTTP ${response.status}`);
   }
 
   const payload = await response.json();
   const packs = Array.isArray(payload?.packs) ? payload.packs : [];
-  await writePublicPackCatalogCache(packs);
+  await writePublicPackCatalogCache(packs, response.headers.get('etag') || '');
   return {
     packs,
     cached: false,
     source: 'network'
   };
+  })();
+  try {
+    return await catalogRequestPromise;
+  } finally {
+    catalogRequestPromise = null;
+  }
 }
 
 export async function findPublicPackCatalogEntry(packId, options = {}) {

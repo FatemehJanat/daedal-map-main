@@ -1,6 +1,7 @@
 """System, settings, queue, and cache API router endpoints."""
 
 import csv
+import hashlib
 import io
 import ipaddress
 import json
@@ -1932,10 +1933,17 @@ async def get_catalog_packs_list(req: Request):
 
     packs = _build_public_pack_list()
 
+    payload = {"packs": packs, "total": len(packs)}
+    etag = '"' + hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest() + '"'
+    if str(req.headers.get("if-none-match") or "").strip() == etag:
+        return Response(status_code=304, headers={"ETag": etag})
     fmt = req.query_params.get("format", "")
     if fmt == "json":
-        return JSONResponse({"packs": packs, "total": len(packs)})
-    return msgpack_response({"packs": packs, "total": len(packs)})
+        response = JSONResponse(payload)
+    else:
+        response = msgpack_response(payload)
+    response.headers["ETag"] = etag
+    return response
 
 
 @router.get("/api/catalog/packs/{pack_id}")

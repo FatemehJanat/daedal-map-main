@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import threading
+import queue
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -228,6 +229,44 @@ def build_guarded_connection(
 _thread_state = threading.local()
 _THREAD_CONNECTION_GENERATION = 0
 _THREAD_CONNECTION_GENERATION_LOCK = threading.Lock()
+_QUERY_POOL_SIZE = max(1, min(16, int(os.environ.get("DUCKDB_QUERY_POOL_SIZE", "6"))))
+_QUERY_POOL: queue.LifoQueue = queue.LifoQueue(maxsize=_QUERY_POOL_SIZE)
+_QUERY_POOL_CREATED = 0
+_QUERY_POOL_LOCK = threading.Lock()
+_QUERY_POOL_GENERATION = 0
+
+
+def _acquire_query_connection():
+    global _QUERY_POOL_CREATED
+    try:
+        con, generation = _QUERY_POOL.get_nowait()
+        if generation != _QUERY_POOL_GENERATION:
+            _release_query_connection(con, generation=generation, discard=True)
+            return _acquire_query_connection()
+        return con, generation
+    except queue.Empty:
+        with _QUERY_POOL_LOCK:
+            if _QUERY_POOL_CREATED < _QUERY_POOL_SIZE:
+                _QUERY_POOL_CREATED += 1
+                try:
+                    return _build_thread_connection(), _QUERY_POOL_GENERATION
+                except Exception:
+                    _QUERY_POOL_CREATED -= 1
+                    raise
+        return _QUERY_POOL.get(timeout=30)
+
+
+def _release_query_connection(con, *, generation: int, discard: bool = False) -> None:
+    global _QUERY_POOL_CREATED
+    if discard or generation != _QUERY_POOL_GENERATION:
+        try:
+            con.close()
+        except Exception:
+            pass
+        with _QUERY_POOL_LOCK:
+            _QUERY_POOL_CREATED = max(0, _QUERY_POOL_CREATED - 1)
+        return
+    _QUERY_POOL.put((con, generation))
 
 
 def _build_thread_connection():
@@ -274,11 +313,25 @@ def reset_thread_connection_pool() -> int:
     The current thread drops immediately. Other worker threads lazily rebuild
     their connection on the next query when they observe the bumped generation.
     """
-    global _THREAD_CONNECTION_GENERATION
+    global _THREAD_CONNECTION_GENERATION, _QUERY_POOL_CREATED, _QUERY_POOL_GENERATION
     with _THREAD_CONNECTION_GENERATION_LOCK:
         _THREAD_CONNECTION_GENERATION += 1
         generation = _THREAD_CONNECTION_GENERATION
     _drop_thread_connection()
+    with _QUERY_POOL_LOCK:
+        _QUERY_POOL_GENERATION += 1
+        drained = 0
+        while True:
+            try:
+                pooled, _ = _QUERY_POOL.get_nowait()
+            except queue.Empty:
+                break
+            drained += 1
+            try:
+                pooled.close()
+            except Exception:
+                pass
+        _QUERY_POOL_CREATED = max(0, _QUERY_POOL_CREATED - drained)
     return generation
 
 
@@ -318,25 +371,37 @@ def _looks_like_connection_error(exc: BaseException) -> bool:
 def run_df(sql: str, params: list) -> pd.DataFrame:
     if duckdb is None:
         return pd.DataFrame()
-    con = _get_thread_connection()
+    if not is_cloud_mode():
+        con = _get_thread_connection()
+        return con.execute(sql, params).df()
+    con, generation = _acquire_query_connection()
+    discard = False
     try:
         return con.execute(sql, params).df()
     except Exception as exc:
         if _looks_like_connection_error(exc):
-            _drop_thread_connection()
+            discard = True
         raise
+    finally:
+        _release_query_connection(con, generation=generation, discard=discard)
 
 
 def run_rows(sql: str, params: list) -> list[tuple]:
     if duckdb is None:
         return []
-    con = _get_thread_connection()
+    if not is_cloud_mode():
+        con = _get_thread_connection()
+        return con.execute(sql, params).fetchall()
+    con, generation = _acquire_query_connection()
+    discard = False
     try:
         return con.execute(sql, params).fetchall()
     except Exception as exc:
         if _looks_like_connection_error(exc):
-            _drop_thread_connection()
+            discard = True
         raise
+    finally:
+        _release_query_connection(con, generation=generation, discard=discard)
 
 
 def _normalize_ts_for_duckdb(val: str | None) -> str | None:
@@ -976,7 +1041,7 @@ def is_default_preload_range(start: str | None, end: str | None) -> bool:
 
 def make_preload_cache_key(source: str, **params) -> str:
     """Canonical cache key for the frontend's default disaster preload workflow."""
-    return make_cache_key(source, preset="preload_2020_2025", **params)
+    return make_cache_key(source, preset="preload_default_10_years", **params)
 
 
 def select_filtered_event_rows_cached(
@@ -1037,9 +1102,9 @@ def prewarm_disaster_sources(global_dir: Path) -> None:
     the DuckDB http metadata cache and our in-memory DataFrame cache so that
     the first user request does not incur cold R2 latency.
 
-    Animation years 2020-2025 are pre-warmed with the exact filter params that
-    the frontend overlay-controller.js uses (min_magnitude, min_area_km2, etc.)
-    so that animation playback hits the cache on the first pass.
+    The rolling ten-year Explore window is pre-warmed with the exact filter
+    params that the frontend overlay-controller.js uses (min_magnitude,
+    min_area_km2, etc.) so that the first preset load hits the cache.
     """
     if not is_cloud_mode():
         return  # pre-warming only needed for R2 mode
@@ -1062,7 +1127,7 @@ def prewarm_disaster_sources(global_dir: Path) -> None:
                 t0 = time.monotonic()
                 df = select_filtered_event_rows(eq_path, year=yr, min_value_filters={"magnitude": 5.5})
                 if not df.empty:
-                    cache_set(ck, df, permanent=True)
+                    cache_set(ck, df, ttl=60)
                 log.info("prewarm earthquakes year=%d: %d rows in %.1fs", yr, len(df), time.monotonic() - t0)
             except Exception as exc:
                 log.warning("prewarm earthquakes year=%d failed: %s", yr, exc)
@@ -1086,7 +1151,7 @@ def prewarm_disaster_sources(global_dir: Path) -> None:
                 t0 = time.monotonic()
                 df = select_filtered_event_rows(ts_path, year=yr, min_value_filters={"max_water_height_m": 3})
                 if not df.empty:
-                    cache_set(ck, df, permanent=True)
+                    cache_set(ck, df, ttl=60)
                 log.info("prewarm tsunamis year=%d: %d rows in %.1fs", yr, len(df), time.monotonic() - t0)
             except Exception as exc:
                 log.warning("prewarm tsunamis year=%d failed: %s", yr, exc)
@@ -1115,7 +1180,7 @@ def prewarm_disaster_sources(global_dir: Path) -> None:
                 t0 = time.monotonic()
                 df = select_filtered_event_rows(fl_path, year=yr, min_value_filters={"severity": 2})
                 if not df.empty:
-                    cache_set(ck, df, permanent=True)
+                    cache_set(ck, df, ttl=60)
                 log.info("prewarm floods year=%d: %d rows in %.1fs", yr, len(df), time.monotonic() - t0)
             except Exception as exc:
                 log.warning("prewarm floods year=%d failed: %s", yr, exc)
@@ -1148,7 +1213,7 @@ def prewarm_disaster_sources(global_dir: Path) -> None:
                 t0 = time.monotonic()
                 df = select_filtered_event_rows(vol_path, year=yr, min_value_filters={"VEI": 3})
                 if not df.empty:
-                    cache_set(ck, df, permanent=True)
+                    cache_set(ck, df, ttl=60)
                 log.info("prewarm volcanoes year=%d: %d rows in %.1fs", yr, len(df), time.monotonic() - t0)
             except Exception as exc:
                 log.warning("prewarm volcanoes year=%d failed: %s", yr, exc)
@@ -1179,7 +1244,7 @@ def prewarm_disaster_sources(global_dir: Path) -> None:
                 t0 = time.monotonic()
                 df = select_filtered_event_rows(tor_path, year=yr)
                 if not df.empty:
-                    cache_set(ck, df, permanent=True)
+                    cache_set(ck, df, ttl=60)
                 log.info("prewarm tornadoes year=%d: %d rows in %.1fs", yr, len(df), time.monotonic() - t0)
             except Exception as exc:
                 log.warning("prewarm tornadoes year=%d failed: %s", yr, exc)
@@ -1214,7 +1279,7 @@ def prewarm_disaster_sources(global_dir: Path) -> None:
                         if not peak_positions.empty:
                             joined = storms_df.merge(peak_positions[["storm_id", "latitude", "longitude"]], on="storm_id", how="inner", suffixes=("", "_pos"))
                             if not joined.empty:
-                                cache_set(ck, joined, permanent=True)
+                                cache_set(ck, joined, ttl=60)
                 log.info("prewarm hurricanes year=%d: %d storms in %.1fs", yr, len(storms_df), time.monotonic() - t0)
             except Exception as exc:
                 log.warning("prewarm hurricanes year=%d failed: %s", yr, exc)
@@ -1226,7 +1291,7 @@ def prewarm_disaster_sources(global_dir: Path) -> None:
             # `end_date` for each storm - so passing start/end here silently
             # falls through and returns ALL storms (1842-2026, 13.5k rows).
             # Filter by `year` directly so the join only covers storms in the
-            # canonical 2020-2025 preload window. Without this, the cached
+            # canonical rolling ten-year preload window. Without this, the cached
             # joined frame was ~303k rows instead of ~14k, and every hurricane
             # request paid pandas-on-300k cost.
             storms_df = select_filtered_event_rows(hur_storms_path)
@@ -1267,7 +1332,7 @@ def prewarm_disaster_sources(global_dir: Path) -> None:
         except Exception as exc:
             log.warning("prewarm hurricanes preload-range failed: %s", exc)
 
-    # --- wildfires (per-year global files 2020-2024; route caches assembled df)
+    # --- wildfires (per-year global files through 2024; route caches assembled df)
     # Warm DuckDB metadata cache for the per-year parquet files.
     wf_base = global_dir / "disasters/wildfires/by_year_enriched"
     for yr in animation_years:
@@ -1287,7 +1352,7 @@ def prewarm_disaster_sources(global_dir: Path) -> None:
                     if "land_cover" not in df.columns:
                         df["land_cover"] = ""
                     if not df.empty:
-                        cache_set(ck, df, permanent=True)
+                        cache_set(ck, df, ttl=60)
                 log.info("prewarm wildfires year=%d: %d rows in %.1fs", yr, len(df), time.monotonic() - t0)
             except Exception as exc:
                 log.warning("prewarm wildfires year=%d failed: %s", yr, exc)

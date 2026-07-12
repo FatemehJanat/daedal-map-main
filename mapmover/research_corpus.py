@@ -813,6 +813,8 @@ def _build_browser_install_manifest(saved_corpus: dict) -> dict:
             total_transfer_bytes += int(artifact["transfer_bytes"])
             total_stored_bytes += int(artifact["stored_bytes"])
             total_expanded_bytes += int(artifact["expanded_bytes"])
+        proxy_path = f"/api/research/browser-save/source-artifact/{saved_corpus.get('id')}/{source_id}" if artifact_ready else ""
+        direct_url = _presign_browser_artifact_url(artifact.get("storage_key")) if artifact_ready else ""
         manifest_sources.append({
             "source_id": source_id,
             "source_name": str(source.get("source_name") or source_id),
@@ -820,7 +822,9 @@ def _build_browser_install_manifest(saved_corpus: dict) -> dict:
             "path": str(source.get("path") or "").strip(),
             "browser_artifact": artifact if artifact_ready else None,
             "size": source.get("size") if isinstance(source.get("size"), dict) else None,
-            "download_path": f"/api/research/browser-save/source-artifact/{saved_corpus.get('id')}/{source_id}" if artifact_ready else "",
+            "download_url": direct_url,
+            "download_path": proxy_path,
+            "download_expires_in": _browser_artifact_url_ttl_seconds() if direct_url else 0,
         })
     install_mode = "source_artifacts" if artifact_ready_source_count == len(source_ids) else "manifest_only"
 
@@ -849,6 +853,39 @@ def _build_browser_install_manifest(saved_corpus: dict) -> dict:
             "expanded_mb": round(total_expanded_bytes / (1024 * 1024), 2),
         },
     }
+
+
+def _browser_artifact_url_ttl_seconds() -> int:
+    try:
+        return max(60, min(3600, int(os.environ.get("BROWSER_ARTIFACT_SIGNED_URL_TTL", "600"))))
+    except (TypeError, ValueError):
+        return 600
+
+
+def _presign_browser_artifact_url(storage_key: str | None) -> str:
+    """Return a short-lived direct object-store URL, or empty for proxy fallback."""
+    storage_key = str(storage_key or "").strip().lstrip("/")
+    if not storage_key or not is_cloud_mode():
+        return ""
+    try:
+        import boto3 as _boto3
+        from mapmover.runtime_config import get_runtime_config
+
+        cloud_cfg = get_runtime_config().get("cloud", {})
+        bucket = os.environ.get("S3_BUCKET", "").strip() or str(cloud_cfg.get("bucket", "")).strip()
+        endpoint_url = os.environ.get("S3_ENDPOINT_URL") or cloud_cfg.get("endpoint_url")
+        region = os.environ.get("AWS_DEFAULT_REGION") or os.environ.get("AWS_REGION") or "auto"
+        if not bucket:
+            return ""
+        client = _boto3.client("s3", endpoint_url=endpoint_url, region_name=region)
+        return str(client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket, "Key": storage_key},
+            ExpiresIn=_browser_artifact_url_ttl_seconds(),
+        ) or "")
+    except Exception as exc:
+        logger.warning("Could not sign browser artifact %s; using Railway proxy: %s", storage_key, exc)
+        return ""
 
 
 def _read_browser_artifact_bytes(storage_key: str) -> tuple[bytes, str]:
