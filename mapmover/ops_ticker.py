@@ -525,6 +525,19 @@ def build_cached_aurora_payload() -> dict:
     )
 
 
+def build_cached_aurora_frames_payload() -> dict:
+    """Compact rolling Aurora frames; decoded by the browser overlay."""
+    from mapmover.ops_orchestrator_runtime import load_aurora_frame_bundle
+    bundle = load_aurora_frame_bundle()
+    frames = bundle.get("frames") if isinstance(bundle.get("frames"), list) else []
+    return _get_cached_view(
+        "ops_aurora_frames",
+        cache_identity=(len(frames), str((frames[-1] if frames else {}).get("issued_at") or "")),
+        ttl_seconds=_AURORA_CACHE_TTL_SECONDS,
+        builder=lambda: {"encoding": bundle.get("encoding"), "frames": frames},
+    )
+
+
 # ---------------------------------------------------------------------------
 # NWS alerts map overlay payload
 #

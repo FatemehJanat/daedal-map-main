@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import gzip
 import hashlib
 import json
 import math
@@ -157,7 +158,7 @@ FEED_ALIASES = {
     HURRICANE_LIVE_FEED: ("hurricane", "hurricanes", "storm", "storms", "cyclone", "typhoon"),
     "usa_nws_alerts": ("nws", "nws alerts", "weather alert", "weather alerts", "warning", "warnings", "alert", "alerts"),
     "noaa_swpc": ("space weather", "space weather alerts", "geomagnetic", "solar storm", "radio blackout"),
-    "noaa_aurora": ("aurora", "aurora forecast", "northern lights"),
+    "noaa_aurora": ("aurora", "aurora conditions", "northern lights"),
 }
 
 COUNT_QUERY_PATTERNS = (
@@ -706,6 +707,33 @@ def load_current_state_history(collector_name: str, limit: int | None = None) ->
     if limit is not None and limit >= 0:
         return entries[-limit:]
     return entries
+
+
+def load_aurora_frame_bundle() -> dict:
+    """Load compact retained Aurora frames for the overlay's real-history loop."""
+    cached = _get_live_state_cache("noaa_aurora", "frames")
+    if isinstance(cached, dict):
+        return cached
+    raw = None
+    client = _build_object_store_client()
+    if client is not None:
+        try:
+            key = f"{_live_state_prefix()}/noaa_aurora/frames.json.gz"
+            raw = client.get_object(Bucket=_object_store_bucket(), Key=key)["Body"].read()
+        except Exception:
+            raw = None
+    if raw is None and str(get_runtime_config().get("runtime_mode", "local")).strip().lower() == "local":
+        try:
+            raw = (PRIVATE_ROOT / "live" / "state" / "noaa_aurora" / "frames.json.gz").read_bytes()
+        except OSError:
+            raw = None
+    try:
+        payload = json.loads(gzip.decompress(raw).decode("utf-8")) if raw else {}
+    except (OSError, ValueError, TypeError):
+        payload = {}
+    result = payload if isinstance(payload, dict) else {}
+    _set_live_state_cache("noaa_aurora", "frames", result)
+    return result
 
 
 def _snapshot_to_geojson(snapshot: dict) -> dict | None:
@@ -3113,7 +3141,7 @@ def _feed_display_name(feed: str) -> str:
         "volcanoes": "volcanoes",
         "currency": "currencies",
         "usa_nws_alerts": "NWS alerts",
-        "noaa_aurora": "aurora forecast cells",
+        "noaa_aurora": "aurora model cells",
         "noaa_swpc": "space weather alerts",
     }
     return names.get(feed, feed.replace("_", " "))
@@ -3128,7 +3156,7 @@ def _feed_singular_label(feed: str) -> str:
         "volcanoes": "volcano event",
         "currency": "currency rate",
         "usa_nws_alerts": "NWS alert",
-        "noaa_aurora": "aurora forecast cell",
+        "noaa_aurora": "aurora model cell",
         "noaa_swpc": "space weather alert",
     }
     return names.get(feed, feed.replace("_", " "))
@@ -3194,7 +3222,7 @@ def _history_count_noun(feed: str) -> str:
         "currency": "currency rates",
         "noaa_swpc": "space weather alerts",
         "usa_nws_alerts": "NWS alerts",
-        "noaa_aurora": "aurora forecast cells",
+        "noaa_aurora": "aurora model cells",
     }
     return nouns.get(feed, _feed_display_name(feed))
 
@@ -3659,7 +3687,7 @@ def _active_count_for_feed(feed: str, summary: dict, query_text: str) -> tuple[i
         return (int(value), "NWS alerts") if value is not None else (None, None)
     if feed == "noaa_aurora":
         value = summary.get("visible_cell_count")
-        return (int(value), "aurora forecast cells") if value is not None else (None, None)
+        return (int(value), "aurora model cells") if value is not None else (None, None)
     for key in ("active_count", "ongoing_count", "storm_count", "event_count", "incident_count", "rate_count"):
         value = summary.get(key)
         if value is not None:
@@ -3902,18 +3930,18 @@ def _try_aurora_visibility_answer(*, effective_feeds: list[str], report: dict) -
     forecast_time = _format_ops_timestamp(summary.get("forecast_time")) or str(summary.get("forecast_time") or "").strip()
     if not visible:
         if forecast_time:
-            return f"The current aurora forecast does not show a visible band right now. Forecast time: {forecast_time}."
-        return "The current aurora forecast does not show a visible band right now."
+            return f"The latest aurora model frame does not show a visible band right now. Model time: {forecast_time}."
+        return "The latest aurora model frame does not show a visible band right now."
     probability_text = ""
     if max_probability not in (None, ""):
         probability_text = f" with peak probability around {max_probability}%"
     if band and forecast_time:
-        return f"The aurora is currently forecast to be visible {band}{probability_text}. Forecast time: {forecast_time}."
+        return f"The latest aurora model frame shows a visible band {band}{probability_text}. Model time: {forecast_time}."
     if band:
-        return f"The aurora is currently forecast to be visible {band}{probability_text}."
+        return f"The latest aurora model frame shows a visible band {band}{probability_text}."
     if forecast_time:
-        return f"The aurora is currently forecast to be visible{probability_text}. Forecast time: {forecast_time}."
-    return f"The aurora is currently forecast to be visible{probability_text}."
+        return f"The latest aurora model frame shows a visible band{probability_text}. Model time: {forecast_time}."
+    return f"The latest aurora model frame shows a visible band{probability_text}."
 
 
 def _focus_feed_from_query(

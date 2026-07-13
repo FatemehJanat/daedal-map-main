@@ -20,6 +20,7 @@ const LAYER_ID = 'aurora-heat';
 const STRONG_PROBABILITY_THRESHOLD = 50;
 const SHIMMER_CYCLE_MS = 2_400;
 const SHIMMER_FRAME_INTERVAL_MS = 80;
+const HISTORY_FRAME_MS = 1000 / 30;
 
 let MapAdapter = null;
 
@@ -28,6 +29,9 @@ export const AuroraOverlay = {
   enabled: false,
   pollTimer: null,
   shimmerFrame: null,
+  historyTimer: null,
+  historyFrames: [],
+  historyFrameIndex: 0,
   shimmerLastUpdatedAt: 0,
   lastCells: null,
   lastDisplayCells: null,
@@ -54,18 +58,24 @@ export const AuroraOverlay = {
     this.enabled = Boolean(on);
     if (this.enabled) {
       await this._refresh();
+      await this._refreshHistory();
       this._startPolling();
-      this._startShimmer();
+      this._startAnimation();
     } else {
       this._stopPolling();
       this._stopShimmer();
+      this._stopHistoryPlayback();
       this._removeLayer();
     }
   },
 
   _startPolling() {
     this._stopPolling();
-    this.pollTimer = setInterval(() => this._refresh(), POLL_INTERVAL_MS);
+    this.pollTimer = setInterval(async () => {
+      await this._refresh();
+      await this._refreshHistory();
+      this._startAnimation();
+    }, POLL_INTERVAL_MS);
   },
 
   _stopPolling() {
@@ -213,7 +223,58 @@ export const AuroraOverlay = {
       if (map.getLayer(LAYER_ID)) map.removeLayer(LAYER_ID);
       if (map.getSource(SRC_ID)) map.removeSource(SRC_ID);
     } catch (e) { /* style may be mid-reload; ignore */ }
-  }
+  },
+
+  _startAnimation() {
+    this._stopShimmer();
+    this._stopHistoryPlayback();
+    if (this.historyFrames.length >= 2) this._startHistoryPlayback();
+    else this._startShimmer();
+  },
+
+  async _refreshHistory() {
+    try {
+      const payload = await fetchMsgpack('/api/ops/aurora/frames');
+      const frames = Array.isArray(payload?.frames) ? payload.frames : [];
+      this.historyFrames = frames.map((frame) => this._decodeHistoryFrame(frame)).filter(Boolean);
+      this.historyFrameIndex = Math.max(0, this.historyFrames.length - 1);
+    } catch (err) {
+      console.warn('AuroraOverlay: history refresh failed', err);
+      this.historyFrames = [];
+    }
+  },
+
+  _decodeHistoryFrame(frame) {
+    const encoded = typeof frame?.cells_b64 === 'string' ? frame.cells_b64 : '';
+    if (!encoded) return null;
+    try {
+      const bytes = Uint8Array.from(atob(encoded), (char) => char.charCodeAt(0));
+      if (bytes.length % 3) return null;
+      const cells = [];
+      for (let offset = 0; offset < bytes.length; offset += 3) {
+        const id = (bytes[offset] << 8) | bytes[offset + 1];
+        const lat = Math.floor(id / 360) - 90;
+        const lon = id % 360;
+        cells.push([lon, lat, bytes[offset + 2]]);
+      }
+      return cells;
+    } catch (_) { return null; }
+  },
+
+  _startHistoryPlayback() {
+    if (this.historyTimer || this.historyFrames.length < 2) return;
+    this.historyFrameIndex = 0;
+    this.historyTimer = setInterval(() => {
+      if (!this.enabled || this.historyFrames.length < 2) return;
+      this._render(this._selectDisplayCells(this.historyFrames[this.historyFrameIndex]));
+      this.historyFrameIndex = (this.historyFrameIndex + 1) % this.historyFrames.length;
+    }, HISTORY_FRAME_MS);
+  },
+
+  _stopHistoryPlayback() {
+    if (this.historyTimer) clearInterval(this.historyTimer);
+    this.historyTimer = null;
+  },
 };
 
 export default AuroraOverlay;

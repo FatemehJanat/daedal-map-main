@@ -543,7 +543,7 @@ function buildCategoriesFromTree(overlayTree) {
   // Add or extend climate overlays. Some catalogs now provide a Climate
   // category, so merge instead of blindly appending a duplicate section.
   const hardcodedClimateOverlays = [
-    { id: 'aurora', label: 'Aurora', description: 'Live aurora forecast', default: false, locked: false, model: 'aurora', icon: 'A', hasYearFilter: false, live: true },
+    { id: 'aurora', label: 'Aurora', description: 'Live aurora conditions', default: false, locked: false, model: 'aurora', icon: 'A', hasYearFilter: false, live: true },
     { id: 'buoys', label: 'Ocean Buoys', description: 'Live NDBC buoy readings (sea temp, wind, waves)', default: false, locked: false, model: 'buoys', icon: 'B', hasYearFilter: false, live: true },
     {
       id: 'ocean-sst-grid',

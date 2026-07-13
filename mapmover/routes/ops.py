@@ -15,6 +15,7 @@ from mapmover.ops_route_runtime import (
 )
 from mapmover.ops_ticker import (
     build_cached_aurora_payload,
+    build_cached_aurora_frames_payload,
     build_cached_nws_alerts_payload,
     build_cached_ticker_payload,
 )
@@ -66,15 +67,25 @@ async def ops_ticker_endpoint(req: Request):
 
 @router.get("/api/ops/aurora")
 async def ops_aurora_endpoint(req: Request):
-    """Current OVATION aurora forecast band for the map overlay. Public, read-only.
+    """Latest OVATION aurora model band for the map overlay. Public, read-only.
 
     Returns the renderable cells [[lon, lat, probability], ...] plus the forecast
-    times, straight from the noaa_aurora live snapshot.
+    timestamps, straight from the noaa_aurora live snapshot.
     """
     try:
         return msgpack_response(build_cached_aurora_payload())
     except Exception as exc:
         logger.exception("Ops aurora error")
+        return msgpack_error(str(exc), 500)
+
+
+@router.get("/api/ops/aurora/frames")
+async def ops_aurora_frames_endpoint(req: Request):
+    """Rolling, compact Aurora model frames for the real-history loop."""
+    try:
+        return msgpack_response(build_cached_aurora_frames_payload())
+    except Exception as exc:
+        logger.exception("Ops aurora frame history error")
         return msgpack_error(str(exc), 500)
 
 

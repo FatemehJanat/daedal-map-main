@@ -1516,12 +1516,12 @@ export const OverlayController = {
       case 'aurora': {
         const stats = AuroraOverlay?.getDisplayStats?.() || {};
         if (!Number.isFinite(stats?.snapshotCount) || stats.snapshotCount <= 0) {
-          return 'Aurora feed active now, but no visible aurora cells are in the current forecast. Ask chat to summarize tonight\'s outlook or focus on one region.';
+          return 'Aurora feed active now, but no visible aurora cells are in the latest model frame. Ask chat to summarize current conditions or focus on one region.';
         }
         if (stats?.usingStrongBand && Number.isFinite(stats?.visibleCount) && stats.visibleCount < stats.snapshotCount) {
-          return `Aurora feed active now. There are ${stats.snapshotCount.toLocaleString()} visible forecast cells in the current snapshot. Showing ${stats.visibleCount.toLocaleString()} cells at ${stats.filterDescription} first for readability. Ask chat to widen the band, focus on North America, or summarize tonight's outlook.`;
+          return `Aurora feed active now. There are ${stats.snapshotCount.toLocaleString()} visible cells in the latest model frame. Showing ${stats.visibleCount.toLocaleString()} cells at ${stats.filterDescription} first for readability. Ask chat to widen the band, focus on North America, or summarize current conditions.`;
         }
-        return `Aurora feed active now. Showing ${stats.snapshotCount.toLocaleString()} visible forecast cells from the current outlook. Ask chat to focus on North America or summarize tonight's outlook.`;
+        return `Aurora feed active now. Showing ${stats.snapshotCount.toLocaleString()} visible cells from the latest model frame. Ask chat to focus on North America or summarize current conditions.`;
       }
       case 'ocean-sst-grid': {
         const gridDate = String(compactSummary?.grid_date || '').trim();

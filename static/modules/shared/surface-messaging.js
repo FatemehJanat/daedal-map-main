@@ -145,11 +145,11 @@ export const SURFACE_MESSAGE_PROFILES = {
   },
   aurora: {
     label: 'Aurora',
-    singular: 'aurora forecast cell',
-    plural: 'aurora forecast cells',
-    exploreActiveDescription: 'aurora forecast cells',
-    exploreHints: 'Ask chat to focus on a region or summarize the outlook.',
-    exploreExamples: ['focus on North America aurora', 'summarize tonight\'s outlook'],
+    singular: 'aurora model cell',
+    plural: 'aurora model cells',
+    exploreActiveDescription: 'aurora conditions',
+    exploreHints: 'Ask chat to focus on a region or summarize current conditions.',
+    exploreExamples: ['focus on North America aurora', 'summarize current aurora conditions'],
   },
   buoys: {
     label: 'Ocean Buoys',
