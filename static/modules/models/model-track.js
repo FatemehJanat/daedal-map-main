@@ -351,6 +351,24 @@ export const TrackModel = {
     });
 
     map.addLayer({
+      // Keep the agency probability circles fully absent from the normal map.
+      // They are intentional hover context, not a second forecast display.
+      id: CONFIG.layers.hurricaneCircle + '-forecast-probability-hover',
+      type: 'fill',
+      source: CONFIG.layers.hurricaneSource,
+      filter: ['all',
+        ['match', ['geometry-type'], ['Polygon', 'MultiPolygon'], true, false],
+        ['==', ['get', 'track_kind'], 'forecast_uncertainty'],
+        ['==', ['get', 'storm_id'], '']
+      ],
+      paint: {
+        'fill-color': categoryColorExpr,
+        'fill-opacity': 0.06,
+        'fill-outline-color': categoryColorExpr
+      }
+    });
+
+    map.addLayer({
       id: CONFIG.layers.hurricaneCircle + '-forecast-cones-hover',
       type: 'fill',
       source: CONFIG.layers.hurricaneSource,
@@ -480,6 +498,10 @@ export const TrackModel = {
       id: CONFIG.layers.hurricaneCircle + '-glow',
       type: 'line',
       source: CONFIG.layers.hurricaneSource,
+      // Do not let the generic track glow render polygon boundaries.  That
+      // leaked hidden JMA probability circles and the corridor's closing
+      // diameter bars into the normal, non-hover state.
+      filter: ['==', ['geometry-type'], 'LineString'],
       layout: {
         'line-cap': 'round',
         'line-join': 'round'
@@ -552,11 +574,14 @@ export const TrackModel = {
     });
 
     const clearForecastHover = () => {
-      const layerId = CONFIG.layers.hurricaneCircle + '-forecast-cones-hover';
-      if (map.getLayer(layerId)) {
+      for (const [layerId, trackKind] of [
+        [CONFIG.layers.hurricaneCircle + '-forecast-probability-hover', 'forecast_uncertainty'],
+        [CONFIG.layers.hurricaneCircle + '-forecast-cones-hover', 'forecast_uncertainty_envelope']
+      ]) {
+        if (!map.getLayer(layerId)) continue;
         map.setFilter(layerId, ['all',
           ['match', ['geometry-type'], ['Polygon', 'MultiPolygon'], true, false],
-          ['==', ['get', 'track_kind'], 'forecast_uncertainty_envelope'],
+          ['==', ['get', 'track_kind'], trackKind],
           ['==', ['get', 'storm_id'], '']
         ]);
       }
@@ -564,11 +589,15 @@ export const TrackModel = {
     map.on('mouseenter', CONFIG.layers.hurricaneCircle + '-forecast-lines', (e) => {
       map.getCanvas().style.cursor = 'pointer';
       const stormId = String(e.features?.[0]?.properties?.storm_id || '');
-      const layerId = CONFIG.layers.hurricaneCircle + '-forecast-cones-hover';
-      if (stormId && map.getLayer(layerId)) {
+      if (!stormId) return;
+      for (const [layerId, trackKind] of [
+        [CONFIG.layers.hurricaneCircle + '-forecast-probability-hover', 'forecast_uncertainty'],
+        [CONFIG.layers.hurricaneCircle + '-forecast-cones-hover', 'forecast_uncertainty_envelope']
+      ]) {
+        if (!map.getLayer(layerId)) continue;
         map.setFilter(layerId, ['all',
           ['match', ['geometry-type'], ['Polygon', 'MultiPolygon'], true, false],
-          ['==', ['get', 'track_kind'], 'forecast_uncertainty_envelope'],
+          ['==', ['get', 'track_kind'], trackKind],
           ['==', ['get', 'storm_id'], stormId]
         ]);
       }
@@ -796,6 +825,7 @@ export const TrackModel = {
         CONFIG.layers.hurricaneCircle + '-lines',
         CONFIG.layers.hurricaneCircle + '-lines-hit',
         CONFIG.layers.hurricaneCircle + '-forecast-lines',
+        CONFIG.layers.hurricaneCircle + '-forecast-probability-hover',
         CONFIG.layers.hurricaneCircle + '-forecast-cones-hover',
         CONFIG.layers.hurricaneCircle + '-forecast-uncertainty-outline',
         CONFIG.layers.hurricaneCircle + '-current'
@@ -1009,6 +1039,7 @@ export const TrackModel = {
       CONFIG.layers.hurricaneCircle + '-lines-hit',
       CONFIG.layers.hurricaneCircle + '-forecast-lines',
       CONFIG.layers.hurricaneCircle + '-forecast-cones',
+      CONFIG.layers.hurricaneCircle + '-forecast-probability-hover',
       CONFIG.layers.hurricaneCircle + '-forecast-cones-hover',
       CONFIG.layers.hurricaneCircle + '-forecast-uncertainty-outline',
       CONFIG.layers.hurricaneCircle + '-current'
