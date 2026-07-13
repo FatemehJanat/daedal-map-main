@@ -363,7 +363,7 @@ export const TrackModel = {
       ],
       paint: {
         'fill-color': categoryColorExpr,
-        'fill-opacity': 0.06,
+        'fill-opacity': 0.072,
         'fill-outline-color': categoryColorExpr
       }
     });
@@ -379,7 +379,7 @@ export const TrackModel = {
       ],
       paint: {
         'fill-color': categoryColorExpr,
-        'fill-opacity': 0.10
+        'fill-opacity': 0.12
       }
     });
 
@@ -586,9 +586,7 @@ export const TrackModel = {
         ]);
       }
     };
-    map.on('mouseenter', CONFIG.layers.hurricaneCircle + '-forecast-lines', (e) => {
-      map.getCanvas().style.cursor = 'pointer';
-      const stormId = String(e.features?.[0]?.properties?.storm_id || '');
+    const showForecastHover = (stormId) => {
       if (!stormId) return;
       for (const [layerId, trackKind] of [
         [CONFIG.layers.hurricaneCircle + '-forecast-probability-hover', 'forecast_uncertainty'],
@@ -601,10 +599,14 @@ export const TrackModel = {
           ['==', ['get', 'storm_id'], stormId]
         ]);
       }
+    };
+    map.on('mouseenter', CONFIG.layers.hurricaneCircle + '-forecast-lines', (e) => {
+      map.getCanvas().style.cursor = 'pointer';
+      const stormId = String(e.features?.[0]?.properties?.storm_id || '');
+      showForecastHover(stormId);
     });
     map.on('mouseleave', CONFIG.layers.hurricaneCircle + '-forecast-lines', () => {
       map.getCanvas().style.cursor = '';
-      clearForecastHover();
     });
     map.on('mouseleave', CONFIG.layers.hurricaneCircle + '-lines', () => {
       map.getCanvas().style.cursor = '';
@@ -639,11 +641,16 @@ export const TrackModel = {
         MapAdapter.showPopup([e.lngLat.lng, e.lngLat.lat], html);
       }
     });
-    map.on('mouseenter', CONFIG.layers.hurricaneCircle + '-lines-hit', () => {
+    map.on('mouseenter', CONFIG.layers.hurricaneCircle + '-lines-hit', (e) => {
       map.getCanvas().style.cursor = 'pointer';
+      // The wide hit strip is also the hover contract for popup and forecast
+      // context.  It covers the full observed + forecast trail, rather than
+      // requiring a user to land exactly on a thin dotted segment.
+      showForecastHover(String(e.features?.[0]?.properties?.storm_id || ''));
     });
     map.on('mouseleave', CONFIG.layers.hurricaneCircle + '-lines-hit', () => {
       map.getCanvas().style.cursor = '';
+      clearForecastHover();
       if (!MapAdapter.popupLocked) {
         MapAdapter.hidePopup();
       }
