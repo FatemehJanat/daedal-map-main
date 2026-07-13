@@ -18,6 +18,8 @@ const POLL_INTERVAL_MS = 5 * 60_000;
 const SRC_ID = 'aurora-src';
 const LAYER_ID = 'aurora-heat';
 const STRONG_PROBABILITY_THRESHOLD = 50;
+const SHIMMER_CYCLE_MS = 2_400;
+const SHIMMER_FRAME_INTERVAL_MS = 80;
 
 let MapAdapter = null;
 
@@ -25,6 +27,8 @@ export const AuroraOverlay = {
   initialized: false,
   enabled: false,
   pollTimer: null,
+  shimmerFrame: null,
+  shimmerLastUpdatedAt: 0,
   lastCells: null,
   lastDisplayCells: null,
   lastPayload: null,
@@ -51,8 +55,10 @@ export const AuroraOverlay = {
     if (this.enabled) {
       await this._refresh();
       this._startPolling();
+      this._startShimmer();
     } else {
       this._stopPolling();
+      this._stopShimmer();
       this._removeLayer();
     }
   },
@@ -67,6 +73,43 @@ export const AuroraOverlay = {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
+  },
+
+  // This is deliberately a presentation effect on ONE real OVATION issuance,
+  // not a time animation. A real Ops time control needs retained snapshots or
+  // multiple upstream forecast steps before it can animate across time.
+  _startShimmer() {
+    if (this.shimmerFrame) return;
+    const tick = (timestamp) => {
+      if (!this.enabled) {
+        this.shimmerFrame = null;
+        return;
+      }
+      if (timestamp - this.shimmerLastUpdatedAt >= SHIMMER_FRAME_INTERVAL_MS) {
+        this.shimmerLastUpdatedAt = timestamp;
+        const map = MapAdapter?.map;
+        if (map?.getLayer(LAYER_ID)) {
+          const phase = (timestamp % SHIMMER_CYCLE_MS) / SHIMMER_CYCLE_MS;
+          const pulse = (Math.sin(phase * Math.PI * 2) + 1) / 2;
+          // Keep the shift restrained so intensity means the NOAA probability
+          // field, while the live map still feels luminous rather than static.
+          map.setPaintProperty(LAYER_ID, 'heatmap-opacity', 0.66 + (pulse * 0.14));
+          map.setPaintProperty(LAYER_ID, 'heatmap-intensity', [
+            'interpolate', ['linear'], ['zoom'],
+            0, 1.1 + (pulse * 0.18),
+            5, 2.0 + (pulse * 0.2),
+          ]);
+        }
+      }
+      this.shimmerFrame = requestAnimationFrame(tick);
+    };
+    this.shimmerFrame = requestAnimationFrame(tick);
+  },
+
+  _stopShimmer() {
+    if (this.shimmerFrame) cancelAnimationFrame(this.shimmerFrame);
+    this.shimmerFrame = null;
+    this.shimmerLastUpdatedAt = 0;
   },
 
   async _refresh() {
@@ -152,10 +195,12 @@ export const AuroraOverlay = {
         'heatmap-color': [
           'interpolate', ['linear'], ['heatmap-density'],
           0, 'rgba(0,0,0,0)',
-          0.2, 'rgba(20,120,70,0.45)',
-          0.45, 'rgba(0,210,130,0.65)',
-          0.7, 'rgba(140,255,190,0.85)',
-          1, 'rgba(225,255,235,0.95)'
+          0.12, 'rgba(79,70,229,0.32)',
+          0.28, 'rgba(37,99,235,0.5)',
+          0.45, 'rgba(6,182,212,0.66)',
+          0.64, 'rgba(16,185,129,0.78)',
+          0.82, 'rgba(190,242,100,0.9)',
+          1, 'rgba(255,248,190,0.98)'
         ]
       }
     });

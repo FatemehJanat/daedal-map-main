@@ -22,6 +22,7 @@ from mapmover.routes.disasters.related import _classify_exact_event_identifier
 from mapmover.runtime.loc_id_resolution import resolve_point_to_loc_id_stack
 from mapmover.runtime.preprocess_user_intents import normalize_query_for_location_matching
 from mapmover.runtime_config import get_runtime_config
+from mapmover.paths import DATA_ROOT
 
 try:
     import boto3
@@ -385,6 +386,33 @@ def _read_json_object(relative_key: str) -> dict | None:
         return None
 
 
+def _read_local_live_state_snapshot(collector: str) -> dict | None:
+    """Use the collector artifact only for a local runtime when cloud state misses.
+
+    Hosted Ops must read the published object-store state.  This fallback lets a
+    local developer verify a freshly collected snapshot without first publishing
+    it, while preserving that cloud-first contract whenever runtime state exists.
+    """
+    runtime_mode = str(get_runtime_config().get("runtime_mode", "local")).strip().lower()
+    if runtime_mode != "local" or not re.fullmatch(r"[A-Za-z0-9_-]+", collector):
+        return None
+    path = DATA_ROOT / "live_state" / "collectors" / collector / "snapshot.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _is_live_state_snapshot(payload: object) -> bool:
+    """Reject empty relay/object responses before they mask a usable fallback."""
+    return (
+        isinstance(payload, dict)
+        and bool(payload.get("collector"))
+        and isinstance(payload.get("payload_summary"), dict)
+    )
+
+
 def _read_jsonl_object(relative_key: str) -> list[dict]:
     client = _build_object_store_client()
     if client is None:
@@ -489,10 +517,10 @@ def load_current_state_snapshot(collector_name: str) -> dict | None:
     if not collector:
         return None
     if collector == HURRICANE_LIVE_FEED:
-        children = [
-            load_current_state_snapshot(name)
-            for name in HURRICANE_OPS_COLLECTORS
-        ]
+        # Each authority is an independent runtime read. Loading them together
+        # avoids turning four site-fallback timeouts into a serial startup cost.
+        with ThreadPoolExecutor(max_workers=len(HURRICANE_OPS_COLLECTORS)) as executor:
+            children = list(executor.map(load_current_state_snapshot, HURRICANE_OPS_COLLECTORS))
         children = [item for item in children if isinstance(item, dict)]
         if not children:
             return None
@@ -610,18 +638,23 @@ def load_current_state_snapshot(collector_name: str) -> dict | None:
             "ops_default_load": "history",
         }
     cached = _get_live_state_cache(collector, "snapshot")
-    if isinstance(cached, dict):
+    if _is_live_state_snapshot(cached):
         _set_live_state_status(collector, "snapshot", "cache")
         return cached
     snapshot = _read_json_object(f"{collector}/snapshot.json")
-    if isinstance(snapshot, dict):
+    if _is_live_state_snapshot(snapshot):
         _set_live_state_cache(collector, "snapshot", snapshot)
         _set_live_state_status(collector, "snapshot", "cloud")
         return snapshot
     snapshot = _fetch_live_state_via_site(collector, "snapshot")
-    if isinstance(snapshot, dict):
+    if _is_live_state_snapshot(snapshot):
         _set_live_state_cache(collector, "snapshot", snapshot)
         _set_live_state_status(collector, "snapshot", "site_fallback")
+        return snapshot
+    snapshot = _read_local_live_state_snapshot(collector)
+    if _is_live_state_snapshot(snapshot):
+        _set_live_state_cache(collector, "snapshot", snapshot)
+        _set_live_state_status(collector, "snapshot", "local_fallback")
         return snapshot
     _set_live_state_status(
         collector,
@@ -636,9 +669,11 @@ def load_current_state_history(collector_name: str, limit: int | None = None) ->
     if not collector:
         return []
     if collector == HURRICANE_LIVE_FEED:
-        merged = []
-        for name in HURRICANE_OPS_COLLECTORS:
-            merged.extend(load_current_state_history(name))
+        # Keep the merged response deterministic below, but fetch the four
+        # independent authority histories concurrently.
+        with ThreadPoolExecutor(max_workers=len(HURRICANE_OPS_COLLECTORS)) as executor:
+            child_histories = list(executor.map(load_current_state_history, HURRICANE_OPS_COLLECTORS))
+        merged = [entry for entries in child_histories for entry in entries]
         merged.sort(key=lambda item: str(
             item.get("published_at")
             or item.get("last_changed_at")
