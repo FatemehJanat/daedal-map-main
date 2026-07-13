@@ -95,7 +95,19 @@ def _hurricane_source_priority_for_storm(storm: dict, source: object | None = No
 
 
 def _hurricane_candidate_time(candidate: dict) -> datetime:
-    return _parse_iso_datetime(candidate.get("issued_at") or candidate.get("valid_from")) or datetime.min.replace(tzinfo=timezone.utc)
+    """Return the advisory time that best describes a candidate's live fix.
+
+    Collectors do not all populate ``issued_at`` consistently.  A current
+    position timestamp is therefore the most dependable freshness signal;
+    using only issuance time made an older preferred-basin source win over a
+    newer usable advisory (and could select an otherwise unrenderable one).
+    """
+    current = candidate.get("current_position") if isinstance(candidate.get("current_position"), dict) else {}
+    return (
+        _parse_iso_datetime(current.get("timestamp") or current.get("valid_at") or current.get("time"))
+        or _parse_iso_datetime(candidate.get("issued_at") or candidate.get("valid_from"))
+        or datetime.min.replace(tzinfo=timezone.utc)
+    )
 
 
 def _hurricane_has_position(candidate: dict) -> bool:
@@ -116,15 +128,20 @@ def _compose_hurricane_candidates(storm: dict) -> dict:
     candidates = [item for item in (storm.get("source_candidates") or {}).values() if isinstance(item, dict)]
     if not candidates:
         return storm
-    def rank(candidate: dict) -> tuple[int, datetime]:
-        return (_hurricane_source_priority_for_storm(storm, candidate.get("source")), _hurricane_candidate_time(candidate))
+    def rank(candidate: dict) -> tuple[datetime, int]:
+        # Freshness is the safety check; basin authority breaks ties between
+        # contemporaneous advisories.  This avoids replacing a current JTWC
+        # fix with an older JMA/GDACS record merely because of its basin rank.
+        return (_hurricane_candidate_time(candidate), _hurricane_source_priority_for_storm(storm, candidate.get("source")))
     observed = max((item for item in candidates if _hurricane_has_position(item)), key=rank, default=None)
     forecast = max((item for item in candidates if _hurricane_has_forecast(item)), key=rank, default=None)
     selected = dict(observed or forecast or storm)
     if forecast:
         for field in ("forecast_points", "forecast_track", "uncertainty_geometry", "forecast_horizon_hours", "valid_through"):
             selected[field] = forecast.get(field)
-    selected["contributing_sources"] = sorted({str(item.get("source") or "").upper() for item in candidates if item.get("source")})
+    selected["contributing_sources"] = list(dict.fromkeys(
+        str(item.get("source") or "").upper() for item in candidates if item.get("source")
+    ))
     selected["selected_observed_source"] = str(observed.get("source") or "").upper() if observed else None
     selected["selected_forecast_source"] = str(forecast.get("source") or "").upper() if forecast else None
     selected["source_candidates"] = []
@@ -1247,7 +1264,11 @@ def _with_hurricane_history_tracks(snapshot: dict, entries: list[dict]) -> dict:
         # both produces the parallel/red "split" history seen near Shanghai.
         # The compositor already selected the authoritative observed source;
         # history must obey the same choice.
-        preferred_source = str(target.get("selected_observed_source") or target.get("source") or "").strip().upper()
+        # Only a live composited storm has an explicit source decision.  A
+        # retained-only historical storm has no such decision; locking it to
+        # the first collector would discard later, better fixes (for example
+        # GDACS first, then JTWC/JMA for Maysak).
+        preferred_source = str(target.get("selected_observed_source") or "").strip().upper()
         candidate_source = str(source or "").strip().upper()
         if preferred_source and candidate_source and candidate_source != preferred_source:
             return
