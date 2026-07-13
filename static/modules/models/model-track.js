@@ -144,6 +144,49 @@ export const TrackModel = {
     };
   },
 
+  _forecastCircleSummary(polygon) {
+    const ring = Array.isArray(polygon?.[0]) ? polygon[0] : [];
+    const points = ring.filter((point) => Array.isArray(point) && Number.isFinite(Number(point[0])) && Number.isFinite(Number(point[1])));
+    if (points.length < 4) return null;
+    const count = points.length - 1;
+    const lon = points.slice(0, count).reduce((sum, point) => sum + Number(point[0]), 0) / count;
+    const lat = points.slice(0, count).reduce((sum, point) => sum + Number(point[1]), 0) / count;
+    const lonScale = Math.max(0.2, Math.cos(lat * Math.PI / 180));
+    const radius = points.slice(0, count).reduce((sum, point) => sum + Math.hypot((Number(point[0]) - lon) * lonScale, Number(point[1]) - lat), 0) / count;
+    return radius > 0 ? { lon, lat, radius, lonScale } : null;
+  },
+
+  _withForecastProbabilityEnvelopes(geojson) {
+    const features = Array.isArray(geojson?.features) ? geojson.features : [];
+    const envelopes = [];
+    for (const feature of features) {
+      if (feature?.properties?.track_kind !== 'forecast_uncertainty' || feature?.geometry?.type !== 'MultiPolygon') continue;
+      const circles = feature.geometry.coordinates.map((polygon) => this._forecastCircleSummary(polygon)).filter(Boolean);
+      if (circles.length < 2) continue;
+      const left = [];
+      const right = [];
+      for (let index = 0; index < circles.length; index += 1) {
+        const current = circles[index];
+        const before = circles[Math.max(0, index - 1)];
+        const after = circles[Math.min(circles.length - 1, index + 1)];
+        const dx = (after.lon - before.lon) * current.lonScale;
+        const dy = after.lat - before.lat;
+        const length = Math.hypot(dx, dy) || 1;
+        const normalX = -dy / length;
+        const normalY = dx / length;
+        left.push([current.lon + (normalX * current.radius / current.lonScale), current.lat + (normalY * current.radius)]);
+        right.push([current.lon - (normalX * current.radius / current.lonScale), current.lat - (normalY * current.radius)]);
+      }
+      const ring = [...left, ...right.reverse(), left[0]];
+      envelopes.push({
+        type: 'Feature',
+        geometry: { type: 'Polygon', coordinates: [ring] },
+        properties: { ...feature.properties, track_kind: 'forecast_uncertainty_envelope', uncertainty_visual: 'interpolated_probability_corridor' }
+      });
+    }
+    return envelopes.length ? { ...geojson, features: [...features, ...envelopes] } : geojson;
+  },
+
   _windIntensityHaloRadiusExpr() {
     const windExpr = ['to-number', ['coalesce', ['get', 'wind_kt'], ['get', 'max_wind_kt'], 0]];
     const lowZoom = ['interpolate', ['linear'], windExpr, 0, 7, 34, 10, 64, 15, 96, 22, 137, 32];
@@ -238,7 +281,7 @@ export const TrackModel = {
     const map = MapAdapter.map;
 
     // Check if source already exists - if so, just update data (no flash)
-    const displayGeojson = this._withLiveWindFootprints(geojson);
+    const displayGeojson = this._withLiveWindFootprints(this._withForecastProbabilityEnvelopes(geojson));
     const existingSource = map.getSource(CONFIG.layers.hurricaneSource);
     if (existingSource) {
       // Source exists - just update data, don't recreate layers
@@ -302,7 +345,7 @@ export const TrackModel = {
         'fill-color': categoryColorExpr,
         // Probability geometry is supporting context, not the affected-wind
         // footprint. Actual r34/r50/r64 bands render above it when supplied.
-        'fill-opacity': 0.004,
+        'fill-opacity': 0,
         'fill-outline-color': 'transparent'
       }
     });
@@ -313,7 +356,7 @@ export const TrackModel = {
       source: CONFIG.layers.hurricaneSource,
       filter: ['all',
         ['match', ['geometry-type'], ['Polygon', 'MultiPolygon'], true, false],
-        ['==', ['get', 'track_kind'], 'forecast_uncertainty'],
+        ['==', ['get', 'track_kind'], 'forecast_uncertainty_envelope'],
         ['==', ['get', 'storm_id'], '']
       ],
       paint: {
@@ -333,7 +376,7 @@ export const TrackModel = {
       paint: {
         'line-color': categoryColorExpr,
         'line-width': 1,
-        'line-opacity': 0.05,
+        'line-opacity': 0,
         'line-dasharray': [1.5, 2]
       }
     });
@@ -513,7 +556,7 @@ export const TrackModel = {
       if (map.getLayer(layerId)) {
         map.setFilter(layerId, ['all',
           ['match', ['geometry-type'], ['Polygon', 'MultiPolygon'], true, false],
-          ['==', ['get', 'track_kind'], 'forecast_uncertainty'],
+          ['==', ['get', 'track_kind'], 'forecast_uncertainty_envelope'],
           ['==', ['get', 'storm_id'], '']
         ]);
       }
@@ -525,7 +568,7 @@ export const TrackModel = {
       if (stormId && map.getLayer(layerId)) {
         map.setFilter(layerId, ['all',
           ['match', ['geometry-type'], ['Polygon', 'MultiPolygon'], true, false],
-          ['==', ['get', 'track_kind'], 'forecast_uncertainty'],
+          ['==', ['get', 'track_kind'], 'forecast_uncertainty_envelope'],
           ['==', ['get', 'storm_id'], stormId]
         ]);
       }
