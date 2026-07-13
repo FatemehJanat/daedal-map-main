@@ -298,8 +298,26 @@ export const TrackModel = {
       ],
       paint: {
         'fill-color': categoryColorExpr,
-        'fill-opacity': 0.13,
+        // Probability geometry is supporting context, not the affected-wind
+        // footprint. Actual r34/r50/r64 bands render above it when supplied.
+        'fill-opacity': 0.045,
         'fill-outline-color': categoryColorExpr
+      }
+    });
+
+    map.addLayer({
+      id: CONFIG.layers.hurricaneCircle + '-forecast-uncertainty-outline',
+      type: 'line',
+      source: CONFIG.layers.hurricaneSource,
+      filter: ['all',
+        ['match', ['geometry-type'], ['Polygon', 'MultiPolygon'], true, false],
+        ['==', ['get', 'track_kind'], 'forecast_uncertainty']
+      ],
+      paint: {
+        'line-color': categoryColorExpr,
+        'line-width': 1,
+        'line-opacity': 0.22,
+        'line-dasharray': [1.5, 2]
       }
     });
 
@@ -691,6 +709,7 @@ export const TrackModel = {
         CONFIG.layers.hurricaneCircle + '-lines',
         CONFIG.layers.hurricaneCircle + '-lines-hit',
         CONFIG.layers.hurricaneCircle + '-forecast-lines',
+        CONFIG.layers.hurricaneCircle + '-forecast-uncertainty-outline',
         CONFIG.layers.hurricaneCircle + '-current'
       ].filter((layerId) => map.getLayer(layerId));
       if (!layersToCheck.length) return;
@@ -902,6 +921,7 @@ export const TrackModel = {
       CONFIG.layers.hurricaneCircle + '-lines-hit',
       CONFIG.layers.hurricaneCircle + '-forecast-lines',
       CONFIG.layers.hurricaneCircle + '-forecast-cones',
+      CONFIG.layers.hurricaneCircle + '-forecast-uncertainty-outline',
       CONFIG.layers.hurricaneCircle + '-current'
     ];
 

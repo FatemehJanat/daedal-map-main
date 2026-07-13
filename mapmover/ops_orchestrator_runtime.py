@@ -93,6 +93,43 @@ def _hurricane_source_priority_for_storm(storm: dict, source: object | None = No
     source_key = str(source or storm.get("source") or "").strip().upper()
     return HURRICANE_BASIN_SOURCE_PRIORITY.get(basin, HURRICANE_SOURCE_PRIORITY).get(source_key, 0)
 
+
+def _hurricane_candidate_time(candidate: dict) -> datetime:
+    return _parse_iso_datetime(candidate.get("issued_at") or candidate.get("valid_from")) or datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _hurricane_has_position(candidate: dict) -> bool:
+    point = candidate.get("current_position") if isinstance(candidate.get("current_position"), dict) else {}
+    try:
+        float(point.get("latitude")); float(point.get("longitude"))
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def _hurricane_has_forecast(candidate: dict) -> bool:
+    return bool(candidate.get("forecast_points") or candidate.get("forecast_track"))
+
+
+def _compose_hurricane_candidates(storm: dict) -> dict:
+    """Choose one observed and one forecast authority for a canonical storm."""
+    candidates = [item for item in (storm.get("source_candidates") or {}).values() if isinstance(item, dict)]
+    if not candidates:
+        return storm
+    def rank(candidate: dict) -> tuple[int, datetime]:
+        return (_hurricane_source_priority_for_storm(storm, candidate.get("source")), _hurricane_candidate_time(candidate))
+    observed = max((item for item in candidates if _hurricane_has_position(item)), key=rank, default=None)
+    forecast = max((item for item in candidates if _hurricane_has_forecast(item)), key=rank, default=None)
+    selected = dict(observed or forecast or storm)
+    if forecast:
+        for field in ("forecast_points", "forecast_track", "uncertainty_geometry", "forecast_horizon_hours", "valid_through"):
+            selected[field] = forecast.get(field)
+    selected["contributing_sources"] = sorted({str(item.get("source") or "").upper() for item in candidates if item.get("source")})
+    selected["selected_observed_source"] = str(observed.get("source") or "").upper() if observed else None
+    selected["selected_forecast_source"] = str(forecast.get("source") or "").upper() if forecast else None
+    selected["source_candidates"] = []
+    return selected
+
 FEED_ALIASES = {
     "earthquakes": ("earthquake", "earthquakes", "quake", "quakes", "seismic"),
     "currency": ("currency", "currencies", "fx", "exchange rate", "exchange rates", "usd"),
@@ -471,6 +508,7 @@ def load_current_state_snapshot(collector_name: str) -> dict | None:
                     normalized["source_identities"] = {
                         source: identity
                     } if source and identity else {}
+                    normalized["source_candidates"] = {source: dict(item)} if source else {}
                     if source == "GDACS":
                         normalized["gdacs_alert"] = {
                             field: item.get(field)
@@ -496,14 +534,17 @@ def load_current_state_snapshot(collector_name: str) -> dict | None:
                     existing.setdefault("contributing_sources", []).append(source)
                 if source and identity:
                     existing.setdefault("source_identities", {})[source] = identity
+                if source:
+                    existing.setdefault("source_candidates", {})[source] = dict(item)
                 if HURRICANE_SOURCE_PRIORITY.get(source, 0) > HURRICANE_SOURCE_PRIORITY.get(existing_source, 0):
                     replacement = dict(item)
                     replacement["contributing_sources"] = existing.get("contributing_sources", [])
                     replacement["source_identities"] = existing.get("source_identities", {})
+                    replacement["source_candidates"] = existing.get("source_candidates", {})
                     if existing.get("gdacs_alert"):
                         replacement["gdacs_alert"] = existing["gdacs_alert"]
                     storms_by_key[key] = replacement
-        storms = list(storms_by_key.values())
+        storms = [_compose_hurricane_candidates(item) for item in storms_by_key.values()]
         hashes = [str(item.get("payload_hash") or "") for item in children]
         latest_checked = max(str(item.get("last_checked_at") or "") for item in children)
         latest_changed = max(str(item.get("last_changed_at") or "") for item in children)
@@ -853,6 +894,8 @@ def _build_live_hurricane_display_payload(snapshot: dict | None) -> dict | None:
             "name": storm.get("name"),
             "basin": storm.get("basin"),
             "source": storm.get("source"),
+            "selected_observed_source": storm.get("selected_observed_source"),
+            "selected_forecast_source": storm.get("selected_forecast_source"),
             "source_name": source_label(storm),
             "source_url": page_url or product_url,
             "source_page_url": page_url,
@@ -906,6 +949,10 @@ def _build_live_hurricane_display_payload(snapshot: dict | None) -> dict | None:
             "source_priority": _hurricane_source_priority_for_storm(storm),
         })
         forecast_coords = [coord for coord in (point_coord(point) for point in forecast_points) if coord]
+        if not forecast_coords:
+            raw_track = storm.get("forecast_track") if isinstance(storm.get("forecast_track"), dict) else {}
+            raw_coords = raw_track.get("coordinates") if raw_track.get("type") == "LineString" else []
+            forecast_coords = [coord for coord in raw_coords if isinstance(coord, list) and len(coord) >= 2]
         if not observed and not current_coord and not forecast_coords:
             continue
         storm_ids.add(storm_id)
