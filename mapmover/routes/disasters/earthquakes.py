@@ -17,6 +17,7 @@ from mapmover.duckdb_helpers import (
     parquet_columns,
     path_to_uri,
     run_df,
+    select_compatible_preload_slice,
     select_filtered_event_rows,
     select_filtered_event_rows_cached,
     select_linked_loc_ids,
@@ -265,20 +266,30 @@ async def get_earthquakes_geojson(
                 )
                 if not df.empty:
                     cache_set(ck, df)
-        elif (
-            start is not None and end is not None and limit is None
-            and loc_prefix is None and affected_loc_id is None
-            and is_default_preload_range(start, end)
-        ):
+        elif start is not None and end is not None and limit is None and loc_prefix is None and affected_loc_id is None:
             ck = make_preload_cache_key("earthquakes", min_magnitude=min_magnitude)
-            df = select_filtered_event_rows_cached(
-                events_path,
-                cache_key=ck,
-                permanent=True,
-                start=start,
-                end=end,
-                min_value_filters={"magnitude": min_magnitude} if min_magnitude is not None else None,
-            )
+            cached_slice = select_compatible_preload_slice(ck, start=start, end=end)
+            if cached_slice is not None:
+                df = cached_slice
+            elif is_default_preload_range(start, end):
+                df = select_filtered_event_rows_cached(
+                    events_path,
+                    cache_key=ck,
+                    permanent=True,
+                    start=start,
+                    end=end,
+                    min_value_filters={"magnitude": min_magnitude} if min_magnitude is not None else None,
+                )
+            else:
+                df = _load_earthquakes_duckdb(
+                    year=year,
+                    start=start,
+                    end=end,
+                    min_magnitude=min_magnitude,
+                    limit=limit,
+                    loc_prefix=loc_prefix,
+                    affected_loc_id=affected_loc_id,
+                )
         else:
             df = _load_earthquakes_duckdb(
                 year=year,

@@ -1044,6 +1044,54 @@ def make_preload_cache_key(source: str, **params) -> str:
     return make_cache_key(source, preset="preload_default_10_years", **params)
 
 
+def select_compatible_preload_slice(
+    cache_key: str,
+    *,
+    start: str | None = None,
+    end: str | None = None,
+    time_column: str = "timestamp",
+) -> pd.DataFrame | None:
+    """Return a narrower time slice from a compatible held preload DataFrame.
+
+    Callers must construct ``cache_key`` from the exact compatible source and
+    filter profile. This helper deliberately knows only time containment: it
+    must never treat a cache built with restrictive predicates as a response to
+    a broader query. ``None`` means no compatible held DataFrame is available;
+    an empty DataFrame means the compatible cache proved the requested interval
+    has no rows.
+    """
+    cached = cache_get(cache_key)
+    if cached is None:
+        return None
+    if start is None and end is None:
+        return cached.copy()
+    if time_column not in cached.columns:
+        return None
+
+    try:
+        timestamps = pd.to_datetime(cached[time_column], errors="coerce", utc=True)
+
+        def parse_bound(value: str | None):
+            if value is None:
+                return None
+            raw = str(value).strip()
+            if raw.lstrip("-").isdigit() and len(raw) > 10:
+                return pd.to_datetime(int(raw), unit="ms", utc=True)
+            return pd.to_datetime(raw, utc=True)
+
+        start_ts = parse_bound(start)
+        end_ts = parse_bound(end)
+        mask = timestamps.notna()
+        if start_ts is not None:
+            mask &= timestamps >= start_ts
+        if end_ts is not None:
+            mask &= timestamps <= end_ts
+        return cached.loc[mask].copy()
+    except Exception as exc:
+        logger.warning("Could not slice compatible preload cache %s: %s", cache_key, exc)
+        return None
+
+
 def select_filtered_event_rows_cached(
     parquet_path: Path,
     cache_key: str,
