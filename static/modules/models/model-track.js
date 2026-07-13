@@ -323,7 +323,7 @@ export const TrackModel = {
           5, 4,
           8, 5.5
         ],
-        'line-opacity': ['*', 0.95, lifecycleOpacity]
+        'line-opacity': ['*', ['coalesce', ['get', 'track_opacity'], 0.95], lifecycleOpacity]
       }
     });
 
@@ -347,7 +347,7 @@ export const TrackModel = {
           5, 4,
           8, 5.5
         ],
-        'line-opacity': ['*', 0.9, lifecycleOpacity],
+        'line-opacity': ['*', ['coalesce', ['get', 'track_opacity'], 0.9], lifecycleOpacity],
         'line-dasharray': [2, 2]
       }
     });
@@ -372,7 +372,7 @@ export const TrackModel = {
         'circle-color': categoryColorExpr,
         'circle-stroke-color': '#ffffff',
         'circle-stroke-width': 2,
-        'circle-opacity': 0.95
+        'circle-opacity': ['coalesce', ['get', 'track_opacity'], 0.95]
       }
     });
 

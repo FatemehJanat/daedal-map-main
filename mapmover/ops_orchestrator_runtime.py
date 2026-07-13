@@ -45,6 +45,18 @@ HURRICANE_LIVE_FEED = "hurricanes_live"
 HURRICANE_LEGACY_OPS_FEED = "hurricanes"
 HURRICANE_OPS_COLLECTORS = ("tc_nhc", "tc_gdacs", "tc_jtwc", "tc_jma")
 HURRICANE_SOURCE_PRIORITY = {"NHC": 50, "JTWC": 40, "JMA": 35, "GDACS": 10}
+# The advisory authority varies by basin.  GDACS deliberately remains context
+# only: it may identify an event, but it never wins an observed/forecast track
+# while a warning centre has a usable advisory.
+HURRICANE_BASIN_SOURCE_PRIORITY = {
+    "AL": {"NHC": 70, "JTWC": 35, "JMA": 20, "GDACS": 10},
+    "EP": {"NHC": 70, "JTWC": 35, "JMA": 20, "GDACS": 10},
+    "CP": {"NHC": 70, "JTWC": 40, "JMA": 20, "GDACS": 10},
+    "WP": {"JMA": 70, "JTWC": 65, "NHC": 20, "GDACS": 10},
+    "IO": {"JTWC": 70, "JMA": 25, "NHC": 20, "GDACS": 10},
+    "SH": {"JTWC": 70, "JMA": 30, "NHC": 20, "GDACS": 10},
+}
+HURRICANE_ACTIVE_FIX_MAX_AGE_HOURS = 18
 HURRICANE_SOURCE_PAGES = {
     "NHC": "https://www.nhc.noaa.gov/cyclones/",
     "GDACS": "https://www.gdacs.org/",
@@ -73,6 +85,13 @@ def _normalize_ops_feed_id(feed: object) -> str:
 
 def _is_hurricane_live_feed(feed: object) -> bool:
     return _normalize_ops_feed_id(feed) == HURRICANE_LIVE_FEED
+
+
+def _hurricane_source_priority_for_storm(storm: dict, source: object | None = None) -> int:
+    """Return the dynamic warning-centre preference for one storm/basin."""
+    basin = str(storm.get("basin") or "").strip().upper()
+    source_key = str(source or storm.get("source") or "").strip().upper()
+    return HURRICANE_BASIN_SOURCE_PRIORITY.get(basin, HURRICANE_SOURCE_PRIORITY).get(source_key, 0)
 
 FEED_ALIASES = {
     "earthquakes": ("earthquake", "earthquakes", "quake", "quakes", "seismic"),
@@ -866,6 +885,26 @@ def _build_live_hurricane_display_payload(snapshot: dict | None) -> dict | None:
         )
         if current_coord and current_is_latest_observed and (not observed or observed[-1] != current_coord):
             observed.append(current_coord)
+        last_observed_time = max(
+            [value for value in [*observed_times, current_time] if value is not None],
+            default=None,
+        )
+        age_hours = max(0.0, (now - last_observed_time).total_seconds() / 3600.0) if last_observed_time else None
+        is_active = bool(age_hours is not None and age_hours <= HURRICANE_ACTIVE_FIX_MAX_AGE_HOURS and not storm.get("retained_history_only"))
+        # Ended/recently inactive storms remain useful in Ops history, but take
+        # an immediate readability drop before slowly fading through retention.
+        if is_active:
+            track_opacity = 0.95
+        else:
+            fade_age = max(0.0, (age_hours or HURRICANE_ACTIVE_FIX_MAX_AGE_HOURS) - HURRICANE_ACTIVE_FIX_MAX_AGE_HOURS)
+            retention_hours = max(1.0, (now - history_cutoff).total_seconds() / 3600.0)
+            track_opacity = max(0.10, 0.65 * (1.0 - min(0.82, fade_age / retention_hours)))
+        base_props.update({
+            "track_state": "active" if is_active else "ended_recent",
+            "track_opacity": round(track_opacity, 3),
+            "last_observed_at": last_observed_time.isoformat() if last_observed_time else None,
+            "source_priority": _hurricane_source_priority_for_storm(storm),
+        })
         forecast_coords = [coord for coord in (point_coord(point) for point in forecast_points) if coord]
         if not observed and not current_coord and not forecast_coords:
             continue
@@ -890,7 +929,7 @@ def _build_live_hurricane_display_payload(snapshot: dict | None) -> dict | None:
                     "track_kind": "current",
                 },
             })
-        if forecast_coords:
+        if is_active and forecast_coords:
             coords = forecast_coords
             if current_coord and (not coords or coords[0] != current_coord):
                 coords = [current_coord, *coords]
@@ -905,7 +944,7 @@ def _build_live_hurricane_display_payload(snapshot: dict | None) -> dict | None:
                     },
                 })
         uncertainty = storm.get("uncertainty_geometry")
-        if forecast_coords and isinstance(uncertainty, dict) and uncertainty.get("type") in {"Polygon", "MultiPolygon"}:
+        if is_active and forecast_coords and isinstance(uncertainty, dict) and uncertainty.get("type") in {"Polygon", "MultiPolygon"}:
             features.append({
                 "type": "Feature",
                 "geometry": uncertainty,
@@ -1115,7 +1154,7 @@ def _with_hurricane_history_tracks(snapshot: dict, entries: list[dict]) -> dict:
             (current_by_key.get(key) for key in identity_keys(storm) if current_by_key.get(key)),
             None,
         )
-        source_priority = HURRICANE_SOURCE_PRIORITY.get(str(storm.get("source") or "").upper(), 0)
+        source_priority = _hurricane_source_priority_for_storm(storm)
         if target is None:
             target = dict(storm)
             if retained_only:
@@ -1157,7 +1196,7 @@ def _with_hurricane_history_tracks(snapshot: dict, entries: list[dict]) -> dict:
         if not storm_id:
             return
         storm_positions = positions.setdefault(storm_id, {})
-        priority = HURRICANE_SOURCE_PRIORITY.get(str(source or target.get("source") or "").upper(), 0)
+        priority = _hurricane_source_priority_for_storm(target, source)
         existing = storm_positions.get(timestamp)
         if existing and int(existing.get("_source_priority") or 0) > priority:
             return
