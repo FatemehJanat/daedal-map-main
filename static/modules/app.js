@@ -113,6 +113,27 @@ function uniqueStrings(values = []) {
   return result;
 }
 
+function resolveRollingShareTime(timeState = null) {
+  if (!timeState || typeof timeState !== 'object') return timeState;
+  const rawEnd = String(timeState.end || '').trim().toLowerCase();
+  if (rawEnd !== 'now' && rawEnd !== 'present') return timeState;
+  // Keep the URL token untouched, but use one concrete instant throughout this
+  // route application so loading and the slider agree on the same endpoint.
+  return {
+    ...timeState,
+    end: new Date().toISOString()
+  };
+}
+
+function resolveRollingShareState(shareState = null) {
+  if (!shareState || typeof shareState !== 'object') return shareState;
+  const resolvedTime = resolveRollingShareTime(shareState.time);
+  return resolvedTime === shareState.time ? shareState : {
+    ...shareState,
+    time: resolvedTime
+  };
+}
+
 function hideStartupChrome() {
   TimeSlider?.hide?.();
   TickerController?.hide?.();
@@ -1462,27 +1483,28 @@ export const App = {
 
   async applyShareState(shareState = null, options = {}) {
     if (!shareState || typeof shareState !== 'object') return false;
-    const lane = normalizeChatMapLane(options.lane || shareState.lane || ChatManager?.mode || this.currentCanvasMode);
-    const handledLoads = await ChatManager.applyShareStateLoads?.(shareState, {
+    const resolvedShareState = resolveRollingShareState(shareState);
+    const lane = normalizeChatMapLane(options.lane || resolvedShareState.lane || ChatManager?.mode || this.currentCanvasMode);
+    const handledLoads = await ChatManager.applyShareStateLoads?.(resolvedShareState, {
       mode: lane,
       syntheticSource: 'share_state'
     });
-    await this.reconcileShareStateOverlays(shareState.overlays || [], lane);
+    await this.reconcileShareStateOverlays(resolvedShareState.overlays || [], lane);
     const handledOverlayDefaults = handledLoads
       ? false
-      : await this.loadShareStateOverlayDefaults(shareState, lane);
-    if (lane === 'explore' && shareState.time) {
-      this.applyShareStateTime(shareState.time);
+      : await this.loadShareStateOverlayDefaults(resolvedShareState, lane);
+    if (lane === 'explore' && resolvedShareState.time) {
+      this.applyShareStateTime(resolvedShareState.time);
     }
-    this.applyRouteFocus(shareState.focus || null, {
-      preserveCamera: Boolean(shareState.camera)
+    this.applyRouteFocus(resolvedShareState.focus || null, {
+      preserveCamera: Boolean(resolvedShareState.camera)
     });
-    this.applyShareStateCamera(shareState.camera || null);
+    this.applyShareStateCamera(resolvedShareState.camera || null);
     return Boolean(
       handledLoads
       || handledOverlayDefaults
-      || shareState.focus
-      || (shareState.camera || shareState.time || (shareState.overlays || []).length)
+      || resolvedShareState.focus
+      || (resolvedShareState.camera || resolvedShareState.time || (resolvedShareState.overlays || []).length)
     );
   },
 
