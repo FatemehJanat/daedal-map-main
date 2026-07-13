@@ -1242,6 +1242,15 @@ def _with_hurricane_history_tracks(snapshot: dict, entries: list[dict]) -> dict:
         storm_id = str(target.get("storm_id") or "").strip()
         if not storm_id:
             return
+        # A canonical storm can have nearly simultaneous fixes from two
+        # warning centres.  Exact timestamps differ by minutes, so keeping
+        # both produces the parallel/red "split" history seen near Shanghai.
+        # The compositor already selected the authoritative observed source;
+        # history must obey the same choice.
+        preferred_source = str(target.get("selected_observed_source") or target.get("source") or "").strip().upper()
+        candidate_source = str(source or "").strip().upper()
+        if preferred_source and candidate_source and candidate_source != preferred_source:
+            return
         storm_positions = positions.setdefault(storm_id, {})
         priority = _hurricane_source_priority_for_storm(target, source)
         existing = storm_positions.get(timestamp)

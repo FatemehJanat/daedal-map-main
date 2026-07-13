@@ -300,7 +300,7 @@ export const TrackModel = {
         'fill-color': categoryColorExpr,
         // Probability geometry is supporting context, not the affected-wind
         // footprint. Actual r34/r50/r64 bands render above it when supplied.
-        'fill-opacity': 0.045,
+        'fill-opacity': 0.015,
         'fill-outline-color': categoryColorExpr
       }
     });
@@ -316,7 +316,7 @@ export const TrackModel = {
       paint: {
         'line-color': categoryColorExpr,
         'line-width': 1,
-        'line-opacity': 0.22,
+        'line-opacity': 0.14,
         'line-dasharray': [1.5, 2]
       }
     });
