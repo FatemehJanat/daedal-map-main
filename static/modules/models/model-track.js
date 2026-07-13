@@ -287,7 +287,9 @@ export const TrackModel = {
     // intensity.
     this._addLiveWindRadiiLayers(map);
 
-    // Add forecast cone polygons (colored by max category)
+    // JMA publishes discrete forecast probability circles. Keep them hidden
+    // by default; a hover-only soft fill makes their overlap read as one
+    // forecast corridor without claiming a mathematically exact union.
     map.addLayer({
       id: CONFIG.layers.hurricaneCircle + '-forecast-cones',
       type: 'fill',
@@ -300,8 +302,23 @@ export const TrackModel = {
         'fill-color': categoryColorExpr,
         // Probability geometry is supporting context, not the affected-wind
         // footprint. Actual r34/r50/r64 bands render above it when supplied.
-        'fill-opacity': 0.015,
-        'fill-outline-color': categoryColorExpr
+        'fill-opacity': 0.004,
+        'fill-outline-color': 'transparent'
+      }
+    });
+
+    map.addLayer({
+      id: CONFIG.layers.hurricaneCircle + '-forecast-cones-hover',
+      type: 'fill',
+      source: CONFIG.layers.hurricaneSource,
+      filter: ['all',
+        ['match', ['geometry-type'], ['Polygon', 'MultiPolygon'], true, false],
+        ['==', ['get', 'track_kind'], 'forecast_uncertainty'],
+        ['==', ['get', 'storm_id'], '']
+      ],
+      paint: {
+        'fill-color': categoryColorExpr,
+        'fill-opacity': 0.10
       }
     });
 
@@ -316,7 +333,7 @@ export const TrackModel = {
       paint: {
         'line-color': categoryColorExpr,
         'line-width': 1,
-        'line-opacity': 0.14,
+        'line-opacity': 0.05,
         'line-dasharray': [1.5, 2]
       }
     });
@@ -489,6 +506,33 @@ export const TrackModel = {
     // Hover cursor for lines
     map.on('mouseenter', CONFIG.layers.hurricaneCircle + '-lines', () => {
       map.getCanvas().style.cursor = 'pointer';
+    });
+
+    const clearForecastHover = () => {
+      const layerId = CONFIG.layers.hurricaneCircle + '-forecast-cones-hover';
+      if (map.getLayer(layerId)) {
+        map.setFilter(layerId, ['all',
+          ['match', ['geometry-type'], ['Polygon', 'MultiPolygon'], true, false],
+          ['==', ['get', 'track_kind'], 'forecast_uncertainty'],
+          ['==', ['get', 'storm_id'], '']
+        ]);
+      }
+    };
+    map.on('mouseenter', CONFIG.layers.hurricaneCircle + '-forecast-lines', (e) => {
+      map.getCanvas().style.cursor = 'pointer';
+      const stormId = String(e.features?.[0]?.properties?.storm_id || '');
+      const layerId = CONFIG.layers.hurricaneCircle + '-forecast-cones-hover';
+      if (stormId && map.getLayer(layerId)) {
+        map.setFilter(layerId, ['all',
+          ['match', ['geometry-type'], ['Polygon', 'MultiPolygon'], true, false],
+          ['==', ['get', 'track_kind'], 'forecast_uncertainty'],
+          ['==', ['get', 'storm_id'], stormId]
+        ]);
+      }
+    });
+    map.on('mouseleave', CONFIG.layers.hurricaneCircle + '-forecast-lines', () => {
+      map.getCanvas().style.cursor = '';
+      clearForecastHover();
     });
     map.on('mouseleave', CONFIG.layers.hurricaneCircle + '-lines', () => {
       map.getCanvas().style.cursor = '';
@@ -709,6 +753,7 @@ export const TrackModel = {
         CONFIG.layers.hurricaneCircle + '-lines',
         CONFIG.layers.hurricaneCircle + '-lines-hit',
         CONFIG.layers.hurricaneCircle + '-forecast-lines',
+        CONFIG.layers.hurricaneCircle + '-forecast-cones-hover',
         CONFIG.layers.hurricaneCircle + '-forecast-uncertainty-outline',
         CONFIG.layers.hurricaneCircle + '-current'
       ].filter((layerId) => map.getLayer(layerId));
@@ -921,6 +966,7 @@ export const TrackModel = {
       CONFIG.layers.hurricaneCircle + '-lines-hit',
       CONFIG.layers.hurricaneCircle + '-forecast-lines',
       CONFIG.layers.hurricaneCircle + '-forecast-cones',
+      CONFIG.layers.hurricaneCircle + '-forecast-cones-hover',
       CONFIG.layers.hurricaneCircle + '-forecast-uncertainty-outline',
       CONFIG.layers.hurricaneCircle + '-current'
     ];
