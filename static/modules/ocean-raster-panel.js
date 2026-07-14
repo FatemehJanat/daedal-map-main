@@ -1,5 +1,5 @@
 /**
- * Ocean Temp Grid control panel.
+ * Climate raster control panel.
  *
  * Self-contained floating panel (inline styles, no HTML/CSS dependency) wired to
  * OceanRasterModel: variable toggle (Temperature / Anomaly), opacity slider, and
@@ -15,7 +15,8 @@ export function setDependencies(deps) {
 }
 
 const PANEL_ID = 'ocean-raster-panel';
-const VAR_LABELS = { sst_c: 'Temperature', sst_anom_c: 'Anomaly' };
+const VAR_LABELS = { sst_c: 'Temperature', sst_anom_c: 'Anomaly', air_temperature_2m_c: 'Temperature', air_temperature_2m_anomaly_c: 'Anomaly' };
+const DATASET_LABELS = { 'ocean-sst-grid': 'Ocean temperature', 'land-temperature-grid': 'Land air temperature' };
 const VAR_UNIT = ' deg C';
 
 let _overlayId = null;
@@ -75,7 +76,7 @@ function _build() {
   const header = document.createElement('div');
   Object.assign(header.style, { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' });
   const title = document.createElement('div');
-  title.textContent = 'Ocean Temp Grid';
+  title.textContent = 'Climate Raster';
   Object.assign(title.style, { fontWeight: '600', fontSize: '13px' });
   const close = document.createElement('button');
   close.textContent = 'x';
@@ -86,6 +87,20 @@ function _build() {
   header.appendChild(close);
   panel.appendChild(header);
   _makeDraggable(panel, header);
+
+  const datasetRow = document.createElement('div');
+  Object.assign(datasetRow.style, { marginBottom: '10px' });
+  const datasetLabel = document.createElement('div'); datasetLabel.textContent = 'Dataset';
+  Object.assign(datasetLabel.style, { color: '#bcc', marginBottom: '4px' });
+  const datasetSelect = document.createElement('select');
+  datasetSelect.id = `${PANEL_ID}-dataset`;
+  Object.assign(datasetSelect.style, { width: '100%', background: '#252a33', color: '#e8eaed', border: '1px solid rgba(255,255,255,.15)', borderRadius: '5px', padding: '4px' });
+  datasetSelect.addEventListener('change', () => {
+    _overlayId = datasetSelect.value;
+    _renderVariables(panel); _renderLegend(panel);
+    _model.setFrameCallback?.(_overlayId, _updateFrameStamp);
+  });
+  datasetRow.appendChild(datasetLabel); datasetRow.appendChild(datasetSelect); panel.appendChild(datasetRow);
 
   // Variable toggle
   const varRow = document.createElement('div');
@@ -163,6 +178,18 @@ function _renderVariables(panel) {
   }
 }
 
+function _renderDatasets(panel) {
+  const select = panel.querySelector(`#${PANEL_ID}-dataset`);
+  if (!select) return;
+  select.innerHTML = '';
+  for (const id of _model.getInstanceIds()) {
+    const option = document.createElement('option');
+    option.value = id; option.textContent = DATASET_LABELS[id] || id;
+    option.selected = id === _overlayId;
+    select.appendChild(option);
+  }
+}
+
 function _formatFrameStamp(stampMs) {
   if (stampMs === null || stampMs === undefined || !Number.isFinite(stampMs)) {
     return 'No data at this time';
@@ -197,6 +224,7 @@ export const OceanRasterPanel = {
     if (!_model) return;
     _overlayId = overlayId;
     const panel = _build();
+    _renderDatasets(panel);
     _renderVariables(panel);
     const op = Math.round((_model.getOpacity(overlayId) ?? 0.6) * 100);
     const slider = panel.querySelector(`#${PANEL_ID}-opacity`);

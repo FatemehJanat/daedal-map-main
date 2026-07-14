@@ -197,7 +197,7 @@ function shouldAutoFocusOnOverlayEnable(mode) {
 // Grid/field overlays cover the planet rather than discrete events; enabling
 // one means "show me the global picture", so they get a fixed world framing
 // instead of a feature-bounds fit.
-const GLOBAL_FOCUS_OVERLAY_IDS = new Set(['ocean-sst-grid', 'aurora']);
+const GLOBAL_FOCUS_OVERLAY_IDS = new Set(['ocean-sst-grid', 'land-temperature-grid', 'aurora']);
 
 function focusGlobalOverlayView() {
   return Boolean(MapAdapter?.focusOnFeatures?.([
@@ -585,6 +585,22 @@ function buildCategoriesFromTree(overlayTree) {
         research: 'monthly'
       },
       rasterVariable: 'sst_c'
+    },
+    {
+      id: 'land-temperature-grid',
+      label: 'Land Air Temperature',
+      description: 'Monthly ERA5 2 m air temperature and anomaly',
+      default: false,
+      locked: false,
+      model: 'ocean-raster',
+      icon: 'T',
+      hasYearFilter: false,
+      live: false,
+      rasterSource: 'era5_land_temperature',
+      rasterBasins: ['LAND_TEMPERATURE'],
+      rasterCadence: 'monthly',
+      rasterVariable: 'air_temperature_2m_c',
+      rasterMaskMode: 'land'
     }
   ];
   const climateCategory = categories.find((cat) => cat.id === 'climate' && cat.isCategory);

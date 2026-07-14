@@ -10,11 +10,50 @@ from fastapi import APIRouter, Request, Response
 from mapmover.data_loading import get_source_path, load_full_catalog, load_source_metadata
 from mapmover.duckdb_helpers import is_cloud_mode
 from mapmover.logging_analytics import logger
-from mapmover.paths import COUNTRIES_DIR
+from mapmover.paths import COUNTRIES_DIR, GEOMETRY_DIR, GLOBAL_DIR
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
 from mapmover.runtime_config import get_runtime_config
 
 router = APIRouter()
+
+_PHYSICAL_MASKS = {
+    "0.25": "land_alpha_0_25deg.msgpack",
+    "1": "land_alpha_1_0deg.msgpack",
+    "2": "land_alpha_2_0deg.msgpack",
+}
+
+
+def _physical_mask_relative_path(filename: str) -> str:
+    return f"geometry/masks/physical_coastline_v1/{filename}"
+
+
+@router.get("/api/raster/physical-mask/{resolution}")
+async def get_physical_mask(resolution: str, req: Request):
+    """Serve the version-pinned shared land-alpha clip grid.
+
+    This is intentionally a small, static artifact rather than a source- or
+    frame-specific field. It can therefore be cached once and used to clip both
+    land and ocean rasters with complementary fractional alpha.
+    """
+    filename = _PHYSICAL_MASKS.get(str(resolution).strip())
+    if filename is None:
+        return msgpack_error("Unsupported physical mask resolution", 404)
+    relative_path = _physical_mask_relative_path(filename)
+    if is_cloud_mode():
+        payload = _cloud_object_bytes(relative_path)
+    else:
+        path = GEOMETRY_DIR / "masks" / "physical_coastline_v1" / filename
+        payload = path.read_bytes() if path.is_file() else None
+    if not payload:
+        return msgpack_error("Physical coastline mask is not published", 404)
+    etag = f'"physical-coastline-v1-{filename}"'
+    if req.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "public, max-age=31536000, immutable"})
+    return Response(
+        content=payload,
+        media_type="application/msgpack",
+        headers={"ETag": etag, "Cache-Control": "public, max-age=31536000, immutable"},
+    )
 
 
 def _require_tifffile():
@@ -67,6 +106,18 @@ def _source_supports_scene_rasters(source_id: str) -> bool:
 
 
 def _load_scene_catalog(source_id: str) -> dict | None:
+    # Local-WIP climate grid: it deliberately stays out of the public catalog
+    # until release QA, but uses the same immutable raster endpoint contract.
+    if source_id == "era5_land_temperature":
+        return {
+            "source_id": source_id,
+            "display_name": "ERA5 Monthly 2 m Air Temperature",
+            "crs": "EPSG:4326",
+            "nodata": 255.0,
+            "value_unit": "degrees Celsius",
+            "relative_dir": "global/climate/land_temperature/rasters",
+            "scenes": [{"period": "LAND_TEMPERATURE", "file": "LAND_TEMPERATURE.msgpack"}],
+        }
     metadata = load_source_metadata(source_id) or {}
     raster_products = metadata.get("raster_products") or {}
     scene_rasters = raster_products.get("scene_rasters") or {}
@@ -113,6 +164,8 @@ def _find_related_raster_source(source_id: str) -> str | None:
 
 
 def _raster_dirs_for_source(source_id: str, catalog: dict | None) -> tuple[Path | None, str | None]:
+    if source_id == "era5_land_temperature":
+        return GLOBAL_DIR / "climate" / "land_temperature" / "rasters", "global/climate/land_temperature/rasters"
     source_path = get_source_path(source_id)
     local_dir = source_path / "rasters" if source_path else None
     relative_dir = _normalize_raster_relative_dir((catalog or {}).get("relative_dir"))

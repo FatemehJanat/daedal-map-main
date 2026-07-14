@@ -22,6 +22,7 @@ import {
   buildColorLUT,
   bytesToFloat32,
   u8ToFloat32,
+  createPhysicalMaskSampler,
   renderMercatorWarpedFrame,
   placeImageLayer,
   setLayerVisibility,
@@ -35,6 +36,22 @@ export function setDependencies(deps) {
 }
 
 const DEFAULT_OPACITY = 0.4;
+const physicalMaskPromises = new Map();
+
+function loadPhysicalMask(fetchMsgpack, resolution, mode = 'water') {
+  const resolutionKey = String(resolution || 2).replace(/\.0$/, '');
+  const key = `${mode}:${resolutionKey}`;
+  if (!physicalMaskPromises.has(key)) {
+    const pending = fetchMsgpack(`/api/raster/physical-mask/${encodeURIComponent(resolutionKey)}`, { silent: true })
+      .then((mask) => createPhysicalMaskSampler(mask, mode))
+      .catch((err) => {
+        physicalMaskPromises.delete(key);
+        throw err;
+      });
+    physicalMaskPromises.set(key, pending);
+  }
+  return physicalMaskPromises.get(key);
+}
 
 // Decode a variable's frame stack on first use only. Loading all basins at once
 // would otherwise decode every variable up front (~2x memory for nothing).
@@ -71,6 +88,7 @@ class OceanBasinLayer {
     this.added = false;
     this.lastFrameIndex = -1;
     this.lastVisibility = null;
+    this.maskSampler = null;
   }
 }
 
@@ -79,6 +97,10 @@ export const OceanRasterModel = {
 
   hasInstance(overlayId) {
     return this.instances.has(overlayId);
+  },
+
+  getInstanceIds() {
+    return Array.from(this.instances.keys());
   },
 
   getTimestampRange(overlayId) {
@@ -132,7 +154,7 @@ export const OceanRasterModel = {
    * @param {string[]} basinIds - e.g. ["XOP"]
    * @param {string} variable - "sst_c" | "sst_anom_c"
    */
-  async load(overlayId, sourceId, basinIds, variable = 'sst_c') {
+  async load(overlayId, sourceId, basinIds, variable = 'sst_c', maskMode = 'water') {
     const { fetchMsgpack } = await import('../utils/fetch.js');
     const isNewInstance = !this.instances.has(overlayId);
     let inst = this.instances.get(overlayId);
@@ -171,6 +193,15 @@ export const OceanRasterModel = {
       layer.canvas.width = bundle.width;
       layer.canvas.height = bundle.height;
       layer.rawFrames = bundle.frames || {};
+      // The static coastline grid is intentionally fetched separately from the
+      // time stack. It is immutable, browser-cacheable, and shared by future
+      // land-temperature rasters.  Ocean uses its exact water complement.
+      const resolution = bundle.deg || 2;
+      try {
+        layer.maskSampler = await loadPhysicalMask(fetchMsgpack, resolution, maskMode);
+      } catch (err) {
+        console.warn('OceanRasterModel: physical coastline mask unavailable; retaining source validity only', err);
+      }
       ensureDecoded(layer, variable);  // decode only the active variable now
       inst.basins.push(layer);
       addedLayer = true;
@@ -262,6 +293,29 @@ export const OceanRasterModel = {
     return this.instances.get(overlayId)?.displayedFrameStamp ?? null;
   },
 
+  /** Return all available values at a clicked coordinate from displayed raster frames. */
+  getPointSamples(lon, lat) {
+    const samples = [];
+    for (const [overlayId, inst] of this.instances) {
+      const timeMs = inst.displayedFrameStamp;
+      if (!Number.isFinite(timeMs)) continue;
+      for (const layer of this._activeLayersForTime(inst, timeMs)) {
+        const { west, east, north, south } = layer.bounds || {};
+        if (!(lon >= west && lon <= east && lat >= south && lat <= north)) continue;
+        const col = Math.max(0, Math.min(layer.width - 1, Math.floor(((lon - west) / (east - west)) * layer.width)));
+        const row = Math.max(0, Math.min(layer.height - 1, Math.floor(((north - lat) / (north - south)) * layer.height)));
+        const index = row * layer.width + col;
+        const frameIndex = this._frameIndexForTime(layer, timeMs);
+        for (const variable of Object.keys(layer.rawFrames || {})) {
+          ensureDecoded(layer, variable);
+          const value = layer.framesByVar[variable]?.[frameIndex]?.[index];
+          if (Number.isFinite(value)) samples.push({ overlayId, variable, value, timestamp: layer.timestamps[frameIndex] });
+        }
+      }
+    }
+    return samples;
+  },
+
   renderAtTimestamp(overlayId, timeMs) {
     const inst = this.instances.get(overlayId);
     if (!inst) return;
@@ -323,6 +377,7 @@ export const OceanRasterModel = {
       min,
       max,
       lut,
+      maskSampler: layer.maskSampler,
     });
   },
 

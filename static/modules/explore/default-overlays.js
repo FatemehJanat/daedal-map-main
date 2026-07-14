@@ -14,6 +14,7 @@ export function getExploreDefaultOverlayIds() {
     'fema_declarations',
     'risk',
     'ocean-sst-grid',
+    'land-temperature-grid',
     'demographics',
     'world_bank_wdi',
     'distributed_manufacturing'

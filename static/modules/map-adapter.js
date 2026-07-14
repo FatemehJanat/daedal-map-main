@@ -8,6 +8,7 @@ import { LocationInfoCache } from './cache.js';
 import { DisasterPopup } from './disaster-popup.js';
 import { PointRadiusModel } from './models/model-point-radius.js';
 import { TrackModel } from './models/model-track.js';
+import { OceanRasterModel } from './models/model-ocean-raster.js';
 import { fetchMsgpack, postMsgpack } from './utils/fetch.js';
 import {
   buildFocusBounds,
@@ -177,7 +178,7 @@ export const MapAdapter = {
 
       const lngLat = this.map.unproject([point.x, point.y]);
       this.showPointInspectorPopup(lngLat, {
-        subtitle: 'Explore map click'
+        subtitle: 'Map click'
       });
     });
 
@@ -1322,7 +1323,7 @@ export const MapAdapter = {
         if (allFeatures.length === 0) {
           if (this.isEmptyMapPointInspectorEnabled()) {
             this.showPointInspectorPopup(e.lngLat, {
-              subtitle: 'Explore blank-map click'
+              subtitle: 'Map click'
             });
             return;
           }
@@ -1374,7 +1375,10 @@ export const MapAdapter = {
   },
 
   isEmptyMapPointInspectorEnabled(lane = App?.currentCanvasMode || 'explore') {
-    return lane === 'explore';
+    // A coordinate/raster lookup is a shared map tool, not an Explore-only
+    // behavior. Keep the lane argument so a future intentionally restricted
+    // shell can opt out explicitly.
+    return ['explore', 'research', 'ops'].includes(lane);
   },
 
   _escapePopupHtml(value) {
@@ -1492,6 +1496,16 @@ export const MapAdapter = {
         </div>
       `
       : '';
+    const climateSamples = OceanRasterModel.getPointSamples(lng, lat);
+    const labels = {
+      sst_c: 'Sea surface temperature', sst_anom_c: 'Sea temperature anomaly',
+      air_temperature_2m_c: 'Air temperature', air_temperature_2m_anomaly_c: 'Air temperature anomaly'
+    };
+    const dataHtml = climateSamples.length
+      ? `<div class="blank-map-popup-data"><strong>Data:</strong>${climateSamples.map((sample) =>
+        `<div class="blank-map-popup-coord-row"><span class="blank-map-popup-label">${this._escapePopupHtml(labels[sample.variable] || sample.variable)}</span><span class="blank-map-popup-value">${sample.value.toFixed(2)} °C</span></div>`
+      ).join('')}</div>`
+      : '';
     return `
       <div class="blank-map-popup" data-popup-kind="point-inspector">
         <div class="blank-map-popup-header">
@@ -1508,6 +1522,7 @@ export const MapAdapter = {
             <span class="blank-map-popup-value">${lng.toFixed(6)}</span>
           </div>
         </div>
+        ${dataHtml}
         ${actionsHtml}
         <div class="blank-map-popup-status" data-role="point-resolve-status">${statusHtml}</div>
       </div>
@@ -1529,7 +1544,7 @@ export const MapAdapter = {
       this.buildPointInspectorPopupHtml(
         lng,
         lat,
-        { subtitle: options.subtitle || 'Explore blank-map click' }
+        { subtitle: options.subtitle || 'Map click' }
       )
     );
     this.setupPopupTabHandlers?.();

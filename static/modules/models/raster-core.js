@@ -79,6 +79,31 @@ export function u8ToFloat32(bytes, vmin, vmax) {
   return out;
 }
 
+/**
+ * Make a sampler for a pinned, global physical coastline alpha grid.
+ * `mode: 'land'` returns land coverage and `mode: 'water'` returns the exact
+ * complement. Keeping this here ensures all climate raster models share one
+ * edge instead of deriving independent source-specific coastlines.
+ */
+export function createPhysicalMaskSampler(mask, mode) {
+  if (!mask || !mask.land_alpha || !Number.isFinite(mask.width) || !Number.isFinite(mask.height)) return null;
+  const bytes = mask.land_alpha instanceof Uint8Array ? mask.land_alpha : new Uint8Array(mask.land_alpha);
+  const { west = -180, south = -90, east = 180, north = 90 } = mask.bounds || {};
+  const width = mask.width;
+  const height = mask.height;
+  if (bytes.length !== width * height || east <= west || north <= south) return null;
+  const invert = mode === 'water';
+  return (lat, lon) => {
+    // Normalise longitude so a global image's right edge never produces an
+    // out-of-range column and both sides of the antimeridian use the same cell.
+    const normalizedLon = ((((lon - west) % 360) + 360) % 360) + west;
+    const col = Math.max(0, Math.min(width - 1, Math.floor(((normalizedLon - west) / (east - west)) * width)));
+    const row = Math.max(0, Math.min(height - 1, Math.floor(((north - lat) / (north - south)) * height)));
+    const land = bytes[row * width + col] / 255;
+    return invert ? 1 - land : land;
+  };
+}
+
 // Web Mercator helpers. Bundles are equirectangular (rows even in latitude),
 // but MapLibre parameterizes image sources in Mercator-Y -- in BOTH the flat map
 // AND the globe (the globe wraps that same Mercator space onto a sphere). So we
@@ -112,8 +137,10 @@ export function invMercY(y) {
  * @param {number} p.min
  * @param {number} p.max
  * @param {Array} p.lut - 256-entry [r,g,b] LUT (from buildColorLUT with no alpha)
+ * @param {(lat:number, lon:number) => number | null} [p.maskSampler] - optional
+ * shared physical coverage sampler; zero coverage is transparent
  */
-export function renderMercatorWarpedFrame({ ctx, canvas, width, height, bounds, pixels, min, max, lut }) {
+export function renderMercatorWarpedFrame({ ctx, canvas, width, height, bounds, pixels, min, max, lut, maskSampler = null }) {
   const range = (max - min) || 1;
   const W = width;
   const dataN = bounds.north;
@@ -146,9 +173,15 @@ export function renderMercatorWarpedFrame({ ctx, canvas, width, height, bounds, 
         px[idx] = px[idx + 1] = px[idx + 2] = px[idx + 3] = 0;
         continue;
       }
+      const lon = bounds.west + ((c + 0.5) / W) * (bounds.east - bounds.west);
+      const coverage = maskSampler ? maskSampler(lat, lon) : 1;
+      if (!Number.isFinite(coverage) || coverage <= 0) {
+        px[idx] = px[idx + 1] = px[idx + 2] = px[idx + 3] = 0;
+        continue;
+      }
       const norm = Math.max(0, Math.min(1, (v - min) / range));
       const color = lut[Math.round(norm * 255)];
-      px[idx] = color[0]; px[idx + 1] = color[1]; px[idx + 2] = color[2]; px[idx + 3] = 255;
+      px[idx] = color[0]; px[idx + 1] = color[1]; px[idx + 2] = color[2]; px[idx + 3] = Math.round(Math.min(1, coverage) * 255);
     }
   }
   ctx.putImageData(img, 0, 0);
