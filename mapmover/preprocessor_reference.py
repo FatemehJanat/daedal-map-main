@@ -375,10 +375,13 @@ def detect_reference_lookup(
     catalog = load_catalog()
     if catalog:
         for source in catalog.get("sources", []):
-            source_id = source.get("source_id", "")
-            source_name = source.get("source_name", "").lower()
-            keywords = [k.lower() for k in source.get("keywords", [])]
-            topic_tags = [t.lower() for t in source.get("topic_tags", [])]
+            source_id = source.get("source_id") or ""
+            source_name = (source.get("source_name") or "").lower()
+            keywords = [k.lower() for k in source.get("keywords", []) if k]
+            topic_tags = [t.lower() for t in source.get("topic_tags", []) if t]
+
+            if not source_id:
+                continue
 
             if source_id.lower() in query_lower or source_name in query_lower:
                 source_path = get_source_path(source_id)
