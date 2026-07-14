@@ -380,6 +380,38 @@ for _nri_source in (
     }
 del _nri_source
 
+# OWID core packs share the same yearly country-panel shape, but each pack's
+# parquet is nested under global/owid/<base>/core/ (not the flat
+# global/<source_id>/ layout used by wb_* above). The catalog's "path" field
+# for each "<base>_core" source_id resolves to that nested core/ directory
+# (mirroring how un_sdg's "01".."17" entries resolve to global/un_sdg/NN/
+# above), so only the parquet filename needs to be specified here.
+for _owid_core_base in (
+    "owid_climate_emissions",
+    "owid_education_core",
+    "owid_energy_core",
+    "owid_food_agriculture_nutrition",
+    "owid_governance_conflict",
+    "owid_health_mortality_disease",
+    "owid_labor_gender",
+    "owid_land_biodiversity",
+    "owid_population_demography",
+    "owid_poverty_inequality_income",
+    "owid_water_sanitation",
+):
+    _owid_core_source_id = f"{_owid_core_base}_core"
+    SUPPORTED_DYNAMIC_SOURCES[_owid_core_source_id] = {
+        "pack_id": _owid_core_base,
+        "parquet_name": f"{_owid_core_base}_core.parquet",
+        "query_mode": "single_source",
+        "location_field": "loc_id",
+        "time_field": "year",
+        "time_granularity": "yearly",
+        "default_limit": DEFAULT_LIMIT,
+        "max_limit": MAX_LIMIT,
+    }
+del _owid_core_base, _owid_core_source_id
+
 
 API_SOURCE_SPECS: dict[str, ApiSourceSpec] = {
     CURRENCY_SOURCE_SPEC.source_id: CURRENCY_SOURCE_SPEC,
