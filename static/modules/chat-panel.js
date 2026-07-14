@@ -2187,6 +2187,13 @@ export const ChatManager = {
         snapshot_hash: item?.snapshot_hash,
         count: item?.count,
         metric_key: item?.metric_key,
+        // Chat can reuse one snapshot while changing the exact subset shown
+        // on the map (for example, all USA fires rather than the 5 km²
+        // readability default). Those directives must invalidate the display
+        // signature even when the snapshot itself has not changed.
+        ops_min_area_km2: item?.ops_min_area_km2,
+        ops_show_all: item?.ops_show_all === true,
+        ops_country_iso3: item?.ops_country_iso3 || '',
         loc_ids: Array.isArray(item?.loc_ids) ? item.loc_ids : [],
         year_keys: item?.year_data ? Object.keys(item.year_data) : []
       }))
