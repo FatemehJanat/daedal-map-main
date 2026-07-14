@@ -2149,6 +2149,7 @@ const DisasterPopup = {
     const html = this.buildBasicPopup(props, eventType);
 
     if (MapAdapter) {
+      MapAdapter.registerFeaturePopupClick?.();
       MapAdapter.showPopup(lngLat, html);
       MapAdapter.popupLocked = true;
       MapAdapter.setSelectedPopupContext?.({

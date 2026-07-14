@@ -335,7 +335,11 @@ const OVERLAY_ENDPOINTS = {
     baseUrl: '/api/wildfires/geojson',
     params: { min_area_km2: '500', include_perimeter: 'true' },  // 500km2 (~193 sq mi) = large fires
     eventType: 'wildfire',
-    yearField: 'year'
+    yearField: 'year',
+    // The published historical Fire Atlas lane currently ends in 2024. Clamp
+    // the initial window to that availability instead of querying the current
+    // calendar year and reporting an empty historical overlay.
+    maxYear: 2024
   },
   tsunamis: {
     baseUrl: '/api/tsunamis/geojson',

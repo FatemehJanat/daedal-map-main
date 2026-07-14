@@ -41,7 +41,6 @@ export function createLivePointOverlay(config) {
     pollTimer: null,
     lastData: null,
     MapAdapter: null,
-    _popup: null,
     _clickBound: false,
     _popupHandler: null,
     _mouseenterHandler: null,
@@ -184,8 +183,6 @@ export function createLivePointOverlay(config) {
 
     _bindPopup(map) {
       if (this._clickBound) return;
-      const maplibre = window.maplibregl || (typeof maplibregl !== 'undefined' ? maplibregl : null);
-      if (!maplibre) return;
       const esc = (v) => String(v == null ? '' : v).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
       this._popupHandler = (e) => {
         const f = e.features && e.features[0];
@@ -202,8 +199,19 @@ export function createLivePointOverlay(config) {
           ${titleVal ? `<div style="font-weight:bold">${esc(config.popup.titlePrefix || '')}${esc(titleVal)}</div>` : ''}
           ${rows}
         </div>`;
-        if (this._popup) this._popup.remove();
-        this._popup = new maplibre.Popup({ closeButton: true }).setLngLat(e.lngLat).setHTML(html).addTo(map);
+        // Live points participate in the one shared popup contract. This keeps
+        // a buoy click above the point/raster inspector rather than opening a
+        // second independent MapLibre popup.
+        this.MapAdapter?.registerFeaturePopupClick?.();
+        this.MapAdapter?.showPopup?.([e.lngLat.lng, e.lngLat.lat], html);
+        if (this.MapAdapter) {
+          this.MapAdapter.popupLocked = true;
+          this.MapAdapter.setSelectedPopupContext?.({
+            kind: 'live_point',
+            overlayId: config.id,
+            properties: p,
+          });
+        }
       };
       this._mouseenterHandler = () => { map.getCanvas().style.cursor = 'pointer'; };
       this._mouseleaveHandler = () => { map.getCanvas().style.cursor = ''; };
@@ -238,7 +246,10 @@ export function createLivePointOverlay(config) {
           if (map.getLayer(id)) map.removeLayer(id);
         }
         if (map.getSource(SRC_ID)) map.removeSource(SRC_ID);
-        if (this._popup) { this._popup.remove(); this._popup = null; }
+        if (this.MapAdapter?.selectedPopupContext?.kind === 'live_point'
+          && this.MapAdapter.selectedPopupContext.overlayId === config.id) {
+          this.MapAdapter.hidePopup?.();
+        }
       } catch (e) { /* style may be mid-reload; ignore */ }
     },
   };

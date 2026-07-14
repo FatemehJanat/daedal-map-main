@@ -68,6 +68,9 @@ export const MapAdapter = {
   mapClickHandlerBound: false,
   canvasPointInspectorBound: false,
   pointResolveRequestToken: 0,
+  featurePopupClickVersion: 0,
+  featurePopupClickAt: 0,
+  pendingPointInspectorTimer: null,
   baseLayerHandlerRefs: {
     click: null,
     mousemove: null,
@@ -177,12 +180,32 @@ export const MapAdapter = {
       }
 
       const lngLat = this.map.unproject([point.x, point.y]);
-      this.showPointInspectorPopup(lngLat, {
-        subtitle: 'Map click'
-      });
+      this.requestPointInspectorAfterClick(lngLat);
     });
 
     this.canvasPointInspectorBound = true;
+  },
+
+  // Feature-layer handlers are not guaranteed to run before the map/canvas
+  // click handlers. Record their intent, then let an empty-map request settle
+  // for one turn before deciding whether it owns the shared popup.
+  registerFeaturePopupClick() {
+    this.featurePopupClickVersion += 1;
+    this.featurePopupClickAt = Date.now();
+  },
+
+  requestPointInspectorAfterClick(lngLat) {
+    if (!lngLat || !this.isEmptyMapPointInspectorEnabled()) return;
+    const featureVersion = this.featurePopupClickVersion;
+    if (this.pendingPointInspectorTimer) {
+      clearTimeout(this.pendingPointInspectorTimer);
+    }
+    this.pendingPointInspectorTimer = setTimeout(() => {
+      this.pendingPointInspectorTimer = null;
+      const featurePopupJustOpened = Date.now() - this.featurePopupClickAt < 150;
+      if (this.featurePopupClickVersion !== featureVersion || featurePopupJustOpened) return;
+      this.showPointInspectorPopup(lngLat, { subtitle: 'Map click' });
+    }, 0);
   },
 
   /**
@@ -1310,21 +1333,9 @@ export const MapAdapter = {
         const selectionFeatures = this.map.getLayer(CONFIG.layers.selectionFill)
           ? this.map.queryRenderedFeatures(e.point, { layers: [CONFIG.layers.selectionFill] })
           : [];
-        const eventLayers = [
-          CONFIG.layers.eventCircle,
-          CONFIG.layers.hurricaneMarker,
-          CONFIG.layers.polygonFill
-        ].filter(layerId => this.map.getLayer(layerId));
-        const eventFeatures = eventLayers.length
-          ? this.map.queryRenderedFeatures(e.point, { layers: eventLayers })
-          : [];
-        const allFeatures = [...selectionFeatures, ...eventFeatures];
-
-        if (allFeatures.length === 0) {
+        if (selectionFeatures.length === 0) {
           if (this.isEmptyMapPointInspectorEnabled()) {
-            this.showPointInspectorPopup(e.lngLat, {
-              subtitle: 'Map click'
-            });
+            this.requestPointInspectorAfterClick(e.lngLat);
             return;
           }
           if (this.popupLocked) {

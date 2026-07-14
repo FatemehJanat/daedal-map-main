@@ -118,7 +118,6 @@ export const NwsAlertsOverlay = {
   enabled: false,
   pollTimer: null,
   lastData: null,
-  _popup: null,
   _clickBound: false,
   _popupHandler: null,
   _mouseenterHandler: null,
@@ -321,8 +320,6 @@ export const NwsAlertsOverlay = {
 
   _bindPopup(map) {
     if (this._clickBound) return;
-    const maplibre = window.maplibregl || (typeof maplibregl !== 'undefined' ? maplibregl : null);
-    if (!maplibre) return;
     this._popupHandler = (e) => {
       const f = e.features && e.features[0];
       if (!f) return;
@@ -344,9 +341,16 @@ export const NwsAlertsOverlay = {
         ${p.expires ? `<div class="nws-popup-expires"><span>Expires</span>${esc(p.expires)}</div>` : ''}
         ${(typeof p.alert_id === 'string' && /^https?:/.test(p.alert_id)) ? `<a class="nws-popup-source" href="${esc(p.alert_id)}" target="_blank" rel="noopener" title="Opens the original machine-readable NWS alert record">Official NWS source (JSON) &rsaquo;</a>` : ''}
       </div>`;
-      if (this._popup) this._popup.remove();
-      this._popup = new maplibre.Popup({ closeButton: true, maxWidth: '340px' })
-        .setLngLat(e.lngLat).setHTML(html).addTo(map);
+      MapAdapter?.registerFeaturePopupClick?.();
+      MapAdapter?.showPopup?.([e.lngLat.lng, e.lngLat.lat], html);
+      if (MapAdapter) {
+        MapAdapter.popupLocked = true;
+        MapAdapter.setSelectedPopupContext?.({
+          kind: 'nws_alert',
+          overlayId: 'nws_alerts',
+          properties: p,
+        });
+      }
     };
     this._mouseenterHandler = () => { map.getCanvas().style.cursor = 'pointer'; };
     this._mouseleaveHandler = () => { map.getCanvas().style.cursor = ''; };
@@ -489,7 +493,9 @@ export const NwsAlertsOverlay = {
         if (map.getLayer(id)) map.removeLayer(id);
       }
       if (map.getSource(SRC_ID)) map.removeSource(SRC_ID);
-      if (this._popup) { this._popup.remove(); this._popup = null; }
+      if (MapAdapter?.selectedPopupContext?.kind === 'nws_alert') {
+        MapAdapter.hidePopup?.();
+      }
       this._removeLegend();
     } catch (e) { /* style may be mid-reload; ignore */ }
   }
