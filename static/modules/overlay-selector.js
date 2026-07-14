@@ -639,8 +639,10 @@ function buildCategoriesFromTree(overlayTree) {
       rasterVariable: 'air_temperature_2m_c',
       // ERA5 2 m air temperature is a global atmospheric field. The panel
       // can optionally apply the shared physical land mask for land-only
-      // analysis, but the default preserves valid air values over water.
-      rasterMaskMode: 'none'
+      // analysis. Ops defaults to that land-only view; Explore and Research
+      // retain the complete atmospheric field for comparison with SST.
+      rasterMaskMode: 'none',
+      rasterMaskModeByLane: { ops: 'land' }
     }
   ];
   const climateCategory = categories.find((cat) => cat.id === 'climate' && cat.isCategory);

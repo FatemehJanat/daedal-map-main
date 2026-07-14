@@ -3287,7 +3287,8 @@ export const OverlayController = {
     }
 
     console.log(`OverlayController: Loading ocean raster ${overlayId} lane=${laneMode} tier=${tier} basins=${basins.join(',')} var=${variable}`);
-    const ok = await OceanRasterModel.load(overlayId, sourceId, basins, variable, config?.rasterMaskMode || 'water');
+    const maskMode = config?.rasterMaskModeByLane?.[laneMode] || config?.rasterMaskMode || 'water';
+    const ok = await OceanRasterModel.load(overlayId, sourceId, basins, variable, maskMode);
     if (!ok) {
       console.error(`OverlayController: Failed to load ocean raster ${overlayId}`);
       return;
