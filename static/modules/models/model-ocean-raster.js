@@ -39,6 +39,7 @@ const DEFAULT_OPACITY = 0.4;
 const physicalMaskPromises = new Map();
 
 function loadPhysicalMask(fetchMsgpack, resolution, mode = 'water') {
+  if (mode === 'none') return Promise.resolve(null);
   const resolutionKey = String(resolution || 2).replace(/\.0$/, '');
   const key = `${mode}:${resolutionKey}`;
   if (!physicalMaskPromises.has(key)) {
@@ -159,7 +160,7 @@ export const OceanRasterModel = {
     const isNewInstance = !this.instances.has(overlayId);
     let inst = this.instances.get(overlayId);
     if (!inst) {
-      inst = { variable, opacity: DEFAULT_OPACITY, basins: [], timestamps: [], pendingLocIds: new Set() };
+      inst = { variable, opacity: DEFAULT_OPACITY, maskMode, basins: [], timestamps: [], pendingLocIds: new Set() };
       this.instances.set(overlayId, inst);
     }
     if (!inst.pendingLocIds) inst.pendingLocIds = new Set();
@@ -293,6 +294,32 @@ export const OceanRasterModel = {
     return this.instances.get(overlayId)?.displayedFrameStamp ?? null;
   },
 
+  getMaskMode(overlayId) {
+    return this.instances.get(overlayId)?.maskMode || 'none';
+  },
+
+  /**
+   * Switch a raster between its native global coverage and the shared
+   * physical land/water mask. This changes display alpha only; it never
+   * modifies the source field or invents a blended coastal value.
+   */
+  async setMaskMode(overlayId, maskMode = 'none') {
+    const inst = this.instances.get(overlayId);
+    if (!inst || inst.maskMode === maskMode) return;
+    const { fetchMsgpack } = await import('../utils/fetch.js');
+    try {
+      await Promise.all(inst.basins.map(async (layer) => {
+        const resolution = layer.width ? Math.abs((layer.bounds?.east - layer.bounds?.west) / layer.width) : 2;
+        layer.maskSampler = await loadPhysicalMask(fetchMsgpack, resolution, maskMode);
+        layer.lastFrameIndex = -1;
+      }));
+      inst.maskMode = maskMode;
+      this.renderAtTimestamp(overlayId, inst.lastRenderTime ?? inst.displayedFrameStamp ?? Date.now());
+    } catch (err) {
+      console.warn('OceanRasterModel: unable to change physical mask mode', err);
+    }
+  },
+
   /** Return all available values at a clicked coordinate from displayed raster frames. */
   getPointSamples(lon, lat) {
     const samples = [];
@@ -302,6 +329,11 @@ export const OceanRasterModel = {
       for (const layer of this._activeLayersForTime(inst, timeMs)) {
         const { west, east, north, south } = layer.bounds || {};
         if (!(lon >= west && lon <= east && lat >= south && lat <= north)) continue;
+        // Point lookup follows the exact same physical coverage contract as
+        // rendering. A land-only Air Temperature view therefore does not
+        // report a hidden atmospheric cell over water.
+        const coverage = layer.maskSampler ? layer.maskSampler(lat, lon) : 1;
+        if (!Number.isFinite(coverage) || coverage <= 0) continue;
         const col = Math.max(0, Math.min(layer.width - 1, Math.floor(((lon - west) / (east - west)) * layer.width)));
         const row = Math.max(0, Math.min(layer.height - 1, Math.floor(((north - lat) / (north - south)) * layer.height)));
         const index = row * layer.width + col;
@@ -319,6 +351,7 @@ export const OceanRasterModel = {
   renderAtTimestamp(overlayId, timeMs) {
     const inst = this.instances.get(overlayId);
     if (!inst) return;
+    inst.lastRenderTime = timeMs;
     let displayedStamp = null;
     const activeLayers = new Set(this._activeLayersForTime(inst, timeMs));
     for (const layer of inst.basins) {

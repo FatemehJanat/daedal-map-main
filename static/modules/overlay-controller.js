@@ -3327,6 +3327,13 @@ export const OverlayController = {
       }
     }
     OceanRasterPanel.show(overlayId);
+    // The ocean source has a compact recent weekly scene plus a separate
+    // monthly history archive. Explore/Research are explicitly historical
+    // tools, so merge the archive on enable. Ops deliberately remains a
+    // current-snapshot surface and does not incur this download.
+    if (tier === 'recent' && config?.rasterPreloadHistory && ['explore', 'research'].includes(laneMode)) {
+      await this.loadOceanRasterOverlay(overlayId, config, { tier: 'history', resetTimeRange: false });
+    }
     console.log(`OverlayController: Ocean raster ${overlayId} loaded tier=${tier} (${timestamps.length} frames)`);
   },
 

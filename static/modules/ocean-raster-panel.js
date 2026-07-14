@@ -16,7 +16,7 @@ export function setDependencies(deps) {
 
 const PANEL_ID = 'ocean-raster-panel';
 const VAR_LABELS = { sst_c: 'Temperature', sst_anom_c: 'Anomaly', air_temperature_2m_c: 'Temperature', air_temperature_2m_anomaly_c: 'Anomaly' };
-const DATASET_LABELS = { 'ocean-sst-grid': 'Ocean temperature', 'land-temperature-grid': 'Land air temperature' };
+const DATASET_LABELS = { 'ocean-sst-grid': 'Ocean temperature', 'land-temperature-grid': 'Air temperature' };
 const VAR_UNIT = ' deg C';
 
 let _overlayId = null;
@@ -97,7 +97,7 @@ function _build() {
   Object.assign(datasetSelect.style, { width: '100%', background: '#252a33', color: '#e8eaed', border: '1px solid rgba(255,255,255,.15)', borderRadius: '5px', padding: '4px' });
   datasetSelect.addEventListener('change', () => {
     _overlayId = datasetSelect.value;
-    _renderVariables(panel); _renderLegend(panel);
+    _renderVariables(panel); _renderMaskControl(panel); _renderLegend(panel);
     _model.setFrameCallback?.(_overlayId, _updateFrameStamp);
   });
   datasetRow.appendChild(datasetLabel); datasetRow.appendChild(datasetSelect); panel.appendChild(datasetRow);
@@ -107,6 +107,24 @@ function _build() {
   varRow.id = `${PANEL_ID}-vars`;
   Object.assign(varRow.style, { display: 'flex', gap: '6px', marginBottom: '12px' });
   panel.appendChild(varRow);
+
+  // ERA5 2 m air temperature is a global field, including air over the
+  // ocean. Offer land-only as an analysis/display filter without changing or
+  // blending the stored values.
+  const maskRow = document.createElement('label');
+  maskRow.id = `${PANEL_ID}-mask`;
+  Object.assign(maskRow.style, { display: 'none', alignItems: 'center', gap: '7px', marginBottom: '12px', color: '#d5dbe3', cursor: 'pointer' });
+  const maskInput = document.createElement('input');
+  maskInput.type = 'checkbox';
+  maskInput.id = `${PANEL_ID}-land-only`;
+  Object.assign(maskInput.style, { accentColor: '#5ec5ff', margin: '0' });
+  const maskText = document.createElement('span');
+  maskText.textContent = 'Land only';
+  maskInput.addEventListener('change', async () => {
+    if (!_overlayId || !_model) return;
+    await _model.setMaskMode?.(_overlayId, maskInput.checked ? 'land' : 'none');
+  });
+  maskRow.appendChild(maskInput); maskRow.appendChild(maskText); panel.appendChild(maskRow);
 
   // Displayed-frame timestamp: which data moment is actually on screen.
   // Makes the held-last-known trailing edge visible (slider can say "now"
@@ -190,6 +208,15 @@ function _renderDatasets(panel) {
   }
 }
 
+function _renderMaskControl(panel) {
+  const row = panel.querySelector(`#${PANEL_ID}-mask`);
+  const input = panel.querySelector(`#${PANEL_ID}-land-only`);
+  if (!row || !input) return;
+  const isAirTemperature = _overlayId === 'land-temperature-grid';
+  row.style.display = isAirTemperature ? 'flex' : 'none';
+  input.checked = isAirTemperature && _model.getMaskMode?.(_overlayId) === 'land';
+}
+
 function _formatFrameStamp(stampMs) {
   if (stampMs === null || stampMs === undefined || !Number.isFinite(stampMs)) {
     return 'No data at this time';
@@ -226,6 +253,7 @@ export const OceanRasterPanel = {
     const panel = _build();
     _renderDatasets(panel);
     _renderVariables(panel);
+    _renderMaskControl(panel);
     const op = Math.round((_model.getOpacity(overlayId) ?? 0.6) * 100);
     const slider = panel.querySelector(`#${PANEL_ID}-opacity`);
     const opVal = panel.querySelector(`#${PANEL_ID}-opval`);

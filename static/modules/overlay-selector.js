@@ -585,11 +585,16 @@ function buildCategoriesFromTree(overlayTree) {
         explore: 'monthly',
         research: 'monthly'
       },
+      // Explore and Research are historical-analysis surfaces. Load the
+      // monthly archive alongside the recent weekly scene so playback starts
+      // with the complete 1982-present timeline rather than requiring a
+      // preliminary manual scrub into the archive.
+      rasterPreloadHistory: true,
       rasterVariable: 'sst_c'
     },
     {
       id: 'land-temperature-grid',
-      label: 'Land Air Temperature',
+      label: 'Air Temperature',
       description: 'Monthly ERA5 2 m air temperature and anomaly',
       default: false,
       locked: false,
@@ -614,7 +619,10 @@ function buildCategoriesFromTree(overlayTree) {
       },
       rasterHistoryCadence: 'monthly',
       rasterVariable: 'air_temperature_2m_c',
-      rasterMaskMode: 'land'
+      // ERA5 2 m air temperature is a global atmospheric field. The panel
+      // can optionally apply the shared physical land mask for land-only
+      // analysis, but the default preserves valid air values over water.
+      rasterMaskMode: 'none'
     }
   ];
   const climateCategory = categories.find((cat) => cat.id === 'climate' && cat.isCategory);
