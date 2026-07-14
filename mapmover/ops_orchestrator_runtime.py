@@ -156,7 +156,7 @@ FEED_ALIASES = {
     "currency": ("currency", "currencies", "fx", "exchange rate", "exchange rates", "usd"),
     "tsunamis": ("tsunami", "tsunamis", "runup", "runups"),
     "volcanoes": ("volcano", "volcanoes", "eruption", "eruptions", "vei"),
-    "wildfires_us_nifc": ("wildfire", "wildfires", "fire", "fires", "nifc"),
+    WILDFIRE_LIVE_FEED: ("wildfire", "wildfires", "fire", "fires", "nifc", "cwfis"),
     HURRICANE_LIVE_FEED: ("hurricane", "hurricanes", "storm", "storms", "cyclone", "typhoon"),
     "usa_nws_alerts": ("nws", "nws alerts", "weather alert", "weather alerts", "warning", "warnings", "alert", "alerts"),
     "noaa_swpc": ("space weather", "space weather alerts", "geomagnetic", "solar storm", "radio blackout"),
@@ -237,8 +237,8 @@ AREA_IMPACT_PATTERNS = (
 )
 
 FEED_FOCUS_SPECS = {
-    "wildfires_us_nifc": {
-        "metric_keys": ("burned_acres", "area_km2"),
+    WILDFIRE_LIVE_FEED: {
+        "metric_keys": ("area_km2", "burned_acres"),
         "label": "wildfire",
         "id_keys": ("event_id", "incident_id", "fire_name"),
     },
@@ -280,9 +280,9 @@ FEED_HISTORY_METRIC_ALIASES = {
         "aliases": ("vei",),
         "label": "VEI",
     },
-    "wildfires_us_nifc": {
-        "metric_keys": ("burned_acres", "area_km2"),
-        "aliases": ("acres", "burned acres", "area"),
+    WILDFIRE_LIVE_FEED: {
+        "metric_keys": ("area_km2", "burned_acres"),
+        "aliases": ("area", "area km2", "acres", "burned acres"),
         "label": "size",
     },
 }
@@ -523,6 +523,15 @@ def _load_snapshot_child_safely(collector_name: str) -> dict | None:
         return None
 
 
+def _load_history_child_safely(collector_name: str) -> list[dict]:
+    """A composite feed's retained view must also survive one child failure."""
+    try:
+        entries = load_current_state_history(collector_name)
+        return entries if isinstance(entries, list) else []
+    except Exception:
+        return []
+
+
 def load_current_state_snapshot(collector_name: str) -> dict | None:
     collector = _normalize_ops_feed_id(collector_name)
     if not collector:
@@ -702,7 +711,18 @@ def load_current_state_history(collector_name: str, limit: int | None = None) ->
         # Keep the merged response deterministic below, but fetch the four
         # independent authority histories concurrently.
         with ThreadPoolExecutor(max_workers=len(HURRICANE_OPS_COLLECTORS)) as executor:
-            child_histories = list(executor.map(load_current_state_history, HURRICANE_OPS_COLLECTORS))
+            child_histories = list(executor.map(_load_history_child_safely, HURRICANE_OPS_COLLECTORS))
+        merged = [entry for entries in child_histories for entry in entries]
+        merged.sort(key=lambda item: str(
+            item.get("published_at")
+            or item.get("last_changed_at")
+            or item.get("upstream_issued_at")
+            or ""
+        ))
+        return merged[-limit:] if limit is not None and limit >= 0 else merged
+    if collector == WILDFIRE_LIVE_FEED:
+        with ThreadPoolExecutor(max_workers=len(WILDFIRE_OPS_COLLECTORS)) as executor:
+            child_histories = list(executor.map(_load_history_child_safely, WILDFIRE_OPS_COLLECTORS))
         merged = [entry for entries in child_histories for entry in entries]
         merged.sort(key=lambda item: str(
             item.get("published_at")
@@ -828,7 +848,7 @@ def _build_point_event_display_payload(
         props.setdefault("collector", collector)
         if collector == "volcanoes":
             props.setdefault("VEI", row.get("vei"))
-        if collector == "wildfires_us_nifc":
+        if collector == WILDFIRE_LIVE_FEED:
             acres = row.get("burned_acres")
             try:
                 props.setdefault("area_km2", float(acres) * 0.00404686)
@@ -2180,7 +2200,7 @@ def _feature_numeric_value(feature: dict, keys: tuple[str, ...]) -> float | None
 
 
 def _focus_feature_name(feed: str, props: dict) -> str:
-    if feed == "wildfires_us_nifc":
+    if feed == WILDFIRE_LIVE_FEED:
         return str(props.get("fire_name") or props.get("event_id") or "Unnamed wildfire").strip()
     if feed == "earthquakes":
         return str(props.get("place") or props.get("event_id") or "Unnamed earthquake").strip()
@@ -2194,11 +2214,13 @@ def _focus_feature_name(feed: str, props: dict) -> str:
 
 
 def _focus_feature_location(feed: str, props: dict) -> str | None:
-    if feed == "wildfires_us_nifc":
+    if feed == WILDFIRE_LIVE_FEED:
         county = str(props.get("county_name") or "").strip()
         state = str(props.get("state") or "").strip()
         if county and state:
             return f"{county}, {state}"
+        if str(props.get("source") or "").strip().lower() == "cwfis_m3":
+            return "Canada"
         return county or state or None
     if feed == "tsunamis":
         location = str(props.get("location") or "").strip()
@@ -2213,9 +2235,9 @@ def _focus_feature_location(feed: str, props: dict) -> str | None:
 
 
 def _focus_metric_text(feed: str, props: dict) -> str | None:
-    if feed == "wildfires_us_nifc":
+    if feed == WILDFIRE_LIVE_FEED:
         try:
-            return f"{int(float(props.get('burned_acres'))):,} acres burned"
+            return f"{float(props.get('area_km2')):,.2f} km² burned"
         except (TypeError, ValueError):
             return None
     if feed == "earthquakes":
@@ -3152,7 +3174,7 @@ def _feed_prefers_history_by_default(feed: str) -> bool:
         "earthquakes",
         "tsunamis",
         "volcanoes",
-        "wildfires_us_nifc",
+        WILDFIRE_LIVE_FEED,
         HURRICANE_LIVE_FEED,
         "usa_nws_alerts",
         "noaa_swpc",
@@ -3163,7 +3185,7 @@ def _feed_prefers_history_by_default(feed: str) -> bool:
 
 def _feed_display_name(feed: str) -> str:
     names = {
-        "wildfires_us_nifc": "wildfires",
+        WILDFIRE_LIVE_FEED: "wildfires",
         HURRICANE_LIVE_FEED: "storms",
         "earthquakes": "earthquakes",
         "tsunamis": "tsunamis",
@@ -3178,7 +3200,7 @@ def _feed_display_name(feed: str) -> str:
 
 def _feed_singular_label(feed: str) -> str:
     names = {
-        "wildfires_us_nifc": "wildfire",
+        WILDFIRE_LIVE_FEED: "wildfire",
         HURRICANE_LIVE_FEED: "storm",
         "earthquakes": "earthquake",
         "tsunamis": "tsunami",
@@ -3213,7 +3235,7 @@ def _feed_history_id_set(feed: str, summary: dict) -> set[str]:
     elif feed == "volcanoes":
         rows = summary.get("events") or []
         id_keys = ("event_id",)
-    elif feed == "wildfires_us_nifc":
+    elif feed == WILDFIRE_LIVE_FEED:
         rows = summary.get("events") or []
         id_keys = ("event_id",)
     elif _is_hurricane_live_feed(feed):
@@ -3246,7 +3268,7 @@ def _history_count_noun(feed: str) -> str:
         "earthquakes": "earthquakes",
         "tsunamis": "tsunami events",
         "volcanoes": "volcano events",
-        "wildfires_us_nifc": "wildfires",
+        WILDFIRE_LIVE_FEED: "wildfires",
         HURRICANE_LIVE_FEED: "storms",
         "currency": "currency rates",
         "noaa_swpc": "space weather alerts",
@@ -3261,7 +3283,7 @@ def _feed_to_explore_pack(feed: str) -> str:
         "earthquakes": "earthquakes",
         "tsunamis": "tsunamis",
         "volcanoes": "volcanoes",
-        "wildfires_us_nifc": "wildfires",
+        WILDFIRE_LIVE_FEED: "wildfires",
         HURRICANE_LIVE_FEED: "hurricanes",
     }
     return mapping.get(feed, "")
@@ -3307,7 +3329,7 @@ def _history_entries_in_window(
 
 
 def _build_history_event_payload(*, feed: str, in_window: list[dict], window_label: str | None) -> dict | None:
-    if feed not in {"earthquakes", "tsunamis", "volcanoes", "wildfires_us_nifc"}:
+    if feed not in {"earthquakes", "tsunamis", "volcanoes", WILDFIRE_LIVE_FEED}:
         return None
     features: list[dict] = []
     seen_ids: set[str] = set()
@@ -3332,7 +3354,7 @@ def _build_history_event_payload(*, feed: str, in_window: list[dict], window_lab
             props.setdefault("collector", feed)
             if feed == "volcanoes":
                 props.setdefault("VEI", row.get("vei"))
-            if feed == "wildfires_us_nifc":
+            if feed == WILDFIRE_LIVE_FEED:
                 acres = row.get("burned_acres")
                 try:
                     props.setdefault("area_km2", float(acres) * 0.00404686)
@@ -3518,7 +3540,7 @@ def _load_exact_history_feature(
     identifier_value: str | None,
     cache=None,
 ) -> tuple[dict, dict] | tuple[None, None]:
-    if feed not in {"earthquakes", "tsunamis", "volcanoes", "wildfires_us_nifc"}:
+    if feed not in {"earthquakes", "tsunamis", "volcanoes", WILDFIRE_LIVE_FEED}:
         return None, None
     if not identifier_value:
         return None, None
@@ -3687,7 +3709,7 @@ def _recover_exact_earthquake_feature(
 def _active_count_for_feed(feed: str, summary: dict, query_text: str) -> tuple[int | None, str | None]:
     if not isinstance(summary, dict):
         return None, None
-    if feed == "wildfires_us_nifc":
+    if feed == WILDFIRE_LIVE_FEED:
         value = summary.get("active_count")
         return (int(value), "active wildfires") if value is not None else (None, None)
     if _is_hurricane_live_feed(feed):

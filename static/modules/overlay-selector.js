@@ -76,7 +76,8 @@ const OPS_FEED_TO_OVERLAY_IDS = {
   ocean_sst: ['ocean-sst-grid'],
   era5_land_temperature: ['land-temperature-grid'],
   tsunamis: ['tsunamis'],
-  wildfires_us_nifc: ['wildfires'],
+  // One logical feed combines the NIFC US and CWFIS Canada collectors.
+  wildfires: ['wildfires'],
   noaa_aurora: ['aurora'],
   noaa_swpc: ['aurora'],
   usa_nws_alerts: ['nws_alerts'],
