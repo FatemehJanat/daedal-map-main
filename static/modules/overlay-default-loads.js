@@ -38,17 +38,6 @@ const SOURCE_TO_OVERLAY = {
   drought_events: 'drought'
 };
 
-const OVERLAY_ONLY_DEFAULTS = {
-  // Raster sources activate their map contract directly. Their URL identity
-  // remains the durable source_id / pack_id; the overlay id is an internal
-  // runtime detail and must not leak into share or entry URLs.
-  ocean_sst: ['ocean-sst-grid'],
-  // WIP-local until this source graduates into catalog surfaces. Keeping the
-  // same source-keyed path now makes the later published route a no-op
-  // migration rather than a separate deep-link behavior.
-  era5_land_temperature: ['land-temperature-grid']
-};
-
 function getCurrentUtcYear() {
   return new Date().getUTCFullYear();
 }
@@ -142,8 +131,27 @@ function buildOverlayRangeLoadAction(defaultLoad, sourceEntry) {
   };
 }
 
+function buildOverlayActivationLoadAction(defaultLoad, sourceEntry) {
+  if (!defaultLoad || typeof defaultLoad !== 'object') return null;
+  if (String(defaultLoad.kind || defaultLoad.type || '').trim() !== 'overlay_activation') {
+    return null;
+  }
+  const overlayIds = Array.isArray(defaultLoad.overlay_ids)
+    ? defaultLoad.overlay_ids.map((value) => String(value || '').trim()).filter(Boolean)
+    : [String(defaultLoad.overlay_id || '').trim()].filter(Boolean);
+  if (!overlayIds.length) return null;
+  return {
+    type: 'overlay_activation',
+    overlayIds,
+    message: String(sourceEntry?.default_response || defaultLoad.summary || '').trim(),
+    question: String(sourceEntry?.default_question || '').trim()
+  };
+}
+
 function getSourceDefaultLoadAction(sourceEntry) {
   if (!sourceEntry || typeof sourceEntry !== 'object') return null;
+  const overlayActivationAction = buildOverlayActivationLoadAction(sourceEntry.default_load, sourceEntry);
+  if (overlayActivationAction) return overlayActivationAction;
   const overlayRangeAction = buildOverlayRangeLoadAction(sourceEntry.default_load, sourceEntry);
   if (overlayRangeAction) {
     return overlayRangeAction;
@@ -190,22 +198,6 @@ function buildResolvedSourceDefaultLoadAction(sourceEntry, {
 function buildSourceDefaultLoadAction(sourceId, packId = '') {
   const normalizedSourceId = String(sourceId || '').trim();
   if (!normalizedSourceId) return null;
-  if (OVERLAY_ONLY_DEFAULTS[normalizedSourceId]) {
-    return {
-      type: 'source_default_load',
-      sourceId: normalizedSourceId,
-      packId: String(packId || resolvePackIdFromSourceId(normalizedSourceId) || '').trim(),
-      label: normalizedSourceId,
-      loadAction: {
-        type: 'overlay_activation',
-        overlayIds: OVERLAY_ONLY_DEFAULTS[normalizedSourceId],
-        entity: {
-          sourceId: normalizedSourceId,
-          packId: String(packId || resolvePackIdFromSourceId(normalizedSourceId) || '').trim()
-        }
-      }
-    };
-  }
   const sourceEntry = getOverlayCatalogEntryBySourceId(normalizedSourceId)
     || getSourceDefaultOverride(normalizedSourceId);
   if (!sourceEntry) return null;
@@ -219,21 +211,6 @@ function buildSourceDefaultLoadAction(sourceId, packId = '') {
 function buildPackDefaultLoadAction(packId) {
   const normalizedPackId = String(packId || '').trim();
   if (!normalizedPackId) return null;
-  if (OVERLAY_ONLY_DEFAULTS[normalizedPackId]) {
-    return {
-      type: 'pack_default_load',
-      packId: normalizedPackId,
-      label: normalizedPackId,
-      packOverrideAction: {
-        type: 'overlay_activation',
-        overlayIds: OVERLAY_ONLY_DEFAULTS[normalizedPackId],
-        entity: {
-          packId: normalizedPackId
-        }
-      },
-      childActions: []
-    };
-  }
 
   const packOverride = getPackDefaultOverride(normalizedPackId);
   const packOverrideAction = packOverride
