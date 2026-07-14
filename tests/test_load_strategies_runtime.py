@@ -208,6 +208,40 @@ class LoadStrategiesRuntimeTests(unittest.TestCase):
         self.assertEqual(captured["source_id"], "fairfax_nlcd_impervious")
         self.assertEqual(captured["kwargs"]["exact_filters"]["geo_level"], "blockgroup")
 
+    def test_load_order_item_dataframe_uses_timestamp_bounds_for_monthly_source(self):
+        captured = {}
+
+        def load_source_data(source_id, **kwargs):
+            captured["source_id"] = source_id
+            captured["kwargs"] = kwargs
+            return [], {"source_id": source_id}
+
+        load_order_item_dataframe(
+            item={
+                "source_id": "era5_land_temperature",
+                "metric": "air_temperature_2m_anomaly_c",
+                "date_start": "2015-12-01",
+                "date_end": "2015-12-31",
+            },
+            temporal_mode=False,
+            aggregate_item_cache={},
+            load_disaster_aggregate_data_func=lambda *_args: (None, None),
+            load_source_data_func=load_source_data,
+            load_source_metadata_func=lambda _source_id: {
+                "time_field": "timestamp",
+                "temporal_coverage": {"field": "timestamp", "granularity": "monthly"},
+            },
+        )
+
+        self.assertIsNone(captured["kwargs"]["year"])
+        self.assertEqual(
+            captured["kwargs"]["compare_filters"],
+            [
+                ("timestamp", ">=", "2015-12-01T00:00:00Z"),
+                ("timestamp", "<=", "2015-12-31T00:00:00Z"),
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

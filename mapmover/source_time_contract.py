@@ -154,10 +154,6 @@ def resolve_temporal_axis(metadata: dict | None, available_columns: list[str] | 
     if not granularity:
         granularity = "yearly" if field == "year" else ("timestamp" if field in {"timestamp", "date", "time"} else None)
 
-    start_year, _ = metadata_source_year_range(metadata)
-    if granularity and granularity != "yearly" and start_year is not None and start_year < 1970:
-        granularity = "yearly"
-
     use_timestamps = granularity in {"timestamp", "daily", "weekly", "monthly"}
     return field, granularity, use_timestamps
 

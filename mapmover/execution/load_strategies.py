@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 import time
 
+import pandas as pd
+
 from mapmover.runtime.geography_reference import canonicalize_loc_id
 from mapmover.runtime.source_hints import resolve_geo_contract
 
@@ -157,6 +159,33 @@ def _classify_pushdown_filters(filters: dict | None) -> tuple[dict, dict, list[t
     return exact_filters, in_filters, compare_filters
 
 
+def _timestamp_pushdown_bounds(item: dict, year: int | None, year_start: int | None, year_end: int | None) -> tuple[str | None, str | None]:
+    """Return inclusive ISO-UTC bounds for a timestamp-backed source."""
+    raw_start = item.get("date_start")
+    raw_end = item.get("date_end")
+    start = pd.to_datetime(raw_start, errors="coerce", utc=True)
+    end = pd.to_datetime(raw_end, errors="coerce", utc=True)
+
+    if pd.isna(start):
+        selected_start = year_start if year_start is not None else year
+        if selected_start is not None:
+            start = pd.Timestamp(int(selected_start), 1, 1, tz="UTC")
+    if pd.isna(end):
+        selected_end = year_end if year_end is not None else year
+        if selected_end is not None:
+            end = pd.Timestamp(int(selected_end), 12, 31, 23, 59, 59, tz="UTC")
+
+    # A bare YYYY-MM end means the whole calendar month, rather than midnight
+    # at its first day.
+    if isinstance(raw_end, str) and re.fullmatch(r"\d{4}-\d{2}", raw_end.strip()) and not pd.isna(end):
+        end = end + pd.offsets.MonthEnd(1) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+
+    def format_bound(value):
+        return None if pd.isna(value) else value.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    return format_bound(start), format_bound(end)
+
+
 def _source_max_admin_level(metadata: dict | None) -> int | None:
     if not isinstance(metadata, dict):
         return None
@@ -296,7 +325,20 @@ def load_order_item_dataframe(
     source_id = item.get("source_id")
     aggregate_like_source = str(source_id or "").strip().endswith("_aggregates")
 
-    pushdown_year = year if (year and not year_start and not year_end) else None
+    source_metadata = {}
+    if source_id and load_source_metadata_func is not None:
+        try:
+            source_metadata = load_source_metadata_func(source_id) or {}
+        except Exception:
+            source_metadata = {}
+    source_temporal = source_metadata.get("temporal_coverage") if isinstance(source_metadata.get("temporal_coverage"), dict) else {}
+    source_time_field = str(source_temporal.get("field") or source_metadata.get("time_field") or "").strip()
+    timestamp_backed_source = source_time_field in {"timestamp", "date", "time", "month", "week"}
+
+    # Year is only a safe storage predicate for sources that actually carry a
+    # year column. Timestamp-backed monthly/daily sources need ISO bounds so a
+    # request for December does not silently load an arbitrary capped slice.
+    pushdown_year = year if (year and not year_start and not year_end and not timestamp_backed_source) else None
     pushdown_prefix = _normalize_loc_id_like_token(region)
     filters_for_pushdown = dict(filters)
     filter_loc_id_prefix = _normalize_loc_id_like_token(filters_for_pushdown.pop("loc_id_prefix", ""))
@@ -318,7 +360,7 @@ def load_order_item_dataframe(
         is_marine = False
         is_usa_high_admin = False
         try:
-            _meta = load_source_metadata_func(source_id) or {}
+            _meta = source_metadata
             is_marine = str(_meta.get("geographic_level") or "").strip().lower() == "marine_zone"
             is_usa_high_admin = _source_country(_meta) == "USA" and (_source_max_admin_level(_meta) or 0) >= 2
         except Exception:
@@ -391,7 +433,13 @@ def load_order_item_dataframe(
             and geo_contract.source_level_value
         ):
             exact_filters["geo_level"] = geo_contract.source_level_value
-    if pushdown_year is None:
+    if timestamp_backed_source:
+        timestamp_start, timestamp_end = _timestamp_pushdown_bounds(item, year, year_start, year_end)
+        if timestamp_start is not None:
+            compare_filters.append((source_time_field, ">=", timestamp_start))
+        if timestamp_end is not None:
+            compare_filters.append((source_time_field, "<=", timestamp_end))
+    elif pushdown_year is None:
         if year_start is not None:
             compare_filters.append(("year", ">=", year_start))
         if year_end is not None:
