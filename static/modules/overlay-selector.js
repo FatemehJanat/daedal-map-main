@@ -74,6 +74,7 @@ const OPS_FEED_TO_OVERLAY_IDS = {
   hurricanes: ['hurricanes_live'],
   hurricanes_live: ['hurricanes_live'],
   ocean_sst: ['ocean-sst-grid'],
+  era5_land_temperature: ['land-temperature-grid'],
   tsunamis: ['tsunamis'],
   wildfires_us_nifc: ['wildfires'],
   noaa_aurora: ['aurora'],
@@ -598,7 +599,13 @@ function buildCategoriesFromTree(overlayTree) {
       live: false,
       rasterSource: 'era5_land_temperature',
       rasterBasins: ['LAND_TEMPERATURE'],
+      rasterBasinsByLane: {
+        explore: ['LAND_TEMPERATURE'],
+        research: ['LAND_TEMPERATURE'],
+        ops: ['LAND_TEMPERATURE']
+      },
       rasterCadence: 'monthly',
+      rasterCadenceByLane: { explore: 'monthly', research: 'monthly', ops: 'monthly' },
       rasterVariable: 'air_temperature_2m_c',
       rasterMaskMode: 'land'
     }
