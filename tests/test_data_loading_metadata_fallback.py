@@ -13,7 +13,9 @@ class SourceMetadataFallbackTests(unittest.TestCase):
         data_loading._metadata_cache.pop("example_monthly_source", None)
 
         with patch("mapmover.data_loading.get_runtime_config", return_value={"runtime_mode": "cloud"}), patch(
-            "mapmover.data_loading.load_catalog", return_value={"sources": [source_contract]}
+            "mapmover.data_loading._catalog_cache", {"sources": [source_contract]}
+        ), patch(
+            "mapmover.data_loading.load_catalog", side_effect=AssertionError("metadata lookup must not build active catalog")
         ), patch("mapmover.data_loading.load_full_catalog") as load_full_catalog, patch(
             "mapmover.data_loading._fetch_json_from_s3", return_value={"source_id": "example_monthly_source"}
         ) as fetch_json:
@@ -34,7 +36,7 @@ class SourceMetadataFallbackTests(unittest.TestCase):
         data_loading._metadata_cache.pop("example_monthly_source", None)
 
         with patch("mapmover.data_loading.get_runtime_config", return_value={"runtime_mode": "cloud"}), patch(
-            "mapmover.data_loading.load_catalog", return_value={"sources": [source_contract]}
+            "mapmover.data_loading._catalog_cache", {"sources": [source_contract]}
         ), patch(
             "mapmover.data_loading.load_full_catalog", return_value={"sources": []}
         ), patch(

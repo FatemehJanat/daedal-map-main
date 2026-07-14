@@ -837,19 +837,31 @@ def load_source_metadata(source_id: str):
     runtime_mode = str(get_runtime_config().get("runtime_mode", "local")).strip().lower()
 
     if runtime_mode == "cloud":
-        # Resolve source paths from the active catalog surface.  A published
-        # request must not depend on wip_catalog.json being refreshed at the
-        # same time as the published catalog.  WIP requests already resolve to
-        # the full catalog through load_catalog(); retain a full-catalog lookup
-        # only as a secondary compatibility fallback.
-        catalog = load_catalog() or {}
+        # Resolve published source paths from the raw published catalog, not
+        # load_catalog().  The latter builds the active product surface and can
+        # itself load source metadata while constructing overlay state.
+        # Consulting it here would recurse during a cold catalog load.
+        if _requested_catalog_surface() == "wip":
+            catalog = load_full_catalog() or {}
+        else:
+            catalog = _catalog_cache or {}
+            if not catalog:
+                try:
+                    catalog = _fetch_json_from_s3("catalog.json") or {}
+                except Exception as catalog_error:
+                    logger.warning(
+                        "Published catalog read failed while resolving metadata for %s: %s",
+                        source_id,
+                        catalog_error,
+                    )
+                    catalog = {}
         full_catalog = None
         source_rel_path = None
         for source in catalog.get("sources", []):
             if source.get("source_id") == source_id:
                 source_rel_path = source.get("path", f"global/{source_id}")
                 break
-        if source_rel_path is None:
+        if source_rel_path is None and _requested_catalog_surface() != "wip":
             full_catalog = load_full_catalog() or {}
             for source in full_catalog.get("sources", []):
                 if source.get("source_id") == source_id:
