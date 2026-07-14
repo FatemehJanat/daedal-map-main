@@ -862,6 +862,20 @@ def load_source_metadata(source_id: str):
                     return metadata
                 except Exception as local_error:
                     logger.error(f"Error loading local fallback metadata for {source_id}: {local_error}")
+            # The published catalog deliberately embeds the source contract used
+            # for discovery and routing.  Use that contract during a transient
+            # per-source metadata read failure rather than allowing a request to
+            # be routed to an unrelated source.  It is a read-only resilience
+            # fallback; the source-side metadata.json remains authoritative.
+            for source in catalog.get("sources", []):
+                if source.get("source_id") == source_id:
+                    metadata = deepcopy(source)
+                    _metadata_cache[source_id] = metadata
+                    logger.warning(
+                        "Using catalog-embedded metadata fallback for %s after cloud metadata read failure",
+                        source_id,
+                    )
+                    return metadata
             return None
 
     source_folder = get_source_path(source_id)
