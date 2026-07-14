@@ -44,6 +44,8 @@ LIVE_STATE_HISTORY_TTL_SECONDS = 60.0
 DEFAULT_OPS_HISTORY_RETENTION_HOURS = 72
 DEFAULT_OPS_HISTORY_DISPLAY_HOURS = 72
 HURRICANE_LIVE_FEED = "hurricanes_live"
+WILDFIRE_LIVE_FEED = "wildfires"
+WILDFIRE_OPS_COLLECTORS = ("wildfires_us_nifc", "wildfires_can_cwfis")
 HURRICANE_LEGACY_OPS_FEED = "hurricanes"
 HURRICANE_OPS_COLLECTORS = ("tc_nhc", "tc_gdacs", "tc_jtwc", "tc_jma")
 HURRICANE_SOURCE_PRIORITY = {"NHC": 50, "JTWC": 40, "JMA": 35, "GDACS": 10}
@@ -82,6 +84,8 @@ def _normalize_ops_feed_id(feed: object) -> str:
     text = str(feed or "").strip()
     if text == HURRICANE_LEGACY_OPS_FEED:
         return HURRICANE_LIVE_FEED
+    if text in {"wildfires_us_nifc", "wildfires_can_cwfis"}:
+        return WILDFIRE_LIVE_FEED
     return text
 
 
@@ -638,6 +642,25 @@ def load_current_state_snapshot(collector_name: str) -> dict | None:
             "ops_history_display_hours": min(display_hours, retention_hours),
             "ops_default_load": "history",
         }
+    if collector == WILDFIRE_LIVE_FEED:
+        with ThreadPoolExecutor(max_workers=len(WILDFIRE_OPS_COLLECTORS)) as executor:
+            children = list(executor.map(load_current_state_snapshot, WILDFIRE_OPS_COLLECTORS))
+        children = [item for item in children if isinstance(item, dict)]
+        if not children:
+            return None
+        events = []
+        for child in children:
+            summary = child.get("payload_summary") if isinstance(child.get("payload_summary"), dict) else {}
+            events.extend(item for item in (summary.get("events") or []) if isinstance(item, dict))
+        checked = max(str(item.get("last_checked_at") or "") for item in children)
+        changed = max(str(item.get("last_changed_at") or "") for item in children)
+        return {"collector": WILDFIRE_LIVE_FEED, "fetched_at": checked, "last_checked_at": checked,
+                "last_changed_at": changed, "collector_status": "ok" if events else "quiet",
+                "payload_summary": {"logical_feed": WILDFIRE_LIVE_FEED, "event_count": len(events), "active_count": len(events), "source_count": len(children), "events": events},
+                "payload_hash": hashlib.sha256("|".join(str(item.get("payload_hash") or "") for item in children).encode("utf-8")).hexdigest(),
+                "schema_version": 1, "feed_type": "live_only", "ops_history_enabled": True,
+                "ops_history_retention_hours": DEFAULT_OPS_HISTORY_RETENTION_HOURS,
+                "ops_history_display_hours": DEFAULT_OPS_HISTORY_DISPLAY_HOURS, "ops_default_load": "snapshot"}
     cached = _get_live_state_cache(collector, "snapshot")
     if _is_live_state_snapshot(cached):
         _set_live_state_status(collector, "snapshot", "cache")
@@ -1460,10 +1483,10 @@ def _build_snapshot_display_payload(feed: str, snapshot: dict | None) -> dict | 
             event_type="volcano",
             label="Ops Volcano Snapshot",
         )
-    if feed == "wildfires_us_nifc":
+    if feed == WILDFIRE_LIVE_FEED:
         return _build_point_event_display_payload(
             snapshot,
-            collector="wildfires_us_nifc",
+            collector=WILDFIRE_LIVE_FEED,
             event_type="wildfire",
             label="Ops Wildfire Snapshot",
         )
@@ -1480,7 +1503,7 @@ def _build_display_payloads(state_by_feed: dict[str, tuple[dict | None, list[dic
         "earthquakes",
         "tsunamis",
         "volcanoes",
-        "wildfires_us_nifc",
+        WILDFIRE_LIVE_FEED,
         HURRICANE_LIVE_FEED,
         "currency",
     ):
@@ -1571,7 +1594,7 @@ def _compact_payload_summary(collector: str, summary: dict, *, sample_limit: int
                 sample_limit,
             ),
         }
-    if collector == "wildfires_us_nifc":
+    if collector == WILDFIRE_LIVE_FEED:
         return {
             "event_count": summary.get("event_count"),
             "incident_count": summary.get("incident_count"),

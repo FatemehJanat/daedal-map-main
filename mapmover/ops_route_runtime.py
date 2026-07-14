@@ -27,11 +27,13 @@ OPS_SUPPORTED_FEEDS = (
     "tsunamis",
     "usa_nws_alerts",
     "volcanoes",
-    "wildfires_us_nifc",
+    "wildfires",
 )
 
 OPS_FEED_ALIASES = {
     "hurricanes": "hurricanes_live",
+    "wildfires_us_nifc": "wildfires",
+    "wildfires_can_cwfis": "wildfires",
 }
 
 
@@ -96,7 +98,7 @@ def _public_default_ops_feeds() -> list[str]:
         "tsunamis",
         "usa_nws_alerts",
         "volcanoes",
-        "wildfires_us_nifc",
+        "wildfires",
     ])
 
 

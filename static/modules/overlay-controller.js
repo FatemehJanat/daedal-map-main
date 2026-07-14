@@ -1208,7 +1208,7 @@ export const OverlayController = {
       case 'hurricanes_live':
         return 'hurricanes_live';
       case 'wildfires':
-        return 'wildfires_us_nifc';
+        return 'wildfires';
       case 'tsunamis':
         return 'tsunamis';
       case 'volcanoes':
