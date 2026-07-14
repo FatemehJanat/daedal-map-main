@@ -515,6 +515,14 @@ def _fetch_live_state_via_site(collector_name: str, kind: str) -> dict | list | 
     return None
 
 
+def _load_snapshot_child_safely(collector_name: str) -> dict | None:
+    """A composite feed must survive one physical upstream/source failing."""
+    try:
+        return load_current_state_snapshot(collector_name)
+    except Exception:
+        return None
+
+
 def load_current_state_snapshot(collector_name: str) -> dict | None:
     collector = _normalize_ops_feed_id(collector_name)
     if not collector:
@@ -523,7 +531,7 @@ def load_current_state_snapshot(collector_name: str) -> dict | None:
         # Each authority is an independent runtime read. Loading them together
         # avoids turning four site-fallback timeouts into a serial startup cost.
         with ThreadPoolExecutor(max_workers=len(HURRICANE_OPS_COLLECTORS)) as executor:
-            children = list(executor.map(load_current_state_snapshot, HURRICANE_OPS_COLLECTORS))
+            children = list(executor.map(_load_snapshot_child_safely, HURRICANE_OPS_COLLECTORS))
         children = [item for item in children if isinstance(item, dict)]
         if not children:
             return None
@@ -642,7 +650,7 @@ def load_current_state_snapshot(collector_name: str) -> dict | None:
         }
     if collector == WILDFIRE_LIVE_FEED:
         with ThreadPoolExecutor(max_workers=len(WILDFIRE_OPS_COLLECTORS)) as executor:
-            children = list(executor.map(load_current_state_snapshot, WILDFIRE_OPS_COLLECTORS))
+            children = list(executor.map(_load_snapshot_child_safely, WILDFIRE_OPS_COLLECTORS))
         children = [item for item in children if isinstance(item, dict)]
         if not children:
             return None
