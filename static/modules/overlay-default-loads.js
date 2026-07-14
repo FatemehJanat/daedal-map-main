@@ -39,7 +39,14 @@ const SOURCE_TO_OVERLAY = {
 };
 
 const OVERLAY_ONLY_DEFAULTS = {
-  ocean_sst: ['ocean-sst-grid']
+  // Raster sources activate their map contract directly. Their URL identity
+  // remains the durable source_id / pack_id; the overlay id is an internal
+  // runtime detail and must not leak into share or entry URLs.
+  ocean_sst: ['ocean-sst-grid'],
+  // WIP-local until this source graduates into catalog surfaces. Keeping the
+  // same source-keyed path now makes the later published route a no-op
+  // migration rather than a separate deep-link behavior.
+  era5_land_temperature: ['land-temperature-grid']
 };
 
 function getCurrentUtcYear() {
