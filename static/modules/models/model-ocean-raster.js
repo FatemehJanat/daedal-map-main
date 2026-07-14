@@ -38,6 +38,23 @@ export function setDependencies(deps) {
 const DEFAULT_OPACITY = 0.4;
 const physicalMaskPromises = new Map();
 
+// Temperature rasters use one visual language across sources.  Existing
+// historical ERA5 bundles predate this shared ramp and the first live bundle
+// omitted color_scales altogether; retaining the override here keeps both
+// paths legible while new bundles carry the same contract themselves.
+const SHARED_TEMPERATURE_COLOR_SCALES = {
+  air_temperature_2m_c: {
+    min: -40, max: 45,
+    stops: [[-40, '#2b2c7f'], [-10, '#2f6db3'], [0, '#5ec5ff'],
+      [10, '#f8f7cf'], [20, '#f5a65b'], [30, '#df5b3f'], [45, '#7f0000']],
+  },
+  air_temperature_2m_anomaly_c: {
+    min: -5, max: 5,
+    stops: [[-5, '#08306b'], [-2, '#4292c6'], [0, '#f7f7f7'],
+      [2, '#fb6a4a'], [5, '#67000d']],
+  },
+};
+
 function loadPhysicalMask(fetchMsgpack, resolution, mode = 'water') {
   if (mode === 'none') return Promise.resolve(null);
   const resolutionKey = String(resolution || 2).replace(/\.0$/, '');
@@ -188,7 +205,10 @@ export const OceanRasterModel = {
       layer.height = bundle.height;
       layer.bounds = bundle.bounds;
       layer.timestamps = bundle.timestamps;
-      layer.colorScales = bundle.color_scales || {};
+      // Prefer the shared temperature ramp even for an older bundle that
+      // carries a legacy scale (or no scale at all). Other raster variables
+      // keep the producer-supplied palette.
+      layer.colorScales = { ...(bundle.color_scales || {}), ...SHARED_TEMPERATURE_COLOR_SCALES };
       layer.dtype = bundle.dtype === 'uint8' ? 'uint8' : 'float32';
       layer.quant = bundle.quant || {};
       layer.canvas.width = bundle.width;
