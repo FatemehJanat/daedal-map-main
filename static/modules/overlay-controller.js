@@ -1520,12 +1520,12 @@ export const OverlayController = {
       case 'aurora': {
         const stats = AuroraOverlay?.getDisplayStats?.() || {};
         if (!Number.isFinite(stats?.snapshotCount) || stats.snapshotCount <= 0) {
-          return 'Aurora feed active now, but no visible aurora cells are in the latest model frame. Ask chat to summarize current conditions or focus on one region.';
+          return 'Aurora conditions are quiet in the latest model update. Recent updates will build toward a 24-hour replay. Ask chat where aurora is most likely visible right now.';
         }
         if (stats?.usingStrongBand && Number.isFinite(stats?.visibleCount) && stats.visibleCount < stats.snapshotCount) {
-          return `Aurora feed active now. There are ${stats.snapshotCount.toLocaleString()} visible cells in the latest model frame. Showing ${stats.visibleCount.toLocaleString()} cells at ${stats.filterDescription} first for readability. Ask chat to widen the band, focus on North America, or summarize current conditions.`;
+          return `Aurora conditions are active. Showing the strongest areas first for readability and replaying recent model updates as the 24-hour history builds. Ask chat where aurora is most likely visible right now.`;
         }
-        return `Aurora feed active now. Showing ${stats.snapshotCount.toLocaleString()} visible cells from the latest model frame. Ask chat to focus on North America or summarize current conditions.`;
+        return 'Aurora conditions are active. Replaying recent model updates as the 24-hour history builds. Ask chat where aurora is most likely visible right now.';
       }
       case 'ocean-sst-grid': {
         const gridDate = String(compactSummary?.grid_date || '').trim();

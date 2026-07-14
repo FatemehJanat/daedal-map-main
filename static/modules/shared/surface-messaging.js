@@ -148,8 +148,8 @@ export const SURFACE_MESSAGE_PROFILES = {
     singular: 'aurora model cell',
     plural: 'aurora model cells',
     exploreActiveDescription: 'aurora conditions',
-    exploreHints: 'Ask chat to focus on a region or summarize current conditions.',
-    exploreExamples: ['focus on North America aurora', 'summarize current aurora conditions'],
+    exploreHints: 'Ask chat where aurora is most likely visible right now.',
+    exploreExamples: ['where is aurora most likely visible right now?'],
   },
   buoys: {
     label: 'Ocean Buoys',
