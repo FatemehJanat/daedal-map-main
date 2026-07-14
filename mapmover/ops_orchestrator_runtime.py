@@ -827,6 +827,24 @@ def _snapshot_to_geojson(snapshot: dict) -> dict | None:
     return {"type": "FeatureCollection", "features": features}
 
 
+def _wildfire_perimeter_geometry(row: dict) -> dict | None:
+    """Return a valid perimeter geometry when a live collector supplied one."""
+    perimeter = row.get("perimeter")
+    if isinstance(perimeter, str):
+        try:
+            perimeter = json.loads(perimeter)
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(perimeter, dict):
+        return None
+    geometry = perimeter.get("geometry") if perimeter.get("type") == "Feature" else perimeter
+    if str(geometry.get("type") or "") not in {"Polygon", "MultiPolygon"}:
+        return None
+    if not geometry.get("coordinates"):
+        return None
+    return geometry
+
+
 def _build_point_event_display_payload(
     snapshot: dict | None,
     *,
@@ -845,11 +863,6 @@ def _build_point_event_display_payload(
     for row in rows:
         if not isinstance(row, dict):
             continue
-        try:
-            lon = float(row.get("longitude"))
-            lat = float(row.get("latitude"))
-        except (TypeError, ValueError):
-            continue
         props = dict(row)
         props.setdefault("collector", collector)
         if collector == "volcanoes":
@@ -860,10 +873,18 @@ def _build_point_event_display_payload(
                 props.setdefault("area_km2", float(acres) * 0.00404686)
             except (TypeError, ValueError):
                 pass
+        geometry = _wildfire_perimeter_geometry(row) if collector == WILDFIRE_LIVE_FEED else None
+        if geometry is None:
+            try:
+                lon = float(row.get("longitude"))
+                lat = float(row.get("latitude"))
+            except (TypeError, ValueError):
+                continue
+            geometry = {"type": "Point", "coordinates": [lon, lat]}
         features.append(
             {
                 "type": "Feature",
-                "geometry": {"type": "Point", "coordinates": [lon, lat]},
+                "geometry": geometry,
                 "properties": props,
             }
         )
@@ -3068,6 +3089,22 @@ def _build_focus_map_result(*, feed: str, payload: dict, feature: dict, watch: d
     return subset_payload
 
 
+def _build_ranked_focus_map_result(*, feed: str, payload: dict, features: list[dict], watch: dict, effective_feeds: list[str]) -> dict:
+    """Return a requested ranked subset as a map payload, not one focused item."""
+    subset_payload = dict(payload)
+    subset_payload["geojson"] = {"type": "FeatureCollection", "features": features}
+    subset_payload["count"] = len(features)
+    subset_payload["fit"] = True
+    label = _feed_display_name(feed)
+    summary = f"Showing the {len(features)} largest active {label} by area."
+    subset_payload["summary"] = summary
+    subset_payload["message"] = summary
+    subset_payload["watch_id"] = watch.get("watch_id")
+    subset_payload["watch_context"] = watch
+    subset_payload["effective_feeds"] = effective_feeds
+    return subset_payload
+
+
 def _load_history_focus_payload(
     *,
     feed: str,
@@ -4184,6 +4221,29 @@ def _try_focus_result(
     )
     if not feed:
         return None
+
+    ranked_match = re.search(r"\b(\d{1,2})\s+(?:biggest|largest)\b", lower)
+    if feed == WILDFIRE_LIVE_FEED and ranked_match:
+        requested_count = max(1, min(int(ranked_match.group(1)), 50))
+        payload = _report_display_payload_by_feed(report).get(feed)
+        spec = FEED_FOCUS_SPECS[feed]
+        ranked_features = sorted(
+            (
+                feature for feature in _payload_features(payload)
+                if _feature_numeric_value(feature, spec["metric_keys"]) is not None
+            ),
+            key=lambda feature: _feature_numeric_value(feature, spec["metric_keys"]) or 0,
+            reverse=True,
+        )[:requested_count]
+        if ranked_features:
+            _store_ops_focus_target(cache, feed=feed, payload=payload, feature=ranked_features[0])
+            return _build_ranked_focus_map_result(
+                feed=feed,
+                payload=payload,
+                features=ranked_features,
+                watch=watch,
+                effective_feeds=effective_feeds,
+            )
 
     history_feed, history_payload = _resolve_cached_history_payload(
         cache=cache,
