@@ -161,6 +161,10 @@ FEED_ALIASES = {
     "usa_nws_alerts": ("nws", "nws alerts", "weather alert", "weather alerts", "warning", "warnings", "alert", "alerts"),
     "noaa_swpc": ("space weather", "space weather alerts", "geomagnetic", "solar storm", "radio blackout"),
     "noaa_aurora": ("aurora", "aurora conditions", "northern lights"),
+    "era5_land_temperature": (
+        "land temperature", "land-air temperature", "air temperature",
+        "temperature anomaly", "temperature anomalies", "2m temperature",
+    ),
 }
 
 COUNT_QUERY_PATTERNS = (
