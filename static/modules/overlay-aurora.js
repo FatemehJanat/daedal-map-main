@@ -275,6 +275,17 @@ export const AuroraOverlay = {
     if (this.historyTimer) clearInterval(this.historyTimer);
     this.historyTimer = null;
   },
+
+  // Chat can answer a "right now" question from the latest real OVATION
+  // issuance. Hold that same frame on the map until the overlay is toggled;
+  // a fresh enable starts the retained-history playback again.
+  freezeAtLatest() {
+    if (!this.enabled || !this.lastDisplayCells) return false;
+    this._stopShimmer();
+    this._stopHistoryPlayback();
+    this._render(this.lastDisplayCells);
+    return true;
+  },
 };
 
 export default AuroraOverlay;

@@ -4834,6 +4834,10 @@ def run_ops_chat(
             "effective_feeds": effective_feeds,
             "ops_report": report,
         }
+        # The text answer and map must refer to the same current OVATION
+        # issuance. The browser holds that frame until Aurora is toggled.
+        if str(direct_answer).startswith("The latest aurora model frame"):
+            result["ui_action"] = "freeze_aurora_latest"
         if report.get("display_payloads"):
             result["display_payloads"] = report.get("display_payloads")
         if report.get("geojson"):

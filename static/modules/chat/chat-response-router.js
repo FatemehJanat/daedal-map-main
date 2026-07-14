@@ -3,6 +3,7 @@
  */
 
 import { getSiteBaseUrl } from '../auth.js';
+import { AuroraOverlay } from '../overlay-aurora.js';
 import { routeMapPayloadContract } from './chat-response-routing-contract.mjs';
 
 export function routeMapResponse(ctx, response, options = {}, deps = {}) {
@@ -362,6 +363,9 @@ export function handleResponse(ctx, response, deps = {}) {
     default:
       ctx.pendingMetricOrder = null;
       ctx.pendingResearchDisplayWarning = null;
+      if (targetMode === 'ops' && response.ui_action === 'freeze_aurora_latest') {
+        AuroraOverlay.freezeAtLatest();
+      }
       ctx.applySupplementalChatActions(response);
       if (response.geojson && response.geojson.features && response.geojson.features.length > 0) {
         add(response.message || response.summary || 'Found data for you.', 'assistant');
