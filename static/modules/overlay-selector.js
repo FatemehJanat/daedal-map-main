@@ -98,6 +98,10 @@ const OPS_FEED_TO_OVERLAY_IDS = {
 function normalizeOpsFeedId(feedId) {
   const normalized = String(feedId || '').trim();
   if (normalized === 'hurricanes') return 'hurricanes_live';
+  // Persisted profiles created before the composed North American wildfire
+  // feed may still carry a physical collector id. Normalize before initial
+  // tray/default-overlay calculation, not only after the watch API returns.
+  if (normalized === 'wildfires_us_nifc' || normalized === 'wildfires_can_cwfis') return 'wildfires';
   return normalized;
 }
 
