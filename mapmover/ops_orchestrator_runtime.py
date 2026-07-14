@@ -46,6 +46,10 @@ DEFAULT_OPS_HISTORY_DISPLAY_HOURS = 72
 HURRICANE_LIVE_FEED = "hurricanes_live"
 WILDFIRE_LIVE_FEED = "wildfires"
 WILDFIRE_OPS_COLLECTORS = ("wildfires_us_nifc", "wildfires_can_cwfis")
+WILDFIRE_COLLECTOR_ISO3 = {
+    "wildfires_us_nifc": "USA",
+    "wildfires_can_cwfis": "CAN",
+}
 HURRICANE_LEGACY_OPS_FEED = "hurricanes"
 HURRICANE_OPS_COLLECTORS = ("tc_nhc", "tc_gdacs", "tc_jtwc", "tc_jma")
 HURRICANE_SOURCE_PRIORITY = {"NHC": 50, "JTWC": 40, "JMA": 35, "GDACS": 10}
@@ -536,6 +540,22 @@ def _load_history_child_safely(collector_name: str) -> list[dict]:
         return []
 
 
+def _wildfire_event_with_geography(event: dict, collector_name: str) -> dict:
+    """Attach the collector's stable geography to a wildfire event.
+
+    New collector snapshots publish these fields themselves. The fallback is
+    kept here so previously published snapshots and retained history can also
+    be filtered correctly.
+    """
+    result = dict(event)
+    iso3 = str(result.get("iso3") or WILDFIRE_COLLECTOR_ISO3.get(collector_name) or "").upper()
+    if iso3:
+        result["iso3"] = iso3
+        state = str(result.get("state") or "").strip().upper()
+        result.setdefault("loc_id", f"{iso3}-{state}" if iso3 == "USA" and state else iso3)
+    return result
+
+
 def load_current_state_snapshot(collector_name: str) -> dict | None:
     collector = _normalize_ops_feed_id(collector_name)
     if not collector:
@@ -670,7 +690,12 @@ def load_current_state_snapshot(collector_name: str) -> dict | None:
         events = []
         for child in children:
             summary = child.get("payload_summary") if isinstance(child.get("payload_summary"), dict) else {}
-            events.extend(item for item in (summary.get("events") or []) if isinstance(item, dict))
+            child_collector = str(child.get("collector") or "")
+            events.extend(
+                _wildfire_event_with_geography(item, child_collector)
+                for item in (summary.get("events") or [])
+                if isinstance(item, dict)
+            )
         area_values = []
         for event in events:
             try:
@@ -733,7 +758,26 @@ def load_current_state_history(collector_name: str, limit: int | None = None) ->
     if collector == WILDFIRE_LIVE_FEED:
         with ThreadPoolExecutor(max_workers=len(WILDFIRE_OPS_COLLECTORS)) as executor:
             child_histories = list(executor.map(_load_history_child_safely, WILDFIRE_OPS_COLLECTORS))
-        merged = [entry for entries in child_histories for entry in entries]
+        merged = []
+        for child_collector, entries in zip(WILDFIRE_OPS_COLLECTORS, child_histories):
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                summary = entry.get("payload_summary")
+                if not isinstance(summary, dict) or not isinstance(summary.get("events"), list):
+                    merged.append(entry)
+                    continue
+                merged.append({
+                    **entry,
+                    "payload_summary": {
+                        **summary,
+                        "events": [
+                            _wildfire_event_with_geography(event, child_collector)
+                            for event in summary["events"]
+                            if isinstance(event, dict)
+                        ],
+                    },
+                })
         merged.sort(key=lambda item: str(
             item.get("published_at")
             or item.get("last_changed_at")
@@ -3622,6 +3666,25 @@ def _wildfire_area_request(query: str, *, wildfire_context: bool = False) -> tup
     return None
 
 
+def _wildfire_country_request(query: str, *, wildfire_context: bool = False) -> str | None:
+    """Return an ISO3 scope for explicit USA/Canada wildfire commands."""
+    text = str(query or "").strip().lower()
+    if not text or not wildfire_context:
+        return None
+    mentions_usa = bool(re.search(r"\b(?:usa|u\.?s\.?a\.?|united states|america)\b", text))
+    mentions_canada = bool(re.search(r"\bcanada\b", text))
+    excluding = bool(re.search(r"\b(?:hide|exclude|without|except|remove)\b", text))
+    if mentions_canada and excluding and not mentions_usa:
+        return "USA"
+    if mentions_usa and excluding and not mentions_canada:
+        return "CAN"
+    if mentions_usa and not mentions_canada:
+        return "USA"
+    if mentions_canada and not mentions_usa:
+        return "CAN"
+    return None
+
+
 def _try_wildfire_snapshot_filter_result(
     *,
     query: str,
@@ -3640,13 +3703,17 @@ def _try_wildfire_snapshot_filter_result(
         cache=cache,
         report=report,
     )
+    wildfire_context = explicit_wildfire or inferred_feed == WILDFIRE_LIVE_FEED
     requested = _wildfire_area_request(
         query,
-        wildfire_context=explicit_wildfire or inferred_feed == WILDFIRE_LIVE_FEED,
+        wildfire_context=wildfire_context,
     )
-    if requested is None:
+    country_scope = _wildfire_country_request(query, wildfire_context=wildfire_context)
+    if requested is None and country_scope is None:
         return None
-    operator, threshold_km2, threshold_label = requested
+    # A country-only command requests the complete current roster for that
+    # country rather than silently reapplying the 5 km² readability default.
+    operator, threshold_km2, threshold_label = requested or (">=", 0.0, "all sizes")
     payloads = _report_display_payload_by_feed(report)
     source_payload = payloads.get(WILDFIRE_LIVE_FEED)
     geojson = source_payload.get("geojson") if isinstance(source_payload, dict) else None
@@ -3657,12 +3724,17 @@ def _try_wildfire_snapshot_filter_result(
         feature for feature in features
         if isinstance(feature, dict)
         and _feature_matches_metric_filter(feature, ("area_km2",), operator, threshold_km2)
+        and (
+            country_scope is None
+            or str((feature.get("properties") or {}).get("iso3") or "").upper() == country_scope
+        )
     ]
     filtered_payload = {
         **source_payload,
         "ops_min_area_km2": threshold_km2 if operator in {">", ">="} else None,
         "ops_show_all": threshold_km2 == 0 and operator == ">=",
-        "summary": f"Showing {len(filtered):,} current wildfires at {operator} {threshold_label}.",
+        "ops_country_iso3": country_scope,
+        "summary": f"Showing {len(filtered):,} current {country_scope + ' ' if country_scope else ''}wildfires at {operator} {threshold_label}.",
         "count": len(filtered),
         "geojson": {**geojson, "features": filtered},
     }
@@ -3672,7 +3744,7 @@ def _try_wildfire_snapshot_filter_result(
         if isinstance(item, dict)
     ]
     return {
-        "message": f"Showing all {len(filtered):,} current wildfires with area {operator} {threshold_label}.",
+        "message": f"Showing all {len(filtered):,} current {country_scope + ' ' if country_scope else ''}wildfires with area {operator} {threshold_label}.",
         "display_payloads": display_payloads,
     }
 

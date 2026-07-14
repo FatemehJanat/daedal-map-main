@@ -1,10 +1,33 @@
 import json
 import unittest
 
-from mapmover.ops_orchestrator_runtime import _build_point_event_display_payload
+from mapmover.ops_orchestrator_runtime import (
+    WILDFIRE_LIVE_FEED,
+    _build_point_event_display_payload,
+    _try_wildfire_snapshot_filter_result,
+)
 
 
 class OpsWildfireGeometryRuntimeTests(unittest.TestCase):
+    def test_country_command_filters_the_display_payload(self):
+        usa = {"type": "Feature", "geometry": {"type": "Point", "coordinates": [-120, 40]}, "properties": {"iso3": "USA", "area_km2": 1}}
+        canada = {"type": "Feature", "geometry": {"type": "Point", "coordinates": [-78, 50]}, "properties": {"iso3": "CAN", "area_km2": 1}}
+        payload = {"source_id": "wildfires_live_ops", "geojson": {"type": "FeatureCollection", "features": [usa, canada]}}
+        report = {"display_payloads": [payload]}
+
+        result = _try_wildfire_snapshot_filter_result(
+            query="hide all fires in canada",
+            report=report,
+            effective_feeds=[WILDFIRE_LIVE_FEED],
+            chat_history=[],
+            cache=None,
+        )
+
+        filtered = result["display_payloads"][0]
+        self.assertEqual("USA", filtered["ops_country_iso3"])
+        self.assertTrue(filtered["ops_show_all"])
+        self.assertEqual([usa], filtered["geojson"]["features"])
+
     def test_multipart_perimeter_is_preserved_as_one_multipolygon_feature(self):
         perimeter = {
             "type": "MultiPolygon",
