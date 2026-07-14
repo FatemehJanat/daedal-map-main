@@ -59,6 +59,7 @@ import {
   focusActiveOpsOverlays,
   getOpsFeedIdForOverlay,
   getOpsOverlayIdsForFeeds,
+  getOpsPublicDefaultOverlayIds,
   resolvePackIdFromSourceId,
   setOpsEffectiveFeeds as setOverlaySelectorOpsEffectiveFeeds
 } from './overlay-selector.js';
@@ -917,9 +918,19 @@ export const ChatManager = {
 
     if (lane === 'ops' && feedId) {
       // Feed deep links are additive marketing entry points: load and enable
-      // the named feed, but keep the user's full watch universe (public
-      // defaults for anonymous, account ops_feeds for signed-in) in the tray.
-      await this.loadOpsFeedSet([feedId], {
+      // the named feed, while the runtime payload must still cover the full
+      // watch universe (public defaults for anonymous, account ops_feeds for
+      // signed-in). Keeping only the URL feed here made other tray overlays
+      // appear as a zero-count snapshot after a deep-link entry.
+      const profileFeeds = Array.isArray(getCurrentProfile()?.ops_feeds)
+        ? getCurrentProfile().ops_feeds
+        : [];
+      const baselineFeeds = profileFeeds.length
+        ? profileFeeds
+        : getOpsPublicDefaultOverlayIds()
+          .map((overlayId) => getOpsFeedIdForOverlay(overlayId))
+          .filter(Boolean);
+      await this.loadOpsFeedSet([...baselineFeeds, feedId], {
         label: 'Ops deep link',
         forceDisplayReplay: true,
         preserveWatchUniverse: true
