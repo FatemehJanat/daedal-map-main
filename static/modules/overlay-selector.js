@@ -168,6 +168,12 @@ export function hasExplicitOpsFeedSelection() {
   return Array.isArray(profile?.ops_feeds) && profile.ops_feeds.length > 0;
 }
 
+function getAccountOpsFeedSelection(profile = getCurrentProfile()) {
+  return normalizeFeedNames(
+    Array.isArray(profile?.ops_feeds) ? profile.ops_feeds : []
+  );
+}
+
 export function getOpsOverlayIdsForFeeds(feeds = []) {
   const overlayIds = new Set();
   for (const feed of feeds || []) {
@@ -357,11 +363,18 @@ function getBaseShownOverlayIdsForMode(mode = getCurrentOverlayLaneMode()) {
   const normalizedMode = String(mode || getCurrentOverlayLaneMode()).trim().toLowerCase() || 'explore';
   const profile = getCurrentProfile();
   const accountShown = getProfileLaneOverlayDefaults(profile, 'default_shown_by_lane', normalizedMode);
+  const accountOpsFeeds = getAccountOpsFeedSelection(profile);
+  // Keep the two Ops lanes distinct. Anonymous/default-watch visitors see the
+  // curated public default set. An account with saved ops_feeds sees every
+  // feed it selected, even when an older tray-layout preference lists fewer.
+  if (normalizedMode === 'ops' && accountOpsFeeds.length) {
+    return Array.from(new Set([
+      ...getOpsOverlayIdsForFeeds(accountOpsFeeds),
+      ...accountShown
+    ]));
+  }
   if (accountShown.length) {
     return accountShown;
-  }
-  if (normalizedMode === 'ops' && hasExplicitOpsFeedSelection()) {
-    return Array.from(getAllowedOpsOverlayIds());
   }
   return getDefaultOverlayIdsForMode(normalizedMode);
 }
