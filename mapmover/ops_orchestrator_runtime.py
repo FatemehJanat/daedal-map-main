@@ -667,11 +667,17 @@ def load_current_state_snapshot(collector_name: str) -> dict | None:
         for child in children:
             summary = child.get("payload_summary") if isinstance(child.get("payload_summary"), dict) else {}
             events.extend(item for item in (summary.get("events") or []) if isinstance(item, dict))
+        area_values = []
+        for event in events:
+            try:
+                area_values.append(float(event.get("area_km2")))
+            except (TypeError, ValueError):
+                continue
         checked = max(str(item.get("last_checked_at") or "") for item in children)
         changed = max(str(item.get("last_changed_at") or "") for item in children)
         return {"collector": WILDFIRE_LIVE_FEED, "fetched_at": checked, "last_checked_at": checked,
                 "last_changed_at": changed, "collector_status": "ok" if events else "quiet",
-                "payload_summary": {"logical_feed": WILDFIRE_LIVE_FEED, "event_count": len(events), "active_count": len(events), "source_count": len(children), "events": events},
+                "payload_summary": {"logical_feed": WILDFIRE_LIVE_FEED, "event_count": len(events), "active_count": len(events), "source_count": len(children), "max_area_km2": max(area_values) if area_values else None, "events": events},
                 "payload_hash": hashlib.sha256("|".join(str(item.get("payload_hash") or "") for item in children).encode("utf-8")).hexdigest(),
                 "schema_version": 1, "feed_type": "live_only", "ops_history_enabled": True,
                 "ops_history_retention_hours": DEFAULT_OPS_HISTORY_RETENTION_HOURS,
@@ -1623,12 +1629,11 @@ def _compact_payload_summary(collector: str, summary: dict, *, sample_limit: int
     if collector == WILDFIRE_LIVE_FEED:
         return {
             "event_count": summary.get("event_count"),
-            "incident_count": summary.get("incident_count"),
             "active_count": summary.get("active_count"),
-            "max_burned_acres": summary.get("max_burned_acres"),
+            "max_area_km2": summary.get("max_area_km2"),
             "top_events": _sample_rows(
                 summary.get("events") or [],
-                ("event_id", "fire_name", "state", "county_name", "status", "burned_acres", "last_updated"),
+                ("event_id", "fire_name", "state", "county_name", "source", "status", "area_km2", "last_updated"),
                 sample_limit,
             ),
         }
@@ -3533,6 +3538,68 @@ def _build_cached_history_followup_count_answer(*, feed: str, payload: dict, que
     )
 
 
+def _wildfire_area_request(query: str) -> tuple[str, float, str] | None:
+    """Parse a current-fire size request into the shared km² display unit."""
+    text = str(query or "").strip().lower()
+    if not text or not any(token in text for token in ("fire", "wildfire")):
+        return None
+    operator = ">="
+    if re.search(r"\b(?:under|below|less than)\b", text):
+        operator = "<"
+    elif re.search(r"\b(?:and|or)\s+above\b|\bat\s+least\b", text):
+        operator = ">="
+    elif re.search(r"\b(?:over|above|greater than|more than)\b", text):
+        operator = ">"
+    match = re.search(r"\b(\d+(?:\.\d+)?)\s*(?:acres?|acre)\b", text)
+    if match:
+        value_km2 = float(match.group(1)) * 0.00404686
+        return operator, value_km2, f"{value_km2:.2f} km²"
+    match = re.search(r"\b(\d+(?:\.\d+)?)\s*(?:km²|km2|square\s*kilometers?)\b", text)
+    if match:
+        value_km2 = float(match.group(1))
+        return operator, value_km2, f"{value_km2:.2f} km²"
+    if re.search(r"\b(?:show|list)\s+all\s+(?:wild)?fires?\b", text):
+        return ">=", 0.0, "all sizes"
+    return None
+
+
+def _try_wildfire_snapshot_filter_result(*, query: str, report: dict, effective_feeds: list[str]) -> dict | None:
+    if WILDFIRE_LIVE_FEED not in effective_feeds:
+        return None
+    requested = _wildfire_area_request(query)
+    if requested is None:
+        return None
+    operator, threshold_km2, threshold_label = requested
+    payloads = _report_display_payload_by_feed(report)
+    source_payload = payloads.get(WILDFIRE_LIVE_FEED)
+    geojson = source_payload.get("geojson") if isinstance(source_payload, dict) else None
+    features = geojson.get("features") if isinstance(geojson, dict) else None
+    if not isinstance(features, list):
+        return None
+    filtered = [
+        feature for feature in features
+        if isinstance(feature, dict)
+        and _feature_matches_metric_filter(feature, ("area_km2",), operator, threshold_km2)
+    ]
+    filtered_payload = {
+        **source_payload,
+        "ops_min_area_km2": threshold_km2 if operator in {">", ">="} else None,
+        "ops_show_all": threshold_km2 == 0 and operator == ">=",
+        "summary": f"Showing {len(filtered):,} current wildfires at {operator} {threshold_label}.",
+        "count": len(filtered),
+        "geojson": {**geojson, "features": filtered},
+    }
+    display_payloads = [
+        filtered_payload if str(item.get("source_id") or "") == str(source_payload.get("source_id") or "") else item
+        for item in (report.get("display_payloads") or [])
+        if isinstance(item, dict)
+    ]
+    return {
+        "message": f"Showing all {len(filtered):,} current wildfires with area {operator} {threshold_label}.",
+        "display_payloads": display_payloads,
+    }
+
+
 def _load_exact_history_feature(
     *,
     feed: str,
@@ -4561,6 +4628,26 @@ def run_ops_chat(
         }
         if report.get("display_payloads"):
             result["display_payloads"] = report.get("display_payloads")
+        if report.get("geojson"):
+            result["geojson"] = report["geojson"]
+        return result
+
+    wildfire_filter_result = _try_wildfire_snapshot_filter_result(
+        query=query,
+        report=report,
+        effective_feeds=effective_feeds,
+    )
+    if wildfire_filter_result:
+        result = {
+            "type": "chat",
+            "message": wildfire_filter_result["message"],
+            "summary": f"Ops watch: {watch.get('label') or 'Watch'} | feeds: {', '.join(effective_feeds)}",
+            "watch_id": watch.get("watch_id"),
+            "watch_context": watch,
+            "effective_feeds": effective_feeds,
+            "ops_report": report,
+            "display_payloads": wildfire_filter_result["display_payloads"],
+        }
         if report.get("geojson"):
             result["geojson"] = report["geojson"]
         return result

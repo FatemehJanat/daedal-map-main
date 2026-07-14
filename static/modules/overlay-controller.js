@@ -1325,15 +1325,24 @@ export const OverlayController = {
         };
       }
       case 'wildfires': {
-        const filtered = sourceFeatures.filter((feature) => Number(feature?.properties?.burned_acres) >= 500);
+        // Wildfire Ops combines NIFC (native acres) and CWFIS (native
+        // hectares). Both collectors publish area_km2 as the display unit.
+        const requestedMinAreaKm2 = Number(sourcePayload?.ops_min_area_km2);
+        const minAreaKm2 = sourcePayload?.ops_show_all === true
+          ? 0
+          : (Number.isFinite(requestedMinAreaKm2) && requestedMinAreaKm2 >= 0
+            ? requestedMinAreaKm2
+            : 2.02); // 500 acres, rounded to two decimal km²
+        const filtered = sourceFeatures.filter((feature) => Number(feature?.properties?.area_km2) >= minAreaKm2);
         const useFilter = filtered.length > 0 && filtered.length < sourceFeatures.length;
         const visibleFeatures = useFilter ? filtered : sourceFeatures;
+        const thresholdText = `${minAreaKm2.toFixed(2)} km² and above`;
         return {
-          payload: useFilter ? clonePayload(filtered, `Showing ${filtered.length.toLocaleString()} wildfire events above 500 acres from the live snapshot.`) : sourcePayload,
+          payload: useFilter ? clonePayload(filtered, `Showing ${filtered.length.toLocaleString()} wildfire events at ${thresholdText} from the live snapshot.`) : sourcePayload,
           snapshotCount: Number.isFinite(compactSummary?.active_count) ? compactSummary.active_count : fullCountFromPayload,
           visibleCount: visibleFeatures.length,
-          filterDescription: useFilter ? '500 acres and above' : null,
-          chatHint: 'Ask chat to show all fires, raise the size filter, or focus on the largest fires.',
+          filterDescription: useFilter ? thresholdText : null,
+          chatHint: 'Ask chat to show all fires, set a km² threshold, or focus on the largest fires.',
         };
       }
       case 'volcanoes': {
