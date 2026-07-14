@@ -84,8 +84,6 @@ def _normalize_ops_feed_id(feed: object) -> str:
     text = str(feed or "").strip()
     if text == HURRICANE_LEGACY_OPS_FEED:
         return HURRICANE_LIVE_FEED
-    if text in {"wildfires_us_nifc", "wildfires_can_cwfis"}:
-        return WILDFIRE_LIVE_FEED
     return text
 
 
