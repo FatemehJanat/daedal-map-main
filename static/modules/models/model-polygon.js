@@ -142,7 +142,7 @@ export const PolygonModel = {
   },
 
   _wildfireCenterIconSizeExpr() {
-    // Match the point-only wildfire flame sizing, then halve it because the
+    // Match the point-only wildfire flame sizing, then reduce it because the
     // polygon remains the authoritative fire footprint.
     const normalSize = [
       'interpolate', ['linear'],
@@ -152,17 +152,17 @@ export const PolygonModel = {
       4, 1.2,
       4.5, 1.38
     ];
-    const halfNormalSize = ['*', 0.5, 1.4, normalSize];
+    const perimeterIconSize = ['*', 0.8, 1.4, normalSize];
     return [
       'interpolate', ['linear'], ['zoom'],
-      0, ['*', halfNormalSize, 1],
-      4, ['*', halfNormalSize, 1.5],
-      5, ['*', halfNormalSize, 1.7],
-      8, ['*', halfNormalSize, 2],
-      10, ['*', halfNormalSize, 3.2],
-      12, ['*', halfNormalSize, 4.6],
-      14, ['*', halfNormalSize, 6],
-      16, ['*', halfNormalSize, 7.5]
+      0, ['*', perimeterIconSize, 1],
+      4, ['*', perimeterIconSize, 1.5],
+      5, ['*', perimeterIconSize, 1.7],
+      8, ['*', perimeterIconSize, 2],
+      10, ['*', perimeterIconSize, 3.2],
+      12, ['*', perimeterIconSize, 4.6],
+      14, ['*', perimeterIconSize, 6],
+      16, ['*', perimeterIconSize, 7.5]
     ];
   },
 
