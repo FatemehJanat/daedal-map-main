@@ -3550,6 +3550,24 @@ def _wildfire_area_request(query: str, *, wildfire_context: bool = False) -> tup
         operator = ">="
     elif re.search(r"\b(?:over|above|greater than|more than)\b", text):
         operator = ">"
+    # In this wildfire-only parser, a bare `km` means square kilometres.
+    # Accept common operational shorthand and normalize every input unit before
+    # applying the one shared area_km2 filter.
+    match = re.search(
+        r"\b(?P<value>\d+(?:\.\d+)?)\s*"
+        r"(?P<unit>acres?|hectares?|ha|km2|square\s*(?:kilometers?|kilometres?)|sq\.?\s*km|km)\b",
+        text,
+    )
+    if match:
+        unit = re.sub(r"\s+", "", match.group("unit").lower())
+        value = float(match.group("value"))
+        if unit in {"acre", "acres"}:
+            value_km2 = value * 0.00404686
+        elif unit in {"ha", "hectare", "hectares"}:
+            value_km2 = value * 0.01
+        else:
+            value_km2 = value
+        return operator, value_km2, f"{value_km2:.2f} km\u00b2"
     match = re.search(r"\b(\d+(?:\.\d+)?)\s*(?:acres?|acre)\b", text)
     if match:
         value_km2 = float(match.group(1)) * 0.00404686
