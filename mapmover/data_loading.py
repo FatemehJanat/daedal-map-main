@@ -837,12 +837,24 @@ def load_source_metadata(source_id: str):
     runtime_mode = str(get_runtime_config().get("runtime_mode", "local")).strip().lower()
 
     if runtime_mode == "cloud":
-        catalog = load_full_catalog()
+        # Resolve source paths from the active catalog surface.  A published
+        # request must not depend on wip_catalog.json being refreshed at the
+        # same time as the published catalog.  WIP requests already resolve to
+        # the full catalog through load_catalog(); retain a full-catalog lookup
+        # only as a secondary compatibility fallback.
+        catalog = load_catalog() or {}
+        full_catalog = None
         source_rel_path = None
         for source in catalog.get("sources", []):
             if source.get("source_id") == source_id:
                 source_rel_path = source.get("path", f"global/{source_id}")
                 break
+        if source_rel_path is None:
+            full_catalog = load_full_catalog() or {}
+            for source in full_catalog.get("sources", []):
+                if source.get("source_id") == source_id:
+                    source_rel_path = source.get("path", f"global/{source_id}")
+                    break
         if source_rel_path is None:
             source_rel_path = f"global/{source_id}"
         try:
@@ -867,8 +879,13 @@ def load_source_metadata(source_id: str):
             # per-source metadata read failure rather than allowing a request to
             # be routed to an unrelated source.  It is a read-only resilience
             # fallback; the source-side metadata.json remains authoritative.
-            for source in catalog.get("sources", []):
-                if source.get("source_id") == source_id:
+            fallback_catalogs = [catalog]
+            if full_catalog is not None:
+                fallback_catalogs.append(full_catalog)
+            for fallback_catalog in fallback_catalogs:
+                for source in fallback_catalog.get("sources", []):
+                    if source.get("source_id") != source_id:
+                        continue
                     metadata = deepcopy(source)
                     _metadata_cache[source_id] = metadata
                     logger.warning(
