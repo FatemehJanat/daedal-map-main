@@ -602,10 +602,17 @@ function buildCategoriesFromTree(overlayTree) {
       rasterBasinsByLane: {
         explore: ['LAND_TEMPERATURE'],
         research: ['LAND_TEMPERATURE'],
-        ops: ['LAND_TEMPERATURE']
+        ops: ['LAND_TEMPERATURE_LATEST']
       },
       rasterCadence: 'monthly',
       rasterCadenceByLane: { explore: 'monthly', research: 'monthly', ops: 'monthly' },
+      rasterHistoryBasins: ['LAND_TEMPERATURE'],
+      rasterHistoryBasinsByLane: {
+        explore: ['LAND_TEMPERATURE'],
+        research: ['LAND_TEMPERATURE'],
+        ops: ['LAND_TEMPERATURE_LATEST']
+      },
+      rasterHistoryCadence: 'monthly',
       rasterVariable: 'air_temperature_2m_c',
       rasterMaskMode: 'land'
     }

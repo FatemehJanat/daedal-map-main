@@ -116,7 +116,10 @@ def _load_scene_catalog(source_id: str) -> dict | None:
             "nodata": 255.0,
             "value_unit": "degrees Celsius",
             "relative_dir": "global/climate/land_temperature/rasters",
-            "scenes": [{"period": "LAND_TEMPERATURE", "file": "LAND_TEMPERATURE.msgpack"}],
+            "scenes": [
+                {"period": "LAND_TEMPERATURE", "file": "LAND_TEMPERATURE.msgpack"},
+                {"period": "LAND_TEMPERATURE_LATEST", "file": "LAND_TEMPERATURE_LATEST.msgpack"},
+            ],
         }
     metadata = load_source_metadata(source_id) or {}
     raster_products = metadata.get("raster_products") or {}
