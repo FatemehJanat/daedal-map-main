@@ -3538,10 +3538,10 @@ def _build_cached_history_followup_count_answer(*, feed: str, payload: dict, que
     )
 
 
-def _wildfire_area_request(query: str) -> tuple[str, float, str] | None:
+def _wildfire_area_request(query: str, *, wildfire_context: bool = False) -> tuple[str, float, str] | None:
     """Parse a current-fire size request into the shared km² display unit."""
     text = str(query or "").strip().lower()
-    if not text or not any(token in text for token in ("fire", "wildfire")):
+    if not text or (not wildfire_context and not any(token in text for token in ("fire", "wildfire"))):
         return None
     operator = ">="
     if re.search(r"\b(?:under|below|less than)\b", text):
@@ -3563,10 +3563,28 @@ def _wildfire_area_request(query: str) -> tuple[str, float, str] | None:
     return None
 
 
-def _try_wildfire_snapshot_filter_result(*, query: str, report: dict, effective_feeds: list[str]) -> dict | None:
+def _try_wildfire_snapshot_filter_result(
+    *,
+    query: str,
+    report: dict,
+    effective_feeds: list[str],
+    chat_history: list | None,
+    cache,
+) -> dict | None:
     if WILDFIRE_LIVE_FEED not in effective_feeds:
         return None
-    requested = _wildfire_area_request(query)
+    explicit_wildfire = bool(re.search(r"\b(?:wild)?fires?\b", str(query or "").lower()))
+    inferred_feed = _infer_followup_feed(
+        query=query,
+        chat_history=chat_history,
+        effective_feeds=effective_feeds,
+        cache=cache,
+        report=report,
+    )
+    requested = _wildfire_area_request(
+        query,
+        wildfire_context=explicit_wildfire or inferred_feed == WILDFIRE_LIVE_FEED,
+    )
     if requested is None:
         return None
     operator, threshold_km2, threshold_label = requested
@@ -4636,6 +4654,8 @@ def run_ops_chat(
         query=query,
         report=report,
         effective_feeds=effective_feeds,
+        chat_history=chat_history,
+        cache=cache,
     )
     if wildfire_filter_result:
         result = {

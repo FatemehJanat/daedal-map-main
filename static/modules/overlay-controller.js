@@ -1332,7 +1332,7 @@ export const OverlayController = {
           ? 0
           : (Number.isFinite(requestedMinAreaKm2) && requestedMinAreaKm2 >= 0
             ? requestedMinAreaKm2
-            : 2.02); // 500 acres, rounded to two decimal km²
+            : 5.0); // Default Ops readability cutoff for the combined NA feed.
         const filtered = sourceFeatures.filter((feature) => Number(feature?.properties?.area_km2) >= minAreaKm2);
         const useFilter = filtered.length > 0 && filtered.length < sourceFeatures.length;
         const visibleFeatures = useFilter ? filtered : sourceFeatures;
@@ -1342,7 +1342,7 @@ export const OverlayController = {
           snapshotCount: Number.isFinite(compactSummary?.active_count) ? compactSummary.active_count : fullCountFromPayload,
           visibleCount: visibleFeatures.length,
           filterDescription: useFilter ? thresholdText : null,
-          chatHint: 'Ask chat to show all fires, set a km² threshold, or focus on the largest fires.',
+          chatHint: 'Ask chat to show all fires, or say “only show 5 km² and bigger.”',
         };
       }
       case 'volcanoes': {
