@@ -59,10 +59,10 @@ import {
   focusActiveOpsOverlays,
   getOpsFeedIdForOverlay,
   getOpsOverlayIdsForFeeds,
-  getOpsPublicDefaultOverlayIds,
   resolvePackIdFromSourceId,
   setOpsEffectiveFeeds as setOverlaySelectorOpsEffectiveFeeds
 } from './overlay-selector.js';
+import { getOpsPublicDefaultOverlayIds } from './ops/default-overlays.js';
 import { ModelRegistry } from './models/model-registry.js';
 import {
   isMixedResearchRasterRequest as isMixedResearchRasterRequestImpl,
