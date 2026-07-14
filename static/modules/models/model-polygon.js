@@ -118,6 +118,22 @@ export const PolygonModel = {
     return `${eventType}-polygon-${baseId}`;
   },
 
+  _wildfireCenterGeojson(geojson) {
+    const features = [];
+    for (const feature of geojson?.features || []) {
+      const props = feature?.properties || {};
+      const latitude = Number(props.latitude);
+      const longitude = Number(props.longitude);
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) continue;
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [longitude, latitude] },
+        properties: props
+      });
+    }
+    return { type: 'FeatureCollection', features };
+  },
+
   /**
    * Get color scheme for an event type.
    * @private
@@ -198,6 +214,8 @@ export const PolygonModel = {
     const sourceId = this._layerId('source', eventType);
     const fillId = this._layerId('fill', eventType);
     const strokeId = this._layerId('stroke', eventType);
+    const centerSourceId = this._layerId('center-source', eventType);
+    const centerId = this._layerId('center', eventType);
     const labelId = this._layerId('label', eventType);
 
     // Check if source already exists - if so, just update data (no flash)
@@ -207,6 +225,9 @@ export const PolygonModel = {
       // type membership so isTypeActive stays in sync with on-map layers.
       this.activeTypes.add(eventType);
       existingSource.setData(geojson);
+      if (eventType === 'wildfire') {
+        map.getSource(centerSourceId)?.setData(this._wildfireCenterGeojson(geojson));
+      }
       return true;
     }
 
@@ -243,6 +264,28 @@ export const PolygonModel = {
         'line-opacity': 0.8
       }
     });
+
+    // A polygon is the authoritative footprint, but the familiar center
+    // marker remains useful for scanning dense live-fire maps. It uses the
+    // collector-published incident coordinates, not a calculated label point,
+    // and lives in a separate render-only source so event counts stay intact.
+    if (eventType === 'wildfire') {
+      map.addSource(centerSourceId, {
+        type: 'geojson',
+        data: this._wildfireCenterGeojson(geojson)
+      });
+      map.addLayer({
+        id: centerId,
+        type: 'circle',
+        source: centerSourceId,
+        paint: {
+          'circle-radius': 5,
+          'circle-color': '#fff4cc',
+          'circle-stroke-color': '#7a1600',
+          'circle-stroke-width': 1.5
+        }
+      });
+    }
 
     // Add labels if requested
     if (options.showLabels !== false) {
@@ -357,6 +400,8 @@ export const PolygonModel = {
     const sourceId = this._layerId('source', eventType);
     const fillId = this._layerId('fill', eventType);
     const strokeId = this._layerId('stroke', eventType);
+    const centerSourceId = this._layerId('center-source', eventType);
+    const centerId = this._layerId('center', eventType);
     const labelId = this._layerId('label', eventType);
 
     // Remove click handler for this type
@@ -377,7 +422,7 @@ export const PolygonModel = {
     }
 
     // Remove layers
-    const layerIds = [labelId, strokeId, fillId];
+    const layerIds = [labelId, centerId, strokeId, fillId];
     for (const layerId of layerIds) {
       if (map.getLayer(layerId)) {
         map.removeLayer(layerId);
@@ -387,6 +432,9 @@ export const PolygonModel = {
     // Remove source
     if (map.getSource(sourceId)) {
       map.removeSource(sourceId);
+    }
+    if (map.getSource(centerSourceId)) {
+      map.removeSource(centerSourceId);
     }
 
     this.activeTypes.delete(eventType);
