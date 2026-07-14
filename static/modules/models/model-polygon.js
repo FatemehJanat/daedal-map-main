@@ -100,6 +100,13 @@ const COLORS = {
   }
 };
 
+const WILDFIRE_CENTER_ICON_ID = 'wildfire-polygon-center-icon';
+const WILDFIRE_CENTER_ICON_SVG = `
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+    <path d="M12 3 C14.2 6.4 17.2 8.7 17.2 12.4 C17.2 16.1 14.9 19 12 19 C9.1 19 6.8 16.6 6.8 13.3 C6.8 10.8 8.1 8.8 10.2 6.9 C10.6 8.6 11.7 9.5 12.8 10.7 C13.5 8.4 13 5.9 12 3 Z" fill="#f8fbff"/>
+  </svg>
+`;
+
 export const PolygonModel = {
   // Currently active event types (supports multiple overlays simultaneously)
   activeTypes: new Set(),
@@ -132,6 +139,72 @@ export const PolygonModel = {
       });
     }
     return { type: 'FeatureCollection', features };
+  },
+
+  _wildfireCenterIconSizeExpr() {
+    // Match the point-only wildfire flame sizing, then halve it because the
+    // polygon remains the authoritative fire footprint.
+    const normalSize = [
+      'interpolate', ['linear'],
+      ['log10', ['max', 10, ['coalesce', ['get', 'area_km2'], 100]]],
+      2, 0.76,
+      3, 0.96,
+      4, 1.2,
+      4.5, 1.38
+    ];
+    const halfNormalSize = ['*', 0.5, 1.4, normalSize];
+    return [
+      'interpolate', ['linear'], ['zoom'],
+      0, ['*', halfNormalSize, 1],
+      4, ['*', halfNormalSize, 1.5],
+      5, ['*', halfNormalSize, 1.7],
+      8, ['*', halfNormalSize, 2],
+      10, ['*', halfNormalSize, 3.2],
+      12, ['*', halfNormalSize, 4.6],
+      14, ['*', halfNormalSize, 6],
+      16, ['*', halfNormalSize, 7.5]
+    ];
+  },
+
+  _addWildfireCenterIconLayer(map, sourceId, layerId) {
+    if (!map.getSource(sourceId) || map.getLayer(layerId)) return;
+    map.addLayer({
+      id: layerId,
+      type: 'symbol',
+      source: sourceId,
+      layout: {
+        'icon-image': WILDFIRE_CENTER_ICON_ID,
+        'icon-size': this._wildfireCenterIconSizeExpr(),
+        'icon-allow-overlap': true,
+        'icon-ignore-placement': true,
+        'icon-anchor': 'center'
+      },
+      paint: {
+        'icon-color': [
+          'interpolate', ['linear'],
+          ['log10', ['max', 10, ['coalesce', ['get', 'area_km2'], 100]]],
+          2, '#ff8800', 3, '#ff4400', 4, '#cc0000', 4.5, '#880000'
+        ],
+        'icon-halo-color': 'rgba(2, 8, 20, 0.92)',
+        'icon-halo-width': 2.2,
+        'icon-halo-blur': 0.6
+      }
+    });
+  },
+
+  _ensureWildfireCenterIcon(map, sourceId, layerId) {
+    if (map.hasImage(WILDFIRE_CENTER_ICON_ID)) {
+      this._addWildfireCenterIconLayer(map, sourceId, layerId);
+      return;
+    }
+    const image = new Image(24, 24);
+    image.onload = () => {
+      if (!map.hasImage(WILDFIRE_CENTER_ICON_ID)) {
+        map.addImage(WILDFIRE_CENTER_ICON_ID, image, { pixelRatio: 2, sdf: true });
+      }
+      this._addWildfireCenterIconLayer(map, sourceId, layerId);
+    };
+    image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(WILDFIRE_CENTER_ICON_SVG)}`;
   },
 
   /**
@@ -274,17 +347,7 @@ export const PolygonModel = {
         type: 'geojson',
         data: this._wildfireCenterGeojson(geojson)
       });
-      map.addLayer({
-        id: centerId,
-        type: 'circle',
-        source: centerSourceId,
-        paint: {
-          'circle-radius': 5,
-          'circle-color': '#fff4cc',
-          'circle-stroke-color': '#7a1600',
-          'circle-stroke-width': 1.5
-        }
-      });
+      this._ensureWildfireCenterIcon(map, centerSourceId, centerId);
     }
 
     // Add labels if requested
