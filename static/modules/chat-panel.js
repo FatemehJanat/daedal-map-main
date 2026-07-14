@@ -917,20 +917,10 @@ export const ChatManager = {
     }
 
     if (lane === 'ops' && feedId) {
-      // Feed deep links are additive marketing entry points: load and enable
-      // the named feed, while the runtime payload must still cover the full
-      // watch universe (public defaults for anonymous, account ops_feeds for
-      // signed-in). Keeping only the URL feed here made other tray overlays
-      // appear as a zero-count snapshot after a deep-link entry.
-      const profileFeeds = Array.isArray(getCurrentProfile()?.ops_feeds)
-        ? getCurrentProfile().ops_feeds
-        : [];
-      const baselineFeeds = profileFeeds.length
-        ? profileFeeds
-        : getOpsPublicDefaultOverlayIds()
-          .map((overlayId) => getOpsFeedIdForOverlay(overlayId))
-          .filter(Boolean);
-      await this.loadOpsFeedSet([...baselineFeeds, feedId], {
+      // A feed URL is an entry action, never a new runtime/watch boundary.
+      // Load the target alongside the existing runtime universe (or the
+      // normal account/public baseline on cold boot), then activate it below.
+      await this.loadOpsFeedSet(this.getOpsEntryFeedSet([feedId]), {
         label: 'Ops deep link',
         forceDisplayReplay: true,
         preserveWatchUniverse: true
@@ -977,6 +967,28 @@ export const ChatManager = {
     }
 
     return handled;
+  },
+
+  getOpsEntryFeedSet(extraFeedIds = []) {
+    const currentRuntimeFeeds = Array.isArray(this.latestOpsReport?.effective_feeds)
+      ? this.latestOpsReport.effective_feeds
+      : [];
+    const profileFeeds = Array.isArray(getCurrentProfile()?.ops_feeds)
+      ? getCurrentProfile().ops_feeds
+      : [];
+    const baselineFeeds = currentRuntimeFeeds.length
+      ? currentRuntimeFeeds
+      : (profileFeeds.length
+        ? profileFeeds
+        : getOpsPublicDefaultOverlayIds()
+          .map((overlayId) => getOpsFeedIdForOverlay(overlayId))
+          .filter(Boolean));
+    const result = [];
+    for (const rawFeedId of [...baselineFeeds, ...(Array.isArray(extraFeedIds) ? extraFeedIds : [])]) {
+      const feedId = String(rawFeedId || '').trim();
+      if (feedId && !result.includes(feedId)) result.push(feedId);
+    }
+    return result;
   },
 
   async loadOpsFeedSet(feedIds = [], options = {}) {
@@ -1097,10 +1109,21 @@ export const ChatManager = {
       .map((entry) => String(entry?.feed_id || '').trim())
       .filter(Boolean);
 
+    const sharedOverlayFeedIds = lane === 'ops'
+      ? (Array.isArray(shareState?.overlays) ? shareState.overlays : [])
+        .map((overlayId) => getOpsFeedIdForOverlay(overlayId))
+        .filter(Boolean)
+      : [];
+
     let handled = false;
-    if (lane === 'ops' && feedIds.length) {
+    if (lane === 'ops') {
       await this.seedEmptyConversation(lane);
-      await this.loadOpsFeedSet(feedIds, { label: 'Ops share view' });
+      // A share URL may choose the initial visible overlays, but it must not
+      // replace the runtime watch with just the feeds named by that URL.
+      await this.loadOpsFeedSet(
+        this.getOpsEntryFeedSet([...feedIds, ...sharedOverlayFeedIds]),
+        { label: 'Ops share view', preserveWatchUniverse: true }
+      );
       handled = true;
     }
 
