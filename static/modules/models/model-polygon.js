@@ -110,6 +110,9 @@ const WILDFIRE_CENTER_ICON_SVG = `
 export const PolygonModel = {
   // Currently active event types (supports multiple overlays simultaneously)
   activeTypes: new Set(),
+  // Wildfire perimeters render a second, point-based flame layer. Track its
+  // bindings separately because it is not backed by the perimeter source.
+  wildfireCenterInteractionTypes: new Set(),
 
   // Handler references for cleanup (per event type)
   clickHandlers: new Map(),      // eventType -> handler
@@ -166,7 +169,7 @@ export const PolygonModel = {
     ];
   },
 
-  _addWildfireCenterIconLayer(map, sourceId, layerId) {
+  _addWildfireCenterIconLayer(map, sourceId, layerId, eventType = 'wildfire') {
     if (!map.getSource(sourceId) || map.getLayer(layerId)) return;
     map.addLayer({
       id: layerId,
@@ -190,11 +193,12 @@ export const PolygonModel = {
         'icon-halo-blur': 0.6
       }
     });
+    this._bindWildfireCenterInteractions(map, eventType, layerId);
   },
 
-  _ensureWildfireCenterIcon(map, sourceId, layerId) {
+  _ensureWildfireCenterIcon(map, sourceId, layerId, eventType = 'wildfire') {
     if (map.hasImage(WILDFIRE_CENTER_ICON_ID)) {
-      this._addWildfireCenterIconLayer(map, sourceId, layerId);
+      this._addWildfireCenterIconLayer(map, sourceId, layerId, eventType);
       return;
     }
     const image = new Image(24, 24);
@@ -202,9 +206,23 @@ export const PolygonModel = {
       if (!map.hasImage(WILDFIRE_CENTER_ICON_ID)) {
         map.addImage(WILDFIRE_CENTER_ICON_ID, image, { pixelRatio: 2, sdf: true });
       }
-      this._addWildfireCenterIconLayer(map, sourceId, layerId);
+      this._addWildfireCenterIconLayer(map, sourceId, layerId, eventType);
     };
     image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(WILDFIRE_CENTER_ICON_SVG)}`;
+  },
+
+  _bindWildfireCenterInteractions(map, eventType, layerId) {
+    if (eventType !== 'wildfire' || !map.getLayer(layerId) || this.wildfireCenterInteractionTypes.has(eventType)) return;
+    const clickHandler = this.clickHandlers.get(eventType);
+    const hoverHandlers = this.hoverHandlers.get(eventType);
+    if (!clickHandler || !hoverHandlers) return;
+
+    map.on('click', layerId, clickHandler);
+    map.on('mouseenter', layerId, hoverHandlers.mouseenter);
+    map.on('mouseleave', layerId, hoverHandlers.mouseleave);
+    map.on('mousemove', layerId, hoverHandlers.mousemove);
+    map.on('mouseleave', layerId, hoverHandlers.mouseleavePopup);
+    this.wildfireCenterInteractionTypes.add(eventType);
   },
 
   /**
@@ -347,7 +365,7 @@ export const PolygonModel = {
         type: 'geojson',
         data: this._wildfireCenterGeojson(geojson)
       });
-      this._ensureWildfireCenterIcon(map, centerSourceId, centerId);
+      this._ensureWildfireCenterIcon(map, centerSourceId, centerId, eventType);
     }
 
     // Add labels if requested
@@ -433,6 +451,9 @@ export const PolygonModel = {
     map.on('mouseleave', fillId, mouseleaveHandler);
     map.on('mousemove', fillId, mousemoveHandler);
     map.on('mouseleave', fillId, mouseleavePopupHandler);
+    // The center flame image may have loaded before or after these handlers
+    // were created. Bind now in either case so clicking it locks the popup.
+    this._bindWildfireCenterInteractions(map, eventType, centerId);
 
     console.log(`PolygonModel: Loaded ${geojson.features.length} ${eventType} features`);
   },
@@ -471,6 +492,7 @@ export const PolygonModel = {
     const clickHandler = this.clickHandlers.get(eventType);
     if (clickHandler) {
       map.off('click', fillId, clickHandler);
+      if (map.getLayer(centerId)) map.off('click', centerId, clickHandler);
       this.clickHandlers.delete(eventType);
     }
 
@@ -481,8 +503,15 @@ export const PolygonModel = {
       map.off('mouseleave', fillId, hoverH.mouseleave);
       map.off('mousemove', fillId, hoverH.mousemove);
       map.off('mouseleave', fillId, hoverH.mouseleavePopup);
+      if (map.getLayer(centerId)) {
+        map.off('mouseenter', centerId, hoverH.mouseenter);
+        map.off('mouseleave', centerId, hoverH.mouseleave);
+        map.off('mousemove', centerId, hoverH.mousemove);
+        map.off('mouseleave', centerId, hoverH.mouseleavePopup);
+      }
       this.hoverHandlers.delete(eventType);
     }
+    this.wildfireCenterInteractionTypes.delete(eventType);
 
     // Remove layers
     const layerIds = [labelId, centerId, strokeId, fillId];
@@ -516,6 +545,7 @@ export const PolygonModel = {
 
     // Clear tracking state
     this.activeTypes.clear();
+    this.wildfireCenterInteractionTypes.clear();
     this.clickHandlers.clear();
     this.hoverHandlers.clear();
   },
