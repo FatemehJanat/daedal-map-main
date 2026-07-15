@@ -140,7 +140,8 @@ def _get_runtime_config_path() -> Path:
 def get_runtime_config() -> dict:
     config = deepcopy(_DEFAULTS)
     runtime_config_path = _get_runtime_config_path()
-    config = _deep_merge(config, _read_json(runtime_config_path))
+    user_config = _read_json(runtime_config_path)
+    config = _deep_merge(config, user_config)
 
     install_mode = os.environ.get("INSTALL_MODE", "").strip().lower()
     if install_mode:
@@ -173,6 +174,14 @@ def get_runtime_config() -> dict:
 
     paths_cfg = config.setdefault("paths", {})
     paths_cfg.update(install_defaults.get("paths", {}))
+    # install_defaults are per-mode defaults, so they must not silently discard an
+    # explicit path from runtime.json. Re-apply the operator's own paths on top:
+    # without this, editing paths.data_root in runtime.json appears to do nothing
+    # and only the DATA_ROOT env var has any effect. Precedence is therefore
+    # built-in defaults < install_defaults < runtime.json < env.
+    for key, value in (user_config.get("paths") or {}).items():
+        if str(value or "").strip():
+            paths_cfg[key] = value
     for env_name, key in [
         ("CONFIG_DIR", "config_dir"),
         ("STATE_DIR", "state_dir"),
