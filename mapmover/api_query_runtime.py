@@ -516,8 +516,21 @@ def _build_metric_specs_from_metadata(metadata: dict[str, Any] | None) -> dict[s
     return built
 
 
-def _build_dynamic_source_spec(source_id: str) -> ApiSourceSpec | None:
-    source_defaults = SUPPORTED_DYNAMIC_SOURCES.get(source_id)
+def _build_dynamic_source_spec(
+    source_id: str,
+    source_defaults: dict[str, Any] | None = None,
+) -> ApiSourceSpec | None:
+    """Build a source spec. With no ``source_defaults`` the public API lane's
+    allowlist decides what exists, which is the only gate on public execution.
+
+    Callers may pass ``source_defaults`` explicitly to build a spec for a source
+    that is deliberately not on the public API lane. That is for internal,
+    operator-local surfaces only (see the private Research MCP's gated internal
+    catalogs). Such a spec must never be written into API_SOURCE_SPECS, because
+    that cache is process-wide and shared with the public query route.
+    """
+    if source_defaults is None:
+        source_defaults = SUPPORTED_DYNAMIC_SOURCES.get(source_id)
     if source_defaults is None:
         return None
 
