@@ -453,7 +453,7 @@ def _default_pack_title(pack_id: str) -> str:
     special = {
         "un_sdg": "UN SDGs",
         "world_factbook": "World Factbook",
-        "owid_co2": "Our World in Data CO2",
+        "owid": "Our World in Data",
     }
     if pack_id in special:
         return special[pack_id]
