@@ -273,6 +273,7 @@ def load_source_data(
     columns: list[str] | None = None,
     prefer_latest_year_when_unspecified: bool = False,
     requested_limit: int | None = None,
+    data_file: str | None = None,
 ) -> tuple:
     return load_runtime_source_data(
         source_id,
@@ -285,6 +286,7 @@ def load_source_data(
         columns=columns,
         prefer_latest_year_when_unspecified=prefer_latest_year_when_unspecified,
         requested_limit=requested_limit,
+        data_file=data_file,
         get_source_path_func=_get_source_path,
         load_source_metadata_func=load_source_metadata,
         candidate_parquet_paths_func=candidate_parquet_paths_impl,

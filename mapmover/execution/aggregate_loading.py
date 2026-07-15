@@ -190,6 +190,14 @@ def load_disaster_aggregate_data_impl(
     if use_rolling:
         candidates.extend([agg_dir / "rolling_20y.parquet", agg_dir / "rolling_10y.parquet"])
     candidates.append(agg_dir / "yearly.parquet")
+    # Some sources (for example FEMA county-year declarations) are already
+    # canonical geographic aggregates and intentionally do not duplicate that
+    # parquet into ``aggregates/admin2/yearly.parquet``.  An explicit aggregate
+    # order should be able to roll up that canonical source rather than silently
+    # falling back to the ordinary annual/timeline loader.
+    canonical_candidate = source_dir / f"{source_id}.parquet"
+    if canonical_candidate not in candidates:
+        candidates.append(canonical_candidate)
 
     parquet_path = None
     df = None

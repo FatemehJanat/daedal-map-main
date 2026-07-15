@@ -35,19 +35,31 @@ def get_source_path(
     return data_root / "global" / source_id
 
 
-def candidate_parquet_paths(source_dir: Path, metadata: dict) -> list[Path]:
+def candidate_parquet_paths(
+    source_dir: Path,
+    metadata: dict,
+    preferred_file: str | None = None,
+) -> list[Path]:
     """Return ordered parquet candidates for a source."""
     candidates: list[Path] = []
     seen: set[str] = set()
 
     def _add_candidate(name: str | None) -> None:
         filename = str(name or "").strip()
-        if not filename or not filename.endswith(".parquet"):
+        # Per-order display tables are data files, not paths.  Keeping this to a
+        # basename prevents an order from escaping its catalogued source folder.
+        if (
+            not filename
+            or not filename.endswith(".parquet")
+            or Path(filename).name != filename
+        ):
             return
         if filename in seen:
             return
         seen.add(filename)
         candidates.append(source_dir / filename)
+
+    _add_candidate(preferred_file)
 
     files_section = metadata.get("files")
     if isinstance(files_section, dict):
@@ -161,6 +173,7 @@ def load_source_data(
     columns: list[str] | None = None,
     prefer_latest_year_when_unspecified: bool = False,
     requested_limit: int | None = None,
+    data_file: str | None = None,
     get_source_path_func,
     load_source_metadata_func,
     candidate_parquet_paths_func,
@@ -253,7 +266,16 @@ def load_source_data(
             pushdown_cap = min(requested_limit_int, max_render_cap)
     pushdown_limit = pushdown_cap + 1 if pushdown_cap > 0 else None
 
-    parquet_candidates = candidate_parquet_paths_func(source_dir, metadata)
+    runtime_block_for_file = metadata.get("runtime") if isinstance(metadata.get("runtime"), dict) else {}
+    display_data_file = runtime_block_for_file.get("display_data_file")
+    parquet_candidates = candidate_parquet_paths_func(
+        source_dir,
+        metadata,
+        # A source can declare a materialized display table for values whose
+        # sparse storage would otherwise be mistaken for an unknown value. An
+        # explicit order file remains an escape hatch for provenance/audit use.
+        preferred_file=data_file or display_data_file,
+    )
     if is_cloud_mode_func():
         if not parquet_candidates:
             raise ValueError(f"Cannot determine parquet path for {source_id} in S3 mode")

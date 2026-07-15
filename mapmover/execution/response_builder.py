@@ -329,7 +329,12 @@ def build_metrics_response(
     ]
     primary_source = list(sources_used.keys())[0] if sources_used else None
     response_data_type = "geometry" if primary_level in special_geometry_levels else "metrics"
-    data_feature_count = len(year_data or {}) if temporal_mode else len(boxes or {})
+    # ``year_data`` is keyed by time bucket, not geography.  Reporting its
+    # length made a 2015-2025 FEMA timeline appear in chat as "Loaded 11
+    # locations" even though it contained county features.  The response
+    # count is always the number of rendered geographic features; time bounds
+    # remain available separately in the temporal payload below.
+    data_feature_count = len(features)
 
     response = {
         "type": "data",
@@ -347,6 +352,15 @@ def build_metrics_response(
         "metric_sources": metric_source_map,
         "aggregation_trace": aggregation_trace,
     }
+    # A narrowed/latest-time metric response may not build a time slider, but
+    # it is still a choropleth. Preserve its selected metric and available
+    # fields so the browser can color it instead of falling back to base
+    # geography.
+    if response_data_type == "metrics":
+        response["metric_key"] = metric_key
+        response["available_metrics"] = all_metrics
+        response["metric_time_ranges"] = metric_year_ranges
+        response["metric_year_ranges"] = metric_year_ranges
     response = apply_cap_info_to_payload(response, cap_info)
 
     default_time_note = _build_default_time_note(items)

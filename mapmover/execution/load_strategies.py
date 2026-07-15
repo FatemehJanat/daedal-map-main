@@ -333,7 +333,14 @@ def load_order_item_dataframe(
             source_metadata = {}
     source_temporal = source_metadata.get("temporal_coverage") if isinstance(source_metadata.get("temporal_coverage"), dict) else {}
     source_time_field = str(source_temporal.get("field") or source_metadata.get("time_field") or "").strip()
-    timestamp_backed_source = source_time_field in {"timestamp", "date", "time", "month", "week"}
+    source_granularity = str(source_temporal.get("granularity") or source_temporal.get("frequency") or "").strip().lower()
+    # Annual tables with both timestamp and year use the integer year for
+    # filtering.  It is timezone-safe and lets the query push down the full
+    # requested timeline before any generic row cap is considered.
+    timestamp_backed_source = (
+        source_time_field in {"timestamp", "date", "time", "month", "week"}
+        and source_granularity not in {"annual", "year", "yearly"}
+    )
 
     # Year is only a safe storage predicate for sources that actually carry a
     # year column. Timestamp-backed monthly/daily sources need ISO bounds so a
@@ -502,6 +509,7 @@ def load_order_item_dataframe(
                 columns=requested_columns,
                 prefer_latest_year_when_unspecified=not temporal_mode and year is None and year_start is None and year_end is None,
                 requested_limit=None if sort_spec else item.get("limit"),
+                data_file=item.get("data_file"),
             )
         return df, metadata
 
@@ -515,4 +523,5 @@ def load_order_item_dataframe(
         columns=requested_columns,
         prefer_latest_year_when_unspecified=not temporal_mode and year is None and year_start is None and year_end is None,
         requested_limit=None if sort_spec else item.get("limit"),
+        data_file=item.get("data_file"),
     )

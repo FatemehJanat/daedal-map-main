@@ -154,6 +154,13 @@ def resolve_temporal_axis(metadata: dict | None, available_columns: list[str] | 
     if not granularity:
         granularity = "yearly" if field == "year" else ("timestamp" if field in {"timestamp", "date", "time"} else None)
 
+    # Annual sources commonly retain a UTC timestamp for provenance while the
+    # integer ``year`` column is their authoritative display bucket.  Prefer
+    # it when available: converting ``YYYY-01-01T00:00Z`` to a local timezone
+    # otherwise labels the record as the preceding calendar year.
+    if granularity == "yearly" and "year" in cols:
+        return "year", "yearly", False
+
     use_timestamps = granularity in {"timestamp", "daily", "weekly", "monthly"}
     return field, granularity, use_timestamps
 
